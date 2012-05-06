@@ -1,0 +1,98 @@
+/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sw=4 et tw=0 ft=C:
+ *
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
+ * June 22, 2008.
+ *
+ * The Initial Developer of the Original Code is
+ *   Brian Crowder <crowder@fiverocks.com>
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+
+/* NB: Keep this list synced with jitstatHandler in jit-test.js. */
+/**
+ * Proper use of this file: Consumers must define JITSTAT; they can optionally
+ * also define MONITOR_JITSTAT or RECORDER_JITSTAT or both to do separate
+ * things with stats that are monitor or recorder specific.  If those are not
+ * defined, they will be automatically defined to JITSTAT.
+ */
+#ifdef DEFINED_MONITOR_JITSTAT
+#error "How did that happen?"
+#endif
+
+#ifdef DEFINED_RECORDER_JITSTAT
+#error "How did that happen?"
+#endif
+
+#ifndef MONITOR_JITSTAT
+#define MONITOR_JITSTAT(_ident, _name) JITSTAT(_ident)
+#define DEFINED_MONITOR_JITSTAT
+#endif
+
+#ifndef RECORDER_JITSTAT
+#define RECORDER_JITSTAT(_ident, _name) JITSTAT(_ident)
+#define DEFINED_RECORDER_JITSTAT
+#endif
+
+RECORDER_JITSTAT(recorderStarted, "started")
+RECORDER_JITSTAT(recorderAborted, "aborted")
+RECORDER_JITSTAT(traceCompleted, "completed")
+MONITOR_JITSTAT(sideExitIntoInterpreter, "exits")
+MONITOR_JITSTAT(timeoutIntoInterpreter, "timeouts")
+MONITOR_JITSTAT(typeMapMismatchAtEntry, "type mismatch")
+RECORDER_JITSTAT(returnToDifferentLoopHeader, "different header")
+MONITOR_JITSTAT(traceTriggered, "triggered")
+MONITOR_JITSTAT(globalShapeMismatchAtEntry, "global mismatch")
+RECORDER_JITSTAT(treesTrashed, "trees trashed")
+RECORDER_JITSTAT(slotPromoted, "slot promoted")
+RECORDER_JITSTAT(unstableLoopVariable, "unstable loop variable")
+RECORDER_JITSTAT(breakLoopExits, "breaks")
+RECORDER_JITSTAT(returnLoopExits, "returns")
+RECORDER_JITSTAT(mergedLoopExits, "merged loop exits")
+RECORDER_JITSTAT(noCompatInnerTrees, "unstableInnerCalls")
+RECORDER_JITSTAT(blacklisted, "blacklisted")
+MONITOR_JITSTAT(cacheFlushed, "flushed")
+JITSTAT(archIsIA32)
+JITSTAT(archIsAMD64)
+JITSTAT(archIs64BIT)
+JITSTAT(archIsARM)
+JITSTAT(archIsSPARC)
+JITSTAT(archIsPPC)
+JITSTAT(archIsMIPS)
+
+#ifdef DEFINED_MONITOR_JITSTAT
+#undef DEFINED_MONITOR_JITSTAT
+#undef MONITOR_JITSTAT
+#endif
+
+#ifdef DEFINED_RECORDER_JITSTAT
+#undef DEFINED_RECORDER_JITSTAT
+#undef RECORDER_JITSTAT
+#endif

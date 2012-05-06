@@ -1,0 +1,103 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ----- BEGIN LICENSE BLOCK -----
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License
+ * Version 1.1 (the "License"); you may not use this file except in
+ * compliance with the License. You may obtain a copy of the License
+ * at http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS"
+ * basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See
+ * the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * The Original Code is Mozilla code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2004
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *    Alex Fritze <alex@croczilla.com> (original author)
+ *
+ * Alternatively, the contents of this file may be used under the
+ * terms of either the GNU General Public License Version 2 or later
+ * (the "GPL"), or the GNU Lesser General Public License Version 2.1
+ * or later (the "LGPL"), in which case the provisions of the GPL or
+ * the LGPL are applicable instead of those above. If you wish to
+ * allow use of your version of this file only under the terms of
+ * either the GPL or the LGPL, and not to allow others to use your
+ * version of this file under the terms of the NPL, indicate your
+ * decision by deleting the provisions above and replace them with the
+ * notice and other provisions required by the GPL or the LGPL. If you
+ * do not delete the provisions above, a recipient may use your
+ * version of this file under the terms of any one of the MPL, the GPL
+ * or the LGPL.
+ *
+ * ----- END LICENSE BLOCK ----- */
+
+#include "nsISupports.idl"
+
+[ptr] native nsAXPCNativeCallContextPtr(nsAXPCNativeCallContext);
+
+%{C++
+struct JSObject;
+%}
+
+[ptr] native JSObjectPtr(JSObject);
+
+[scriptable, uuid(243d1a31-db9f-47a1-9922-55a1ad5515fb)]
+interface xpcIJSModuleLoader : nsISupports
+{
+  /**
+   * To be called from JavaScript only.
+   *
+   * Synchronously loads and evaluates the js file located at
+   * aResourceURI with a new, fully privileged global object.
+   *
+   * If 'targetObj' is specified and equal to null, returns the
+   * module's global object. Otherwise (if 'targetObj' is not
+   * specified, or 'targetObj' is != null) looks for a property
+   * 'EXPORTED_SYMBOLS' on the new global object. 'EXPORTED_SYMBOLS'
+   * is expected to be an array of strings identifying properties on
+   * the global object.  These properties will be installed as
+   * properties on 'targetObj', or, if 'targetObj' is not specified,
+   * on the caller's global object. If 'EXPORTED_SYMBOLS' is not
+   * found, an error is thrown.
+   *
+   * @param resourceURI A resource:// URI string to load the module from.
+   * @param targetObj  the object to install the exported properties on.
+   *        If this parameter is a primitive value, this method throws
+   *        an exception.
+   * @returns the module code's global object.
+   *
+   * The implementation maintains a hash of registryLocation->global obj.
+   * Subsequent invocations of importModule with 'registryLocation'
+   * pointing to the same file will not cause the module to be re-evaluated,
+   * but the symbols in EXPORTED_SYMBOLS will be exported into the
+   * specified target object and the global object returned as above.
+   *
+   * (This comment is duplicated to nsIXPCComponents_Utils.)
+   */
+  [implicit_jscontext,optional_argc]
+  jsval import(in AUTF8String aResourceURI, [optional] in jsval targetObj);
+
+  /**
+   * Imports the JS module at aResourceURI to the JS object
+   * 'targetObj' (if != null) as described for importModule() and
+   * returns the module's global object.
+   */
+  [noscript] JSObjectPtr importInto(in AUTF8String aResourceURI,
+                                    in JSObjectPtr targetObj,
+                                    in nsAXPCNativeCallContextPtr cc);
+
+  /**
+   * Unloads the JS module at aResourceURI. Existing references to the module
+   * will continue to work but any subsequent import of the module will
+   * reload it and give new reference. If the JS module hasn't yet been imported
+   * then this method will do nothing.
+   */
+  void unload(in AUTF8String aResourceURI);
+};

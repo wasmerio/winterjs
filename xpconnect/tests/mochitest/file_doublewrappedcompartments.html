@@ -1,0 +1,20 @@
+<html>
+    <head>
+        <script>
+            // We want to put an expando on the object, but we want this object
+            // to be wrapped in other compartments. This means that the expando
+            // must implement precreate, which happens (in general) for nodes.
+            // So we just do a cyclic reference to the document body.
+            window.expando = document.documentElement;
+
+            function testme(obj) {
+                netscape.security.PrivilegeManager.enablePrivilege("UniversalXPConnect");
+                const Ci = Components.interfaces;
+                const utils = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                                    .getInterface(Ci.nsIDOMWindowUtils);
+
+                return utils.getClassName(obj) != "Proxy" &&
+                       typeof obj.QueryInterface == 'function';
+            }
+        </script>
+    </head>
