@@ -1,42 +1,9 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=78:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey code.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Jeff Walden <jwalden+code@mit.edu> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jscntxtinlines_h___
 #define jscntxtinlines_h___
@@ -145,23 +112,6 @@ NewObjectCache::newObjectFromHit(JSContext *cx, EntryIndex entry_)
         return obj;
     }
 
-    /* Copy the entry to the stack first in case it is purged by a GC. */
-    size_t nbytes = entry->nbytes;
-    char stackObject[sizeof(JSObject_Slots16)];
-    JS_ASSERT(nbytes <= sizeof(stackObject));
-    js_memcpy(&stackObject, &entry->templateObject, nbytes);
-
-    JSObject *baseobj = (JSObject *) stackObject;
-    RootShape shapeRoot(cx, (Shape **) baseobj->addressOfShape());
-    RootTypeObject typeRoot(cx, (types::TypeObject **) baseobj->addressOfType());
-
-    obj = js_NewGCObject(cx, entry->kind);
-    if (obj) {
-        copyCachedToObject(obj, baseobj);
-        Probes::createObject(cx, obj);
-        return obj;
-    }
-
     return NULL;
 }
 
@@ -190,7 +140,7 @@ GetGlobalForScopeChain(JSContext *cx)
     if (cx->hasfp())
         return &cx->fp()->global();
 
-    JSObject *scope = JS_ObjectToInnerObject(cx, cx->globalObject);
+    JSObject *scope = JS_ObjectToInnerObject(cx, HandleObject::fromMarkedLocation(&cx->globalObject));
     if (!scope)
         return NULL;
     return &scope->asGlobal();
@@ -201,6 +151,8 @@ GetGSNCache(JSContext *cx)
 {
     return &cx->runtime->gsnCache;
 }
+
+#if JS_HAS_XML_SUPPORT
 
 class AutoNamespaceArray : protected AutoGCRooter {
   public:
@@ -222,6 +174,8 @@ class AutoNamespaceArray : protected AutoGCRooter {
   public:
     JSXMLArray<JSObject> array;
 };
+
+#endif /* JS_HAS_XML_SUPPORT */
 
 template <typename T>
 class AutoPtr
@@ -255,8 +209,13 @@ class CompartmentChecker
     JSCompartment *compartment;
 
   public:
-    explicit CompartmentChecker(JSContext *cx) : context(cx), compartment(cx->compartment) {
-        check(cx->hasfp() ? JS_GetGlobalForScopeChain(cx) : cx->globalObject);
+    explicit CompartmentChecker(JSContext *cx)
+      : context(cx), compartment(cx->compartment)
+    {
+        if (cx->compartment) {
+            GlobalObject *global = GetGlobalForScopeChain(cx);
+            JS_ASSERT(cx->global() == global);
+        }
     }
 
     /*
@@ -292,6 +251,11 @@ class CompartmentChecker
             check(obj->compartment());
     }
 
+    template<typename T>
+    void check(Handle<T> handle) {
+        check(handle.get());
+    }
+
     void check(JSString *str) {
         if (!str->isAtom())
             check(str->compartment());
@@ -323,7 +287,7 @@ class CompartmentChecker
         if (JSID_IS_OBJECT(id))
             check(JSID_TO_OBJECT(id));
     }
-    
+
     void check(JSIdArray *ida) {
         if (ida) {
             for (int i = 0; i < ida->length; i++) {
@@ -334,11 +298,8 @@ class CompartmentChecker
     }
 
     void check(JSScript *script) {
-        if (script) {
+        if (script)
             check(script->compartment());
-            if (!script->isCachedEval && script->globalObject)
-                check(script->globalObject);
-        }
     }
 
     void check(StackFrame *fp) {
@@ -354,12 +315,12 @@ class CompartmentChecker
  * depends on other objects not having been swept yet.
  */
 #define START_ASSERT_SAME_COMPARTMENT()                                       \
-    if (cx->runtime->gcRunning)                                               \
+    if (cx->runtime->isHeapBusy())                                            \
         return;                                                               \
     CompartmentChecker c(cx)
 
 template <class T1> inline void
-assertSameCompartment(JSContext *cx, T1 t1)
+assertSameCompartment(JSContext *cx, const T1 &t1)
 {
 #ifdef DEBUG
     START_ASSERT_SAME_COMPARTMENT();
@@ -368,7 +329,7 @@ assertSameCompartment(JSContext *cx, T1 t1)
 }
 
 template <class T1, class T2> inline void
-assertSameCompartment(JSContext *cx, T1 t1, T2 t2)
+assertSameCompartment(JSContext *cx, const T1 &t1, const T2 &t2)
 {
 #ifdef DEBUG
     START_ASSERT_SAME_COMPARTMENT();
@@ -378,7 +339,7 @@ assertSameCompartment(JSContext *cx, T1 t1, T2 t2)
 }
 
 template <class T1, class T2, class T3> inline void
-assertSameCompartment(JSContext *cx, T1 t1, T2 t2, T3 t3)
+assertSameCompartment(JSContext *cx, const T1 &t1, const T2 &t2, const T3 &t3)
 {
 #ifdef DEBUG
     START_ASSERT_SAME_COMPARTMENT();
@@ -389,7 +350,7 @@ assertSameCompartment(JSContext *cx, T1 t1, T2 t2, T3 t3)
 }
 
 template <class T1, class T2, class T3, class T4> inline void
-assertSameCompartment(JSContext *cx, T1 t1, T2 t2, T3 t3, T4 t4)
+assertSameCompartment(JSContext *cx, const T1 &t1, const T2 &t2, const T3 &t3, const T4 &t4)
 {
 #ifdef DEBUG
     START_ASSERT_SAME_COMPARTMENT();
@@ -401,7 +362,7 @@ assertSameCompartment(JSContext *cx, T1 t1, T2 t2, T3 t3, T4 t4)
 }
 
 template <class T1, class T2, class T3, class T4, class T5> inline void
-assertSameCompartment(JSContext *cx, T1 t1, T2 t2, T3 t3, T4 t4, T5 t5)
+assertSameCompartment(JSContext *cx, const T1 &t1, const T2 &t2, const T3 &t3, const T4 &t4, const T5 &t5)
 {
 #ifdef DEBUG
     START_ASSERT_SAME_COMPARTMENT();
@@ -419,11 +380,29 @@ STATIC_PRECONDITION_ASSUME(ubound(args.argv_) >= argc)
 JS_ALWAYS_INLINE bool
 CallJSNative(JSContext *cx, Native native, const CallArgs &args)
 {
+    JS_CHECK_RECURSION(cx, return false);
+
 #ifdef DEBUG
-    JSBool alreadyThrowing = cx->isExceptionPending();
+    bool alreadyThrowing = cx->isExceptionPending();
 #endif
     assertSameCompartment(cx, args);
     bool ok = native(cx, args.length(), args.base());
+    if (ok) {
+        assertSameCompartment(cx, args.rval());
+        JS_ASSERT_IF(!alreadyThrowing, !cx->isExceptionPending());
+    }
+    return ok;
+}
+
+STATIC_PRECONDITION_ASSUME(ubound(args.argv_) >= argc)
+JS_ALWAYS_INLINE bool
+CallNativeImpl(JSContext *cx, NativeImpl impl, const CallArgs &args)
+{
+#ifdef DEBUG
+    bool alreadyThrowing = cx->isExceptionPending();
+#endif
+    assertSameCompartment(cx, args);
+    bool ok = impl(cx, args);
     if (ok) {
         assertSameCompartment(cx, args.rval());
         JS_ASSERT_IF(!alreadyThrowing, !cx->isExceptionPending());
@@ -438,7 +417,7 @@ JS_ALWAYS_INLINE bool
 CallJSNativeConstructor(JSContext *cx, Native native, const CallArgs &args)
 {
 #ifdef DEBUG
-    RootedVarObject callee(cx, &args.callee());
+    RootedObject callee(cx, &args.callee());
 #endif
 
     JS_ASSERT(args.thisv().isMagic());
@@ -469,42 +448,43 @@ CallJSNativeConstructor(JSContext *cx, Native native, const CallArgs &args)
 }
 
 JS_ALWAYS_INLINE bool
-CallJSPropertyOp(JSContext *cx, PropertyOp op, JSObject *receiver, jsid id, Value *vp)
+CallJSPropertyOp(JSContext *cx, PropertyOp op, HandleObject receiver, HandleId id, MutableHandleValue vp)
 {
-    assertSameCompartment(cx, receiver, id, *vp);
+    JS_CHECK_RECURSION(cx, return false);
+
+    assertSameCompartment(cx, receiver, id, vp);
     JSBool ok = op(cx, receiver, id, vp);
     if (ok)
-        assertSameCompartment(cx, *vp);
+        assertSameCompartment(cx, vp);
     return ok;
 }
 
 JS_ALWAYS_INLINE bool
-CallJSPropertyOpSetter(JSContext *cx, StrictPropertyOp op, JSObject *obj, jsid id,
-                       JSBool strict, Value *vp)
+CallJSPropertyOpSetter(JSContext *cx, StrictPropertyOp op, HandleObject obj, HandleId id,
+                       JSBool strict, MutableHandleValue vp)
 {
-    assertSameCompartment(cx, obj, id, *vp);
+    JS_CHECK_RECURSION(cx, return false);
+
+    assertSameCompartment(cx, obj, id, vp);
     return op(cx, obj, id, strict, vp);
 }
 
 inline bool
-CallSetter(JSContext *cx, JSObject *obj, jsid id, StrictPropertyOp op, unsigned attrs,
-           unsigned shortid, JSBool strict, Value *vp)
+CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, unsigned attrs,
+           unsigned shortid, JSBool strict, MutableHandleValue vp)
 {
     if (attrs & JSPROP_SETTER)
-        return InvokeGetterOrSetter(cx, obj, CastAsObjectJsval(op), 1, vp, vp);
+        return InvokeGetterOrSetter(cx, obj, CastAsObjectJsval(op), 1, vp.address(), vp.address());
 
     if (attrs & JSPROP_GETTER)
         return js_ReportGetterOnlyAssignment(cx);
 
-    if (attrs & JSPROP_SHORTID)
-        id = INT_TO_JSID(shortid);
-    return CallJSPropertyOpSetter(cx, op, obj, id, strict, vp);
-}
+    if (!(attrs & JSPROP_SHORTID))
+        return CallJSPropertyOpSetter(cx, op, obj, id, strict, vp);
 
-static inline HeapPtrAtom *
-FrameAtomBase(JSContext *cx, js::StackFrame *fp)
-{
-    return fp->script()->atoms;
+    RootedId nid(cx, INT_TO_JSID(shortid));
+
+    return CallJSPropertyOpSetter(cx, op, obj, nid, strict, vp);
 }
 
 }  /* namespace js */
@@ -569,28 +549,16 @@ JSContext::setCompileOptions(unsigned newcopts)
     maybeOverrideVersion(newVersion);
 }
 
-inline void
-JSContext::assertValidStackDepth(unsigned depth)
+inline js::LifoAlloc &
+JSContext::analysisLifoAlloc()
 {
-#ifdef DEBUG
-    JS_ASSERT(0 <= regs().sp - fp()->base());
-    JS_ASSERT(depth <= uintptr_t(regs().sp - fp()->base()));
-#endif
+    return compartment->analysisLifoAlloc;
 }
 
 inline js::LifoAlloc &
 JSContext::typeLifoAlloc()
 {
     return compartment->typeLifoAlloc;
-}
-
-inline bool
-JSContext::ensureGeneratorStackSpace()
-{
-    bool ok = genStack.reserve(genStack.length() + 1);
-    if (!ok)
-        js_ReportOutOfMemory(this);
-    return ok;
 }
 
 inline void
@@ -606,8 +574,14 @@ JSContext::ensureParseMapPool()
 {
     if (parseMapPool_)
         return true;
-    parseMapPool_ = js::OffTheBooks::new_<js::ParseMapPool>(this);
+    parseMapPool_ = js::OffTheBooks::new_<js::frontend::ParseMapPool>(this);
     return parseMapPool_;
+}
+
+inline js::PropertyTree&
+JSContext::propertyTree()
+{
+    return compartment->propertyTree;
 }
 
 /* Get the current frame, first lazily instantiating stack frames if needed. */

@@ -21,8 +21,6 @@ all.h
 alloca.h
 alloc.h
 alsa/asoundlib.h
-alsa/pcm.h
-alsa/mixer.h
 android/log.h
 ansi_parms.h
 a.out.h
@@ -596,6 +594,8 @@ proto/exec.h
 psap.h
 Pt.h
 pthread.h
+pthread_np.h
+pulse/pulseaudio.h
 pwd.h
 Python.h
 QDOffscreen.h
@@ -647,8 +647,10 @@ signal.h
 SimpleGameSound.h
 SIOUX.h
 size_t.h
+sndio.h
 someincludefile.h
 Sound.h
+soundcard.h
 sqlite3.h
 ssdef.h
 sslerr.h
@@ -1040,13 +1042,18 @@ shareuiinterface.h
 #if MOZ_NATIVE_LIBVPX==1
 vpx/vpx_codec.h
 vpx/vpx_decoder.h
+vpx/vpx_encoder.h
+vpx/vp8cx.h
 vpx/vp8dx.h
 #endif
 #ifdef XP_WIN
 vpx/vpx_codec.h
 vpx/vpx_decoder.h
+vpx/vpx_encoder.h
+vpx/vp8cx.h
 vpx/vp8dx.h
 sydneyaudio/sydney_audio.h
+speex/speex_resampler.h
 vorbis/codec.h
 theora/theoradec.h
 tremor/ivorbiscodec.h
@@ -1059,3 +1066,5 @@ gst/gst.h
 gst/app/gstappsink.h
 gst/app/gstappsrc.h
 gst/video/video.h
+sys/msg.h
+sys/ipc.h

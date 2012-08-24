@@ -1,42 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Implements nsIStackFrame. */
 
@@ -51,10 +17,10 @@ public:
     static nsresult CreateStack(JSContext* cx, JSStackFrame* fp,
                                 XPCJSStackFrame** stack);
 
-    static nsresult CreateStackFrameLocation(PRUint32 aLanguage,
+    static nsresult CreateStackFrameLocation(uint32_t aLanguage,
                                              const char* aFilename,
                                              const char* aFunctionName,
-                                             PRInt32 aLineNumber,
+                                             int32_t aLineNumber,
                                              nsIStackFrame* aCaller,
                                              XPCJSStackFrame** stack);
 
@@ -69,8 +35,8 @@ private:
 
     char* mFilename;
     char* mFunname;
-    PRInt32 mLineno;
-    PRUint32 mLanguage;
+    int32_t mLineno;
+    uint32_t mLanguage;
 };
 
 /**********************************************/
@@ -91,10 +57,10 @@ XPCJSStack::CreateStack(JSContext* cx, nsIStackFrame** stack)
 
 // static
 nsresult
-XPCJSStack::CreateStackFrameLocation(PRUint32 aLanguage,
+XPCJSStack::CreateStackFrameLocation(uint32_t aLanguage,
                                      const char* aFilename,
                                      const char* aFunctionName,
-                                     PRInt32 aLineNumber,
+                                     int32_t aLineNumber,
                                      nsIStackFrame* aCaller,
                                      nsIStackFrame** stack)
 {
@@ -110,8 +76,8 @@ XPCJSStack::CreateStackFrameLocation(PRUint32 aLanguage,
 /**********************************************/
 
 XPCJSStackFrame::XPCJSStackFrame()
-    :   mFilename(nsnull),
-        mFunname(nsnull),
+    :   mFilename(nullptr),
+        mFunname(nullptr),
         mLineno(0),
         mLanguage(nsIProgrammingLanguage::UNKNOWN)
 {
@@ -131,7 +97,7 @@ nsresult
 XPCJSStackFrame::CreateStack(JSContext* cx, JSStackFrame* fp,
                              XPCJSStackFrame** stack)
 {
-    static const unsigned MAX_FRAMES = 3000;
+    static const unsigned MAX_FRAMES = 100;
     unsigned numFrames = 0;
 
     nsRefPtr<XPCJSStackFrame> first = new XPCJSStackFrame();
@@ -153,7 +119,7 @@ XPCJSStackFrame::CreateStack(JSContext* cx, JSStackFrame* fp,
                                             sizeof(char)*(strlen(filename)+1));
                     }
 
-                    self->mLineno = (PRInt32) JS_PCToLineNumber(cx, script, pc);
+                    self->mLineno = (int32_t) JS_PCToLineNumber(cx, script, pc);
 
                     JSFunction* fun = JS_GetFrameFunction(cx, fp);
                     if (fun) {
@@ -190,10 +156,10 @@ XPCJSStackFrame::CreateStack(JSContext* cx, JSStackFrame* fp,
 
 // static
 nsresult
-XPCJSStackFrame::CreateStackFrameLocation(PRUint32 aLanguage,
+XPCJSStackFrame::CreateStackFrameLocation(uint32_t aLanguage,
                                           const char* aFilename,
                                           const char* aFunctionName,
-                                          PRInt32 aLineNumber,
+                                          int32_t aLineNumber,
                                           nsIStackFrame* aCaller,
                                           XPCJSStackFrame** stack)
 {
@@ -230,15 +196,15 @@ XPCJSStackFrame::CreateStackFrameLocation(PRUint32 aLanguage,
     }
 
     if (failed && self) {
-        NS_RELEASE(self);   // sets self to nsnull
+        NS_RELEASE(self);   // sets self to nullptr
     }
 
     *stack = self;
     return self ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-/* readonly attribute PRUint32 language; */
-NS_IMETHODIMP XPCJSStackFrame::GetLanguage(PRUint32 *aLanguage)
+/* readonly attribute uint32_t language; */
+NS_IMETHODIMP XPCJSStackFrame::GetLanguage(uint32_t *aLanguage)
 {
     *aLanguage = mLanguage;
     return NS_OK;
@@ -271,8 +237,8 @@ NS_IMETHODIMP XPCJSStackFrame::GetName(char * *aFunction)
     XPC_STRING_GETTER_BODY(aFunction, mFunname);
 }
 
-/* readonly attribute PRInt32 lineNumber; */
-NS_IMETHODIMP XPCJSStackFrame::GetLineNumber(PRInt32 *aLineNumber)
+/* readonly attribute int32_t lineNumber; */
+NS_IMETHODIMP XPCJSStackFrame::GetLineNumber(int32_t *aLineNumber)
 {
     *aLineNumber = mLineno;
     return NS_OK;
@@ -281,7 +247,7 @@ NS_IMETHODIMP XPCJSStackFrame::GetLineNumber(PRInt32 *aLineNumber)
 /* readonly attribute string sourceLine; */
 NS_IMETHODIMP XPCJSStackFrame::GetSourceLine(char * *aSourceLine)
 {
-    *aSourceLine = nsnull;
+    *aSourceLine = nullptr;
     return NS_OK;
 }
 

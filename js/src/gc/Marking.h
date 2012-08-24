@@ -67,20 +67,25 @@ void Mark##base(JSTracer *trc, HeapPtr<type> *thing, const char *name);         
 void Mark##base##Root(JSTracer *trc, type **thingp, const char *name);                            \
 void Mark##base##Unbarriered(JSTracer *trc, type **thingp, const char *name);                     \
 void Mark##base##Range(JSTracer *trc, size_t len, HeapPtr<type> *thing, const char *name);        \
-void Mark##base##RootRange(JSTracer *trc, size_t len, type **thing, const char *name);
+void Mark##base##RootRange(JSTracer *trc, size_t len, type **thing, const char *name);            \
+bool Is##base##Marked(type **thingp);                                                             \
+bool Is##base##Marked(HeapPtr<type> *thingp);
 
 DeclMarker(BaseShape, BaseShape)
 DeclMarker(BaseShape, UnownedBaseShape)
 DeclMarker(Object, ArgumentsObject)
+DeclMarker(Object, DebugScopeObject)
 DeclMarker(Object, GlobalObject)
 DeclMarker(Object, JSObject)
 DeclMarker(Object, JSFunction)
+DeclMarker(Object, ScopeObject)
 DeclMarker(Script, JSScript)
 DeclMarker(Shape, Shape)
 DeclMarker(String, JSAtom)
 DeclMarker(String, JSString)
 DeclMarker(String, JSFlatString)
 DeclMarker(String, JSLinearString)
+DeclMarker(String, PropertyName)
 DeclMarker(TypeObject, types::TypeObject)
 #if JS_HAS_XML_SUPPORT
 DeclMarker(XML, JSXML)
@@ -110,6 +115,9 @@ void
 MarkIdRoot(JSTracer *trc, jsid *id, const char *name);
 
 void
+MarkIdUnbarriered(JSTracer *trc, jsid *id, const char *name);
+
+void
 MarkIdRange(JSTracer *trc, size_t len, HeapId *vec, const char *name);
 
 void
@@ -118,10 +126,16 @@ MarkIdRootRange(JSTracer *trc, size_t len, jsid *vec, const char *name);
 /*** Value Marking ***/
 
 void
-MarkValue(JSTracer *trc, HeapValue *v, const char *name);
+MarkValue(JSTracer *trc, EncapsulatedValue *v, const char *name);
 
 void
-MarkValueRange(JSTracer *trc, size_t len, HeapValue *vec, const char *name);
+MarkValueRange(JSTracer *trc, size_t len, EncapsulatedValue *vec, const char *name);
+
+inline void
+MarkValueRange(JSTracer *trc, HeapValue *begin, HeapValue *end, const char *name)
+{
+    return MarkValueRange(trc, end - begin, begin, name);
+}
 
 void
 MarkValueRoot(JSTracer *trc, Value *v, const char *name);
@@ -134,6 +148,12 @@ MarkValueRootRange(JSTracer *trc, Value *begin, Value *end, const char *name)
 {
     MarkValueRootRange(trc, end - begin, begin, name);
 }
+
+void
+MarkTypeRoot(JSTracer *trc, types::Type *v, const char *name);
+
+bool
+IsValueMarked(Value *v);
 
 /*** Slot Marking ***/
 
@@ -216,24 +236,35 @@ Mark(JSTracer *trc, HeapPtr<JSScript> *o, const char *name)
     MarkScript(trc, o, name);
 }
 
+#if JS_HAS_XML_SUPPORT
 inline void
 Mark(JSTracer *trc, HeapPtr<JSXML> *xml, const char *name)
 {
     MarkXML(trc, xml, name);
 }
+#endif
+
+bool
+IsCellMarked(Cell **thingp);
 
 inline bool
-IsMarked(const Value &v)
+IsMarked(EncapsulatedValue *v)
 {
-    if (v.isMarkable())
-        return !IsAboutToBeFinalized(v);
-    return true;
+    if (!v->isMarkable())
+        return true;
+    return IsValueMarked(v->unsafeGet());
 }
 
 inline bool
-IsMarked(Cell *cell)
+IsMarked(HeapPtrObject *objp)
 {
-    return !IsAboutToBeFinalized(cell);
+    return IsObjectMarked(objp);
+}
+
+inline bool
+IsMarked(HeapPtrScript *scriptp)
+{
+    return IsScriptMarked(scriptp);
 }
 
 inline Cell *

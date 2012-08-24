@@ -1,41 +1,8 @@
 /* -*- Mode: c++; c-basic-offset: 4; tab-width: 40; indent-tabs-mode: nil -*- */
 /* vim: set ts=40 sw=4 et tw=99: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Mozilla SpiderMonkey property tree implementation
- *
- * The Initial Developer of the Original Code is
- *   Mozilla Foundation
- * Portions created by the Initial Developer are Copyright (C) 2002-2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <new>
 
@@ -135,12 +102,14 @@ void
 Shape::removeChild(Shape *child)
 {
     JS_ASSERT(!child->inDictionary());
+    JS_ASSERT(child->parent == this);
 
     KidsPointer *kidp = &kids;
 
     if (kidp->isShape()) {
         JS_ASSERT(kidp->toShape() == child);
         kidp->setNull();
+        child->parent = NULL;
         return;
     }
 
@@ -148,6 +117,7 @@ Shape::removeChild(Shape *child)
     JS_ASSERT(hash->count() >= 2);      /* otherwise kidp->isShape() should be true */
 
     hash->remove(child);
+    child->parent = NULL;
 
     if (hash->count() == 1) {
         /* Convert from HASH form back to SHAPE form. */
@@ -159,29 +129,12 @@ Shape::removeChild(Shape *child)
     }
 }
 
-/*
- * We need a read barrier for the shape tree, since these are weak pointers.
- */
-static Shape *
-ReadBarrier(Shape *shape)
-{
-#ifdef JSGC_INCREMENTAL
-    JSCompartment *comp = shape->compartment();
-    if (comp->needsBarrier()) {
-        Shape *tmp = shape;
-        MarkShapeUnbarriered(comp->barrierTracer(), &tmp, "read barrier");
-        JS_ASSERT(tmp == shape);
-    }
-#endif
-    return shape;
-}
-
 Shape *
-PropertyTree::getChild(JSContext *cx, Shape *parent, uint32_t nfixed, const StackShape &child)
+PropertyTree::getChild(JSContext *cx, Shape *parent_, uint32_t nfixed, const StackShape &child)
 {
-    Shape *shape;
+    Shape *shape = NULL;
 
-    JS_ASSERT(parent);
+    JS_ASSERT(parent_);
 
     /*
      * The property tree has extremely low fan-out below its root in
@@ -191,21 +144,47 @@ PropertyTree::getChild(JSContext *cx, Shape *parent, uint32_t nfixed, const Stac
      * |this| can significantly increase fan-out below the property
      * tree root -- see bug 335700 for details.
      */
-    KidsPointer *kidp = &parent->kids;
+    KidsPointer *kidp = &parent_->kids;
     if (kidp->isShape()) {
-        shape = kidp->toShape();
-        if (shape->matches(child))
-            return ReadBarrier(shape);
+        Shape *kid = kidp->toShape();
+        if (kid->matches(child))
+            shape = kid;
     } else if (kidp->isHash()) {
         shape = *kidp->toHash()->lookup(child);
-        if (shape)
-            return ReadBarrier(shape);
     } else {
         /* If kidp->isNull(), we always insert. */
     }
 
-    RootStackShape childRoot(cx, &child);
-    RootShape parentRoot(cx, &parent);
+#ifdef JSGC_INCREMENTAL
+    if (shape) {
+        JSCompartment *comp = shape->compartment();
+        if (comp->needsBarrier()) {
+            /*
+             * We need a read barrier for the shape tree, since these are weak
+             * pointers.
+             */
+            Shape *tmp = shape;
+            MarkShapeUnbarriered(comp->barrierTracer(), &tmp, "read barrier");
+            JS_ASSERT(tmp == shape);
+        } else if (comp->isGCSweeping() && !shape->isMarked() &&
+                   !shape->arenaHeader()->allocatedDuringIncremental)
+        {
+            /*
+             * The shape we've found is unreachable and due to be finalized, so
+             * remove our weak reference to it and don't use it.
+             */
+            JS_ASSERT(parent_->isMarked());
+            parent_->removeChild(shape);
+            shape = NULL;
+        }
+    }
+#endif
+
+    if (shape)
+        return shape;
+
+    StackShape::AutoRooter childRoot(cx, &child);
+    RootedShape parent(cx, parent_);
 
     shape = newShape(cx);
     if (!shape)
@@ -223,6 +202,11 @@ void
 Shape::finalize(FreeOp *fop)
 {
     if (!inDictionary()) {
+        /*
+         * Note that due to incremental sweeping, if !parent->isMarked() then
+         * the parent may point to a new shape allocated in the same cell that
+         * use to hold our parent.
+         */
         if (parent && parent->isMarked())
             parent->removeChild(this);
 
@@ -234,7 +218,7 @@ Shape::finalize(FreeOp *fop)
 #ifdef DEBUG
 
 void
-KidsPointer::checkConsistency(const Shape *aKid) const
+KidsPointer::checkConsistency(Shape *aKid) const
 {
     if (isShape()) {
         JS_ASSERT(toShape() == aKid);
@@ -303,7 +287,7 @@ Shape::dump(JSContext *cx, FILE *fp) const
         fputs(") ", fp);
     }
 
-    fprintf(fp, "shortid %d\n", shortid());
+    fprintf(fp, "shortid %d\n", maybeShortid());
 }
 
 void

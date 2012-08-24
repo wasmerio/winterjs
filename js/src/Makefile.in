@@ -1,43 +1,10 @@
 # -*- Mode: makefile -*-
 #
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is Mozilla Communicator client code, released
-# March 31, 1998.
-#
-# The Initial Developer of the Original Code is
-# Netscape Communications Corporation.
-# Portions created by the Initial Developer are Copyright (C) 1998
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= .
+DEPTH		= @DEPTH@
 topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 
@@ -71,11 +38,7 @@ LIBRARY_NAME	    = mozjs
 STATIC_LIBRARY_NAME = js_static
 GRE_MODULE	    = 1
 
-LIBS		= $(NSPR_LIBS) 
-
-ifeq ($(OS_ARCH),WINNT)
-NO_PROFILE_GUIDED_OPTIMIZE = 1
-endif
+LIBS		= $(NSPR_LIBS)
 
 # JavaScript must be built shared, even for static builds, as it is used by
 # other modules which are always built shared. Failure to do so results in
@@ -119,7 +82,6 @@ CPPSRCS		= \
 		jsfun.cpp \
 		jsgc.cpp \
 		jscrashreport.cpp \
-		jshash.cpp \
 		jsinfer.cpp \
 		jsinterp.cpp \
 		jsiter.cpp \
@@ -152,20 +114,22 @@ CPPSRCS		= \
 		ScopeObject.cpp \
 		Debugger.cpp \
 		GlobalObject.cpp \
-		MethodGuard.cpp \
 		ObjectImpl.cpp \
 		Stack.cpp \
 		String.cpp \
 		BytecodeCompiler.cpp \
 		BytecodeEmitter.cpp \
 		FoldConstants.cpp \
+		NameFunctions.cpp \
+		ParallelArray.cpp \
 		ParseMaps.cpp \
 		ParseNode.cpp \
 		Parser.cpp \
-		SemanticAnalysis.cpp \
+		SPSProfiler.cpp \
 		TokenStream.cpp \
 		TestingFunctions.cpp \
 		LifoAlloc.cpp \
+		Eval.cpp \
 		MapObject.cpp \
 		MemoryMetrics.cpp \
 		RegExpObject.cpp \
@@ -174,6 +138,7 @@ CPPSRCS		= \
 		Marking.cpp \
 		Memory.cpp \
 		Statistics.cpp \
+		StoreBuffer.cpp \
 		StringBuffer.cpp \
 		Unicode.cpp \
 		Xdr.cpp \
@@ -196,7 +161,6 @@ INSTALLED_HEADERS = \
 		jsdhash.h \
 		jsfriendapi.h \
 		jsgc.h \
-		jshash.h \
 		jslock.h \
 		json.h \
 		jsproxy.h \
@@ -226,6 +190,7 @@ EXPORTS_gc = \
 		Heap.h \
 		Root.h \
 		Statistics.h \
+		StoreBuffer.h \
 		$(NULL)
 
 ######################################################
@@ -320,52 +285,24 @@ endif
 
 endif
 
-ifeq (,$(filter arm% sparc %86 x86_64 mips%,$(TARGET_CPU)))
-
-VPATH +=	$(srcdir)/assembler \
-		$(srcdir)/assembler/wtf \
-		$(srcdir)/assembler/jit \
-		$(srcdir)/yarr \
-		$(NULL)
-
-CPPSRCS +=	ExecutableAllocator.cpp \
-		ExecutableAllocatorPosix.cpp \
-		OSAllocatorOS2.cpp \
-		OSAllocatorPosix.cpp \
-		OSAllocatorWin.cpp \
-		PageBlock.cpp \
-		YarrInterpreter.cpp \
-		YarrPattern.cpp \
-		YarrSyntaxChecker.cpp \
-		$(NULL)
-else
-
 ###############################################
 # BEGIN include sources for the Nitro assembler
 #
 
-ENABLE_YARR_JIT = 1
-
 VPATH += 	$(srcdir)/assembler \
 		$(srcdir)/assembler/wtf \
 		$(srcdir)/assembler/jit \
-		$(srcdir)/assembler/assembler \
-		$(srcdir)/methodjit \
 		$(srcdir)/yarr \
 		$(NONE)
 
 CPPSRCS += 	ExecutableAllocator.cpp \
-		ARMAssembler.cpp \
-		MacroAssemblerARM.cpp \
-		MacroAssemblerX86Common.cpp \
 		PageBlock.cpp \
 		YarrInterpreter.cpp \
-		YarrJIT.cpp \
 		YarrPattern.cpp \
 		YarrSyntaxChecker.cpp \
 		$(NONE)
 
-ifdef MOZ_DEBUG
+ifdef ENABLE_METHODJIT_SPEW
 CPPSRCS += Logging.cpp
 endif
 
@@ -385,6 +322,20 @@ CPPSRCS += ExecutableAllocatorOS2.cpp \
            $(NONE)
 endif
 
+ifneq (,$(filter arm% sparc %86 x86_64 mips%,$(TARGET_CPU)))
+ENABLE_YARR_JIT = 1
+DEFINES += -DENABLE_YARR_JIT=1
+
+VPATH += 	$(srcdir)/assembler/assembler \
+		$(srcdir)/methodjit \
+		$(NONE)
+
+CPPSRCS +=	ARMAssembler.cpp \
+		MacroAssemblerARM.cpp \
+		MacroAssemblerX86Common.cpp \
+		YarrJIT.cpp \
+		$(NONE)
+
 ifeq (86, $(findstring 86,$(TARGET_CPU)))
 ifeq (x86_64, $(TARGET_CPU))
 #CPPSRCS		+= only_on_x86_64.cpp
@@ -395,11 +346,12 @@ endif
 ifeq (arm, $(TARGET_CPU))
 #CPPSRCS		+= only_on_arm.cpp
 endif
+
+endif
+
 #
 # END enclude sources for the Nitro assembler
 #############################################
-
-endif
 
 ifdef JS_HAS_CTYPES
 VPATH += $(srcdir)/ctypes
@@ -493,11 +445,15 @@ endif
 
 # Define keyword generator before rules.mk, see bug 323979 comment 50
 
+HOST_CPPSRCS += jskwgen.cpp
 HOST_SIMPLE_PROGRAMS += host_jskwgen$(HOST_BIN_SUFFIX)
 GARBAGE += jsautokw.h host_jskwgen$(HOST_BIN_SUFFIX)
 
+HOST_CPPSRCS += jsoplengen.cpp
 HOST_SIMPLE_PROGRAMS += host_jsoplengen$(HOST_BIN_SUFFIX)
 GARBAGE += jsautooplen.h host_jsoplengen$(HOST_BIN_SUFFIX)
+
+GARBAGE += selfhosted.out.h
 
 USE_HOST_CXX = 1
 
@@ -533,29 +489,6 @@ export::
 distclean clean::
 		$(call SUBMAKE,$@,ctypes/libffi)
 endif
-endif
-
-# Because the SpiderMonkey can be distributed and built independently
-# of the Mozilla source tree, it contains its own copies of many of
-# the files used by the top-level Mozilla build process, from the
-# 'config' and 'build' subtrees.
-#
-# To make it simpler to keep the copies in sync, we follow the policy
-# that the SpiderMonkey copies must always be exact copies of those in
-# the containing Mozilla tree.  If you've made a change in one, it
-# belongs in the other as well.  If the change isn't right for both
-# places, then that's something to bring up with the other developers.
-#
-# Some files are reasonable to diverge; for  example,
-# js/config/autoconf.mk.in doesn't need most of the stuff in
-# config/autoconf.mk.in.
-check-sync-dirs-cmd = $(PYTHON) $(srcdir)/config/check-sync-dirs.py
-check-sync-dirs:
-	$(check-sync-dirs-cmd) $(srcdir)/config $(MOZ_SYNC_BUILD_FILES)/config
-	$(check-sync-dirs-cmd) $(srcdir)/build $(MOZ_SYNC_BUILD_FILES)/build
-
-ifdef MOZ_SYNC_BUILD_FILES
-check:: check-sync-dirs
 endif
 
 # The "find any vanilla new/new[] calls" script is tailored to Linux, so
@@ -650,7 +583,7 @@ check-jstests:
 #   Bug 652154: On Windows, SM(!m !t) don't work because of path problems with
 #				their unusual directory layout
 #
-#   Bug 652155: On Mac, SM(d) doesn't work for unknown reasons 
+#   Bug 652155: On Mac, SM(d) doesn't work for unknown reasons
 
 ifeq ($(OS_ARCH),WINNT)
 ifdef ENABLE_METHODJIT
@@ -711,14 +644,28 @@ ifeq (,$(filter HP-UX WINNT OS2,$(OS_ARCH)))
 EXTRA_LIBS	+= -lm
 endif
 
-# Prevent floating point errors caused by VC++ optimizations
-ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
-ifeq (,$(filter-out 1200 1300 1310,$(_MSC_VER)))
-CFLAGS += -Op
-else
-CFLAGS += -fp:precise
+CFLAGS += $(MOZ_ZLIB_CFLAGS)
+EXTRA_LIBS += $(MOZ_ZLIB_LIBS)
+# Enable zlib usage if zlib has been located. When building the browser on
+# Windows, MOZ_ZLIB_LIBS is empty because zlib is part of libmozglue. We thus
+# also enable zlib if mozglue is present.
+ifneq (,$(MOZ_ZLIB_LIBS)$(MOZ_GLUE_LDFLAGS))
+DEFINES += -DUSE_ZLIB
 endif
-endif # WINNT
+
+# Prevent floating point errors caused by VC++ optimizations
+ifdef _MSC_VER
+# XXX We should add this to CXXFLAGS, too?
+CFLAGS += -fp:precise
+
+ifeq ($(CPU_ARCH),x86)
+# Workaround compiler bug on PGO (Bug 721284)
+MonoIC.$(OBJ_SUFFIX): CXXFLAGS += -GL-
+Compiler.$(OBJ_SUFFIX): CXXFLAGS += -GL-
+# Ditto (Bug 772303)
+RegExp.$(OBJ_SUFFIX): CXXFLAGS += -GL-
+endif
+endif # _MSC_VER
 
 ifeq ($(OS_ARCH),FreeBSD)
 EXTRA_LIBS	+= -pthread
@@ -778,7 +725,7 @@ endif
 # - EXTRA_DSO_LDOPTS includes the NSPR -L and -l flags.
 # - OS_LIBS includes libraries selected by the configure script.
 # - EXTRA_LIBS includes libraries selected by this Makefile.
-JS_CONFIG_LIBS=$(EXTRA_DSO_LDOPTS) $(OS_LIBS) $(EXTRA_LIBS) 
+JS_CONFIG_LIBS=$(EXTRA_DSO_LDOPTS) $(OS_LIBS) $(EXTRA_LIBS)
 
 # The configure script invokes this rule explicitly at configure time!
 # It's important that js-config be ready by the time we're done
@@ -873,6 +820,28 @@ $(CURDIR)/javascript-trace.h: $(srcdir)/javascript-trace.d
 # we have to list them explicitly.
 $(addsuffix .$(OBJ_SUFFIX),jsprobes jsinterp jsobj): $(CURDIR)/javascript-trace.h
 endif
+
+ifdef HAVE_LINUX_PERF_EVENT_H
+pm_linux.$(OBJ_SUFFIX): CXXFLAGS += $(LINUX_HEADERS_INCLUDES)
+endif
+
+# Prepare self-hosted JS code for embedding
+export:: selfhosted.out.h
+
+selfhosting_srcs := \
+  $(srcdir)/builtin/array.js \
+  $(NULL)
+
+selfhosted_out_h_deps := \
+  $(selfhosting_srcs) \
+  $(srcdir)/js.msg \
+  $(srcdir)/builtin/macros.py \
+  $(srcdir)/builtin/js2c.py \
+  $(srcdir)/builtin/embedjs.py
+
+selfhosted.out.h: $(selfhosted_out_h_deps)
+	$(PYTHON) $(srcdir)/builtin/embedjs.py $@ $(srcdir)/js.msg \
+	  $(srcdir)/builtin/macros.py $(selfhosting_srcs)
 
 ###############################################
 # BEGIN kludges for the Nitro assembler

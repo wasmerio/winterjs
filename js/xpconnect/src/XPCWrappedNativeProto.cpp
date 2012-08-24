@@ -1,69 +1,36 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Shared proto object for XPCWrappedNative. */
 
 #include "xpcprivate.h"
 
 #if defined(DEBUG_xpc_hacker) || defined(DEBUG)
-PRInt32 XPCWrappedNativeProto::gDEBUG_LiveProtoCount = 0;
+int32_t XPCWrappedNativeProto::gDEBUG_LiveProtoCount = 0;
 #endif
 
 XPCWrappedNativeProto::XPCWrappedNativeProto(XPCWrappedNativeScope* Scope,
                                              nsIClassInfo* ClassInfo,
-                                             PRUint32 ClassInfoFlags,
+                                             uint32_t ClassInfoFlags,
                                              XPCNativeSet* Set,
                                              QITableEntry* offsets)
     : mScope(Scope),
-      mJSProtoObject(nsnull),
+      mJSProtoObject(nullptr),
       mClassInfo(ClassInfo),
       mClassInfoFlags(ClassInfoFlags),
       mSet(Set),
-      mSecurityInfo(nsnull),
-      mScriptableInfo(nsnull),
+      mSecurityInfo(nullptr),
+      mScriptableInfo(nullptr),
       mOffsets(offsets)
 {
     // This native object lives as long as its associated JSObject - killed
     // by finalization of the JSObject (or explicitly if Init fails).
 
     MOZ_COUNT_CTOR(XPCWrappedNativeProto);
+    MOZ_ASSERT(mScope);
 
 #ifdef DEBUG
     PR_ATOMIC_INCREMENT(&gDEBUG_LiveProtoCount);
@@ -94,7 +61,7 @@ XPCWrappedNativeProto::Init(XPCCallContext& ccx,
 {
     nsIXPCScriptable *callback = scriptableCreateInfo ?
                                  scriptableCreateInfo->GetCallback() :
-                                 nsnull;
+                                 nullptr;
     if (callback) {
         mScriptableInfo =
             XPCNativeScriptableInfo::Construct(ccx, scriptableCreateInfo);
@@ -135,7 +102,7 @@ XPCWrappedNativeProto::Init(XPCCallContext& ccx,
             success = CallPostCreatePrototype(ccx);
     }
 
-    DEBUG_ReportShadowedMembers(mSet, nsnull, this);
+    DEBUG_ReportShadowedMembers(mSet, nullptr, this);
 
     return success;
 }
@@ -145,7 +112,7 @@ XPCWrappedNativeProto::CallPostCreatePrototype(XPCCallContext& ccx)
 {
     // Nothing to do if we don't have a scriptable callback.
     nsIXPCScriptable *callback = mScriptableInfo ? mScriptableInfo->GetCallback()
-                                                 : nsnull;
+                                                 : nullptr;
     if (!callback)
         return true;
 
@@ -153,8 +120,8 @@ XPCWrappedNativeProto::CallPostCreatePrototype(XPCCallContext& ccx)
     // so we don't have to check any sort of "want" here. See xpc_map_end.h.
     nsresult rv = callback->PostCreatePrototype(ccx, mJSProtoObject);
     if (NS_FAILED(rv)) {
-        JS_SetPrivate(mJSProtoObject, nsnull);
-        mJSProtoObject = nsnull;
+        JS_SetPrivate(mJSProtoObject, nullptr);
+        mJSProtoObject = nullptr;
         XPCThrower::Throw(rv, ccx);
         return false;
     }
@@ -198,8 +165,8 @@ XPCWrappedNativeProto::SystemIsBeingShutDown()
 
     if (mJSProtoObject) {
         // short circuit future finalization
-        JS_SetPrivate(mJSProtoObject, nsnull);
-        mJSProtoObject = nsnull;
+        JS_SetPrivate(mJSProtoObject, nullptr);
+        mJSProtoObject = nullptr;
     }
 }
 
@@ -216,8 +183,8 @@ XPCWrappedNativeProto::GetNewOrUsed(XPCCallContext& ccx,
     NS_ASSERTION(classInfo, "bad param");
 
     AutoMarkingWrappedNativeProtoPtr proto(ccx);
-    ClassInfo2WrappedNativeProtoMap* map = nsnull;
-    XPCLock* lock = nsnull;
+    ClassInfo2WrappedNativeProtoMap* map = nullptr;
+    XPCLock* lock = nullptr;
 
     uint32_t ciFlags;
     if (NS_FAILED(classInfo->GetFlags(&ciFlags)))
@@ -225,7 +192,7 @@ XPCWrappedNativeProto::GetNewOrUsed(XPCCallContext& ccx,
 
     JSBool mainThreadOnly = !!(ciFlags & nsIClassInfo::MAIN_THREAD_ONLY);
     map = scope->GetWrappedNativeProtoMap(mainThreadOnly);
-    lock = mainThreadOnly ? nsnull : scope->GetRuntime()->GetMapLock();
+    lock = mainThreadOnly ? nullptr : scope->GetRuntime()->GetMapLock();
     {   // scoped lock
         XPCAutoLock al(lock);
         proto = map->Find(classInfo);
@@ -236,13 +203,13 @@ XPCWrappedNativeProto::GetNewOrUsed(XPCCallContext& ccx,
     AutoMarkingNativeSetPtr set(ccx);
     set = XPCNativeSet::GetNewOrUsed(ccx, classInfo);
     if (!set)
-        return nsnull;
+        return nullptr;
 
     proto = new XPCWrappedNativeProto(scope, classInfo, ciFlags, set, offsets);
 
     if (!proto || !proto->Init(ccx, scriptableCreateInfo, callPostCreatePrototype)) {
         delete proto.get();
-        return nsnull;
+        return nullptr;
     }
 
     {   // scoped lock
@@ -254,7 +221,7 @@ XPCWrappedNativeProto::GetNewOrUsed(XPCCallContext& ccx,
 }
 
 void
-XPCWrappedNativeProto::DebugDump(PRInt16 depth)
+XPCWrappedNativeProto::DebugDump(int16_t depth)
 {
 #ifdef DEBUG
     depth-- ;
@@ -269,7 +236,7 @@ XPCWrappedNativeProto::DebugDump(PRInt16 depth)
         if (depth && mScriptableInfo) {
             XPC_LOG_INDENT();
             XPC_LOG_ALWAYS(("mScriptable @ %x", mScriptableInfo->GetCallback()));
-            XPC_LOG_ALWAYS(("mFlags of %x", (PRUint32)mScriptableInfo->GetFlags()));
+            XPC_LOG_ALWAYS(("mFlags of %x", (uint32_t)mScriptableInfo->GetFlags()));
             XPC_LOG_ALWAYS(("mJSClass @ %x", mScriptableInfo->GetJSClass()));
             XPC_LOG_OUTDENT();
         }

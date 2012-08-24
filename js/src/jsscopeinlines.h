@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jsscopeinlines_h___
 #define jsscopeinlines_h___
@@ -155,10 +122,14 @@ StackBaseShape::updateGetterSetter(uint8_t attrs,
                                    StrictPropertyOp rawSetter)
 {
     flags &= ~(BaseShape::HAS_GETTER_OBJECT | BaseShape::HAS_SETTER_OBJECT);
-    if ((attrs & JSPROP_GETTER) && rawGetter)
+    if ((attrs & JSPROP_GETTER) && rawGetter) {
+        JS_ASSERT(!IsPoisonedPtr(rawGetter));
         flags |= BaseShape::HAS_GETTER_OBJECT;
-    if ((attrs & JSPROP_SETTER) && rawSetter)
+    }
+    if ((attrs & JSPROP_SETTER) && rawSetter) {
+        JS_ASSERT(!IsPoisonedPtr(rawSetter));
         flags |= BaseShape::HAS_SETTER_OBJECT;
+    }
 
     this->rawGetter = rawGetter;
     this->rawSetter = rawSetter;
@@ -277,41 +248,72 @@ Shape::matchesParamsAfterId(BaseShape *base, uint32_t aslot,
 }
 
 inline bool
-Shape::get(JSContext* cx, JSObject *receiver, JSObject* obj, JSObject *pobj, js::Value* vp) const
+Shape::getUserId(JSContext *cx, jsid *idp) const
+{
+    const Shape *self = this;
+#ifdef DEBUG
+    {
+        SkipRoot skip(cx, &self);
+        MaybeCheckStackRoots(cx);
+    }
+#endif
+    if (self->hasShortID()) {
+        int16_t id = self->shortid();
+        if (id < 0)
+            return ValueToId(cx, Int32Value(id), idp);
+        *idp = INT_TO_JSID(id);
+    } else {
+        *idp = self->propid();
+    }
+    return true;
+}
+
+inline bool
+Shape::get(JSContext* cx, HandleObject receiver, JSObject* obj, JSObject *pobj, MutableHandleValue vp)
 {
     JS_ASSERT(!hasDefaultGetter());
 
     if (hasGetterValue()) {
-        js::Value fval = getterValue();
-        return js::InvokeGetterOrSetter(cx, receiver, fval, 0, 0, vp);
+        Value fval = getterValue();
+        return InvokeGetterOrSetter(cx, receiver, fval, 0, 0, vp.address());
     }
 
-    /*
-     * |with (it) color;| ends up here, as do XML filter-expressions.
-     * Avoid exposing the With object to native getters.
-     */
-    if (obj->isWith())
-        obj = &obj->asWith().object();
-    return js::CallJSPropertyOp(cx, getterOp(), receiver, getUserId(), vp);
+    Rooted<Shape *> self(cx, this);
+    RootedId id(cx);
+    if (!self->getUserId(cx, id.address()))
+        return false;
+
+    return CallJSPropertyOp(cx, self->getterOp(), receiver, id, vp);
 }
 
 inline bool
-Shape::set(JSContext* cx, JSObject* obj, bool strict, js::Value* vp) const
+Shape::set(JSContext* cx, HandleObject obj, HandleObject receiver, bool strict, MutableHandleValue vp)
 {
     JS_ASSERT_IF(hasDefaultSetter(), hasGetterValue());
 
     if (attrs & JSPROP_SETTER) {
-        js::Value fval = setterValue();
-        return js::InvokeGetterOrSetter(cx, obj, fval, 1, vp, vp);
+        Value fval = setterValue();
+        return InvokeGetterOrSetter(cx, receiver, fval, 1, vp.address(), vp.address());
     }
 
     if (attrs & JSPROP_GETTER)
         return js_ReportGetterOnlyAssignment(cx);
 
-    /* See the comment in js::Shape::get as to why we check for With. */
-    if (obj->isWith())
-        obj = &obj->asWith().object();
-    return js::CallJSPropertyOpSetter(cx, setterOp(), obj, getUserId(), strict, vp);
+    Rooted<Shape *> self(cx, this);
+    RootedId id(cx);
+    if (!self->getUserId(cx, id.address()))
+        return false;
+
+    /*
+     * |with (it) color;| ends up here, as do XML filter-expressions.
+     * Avoid exposing the With object to native setters.
+     */
+    if (obj->isWith()) {
+        RootedObject nobj(cx, &obj->asWith().object());
+        return CallJSPropertyOpSetter(cx, self->setterOp(), nobj, id, strict, vp);
+    }
+
+    return CallJSPropertyOpSetter(cx, self->setterOp(), obj, id, strict, vp);
 }
 
 inline void
@@ -381,7 +383,7 @@ EmptyShape::EmptyShape(UnownedBaseShape *base, uint32_t nfixed)
 }
 
 inline void
-Shape::writeBarrierPre(const js::Shape *shape)
+Shape::writeBarrierPre(Shape *shape)
 {
 #ifdef JSGC_INCREMENTAL
     if (!shape)
@@ -397,12 +399,12 @@ Shape::writeBarrierPre(const js::Shape *shape)
 }
 
 inline void
-Shape::writeBarrierPost(const js::Shape *shape, void *addr)
+Shape::writeBarrierPost(Shape *shape, void *addr)
 {
 }
 
 inline void
-Shape::readBarrier(const Shape *shape)
+Shape::readBarrier(Shape *shape)
 {
 #ifdef JSGC_INCREMENTAL
     JSCompartment *comp = shape->compartment();

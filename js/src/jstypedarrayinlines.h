@@ -1,41 +1,8 @@
 /* -*- Mode: c++; c-basic-offset: 4; tab-width: 40; indent-tabs-mode: nil -*- */
 /* vim: set ts=40 sw=4 et tw=99: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla WebGL impl
- *
- * The Initial Developer of the Original Code is
- *   Mozilla Foundation
- * Portions created by the Initial Developer are Copyright (C) 2009
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Nikhil Marathe <nsm.nikhil@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jstypedarrayinlines_h
 #define jstypedarrayinlines_h
@@ -91,52 +58,135 @@ ClampIntForUint8Array(int32_t x)
     return x;
 }
 
-inline uint32_t
-TypedArray::getLength(JSObject *obj) {
+inline Value
+TypedArray::lengthValue(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
-    return obj->getFixedSlot(FIELD_LENGTH).toInt32();
+    return obj->getFixedSlot(FIELD_LENGTH);
 }
 
 inline uint32_t
-TypedArray::getByteOffset(JSObject *obj) {
+TypedArray::length(JSObject *obj)
+{
+    return lengthValue(obj).toInt32();
+}
+
+inline Value
+TypedArray::byteOffsetValue(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
-    return obj->getFixedSlot(FIELD_BYTEOFFSET).toInt32();
+    return obj->getFixedSlot(FIELD_BYTEOFFSET);
 }
 
 inline uint32_t
-TypedArray::getByteLength(JSObject *obj) {
+TypedArray::byteOffset(JSObject *obj)
+{
+    return byteOffsetValue(obj).toInt32();
+}
+
+inline Value
+TypedArray::byteLengthValue(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
-    return obj->getFixedSlot(FIELD_BYTELENGTH).toInt32();
+    return obj->getFixedSlot(FIELD_BYTELENGTH);
 }
 
 inline uint32_t
-TypedArray::getType(JSObject *obj) {
+TypedArray::byteLength(JSObject *obj)
+{
+    return byteLengthValue(obj).toInt32();
+}
+
+inline uint32_t
+TypedArray::type(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
     return obj->getFixedSlot(FIELD_TYPE).toInt32();
 }
 
-inline ArrayBufferObject *
-TypedArray::getBuffer(JSObject *obj) {
+inline Value
+TypedArray::bufferValue(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
-    return &obj->getFixedSlot(FIELD_BUFFER).toObject().asArrayBuffer();
+    return obj->getFixedSlot(FIELD_BUFFER);
+}
+
+inline ArrayBufferObject *
+TypedArray::buffer(JSObject *obj)
+{
+    return &bufferValue(obj).toObject().asArrayBuffer();
 }
 
 inline void *
-TypedArray::getDataOffset(JSObject *obj) {
+TypedArray::viewData(JSObject *obj)
+{
     JS_ASSERT(obj->isTypedArray());
     return (void *)obj->getPrivate(NUM_FIXED_SLOTS);
 }
 
+inline uint32_t
+TypedArray::slotWidth(int atype) {
+    switch (atype) {
+    case js::TypedArray::TYPE_INT8:
+    case js::TypedArray::TYPE_UINT8:
+    case js::TypedArray::TYPE_UINT8_CLAMPED:
+        return 1;
+    case js::TypedArray::TYPE_INT16:
+    case js::TypedArray::TYPE_UINT16:
+        return 2;
+    case js::TypedArray::TYPE_INT32:
+    case js::TypedArray::TYPE_UINT32:
+    case js::TypedArray::TYPE_FLOAT32:
+        return 4;
+    case js::TypedArray::TYPE_FLOAT64:
+        return 8;
+    default:
+        JS_NOT_REACHED("invalid typed array type");
+        return 0;
+    }
+}
+
+inline int
+TypedArray::slotWidth(JSObject *obj) {
+    return slotWidth(type(obj));
+}
+
+bool
+DataViewObject::is(const Value &v)
+{
+    return v.isObject() && v.toObject().hasClass(&DataViewClass);
+}
+
 inline DataViewObject *
 DataViewObject::create(JSContext *cx, uint32_t byteOffset, uint32_t byteLength,
-                       Handle<ArrayBufferObject*> arrayBuffer)
+                       Handle<ArrayBufferObject*> arrayBuffer, JSObject *protoArg)
 {
     JS_ASSERT(byteOffset <= INT32_MAX);
     JS_ASSERT(byteLength <= INT32_MAX);
 
-    RootedVarObject obj(cx, NewBuiltinClassInstance(cx, &DataViewClass));
+    RootedObject proto(cx, protoArg);
+    RootedObject obj(cx, NewBuiltinClassInstance(cx, &DataViewClass));
     if (!obj)
         return NULL;
+
+    if (proto) {
+        types::TypeObject *type = proto->getNewType(cx);
+        if (!type)
+            return NULL;
+        obj->setType(type);
+    } else if (cx->typeInferenceEnabled()) {
+        if (byteLength >= TypedArray::SINGLETON_TYPE_BYTE_LENGTH) {
+            if (!JSObject::setSingletonType(cx, obj))
+                return NULL;
+        } else {
+            jsbytecode *pc;
+            RootedScript script(cx, cx->stack.currentScript(&pc));
+            if (script) {
+                if (!types::SetInitializerObjectType(cx, script, pc, obj))
+                    return NULL;
+            }
+        }
+    }
 
     JS_ASSERT(arrayBuffer->isArrayBuffer());
 
@@ -145,6 +195,7 @@ DataViewObject::create(JSContext *cx, uint32_t byteOffset, uint32_t byteLength,
     dvobj.setFixedSlot(BYTELENGTH_SLOT, Int32Value(byteLength));
     dvobj.setFixedSlot(BUFFER_SLOT, ObjectValue(*arrayBuffer));
     dvobj.setPrivate(arrayBuffer->dataPointer() + byteOffset);
+    JS_ASSERT(byteOffset + byteLength <= arrayBuffer->byteLength());
 
     JS_ASSERT(dvobj.numFixedSlots() == RESERVED_SLOTS);
 
@@ -188,6 +239,24 @@ DataViewObject::hasBuffer() const
 {
     JS_ASSERT(isDataView());
     return getReservedSlot(BUFFER_SLOT).isObject();
+}
+
+inline Value
+DataViewObject::bufferValue(DataViewObject &view)
+{
+    return view.hasBuffer() ? ObjectValue(view.arrayBuffer()) : UndefinedValue();
+}
+
+inline Value
+DataViewObject::byteOffsetValue(DataViewObject &view)
+{
+    return Int32Value(view.byteOffset());
+}
+
+inline Value
+DataViewObject::byteLengthValue(DataViewObject &view)
+{
+    return Int32Value(view.byteLength());
 }
 
 } /* namespace js */

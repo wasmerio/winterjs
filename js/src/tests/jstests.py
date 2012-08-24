@@ -5,41 +5,60 @@ The JS Shell Test Harness.
 See the adjacent README.txt for more details.
 """
 
-import os, sys
+import os, sys, textwrap
+from copy import copy
 from subprocess import list2cmdline, call
 
-from results import NullTestOutput
-from tests import TestCase
-from results import ResultsSink
+from lib.results import NullTestOutput
+from lib.tests import TestCase
+from lib.results import ResultsSink
+from lib.progressbar import ProgressBar
 
 if (sys.platform.startswith('linux') or
     sys.platform.startswith('darwin')
    ):
-    from tasks_unix import run_all_tests
+    from lib.tasks_unix import run_all_tests
 else:
-    from tasks_win import run_all_tests
+    from lib.tasks_win import run_all_tests
 
 def run_tests(options, tests, results):
     """Run the given tests, sending raw results to the given results accumulator."""
-    pb = None
-    if not options.hide_progress:
-        try:
-            from progressbar import ProgressBar
-            pb = ProgressBar('', len(tests), 16)
-        except ImportError:
-            pass
-    results.pb = pb
-
     try:
-        results.finished = run_all_tests(tests, results, options)
+        completed = run_all_tests(tests, results, options)
     except KeyboardInterrupt:
-        results.finished = False
+        completed = False
 
-    if pb:
-        pb.finish()
+    results.finish(completed)
 
-    if not options.tinderbox:
-        results.list()
+def get_cpu_count():
+    """
+    Guess at a reasonable parallelism count to set as the default for the
+    current machine and run.
+    """
+    # Python 2.6+
+    try:
+        import multiprocessing
+        return multiprocessing.cpu_count()
+    except (ImportError,NotImplementedError):
+        pass
+
+    # POSIX
+    try:
+        res = int(os.sysconf('SC_NPROCESSORS_ONLN'))
+        if res > 0:
+            return res
+    except (AttributeError,ValueError):
+        pass
+
+    # Windows
+    try:
+        res = int(os.environ['NUMBER_OF_PROCESSORS'])
+        if res > 0:
+            return res
+    except (KeyError, ValueError):
+        pass
+
+    return 1
 
 def parse_args():
     """
@@ -51,19 +70,23 @@ def parse_args():
         excluded_paths :set<str>: Test paths specifically excluded by the CLI.
     """
     from optparse import OptionParser, OptionGroup
-    op = OptionParser(usage='%prog [OPTIONS] JS_SHELL [TESTS]')
+    op = OptionParser(usage=textwrap.dedent("""
+        %prog [OPTIONS] JS_SHELL [TESTS]
+
+        Shell output format: [ pass | fail | timeout | skip ] progress | time
+        """).strip())
     op.add_option('--xul-info', dest='xul_info_src',
                   help='config data for xulRuntime (avoids search for config/autoconf.mk)')
 
     harness_og = OptionGroup(op, "Harness Controls", "Control how tests are run.")
-    num_workers = 2
-    num_workers_help ='Number of tests to run in parallel (default %s)' % num_workers
-    harness_og.add_option('-j', '--worker-count', type=int,
-                          default=num_workers, help=num_workers_help)
+    harness_og.add_option('-j', '--worker-count', type=int, default=max(1, get_cpu_count()),
+                          help='Number of tests to run in parallel (default %default)')
     harness_og.add_option('-t', '--timeout', type=float, default=150.0,
                           help='Set maximum time a test is allows to run (in seconds).')
     harness_og.add_option('-a', '--args', dest='shell_args', default='',
                           help='Extra args to pass to the JS shell.')
+    harness_og.add_option('--jitflags', default='',
+                          help='Example: --jitflags=m,amd to run each test with -m, -a -m -d [default=%default]')
     harness_og.add_option('-g', '--debug', action='store_true', help='Run a test in debugger.')
     harness_og.add_option('--debugger', default='gdb -q --args', help='Debugger command.')
     harness_og.add_option('--valgrind', action='store_true', help='Run tests in valgrind.')
@@ -107,14 +130,14 @@ def parse_args():
     options, args = op.parse_args()
 
     # Acquire the JS shell given on the command line.
-    js_shell = None
+    options.js_shell = None
     requested_paths = set()
     if len(args) > 0:
-        js_shell = os.path.abspath(args[0])
+        options.js_shell = os.path.abspath(args[0])
         requested_paths |= set(args[1:])
 
     # If we do not have a shell, we must be in a special mode.
-    if js_shell is None and not options.make_manifests:
+    if options.js_shell is None and not options.make_manifests:
         op.error('missing JS_SHELL argument')
 
     # Valgrind and gdb are mutually exclusive.
@@ -128,7 +151,7 @@ def parse_args():
         if os.uname()[0] == 'Darwin':
             prefix.append('--dsymutil=yes')
         options.show_output = True
-    TestCase.set_js_cmd_prefix(js_shell, options.shell_args.split(), prefix)
+    TestCase.set_js_cmd_prefix(options.js_shell, options.shell_args.split(), prefix)
 
     # If files with lists of tests to run were specified, add them to the
     # requested tests set.
@@ -152,36 +175,50 @@ def parse_args():
                 fp.close()
 
     # Handle output redirection, if requested and relevant.
-    output_file = sys.stdout
+    options.output_fp = sys.stdout
     if options.output_file and (options.show_cmd or options.show_output):
-        output_file = open(options.output_file, 'w')
-    ResultsSink.output_file = output_file
+        try:
+            options.output_fp = open(options.output_file, 'w')
+        except IOError, ex:
+            raise SystemExit("Failed to open output file: " + str(ex))
 
     # Hide the progress bar if it will get in the way of other output.
-    if ((options.show_cmd or options.show_output) and
-        output_file == sys.stdout or options.tinderbox):
-        options.hide_progress = True
+    options.hide_progress = (((options.show_cmd or options.show_output) and
+                              options.output_fp == sys.stdout) or
+                             options.tinderbox or
+                             ProgressBar.conservative_isatty() or
+                             options.hide_progress)
 
-    return (options, js_shell, requested_paths, excluded_paths)
+    return (options, requested_paths, excluded_paths)
 
-def load_tests(options, js_shell, requested_paths, excluded_paths):
+def parse_jitflags(op_jitflags):
+    jitflags = [ [ '-' + flag for flag in flags ]
+                 for flags in op_jitflags.split(',') ]
+    for flags in jitflags:
+        for flag in flags:
+            if flag not in ('-m', '-a', '-p', '-d', '-n'):
+                print('Invalid jit flag: "%s"'%flag)
+                sys.exit(1)
+    return jitflags
+
+def load_tests(options, requested_paths, excluded_paths):
     """
     Returns a tuple: (skipped_tests, test_list)
         skip_list: [iterable<Test>] Tests found but skipped.
         test_list: [iterable<Test>] Tests found that should be run.
     """
-    import manifest
+    import lib.manifest as manifest
 
-    if js_shell is None:
+    if options.js_shell is None:
         xul_tester = manifest.NullXULInfoTester()
     else:
         if options.xul_info_src is None:
-            xul_info = manifest.XULInfo.create(js_shell)
+            xul_info = manifest.XULInfo.create(options.js_shell)
         else:
             xul_abi, xul_os, xul_debug = options.xul_info_src.split(r':')
             xul_debug = xul_debug.lower() is 'true'
             xul_info = manifest.XULInfo(xul_abi, xul_os, xul_debug)
-        xul_tester = manifest.XULInfoTester(xul_info, js_shell)
+        xul_tester = manifest.XULInfoTester(xul_info, options.js_shell)
 
     test_dir = os.path.dirname(os.path.abspath(__file__))
     test_list = manifest.load(test_dir, xul_tester)
@@ -190,6 +227,18 @@ def load_tests(options, js_shell, requested_paths, excluded_paths):
     if options.make_manifests:
         manifest.make_manifests(options.make_manifests, test_list)
         sys.exit()
+
+    # Create a new test list. Apply each JIT configuration to every test.
+    if options.jitflags:
+        new_test_list = []
+        jitflags_list = parse_jitflags(options.jitflags)
+        for test in test_list:
+            for jitflags in jitflags_list:
+                tmp_test = copy(test)
+                tmp_test.options = copy(test.options)
+                tmp_test.options.extend(jitflags)
+                new_test_list.append(tmp_test)
+        test_list = new_test_list
 
     if options.test_file:
         paths = set()
@@ -229,8 +278,8 @@ def load_tests(options, js_shell, requested_paths, excluded_paths):
     return skip_list, test_list
 
 def main():
-    options, js_shell, requested_paths, excluded_paths = parse_args()
-    skip_list, test_list = load_tests(options, js_shell, requested_paths, excluded_paths)
+    options, requested_paths, excluded_paths = parse_args()
+    skip_list, test_list = load_tests(options, requested_paths, excluded_paths)
 
     if not test_list:
         print 'no tests selected'
@@ -259,15 +308,12 @@ def main():
 
     results = None
     try:
-        results = ResultsSink(ResultsSink.output_file, options)
+        results = ResultsSink(options, len(skip_list) + len(test_list))
         for t in skip_list:
             results.push(NullTestOutput(t))
         run_tests(options, test_list, results)
     finally:
         os.chdir(curdir)
-
-    if ResultsSink.output_file != sys.stdout:
-        ResultsSink.output_file.close()
 
     if results is None or not results.all_passed():
         return 1

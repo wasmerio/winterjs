@@ -1,46 +1,14 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * JS math package.
  */
 
+#include "mozilla/Constants.h"
 #include "mozilla/FloatingPoint.h"
 
 #include <stdlib.h>
@@ -76,9 +44,6 @@ using namespace js;
 #ifndef M_LN10
 #define M_LN10          2.30258509299404568402
 #endif
-#ifndef M_PI
-#define M_PI            3.14159265358979323846
-#endif
 #ifndef M_SQRT2
 #define M_SQRT2         1.41421356237309504880
 #endif
@@ -105,6 +70,12 @@ MathCache::MathCache() {
     JS_ASSERT(MOZ_DOUBLE_IS_NEGATIVE_ZERO(-0.0));
     JS_ASSERT(!MOZ_DOUBLE_IS_NEGATIVE_ZERO(+0.0));
     JS_ASSERT(hash(-0.0) != hash(+0.0));
+}
+
+size_t
+MathCache::sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf)
+{
+    return mallocSizeOf(this);
 }
 
 Class js::MathClass = {
@@ -450,7 +421,7 @@ powi(double x, int y)
                 // infinity in the computation, because sometimes the higher
                 // internal precision in the pow() implementation would have
                 // given us a finite p. This happens very rarely.
-                
+
                 double result = 1.0 / p;
                 return (result == 0 && MOZ_DOUBLE_IS_INFINITE(p))
                        ? pow(x, static_cast<double>(y))  // Avoid pow(double, int).
@@ -502,8 +473,13 @@ js_math_pow(JSContext *cx, unsigned argc, Value *vp)
         return JS_TRUE;
     }
 
-    if (vp[3].isInt32())
-        z = powi(x, vp[3].toInt32());
+    /*
+     * Use powi if the exponent is an integer or an integer-valued double.
+     * We don't have to check for NaN since a comparison with NaN is always
+     * false.
+     */
+    if (int32_t(y) == y)
+        z = powi(x, int32_t(y));
     else
         z = pow(x, y);
 
@@ -653,7 +629,7 @@ math_tan(JSContext *cx, unsigned argc, Value *vp)
 static JSBool
 math_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
-    vp->setString(CLASS_ATOM(cx, Math));
+    vp->setString(CLASS_NAME(cx, Math));
     return JS_TRUE;
 }
 #endif
@@ -686,10 +662,9 @@ static JSFunctionSpec math_static_methods[] = {
 JSObject *
 js_InitMathClass(JSContext *cx, JSObject *obj_)
 {
-    RootedVarObject obj(cx, obj_);
-
-    RootedVarObject Math(cx, NewObjectWithClassProto(cx, &MathClass, NULL, obj));
-    if (!Math || !Math->setSingletonType(cx))
+    RootedObject obj(cx, obj_);
+    RootedObject Math(cx, NewObjectWithClassProto(cx, &MathClass, NULL, obj));
+    if (!Math || !JSObject::setSingletonType(cx, Math))
         return NULL;
 
     if (!JS_DefineProperty(cx, obj, js_Math_str, OBJECT_TO_JSVAL(Math),

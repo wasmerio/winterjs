@@ -1,40 +1,8 @@
 /* -*- Mode: c++; c-basic-offset: 4; tab-width: 40; indent-tabs-mode: nil -*- */
 /* vim: set ts=40 sw=4 et tw=99: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Mozilla SpiderMonkey bytecode analysis
- *
- * The Initial Developer of the Original Code is
- *   Mozilla Foundation
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Definitions for javascript analysis. */
 
@@ -154,7 +122,7 @@ class Bytecode
 
     union {
         /* If this is a JOF_TYPESET opcode, index into the observed types for the op. */
-        types::TypeSet *observedTypes;
+        types::StackTypeSet *observedTypes;
 
         /* If this is a loop head (TRACE or NOTRACE), information about the loop. */
         LoopAnalysis *loop;
@@ -196,7 +164,7 @@ class Bytecode
     /* --------- Type inference --------- */
 
     /* Types for all values pushed by this bytecode. */
-    types::TypeSet *pushedTypes;
+    types::StackTypeSet *pushedTypes;
 
     /* Any type barriers in place at this bytecode. */
     types::TypeBarrier *typeBarriers;
@@ -390,17 +358,6 @@ static inline uint32_t GetBytecodeSlot(JSScript *script, jsbytecode *pc)
       case JSOP_LOCALINC:
       case JSOP_LOCALDEC:
         return LocalSlot(script, GET_SLOTNO(pc));
-
-      case JSOP_GETALIASEDVAR:
-      case JSOP_CALLALIASEDVAR:
-      case JSOP_SETALIASEDVAR:
-      {
-          ScopeCoordinate sc = ScopeCoordinate(pc);
-          return script->bindings.bindingIsArg(sc.binding)
-                 ? ArgSlot(script->bindings.bindingToArg(sc.binding))
-                 : LocalSlot(script, script->bindings.bindingToLocal(sc.binding));
-      }
-
 
       case JSOP_THIS:
         return ThisSlot();
@@ -612,7 +569,7 @@ struct LifetimeVariable
         return offset;
     }
 
-#ifdef DEBUG
+#ifdef JS_METHODJIT_SPEW
     void print() const;
 #endif
 };
@@ -782,7 +739,7 @@ class SSAValue
  */
 struct SSAPhiNode
 {
-    types::TypeSet types;
+    types::StackTypeSet types;
     uint32_t slot;
     uint32_t length;
     SSAValue *options;
@@ -852,6 +809,7 @@ class ScriptAnalysis
     Bytecode **codeArray;
 
     uint32_t numSlots;
+    uint32_t numPropertyReads_;
 
     bool outOfMemory;
     bool hadFailure;
@@ -876,8 +834,6 @@ class ScriptAnalysis
     bool usesThisValue_:1;
     bool hasFunctionCalls_:1;
     bool modifiesArguments_:1;
-    bool extendsScope_:1;
-    bool addsScopeObjects_:1;
     bool localsAliasStack_:1;
     bool isInlineable:1;
     bool isJaegerCompileable:1;
@@ -891,12 +847,12 @@ class ScriptAnalysis
 
   public:
 
-    ScriptAnalysis(JSScript *script) { 
+    ScriptAnalysis(JSScript *script) {
         PodZero(this);
         this->script = script;
 #ifdef DEBUG
         this->originalDebugMode_ = script->compartment()->debugMode();
-#endif        
+#endif
     }
 
     bool ranBytecode() { return ranBytecode_; }
@@ -917,6 +873,9 @@ class ScriptAnalysis
     bool inlineable(uint32_t argc) { return isInlineable && argc == script->function()->nargs; }
     bool jaegerCompileable() { return isJaegerCompileable; }
 
+    /* Number of property read opcodes in the script. */
+    uint32_t numPropertyReads() const { return numPropertyReads_; }
+
     /* Whether there are POPV/SETRVAL bytecodes which can write to the frame's rval. */
     bool usesReturnValue() const { return usesReturnValue_; }
 
@@ -932,15 +891,6 @@ class ScriptAnalysis
      * object cannot escape, the arguments are never modified within the script.
      */
     bool modifiesArguments() { return modifiesArguments_; }
-
-    /*
-     * True if the script may extend declarations in its top level scope with
-     * dynamic fun/var declarations or through eval.
-     */
-    bool extendsScope() { return extendsScope_; }
-
-    /* True if the script may add block or with objects to its scope chain. */
-    bool addsScopeObjects() { return addsScopeObjects_; }
 
     /*
      * True if there are any LOCAL opcodes aliasing values on the stack (above
@@ -979,7 +929,7 @@ class ScriptAnalysis
         return (cs->format & JOF_POST) && !popGuaranteed(pc);
     }
 
-    types::TypeSet *bytecodeTypes(const jsbytecode *pc) {
+    types::StackTypeSet *bytecodeTypes(const jsbytecode *pc) {
         JS_ASSERT(js_CodeSpec[*pc].format & JOF_TYPESET);
         return getCode(pc).observedTypes;
     }
@@ -1000,15 +950,15 @@ class ScriptAnalysis
     }
     const SlotValue *newValues(const jsbytecode *pc) { return newValues(pc - script->code); }
 
-    types::TypeSet *pushedTypes(uint32_t offset, uint32_t which = 0) {
+    types::StackTypeSet *pushedTypes(uint32_t offset, uint32_t which = 0) {
         JS_ASSERT(offset < script->length);
         JS_ASSERT(which < GetDefCount(script, offset) +
                   (ExtendedDef(script->code + offset) ? 1 : 0));
-        types::TypeSet *array = getCode(offset).pushedTypes;
+        types::StackTypeSet *array = getCode(offset).pushedTypes;
         JS_ASSERT(array);
         return array + which;
     }
-    types::TypeSet *pushedTypes(const jsbytecode *pc, uint32_t which) {
+    types::StackTypeSet *pushedTypes(const jsbytecode *pc, uint32_t which) {
         return pushedTypes(pc - script->code, which);
     }
 
@@ -1042,7 +992,7 @@ class ScriptAnalysis
 
     inline void addPushedType(JSContext *cx, uint32_t offset, uint32_t which, types::Type type);
 
-    types::TypeSet *getValueTypes(const SSAValue &v) {
+    types::StackTypeSet *getValueTypes(const SSAValue &v) {
         switch (v.kind()) {
           case SSAValue::PUSHED:
             return pushedTypes(v.pushedOffset(), v.pushedIndex());
@@ -1068,10 +1018,10 @@ class ScriptAnalysis
         }
     }
 
-    types::TypeSet *poppedTypes(uint32_t offset, uint32_t which) {
+    types::StackTypeSet *poppedTypes(uint32_t offset, uint32_t which) {
         return getValueTypes(poppedValue(offset, which));
     }
-    types::TypeSet *poppedTypes(const jsbytecode *pc, uint32_t which) {
+    types::StackTypeSet *poppedTypes(const jsbytecode *pc, uint32_t which) {
         return getValueTypes(poppedValue(pc, which));
     }
 
@@ -1150,25 +1100,6 @@ class ScriptAnalysis
         return lifetimes[slot];
     }
 
-    /*
-     * If a NAME or similar opcode is definitely accessing a particular slot
-     * of a script this one is nested in, get that script/slot.
-     */
-    struct NameAccess {
-        JSScript *script;
-        types::TypeScriptNesting *nesting;
-        uint32_t slot;
-
-        /* Decompose the slot above. */
-        bool arg;
-        uint32_t index;
-
-        const Value **basePointer() const {
-            return arg ? &nesting->argArray : &nesting->varArray;
-        }
-    };
-    NameAccess resolveNameAccess(JSContext *cx, jsid id, bool addDependency = false);
-
     void printSSA(JSContext *cx);
     void printTypes(JSContext *cx);
 
@@ -1230,16 +1161,21 @@ class ScriptAnalysis
         Vector<SSAPhiNode *> phiNodes;
         bool hasGetSet;
         bool hasHole;
-        types::TypeSet *forTypes;
+        types::StackTypeSet *forTypes;
+        bool hasPropertyReadTypes;
+        uint32_t propertyReadIndex;
         TypeInferenceState(JSContext *cx)
-            : phiNodes(cx), hasGetSet(false), hasHole(false), forTypes(NULL)
+            : phiNodes(cx), hasGetSet(false), hasHole(false), forTypes(NULL),
+              hasPropertyReadTypes(false), propertyReadIndex(0)
         {}
     };
 
     /* Type inference helpers */
     bool analyzeTypesBytecode(JSContext *cx, unsigned offset, TypeInferenceState &state);
-    bool needsArgsObj(NeedsArgsObjState &state, const SSAValue &v);
-    bool needsArgsObj(NeedsArgsObjState &state, SSAUseChain *use);
+
+    typedef Vector<SSAValue, 16> SeenVector;
+    bool needsArgsObj(JSContext *cx, SeenVector &seen, const SSAValue &v);
+    bool needsArgsObj(JSContext *cx, SeenVector &seen, SSAUseChain *use);
     bool needsArgsObj(JSContext *cx);
 
   public:
@@ -1340,7 +1276,7 @@ class CrossScriptSSA
         return res;
     }
 
-    types::TypeSet *getValueTypes(const CrossSSAValue &cv) {
+    types::StackTypeSet *getValueTypes(const CrossSSAValue &cv) {
         return getFrame(cv.frame).script->analysis()->getValueTypes(cv.v);
     }
 

@@ -1,42 +1,7 @@
 /* -*-  Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is js-ctypes.
- *
- * The Initial Developer of the Original Code is
- * The Mozilla Foundation <http://www.mozilla.org/>.
- * Portions created by the Initial Developer are Copyright (C) 2009
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Mark Finkle <mark.finkle@gmail.com>, <mfinkle@mozilla.com>
- *  Fredrik Larsson <nossralf@gmail.com>
- *  Dan Witte <dwitte@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jscntxt.h"
 #include "jsstr.h"
@@ -114,10 +79,9 @@ Library::Name(JSContext* cx, unsigned argc, jsval *vp)
 JSObject*
 Library::Create(JSContext* cx, jsval path, JSCTypesCallbacks* callbacks)
 {
-  JSObject* libraryObj = JS_NewObject(cx, &sLibraryClass, NULL, NULL);
+  RootedObject libraryObj(cx, JS_NewObject(cx, &sLibraryClass, NULL, NULL));
   if (!libraryObj)
     return NULL;
-  js::AutoObjectRooter root(cx, libraryObj);
 
   // initialize the library
   JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(NULL));
@@ -176,13 +140,20 @@ Library::Create(JSContext* cx, jsval path, JSCTypesCallbacks* callbacks)
 #endif
 
   PRLibrary* library = PR_LoadLibraryWithFlags(libSpec, 0);
+
+  if (!library) {
+#ifdef XP_WIN
+    JS_ReportError(cx, "couldn't open library %hs", pathChars);
+#else
+    JS_ReportError(cx, "couldn't open library %s", pathBytes);
+    JS_free(cx, pathBytes);
+#endif
+    return NULL;
+  }
+
 #ifndef XP_WIN
   JS_free(cx, pathBytes);
 #endif
-  if (!library) {
-    JS_ReportError(cx, "couldn't open library");
-    return NULL;
-  }
 
   // stash the library
   JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(library));
@@ -270,7 +241,7 @@ Library::Close(JSContext* cx, unsigned argc, jsval* vp)
 JSBool
 Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
 {
-  JSObject* obj = JS_THIS_OBJECT(cx, vp);
+  RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
   if (!obj)
     return JS_FALSE;
   if (!IsLibrary(obj)) {
@@ -305,9 +276,8 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
     return JS_FALSE;
   }
 
-  JSObject* fnObj = NULL;
-  JSObject* typeObj;
-  js::AutoObjectRooter root(cx);
+  RootedObject fnObj(cx, NULL);
+  RootedObject typeObj(cx);
   bool isFunction = argc > 2;
   if (isFunction) {
     // Case 1).
@@ -316,14 +286,11 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
               argv[1], argv[2], &argv[3], argc - 3);
     if (!fnObj)
       return JS_FALSE;
-    root.setObject(fnObj);
 
     // Make a function pointer type.
     typeObj = PointerType::CreateInternal(cx, fnObj);
     if (!typeObj)
       return JS_FALSE;
-    root.setObject(typeObj);
-
   } else {
     // Case 2).
     if (JSVAL_IS_PRIMITIVE(argv[1]) ||
@@ -369,7 +336,7 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
     }
   }
 
-  JSObject* result = CData::Create(cx, typeObj, obj, data, isFunction);
+  RootedObject result(cx, CData::Create(cx, typeObj, obj, data, isFunction));
   if (!result)
     return JS_FALSE;
 

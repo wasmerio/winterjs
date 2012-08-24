@@ -1,47 +1,23 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is XPConnect code.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef nsDOMQS_h__
 #define nsDOMQS_h__
 
+#include "mozilla/dom/ImageData.h"
 #include "nsDOMClassInfoID.h"
+#include "nsGenericHTMLElement.h"
+#include "nsHTMLCanvasElement.h"
+#include "nsHTMLImageElement.h"
+#include "nsHTMLVideoElement.h"
+#include "nsHTMLDocument.h"
+#include "nsICSSDeclaration.h"
+#include "nsSVGStylableElement.h"
 
 #define DEFINE_UNWRAP_CAST(_interface, _base, _bit)                           \
 template <>                                                                   \
-inline JSBool                                                                 \
+MOZ_ALWAYS_INLINE JSBool                                                      \
 xpc_qsUnwrapThis<_interface>(JSContext *cx,                                   \
                              JSObject *obj,                                   \
                              _interface **ppThis,                             \
@@ -127,7 +103,7 @@ xpc_qsUnwrapThis<nsGenericElement>(JSContext *cx,
 
     if (!failureFatal && (!ok || !content)) {
       ok = true;
-      *ppThis = nsnull;
+      *ppThis = nullptr;
     }
 
     return ok;
@@ -149,6 +125,77 @@ xpc_qsUnwrapArg<nsGenericElement>(JSContext *cx,
     return rv;
 }
 
+inline nsresult
+xpc_qsUnwrapArg_HTMLElement(JSContext *cx,
+                            jsval v,
+                            nsIAtom *aTag,
+                            nsIContent **ppArg,
+                            nsISupports **ppArgRef,
+                            jsval *vp)
+{
+    nsIContent *elem;
+    jsval val;
+    nsresult rv = xpc_qsUnwrapArg<nsIContent>(cx, v, &elem, ppArgRef, &val);
+    if (NS_SUCCEEDED(rv)) {
+        if (elem->IsHTML(aTag)) {
+            *ppArg = elem;
+            *vp = val;
+        } else {
+            rv = NS_ERROR_XPC_BAD_CONVERT_JS;
+        }
+    }
+    return rv;
+}
+
+#define DEFINE_UNWRAP_CAST_HTML(_tag, _clazz)                                 \
+template <>                                                                   \
+inline nsresult                                                               \
+xpc_qsUnwrapArg<_clazz>(JSContext *cx,                                        \
+                        jsval v,                                              \
+                        _clazz **ppArg,                                       \
+                        nsISupports **ppArgRef,                               \
+                        jsval *vp)                                            \
+{                                                                             \
+    nsIContent *elem;                                                         \
+    nsresult rv = xpc_qsUnwrapArg_HTMLElement(cx, v, nsGkAtoms::_tag, &elem,  \
+                                              ppArgRef, vp);                  \
+    if (NS_SUCCEEDED(rv))                                                     \
+        *ppArg = static_cast<_clazz*>(elem);                                  \
+    return rv;                                                                \
+}                                                                             \
+                                                                              \
+template <>                                                                   \
+inline nsresult                                                               \
+xpc_qsUnwrapArg<_clazz>(JSContext *cx, jsval v, _clazz **ppArg,               \
+                        _clazz **ppArgRef, jsval *vp)                         \
+{                                                                             \
+    nsISupports* argRef = static_cast<nsIContent*>(*ppArgRef);                \
+    nsresult rv = xpc_qsUnwrapArg<_clazz>(cx, v, ppArg, &argRef, vp);         \
+    *ppArgRef = static_cast<_clazz*>(static_cast<nsIContent*>(argRef));       \
+    return rv;                                                                \
+}
+
+DEFINE_UNWRAP_CAST_HTML(canvas, nsHTMLCanvasElement)
+DEFINE_UNWRAP_CAST_HTML(img, nsHTMLImageElement)
+DEFINE_UNWRAP_CAST_HTML(video, nsHTMLVideoElement)
+
+template <>
+inline nsresult
+xpc_qsUnwrapArg<mozilla::dom::ImageData>(JSContext *cx, jsval v,
+                                         mozilla::dom::ImageData **ppArg,
+                                         mozilla::dom::ImageData **ppArgRef,
+                                         jsval *vp)
+{
+    nsIDOMImageData* arg;
+    nsIDOMImageData* argRef;
+    nsresult rv = xpc_qsUnwrapArg<nsIDOMImageData>(cx, v, &arg, &argRef, vp);
+    if (NS_SUCCEEDED(rv)) {
+        *ppArg = static_cast<mozilla::dom::ImageData*>(arg);
+        *ppArgRef = static_cast<mozilla::dom::ImageData*>(argRef);
+    }
+    return rv;
+}
+
 inline nsISupports*
 ToSupports(nsContentList *p)
 {
@@ -159,6 +206,12 @@ inline nsISupports*
 ToCanonicalSupports(nsINode* p)
 {
     return p;
+}
+
+inline nsISupports*
+ToSupports(nsINode* p)
+{
+  return p;
 }
 
 inline nsISupports*

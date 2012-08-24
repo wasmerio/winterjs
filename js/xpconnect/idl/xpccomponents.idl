@@ -1,41 +1,7 @@
 /* -*- Mode: IDL; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsISupports.idl"
 #include "xpcexception.idl"
@@ -152,7 +118,7 @@ interface ScheduledGCCallback : nsISupports
 /**
 * interface of Components.utils
 */
-[scriptable, uuid(9e43a260-5db2-11e1-b86c-0800200c9a66)]
+[scriptable, uuid(25442383-a1f5-440c-9e18-a2a1cdb8a638)]
 interface nsIXPCComponents_Utils : nsISupports
 {
 
@@ -262,6 +228,13 @@ interface nsIXPCComponents_Utils : nsISupports
      * Force an immediate garbage collection cycle.
      */
     void forceGC();
+
+    /*
+     * To be called from JS only.
+     *
+     * Force an immediate cycle collection cycle.
+     */
+    void forceCC();
     
     /*
      * To be called from JS only.
@@ -322,11 +295,47 @@ interface nsIXPCComponents_Utils : nsISupports
     /*
      * To be called from JS only.
      *
+     * Returns an array created in |vobj|'s compartment.
+     */
+    [implicit_jscontext]
+    jsval createArrayIn(in jsval vobj);
+
+    /*
+     * To be called from JS only.
+     *
      * Ensures that all functions come from vobj's scope (and aren't cross
      * compartment wrappers).
      */
     [implicit_jscontext]
     void makeObjectPropsNormal(in jsval vobj);
+
+    /**
+     * Determines whether this object is backed by a DeadObjectProxy.
+     *
+     * Dead-wrapper objects hold no other objects alive (they have no outgoing
+     * reference edges) and will throw if you touch them (e.g. by
+     * reading/writing a property).
+     */
+    bool isDeadWrapper(in jsval obj);
+
+    /*
+     * To be called from JS only. This is for Gecko internal use only, and may
+     * disappear at any moment.
+     *
+     * Forces a recomputation of all wrappers in and out of the compartment
+     * containing |obj|. If |obj| is not an object, all wrappers system-wide
+     * are recomputed.
+     */
+    [implicit_jscontext]
+    void recomputeWrappers([optional] in jsval vobj);
+
+    /*
+     * Dispatches a runnable to the current/main thread. If |scope| is passed,
+     * the runnable will be dispatch in the compartment of |scope|, which
+     * affects which error reporter gets called.
+     */
+    [implicit_jscontext]
+    void dispatch(in jsval runnable, [optional] in jsval scope);
 
     /*
      * To be called from JS only.
@@ -361,13 +370,19 @@ interface nsIXPCComponents_Utils : nsISupports
     attribute boolean methodjit_always;
 
     [implicit_jscontext]
+    attribute boolean strict_mode;
+
+    [implicit_jscontext]
     void setGCZeal(in long zeal);
+
+    [implicit_jscontext]
+    void nukeSandbox(in jsval obj);
 };
 
 /**
 * interface of JavaScript's 'Components' object
 */
-[scriptable, uuid(4676e9cf-2c07-423b-b161-26bb9d8067d3)]
+[scriptable, uuid(8406dedb-23cc-42db-9f69-1f18785091b5)]
 interface nsIXPCComponents : nsISupports
 {
     readonly attribute nsIXPCComponents_Interfaces      interfaces;

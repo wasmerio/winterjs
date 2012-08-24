@@ -1,41 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *   Jan de Mooij <jandemooij@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "jsbool.h"
 #include "jslibmath.h"
 #include "jsmath.h"
@@ -175,7 +143,7 @@ mjit::Compiler::compileMathSqrt(FrameEntry *arg)
 }
 
 CompileStatus
-mjit::Compiler::compileMathMinMaxDouble(FrameEntry *arg1, FrameEntry *arg2, 
+mjit::Compiler::compileMathMinMaxDouble(FrameEntry *arg1, FrameEntry *arg2,
                                         Assembler::DoubleCondition cond)
 {
     FPRegisterID fpReg1;
@@ -197,10 +165,10 @@ mjit::Compiler::compileMathMinMaxDouble(FrameEntry *arg1, FrameEntry *arg2,
 
     /* Slow path for 0 and NaN, because they have special requriments. */
     masm.zeroDouble(Registers::FPConversionTemp);
-    Jump zeroOrNan = masm.branchDouble(Assembler::DoubleEqualOrUnordered, fpReg1, 
+    Jump zeroOrNan = masm.branchDouble(Assembler::DoubleEqualOrUnordered, fpReg1,
                                        Registers::FPConversionTemp);
     stubcc.linkExit(zeroOrNan, Uses(4));
-    Jump zeroOrNan2 = masm.branchDouble(Assembler::DoubleEqualOrUnordered, fpReg2, 
+    Jump zeroOrNan2 = masm.branchDouble(Assembler::DoubleEqualOrUnordered, fpReg2,
                                         Registers::FPConversionTemp);
     stubcc.linkExit(zeroOrNan2, Uses(4));
 
@@ -352,8 +320,8 @@ mjit::Compiler::compileGetChar(FrameEntry *thisValue, FrameEntry *arg, GetCharMo
     masm.move(reg1, reg2);
 
     /* Slow path if string is a rope */
-    masm.andPtr(ImmPtr((void *)JSString::ROPE_BIT), reg1);
-    Jump isRope = masm.branchTestPtr(Assembler::NonZero, reg1);
+    masm.andPtr(ImmPtr((void *)JSString::FLAGS_MASK), reg1);
+    Jump isRope = masm.branchTestPtr(Assembler::Zero, reg1);
     stubcc.linkExit(isRope, Uses(3));
 
     /* Slow path if out-of-range. */
@@ -505,7 +473,7 @@ mjit::Compiler::compileArrayPopShift(FrameEntry *thisValue, bool isPacked, bool 
 
 #ifdef JSGC_INCREMENTAL_MJ
     /* Write barrier. */
-    if (cx->compartment->needsBarrier())
+    if (cx->compartment->compileBarriers())
         return Compile_InlineAbort;
 #endif
 
@@ -647,9 +615,7 @@ mjit::Compiler::compileArrayConcat(types::TypeSet *thisTypes, types::TypeSet *ar
      * so check that type information already reflects possible side effects of
      * this call.
      */
-    thisTypes->addFreeze(cx);
-    argTypes->addFreeze(cx);
-    types::TypeSet *thisElemTypes = thisType->getProperty(cx, JSID_VOID, false);
+    types::HeapTypeSet *thisElemTypes = thisType->getProperty(cx, JSID_VOID, false);
     if (!thisElemTypes)
         return Compile_Error;
     if (!pushedTypeSet(0)->hasType(types::Type::ObjectType(thisType)))
@@ -660,7 +626,7 @@ mjit::Compiler::compileArrayConcat(types::TypeSet *thisTypes, types::TypeSet *ar
         types::TypeObject *argType = argTypes->getTypeObject(i);
         if (!argType)
             continue;
-        types::TypeSet *elemTypes = argType->getProperty(cx, JSID_VOID, false);
+        types::HeapTypeSet *elemTypes = argType->getProperty(cx, JSID_VOID, false);
         if (!elemTypes)
             return Compile_Error;
         if (!elemTypes->knownSubset(cx, thisElemTypes))
@@ -704,7 +670,7 @@ mjit::Compiler::compileArrayConcat(types::TypeSet *thisTypes, types::TypeSet *ar
     templateObject->setType(thisType);
 
     RegisterID result = Registers::ReturnReg;
-    Jump emptyFreeList = masm.getNewObject(cx, result, templateObject);
+    Jump emptyFreeList = getNewObject(cx, result, templateObject);
     stubcc.linkExit(emptyFreeList, Uses(3));
 
     masm.storeValueFromComponents(ImmType(JSVAL_TYPE_OBJECT), result, frame.addressOf(frame.peek(-3)));
@@ -747,7 +713,7 @@ mjit::Compiler::compileArrayWithLength(uint32_t argc)
     templateObject->setType(type);
 
     RegisterID result = frame.allocReg();
-    Jump emptyFreeList = masm.getNewObject(cx, result, templateObject);
+    Jump emptyFreeList = getNewObject(cx, result, templateObject);
 
     stubcc.linkExit(emptyFreeList, Uses(0));
     stubcc.leave();
@@ -790,7 +756,7 @@ mjit::Compiler::compileArrayWithArgs(uint32_t argc)
     JS_ASSERT(templateObject->getDenseArrayCapacity() >= argc);
 
     RegisterID result = frame.allocReg();
-    Jump emptyFreeList = masm.getNewObject(cx, result, templateObject);
+    Jump emptyFreeList = getNewObject(cx, result, templateObject);
     stubcc.linkExit(emptyFreeList, Uses(0));
 
     int offset = JSObject::offsetOfFixedElements();
@@ -849,7 +815,7 @@ mjit::Compiler::compileParseInt(JSValueType argType, uint32_t argc)
             OOL_STUBCALL(stubs::SlowCall, REJOIN_FALLTHROUGH);
         }
 
-        /* 
+        /*
          * Stack looks like callee, this, arg1, arg2, argN.
          * First pop all args other than arg1.
          */
@@ -859,7 +825,7 @@ mjit::Compiler::compileParseInt(JSValueType argType, uint32_t argc)
 
         if (needStubCall) {
             stubcc.rejoin(Changes(1));
-        }        
+        }
     } else {
         FrameEntry *arg = frame.peek(-(int32_t)argc);
         FPRegisterID fpScratchReg = frame.allocFPReg();
@@ -872,7 +838,7 @@ mjit::Compiler::compileParseInt(JSValueType argType, uint32_t argc)
         masm.slowLoadConstantDouble(1, fpScratchReg);
 
         /* Slow path for NaN and numbers < 1. */
-        Jump lessThanOneOrNan = masm.branchDouble(Assembler::DoubleLessThanOrUnordered, 
+        Jump lessThanOneOrNan = masm.branchDouble(Assembler::DoubleLessThanOrUnordered,
                                                   fpReg, fpScratchReg);
         stubcc.linkExit(lessThanOneOrNan, Uses(2 + argc));
 
@@ -896,7 +862,7 @@ mjit::Compiler::compileParseInt(JSValueType argType, uint32_t argc)
         stubcc.rejoin(Changes(1));
     }
 
-    return Compile_Okay;   
+    return Compile_Okay;
 }
 
 CompileStatus
@@ -907,7 +873,7 @@ mjit::Compiler::inlineNativeFunction(uint32_t argc, bool callingNew)
 
     FrameEntry *origCallee = frame.peek(-((int)argc + 2));
     FrameEntry *thisValue = frame.peek(-((int)argc + 1));
-    types::TypeSet *thisTypes = analysis->poppedTypes(PC, argc);
+    types::StackTypeSet *thisTypes = analysis->poppedTypes(PC, argc);
 
     if (!origCallee->isConstant() || !origCallee->isType(JSVAL_TYPE_OBJECT))
         return Compile_InlineAbort;
@@ -979,7 +945,7 @@ mjit::Compiler::inlineNativeFunction(uint32_t argc, bool callingNew)
         }
     } else if (argc == 1) {
         FrameEntry *arg = frame.peek(-1);
-        types::TypeSet *argTypes = frame.extra(arg).types;
+        types::StackTypeSet *argTypes = frame.extra(arg).types;
         if (!argTypes)
             return Compile_InlineAbort;
         JSValueType argType = arg->isTypeKnown() ? arg->getKnownType() : JSVAL_TYPE_UNKNOWN;
@@ -1054,7 +1020,7 @@ mjit::Compiler::inlineNativeFunction(uint32_t argc, bool callingNew)
         if ((native == js_math_min || native == js_math_max)) {
             if (arg1Type == JSVAL_TYPE_INT32 && arg2Type == JSVAL_TYPE_INT32 &&
                 type == JSVAL_TYPE_INT32) {
-                return compileMathMinMaxInt(arg1, arg2, 
+                return compileMathMinMaxInt(arg1, arg2,
                         native == js_math_min ? Assembler::LessThan : Assembler::GreaterThan);
             }
             if ((arg1Type == JSVAL_TYPE_INT32 || arg1Type == JSVAL_TYPE_DOUBLE) &&

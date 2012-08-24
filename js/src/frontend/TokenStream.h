@@ -1,42 +1,8 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Nick Fitzgerald <nfitzgerald@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef TokenStream_h__
 #define TokenStream_h__
@@ -61,6 +27,7 @@
 #undef JS_KEYWORD
 
 namespace js {
+namespace frontend {
 
 enum TokenKind {
     TOK_ERROR = -1,                /* well-known as the only code < EOF */
@@ -81,6 +48,7 @@ enum TokenKind {
     TOK_MOD,                       /* modulus */
     TOK_INC, TOK_DEC,              /* increment/decrement (++ --) */
     TOK_DOT,                       /* member operator (.) */
+    TOK_TRIPLEDOT,                 /* for rest arguments (...) */
     TOK_LB, TOK_RB,                /* left and right brackets */
     TOK_LC, TOK_RC,                /* left and right curlies (braces) */
     TOK_LP, TOK_RP,                /* left and right parentheses */
@@ -299,6 +267,10 @@ struct TokenPos {
     bool operator >=(const TokenPos& bpos) const {
         return !(*this < bpos);
     }
+
+    bool encloses(const TokenPos& pos) const {
+        return begin <= pos.begin && pos.end <= end;
+    }
 };
 
 struct Token {
@@ -415,13 +387,13 @@ enum TokenStreamFlags
     TSF_OPERAND = 0x08,         /* looking for operand, not operator */
     TSF_UNEXPECTED_EOF = 0x10,  /* unexpected end of input, i.e. TOK_EOF not at top-level. */
     TSF_KEYWORD_IS_NAME = 0x20, /* Ignore keywords and return TOK_NAME instead to the parser. */
-    TSF_STRICT_MODE_CODE = 0x40,/* Tokenize as appropriate for strict mode code. */
-    TSF_DIRTYLINE = 0x80,       /* non-whitespace since start of line */
-    TSF_OWNFILENAME = 0x100,    /* ts->filename is malloc'd */
-    TSF_XMLTAGMODE = 0x200,     /* scanning within an XML tag in E4X */
-    TSF_XMLTEXTMODE = 0x400,    /* scanning XMLText terminal from E4X */
-    TSF_XMLONLYMODE = 0x800,    /* don't scan {expr} within text/tag */
-    TSF_OCTAL_CHAR = 0x1000,    /* observed a octal character escape */
+    TSF_DIRTYLINE = 0x40,       /* non-whitespace since start of line */
+    TSF_OWNFILENAME = 0x80,     /* ts->filename is malloc'd */
+    TSF_XMLTAGMODE = 0x100,     /* scanning within an XML tag in E4X */
+    TSF_XMLTEXTMODE = 0x200,    /* scanning XMLText terminal from E4X */
+    TSF_XMLONLYMODE = 0x400,    /* don't scan {expr} within text/tag */
+    TSF_OCTAL_CHAR = 0x800,     /* observed a octal character escape */
+    TSF_HAD_ERROR = 0x1000,     /* returned TOK_ERROR from getToken */
 
     /*
      * To handle the hard case of contiguous HTML comments, we want to clear the
@@ -445,6 +417,57 @@ enum TokenStreamFlags
     TSF_IN_HTML_COMMENT = 0x2000
 };
 
+struct Parser;
+
+struct CompileError {
+    JSContext *cx;
+    JSErrorReport report;
+    char *message;
+    bool hasCharArgs;
+    CompileError(JSContext *cx)
+     : cx(cx), message(NULL), hasCharArgs(false)
+    {
+        PodZero(&report);
+    }
+    ~CompileError();
+    void throwError();
+};
+
+namespace StrictMode {
+/* For an explanation of how these are used, see the comment in the FunctionBox definition. */
+enum StrictModeState {
+    NOTSTRICT,
+    UNKNOWN,
+    STRICT
+};
+}
+
+inline StrictMode::StrictModeState
+StrictModeFromContext(JSContext *cx)
+{
+    return cx->hasRunOption(JSOPTION_STRICT_MODE) ? StrictMode::STRICT : StrictMode::UNKNOWN;
+}
+
+// Ideally, tokenizing would be entirely independent of context.  But the
+// strict mode flag, which is in SharedContext, affects tokenizing, and
+// TokenStream needs to see it.
+//
+// This class is a tiny back-channel from TokenStream to the strict mode flag
+// that avoids exposing the rest of SharedContext to TokenStream. get()
+// returns the current strict mode state. The other two methods get and set
+// the queuedStrictModeError member of ParseContext. StrictModeGetter's
+// non-inline methods are implemented in Parser.cpp.
+//
+class StrictModeGetter {
+    Parser *parser;
+  public:
+    StrictModeGetter(Parser *p) : parser(p) { }
+
+    StrictMode::StrictModeState get() const;
+    CompileError *queuedStrictModeError() const;
+    void setQueuedStrictModeError(CompileError *e);
+};
+
 class TokenStream
 {
     /* Unicode separators that are treated as line terminators, in addition to \n, \r */
@@ -453,31 +476,16 @@ class TokenStream
         PARA_SEPARATOR = 0x2029
     };
 
-    static const size_t ntokens = 4;                /* 1 current + 2 lookahead, rounded
+    static const size_t ntokens = 4;                /* 1 current + 3 lookahead, rounded
                                                        to power of 2 to avoid divmod by 3 */
     static const unsigned ntokensMask = ntokens - 1;
 
   public:
     typedef Vector<jschar, 32> CharBuffer;
 
-    /*
-     * To construct a TokenStream, first call the constructor, which is
-     * infallible, then call |init|, which can fail. To destroy a TokenStream,
-     * first call |close| then call the destructor. If |init| fails, do not call
-     * |close|.
-     *
-     * This class uses JSContext.tempLifoAlloc to allocate internal buffers. The
-     * caller should JS_ARENA_MARK before calling |init| and JS_ARENA_RELEASE
-     * after calling |close|.
-     */
-    TokenStream(JSContext *, JSPrincipals *principals, JSPrincipals *originPrincipals);
+    TokenStream(JSContext *cx, const CompileOptions &options,
+                const jschar *base, size_t length, StrictModeGetter *smg);
 
-    /*
-     * Create a new token stream from an input buffer.
-     * Return false on memory-allocation failure.
-     */
-    bool init(const jschar *base, size_t length, const char *filename, unsigned lineno,
-              JSVersion version);
     ~TokenStream();
 
     /* Accessors. */
@@ -491,14 +499,21 @@ class TokenStream
         TokenKind type = currentToken().type;
         return type == type1 || type == type2;
     }
+    size_t offsetOfToken(const Token &tok) const {
+        return tok.ptr - userbuf.base();
+    }
     const CharBuffer &getTokenbuf() const { return tokenbuf; }
     const char *getFilename() const { return filename; }
     unsigned getLineno() const { return lineno; }
-    /* Note that the version and hasXML can get out of sync via setXML. */
+    /* Note that the version and hasMoarXML can get out of sync via setMoarXML. */
     JSVersion versionNumber() const { return VersionNumber(version); }
     JSVersion versionWithFlags() const { return version; }
-    bool hasXML() const { return xml || VersionShouldParseXML(versionNumber()); }
-    void setXML(bool enabled) { xml = enabled; }
+    // TokenStream::allowsXML() can be true even if Parser::allowsXML() is
+    // false. Read the comment at Parser::allowsXML() to find out why.
+    bool allowsXML() const { return allowXML && strictModeState() != StrictMode::STRICT; }
+    bool hasMoarXML() const { return moarXML || VersionShouldParseXML(versionNumber()); }
+    void setMoarXML(bool enabled) { moarXML = enabled; }
+    bool hadError() const { return !!(flags & TSF_HAD_ERROR); }
 
     bool isCurrentTokenEquality() const {
         return TokenKindIsEquality(currentToken().type);
@@ -517,22 +532,34 @@ class TokenStream
     }
 
     /* Flag methods. */
-    void setStrictMode(bool enabled = true) { setFlag(enabled, TSF_STRICT_MODE_CODE); }
     void setXMLTagMode(bool enabled = true) { setFlag(enabled, TSF_XMLTAGMODE); }
     void setXMLOnlyMode(bool enabled = true) { setFlag(enabled, TSF_XMLONLYMODE); }
     void setUnexpectedEOF(bool enabled = true) { setFlag(enabled, TSF_UNEXPECTED_EOF); }
-    void setOctalCharacterEscape(bool enabled = true) { setFlag(enabled, TSF_OCTAL_CHAR); }
 
-    bool isStrictMode() { return !!(flags & TSF_STRICT_MODE_CODE); }
-    bool isXMLTagMode() { return !!(flags & TSF_XMLTAGMODE); }
-    bool isXMLOnlyMode() { return !!(flags & TSF_XMLONLYMODE); }
-    bool isUnexpectedEOF() { return !!(flags & TSF_UNEXPECTED_EOF); }
+    StrictMode::StrictModeState strictModeState() const
+    {
+        return strictModeGetter ? strictModeGetter->get() : StrictMode::NOTSTRICT;
+    }
+    bool isXMLTagMode() const { return !!(flags & TSF_XMLTAGMODE); }
+    bool isXMLOnlyMode() const { return !!(flags & TSF_XMLONLYMODE); }
+    bool isUnexpectedEOF() const { return !!(flags & TSF_UNEXPECTED_EOF); }
     bool isEOF() const { return !!(flags & TSF_EOF); }
-    bool hasOctalCharacterEscape() const { return flags & TSF_OCTAL_CHAR; }
 
-    bool reportCompileErrorNumberVA(ParseNode *pn, unsigned flags, unsigned errorNumber, va_list ap);
+    // TokenStream-specific error reporters.
+    bool reportError(unsigned errorNumber, ...);
+    bool reportWarning(unsigned errorNumber, ...);
+    bool reportStrictWarning(unsigned errorNumber, ...);
+    bool reportStrictModeError(unsigned errorNumber, ...);
+
+    // General-purpose error reporters.  You should avoid calling these
+    // directly, and instead use the more succinct alternatives (e.g.
+    // reportError()) in TokenStream, Parser, and BytecodeEmitter.
+    bool reportCompileErrorNumberVA(ParseNode *pn, unsigned flags, unsigned errorNumber,
+                                    va_list args);
+    bool reportStrictModeErrorNumberVA(ParseNode *pn, unsigned errorNumber, va_list args);
 
   private:
+    void onError();
     static JSAtom *atomize(JSContext *cx, CharBuffer &cb);
     bool putIdentInTokenbuf(const jschar *identStart);
 
@@ -595,7 +622,7 @@ class TokenStream
 
     TokenKind peekToken() {
         if (lookahead != 0) {
-            JS_ASSERT(lookahead == 1);
+            JS_ASSERT(lookahead <= 2);
             return tokens[(cursor + lookahead) & ntokensMask].type;
         }
         TokenKind tt = getTokenInternal();
@@ -613,7 +640,7 @@ class TokenStream
             return TOK_EOL;
 
         if (lookahead != 0) {
-            JS_ASSERT(lookahead == 1);
+            JS_ASSERT(lookahead <= 2);
             return tokens[(cursor + lookahead) & ntokensMask].type;
         }
 
@@ -650,11 +677,22 @@ class TokenStream
         JS_ALWAYS_TRUE(matchToken(tt));
     }
 
+
+    /*
+     * Return the offset into the source buffer of the end of the token.
+     */
+    size_t endOffset(const Token &tok);
+
+    bool hasSourceMap() const {
+        return sourceMap != NULL;
+    }
+
     /*
      * Give up responsibility for managing the sourceMap filename's memory.
      */
-    const jschar *releaseSourceMap() {
-        const jschar* sm = sourceMap;
+    jschar *releaseSourceMap() {
+        JS_ASSERT(hasSourceMap());
+        jschar *sm = sourceMap;
         sourceMap = NULL;
         return sm;
     }
@@ -685,19 +723,23 @@ class TokenStream
      */
     class TokenBuf {
       public:
-        TokenBuf() : base(NULL), limit(NULL), ptr(NULL) { }
-
-        void init(const jschar *buf, size_t length) {
-            base = ptr = buf;
-            limit = base + length;
-        }
+        TokenBuf(const jschar *buf, size_t length)
+          : base_(buf), limit_(buf + length), ptr(buf) { }
 
         bool hasRawChars() const {
-            return ptr < limit;
+            return ptr < limit_;
         }
 
         bool atStart() const {
-            return ptr == base;
+            return ptr == base_;
+        }
+
+        const jschar *base() const {
+            return base_;
+        }
+
+        const jschar *limit() const {
+            return limit_;
         }
 
         jschar getRawChar() {
@@ -742,13 +784,8 @@ class TokenStream
         }
 
 #ifdef DEBUG
-        /*
-         * Poison the TokenBuf so it cannot be accessed again.  There's one
-         * exception to this rule -- see findEOL() -- which is why
-         * ptrWhenPoisoned exists.
-         */
+        /* Poison the TokenBuf so it cannot be accessed again. */
         void poison() {
-            ptrWhenPoisoned = ptr;
             ptr = NULL;
         }
 #endif
@@ -757,13 +794,14 @@ class TokenStream
             return (c == '\n' || c == '\r' || c == LINE_SEPARATOR || c == PARA_SEPARATOR);
         }
 
-        const jschar *findEOL();
+        // Finds the next EOL, but stops once 'max' jschars have been scanned
+        // (*including* the starting jschar).
+        const jschar *findEOLMax(const jschar *p, size_t max);
 
       private:
-        const jschar *base;             /* base of buffer */
-        const jschar *limit;            /* limit for quick bounds check */
+        const jschar *base_;            /* base of buffer */
+        const jschar *limit_;           /* limit for quick bounds check */
         const jschar *ptr;              /* next char to get */
-        const jschar *ptrWhenPoisoned;  /* |ptr| when poison() was called */
     };
 
     TokenKind getTokenInternal();     /* doesn't check for pushback or error flag. */
@@ -831,9 +869,11 @@ class TokenStream
     bool                maybeEOL[256];       /* probabilistic EOL lookup table */
     bool                maybeStrSpecial[256];/* speeds up string scanning */
     JSVersion           version;        /* (i.e. to identify keywords) */
-    bool                xml;            /* see JSOPTION_XML */
+    bool                allowXML;       /* see JSOPTION_ALLOW_XML */
+    bool                moarXML;        /* see JSOPTION_MOAR_XML */
     JSContext           *const cx;
     JSPrincipals        *const originPrincipals;
+    StrictModeGetter    *strictModeGetter; /* used to test for strict mode */
 };
 
 struct KeywordInfo {
@@ -854,7 +894,7 @@ FindKeyword(const jschar *s, size_t length);
  * Check that str forms a valid JS identifier name. The function does not
  * check if str is a JS keyword.
  */
-JSBool
+bool
 IsIdentifier(JSLinearString *str);
 
 /*
@@ -863,36 +903,7 @@ IsIdentifier(JSLinearString *str);
  */
 #define JSREPORT_UC 0x100
 
-/*
- * Report a compile-time error by its number. Return true for a warning, false
- * for an error. When pn is not null, use it to report error's location.
- * Otherwise use ts, which must not be null.
- */
-bool
-ReportCompileErrorNumber(JSContext *cx, TokenStream *ts, ParseNode *pn, unsigned flags,
-                         unsigned errorNumber, ...);
-
-/*
- * Report a condition that should elicit a warning with JSOPTION_STRICT,
- * or an error if ts or tc is handling strict mode code.  This function
- * defers to ReportCompileErrorNumber to do the real work.  Either tc
- * or ts may be NULL, if there is no tree context or token stream state
- * whose strictness should affect the report.
- *
- * One could have ReportCompileErrorNumber recognize the
- * JSREPORT_STRICT_MODE_ERROR flag instead of having a separate function
- * like this one.  However, the strict mode code flag we need to test is
- * in the TreeContext structure for that code; we would have to change
- * the ~120 ReportCompileErrorNumber calls to pass the additional
- * argument, even though many of those sites would never use it.  Using
- * ts's TSF_STRICT_MODE_CODE flag instead of tc's would be brittle: at some
- * points ts's flags don't correspond to those of the tc relevant to the
- * error.
- */
-bool
-ReportStrictModeError(JSContext *cx, TokenStream *ts, TreeContext *tc, ParseNode *pn,
-                      unsigned errorNumber, ...);
-
+} /* namespace frontend */
 } /* namespace js */
 
 extern JS_FRIEND_API(int)
@@ -900,7 +911,7 @@ js_fgets(char *buf, int size, FILE *file);
 
 #ifdef DEBUG
 extern const char *
-TokenKindToString(js::TokenKind tt);
+TokenKindToString(js::frontend::TokenKind tt);
 #endif
 
 #endif /* TokenStream_h__ */

@@ -1,55 +1,45 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "xpcprivate.h"
+
+#ifdef XP_WIN
+#include <windows.h>
+#endif
 
 #ifdef TAB
 #undef TAB
 #endif
 #define TAB "    "
 
+static void DebugDump(const char* fmt, ...)
+{
+  char buffer[2048];
+  va_list ap;
+  va_start(ap, fmt);
+#ifdef XPWIN
+  _vsnprintf(buffer, sizeof(buffer), fmt, ap);
+#else
+  vsnprintf(buffer, sizeof(buffer), fmt, ap);
+#endif
+  buffer[sizeof(buffer)-1] = '\0';
+  va_end(ap);
+#ifdef XP_WIN
+  if (IsDebuggerPresent()) {
+    OutputDebugStringA(buffer);
+  }
+#endif
+  printf("%s", buffer);
+}
+
 static const char* JSVAL2String(JSContext* cx, jsval val, JSBool* isString,
                                 JSAutoByteString *bytes)
 {
     JSAutoRequest ar(cx);
-    const char* value = nsnull;
+    const char* value = nullptr;
     JSString* value_str = JS_ValueToString(cx, val);
     if (value_str)
         value = bytes->encode(cx, value_str);
@@ -68,18 +58,17 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
                            char* buf, int num,
                            JSBool showArgs, JSBool showLocals, JSBool showThisProps)
 {
-    JSPropertyDescArray callProps = {0, nsnull};
-    JSPropertyDescArray thisProps = {0, nsnull};
+    JSPropertyDescArray callProps = {0, nullptr};
+    JSPropertyDescArray thisProps = {0, nullptr};
     JSBool gotThisVal = false;
     jsval thisVal;
-    JSObject* callObj = nsnull;
-    JSString* funname = nsnull;
+    JSObject* callObj = nullptr;
+    JSString* funname = nullptr;
     JSAutoByteString funbytes;
-    const char* filename = nsnull;
-    PRInt32 lineno = 0;
-    JSFunction* fun = nsnull;
+    const char* filename = nullptr;
+    int32_t lineno = 0;
+    JSFunction* fun = nullptr;
     uint32_t namedArgCount = 0;
-    jsval val;
     JSBool isString;
 
     // get the info for this stack frame
@@ -94,7 +83,7 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
 
     if (script && pc) {
         filename = JS_GetScriptFilename(cx, script);
-        lineno =  (PRInt32) JS_PCToLineNumber(cx, script, pc);
+        lineno =  (int32_t) JS_PCToLineNumber(cx, script, pc);
         fun = JS_GetFrameFunction(cx, fp);
         if (fun)
             funname = JS_GetFunctionId(fun);
@@ -103,7 +92,7 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
             callObj = JS_GetFrameCallObject(cx, fp);
             if (callObj)
                 if (!JS_GetPropertyDescArray(cx, callObj, &callProps))
-                    callProps.array = nsnull;  // just to be sure
+                    callProps.array = nullptr;  // just to be sure
         }
 
         gotThisVal = JS_GetFrameThis(cx, fp, &thisVal);
@@ -112,7 +101,7 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
             JSVAL_IS_PRIMITIVE(thisVal) ||
             !JS_GetPropertyDescArray(cx, JSVAL_TO_OBJECT(thisVal),
                                      &thisProps)) {
-            thisProps.array = nsnull;  // just to be sure
+            thisProps.array = nullptr;  // just to be sure
         }
     }
 
@@ -131,32 +120,30 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
     if (showArgs && callObj) {
         for (uint32_t i = 0; i < callProps.length; i++) {
             JSPropertyDesc* desc = &callProps.array[i];
-            if (desc->flags & JSPD_ARGUMENT) {
-                JSAutoByteString nameBytes;
-                const char* name = JSVAL2String(cx, desc->id, &isString, &nameBytes);
-                if (!isString)
-                    name = nsnull;
-                JSAutoByteString valueBytes;
-                const char* value = JSVAL2String(cx, desc->value, &isString, &valueBytes);
+            JSAutoByteString nameBytes;
+            const char* name = JSVAL2String(cx, desc->id, &isString, &nameBytes);
+            if (!isString)
+                name = nullptr;
+            JSAutoByteString valueBytes;
+            const char* value = JSVAL2String(cx, desc->value, &isString, &valueBytes);
 
-                buf = JS_sprintf_append(buf, "%s%s%s%s%s%s",
-                                        namedArgCount ? ", " : "",
-                                        name ? name :"",
-                                        name ? " = " : "",
-                                        isString ? "\"" : "",
-                                        value ? value : "?unknown?",
-                                        isString ? "\"" : "");
-                if (!buf) goto out;
-                namedArgCount++;
-            }
+            buf = JS_sprintf_append(buf, "%s%s%s%s%s%s",
+                                    namedArgCount ? ", " : "",
+                                    name ? name :"",
+                                    name ? " = " : "",
+                                    isString ? "\"" : "",
+                                    value ? value : "?unknown?",
+                                    isString ? "\"" : "");
+            if (!buf) goto out;
+            namedArgCount++;
         }
 
         // print any unnamed trailing args (found in 'arguments' object)
-
+        JS::Value val;
         if (JS_GetProperty(cx, callObj, "arguments", &val) &&
-            JSVAL_IS_OBJECT(val)) {
+            val.isObject()) {
             uint32_t argCount;
-            JSObject* argsObj = JSVAL_TO_OBJECT(val);
+            JSObject* argsObj = &val.toObject();
             if (JS_GetProperty(cx, argsObj, "length", &val) &&
                 JS_ValueToECMAUint32(cx, val, &argCount) &&
                 argCount > namedArgCount) {
@@ -192,20 +179,18 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
     if (showLocals && callProps.array) {
         for (uint32_t i = 0; i < callProps.length; i++) {
             JSPropertyDesc* desc = &callProps.array[i];
-            if (desc->flags & JSPD_VARIABLE) {
-                JSAutoByteString nameBytes;
-                JSAutoByteString valueBytes;
-                const char *name = JSVAL2String(cx, desc->id, nsnull, &nameBytes);
-                const char *value = JSVAL2String(cx, desc->value, &isString, &valueBytes);
+            JSAutoByteString nameBytes;
+            JSAutoByteString valueBytes;
+            const char *name = JSVAL2String(cx, desc->id, nullptr, &nameBytes);
+            const char *value = JSVAL2String(cx, desc->value, &isString, &valueBytes);
 
-                if (name && value) {
-                    buf = JS_sprintf_append(buf, TAB "%s = %s%s%s\n",
-                                            name,
-                                            isString ? "\"" : "",
-                                            value,
-                                            isString ? "\"" : "");
-                    if (!buf) goto out;
-                }
+            if (name && value) {
+                buf = JS_sprintf_append(buf, TAB "%s = %s%s%s\n",
+                                        name,
+                                        isString ? "\"" : "",
+                                        value,
+                                        isString ? "\"" : "");
+                if (!buf) goto out;
             }
         }
     }
@@ -217,7 +202,7 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
             JSString* thisValStr;
             JSAutoByteString thisValBytes;
 
-            if (nsnull != (thisValStr = JS_ValueToString(cx, thisVal)) &&
+            if (nullptr != (thisValStr = JS_ValueToString(cx, thisVal)) &&
                 thisValBytes.encode(cx, thisValStr)) {
                 buf = JS_sprintf_append(buf, TAB "this = %s\n", thisValBytes.ptr());
                 if (!buf) goto out;
@@ -235,7 +220,7 @@ static char* FormatJSFrame(JSContext* cx, JSStackFrame* fp,
             if (desc->flags & JSPD_ENUMERATE) {
                 JSAutoByteString nameBytes;
                 JSAutoByteString valueBytes;
-                const char *name = JSVAL2String(cx, desc->id, nsnull, &nameBytes);
+                const char *name = JSVAL2String(cx, desc->id, nullptr, &nameBytes);
                 const char *value = JSVAL2String(cx, desc->value, &isString, &valueBytes);
                 if (name && value) {
                     buf = JS_sprintf_append(buf, TAB "this.%s = %s%s%s\n",
@@ -262,10 +247,10 @@ static char* FormatJSStackDump(JSContext* cx, char* buf,
                                JSBool showThisProps)
 {
     JSStackFrame* fp;
-    JSStackFrame* iter = nsnull;
+    JSStackFrame* iter = nullptr;
     int num = 0;
 
-    while (nsnull != (fp = JS_FrameIterator(cx, &iter))) {
+    while (nullptr != (fp = JS_FrameIterator(cx, &iter))) {
         buf = FormatJSFrame(cx, fp, buf, num, showArgs, showLocals, showThisProps);
         num++;
     }
@@ -280,7 +265,7 @@ JSBool
 xpc_DumpJSStack(JSContext* cx, JSBool showArgs, JSBool showLocals, JSBool showThisProps)
 {
     if (char* buf = xpc_PrintJSStack(cx, showArgs, showLocals, showThisProps)) {
-        fputs(buf, stdout);
+        DebugDump("%s\n", buf);
         JS_smprintf_free(buf);
     }
     return true;
@@ -293,13 +278,13 @@ xpc_PrintJSStack(JSContext* cx, JSBool showArgs, JSBool showLocals,
     char* buf;
     JSExceptionState *state = JS_SaveExceptionState(cx);
     if (!state)
-        puts("Call to a debug function modifying state!");
+        DebugDump("%s", "Call to a debug function modifying state!\n");
 
     JS_ClearPendingException(cx);
 
-    buf = FormatJSStackDump(cx, nsnull, showArgs, showLocals, showThisProps);
+    buf = FormatJSStackDump(cx, nullptr, showArgs, showLocals, showThisProps);
     if (!buf)
-        puts("Failed to format JavaScript stack for dump");
+        DebugDump("%s", "Failed to format JavaScript stack for dump\n");
 
     JS_RestoreExceptionState(cx, state);
     return buf;
@@ -311,31 +296,31 @@ static void
 xpcDumpEvalErrorReporter(JSContext *cx, const char *message,
                          JSErrorReport *report)
 {
-    printf("Error: %s\n", message);
+    DebugDump("Error: %s\n", message);
 }
 
 JSBool
 xpc_DumpEvalInJSStackFrame(JSContext* cx, uint32_t frameno, const char* text)
 {
     JSStackFrame* fp;
-    JSStackFrame* iter = nsnull;
+    JSStackFrame* iter = nullptr;
     uint32_t num = 0;
 
     if (!cx || !text) {
-        puts("invalid params passed to xpc_DumpEvalInJSStackFrame!");
+        DebugDump("%s", "invalid params passed to xpc_DumpEvalInJSStackFrame!\n");
         return false;
     }
 
-    printf("js[%d]> %s\n", frameno, text);
+    DebugDump("js[%d]> %s\n", frameno, text);
 
-    while (nsnull != (fp = JS_FrameIterator(cx, &iter))) {
+    while (nullptr != (fp = JS_FrameIterator(cx, &iter))) {
         if (num == frameno)
             break;
         num++;
     }
 
     if (!fp) {
-        puts("invalid frame number!");
+        DebugDump("%s", "invalid frame number!\n");
         return false;
     }
 
@@ -348,11 +333,11 @@ xpc_DumpEvalInJSStackFrame(JSContext* cx, uint32_t frameno, const char* text)
     JSString* str;
     JSAutoByteString bytes;
     if (JS_EvaluateInStackFrame(cx, fp, text, strlen(text), "eval", 1, &rval) &&
-        nsnull != (str = JS_ValueToString(cx, rval)) &&
+        nullptr != (str = JS_ValueToString(cx, rval)) &&
         bytes.encode(cx, str)) {
-        printf("%s\n", bytes.ptr());
+        DebugDump("%s\n", bytes.ptr());
     } else
-        puts("eval failed!");
+        DebugDump("%s", "eval failed!\n");
     JS_SetErrorReporter(cx, older);
     JS_RestoreExceptionState(cx, exceptionState);
     return true;
@@ -365,17 +350,17 @@ xpc_DebuggerKeywordHandler(JSContext *cx, JSScript *script, jsbytecode *pc,
                            jsval *rval, void *closure)
 {
     static const char line[] =
-    "------------------------------------------------------------------------";
-    puts(line);
-    puts("Hit JavaScript \"debugger\" keyword. JS call stack...");
+    "------------------------------------------------------------------------\n";
+    DebugDump("%s", line);
+    DebugDump("%s", "Hit JavaScript \"debugger\" keyword. JS call stack...\n");
     xpc_DumpJSStack(cx, true, true, false);
-    puts(line);
+    DebugDump("%s", line);
     return JSTRAP_CONTINUE;
 }
 
 JSBool xpc_InstallJSDebuggerKeywordHandler(JSRuntime* rt)
 {
-    return JS_SetDebuggerHandler(rt, xpc_DebuggerKeywordHandler, nsnull);
+    return JS_SetDebuggerHandler(rt, xpc_DebuggerKeywordHandler, nullptr);
 }
 
 /***************************************************************************/
@@ -417,10 +402,10 @@ static const int tab_width = 2;
 static void PrintObjectBasics(JSObject* obj)
 {
     if (JS_IsNative(obj))
-        printf("%p 'native' <%s>",
-               (void *)obj, js::GetObjectClass(obj)->name);
+        DebugDump("%p 'native' <%s>",
+                  (void *)obj, js::GetObjectClass(obj)->name);
     else
-        printf("%p 'host'", (void *)obj);
+        DebugDump("%p 'host'", (void *)obj);
 }
 
 static void PrintObject(JSObject* obj, int depth, ObjectPile* pile)
@@ -429,13 +414,13 @@ static void PrintObject(JSObject* obj, int depth, ObjectPile* pile)
 
     switch (pile->Visit(obj)) {
     case ObjectPile::primary:
-        puts("");
+        DebugDump("%s", "\n");
         break;
     case ObjectPile::seen:
-        puts(" (SEE ABOVE)");
+        DebugDump("%s", " (SEE ABOVE)\n");
         return;
     case ObjectPile::overflow:
-        puts(" (TOO MANY OBJECTS)");
+        DebugDump("%s", " (TOO MANY OBJECTS)\n");
         return;
     }
 
@@ -445,16 +430,16 @@ static void PrintObject(JSObject* obj, int depth, ObjectPile* pile)
     JSObject* parent = js::GetObjectParent(obj);
     JSObject* proto  = js::GetObjectProto(obj);
 
-    printf("%*sparent: ", INDENT(depth+1));
+    DebugDump("%*sparent: ", INDENT(depth+1));
     if (parent)
         PrintObject(parent, depth+1, pile);
     else
-        puts("null");
-    printf("%*sproto: ", INDENT(depth+1));
+        DebugDump("%s", "null\n");
+    DebugDump("%*sproto: ", INDENT(depth+1));
     if (proto)
         PrintObject(proto, depth+1, pile);
     else
-        puts("null");
+        DebugDump("%s", "null\n");
 }
 
 JSBool
@@ -462,16 +447,16 @@ xpc_DumpJSObject(JSObject* obj)
 {
     ObjectPile pile;
 
-    puts("Debugging reminders...");
-    puts("  class:  (JSClass*)(obj->fslots[2]-1)");
-    puts("  parent: (JSObject*)(obj->fslots[1])");
-    puts("  proto:  (JSObject*)(obj->fslots[0])");
-    puts("");
+    DebugDump("%s", "Debugging reminders...\n");
+    DebugDump("%s", "  class:  (JSClass*)(obj->fslots[2]-1)\n");
+    DebugDump("%s", "  parent: (JSObject*)(obj->fslots[1])\n");
+    DebugDump("%s", "  proto:  (JSObject*)(obj->fslots[0])\n");
+    DebugDump("%s", "\n");
 
     if (obj)
         PrintObject(obj, 0, &pile);
     else
-        puts("xpc_DumpJSObject passed null!");
+        DebugDump("%s", "xpc_DumpJSObject passed null!\n");
 
     return true;
 }
@@ -482,6 +467,6 @@ xpc_PrintAllReferencesTo(void *p)
 {
     /* p must be a JS object */
     XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
-    JS_DumpHeap(rt->GetJSRuntime(), stdout, nsnull, JSTRACE_OBJECT, p, 0x7fffffff, nsnull);
+    JS_DumpHeap(rt->GetJSRuntime(), stdout, nullptr, JSTRACE_OBJECT, p, 0x7fffffff, nullptr);
 }
 #endif

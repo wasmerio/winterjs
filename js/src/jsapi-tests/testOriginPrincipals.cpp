@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "tests.h"
 #include "jsdbgapi.h"
 #include "jsobjinlines.h"
@@ -74,6 +78,7 @@ eval(const char *asciiChars, JSPrincipals *principals, JSPrincipals *originPrinc
         chars[i] = asciiChars[i];
     chars[len] = 0;
 
+    JS::RootedObject global(cx, JS_GetGlobalObject(cx));
     bool ok = JS_EvaluateUCScriptForPrincipalsVersionOrigin(cx, global,
                                                             principals,
                                                             originPrincipals,

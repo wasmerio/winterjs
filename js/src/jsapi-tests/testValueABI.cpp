@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "tests.h"
 
 /*
@@ -25,10 +29,10 @@ C_jsvalAlignmentTest();
 
 BEGIN_TEST(testValueABI_retparam)
 {
-    JSObject* obj = JS_GetGlobalObject(cx);
+    JS::RootedObject obj(cx, JS_GetGlobalObject(cx));
     jsval v = OBJECT_TO_JSVAL(obj);
     obj = NULL;
-    CHECK(C_ValueToObject(cx, v, &obj));
+    CHECK(C_ValueToObject(cx, v, obj.address()));
     JSBool equal;
     CHECK(JS_StrictlyEqual(cx, v, OBJECT_TO_JSVAL(obj), &equal));
     CHECK(equal);

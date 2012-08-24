@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * JS boolean implementation.
@@ -63,7 +30,7 @@
 #include "jsobjinlines.h"
 
 #include "vm/BooleanObject-inl.h"
-#include "vm/MethodGuard-inl.h"
+#include "vm/GlobalObject-inl.h"
 
 using namespace js;
 using namespace js::types;
@@ -79,15 +46,20 @@ Class js::BooleanClass = {
     JS_ConvertStub
 };
 
-#if JS_HAS_TOSOURCE
-static JSBool
-bool_toSource(JSContext *cx, unsigned argc, Value *vp)
+JS_ALWAYS_INLINE bool
+IsBoolean(const Value &v)
 {
-    CallArgs args = CallArgsFromVp(argc, vp);
+    return v.isBoolean() || (v.isObject() && v.toObject().hasClass(&BooleanClass));
+}
 
-    bool b, ok;
-    if (!BoxedPrimitiveMethodGuard(cx, args, bool_toSource, &b, &ok))
-        return ok;
+#if JS_HAS_TOSOURCE
+JS_ALWAYS_INLINE bool
+bool_toSource_impl(JSContext *cx, CallArgs args)
+{
+    const Value &thisv = args.thisv();
+    JS_ASSERT(IsBoolean(thisv));
+
+    bool b = thisv.isBoolean() ? thisv.toBoolean() : thisv.toObject().asBoolean().unbox();
 
     StringBuffer sb(cx);
     if (!sb.append("(new Boolean(") || !BooleanToStringBuffer(cx, b, sb) || !sb.append("))"))
@@ -99,32 +71,49 @@ bool_toSource(JSContext *cx, unsigned argc, Value *vp)
     args.rval().setString(str);
     return true;
 }
-#endif
 
-static JSBool
-bool_toString(JSContext *cx, unsigned argc, Value *vp)
+JSBool
+bool_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
+    return CallNonGenericMethod<IsBoolean, bool_toSource_impl>(cx, args);
+}
+#endif
 
-    bool b, ok;
-    if (!BoxedPrimitiveMethodGuard<bool>(cx, args, bool_toString, &b, &ok))
-        return ok;
+JS_ALWAYS_INLINE bool
+bool_toString_impl(JSContext *cx, CallArgs args)
+{
+    const Value &thisv = args.thisv();
+    JS_ASSERT(IsBoolean(thisv));
 
+    bool b = thisv.isBoolean() ? thisv.toBoolean() : thisv.toObject().asBoolean().unbox();
     args.rval().setString(cx->runtime->atomState.booleanAtoms[b ? 1 : 0]);
     return true;
 }
 
-static JSBool
+JSBool
+bool_toString(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return CallNonGenericMethod<IsBoolean, bool_toString_impl>(cx, args);
+}
+
+JS_ALWAYS_INLINE bool
+bool_valueOf_impl(JSContext *cx, CallArgs args)
+{
+    const Value &thisv = args.thisv();
+    JS_ASSERT(IsBoolean(thisv));
+
+    bool b = thisv.isBoolean() ? thisv.toBoolean() : thisv.toObject().asBoolean().unbox();
+    args.rval().setBoolean(b);
+    return true;
+}
+
+JSBool
 bool_valueOf(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-
-    bool b, ok;
-    if (!BoxedPrimitiveMethodGuard(cx, args, bool_valueOf, &b, &ok))
-        return ok;
-
-    args.rval().setBoolean(b);
-    return true;
+    return CallNonGenericMethod<IsBoolean, bool_valueOf_impl>(cx, args);
 }
 
 static JSFunctionSpec boolean_methods[] = {
@@ -132,7 +121,6 @@ static JSFunctionSpec boolean_methods[] = {
     JS_FN(js_toSource_str,  bool_toSource,  0, 0),
 #endif
     JS_FN(js_toString_str,  bool_toString,  0, 0),
-    JS_FN(js_valueOf_str,   bool_valueOf,   0, 0),
     JS_FS_END
 };
 
@@ -141,7 +129,7 @@ Boolean(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    bool b = args.length() != 0 ? js_ValueToBoolean(args[0]) : false;
+    bool b = args.length() != 0 ? JS::ToBoolean(args[0]) : false;
 
     if (IsConstructing(vp)) {
         JSObject *obj = BooleanObject::create(cx, b);
@@ -159,15 +147,14 @@ js_InitBooleanClass(JSContext *cx, JSObject *obj)
 {
     JS_ASSERT(obj->isNative());
 
-    RootedVar<GlobalObject*> global(cx, &obj->asGlobal());
+    Rooted<GlobalObject*> global(cx, &obj->asGlobal());
 
-    RootedVarObject booleanProto (cx, global->createBlankPrototype(cx, &BooleanClass));
+    RootedObject booleanProto (cx, global->createBlankPrototype(cx, &BooleanClass));
     if (!booleanProto)
         return NULL;
     booleanProto->setFixedSlot(BooleanObject::PRIMITIVE_VALUE_SLOT, BooleanValue(false));
 
-    RootedVarFunction ctor(cx);
-    ctor = global->createConstructor(cx, Boolean, CLASS_ATOM(cx, Boolean), 1);
+    RootedFunction ctor(cx, global->createConstructor(cx, Boolean, CLASS_NAME(cx, Boolean), 1));
     if (!ctor)
         return NULL;
 
@@ -176,6 +163,20 @@ js_InitBooleanClass(JSContext *cx, JSObject *obj)
 
     if (!DefinePropertiesAndBrand(cx, booleanProto, NULL, boolean_methods))
         return NULL;
+
+    Rooted<PropertyName*> valueOfName(cx, cx->runtime->atomState.valueOfAtom);
+    Rooted<JSFunction*> valueOf(cx,
+                                js_NewFunction(cx, NULL, bool_valueOf, 0, 0, global, valueOfName));
+    if (!valueOf)
+        return NULL;
+    RootedValue value(cx, ObjectValue(*valueOf));
+    if (!JSObject::defineProperty(cx, booleanProto, valueOfName, value,
+                                  JS_PropertyStub, JS_StrictPropertyStub, 0))
+    {
+        return NULL;
+    }
+
+    global->setBooleanValueOf(valueOf);
 
     if (!DefineConstructorAndPrototype(cx, global, JSProto_Boolean, ctor, booleanProto))
         return NULL;
@@ -191,24 +192,22 @@ js_BooleanToString(JSContext *cx, JSBool b)
 
 namespace js {
 
+JS_PUBLIC_API(bool)
+ToBooleanSlow(const Value &v)
+{
+    JS_ASSERT(v.isString());
+    return v.toString()->length() != 0;
+}
+
 bool
 BooleanGetPrimitiveValueSlow(JSContext *cx, JSObject &obj, Value *vp)
 {
-    JS_ASSERT(ObjectClassIs(obj, ESClass_Boolean, cx));
-    JS_ASSERT(obj.isProxy());
-
-    /*
-     * To respect the proxy abstraction, we can't simply unwrap and call
-     * getPrimitiveThis on the wrapped object. All we know is that obj says
-     * its [[Class]] is "Boolean". Boolean.prototype.valueOf is specified to
-     * return the [[PrimitiveValue]] internal property, so call that instead.
-     */
     InvokeArgsGuard ag;
     if (!cx->stack.pushInvokeArgs(cx, 0, &ag))
         return false;
-    ag.calleev().setUndefined();
-    ag.thisv().setObject(obj);
-    if (!GetProxyHandler(&obj)->nativeCall(cx, &obj, &BooleanClass, bool_valueOf, ag))
+    ag.setCallee(cx->compartment->maybeGlobal()->booleanValueOf());
+    ag.setThis(ObjectValue(obj));
+    if (!Invoke(cx, ag))
         return false;
     *vp = ag.rval();
     return true;
@@ -216,23 +215,4 @@ BooleanGetPrimitiveValueSlow(JSContext *cx, JSObject &obj, Value *vp)
 
 }  /* namespace js */
 
-JSBool
-js_ValueToBoolean(const Value &v)
-{
-    if (v.isInt32())
-        return v.toInt32() != 0;
-    if (v.isString())
-        return v.toString()->length() != 0;
-    if (v.isObject())
-        return JS_TRUE;
-    if (v.isNullOrUndefined())
-        return JS_FALSE;
-    if (v.isDouble()) {
-        double d;
 
-        d = v.toDouble();
-        return !MOZ_DOUBLE_IS_NaN(d) && d != 0;
-    }
-    JS_ASSERT(v.isBoolean());
-    return v.toBoolean();
-}

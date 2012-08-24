@@ -3,18 +3,23 @@
  *
  * Test script cloning.
  */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 
 #include "tests.h"
 #include "jsdbgapi.h"
 
 BEGIN_TEST(test_cloneScript)
 {
-    JSObject *A, *B;
+    JS::RootedObject A(cx, createGlobal());
+    JS::RootedObject B(cx, createGlobal());
 
-    CHECK(A = createGlobal());
-    CHECK(B = createGlobal());
+    CHECK(A);
+    CHECK(B);
 
-    const char *source = 
+    const char *source =
         "var i = 0;\n"
         "var sum = 0;\n"
         "while (i < 10) {\n"
@@ -23,7 +28,7 @@ BEGIN_TEST(test_cloneScript)
         "}\n"
         "(sum);\n";
 
-    JSObject *obj;
+    JS::RootedObject obj(cx);
 
     // compile for A
     {
@@ -91,15 +96,16 @@ BEGIN_TEST(test_cloneScriptWithPrincipals)
     JSPrincipals *principalsB = new Principals();
     AutoDropPrincipals dropB(rt, principalsB);
 
-    JSObject *A, *B;
+    JS::RootedObject A(cx, createGlobal(principalsA));
+    JS::RootedObject B(cx, createGlobal(principalsB));
 
-    CHECK(A = createGlobal(principalsA));
-    CHECK(B = createGlobal(principalsB));
+    CHECK(A);
+    CHECK(B);
 
     const char *argnames[] = { "arg" };
     const char *source = "return function() { return arg; }";
 
-    JSObject *obj;
+    JS::RootedObject obj(cx);
 
     // Compile in A
     {
@@ -125,7 +131,7 @@ BEGIN_TEST(test_cloneScriptWithPrincipals)
         if (!b.enter(cx, B))
             return false;
 
-        JSObject *cloned;
+        JS::RootedObject cloned(cx);
         CHECK(cloned = JS_CloneFunctionObject(cx, obj, B));
 
         JSFunction *fun;

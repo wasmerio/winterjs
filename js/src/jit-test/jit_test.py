@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 
 # jit_test.py -- Python harness for JavaScript trace tests.
 
@@ -50,6 +54,7 @@ class Test:
         self.slow = False      # True means the test is slow-running
         self.allow_oom = False # True means that OOM is not considered a failure
         self.valgrind = False  # True means run under valgrind
+        self.tz_pacific = False # True means force Pacific time for the test
         self.expect_error = '' # Errors to expect and consider passing
         self.expect_status = 0 # Exit status to expect from shell
 
@@ -59,6 +64,7 @@ class Test:
         t.slow = self.slow
         t.allow_oom = self.allow_oom
         t.valgrind = self.valgrind
+        t.tz_pacific = self.tz_pacific
         t.expect_error = self.expect_error
         t.expect_status = self.expect_status
         return t
@@ -97,12 +103,16 @@ class Test:
                         test.allow_oom = True
                     elif name == 'valgrind':
                         test.valgrind = options.valgrind
+                    elif name == 'tz-pacific':
+                        test.tz_pacific = True
                     elif name == 'mjitalways':
                         test.jitflags.append('-a')
                     elif name == 'debug':
                         test.jitflags.append('-d')
                     elif name == 'mjit':
                         test.jitflags.append('-m')
+                    elif name == 'dump-bytecode':
+                        test.jitflags.append('-D')
                     else:
                         print('warning: unrecognized |jit-test| attribute %s'%part)
 
@@ -218,7 +228,12 @@ def run_test(test, lib_dir, shell_args):
         run = run_cmd_avoid_stdio
     else:
         run = run_cmd
-    out, err, code, timed_out = run(cmd, os.environ, OPTIONS.timeout)
+
+    env = os.environ.copy()
+    if test.tz_pacific:
+        env['TZ'] = 'PST8PDT'
+
+    out, err, code, timed_out = run(cmd, env, OPTIONS.timeout)
 
     if OPTIONS.show_output:
         sys.stdout.write(out)
@@ -244,7 +259,7 @@ def check_output(out, err, rc, test):
     if rc != test.expect_status:
         # Allow a non-zero exit code if we want to allow OOM, but only if we
         # actually got OOM.
-        return test.allow_oom and ': out of memory' in err
+        return test.allow_oom and 'out of memory' in err and 'Assertion failure' not in err
 
     return True
 

@@ -1,39 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is JavaScript Engine testing utilities.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2005
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 //-----------------------------------------------------------------------------
 var BUGNUMBER = 304828;
@@ -61,7 +29,7 @@ reportCompare(expect, actual, summary + ': join');
 
 // reverse
 value  = '123';
-expect = 'TypeError: Array.prototype.reverse.call(value) is read-only';
+expect = 'TypeError: Array.prototype.reverse.call(...) is read-only';
 try
 {
   actual = Array.prototype.reverse.call(value) + '';
@@ -74,7 +42,7 @@ reportCompare(expect, actual, summary + ': reverse');
 
 // sort
 value  = 'cba';
-expect = 'TypeError: Array.prototype.sort.call(value) is read-only';
+expect = 'TypeError: Array.prototype.sort.call(...) is read-only';
 try
 {
   actual = Array.prototype.sort.call(value) + '';
@@ -101,7 +69,7 @@ reportCompare('abc', value, summary + ': push');
 
 // pop
 value  = 'abc';
-expect = "TypeError: property Array.prototype.pop.call(value) is non-configurable and can't be deleted";
+expect = "TypeError: property Array.prototype.pop.call(...) is non-configurable and can't be deleted";
 try
 {
   actual = Array.prototype.pop.call(value);
@@ -115,7 +83,7 @@ reportCompare('abc', value, summary + ': pop');
 
 // unshift
 value  = 'def';
-expect = 'TypeError: Array.prototype.unshift.call(value, "a", "b", "c") is read-only';
+expect = 'TypeError: Array.prototype.unshift.call(...) is read-only';
 try
 {
   actual = Array.prototype.unshift.call(value, 'a', 'b', 'c');
@@ -129,7 +97,7 @@ reportCompare('def', value, summary + ': unshift');
 
 // shift
 value  = 'abc';
-expect = 'TypeError: Array.prototype.shift.call(value) is read-only';
+expect = 'TypeError: Array.prototype.shift.call(...) is read-only';
 try
 {
   actual = Array.prototype.shift.call(value);
@@ -143,7 +111,7 @@ reportCompare('abc', value, summary + ': shift');
 
 // splice
 value  = 'abc';
-expect = 'TypeError: Array.prototype.splice.call(value, 1, 1) is read-only';
+expect = 'TypeError: Array.prototype.splice.call(...) is read-only';
 try
 {
   actual = Array.prototype.splice.call(value, 1, 1) + '';

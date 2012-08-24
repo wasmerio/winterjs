@@ -22,7 +22,7 @@ function test()
   printBugNumber(BUGNUMBER);
   printStatus (summary);
  
-  expect = 'TypeError: [] is not a function';
+  expect = 'TypeError: (intermediate value).__proto__ is not a function';
 
   jit(true);
 

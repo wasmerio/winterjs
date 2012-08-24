@@ -1,62 +1,24 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=78:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey call object code.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Paul Biggar <pbiggar@mozilla.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef ScopeObject_inl_h___
 #define ScopeObject_inl_h___
 
 #include "ScopeObject.h"
 
+#include "jsscriptinlines.h"
+
 namespace js {
 
 inline
 ScopeCoordinate::ScopeCoordinate(jsbytecode *pc)
-  : hops(GET_UINT16(pc)), binding(GET_UINT16(pc + 2))
+  : hops(GET_UINT16(pc)), slot(GET_UINT16(pc + 2))
 {
     JS_ASSERT(JOF_OPTYPE(*pc) == JOF_SCOPECOORD);
-}
-
-inline JSAtom *
-ScopeCoordinateAtom(JSScript *script, jsbytecode *pc)
-{
-    JS_ASSERT(JOF_OPTYPE(*pc) == JOF_SCOPECOORD);
-    return script->getAtom(GET_UINT32_INDEX(pc + 2 * sizeof(uint16_t)));
 }
 
 inline JSObject &
@@ -68,24 +30,26 @@ ScopeObject::enclosingScope() const
 inline bool
 ScopeObject::setEnclosingScope(JSContext *cx, HandleObject obj)
 {
-    RootedVarObject self(cx, this);
+    RootedObject self(cx, this);
     if (!obj->setDelegate(cx))
         return false;
     self->setFixedSlot(SCOPE_CHAIN_SLOT, ObjectValue(*obj));
     return true;
 }
 
-inline StackFrame *
-ScopeObject::maybeStackFrame() const
+inline const Value &
+ScopeObject::aliasedVar(ScopeCoordinate sc)
 {
-    JS_ASSERT(!isStaticBlock());
-    return reinterpret_cast<StackFrame *>(JSObject::getPrivate());
+    JS_ASSERT(isCall() || isClonedBlock());
+    return getSlot(sc.slot);
 }
 
 inline void
-ScopeObject::setStackFrame(StackFrame *frame)
+ScopeObject::setAliasedVar(ScopeCoordinate sc, const Value &v)
 {
-    return setPrivate(frame);
+    JS_ASSERT(isCall() || isClonedBlock());
+    JS_STATIC_ASSERT(CallObject::RESERVED_SLOTS == BlockObject::RESERVED_SLOTS);
+    setSlot(sc.slot, v);
 }
 
 /*static*/ inline size_t
@@ -103,96 +67,22 @@ CallObject::isForEval() const
     return getReservedSlot(CALLEE_SLOT).isNull();
 }
 
-inline void
-CallObject::setCallee(JSObject *callee)
+inline JSFunction &
+CallObject::callee() const
 {
-    JS_ASSERT_IF(callee, callee->isFunction());
-    setFixedSlot(CALLEE_SLOT, ObjectOrNullValue(callee));
-}
-
-inline JSObject *
-CallObject::getCallee() const
-{
-    return getReservedSlot(CALLEE_SLOT).toObjectOrNull();
-}
-
-inline JSFunction *
-CallObject::getCalleeFunction() const
-{
-    return getReservedSlot(CALLEE_SLOT).toObject().toFunction();
+    return *getReservedSlot(CALLEE_SLOT).toObject().toFunction();
 }
 
 inline const Value &
-CallObject::arg(unsigned i) const
+CallObject::aliasedVar(AliasedFormalIter fi)
 {
-    JS_ASSERT(i < getCalleeFunction()->nargs);
-    return getSlot(RESERVED_SLOTS + i);
+    return getSlot(fi.scopeSlot());
 }
 
 inline void
-CallObject::setArg(unsigned i, const Value &v)
+CallObject::setAliasedVar(AliasedFormalIter fi, const Value &v)
 {
-    JS_ASSERT(i < getCalleeFunction()->nargs);
-    setSlot(RESERVED_SLOTS + i, v);
-}
-
-inline void
-CallObject::initArgUnchecked(unsigned i, const Value &v)
-{
-    JS_ASSERT(i < getCalleeFunction()->nargs);
-    initSlotUnchecked(RESERVED_SLOTS + i, v);
-}
-
-inline const Value &
-CallObject::var(unsigned i) const
-{
-    JSFunction *fun = getCalleeFunction();
-    JS_ASSERT(fun->nargs == fun->script()->bindings.numArgs());
-    JS_ASSERT(i < fun->script()->bindings.numVars());
-    return getSlot(RESERVED_SLOTS + fun->nargs + i);
-}
-
-inline void
-CallObject::setVar(unsigned i, const Value &v)
-{
-    JSFunction *fun = getCalleeFunction();
-    JS_ASSERT(fun->nargs == fun->script()->bindings.numArgs());
-    JS_ASSERT(i < fun->script()->bindings.numVars());
-    setSlot(RESERVED_SLOTS + fun->nargs + i, v);
-}
-
-inline void
-CallObject::initVarUnchecked(unsigned i, const Value &v)
-{
-    JSFunction *fun = getCalleeFunction();
-    JS_ASSERT(fun->nargs == fun->script()->bindings.numArgs());
-    JS_ASSERT(i < fun->script()->bindings.numVars());
-    initSlotUnchecked(RESERVED_SLOTS + fun->nargs + i, v);
-}
-
-inline void
-CallObject::copyValues(unsigned nargs, Value *argv, unsigned nvars, Value *slots)
-{
-    JS_ASSERT(slotInRange(RESERVED_SLOTS + nargs + nvars, SENTINEL_ALLOWED));
-    copySlotRange(RESERVED_SLOTS, argv, nargs);
-    copySlotRange(RESERVED_SLOTS + nargs, slots, nvars);
-}
-
-inline HeapSlotArray
-CallObject::argArray()
-{
-    DebugOnly<JSFunction*> fun = getCalleeFunction();
-    JS_ASSERT(hasContiguousSlots(RESERVED_SLOTS, fun->nargs));
-    return HeapSlotArray(getSlotAddress(RESERVED_SLOTS));
-}
-
-inline HeapSlotArray
-CallObject::varArray()
-{
-    JSFunction *fun = getCalleeFunction();
-    JS_ASSERT(hasContiguousSlots(RESERVED_SLOTS + fun->nargs,
-                                 fun->script()->bindings.numVars()));
-    return HeapSlotArray(getSlotAddress(RESERVED_SLOTS + fun->nargs));
+    setSlot(fi.scopeSlot(), v);
 }
 
 inline uint32_t
@@ -219,24 +109,63 @@ BlockObject::slotCount() const
     return propertyCount();
 }
 
-inline HeapSlot &
+inline unsigned
+BlockObject::slotToLocalIndex(const Bindings &bindings, unsigned slot)
+{
+    JS_ASSERT(slot < RESERVED_SLOTS + slotCount());
+    return bindings.numVars() + stackDepth() + (slot - RESERVED_SLOTS);
+}
+
+inline unsigned
+BlockObject::localIndexToSlot(const Bindings &bindings, unsigned i)
+{
+    return RESERVED_SLOTS + (i - (bindings.numVars() + stackDepth()));
+}
+
+inline const Value &
 BlockObject::slotValue(unsigned i)
 {
     JS_ASSERT(i < slotCount());
     return getSlotRef(RESERVED_SLOTS + i);
 }
 
+inline void
+BlockObject::setSlotValue(unsigned i, const Value &v)
+{
+    JS_ASSERT(i < slotCount());
+    setSlot(RESERVED_SLOTS + i, v);
+}
+
+inline void
+StaticBlockObject::initPrevBlockChainFromParser(StaticBlockObject *prev)
+{
+    setReservedSlot(SCOPE_CHAIN_SLOT, ObjectOrNullValue(prev));
+}
+
+inline void
+StaticBlockObject::resetPrevBlockChainFromParser()
+{
+    setReservedSlot(SCOPE_CHAIN_SLOT, UndefinedValue());
+}
+
+inline void
+StaticBlockObject::initEnclosingStaticScope(JSObject *obj)
+{
+    JS_ASSERT(getReservedSlot(SCOPE_CHAIN_SLOT).isUndefined());
+    setReservedSlot(SCOPE_CHAIN_SLOT, ObjectOrNullValue(obj));
+}
+
 inline StaticBlockObject *
 StaticBlockObject::enclosingBlock() const
 {
     JSObject *obj = getReservedSlot(SCOPE_CHAIN_SLOT).toObjectOrNull();
-    return obj ? &obj->asStaticBlock() : NULL;
+    return obj && obj->isStaticBlock() ? &obj->asStaticBlock() : NULL;
 }
 
-inline void
-StaticBlockObject::setEnclosingBlock(StaticBlockObject *blockObj)
+inline JSObject *
+StaticBlockObject::enclosingStaticScope() const
 {
-    setFixedSlot(SCOPE_CHAIN_SLOT, ObjectOrNullValue(blockObj));
+    return getReservedSlot(SCOPE_CHAIN_SLOT).toObjectOrNull();
 }
 
 inline void
@@ -247,29 +176,40 @@ StaticBlockObject::setStackDepth(uint32_t depth)
 }
 
 inline void
-StaticBlockObject::setDefinitionParseNode(unsigned i, Definition *def)
+StaticBlockObject::setDefinitionParseNode(unsigned i, frontend::Definition *def)
 {
     JS_ASSERT(slotValue(i).isUndefined());
-    slotValue(i).init(this, i, PrivateValue(def));
+    setSlotValue(i, PrivateValue(def));
 }
 
-inline Definition *
+inline frontend::Definition *
 StaticBlockObject::maybeDefinitionParseNode(unsigned i)
 {
     Value v = slotValue(i);
-    return v.isUndefined() ? NULL : reinterpret_cast<Definition *>(v.toPrivate());
+    return v.isUndefined() ? NULL : reinterpret_cast<frontend::Definition *>(v.toPrivate());
 }
 
 inline void
 StaticBlockObject::setAliased(unsigned i, bool aliased)
 {
-    slotValue(i).init(this, i, BooleanValue(aliased));
+    JS_ASSERT_IF(i > 0, slotValue(i-1).isBoolean());
+    setSlotValue(i, BooleanValue(aliased));
+    if (aliased && !needsClone()) {
+        setSlotValue(0, MagicValue(JS_BLOCK_NEEDS_CLONE));
+        JS_ASSERT(needsClone());
+    }
 }
 
 inline bool
 StaticBlockObject::isAliased(unsigned i)
 {
     return slotValue(i).isTrue();
+}
+
+inline bool
+StaticBlockObject::needsClone()
+{
+    return !slotValue(0).isFalse();
 }
 
 inline bool
@@ -285,10 +225,17 @@ ClonedBlockObject::staticBlock() const
 }
 
 inline const Value &
-ClonedBlockObject::closedSlot(unsigned i)
+ClonedBlockObject::var(unsigned i, MaybeCheckAliasing checkAliasing)
 {
-    JS_ASSERT(!maybeStackFrame());
+    JS_ASSERT_IF(checkAliasing, staticBlock().isAliased(i));
     return slotValue(i);
+}
+
+inline void
+ClonedBlockObject::setVar(unsigned i, const Value &v, MaybeCheckAliasing checkAliasing)
+{
+    JS_ASSERT_IF(checkAliasing, staticBlock().isAliased(i));
+    setSlotValue(i, v);
 }
 
 }  /* namespace js */
@@ -347,6 +294,13 @@ JSObject::asClonedBlock()
 {
     JS_ASSERT(isClonedBlock());
     return *static_cast<js::ClonedBlockObject *>(this);
+}
+
+inline js::DebugScopeObject &
+JSObject::asDebugScope()
+{
+    JS_ASSERT(isDebugScope());
+    return *static_cast<js::DebugScopeObject *>(this);
 }
 
 #endif /* CallObject_inl_h___ */

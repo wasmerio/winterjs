@@ -1,44 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=80:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Robert Ginda <rginda@netscape.com>
- *   Kris Maglione <maglione.k@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozJSSubScriptLoader.h"
 #include "mozJSLoaderUtils.h"
@@ -86,7 +51,7 @@ using namespace mozilla::scache;
 extern void
 mozJSLoaderErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep);
 
-mozJSSubScriptLoader::mozJSSubScriptLoader() : mSystemPrincipal(nsnull)
+mozJSSubScriptLoader::mozJSSubScriptLoader() : mSystemPrincipal(nullptr)
 {
 }
 
@@ -118,7 +83,7 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *target_ob
     // Instead of calling NS_OpenURI, we create the channel ourselves and call
     // SetContentType, to avoid expensive MIME type lookups (bug 632490).
     rv = NS_NewChannel(getter_AddRefs(chan), uri, serv,
-                       nsnull, nsnull, nsIRequest::LOAD_NORMAL);
+                       nullptr, nullptr, nsIRequest::LOAD_NORMAL);
     if (NS_SUCCEEDED(rv)) {
         chan->SetContentType(NS_LITERAL_CSTRING("application/javascript"));
         rv = chan->Open(getter_AddRefs(instream));
@@ -128,7 +93,7 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *target_ob
         return ReportError(cx, LOAD_ERROR_NOSTREAM);
     }
 
-    PRInt32 len = -1;
+    int32_t len = -1;
 
     rv = chan->GetContentLength(&len);
     if (NS_FAILED(rv) || len == -1) {
@@ -144,22 +109,24 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *target_ob
      * exceptions, including the source/line number */
     er = JS_SetErrorReporter(cx, mozJSLoaderErrorReporter);
 
+    JS::CompileOptions options(cx);
+    options.setPrincipals(nsJSPrincipals::get(principal))
+           .setFileAndLine(uriStr, 1)
+           .setSourcePolicy(JS::CompileOptions::LAZY_SOURCE);
+    JS::RootedObject target_obj_root(cx, target_obj);
     if (!charset.IsVoid()) {
         nsString script;
-        rv = nsScriptLoader::ConvertToUTF16(nsnull, reinterpret_cast<const PRUint8*>(buf.get()), len,
-                                            charset, nsnull, script);
+        rv = nsScriptLoader::ConvertToUTF16(nullptr, reinterpret_cast<const uint8_t*>(buf.get()), len,
+                                            charset, nullptr, script);
 
         if (NS_FAILED(rv)) {
             return ReportError(cx, LOAD_ERROR_BADCHARSET);
         }
 
-        *scriptp =
-            JS_CompileUCScriptForPrincipals(cx, target_obj, nsJSPrincipals::get(principal),
-                                            reinterpret_cast<const jschar*>(script.get()),
-                                            script.Length(), uriStr, 1);
+        *scriptp = JS::Compile(cx, target_obj_root, options,
+                               reinterpret_cast<const jschar*>(script.get()), script.Length());
     } else {
-        *scriptp = JS_CompileScriptForPrincipals(cx, target_obj, nsJSPrincipals::get(principal),
-                                                 buf.get(), len, uriStr, 1);
+        *scriptp = JS::Compile(cx, target_obj_root, options, buf.get(), len);
     }
 
     /* repent for our evil deeds */
@@ -218,7 +185,7 @@ mozJSSubScriptLoader::LoadSubScript(const nsAString& url,
         nsCOMPtr<nsIXPConnect> xpc = do_GetService(nsIXPConnect::GetCID());
         NS_ENSURE_TRUE(xpc, NS_ERROR_FAILURE);
 
-        nsAXPCNativeCallContext *cc = nsnull;
+        nsAXPCNativeCallContext *cc = nullptr;
         rv = xpc->GetCurrentNativeCallContext(&cc);
         NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
@@ -260,10 +227,10 @@ mozJSSubScriptLoader::LoadSubScript(const nsAString& url,
     nsCAutoString uriStr;
     nsCAutoString scheme;
 
-    JSScript* script = nsnull;
+    JSScript* script = nullptr;
 
     // Figure out who's calling us
-    if (!JS_DescribeScriptedCaller(cx, &script, nsnull)) {
+    if (!JS_DescribeScriptedCaller(cx, &script, nullptr)) {
         // No scripted frame means we don't know who's calling, bail.
         return NS_ERROR_FAILURE;
     }
@@ -271,7 +238,7 @@ mozJSSubScriptLoader::LoadSubScript(const nsAString& url,
     // Suppress caching if we're compiling as content.
     StartupCache* cache = (principal == mSystemPrincipal)
                           ? StartupCache::GetSingleton()
-                          : nsnull;
+                          : nullptr;
     nsCOMPtr<nsIIOService> serv = do_GetService(NS_IOSERVICE_CONTRACTID);
     if (!serv) {
         return ReportError(cx, LOAD_ERROR_NOSERVICE);
@@ -279,7 +246,7 @@ mozJSSubScriptLoader::LoadSubScript(const nsAString& url,
 
     // Make sure to explicitly create the URI, since we'll need the
     // canonicalized spec.
-    rv = NS_NewURI(getter_AddRefs(uri), NS_LossyConvertUTF16toASCII(url).get(), nsnull, serv);
+    rv = NS_NewURI(getter_AddRefs(uri), NS_LossyConvertUTF16toASCII(url).get(), nullptr, serv);
     if (NS_FAILED(rv)) {
         return ReportError(cx, LOAD_ERROR_NOURI);
     }
@@ -317,7 +284,7 @@ mozJSSubScriptLoader::LoadSubScript(const nsAString& url,
     cachePath.AppendPrintf("jssubloader/%d", version);
     PathifyURI(uri, cachePath);
 
-    script = nsnull;
+    script = nullptr;
     if (cache)
         rv = ReadCachedScript(cache, cachePath, cx, mSystemPrincipal, &script);
     if (!script) {

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "tests.h"
 #include "jsatom.h"
 
@@ -9,7 +13,7 @@ BEGIN_TEST(testAtomizedIsNotInterned)
 {
     /* Try to pick a string that won't be interned by other tests in this runtime. */
     static const char someChars[] = "blah blah blah? blah blah blah";
-    JSAtom *atom = js_Atomize(cx, someChars, ArrayLength(someChars));
+    JSAtom *atom = js::Atomize(cx, someChars, ArrayLength(someChars));
     CHECK(!JS_StringHasBeenInterned(cx, atom));
     CHECK(JS_InternJSString(cx, atom));
     CHECK(JS_StringHasBeenInterned(cx, atom));
@@ -24,7 +28,7 @@ struct StringWrapper
 } sw;
 
 void
-FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status)
+FinalizeCallback(JSFreeOp *fop, JSFinalizeStatus status, JSBool isCompartmentGC)
 {
     if (status == JSFINALIZE_START)
         sw.strOk = !JS_IsAboutToBeFinalized(sw.str);

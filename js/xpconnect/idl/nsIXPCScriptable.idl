@@ -1,68 +1,11 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsISupports.idl"
 #include "nsIXPConnect.idl"
-
-%{ C++
-#define NS_SUCCESS_I_DID_SOMETHING \
-   (NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCONNECT,1))
-
-/**
- * Classes that want to only be touched by chrome (or from code whose filename
- * begins with chrome://global/) shoudl return this from their scriptable
- * helper's PreCreate hook.
- */
-#define NS_SUCCESS_CHROME_ACCESS_ONLY \
-   (NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCONNECT,2))
-
-/**
- * Classes that want slim wrappers should return NS_SUCCESS_ALLOW_SLIM_WRAPPERS
- * from their scriptable helper's PreCreate hook. They must also force a parent
- * for their wrapper (from the PreCreate hook), they must implement
- * nsWrapperCache and their scriptable helper must implement nsXPCClassInfo and
- * must return DONT_ASK_INSTANCE_FOR_SCRIPTABLE in the flags.
- */
-#define NS_SUCCESS_ALLOW_SLIM_WRAPPERS \
-   (NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCONNECT,3))
-%}
 
 /**
  * Note: This is not really an XPCOM interface.  For example, callers must
@@ -71,50 +14,50 @@
  * to *_retval unless they want to return PR_FALSE.
  */
 
-[uuid(fca22e1e-a2bf-456e-83db-f73e8de0f7c5)]
+[uuid(c4788e02-3239-490a-8aeb-60fad08303fd)]
 interface nsIXPCScriptable : nsISupports
 {
     /* bitflags used for 'flags' (only 32 bits available!) */
 
-    const PRUint32 WANT_PRECREATE                   = 1 <<  0;
-    const PRUint32 WANT_CREATE                      = 1 <<  1;
-    const PRUint32 WANT_POSTCREATE                  = 1 <<  2;
-    const PRUint32 WANT_ADDPROPERTY                 = 1 <<  3;
-    const PRUint32 WANT_DELPROPERTY                 = 1 <<  4;
-    const PRUint32 WANT_GETPROPERTY                 = 1 <<  5;
-    const PRUint32 WANT_SETPROPERTY                 = 1 <<  6;
-    const PRUint32 WANT_ENUMERATE                   = 1 <<  7;
-    const PRUint32 WANT_NEWENUMERATE                = 1 <<  8;
-    const PRUint32 WANT_NEWRESOLVE                  = 1 <<  9;
-    const PRUint32 WANT_CONVERT                     = 1 << 10;
-    const PRUint32 WANT_FINALIZE                    = 1 << 11;
-    const PRUint32 WANT_CHECKACCESS                 = 1 << 12;
-    const PRUint32 WANT_CALL                        = 1 << 13;
-    const PRUint32 WANT_CONSTRUCT                   = 1 << 14;
-    const PRUint32 WANT_HASINSTANCE                 = 1 << 15;
+    const uint32_t WANT_PRECREATE                   = 1 <<  0;
+    const uint32_t WANT_CREATE                      = 1 <<  1;
+    const uint32_t WANT_POSTCREATE                  = 1 <<  2;
+    const uint32_t WANT_ADDPROPERTY                 = 1 <<  3;
+    const uint32_t WANT_DELPROPERTY                 = 1 <<  4;
+    const uint32_t WANT_GETPROPERTY                 = 1 <<  5;
+    const uint32_t WANT_SETPROPERTY                 = 1 <<  6;
+    const uint32_t WANT_ENUMERATE                   = 1 <<  7;
+    const uint32_t WANT_NEWENUMERATE                = 1 <<  8;
+    const uint32_t WANT_NEWRESOLVE                  = 1 <<  9;
+    const uint32_t WANT_CONVERT                     = 1 << 10;
+    const uint32_t WANT_FINALIZE                    = 1 << 11;
+    const uint32_t WANT_CHECKACCESS                 = 1 << 12;
+    const uint32_t WANT_CALL                        = 1 << 13;
+    const uint32_t WANT_CONSTRUCT                   = 1 << 14;
+    const uint32_t WANT_HASINSTANCE                 = 1 << 15;
     // Unused bit here!
-    const PRUint32 USE_JSSTUB_FOR_ADDPROPERTY       = 1 << 17;
-    const PRUint32 USE_JSSTUB_FOR_DELPROPERTY       = 1 << 18;
-    const PRUint32 USE_JSSTUB_FOR_SETPROPERTY       = 1 << 19;
-    const PRUint32 DONT_ENUM_STATIC_PROPS           = 1 << 20;
-    const PRUint32 DONT_ENUM_QUERY_INTERFACE        = 1 << 21;
-    const PRUint32 DONT_ASK_INSTANCE_FOR_SCRIPTABLE = 1 << 22;
-    const PRUint32 CLASSINFO_INTERFACES_ONLY        = 1 << 23;
-    const PRUint32 ALLOW_PROP_MODS_DURING_RESOLVE   = 1 << 24;
-    const PRUint32 ALLOW_PROP_MODS_TO_PROTOTYPE     = 1 << 25;
-    const PRUint32 IS_GLOBAL_OBJECT                 = 1 << 26;
-    const PRUint32 DONT_REFLECT_INTERFACE_NAMES     = 1 << 27;
-    const PRUint32 WANT_EQUALITY                    = 1 << 28;
-    const PRUint32 WANT_OUTER_OBJECT                = 1 << 29;
-    const PRUint32 USE_STUB_EQUALITY_HOOK           = 1 << 30;
+    const uint32_t USE_JSSTUB_FOR_ADDPROPERTY       = 1 << 17;
+    const uint32_t USE_JSSTUB_FOR_DELPROPERTY       = 1 << 18;
+    const uint32_t USE_JSSTUB_FOR_SETPROPERTY       = 1 << 19;
+    const uint32_t DONT_ENUM_STATIC_PROPS           = 1 << 20;
+    const uint32_t DONT_ENUM_QUERY_INTERFACE        = 1 << 21;
+    const uint32_t DONT_ASK_INSTANCE_FOR_SCRIPTABLE = 1 << 22;
+    const uint32_t CLASSINFO_INTERFACES_ONLY        = 1 << 23;
+    const uint32_t ALLOW_PROP_MODS_DURING_RESOLVE   = 1 << 24;
+    const uint32_t ALLOW_PROP_MODS_TO_PROTOTYPE     = 1 << 25;
+    const uint32_t IS_GLOBAL_OBJECT                 = 1 << 26;
+    const uint32_t DONT_REFLECT_INTERFACE_NAMES     = 1 << 27;
+    const uint32_t WANT_EQUALITY                    = 1 << 28;
+    const uint32_t WANT_OUTER_OBJECT                = 1 << 29;
+    const uint32_t USE_STUB_EQUALITY_HOOK           = 1 << 30;
 
     // The high order bit is RESERVED for consumers of these flags. 
     // No implementor of this interface should ever return flags 
     // with this bit set.
-    const PRUint32 RESERVED                         = 1 << 31;
+    const uint32_t RESERVED                         = 1 << 31;
 
     readonly attribute string   className;
-    readonly attribute PRUint32 scriptableFlags;
+    [notxpcom,nostdcall] uint32_t getScriptableFlags();
 
     void   preCreate(in nsISupports nativeObj, in JSContextPtr cx,
                      in JSObjectPtr globalObj, out JSObjectPtr parentObj);
@@ -122,8 +65,15 @@ interface nsIXPCScriptable : nsISupports
     void   create(in nsIXPConnectWrappedNative wrapper,
                   in JSContextPtr cx, in JSObjectPtr obj);
 
+    // Both methods here are protected by WANT_POSTCREATE. If you want to do
+    // something after a wrapper is created, there's a good chance you also
+    // want to do something when the wrapper is transplanted to a new
+    // compartment.
     void   postCreate(in nsIXPConnectWrappedNative wrapper,
                       in JSContextPtr cx, in JSObjectPtr obj);
+
+    void postTransplant(in nsIXPConnectWrappedNative wrapper,
+                        in JSContextPtr cx, in JSObjectPtr obj);
 
     boolean addProperty(in nsIXPConnectWrappedNative wrapper,
                        in JSContextPtr cx, in JSObjectPtr obj, in jsid id,
@@ -150,30 +100,30 @@ interface nsIXPCScriptable : nsISupports
 
     boolean newEnumerate(in nsIXPConnectWrappedNative wrapper,
                         in JSContextPtr cx, in JSObjectPtr obj,
-                        in PRUint32 enum_op, in JSValPtr statep, out jsid idp);
+                        in uint32_t enum_op, in JSValPtr statep, out jsid idp);
 
     boolean newResolve(in nsIXPConnectWrappedNative wrapper,
                       in JSContextPtr cx, in JSObjectPtr obj, in jsid id,
-                      in PRUint32 flags, out JSObjectPtr objp);
+                      in uint32_t flags, out JSObjectPtr objp);
 
     boolean convert(in nsIXPConnectWrappedNative wrapper,
                    in JSContextPtr cx, in JSObjectPtr obj,
-                   in PRUint32 type, in JSValPtr vp);
+                   in uint32_t type, in JSValPtr vp);
 
     void   finalize(in nsIXPConnectWrappedNative wrapper,
                     in JSFreeOpPtr fop, in JSObjectPtr obj);
 
     boolean checkAccess(in nsIXPConnectWrappedNative wrapper,
                        in JSContextPtr cx, in JSObjectPtr obj, in jsid id,
-                       in PRUint32 mode, in JSValPtr vp);
+                       in uint32_t mode, in JSValPtr vp);
 
     boolean call(in nsIXPConnectWrappedNative wrapper,
                 in JSContextPtr cx, in JSObjectPtr obj,
-                in PRUint32 argc, in JSValPtr argv, in JSValPtr vp);
+                in uint32_t argc, in JSValPtr argv, in JSValPtr vp);
 
     boolean construct(in nsIXPConnectWrappedNative wrapper,
                      in JSContextPtr cx, in JSObjectPtr obj,
-                     in PRUint32 argc, in JSValPtr argv, in JSValPtr vp);
+                     in uint32_t argc, in JSValPtr argv, in JSValPtr vp);
 
     boolean hasInstance(in nsIXPConnectWrappedNative wrapper,
                        in JSContextPtr cx, in JSObjectPtr obj,
@@ -207,7 +157,7 @@ public:
 
   virtual void PreserveWrapper(nsISupports *aNative) = 0;
 
-  virtual PRUint32 GetInterfacesBitmap() = 0;
+  virtual uint32_t GetInterfacesBitmap() = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsXPCClassInfo, NS_XPCCLASSINFO_IID)

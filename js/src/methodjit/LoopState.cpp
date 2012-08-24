@@ -1,40 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "methodjit/Compiler.h"
 #include "methodjit/LoopState.h"
@@ -157,7 +126,7 @@ LoopState::init(jsbytecode *head, Jump entry, jsbytecode *entryTarget)
     RegisterAllocation *&alloc = outerAnalysis->getAllocation(head);
     JS_ASSERT(!alloc);
 
-    alloc = cx->typeLifoAlloc().new_<RegisterAllocation>(true);
+    alloc = cx->analysisLifoAlloc().new_<RegisterAllocation>(true);
     if (!alloc) {
         js_ReportOutOfMemory(cx);
         return false;
@@ -171,7 +140,7 @@ LoopState::init(jsbytecode *head, Jump entry, jsbytecode *entryTarget)
      * had indirect modification of their arguments.
      */
     if (outerScript->function()) {
-        if (TypeSet::HasObjectFlags(cx, outerScript->function()->getType(cx), OBJECT_FLAG_UNINLINEABLE))
+        if (HeapTypeSet::HasObjectFlags(cx, outerScript->function()->getType(cx), OBJECT_FLAG_UNINLINEABLE))
             this->skipAnalysis = true;
     }
 
@@ -809,10 +778,10 @@ LoopState::invariantLength(const CrossSSAValue &obj)
     int32_t objConstant;
     if (!getEntryValue(obj, &objSlot, &objConstant) || objSlot == UNASSIGNED || objConstant != 0)
         return NULL;
-    TypeSet *objTypes = ssa->getValueTypes(obj);
+    StackTypeSet *objTypes = ssa->getValueTypes(obj);
 
     /* Check for 'length' on the lazy arguments for the current frame. */
-    if (objTypes->isMagicArguments(cx)) {
+    if (objTypes->isMagicArguments()) {
         JS_ASSERT(obj.frame == CrossScriptSSA::OUTER_FRAME);
 
         for (unsigned i = 0; i < invariantEntries.length(); i++) {
@@ -855,9 +824,6 @@ LoopState::invariantLength(const CrossSSAValue &obj)
 
     /* Hoist 'length' access on typed arrays. */
     if (!objTypes->hasObjectFlags(cx, OBJECT_FLAG_NON_TYPED_ARRAY)) {
-        /* Recompile if object type changes. */
-        objTypes->addFreeze(cx);
-
         uint32_t which = frame.allocTemporary();
         if (which == UINT32_MAX)
             return NULL;
@@ -892,7 +858,6 @@ LoopState::invariantLength(const CrossSSAValue &obj)
         if (object && hasModifiedProperty(object, JSID_VOID))
             return NULL;
     }
-    objTypes->addFreeze(cx);
 
     uint32_t which = frame.allocTemporary();
     if (which == UINT32_MAX)
@@ -917,7 +882,7 @@ LoopState::invariantProperty(const CrossSSAValue &obj, jsid id)
     if (skipAnalysis)
         return NULL;
 
-    if (id == ATOM_TO_JSID(cx->runtime->atomState.lengthAtom))
+    if (id == NameToId(cx->runtime->atomState.lengthAtom))
         return NULL;
 
     uint32_t objSlot;
@@ -944,12 +909,11 @@ LoopState::invariantProperty(const CrossSSAValue &obj, jsid id)
     TypeObject *object = objTypes->getTypeObject(0);
     if (!object || object->unknownProperties() || hasModifiedProperty(object, id) || id != MakeTypeId(cx, id))
         return NULL;
-    TypeSet *propertyTypes = object->getProperty(cx, id, false);
+    HeapTypeSet *propertyTypes = object->getProperty(cx, id, false);
     if (!propertyTypes)
         return NULL;
-    if (!propertyTypes->isDefiniteProperty() || propertyTypes->isOwnProperty(cx, object, true))
+    if (!propertyTypes->definiteProperty() || propertyTypes->isOwnProperty(cx, object, true))
         return NULL;
-    objTypes->addFreeze(cx);
 
     uint32_t which = frame.allocTemporary();
     if (which == UINT32_MAX)
@@ -1209,8 +1173,8 @@ LoopState::ignoreIntegerOverflow(const CrossSSAValue &pushed)
             return false;
         }
 
-        TypeSet *lhsTypes = outerAnalysis->poppedTypes(use->offset, 1);
-        if (lhsTypes->getKnownTypeTag(cx) != JSVAL_TYPE_INT32)
+        StackTypeSet *lhsTypes = outerAnalysis->poppedTypes(use->offset, 1);
+        if (lhsTypes->getKnownTypeTag() != JSVAL_TYPE_INT32)
             return false;
 
         JaegerSpew(JSpew_Analysis, "Integer result is RHS in integer addition\n");
@@ -1602,8 +1566,8 @@ LoopState::analyzeLoopTest()
     SSAValue two = outerAnalysis->poppedValue(test.pushedOffset(), 0);
 
     /* The test must be comparing known integers. */
-    if (outerAnalysis->getValueTypes(one)->getKnownTypeTag(cx) != JSVAL_TYPE_INT32 ||
-        outerAnalysis->getValueTypes(two)->getKnownTypeTag(cx) != JSVAL_TYPE_INT32) {
+    if (outerAnalysis->getValueTypes(one)->getKnownTypeTag() != JSVAL_TYPE_INT32 ||
+        outerAnalysis->getValueTypes(two)->getKnownTypeTag() != JSVAL_TYPE_INT32) {
         return;
     }
 
@@ -1706,11 +1670,11 @@ LoopState::definiteArrayAccess(const SSAValue &obj, const SSAValue &index)
      * other value by which the overflow could be observed.
      */
 
-    TypeSet *objTypes = outerAnalysis->getValueTypes(obj);
-    TypeSet *elemTypes = outerAnalysis->getValueTypes(index);
+    StackTypeSet *objTypes = outerAnalysis->getValueTypes(obj);
+    StackTypeSet *elemTypes = outerAnalysis->getValueTypes(index);
 
-    if (objTypes->getKnownTypeTag(cx) != JSVAL_TYPE_OBJECT ||
-        elemTypes->getKnownTypeTag(cx) != JSVAL_TYPE_INT32) {
+    if (objTypes->getKnownTypeTag() != JSVAL_TYPE_OBJECT ||
+        elemTypes->getKnownTypeTag() != JSVAL_TYPE_INT32) {
         return false;
     }
 
@@ -1832,19 +1796,18 @@ LoopState::analyzeLoopBody(unsigned frame)
             SSAValue objValue = analysis->poppedValue(pc, 2);
             SSAValue elemValue = analysis->poppedValue(pc, 1);
 
-            TypeSet *objTypes = analysis->getValueTypes(objValue);
-            TypeSet *elemTypes = analysis->getValueTypes(elemValue);
+            StackTypeSet *objTypes = analysis->getValueTypes(objValue);
+            StackTypeSet *elemTypes = analysis->getValueTypes(elemValue);
 
             /*
              * Mark the modset as unknown if the index might be non-integer,
              * we don't want to consider the SETELEM PIC here.
              */
-            if (objTypes->unknownObject() || elemTypes->getKnownTypeTag(cx) != JSVAL_TYPE_INT32) {
+            if (objTypes->unknownObject() || elemTypes->getKnownTypeTag() != JSVAL_TYPE_INT32) {
                 unknownModset = true;
                 break;
             }
 
-            objTypes->addFreeze(cx);
             for (unsigned i = 0; i < objTypes->getObjectCount(); i++) {
                 TypeObject *object = objTypes->getTypeObject(i);
                 if (!object)
@@ -1870,8 +1833,8 @@ LoopState::analyzeLoopBody(unsigned frame)
           }
 
           case JSOP_SETPROP: {
-            JSAtom *atom = script->getAtom(GET_UINT32_INDEX(pc));
-            jsid id = MakeTypeId(cx, ATOM_TO_JSID(atom));
+            PropertyName *name = script->getName(GET_UINT32_INDEX(pc));
+            jsid id = MakeTypeId(cx, NameToId(name));
 
             TypeSet *objTypes = analysis->poppedTypes(pc, 1);
             if (objTypes->unknownObject()) {
@@ -1879,7 +1842,6 @@ LoopState::analyzeLoopBody(unsigned frame)
                 break;
             }
 
-            objTypes->addFreeze(cx);
             for (unsigned i = 0; i < objTypes->getObjectCount(); i++) {
                 TypeObject *object = objTypes->getTypeObject(i);
                 if (!object)
@@ -1947,7 +1909,7 @@ LoopState::analyzeLoopBody(unsigned frame)
           case JSOP_GE:
           case JSOP_STRICTEQ:
           case JSOP_STRICTNE: {
-            JSValueType type = analysis->poppedTypes(pc, 1)->getKnownTypeTag(cx);
+            JSValueType type = analysis->poppedTypes(pc, 1)->getKnownTypeTag();
             if (type != JSVAL_TYPE_INT32 && type != JSVAL_TYPE_DOUBLE)
                 constrainedLoop = false;
           }
@@ -1956,7 +1918,7 @@ LoopState::analyzeLoopBody(unsigned frame)
           case JSOP_POS:
           case JSOP_NEG:
           case JSOP_BITNOT: {
-            JSValueType type = analysis->poppedTypes(pc, 0)->getKnownTypeTag(cx);
+            JSValueType type = analysis->poppedTypes(pc, 0)->getKnownTypeTag();
             if (type != JSVAL_TYPE_INT32 && type != JSVAL_TYPE_DOUBLE)
                 constrainedLoop = false;
             break;
@@ -2184,8 +2146,8 @@ LoopState::getEntryValue(const CrossSSAValue &iv, uint32_t *pslot, int32_t *pcon
       }
 
       case JSOP_GETPROP: {
-        JSAtom *atom = script->getAtom(GET_UINT32_INDEX(pc));
-        jsid id = ATOM_TO_JSID(atom);
+        PropertyName *name = script->getName(GET_UINT32_INDEX(pc));
+        jsid id = NameToId(name);
         CrossSSAValue objcv(cv.frame, analysis->poppedValue(v.pushedOffset(), 0));
         FrameEntry *tmp = invariantProperty(objcv, id);
         if (!tmp)

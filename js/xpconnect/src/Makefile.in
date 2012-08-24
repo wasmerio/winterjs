@@ -1,43 +1,9 @@
 #
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is Mozilla Communicator client code, released
-# March 31, 1998.
-#
-# The Initial Developer of the Original Code is
-# Netscape Communications Corporation.
-# Portions created by the Initial Developer are Copyright (C) 1998
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   John Bandhauer <jband@netscape.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= ../../..
+DEPTH		= @DEPTH@
 topsrcdir	= @top_srcdir@
 srcdir		= @srcdir@
 VPATH		= @srcdir@
@@ -50,9 +16,13 @@ LIBRARY_NAME    = xpconnect_s
 FORCE_STATIC_LIB = 1
 LIBXUL_LIBRARY = 1
 EXPORTS = \
+		qsObjectHelper.h \
+		xpcObjectHelper.h \
 		xpcpublic.h \
+		XPCJSMemoryReporter.h \
 		dombindings.h \
-		dombindings_gen.h
+		dombindings_gen.h \
+		GeneratedEvents.h
 
 CPPSRCS		= \
 		nsScriptError.cpp \
@@ -72,7 +42,7 @@ CPPSRCS		= \
 		XPCRuntimeService.cpp  \
 		XPCStack.cpp \
 		XPCString.cpp \
-		XPCThreadContext.cpp \
+		XPCJSContextStack.cpp \
 		XPCThrower.cpp \
 		XPCWrappedJS.cpp \
 		XPCVariant.cpp \
@@ -88,6 +58,7 @@ CPPSRCS		= \
 		dom_quickstubs.cpp \
 		dombindings.cpp \
 		DictionaryHelpers.cpp \
+		GeneratedEvents.cpp \
 		$(NULL)
 
 include $(topsrcdir)/config/config.mk
@@ -147,15 +118,14 @@ dom_quickstubs.h: dom_quickstubs.cpp
 
 dom_quickstubs.cpp: $(srcdir)/dom_quickstubs.qsconf \
                     $(srcdir)/qsgen.py \
-                    $(topsrcdir)/xpcom/idl-parser/header.py \
-                    $(topsrcdir)/xpcom/idl-parser/xpidl.py \
+                    $(LIBXUL_DIST)/sdk/bin/header.py \
+                    $(LIBXUL_DIST)/sdk/bin/xpidl.py \
                     $(DEPTH)/js/src/js-confdefs.h
 	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
 	  $(PLY_INCLUDE) \
-	  -I$(topsrcdir)/xpcom/idl-parser \
+	  -I$(LIBXUL_DIST)/sdk/bin \
 	  $(srcdir)/qsgen.py \
 	  --idlpath=$(DEPTH)/dist/idl \
-	  --cachedir=$(DEPTH)/xpcom/idl-parser \
 	  --header-output dom_quickstubs.h \
 	  --stub-output dom_quickstubs.cpp \
 	  --makedepend-output $(MDDEPDIR)/dom_qsgen.pp \
@@ -168,15 +138,14 @@ dombindings.$(OBJ_SUFFIX): dombindings_gen.h \
 dombindings_gen.h: $(srcdir)/dombindings.conf \
                    $(srcdir)/dombindingsgen.py \
                    $(srcdir)/codegen.py \
-                   $(topsrcdir)/xpcom/idl-parser/header.py \
-                   $(topsrcdir)/xpcom/idl-parser/xpidl.py \
+                   $(LIBXUL_DIST)/sdk/bin/header.py \
+                   $(LIBXUL_DIST)/sdk/bin/xpidl.py \
                    $(DEPTH)/js/src/js-confdefs.h
 	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
 	  $(PLY_INCLUDE) \
-	  -I$(topsrcdir)/xpcom/idl-parser \
+	  -I$(LIBXUL_DIST)/sdk/bin \
 	  $(srcdir)/dombindingsgen.py \
 	  --idlpath=$(DEPTH)/dist/idl \
-	  --cachedir=$(DEPTH)/xpcom/idl-parser \
 	  --header-output dombindings_gen.h \
 	  $(srcdir)/dombindings.conf
 
@@ -185,53 +154,80 @@ exports:: dombindings_gen.h
 dombindings_gen.cpp: $(srcdir)/dombindings.conf \
                      $(srcdir)/dombindingsgen.py \
                      $(srcdir)/codegen.py \
-                     $(topsrcdir)/xpcom/idl-parser/header.py \
-                     $(topsrcdir)/xpcom/idl-parser/xpidl.py \
+                     $(LIBXUL_DIST)/sdk/bin/header.py \
+                     $(LIBXUL_DIST)/sdk/bin/xpidl.py \
                      $(DEPTH)/js/src/js-confdefs.h
 	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
 	  $(PLY_INCLUDE) \
-	  -I$(topsrcdir)/xpcom/idl-parser \
+	  -I$(LIBXUL_DIST)/sdk/bin \
 	  $(srcdir)/dombindingsgen.py \
 	  --idlpath=$(DEPTH)/dist/idl \
-	  --cachedir=$(DEPTH)/xpcom/idl-parser \
 	  --stub-output dombindings_gen.cpp \
 	  --makedepend-output $(MDDEPDIR)/dombindingsgen.pp \
 	  $(srcdir)/dombindings.conf
 
-DictionaryHelpers.$(OBJ_SUFFIX): DictionaryHelpers.h \
-                                 DictionaryHelpers.cpp
+DictionaryHelpers.$(OBJ_SUFFIX): DictionaryHelpers.cpp
 
-DictionaryHelpers.h: $(srcdir)/dictionary_helper_gen.conf \
-                     $(srcdir)/dictionary_helper_gen.py \
-                     $(srcdir)/codegen.py \
-                     $(topsrcdir)/xpcom/idl-parser/header.py \
-                     $(topsrcdir)/xpcom/idl-parser/xpidl.py \
-                     $(DEPTH)/js/src/js-confdefs.h
-	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
-	  $(PLY_INCLUDE) \
-	  -I$(topsrcdir)/xpcom/idl-parser \
-	  $(srcdir)/dictionary_helper_gen.py \
-	  -I $(DEPTH)/dist/idl \
-	  --cachedir=$(DEPTH)/xpcom/idl-parser \
-	  --header-output DictionaryHelpers.h \
-	  $(srcdir)/dictionary_helper_gen.conf
+DictionaryHelpers.h: DictionaryHelpers.cpp
 
 DictionaryHelpers.cpp: $(srcdir)/dictionary_helper_gen.conf \
+                       event_impl_gen.conf \
                        $(srcdir)/dictionary_helper_gen.py \
                        $(srcdir)/codegen.py \
-                       $(topsrcdir)/xpcom/idl-parser/header.py \
-                       $(topsrcdir)/xpcom/idl-parser/xpidl.py \
+                       $(LIBXUL_DIST)/sdk/bin/header.py \
+                       $(LIBXUL_DIST)/sdk/bin/xpidl.py \
                        $(DEPTH)/js/src/js-confdefs.h
 	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
 	  $(PLY_INCLUDE) \
-	  -I$(topsrcdir)/xpcom/idl-parser \
+	  -I$(LIBXUL_DIST)/sdk/bin \
 	  $(srcdir)/dictionary_helper_gen.py \
 	  -I $(DEPTH)/dist/idl \
-	  --cachedir=$(DEPTH)/xpcom/idl-parser \
 	  --header-output DictionaryHelpers.h \
 	  --stub-output DictionaryHelpers.cpp \
 	  --makedepend-output $(MDDEPDIR)/dictionary_helper_gen.pp \
-	  $(srcdir)/dictionary_helper_gen.conf
+	  $(srcdir)/dictionary_helper_gen.conf \
+	  event_impl_gen.conf
+
+GeneratedEvents.$(OBJ_SUFFIX): GeneratedEvents.h \
+                               GeneratedEvents.cpp
+
+event_impl_gen.conf : $(srcdir)/event_impl_gen.conf.in
+	$(PYTHON) $(topsrcdir)/config/Preprocessor.py $(DEFINES) $(ACDEFINES) $^ > event_impl_gen.conf
+
+GeneratedEvents.h: $(srcdir)/dictionary_helper_gen.conf \
+                   event_impl_gen.conf \
+                   $(srcdir)/dictionary_helper_gen.py \
+                   $(srcdir)/event_impl_gen.py \
+                   $(srcdir)/codegen.py \
+                   $(LIBXUL_DIST)/sdk/bin/header.py \
+                   $(LIBXUL_DIST)/sdk/bin/xpidl.py \
+                   $(DEPTH)/js/src/js-confdefs.h
+	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
+	  $(PLY_INCLUDE) \
+	  -I$(LIBXUL_DIST)/sdk/bin \
+	  $(srcdir)/event_impl_gen.py \
+	  -I $(DEPTH)/dist/idl \
+	  --header-output GeneratedEvents.h \
+	  event_impl_gen.conf
+
+GeneratedEvents.cpp: DictionaryHelpers.h \
+                     $(srcdir)/dictionary_helper_gen.conf \
+                     event_impl_gen.conf \
+                     $(srcdir)/dictionary_helper_gen.py \
+                     $(srcdir)/event_impl_gen.py \
+                     $(srcdir)/codegen.py \
+                     $(LIBXUL_DIST)/sdk/bin/header.py \
+                     $(LIBXUL_DIST)/sdk/bin/xpidl.py \
+                     $(DEPTH)/js/src/js-confdefs.h
+	$(PYTHON) $(topsrcdir)/config/pythonpath.py \
+	  $(PLY_INCLUDE) \
+	  -I$(LIBXUL_DIST)/sdk/bin \
+	  $(srcdir)/event_impl_gen.py \
+	  -I $(DEPTH)/dist/idl \
+	  --header-output GeneratedEvents.h \
+	  --stub-output GeneratedEvents.cpp \
+	  --makedepend-output $(MDDEPDIR)/event_impl_gen.pp \
+	  event_impl_gen.conf
 
 _EXTRA_EXPORT_FILES = \
   DictionaryHelpers.h \
@@ -247,10 +243,14 @@ GARBAGE += \
 		dombindings_gen.cpp \
 		DictionaryHelpers.h \
 		DictionaryHelpers.cpp \
+		GeneratedEvents.h \
+		GeneratedEvents.cpp \
+		event_impl_gen.conf \
 		xpidl_debug \
 		$(MDDEPDIR)/dom_qsgen.pp \
 		$(MDDEPDIR)/dombindingsgen.pp \
 		$(MDDEPDIR)/dictionary_helper_gen.pp \
+		$(MDDEPDIR)/event_impl_gen.pp \
 		$(wildcard $(topsrcdir)/other-licenses/ply/ply/*.pyc) \
 		$(NULL)
 

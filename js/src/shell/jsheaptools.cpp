@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is JavaScript heap tools.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Jim Blandy <jimb@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <string.h>
 
@@ -78,7 +45,7 @@ using namespace js;
  */
 
 /*
- * A JSTracer that produces a map of the heap with edges reversed. 
+ * A JSTracer that produces a map of the heap with edges reversed.
  *
  * HeapReversers must be allocated in a stack frame. (They contain an AutoArrayRooter,
  * and those must be allocated and destroyed in a stack-like order.)
@@ -179,12 +146,18 @@ class HeapReverser : public JSTracer {
     /* Build a reversed map of the heap in |map|. */
     bool reverseHeap();
 
-  private:    
+  private:
     /*
-     * Conservative scanning can, on a whim, decide that a root is no longer a
-     * root, and cause bits of our graph to disappear. The 'roots' vector holds
-     * all the roots we find alive, and 'rooter' keeps them alive until we're
-     * destroyed.
+     * Once we've produced a reversed map of the heap, we need to keep the
+     * engine from freeing the objects we've found in it, until we're done using
+     * the map. Even if we're only using the map to construct a result object,
+     * and not rearranging the heap ourselves, any allocation could cause a
+     * garbage collection, which could free objects held internally by the
+     * engine (for example, JaegerMonkey object templates, used by jit scripts).
+     *
+     * So, each time reverseHeap reaches any object, we add it to 'roots', which
+     * is cited by 'rooter', so the object will stay alive long enough for us to
+     * include it in the results, if needed.
      *
      * Note that AutoArrayRooters must be constructed and destroyed in a
      * stack-like order, so the same rule applies to this HeapReverser. The
@@ -214,7 +187,7 @@ class HeapReverser : public JSTracer {
             reverser->parent = newParent;
         }
         ~AutoParent() {
-            reverser->parent = savedParent; 
+            reverser->parent = savedParent;
         }
       private:
         HeapReverser *reverser;
@@ -251,7 +224,8 @@ class HeapReverser : public JSTracer {
     /* Static member function wrapping 'traverseEdge'. */
     static void traverseEdgeWithThis(JSTracer *tracer, void **thingp, JSGCTraceKind kind) {
         HeapReverser *reverser = static_cast<HeapReverser *>(tracer);
-        reverser->traversalStatus = reverser->traverseEdge(*thingp, kind);
+        if (!reverser->traverseEdge(*thingp, kind))
+            reverser->traversalStatus = false;
     }
 
     /* Return a jsval representing a node, if possible; otherwise, return JSVAL_VOID. */
@@ -264,10 +238,11 @@ class HeapReverser : public JSTracer {
 };
 
 bool
-HeapReverser::traverseEdge(void *cell, JSGCTraceKind kind) {
-    /* If this is a root, make our own root for it as well. */
-    if (!parent) {
-        if (!roots.append(nodeToValue(cell, kind)))
+HeapReverser::traverseEdge(void *cell, JSGCTraceKind kind)
+{
+    jsval v = nodeToValue(cell, kind);
+    if (v.isObject()) {
+        if (!roots.append(v))
             return false;
         rooter.changeArray(roots.begin(), roots.length());
     }
@@ -300,7 +275,10 @@ HeapReverser::traverseEdge(void *cell, JSGCTraceKind kind) {
 }
 
 bool
-HeapReverser::reverseHeap() {
+HeapReverser::reverseHeap()
+{
+    traversalStatus = true;
+
     /* Prime the work stack with the roots of collection. */
     JS_TraceRuntime(this);
     if (!traversalStatus)
@@ -351,7 +329,7 @@ HeapReverser::getEdgeDescription()
 /* A class for finding an object's referrers, given a reversed heap map. */
 class ReferenceFinder {
   public:
-    ReferenceFinder(JSContext *cx, const HeapReverser &reverser) 
+    ReferenceFinder(JSContext *cx, const HeapReverser &reverser)
       : context(cx), reverser(reverser), result(cx) { }
 
     /* Produce an object describing all references to |target|. */
@@ -365,13 +343,13 @@ class ReferenceFinder {
     const HeapReverser &reverser;
 
     /* The results object we're currently building. */
-    RootedVarObject result;
+    RootedObject result;
 
     /* A list of edges we've traversed to get to a certain point. */
     class Path {
       public:
         Path(const HeapReverser::Edge &edge, Path *next) : edge(edge), next(next) { }
-        
+
         /*
          * Compute the full path represented by this Path. The result is
          * owned by the caller.
@@ -390,7 +368,7 @@ class ReferenceFinder {
         HeapReverser::Node *node;
     };
 
-    /* 
+    /*
      * Given that we've reached |cell| via |path|, with all Nodes along that
      * path marked, add paths from all reportable objects reachable from cell
      * to |result|.
@@ -436,7 +414,7 @@ ReferenceFinder::visit(void *cell, Path *path)
     /* Have we reached a root? Always report that. */
     if (!cell)
         return addReferrer(JSVAL_NULL, path);
-        
+
     HeapReverser::Map::Ptr p = reverser.map.lookup(cell);
     JS_ASSERT(p);
     HeapReverser::Node *node = &p->value;
@@ -473,7 +451,7 @@ ReferenceFinder::Path::computeName(JSContext *cx)
 {
     /* Walk the edge list and compute the total size of the path. */
     size_t size = 6;
-    for (Path *l = this; l; l = l->next) 
+    for (Path *l = this; l; l = l->next)
         size += strlen(l->edge.name) + (l->next ? 2 : 0);
     size += 1;
 
@@ -503,40 +481,41 @@ ReferenceFinder::Path::computeName(JSContext *cx)
 }
 
 bool
-ReferenceFinder::addReferrer(jsval referrer, Path *path)
+ReferenceFinder::addReferrer(jsval referrer_, Path *path)
 {
-    if (!context->compartment->wrap(context, &referrer))
-        return NULL;
+    Rooted<jsval> referrer(context, referrer_);
+
+    if (!context->compartment->wrap(context, referrer.address()))
+        return false;
 
     char *pathName = path->computeName(context);
     if (!pathName)
         return false;
     AutoReleasePtr releasePathName(context, pathName);
 
-    Root<jsval> referrerRoot(context, &referrer);
-
     /* Find the property of the results object named |pathName|. */
-    jsval v;
+    JS::RootedValue valRoot(context);
+    Value &v = valRoot.get();
+
     if (!JS_GetProperty(context, result, pathName, &v))
         return false;
-    if (JSVAL_IS_VOID(v)) {
+    if (v.isUndefined()) {
         /* Create an array to accumulate referents under this path. */
-        JSObject *array = JS_NewArrayObject(context, 1, &referrer);
+        JSObject *array = JS_NewArrayObject(context, 1, referrer.address());
         if (!array)
             return false;
-        v = OBJECT_TO_JSVAL(array);
+        v.setObject(*array);
         return !!JS_SetProperty(context, result, pathName, &v);
     }
 
     /* The property's value had better be an array. */
-    JS_ASSERT(JSVAL_IS_OBJECT(v) && !JSVAL_IS_NULL(v));
-    RootedVarObject array(context, JSVAL_TO_OBJECT(v));
+    RootedObject array(context, &v.toObject());
     JS_ASSERT(JS_IsArrayObject(context, array));
 
     /* Append our referrer to this array. */
     uint32_t length;
     return JS_GetArrayLength(context, array, &length) &&
-           JS_SetElement(context, array, length, &referrer);
+           JS_SetElement(context, array, length, referrer.address());
 }
 
 JSObject *
@@ -561,8 +540,8 @@ FindReferences(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    jsval target = JS_ARGV(cx, vp)[0];
-    if (!JSVAL_IS_OBJECT(target) || JSVAL_IS_NULL(target)) {
+    JS::Value target = JS_ARGV(cx, vp)[0];
+    if (!target.isObject()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_UNEXPECTED_TYPE,
                              "argument", "not an object");
         return false;
@@ -575,10 +554,11 @@ FindReferences(JSContext *cx, unsigned argc, jsval *vp)
 
     /* Given the reversed map, find the referents of target. */
     ReferenceFinder finder(cx, reverser);
-    JSObject *references = finder.findReferences(RootedVarObject(cx, JSVAL_TO_OBJECT(target)));
+    Rooted<JSObject*> targetObj(cx, &target.toObject());
+    JSObject *references = finder.findReferences(targetObj);
     if (!references)
         return false;
-    
+
     JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(references));
     return true;
 }

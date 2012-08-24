@@ -1,40 +1,7 @@
 /* -*-  Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is js-ctypes.
- *
- * The Initial Developer of the Original Code is
- * The Mozilla Foundation <http://www.mozilla.org/>.
- * Portions created by the Initial Developer are Copyright (C) 2009
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Dan Witte <dwitte@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
  * This header contains the builtin types available for arguments and return
@@ -97,6 +64,7 @@
 #define CTYPES_FFI_ULONG     (sizeof(long)      == 4 ? ffi_type_uint32 : ffi_type_uint64)
 #define CTYPES_FFI_SIZE_T    (sizeof(size_t)    == 4 ? ffi_type_uint32 : ffi_type_uint64)
 #define CTYPES_FFI_SSIZE_T   (sizeof(size_t)    == 4 ? ffi_type_sint32 : ffi_type_sint64)
+#define CTYPES_FFI_OFF_T     (sizeof(off_t)     == 4 ? ffi_type_sint32 : ffi_type_sint64)
 #define CTYPES_FFI_INTPTR_T  (sizeof(uintptr_t) == 4 ? ffi_type_sint32 : ffi_type_sint64)
 #define CTYPES_FFI_UINTPTR_T (sizeof(uintptr_t) == 4 ? ffi_type_uint32 : ffi_type_uint64)
 
@@ -120,6 +88,7 @@ DEFINE_WRAPPED_INT_TYPE(long_long,          long long,          ffi_type_sint64)
 DEFINE_WRAPPED_INT_TYPE(unsigned_long_long, unsigned long long, ffi_type_uint64)
 DEFINE_WRAPPED_INT_TYPE(size_t,             size_t,             CTYPES_FFI_SIZE_T)
 DEFINE_WRAPPED_INT_TYPE(ssize_t,            CTYPES_SSIZE_T,     CTYPES_FFI_SSIZE_T)
+DEFINE_WRAPPED_INT_TYPE(off_t,              off_t,              CTYPES_FFI_OFF_T)
 DEFINE_WRAPPED_INT_TYPE(intptr_t,           intptr_t,           CTYPES_FFI_INTPTR_T)
 DEFINE_WRAPPED_INT_TYPE(uintptr_t,          uintptr_t,          CTYPES_FFI_UINTPTR_T)
 DEFINE_FLOAT_TYPE      (float32_t,          float,              ffi_type_float)

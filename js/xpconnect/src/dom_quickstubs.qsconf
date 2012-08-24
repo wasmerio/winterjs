@@ -1,40 +1,7 @@
 # -*- Mode: Python -*-
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is mozilla.org code.
-#
-# The Initial Developer of the Original Code is
-#   Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2008
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Jason Orendorff <jorendorff@mozilla.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 name = 'DOM'
 
@@ -83,9 +50,7 @@ members = [
     'nsIDOMScreen.width',
     'nsIDOMScreen.left',
     'nsIDOMClientRect.*',
-    'nsIDOMClientRectList.*',
     'nsIDOMPaintRequest.*',
-    'nsIDOMPaintRequestList.*',
     # nsLocationSH has ~ALLOW_PROP_MODS_TO_PROTOTYPE, so don't try.
     #'nsIDOMLocation.hostname',
     #'nsIDOMLocation.href',
@@ -168,14 +133,11 @@ members = [
     'nsIDOMNamedNodeMap.item',
     'nsIDOMNamedNodeMap.length',
     'nsIDOMNode.*',
-    'nsIDOMNodeList.*',
     'nsIDOMNodeSelector.querySelector',
     'nsIDOMNodeSelector.querySelectorAll',
     'nsIDOMText.splitText',
     'nsIDOMDOMImplementation.*',
     'nsIDOMDOMStringList.*',
-    'nsIDOMDOMTokenList.*',
-    'nsIDOMDOMSettableTokenList.*',
     'nsIDOMXULDocument.getBoxObjectFor',
     'nsIDOMMutationRecord.*',
 
@@ -190,7 +152,18 @@ members = [
     'nsIDOMEventTarget.removeEventListener',
     'nsIDOMEventTarget.dispatchEvent',
 
-    'nsIDOMEvent.*',
+    'nsIDOMEvent.type',
+    'nsIDOMEvent.target',
+    'nsIDOMEvent.currentTarget',
+    'nsIDOMEvent.eventPhase',
+    'nsIDOMEvent.bubbles',
+    'nsIDOMEvent.cancelable',
+    'nsIDOMEvent.timeStamp',
+    'nsIDOMEvent.stopPropagation',
+    'nsIDOMEvent.preventDefault',
+    'nsIDOMEvent.initEvent',
+    'nsIDOMEvent.defaultPrevented',
+    'nsIDOMEvent.stopImmediatePropagation',
     'nsIDOMMouseEvent.*',
     'nsIDOMKeyEvent.*',
     'nsIDOMMutationEvent.*',
@@ -203,8 +176,6 @@ members = [
     'nsIDOMProgressEvent.loaded',
     'nsIDOMProgressEvent.total',
     #XXX Can't quickstub initProgressEvent because it has long long parameters.
-    'nsIDOMNSEvent.originalTarget',
-    'nsIDOMNSEvent.getPreventDefault',
     'nsIDOMUIEvent.which',
     'nsIDOMUIEvent.rangeParent',
     'nsIDOMUIEvent.rangeOffset',
@@ -232,11 +203,6 @@ members = [
     'nsIDOMHTMLButtonElement.form',
     'nsIDOMHTMLButtonElement.value',
     'nsIDOMHTMLButtonElement.disabled',
-    'nsIDOMHTMLCollection.item',
-    # This is shadowed by nsIDOMHTMLOptionsCollection.length,
-    # but it is also present in other objects where it isn't shadowed.
-    # Quick stubs handle the shadowing the same as XPConnect.
-    'nsIDOMHTMLCollection.length',
     'nsIDOMHTMLCommandElement.*',
     'nsIDOMHTMLDocument.body',
     'nsIDOMHTMLDocument.getElementsByName',
@@ -252,7 +218,33 @@ members = [
     'nsIDOMHTMLDocument.getSelection',
     'nsIDOMHTMLDocument.designMode',
     'nsIDOMHTMLDocument.head',
-    'nsIDOMHTMLElement.*',
+    # We can't quick stub nsIDOMHTMLElement.* because we don't 
+    # generate quick stubs for nsIVariant attributes.
+    'nsIDOMHTMLElement.id',
+    'nsIDOMHTMLElement.title',
+    'nsIDOMHTMLElement.lang',
+    'nsIDOMHTMLElement.dir',
+    'nsIDOMHTMLElement.className',
+    'nsIDOMHTMLElement.dataset',
+    'nsIDOMHTMLElement.itemScope',
+    'nsIDOMHTMLElement.itemId',
+    'nsIDOMHTMLElement.properties',
+    'nsIDOMHTMLElement.hidden',
+    'nsIDOMHTMLElement.tabIndex',
+    'nsIDOMHTMLElement.accessKey',
+    'nsIDOMHTMLElement.accessKeyLabel',
+    'nsIDOMHTMLElement.draggable',
+    'nsIDOMHTMLElement.contentEditable',
+    'nsIDOMHTMLElement.isContentEditable',
+    'nsIDOMHTMLElement.contextMenu',
+    'nsIDOMHTMLElement.spellcheck',
+    'nsIDOMHTMLElement.innerHTML',
+    'nsIDOMHTMLElement.outerHTML',
+    'nsIDOMHTMLElement.offsetParent',
+    'nsIDOMHTMLElement.offsetTop',
+    'nsIDOMHTMLElement.offsetLeft',
+    'nsIDOMHTMLElement.offsetWidth',
+    'nsIDOMHTMLElement.offsetHeight',
     'nsIDOMHTMLFormElement.elements',
     'nsIDOMHTMLFormElement.name',
     'nsIDOMHTMLFormElement.submit',
@@ -289,6 +281,7 @@ members = [
     'nsIDOMHTMLInputElement.selectionDirection',
     'nsIDOMHTMLInputElement.setSelectionRange',
     'nsIDOMHTMLLinkElement.disabled',
+    'nsIDOMHTMLMeterElement.*',
     'nsIDOMHTMLMenuElement.*',
     'nsIDOMHTMLMenuItemElement.*',
     'nsIDOMHTMLOptionElement.index',
@@ -299,8 +292,6 @@ members = [
     'nsIDOMHTMLOptionElement.value',
     'nsIDOMHTMLOptionElement.label',
     'nsIDOMHTMLOptionElement.disabled',
-    'nsIDOMHTMLOptionsCollection.item',
-    'nsIDOMHTMLOptionsCollection.length',
     'nsIDOMHTMLProgressElement.*',
     'nsIDOMHTMLSelectElement.name',
     'nsIDOMHTMLSelectElement.form',
@@ -356,8 +347,6 @@ members = [
     'nsIDOMHTMLCanvasElement.height',
     'nsIDOMHTMLCanvasElement.getContext',
     'nsIDOMHTMLCanvasElement.toDataURL',
-    'nsIDOMHTMLOptionsCollection.selectedIndex',
-    'nsIDOMHTMLOptionsCollection.add',
 
     # dom/interfaces/json - None.
     # All methods of nsIJSON call GetCurrentNativeCallContext.
@@ -457,23 +446,26 @@ members = [
     'nsIIDBCursor.*',
     'nsIIDBCursorWithValue.*',
     'nsIIDBDatabase.*',
+    'nsIIDBFactory.*',
+    'nsIIDBFileHandle.*',
     'nsIIDBIndex.*',
     'nsIIDBKeyRange.*',
     'nsIIDBObjectStore.*',
     'nsIIDBRequest.*',
     'nsIIDBTransaction.*',
-    'nsIIDBFactory.*',
     'nsIIDBOpenDBRequest.*',
     'nsIIDBVersionChangeEvent.*',
     'nsIIndexedDatabaseUsageCallback.*',
     'nsIIndexedDatabaseManager.*',
 
-    # Performance
-    'nsIDOMPerformance.*',
-    'nsIDOMPerformanceTiming.*',
-    'nsIDOMPerformanceNavigation.*',
-
     'nsIDOMDOMError.*',
+
+    # dom/file
+    'nsIDOMFileHandle.*',
+    '-nsIDOMFileHandle.getFileId',
+    '-nsIDOMFileHandle.getFileInfo',
+    'nsIDOMFileRequest.*',
+    'nsIDOMLockedFile.*',
     ]
 
 # Most interfaces can be found by searching the includePath; to find
@@ -508,6 +500,8 @@ irregularFilenames = {
     'nsIWebGLExtensionStandardDerivatives' : 'nsIDOMWebGLRenderingContext',
     'nsIWebGLExtensionTextureFilterAnisotropic' : 'nsIDOMWebGLRenderingContext',
     'nsIWebGLExtensionLoseContext' : 'nsIDOMWebGLRenderingContext',
+    'nsIWebGLExtensionCompressedTextureS3TC' : 'nsIDOMWebGLRenderingContext',
+    'nsIWebGLExtensionDepthTexture' : 'nsIDOMWebGLRenderingContext',
 
     'nsIIndexedDatabaseUsageCallback': 'nsIIndexedDatabaseManager',
 
@@ -523,7 +517,6 @@ customIncludes = [
     'nsINode.h',
     'nsIContent.h',
     'nsIDocument.h',
-    'nsINodeList.h',
     'nsCSSPropertiesQS.h',
     'nsDocument.h',
     'nsDOMTokenList.h',
@@ -629,7 +622,7 @@ customMethodCalls = {
         'arg1Type': 'nsINode',
         'code': '    nsINode *result = self->InsertBefore(arg0, arg1, &rv);\n'
                 '    if(NS_FAILED(rv))\n'
-                '        result = nsnull;'
+                '        result = nullptr;'
         },
     'nsIDOMNode_ReplaceChild': {
         'thisType': 'nsINode',
@@ -637,24 +630,24 @@ customMethodCalls = {
         'arg1Type': 'nsINode',
         'code': '    nsINode *result = self->ReplaceChild(arg0, arg1, &rv);\n'
                 '    if(NS_FAILED(rv))\n'
-                '        result = nsnull;'
+                '        result = nullptr;'
         },
     'nsIDOMNode_RemoveChild': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
         'code': '    rv = self->RemoveChild(arg0);\n'
-                '    nsINode *result = NS_SUCCEEDED(rv) ? arg0 : nsnull;'
+                '    nsINode *result = NS_SUCCEEDED(rv) ? arg0 : nullptr;'
         },
     'nsIDOMNode_AppendChild': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
         'code': '    nsINode *result = self->AppendChild(arg0, &rv);\n'
                 '    if(NS_FAILED(rv))\n'
-                '        result = nsnull;'
+                '        result = nullptr;'
         },
     'nsIDOMNode_GetNodeType': {
         'thisType': 'nsINode',
-        'code': 'PRUint16 result = self->NodeType();',
+        'code': 'uint16_t result = self->NodeType();',
         'canFail': False
         },
     'nsIDOMNode_GetNodeName': {
@@ -667,16 +660,8 @@ customMethodCalls = {
         'code': 'nsString result = self->LocalName();',
         'canFail': False
         },
-    'nsIDOMNodeList_Item': {
-        'thisType': 'nsINodeList',
-        'code': '    nsINode *result = self->GetNodeAt(arg0);',
-        'canFail': False
-        },
     'nsIDOMHTMLDocument_': {
         'thisType': 'nsHTMLDocument'
-        },
-    'nsIDOMNodeList_GetLength': {
-        'thisType': 'nsINodeList'
         },
     'nsIDOMHTMLDocument_Write': {
         'thisType': 'nsHTMLDocument',
@@ -720,7 +705,7 @@ customMethodCalls = {
         },
     'nsIDOMElement_GetScrollTop': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetScrollTop();',
+        'code': '    int32_t result = self->GetScrollTop();',
         'canFail': False
         },
     'nsIDOMElement_SetScrollTop': {
@@ -729,7 +714,7 @@ customMethodCalls = {
         },
     'nsIDOMElement_GetScrollLeft': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetScrollLeft();',
+        'code': '    int32_t result = self->GetScrollLeft();',
         'canFail': False
         },
     'nsIDOMElement_SetScrollLeft': {
@@ -738,17 +723,17 @@ customMethodCalls = {
         },
     'nsIDOMElement_GetScrollHeight': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetScrollHeight();',
+        'code': '    int32_t result = self->GetScrollHeight();',
         'canFail': False
         },
     'nsIDOMElement_GetScrollWidth': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetScrollWidth();',
+        'code': '    int32_t result = self->GetScrollWidth();',
         'canFail': False
         },
     'nsIDOMElement_GetClientTop': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetClientTop();',
+        'code': '    int32_t result = self->GetClientTop();',
         'canFail': False
         },
     'nsIDOMElement_SetClientTop': {
@@ -757,7 +742,7 @@ customMethodCalls = {
         },
     'nsIDOMElement_GetClientLeft': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetClientLeft();',
+        'code': '    int32_t result = self->GetClientLeft();',
         'canFail': False
         },
     'nsIDOMElement_SetClientLeft': {
@@ -766,12 +751,12 @@ customMethodCalls = {
         },
     'nsIDOMElement_GetClientHeight': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetClientHeight();',
+        'code': '    int32_t result = self->GetClientHeight();',
         'canFail': False
         },
     'nsIDOMElement_GetClientWidth': {
         'thisType': 'nsGenericElement',
-        'code': '    PRInt32 result = self->GetClientWidth();',
+        'code': '    int32_t result = self->GetClientWidth();',
         'canFail': False
         },
     'nsIDOMElement_GetFirstElementChild': {
@@ -832,7 +817,7 @@ customMethodCalls = {
     'nsIDOMNode_CompareDocumentPosition': {
         'thisType': 'nsINode',
         'arg0Type': 'nsINode',
-        'code': '    PRUint16 result;\n'
+        'code': '    uint16_t result;\n'
                 '    rv = self->CompareDocPosition(arg0, &result);',
         'canFail': True
         },

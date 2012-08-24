@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * vim: sw=2 ts=8 et :
  */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at:
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Code.
- *
- * The Initial Developer of the Original Code is
- *   The Mozilla Foundation
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Chris Jones <jones.chris.g@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "prinit.h"
 #include "plstr.h"
@@ -44,7 +11,6 @@
 #include "jsapi.h"
 
 #include "nsCollationCID.h"
-#include "nsDOMClassInfo.h"
 #include "nsJSUtils.h"
 #include "nsICharsetConverterManager.h"
 #include "nsIPlatformCharset.h"
@@ -52,6 +18,8 @@
 #include "nsICollation.h"
 #include "nsIServiceManager.h"
 #include "nsUnicharUtils.h"
+
+#include "xpcpublic.h"
 
 /**
  * JS locale callbacks implemented by XPCOM modules.  This
@@ -86,7 +54,7 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
             lc->localeToUpperCase == LocaleToUpperCase &&
             lc->localeToLowerCase == LocaleToLowerCase &&
             lc->localeCompare == LocaleCompare &&
-            lc->localeToUnicode == LocaleToUnicode) ? This(cx) : nsnull;
+            lc->localeToUnicode == LocaleToUnicode) ? This(cx) : nullptr;
   }
 
   static JSBool
@@ -156,7 +124,7 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
 
   XPCLocaleCallbacks()
 #ifdef DEBUG
-    : mThread(nsnull)
+    : mThread(nullptr)
 #endif
   {
     MOZ_COUNT_CTOR(XPCLocaleCallbacks);
@@ -165,7 +133,7 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
     localeToLowerCase = LocaleToLowerCase;
     localeCompare = LocaleCompare;
     localeToUnicode = LocaleToUnicode;
-    localeGetErrorMessage = nsnull;
+    localeGetErrorMessage = nullptr;
   }
 
   ~XPCLocaleCallbacks()
@@ -210,11 +178,11 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
       }
     }
 
-    JSString *str = nsnull;
-    PRInt32 srcLength = PL_strlen(src);
+    JSString *str = nullptr;
+    int32_t srcLength = PL_strlen(src);
 
     if (mDecoder) {
-      PRInt32 unicharLength = srcLength;
+      int32_t unicharLength = srcLength;
       PRUnichar *unichars =
         (PRUnichar *)JS_malloc(cx, (srcLength + 1) * sizeof(PRUnichar));
       if (unichars) {
@@ -241,7 +209,7 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
     }
 
     if (!str) {
-      nsDOMClassInfo::ThrowJSException(cx, NS_ERROR_OUT_OF_MEMORY);
+      xpc::Throw(cx, NS_ERROR_OUT_OF_MEMORY);
       return false;
     }
 
@@ -273,7 +241,7 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
       }
 
       if (NS_FAILED(rv)) {
-        nsDOMClassInfo::ThrowJSException(cx, rv);
+        xpc::Throw(cx, rv);
 
         return false;
       }
@@ -284,12 +252,12 @@ struct XPCLocaleCallbacks : public JSLocaleCallbacks
       return false;
     }
 
-    PRInt32 result;
+    int32_t result;
     rv = mCollation->CompareString(nsICollation::kCollationStrengthDefault,
                                    depStr1, depStr2, &result);
 
     if (NS_FAILED(rv)) {
-      nsDOMClassInfo::ThrowJSException(cx, rv);
+      xpc::Throw(cx, rv);
 
       return false;
     }
@@ -353,7 +321,7 @@ DelocalizeContextCallback(JSContext *cx, unsigned contextOp)
   if (contextOp == JSCONTEXT_DESTROY) {
     if (XPCLocaleCallbacks* lc = XPCLocaleCallbacks::MaybeThis(cx)) {
       // This is a JSContext for which xpc_LocalizeContext() was called.
-      JS_SetLocaleCallbacks(cx, nsnull);
+      JS_SetLocaleCallbacks(cx, nullptr);
       delete lc;
     }
   }

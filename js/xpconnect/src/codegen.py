@@ -1,40 +1,7 @@
 #!/usr/bin/env/python
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is mozilla.org code.
-#
-# The Initial Developer of the Original Code is
-#   Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2008
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Jason Orendorff <jorendorff@mozilla.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import xpidl
 import header
@@ -128,12 +95,12 @@ argumentUnboxingTemplates = {
 
     'long long':
         "    int64_t ${name};\n"
-        "    if (!xpc::ValueToInt64(cx, ${argVal}, &${name}))\n"
+        "    if (!JS::ToInt64(cx, ${argVal}, &${name}))\n"
         "        return JS_FALSE;\n",
 
     'unsigned long long':
         "    uint64_t ${name};\n"
-        "    if (!xpc::ValueToUint64(cx, ${argVal}, &${name}))\n"
+        "    if (!JS::ToUint64(cx, ${argVal}, &${name}))\n"
         "        return JS_FALSE;\n",
 
     'float':
@@ -365,10 +332,12 @@ resultConvTemplates = {
         "    return xpc_qsUint64ToJsval(cx, result, ${jsvalPtr});\n",
 
     'float':
-        "    return JS_NewNumberValue(cx, result, ${jsvalPtr});\n",
+        "    ${jsvalRef} = JS_NumberValue(result);\n"
+        "    return JS_TRUE;\n",
 
     'double':
-        "    return JS_NewNumberValue(cx, result, ${jsvalPtr});\n",
+        "    ${jsvalRef} = JS_NumberValue(result);\n"
+        "    return JS_TRUE;\n",
 
     'boolean':
         "    ${jsvalRef} = (result ? JSVAL_TRUE : JSVAL_FALSE);\n"
@@ -398,7 +367,8 @@ def writeResultConv(f, type, interfaceResultTemplate, jsvalPtr, jsvalRef):
         template = resultConvTemplates.get(typeName)
     elif isInterfaceType(type):
         if isVariantType(type):
-            template = "    return xpc_qsVariantToJsval(lccx, result, ${jsvalPtr});\n"
+            template =  ("    XPCLazyCallContext lccx(JS_CALLER, cx, obj);\n"
+                         "    return xpc_qsVariantToJsval(lccx, result, ${jsvalPtr});\n")
         else:
             template = ("    if (!result) {\n"
                         "      *${jsvalPtr} = JSVAL_NULL;\n"
@@ -473,9 +443,9 @@ def writeStub(f, customMethodCalls, member, stubName, writeThisUnwrapping, write
     if isAttr:
         # JSPropertyOp signature.
         if isSetter:
-            signature += "%s(JSContext *cx, JSObject *obj, jsid id, JSBool strict,%s jsval *vp)\n"
+            signature += "%s(JSContext *cx, JSHandleObject obj, JSHandleId id, JSBool strict,%s JSMutableHandleValue vp_)\n"
         else:
-            signature += "%s(JSContext *cx, JSObject *obj, jsid id,%s jsval *vp)\n"
+            signature += "%s(JSContext *cx, JSHandleObject obj, JSHandleId id,%s JSMutableHandleValue vp_)\n"
     else:
         # JSFastNative.
         signature += "%s(JSContext *cx, unsigned argc,%s jsval *vp)\n"
@@ -510,7 +480,7 @@ def writeStub(f, customMethodCalls, member, stubName, writeThisUnwrapping, write
             argumentValues = (customMethodCall['additionalArgumentValues']
                               % header.methodNativeName(member))
             if isAttr:
-                callTemplate += ("    return %s(cx, obj, id%s, %s, vp);\n"
+                callTemplate += ("    return %s(cx, obj, id%s, %s, vp_);\n"
                                  % (templateName, ", strict" if isSetter else "", argumentValues))
             else:
                 callTemplate += ("    return %s(cx, argc, %s, vp);\n"
@@ -543,6 +513,10 @@ def writeStub(f, customMethodCalls, member, stubName, writeThisUnwrapping, write
     f.write(signature % (stubName, additionalArguments))
     f.write("{\n")
     f.write("    XPC_QS_ASSERT_CONTEXT_OK(cx);\n")
+
+    # Convert JSMutableHandleValue to jsval*
+    if isAttr:
+        f.write("    jsval *vp = vp_.address();\n")
 
     # For methods, compute "this".
     if isMethod:

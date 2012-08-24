@@ -1,43 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *   Pierre Phaneuf <pp@ludusdesign.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Class that wraps JS objects to appear as XPCOM objects. */
 
@@ -52,8 +17,9 @@
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsXPCWrappedJS)
 
 NS_IMETHODIMP
-NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
-   (void *p, nsCycleCollectionTraversalCallback &cb)
+NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::TraverseImpl
+   (NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS) *that, void *p,
+    nsCycleCollectionTraversalCallback &cb)
 {
     nsISupports *s = static_cast<nsISupports*>(p);
     NS_ASSERTION(CheckForRightISupports(s),
@@ -127,13 +93,13 @@ nsXPCWrappedJS::AggregatedQueryInterface(REFNSIID aIID, void** aInstancePtr)
 NS_IMETHODIMP
 nsXPCWrappedJS::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 {
-    if (nsnull == aInstancePtr) {
+    if (nullptr == aInstancePtr) {
         NS_PRECONDITION(0, "null pointer");
         return NS_ERROR_NULL_POINTER;
     }
 
     if ( aIID.Equals(NS_GET_IID(nsXPCOMCycleCollectionParticipant)) ) {
-        *aInstancePtr = & NS_CYCLE_COLLECTION_NAME(nsXPCWrappedJS);
+        *aInstancePtr = NS_CYCLE_COLLECTION_PARTICIPANT(nsXPCWrappedJS);
         return NS_OK;
     }
 
@@ -249,21 +215,19 @@ void
 nsXPCWrappedJS::TraceJS(JSTracer* trc)
 {
     NS_ASSERTION(mRefCnt >= 2 && IsValid(), "must be strongly referenced");
-    JS_SET_TRACING_DETAILS(trc, PrintTraceName, this, 0);
+    JS_SET_TRACING_DETAILS(trc, GetTraceName, this, 0);
     JS_CallTracer(trc, GetJSObjectPreserveColor(), JSTRACE_OBJECT);
 }
 
-#ifdef DEBUG
 // static
 void
-nsXPCWrappedJS::PrintTraceName(JSTracer* trc, char *buf, size_t bufsize)
+nsXPCWrappedJS::GetTraceName(JSTracer* trc, char *buf, size_t bufsize)
 {
     const nsXPCWrappedJS* self = static_cast<const nsXPCWrappedJS*>
                                             (trc->debugPrintArg);
     JS_snprintf(buf, bufsize, "nsXPCWrappedJS[%s,0x%p:0x%p].mJSObj",
                 self->GetClass()->GetInterfaceName(), self, self->mXPTCStub);
 }
-#endif
 
 NS_IMETHODIMP
 nsXPCWrappedJS::GetWeakReference(nsIWeakReference** aInstancePtr)
@@ -294,7 +258,7 @@ CheckMainThreadOnly(nsXPCWrappedJS *aWrapper)
     nsCOMPtr<nsIClassInfo> ci;
     CallQueryInterface(aWrapper, getter_AddRefs(ci));
     if (ci) {
-        PRUint32 flags;
+        uint32_t flags;
         if (NS_SUCCEEDED(ci->GetFlags(&flags)) && !(flags & nsIClassInfo::MAIN_THREAD_ONLY))
             return true;
 
@@ -317,9 +281,9 @@ nsXPCWrappedJS::GetNewOrUsed(XPCCallContext& ccx,
 {
     JSObject2WrappedJSMap* map;
     JSObject* rootJSObj;
-    nsXPCWrappedJS* root = nsnull;
-    nsXPCWrappedJS* wrapper = nsnull;
-    nsXPCWrappedJSClass* clazz = nsnull;
+    nsXPCWrappedJS* root = nullptr;
+    nsXPCWrappedJS* wrapper = nullptr;
+    nsXPCWrappedJSClass* clazz = nullptr;
     XPCJSRuntime* rt = ccx.GetRuntime();
     JSBool release_root = false;
 
@@ -346,8 +310,8 @@ nsXPCWrappedJS::GetNewOrUsed(XPCCallContext& ccx,
         XPCAutoLock lock(rt->GetMapLock());
         root = map->Find(rootJSObj);
         if (root) {
-            if ((nsnull != (wrapper = root->Find(aIID))) ||
-                (nsnull != (wrapper = root->FindInherited(aIID)))) {
+            if ((nullptr != (wrapper = root->Find(aIID))) ||
+                (nullptr != (wrapper = root->FindInherited(aIID)))) {
                 NS_ADDREF(wrapper);
                 goto return_wrapper;
             }
@@ -358,7 +322,7 @@ nsXPCWrappedJS::GetNewOrUsed(XPCCallContext& ccx,
         // build the root wrapper
         if (rootJSObj == aJSObj) {
             // the root will do double duty as the interface wrapper
-            wrapper = root = new nsXPCWrappedJS(ccx, aJSObj, clazz, nsnull,
+            wrapper = root = new nsXPCWrappedJS(ccx, aJSObj, clazz, nullptr,
                                                 aOuter);
             if (!root)
                 goto return_wrapper;
@@ -382,13 +346,13 @@ nsXPCWrappedJS::GetNewOrUsed(XPCCallContext& ccx,
             goto return_wrapper;
         } else {
             // just a root wrapper
-            nsXPCWrappedJSClass* rootClazz = nsnull;
+            nsXPCWrappedJSClass* rootClazz = nullptr;
             nsXPCWrappedJSClass::GetNewOrUsed(ccx, NS_GET_IID(nsISupports),
                                               &rootClazz);
             if (!rootClazz)
                 goto return_wrapper;
 
-            root = new nsXPCWrappedJS(ccx, rootJSObj, rootClazz, nsnull, aOuter);
+            root = new nsXPCWrappedJS(ccx, rootJSObj, rootClazz, nullptr, aOuter);
             NS_RELEASE(rootClazz);
 
             if (!root)
@@ -453,8 +417,8 @@ nsXPCWrappedJS::nsXPCWrappedJS(XPCCallContext& ccx,
     : mJSObj(aJSObj),
       mClass(aClass),
       mRoot(root ? root : this),
-      mNext(nsnull),
-      mOuter(root ? nsnull : aOuter),
+      mNext(nullptr),
+      mOuter(root ? nullptr : aOuter),
       mMainThread(NS_IsMainThread()),
       mMainThreadOnly(root && root->mMainThreadOnly)
 {
@@ -515,7 +479,7 @@ nsXPCWrappedJS::Unlink()
                 RemoveFromRootSet(rt->GetMapLock());
         }
 
-        mJSObj = nsnull;
+        mJSObj = nullptr;
     }
 
     if (mRoot == this) {
@@ -540,7 +504,7 @@ nsXPCWrappedJS::Unlink()
         XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
         if (rt->GetThreadRunningGC()) {
             rt->DeferredRelease(mOuter);
-            mOuter = nsnull;
+            mOuter = nullptr;
         } else {
             NS_RELEASE(mOuter);
         }
@@ -558,7 +522,7 @@ nsXPCWrappedJS::Find(REFNSIID aIID)
             return cur;
     }
 
-    return nsnull;
+    return nullptr;
 }
 
 // check if asking for an interface that some wrapper in the chain inherits from
@@ -574,7 +538,7 @@ nsXPCWrappedJS::FindInherited(REFNSIID aIID)
             return cur;
     }
 
-    return nsnull;
+    return nullptr;
 }
 
 NS_IMETHODIMP
@@ -593,7 +557,7 @@ nsXPCWrappedJS::GetInterfaceInfo(nsIInterfaceInfo** info)
 }
 
 NS_IMETHODIMP
-nsXPCWrappedJS::CallMethod(PRUint16 methodIndex,
+nsXPCWrappedJS::CallMethod(uint16_t methodIndex,
                            const XPTMethodDescriptor* info,
                            nsXPTCMiniVariant* params)
 {
@@ -632,13 +596,13 @@ nsXPCWrappedJS::SystemIsBeingShutDown(JSRuntime* rt)
     // and have them propagate into all sorts of mischief as the system is being
     // shutdown. This was learned the hard way :(
 
-    // mJSObj == nsnull is used to indicate that the wrapper is no longer valid
+    // mJSObj == nullptr is used to indicate that the wrapper is no longer valid
     // and that calls should fail without trying to use any of the
     // xpconnect mechanisms. 'IsValid' is implemented by checking this pointer.
 
     // NOTE: that mClass is retained so that GetInterfaceInfo can continue to
     // work (and avoid crashing some platforms).
-    mJSObj = nsnull;
+    mJSObj = nullptr;
 
     // Notify other wrappers in the chain.
     if (mNext)
@@ -674,7 +638,7 @@ nsXPCWrappedJS::GetProperty(const nsAString & name, nsIVariant **_retval)
 /***************************************************************************/
 
 NS_IMETHODIMP
-nsXPCWrappedJS::DebugDump(PRInt16 depth)
+nsXPCWrappedJS::DebugDump(int16_t depth)
 {
 #ifdef DEBUG
     XPC_LOG_ALWAYS(("nsXPCWrappedJS @ %x with mRefCnt = %d", this, mRefCnt.get()));

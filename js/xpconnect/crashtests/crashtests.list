@@ -35,4 +35,13 @@ load 616930-1.html
 load 639737-1.html
 load 648206-1.html
 load 705875.html
+load 720305-1.html
 load 723465.html
+load 732870.html
+load 751995.html
+load 761831.html
+asserts(0-1) load 752038.html # We may hit bug 645229 here.
+asserts(1) load 753162.html # We hit bug 675518 or bug 680086 here.
+load 754311.html
+load 776328.html
+load 776333.html

@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *   David Anderson <danderson@mozilla.com>
- *   David Mandelin <dmandelin@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if !defined jsjaeger_mono_ic_h__ && defined JS_METHODJIT && defined JS_MONOIC
 #define jsjaeger_mono_ic_h__
@@ -138,25 +105,18 @@ struct SetGlobalNameIC : public GlobalNameIC
 {
     JSC::CodeLocationLabel  slowPathStart;
 
-    /* Dynamically generted stub for method-write checks. */
-    JSC::JITCode            extraStub;
-
     /* SET only, if we had to generate an out-of-line path. */
     int32_t inlineShapeJump : 10;   /* Offset into inline path for shape jump. */
-    int32_t extraShapeGuard : 6;    /* Offset into stub for shape guard. */
     bool objConst : 1;          /* True if the object is constant. */
     RegisterID objReg   : 5;    /* Register for object, if objConst is false. */
     RegisterID shapeReg : 5;    /* Register for shape; volatile. */
-    bool hasExtraStub : 1;      /* Extra stub is preset. */
 
     int32_t fastRejoinOffset : 16;  /* Offset from fastPathStart to rejoin. */
-    int32_t extraStoreOffset : 16;  /* Offset into store code. */
 
     /* SET only. */
     ValueRemat vr;              /* RHS value. */
 
-    void patchInlineShapeGuard(Repatcher &repatcher, const Shape *shape);
-    void patchExtraShapeGuard(Repatcher &repatcher, const Shape *shape);
+    void patchInlineShapeGuard(Repatcher &repatcher, Shape *shape);
 };
 
 void JS_FASTCALL GetGlobalName(VMFrame &f, ic::GetGlobalNameIC *ic);
@@ -221,7 +181,7 @@ struct CallICInfo {
     /* Out of line slow call. */
     uint32_t oolCallOffset   : 16;
 
-    /* Jump to patch for out-of-line scripted calls. */
+    /* Jump/rejoin to patch for out-of-line scripted calls. */
     uint32_t oolJumpOffset   : 16;
 
     /* Label for out-of-line call to IC function. */
@@ -238,19 +198,6 @@ struct CallICInfo {
     bool hasJsFunCheck : 1;
     bool typeMonitored : 1;
 
-    inline void reset() {
-        fastGuardedObject = NULL;
-        fastGuardedNative = NULL;
-        hit = false;
-        hasJsFunCheck = false;
-        PodArrayZero(pools);
-    }
-
-    inline void releasePools() {
-        releasePool(Pool_ScriptStub);
-        releasePool(Pool_ClosureStub);
-    }
-
     inline void releasePool(PoolIndex index) {
         if (pools[index]) {
             pools[index]->release();
@@ -264,6 +211,25 @@ struct CallICInfo {
         hasJsFunCheck = false;
         fastGuardedObject = NULL;
         JS_REMOVE_LINK(&links);
+    }
+
+    inline void reset(Repatcher &repatcher) {
+        if (fastGuardedObject) {
+            repatcher.repatch(funGuard, NULL);
+            repatcher.relink(funJump, slowPathStart);
+            purgeGuardedObject();
+        }
+        if (fastGuardedNative) {
+            repatcher.relink(funJump, slowPathStart);
+            fastGuardedNative = NULL;
+        }
+        if (pools[Pool_ScriptStub]) {
+            JSC::CodeLocationJump oolJump = slowPathStart.jumpAtOffset(oolJumpOffset);
+            JSC::CodeLocationLabel icCall = slowPathStart.labelAtOffset(icCallOffset);
+            repatcher.relink(oolJump, icCall);
+            releasePool(Pool_ScriptStub);
+        }
+        hit = false;
     }
 };
 

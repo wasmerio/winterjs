@@ -1,45 +1,12 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   IBM Corp.
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Various JS utility functions. */
 
+#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 
 #include <stdio.h>
@@ -54,8 +21,103 @@
 #endif
 
 #include "js/TemplateLib.h"
+#include "js/Utility.h"
+
+#if USE_ZLIB
+#include "zlib.h"
+#endif
 
 using namespace js;
+
+#if USE_ZLIB
+static void *
+zlib_alloc(void *cx, uInt items, uInt size)
+{
+    return OffTheBooks::malloc_(items * size);
+}
+
+static void
+zlib_free(void *cx, void *addr)
+{
+    Foreground::free_(addr);
+}
+
+bool
+Compressor::init()
+{
+    if (inplen >= UINT32_MAX)
+        return false;
+    zs.zalloc = zlib_alloc;
+    zs.zfree = zlib_free;
+    int ret = deflateInit(&zs, Z_DEFAULT_COMPRESSION);
+    if (ret != Z_OK) {
+        JS_ASSERT(ret == Z_MEM_ERROR);
+        return false;
+    }
+    return true;
+}
+
+bool
+Compressor::compressMore()
+{
+    uInt left = inplen - (zs.next_in - inp);
+    bool done = left <= CHUNKSIZE;
+    if (done)
+        zs.avail_in = left;
+    else if (zs.avail_in == 0)
+        zs.avail_in = CHUNKSIZE;
+    int ret = deflate(&zs, done ? Z_FINISH : Z_NO_FLUSH);
+    if (ret == Z_MEM_ERROR) {
+        zs.avail_out = 0;
+        return false;
+    }
+    if (ret == Z_BUF_ERROR || (done && ret == Z_OK)) {
+        JS_ASSERT(zs.avail_out == 0);
+        return false;
+    }
+    JS_ASSERT_IF(!done, ret == Z_OK);
+    JS_ASSERT_IF(done, ret == Z_STREAM_END);
+    return !done;
+}
+
+size_t
+Compressor::finish()
+{
+    size_t outlen = inplen - zs.avail_out;
+    int ret = deflateEnd(&zs);
+    if (ret != Z_OK) {
+        // If we finished early, we can get a Z_DATA_ERROR.
+        JS_ASSERT(ret == Z_DATA_ERROR);
+        JS_ASSERT(uInt(zs.next_in - inp) < inplen || !zs.avail_out);
+    }
+    return outlen;
+}
+
+bool
+js::DecompressString(const unsigned char *inp, size_t inplen, unsigned char *out, size_t outlen)
+{
+    JS_ASSERT(inplen <= UINT32_MAX);
+    z_stream zs;
+    zs.zalloc = zlib_alloc;
+    zs.zfree = zlib_free;
+    zs.opaque = NULL;
+    zs.next_in = (Bytef *)inp;
+    zs.avail_in = inplen;
+    zs.next_out = out;
+    JS_ASSERT(outlen);
+    zs.avail_out = outlen;
+    int ret = inflateInit(&zs);
+    if (ret != Z_OK) {
+        JS_ASSERT(ret == Z_MEM_ERROR);
+        return false;
+    }
+    ret = inflate(&zs, Z_FINISH);
+    JS_ASSERT(ret == Z_STREAM_END);
+    ret = inflateEnd(&zs);
+    JS_ASSERT(ret == Z_OK);
+    return true;
+}
+#endif
 
 #ifdef DEBUG
 /* For JS_OOM_POSSIBLY_FAIL in jsutil.h. */
@@ -69,41 +131,11 @@ JS_PUBLIC_DATA(uint32_t) OOM_counter = 0;
  */
 JS_STATIC_ASSERT(sizeof(void *) == sizeof(void (*)()));
 
-static JS_NEVER_INLINE void
-CrashInJS()
-{
-    /*
-     * We write 123 here so that the machine code for this function is
-     * unique. Otherwise the linker, trying to be smart, might use the
-     * same code for CrashInJS and for some other function. That
-     * messes up the signature in minidumps.
-     */
-
-#if defined(WIN32)
-    /*
-     * We used to call DebugBreak() on Windows, but amazingly, it causes
-     * the MSVS 2010 debugger not to be able to recover a call stack.
-     */
-    *((volatile int *) NULL) = 123;
-    exit(3);
-#elif defined(__APPLE__)
-    /*
-     * On Mac OS X, Breakpad ignores signals. Only real Mach exceptions are
-     * trapped.
-     */
-    *((volatile int *) NULL) = 123;  /* To continue from here in GDB: "return" then "continue". */
-    raise(SIGABRT);  /* In case above statement gets nixed by the optimizer. */
-#else
-    raise(SIGABRT);  /* To continue from here in GDB: "signal 0". */
-#endif
-}
-
 JS_PUBLIC_API(void)
 JS_Assert(const char *s, const char *file, int ln)
 {
-    fprintf(stderr, "Assertion failure: %s, at %s:%d\n", s, file, ln);
-    fflush(stderr);
-    CrashInJS();
+    MOZ_ReportAssertionFailure(s, file, ln);
+    MOZ_CRASH();
 }
 
 #ifdef JS_BASIC_STATS
@@ -141,11 +173,11 @@ ValToBin(unsigned logscale, uint32_t val)
     if (val <= 1)
         return val;
     bin = (logscale == 10)
-          ? (unsigned) ceil(log10((double) val))
-          : (logscale == 2)
-          ? (unsigned) JS_CEILING_LOG2W(val)
-          : val;
-    return JS_MIN(bin, 10);
+        ? (unsigned) ceil(log10((double) val))
+        : (logscale == 2)
+        ? (unsigned) JS_CEILING_LOG2W(val)
+        : val;
+    return Min(bin, 10U);
 }
 
 void

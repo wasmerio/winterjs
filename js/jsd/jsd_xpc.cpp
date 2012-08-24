@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Robert Ginda, <rginda@netscape.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jsdbgapi.h"
 #include "jslock.h"
@@ -55,6 +22,8 @@
 #include "jsdebug.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
+#include "nsCycleCollectionParticipant.h"
+#include "mozilla/Attributes.h"
 
 /* XXX DOM dependency */
 #include "nsIScriptContext.h"
@@ -121,11 +90,11 @@ const char jsdARObserverCtrID[] = "@mozilla.org/js/jsd/app-start-observer;2";
 const char jsdASObserverCtrID[] = "service,@mozilla.org/js/jsd/app-start-observer;2";
 
 #ifdef DEBUG_verbose
-PRUint32 gScriptCount   = 0;
-PRUint32 gValueCount    = 0;
-PRUint32 gPropertyCount = 0;
-PRUint32 gContextCount  = 0;
-PRUint32 gFrameCount  = 0;
+uint32_t gScriptCount   = 0;
+uint32_t gValueCount    = 0;
+uint32_t gPropertyCount = 0;
+uint32_t gContextCount  = 0;
+uint32_t gFrameCount  = 0;
 #endif
 
 static jsdService          *gJsds               = 0;
@@ -136,7 +105,7 @@ static struct DeadScript {
     PRCList     links;
     JSDContext *jsdc;
     jsdIScript *script;
-} *gDeadScripts = nsnull;
+} *gDeadScripts = nullptr;
 
 enum PatternType {
     ptIgnore     = 0U,
@@ -152,14 +121,14 @@ static struct FilterRecord {
     void        *glob;
     nsCString    urlPattern;
     PatternType  patternType;
-    PRUint32     startLine;
-    PRUint32     endLine;
-} *gFilters = nsnull;
+    uint32_t     startLine;
+    uint32_t     endLine;
+} *gFilters = nullptr;
 
-static struct LiveEphemeral *gLiveValues      = nsnull;
-static struct LiveEphemeral *gLiveProperties  = nsnull;
-static struct LiveEphemeral *gLiveContexts    = nsnull;
-static struct LiveEphemeral *gLiveStackFrames = nsnull;
+static struct LiveEphemeral *gLiveValues      = nullptr;
+static struct LiveEphemeral *gLiveProperties  = nullptr;
+static struct LiveEphemeral *gLiveContexts    = nullptr;
+static struct LiveEphemeral *gLiveStackFrames = nullptr;
 
 /*******************************************************************************
  * utility functions for ephemeral lists
@@ -168,7 +137,7 @@ already_AddRefed<jsdIEphemeral>
 jsds_FindEphemeral (LiveEphemeral **listHead, void *key)
 {
     if (!*listHead)
-        return nsnull;
+        return nullptr;
     
     LiveEphemeral *lv_record = 
         reinterpret_cast<LiveEphemeral *>
@@ -185,7 +154,7 @@ jsds_FindEphemeral (LiveEphemeral **listHead, void *key)
     }
     while (lv_record != *listHead);
 
-    return nsnull;
+    return nullptr;
 }
 
 void
@@ -230,7 +199,7 @@ jsds_RemoveEphemeral (LiveEphemeral **listHead, LiveEphemeral *item)
          * null out the list head */
         NS_ASSERTION (*listHead == item,
                       "How could we not be the head of a one item list?");
-        *listHead = nsnull;
+        *listHead = nullptr;
     }
     else if (item == *listHead)
     {
@@ -260,7 +229,7 @@ jsds_SyncFilter (FilterRecord *rec, jsdIFilter *filter)
     NS_ASSERTION (rec, "jsds_SyncFilter without rec");
     NS_ASSERTION (filter, "jsds_SyncFilter without filter");
     
-    JSObject *glob_proper = nsnull;
+    JSObject *glob_proper = nullptr;
     nsCOMPtr<nsISupports> glob;
     nsresult rv = filter->GetGlobalObject(getter_AddRefs(glob));
     if (NS_FAILED(rv))
@@ -271,12 +240,12 @@ jsds_SyncFilter (FilterRecord *rec, jsdIFilter *filter)
             glob_proper = nsiglob->GetGlobalJSObject();
     }
     
-    PRUint32 startLine;
+    uint32_t startLine;
     rv = filter->GetStartLine(&startLine);
     if (NS_FAILED(rv))
         return false;
 
-    PRUint32 endLine;
+    uint32_t endLine;
     rv = filter->GetStartLine(&endLine);
     if (NS_FAILED(rv))
         return false;    
@@ -286,7 +255,7 @@ jsds_SyncFilter (FilterRecord *rec, jsdIFilter *filter)
     if (NS_FAILED(rv))
         return false;
     
-    PRUint32 len = urlPattern.Length();
+    uint32_t len = urlPattern.Length();
     if (len) {
         if (urlPattern[0] == '*') {
             /* pattern starts with a *, shift all chars once to the left,
@@ -339,7 +308,7 @@ FilterRecord *
 jsds_FindFilter (jsdIFilter *filter)
 {
     if (!gFilters)
-        return nsnull;
+        return nullptr;
     
     FilterRecord *current = gFilters;
     
@@ -350,7 +319,7 @@ jsds_FindFilter (jsdIFilter *filter)
                                   (PR_NEXT_LINK(&current->links));
     } while (current != gFilters);
     
-    return nsnull;
+    return nullptr;
 }
 
 /* returns true if the hook should be executed. */
@@ -387,11 +356,11 @@ jsds_FilterHook (JSDContext *jsdc, JSDThreadState *state)
     if (!gFilters)
         return true;    
 
-    PRUint32 currentLine = JSD_GetClosestLine (jsdc, script, pc);
-    PRUint32 len = 0;
+    uint32_t currentLine = JSD_GetClosestLine (jsdc, script, pc);
+    uint32_t len = 0;
     FilterRecord *currentFilter = gFilters;
     do {
-        PRUint32 flags = 0;
+        uint32_t flags = 0;
 
 #ifdef DEBUG
         nsresult rv =
@@ -417,7 +386,7 @@ jsds_FilterHook (JSDContext *jsdc, JSDThreadState *state)
                 if (!len)
                     len = url.Length();
                 nsCString urlPattern = currentFilter->urlPattern;
-                PRUint32 patternLength = urlPattern.Length();
+                uint32_t patternLength = urlPattern.Length();
                 if (len >= patternLength) {
                     switch (currentFilter->patternType) {
                         case ptEquals:
@@ -468,18 +437,18 @@ jsds_NotifyPendingDeadScripts (JSRuntime *rt)
     if (jsds) {
         NS_ADDREF(jsds);
         jsds->GetScriptHook (getter_AddRefs(hook));
-        jsds->DoPause(nsnull, true);
+        jsds->DoPause(nullptr, true);
     }
 
     DeadScript *deadScripts = gDeadScripts;
-    gDeadScripts = nsnull;
+    gDeadScripts = nullptr;
     while (deadScripts) {
         DeadScript *ds = deadScripts;
         /* get next deleted script */
         deadScripts = reinterpret_cast<DeadScript *>
                                        (PR_NEXT_LINK(&ds->links));
         if (deadScripts == ds)
-            deadScripts = nsnull;
+            deadScripts = nullptr;
 
         if (hook)
         {
@@ -503,7 +472,7 @@ jsds_NotifyPendingDeadScripts (JSRuntime *rt)
     }
 
     if (jsds) {
-        jsds->DoUnPause(nsnull, true);
+        jsds->DoUnPause(nullptr, true);
         NS_RELEASE(jsds);
     }
 }
@@ -552,10 +521,10 @@ jsds_ErrorHookProc (JSDContext *jsdc, JSContext *cx, const char *message,
     }
     
     nsCAutoString fileName;
-    PRUint32    line;
-    PRUint32    pos;
-    PRUint32    flags;
-    PRUint32    errnum;
+    uint32_t    line;
+    uint32_t    pos;
+    uint32_t    flags;
+    uint32_t    errnum;
     bool        rval;
     if (report) {
         fileName.Assign(report->filename);
@@ -572,9 +541,9 @@ jsds_ErrorHookProc (JSDContext *jsdc, JSContext *cx, const char *message,
         errnum   = 0;
     }
     
-    gJsds->DoPause(nsnull, true);
+    gJsds->DoPause(nullptr, true);
     hook->OnError (nsDependentCString(message), fileName, line, pos, flags, errnum, val, &rval);
-    gJsds->DoUnPause(nsnull, true);
+    gJsds->DoUnPause(nullptr, true);
     
     running = false;
     if (!rval)
@@ -615,20 +584,20 @@ jsds_CallHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
     nsCOMPtr<jsdIStackFrame> frame =
         getter_AddRefs(jsdStackFrame::FromPtr(jsdc, jsdthreadstate,
                                               native_frame));
-    gJsds->DoPause(nsnull, true);
+    gJsds->DoPause(nullptr, true);
     hook->OnCall(frame, type);    
-    gJsds->DoUnPause(nsnull, true);
+    gJsds->DoUnPause(nullptr, true);
     jsdStackFrame::InvalidateAll();
 
     return JS_TRUE;
 }
 
-static PRUint32
+static uint32_t
 jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
                         unsigned type, void* callerdata, jsval* rval)
 {
     nsCOMPtr<jsdIExecutionHook> hook(0);
-    PRUint32 hook_rv = JSD_HOOK_RETURN_CONTINUE;
+    uint32_t hook_rv = JSD_HOOK_RETURN_CONTINUE;
     nsCOMPtr<jsdIValue> js_rv;
 
     switch (type)
@@ -647,7 +616,7 @@ jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
                 /* we can't pause breakpoints the way we pause the other
                  * execution hooks (at least, not easily.)  Instead we bail
                  * here if the service is paused. */
-                PRUint32 level;
+                uint32_t level;
                 gJsds->GetPauseDepth(&level);
                 if (!level)
                     gJsds->GetBreakpointHook(getter_AddRefs(hook));
@@ -677,13 +646,13 @@ jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
     nsCOMPtr<jsdIStackFrame> frame =
         getter_AddRefs(jsdStackFrame::FromPtr(jsdc, jsdthreadstate,
                                               native_frame));
-    gJsds->DoPause(nsnull, true);
+    gJsds->DoPause(nullptr, true);
     jsdIValue *inout_rv = js_rv;
     NS_IF_ADDREF(inout_rv);
     hook->OnExecute (frame, type, &inout_rv, &hook_rv);
     js_rv = inout_rv;
     NS_IF_RELEASE(inout_rv);
-    gJsds->DoUnPause(nsnull, true);
+    gJsds->DoUnPause(nullptr, true);
     jsdStackFrame::InvalidateAll();
         
     if (hook_rv == JSD_HOOK_RETURN_RET_WITH_VAL ||
@@ -723,9 +692,9 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
 #ifdef CAUTIOUS_SCRIPTHOOK
         JS_UNKEEP_ATOMS(rt);
 #endif
-        gJsds->DoPause(nsnull, true);
+        gJsds->DoPause(nullptr, true);
         hook->OnScriptCreated (script);
-        gJsds->DoUnPause(nsnull, true);
+        gJsds->DoUnPause(nullptr, true);
 #ifdef CAUTIOUS_SCRIPTHOOK
         JS_KEEP_ATOMS(rt);
 #endif
@@ -752,9 +721,9 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
             JS_UNKEEP_ATOMS(rt);
 #endif
                 
-            gJsds->DoPause(nsnull, true);
+            gJsds->DoPause(nullptr, true);
             hook->OnScriptDestroyed (jsdis);
-            gJsds->DoUnPause(nsnull, true);
+            gJsds->DoUnPause(nullptr, true);
 #ifdef CAUTIOUS_SCRIPTHOOK
             JS_KEEP_ATOMS(rt);
 #endif
@@ -822,7 +791,7 @@ jsdObject::GetCreatorURL(nsACString &_rval)
 }
 
 NS_IMETHODIMP
-jsdObject::GetCreatorLine(PRUint32 *_rval)
+jsdObject::GetCreatorLine(uint32_t *_rval)
 {
     *_rval = JSD_GetObjectNewLineNumber(mCx, mObject);
     return NS_OK;
@@ -836,7 +805,7 @@ jsdObject::GetConstructorURL(nsACString &_rval)
 }
 
 NS_IMETHODIMP
-jsdObject::GetConstructorLine(PRUint32 *_rval)
+jsdObject::GetConstructorLine(uint32_t *_rval)
 {
     *_rval = JSD_GetObjectConstructorLineNumber(mCx, mObject);
     return NS_OK;
@@ -918,7 +887,7 @@ jsdProperty::GetAlias(jsdIValue **_rval)
 }
 
 NS_IMETHODIMP
-jsdProperty::GetFlags(PRUint32 *_rval)
+jsdProperty::GetFlags(uint32_t *_rval)
 {
     *_rval = JSD_GetPropertyFlags (mCx, mProperty);
     return NS_OK;
@@ -942,13 +911,6 @@ jsdProperty::GetValue(jsdIValue **_rval)
     return NS_OK;
 }
 
-NS_IMETHODIMP
-jsdProperty::GetVarArgSlot(PRUint32 *_rval)
-{
-    *_rval = JSD_GetPropertyVarArgSlot (mCx, mProperty);
-    return NS_OK;
-}
-
 /* Scripts */
 NS_IMPL_THREADSAFE_ISUPPORTS2(jsdScript, jsdIScript, jsdIEphemeral)
 
@@ -962,8 +924,8 @@ AssignToJSString(nsACString *x, JSString *str)
     size_t length = JS_GetStringEncodingLength(NULL, str);
     if (length == size_t(-1))
         return NS_ERROR_FAILURE;
-    x->SetLength(PRUint32(length));
-    if (x->Length() != PRUint32(length))
+    x->SetLength(uint32_t(length));
+    if (x->Length() != uint32_t(length))
         return NS_ERROR_OUT_OF_MEMORY;
     JS_EncodeStringToBuffer(str, x->BeginWriting(), length);
     return NS_OK;
@@ -1030,7 +992,7 @@ jsdScript::CreatePPLineMap()
     JSObject   *obj = JS_NewObject(cx, NULL, NULL, NULL);
     JSFunction *fun = JSD_GetJSFunction (mCx, mScript);
     JSScript   *script; /* In JSD compartment */
-    PRUint32    baseLine;
+    uint32_t    baseLine;
     JSString   *jsstr;
     size_t      length;
     const jschar *chars;
@@ -1041,17 +1003,17 @@ jsdScript::CreatePPLineMap()
         {
             JSAutoEnterCompartment ac;
             if (!ac.enter(cx, JS_GetFunctionObject(fun)))
-                return nsnull;
+                return nullptr;
 
             nargs = JS_GetFunctionArgumentCount(cx, fun);
             if (nargs > 12)
-                return nsnull;
+                return nullptr;
             jsstr = JS_DecompileFunctionBody (cx, fun, 4);
             if (!jsstr)
-                return nsnull;
+                return nullptr;
 
             if (!(chars = JS_GetStringCharsAndLength(cx, jsstr, &length)))
-                return nsnull;
+                return nullptr;
         }
 
         JS::Anchor<JSString *> kungFuDeathGrip(jsstr);
@@ -1061,7 +1023,7 @@ jsdScript::CreatePPLineMap()
         fun = JS_CompileUCFunction (cx, obj, "ppfun", nargs, argnames, chars,
                                     length, "x-jsd:ppbuffer?type=function", 3);
         if (!fun || !(script = JS_GetFunctionScript(cx, fun)))
-            return nsnull;
+            return nullptr;
         baseLine = 3;
     } else {
         script = JSD_GetJSScript(mCx, mScript);
@@ -1070,34 +1032,34 @@ jsdScript::CreatePPLineMap()
         {
             JS::AutoEnterScriptCompartment ac;
             if (!ac.enter(cx, script))
-                return nsnull;
+                return nullptr;
 
             jsstr = JS_DecompileScript (cx, script, "ppscript", 4);
             if (!jsstr)
-                return nsnull;
+                return nullptr;
 
             if (!(chars = JS_GetStringCharsAndLength(cx, jsstr, &length)))
-                return nsnull;
+                return nullptr;
         }
 
         JS::Anchor<JSString *> kungFuDeathGrip(jsstr);
         script = JS_CompileUCScript (cx, obj, chars, length, "x-jsd:ppbuffer?type=script", 1);
         if (!script)
-            return nsnull;
+            return nullptr;
         baseLine = 1;
     }
 
-    PRUint32 scriptExtent = JS_GetScriptLineExtent (cx, script);
+    uint32_t scriptExtent = JS_GetScriptLineExtent (cx, script);
     jsbytecode* firstPC = JS_LineNumberToPC (cx, script, 0);
     /* allocate worst case size of map (number of lines in script + 1
      * for our 0 record), we'll shrink it with a realloc later. */
     PCMapEntry *lineMap =
         static_cast<PCMapEntry *>
                    (PR_Malloc((scriptExtent + 1) * sizeof (PCMapEntry)));
-    PRUint32 lineMapSize = 0;
+    uint32_t lineMapSize = 0;
 
     if (lineMap) {
-        for (PRUint32 line = baseLine; line < scriptExtent + baseLine; ++line) {
+        for (uint32_t line = baseLine; line < scriptExtent + baseLine; ++line) {
             jsbytecode* pc = JS_LineNumberToPC (cx, script, line);
             if (line == JS_PCToLineNumber (cx, script, pc)) {
                 lineMap[lineMapSize].line = line;
@@ -1121,12 +1083,12 @@ jsdScript::CreatePPLineMap()
     return mPPLineMap = lineMap;
 }
 
-PRUint32
-jsdScript::PPPcToLine (PRUint32 aPC)
+uint32_t
+jsdScript::PPPcToLine (uint32_t aPC)
 {
     if (!mPPLineMap && !CreatePPLineMap())
         return 0;
-    PRUint32 i;
+    uint32_t i;
     for (i = 1; i < mPCMapSize; ++i) {
         if (mPPLineMap[i].pc > aPC)
             return mPPLineMap[i - 1].line;            
@@ -1135,12 +1097,12 @@ jsdScript::PPPcToLine (PRUint32 aPC)
     return mPPLineMap[mPCMapSize - 1].line;
 }
 
-PRUint32
-jsdScript::PPLineToPc (PRUint32 aLine)
+uint32_t
+jsdScript::PPLineToPc (uint32_t aLine)
 {
     if (!mPPLineMap && !CreatePPLineMap())
         return 0;
-    PRUint32 i;
+    uint32_t i;
     for (i = 1; i < mPCMapSize; ++i) {
         if (mPPLineMap[i].line > aLine)
             return mPPLineMap[i - 1].pc;
@@ -1166,7 +1128,7 @@ jsdScript::GetJSDScript(JSDScript **_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::GetVersion (PRInt32 *_rval)
+jsdScript::GetVersion (int32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     JSContext *cx = JSD_GetDefaultJSContext (mCx);
@@ -1174,12 +1136,12 @@ jsdScript::GetVersion (PRInt32 *_rval)
     JS::AutoEnterScriptCompartment ac;
     if (!ac.enter(cx, script))
         return NS_ERROR_FAILURE;
-    *_rval = static_cast<PRInt32>(JS_GetScriptVersion(cx, script));
+    *_rval = static_cast<int32_t>(JS_GetScriptVersion(cx, script));
     return NS_OK;
 }
 
 NS_IMETHODIMP
-jsdScript::GetTag(PRUint32 *_rval)
+jsdScript::GetTag(uint32_t *_rval)
 {
     if (!mTag)
         mTag = ++jsdScript::LastTag;
@@ -1231,7 +1193,7 @@ jsdScript::GetIsValid(bool *_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::SetFlags(PRUint32 flags)
+jsdScript::SetFlags(uint32_t flags)
 {
     ASSERT_VALID_EPHEMERAL;
     JSD_SetScriptFlags(mCx, mScript, flags);
@@ -1239,7 +1201,7 @@ jsdScript::SetFlags(PRUint32 flags)
 }
 
 NS_IMETHODIMP
-jsdScript::GetFlags(PRUint32 *_rval)
+jsdScript::GetFlags(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     *_rval = JSD_GetScriptFlags(mCx, mScript);
@@ -1261,7 +1223,7 @@ jsdScript::GetFunctionName(nsACString &_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::GetParameterNames(PRUint32* count, PRUnichar*** paramNames)
+jsdScript::GetParameterNames(uint32_t* count, PRUnichar*** paramNames)
 {
     ASSERT_VALID_EPHEMERAL;
     JSContext *cx = JSD_GetDefaultJSContext (mCx);
@@ -1272,7 +1234,7 @@ jsdScript::GetParameterNames(PRUint32* count, PRUnichar*** paramNames)
     JSFunction *fun = JSD_GetJSFunction (mCx, mScript);
     if (!fun) {
         *count = 0;
-        *paramNames = nsnull;
+        *paramNames = nullptr;
         return NS_OK;
     }
 
@@ -1285,7 +1247,7 @@ jsdScript::GetParameterNames(PRUint32* count, PRUnichar*** paramNames)
     if (!JS_FunctionHasLocalNames(cx, fun) ||
         (nargs = JS_GetFunctionArgumentCount(cx, fun)) == 0) {
         *count = 0;
-        *paramNames = nsnull;
+        *paramNames = nullptr;
         return NS_OK;
     }
 
@@ -1391,21 +1353,21 @@ jsdScript::GetFunctionSource(nsAString & aFunctionSource)
 }
 
 NS_IMETHODIMP
-jsdScript::GetBaseLineNumber(PRUint32 *_rval)
+jsdScript::GetBaseLineNumber(uint32_t *_rval)
 {
     *_rval = mBaseLineNumber;
     return NS_OK;
 }
 
 NS_IMETHODIMP
-jsdScript::GetLineExtent(PRUint32 *_rval)
+jsdScript::GetLineExtent(uint32_t *_rval)
 {
     *_rval = mLineExtent;
     return NS_OK;
 }
 
 NS_IMETHODIMP
-jsdScript::GetCallCount(PRUint32 *_rval)
+jsdScript::GetCallCount(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     *_rval = JSD_GetScriptCallCount (mCx, mScript);
@@ -1413,7 +1375,7 @@ jsdScript::GetCallCount(PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::GetMaxRecurseDepth(PRUint32 *_rval)
+jsdScript::GetMaxRecurseDepth(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     *_rval = JSD_GetScriptMaxRecurseDepth (mCx, mScript);
@@ -1477,7 +1439,7 @@ jsdScript::ClearProfileData()
 }
 
 NS_IMETHODIMP
-jsdScript::PcToLine(PRUint32 aPC, PRUint32 aPcmap, PRUint32 *_rval)
+jsdScript::PcToLine(uint32_t aPC, uint32_t aPcmap, uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     if (aPcmap == PCMAP_SOURCETEXT) {
@@ -1492,7 +1454,7 @@ jsdScript::PcToLine(PRUint32 aPC, PRUint32 aPcmap, PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::LineToPc(PRUint32 aLine, PRUint32 aPcmap, PRUint32 *_rval)
+jsdScript::LineToPc(uint32_t aLine, uint32_t aPcmap, uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     if (aPcmap == PCMAP_SOURCETEXT) {
@@ -1520,8 +1482,8 @@ jsdScript::EnableSingleStepInterrupts(bool enable)
 }
 
 NS_IMETHODIMP
-jsdScript::GetExecutableLines(PRUint32 aPcmap, PRUint32 aStartLine, PRUint32 aMaxLines,
-                              PRUint32* aCount, PRUint32** aExecutableLines)
+jsdScript::GetExecutableLines(uint32_t aPcmap, uint32_t aStartLine, uint32_t aMaxLines,
+                              uint32_t* aCount, uint32_t** aExecutableLines)
 {
     ASSERT_VALID_EPHEMERAL;
     if (aPcmap == PCMAP_SOURCETEXT) {
@@ -1530,7 +1492,7 @@ jsdScript::GetExecutableLines(PRUint32 aPcmap, PRUint32 aStartLine, PRUint32 aMa
                        + JSD_GetScriptLineExtent(mCx, mScript) - 1;
         uintptr_t end = JSD_GetClosestPC(mCx, mScript, lastLine + 1);
 
-        *aExecutableLines = static_cast<PRUint32*>(NS_Alloc((end - start + 1) * sizeof(PRUint32)));
+        *aExecutableLines = static_cast<uint32_t*>(NS_Alloc((end - start + 1) * sizeof(uint32_t)));
         if (!JSD_GetLinePCs(mCx, mScript, aStartLine, aMaxLines, aCount, aExecutableLines, NULL))
             return NS_ERROR_OUT_OF_MEMORY;
         
@@ -1543,8 +1505,8 @@ jsdScript::GetExecutableLines(PRUint32 aPcmap, PRUint32 aStartLine, PRUint32 aMa
                 return NS_ERROR_OUT_OF_MEMORY;
         }
 
-        nsTArray<PRUint32> lines;
-        PRUint32 i;
+        nsTArray<uint32_t> lines;
+        uint32_t i;
 
         for (i = 0; i < mPCMapSize; ++i) {
             if (mPPLineMap[i].line >= aStartLine)
@@ -1558,7 +1520,7 @@ jsdScript::GetExecutableLines(PRUint32 aPcmap, PRUint32 aStartLine, PRUint32 aMa
         if (aCount)
             *aCount = lines.Length();
 
-        *aExecutableLines = static_cast<PRUint32*>(NS_Alloc(lines.Length() * sizeof(PRUint32)));
+        *aExecutableLines = static_cast<uint32_t*>(NS_Alloc(lines.Length() * sizeof(uint32_t)));
         if (!*aExecutableLines)
             return NS_ERROR_OUT_OF_MEMORY;
 
@@ -1572,7 +1534,7 @@ jsdScript::GetExecutableLines(PRUint32 aPcmap, PRUint32 aStartLine, PRUint32 aMa
 }
 
 NS_IMETHODIMP
-jsdScript::IsLineExecutable(PRUint32 aLine, PRUint32 aPcmap, bool *_rval)
+jsdScript::IsLineExecutable(uint32_t aLine, uint32_t aPcmap, bool *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     if (aPcmap == PCMAP_SOURCETEXT) {    
@@ -1582,7 +1544,7 @@ jsdScript::IsLineExecutable(PRUint32 aLine, PRUint32 aPcmap, bool *_rval)
         if (!mPPLineMap && !CreatePPLineMap())
             return NS_ERROR_OUT_OF_MEMORY;
         *_rval = false;
-        for (PRUint32 i = 0; i < mPCMapSize; ++i) {
+        for (uint32_t i = 0; i < mPCMapSize; ++i) {
             if (mPPLineMap[i].line >= aLine) {
                 *_rval = (mPPLineMap[i].line == aLine);
                 break;
@@ -1596,7 +1558,7 @@ jsdScript::IsLineExecutable(PRUint32 aLine, PRUint32 aPcmap, bool *_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::SetBreakpoint(PRUint32 aPC)
+jsdScript::SetBreakpoint(uint32_t aPC)
 {
     ASSERT_VALID_EPHEMERAL;
     uintptr_t pc = mFirstPC + aPC;
@@ -1605,7 +1567,7 @@ jsdScript::SetBreakpoint(PRUint32 aPC)
 }
 
 NS_IMETHODIMP
-jsdScript::ClearBreakpoint(PRUint32 aPC)
+jsdScript::ClearBreakpoint(uint32_t aPC)
 {
     ASSERT_VALID_EPHEMERAL;    
     uintptr_t pc = mFirstPC + aPC;
@@ -1630,7 +1592,7 @@ jsdIContext *
 jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
 {
     if (!aJSDCx || !aJSCx)
-        return nsnull;
+        return nullptr;
 
     nsCOMPtr<jsdIContext> jsdicx;
     nsCOMPtr<jsdIEphemeral> eph = 
@@ -1647,7 +1609,7 @@ jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
         jsdicx = new jsdContext (aJSDCx, aJSCx, iscx);
     }
 
-    jsdIContext *ctx = nsnull;
+    jsdIContext *ctx = nullptr;
     jsdicx.swap(ctx);
     return ctx;
 }
@@ -1705,7 +1667,7 @@ jsdContext::GetJSContext(JSContext **_rval)
 }
 
 NS_IMETHODIMP
-jsdContext::GetOptions(PRUint32 *_rval)
+jsdContext::GetOptions(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     *_rval = JS_GetOptions(mJSCx);
@@ -1713,10 +1675,10 @@ jsdContext::GetOptions(PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdContext::SetOptions(PRUint32 options)
+jsdContext::SetOptions(uint32_t options)
 {
     ASSERT_VALID_EPHEMERAL;
-    PRUint32 lastOptions = JS_GetOptions(mJSCx);
+    uint32_t lastOptions = JS_GetOptions(mJSCx);
 
     /* don't let users change this option, they'd just be shooting themselves
      * in the foot. */
@@ -1731,7 +1693,7 @@ NS_IMETHODIMP
 jsdContext::GetPrivateData(nsISupports **_rval)
 {
     ASSERT_VALID_EPHEMERAL;
-    PRUint32 options = JS_GetOptions(mJSCx);
+    uint32_t options = JS_GetOptions(mJSCx);
     if (options & JSOPTION_PRIVATE_IS_NSISUPPORTS)
     {
         *_rval = static_cast<nsISupports*>(JS_GetContextPrivate(mJSCx));
@@ -1739,7 +1701,7 @@ jsdContext::GetPrivateData(nsISupports **_rval)
     }
     else
     {
-        *_rval = nsnull;
+        *_rval = nullptr;
     }
     
     return NS_OK;
@@ -1754,7 +1716,7 @@ jsdContext::GetWrappedContext(nsISupports **_rval)
 }
 
 NS_IMETHODIMP
-jsdContext::GetTag(PRUint32 *_rval)
+jsdContext::GetTag(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     if (!mTag)
@@ -1765,15 +1727,15 @@ jsdContext::GetTag(PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdContext::GetVersion (PRInt32 *_rval)
+jsdContext::GetVersion (int32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
-    *_rval = static_cast<PRInt32>(JS_GetVersion(mJSCx));
+    *_rval = static_cast<int32_t>(JS_GetVersion(mJSCx));
     return NS_OK;
 }
 
 NS_IMETHODIMP
-jsdContext::SetVersion (PRInt32 id)
+jsdContext::SetVersion (int32_t id)
 {
     ASSERT_VALID_EPHEMERAL;
     JSVersion ver = static_cast<JSVersion>(id);
@@ -1863,7 +1825,7 @@ jsdStackFrame::FromPtr (JSDContext *aCx, JSDThreadState *aThreadState,
                         JSDStackFrameInfo *aStackFrameInfo)
 {
     if (!aStackFrameInfo)
-        return nsnull;
+        return nullptr;
 
     jsdIStackFrame *rv;
     nsCOMPtr<jsdIStackFrame> frame;
@@ -1991,7 +1953,7 @@ jsdStackFrame::GetScript(jsdIScript **_rval)
 }
 
 NS_IMETHODIMP
-jsdStackFrame::GetPc(PRUint32 *_rval)
+jsdStackFrame::GetPc(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     JSDScript *script = JSD_GetScriptForStackFrame (mCx, mThreadState,
@@ -2009,7 +1971,7 @@ jsdStackFrame::GetPc(PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdStackFrame::GetLine(PRUint32 *_rval)
+jsdStackFrame::GetLine(uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     JSDScript *script = JSD_GetScriptForStackFrame (mCx, mThreadState,
@@ -2059,7 +2021,7 @@ jsdStackFrame::GetThisValue(jsdIValue **_rval)
 
 NS_IMETHODIMP
 jsdStackFrame::Eval (const nsAString &bytes, const nsACString &fileName,
-                     PRUint32 line, jsdIValue **result, bool *_rval)
+                     uint32_t line, jsdIValue **result, bool *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
 
@@ -2109,7 +2071,7 @@ jsdStackFrame::Eval (const nsAString &bytes, const nsACString &fileName,
     rv = stack->Pop(&poppedCX);
     NS_ASSERTION(NS_SUCCEEDED(rv) && poppedCX == cx, "bad pop");
 #else
-    (void) stack->Pop(nsnull);
+    (void) stack->Pop(nullptr);
 #endif
 
     JSDValue *jsdv = JSD_NewValue (mCx, jv);
@@ -2130,7 +2092,7 @@ jsdValue::FromPtr (JSDContext *aCx, JSDValue *aValue)
     /* value will be dropped by te jsdValue destructor. */
 
     if (!aValue)
-        return nsnull;
+        return nullptr;
     
     jsdIValue *rv = new jsdValue (aCx, aValue);
     NS_IF_ADDREF(rv);
@@ -2219,7 +2181,7 @@ jsdValue::GetIsPrimitive (bool *_rval)
 }
 
 NS_IMETHODIMP
-jsdValue::GetJsType (PRUint32 *_rval)
+jsdValue::GetJsType (uint32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     jsval val;
@@ -2240,7 +2202,7 @@ jsdValue::GetJsType (PRUint32 *_rval)
         *_rval = TYPE_VOID;
     else if (JSD_IsValueFunction (mCx, mValue))
         *_rval = TYPE_FUNCTION;
-    else if (JSVAL_IS_OBJECT(val))
+    else if (!JSVAL_IS_PRIMITIVE(val))
         *_rval = TYPE_OBJECT;
     else
         NS_ASSERTION (0, "Value has no discernible type.");
@@ -2308,7 +2270,7 @@ jsdValue::GetDoubleValue(double *_rval)
 }
 
 NS_IMETHODIMP
-jsdValue::GetIntValue(PRInt32 *_rval)
+jsdValue::GetIntValue(int32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     *_rval = JSD_GetValueInt (mCx, mValue);
@@ -2351,7 +2313,7 @@ jsdValue::GetStringValue(nsACString &_rval)
 }
 
 NS_IMETHODIMP
-jsdValue::GetPropertyCount (PRInt32 *_rval)
+jsdValue::GetPropertyCount (int32_t *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     if (JSD_IsValueObject(mCx, mValue))
@@ -2362,14 +2324,14 @@ jsdValue::GetPropertyCount (PRInt32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdValue::GetProperties (jsdIProperty ***propArray, PRUint32 *length)
+jsdValue::GetProperties (jsdIProperty ***propArray, uint32_t *length)
 {
     ASSERT_VALID_EPHEMERAL;
-    *propArray = nsnull;
+    *propArray = nullptr;
     if (length)
         *length = 0;
 
-    PRUint32 prop_count = JSD_IsValueObject(mCx, mValue)
+    uint32_t prop_count = JSD_IsValueObject(mCx, mValue)
         ? JSD_GetCountOfProperties (mCx, mValue)
         : 0;
     NS_ENSURE_TRUE(prop_count, NS_OK);
@@ -2380,7 +2342,7 @@ jsdValue::GetProperties (jsdIProperty ***propArray, PRUint32 *length)
                                        prop_count));
     NS_ENSURE_TRUE(pa_temp, NS_ERROR_OUT_OF_MEMORY);
 
-    PRUint32     i    = 0;
+    uint32_t     i    = 0;
     JSDProperty *iter = NULL;
     JSDProperty *prop;
     while ((prop = JSD_IterateProperties (mCx, mValue, &iter))) {
@@ -2450,7 +2412,42 @@ jsdValue::GetScript(jsdIScript **_rval)
 /******************************************************************************
  * debugger service implementation
  ******************************************************************************/
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdService, jsdIDebuggerService)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(jsdService)
+  NS_INTERFACE_MAP_ENTRY(jsdIDebuggerService)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, jsdIDebuggerService)
+NS_INTERFACE_MAP_END
+
+/* NS_IMPL_CYCLE_COLLECTION_10(jsdService, ...) */
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(jsdService)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(jsdService)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mErrorHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBreakpointHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDebugHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDebuggerHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mInterruptHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mScriptHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mThrowHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTopLevelHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFunctionHook)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mActivationCallback)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(jsdService)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mErrorHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBreakpointHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDebugHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDebuggerHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInterruptHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mScriptHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mThrowHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTopLevelHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFunctionHook)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mActivationCallback)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(jsdService)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(jsdService)
 
 NS_IMETHODIMP
 jsdService::GetJSDContext(JSDContext **_rval)
@@ -2460,7 +2457,7 @@ jsdService::GetJSDContext(JSDContext **_rval)
 }
 
 NS_IMETHODIMP
-jsdService::GetFlags (PRUint32 *_rval)
+jsdService::GetFlags (uint32_t *_rval)
 {
     ASSERT_VALID_CONTEXT;
     *_rval = JSD_GetContextFlags (mCx);
@@ -2468,7 +2465,7 @@ jsdService::GetFlags (PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdService::SetFlags (PRUint32 flags)
+jsdService::SetFlags (uint32_t flags)
 {
     ASSERT_VALID_CONTEXT;
     JSD_SetContextFlags (mCx, flags);
@@ -2483,14 +2480,14 @@ jsdService::GetImplementationString(nsACString &aImplementationString)
 }
 
 NS_IMETHODIMP
-jsdService::GetImplementationMajor(PRUint32 *_rval)
+jsdService::GetImplementationMajor(uint32_t *_rval)
 {
     *_rval = JSDS_MAJOR_VERSION;
     return NS_OK;
 }
 
 NS_IMETHODIMP
-jsdService::GetImplementationMinor(PRUint32 *_rval)
+jsdService::GetImplementationMinor(uint32_t *_rval)
 {
     *_rval = JSDS_MINOR_VERSION;
     return NS_OK;
@@ -2553,8 +2550,8 @@ jsdService::DeactivateDebugger ()
     
     JSD_DebuggerOff (mCx);
 
-    mCx = nsnull;
-    mRuntime = nsnull;
+    mCx = nullptr;
+    mRuntime = nullptr;
     mOn = false;
 
     return NS_OK;
@@ -2666,7 +2663,7 @@ jsdService::Off (void)
 }
 
 NS_IMETHODIMP
-jsdService::GetPauseDepth(PRUint32 *_rval)
+jsdService::GetPauseDepth(uint32_t *_rval)
 {
     NS_ENSURE_ARG_POINTER(_rval);
     *_rval = mPauseLevel;
@@ -2674,13 +2671,13 @@ jsdService::GetPauseDepth(PRUint32 *_rval)
 }
     
 NS_IMETHODIMP
-jsdService::Pause(PRUint32 *_rval)
+jsdService::Pause(uint32_t *_rval)
 {
     return DoPause(_rval, false);
 }
 
 nsresult
-jsdService::DoPause(PRUint32 *_rval, bool internalCall)
+jsdService::DoPause(uint32_t *_rval, bool internalCall)
 {
     if (!mCx)
         return NS_ERROR_NOT_INITIALIZED;
@@ -2712,13 +2709,13 @@ jsdService::DoPause(PRUint32 *_rval, bool internalCall)
 }
 
 NS_IMETHODIMP
-jsdService::UnPause(PRUint32 *_rval)
+jsdService::UnPause(uint32_t *_rval)
 {
     return DoUnPause(_rval, false);
 }
 
 nsresult
-jsdService::DoUnPause(PRUint32 *_rval, bool internalCall)
+jsdService::DoUnPause(uint32_t *_rval, bool internalCall)
 {
     if (!mCx)
         return NS_ERROR_NOT_INITIALIZED;
@@ -2931,7 +2928,7 @@ jsdService::RemoveFilter (jsdIFilter *filter)
                                    (PR_NEXT_LINK(&rec->links));
         /* If we're the only filter left, null out the list head. */
         if (gFilters == rec)
-            gFilters = nsnull;
+            gFilters = nullptr;
     }
 
     
@@ -2999,7 +2996,7 @@ jsdService::EnumerateFilters (jsdIFilterEnumerator *enumerator)
 NS_IMETHODIMP
 jsdService::RefreshFilters ()
 {
-    return EnumerateFilters(nsnull);
+    return EnumerateFilters(nullptr);
 }
 
 NS_IMETHODIMP
@@ -3019,7 +3016,7 @@ jsdService::ClearFilters ()
     } while (current != gFilters);
     
     jsds_FreeFilter(current);
-    gFilters = nsnull;
+    gFilters = nullptr;
     
     return NS_OK;
 }
@@ -3049,7 +3046,7 @@ jsdService::WrapValue(const JS::Value &value, jsdIValue **_rval)
 
 
 NS_IMETHODIMP
-jsdService::EnterNestedEventLoop (jsdINestCallback *callback, PRUint32 *_rval)
+jsdService::EnterNestedEventLoop (jsdINestCallback *callback, uint32_t *_rval)
 {
     // Nesting event queues is a thing of the past.  Now, we just spin the
     // current event loop.
@@ -3059,15 +3056,15 @@ jsdService::EnterNestedEventLoop (jsdINestCallback *callback, PRUint32 *_rval)
         stack(do_GetService("@mozilla.org/js/xpc/ContextStack;1", &rv));
     if (NS_FAILED(rv))
         return rv;
-    PRUint32 nestLevel = ++mNestedLoopLevel;
+    uint32_t nestLevel = ++mNestedLoopLevel;
     
     nsCOMPtr<nsIThread> thread = do_GetCurrentThread();
 
-    if (NS_SUCCEEDED(stack->Push(nsnull))) {
+    if (NS_SUCCEEDED(stack->Push(nullptr))) {
         if (callback) {
-            DoPause(nsnull, true);
+            DoPause(nullptr, true);
             rv = callback->OnNest();
-            DoUnPause(nsnull, true);
+            DoUnPause(nullptr, true);
         }
         
         while (NS_SUCCEEDED(rv) && mNestedLoopLevel >= nestLevel) {
@@ -3077,7 +3074,7 @@ jsdService::EnterNestedEventLoop (jsdINestCallback *callback, PRUint32 *_rval)
 
         JSContext* cx;
         stack->Pop(&cx);
-        NS_ASSERTION(cx == nsnull, "JSContextStack mismatch");
+        NS_ASSERTION(cx == nullptr, "JSContextStack mismatch");
     }
     else
         rv = NS_ERROR_FAILURE;
@@ -3092,7 +3089,7 @@ jsdService::EnterNestedEventLoop (jsdINestCallback *callback, PRUint32 *_rval)
 }
 
 NS_IMETHODIMP
-jsdService::ExitNestedEventLoop (PRUint32 *_rval)
+jsdService::ExitNestedEventLoop (uint32_t *_rval)
 {
     if (mNestedLoopLevel > 0)
         --mNestedLoopLevel;
@@ -3349,17 +3346,17 @@ jsdService::GetFunctionHook (jsdICallHook **aHook)
 jsdService::~jsdService()
 {
     ClearFilters();
-    mErrorHook = nsnull;
-    mBreakpointHook = nsnull;
-    mDebugHook = nsnull;
-    mDebuggerHook = nsnull;
-    mInterruptHook = nsnull;
-    mScriptHook = nsnull;
-    mThrowHook = nsnull;
-    mTopLevelHook = nsnull;
-    mFunctionHook = nsnull;
+    mErrorHook = nullptr;
+    mBreakpointHook = nullptr;
+    mDebugHook = nullptr;
+    mDebuggerHook = nullptr;
+    mInterruptHook = nullptr;
+    mScriptHook = nullptr;
+    mThrowHook = nullptr;
+    mTopLevelHook = nullptr;
+    mFunctionHook = nullptr;
     Off();
-    gJsds = nsnull;
+    gJsds = nullptr;
 }
 
 jsdService *
@@ -3378,7 +3375,7 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(jsdService, jsdService::GetService)
  * and/or removed from the app-start category by the jsdService::initAtStartup
  * property.
  */
-class jsdASObserver : public nsIObserver 
+class jsdASObserver MOZ_FINAL : public nsIObserver
 {
   public:
     NS_DECL_ISUPPORTS
@@ -3470,7 +3467,7 @@ jsdThreadState::GetJSDThreadState(JSDThreadState **_rval)
 }
 
 NS_IMETHODIMP
-jsdThreadState::GetFrameCount (PRUint32 *_rval)
+jsdThreadState::GetFrameCount (uint32_t *_rval)
 {
     *_rval = JSD_GetCountOfStackFrames (mCx, mThreadState);
     return NS_OK;

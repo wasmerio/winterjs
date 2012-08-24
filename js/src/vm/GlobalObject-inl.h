@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=78:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey global object code.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Jeff Walden <jwalden+code@mit.edu> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef GlobalObject_inl_h___
 #define GlobalObject_inl_h___
@@ -90,6 +57,167 @@ GlobalObject::setOriginalEval(JSObject *evalobj)
 {
     JS_ASSERT(getSlotRef(EVAL).isUndefined());
     setSlot(EVAL, ObjectValue(*evalobj));
+}
+
+void
+GlobalObject::setCreateArrayFromBufferHelper(uint32_t slot, Handle<JSFunction*> fun)
+{
+    JS_ASSERT(getSlotRef(slot).isUndefined());
+    setSlot(slot, ObjectValue(*fun));
+}
+
+void
+GlobalObject::setBooleanValueOf(Handle<JSFunction*> valueOfFun)
+{
+    JS_ASSERT(getSlotRef(BOOLEAN_VALUEOF).isUndefined());
+    setSlot(BOOLEAN_VALUEOF, ObjectValue(*valueOfFun));
+}
+
+void
+GlobalObject::setCreateDataViewForThis(Handle<JSFunction*> fun)
+{
+    JS_ASSERT(getSlotRef(CREATE_DATAVIEW_FOR_THIS).isUndefined());
+    setSlot(CREATE_DATAVIEW_FOR_THIS, ObjectValue(*fun));
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<uint8_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_UINT8, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<int8_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_INT8, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<uint16_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_UINT16, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<int16_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_INT16, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<uint32_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_UINT32, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<int32_t>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_INT32, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<float>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_FLOAT32, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<double>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_FLOAT64, fun);
+}
+
+template<>
+inline void
+GlobalObject::setCreateArrayFromBuffer<uint8_clamped>(Handle<JSFunction*> fun)
+{
+    setCreateArrayFromBufferHelper(FROM_BUFFER_UINT8CLAMPED, fun);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint8_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT8);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int8_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT8);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint16_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT16);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int16_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT16);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint32_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<int32_t>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_INT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<float>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_FLOAT32);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<double>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_FLOAT64);
+}
+
+template<>
+inline Value
+GlobalObject::createArrayFromBuffer<uint8_clamped>() const
+{
+    return createArrayFromBufferHelper(FROM_BUFFER_UINT8CLAMPED);
+}
+
+void
+GlobalObject::setProtoGetter(JSFunction *protoGetter)
+{
+    JS_ASSERT(getSlotRef(PROTO_GETTER).isUndefined());
+    setSlot(PROTO_GETTER, ObjectValue(*protoGetter));
+}
+
+void
+GlobalObject::setIntrinsicsHolder(JSObject *obj)
+{
+    JS_ASSERT(getSlotRef(INTRINSICS).isUndefined());
+    setSlot(INTRINSICS, ObjectValue(*obj));
 }
 
 } // namespace js

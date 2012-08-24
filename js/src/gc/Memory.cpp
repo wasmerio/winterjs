@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Assertions.h"
+
 #include "jstypes.h"
 
 #include "js/Utility.h"
@@ -15,6 +17,7 @@ namespace gc {
 
 #if defined(XP_WIN)
 #include "jswin.h"
+#include <psapi.h>
 
 static size_t AllocationGranularity = 0;
 
@@ -23,7 +26,8 @@ InitMemorySubsystem()
 {
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
-    JS_OPT_ASSERT(sysinfo.dwPageSize == PageSize);
+    if (sysinfo.dwPageSize != PageSize)
+        MOZ_CRASH();
     AllocationGranularity = sysinfo.dwAllocationGranularity;
 }
 
@@ -89,6 +93,15 @@ MarkPagesInUse(void *p, size_t size)
 {
     JS_ASSERT(uintptr_t(p) % PageSize == 0);
     return true;
+}
+
+size_t
+GetPageFaultCount()
+{
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+        return 0;
+    return pmc.PageFaultCount;
 }
 
 #elif defined(XP_OS2)
@@ -216,6 +229,12 @@ MarkPagesInUse(void *p, size_t size)
     return true;
 }
 
+size_t
+GetPageFaultCount()
+{
+    return 0;
+}
+
 #elif defined(SOLARIS)
 
 #include <sys/mman.h>
@@ -267,15 +286,24 @@ MarkPagesInUse(void *p, size_t size)
     return true;
 }
 
+size_t
+GetPageFaultCount()
+{
+    return 0;
+}
+
 #elif defined(XP_UNIX) || defined(XP_MACOSX) || defined(DARWIN)
 
 #include <sys/mman.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 void
 InitMemorySubsystem()
 {
-    JS_OPT_ASSERT(size_t(sysconf(_SC_PAGESIZE)) == PageSize);
+    if (size_t(sysconf(_SC_PAGESIZE)) != PageSize)
+        MOZ_CRASH();
 }
 
 void *
@@ -295,7 +323,7 @@ MapAlignedPages(size_t size, size_t alignment)
     }
 
     /* Overallocate and unmap the region's edges. */
-    size_t reqSize = JS_MIN(size + 2 * alignment, 2 * size);
+    size_t reqSize = Min(size + 2 * alignment, 2 * size);
     void *region = mmap(NULL, reqSize, prot, flags, -1, 0);
     if (region == MAP_FAILED)
         return NULL;
@@ -334,6 +362,16 @@ MarkPagesInUse(void *p, size_t size)
 {
     JS_ASSERT(uintptr_t(p) % PageSize == 0);
     return true;
+}
+
+size_t
+GetPageFaultCount()
+{
+    struct rusage usage;
+    int err = getrusage(RUSAGE_SELF, &usage);
+    if (err)
+        return 0;
+    return usage.ru_minflt + usage.ru_majflt;
 }
 
 #else

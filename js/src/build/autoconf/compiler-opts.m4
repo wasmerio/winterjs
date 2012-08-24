@@ -1,3 +1,7 @@
+dnl This Source Code Form is subject to the terms of the Mozilla Public
+dnl License, v. 2.0. If a copy of the MPL was not distributed with this
+dnl file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 dnl Add compiler specific options
 
 AC_DEFUN([MOZ_DEFAULT_COMPILER],
@@ -48,19 +52,49 @@ esac
 fi
 ])
 
+dnl ============================================================================
+dnl C++ rtti
+dnl We don't use it in the code, but it can be usefull for debugging, so give
+dnl the user the option of enabling it.
+dnl ============================================================================
+AC_DEFUN([MOZ_RTTI],
+[
+MOZ_ARG_ENABLE_BOOL(cpp-rtti,
+[  --enable-cpp-rtti       Enable C++ RTTI ],
+[ _MOZ_USE_RTTI=1 ],
+[ _MOZ_USE_RTTI= ])
+
+if test -z "$_MOZ_USE_RTTI"; then
+    if test "$GNU_CC"; then
+        CXXFLAGS="$CXXFLAGS -fno-rtti"
+    else
+        case "$target" in
+        *-mingw*)
+            CXXFLAGS="$CXXFLAGS -GR-"
+        esac
+    fi
+fi
+])
+
+dnl A high level macro for selecting compiler options.
 AC_DEFUN([MOZ_COMPILER_OPTS],
 [
+  MOZ_RTTI
 if test "$CLANG_CXX"; then
     ## We disable return-type-c-linkage because jsval is defined as a C++ type but is
     ## returned by C functions. This is possible because we use knowledge about the ABI
     ## to typedef it to a C type with the same layout when the headers are included
     ## from C.
-    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-unknown-warning-option -Wno-return-type-c-linkage"
+    ##
+    ## mismatched-tags is disabled (bug 780474) mostly because it's useless.
+    ## Worse, it's not supported by gcc, so it will cause tryserver bustage
+    ## without any easy way for non-Clang users to check for it.
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-unknown-warning-option -Wno-return-type-c-linkage -Wno-mismatched-tags"
 fi
 
 if test "$GNU_CC"; then
     CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
-    CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
+    CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections -fno-exceptions"
 fi
 
 dnl ========================================================

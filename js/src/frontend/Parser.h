@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=78:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef Parser_h__
 #define Parser_h__
@@ -53,14 +20,209 @@
 
 #include "frontend/ParseMaps.h"
 #include "frontend/ParseNode.h"
-
-#define NUM_TEMP_FREELISTS      6U      /* 32 to 2048 byte size classes (32 bit) */
-
-typedef struct BindData BindData;
+#include "frontend/SharedContext.h"
 
 namespace js {
+namespace frontend {
 
-class StaticBlockObject;
+struct StmtInfoPC : public StmtInfoBase {
+    StmtInfoPC      *down;          /* info for enclosing statement */
+    StmtInfoPC      *downScope;     /* next enclosing lexical scope */
+
+    uint32_t        blockid;        /* for simplified dominance computation */
+
+    /* True if type == STMT_BLOCK and this block is a function body. */
+    bool            isFunctionBodyBlock;
+
+    StmtInfoPC(JSContext *cx) : StmtInfoBase(cx), isFunctionBodyBlock(false) {}
+};
+
+typedef HashSet<JSAtom *> FuncStmtSet;
+struct Parser;
+struct SharedContext;
+
+typedef Vector<Definition *, 16> DeclVector;
+
+/*
+ * The struct ParseContext stores information about the current parsing context,
+ * which is part of the parser state (see the field Parser::pc). The current
+ * parsing context is either the global context, or the function currently being
+ * parsed. When the parser encounters a function definition, it creates a new
+ * ParseContext, makes it the new current context, and sets its parent to the
+ * context in which it encountered the definition.
+ */
+struct ParseContext                 /* tree context for semantic checks */
+{
+    typedef StmtInfoPC StmtInfo;
+
+    SharedContext   *sc;            /* context shared between parsing and bytecode generation */
+
+    uint32_t        bodyid;         /* block number of program/function body */
+    uint32_t        blockidGen;     /* preincremented block number generator */
+
+    StmtInfoPC      *topStmt;       /* top of statement info stack */
+    StmtInfoPC      *topScopeStmt;  /* top lexical scope statement */
+    Rooted<StaticBlockObject *> blockChain;
+                                    /* compile time block scope chain */
+
+    const unsigned  staticLevel;    /* static compilation unit nesting level */
+
+    uint32_t        parenDepth;     /* nesting depth of parens that might turn out
+                                       to be generator expressions */
+    uint32_t        yieldCount;     /* number of |yield| tokens encountered at
+                                       non-zero depth in current paren tree */
+    ParseNode       *blockNode;     /* parse node for a block with let declarations
+                                       (block with its own lexical scope)  */
+  private:
+    AtomDecls       decls_;         /* function, const, and var declarations */
+    DeclVector      args_;          /* argument definitions */
+    DeclVector      vars_;          /* var/const definitions */
+
+  public:
+    const AtomDecls &decls() const {
+        return decls_;
+    }
+
+    uint32_t numArgs() const {
+        JS_ASSERT(sc->inFunction());
+        return args_.length();
+    }
+
+    uint32_t numVars() const {
+        JS_ASSERT(sc->inFunction());
+        return vars_.length();
+    }
+
+    /*
+     * This function adds a definition to the lexical scope represented by this
+     * ParseContext.
+     *
+     * Pre-conditions:
+     *  + The caller must have already taken care of name collisions:
+     *    - For non-let definitions, this means 'name' isn't in 'decls'.
+     *    - For let definitions, this means 'name' isn't already a name in the
+     *      current block.
+     *  + The given 'pn' is either a placeholder (created by a previous unbound
+     *    use) or an un-bound un-linked name node.
+     *  + The given 'kind' is one of ARG, CONST, VAR, or LET. In particular,
+     *    NAMED_LAMBDA is handled in an ad hoc special case manner (see
+     *    LeaveFunction) that we should consider rewriting.
+     *
+     * Post-conditions:
+     *  + pc->decls().lookupFirst(name) == pn
+     *  + The given name 'pn' has been converted in-place into a
+     *    non-placeholder definition.
+     *  + If this is a function scope (sc->inFunction), 'pn' is bound to a
+     *    particular local/argument slot.
+     *  + PND_CONST is set for Definition::COSNT
+     *  + Pre-existing uses of pre-existing placeholders have been linked to
+     *    'pn' if they are in the scope of 'pn'.
+     *  + Pre-existing placeholders in the scope of 'pn' have been removed.
+     */
+    bool define(JSContext *cx, PropertyName *name, ParseNode *pn, Definition::Kind);
+
+    /*
+     * Let definitions may shadow same-named definitions in enclosing scopes.
+     * To represesent this, 'decls' is not a plain map, but actually:
+     *   decls :: name -> stack of definitions
+     * New bindings are pushed onto the stack, name lookup always refers to the
+     * top of the stack, and leaving a block scope calls popLetDecl for each
+     * name in the block's scope.
+     */
+    void popLetDecl(JSAtom *atom);
+
+    /* See the sad story in DefineArg. */
+    void prepareToAddDuplicateArg(Definition *prevDecl);
+
+    /* See the sad story in MakeDefIntoUse. */
+    void updateDecl(JSAtom *atom, ParseNode *newDecl);
+
+    /*
+     * After a function body has been parsed, the parser generates the
+     * function's "bindings". Bindings are a data-structure, ultimately stored
+     * in the compiled JSScript, that serve three purposes:
+     *  - After parsing, the ParseContext is destroyed and 'decls' along with
+     *    it. Mostly, the emitter just uses the binding information stored in
+     *    the use/def nodes, but the emitter occasionally needs 'bindings' for
+     *    various scope-related queries.
+     *  - Bindings provide the initial js::Shape to use when creating a dynamic
+     *    scope object (js::CallObject) for the function. This shape is used
+     *    during dynamic name lookup.
+     *  - Sometimes a script's bindings are accessed at runtime to retrieve the
+     *    contents of the lexical scope (e.g., from the debugger).
+     */
+    bool generateFunctionBindings(JSContext *cx, Bindings *bindings) const;
+
+  public:
+    ParseNode       *yieldNode;     /* parse node for a yield expression that might
+                                       be an error if we turn out to be inside a
+                                       generator expression */
+    FunctionBox     *functionList;
+
+    // A strict mode error found in this scope or one of its children. It is
+    // used only when strictModeState is UNKNOWN. If the scope turns out to be
+    // strict and this is non-null, it is thrown.
+    CompileError    *queuedStrictModeError;
+
+  private:
+    ParseContext    **parserPC;     /* this points to the Parser's active pc
+                                       and holds either |this| or one of
+                                       |this|'s descendents */
+
+  public:
+    OwnedAtomDefnMapPtr lexdeps;    /* unresolved lexical name dependencies */
+
+    ParseContext     *parent;       /* Enclosing function or global context.  */
+
+    ParseNode       *innermostWith; /* innermost WITH parse node */
+
+    FuncStmtSet     *funcStmts;     /* Set of (non-top-level) function statements
+                                       that will alias any top-level bindings with
+                                       the same name. */
+
+    /*
+     * Flags that are set for a short time during parsing to indicate context
+     * or the presence of a code feature.
+     */
+    bool            hasReturnExpr:1; /* function has 'return <expr>;' */
+    bool            hasReturnVoid:1; /* function has 'return;' */
+
+    bool            inForInit:1;    /* parsing init expr of for; exclude 'in' */
+
+    // Set when parsing a declaration-like destructuring pattern.  This flag
+    // causes PrimaryExpr to create PN_NAME parse nodes for variable references
+    // which are not hooked into any definition's use chain, added to any tree
+    // context's AtomList, etc. etc.  CheckDestructuring will do that work
+    // later.
+    //
+    // The comments atop CheckDestructuring explain the distinction between
+    // assignment-like and declaration-like destructuring patterns, and why
+    // they need to be treated differently.
+    bool            inDeclDestructuring:1;
+
+    inline ParseContext(Parser *prs, SharedContext *sc, unsigned staticLevel, uint32_t bodyid);
+    inline ~ParseContext();
+
+    inline bool init();
+
+    inline void setQueuedStrictModeError(CompileError *e);
+
+    unsigned blockid();
+
+    // True if we are at the topmost level of a entire script or function body.
+    // For example, while parsing this code we would encounter f1 and f2 at
+    // body level, but we would not encounter f3 or f4 at body level:
+    //
+    //   function f1() { function f2() { } }
+    //   if (cond) { function f3() { if (cond) { function f4() { } } } }
+    //
+    bool atBodyLevel();
+};
+
+bool
+GenerateBlockId(ParseContext *pc, uint32_t &blockid);
+
+struct BindData;
 
 enum FunctionSyntaxKind { Expression, Statement };
 enum LetContext { LetExpresion, LetStatement };
@@ -69,49 +231,59 @@ enum VarContext { HoistVars, DontHoistVars };
 struct Parser : private AutoGCRooter
 {
     JSContext           *const context; /* FIXME Bug 551291: use AutoGCRooter::context? */
-    void                *tempFreeList[NUM_TEMP_FREELISTS];
+    StrictModeGetter    strictModeGetter; /* used by tokenStream to test for strict mode */
     TokenStream         tokenStream;
     void                *tempPoolMark;  /* initial JSContext.tempLifoAlloc mark */
-    JSPrincipals        *principals;    /* principals associated with source */
-    JSPrincipals        *originPrincipals;   /* see jsapi.h 'originPrincipals' comment */
-    StackFrame          *const callerFrame;  /* scripted caller frame for eval and dbgapi */
-    JSObject            *const callerVarObj; /* callerFrame's varObj */
     ParseNodeAllocator  allocator;
-    uint32_t            functionCount;  /* number of functions in current unit */
     ObjectBox           *traceListHead; /* list of parsed object for GC tracing */
 
-    /* This is a TreeContext or a BytecodeEmitter; see the comment on TCF_COMPILING. */
-    TreeContext         *tc;            /* innermost tree context (stack-allocated) */
+    ParseContext        *pc;            /* innermost parse context (stack-allocated) */
+
+    SourceCompressionToken *sct;        /* compression token for aborting */
 
     /* Root atoms and objects allocated for the parsed tree. */
     AutoKeepAtoms       keepAtoms;
 
     /* Perform constant-folding; must be true when interfacing with the emitter. */
-    bool                foldConstants;
+    const bool          foldConstants:1;
 
-    Parser(JSContext *cx, JSPrincipals *prin = NULL, JSPrincipals *originPrin = NULL,
-           StackFrame *cfp = NULL, bool fold = true);
+  private:
+    /* Script can optimize name references based on scope chain. */
+    const bool          compileAndGo:1;
+
+    /*
+     * In self-hosting mode, scripts emit JSOP_CALLINTRINSIC instead of
+     * JSOP_NAME or JSOP_GNAME to access unbound variables. JSOP_CALLINTRINSIC
+     * does a name lookup in a special object that contains properties
+     * installed during global initialization and that properties from
+     * self-hosted scripts get copied into lazily upon first access in a
+     * global.
+     * As that object is inaccessible to client code, the lookups are
+     * guaranteed to return the original objects, ensuring safe implementation
+     * of self-hosted builtins.
+     * Additionally, the special syntax %_CallName(receiver, ...args, fun) is
+     * supported, for which bytecode is emitted that invokes |fun| with
+     * |receiver| as the this-object and ...args as the arguments..
+     */
+    const bool          selfHostingMode:1;
+
+  public:
+    Parser(JSContext *cx, const CompileOptions &options,
+           const jschar *chars, size_t length, bool foldConstants);
     ~Parser();
 
     friend void AutoGCRooter::trace(JSTracer *trc);
-    friend struct TreeContext;
 
     /*
-     * Initialize a parser. Parameters are passed on to init tokenStream. The
-     * compiler owns the arena pool "tops-of-stack" space above the current
-     * JSContext.tempLifoAlloc mark. This means you cannot allocate from
-     * tempLifoAlloc and save the pointer beyond the next Parser destructor
-     * invocation.
+     * Initialize a parser. The compiler owns the arena pool "tops-of-stack"
+     * space above the current JSContext.tempLifoAlloc mark. This means you
+     * cannot allocate from tempLifoAlloc and save the pointer beyond the next
+     * Parser destructor invocation.
      */
-    bool init(const jschar *base, size_t length, const char *filename, unsigned lineno,
-              JSVersion version);
-
-    void setPrincipals(JSPrincipals *prin, JSPrincipals *originPrin);
+    bool init();
 
     const char *getFilename() const { return tokenStream.getFilename(); }
-    JSVersion versionWithFlags() const { return tokenStream.versionWithFlags(); }
     JSVersion versionNumber() const { return tokenStream.versionNumber(); }
-    bool hasXML() const { return tokenStream.hasXML(); }
 
     /*
      * Parse a top-level JS script.
@@ -128,22 +300,30 @@ struct Parser : private AutoGCRooter
      */
     ObjectBox *newObjectBox(JSObject *obj);
 
-    FunctionBox *newFunctionBox(JSObject *obj, ParseNode *fn, TreeContext *tc);
+    FunctionBox *newFunctionBox(JSObject *obj, ParseNode *fn, ParseContext *pc,
+                                StrictMode::StrictModeState sms);
 
     /*
-     * Create a new function object given tree context (tc) and a name (which
+     * Create a new function object given parse context (pc) and a name (which
      * is optional if this is a function expression).
      */
-    JSFunction *newFunction(TreeContext *tc, JSAtom *atom, FunctionSyntaxKind kind);
+    JSFunction *newFunction(ParseContext *pc, JSAtom *atom, FunctionSyntaxKind kind);
 
     void trace(JSTracer *trc);
 
     /*
      * Report a parse (compile) error.
      */
-    inline bool reportErrorNumber(ParseNode *pn, unsigned flags, unsigned errorNumber, ...);
+    inline bool reportError(ParseNode *pn, unsigned errorNumber, ...);
+    inline bool reportUcError(ParseNode *pn, unsigned errorNumber, ...);
+    inline bool reportWarning(ParseNode *pn, unsigned errorNumber, ...);
+    inline bool reportStrictWarning(ParseNode *pn, unsigned errorNumber, ...);
+    inline bool reportStrictModeError(ParseNode *pn, unsigned errorNumber, ...);
+    typedef bool (Parser::*Reporter)(ParseNode *pn, unsigned errorNumber, ...);
 
   private:
+    Parser *thisForCtor() { return this; }
+
     ParseNode *allocParseNode(size_t size) {
         JS_ASSERT(size == sizeof(ParseNode));
         return static_cast<ParseNode *>(allocator.allocNode());
@@ -172,7 +352,7 @@ struct Parser : private AutoGCRooter
 
     /* Public entry points for parsing. */
     ParseNode *statement();
-    bool recognizeDirectivePrologue(ParseNode *pn, bool *isDirectivePrologueMember);
+    bool processDirectives(ParseNode *stringsAtStart);
 
     /*
      * Parse a function body.  Pass StatementListBody if the body is a list of
@@ -185,8 +365,8 @@ struct Parser : private AutoGCRooter
     /*
      * JS parsers, from lowest to highest precedence.
      *
-     * Each parser must be called during the dynamic scope of a TreeContext
-     * object, pointed to by this->tc.
+     * Each parser must be called during the dynamic scope of a ParseContext
+     * object, pointed to by this->pc.
      *
      * Each returns a parse node tree or null on error.
      *
@@ -200,7 +380,7 @@ struct Parser : private AutoGCRooter
      */
     ParseNode *functionStmt();
     ParseNode *functionExpr();
-    ParseNode *statements();
+    ParseNode *statements(bool *hasFunctionStmt = NULL);
 
     ParseNode *switchStatement();
     ParseNode *forStatement();
@@ -214,6 +394,7 @@ struct Parser : private AutoGCRooter
                          VarContext varContext = HoistVars);
     ParseNode *expr();
     ParseNode *assignExpr();
+    ParseNode *assignExprWithoutYield(unsigned err);
     ParseNode *condExpr1();
     ParseNode *orExpr1();
     ParseNode *andExpr1i();
@@ -235,15 +416,15 @@ struct Parser : private AutoGCRooter
     ParseNode *mulExpr1i();
     ParseNode *mulExpr1n();
     ParseNode *unaryExpr();
-    ParseNode *memberExpr(JSBool allowCallSyntax);
+    ParseNode *memberExpr(bool allowCallSyntax);
     ParseNode *primaryExpr(TokenKind tt, bool afterDoubleDot);
-    ParseNode *parenExpr(JSBool *genexp = NULL);
+    ParseNode *parenExpr(bool *genexp = NULL);
 
     /*
      * Additional JS parsers.
      */
     enum FunctionType { Getter, Setter, Normal };
-    bool functionArguments(TreeContext &funtc, FunctionBox *funbox, ParseNode **list);
+    bool functionArguments(ParseNode **list, bool &hasRest);
 
     ParseNode *functionDef(HandlePropertyName name, FunctionType type, FunctionSyntaxKind kind);
 
@@ -253,7 +434,7 @@ struct Parser : private AutoGCRooter
     ParseNode *comprehensionTail(ParseNode *kid, unsigned blockid, bool isGenexp,
                                  ParseNodeKind kind = PNK_SEMI, JSOp op = JSOP_NOP);
     ParseNode *generatorExpr(ParseNode *kid);
-    JSBool argumentList(ParseNode *listNode);
+    bool argumentList(ParseNode *listNode);
     ParseNode *bracketedExpr();
     ParseNode *letBlock(LetContext letContext);
     ParseNode *returnOrYield(bool useAssignExpr);
@@ -262,42 +443,101 @@ struct Parser : private AutoGCRooter
     bool checkForFunctionNode(PropertyName *name, ParseNode *node);
 
     ParseNode *identifierName(bool afterDoubleDot);
+    ParseNode *intrinsicName();
 
 #if JS_HAS_XML_SUPPORT
+    // True if E4X syntax is allowed in the current syntactic context. Note this
+    // function may be false while TokenStream::allowsXML() is true!
+    // Specifically, when strictModeState is not STRICT, Parser::allowsXML()
+    // will be false, where TokenStream::allowsXML() is only false when
+    // strictModeState is STRICT. The reason for this is when we are parsing the
+    // directive prologue, the tokenizer looks ahead into the body of the
+    // function. So, we have to be lenient in case the function is not
+    // strict. This also effectively bans XML in function defaults. See bug
+    // 772691.
+    bool allowsXML() const {
+        return pc->sc->strictModeState == StrictMode::NOTSTRICT && tokenStream.allowsXML();
+    }
+
     ParseNode *endBracketedExpr();
 
     ParseNode *propertySelector();
     ParseNode *qualifiedSuffix(ParseNode *pn);
     ParseNode *qualifiedIdentifier();
     ParseNode *attributeIdentifier();
-    ParseNode *xmlExpr(JSBool inTag);
+    ParseNode *xmlExpr(bool inTag);
     ParseNode *xmlNameExpr();
     ParseNode *xmlTagContent(ParseNodeKind tagkind, JSAtom **namep);
-    JSBool xmlElementContent(ParseNode *pn);
-    ParseNode *xmlElementOrList(JSBool allowList);
-    ParseNode *xmlElementOrListRoot(JSBool allowList);
+    bool xmlElementContent(ParseNode *pn);
+    ParseNode *xmlElementOrList(bool allowList);
+    ParseNode *xmlElementOrListRoot(bool allowList);
 
     ParseNode *starOrAtPropertyIdentifier(TokenKind tt);
     ParseNode *propertyQualifiedIdentifier();
 #endif /* JS_HAS_XML_SUPPORT */
 
+    bool setStrictMode(bool strictMode);
     bool setAssignmentLhsOps(ParseNode *pn, JSOp op);
     bool matchInOrOf(bool *isForOfp);
 };
 
 inline bool
-Parser::reportErrorNumber(ParseNode *pn, unsigned flags, unsigned errorNumber, ...)
+Parser::reportError(ParseNode *pn, unsigned errorNumber, ...)
 {
     va_list args;
     va_start(args, errorNumber);
-    bool result = tokenStream.reportCompileErrorNumberVA(pn, flags, errorNumber, args);
+    bool result = tokenStream.reportCompileErrorNumberVA(pn, JSREPORT_ERROR, errorNumber, args);
+    va_end(args);
+    return result;
+}
+
+inline bool
+Parser::reportUcError(ParseNode *pn, unsigned errorNumber, ...)
+{
+    va_list args;
+    va_start(args, errorNumber);
+    bool result = tokenStream.reportCompileErrorNumberVA(pn, JSREPORT_UC | JSREPORT_ERROR,
+                                                         errorNumber, args);
+    va_end(args);
+    return result;
+}
+
+inline bool
+Parser::reportWarning(ParseNode *pn, unsigned errorNumber, ...)
+{
+    va_list args;
+    va_start(args, errorNumber);
+    bool result = tokenStream.reportCompileErrorNumberVA(pn, JSREPORT_WARNING, errorNumber, args);
+    va_end(args);
+    return result;
+}
+
+inline bool
+Parser::reportStrictWarning(ParseNode *pn, unsigned errorNumber, ...)
+{
+    va_list args;
+    va_start(args, errorNumber);
+    bool result = tokenStream.reportCompileErrorNumberVA(pn, JSREPORT_STRICT | JSREPORT_WARNING,
+                                                         errorNumber, args);
+    va_end(args);
+    return result;
+}
+
+inline bool
+Parser::reportStrictModeError(ParseNode *pn, unsigned errorNumber, ...)
+{
+    va_list args;
+    va_start(args, errorNumber);
+    bool result = tokenStream.reportStrictModeErrorNumberVA(pn, errorNumber, args);
     va_end(args);
     return result;
 }
 
 bool
-DefineArg(ParseNode *pn, JSAtom *atom, unsigned i, TreeContext *tc);
+DefineArg(Parser *parser, ParseNode *funcpn, HandlePropertyName name,
+          bool disallowDuplicateArgs = false, Definition **duplicatedArg = NULL);
 
+} /* namespace frontend */
 } /* namespace js */
 
 /*

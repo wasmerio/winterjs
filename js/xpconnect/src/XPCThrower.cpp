@@ -1,46 +1,13 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Code for throwing errors into JavaScript. */
 
 #include "xpcprivate.h"
+#include "xpcpublic.h"
 #include "XPCWrapper.h"
 
 JSBool XPCThrower::sVerbose = true;
@@ -52,10 +19,21 @@ XPCThrower::Throw(nsresult rv, JSContext* cx)
     const char* format;
     if (JS_IsExceptionPending(cx))
         return;
-    if (!nsXPCException::NameAndFormatForNSResult(rv, nsnull, &format))
+    if (!nsXPCException::NameAndFormatForNSResult(rv, nullptr, &format))
         format = "";
     BuildAndThrowException(cx, rv, format);
 }
+
+namespace xpc {
+
+bool
+Throw(JSContext *cx, nsresult rv)
+{
+    XPCThrower::Throw(rv, cx);
+    return false;
+}
+
+} // namespace xpc
 
 /*
  * If there has already been an exception thrown, see if we're throwing the
@@ -66,15 +44,11 @@ XPCThrower::Throw(nsresult rv, JSContext* cx)
 JSBool
 XPCThrower::CheckForPendingException(nsresult result, JSContext *cx)
 {
-    nsXPConnect* xpc = nsXPConnect::GetXPConnect();
-    if (!xpc)
-        return false;
-
     nsCOMPtr<nsIException> e;
-    xpc->GetPendingException(getter_AddRefs(e));
+    XPCJSRuntime::Get()->GetPendingException(getter_AddRefs(e));
     if (!e)
         return false;
-    xpc->SetPendingException(nsnull);
+    XPCJSRuntime::Get()->SetPendingException(nullptr);
 
     nsresult e_result;
     if (NS_FAILED(e->GetResult(&e_result)) || e_result != result)
@@ -95,7 +69,7 @@ XPCThrower::Throw(nsresult rv, XPCCallContext& ccx)
     if (CheckForPendingException(rv, ccx))
         return;
 
-    if (!nsXPCException::NameAndFormatForNSResult(rv, nsnull, &format))
+    if (!nsXPCException::NameAndFormatForNSResult(rv, nullptr, &format))
         format = "";
 
     sz = (char*) format;
@@ -130,10 +104,10 @@ XPCThrower::ThrowBadResult(nsresult rv, nsresult result, XPCCallContext& ccx)
 
     // else...
 
-    if (!nsXPCException::NameAndFormatForNSResult(rv, nsnull, &format) || !format)
+    if (!nsXPCException::NameAndFormatForNSResult(rv, nullptr, &format) || !format)
         format = "";
 
-    if (nsXPCException::NameAndFormatForNSResult(result, &name, nsnull) && name)
+    if (nsXPCException::NameAndFormatForNSResult(result, &name, nullptr) && name)
         sz = JS_smprintf("%s 0x%x (%s)", format, result, name);
     else
         sz = JS_smprintf("%s 0x%x", format, result);
@@ -154,7 +128,7 @@ XPCThrower::ThrowBadParam(nsresult rv, unsigned paramNum, XPCCallContext& ccx)
     char* sz;
     const char* format;
 
-    if (!nsXPCException::NameAndFormatForNSResult(rv, nsnull, &format))
+    if (!nsXPCException::NameAndFormatForNSResult(rv, nullptr, &format))
         format = "";
 
     sz = JS_smprintf("%s arg %d", format, paramNum);
@@ -174,7 +148,7 @@ void
 XPCThrower::Verbosify(XPCCallContext& ccx,
                       char** psz, bool own)
 {
-    char* sz = nsnull;
+    char* sz = nullptr;
 
     if (ccx.HasInterfaceAndMember()) {
         XPCNativeInterface* iface = ccx.GetInterface();
@@ -205,23 +179,22 @@ XPCThrower::BuildAndThrowException(JSContext* cx, nsresult rv, const char* sz)
         return;
     nsCOMPtr<nsIException> finalException;
     nsCOMPtr<nsIException> defaultException;
-    nsXPCException::NewException(sz, rv, nsnull, nsnull, getter_AddRefs(defaultException));
-    XPCPerThreadData* tls = XPCPerThreadData::GetData(cx);
-    if (tls) {
-        nsIExceptionManager * exceptionManager = tls->GetExceptionManager();
-        if (exceptionManager) {
-           // Ask the provider for the exception, if there is no provider
-           // we expect it to set e to null
-            exceptionManager->GetExceptionFromProvider(rv,
-                                                       defaultException,
-                                                       getter_AddRefs(finalException));
-            // We should get at least the defaultException back,
-            // but just in case
-            if (finalException == nsnull) {
-                finalException = defaultException;
-            }
+    nsXPCException::NewException(sz, rv, nullptr, nullptr, getter_AddRefs(defaultException));
+
+    nsIExceptionManager * exceptionManager = XPCJSRuntime::Get()->GetExceptionManager();
+    if (exceptionManager) {
+        // Ask the provider for the exception, if there is no provider
+        // we expect it to set e to null
+        exceptionManager->GetExceptionFromProvider(rv,
+                                                   defaultException,
+                                                   getter_AddRefs(finalException));
+        // We should get at least the defaultException back,
+        // but just in case
+        if (finalException == nullptr) {
+            finalException = defaultException;
         }
     }
+
     // XXX Should we put the following test and call to JS_ReportOutOfMemory
     // inside this test?
     if (finalException)
@@ -238,22 +211,7 @@ IsCallerChrome(JSContext* cx)
     nsresult rv;
 
     nsCOMPtr<nsIScriptSecurityManager> secMan;
-    if (XPCPerThreadData::IsMainThread(cx)) {
-        secMan = XPCWrapper::GetSecurityManager();
-    } else {
-        nsXPConnect* xpc = nsXPConnect::GetXPConnect();
-        if (!xpc)
-            return false;
-
-        nsCOMPtr<nsIXPCSecurityManager> xpcSecMan;
-        PRUint16 flags = 0;
-        rv = xpc->GetSecurityManagerForJSContext(cx, getter_AddRefs(xpcSecMan),
-                                                 &flags);
-        if (NS_FAILED(rv) || !xpcSecMan)
-            return false;
-
-        secMan = do_QueryInterface(xpcSecMan);
-    }
+    secMan = XPCWrapper::GetSecurityManager();
 
     if (!secMan)
         return false;

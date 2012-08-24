@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Robert Ginda, <rginda@netscape.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef JSDSERVICE_H___
 #define JSDSERVICE_H___
@@ -45,6 +12,8 @@
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nspr.h"
+#include "nsCycleCollectionParticipant.h"
+#include "mozilla/Attributes.h"
 
 // #if defined(DEBUG_rginda_l)
 // #   define DEBUG_verbose
@@ -58,14 +27,14 @@ struct LiveEphemeral {
 };
 
 struct PCMapEntry {
-    PRUint32 pc, line;
+    uint32_t pc, line;
 };
     
 /*******************************************************************************
  * reflected jsd data structures
  *******************************************************************************/
 
-class jsdObject : public jsdIObject
+class jsdObject MOZ_FINAL : public jsdIObject
 {
   public:
     NS_DECL_ISUPPORTS
@@ -81,7 +50,7 @@ class jsdObject : public jsdIObject
                                 JSDObject *aObject)
     {
         if (!aObject)
-            return nsnull;
+            return nullptr;
         
         jsdIObject *rv = new jsdObject (aCx, aObject);
         NS_IF_ADDREF(rv);
@@ -111,7 +80,7 @@ class jsdProperty : public jsdIProperty
                                   JSDProperty *aProperty)
     {
         if (!aProperty)
-            return nsnull;
+            return nullptr;
         
         jsdIProperty *rv = new jsdProperty (aCx, aProperty);
         NS_IF_ADDREF(rv);
@@ -144,7 +113,7 @@ class jsdScript : public jsdIScript
     static jsdIScript *FromPtr (JSDContext *aCx, JSDScript *aScript)
     {
         if (!aScript)
-            return nsnull;
+            return nullptr;
 
         void *data = JSD_GetScriptPrivate (aScript);
         jsdIScript *rv;
@@ -165,27 +134,27 @@ class jsdScript : public jsdIScript
     static void InvalidateAll();
 
   private:
-    static PRUint32 LastTag;
+    static uint32_t LastTag;
     
     jsdScript(); /* no implementation */
     jsdScript (const jsdScript&); /* no implementation */
     PCMapEntry* CreatePPLineMap();
-    PRUint32    PPPcToLine(PRUint32 aPC);
-    PRUint32    PPLineToPc(PRUint32 aLine);
+    uint32_t    PPPcToLine(uint32_t aPC);
+    uint32_t    PPLineToPc(uint32_t aLine);
     
     bool        mValid;
-    PRUint32    mTag;
+    uint32_t    mTag;
     JSDContext *mCx;
     JSDScript  *mScript;
     nsCString  *mFileName;
     nsCString  *mFunctionName;
-    PRUint32    mBaseLineNumber, mLineExtent;
+    uint32_t    mBaseLineNumber, mLineExtent;
     PCMapEntry *mPPLineMap;
-    PRUint32    mPCMapSize;
+    uint32_t    mPCMapSize;
     uintptr_t   mFirstPC;
 };
 
-PRUint32 jsdScript::LastTag = 0;
+uint32_t jsdScript::LastTag = 0;
 
 class jsdContext : public jsdIContext
 {
@@ -200,20 +169,20 @@ class jsdContext : public jsdIContext
     static void InvalidateAll();
     static jsdIContext *FromPtr (JSDContext *aJSDCx, JSContext *aJSCx);
   private:
-    static PRUint32 LastTag;
+    static uint32_t LastTag;
 
     jsdContext (); /* no implementation */
     jsdContext (const jsdContext&); /* no implementation */
 
     bool                   mValid;
     LiveEphemeral          mLiveListEntry;
-    PRUint32               mTag;
+    uint32_t               mTag;
     JSDContext            *mJSDCx;
     JSContext             *mJSCx;
     nsCOMPtr<nsISupports>  mISCx;
 };
 
-PRUint32 jsdContext::LastTag = 0;
+uint32_t jsdContext::LastTag = 0;
 
 class jsdStackFrame : public jsdIStackFrame
 {
@@ -274,8 +243,10 @@ class jsdValue : public jsdIValue
 class jsdService : public jsdIDebuggerService
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
     NS_DECL_JSDIDEBUGGERSERVICE
+
+    NS_DECL_CYCLE_COLLECTION_CLASS(jsdService)
 
     jsdService() : mOn(false), mPauseLevel(0),
                    mNestedLoopLevel(0), mCx(0), mRuntime(0), mErrorHook(0),
@@ -291,13 +262,13 @@ class jsdService : public jsdIDebuggerService
 
     bool CheckInterruptHook() { return !!mInterruptHook; }
     
-    nsresult DoPause(PRUint32 *_rval, bool internalCall);
-    nsresult DoUnPause(PRUint32 *_rval, bool internalCall);
+    nsresult DoPause(uint32_t *_rval, bool internalCall);
+    nsresult DoUnPause(uint32_t *_rval, bool internalCall);
 
   private:
     bool        mOn;
-    PRUint32    mPauseLevel;
-    PRUint32    mNestedLoopLevel;
+    uint32_t    mPauseLevel;
+    uint32_t    mNestedLoopLevel;
     JSDContext *mCx;
     JSRuntime  *mRuntime;
 
@@ -335,7 +306,7 @@ class jsdContext : public jsdIContext
     static jsdIContext *FromPtr (JSDContext *aCx)
     {
         if (!aCx)
-            return nsnull;
+            return nullptr;
         
         void *data = JSD_GetContextPrivate (aCx);
         jsdIContext *rv;
@@ -383,7 +354,7 @@ class jsdThreadState : public jsdIThreadState
                                      JSDThreadState *aThreadState)
     {
         if (!aThreadState)
-            return nsnull;
+            return nullptr;
         
         jsdIThreadState *rv = new jsdThreadState (aCx, aThreadState);
         NS_IF_ADDREF(rv);

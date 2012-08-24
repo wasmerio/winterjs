@@ -1,39 +1,7 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * JavaScript Debugging support - Value and Property support
@@ -51,7 +19,7 @@ void JSD_ASSERT_VALID_VALUE(JSDValue* jsdval)
     if(!JS_CLIST_IS_EMPTY(&jsdval->props))
     {
         JS_ASSERT(CHECK_BIT_FLAG(jsdval->flags, GOT_PROPS));
-        JS_ASSERT(JSVAL_IS_OBJECT(jsdval->val));
+        JS_ASSERT(!JSVAL_IS_PRIMITIVE(jsdval->val));
     }
 
     if(jsdval->proto)
@@ -87,7 +55,7 @@ void JSD_ASSERT_VALID_PROPERTY(JSDProperty* jsdprop)
 JSBool
 jsd_IsValueObject(JSDContext* jsdc, JSDValue* jsdval)
 {
-    return JSVAL_IS_OBJECT(jsdval->val);
+    return !JSVAL_IS_PRIMITIVE(jsdval->val) || JSVAL_IS_NULL(jsdval->val);
 }
 
 JSBool
@@ -407,7 +375,6 @@ static JSDProperty* _newProperty(JSDContext* jsdc, JSPropertyDesc* pd,
     JS_INIT_CLIST(&jsdprop->links);
     jsdprop->nref = 1;
     jsdprop->flags = pd->flags | additionalFlags;
-    jsdprop->slot = pd->slot;
 
     if(!(jsdprop->name = jsd_NewValue(jsdc, pd->id)))
         goto new_prop_fail;
@@ -449,7 +416,7 @@ static JSBool _buildProps(JSDContext* jsdc, JSDValue* jsdval)
 
     JS_ASSERT(JS_CLIST_IS_EMPTY(&jsdval->props));
     JS_ASSERT(!(CHECK_BIT_FLAG(jsdval->flags, GOT_PROPS)));
-    JS_ASSERT(JSVAL_IS_OBJECT(jsdval->val));
+    JS_ASSERT(!JSVAL_IS_PRIMITIVE(jsdval->val));
 
     if(JSVAL_IS_PRIMITIVE(jsdval->val))
         return JS_FALSE;
@@ -657,7 +624,7 @@ jsd_GetValueProperty(JSDContext* jsdc, JSDValue* jsdval, JSString* name)
         return NULL;
     }
 
-    pd.slot = pd.spare = 0;
+    pd.spare = 0;
     pd.alias = JSVAL_NULL;
     pd.flags |= (attrs & JSPROP_ENUMERATE) ? JSPD_ENUMERATE : 0
         | (attrs & JSPROP_READONLY)  ? JSPD_READONLY  : 0
@@ -675,16 +642,16 @@ jsd_GetValueFunction(JSDContext* jsdc, JSDValue* jsdval)
 {
     JSObject *obj;
     JSFunction *fun;
-    JSCrossCompartmentCall *call = NULL;
-    if (!JSVAL_IS_OBJECT(jsdval->val))
-        return NULL;
-    if(!(obj = JSVAL_TO_OBJECT(jsdval->val)))
-        return NULL;
-    obj = JS_UnwrapObject(obj);
 
+    JSCrossCompartmentCall *call = NULL;
+    if (JSVAL_IS_PRIMITIVE(jsdval->val))
+        return NULL;
+
+    obj = JS_UnwrapObject(JSVAL_TO_OBJECT(jsdval->val));
     call = JS_EnterCrossCompartmentCall(jsdc->dumbContext, obj);
     if (!call)
         return NULL;
+
     fun = JS_ValueToFunction(jsdc->dumbContext, OBJECT_TO_JSVAL(obj));
     JS_LeaveCrossCompartmentCall(call);
 
@@ -702,10 +669,9 @@ jsd_GetValuePrototype(JSDContext* jsdc, JSDValue* jsdval)
         JSObject* proto;
         JS_ASSERT(!jsdval->proto);
         SET_BIT_FLAG(jsdval->flags, GOT_PROTO);
-        if(!JSVAL_IS_OBJECT(jsdval->val))
+        if(JSVAL_IS_PRIMITIVE(jsdval->val))
             return NULL;
-        if(!(obj = JSVAL_TO_OBJECT(jsdval->val)))
-            return NULL;
+        obj = JSVAL_TO_OBJECT(jsdval->val);
         proto = JS_GetPrototype(obj);
         if(!proto)
             return NULL;
@@ -727,10 +693,9 @@ jsd_GetValueParent(JSDContext* jsdc, JSDValue* jsdval)
         JSObject* parent;
         JS_ASSERT(!jsdval->parent);
         SET_BIT_FLAG(jsdval->flags, GOT_PARENT);
-        if(!JSVAL_IS_OBJECT(jsdval->val))
+        if(JSVAL_IS_PRIMITIVE(jsdval->val))
             return NULL;
-        if(!(obj = JSVAL_TO_OBJECT(jsdval->val)))
-            return NULL;
+        obj = JSVAL_TO_OBJECT(jsdval->val);
         JS_BeginRequest(jsdc->dumbContext);
         call = JS_EnterCrossCompartmentCall(jsdc->dumbContext, obj);
         if(!call) {
@@ -762,10 +727,9 @@ jsd_GetValueConstructor(JSDContext* jsdc, JSDValue* jsdval)
         JSObject* ctor;
         JS_ASSERT(!jsdval->ctor);
         SET_BIT_FLAG(jsdval->flags, GOT_CTOR);
-        if(!JSVAL_IS_OBJECT(jsdval->val))
+        if(JSVAL_IS_PRIMITIVE(jsdval->val))
             return NULL;
-        if(!(obj = JSVAL_TO_OBJECT(jsdval->val)))
-            return NULL;
+        obj = JSVAL_TO_OBJECT(jsdval->val);
         proto = JS_GetPrototype(obj);
         if(!proto)
             return NULL;
@@ -794,11 +758,9 @@ jsd_GetValueClassName(JSDContext* jsdc, JSDValue* jsdval)
     jsval val = jsdval->val;
     JSCrossCompartmentCall *call = NULL;
 
-    if(!jsdval->className && JSVAL_IS_OBJECT(val))
+    if(!jsdval->className && !JSVAL_IS_PRIMITIVE(val))
     {
-        JSObject* obj;
-        if(!(obj = JSVAL_TO_OBJECT(val)))
-            return NULL;
+        JSObject* obj = JSVAL_TO_OBJECT(val);
         JS_BeginRequest(jsdc->dumbContext);
         call = JS_EnterCrossCompartmentCall(jsdc->dumbContext, obj);
         if(!call) {
@@ -806,7 +768,7 @@ jsd_GetValueClassName(JSDContext* jsdc, JSDValue* jsdval)
 
             return NULL;
         }
-        jsdval->className = JS_GetClass(obj)->name;
+        jsdval->className = JS_GetDebugClassName(obj);
         JS_LeaveCrossCompartmentCall(call);
         JS_EndRequest(jsdc->dumbContext);
     }
@@ -882,12 +844,6 @@ unsigned
 jsd_GetPropertyFlags(JSDContext* jsdc, JSDProperty* jsdprop)
 {
     return jsdprop->flags;
-}
-
-unsigned
-jsd_GetPropertyVarArgSlot(JSDContext* jsdc, JSDProperty* jsdprop)
-{
-    return jsdprop->slot;
 }
 
 void

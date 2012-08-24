@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey code.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jsgcinlines_h___
 #define jsgcinlines_h___
@@ -115,17 +82,11 @@ GetGCObjectFixedSlotsKind(size_t numFixedSlots)
     return slotsToThingKind[numFixedSlots];
 }
 
-static inline bool
-IsBackgroundAllocKind(AllocKind kind)
-{
-    JS_ASSERT(kind <= FINALIZE_LAST);
-    return kind <= FINALIZE_OBJECT_LAST && kind % 2 == 1;
-}
-
 static inline AllocKind
 GetBackgroundAllocKind(AllocKind kind)
 {
-    JS_ASSERT(!IsBackgroundAllocKind(kind));
+    JS_ASSERT(!IsBackgroundFinalized(kind));
+    JS_ASSERT(kind <= FINALIZE_OBJECT_LAST);
     return (AllocKind) (kind + 1);
 }
 
@@ -215,44 +176,61 @@ GCPoke(JSRuntime *rt, Value oldval)
 #endif
 }
 
-/*
- * Invoke ArenaOp and CellOp on every arena and cell in a compartment which
- * have the specified thing kind.
- */
-template <class ArenaOp, class CellOp>
-void
-ForEachArenaAndCell(JSCompartment *compartment, AllocKind thingKind,
-                    ArenaOp arenaOp, CellOp cellOp)
+class ArenaIter
 {
-    size_t thingSize = Arena::thingSize(thingKind);
-    ArenaHeader *aheader = compartment->arenas.getFirstArena(thingKind);
+    ArenaHeader *aheader;
+    ArenaHeader *remainingHeader;
 
-    for (; aheader; aheader = aheader->next) {
-        Arena *arena = aheader->getArena();
-        arenaOp(arena);
-        FreeSpan firstSpan(aheader->getFirstFreeSpan());
-        const FreeSpan *span = &firstSpan;
+  public:
+    ArenaIter() {
+        init();
+    }
 
-        for (uintptr_t thing = arena->thingsStart(thingKind); ; thing += thingSize) {
-            JS_ASSERT(thing <= arena->thingsEnd());
-            if (thing == span->first) {
-                if (!span->hasNext())
-                    break;
-                thing = span->last;
-                span = span->nextSpan();
-            } else {
-                Cell *t = reinterpret_cast<Cell *>(thing);
-                cellOp(t);
-            }
+    ArenaIter(JSCompartment *comp, AllocKind kind) {
+        init(comp, kind);
+    }
+
+    void init() {
+        aheader = NULL;
+        remainingHeader = NULL;
+    }
+
+    void init(ArenaHeader *aheaderArg) {
+        aheader = aheaderArg;
+        remainingHeader = NULL;
+    }
+
+    void init(JSCompartment *comp, AllocKind kind) {
+        aheader = comp->arenas.getFirstArena(kind);
+        remainingHeader = comp->arenas.getFirstArenaToSweep(kind);
+        if (!aheader) {
+            aheader = remainingHeader;
+            remainingHeader = NULL;
         }
     }
-}
+
+    bool done() {
+        return !aheader;
+    }
+
+    ArenaHeader *get() {
+        return aheader;
+    }
+
+    void next() {
+        aheader = aheader->next;
+        if (!aheader) {
+            aheader = remainingHeader;
+            remainingHeader = NULL;
+        }
+    }
+};
 
 class CellIterImpl
 {
     size_t firstThingOffset;
     size_t thingSize;
-    ArenaHeader *aheader;
+    ArenaIter aiter;
     FreeSpan firstSpan;
     const FreeSpan *span;
     uintptr_t thing;
@@ -272,15 +250,15 @@ class CellIterImpl
     }
 
     void init(ArenaHeader *singleAheader) {
-        aheader = singleAheader;
-        initSpan(aheader->compartment, aheader->getAllocKind());
+        initSpan(singleAheader->compartment, singleAheader->getAllocKind());
+        aiter.init(singleAheader);
         next();
-        aheader = NULL;
+        aiter.init();
     }
 
     void init(JSCompartment *comp, AllocKind kind) {
         initSpan(comp, kind);
-        aheader = comp->arenas.getFirstArena(kind);
+        aiter.init(comp, kind);
         next();
     }
 
@@ -308,14 +286,15 @@ class CellIterImpl
                 span = span->nextSpan();
                 break;
             }
-            if (!aheader) {
+            if (aiter.done()) {
                 cell = NULL;
                 return;
             }
+            ArenaHeader *aheader = aiter.get();
             firstSpan = aheader->getFirstFreeSpan();
             span = &firstSpan;
             thing = aheader->arenaAddress() | firstThingOffset;
-            aheader = aheader->next;
+            aiter.next();
         }
         cell = reinterpret_cast<Cell *>(thing);
         thing += thingSize;
@@ -326,12 +305,12 @@ class CellIterUnderGC : public CellIterImpl
 {
   public:
     CellIterUnderGC(JSCompartment *comp, AllocKind kind) {
-        JS_ASSERT(comp->rt->gcRunning);
+        JS_ASSERT(comp->rt->isHeapBusy());
         init(comp, kind);
     }
 
     CellIterUnderGC(ArenaHeader *aheader) {
-        JS_ASSERT(aheader->compartment->rt->gcRunning);
+        JS_ASSERT(aheader->compartment->rt->isHeapBusy());
         init(aheader);
     }
 };
@@ -359,11 +338,11 @@ class CellIter : public CellIterImpl
          * background finalization; make sure people aren't using CellIter to
          * walk such allocation kinds.
          */
-        JS_ASSERT(!IsBackgroundAllocKind(kind));
+        JS_ASSERT(!IsBackgroundFinalized(kind));
         if (lists->isSynchronizedFreeList(kind)) {
             lists = NULL;
         } else {
-            JS_ASSERT(!comp->rt->gcRunning);
+            JS_ASSERT(!comp->rt->isHeapBusy());
             lists->copyFreeListToArena(kind);
         }
 #ifdef DEBUG
@@ -383,6 +362,23 @@ class CellIter : public CellIterImpl
     }
 };
 
+/*
+ * Invoke ArenaOp and CellOp on every arena and cell in a compartment which
+ * have the specified thing kind.
+ */
+template <class ArenaOp, class CellOp>
+void
+ForEachArenaAndCell(JSCompartment *compartment, AllocKind thingKind,
+                    ArenaOp arenaOp, CellOp cellOp)
+{
+    for (ArenaIter aiter(compartment, thingKind); !aiter.done(); aiter.next()) {
+        ArenaHeader *aheader = aiter.get();
+        arenaOp(aheader->getArena());
+        for (CellIterUnderGC iter(aheader); !iter.done(); iter.next())
+            cellOp(iter.getCell());
+    }
+}
+
 /* Signatures for ArenaOp and CellOp above. */
 
 inline void EmptyArenaOp(Arena *arena) {}
@@ -394,7 +390,7 @@ class GCCompartmentsIter {
 
   public:
     GCCompartmentsIter(JSRuntime *rt) {
-        JS_ASSERT(rt->gcRunning);
+        JS_ASSERT(rt->isHeapBusy());
         it = rt->compartments.begin();
         end = rt->compartments.end();
         if (!(*it)->isCollecting())
@@ -431,11 +427,9 @@ inline T *
 NewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
 {
     JS_ASSERT(thingSize == js::gc::Arena::thingSize(kind));
-#ifdef JS_THREADSAFE
-    JS_ASSERT_IF((cx->compartment == cx->runtime->atomsCompartment),
+    JS_ASSERT_IF(cx->compartment == cx->runtime->atomsCompartment,
                  kind == js::gc::FINALIZE_STRING || kind == js::gc::FINALIZE_SHORT_STRING);
-#endif
-    JS_ASSERT(!cx->runtime->gcRunning);
+    JS_ASSERT(!cx->runtime->isHeapBusy());
     JS_ASSERT(!cx->runtime->noGCOrAllocationCheck);
 
     /* For testing out of memory conditions */
@@ -446,15 +440,20 @@ NewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
         js::gc::RunDebugGC(cx);
 #endif
 
-    MaybeCheckStackRoots(cx);
+    MaybeCheckStackRoots(cx, /* relax = */ false);
 
     JSCompartment *comp = cx->compartment;
     void *t = comp->arenas.allocateFromFreeList(kind, thingSize);
     if (!t)
         t = js::gc::ArenaLists::refillFreeList(cx, kind);
 
-    JS_ASSERT_IF(t && comp->needsBarrier(),
+    JS_ASSERT_IF(t && comp->wasGCStarted() && comp->needsBarrier(),
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
+
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+    if (cx->runtime->gcVerifyPostData && IsNurseryAllocable(kind) && !IsAtomsCompartment(comp))
+        comp->gcNursery.insertPointer(t);
+#endif
     return static_cast<T *>(t);
 }
 
@@ -464,11 +463,9 @@ inline T *
 TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
 {
     JS_ASSERT(thingSize == js::gc::Arena::thingSize(kind));
-#ifdef JS_THREADSAFE
-    JS_ASSERT_IF((cx->compartment == cx->runtime->atomsCompartment),
+    JS_ASSERT_IF(cx->compartment == cx->runtime->atomsCompartment,
                  kind == js::gc::FINALIZE_STRING || kind == js::gc::FINALIZE_SHORT_STRING);
-#endif
-    JS_ASSERT(!cx->runtime->gcRunning);
+    JS_ASSERT(!cx->runtime->isHeapBusy());
     JS_ASSERT(!cx->runtime->noGCOrAllocationCheck);
 
 #ifdef JS_GC_ZEAL
@@ -477,8 +474,14 @@ TryNewGCThing(JSContext *cx, js::gc::AllocKind kind, size_t thingSize)
 #endif
 
     void *t = cx->compartment->arenas.allocateFromFreeList(kind, thingSize);
-    JS_ASSERT_IF(t && cx->compartment->needsBarrier(),
+    JS_ASSERT_IF(t && cx->compartment->wasGCStarted() && cx->compartment->needsBarrier(),
                  static_cast<T *>(t)->arenaHeader()->allocatedDuringIncremental);
+
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+    JSCompartment *comp = cx->compartment;
+    if (cx->runtime->gcVerifyPostData && IsNurseryAllocable(kind) && !IsAtomsCompartment(comp))
+        comp->gcNursery.insertPointer(t);
+#endif
     return static_cast<T *>(t);
 }
 

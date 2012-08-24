@@ -1,40 +1,7 @@
 /* -*-  Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is js-ctypes.
- *
- * The Initial Developer of the Original Code is
- * The Mozilla Foundation <http://www.mozilla.org/>.
- * Portions created by the Initial Developer are Copyright (C) 2009
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Dan Witte <dwitte@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef CTYPES_H
 #define CTYPES_H
@@ -352,15 +319,15 @@ bool IsCTypesGlobal(JSObject* obj);
 
 JSCTypesCallbacks* GetCallbacks(JSObject* obj);
 
-JSBool InitTypeClasses(JSContext* cx, JSObject* parent);
+JSBool InitTypeClasses(JSContext* cx, JSHandleObject parent);
 
-JSBool ConvertToJS(JSContext* cx, JSObject* typeObj, JSObject* dataObj,
+JSBool ConvertToJS(JSContext* cx, JSHandleObject typeObj, JSHandleObject dataObj,
   void* data, bool wantPrimitive, bool ownResult, jsval* result);
 
 JSBool ImplicitConvert(JSContext* cx, jsval val, JSObject* targetType,
   void* buffer, bool isArgument, bool* freePointer);
 
-JSBool ExplicitConvert(JSContext* cx, jsval val, JSObject* targetType,
+JSBool ExplicitConvert(JSContext* cx, jsval val, JSHandleObject targetType,
   void* buffer);
 
 /*******************************************************************************
@@ -460,7 +427,7 @@ enum Int64FunctionSlot {
 *******************************************************************************/
 
 namespace CType {
-  JSObject* Create(JSContext* cx, JSObject* typeProto, JSObject* dataProto,
+  JSObject* Create(JSContext* cx, JSHandleObject typeProto, JSHandleObject dataProto,
     TypeCode type, JSString* name, jsval size, jsval align, ffi_type* ffiType);
 
   JSObject* DefineBuiltin(JSContext* cx, JSObject* parent, const char* propName,
@@ -476,20 +443,20 @@ namespace CType {
   bool IsSizeDefined(JSObject* obj);
   size_t GetAlignment(JSObject* obj);
   ffi_type* GetFFIType(JSContext* cx, JSObject* obj);
-  JSString* GetName(JSContext* cx, JSObject* obj);
+  JSString* GetName(JSContext* cx, JSHandleObject obj);
   JSObject* GetProtoFromCtor(JSObject* obj, CTypeProtoSlot slot);
   JSObject* GetProtoFromType(JSObject* obj, CTypeProtoSlot slot);
   JSCTypesCallbacks* GetCallbacksFromType(JSObject* obj);
 }
 
 namespace PointerType {
-  JSObject* CreateInternal(JSContext* cx, JSObject* baseType);
+  JSObject* CreateInternal(JSContext* cx, JSHandleObject baseType);
 
   JSObject* GetBaseType(JSObject* obj);
 }
 
 namespace ArrayType {
-  JSObject* CreateInternal(JSContext* cx, JSObject* baseType, size_t length,
+  JSObject* CreateInternal(JSContext* cx, JSHandleObject baseType, size_t length,
     bool lengthDefined);
 
   JSObject* GetBaseType(JSObject* obj);
@@ -520,12 +487,12 @@ namespace FunctionType {
 }
 
 namespace CClosure {
-  JSObject* Create(JSContext* cx, JSObject* typeObj, JSObject* fnObj,
-    JSObject* thisObj, jsval errVal, PRFuncPtr* fnptr);
+  JSObject* Create(JSContext* cx, JSHandleObject typeObj, JSHandleObject fnObj,
+    JSHandleObject thisObj, jsval errVal, PRFuncPtr* fnptr);
 }
 
 namespace CData {
-  JSObject* Create(JSContext* cx, JSObject* typeObj, JSObject* refObj,
+  JSObject* Create(JSContext* cx, JSHandleObject typeObj, JSHandleObject refObj,
     void* data, bool ownResult);
 
   JSObject* GetCType(JSObject* dataObj);

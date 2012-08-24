@@ -1,6 +1,10 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99:
  */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 
 #include "tests.h"
 
@@ -93,7 +97,7 @@ ExhaustiveTest(const char funcode[])
     for (size_t i = 0; i <= ArgCount; i++) {
         for (size_t j = 0; j <= ArgCount - i; j++) {
             ClearElements(elems);
-            CHECK(argsobj.getElements(i, j, elems));
+            CHECK(argsobj.maybeGetElements(i, j, elems));
             for (size_t k = 0; k < j; k++)
                 CHECK_SAME(elems[k], INT_TO_JSVAL(i + k));
             for (size_t k = j; k < MAX_ELEMS - 1; k++)

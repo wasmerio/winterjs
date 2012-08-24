@@ -67,8 +67,11 @@ else
 endif
 
 # Intent: Conditionals for detecting common/tier target use
-#   Todo: are check, install, test needed ?
-isTargetStem       = $(sort $(foreach pat, $(1)% %$(1), $(call is_XinY,$(pat),${$(mcg_goals)})))
+isTargetStem       = $(sort \
+  $(foreach var,$(getargv),\
+    $(foreach pat,$(var)% %$(var),\
+      $(call is_XinY,$(pat),${$(mcg_goals)})\
+  )))
 isTargetStemClean  = $(call isTargetStem,clean)
 isTargetStemExport = $(call isTargetStem,export)
 isTargetStemLibs   = $(call isTargetStem,libs)
@@ -90,7 +93,7 @@ map = $(foreach val,$(2),$(call $(1),$(val)))
 
 
 ## Disable checking for clean targets
-ifeq (,$(filter %clean clean%,$(MAKECMDGOALS)))
+ifeq (,$(filter %clean clean%,$(MAKECMDGOALS))) #{
 
 # Usage: $(call checkIfEmpty,[error|warning] foo NULL bar)
 checkIfEmpty =$(foreach var,$(wordlist 2,100,$(argv)),$(if $(strip $($(var))),$(NOP),$(call $(1),Variable $(var) does not contain a value)))
@@ -99,4 +102,13 @@ checkIfEmpty =$(foreach var,$(wordlist 2,100,$(argv)),$(if $(strip $($(var))),$(
 errorIfEmpty =$(call checkIfEmpty,error $(argv))
 warnIfEmpty  =$(call checkIfEmpty,warning $(argv))
 
+endif #}
+
+###########################################################################
+## Common makefile library loader
+###########################################################################
+topORerr =$(if $(topsrcdir),$(topsrcdir),$(error topsrcdir is not defined))
+
+ifdef USE_AUTOTARGETS_MK # mkdir_deps
+  include $(topORerr)/config/makefiles/autotargets.mk
 endif

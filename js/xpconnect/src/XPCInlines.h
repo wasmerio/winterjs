@@ -1,43 +1,9 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=79:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* private inline methods (#include'd by xpcprivate.h). */
 
@@ -86,13 +52,6 @@ XPCCallContext::GetRuntime() const
 {
     CHECK_STATE(HAVE_CONTEXT);
     return mXPCContext->GetRuntime();
-}
-
-inline XPCPerThreadData*
-XPCCallContext::GetThreadData() const
-{
-    CHECK_STATE(HAVE_CONTEXT);
-    return mThreadData;
 }
 
 inline XPCContext*
@@ -168,14 +127,14 @@ XPCCallContext::GetIdentityObject() const
         return mWrapper->GetIdentityObject();
     return mFlattenedJSObject ?
            static_cast<nsISupports*>(xpc_GetJSPrivate(mFlattenedJSObject)) :
-           nsnull;
+           nullptr;
 }
 
 inline XPCWrappedNative*
 XPCCallContext::GetWrapper() const
 {
     if (mState == INIT_FAILED)
-        return nsnull;
+        return nullptr;
 
     CHECK_STATE(HAVE_OBJECT);
     return mWrapper;
@@ -187,7 +146,7 @@ XPCCallContext::GetProto() const
     CHECK_STATE(HAVE_OBJECT);
     if (mWrapper)
         return mWrapper->GetProto();
-    return mFlattenedJSObject ? GetSlimWrapperProto(mFlattenedJSObject) : nsnull;
+    return mFlattenedJSObject ? GetSlimWrapperProto(mFlattenedJSObject) : nullptr;
 }
 
 inline JSBool
@@ -296,31 +255,31 @@ inline jsid
 XPCCallContext::GetResolveName() const
 {
     CHECK_STATE(HAVE_CONTEXT);
-    return mThreadData->GetResolveName();
+    return XPCJSRuntime::Get()->GetResolveName();
 }
 
 inline jsid
 XPCCallContext::SetResolveName(jsid name)
 {
     CHECK_STATE(HAVE_CONTEXT);
-    return mThreadData->SetResolveName(name);
+    return XPCJSRuntime::Get()->SetResolveName(name);
 }
 
 inline XPCWrappedNative*
 XPCCallContext::GetResolvingWrapper() const
 {
     CHECK_STATE(HAVE_OBJECT);
-    return mThreadData->GetResolvingWrapper();
+    return XPCJSRuntime::Get()->GetResolvingWrapper();
 }
 
 inline XPCWrappedNative*
 XPCCallContext::SetResolvingWrapper(XPCWrappedNative* w)
 {
     CHECK_STATE(HAVE_OBJECT);
-    return mThreadData->SetResolvingWrapper(w);
+    return XPCJSRuntime::Get()->SetResolvingWrapper(w);
 }
 
-inline PRUint16
+inline uint16_t
 XPCCallContext::GetMethodIndex() const
 {
     CHECK_STATE(HAVE_OBJECT);
@@ -328,7 +287,7 @@ XPCCallContext::GetMethodIndex() const
 }
 
 inline void
-XPCCallContext::SetMethodIndex(PRUint16 index)
+XPCCallContext::SetMethodIndex(uint16_t index)
 {
     CHECK_STATE(HAVE_OBJECT);
     mMethodIndex = index;
@@ -354,14 +313,14 @@ inline const nsIID*
 XPCNativeInterface::GetIID() const
 {
     const nsIID* iid;
-    return NS_SUCCEEDED(mInfo->GetIIDShared(&iid)) ? iid : nsnull;
+    return NS_SUCCEEDED(mInfo->GetIIDShared(&iid)) ? iid : nullptr;
 }
 
 inline const char*
 XPCNativeInterface::GetNameString() const
 {
     const char* name;
-    return NS_SUCCEEDED(mInfo->GetNameShared(&name)) ? name : nsnull;
+    return NS_SUCCEEDED(mInfo->GetNameShared(&name)) ? name : nullptr;
 }
 
 inline XPCNativeMember*
@@ -371,7 +330,7 @@ XPCNativeInterface::FindMember(jsid name) const
     for (int i = (int) mMemberCount; i > 0; i--, member++)
         if (member->GetName() == name)
             return const_cast<XPCNativeMember*>(member);
-    return nsnull;
+    return nullptr;
 }
 
 inline JSBool
@@ -386,7 +345,7 @@ XPCNativeInterface::HasAncestor(const nsIID* iid) const
 
 inline JSBool
 XPCNativeSet::FindMember(jsid name, XPCNativeMember** pMember,
-                         PRUint16* pInterfaceIndex) const
+                         uint16_t* pInterfaceIndex) const
 {
     XPCNativeInterface* const * iface;
     int count = (int) mInterfaceCount;
@@ -397,9 +356,9 @@ XPCNativeSet::FindMember(jsid name, XPCNativeMember** pMember,
     for (i = 0, iface = mInterfaces; i < count; i++, iface++) {
         if (name == (*iface)->GetName()) {
             if (pMember)
-                *pMember = nsnull;
+                *pMember = nullptr;
             if (pInterfaceIndex)
-                *pInterfaceIndex = (PRUint16) i;
+                *pInterfaceIndex = (uint16_t) i;
             return true;
         }
     }
@@ -411,7 +370,7 @@ XPCNativeSet::FindMember(jsid name, XPCNativeMember** pMember,
             if (pMember)
                 *pMember = member;
             if (pInterfaceIndex)
-                *pInterfaceIndex = (PRUint16) i;
+                *pInterfaceIndex = (uint16_t) i;
             return true;
         }
     }
@@ -422,7 +381,7 @@ inline JSBool
 XPCNativeSet::FindMember(jsid name, XPCNativeMember** pMember,
                          XPCNativeInterface** pInterface) const
 {
-    PRUint16 index;
+    uint16_t index;
     if (!FindMember(name, pMember, &index))
         return false;
     *pInterface = mInterfaces[index];
@@ -451,7 +410,7 @@ XPCNativeSet::FindMember(jsid name,
         !protoSet ||
         (protoSet != this &&
          !protoSet->MatchesSetUpToInterface(this, Interface) &&
-         (!protoSet->FindMember(name, &protoMember, (PRUint16*)nsnull) ||
+         (!protoSet->FindMember(name, &protoMember, (uint16_t*)nullptr) ||
           protoMember != Member));
 
     return true;
@@ -468,7 +427,7 @@ XPCNativeSet::FindNamedInterface(jsid name) const
         if (name == iface->GetName())
             return iface;
     }
-    return nsnull;
+    return nullptr;
 }
 
 inline XPCNativeInterface*
@@ -482,7 +441,7 @@ XPCNativeSet::FindInterfaceWithIID(const nsIID& iid) const
         if (iface->GetIID()->Equals(iid))
             return iface;
     }
-    return nsnull;
+    return nullptr;
 }
 
 inline JSBool
@@ -523,7 +482,7 @@ inline JSBool
 XPCNativeSet::MatchesSetUpToInterface(const XPCNativeSet* other,
                                       XPCNativeInterface* iface) const
 {
-    int count = JS_MIN((int)mInterfaceCount, (int)other->mInterfaceCount);
+    int count = js::Min(int(mInterfaceCount), int(other->mInterfaceCount));
 
     XPCNativeInterface* const * pp1 = mInterfaces;
     XPCNativeInterface* const * pp2 = other->mInterfaces;
@@ -568,7 +527,7 @@ inline void XPCNativeSet::ASSERT_NotMarked()
 inline
 JSObject* XPCWrappedNativeTearOff::GetJSObjectPreserveColor() const
 {
-    return mJSObject;
+    return reinterpret_cast<JSObject *>(reinterpret_cast<uintptr_t>(mJSObject) & ~1);
 }
 
 inline
@@ -582,7 +541,8 @@ JSObject* XPCWrappedNativeTearOff::GetJSObject()
 inline
 void XPCWrappedNativeTearOff::SetJSObject(JSObject*  JSObj)
 {
-        mJSObject = JSObj;
+    MOZ_ASSERT(!IsMarked());
+    mJSObject = JSObj;
 }
 
 inline
@@ -597,7 +557,7 @@ XPCWrappedNativeTearOff::~XPCWrappedNativeTearOff()
 inline JSBool
 XPCWrappedNative::HasInterfaceNoQI(const nsIID& iid)
 {
-    return nsnull != GetSet()->FindInterfaceWithIID(iid);
+    return nullptr != GetSet()->FindInterfaceWithIID(iid);
 }
 
 inline void
@@ -618,9 +578,9 @@ XPCWrappedNative::SweepTearOffs()
                 nsISupports* obj = to->GetNative();
                 if (obj) {
                     obj->Release();
-                    to->SetNative(nsnull);
+                    to->SetNative(nullptr);
                 }
-                to->SetInterface(nsnull);
+                to->SetInterface(nullptr);
             }
         }
     }
@@ -693,8 +653,8 @@ XPCLazyCallContext::SetWrapper(JSObject* flattenedJSObject)
 {
     NS_ASSERTION(IS_SLIM_WRAPPER_OBJECT(flattenedJSObject),
                  "What kind of object is this?");
-    mWrapper = nsnull;
-    mTearOff = nsnull;
+    mWrapper = nullptr;
+    mTearOff = nullptr;
     mFlattenedJSObject = flattenedJSObject;
 }
 

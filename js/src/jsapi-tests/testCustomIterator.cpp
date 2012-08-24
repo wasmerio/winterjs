@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "tests.h"
 
 #include "jsclass.h"
@@ -14,9 +18,9 @@ IterNext(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static JSObject *
-IterHook(JSContext *cx, JSObject *obj, JSBool keysonly)
+IterHook(JSContext *cx, JS::HandleObject obj, JSBool keysonly)
 {
-    JSObject *iterObj = JS_NewObject(cx, NULL, NULL, NULL);
+    JS::RootedObject iterObj(cx, JS_NewObject(cx, NULL, NULL, NULL));
     if (!iterObj)
         return NULL;
     if (!JS_DefineFunction(cx, iterObj, "next", IterNext, 0, 0))
@@ -61,7 +65,7 @@ IterClassConstructor(JSContext *cx, unsigned argc, jsval *vp)
 
 BEGIN_TEST(testCustomIterator_bug612523)
 {
-    CHECK(JS_InitClass(cx, JS_GetGlobalObject(cx), NULL, Jsvalify(&HasCustomIterClass),
+    CHECK(JS_InitClass(cx, global, NULL, Jsvalify(&HasCustomIterClass),
                        IterClassConstructor, 0, NULL, NULL, NULL, NULL));
 
     jsval result;

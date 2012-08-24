@@ -1,37 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=80:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * Copyright (C) 2007  Sun Microsystems, Inc. All Rights Reserved.
- *
- * Contributor(s):
- *      Brendan Eich <brendan@mozilla.org>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifdef MOZ_ETW
 
@@ -68,182 +40,48 @@ const char Probes::anonymousName[] = "(anonymous)";
 
 bool Probes::ProfilingActive = true;
 
-static Vector<Probes::JITWatcher*, 4, SystemAllocPolicy> jitWatchers;
-
-bool
-Probes::addJITWatcher(JITWatcher *watcher)
-{
-    return jitWatchers.append(watcher);
-}
-
-bool
-Probes::removeJITWatcher(JSRuntime *rt, JITWatcher *watcher)
-{
-    JITWatcher **place = Find(jitWatchers, watcher);
-    if (!place)
-        return false;
-    if (rt)
-        rt->delete_(*place);
-    else
-        Foreground::delete_(*place);
-    jitWatchers.erase(place);
-    return true;
-}
-
-void
-Probes::removeAllJITWatchers(JSRuntime *rt)
-{
-    if (rt) {
-        for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-            rt->delete_(*p);
-    } else {
-        for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-            Foreground::delete_(*p);
-    }
-    jitWatchers.clear();
-}
-
 Probes::JITReportGranularity
-Probes::JITGranularityRequested()
+Probes::JITGranularityRequested(JSContext *cx)
 {
-    JITReportGranularity want = JITREPORT_GRANULARITY_NONE;
-    for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p) {
-        JITReportGranularity request = (*p)->granularityRequested();
-        if (request > want)
-            want = request;
-    }
-
-    return want;
+    if (cx->runtime->spsProfiler.enabled())
+        return JITREPORT_GRANULARITY_LINE;
+    return JITREPORT_GRANULARITY_NONE;
 }
 
 #ifdef JS_METHODJIT
-/*
- * Flatten the tree of inlined frames into a series of native code regions, one
- * for each contiguous section of native code that belongs to a single
- * ActiveFrame. (Note that some of these regions may be zero-length, for
- * example if two ActiveFrames end at the same place.)
- */
-typedef mjit::Compiler::ActiveFrame ActiveFrame;
 
 bool
-Probes::JITWatcher::CollectNativeRegions(RegionVector &regions,
-                                         JSRuntime *rt,
-                                         mjit::JITChunk *jit,
-                                         mjit::JSActiveFrame *outerFrame,
-                                         mjit::JSActiveFrame **inlineFrames)
-{
-    regions.resize(jit->nInlineFrames * 2 + 2);
-
-    mjit::JSActiveFrame **stack =
-        rt->array_new<mjit::JSActiveFrame*>(jit->nInlineFrames+2);
-    if (!stack)
-        return false;
-    uint32_t depth = 0;
-    uint32_t ip = 0;
-
-    stack[depth++] = NULL;
-    stack[depth++] = outerFrame;
-    regions[0].frame = outerFrame;
-    regions[0].script = outerFrame->script;
-    regions[0].pc = outerFrame->script->code;
-    regions[0].enter = true;
-    ip++;
-
-    for (uint32_t i = 0; i <= jit->nInlineFrames; i++) {
-        mjit::JSActiveFrame *frame = (i < jit->nInlineFrames) ? inlineFrames[i] : outerFrame;
-
-        // Not a down frame; pop the current frame, then pop until we reach
-        // this frame's parent, recording subframe ends as we go
-        while (stack[depth-1] != frame->parent) {
-            depth--;
-            JS_ASSERT(depth > 0);
-            // Pop up from regions[ip-1].frame to top of the stack: start a
-            // region in the destination frame and close off the source
-            // (origin) frame at the end of its script
-            mjit::JSActiveFrame *src = regions[ip-1].frame;
-            mjit::JSActiveFrame *dst = stack[depth-1];
-            JS_ASSERT_IF(!dst, i == jit->nInlineFrames);
-            regions[ip].frame = dst;
-            regions[ip].script = dst ? dst->script : NULL;
-            regions[ip].pc = src->parentPC + 1;
-            regions[ip-1].endpc = src->script->code + src->script->length;
-            regions[ip].enter = false;
-            ip++;
-        }
-
-        if (i < jit->nInlineFrames) {
-            // Push a frame (enter an inlined function). Start a region at the
-            // beginning of the new frame's script, and end the previous region
-            // at parentPC.
-            stack[depth++] = frame;
-
-            regions[ip].frame = frame;
-            regions[ip].script = frame->script;
-            regions[ip].pc = frame->script->code;
-            regions[ip-1].endpc = frame->parentPC;
-            regions[ip].enter = true;
-            ip++;
-        }
-    }
-
-    // Final region is always zero-length and not particularly useful
-    ip--;
-    regions.popBack();
-
-    mjit::JSActiveFrame *prev = NULL;
-    for (NativeRegion *iter = regions.begin(); iter != regions.end(); ++iter) {
-        mjit::JSActiveFrame *frame = iter->frame;
-        if (iter->enter) {
-            // Pushing down a frame, so region starts at the beginning of the
-            // (destination) frame
-            iter->mainOffset = frame->mainCodeStart;
-            iter->stubOffset = frame->stubCodeStart;
-        } else {
-            // Popping up a level, so region starts at the end of the (source) frame
-            iter->mainOffset = prev->mainCodeEnd;
-            iter->stubOffset = prev->stubCodeEnd;
-        }
-        prev = frame;
-    }
-
-    JS_ASSERT(ip == 2 * jit->nInlineFrames + 1);
-    rt->array_delete(stack);
-
-    // All of the stub code comes immediately after the main code
-    for (NativeRegion *iter = regions.begin(); iter != regions.end(); ++iter)
-        iter->stubOffset += outerFrame->mainCodeEnd;
-
-    return true;
-}
-
-void
 Probes::registerMJITCode(JSContext *cx, js::mjit::JITChunk *chunk,
                          js::mjit::JSActiveFrame *outerFrame,
-                         js::mjit::JSActiveFrame **inlineFrames,
-                         void *mainCodeAddress, size_t mainCodeSize,
-                         void *stubCodeAddress, size_t stubCodeSize)
+                         js::mjit::JSActiveFrame **inlineFrames)
 {
-    for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-        (*p)->registerMJITCode(cx, chunk, outerFrame,
-                               inlineFrames,
-                               mainCodeAddress, mainCodeSize,
-                               stubCodeAddress, stubCodeSize);
+    if (cx->runtime->spsProfiler.enabled() &&
+        !cx->runtime->spsProfiler.registerMJITCode(chunk, outerFrame, inlineFrames))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 void
 Probes::discardMJITCode(FreeOp *fop, mjit::JITScript *jscr, mjit::JITChunk *chunk, void* address)
 {
-    for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-        (*p)->discardMJITCode(fop, jscr, chunk, address);
+    if (fop->runtime()->spsProfiler.enabled())
+        fop->runtime()->spsProfiler.discardMJITCode(jscr, chunk, address);
 }
 
-void
+bool
 Probes::registerICCode(JSContext *cx,
                        mjit::JITChunk *chunk, JSScript *script, jsbytecode* pc,
                        void *start, size_t size)
 {
-    for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-        (*p)->registerICCode(cx, chunk, script, pc, start, size);
+    if (cx->runtime->spsProfiler.enabled() &&
+        !cx->runtime->spsProfiler.registerICCode(chunk, script, pc, start, size))
+    {
+        return false;
+    }
+    return true;
 }
 #endif
 
@@ -251,8 +89,10 @@ Probes::registerICCode(JSContext *cx,
 void
 Probes::discardExecutableRegion(void *start, size_t size)
 {
-    for (JITWatcher **p = jitWatchers.begin(); p != jitWatchers.end(); ++p)
-        (*p)->discardExecutableRegion(start, size);
+    /*
+     * Not needed for SPS because ICs are disposed of when the normal JITChunk
+     * is disposed of
+     */
 }
 
 static JSRuntime *initRuntime;
@@ -303,8 +143,6 @@ Probes::shutdown()
     if (!ETWShutdown())
         ok = false;
 #endif
-
-    Probes::removeAllJITWatchers(NULL);
 
     return ok;
 }

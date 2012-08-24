@@ -1,41 +1,9 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jsfuninlines_h___
 #define jsfuninlines_h___
@@ -72,6 +40,28 @@ JSFunction::initEnvironment(JSObject *obj)
 {
     JS_ASSERT(isInterpreted());
     ((js::HeapPtrObject *)&u.i.env_)->init(obj);
+}
+
+inline void
+JSFunction::initNative(js::Native native, const JSJitInfo *data)
+{
+    JS_ASSERT(native);
+    u.n.native = native;
+    u.n.jitinfo = data;
+}
+
+inline const JSJitInfo *
+JSFunction::jitInfo() const
+{
+    JS_ASSERT(isNative());
+    return u.n.jitinfo;
+}
+
+inline void
+JSFunction::setJitInfo(const JSJitInfo *data)
+{
+    JS_ASSERT(isNative());
+    u.n.jitinfo = data;
 }
 
 inline void
@@ -151,7 +141,7 @@ ClassMethodIsNative(JSContext *cx, HandleObject obj, Class *clasp, HandleId meth
 
     Value v;
     if (!HasDataProperty(cx, obj, methodid, &v)) {
-        RootedVarObject proto(cx, obj->getProto());
+        RootedObject proto(cx, obj->getProto());
         if (!proto || proto->getClass() != clasp || !HasDataProperty(cx, proto, methodid, &v))
             return false;
     }
@@ -192,8 +182,9 @@ IsConstructing(CallReceiver call)
 inline const char *
 GetFunctionNameBytes(JSContext *cx, JSFunction *fun, JSAutoByteString *bytes)
 {
-    if (fun->atom)
-        return bytes->encode(cx, fun->atom);
+    JSAtom *atom = fun->atom();
+    if (atom)
+        return bytes->encode(cx, atom);
     return js_anonymous_str;
 }
 
@@ -220,7 +211,7 @@ CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
                     gc::AllocKind kind = JSFunction::FinalizeKind)
 {
     JS_ASSERT(parent);
-    RootedVarObject proto(cx, parent->global().getOrCreateFunctionPrototype(cx));
+    RootedObject proto(cx, parent->global().getOrCreateFunctionPrototype(cx));
     if (!proto)
         return NULL;
 
@@ -238,7 +229,8 @@ CloneFunctionObjectIfNotSingleton(JSContext *cx, HandleFunction fun, HandleObjec
      * with its type in existence.
      */
     if (fun->hasSingletonType()) {
-        if (!JSObject::setParent(cx, fun, RootedVarObject(cx, SkipScopeParent(parent))))
+        Rooted<JSObject*> obj(cx, SkipScopeParent(parent));
+        if (!JSObject::setParent(cx, fun, obj))
             return NULL;
         fun->setEnvironment(parent);
         return fun;
@@ -262,10 +254,9 @@ CloneFunctionObject(JSContext *cx, HandleFunction fun)
     if (fun->hasSingletonType())
         return fun;
 
-    return js_CloneFunctionObject(cx, fun,
-                                  RootedVarObject(cx, fun->environment()),
-                                  RootedVarObject(cx, fun->getProto()),
-                                  JSFunction::ExtendedFinalizeKind);
+    Rooted<JSObject*> env(cx, fun->environment());
+    Rooted<JSObject*> proto(cx, fun->getProto());
+    return js_CloneFunctionObject(cx, fun, env, proto, JSFunction::ExtendedFinalizeKind);
 }
 
 } /* namespace js */

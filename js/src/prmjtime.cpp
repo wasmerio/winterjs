@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * PR time code.
@@ -456,7 +423,7 @@ PRMJ_Now(void)
 
             /* On some dual processor/core systems, we might get an earlier time
                so we cache the last time that we returned */
-            calibration.last = JS_MAX(calibration.last, int64_t(highresTime));
+            calibration.last = js::Max(calibration.last, int64_t(highresTime));
             returnedTime = calibration.last;
             MUTEX_UNLOCK(&calibration.data_lock);
 
@@ -725,7 +692,7 @@ DSTOffsetCache::getDSTOffsetMilliseconds(int64_t localTimeMilliseconds, JSContex
     oldRangeEndSeconds = rangeEndSeconds;
 
     if (rangeStartSeconds <= localTimeSeconds) {
-        int64_t newEndSeconds = JS_MIN(rangeEndSeconds + RANGE_EXPANSION_AMOUNT, MAX_UNIX_TIMET);
+        int64_t newEndSeconds = js::Min(rangeEndSeconds + RANGE_EXPANSION_AMOUNT, MAX_UNIX_TIMET);
         if (newEndSeconds >= localTimeSeconds) {
             int64_t endOffsetMilliseconds = computeDSTOffsetMilliseconds(newEndSeconds);
             if (endOffsetMilliseconds == offsetMilliseconds) {
@@ -748,7 +715,7 @@ DSTOffsetCache::getDSTOffsetMilliseconds(int64_t localTimeMilliseconds, JSContex
         return offsetMilliseconds;
     }
 
-    int64_t newStartSeconds = JS_MAX(rangeStartSeconds - RANGE_EXPANSION_AMOUNT, 0);
+    int64_t newStartSeconds = js::Max(rangeStartSeconds - RANGE_EXPANSION_AMOUNT, int64_t(0));
     if (newStartSeconds <= localTimeSeconds) {
         int64_t startOffsetMilliseconds = computeDSTOffsetMilliseconds(newStartSeconds);
         if (startOffsetMilliseconds == offsetMilliseconds) {

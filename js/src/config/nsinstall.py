@@ -1,39 +1,6 @@
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is Mozilla.
-#
-# The Initial Developer of the Original Code is
-# the Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2007
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Axel Hecht <axel@pike.org>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # This is a partial python port of nsinstall.
 # It's intended to be used when there's no natively compile nsinstall
@@ -48,8 +15,9 @@ import os
 import os.path
 import sys
 import shutil
+import stat
 
-def nsinstall(argv):
+def _nsinstall_internal(argv):
   usage = "usage: %prog [options] arg1 [arg2 ...] target-directory"
   p = OptionParser(usage=usage)
 
@@ -67,6 +35,8 @@ def nsinstall(argv):
                help="Create link (ignored)")
   p.add_option('-L', action="store", metavar="linkprefix",
                help="Link prefix (ignored)")
+  p.add_option('-X', action="append", metavar="file",
+               help="Ignore a file when installing a directory recursively.")
 
   # The remaining arguments are not used in our tree, thus they're not
   # implented.
@@ -92,21 +62,35 @@ def nsinstall(argv):
       return 1
 
   # just create one directory?
-  if options.D:
-    if len(args) != 1:
+  def maybe_create_dir(dir, mode, try_again):
+    dir = os.path.abspath(dir)
+    if os.path.exists(dir):
+      if not os.path.isdir(dir):
+        print >> sys.stderr, ('nsinstall: %s is not a directory' % dir)
+        return 1
+      if mode:
+        os.chmod(dir, mode)
+      return 0
+
+    try:
+      if mode:
+        os.makedirs(dir, mode)
+      else:
+        os.makedirs(dir)
+    except Exception, e:
+      # We might have hit EEXIST due to a race condition (see bug 463411) -- try again once
+      if try_again:
+        return maybe_create_dir(dir, mode, False)
+      print >> sys.stderr, ("nsinstall: failed to create directory %s: %s" % (dir, e))
       return 1
-    if os.path.exists(args[0]):
-      if not os.path.isdir(args[0]):
-        sys.stderr.write('nsinstall: ' + args[0] + ' is not a directory\n')
-        sys.exit(1)
-      if options.m:
-        os.chmod(args[0], options.m)
-      sys.exit()
-    if options.m:
-      os.makedirs(args[0], options.m)
     else:
-      os.makedirs(args[0])
-    return 0
+      return 0
+
+  if options.X:
+    options.X = [os.path.abspath(p) for p in options.X]
+
+  if options.D:
+    return maybe_create_dir(args[0], options.m, True)
 
   # nsinstall arg1 [...] directory
   if len(args) < 2:
@@ -114,8 +98,12 @@ def nsinstall(argv):
 
   def copy_all_entries(entries, target):
     for e in entries:
-      dest = os.path.join(target,
-                          os.path.basename(os.path.normpath(e)))
+      e = os.path.abspath(e)
+      if options.X and e in options.X:
+        continue
+
+      dest = os.path.join(target, os.path.basename(e))
+      dest = os.path.abspath(dest)
       handleTarget(e, dest)
       if options.m:
         os.chmod(dest, options.m)
@@ -137,19 +125,57 @@ def nsinstall(argv):
         # options.t is not relevant for directories
         if options.m:
           os.chmod(targetpath, options.m)
-      elif options.t:
-        shutil.copy2(srcpath, targetpath)
       else:
-        shutil.copy(srcpath, targetpath)
+        if os.path.exists(targetpath):
+          # On Windows, read-only files can't be deleted
+          os.chmod(targetpath, stat.S_IWUSR)
+          os.remove(targetpath)
+        if options.t:
+          shutil.copy2(srcpath, targetpath)
+        else:
+          shutil.copy(srcpath, targetpath)
 
   # the last argument is the target directory
   target = args.pop()
-  # ensure target directory
-  if not os.path.isdir(target):
-    os.makedirs(target)
+  # ensure target directory (importantly, we do not apply a mode to the directory
+  # because we want to copy files into it and the mode might be read-only)
+  rv = maybe_create_dir(target, None, True)
+  if rv != 0:
+    return rv
 
   copy_all_entries(args, target)
   return 0
 
+# nsinstall as a native command is always UTF-8
+def nsinstall(argv):
+  return _nsinstall_internal([unicode(arg, "utf-8") for arg in argv])
+
 if __name__ == '__main__':
-  sys.exit(nsinstall(sys.argv[1:]))
+  # sys.argv corrupts characters outside the system code page on Windows
+  # <http://bugs.python.org/issue2128>. Use ctypes instead. This is also
+  # useful because switching to Unicode strings makes python use the wide
+  # Windows APIs, which is what we want here since the wide APIs normally do a
+  # better job at handling long paths and such.
+  if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+    GetCommandLine = ctypes.windll.kernel32.GetCommandLineW
+    GetCommandLine.argtypes = []
+    GetCommandLine.restype = wintypes.LPWSTR
+
+    CommandLineToArgv = ctypes.windll.shell32.CommandLineToArgvW
+    CommandLineToArgv.argtypes = [wintypes.LPWSTR, ctypes.POINTER(ctypes.c_int)]
+    CommandLineToArgv.restype = ctypes.POINTER(wintypes.LPWSTR)
+
+    argc = ctypes.c_int(0)
+    argv_arr = CommandLineToArgv(GetCommandLine(), ctypes.byref(argc))
+    # The first argv will be "python", the second will be the .py file
+    argv = argv_arr[1:argc.value]
+  else:
+    # For consistency, do it on Unix as well
+    if sys.stdin.encoding is not None:
+      argv = [unicode(arg, sys.stdin.encoding) for arg in sys.argv]
+    else:
+      argv = [unicode(arg) for arg in sys.argv]
+
+  sys.exit(_nsinstall_internal(argv[1:]))

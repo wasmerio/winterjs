@@ -1,50 +1,13 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   John Bandhauer <jband@netscape.com> (original author)
- *   Mark Hammond <MarkH@ActiveState.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* An implementaion of nsIException. */
 
 #include "xpcprivate.h"
-#include "nsNetError.h"
-#include "mozStorage.h"
-#include "nsPluginError.h"
+#include "nsError.h"
 #include "nsIUnicodeDecoder.h"
 
 /***************************************************************************/
@@ -62,7 +25,7 @@ static struct ResultMap
     {(val), #val, format},
 #include "xpc.msg"
 #undef XPC_MSG_DEF
-    {0,0,0}   // sentinel to mark end of array
+    {NS_OK,0,0}   // sentinel to mark end of array
 };
 
 #define RESULT_COUNT ((sizeof(map) / sizeof(map[0]))-1)
@@ -97,7 +60,7 @@ nsXPCException::IterateNSResults(nsresult* rv,
     else
         p++;
     if (!p->name)
-        p = nsnull;
+        p = nullptr;
     else {
         if (rv)
             *rv = p->rv;
@@ -111,7 +74,7 @@ nsXPCException::IterateNSResults(nsresult* rv,
 }
 
 // static
-PRUint32
+uint32_t
 nsXPCException::GetNSResultCount()
 {
     return RESULT_COUNT;
@@ -134,14 +97,14 @@ NS_IMPL_THREADSAFE_RELEASE(nsXPCException)
 NS_IMPL_CI_INTERFACE_GETTER1(nsXPCException, nsIXPCException)
 
 nsXPCException::nsXPCException()
-    : mMessage(nsnull),
-      mResult(0),
-      mName(nsnull),
-      mLocation(nsnull),
-      mData(nsnull),
-      mFilename(nsnull),
+    : mMessage(nullptr),
+      mResult(NS_OK),
+      mName(nullptr),
+      mLocation(nullptr),
+      mData(nullptr),
+      mFilename(nullptr),
       mLineNumber(0),
-      mInner(nsnull),
+      mInner(nullptr),
       mInitialized(false)
 {
     MOZ_COUNT_CTOR(nsXPCException);
@@ -155,7 +118,7 @@ nsXPCException::~nsXPCException()
 
 /* [noscript] xpcexJSVal stealJSVal (); */
 NS_IMETHODIMP
-nsXPCException::StealJSVal(jsval *vp NS_OUTPARAM)
+nsXPCException::StealJSVal(jsval *vp)
 {
     if (mThrownJSVal.IsHeld()) {
         *vp = mThrownJSVal.Release();
@@ -180,17 +143,17 @@ nsXPCException::Reset()
 {
     if (mMessage) {
         nsMemory::Free(mMessage);
-        mMessage = nsnull;
+        mMessage = nullptr;
     }
     if (mName) {
         nsMemory::Free(mName);
-        mName = nsnull;
+        mName = nullptr;
     }
     if (mFilename) {
         nsMemory::Free(mFilename);
-        mFilename = nsnull;
+        mFilename = nullptr;
     }
-    mLineNumber = (PRUint32)-1;
+    mLineNumber = (uint32_t)-1;
     NS_IF_RELEASE(mLocation);
     NS_IF_RELEASE(mData);
     NS_IF_RELEASE(mInner);
@@ -226,7 +189,7 @@ nsXPCException::GetName(char * *aName)
 
     const char* name = mName;
     if (!name)
-        NameAndFormatForNSResult(mResult, &name, nsnull);
+        NameAndFormatForNSResult(mResult, &name, nullptr);
 
     XPC_STRING_GETTER_BODY(aName, name);
 }
@@ -239,8 +202,8 @@ NS_IMETHODIMP nsXPCException::GetFilename(char * *aFilename)
     XPC_STRING_GETTER_BODY(aFilename, mFilename);
 }
 
-/* readonly attribute PRUint32 lineNumber; */
-NS_IMETHODIMP nsXPCException::GetLineNumber(PRUint32 *aLineNumber)
+/* readonly attribute uint32_t lineNumber; */
+NS_IMETHODIMP nsXPCException::GetLineNumber(uint32_t *aLineNumber)
 {
     if (!aLineNumber)
         return NS_ERROR_NULL_POINTER;
@@ -250,8 +213,8 @@ NS_IMETHODIMP nsXPCException::GetLineNumber(PRUint32 *aLineNumber)
     return NS_OK;
 }
 
-/* readonly attribute PRUint32 columnNumber; */
-NS_IMETHODIMP nsXPCException::GetColumnNumber(PRUint32 *aColumnNumber)
+/* readonly attribute uint32_t columnNumber; */
+NS_IMETHODIMP nsXPCException::GetColumnNumber(uint32_t *aColumnNumber)
 {
     NS_ENSURE_ARG_POINTER(aColumnNumber);
     if (!mInitialized)
@@ -369,7 +332,7 @@ nsXPCException::ToString(char **_retval)
     static const char format[] =
  "[Exception... \"%s\"  nsresult: \"0x%x (%s)\"  location: \"%s\"  data: %s]";
 
-    char* indicatedLocation = nsnull;
+    char* indicatedLocation = nullptr;
 
     if (mLocation) {
         // we need to free this if it does not fail
@@ -378,12 +341,12 @@ nsXPCException::ToString(char **_retval)
             return rv;
     }
 
-    const char* msg = mMessage ? mMessage : nsnull;
+    const char* msg = mMessage ? mMessage : nullptr;
     const char* location = indicatedLocation ?
                                 indicatedLocation : defaultLocation;
     const char* resultName = mName;
     if (!resultName && !NameAndFormatForNSResult(mResult, &resultName,
-                                                 (!msg) ? &msg : nsnull)) {
+                                                 (!msg) ? &msg : nullptr)) {
         if (!msg)
             msg = defaultMsg;
         resultName = "<unknown>";
@@ -394,7 +357,7 @@ nsXPCException::ToString(char **_retval)
     if (indicatedLocation)
         nsMemory::Free(indicatedLocation);
 
-    char* final = nsnull;
+    char* final = nullptr;
     if (temp) {
         final = (char*) nsMemory::Clone(temp, sizeof(char)*(strlen(temp)+1));
         JS_smprintf_free(temp);
@@ -456,8 +419,8 @@ nsXPCException::NewException(const char *aMessage,
         // We want to trim off any leading native 'dataless' frames
         if (location)
             while (1) {
-                PRUint32 language;
-                PRInt32 lineNumber;
+                uint32_t language;
+                int32_t lineNumber;
                 if (NS_FAILED(location->GetLanguage(&language)) ||
                     language == nsIProgrammingLanguage::JAVASCRIPT ||
                     NS_FAILED(location->GetLineNumber(&lineNumber)) ||
@@ -472,7 +435,7 @@ nsXPCException::NewException(const char *aMessage,
             }
         // at this point we have non-null location with one extra addref,
         // or no location at all
-        rv = e->Initialize(aMessage, aResult, nsnull, location, aData, nsnull);
+        rv = e->Initialize(aMessage, aResult, nullptr, location, aData, nullptr);
         NS_IF_RELEASE(location);
         if (NS_FAILED(rv))
             NS_RELEASE(e);

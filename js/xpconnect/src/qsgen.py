@@ -1,42 +1,9 @@
 #!/usr/bin/env/python
 # qsgen.py - Generate XPConnect quick stubs.
 #
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is mozilla.org code.
-#
-# The Initial Developer of the Original Code is
-#   Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2008
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Jason Orendorff <jorendorff@mozilla.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # =About quick stubs=
 # qsgen.py generates "quick stubs", custom SpiderMonkey getters, setters, and
@@ -374,7 +341,7 @@ def writeHeaderFile(filename, name):
                 "#define " + headerMacro + "\n\n"
                 "JSBool " + name + "_DefineQuickStubs("
                 "JSContext *cx, JSObject *proto, unsigned flags, "
-                "PRUint32 count, const nsID **iids);\n\n"
+                "uint32_t count, const nsID **iids);\n\n"
                 "void " + name + "_MarkInterfaces();\n\n"
                 "void " + name + "_ClearInterfaces();\n\n"
                 "inline void " + name + "_InitInterfaces()\n"
@@ -457,12 +424,12 @@ argumentUnboxingTemplates = {
 
     'long long':
         "    int64_t ${name};\n"
-        "    if (!xpc::ValueToInt64(cx, ${argVal}, &${name}))\n"
+        "    if (!JS::ToInt64(cx, ${argVal}, &${name}))\n"
         "        return JS_FALSE;\n",
 
     'unsigned long long':
         "    uint64_t ${name};\n"
-        "    if (!xpc::ValueToUint64(cx, ${argVal}, &${name}))\n"
+        "    if (!JS::ToUint64(cx, ${argVal}, &${name}))\n"
         "        return JS_FALSE;\n",
 
     'float':
@@ -689,10 +656,12 @@ resultConvTemplates = {
         "    return xpc_qsUint64ToJsval(cx, result, ${jsvalPtr});\n",
 
     'float':
-        "    return JS_NewNumberValue(cx, result, ${jsvalPtr});\n",
+        "    ${jsvalRef} = JS_NumberValue(result);\n"
+        "    return JS_TRUE;\n",
 
     'double':
-        "    return JS_NewNumberValue(cx, result, ${jsvalPtr});\n",
+        "    ${jsvalRef} =  JS_NumberValue(result);\n"
+        "    return JS_TRUE;\n",
 
     'boolean':
         "    ${jsvalRef} = (result ? JSVAL_TRUE : JSVAL_FALSE);\n"
@@ -797,9 +766,9 @@ def writeQuickStub(f, customMethodCalls, member, stubName, isSetter=False):
     if isAttr:
         # JSPropertyOp signature.
         if isSetter:
-            signature += "%s(JSContext *cx, JSObject *obj, jsid id, JSBool strict,%s jsval *vp)\n"
+            signature += "%s(JSContext *cx, JSHandleObject obj, JSHandleId id, JSBool strict,%s JSMutableHandleValue vp_)\n"
         else:
-            signature += "%s(JSContext *cx, JSObject *obj, jsid id,%s jsval *vp)\n"
+            signature += "%s(JSContext *cx, JSHandleObject obj, JSHandleId id,%s JSMutableHandleValue vp_)\n"
     else:
         # JSFastNative.
         signature += "%s(JSContext *cx, unsigned argc,%s jsval *vp)\n"
@@ -836,7 +805,7 @@ def writeQuickStub(f, customMethodCalls, member, stubName, isSetter=False):
             argumentValues = (customMethodCall['additionalArgumentValues']
                               % nativeName)
             if isAttr:
-                callTemplate += ("    return %s(cx, obj, id%s, %s, vp);\n"
+                callTemplate += ("    return %s(cx, obj, id%s, %s, vp_);\n"
                                  % (templateName, ", strict" if isSetter else "", argumentValues))
             else:
                 callTemplate += ("    return %s(cx, argc, %s, vp);\n"
@@ -875,6 +844,10 @@ def writeQuickStub(f, customMethodCalls, member, stubName, isSetter=False):
     f.write(signature % (stubName, additionalArguments))
     f.write("{\n")
     f.write("    XPC_QS_ASSERT_CONTEXT_OK(cx);\n")
+
+    # Convert JSMutableHandleValue to jsval*
+    if isAttr:
+        f.write("    jsval *vp = vp_.address();\n")
 
     # For methods, compute "this".
     if isMethod:
@@ -928,7 +901,7 @@ def writeQuickStub(f, customMethodCalls, member, stubName, isSetter=False):
                     "&selfref.ptr, %s, &lccx, %s))\n" % (pthisval, unwrapFatalArg))
         else:
             f.write("    if (!xpc_qsUnwrapThis(cx, obj, &self, "
-                    "&selfref.ptr, %s, nsnull, %s))\n" % (pthisval, unwrapFatalArg))
+                    "&selfref.ptr, %s, nullptr, %s))\n" % (pthisval, unwrapFatalArg))
         f.write("        return JS_FALSE;\n")
 
         if not unwrapThisFailureFatal:
@@ -1012,7 +985,7 @@ def writeQuickStub(f, customMethodCalls, member, stubName, isSetter=False):
             if member.implicit_jscontext:
                 argv.append('cx')
             if member.optional_argc:
-                argv.append('NS_MIN<PRUint32>(argc, %d) - %d' % 
+                argv.append('NS_MIN<uint32_t>(argc, %d) - %d' % 
                             (len(member.params), requiredArgs))
             if not isVoidType(member.realtype):
                 argv.append(outParamForm(resultname, member.realtype))
@@ -1137,7 +1110,7 @@ def writeResultXPCInterfacesArray(f, conf, resulttypes):
     f.write("void %s_MarkInterfaces()\n"
             "{\n" % conf.name)
     if count > 0:
-        f.write("    for (PRUint32 i = 0; i < %d; ++i)\n"
+        f.write("    for (uint32_t i = 0; i < %d; ++i)\n"
                 "        if (interfaces[i])\n"
                 "            interfaces[i]->Mark();\n" % count)
     f.write("}\n")
@@ -1149,7 +1122,7 @@ def writeResultXPCInterfacesArray(f, conf, resulttypes):
     f.write("}\n\n")
     i = 0
     for type in resulttypes:
-        f.write("static const PRUint32 k_%s = %d;\n" % (type, i))
+        f.write("static const uint32_t k_%s = %d;\n" % (type, i))
         i += 1
     if count > 0:
         f.write("\n\n")
@@ -1276,7 +1249,7 @@ def writeDefiner(f, conf, stringtable, interfaces):
     # the definer function (entry point to this quick stubs file)
     f.write("namespace xpc {\n")
     f.write("bool %s_DefineQuickStubs(" % conf.name)
-    f.write("JSContext *cx, JSObject *proto, unsigned flags, PRUint32 count, "
+    f.write("JSContext *cx, JSObject *proto, unsigned flags, uint32_t count, "
             "const nsID **iids)\n"
             "{\n")
     f.write("    return !!xpc_qsDefineQuickStubs("

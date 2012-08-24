@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99 ft=cpp:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is SpiderMonkey JavaScript engine.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011-2012
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Jason Orendorff <jorendorff@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef MapObject_h__
 #define MapObject_h__
@@ -45,7 +12,7 @@
 #include "jscntxt.h"
 #include "jsobj.h"
 
-#include "js/HashTable.h"
+#include "mozilla/FloatingPoint.h"
 
 namespace js {
 
@@ -58,47 +25,86 @@ namespace js {
  * All values except ropes are hashable as-is.
  */
 class HashableValue {
-    HeapValue value;
+    RelocatableValue value;
 
   public:
     struct Hasher {
         typedef HashableValue Lookup;
         static HashNumber hash(const Lookup &v) { return v.hash(); }
         static bool match(const HashableValue &k, const Lookup &l) { return k.equals(l); }
+        static bool isEmpty(const HashableValue &v) { return v.value.isMagic(JS_HASH_KEY_EMPTY); }
+        static void makeEmpty(HashableValue *vp) { vp->value = MagicValue(JS_HASH_KEY_EMPTY); }
     };
 
     HashableValue() : value(UndefinedValue()) {}
 
-    operator const HeapValue &() const { return value; }
     bool setValue(JSContext *cx, const Value &v);
     HashNumber hash() const;
     bool equals(const HashableValue &other) const;
+    HashableValue mark(JSTracer *trc) const;
+    Value get() const { return value.get(); }
 
-    struct StackRoot {
-        StackRoot(JSContext *cx, HashableValue *pv) : valueRoot(cx, (Value*) &pv->value) {}
-        RootValue valueRoot;
+    class AutoRooter : private AutoGCRooter
+    {
+      public:
+        explicit AutoRooter(JSContext *cx, HashableValue *v_
+                            JS_GUARD_OBJECT_NOTIFIER_PARAM)
+          : AutoGCRooter(cx, HASHABLEVALUE), v(v_), skip(cx, v_)
+        {
+            JS_GUARD_OBJECT_NOTIFIER_INIT;
+        }
+
+        friend void AutoGCRooter::trace(JSTracer *trc);
+        void trace(JSTracer *trc);
+
+      private:
+        HashableValue *v;
+        SkipRoot skip;
+        JS_DECL_USE_GUARD_OBJECT_NOTIFIER
     };
 };
 
-typedef HashMap<HashableValue, HeapValue, HashableValue::Hasher, RuntimeAllocPolicy> ValueMap;
-typedef HashSet<HashableValue, HashableValue::Hasher, RuntimeAllocPolicy> ValueSet;
+template <class Key, class Value, class OrderedHashPolicy, class AllocPolicy>
+class OrderedHashMap;
+
+template <class T, class OrderedHashPolicy, class AllocPolicy>
+class OrderedHashSet;
+
+typedef OrderedHashMap<HashableValue,
+                       RelocatableValue,
+                       HashableValue::Hasher,
+                       RuntimeAllocPolicy> ValueMap;
+
+typedef OrderedHashSet<HashableValue,
+                       HashableValue::Hasher,
+                       RuntimeAllocPolicy> ValueSet;
 
 class MapObject : public JSObject {
   public:
     static JSObject *initClass(JSContext *cx, JSObject *obj);
     static Class class_;
   private:
-    typedef ValueMap Data;
     static JSFunctionSpec methods[];
     ValueMap *getData() { return static_cast<ValueMap *>(getPrivate()); }
+    static ValueMap & extract(CallReceiver call);
     static void mark(JSTracer *trc, JSObject *obj);
     static void finalize(FreeOp *fop, JSObject *obj);
     static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
+
+    static bool is(const Value &v);
+
+    static bool size_impl(JSContext *cx, CallArgs args);
     static JSBool size(JSContext *cx, unsigned argc, Value *vp);
+    static bool get_impl(JSContext *cx, CallArgs args);
     static JSBool get(JSContext *cx, unsigned argc, Value *vp);
+    static bool has_impl(JSContext *cx, CallArgs args);
     static JSBool has(JSContext *cx, unsigned argc, Value *vp);
+    static bool set_impl(JSContext *cx, CallArgs args);
     static JSBool set(JSContext *cx, unsigned argc, Value *vp);
+    static bool delete_impl(JSContext *cx, CallArgs args);
     static JSBool delete_(JSContext *cx, unsigned argc, Value *vp);
+    static bool iterator_impl(JSContext *cx, CallArgs args);
+    static JSBool iterator(JSContext *cx, unsigned argc, Value *vp);
 };
 
 class SetObject : public JSObject {
@@ -106,16 +112,25 @@ class SetObject : public JSObject {
     static JSObject *initClass(JSContext *cx, JSObject *obj);
     static Class class_;
   private:
-    typedef ValueSet Data;
     static JSFunctionSpec methods[];
     ValueSet *getData() { return static_cast<ValueSet *>(getPrivate()); }
+    static ValueSet & extract(CallReceiver call);
     static void mark(JSTracer *trc, JSObject *obj);
     static void finalize(FreeOp *fop, JSObject *obj);
     static JSBool construct(JSContext *cx, unsigned argc, Value *vp);
+
+    static bool is(const Value &v);
+
+    static bool size_impl(JSContext *cx, CallArgs args);
     static JSBool size(JSContext *cx, unsigned argc, Value *vp);
+    static bool has_impl(JSContext *cx, CallArgs args);
     static JSBool has(JSContext *cx, unsigned argc, Value *vp);
+    static bool add_impl(JSContext *cx, CallArgs args);
     static JSBool add(JSContext *cx, unsigned argc, Value *vp);
+    static bool delete_impl(JSContext *cx, CallArgs args);
     static JSBool delete_(JSContext *cx, unsigned argc, Value *vp);
+    static bool iterator_impl(JSContext *cx, CallArgs args);
+    static JSBool iterator(JSContext *cx, unsigned argc, Value *vp);
 };
 
 } /* namespace js */

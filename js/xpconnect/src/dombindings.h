@@ -1,41 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99 ft=cpp:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code, released
- * June 24, 2010.
- *
- * The Initial Developer of the Original Code is
- *    The Mozilla Foundation
- *
- * Contributor(s):
- *    Andreas Gal <gal@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef dombindings_h
 #define dombindings_h
@@ -49,9 +17,9 @@ namespace mozilla {
 namespace dom {
 namespace binding {
 
-class ProxyHandler : public js::ProxyHandler {
+class ProxyHandler : public js::BaseProxyHandler {
 protected:
-    ProxyHandler() : js::ProxyHandler(ProxyFamily())
+    ProxyHandler() : js::BaseProxyHandler(ProxyFamily())
     {
     }
 
@@ -103,26 +71,15 @@ public:
     typedef ListType LT;
     typedef Base B;
     typedef IndexOps IO;
-    typedef NameOps NO;
+    typedef NameOps NOp;
 };
 
 class NoBase {
 public:
     static JSObject *getPrototype(JSContext *cx, XPCWrappedNativeScope *scope,
                                   JSObject *receiver);
-    static bool shouldCacheProtoShape(JSContext *cx, JSObject *proto, bool *shouldCache)
-    {
-        *shouldCache = true;
-        return true;
-    }
     static bool resolveNativeName(JSContext *cx, JSObject *proxy, jsid id, JSPropertyDescriptor *desc)
     {
-        return true;
-    }
-    static bool nativeGet(JSContext *cx, JSObject *proxy, JSObject *proto, jsid id, bool *found,
-                          JS::Value *vp)
-    {
-        *found = false;
         return true;
     }
     static nsISupports* nativeToSupports(nsISupports* aNative)
@@ -142,13 +99,13 @@ protected:
     typedef typename LC::B Base;
     typedef typename LC::IO::G::T IndexGetterType;
     typedef typename LC::IO::S::T IndexSetterType;
-    typedef typename LC::NO::G::T NameGetterType;
-    typedef typename LC::NO::S::T NameSetterType;
+    typedef typename LC::NOp::G::T NameGetterType;
+    typedef typename LC::NOp::S::T NameSetterType;
     enum {
         hasIndexGetter = LC::IO::G::hasOp,
         hasIndexSetter = LC::IO::S::hasOp,
-        hasNameGetter = LC::NO::G::hasOp,
-        hasNameSetter = LC::NO::S::hasOp
+        hasNameGetter = LC::NOp::G::hasOp,
+        hasNameSetter = LC::NOp::S::hasOp
     };
 
 private:
@@ -176,10 +133,7 @@ private:
 
     static JSObject *ensureExpandoObject(JSContext *cx, JSObject *obj);
 
-    static js::Shape *getProtoShape(JSObject *obj);
-    static void setProtoShape(JSObject *obj, js::Shape *shape);
-
-    static JSBool length_getter(JSContext *cx, JSObject *obj, jsid id, jsval *vp);
+    static JSBool length_getter(JSContext *cx, JSHandleObject obj, JSHandleId id, JSMutableHandleValue vp);
 
     static inline bool getItemAt(ListType *list, uint32_t i, IndexGetterType &item);
     static inline bool setItemAt(JSContext *cx, ListType *list, uint32_t i, IndexSetterType item);
@@ -230,7 +184,7 @@ public:
     JSString *obj_toString(JSContext *cx, JSObject *proxy);
     void finalize(JSFreeOp *fop, JSObject *proxy);
 
-    static bool proxyHandlerIsList(js::ProxyHandler *handler) {
+    static bool proxyHandlerIsList(js::BaseProxyHandler *handler) {
         return handler == &instance;
     }
     static bool objIsList(JSObject *obj) {
@@ -245,12 +199,8 @@ public:
 
     static JSObject *getPrototype(JSContext *cx, XPCWrappedNativeScope *scope,
                                   JSObject *receiver);
-    static inline bool protoIsClean(JSContext *cx, JSObject *proto, bool *isClean);
-    static bool shouldCacheProtoShape(JSContext *cx, JSObject *proto, bool *shouldCache);
     static bool resolveNativeName(JSContext *cx, JSObject *proxy, jsid id,
                                   JSPropertyDescriptor *desc);
-    static bool nativeGet(JSContext *cx, JSObject *proxy, JSObject *proto, jsid id, bool *found,
-                          JS::Value *vp);
     static ListType *getNative(JSObject *proxy);
     static nsISupports* nativeToSupports(ListType* aNative)
     {

@@ -1,42 +1,9 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=98:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jspropertycache.h"
 #include "jscntxt.h"
@@ -48,29 +15,19 @@
 using namespace js;
 
 PropertyCacheEntry *
-PropertyCache::fill(JSContext *cx, JSObject *obj, unsigned scopeIndex, JSObject *pobj,
-                    const Shape *shape)
+PropertyCache::fill(JSContext *cx, JSObject *obj, JSObject *pobj, Shape *shape)
 {
     JS_ASSERT(this == &JS_PROPERTY_CACHE(cx));
-    JS_ASSERT(!cx->runtime->gcRunning);
+    JS_ASSERT(!cx->runtime->isHeapBusy());
 
     /*
      * Check for overdeep scope and prototype chain. Because resolve, getter,
      * and setter hooks can change the prototype chain using JS_SetPrototype
      * after LookupPropertyWithFlags has returned, we calculate the protoIndex
      * here and not in LookupPropertyWithFlags.
-     *
-     * The scopeIndex can't be wrong. We require JS_SetParent calls to happen
-     * before any running script might consult a parent-linked scope chain. If
-     * this requirement is not satisfied, the fill in progress will never hit,
-     * but scope shape tests ensure nothing malfunctions.
      */
-    JS_ASSERT_IF(obj == pobj, scopeIndex == 0);
 
     JSObject *tmp = obj;
-    for (unsigned i = 0; i < scopeIndex; i++)
-        tmp = &tmp->asScope().enclosingScope();
-
     unsigned protoIndex = 0;
     while (tmp != pobj) {
         /*
@@ -97,7 +54,7 @@ PropertyCache::fill(JSContext *cx, JSObject *obj, unsigned scopeIndex, JSObject 
     }
 
     typedef PropertyCacheEntry Entry;
-    if (scopeIndex > Entry::MaxScopeIndex || protoIndex > Entry::MaxProtoIndex) {
+    if (protoIndex > Entry::MaxProtoIndex) {
         PCMETER(longchains++);
         return JS_NO_PROP_CACHE_FILL;
     }
@@ -115,16 +72,12 @@ PropertyCache::fill(JSContext *cx, JSObject *obj, unsigned scopeIndex, JSObject 
         return JS_NO_PROP_CACHE_FILL;
 
     if (obj == pobj) {
-        JS_ASSERT(scopeIndex == 0 && protoIndex == 0);
+        JS_ASSERT(protoIndex == 0);
     } else {
-#ifdef DEBUG
-        if (scopeIndex == 0) {
-            JS_ASSERT(protoIndex != 0);
-            JS_ASSERT((protoIndex == 1) == (obj->getProto() == pobj));
-        }
-#endif
+        JS_ASSERT(protoIndex != 0);
+        JS_ASSERT((protoIndex == 1) == (obj->getProto() == pobj));
 
-        if (scopeIndex != 0 || protoIndex != 1) {
+        if (protoIndex != 1) {
             /*
              * Make sure that a later shadowing assignment will enter
              * PurgeProtoChain and invalidate this entry, bug 479198.
@@ -136,7 +89,7 @@ PropertyCache::fill(JSContext *cx, JSObject *obj, unsigned scopeIndex, JSObject 
 
     PropertyCacheEntry *entry = &table[hash(pc, obj->lastProperty())];
     PCMETER(entry->vword.isNull() || recycles++);
-    entry->assign(pc, obj->lastProperty(), pobj->lastProperty(), shape, scopeIndex, protoIndex);
+    entry->assign(pc, obj->lastProperty(), pobj->lastProperty(), shape, protoIndex);
 
     empty = false;
     PCMETER(fills++);
@@ -154,23 +107,20 @@ PropertyName *
 PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject **pobjp,
                         PropertyCacheEntry *entry)
 {
-    JSObject *obj, *pobj, *tmp;
-#ifdef DEBUG
+    JSObject *obj, *pobj;
     JSScript *script = cx->stack.currentScript();
-#endif
 
     JS_ASSERT(this == &JS_PROPERTY_CACHE(cx));
     JS_ASSERT(uint32_t(pc - script->code) < script->length);
 
     JSOp op = JSOp(*pc);
-    const JSCodeSpec &cs = js_CodeSpec[op];
 
     obj = *objp;
 
     if (entry->kpc != pc) {
         PCMETER(kpcmisses++);
 
-        PropertyName *name = GetNameFromBytecode(cx, pc, op, cs);
+        PropertyName *name = GetNameFromBytecode(cx, script, pc, op);
 #ifdef DEBUG_notme
         JSAutoByteString printable;
         fprintf(stderr,
@@ -193,7 +143,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
 
     if (entry->kshape != obj->lastProperty()) {
         PCMETER(kshapemisses++);
-        return GetNameFromBytecode(cx, pc, op, cs);
+        return GetNameFromBytecode(cx, script, pc, op);
     }
 
     /*
@@ -202,22 +152,9 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
      */
     pobj = obj;
 
-    if (JOF_MODE(cs.format) == JOF_NAME) {
-        uint8_t scopeIndex = entry->scopeIndex;
-        while (scopeIndex > 0) {
-            tmp = pobj->enclosingScope();
-            if (!tmp || !tmp->isNative())
-                break;
-            pobj = tmp;
-            scopeIndex--;
-        }
-
-        *objp = pobj;
-    }
-
     uint8_t protoIndex = entry->protoIndex;
     while (protoIndex > 0) {
-        tmp = pobj->getProto();
+        JSObject *tmp = pobj->getProto();
         if (!tmp || !tmp->isNative())
             break;
         pobj = tmp;
@@ -226,15 +163,15 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
 
     if (pobj->lastProperty() == entry->pshape) {
 #ifdef DEBUG
-        PropertyName *name = GetNameFromBytecode(cx, pc, op, cs);
-        JS_ASSERT(pobj->nativeContains(cx, js_CheckForStringIndex(ATOM_TO_JSID(name))));
+        PropertyName *name = GetNameFromBytecode(cx, script, pc, op);
+        JS_ASSERT(pobj->nativeContainsNoAllocation(NameToId(name)));
 #endif
         *pobjp = pobj;
         return NULL;
     }
 
     PCMETER(vcapmisses++);
-    return GetNameFromBytecode(cx, pc, op, cs);
+    return GetNameFromBytecode(cx, script, pc, op);
 }
 
 #ifdef DEBUG
@@ -247,7 +184,6 @@ PropertyCache::assertEmpty()
         JS_ASSERT(!table[i].kshape);
         JS_ASSERT(!table[i].pshape);
         JS_ASSERT(!table[i].prop);
-        JS_ASSERT(!table[i].scopeIndex);
         JS_ASSERT(!table[i].protoIndex);
     }
 }

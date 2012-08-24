@@ -1,42 +1,9 @@
 #!/usr/bin/env python
 # header.py - Generate C++ header files from IDL.
 #
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is mozilla.org code.
-#
-# The Initial Developer of the Original Code is
-#   Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2011
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Olli Pettay <Olli.Pettay@helsinki.fi>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 from codegen import *
 import sys, os.path, re, xpidl, itertools
@@ -143,8 +110,13 @@ def print_header_file(fd, conf):
              "#define _gen_mozilla_idl_dictionary_helpers_h_\n\n")
 
     fd.write("#include \"jsapi.h\"\n"
+             "#include \"nsError.h\"\n"
              "#include \"nsString.h\"\n"
              "#include \"nsCOMPtr.h\"\n\n")
+
+    # win32 namespace issues
+    fd.write("#undef near\n"
+             "\n\n")
 
     forwards = []
     attrnames = []
@@ -280,7 +252,7 @@ def init_value(attribute):
     realtype = realtype.strip(' ')
     if attribute.defvalue is None:
         if realtype.endswith('*'):
-            return "nsnull"
+            return "nullptr"
         if realtype == "bool":
             return "false"
         if realtype.count("nsAString"):
@@ -333,7 +305,9 @@ def write_getter(a, iface, fd):
         fd.write("    JSBool b;\n")
         fd.write("    MOZ_ALWAYS_TRUE(JS_ValueToBoolean(aCx, v, &b));\n")
         fd.write("    aDict.%s = b;\n" % a.name)
-    elif realtype.count("PRInt32"):
+    elif realtype.count("uint32_t"):
+        fd.write("    NS_ENSURE_STATE(JS_ValueToECMAUint32(aCx, v, &aDict.%s));\n" % a.name)
+    elif realtype.count("int32_t"):
         fd.write("    NS_ENSURE_STATE(JS_ValueToECMAInt32(aCx, v, &aDict.%s));\n" % a.name)
     elif realtype.count("double"):
         fd.write("    NS_ENSURE_STATE(JS_ValueToNumber(aCx, v, &aDict.%s));\n" % a.name)
@@ -341,10 +315,14 @@ def write_getter(a, iface, fd):
         fd.write("    double d;\n")
         fd.write("    NS_ENSURE_STATE(JS_ValueToNumber(aCx, v, &d));")
         fd.write("    aDict.%s = (float) d;\n" % a.name)
-    elif realtype.count("PRUint16"):
+    elif realtype.count("uint16_t"):
         fd.write("    uint32_t u;\n")
         fd.write("    NS_ENSURE_STATE(JS_ValueToECMAUint32(aCx, v, &u));\n")
         fd.write("    aDict.%s = u;\n" % a.name)
+    elif realtype.count("int16_t"):
+        fd.write("    int32_t i;\n")
+        fd.write("    NS_ENSURE_STATE(JS_ValueToECMAInt32(aCx, v, &i));\n")
+        fd.write("    aDict.%s = i;\n" % a.name)
     elif realtype.count("nsAString"):
         if a.nullable:
             fd.write("    xpc_qsDOMString d(aCx, v, &v, xpc_qsDOMString::eNull, xpc_qsDOMString::eNull);\n")
@@ -433,7 +411,9 @@ def write_cpp(iface, fd):
              "  if (!aCx || !aVal) {\n"
              "    return NS_OK;\n"
              "  }\n"
-             "  NS_ENSURE_STATE(aVal->isObject());\n\n"
+             "  if (!aVal->isObject()) {\n"
+             "    return aVal->isNullOrUndefined() ? NS_OK : NS_ERROR_TYPE_ERR;\n"
+             "  }\n\n"
              "  JSObject* obj = &aVal->toObject();\n"
              "  Maybe<nsCxPusher> pusher;\n"
              "  if (NS_IsMainThread()) {\n"
@@ -460,11 +440,11 @@ if __name__ == '__main__':
                  help="Quick stub header output file", metavar="FILE")
     o.add_option('--makedepend-output', type='string', default=None,
                  help="gnumake dependencies output file", metavar="FILE")
-    o.add_option('--cachedir', dest='cachedir', default='',
+    o.add_option('--cachedir', dest='cachedir', default=None,
                  help="Directory in which to cache lex/parse tables.")
     (options, filenames) = o.parse_args()
-    if len(filenames) != 1:
-        o.error("Exactly one config filename is needed.")
+    if len(filenames) < 1:
+        o.error("At least one config filename is needed.")
     filename = filenames[0]
 
     if options.cachedir is not None:
@@ -476,6 +456,16 @@ if __name__ == '__main__':
     p = xpidl.IDLParser(outputdir=options.cachedir)
 
     conf = readConfigFile(filename)
+
+    if (len(filenames) > 1):
+        eventconfig = {}
+        execfile(filenames[1], eventconfig)
+        simple_events = eventconfig.get('simple_events', [])
+        for e in simple_events:
+            eventdict = ("%sInit" % e)
+            eventidl = ("nsIDOM%s.idl" % e)
+            conf.dictionaries.append([eventdict, eventidl]);
+
 
     if options.header_output is not None:
         outfd = open(options.header_output, 'w')

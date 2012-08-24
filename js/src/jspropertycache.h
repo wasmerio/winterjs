@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=98:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jspropertycache_h___
 #define jspropertycache_h___
@@ -58,21 +25,18 @@ class PropertyCache;
 
 struct PropertyCacheEntry
 {
-    jsbytecode          *kpc;           /* pc of cache-testing bytecode */
-    const Shape         *kshape;        /* shape of direct (key) object */
-    const Shape         *pshape;        /* shape of owning object */
-    const Shape         *prop;          /* shape of accessed property */
+    jsbytecode    *kpc;           /* pc of cache-testing bytecode */
+    Shape         *kshape;        /* shape of direct (key) object */
+    Shape         *pshape;        /* shape of owning object */
+    Shape         *prop;          /* shape of accessed property */
 
     friend class PropertyCache;
 
   private:
-    /* Index into scope chain; inapplicable to property lookup entries. */
-    uint8_t             scopeIndex;
     /* Index into the prototype chain from the object for this entry. */
-    uint8_t             protoIndex;
+    uint8_t       protoIndex;
 
   public:
-    static const size_t MaxScopeIndex = 15;
     static const size_t MaxProtoIndex = 15;
 
     /*
@@ -83,7 +47,7 @@ struct PropertyCacheEntry
      * lookups.  It is meaningless to ask this question of an entry for an
      * identifier lookup.
      */
-    bool isOwnPropertyHit() const { return scopeIndex == 0 && protoIndex == 0; }
+    bool isOwnPropertyHit() const { return protoIndex == 0; }
 
     /*
      * True iff the property lookup will find the property on the prototype of
@@ -93,18 +57,15 @@ struct PropertyCacheEntry
      * lookups.  It is meaningless to ask this question of an entry for an
      * identifier lookup.
      */
-    bool isPrototypePropertyHit() const { return scopeIndex == 0 && protoIndex == 1; }
+    bool isPrototypePropertyHit() const { return protoIndex == 1; }
 
-    void assign(jsbytecode *kpc, const Shape *kshape, const Shape *pshape,
-                const Shape *prop, unsigned scopeIndex, unsigned protoIndex) {
-        JS_ASSERT(scopeIndex <= MaxScopeIndex);
+    void assign(jsbytecode *kpc, Shape *kshape, Shape *pshape, Shape *prop, unsigned protoIndex) {
         JS_ASSERT(protoIndex <= MaxProtoIndex);
 
         this->kpc = kpc;
         this->kshape = kshape;
         this->pshape = pshape;
         this->prop = prop;
-        this->scopeIndex = uint8_t(scopeIndex);
         this->protoIndex = uint8_t(protoIndex);
     }
 };
@@ -172,7 +133,7 @@ class PropertyCache
     PropertyCache() {
         PodZero(this);
     }
-    
+
   private:
     static inline uintptr_t
     hash(jsbytecode *pc, const Shape *kshape)
@@ -210,14 +171,13 @@ class PropertyCache
 
     /*
      * Fill property cache entry for key cx->fp->pc, optimized value word
-     * computed from obj and shape, and entry capability forged from 24-bit
-     * obj->shape(), 4-bit scopeIndex, and 4-bit protoIndex.
+     * computed from obj and shape, and entry capability forged from
+     * obj->shape() and an 8-bit protoIndex.
      *
      * Return the filled cache entry or JS_NO_PROP_CACHE_FILL if caching was
      * not possible.
      */
-    PropertyCacheEntry *fill(JSContext *cx, JSObject *obj, unsigned scopeIndex,
-                             JSObject *pobj, const js::Shape *shape);
+    PropertyCacheEntry *fill(JSContext *cx, JSObject *obj, JSObject *pobj, js::Shape *shape);
 
     void purge(JSRuntime *rt);
 

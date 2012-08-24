@@ -1,40 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL. 
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if !defined jsjaeger_h__ && defined JS_METHODJIT
 #define jsjaeger_h__
@@ -66,6 +35,10 @@ namespace js {
 namespace mjit {
     struct JITChunk;
     struct JITScript;
+}
+
+namespace analyze {
+    struct ScriptLiveness;
 }
 
 struct VMFrame
@@ -140,7 +113,7 @@ struct VMFrame
     Value        *stackLimit;
     StackFrame   *entryfp;
     FrameRegs    *oldregs;
-    JSRejoinState stubRejoin;  /* How to rejoin if inside a call from an IC stub. */
+    FrameRejoinState stubRejoin;  /* How to rejoin if inside a call from an IC stub. */
 
 #if defined(JS_CPU_X86)
     void         *unused0, *unused1;  /* For 16 byte alignment */
@@ -325,14 +298,14 @@ enum RejoinState {
     REJOIN_PUSH_BOOLEAN,
     REJOIN_PUSH_OBJECT,
 
-    /* Call returns an object, which should be assigned to a local per the current bytecode. */
-    REJOIN_DEFLOCALFUN,
-
     /*
      * During the prologue of constructing scripts, after the function's
      * .prototype property has been fetched.
      */
     REJOIN_THIS_PROTOTYPE,
+
+    /* As above, after the 'this' object has been created. */
+    REJOIN_THIS_CREATED,
 
     /*
      * Type check on arguments failed during prologue, need stack check and
@@ -341,9 +314,10 @@ enum RejoinState {
     REJOIN_CHECK_ARGUMENTS,
 
     /*
-     * The script's jitcode was discarded after marking an outer function as
-     * reentrant or due to a GC while creating a call object.
+     * The script's jitcode was discarded during one of the following steps of
+     * a frame's prologue.
      */
+    REJOIN_EVAL_PROLOGUE,
     REJOIN_FUNCTION_PROLOGUE,
 
     /*
@@ -370,14 +344,14 @@ enum RejoinState {
 };
 
 /* Get the rejoin state for a StackFrame after returning from a scripted call. */
-static inline JSRejoinState
+static inline FrameRejoinState
 ScriptedRejoin(uint32_t pcOffset)
 {
     return REJOIN_SCRIPTED | (pcOffset << 1);
 }
 
 /* Get the rejoin state for a StackFrame after returning from a stub call. */
-static inline JSRejoinState
+static inline FrameRejoinState
 StubRejoin(RejoinState rejoin)
 {
     return rejoin << 1;
@@ -628,8 +602,13 @@ struct NativeMapEntry {
 
 /* Per-op counts of performance metrics. */
 struct PCLengthEntry {
-    double          codeLength; /* amount of inline code generated */
-    double          picsLength; /* amount of PIC stub code generated */
+    double          inlineLength; /* amount of inline code generated */
+    double          picsLength;   /* amount of PIC stub code generated */
+    double          stubLength;   /* amount of stubcc code generated */
+    double          codeLengthAugment; /* augment to inlineLength to be added
+                                          at runtime, represents instrumentation
+                                          taken out or common stubcc accounted
+                                          for (instead of just adding inlineLength) */
 };
 
 /*
@@ -671,10 +650,14 @@ struct JITChunk
      * Therefore, do not change the section ordering in finishThisUp() without
      * changing nMICs() et al as well.
      */
-    uint32_t        nNmapPairs;         /* The NativeMapEntrys are sorted by .bcOff.
+    uint32_t        nNmapPairs : 31;    /* The NativeMapEntrys are sorted by .bcOff.
                                            .ncode values may not be NULL. */
     uint32_t        nInlineFrames;
     uint32_t        nCallSites;
+    uint32_t        nRootedTemplates;
+    uint32_t        nRootedRegExps;
+    uint32_t        nMonitoredBytecodes;
+    uint32_t        nTypeBarrierBytecodes;
 #ifdef JS_MONOIC
     uint32_t        nGetGlobalNames;
     uint32_t        nSetGlobalNames;
@@ -693,12 +676,25 @@ struct JITChunk
     ExecPoolVector execPools;
 #endif
 
+    types::RecompileInfo recompileInfo;
+
     // Additional ExecutablePools for native call and getter stubs.
     Vector<NativeCallStub, 0, SystemAllocPolicy> nativeCallStubs;
 
     NativeMapEntry *nmap() const;
     js::mjit::InlineFrame *inlineFrames() const;
     js::mjit::CallSite *callSites() const;
+    JSObject **rootedTemplates() const;
+    RegExpShared **rootedRegExps() const;
+
+    /*
+     * Offsets of bytecodes which were monitored or had type barriers at the
+     * point of compilation. Used to avoid unnecessary recompilation after
+     * analysis purges.
+     */
+    uint32_t *monitoredBytecodes() const;
+    uint32_t *typeBarrierBytecodes() const;
+
 #ifdef JS_MONOIC
     ic::GetGlobalNameIC *getGlobalNames() const;
     ic::SetGlobalNameIC *setGlobalNames() const;
@@ -717,12 +713,13 @@ struct JITChunk
         return jcheck >= jitcode && jcheck < jitcode + code.m_size;
     }
 
-    void nukeScriptDependentICs();
-
     size_t computedSizeOfIncludingThis();
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf);
 
     ~JITChunk();
+
+    void trace(JSTracer *trc);
+    void purgeCaches();
 
   private:
     /* Helpers used to navigate the variable-length sections. */
@@ -807,6 +804,12 @@ struct JITScript
      */
     JSC::ExecutablePool *shimPool;
 
+    /*
+     * Optional liveness information attached to the JITScript if the analysis
+     * information is purged while retaining JIT info.
+     */
+    analyze::ScriptLiveness *liveness;
+
 #ifdef JS_MONOIC
     /* Inline cache at function entry for checking this/argument types. */
     JSC::CodeLocationLabel argsCheckStub;
@@ -854,6 +857,9 @@ struct JITScript
 
     void destroy(FreeOp *fop);
     void destroyChunk(FreeOp *fop, unsigned chunkIndex, bool resetUses = true);
+
+    void trace(JSTracer *trc);
+    void purgeCaches();
 };
 
 /*
@@ -890,15 +896,23 @@ enum CompileRequest
 
 CompileStatus
 CanMethodJIT(JSContext *cx, JSScript *script, jsbytecode *pc,
-             bool construct, CompileRequest request);
+             bool construct, CompileRequest request, StackFrame *sp);
 
 inline void
 ReleaseScriptCode(FreeOp *fop, JSScript *script)
 {
-    if (script->jitHandleCtor.isValid())
-        JSScript::ReleaseCode(fop, &script->jitHandleCtor);
-    if (script->jitHandleNormal.isValid())
-        JSScript::ReleaseCode(fop, &script->jitHandleNormal);
+    if (!script->hasMJITInfo())
+        return;
+
+    for (int constructing = 0; constructing <= 1; constructing++) {
+        for (int barriers = 0; barriers <= 1; barriers++) {
+            JSScript::JITScriptHandle *jith = script->jitHandle((bool) constructing, (bool) barriers);
+            if (jith && jith->isValid())
+                JSScript::ReleaseCode(fop, jith);
+        }
+    }
+
+    script->destroyMJITInfo(fop);
 }
 
 // Expand all stack frames inlined by the JIT within a compartment.
@@ -957,7 +971,7 @@ inline void * bsearch_nmap(NativeMapEntry *nmap, size_t nPairs, size_t bcOff)
         if (bcOff < bcOff_mid) {
             hi = mid-1;
             continue;
-        } 
+        }
         if (bcOff > bcOff_mid) {
             lo = mid+1;
             continue;
@@ -1012,7 +1026,7 @@ VMFrame::pc()
 inline void *
 JSScript::nativeCodeForPC(bool constructing, jsbytecode *pc)
 {
-    js::mjit::JITScript *jit = getJIT(constructing);
+    js::mjit::JITScript *jit = getJIT(constructing, compartment()->compileBarriers());
     if (!jit)
         return NULL;
     js::mjit::JITChunk *chunk = jit->chunk(pc);

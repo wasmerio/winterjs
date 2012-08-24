@@ -1,42 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *   David Anderson <danderson@mozilla.com>
- *   David Mandelin <dmandelin@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if !defined jsjaeger_baseassembler_h__ && defined JS_METHODJIT
 #define jsjaeger_baseassembler_h__
@@ -51,9 +18,12 @@
 #include "CodeGenIncludes.h"
 #include "jsobjinlines.h"
 #include "jsscopeinlines.h"
+#include "jstypedarrayinlines.h"
 
 namespace js {
 namespace mjit {
+
+class Assembler;
 
 // Represents an int32_t property name in generated code, which must be either
 // a RegisterID or a constant value.
@@ -108,6 +78,132 @@ struct StackMarker {
     { }
 };
 
+/*
+ * SPS is the profiling backend used by the JS engine to enable time profiling.
+ * More information can be found in vm/SPSProfiler.{h,cpp}. This class manages
+ * the instrumentation portion of the profiling for JIT code.
+ *
+ * The instrumentation tracks entry into functions, leaving those functions via
+ * a function call, reentering the functions from a function call, and exiting
+ * the functions from returning. This class also handles inline frames and
+ * manages the instrumentation which needs to be attached to them as well.
+ *
+ * The basic methods which emit instrumentation are at the end of this class,
+ * and the management functions are all described in the middle.
+ */
+class SPSInstrumentation {
+    typedef JSC::MacroAssembler::RegisterID RegisterID;
+
+    /* Because of inline frames, this is a nested structure in a vector */
+    struct FrameState {
+        bool pushed;    // has sps pushed a frame yet?
+        bool skipNext;  // should the next call to reenter be skipped?
+        int  left;      // number of leave() calls made without a matching reenter()
+    };
+
+    SPSProfiler *profiler_;   // Instrumentation location management
+    JSScript **script_;       // Used from Compiler.cpp
+    jsbytecode **pc_;         // same purpose as script_
+    VMFrame *vmframe;         // Used in PolyIC/MonoIC compilations
+
+    Vector<FrameState, 1, SystemAllocPolicy> frames;
+    FrameState *frame;
+
+    /*
+     * When the instrumentation pushes some information, it needs to know about
+     * the script/pc current in play. When originally compiling via
+     * Compiler.cpp, the script and pc change rapidly, hence the **. During a
+     * recompilation or some form of IC, the script/pc don't change, hence using
+     * the VMFrame as the source of this information.
+     */
+    JSScript *script() { return script_ ? *script_ : vmframe->script(); }
+    jsbytecode *pc() { return pc_ ? *pc_ : vmframe->pc(); }
+
+  public:
+    /* Constructor meant to be used from the compilers */
+    SPSInstrumentation(SPSProfiler *profiler, JSScript **script, jsbytecode **pc)
+      : profiler_(profiler),
+        script_(script),
+        pc_(pc),
+        vmframe(NULL),
+        frame(NULL)
+    {
+        enterInlineFrame();
+    }
+
+    /* Constructor used for recompilations and ICs */
+    SPSInstrumentation(VMFrame *f)
+      : profiler_(&f->cx->runtime->spsProfiler),
+        script_(NULL),
+        pc_(NULL),
+        vmframe(f),
+        frame(NULL)
+    {
+        enterInlineFrame();
+        setPushed();
+    }
+
+    /* Small proxies around SPSProfiler */
+    bool enabled() { return profiler_ && profiler_->enabled(); }
+    SPSProfiler *profiler() { JS_ASSERT(enabled()); return profiler_; }
+    bool slowAssertions() { return enabled() && profiler_->slowAssertionsEnabled(); }
+
+    /* Signals an inline function returned, reverting to the previous state */
+    void leaveInlineFrame() {
+        if (!enabled())
+            return;
+        frames.shrinkBy(1);
+        JS_ASSERT(frames.length() > 0);
+        frame = &frames[frames.length() - 1];
+    }
+
+    /* Saves the current state and assumes a fresh one for the inline function */
+    bool enterInlineFrame() {
+        if (!enabled())
+            return true;
+        if (!frames.growBy(1))
+            return false;
+        frame = &frames[frames.length() - 1];
+        frame->pushed = frame->skipNext = false;
+        frame->left = 0;
+        return true;
+    }
+
+    /*
+     * When debugging or with slow assertions, sometimes a C++ method will be
+     * invoked to perform the pop operation from the SPS stack. When we leave
+     * JIT code, we need to record the current PC, but upon reentering JIT code,
+     * no update back to NULL should happen. This method exists to flag this
+     * behavior. The next leave() will emit instrumentation, but the following
+     * reenter() will be a no-op.
+     */
+    void skipNextReenter() {
+        if (!enabled())
+            return;
+        JS_ASSERT(!frame->skipNext && frame->left == 0);
+        frame->skipNext = true;
+    }
+
+    /*
+     * In some cases, a frame needs to be flagged as having been pushed, but no
+     * instrumentation should be emitted. This updates internal state to flag
+     * that further instrumentation should actually be emitted.
+     */
+    void setPushed() {
+        if (!enabled())
+            return;
+        JS_ASSERT(!frame->pushed);
+        frame->pushed = true;
+    }
+
+    /* Actual instrumentation emitters, for more information see below */
+    bool push(JSContext *cx, Assembler &masm, RegisterID scratch);
+    void pushManual(Assembler &masm, RegisterID scratch);
+    void leave(Assembler &masm, RegisterID scratch);
+    void reenter(Assembler &masm, RegisterID scratch);
+    void pop(Assembler &masm);
+};
+
 class Assembler : public ValueAssembler
 {
     struct CallPatch {
@@ -148,15 +244,20 @@ class Assembler : public ValueAssembler
     bool        callIsAligned;
 #endif
 
+    // When instrumentation is enabled, these fields are used to manage the
+    // instrumentation which occurs at call() locations
+    SPSInstrumentation *sps;
+
   public:
-    Assembler()
+    Assembler(SPSInstrumentation *sps = NULL)
       : callPatches(SystemAllocPolicy()),
         availInCall(0),
         extraStackSpace(0),
-        stackAdjust(0)
+        stackAdjust(0),
 #ifdef DEBUG
-        , callIsAligned(false)
+        callIsAligned(false),
 #endif
+        sps(sps)
     {
         startLabel = label();
     }
@@ -192,7 +293,7 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
         loadPtr(Address(obj, JSObject::offsetOfShape()), shape);
     }
 
-    Jump guardShape(RegisterID objReg, const Shape *shape) {
+    Jump guardShape(RegisterID objReg, Shape *shape) {
         return branchPtr(NotEqual, Address(objReg, JSObject::offsetOfShape()), ImmPtr(shape));
     }
 
@@ -348,7 +449,7 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
     // stack space must be reserved up-front, and is aligned on an 8-byte
     // boundary.
     //
-    // Returns an offset that can be used to index into this stack 
+    // Returns an offset that can be used to index into this stack
     StackMarker allocStack(uint32_t bytes, uint32_t alignment = 4) {
         bytes += align(bytes + extraStackSpace, alignment);
         subPtr(Imm32(bytes), stackPointerRegister);
@@ -435,6 +536,9 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
     // a register, is asking for breaking on some platform or some situation.
     // Be careful to limit to storeArg() during setupABICall.
     void setupABICall(Registers::CallConvention convention, uint32_t generalArgs) {
+        if (sps && sps->enabled())
+            leaveBeforeCall();
+
         JS_ASSERT(!callIsAligned);
 
         uint32_t numArgRegs = Registers::numArgRegs(convention);
@@ -567,6 +671,44 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
         }
     }
 
+    void storeArg(uint32_t i, Imm32 imm) {
+        JS_ASSERT(callIsAligned);
+        RegisterID to;
+        if (Registers::regForArg(callConvention, i, &to)) {
+            move(imm, to);
+            availInCall.takeRegUnchecked(to);
+        } else {
+            store32(imm, addressOfArg(i));
+        }
+    }
+
+  private:
+    // When profiling is enabled, we need to run an epilogue and a prologue to
+    // every call. These two functions manage this code generation and are
+    // called from callWithABI below.
+    void leaveBeforeCall() {
+        if (availInCall.empty()) {
+            RegisterID reg = Registers(Registers::TempRegs).peekReg().reg();
+            saveReg(reg);
+            sps->leave(*this, reg);
+            restoreReg(reg);
+        } else {
+            sps->leave(*this, availInCall.peekReg().reg());
+        }
+    }
+
+    void reenterAfterCall() {
+        if (availInCall.empty()) {
+            RegisterID reg = Registers(Registers::TempRegs).peekReg().reg();
+            saveReg(reg);
+            sps->reenter(*this, reg);
+            restoreReg(reg);
+        } else {
+            sps->reenter(*this, availInCall.peekReg().reg());
+        }
+    }
+
+  public:
     // High-level call helper, given an optional function pointer and a
     // calling convention. setupABICall() must have been called beforehand,
     // as well as each numbered argument stored with storeArg().
@@ -581,7 +723,7 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
         // that make 12 insufficent.  In case 16 is also insufficent, I've bumped
         // it to 20.
         ensureSpace(20);
-        int initFlushCount = flushCount();
+        DebugOnly<int> initFlushCount = flushCount();
 #endif
         // [Bug 614953]: This can only be made conditional once the ARM back-end
         // is able to distinguish and patch both call sequences. Other
@@ -596,10 +738,14 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
         JS_ASSERT(callIsAligned);
 
         Call cl = call();
+
         callPatches.append(CallPatch(cl, fun));
+
 #ifdef JS_CPU_ARM
         JS_ASSERT(initFlushCount == flushCount());
 #endif
+        if (sps && sps->enabled())
+            reenterAfterCall();
         if (stackAdjust)
             addPtr(Imm32(stackAdjust), stackPointerRegister);
 
@@ -633,10 +779,10 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
                               pc, pinlined, fd);                              \
     }
 
-    STUB_CALL_TYPE(JSObjStub);
-    STUB_CALL_TYPE(VoidPtrStubUInt32);
-    STUB_CALL_TYPE(VoidStubUInt32);
-    STUB_CALL_TYPE(VoidStub);
+    STUB_CALL_TYPE(JSObjStub)
+    STUB_CALL_TYPE(VoidPtrStubUInt32)
+    STUB_CALL_TYPE(VoidStubUInt32)
+    STUB_CALL_TYPE(VoidStub)
 
 #undef STUB_CALL_TYPE
 
@@ -920,7 +1066,7 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
     }
 
     void loadObjProp(JSObject *obj, RegisterID objReg,
-                     const js::Shape *shape,
+                     js::Shape *shape,
                      RegisterID typeReg, RegisterID dataReg)
     {
         if (obj->isFixedSlot(shape->slot()))
@@ -1276,7 +1422,8 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
     /*
      * Get a free object for the specified GC kind in compartment, writing it
      * to result and filling it in according to templateObject. Returns a jump
-     * taken if a free thing was not retrieved.
+     * taken if a free thing was not retrieved. Note: don't call this directly,
+     * use Compiler::getNewObject instead.
      */
     Jump getNewObject(JSContext *cx, RegisterID result, JSObject *templateObject)
     {
@@ -1391,11 +1538,55 @@ static const JSC::MacroAssembler::RegisterID JSParamReg_Argc  = JSC::MIPSRegiste
         }
     }
 
+  private:
+    /*
+     * Performs address arithmetic to return the base of the ProfileEntry into
+     * the register provided. The Jump returned is taken if the SPS stack is
+     * overflowing and no data should be written to it.
+     */
+    Jump spsProfileEntryAddress(SPSProfiler *p, int offset, RegisterID reg)
+    {
+        load32(p->size(), reg);
+        if (offset != 0)
+            add32(Imm32(offset), reg);
+        Jump j = branch32(Assembler::GreaterThanOrEqual, reg, Imm32(p->maxSize()));
+        JS_STATIC_ASSERT(sizeof(ProfileEntry) == 4 * sizeof(void*));
+        // 4 * sizeof(void*) * idx = idx << (2 + log(sizeof(void*)))
+        lshift32(Imm32(2 + (sizeof(void*) == 4 ? 2 : 3)), reg);
+        addPtr(ImmPtr(p->stack()), reg);
+        return j;
+    }
+
+  public:
+    void spsUpdatePCIdx(SPSProfiler *p, int32_t idx, RegisterID reg) {
+        Jump j = spsProfileEntryAddress(p, -1, reg);
+        store32(Imm32(idx), Address(reg, ProfileEntry::offsetOfPCIdx()));
+        j.linkTo(label(), this);
+    }
+
+    void spsPushFrame(SPSProfiler *p, const char *str, JSScript *s, RegisterID reg) {
+        Jump j = spsProfileEntryAddress(p, 0, reg);
+
+        storePtr(ImmPtr(str),  Address(reg, ProfileEntry::offsetOfString()));
+        storePtr(ImmPtr(s),    Address(reg, ProfileEntry::offsetOfScript()));
+        storePtr(ImmPtr(NULL), Address(reg, ProfileEntry::offsetOfStackAddress()));
+        store32(Imm32(ProfileEntry::NullPCIndex),
+                Address(reg, ProfileEntry::offsetOfPCIdx()));
+
+        /* Always increment the stack size, regardless if we actually pushed */
+        j.linkTo(label(), this);
+        add32(Imm32(1), AbsoluteAddress(p->size()));
+    }
+
+    void spsPopFrame(SPSProfiler *p) {
+        sub32(Imm32(1), AbsoluteAddress(p->size()));
+    }
+
     static const double oneDouble;
 };
 
 /* Return f<true> if the script is strict mode code, f<false> otherwise. */
-#define STRICT_VARIANT(f)                                                     \
+#define STRICT_VARIANT(script, f)                                             \
     (FunctionTemplateConditional(script->strictModeCode,                      \
                                  f<true>, f<false>))
 
@@ -1437,6 +1628,86 @@ class PreserveRegisters {
             masm.restoreReg(regs[--count]);
     }
 };
+
+/*
+ * Flags entry into a JS function for the first time. Before this is called, no
+ * instrumentation is emitted, but after this instrumentation is emitted.
+ */
+inline bool
+SPSInstrumentation::push(JSContext *cx, Assembler &masm, RegisterID scratch)
+{
+    JS_ASSERT(!frame->pushed);
+    JS_ASSERT(frame->left == 0);
+    if (!enabled())
+        return true;
+    JSScript *s = script();
+    const char *string = profiler_->profileString(cx, s, s->function());
+    if (string == NULL)
+        return false;
+    masm.spsPushFrame(profiler_, string, script(), scratch);
+    frame->pushed = true;
+    return true;
+}
+
+/*
+ * Signifies that C++ performed the push() for this function. C++ always sets
+ * the current PC to something non-null, however, so as soon as JIT code is
+ * reentered this updates the current pc to NULL.
+ */
+inline void
+SPSInstrumentation::pushManual(Assembler &masm, RegisterID scratch)
+{
+    JS_ASSERT(!frame->pushed);
+    JS_ASSERT(frame->left == 0);
+    if (!enabled())
+        return;
+    masm.spsUpdatePCIdx(profiler_, ProfileEntry::NullPCIndex, scratch);
+    frame->pushed = true;
+}
+
+/*
+ * Signals that the current function is leaving for a function call. This can
+ * happen both on JS function calls and also calls to C++. This internally
+ * manages how many leave() calls have been seen, and only the first leave()
+ * emits instrumentation. Similarly, only the last corresponding reenter()
+ * actually emits instrumentation.
+ */
+inline void
+SPSInstrumentation::leave(Assembler &masm, RegisterID scratch)
+{
+    if (enabled() && frame->pushed && frame->left++ == 0)
+        masm.spsUpdatePCIdx(profiler_, pc() - script()->code, scratch);
+}
+
+/*
+ * Flags that the leaving of the current function has returned. This tracks
+ * state with leave() to only emit instrumentation at proper times.
+ */
+inline void
+SPSInstrumentation::reenter(Assembler &masm, RegisterID scratch)
+{
+    if (!enabled() || !frame->pushed || frame->left-- != 1)
+        return;
+    if (frame->skipNext)
+        frame->skipNext = false;
+    else
+        masm.spsUpdatePCIdx(profiler_, ProfileEntry::NullPCIndex, scratch);
+}
+
+/*
+ * Signifies exiting a JS frame, popping the SPS entry. Because there can be
+ * multiple return sites of a function, this does not cease instrumentation
+ * emission.
+ */
+inline void
+SPSInstrumentation::pop(Assembler &masm)
+{
+    if (enabled()) {
+        JS_ASSERT(frame->left == 0);
+        JS_ASSERT(frame->pushed);
+        masm.spsPopFrame(profiler_);
+    }
+}
 
 } /* namespace mjit */
 } /* namespace js */

@@ -1,8 +1,11 @@
 dnl
 dnl Local autoconf macros used with mozilla
 dnl The contents of this file are under the Public Domain.
-dnl 
+dnl
 
+builtin(include, build/autoconf/config.status.m4)dnl
+builtin(include, build/autoconf/toolchain.m4)dnl
+builtin(include, build/autoconf/ccache.m4)dnl
 builtin(include, build/autoconf/pkg.m4)dnl
 builtin(include, build/autoconf/nspr.m4)dnl
 builtin(include, build/autoconf/altoptions.m4)dnl
@@ -17,5 +20,8 @@ builtin(include, build/autoconf/frameptr.m4)dnl
 builtin(include, build/autoconf/compiler-opts.m4)dnl
 builtin(include, build/autoconf/expandlibs.m4)dnl
 builtin(include, build/autoconf/arch.m4)dnl
+builtin(include, build/autoconf/android.m4)dnl
+builtin(include, build/autoconf/zlib.m4)dnl
+builtin(include, build/autoconf/linux.m4)dnl
 
 MOZ_PROG_CHECKMSYS()

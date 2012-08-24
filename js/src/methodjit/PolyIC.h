@@ -1,41 +1,9 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=4 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla SpiderMonkey JavaScript 1.9 code, released
- * May 28, 2008.
- *
- * The Initial Developer of the Original Code is
- *   Brendan Eich <brendan@mozilla.org>
- *
- * Contributor(s):
- *   David Mandelin <dmandelin@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #if !defined jsjaeger_poly_ic_h__ && defined JS_METHODJIT
 #define jsjaeger_poly_ic_h__
@@ -63,11 +31,11 @@ static const uint32_t MAX_GETELEM_IC_STUBS = 17;
 enum LookupStatus {
     Lookup_Error = 0,
     Lookup_Uncacheable,
-    Lookup_Cacheable
+    Lookup_Cacheable,
+    Lookup_NoProperty
 };
 
 struct BaseIC : public MacroAssemblerTypedefs {
-    BaseIC() { }
 
     // Address of inline fast-path.
     CodeLocationLabel fastPathStart;
@@ -99,9 +67,12 @@ struct BaseIC : public MacroAssemblerTypedefs {
     // Number of stubs generated.
     uint32_t stubsGenerated : 5;
 
-    // Opcode this was compiled for.
-    JSOp op : 9;
+    bool shouldUpdate(VMFrame &f);
+    void spew(VMFrame &f, const char *event, const char *reason);
+    LookupStatus disable(VMFrame &f, const char *reason, void *stub);
+    void updatePCCounters(VMFrame &f, Assembler &masm);
 
+  protected:
     void reset() {
         hit = false;
         slowCallPatched = false;
@@ -109,11 +80,6 @@ struct BaseIC : public MacroAssemblerTypedefs {
         stubsGenerated = 0;
         secondShapeGuard = 0;
     }
-    bool shouldUpdate(JSContext *cx);
-    void spew(JSContext *cx, const char *event, const char *reason);
-    LookupStatus disable(VMFrame &f, const char *reason, void *stub);
-    void updatePCCounters(VMFrame &f, Assembler &masm);
-    bool isCallOp();
 };
 
 class BasePolyIC : public BaseIC {
@@ -155,40 +121,6 @@ class BasePolyIC : public BaseIC {
     }
 
   public:
-    BasePolyIC() {
-        u.execPool = NULL;
-    }
-
-    ~BasePolyIC() {
-        releasePools();
-        if (areMultiplePools())
-            Foreground::delete_(multiplePools());
-    }
-
-    void reset() {
-        BaseIC::reset();
-        releasePools();
-        if (areZeroPools()) {
-            // Common case:  do nothing.
-        } else if (isOnePool()) {
-            u.execPool = NULL;
-        } else {
-            multiplePools()->clear();
-        }
-    }
-
-    void releasePools() {
-        if (areZeroPools()) {
-            // Common case:  do nothing.
-        } else if (isOnePool()) {
-            u.execPool->release();
-        } else {
-            ExecPoolVector *execPools = multiplePools();
-            for (size_t i = 0; i < execPools->length(); i++)
-                (*execPools)[i]->release();
-        }
-    }
-
     bool addPool(JSContext *cx, JSC::ExecutablePool *pool) {
         if (areZeroPools()) {
             u.execPool = pool;
@@ -197,7 +129,7 @@ class BasePolyIC : public BaseIC {
         if (isOnePool()) {
             JSC::ExecutablePool *oldPool = u.execPool;
             JS_ASSERT(!isTagged(oldPool));
-            ExecPoolVector *execPools = OffTheBooks::new_<ExecPoolVector>(SystemAllocPolicy()); 
+            ExecPoolVector *execPools = OffTheBooks::new_<ExecPoolVector>(SystemAllocPolicy());
             if (!execPools)
                 return false;
             if (!execPools->append(oldPool) || !execPools->append(pool)) {
@@ -207,12 +139,29 @@ class BasePolyIC : public BaseIC {
             u.taggedExecPools = tag(execPools);
             return true;
         }
-        return multiplePools()->append(pool); 
+        return multiplePools()->append(pool);
+    }
+
+  protected:
+    void reset() {
+        BaseIC::reset();
+        if (areZeroPools()) {
+            // Common case:  do nothing.
+        } else if (isOnePool()) {
+            u.execPool->release();
+            u.execPool = NULL;
+        } else {
+            ExecPoolVector *execPools = multiplePools();
+            for (size_t i = 0; i < execPools->length(); i++)
+                (*execPools)[i]->release();
+            Foreground::delete_(execPools);
+            u.execPool = NULL;
+        }
+        JS_ASSERT(areZeroPools());
     }
 };
 
 struct GetElementIC : public BasePolyIC {
-    GetElementIC() { reset(); }
 
     // On stub entry:
     //   If hasInlineTypeCheck() is true, and inlineTypeCheckPatched is false,
@@ -290,6 +239,17 @@ struct GetElementIC : public BasePolyIC {
         return false;
     }
 
+    void purge(Repatcher &repatcher);
+    LookupStatus update(VMFrame &f, HandleObject obj, HandleValue v, HandleId id, MutableHandleValue vp);
+    LookupStatus attachGetProp(VMFrame &f, HandleObject obj, HandleValue v, HandlePropertyName name,
+                               MutableHandleValue vp);
+    LookupStatus attachTypedArray(VMFrame &f, HandleObject obj, HandleValue v, HandleId id,
+                                  MutableHandleValue vp);
+    LookupStatus disable(VMFrame &f, const char *reason);
+    LookupStatus error(JSContext *cx);
+    bool shouldUpdate(VMFrame &f);
+
+  protected:
     void reset() {
         BasePolyIC::reset();
         inlineTypeGuardPatched = false;
@@ -297,22 +257,9 @@ struct GetElementIC : public BasePolyIC {
         typeRegHasBaseShape = false;
         hasLastStringStub = false;
     }
-    void purge(Repatcher &repatcher);
-    LookupStatus update(VMFrame &f, JSObject *obj, const Value &v, jsid id, Value *vp);
-    LookupStatus attachGetProp(VMFrame &f, JSObject *obj, const Value &v, PropertyName *name,
-                               Value *vp);
-    LookupStatus attachTypedArray(VMFrame &f, JSObject *obj, const Value &v, jsid id, Value *vp);
-    LookupStatus disable(VMFrame &f, const char *reason);
-    LookupStatus error(JSContext *cx);
-    bool shouldUpdate(JSContext *cx);
 };
 
 struct SetElementIC : public BaseIC {
-    SetElementIC() : execPool(NULL) { reset(); }
-    ~SetElementIC() {
-        if (execPool)
-            execPool->release();
-    }
 
     // On stub entry:
     //   objReg contains the payload of the |obj| parameter.
@@ -356,21 +303,24 @@ struct SetElementIC : public BaseIC {
     // Optional executable pool for the out-of-line hole stub.
     JSC::ExecutablePool *execPool;
 
-    void reset() {
-        BaseIC::reset();
-        if (execPool != NULL)
-            execPool->release();
-        execPool = NULL;
-        inlineShapeGuardPatched = false;
-        inlineHoleGuardPatched = false;
-    }
     void purge(Repatcher &repatcher);
     LookupStatus attachTypedArray(VMFrame &f, JSObject *obj, int32_t key);
     LookupStatus attachHoleStub(VMFrame &f, JSObject *obj, int32_t key);
     LookupStatus update(VMFrame &f, const Value &objval, const Value &idval);
     LookupStatus disable(VMFrame &f, const char *reason);
     LookupStatus error(JSContext *cx);
-    bool shouldUpdate(JSContext *cx);
+    bool shouldUpdate(VMFrame &f);
+
+  protected:
+    void reset() {
+        BaseIC::reset();
+        if (execPool) {
+            execPool->release();
+            execPool = NULL;
+        }
+        inlineShapeGuardPatched = false;
+        inlineHoleGuardPatched = false;
+    }
 };
 
 struct PICInfo : public BasePolyIC {
@@ -453,12 +403,12 @@ struct PICInfo : public BasePolyIC {
     // Whether type properties need to be updated to reflect generated stubs.
     bool typeMonitored : 1;
 
+    // For GET caches, whether the access may use the property cache.
+    bool cached : 1;
+
     // Offset from start of fast path to initial shape guard.
     uint32_t shapeGuard;
 
-    // Possible types of the RHS, for monitored SETPROP PICs.
-    types::TypeSet *rhsTypes;
-    
     inline bool isSet() const {
         return kind == SET;
     }
@@ -525,10 +475,14 @@ struct PICInfo : public BasePolyIC {
 
     // Where in the script did we generate this PIC?
     jsbytecode *pc;
-    
+
     // Index into the script's atom table.
     PropertyName *name;
 
+  public:
+    void purge(Repatcher &repatcher);
+
+  protected:
     // Reset the data members to the state of a fresh PIC before any patching
     // or stub generation was done.
     void reset() {
@@ -540,8 +494,7 @@ struct PICInfo : public BasePolyIC {
 
 #ifdef JS_POLYIC
 void JS_FASTCALL GetProp(VMFrame &f, ic::PICInfo *);
-void JS_FASTCALL GetPropNoCache(VMFrame &f, ic::PICInfo *);
-void JS_FASTCALL SetProp(VMFrame &f, ic::PICInfo *);
+void JS_FASTCALL SetPropOrName(VMFrame &f, ic::PICInfo *);
 void JS_FASTCALL Name(VMFrame &f, ic::PICInfo *);
 void JS_FASTCALL XName(VMFrame &f, ic::PICInfo *);
 void JS_FASTCALL BindName(VMFrame &f, ic::PICInfo *);

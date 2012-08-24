@@ -1,43 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Mike Shaver <shaver@mozilla.org>
- *   John Bandhauer <jband@netscape.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "xpcprivate.h"
 
@@ -67,42 +32,49 @@ NS_IMPL_THREADSAFE_RELEASE(BackstagePass)
                             nsIXPCScriptable::DONT_REFLECT_INTERFACE_NAMES
 #include "xpc_map_end.h" /* This will #undef the above */
 
-/* bool newResolve (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in jsval id, in PRUint32 flags, out JSObjectPtr objp); */
+/* bool newResolve (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in jsval id, in uint32_t flags, out JSObjectPtr objp); */
 NS_IMETHODIMP
 BackstagePass::NewResolve(nsIXPConnectWrappedNative *wrapper,
-                          JSContext * cx, JSObject * obj,
-                          jsid id, PRUint32 flags,
-                          JSObject * *objp, bool *_retval)
+                          JSContext * cx, JSObject * obj_,
+                          jsid id_, uint32_t flags,
+                          JSObject * *objp_, bool *_retval)
 {
+    JS::RootedObject obj(cx, obj_);
+    JS::RootedId id(cx, id_);
+
     JSBool resolved;
 
     *_retval = !!JS_ResolveStandardClass(cx, obj, id, &resolved);
-    if (!*_retval)
-        return NS_OK;
-
-    if (resolved) {
-        *objp = obj;
+    if (!*_retval) {
+        *objp_ = nullptr;
         return NS_OK;
     }
 
-    *_retval = !!ResolveWorkerClasses(cx, obj, id, flags, objp);
+    if (resolved) {
+        *objp_ = obj;
+        return NS_OK;
+    }
+
+    JS::RootedObject objp(cx, *objp_);
+    *_retval = !!ResolveWorkerClasses(cx, obj, id, flags, &objp);
+    *objp_ = objp;
     return NS_OK;
 }
 
 /***************************************************************************/
-/* void getInterfaces (out PRUint32 count, [array, size_is (count), retval]
+/* void getInterfaces (out uint32_t count, [array, size_is (count), retval]
                        out nsIIDPtr array); */
 NS_IMETHODIMP
-BackstagePass::GetInterfaces(PRUint32 *aCount, nsIID * **aArray)
+BackstagePass::GetInterfaces(uint32_t *aCount, nsIID * **aArray)
 {
-    const PRUint32 count = 2;
+    const uint32_t count = 2;
     *aCount = count;
     nsIID **array;
     *aArray = array = static_cast<nsIID**>(nsMemory::Alloc(count * sizeof(nsIID*)));
     if (!array)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    PRUint32 index = 0;
+    uint32_t index = 0;
     nsIID* clone;
 #define PUSH_IID(id)                                                          \
     clone = static_cast<nsIID *>(nsMemory::Clone(&NS_GET_IID( id ),           \
@@ -120,16 +92,16 @@ oom:
     while (index)
         nsMemory::Free(array[--index]);
     nsMemory::Free(array);
-    *aArray = nsnull;
+    *aArray = nullptr;
     return NS_ERROR_OUT_OF_MEMORY;
 }
 
-/* nsISupports getHelperForLanguage (in PRUint32 language); */
+/* nsISupports getHelperForLanguage (in uint32_t language); */
 NS_IMETHODIMP
-BackstagePass::GetHelperForLanguage(PRUint32 language,
+BackstagePass::GetHelperForLanguage(uint32_t language,
                                     nsISupports **retval)
 {
-    *retval = nsnull;
+    *retval = nullptr;
     return NS_OK;
 }
 
@@ -137,7 +109,7 @@ BackstagePass::GetHelperForLanguage(PRUint32 language,
 NS_IMETHODIMP
 BackstagePass::GetContractID(char * *aContractID)
 {
-    *aContractID = nsnull;
+    *aContractID = nullptr;
     return NS_ERROR_NOT_AVAILABLE;
 }
 
@@ -154,21 +126,21 @@ BackstagePass::GetClassDescription(char * *aClassDescription)
 NS_IMETHODIMP
 BackstagePass::GetClassID(nsCID * *aClassID)
 {
-    *aClassID = nsnull;
+    *aClassID = nullptr;
     return NS_OK;
 }
 
-/* readonly attribute PRUint32 implementationLanguage; */
+/* readonly attribute uint32_t implementationLanguage; */
 NS_IMETHODIMP
-BackstagePass::GetImplementationLanguage(PRUint32 *aImplementationLanguage)
+BackstagePass::GetImplementationLanguage(uint32_t *aImplementationLanguage)
 {
     *aImplementationLanguage = nsIProgrammingLanguage::CPLUSPLUS;
     return NS_OK;
 }
 
-/* readonly attribute PRUint32 flags; */
+/* readonly attribute uint32_t flags; */
 NS_IMETHODIMP
-BackstagePass::GetFlags(PRUint32 *aFlags)
+BackstagePass::GetFlags(uint32_t *aFlags)
 {
     *aFlags = nsIClassInfo::THREADSAFE;
     return NS_OK;

@@ -1,43 +1,9 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Nick Fitzgerald <nfitzgerald@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * JS debugging API.
@@ -164,9 +130,25 @@ ScriptDebugEpilogue(JSContext *cx, StackFrame *fp, bool okArg)
 } /* namespace js */
 
 JS_FRIEND_API(JSBool)
+JS_SetDebugModeForAllCompartments(JSContext *cx, JSBool debug)
+{
+    AutoDebugModeGC dmgc(cx->runtime);
+
+    for (CompartmentsIter c(cx->runtime); !c.done(); c.next()) {
+        // Ignore special compartments (atoms, JSD compartments)
+        if (c->principals) {
+            if (!c->setDebugModeFromC(cx, !!debug, dmgc))
+                return false;
+        }
+    }
+    return true;
+}
+
+JS_FRIEND_API(JSBool)
 JS_SetDebugModeForCompartment(JSContext *cx, JSCompartment *comp, JSBool debug)
 {
-    return comp->setDebugModeFromC(cx, !!debug);
+    AutoDebugModeGC dmgc(cx->runtime);
+    return comp->setDebugModeFromC(cx, !!debug, dmgc);
 }
 
 static JSBool
@@ -203,7 +185,7 @@ JS_SetTrap(JSContext *cx, JSScript *script, jsbytecode *pc, JSTrapHandler handle
     if (!CheckDebugMode(cx))
         return false;
 
-    BreakpointSite *site = script->getOrCreateBreakpointSite(cx, pc, NULL);
+    BreakpointSite *site = script->getOrCreateBreakpointSite(cx, pc);
     if (!site)
         return false;
     site->setTrap(cx->runtime->defaultFreeOp(), handler, closure);
@@ -241,7 +223,9 @@ JS_SetInterrupt(JSRuntime *rt, JSInterruptHook hook, void *closure)
 {
     rt->debugHooks.interruptHook = hook;
     rt->debugHooks.interruptHookData = closure;
-    return JS_TRUE;
+    for (InterpreterFrames *f = rt->interpreterFrames; f; f = f->older)
+        f->enableInterruptsUnconditionally();
+    return true;
 }
 
 JS_PUBLIC_API(JSBool)
@@ -263,20 +247,18 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id,
                  JSWatchPointHandler handler, JSObject *closure_)
 {
     assertSameCompartment(cx, obj_);
-    id = js_CheckForStringIndex(id);
 
-    RootedVarObject obj(cx, obj_), closure(cx, closure_);
+    RootedObject obj(cx, obj_), closure(cx, closure_);
 
-    JSObject *origobj;
-    Value v;
-    unsigned attrs;
-
-    origobj = obj;
-    OBJ_TO_INNER_OBJECT(cx, obj.reference());
+    JSObject *origobj = obj;
+    obj = GetInnerObject(cx, obj);
     if (!obj)
         return false;
 
-    RootedVarId propid(cx);
+    Value v;
+    unsigned attrs;
+
+    RootedId propid(cx);
 
     if (JSID_IS_INT(id)) {
         propid = id;
@@ -284,9 +266,8 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id,
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_WATCH_PROP);
         return false;
     } else {
-        if (!js_ValueToStringId(cx, IdToValue(id), propid.address()))
+        if (!ValueToId(cx, IdToValue(id), propid.address()))
             return false;
-        propid = js_CheckForStringIndex(propid);
     }
 
     /*
@@ -322,7 +303,6 @@ JS_ClearWatchPoint(JSContext *cx, JSObject *obj, jsid id,
 {
     assertSameCompartment(cx, obj, id);
 
-    id = js_CheckForStringIndex(id);
     if (WatchpointMap *wpmap = cx->compartment->watchpointMap)
         wpmap->unwatch(obj, id, handlerp, closurep);
     return true;
@@ -436,21 +416,21 @@ JS_FunctionHasLocalNames(JSContext *cx, JSFunction *fun)
 extern JS_PUBLIC_API(uintptr_t *)
 JS_GetFunctionLocalNameArray(JSContext *cx, JSFunction *fun, void **markp)
 {
-    BindingNames localNames(cx);
-    if (!fun->script()->bindings.getLocalNameArray(cx, &localNames))
+    BindingVector bindings(cx);
+    if (!FillBindingVector(fun->script()->bindings, &bindings))
         return NULL;
 
     /* Munge data into the API this method implements.  Avert your eyes! */
     *markp = cx->tempLifoAlloc().mark();
 
-    uintptr_t *names = cx->tempLifoAlloc().newArray<uintptr_t>(localNames.length());
+    uintptr_t *names = cx->tempLifoAlloc().newArray<uintptr_t>(bindings.length());
     if (!names) {
         js_ReportOutOfMemory(cx);
         return NULL;
     }
 
-    for (size_t i = 0; i < localNames.length(); i++)
-        names[i] = reinterpret_cast<uintptr_t>(localNames[i].maybeAtom);
+    for (size_t i = 0; i < bindings.length(); i++)
+        names[i] = reinterpret_cast<uintptr_t>(bindings[i].name());
 
     return names;
 }
@@ -511,15 +491,30 @@ JS_FrameIterator(JSContext *cx, JSStackFrame **iteratorp)
 }
 
 JS_PUBLIC_API(JSScript *)
-JS_GetFrameScript(JSContext *cx, JSStackFrame *fp)
+JS_GetFrameScript(JSContext *cx, JSStackFrame *fpArg)
 {
-    return Valueify(fp)->maybeScript();
+    StackFrame *fp = Valueify(fpArg);
+    if (fp->isDummyFrame())
+        return NULL;
+
+    return fp->maybeScript();
 }
 
 JS_PUBLIC_API(jsbytecode *)
-JS_GetFramePC(JSContext *cx, JSStackFrame *fp)
+JS_GetFramePC(JSContext *cx, JSStackFrame *fpArg)
 {
-    return Valueify(fp)->pcQuadratic(cx->stack);
+    StackFrame *fp = Valueify(fpArg);
+    if (fp->isDummyFrame())
+        return NULL;
+
+    /*
+     * This API is used to compute the line number for jsd and XPConnect
+     * exception handling backtraces. Once the stack gets really deep, the
+     * overall cost can become quadratic. This can hang the browser (eventually
+     * terminated by a slow-script dialog) when content causes infinite
+     * recursion and a backtrace.
+     */
+    return fp->pcQuadratic(cx->stack, 100);
 }
 
 JS_PUBLIC_API(void *)
@@ -557,40 +552,41 @@ JS_PUBLIC_API(JSObject *)
 JS_GetFrameScopeChain(JSContext *cx, JSStackFrame *fpArg)
 {
     StackFrame *fp = Valueify(fpArg);
-    JS_ASSERT(cx->stack.containsSlow(fp));
+    JS_ASSERT(cx->stack.space().containsSlow(fp));
 
     js::AutoCompartment ac(cx, fp->scopeChain());
     if (!ac.enter())
         return NULL;
 
-    /* Force creation of argument and call objects if not yet created */
-    (void) JS_GetFrameCallObject(cx, Jsvalify(fp));
-    return GetScopeChain(cx, fp);
+    return GetDebugScopeForFrame(cx, fp);
 }
 
 JS_PUBLIC_API(JSObject *)
 JS_GetFrameCallObject(JSContext *cx, JSStackFrame *fpArg)
 {
     StackFrame *fp = Valueify(fpArg);
-    JS_ASSERT(cx->stack.containsSlow(fp));
-
-    if (!fp->compartment()->debugMode())
-        return NULL;
+    JS_ASSERT(cx->stack.space().containsSlow(fp));
 
     if (!fp->isFunctionFrame())
         return NULL;
 
-    js::AutoCompartment ac(cx, fp->scopeChain());
-    if (!ac.enter())
-        return NULL;
+    JSObject *o = GetDebugScopeForFrame(cx, fp);
 
     /*
-     * XXX ill-defined: null return here means error was reported, unlike a
-     *     null returned above or in the #else
+     * Given that fp is a function frame and GetDebugScopeForFrame always fills
+     * in missing scopes, we can expect to find fp's CallObject on 'o'. Note:
+     *  - GetDebugScopeForFrame wraps every ScopeObject (missing or not) with
+     *    a DebugScopeObject proxy.
+     *  - If fp is an eval-in-function, then fp has no callobj of its own and
+     *    JS_GetFrameCallObject will return the innermost function's callobj.
      */
-    if (!fp->hasCallObj() && fp->isNonEvalFunctionFrame())
-        return CallObject::createForFunction(cx, fp);
-    return &fp->callObj();
+    while (o) {
+        ScopeObject &scope = o->asDebugScope().scope();
+        if (scope.isCall())
+            return o;
+        o = o->enclosingScope();
+    }
+    return NULL;
 }
 
 JS_PUBLIC_API(JSBool)
@@ -651,6 +647,14 @@ JS_GetFrameCalleeObject(JSContext *cx, JSStackFrame *fp)
     return Valueify(fp)->maybeCalleev().toObjectOrNull();
 }
 
+JS_PUBLIC_API(const char *)
+JS_GetDebugClassName(JSObject *obj)
+{
+    if (obj->isDebugScope())
+        return obj->asDebugScope().scope().getClass()->name;
+    return obj->getClass()->name;
+}
+
 JS_PUBLIC_API(JSBool)
 JS_IsDebuggerFrame(JSContext *cx, JSStackFrame *fp)
 {
@@ -691,7 +695,9 @@ JS_GetScriptFilename(JSContext *cx, JSScript *script)
 JS_PUBLIC_API(const jschar *)
 JS_GetScriptSourceMap(JSContext *cx, JSScript *script)
 {
-    return script->hasSourceMap ? script->getSourceMap() : NULL;
+    ScriptSource *source = script->scriptSource();
+    JS_ASSERT(source);
+    return source->hasSourceMap() ? source->sourceMap() : NULL;
 }
 
 JS_PUBLIC_API(unsigned)
@@ -742,7 +748,7 @@ JS_EvaluateUCInStackFrame(JSContext *cx, JSStackFrame *fpArg,
 
     SkipRoot skip(cx, &chars);
 
-    RootedVar<Env*> env(cx, JS_GetFrameScopeChain(cx, fpArg));
+    Rooted<Env*> env(cx, JS_GetFrameScopeChain(cx, fpArg));
     if (!env)
         return false;
 
@@ -788,7 +794,7 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
     assertSameCompartment(cx, obj_);
     pd->id = IdToJsval(shape->propid());
 
-    RootedVarObject obj(cx, obj_);
+    RootedObject obj(cx, obj_);
 
     JSBool wasThrowing = cx->isExceptionPending();
     Value lastException = UndefinedValue();
@@ -796,7 +802,9 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
         lastException = cx->getPendingException();
     cx->clearPendingException();
 
-    if (!js_GetProperty(cx, obj, shape->propid(), &pd->value)) {
+    Rooted<jsid> id(cx, shape->propid());
+    RootedValue value(cx);
+    if (!baseops::GetProperty(cx, obj, id, &value)) {
         if (!cx->isExceptionPending()) {
             pd->flags = JSPD_ERROR;
             pd->value = JSVAL_VOID;
@@ -806,6 +814,7 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
         }
     } else {
         pd->flags = 0;
+        pd->value = value;
     }
 
     if (wasThrowing)
@@ -815,47 +824,70 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
               |  (!shape->writable()  ? JSPD_READONLY  : 0)
               |  (!shape->configurable() ? JSPD_PERMANENT : 0);
     pd->spare = 0;
-    if (shape->getter() == CallObject::getArgOp) {
-        pd->slot = shape->shortid();
-        pd->flags |= JSPD_ARGUMENT;
-    } else if (shape->getter() == CallObject::getVarOp) {
-        pd->slot = shape->shortid();
-        pd->flags |= JSPD_VARIABLE;
-    } else {
-        pd->slot = 0;
-    }
     pd->alias = JSVAL_VOID;
 
     return JS_TRUE;
 }
 
 JS_PUBLIC_API(JSBool)
-JS_GetPropertyDescArray(JSContext *cx, JSObject *obj, JSPropertyDescArray *pda)
+JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
 {
-    assertSameCompartment(cx, obj);
+    RootedObject obj(cx, obj_);
 
-    Class *clasp = obj->getClass();
+    assertSameCompartment(cx, obj);
+    uint32_t i = 0;
+    JSPropertyDesc *pd = NULL;
+
+    if (obj->isDebugScope()) {
+        AutoIdVector props(cx);
+        if (!Proxy::enumerate(cx, obj, props))
+            return false;
+
+        pd = (JSPropertyDesc *)cx->calloc_(props.length() * sizeof(JSPropertyDesc));
+        if (!pd)
+            return false;
+
+        for (i = 0; i < props.length(); ++i) {
+            pd[i].id = JSVAL_NULL;
+            pd[i].value = JSVAL_NULL;
+            if (!js_AddRoot(cx, &pd[i].id, NULL))
+                goto bad;
+            pd[i].id = IdToValue(props[i]);
+            if (!js_AddRoot(cx, &pd[i].value, NULL))
+                goto bad;
+            if (!Proxy::get(cx, obj, obj, props.handleAt(i), MutableHandleValue::fromMarkedLocation(&pd[i].value)))
+                goto bad;
+        }
+
+        pda->length = props.length();
+        pda->array = pd;
+        return true;
+    }
+
+    Class *clasp;
+    clasp = obj->getClass();
     if (!obj->isNative() || (clasp->flags & JSCLASS_NEW_ENUMERATE)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
                              JSMSG_CANT_DESCRIBE_PROPS, clasp->name);
-        return JS_FALSE;
+        return false;
     }
     if (!clasp->enumerate(cx, obj))
-        return JS_FALSE;
+        return false;
 
     /* Return an empty pda early if obj has no own properties. */
     if (obj->nativeEmpty()) {
         pda->length = 0;
         pda->array = NULL;
-        return JS_TRUE;
+        return true;
     }
 
-    uint32_t n = obj->propertyCount();
-    JSPropertyDesc *pd = (JSPropertyDesc *) cx->malloc_(size_t(n) * sizeof(JSPropertyDesc));
+    pd = (JSPropertyDesc *)cx->malloc_(obj->propertyCount() * sizeof(JSPropertyDesc));
     if (!pd)
-        return JS_FALSE;
-    uint32_t i = 0;
+        return false;
     for (Shape::Range r = obj->lastProperty()->all(); !r.empty(); r.popFront()) {
+        pd[i].id = JSVAL_NULL;
+        pd[i].value = JSVAL_NULL;
+        pd[i].alias = JSVAL_NULL;
         if (!js_AddRoot(cx, &pd[i].id, NULL))
             goto bad;
         if (!js_AddRoot(cx, &pd[i].value, NULL))
@@ -865,18 +897,18 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj, JSPropertyDescArray *pda)
             goto bad;
         if ((pd[i].flags & JSPD_ALIAS) && !js_AddRoot(cx, &pd[i].alias, NULL))
             goto bad;
-        if (++i == n)
+        if (++i == obj->propertyCount())
             break;
     }
     pda->length = i;
     pda->array = pd;
-    return JS_TRUE;
+    return true;
 
 bad:
     pda->length = i + 1;
     pda->array = pd;
     JS_PutPropertyDescArray(cx, pda);
-    return JS_FALSE;
+    return false;
 }
 
 JS_PUBLIC_API(void)
@@ -893,6 +925,8 @@ JS_PutPropertyDescArray(JSContext *cx, JSPropertyDescArray *pda)
             js_RemoveRoot(cx->runtime, &pd[i].alias);
     }
     cx->free_(pd);
+    pda->array = NULL;
+    pda->length = 0;
 }
 
 /************************************************************************/
@@ -970,8 +1004,8 @@ JS_GetFunctionTotalSize(JSContext *cx, JSFunction *fun)
     nbytes += JS_GetObjectTotalSize(cx, fun);
     if (fun->isInterpreted())
         nbytes += JS_GetScriptTotalSize(cx, fun->script());
-    if (fun->atom)
-        nbytes += GetAtomTotalSize(cx, fun->atom);
+    if (fun->displayAtom())
+        nbytes += GetAtomTotalSize(cx, fun->displayAtom());
     return nbytes;
 }
 
@@ -1352,7 +1386,7 @@ DumpCallgrind(JSContext *cx, unsigned argc, jsval *vp)
 
     JS_SET_RVAL(cx, vp, BOOLEAN_TO_JSVAL(js_DumpCallgrind(outFile.mBytes)));
     return JS_TRUE;
-}    
+}
 #endif
 
 #ifdef MOZ_VTUNE
@@ -1418,8 +1452,10 @@ static JSFunctionSpec profiling_functions[] = {
 #endif
 
 JS_PUBLIC_API(JSBool)
-JS_DefineProfilingFunctions(JSContext *cx, JSObject *obj)
+JS_DefineProfilingFunctions(JSContext *cx, JSObject *objArg)
 {
+    RootedObject obj(cx, objArg);
+
     assertSameCompartment(cx, obj);
 #ifdef MOZ_PROFILING
     return JS_DefineFunctions(cx, obj, profiling_functions);
@@ -1703,9 +1739,11 @@ JSBool js_StopPerf()
 #endif /* __linux__ */
 
 JS_PUBLIC_API(void)
-JS_DumpBytecode(JSContext *cx, JSScript *script)
+JS_DumpBytecode(JSContext *cx, JSScript *scriptArg)
 {
 #if defined(DEBUG)
+    Rooted<JSScript*> script(cx, scriptArg);
+
     Sprinter sprinter(cx);
     if (!sprinter.init())
         return;
@@ -1718,9 +1756,10 @@ JS_DumpBytecode(JSContext *cx, JSScript *script)
 }
 
 extern JS_PUBLIC_API(void)
-JS_DumpPCCounts(JSContext *cx, JSScript *script)
+JS_DumpPCCounts(JSContext *cx, JSScript *scriptArg)
 {
 #if defined(DEBUG)
+    Rooted<JSScript*> script(cx, scriptArg);
     JS_ASSERT(script->hasScriptCounts);
 
     Sprinter sprinter(cx);
@@ -1755,8 +1794,10 @@ JS_DumpCompartmentBytecode(JSContext *cx)
     ScriptsToDump scripts;
     IterateCells(cx->runtime, cx->compartment, gc::FINALIZE_SCRIPT, &scripts, DumpBytecodeScriptCallback);
 
-    for (size_t i = 0; i < scripts.length(); i++)
-        JS_DumpBytecode(cx, scripts[i]);
+    for (size_t i = 0; i < scripts.length(); i++) {
+        if (scripts[i]->enclosingScriptsCompiledSuccessfully())
+            JS_DumpBytecode(cx, scripts[i]);
+    }
 }
 
 JS_PUBLIC_API(void)
@@ -1764,7 +1805,7 @@ JS_DumpCompartmentPCCounts(JSContext *cx)
 {
     for (CellIter i(cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
-        if (script->hasScriptCounts)
+        if (script->hasScriptCounts && script->enclosingScriptsCompiledSuccessfully())
             JS_DumpPCCounts(cx, script);
     }
 }

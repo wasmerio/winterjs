@@ -1,40 +1,7 @@
 #
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is mozilla.org code.
-#
-# The Initial Developer of the Original Code is
-# Netscape Communications Corporation.
-# Portions created by the Initial Developer are Copyright (C) 1998
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Benjamin Smedberg <benjamin@smedbergs.us>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either of the GNU General Public License Version 2 or later (the "GPL"),
-# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #
 # config.mk
@@ -89,15 +56,18 @@ space :=$(nullstr) # EOL
 
 core_winabspath = $(firstword $(subst /, ,$(call core_abspath,$(1)))):$(subst $(space),,$(patsubst %,\\%,$(wordlist 2,$(words $(subst /, ,$(call core_abspath,$(1)))), $(strip $(subst /, ,$(call core_abspath,$(1)))))))
 
+RM = rm -f
+
 # LIBXUL_DIST is not defined under js/src, thus we make it mean DIST there.
 LIBXUL_DIST ?= $(DIST)
 
 # FINAL_TARGET specifies the location into which we copy end-user-shipped
 # build products (typelibs, components, chrome).
 #
-# It will usually be the well-loved $(DIST)/bin, today, but can also be an
-# XPI-contents staging directory for ambitious and right-thinking extensions.
-FINAL_TARGET = $(if $(XPI_NAME),$(DIST)/xpi-stage/$(XPI_NAME),$(DIST)/bin)
+# If XPI_NAME is set, the files will be shipped to $(DIST)/xpi-stage/$(XPI_NAME)
+# If DIST_SUBDIR is set, the files will be shipped to $(DIST)/$(DIST_SUBDIR)
+# Otherwise, the default $(DIST)/bin will be used.
+FINAL_TARGET = $(if $(XPI_NAME),$(DIST)/xpi-stage/$(XPI_NAME),$(if $(DIST_SUBDIR),$(DIST)/bin/$(DIST_SUBDIR),$(DIST)/bin))
 
 ifdef XPI_NAME
 DEFINES += -DXPI_NAME=$(XPI_NAME)
@@ -117,20 +87,12 @@ endif
 CONFIG_TOOLS	= $(MOZ_BUILD_ROOT)/config
 AUTOCONF_TOOLS	= $(topsrcdir)/build/autoconf
 
-ifeq ($(OS_ARCH),QNX)
-ifeq ($(OS_TARGET),NTO)
-LD		:= qcc -Vgcc_ntox86 -nostdlib
-else
-LD		:= $(CC)
-endif
-endif
-
 #
 # Strip off the excessively long version numbers on these platforms,
 # but save the version to allow multiple versions of the same base
 # platform to be built in the same tree.
 #
-ifneq (,$(filter FreeBSD HP-UX Linux NetBSD OpenBSD OSF1 SunOS,$(OS_ARCH)))
+ifneq (,$(filter FreeBSD HP-UX Linux NetBSD OpenBSD SunOS,$(OS_ARCH)))
 OS_RELEASE	:= $(basename $(OS_RELEASE))
 
 # Allow the user to ignore the OS_VERSION, which is usually irrelevant.
@@ -150,18 +112,28 @@ FINAL_LINK_COMP_NAMES = $(DEPTH)/config/final-link-comp-names
 MOZ_UNICHARUTIL_LIBS = $(LIBXUL_DIST)/lib/$(LIB_PREFIX)unicharutil_s.$(LIB_SUFFIX)
 MOZ_WIDGET_SUPPORT_LIBS    = $(DIST)/lib/$(LIB_PREFIX)widgetsupport_s.$(LIB_SUFFIX)
 
+ifdef _MSC_VER
+ifdef .PYMAKE
+PYCOMMANDPATH += $(topsrcdir)/build
+CC_WRAPPER ?= %cl InvokeClWithDependencyGeneration
+CXX_WRAPPER ?= %cl InvokeClWithDependencyGeneration
+else
+CC_WRAPPER ?= $(PYTHON) -O $(topsrcdir)/build/cl.py
+CXX_WRAPPER ?= $(PYTHON) -O $(topsrcdir)/build/cl.py
+endif # .PYMAKE
+endif # _MSC_VER
+
 CC := $(CC_WRAPPER) $(CC)
 CXX := $(CXX_WRAPPER) $(CXX)
 MKDIR ?= mkdir
 SLEEP ?= sleep
 TOUCH ?= touch
 
-ifndef .PYMAKE
-PYTHON_PATH = $(PYTHON) $(topsrcdir)/config/pythonpath.py
-else
+ifdef .PYMAKE
 PYCOMMANDPATH += $(topsrcdir)/config
-PYTHON_PATH = %pythonpath main
 endif
+
+PYTHON_PATH = $(PYTHON) $(topsrcdir)/config/pythonpath.py
 
 # determine debug-related options
 _DEBUG_ASFLAGS :=
@@ -219,17 +191,6 @@ OS_LDFLAGS += -DEBUG -OPT:REF,ICF
 else
 OS_LDFLAGS += -DEBUG -OPT:REF
 endif
-endif
-
-ifdef MOZ_QUANTIFY
-# -FIXED:NO is needed for Quantify to work, but it increases the size
-# of executables, so only use it if building for Quantify.
-WIN32_EXE_LDFLAGS += -FIXED:NO
-
-# We need -OPT:NOICF to prevent identical methods from being merged together.
-# Otherwise, Quantify doesn't know which method was actually called when it's
-# showing you the profile.
-OS_LDFLAGS += -OPT:NOICF
 endif
 
 #
@@ -384,13 +345,16 @@ MAKE_JARS_FLAGS += --both-manifests
 endif
 
 TAR_CREATE_FLAGS = -cvhf
+TAR_CREATE_FLAGS_QUIET = -chf
 
 ifeq ($(OS_ARCH),BSD_OS)
 TAR_CREATE_FLAGS = -cvLf
+TAR_CREATE_FLAGS_QUIET = -cLf
 endif
 
 ifeq ($(OS_ARCH),OS2)
 TAR_CREATE_FLAGS = -cvf
+TAR_CREATE_FLAGS_QUIET = -cf
 endif
 
 #
@@ -403,8 +367,6 @@ MY_RULES	:= $(DEPTH)/config/myrules.mk
 # Default command macros; can be overridden in <arch>.mk.
 #
 CCC = $(CXX)
-PURIFY = purify $(PURIFYOPTIONS)
-QUANTIFY = quantify $(QUANTIFYOPTIONS)
 XPIDL_LINK = $(PYTHON) $(LIBXUL_DIST)/sdk/bin/xpt.py link
 
 # Java macros
@@ -412,19 +374,21 @@ JAVA_GEN_DIR  = _javagen
 JAVA_DIST_DIR = $(DEPTH)/$(JAVA_GEN_DIR)
 JAVA_IFACES_PKG_NAME = org/mozilla/interfaces
 
+OS_INCLUDES += $(NSPR_CFLAGS) $(NSS_CFLAGS) $(MOZ_JPEG_CFLAGS) $(MOZ_PNG_CFLAGS) $(MOZ_ZLIB_CFLAGS)
+
 INCLUDES = \
   $(LOCAL_INCLUDES) \
   -I$(srcdir) \
   -I. \
-  -I$(DIST)/include -I$(DIST)/include/nsprpub \
-  $(if $(LIBXUL_SDK),-I$(LIBXUL_SDK)/include -I$(LIBXUL_SDK)/include/nsprpub) \
+  -I$(DIST)/include \
+  $(if $(LIBXUL_SDK),-I$(LIBXUL_SDK)/include) \
   $(OS_INCLUDES) \
   $(NULL)
 
 include $(topsrcdir)/config/static-checking-config.mk
 
-CFLAGS		= $(OS_CFLAGS)
-CXXFLAGS	= $(OS_CXXFLAGS)
+CFLAGS		= $(OS_CPPFLAGS) $(OS_CFLAGS)
+CXXFLAGS	= $(OS_CPPFLAGS) $(OS_CXXFLAGS)
 LDFLAGS		= $(OS_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
 
 # Allow each module to override the *default* optimization settings
@@ -531,8 +495,8 @@ OS_COMPILE_CMMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
 endif
 endif
 
-COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CFLAGS)
-COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CXXFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CXXFLAGS)
+COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS)
+COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(CXXFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS)
 COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS)
 COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS)
 
@@ -600,6 +564,7 @@ ifdef MACOSX_DEPLOYMENT_TARGET
 export MACOSX_DEPLOYMENT_TARGET
 PBBUILD_SETTINGS += MACOSX_DEPLOYMENT_TARGET="$(MACOSX_DEPLOYMENT_TARGET)"
 endif # MACOSX_DEPLOYMENT_TARGET
+
 ifdef MOZ_OPTIMIZE
 ifeq (2,$(MOZ_OPTIMIZE))
 # Only override project defaults if the config specified explicit settings
@@ -608,6 +573,11 @@ endif # MOZ_OPTIMIZE=2
 endif # MOZ_OPTIMIZE
 endif # OS_ARCH=Darwin
 
+ifdef MOZ_USING_CCACHE
+ifdef CLANG_CXX
+export CCACHE_CPP2=1
+endif
+endif
 
 ifdef MOZ_NATIVE_MAKEDEPEND
 MKDEPEND_DIR =
@@ -671,19 +641,34 @@ endif
 PWD := $(CURDIR)
 endif
 
+NSINSTALL_PY := $(PYTHON) $(call core_abspath,$(topsrcdir)/config/nsinstall.py)
+# For Pymake, wherever we use nsinstall.py we're also going to try to make it
+# a native command where possible. Since native commands can't be used outside
+# of single-line commands, we continue to provide INSTALL for general use.
+# Single-line commands should be switched over to install_cmd.
+NSINSTALL_NATIVECMD := %nsinstall nsinstall
+
 ifdef NSINSTALL_BIN
 NSINSTALL = $(NSINSTALL_BIN)
 else
 ifeq (OS2,$(CROSS_COMPILE)$(OS_ARCH))
 NSINSTALL = $(MOZ_TOOLS_DIR)/nsinstall
 else
+ifeq ($(HOST_OS_ARCH),WINNT)
+NSINSTALL = $(NSINSTALL_PY)
+else
 NSINSTALL = $(CONFIG_TOOLS)/nsinstall$(HOST_BIN_SUFFIX)
+endif # WINNT
 endif # OS2
 endif # NSINSTALL_BIN
 
 
 ifeq (,$(CROSS_COMPILE)$(filter-out WINNT OS2, $(OS_ARCH)))
-INSTALL		= $(NSINSTALL)
+INSTALL = $(NSINSTALL) -t
+ifdef .PYMAKE
+install_cmd = $(NSINSTALL_NATIVECMD) -t $(1)
+endif # .PYMAKE
+
 else
 
 # This isn't laid out as conditional directives so that NSDISTMODE can be
@@ -692,16 +677,13 @@ INSTALL         = $(if $(filter copy, $(NSDISTMODE)), $(NSINSTALL) -t, $(if $(fi
 
 endif # WINNT/OS2
 
+# The default for install_cmd is simply INSTALL
+install_cmd ?= $(INSTALL) $(1)
+
 # Use nsinstall in copy mode to install files on the system
 SYSINSTALL	= $(NSINSTALL) -t
-
-# Directory nsinstall. Windows and OS/2 nsinstall can't recursively copy
-# directories.
-ifneq (,$(filter WINNT os2-emx,$(HOST_OS_ARCH)))
-DIR_INSTALL = $(PYTHON) $(topsrcdir)/config/nsinstall.py
-else
-DIR_INSTALL = $(INSTALL)
-endif # WINNT/OS2
+# This isn't necessarily true, just here
+sysinstall_cmd = install_cmd
 
 #
 # Localization build automation
@@ -774,9 +756,8 @@ OPTIMIZE_JARS_CMD = $(PYTHON) $(call core_abspath,$(topsrcdir)/config/optimizeja
 
 CREATE_PRECOMPLETE_CMD = $(PYTHON) $(call core_abspath,$(topsrcdir)/config/createprecomplete.py)
 
-EXPAND_LIBS_DEPS = $(PYTHON) $(topsrcdir)/config/pythonpath.py -I$(DEPTH)/config $(topsrcdir)/config/expandlibs_deps.py
-EXPAND_LIBS_EXEC = $(PYTHON) $(topsrcdir)/config/pythonpath.py -I$(DEPTH)/config $(topsrcdir)/config/expandlibs_exec.py
-EXPAND_LIBS_GEN = $(PYTHON) $(topsrcdir)/config/pythonpath.py -I$(DEPTH)/config $(topsrcdir)/config/expandlibs_gen.py
+EXPAND_LIBS_EXEC = $(PYTHON) $(topsrcdir)/config/pythonpath.py -I$(DEPTH)/config $(topsrcdir)/config/expandlibs_exec.py $(if $@,--depend $(MDDEPDIR)/$(@F).pp --target $@)
+EXPAND_LIBS_GEN = $(PYTHON) $(topsrcdir)/config/pythonpath.py -I$(DEPTH)/config $(topsrcdir)/config/expandlibs_gen.py $(if $@,--depend $(MDDEPDIR)/$(@F).pp)
 EXPAND_AR = $(EXPAND_LIBS_EXEC) --extract -- $(AR)
 EXPAND_CC = $(EXPAND_LIBS_EXEC) --uselist -- $(CC)
 EXPAND_CCC = $(EXPAND_LIBS_EXEC) --uselist -- $(CCC)
@@ -836,3 +817,5 @@ EXPAND_MOZLIBNAME = $(foreach lib,$(1),$(DIST)/lib/$(LIB_PREFIX)$(lib).$(LIB_SUF
 ifndef MOZ_SYSTEM_PLY
 PLY_INCLUDE = -I$(topsrcdir)/other-licenses/ply
 endif
+
+export CL_INCLUDES_PREFIX

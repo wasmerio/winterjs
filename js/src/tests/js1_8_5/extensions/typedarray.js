@@ -1,3 +1,4 @@
+// |reftest| skip-if(!xulRuntime.shell)
 /* -*- Mode: js2; tab-width: 40; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
  * Any copyright is dedicated to the Public Domain.
@@ -424,6 +425,98 @@ function test()
     // use a loop to invoke the TM
     for (var i = 0; i < b.length; i++)
         check(function() b[90] == 5)
+
+    // Protos and proxies, oh my!
+    var alien = newGlobal('new-compartment');
+
+    var alien_view = alien.eval('view = new Uint8Array(7)');
+    var alien_buffer = alien.eval('buffer = view.buffer');
+
+    // when creating a view of a buffer in a different compartment, the view
+    // itself should be created in the other compartment and wrapped for use in
+    // this compartment. (There should never be a compartment boundary between
+    // an ArrayBufferView and its ArrayBuffer.)
+    var view = new Int8Array(alien_buffer);
+
+    // First make sure they're looking at the same data
+    alien_view[3] = 77;
+    check(function () view[3] == 77);
+
+    // Now check that the proxy setup is as expected
+    check(function () isProxy(alien_view));
+    check(function () isProxy(alien_buffer));
+    check(function () isProxy(view)); // the real test
+
+    // cross-compartment property access
+    check(function () alien_buffer.byteLength == 7);
+    check(function () alien_view.byteLength == 7);
+    check(function () view.byteLength == 7);
+
+    // typed array protos should be equal
+    simple = new Int8Array(12);
+    check(function () Object.getPrototypeOf(view) == Object.getPrototypeOf(simple));
+    check(function () Object.getPrototypeOf(view) == Int8Array.prototype);
+
+    // named properties are defined on the prototype
+    check(function () !Object.getOwnPropertyDescriptor(simple, 'byteLength'));
+    check(function () Object.getOwnPropertyDescriptor(Int8Array.prototype, 'byteLength'));
+
+    // crazy as it sounds, the named properties are configurable per WebIDL.
+    // But we are currently discussing the situation, and typed arrays may be
+    // pulled into the ES spec, so for now this is disallowed.
+    if (false) {
+        check(function () simple.byteLength == 12);
+        getter = Object.getOwnPropertyDescriptor(Int8Array.prototype, 'byteLength').get;
+        Object.defineProperty(Int8Array.prototype, 'byteLength', { get: function () { return 1 + getter.apply(this) } });
+        check(function () simple.byteLength == 13);
+    }
+
+    // test move()
+    var numbers = [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ];
+
+    function tastring(tarray) {
+        return [ x for (x of tarray) ].toString();
+    }
+
+    function checkMove(offset, start, end, dest, want) {
+        var numbers_buffer = new Uint8Array(numbers).buffer;
+        var view = new Int8Array(numbers_buffer, offset);
+        view.move(start, end, dest);
+        check(function () tastring(view) == want.toString());
+        if (tastring(view) != want.toString()) {
+            print("Wanted: " + want.toString());
+            print("Got   : " + tastring(view));
+        }
+    }
+
+    // basic move [2,5) -> 4
+    checkMove(0, 2, 5, 4, [ 0, 1, 2, 3, 2, 3, 4, 7, 8 ]);
+
+    // negative values should count from end
+    checkMove(0, -7,  5,  4, [ 0, 1, 2, 3, 2, 3, 4, 7, 8 ]);
+    checkMove(0,  2, -4,  4, [ 0, 1, 2, 3, 2, 3, 4, 7, 8 ]);
+    checkMove(0,  2,  5, -5, [ 0, 1, 2, 3, 2, 3, 4, 7, 8 ]);
+    checkMove(0, -7, -4, -5, [ 0, 1, 2, 3, 2, 3, 4, 7, 8 ]);
+
+    // offset
+    checkMove(2, 0, 3, 4, [ 2, 3, 4, 5, 2, 3, 4 ]);
+
+    // clipping
+    checkMove(0,  5000,  6000, 0, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(0, -5000, -6000, 0, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(0, -5000,  6000, 0, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(0,  5000,  6000, 1, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(0, -5000, -6000, 1, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(0,  5000,  6000, 0, [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(2, -5000, -6000, 0, [ 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(2, -5000,  6000, 0, [ 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(2,  5000,  6000, 1, [ 2, 3, 4, 5, 6, 7, 8 ]);
+    checkMove(2, -5000, -6000, 1, [ 2, 3, 4, 5, 6, 7, 8 ]);
+
+    checkMove(2, -5000,    3, 1,     [ 2, 2, 3, 4, 6, 7, 8 ]);
+    checkMove(2,     1, 6000, 0,     [ 3, 4, 5, 6, 7, 8, 8 ]);
+    checkMove(2,     1, 6000, -4000, [ 3, 4, 5, 6, 7, 8, 8 ]);
+
     print ("done");
 
     reportCompare(0, TestFailCount, "typed array tests");
