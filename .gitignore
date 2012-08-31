@@ -2,3 +2,7 @@
 js/src/configure
 js/src/config/Expression.pyc
 js/src/config/expandlibs.pyc
+js/src/builtin/js2c.pyc
+js/src/builtin/jsmin.pyc
+js/src/build/ConfigStatus.pyc
+js/src/config/Preprocessor.pyc
