@@ -1177,9 +1177,11 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
     uintptr_t *stackMin, *stackEnd;
 #if JS_STACK_GROWTH_DIRECTION > 0
     stackMin = rt->nativeStackBase;
-    stackEnd = cgcd->nativeStackTop;
+    stackEnd = rt->nativeStackEnd ? reinterpret_cast<uintptr_t*>(rt->nativeStackEnd)
+                                 : cgcd->nativeStackTop;
 #else
-    stackMin = cgcd->nativeStackTop + 1;
+    stackMin = rt->nativeStackEnd ? reinterpret_cast<uintptr_t*>(rt->nativeStackEnd)
+                                 : cgcd->nativeStackTop + 1;
     stackEnd = reinterpret_cast<uintptr_t *>(rt->nativeStackBase);
 #endif
 
