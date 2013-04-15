@@ -7086,10 +7086,15 @@ JS_SetRuntimeThread(JSRuntime *rt)
 }
 
 extern JS_PUBLIC_API(void)
-JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t stackBase, uintptr_t stackEnd)
+JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t minValue, uintptr_t maxValue)
 {
-    rt->nativeStackBase = stackBase;
-    rt->nativeStackEnd = stackEnd;
+#if JS_STACK_GROWTH_DIRECTION < 0
+    rt->nativeStackBase = maxValue;
+    rt->nativeStackEnd = minValue;
+#else
+    rt->nativeStackBase = minValue;
+    rt->nativeStackEnd = maxValue;
+#endif
 }
 
 extern JS_NEVER_INLINE JS_PUBLIC_API(void)
