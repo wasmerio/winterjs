@@ -22,9 +22,10 @@ DIRS += editline
 endif
 
 # editline needs to get built before the shell
-ifndef JS_DISABLE_SHELL
-DIRS += shell
-endif
+# Disabled for Servo
+#ifndef JS_DISABLE_SHELL
+#DIRS += shell
+#endif
 
 # FIXME: bug 530688 covers getting these working on Android
 ifneq ($(OS_ARCH),ANDROID)
@@ -39,6 +40,10 @@ STATIC_LIBRARY_NAME = js_static
 GRE_MODULE	    = 1
 
 LIBS		= $(NSPR_LIBS)
+
+# For Servo: Disable representing jsid as a struct in debug builds, to avoid
+# a linker error.
+DEFINES += -DJS_NO_JSVAL_JSID_STRUCT_TYPES
 
 # JavaScript must be built shared, even for static builds, as it is used by
 # other modules which are always built shared. Failure to do so results in
