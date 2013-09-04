@@ -22,9 +22,10 @@ DIRS += editline
 endif
 
 # editline needs to get built before the shell
-ifndef JS_DISABLE_SHELL
-DIRS += shell
-endif
+# Disabled for Servo
+#ifndef JS_DISABLE_SHELL
+#DIRS += shell
+#endif
 
 # FIXME: bug 530688 covers getting these working on Android
 ifneq ($(OS_ARCH),ANDROID)
