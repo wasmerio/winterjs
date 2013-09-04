@@ -79,6 +79,9 @@ CSRCS = \
 #  testRegExpInstanceProperties.cpp \
 #  $(NULL)
 
+# Servo change: see js/src/Makefile.in
+DEFINES += -DJS_NO_JSVAL_JSID_STRUCT_TYPES
+
 DEFINES         += -DEXPORT_JS_API
 # Building against js_static requires that we declare mfbt sybols "exported"
 # on its behalf.
