@@ -124,6 +124,7 @@ class JS_FRIEND_API(BaseProxyHandler) {
     virtual bool getElementIfPresent(JSContext *cx, JSObject *obj, JSObject *receiver,
                                      uint32_t index, Value *vp, bool *present);
     virtual bool getPrototypeOf(JSContext *cx, JSObject *proxy, JSObject **proto);
+    virtual void trace(JSTracer *trc, JSObject *proxy);
 };
 
 /*
@@ -245,6 +246,7 @@ class Proxy {
     static bool regexp_toShared(JSContext *cx, JSObject *proxy, RegExpGuard *g);
     static bool defaultValue(JSContext *cx, JSObject *obj, JSType hint, Value *vp);
     static bool iteratorNext(JSContext *cx, JSObject *proxy, Value *vp);
+    static void trace(JSTracer *trc, JSObject *obj);
 };
 
 inline bool IsObjectProxyClass(const Class *clasp)

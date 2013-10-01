@@ -387,6 +387,11 @@ BaseProxyHandler::getPrototypeOf(JSContext *cx, JSObject *proxy, JSObject **prot
     return true;
 }
 
+void
+BaseProxyHandler::trace(JSTracer *trc, JSObject *proxy)
+{
+}
+
 IndirectProxyHandler::IndirectProxyHandler(void *family) : BaseProxyHandler(family)
 {
 }
@@ -1401,6 +1406,12 @@ Proxy::iteratorNext(JSContext *cx, JSObject *proxy, Value *vp)
     return GetProxyHandler(proxy)->iteratorNext(cx, proxy, vp);
 }
 
+void
+Proxy::trace(JSTracer *trc, JSObject *proxy)
+{
+    return GetProxyHandler(proxy)->trace(trc, proxy);
+}
+
 static JSObject *
 proxy_innerObject(JSContext *cx, HandleObject obj)
 {
@@ -1692,6 +1703,7 @@ proxy_TraceObject(JSTracer *trc, JSObject *obj)
     MarkCrossCompartmentSlot(trc, &obj->getReservedSlotRef(JSSLOT_PROXY_PRIVATE), "private");
     MarkSlot(trc, &obj->getReservedSlotRef(JSSLOT_PROXY_EXTRA + 0), "extra0");
     MarkSlot(trc, &obj->getReservedSlotRef(JSSLOT_PROXY_EXTRA + 1), "extra1");
+    Proxy::trace(trc, obj);
 }
 
 static void
