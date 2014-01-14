@@ -5677,3 +5677,31 @@ js_NewGCXML(JSContext *cx)
     return NewGCThing<JSXML>(cx, js::gc::FINALIZE_XML, sizeof(JSXML));
 }
 #endif
+
+JS_BEGIN_EXTERN_C
+
+/*
+ * Returns the object that the given candidate pointer points to, if it points
+ * to a valid object in this runtime.
+ */
+JS_FRIEND_API(JSObject *)
+JS_GetAddressableObject(JSRuntime *rt, uintptr_t candidateObj)
+{
+    gc::AllocKind kind;
+    void *thing;
+    if (js::IsAddressableGCThing(rt,
+                                 candidateObj,
+                                 false,
+                                 &kind,
+                                 NULL,
+                                 &thing) != CGCT_VALID) {
+        return NULL;
+    }
+    if (MapAllocToTraceKind(kind) != JSTRACE_OBJECT) {
+        return NULL;
+    }
+    return reinterpret_cast<JSObject *>(thing);
+}
+
+JS_END_EXTERN_C
+
