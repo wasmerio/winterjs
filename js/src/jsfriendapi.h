@@ -172,6 +172,11 @@ JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *obj, const JSFunctionSpecWit
 
 #endif
 
+/* Implemented in jsgc.cpp. */
+
+extern JS_FRIEND_API(JSObject *)
+JS_GetAddressableObject(JSRuntime *rt, uintptr_t candidateObj);
+
 JS_END_EXTERN_C
 
 #ifdef __cplusplus
