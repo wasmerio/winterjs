@@ -4430,6 +4430,10 @@ Collect(JSRuntime *rt, bool incremental, int64_t budget,
 {
     JS_AbortIfWrongThread(rt);
 
+    if (rt->gcInhibit) {
+        return;
+    }
+
     ContextIter cx(rt);
     if (!cx.done())
         MaybeCheckStackRoots(cx);

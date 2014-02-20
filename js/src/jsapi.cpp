@@ -773,6 +773,7 @@ JSRuntime::JSRuntime()
     gcLowFrequencyHeapGrowth(1.5),
     gcDynamicHeapGrowth(false),
     gcDynamicMarkSlice(false),
+    gcInhibit(false),
     gcShouldCleanUpEverything(false),
     gcIsNeeded(0),
     gcWeakMapList(NULL),
@@ -7162,6 +7163,20 @@ JS_ScheduleGC(JSContext *cx, uint32_t count)
     cx->runtime->gcNextScheduled = count;
 }
 #endif
+
+JS_PUBLIC_API(void)
+JS_InhibitGC(JSContext *cx)
+{
+    JS_ASSERT(!cx->runtime->gcInhibit);
+    cx->runtime->gcInhibit = true;
+}
+
+JS_PUBLIC_API(void)
+JS_AllowGC(JSContext *cx)
+{
+    JS_ASSERT(cx->runtime->gcInhibit);
+    cx->runtime->gcInhibit = false;
+}
 
 /************************************************************************/
 
