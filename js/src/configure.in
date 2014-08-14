@@ -1290,6 +1290,12 @@ if test "$GNU_CXX"; then
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, variadic-macros, ac_cxx_has_wno_variadic_macros)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-but-set-variable, ac_cxx_has_wno_unused_but_set_variable)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-variable, ac_cxx_has_wno_unused_variable)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, uninitialized, ac_cxx_has_wno_uninitialized)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, undefined-inline, ac_cxx_has_wno_undefined_inline)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, parentheses-equality, ac_cxx_has_wno_parentheses_equality)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-function, ac_cxx_has_wno_unused_function)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, null-conversion, ac_cxx_has_wno_null_conversion)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-private-field, ac_cxx_has_wno_unused_private_field)
 
     if test -z "$INTEL_CXX" -a -z "$CLANG_CXX"; then
        # Don't use -Wcast-align with ICC or clang
