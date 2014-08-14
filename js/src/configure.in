@@ -1219,6 +1219,7 @@ if test "$GNU_CC"; then
     #
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wno-unused"
     MOZ_C_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_c_has_wno_overlength_strings)
+    MOZ_C_SUPPORTS_WARNING(-Wno-, variadic-macros, ac_c_has_wno_variadic_macros)
 
     if test -z "$INTEL_CC" -a -z "$CLANG_CC"; then
        # Don't use -Wcast-align with ICC or clang
@@ -1287,6 +1288,8 @@ if test "$GNU_CXX"; then
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_cxx_has_wno_overlength_strings)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, invalid-offsetof, ac_cxx_has_wno_invalid_offsetof)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, variadic-macros, ac_cxx_has_wno_variadic_macros)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-but-set-variable, ac_cxx_has_wno_unused_but_set_variable)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-variable, ac_cxx_has_wno_unused_variable)
 
     if test -z "$INTEL_CXX" -a -z "$CLANG_CXX"; then
        # Don't use -Wcast-align with ICC or clang
