@@ -1284,7 +1284,8 @@ if test "$GNU_CXX"; then
     # -Wno-invalid-offsetof - we use offsetof on non-POD types frequently
     # -Wno-variadic-macros - ???
     #
-    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-ctor-dtor-privacy -Wno-unused-local-typedefs"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-ctor-dtor-privacy"
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-local-typedefs, ac_cxx_has_wno_unused_local_typedefs)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_cxx_has_wno_overlength_strings)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, invalid-offsetof, ac_cxx_has_wno_invalid_offsetof)
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, variadic-macros, ac_cxx_has_wno_variadic_macros)
