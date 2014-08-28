@@ -1,0 +1,13 @@
+[package]
+
+name = "mozjs-sys"
+version = "0.0.0"
+authors = ["Mozilla"]
+
+build = "make -f makefile.cargo"
+
+[lib]
+
+name = "mozjs-sys"
+path = "lib.rs"
+

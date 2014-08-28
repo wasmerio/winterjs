@@ -1,0 +1,7 @@
+SRC_DIR = $(shell pwd)
+
+.PHONY : all
+all:
+	cd $(OUT_DIR) && $(SRC_DIR)/js/src/configure --enable-gczeal
+	cd $(OUT_DIR) && make -f Makefile -j4
+
