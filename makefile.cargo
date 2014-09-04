@@ -1,7 +1,29 @@
+ifeq (androideabi,$(findstring androideabi,$(TARGET)))
+
+CC := $(TARGET)-gcc
+CXX := $(TARGET)-g++
+AR := $(TARGET)-ar
+
+CONFIGURE_FLAGS = \
+    --target=$(TARGET) \
+    --with-android-ndk=$(ANDROID_NDK) \
+    --with-android-toolchain=$(ANDROID_TOOLCHAIN) \
+    $(NULL)
+
+else
+
+CC ?= gcc
+CXX ?= g++
+AR ?= ar
+
+CONFIGURE_FLAGS =
+
+endif
+
 SRC_DIR = $(shell pwd)
 
 .PHONY : all
 all:
-	cd $(OUT_DIR) && $(SRC_DIR)/js/src/configure --enable-gczeal
+	cd $(OUT_DIR) && $(SRC_DIR)/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j4
 
