@@ -20,6 +20,10 @@ CONFIGURE_FLAGS =
 
 endif
 
+ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
+	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0
+endif
+
 SRC_DIR = $(shell pwd)
 
 .PHONY : all
