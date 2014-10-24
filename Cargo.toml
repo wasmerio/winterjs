@@ -6,6 +6,9 @@ authors = ["Mozilla"]
 
 build = "make -f makefile.cargo"
 
+[features]
+debugmozjs = []
+
 [lib]
 
 name = "mozjs-sys"
