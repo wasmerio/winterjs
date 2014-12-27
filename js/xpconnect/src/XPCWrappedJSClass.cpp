@@ -305,8 +305,11 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(XPCCallContext& ccx,
             }
 
             // Don't report if reporting was disabled by someone else.
-            if (!(oldOpts & JSOPTION_DONT_REPORT_UNCAUGHT))
+            if (!(oldOpts & JSOPTION_DONT_REPORT_UNCAUGHT) &&
+                !(oldOpts & JSOPTION_AUTOJSAPI_OWNS_ERROR_REPORTING))
+            {
                 JS_ReportPendingException(cx);
+            }
         }
     }
 
