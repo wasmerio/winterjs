@@ -439,9 +439,6 @@ struct JSRuntime : js::RuntimeFriendFields
     /* Base address of the native stack for the current thread. */
     uintptr_t           nativeStackBase;
 
-    /* Base address of the native stack for the current thread. */
-    uintptr_t           nativeStackEnd;
-
     /* The native stack size limit that runtime should not exceed. */
     size_t              nativeStackQuota;
 

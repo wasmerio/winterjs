@@ -6258,9 +6258,6 @@ JS_ClearRuntimeThread(JSRuntime *rt);
 extern JS_PUBLIC_API(void)
 JS_SetRuntimeThread(JSRuntime *rt);
 
-extern JS_PUBLIC_API(void)
-JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t stackBase, uintptr_t stackEnd);
-
 #ifdef __cplusplus
 JS_END_EXTERN_C
 

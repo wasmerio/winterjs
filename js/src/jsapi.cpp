@@ -735,7 +735,6 @@ JSRuntime::JSRuntime()
 #endif
     selfHostedGlobal_(NULL),
     nativeStackBase(0),
-    nativeStackEnd(0),
     nativeStackQuota(0),
     interpreterFrames(NULL),
     cxCallback(NULL),
@@ -7084,13 +7083,6 @@ JS_SetRuntimeThread(JSRuntime *rt)
 #ifdef JS_THREADSAFE
     rt->setOwnerThread();
 #endif
-}
-
-extern JS_PUBLIC_API(void)
-JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t stackBase, uintptr_t stackEnd)
-{
-    rt->nativeStackBase = stackBase;
-    rt->nativeStackEnd = stackEnd;
 }
 
 extern JS_NEVER_INLINE JS_PUBLIC_API(void)
