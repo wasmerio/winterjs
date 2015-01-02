@@ -525,7 +525,6 @@ struct JSRuntime : js::RuntimeFriendFields
     double              gcLowFrequencyHeapGrowth;
     bool                gcDynamicHeapGrowth;
     bool                gcDynamicMarkSlice;
-    bool                gcInhibit;
 
     /* During shutdown, the GC needs to clean up every possible object. */
     bool                gcShouldCleanUpEverything;

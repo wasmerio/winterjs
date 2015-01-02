@@ -6328,12 +6328,6 @@ extern JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext *cx, uint32_t count);
 #endif
 
-extern JS_PUBLIC_API(void)
-JS_InhibitGC(JSContext *cx);
-
-extern JS_PUBLIC_API(void)
-JS_AllowGC(JSContext *cx);
-
 /*
  * Convert a uint32_t index into a jsid.
  */
