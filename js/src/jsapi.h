@@ -6258,9 +6258,6 @@ JS_ClearRuntimeThread(JSRuntime *rt);
 extern JS_PUBLIC_API(void)
 JS_SetRuntimeThread(JSRuntime *rt);
 
-extern JS_PUBLIC_API(void)
-JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t minValue, uintptr_t maxValue);
-
 #ifdef __cplusplus
 JS_END_EXTERN_C
 
@@ -6327,12 +6324,6 @@ JS_SetGCZeal(JSContext *cx, uint8_t zeal, uint32_t frequency);
 extern JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext *cx, uint32_t count);
 #endif
-
-extern JS_PUBLIC_API(void)
-JS_InhibitGC(JSContext *cx);
-
-extern JS_PUBLIC_API(void)
-JS_AllowGC(JSContext *cx);
 
 /*
  * Convert a uint32_t index into a jsid.

@@ -439,9 +439,6 @@ struct JSRuntime : js::RuntimeFriendFields
     /* Base address of the native stack for the current thread. */
     uintptr_t           nativeStackBase;
 
-    /* Base address of the native stack for the current thread. */
-    uintptr_t           nativeStackEnd;
-
     /* The native stack size limit that runtime should not exceed. */
     size_t              nativeStackQuota;
 
@@ -525,7 +522,6 @@ struct JSRuntime : js::RuntimeFriendFields
     double              gcLowFrequencyHeapGrowth;
     bool                gcDynamicHeapGrowth;
     bool                gcDynamicMarkSlice;
-    uint64_t            gcInhibit;
 
     /* During shutdown, the GC needs to clean up every possible object. */
     bool                gcShouldCleanUpEverything;

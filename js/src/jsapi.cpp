@@ -735,7 +735,6 @@ JSRuntime::JSRuntime()
 #endif
     selfHostedGlobal_(NULL),
     nativeStackBase(0),
-    nativeStackEnd(0),
     nativeStackQuota(0),
     interpreterFrames(NULL),
     cxCallback(NULL),
@@ -773,7 +772,6 @@ JSRuntime::JSRuntime()
     gcLowFrequencyHeapGrowth(1.5),
     gcDynamicHeapGrowth(false),
     gcDynamicMarkSlice(false),
-    gcInhibit(0),
     gcShouldCleanUpEverything(false),
     gcIsNeeded(0),
     gcWeakMapList(NULL),
@@ -7087,18 +7085,6 @@ JS_SetRuntimeThread(JSRuntime *rt)
 #endif
 }
 
-extern JS_PUBLIC_API(void)
-JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t minValue, uintptr_t maxValue)
-{
-#if JS_STACK_GROWTH_DIRECTION < 0
-    rt->nativeStackBase = maxValue;
-    rt->nativeStackEnd = minValue;
-#else
-    rt->nativeStackBase = minValue;
-    rt->nativeStackEnd = maxValue;
-#endif
-}
-
 extern JS_NEVER_INLINE JS_PUBLIC_API(void)
 JS_AbortIfWrongThread(JSRuntime *rt)
 {
@@ -7164,19 +7150,6 @@ JS_ScheduleGC(JSContext *cx, uint32_t count)
     cx->runtime->gcNextScheduled = count;
 }
 #endif
-
-JS_PUBLIC_API(void)
-JS_InhibitGC(JSContext *cx)
-{
-    ++cx->runtime->gcInhibit;
-}
-
-JS_PUBLIC_API(void)
-JS_AllowGC(JSContext *cx)
-{
-    JS_ASSERT(cx->runtime->gcInhibit);
-    --cx->runtime->gcInhibit;
-}
 
 /************************************************************************/
 
