@@ -1059,8 +1059,13 @@ extern JS_FRIEND_API(JSObject *)
 JS_NewInt8Array(JSContext *cx, uint32_t nelements);
 extern JS_FRIEND_API(JSObject *)
 JS_NewUint8Array(JSContext *cx, uint32_t nelements);
+
+JS_BEGIN_EXTERN_C
+
 extern JS_FRIEND_API(JSObject *)
 JS_NewUint8ClampedArray(JSContext *cx, uint32_t nelements);
+
+JS_END_EXTERN_C
 
 extern JS_FRIEND_API(JSObject *)
 JS_NewInt16Array(JSContext *cx, uint32_t nelements);
@@ -1320,8 +1325,14 @@ extern JS_FRIEND_API(int8_t *)
 JS_GetInt8ArrayData(JSObject *obj, JSContext *cx);
 extern JS_FRIEND_API(uint8_t *)
 JS_GetUint8ArrayData(JSObject *obj, JSContext *cx);
+
+JS_BEGIN_EXTERN_C
+
 extern JS_FRIEND_API(uint8_t *)
 JS_GetUint8ClampedArrayData(JSObject *obj, JSContext *cx);
+
+JS_END_EXTERN_C
+
 extern JS_FRIEND_API(int16_t *)
 JS_GetInt16ArrayData(JSObject *obj, JSContext *cx);
 extern JS_FRIEND_API(uint16_t *)
