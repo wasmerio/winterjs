@@ -36,7 +36,7 @@ MOZ_ARG_WITH_STRING(android-platform,
     android_platform=$withval)
 
 case "$target" in
-arm-linux*-android*|*-linuxandroid*)
+arm-*linux*-android*|*-linuxandroid*)
     android_tool_prefix="arm-linux-androideabi"
     ;;
 i?86-*android*)
