@@ -1,6 +1,7 @@
 ifeq (androideabi,$(findstring androideabi,$(TARGET)))
 
 CC := $(TARGET)-gcc
+CPP := $(TARGET)-gcc -E
 CXX := $(TARGET)-g++
 AR := $(TARGET)-ar
 
@@ -13,6 +14,7 @@ CONFIGURE_FLAGS = \
 else
 
 CC ?= gcc
+CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
 
@@ -24,10 +26,26 @@ ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
 	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0
 endif
 
+ifeq (windows,$(findstring windows,$(TARGET)))
+	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
+	# overwrite it here.
+	ifeq ($(CC),cc)
+		CC = gcc
+		CPP = gcc -E
+	endif
+	# cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
+	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
+	# on windows, SM requires moztools which contains prebuilt libraries like glib and libIDL.
+	# we don't need them, so just set any fake path.
+	MOZ_TOOLS=$(OUT_DIR)
+endif
+
 SRC_DIR = $(shell pwd)
 
 .PHONY : all
 all:
-	cd $(OUT_DIR) && $(SRC_DIR)/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
+	cd $(OUT_DIR) && \
+	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	$(SRC_DIR)/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j4
 
