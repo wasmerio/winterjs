@@ -4,7 +4,7 @@ name = "mozjs-sys"
 version = "0.0.0"
 authors = ["Mozilla"]
 
-build = "make -f makefile.cargo"
+build = "build.rs"
 
 [features]
 debugmozjs = []
