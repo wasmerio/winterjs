@@ -1054,19 +1054,14 @@ typedef uint32_t JSArrayBufferViewType;
 /*
  * Create a new typed array with nelements elements.
  */
+JS_BEGIN_EXTERN_C
 
 extern JS_FRIEND_API(JSObject *)
 JS_NewInt8Array(JSContext *cx, uint32_t nelements);
 extern JS_FRIEND_API(JSObject *)
 JS_NewUint8Array(JSContext *cx, uint32_t nelements);
-
-JS_BEGIN_EXTERN_C
-
 extern JS_FRIEND_API(JSObject *)
 JS_NewUint8ClampedArray(JSContext *cx, uint32_t nelements);
-
-JS_END_EXTERN_C
-
 extern JS_FRIEND_API(JSObject *)
 JS_NewInt16Array(JSContext *cx, uint32_t nelements);
 extern JS_FRIEND_API(JSObject *)
@@ -1079,6 +1074,8 @@ extern JS_FRIEND_API(JSObject *)
 JS_NewFloat32Array(JSContext *cx, uint32_t nelements);
 extern JS_FRIEND_API(JSObject *)
 JS_NewFloat64Array(JSContext *cx, uint32_t nelements);
+
+JS_END_EXTERN_C
 
 /*
  * Create a new typed array and copy in values from the given object. The
@@ -1320,19 +1317,14 @@ JS_GetArrayBufferViewByteLength(JSObject *obj, JSContext *cx);
  * unwrapping will succeed. If cx is NULL, then DEBUG builds may be unable to
  * assert when unwrapping should be disallowed.
  */
+JS_BEGIN_EXTERN_C
 
 extern JS_FRIEND_API(int8_t *)
 JS_GetInt8ArrayData(JSObject *obj, JSContext *cx);
 extern JS_FRIEND_API(uint8_t *)
 JS_GetUint8ArrayData(JSObject *obj, JSContext *cx);
-
-JS_BEGIN_EXTERN_C
-
 extern JS_FRIEND_API(uint8_t *)
 JS_GetUint8ClampedArrayData(JSObject *obj, JSContext *cx);
-
-JS_END_EXTERN_C
-
 extern JS_FRIEND_API(int16_t *)
 JS_GetInt16ArrayData(JSObject *obj, JSContext *cx);
 extern JS_FRIEND_API(uint16_t *)
@@ -1345,6 +1337,8 @@ extern JS_FRIEND_API(float *)
 JS_GetFloat32ArrayData(JSObject *obj, JSContext *cx);
 extern JS_FRIEND_API(double *)
 JS_GetFloat64ArrayData(JSObject *obj, JSContext *cx);
+
+JS_END_EXTERN_C
 
 /*
  * Same as above, but for any kind of ArrayBufferView. Prefer the type-specific
