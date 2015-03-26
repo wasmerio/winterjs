@@ -1,6 +1,6 @@
 [package]
 
-name = "mozjs-sys"
+name = "mozjs_sys"
 version = "0.0.0"
 authors = ["Mozilla"]
 
@@ -11,6 +11,6 @@ debugmozjs = []
 
 [lib]
 
-name = "mozjs-sys"
+name = "mozjs_sys"
 path = "lib.rs"
 
