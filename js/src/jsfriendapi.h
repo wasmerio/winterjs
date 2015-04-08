@@ -1075,8 +1075,6 @@ JS_NewFloat32Array(JSContext *cx, uint32_t nelements);
 extern JS_FRIEND_API(JSObject *)
 JS_NewFloat64Array(JSContext *cx, uint32_t nelements);
 
-JS_END_EXTERN_C
-
 /*
  * Create a new typed array and copy in values from the given object. The
  * object is used as if it were an array; that is, the new array (if
@@ -1317,7 +1315,6 @@ JS_GetArrayBufferViewByteLength(JSObject *obj, JSContext *cx);
  * unwrapping will succeed. If cx is NULL, then DEBUG builds may be unable to
  * assert when unwrapping should be disallowed.
  */
-JS_BEGIN_EXTERN_C
 
 extern JS_FRIEND_API(int8_t *)
 JS_GetInt8ArrayData(JSObject *obj, JSContext *cx);
