@@ -1,1 +1,0 @@
-Components.utils.import("resource://test/syntax_error.jsm");

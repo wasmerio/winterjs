@@ -1,0 +1,43 @@
+if [ "x$IS_NIGHTLY" = "xyes" ]; then
+  # Some nightlies (eg: Mulet) don't want these set.
+  MOZ_AUTOMATION_UPLOAD_SYMBOLS=${MOZ_AUTOMATION_UPLOAD_SYMBOLS-1}
+  MOZ_AUTOMATION_UPDATE_PACKAGING=${MOZ_AUTOMATION_UPDATE_PACKAGING-1}
+  MOZ_AUTOMATION_SDK=${MOZ_AUTOMATION_SDK-1}
+fi
+
+. "$topsrcdir/build/mozconfig.common"
+
+# some b2g desktop builds still happen on i686 machines, and the tooltool
+# toolchain is x86_64 only.
+# We also deal with valgrind builds here, they don't use tooltool manifests at
+# all yet.
+if [ -z "$no_tooltool" ]
+then
+  CC="$topsrcdir/gcc/bin/gcc"
+  CXX="$topsrcdir/gcc/bin/g++"
+
+  # We want to make sure we use binutils and other binaries in the tooltool
+  # package.
+  mk_add_options PATH="$topsrcdir/gcc/bin:$PATH"
+else
+  CC="/tools/gcc-4.7.3-0moz1/bin/gcc"
+  CXX="/tools/gcc-4.7.3-0moz1/bin/g++"
+fi
+
+ac_add_options --enable-elf-hack
+
+# Avoid dependency on libstdc++ 4.7
+ac_add_options --enable-stdcxx-compat
+
+# $topsrcdir/gtk3 comes from tooltool, when the tooltool manifest contains it.
+if [ -d "$topsrcdir/gtk3" ]; then
+  # PKG_CONFIG_LIBDIR is appropriately overridden in mozconfig.linux32
+  export PKG_CONFIG_LIBDIR=/usr/lib64/pkgconfig:/usr/share/pkgconfig
+  export PKG_CONFIG_SYSROOT_DIR="$topsrcdir/gtk3"
+  export PKG_CONFIG_PATH="$topsrcdir/gtk3/usr/local/lib/pkgconfig"
+  export PATH="$topsrcdir/gtk3/usr/local/bin:${PATH}"
+  # Ensure cairo, gdk-pixbuf, etc. are not taken from the system installed packages.
+  LDFLAGS="-L$topsrcdir/gtk3/usr/local/lib"
+  mk_add_options "export LD_LIBRARY_PATH=$topsrcdir/gtk3/usr/local/lib"
+  ac_add_options --enable-default-toolkit=cairo-gtk3
+fi

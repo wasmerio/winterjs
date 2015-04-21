@@ -1,0 +1,20 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# LLVM_CXXFLAGS comes with its own optimization flags.
+MOZ_OPTIMIZE =
+
+include $(topsrcdir)/config/config.mk
+
+# In the current moz.build world, we need to override essentially every
+# variable to limit ourselves to what we need to build the clang plugin.
+OS_CXXFLAGS := $(LLVM_CXXFLAGS) -fno-rtti -fno-exceptions
+OS_COMPILE_CXXFLAGS :=
+OS_LDFLAGS := $(LLVM_LDFLAGS) $(CLANG_LDFLAGS)
+DSO_LDOPTS := -shared
+
+# Use the default OS X deployment target to enable using the libc++ headers
+# correctly.  Note that the binary produced here is a host tool and doesn't need
+# to be distributed.
+MACOSX_DEPLOYMENT_TARGET :=
