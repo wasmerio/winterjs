@@ -3004,7 +3004,7 @@ Android|WINNT|Darwin)
   ;;
 *)
   dnl On !Android !Windows !OSX, we only want to link executables against mozglue
-  MOZ_GLUE_IN_PROGRAM=1
+  MOZ_GLUE_IN_PROGRAM=
   ;;
 esac
 
