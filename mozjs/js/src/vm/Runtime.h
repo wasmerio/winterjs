@@ -807,7 +807,7 @@ struct JSRuntime : public JS::shadow::Runtime,
      * main thread with an ExclusiveContext which could access such data.
      */
     PRLock *exclusiveAccessLock;
-    mozilla::DebugOnly<PRThread *> exclusiveAccessOwner;
+    mozilla::DebugOnly<pthread_t> exclusiveAccessOwner;
     mozilla::DebugOnly<bool> mainThreadHasExclusiveAccess;
 
     /* Number of non-main threads with an ExclusiveContext. */
@@ -822,7 +822,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 #ifdef DEBUG
     bool currentThreadHasExclusiveAccess() {
         return (!numExclusiveThreads && mainThreadHasExclusiveAccess) ||
-               exclusiveAccessOwner == PR_GetCurrentThread();
+               exclusiveAccessOwner == pthread_self();
     }
 #endif // DEBUG
 

@@ -21,6 +21,7 @@
 
 #include "frontend/TokenStream.h"
 #include "jit/Ion.h"
+#include <pthread.h>
 
 namespace js {
 
@@ -238,7 +239,7 @@ class GlobalHelperThreadState
      */
     PRLock *helperLock;
 #ifdef DEBUG
-    PRThread *lockOwner;
+    pthread_t lockOwner;
 #endif
 
     /* Condvars for threads waiting/notifying each other. */

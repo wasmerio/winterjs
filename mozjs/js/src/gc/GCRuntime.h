@@ -17,6 +17,8 @@
 #include "gc/StoreBuffer.h"
 #include "gc/Tracer.h"
 
+#include <pthread.h>
+
 /* Perform validation of incremental marking in debug builds but not on B2G. */
 #if defined(DEBUG) && !defined(MOZ_B2G)
 #define JS_GC_MARKING_VALIDATION
@@ -685,7 +687,7 @@ class GCRuntime
     bool onBackgroundThread() { return helperState.onBackgroundThread(); }
 
     bool currentThreadOwnsGCLock() {
-        return lockOwner == PR_GetCurrentThread();
+        return lockOwner == pthread_self();
     }
 
 #endif // DEBUG
@@ -698,13 +700,13 @@ class GCRuntime
         PR_Lock(lock);
         MOZ_ASSERT(!lockOwner);
 #ifdef DEBUG
-        lockOwner = PR_GetCurrentThread();
+        lockOwner = pthread_self();
 #endif
     }
 
     void unlockGC() {
-        MOZ_ASSERT(lockOwner == PR_GetCurrentThread());
-        lockOwner = nullptr;
+        MOZ_ASSERT(lockOwner == pthread_self());
+        lockOwner = 0;
         PR_Unlock(lock);
     }
 
@@ -1291,7 +1293,7 @@ class GCRuntime
 
     /* Synchronize GC heap access between main thread and GCHelperState. */
     PRLock *lock;
-    mozilla::DebugOnly<PRThread *> lockOwner;
+    mozilla::DebugOnly<pthread_t> lockOwner;
 
     BackgroundAllocTask allocTask;
     GCHelperState helperState;

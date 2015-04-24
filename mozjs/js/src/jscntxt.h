@@ -14,6 +14,8 @@
 #include "js/Vector.h"
 #include "vm/Runtime.h"
 
+#include <pthread.h>
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4100) /* Silence unreferenced formal parameter warnings */
@@ -860,7 +862,7 @@ class AutoLockForExclusiveAccess
             runtime->assertCanLock(ExclusiveAccessLock);
             PR_Lock(runtime->exclusiveAccessLock);
 #ifdef DEBUG
-            runtime->exclusiveAccessOwner = PR_GetCurrentThread();
+            runtime->exclusiveAccessOwner = pthread_self();
 #endif
         } else {
             MOZ_ASSERT(!runtime->mainThreadHasExclusiveAccess);
@@ -879,8 +881,8 @@ class AutoLockForExclusiveAccess
     }
     ~AutoLockForExclusiveAccess() {
         if (runtime->numExclusiveThreads) {
-            MOZ_ASSERT(runtime->exclusiveAccessOwner == PR_GetCurrentThread());
-            runtime->exclusiveAccessOwner = nullptr;
+            MOZ_ASSERT(runtime->exclusiveAccessOwner == pthread_self());
+            runtime->exclusiveAccessOwner = 0;
             PR_Unlock(runtime->exclusiveAccessLock);
         } else {
             MOZ_ASSERT(runtime->mainThreadHasExclusiveAccess);

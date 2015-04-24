@@ -131,7 +131,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     handlingSignal(false),
     interruptCallback(nullptr),
     exclusiveAccessLock(nullptr),
-    exclusiveAccessOwner(nullptr),
+    exclusiveAccessOwner(0),
     mainThreadHasExclusiveAccess(false),
     numExclusiveThreads(0),
     numCompartments(0),
@@ -824,7 +824,7 @@ JSRuntime::assertCanLock(RuntimeLock which)
     // it must be done in the order below.
     switch (which) {
       case ExclusiveAccessLock:
-        MOZ_ASSERT(exclusiveAccessOwner != PR_GetCurrentThread());
+        MOZ_ASSERT(exclusiveAccessOwner != pthread_self());
       case HelperThreadStateLock:
         MOZ_ASSERT(!HelperThreadState().isLocked());
       case GCLock:

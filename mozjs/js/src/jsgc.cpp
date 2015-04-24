@@ -1120,7 +1120,7 @@ GCRuntime::GCRuntime(JSRuntime *rt) :
     noGCOrAllocationCheck(0),
 #endif
     lock(nullptr),
-    lockOwner(nullptr),
+    lockOwner(0),
     allocTask(rt, emptyChunks_),
     helperState(rt)
 {
@@ -3304,11 +3304,11 @@ GCHelperState::waitForBackgroundThread()
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
 
 #ifdef DEBUG
-    rt->gc.lockOwner = nullptr;
+    rt->gc.lockOwner = 0;
 #endif
     PR_WaitCondVar(done, PR_INTERVAL_NO_TIMEOUT);
 #ifdef DEBUG
-    rt->gc.lockOwner = PR_GetCurrentThread();
+    rt->gc.lockOwner = pthread_self();
 #endif
 }
 
