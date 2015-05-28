@@ -1,16 +1,14 @@
 [package]
-
 name = "mozjs_sys"
 version = "0.0.0"
 authors = ["Mozilla"]
-
+links = "mozjs"
 build = "build.rs"
 
 [features]
 debugmozjs = []
 
 [lib]
-
 name = "mozjs_sys"
 path = "lib.rs"
 
