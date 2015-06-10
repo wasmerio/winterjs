@@ -22,7 +22,7 @@ CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
 
-CONFIGURE_FLAGS =
+CONFIGURE_FLAGS = --disable-jemalloc
 
 endif
 
