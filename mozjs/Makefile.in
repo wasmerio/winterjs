@@ -59,7 +59,6 @@ CLOBBER: $(topsrcdir)/CLOBBER
 endif
 
 $(topsrcdir)/configure: $(topsrcdir)/configure.in
-$(topsrcdir)/js/src/configure: $(topsrcdir)/js/src/configure.in
 $(topsrcdir)/configure $(topsrcdir)/js/src/configure:
 	@echo 'STOP!  $^ has changed, and your configure is out of date.'
 	@echo 'Please rerun autoconf and re-configure your build directory.'
