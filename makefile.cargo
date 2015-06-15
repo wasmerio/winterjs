@@ -1,15 +1,18 @@
-ifeq (androideabi,$(findstring androideabi,$(TARGET)))
+ifeq (eabi,$(findstring eabi,$(TARGET)))
 
 CC := $(TARGET)-gcc
 CPP := $(TARGET)-gcc -E
 CXX := $(TARGET)-g++
 AR := $(TARGET)-ar
 
-CONFIGURE_FLAGS = \
-    --target=$(TARGET) \
-    --with-android-ndk=$(ANDROID_NDK) \
-    --with-android-toolchain=$(ANDROID_TOOLCHAIN) \
-    $(NULL)
+CONFIGURE_FLAGS := --target=$(TARGET)
+
+	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
+		CONFIGURE_FLAGS += \
+			--with-android-ndk=$(ANDROID_NDK) \
+			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
+			$(NULL)
+	endif
 
 else
 
