@@ -12,6 +12,7 @@ CONFIGURE_FLAGS := --target=$(TARGET)
 			--with-android-ndk=$(ANDROID_NDK) \
 			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
 			--without-intl-api \
+			--disable-jemalloc \
 			$(NULL)
 	endif
 
@@ -22,7 +23,7 @@ CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
 
-CONFIGURE_FLAGS = --disable-jemalloc
+CONFIGURE_FLAGS := --disable-jemalloc
 
 endif
 
