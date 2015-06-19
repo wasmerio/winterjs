@@ -32,6 +32,9 @@ if not CONFIG['JS_STANDALONE']:
         'probes',
     ]
 
+if CONFIG['JS_STANDALONE'] and CONFIG['OS_TARGET'] == 'Android':
+    DIRS += ['build/stlport']
+
 if not CONFIG['LIBXUL_SDK']:
     DIRS += [
         'mozglue',
