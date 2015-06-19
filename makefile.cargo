@@ -1,9 +1,9 @@
 ifeq (eabi,$(findstring eabi,$(TARGET)))
 
-CC ?= $(TARGET)-gcc
-CPP ?= $(TARGET)-gcc -E
-CXX ?= $(TARGET)-g++
-AR ?= $(TARGET)-ar
+CC := $(TARGET)-gcc
+CPP := $(TARGET)-gcc -E
+CXX := $(TARGET)-g++
+AR := $(TARGET)-ar
 
 CONFIGURE_FLAGS := --target=$(TARGET)
 
