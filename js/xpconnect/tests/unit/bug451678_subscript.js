@@ -1,2 +1,0 @@
-var tags = [];
-function makeTags() {}

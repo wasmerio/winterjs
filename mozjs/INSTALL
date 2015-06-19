@@ -1,0 +1,11 @@
+Full build documentation for SpiderMonkey is hosted on MDN:
+  https://developer.mozilla.org/en-US/docs/SpiderMonkey/Build_Documentation
+
+Note that the libraries produced by the build system include symbols,
+causing the binaries to be extremely large. It is highly suggested that `strip`
+be run over the binaries before deploying them.
+
+Building with default options may be performed as follows:
+  cd js/src
+  ./configure
+  make

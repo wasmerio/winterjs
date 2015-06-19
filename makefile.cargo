@@ -11,6 +11,7 @@ CONFIGURE_FLAGS := --target=$(TARGET)
 		CONFIGURE_FLAGS += \
 			--with-android-ndk=$(ANDROID_NDK) \
 			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
+			--without-intl-api \
 			$(NULL)
 	endif
 
@@ -21,7 +22,7 @@ CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
 
-CONFIGURE_FLAGS =
+CONFIGURE_FLAGS = --disable-jemalloc
 
 endif
 
@@ -49,6 +50,6 @@ SRC_DIR = $(shell pwd)
 all:
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
+	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j4
 

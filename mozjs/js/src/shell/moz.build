@@ -1,0 +1,37 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# vim: set filetype=python:
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+if CONFIG['JS_SHELL_NAME']:
+    GeckoProgram(CONFIG['JS_SHELL_NAME'], linkage=None)
+    if CONFIG['JS_BUNDLED_EDITLINE']:
+        USE_LIBS += ['editline']
+    USE_LIBS += ['static:js']
+
+UNIFIED_SOURCES += [
+    'js.cpp',
+    'jsoptparse.cpp',
+    'OSObject.cpp'
+]
+
+# Building against js_static requires that we declare mfbt sybols "exported"
+# on its behalf.
+for var in ('EXPORT_JS_API', 'IMPL_MFBT'):
+    DEFINES[var] = True
+
+if CONFIG['_MSC_VER']:
+    # unnecessary PGO for js shell.  But gcc cannot turn off pgo because it is
+    # necessary to link PGO lib on gcc when a object/static lib are compiled
+    # for PGO.
+    NO_PGO = True
+
+LOCAL_INCLUDES += ['..']
+GENERATED_INCLUDES += ['..']
+
+OS_LIBS += CONFIG['EDITLINE_LIBS']
+OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
+
+if CONFIG['GNU_CXX']:
+    FAIL_ON_WARNINGS = True

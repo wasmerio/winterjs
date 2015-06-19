@@ -1,0 +1,26 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# Any copyright is dedicated to the Public Domain.
+# http://creativecommons.org/publicdomain/zero/1.0/
+
+EXTRA_COMPONENTS = ['bar.js', 'foo.js']
+EXTRA_PP_COMPONENTS = ['bar.pp.js', 'foo.pp.js']
+
+FAIL_ON_WARNINGS = True
+MSVC_ENABLE_PGO = True
+NO_VISIBILITY_FLAGS = True
+
+DELAYLOAD_DLLS = ['foo.dll', 'bar.dll']
+
+RCFILE = 'foo.rc'
+RESFILE = 'bar.res'
+RCINCLUDE = 'bar.rc'
+DEFFILE = 'baz.def'
+
+USE_STATIC_LIBS = True
+
+CFLAGS += ['-fno-exceptions', '-w']
+CXXFLAGS += ['-fcxx-exceptions', '-include foo.h']
+LDFLAGS += ['-framework Foo', '-x']
+WIN32_EXE_LDFLAGS += ['-subsystem:console']
+
+DISABLE_STL_WRAPPING = True

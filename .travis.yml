@@ -1,8 +1,14 @@
 language: rust
-sudo: false
+sudo: required
 branches:
   except:
     - master
 notifications:
   webhooks: http://build.servo.org:54856/travis
 
+before_install:
+  - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+  - sudo apt-get update -qq
+install:
+  - sudo apt-get install -qq g++-4.9
+  - export CXX="g++-4.9"
