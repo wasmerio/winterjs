@@ -1,29 +1,26 @@
+CONFIGURE_FLAGS := --disable-jemalloc
+
 ifeq (eabi,$(findstring eabi,$(TARGET)))
 
-CC := $(TARGET)-gcc
-CPP := $(TARGET)-gcc -E
-CXX := $(TARGET)-g++
-AR := $(TARGET)-ar
+CC ?= $(TARGET)-gcc
+CPP ?= $(TARGET)-gcc -E
+CXX ?= $(TARGET)-g++
+AR ?= $(TARGET)-ar
 
-CONFIGURE_FLAGS := --target=$(TARGET)
+CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api
 
 	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
 		CONFIGURE_FLAGS += \
 			--with-android-ndk=$(ANDROID_NDK) \
 			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
-			--without-intl-api \
-			--disable-jemalloc \
 			$(NULL)
 	endif
-
 else
 
 CC ?= gcc
 CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
-
-CONFIGURE_FLAGS := --disable-jemalloc
 
 endif
 
