@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let result = Command::new("make")
-        .args(&["-f", "makefile.cargo"])
+        .args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
