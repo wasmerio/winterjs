@@ -49,5 +49,5 @@ all:
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
-	cd $(OUT_DIR) && make -f Makefile -j4
+	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 
