@@ -12,3 +12,6 @@ debugmozjs = []
 name = "mozjs_sys"
 path = "lib.rs"
 
+[dependencies]
+libc = "*"
+libz-sys = "*"
