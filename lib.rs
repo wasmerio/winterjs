@@ -1,1 +1,2 @@
-// Intentionally blank
+extern crate libz_sys;
+
