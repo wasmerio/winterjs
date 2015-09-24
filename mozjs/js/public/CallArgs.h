@@ -94,43 +94,50 @@ extern JS_PUBLIC_DATA(const HandleValue) UndefinedHandleValue;
  */
 
 namespace detail {
+template<class WantUsedRval>
+class CallReceiverBase;
+class IncludeUsedRval;
+}
+
+typedef detail::CallReceiverBase<detail::IncludeUsedRval> CallReceiver;
+CallReceiver CallReceiverFromArgv(Value *argv);
+CallReceiver CallReceiverFromVp(Value *vp);
+
+namespace detail {
 
 #ifdef JS_DEBUG
 extern JS_PUBLIC_API(void)
 CheckIsValidConstructible(Value v);
 #endif
 
-enum UsedRval { IncludeUsedRval, NoUsedRval };
-
-template<UsedRval WantUsedRval>
-class MOZ_STACK_CLASS UsedRvalBase;
-
-template<>
-class MOZ_STACK_CLASS UsedRvalBase<IncludeUsedRval>
-{
-  protected:
-    mutable bool usedRval_;
-    void setUsedRval() const { usedRval_ = true; }
-    void clearUsedRval() const { usedRval_ = false; }
-};
-
-template<>
-class MOZ_STACK_CLASS UsedRvalBase<NoUsedRval>
-{
-  protected:
+class MOZ_STACK_CLASS UsedRvalBase {
+  public:
     void setUsedRval() const {}
     void clearUsedRval() const {}
 };
 
-template<UsedRval WantUsedRval>
-class MOZ_STACK_CLASS CallReceiverBase : public UsedRvalBase<
-#ifdef JS_DEBUG
-        WantUsedRval
-#else
-        NoUsedRval
-#endif
-    >
+class MOZ_STACK_CLASS IncludeUsedRval : public UsedRvalBase
 {
+  public:
+#ifdef JS_DEBUG
+    mutable bool usedRval_;
+    void setUsedRval() const { usedRval_ = true; }
+    void clearUsedRval() const { usedRval_ = false; }
+#endif
+};
+
+class MOZ_STACK_CLASS NoUsedRval : public UsedRvalBase {};
+
+template<class WantUsedRval>
+class CallReceiverBase;
+
+template<class WantUsedRval>
+class MOZ_STACK_CLASS CallReceiverBase : public WantUsedRval
+{
+  static_assert(mozilla::IsSame<WantUsedRval, IncludeUsedRval>::value ||
+                mozilla::IsSame<WantUsedRval, NoUsedRval>::value,
+                "WantUsedRval can only be IncludeUsedRval or NoUsedRval");
+
   protected:
     Value* argv_;
 
@@ -225,16 +232,13 @@ class MOZ_STACK_CLASS CallReceiverBase : public UsedRvalBase<
     MutableHandleValue mutableThisv() const {
         return MutableHandleValue::fromMarkedLocation(&argv_[-1]);
     }
+
+  private:
+    friend CallReceiverBase<IncludeUsedRval> JS::CallReceiverFromVp(Value *vp);
+    friend CallReceiverBase<IncludeUsedRval> JS::CallReceiverFromArgv(Value *argv);
 };
 
 } // namespace detail
-
-class MOZ_STACK_CLASS CallReceiver : public detail::CallReceiverBase<detail::IncludeUsedRval>
-{
-  private:
-    friend CallReceiver CallReceiverFromVp(Value* vp);
-    friend CallReceiver CallReceiverFromArgv(Value* argv);
-};
 
 MOZ_ALWAYS_INLINE CallReceiver
 CallReceiverFromArgv(Value* argv)
@@ -277,11 +281,8 @@ CallReceiverFromVp(Value* vp)
  */
 namespace detail {
 
-template<UsedRval WantUsedRval>
-class MOZ_STACK_CLASS CallArgsBase :
-        public mozilla::Conditional<WantUsedRval == detail::IncludeUsedRval,
-                                    CallReceiver,
-                                    CallReceiverBase<NoUsedRval> >::Type
+template<class WantUsedRval>
+class MOZ_STACK_CLASS CallArgsBase : public CallReceiverBase<WantUsedRval>
 {
   protected:
     unsigned argc_;
