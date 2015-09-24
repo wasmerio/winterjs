@@ -31,8 +31,11 @@ ifdef .PYMAKE
 $(error Pymake is no longer supported. Please upgrade to MozillaBuild 1.9 or newer and build with 'mach' or 'mozmake')
 endif
 
+# don't support MSYS make, except if we're actually under mingw64/msys2
+ifneq ($(MSYSTEM),MINGW64)
 ifeq (a,$(firstword a$(subst /, ,$(abspath .))))
 $(error MSYS make is not supported)
+endif
 endif
 # 4.0- happens to be greater than 4.0, lower than the mozmake version,
 # and lower than 4.0.1 or 4.1, whatever next version of gnu make will
