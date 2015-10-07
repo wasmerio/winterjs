@@ -1,6 +1,6 @@
 CONFIGURE_FLAGS := --disable-jemalloc
 
-ifeq (eabi,$(findstring eabi,$(TARGET)))
+ifneq ($(HOST),$(TARGET))
 
 CC ?= $(TARGET)-gcc
 CPP ?= $(TARGET)-gcc -E
