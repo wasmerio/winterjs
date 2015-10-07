@@ -1,0 +1,3 @@
+language: rust
+channel: nightly
+sudo: 9000
