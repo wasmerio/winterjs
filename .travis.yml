@@ -1,3 +1,6 @@
 language: rust
 channel: nightly
 sudo: 9000
+
+notifications:
+  webhooks: http://build.servo.org:54856/travis
