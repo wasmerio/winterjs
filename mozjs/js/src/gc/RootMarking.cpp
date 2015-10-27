@@ -126,7 +126,7 @@ JS::AutoIdArray::trace(JSTracer *trc)
     gc::MarkIdRange(trc, idArray->length, idArray->vector, "JSAutoIdArray.idArray");
 }
 
-inline void
+void
 AutoGCRooter::trace(JSTracer *trc)
 {
     switch (tag_) {

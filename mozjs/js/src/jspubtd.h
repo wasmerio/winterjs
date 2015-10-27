@@ -221,7 +221,7 @@ class JS_PUBLIC_API(AutoGCRooter)
     }
 
     /* Implemented in gc/RootMarking.cpp. */
-    inline void trace(JSTracer *trc);
+    void trace(JSTracer *trc);
     static void traceAll(JSTracer *trc);
     static void traceAllWrappers(JSTracer *trc);
 
