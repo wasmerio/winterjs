@@ -25,7 +25,7 @@ AR ?= ar
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0
+	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0 --enable-gczeal
 endif
 
 ifeq (windows,$(findstring windows,$(TARGET)))
@@ -48,6 +48,6 @@ SRC_DIR = $(shell pwd)
 all:
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
+	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 
