@@ -28,6 +28,10 @@ ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
 	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0
 endif
 
+ifneq (,$(CCACHE))
+	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
+endif
+
 ifeq (windows,$(findstring windows,$(TARGET)))
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
