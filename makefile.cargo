@@ -32,26 +32,67 @@ ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifeq (windows,$(findstring windows,$(TARGET)))
+ifeq ($(MSYSTEM),MINGW64)
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
 		CC = gcc
 		CPP = gcc -E
 	endif
+
 	# cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
 	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
+
 	# on windows, SM requires moztools which contains prebuilt libraries like glib and libIDL.
-	# we don't need them, so just set any fake path.
-	MOZ_TOOLS=$(OUT_DIR)
+	# we don't need them, so just set / -- configure will check that $(MOZ_TOOLS)/bin exists
+	# and that it's in the path.
+	MOZ_TOOLS=/
+
+	# This is a mess.  m-c/spidermonkey includes its own copy of virtualenv.py,
+	# which doesn't have the fixes needed to make it work with msys2/mingw64.
+	# The only way we can successfully build under msys2 is to use the win32-native
+	# python.
+
+	ifneq (,$(wildcard c:/python27/python.exe))
+	FORCED_PYTHON := "c:/python27/python.exe"
+	else ifneq(,$(NATIVE_WIN32_PYTHON))
+	FORCED_PYTHON := "$(NATIVE_WIN32_PYTHON)"
+	else
+	$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
+	$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
+	$(error Can't find native Win32 python)
+	endif
+
+	# on windows/mingw64, we need to not use virtualenv -- the virtualenv.py script
+	# that ships with m-c doesn't work on mingw.
+	ifeq ($(MSYSTEM),MINGW64)
+	DONT_POPULATE_VIRTUALENV=1
+	endif
+
+	# we build with system nspr, expecting a msys2 mingw64 build
+	# The mingw64 nspr-config gives -lplc4 for example, but only libplc4.dll.a and libplc4_s.a exist.
+	# We can't use static NSPR because it doesn't properly work with threads.  This would all
+	# be fixed once a Windows equivalent to PosixNSPR.{cpp,h} is written.
+	#CONFIGURE_FLAGS += --with-system-nspr
+	CONFIGURE_FLAGS += --with-nspr-cflags="-I/mingw64/include/nspr"
+	CONFIGURE_FLAGS += --with-nspr-libs="-lplds4.dll -lplc4.dll -lnspr4.dll"
 endif
 
 SRC_DIR = $(shell pwd)
 
 .PHONY : all
+ifneq (,$(FORCED_PYTHON))
 all:
 	cd $(OUT_DIR) && \
+	PYTHON="$(FORCED_PYTHON)" \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+else
+all:
+	cd $(OUT_DIR) && \
+	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
+	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+endif
 
