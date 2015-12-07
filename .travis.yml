@@ -2,5 +2,13 @@ language: rust
 channel: nightly
 sudo: 9000
 
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    packages:
+    - gcc-4.8
+    - g++-4.8
+
 notifications:
   webhooks: http://build.servo.org:54856/travis
