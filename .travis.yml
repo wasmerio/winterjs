@@ -10,5 +10,8 @@ addons:
     - gcc-4.8
     - g++-4.8
 
+env:
+- CC="gcc-4.8" CPP="gcc-4.8 -E" CXX="g++-4.8"
+
 notifications:
   webhooks: http://build.servo.org:54856/travis
