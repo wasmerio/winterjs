@@ -70,7 +70,7 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-export-js
+	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
 
 endif
 
