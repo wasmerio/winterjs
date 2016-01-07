@@ -16,13 +16,11 @@ fn main() {
         .unwrap();
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/dist/lib", out_dir);
+    println!("cargo:rustc-link-lib=static=js_static");
     if target.contains("windows") {
-        // On Windows, because dynamic libs and static libs end up
-        // with different symbols for the import, we have to build
-        // with the shared mozjs DLL.
-        println!("cargo:rustc-link-lib=mozjs");
-    } else {
-        println!("cargo:rustc-link-lib=static=js_static");
+        println!("cargo:rustc-link-lib=static=mozglue");
+        println!("cargo:rustc-link-lib=winmm");
+        println!("cargo:rustc-link-lib=psapi");
     }
     println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:outdir={}", out_dir);

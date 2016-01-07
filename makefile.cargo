@@ -63,19 +63,8 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	# on windows/mingw64, we need to not use virtualenv -- the virtualenv.py script
-	# that ships with m-c doesn't work on mingw.
-	ifeq ($(MSYSTEM),MINGW64)
-	DONT_POPULATE_VIRTUALENV=1
-	endif
+	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
 
-	# we build with system nspr, expecting a msys2 mingw64 build
-	# The mingw64 nspr-config gives -lplc4 for example, but only libplc4.dll.a and libplc4_s.a exist.
-	# We can't use static NSPR because it doesn't properly work with threads.  This would all
-	# be fixed once a Windows equivalent to PosixNSPR.{cpp,h} is written.
-	#CONFIGURE_FLAGS += --with-system-nspr
-	CONFIGURE_FLAGS += --with-nspr-cflags="-I/mingw64/include/nspr"
-	CONFIGURE_FLAGS += --with-nspr-libs="-lplds4.dll -lplc4.dll -lnspr4.dll"
 endif
 
 SRC_DIR = $(shell pwd)
