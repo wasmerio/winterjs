@@ -68,33 +68,6 @@ PR_GetCurrentThread();
 PRStatus
 PR_SetCurrentThreadName(const char *name);
 
-typedef void (*PRThreadPrivateDTOR)(void *priv);
-
-PRStatus
-PR_NewThreadPrivateIndex(unsigned *newIndex, PRThreadPrivateDTOR destructor);
-
-PRStatus
-PR_SetThreadPrivate(unsigned index, void *priv);
-
-void *
-PR_GetThreadPrivate(unsigned index);
-
-struct PRCallOnceType {
-    int initialized;
-    int32_t inProgress;
-    PRStatus status;
-};
-
-typedef PRStatus (*PRCallOnceFN)();
-
-PRStatus
-PR_CallOnce(PRCallOnceType *once, PRCallOnceFN func);
-
-typedef PRStatus (*PRCallOnceWithArgFN)(void *);
-
-PRStatus
-PR_CallOnceWithArg(PRCallOnceType *once, PRCallOnceWithArgFN func, void *arg);
-
 PRLock *
 PR_NewLock();
 
@@ -136,6 +109,25 @@ PR_TicksPerSecond();
 
 PRStatus
 PR_WaitCondVar(PRCondVar *cvar, uint32_t timeout);
+
+// These are not supported, and will assert if called.
+// Present only to avoid linkage errors.
+
+struct PRCallOnceType {
+    int initialized;
+    int32_t inProgress;
+    PRStatus status;
+};
+
+typedef PRStatus (*PRCallOnceFN)();
+
+PRStatus
+PR_CallOnce(PRCallOnceType *once, PRCallOnceFN func);
+
+typedef PRStatus (*PRCallOnceWithArgFN)(void *);
+
+PRStatus
+PR_CallOnceWithArg(PRCallOnceType *once, PRCallOnceWithArgFN func, void *arg);
 
 #endif /* JS_POSIX_NSPR */
 

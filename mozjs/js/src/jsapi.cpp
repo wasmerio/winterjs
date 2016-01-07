@@ -441,9 +441,10 @@ JS_IsBuiltinFunctionConstructor(JSFunction *fun)
  *
  * The only reason at present for the restriction that you can't call
  * JS_Init/stuff/JS_ShutDown multiple times is the Windows PRMJ NowInit
- * initialization code, which uses PR_CallOnce to initialize the PRMJ_Now
- * subsystem.  (For reinitialization to be permitted, we'd need to "reset" the
- * called-once status -- doable, but more trouble than it's worth now.)
+ * initialization code, which currently initializes a critical section
+ * each time it's called.  (For reinitialization to be permitted, we'd
+ * need to destroy the previous CS first -- doable, but more trouble
+ * than it's worth now.)
  * Initializing that subsystem from JS_Init eliminates the problem, but
  * initialization can take a comparatively long time (15ms or so), so we
  * really don't want to do it in JS_Init, and we really do want to do it only
