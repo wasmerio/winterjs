@@ -397,9 +397,15 @@ SOURCES += [
 ]
 
 if CONFIG['JS_POSIX_NSPR']:
-    UNIFIED_SOURCES += [
-        'vm/PosixNSPR.cpp',
-    ]
+    if CONFIG['OS_ARCH'] == 'WINNT':
+        # Not unified; we may need to munge _WIN32_WINNT
+        SOURCES += [
+            'vm/WinNSPR.cpp',
+        ]
+    else:
+        UNIFIED_SOURCES += [
+            'vm/PosixNSPR.cpp',
+        ]
 
 if CONFIG['MOZ_INSTRUMENTS']:
     SOURCES += [
