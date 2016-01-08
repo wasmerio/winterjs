@@ -6,7 +6,8 @@
 
 # Build mozglue as a shared lib on Windows, OSX and Android.
 # If this is ever changed, update MOZ_SHARED_MOZGLUE in browser/installer/Makefile.in
-if CONFIG['OS_TARGET'] in ('WINNT', 'Darwin', 'Android'):
+# If JS_STANDALONE, always build as static.
+if CONFIG['OS_TARGET'] in ('WINNT', 'Darwin', 'Android') and not CONFIG['JS_STANDALONE']:
     SharedLibrary('mozglue')
 else:
     Library('mozglue')
@@ -24,14 +25,14 @@ if CONFIG['MOZ_ASAN']:
         'AsanOptions.cpp',
     ]
 
-if CONFIG['OS_TARGET'] == 'WINNT':
-    DEFFILE = 'mozglue.def'
-    # We'll break the DLL blocklist if we immediately load user32.dll
-    DELAYLOAD_DLLS += [
-        'user32.dll',
-    ]
-
 if not CONFIG['JS_STANDALONE']:
+
+    if CONFIG['OS_TARGET'] == 'WINNT':
+        DEFFILE = 'mozglue.def'
+        # We'll break the DLL blocklist if we immediately load user32.dll
+        DELAYLOAD_DLLS += [
+            'user32.dll',
+        ]
 
     if CONFIG['MOZ_MEMORY'] and (CONFIG['MOZ_SYSTEM_JEMALLOC'] or FORCE_SHARED_LIB):
         pass
