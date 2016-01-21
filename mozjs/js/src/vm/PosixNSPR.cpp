@@ -163,62 +163,6 @@ PR_SetCurrentThreadName(const char *name)
     return PR_SUCCESS;
 }
 
-static const size_t MaxTLSKeyCount = 32;
-static size_t gTLSKeyCount;
-static pthread_key_t gTLSKeys[MaxTLSKeyCount];
-
-PRStatus
-PR_NewThreadPrivateIndex(unsigned *newIndex, PRThreadPrivateDTOR destructor)
-{
-    /*
-     * We only call PR_NewThreadPrivateIndex from the main thread, so there's no
-     * need to lock the table of TLS keys.
-     */
-    MOZ_ASSERT(PR_GetCurrentThread() == &gMainThread);
-
-    pthread_key_t key;
-    if (pthread_key_create(&key, destructor))
-        return PR_FAILURE;
-
-    MOZ_ASSERT(gTLSKeyCount + 1 < MaxTLSKeyCount);
-
-    gTLSKeys[gTLSKeyCount] = key;
-    *newIndex = gTLSKeyCount;
-    gTLSKeyCount++;
-
-    return PR_SUCCESS;
-}
-
-PRStatus
-PR_SetThreadPrivate(unsigned index, void *priv)
-{
-    if (index >= gTLSKeyCount)
-        return PR_FAILURE;
-    if (pthread_setspecific(gTLSKeys[index], priv))
-        return PR_FAILURE;
-    return PR_SUCCESS;
-}
-
-void *
-PR_GetThreadPrivate(unsigned index)
-{
-    if (index >= gTLSKeyCount)
-        return nullptr;
-    return pthread_getspecific(gTLSKeys[index]);
-}
-
-PRStatus
-PR_CallOnce(PRCallOnceType *once, PRCallOnceFN func)
-{
-    MOZ_CRASH("PR_CallOnce unimplemented");
-}
-
-PRStatus
-PR_CallOnceWithArg(PRCallOnceType *once, PRCallOnceWithArgFN func, void *arg)
-{
-    MOZ_CRASH("PR_CallOnceWithArg unimplemented");
-}
-
 class nspr::Lock
 {
     pthread_mutex_t mutex_;
@@ -361,6 +305,18 @@ PR_WaitCondVar(PRCondVar *cvar, uint32_t timeout)
             return PR_SUCCESS;
         return PR_FAILURE;
     }
+}
+
+PRStatus
+PR_CallOnce(PRCallOnceType *once, PRCallOnceFN func)
+{
+    MOZ_CRASH("PR_CallOnce unimplemented");
+}
+
+PRStatus
+PR_CallOnceWithArg(PRCallOnceType *once, PRCallOnceWithArgFN func, void *arg)
+{
+    MOZ_CRASH("PR_CallOnceWithArg unimplemented");
 }
 
 #endif /* JS_POSIX_NSPR */

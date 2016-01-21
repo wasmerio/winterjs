@@ -27,8 +27,6 @@
 #include <mmsystem.h> /* for timeBegin/EndPeriod */
 #include <stdlib.h>   /* for _set_invalid_parameter_handler */
 
-#include "prinit.h"
-
 #endif
 
 #ifdef XP_UNIX
