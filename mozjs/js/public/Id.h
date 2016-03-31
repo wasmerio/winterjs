@@ -27,12 +27,16 @@
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
+namespace js {
+template <typename T> struct DefaultHasher;
+} // namespace js
+
 struct jsid
 {
     size_t asBits;
-    bool operator==(jsid rhs) const { return asBits == rhs.asBits; }
-    bool operator!=(jsid rhs) const { return asBits != rhs.asBits; }
-};
+    bool operator==(const jsid& rhs) const { return asBits == rhs.asBits; }
+    bool operator!=(const jsid& rhs) const { return asBits != rhs.asBits; }
+} JS_HAZ_GC_POINTER;
 #define JSID_BITS(id) (id.asBits)
 
 #define JSID_TYPE_STRING                 0x0
@@ -51,14 +55,14 @@ JSID_IS_STRING(jsid id)
     return (JSID_BITS(id) & JSID_TYPE_MASK) == 0;
 }
 
-static MOZ_ALWAYS_INLINE JSString *
+static MOZ_ALWAYS_INLINE JSString*
 JSID_TO_STRING(jsid id)
 {
     MOZ_ASSERT(JSID_IS_STRING(id));
-    return (JSString *)JSID_BITS(id);
+    return (JSString*)JSID_BITS(id);
 }
 
-/*
+/**
  * Only JSStrings that have been interned via the JSAPI can be turned into
  * jsids by API clients.
  *
@@ -66,7 +70,7 @@ JSID_TO_STRING(jsid id)
  * string must be appropriately rooted to avoid being collected by the GC.
  */
 JS_PUBLIC_API(jsid)
-INTERNED_STRING_TO_JSID(JSContext *cx, JSString *str);
+INTERNED_STRING_TO_JSID(JSContext* cx, JSString* str);
 
 static MOZ_ALWAYS_INLINE bool
 JSID_IS_ZERO(jsid id)
@@ -112,20 +116,20 @@ JSID_IS_SYMBOL(jsid id)
            JSID_BITS(id) != JSID_TYPE_SYMBOL;
 }
 
-static MOZ_ALWAYS_INLINE JS::Symbol *
+static MOZ_ALWAYS_INLINE JS::Symbol*
 JSID_TO_SYMBOL(jsid id)
 {
     MOZ_ASSERT(JSID_IS_SYMBOL(id));
-    return (JS::Symbol *)(JSID_BITS(id) & ~(size_t)JSID_TYPE_MASK);
+    return (JS::Symbol*)(JSID_BITS(id) & ~(size_t)JSID_TYPE_MASK);
 }
 
 static MOZ_ALWAYS_INLINE jsid
-SYMBOL_TO_JSID(JS::Symbol *sym)
+SYMBOL_TO_JSID(JS::Symbol* sym)
 {
     jsid id;
     MOZ_ASSERT(sym != nullptr);
     MOZ_ASSERT((size_t(sym) & JSID_TYPE_MASK) == 0);
-    MOZ_ASSERT(!js::gc::IsInsideNursery(reinterpret_cast<js::gc::Cell *>(sym)));
+    MOZ_ASSERT(!js::gc::IsInsideNursery(reinterpret_cast<js::gc::Cell*>(sym)));
     JSID_BITS(id) = (size_t(sym) | JSID_TYPE_SYMBOL);
     return id;
 }
@@ -139,11 +143,11 @@ JSID_IS_GCTHING(jsid id)
 static MOZ_ALWAYS_INLINE JS::GCCellPtr
 JSID_TO_GCTHING(jsid id)
 {
-    void *thing = (void *)(JSID_BITS(id) & ~(size_t)JSID_TYPE_MASK);
+    void* thing = (void*)(JSID_BITS(id) & ~(size_t)JSID_TYPE_MASK);
     if (JSID_IS_STRING(id))
-        return JS::GCCellPtr(thing, JSTRACE_STRING);
+        return JS::GCCellPtr(thing, JS::TraceKind::String);
     MOZ_ASSERT(JSID_IS_SYMBOL(id));
-    return JS::GCCellPtr(thing, JSTRACE_SYMBOL);
+    return JS::GCCellPtr(thing, JS::TraceKind::Symbol);
 }
 
 static MOZ_ALWAYS_INLINE bool
@@ -168,16 +172,50 @@ extern JS_PUBLIC_DATA(const JS::HandleId) JSID_EMPTYHANDLE;
 
 namespace js {
 
-template <> struct GCMethods<jsid>
+template <>
+struct DefaultHasher<jsid>
+{
+    typedef jsid Lookup;
+    static HashNumber hash(jsid id) {
+        return JSID_BITS(id);
+    }
+    static bool match(jsid id1, jsid id2) {
+        return id1 == id2;
+    }
+};
+
+template <>
+struct GCPolicy<jsid>
 {
     static jsid initial() { return JSID_VOID; }
-    static bool needsPostBarrier(jsid id) { return false; }
-    static void postBarrier(jsid *idp) {}
-    static void relocate(jsid *idp) {}
+    static void trace(JSTracer* trc, jsid* idp, const char* name) {
+        js::UnsafeTraceManuallyBarrieredEdge(trc, idp, name);
+    }
 };
+
+template <>
+struct BarrierMethods<jsid>
+{
+    static void postBarrier(jsid* idp, jsid prev, jsid next) {}
+};
+
+// If the jsid is a GC pointer type, convert to that type and call |f| with
+// the pointer. If the jsid is not a GC type, calls F::defaultValue.
+template <typename F, typename... Args>
+auto
+DispatchTyped(F f, jsid& id, Args&&... args)
+  -> decltype(f(static_cast<JSString*>(nullptr), mozilla::Forward<Args>(args)...))
+{
+    if (JSID_IS_STRING(id))
+        return f(JSID_TO_STRING(id), mozilla::Forward<Args>(args)...);
+    if (JSID_IS_SYMBOL(id))
+        return f(JSID_TO_SYMBOL(id), mozilla::Forward<Args>(args)...);
+    MOZ_ASSERT(!JSID_IS_GCTHING(id));
+    return F::defaultValue(id);
+}
 
 #undef id
 
-}
+} // namespace js
 
 #endif /* js_Id_h */

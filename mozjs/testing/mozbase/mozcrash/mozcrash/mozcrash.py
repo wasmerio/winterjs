@@ -5,13 +5,15 @@
 __all__ = [
     'check_for_crashes',
     'check_for_java_exception',
-    'log_crashes'
+    'kill_and_get_minidump',
+    'log_crashes',
 ]
 
 import glob
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,8 +22,8 @@ import zipfile
 from collections import namedtuple
 
 import mozfile
+import mozinfo
 import mozlog
-from mozlog.structured import structuredlog
 
 
 StackInfo = namedtuple("StackInfo",
@@ -35,14 +37,14 @@ StackInfo = namedtuple("StackInfo",
 
 
 def get_logger():
-    structured_logger = structuredlog.get_default_logger("mozcrash")
+    structured_logger = mozlog.get_default_logger("mozcrash")
     if structured_logger is None:
-        return mozlog.getLogger('mozcrash')
+        return mozlog.unstructured.getLogger('mozcrash')
     return structured_logger
 
 
 def check_for_crashes(dump_directory,
-                      symbols_path,
+                      symbols_path=None,
                       stackwalk_binary=None,
                       dump_save_path=None,
                       test_name=None,
@@ -161,8 +163,14 @@ class CrashInfo(object):
         self._dump_files = None
 
     def _get_symbols(self):
-        # This updates self.symbols_path so we only download once
-        if self.symbols_path and mozfile.is_url(self.symbols_path):
+        # If no symbols path has been set create a temporary folder to let the
+        # minidump stackwalk download the symbols.
+        if not self.symbols_path:
+            self.symbols_path = tempfile.mkdtemp()
+            self.remove_symbols = True
+
+        # This updates self.symbols_path so we only download once.
+        if mozfile.is_url(self.symbols_path):
             self.remove_symbols = True
             self.logger.info("Downloading symbols from: %s" % self.symbols_path)
             # Get the symbols and write them to a temporary zipfile
@@ -228,13 +236,24 @@ class CrashInfo(object):
         err = None
         retcode = None
         if (self.symbols_path and self.stackwalk_binary and
-            os.path.exists(self.stackwalk_binary)):
+            os.path.exists(self.stackwalk_binary) and
+            os.access(self.stackwalk_binary, os.X_OK)):
+
+            command = [
+                self.stackwalk_binary,
+                path,
+                self.symbols_path
+            ]
+            self.logger.info('Copy/paste: ' + ' '.join(command))
             # run minidump_stackwalk
-            p = subprocess.Popen([self.stackwalk_binary, path, self.symbols_path],
-                                 stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE)
+            p = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
             (out, err) = p.communicate()
             retcode = p.returncode
+
             if len(out) > 3:
                 # minidump_stackwalk is chatty,
                 # so ignore stderr when it succeeds.
@@ -253,6 +272,7 @@ class CrashInfo(object):
                         break
             else:
                 include_stderr = True
+
         else:
             if not self.symbols_path:
                 errors.append("No symbols path given, can't process dump.")
@@ -260,6 +280,8 @@ class CrashInfo(object):
                 errors.append("MINIDUMP_STACKWALK not set, can't process dump.")
             elif self.stackwalk_binary and not os.path.exists(self.stackwalk_binary):
                 errors.append("MINIDUMP_STACKWALK binary not found: %s" % self.stackwalk_binary)
+            elif not os.access(self.stackwalk_binary, os.X_OK):
+                errors.append('This user cannot execute the MINIDUMP_STACKWALK binary.')
 
         if self.dump_save_path:
             self._save_dump_file(path, extra)
@@ -335,7 +357,151 @@ def check_for_java_exception(logcat, quiet=False):
                 if not quiet:
                     print "PROCESS-CRASH | java-exception | %s %s" % (exception_type, exception_location)
             else:
-                print "Automation Error: Logcat is truncated!"
+                print "Automation Error: java exception in logcat at line %d of %d: %s" % (i, len(logcat), line)
             break
 
     return found_exception
+
+if mozinfo.isWin:
+    import ctypes
+    import uuid
+
+    kernel32 = ctypes.windll.kernel32
+    OpenProcess = kernel32.OpenProcess
+    CloseHandle = kernel32.CloseHandle
+
+    def write_minidump(pid, dump_directory, utility_path):
+        """
+        Write a minidump for a process.
+
+        :param pid: PID of the process to write a minidump for.
+        :param dump_directory: Directory in which to write the minidump.
+        """
+        PROCESS_QUERY_INFORMATION = 0x0400
+        PROCESS_VM_READ = 0x0010
+        GENERIC_READ = 0x80000000
+        GENERIC_WRITE = 0x40000000
+        CREATE_ALWAYS = 2
+        FILE_ATTRIBUTE_NORMAL = 0x80
+        INVALID_HANDLE_VALUE = -1
+
+        file_name = os.path.join(dump_directory,
+                                 str(uuid.uuid4()) + ".dmp")
+
+        if (mozinfo.info['bits'] != ctypes.sizeof(ctypes.c_voidp) * 8 and
+            utility_path):
+            # We're not going to be able to write a minidump with ctypes if our
+            # python process was compiled for a different architecture than
+            # firefox, so we invoke the minidumpwriter utility program.
+
+            log = get_logger()
+            minidumpwriter = os.path.normpath(os.path.join(utility_path,
+                                                           "minidumpwriter.exe"))
+            log.info("Using %s to write a dump to %s for [%d]" %
+                     (minidumpwriter, file_name, pid))
+            if not os.path.exists(minidumpwriter):
+                log.error("minidumpwriter not found in %s" % utility_path)
+                return
+
+            if isinstance(file_name, unicode):
+                # Convert to a byte string before sending to the shell.
+                file_name = file_name.encode(sys.getfilesystemencoding())
+
+            status = subprocess.Popen([minidumpwriter, str(pid), file_name]).wait()
+            if status:
+                log.error("minidumpwriter exited with status: %d" % status)
+            return
+
+        proc_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+                                  0, pid)
+        if not proc_handle:
+            return
+
+        if not isinstance(file_name, unicode):
+            # Convert to unicode explicitly so our path will be valid as input
+            # to CreateFileW
+            file_name = unicode(file_name, sys.getfilesystemencoding())
+
+        file_handle = kernel32.CreateFileW(file_name,
+                                           GENERIC_READ | GENERIC_WRITE,
+                                           0,
+                                           None,
+                                           CREATE_ALWAYS,
+                                           FILE_ATTRIBUTE_NORMAL,
+                                           None)
+        if file_handle != INVALID_HANDLE_VALUE:
+            ctypes.windll.dbghelp.MiniDumpWriteDump(proc_handle,
+                                                    pid,
+                                                    file_handle,
+                                                    # Dump type - MiniDumpNormal
+                                                    0,
+                                                    # Exception parameter
+                                                    None,
+                                                    # User stream parameter
+                                                    None,
+                                                    # Callback parameter
+                                                    None)
+            CloseHandle(file_handle)
+        CloseHandle(proc_handle)
+
+    def kill_pid(pid):
+        """
+        Terminate a process with extreme prejudice.
+
+        :param pid: PID of the process to terminate.
+        """
+        PROCESS_TERMINATE = 0x0001
+        handle = OpenProcess(PROCESS_TERMINATE, 0, pid)
+        if handle:
+            kernel32.TerminateProcess(handle, 1)
+            CloseHandle(handle)
+else:
+    def kill_pid(pid):
+        """
+        Terminate a process with extreme prejudice.
+
+        :param pid: PID of the process to terminate.
+        """
+        os.kill(pid, signal.SIGKILL)
+
+def kill_and_get_minidump(pid, dump_directory, utility_path=None):
+    """
+    Attempt to kill a process and leave behind a minidump describing its
+    execution state.
+
+    :param pid: The PID of the process to kill.
+    :param dump_directory: The directory where a minidump should be written on
+    Windows, where the dump will be written from outside the process.
+
+    On Windows a dump will be written using the MiniDumpWriteDump function
+    from DbgHelp.dll. On Linux and OS X the process will be sent a SIGABRT
+    signal to trigger minidump writing via a Breakpad signal handler. On other
+    platforms the process will simply be killed via SIGKILL.
+
+    If the process is hung in such a way that it cannot respond to SIGABRT
+    it may still be running after this function returns. In that case it
+    is the caller's responsibility to deal with killing it.
+    """
+    needs_killing = True
+    if mozinfo.isWin:
+        write_minidump(pid, dump_directory, utility_path)
+    elif mozinfo.isLinux or mozinfo.isMac:
+        os.kill(pid, signal.SIGABRT)
+        needs_killing = False
+    if needs_killing:
+        kill_pid(pid)
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--stackwalk-binary', '-b')
+    parser.add_argument('--dump-save-path', '-o')
+    parser.add_argument('--test-name', '-n')
+    parser.add_argument('dump_directory')
+    parser.add_argument('symbols_path')
+    args = parser.parse_args()
+
+    check_for_crashes(args.dump_directory, args.symbols_path,
+                      stackwalk_binary=args.stackwalk_binary,
+                      dump_save_path=args.dump_save_path,
+                      test_name=args.test_name)

@@ -15,7 +15,7 @@ function f() {
     var i8  = new Int8Array(f32.buffer);
     var u8  = new Uint8Array(f32.buffer);
 
-    var f4 = SIMD.float32x4(42, 43, 44, 45);
+    var f4 = SIMD.Float32x4(42, 43, 44, 45);
 
     function check(n) {
         assertEq(f32[0], 42);
@@ -30,86 +30,86 @@ function f() {
     }
 
     function testStore() {
-        SIMD.float32x4.store(f64, 0, f4);
+        SIMD.Float32x4.store(f64, 0, f4);
         check(4);
-        SIMD.float32x4.store(f32, 0, f4);
+        SIMD.Float32x4.store(f32, 0, f4);
         check(4);
-        SIMD.float32x4.store(i32, 0, f4);
+        SIMD.Float32x4.store(i32, 0, f4);
         check(4);
-        SIMD.float32x4.store(u32, 0, f4);
+        SIMD.Float32x4.store(u32, 0, f4);
         check(4);
-        SIMD.float32x4.store(i16, 0, f4);
+        SIMD.Float32x4.store(i16, 0, f4);
         check(4);
-        SIMD.float32x4.store(u16, 0, f4);
+        SIMD.Float32x4.store(u16, 0, f4);
         check(4);
-        SIMD.float32x4.store(i8, 0, f4);
+        SIMD.Float32x4.store(i8, 0, f4);
         check(4);
-        SIMD.float32x4.store(u8, 0, f4);
+        SIMD.Float32x4.store(u8, 0, f4);
         check(4);
     }
 
-    function testStoreX() {
-        SIMD.float32x4.storeX(f64, 0, f4);
+    function testStore1() {
+        SIMD.Float32x4.store1(f64, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(f32, 0, f4);
+        SIMD.Float32x4.store1(f32, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(i32, 0, f4);
+        SIMD.Float32x4.store1(i32, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(u32, 0, f4);
+        SIMD.Float32x4.store1(u32, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(i16, 0, f4);
+        SIMD.Float32x4.store1(i16, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(u16, 0, f4);
+        SIMD.Float32x4.store1(u16, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(i8, 0, f4);
+        SIMD.Float32x4.store1(i8, 0, f4);
         check(1);
-        SIMD.float32x4.storeX(u8, 0, f4);
+        SIMD.Float32x4.store1(u8, 0, f4);
         check(1);
     }
 
-    function testStoreXY() {
-        SIMD.float32x4.storeXY(f64, 0, f4);
+    function testStore2() {
+        SIMD.Float32x4.store2(f64, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(f32, 0, f4);
+        SIMD.Float32x4.store2(f32, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(i32, 0, f4);
+        SIMD.Float32x4.store2(i32, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(u32, 0, f4);
+        SIMD.Float32x4.store2(u32, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(i16, 0, f4);
+        SIMD.Float32x4.store2(i16, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(u16, 0, f4);
+        SIMD.Float32x4.store2(u16, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(i8, 0, f4);
+        SIMD.Float32x4.store2(i8, 0, f4);
         check(2);
-        SIMD.float32x4.storeXY(u8, 0, f4);
+        SIMD.Float32x4.store2(u8, 0, f4);
         check(2);
     }
 
-    function testStoreXYZ() {
-        SIMD.float32x4.storeXYZ(f64, 0, f4);
+    function testStore3() {
+        SIMD.Float32x4.store3(f64, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(f32, 0, f4);
+        SIMD.Float32x4.store3(f32, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(i32, 0, f4);
+        SIMD.Float32x4.store3(i32, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(u32, 0, f4);
+        SIMD.Float32x4.store3(u32, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(i16, 0, f4);
+        SIMD.Float32x4.store3(i16, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(u16, 0, f4);
+        SIMD.Float32x4.store3(u16, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(i8, 0, f4);
+        SIMD.Float32x4.store3(i8, 0, f4);
         check(3);
-        SIMD.float32x4.storeXYZ(u8, 0, f4);
+        SIMD.Float32x4.store3(u8, 0, f4);
         check(3);
     }
 
     for (var i = 0; i < 150; i++) {
         testStore();
-        testStoreX();
-        testStoreXY();
-        testStoreXYZ();
+        testStore1();
+        testStore2();
+        testStore3();
     }
 }
 
@@ -122,12 +122,12 @@ function testBailout(uglyDuckling) {
 
     var i8  = new Int8Array(f32.buffer);
 
-    var f4 = SIMD.float32x4(42, 43, 44, 45);
+    var f4 = SIMD.Float32x4(42, 43, 44, 45);
 
     for (var i = 0; i < 150; i++) {
         var caught = false;
         try {
-            SIMD.float32x4.store(i8, (i < 149) ? 0 : (16 << 2) - (4 << 2) + 1, f4);
+            SIMD.Float32x4.store(i8, (i < 149) ? 0 : (16 << 2) - (4 << 2) + 1, f4);
         } catch (e) {
             print(e);
             assertEq(e instanceof RangeError, true);
@@ -141,4 +141,3 @@ print('Testing range checks...');
 testBailout(-1);
 testBailout(-15);
 testBailout(12 * 4 + 1);
-

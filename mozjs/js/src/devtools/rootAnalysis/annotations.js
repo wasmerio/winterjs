@@ -13,7 +13,7 @@ var ignoreIndirectCalls = {
     "__conv" : true,
     "__convf" : true,
     "prerrortable.c:callback_newtable" : true,
-    "mozalloc_oom.cpp:void (* gAbortHandler)(size_t)" : true
+    "mozalloc_oom.cpp:void (* gAbortHandler)(size_t)" : true,
 };
 
 function indirectCallCannotGC(fullCaller, fullVariable)
@@ -38,10 +38,6 @@ function indirectCallCannotGC(fullCaller, fullVariable)
     if (name == "op" && /GetWeakmapKeyDelegate/.test(caller))
         return true;
 
-    var CheckCallArgs = "AsmJSValidate.cpp:uint8 CheckCallArgs(FunctionCompiler*, js::frontend::ParseNode*, (uint8)(FunctionCompiler*,js::frontend::ParseNode*,Type)*, FunctionCompiler::Call*)";
-    if (name == "checkArg" && caller == CheckCallArgs)
-        return true;
-
     // hook called during script finalization which cannot GC.
     if (/CallDestroyScriptHook/.test(caller))
         return true;
@@ -57,7 +53,6 @@ function indirectCallCannotGC(fullCaller, fullVariable)
 
 // Ignore calls through functions pointers with these types
 var ignoreClasses = {
-    "JSTracer" : true,
     "JSStringFinalizer" : true,
     "SprintfState" : true,
     "SprintfStateStr" : true,
@@ -67,6 +62,7 @@ var ignoreClasses = {
     "XPCOMFunctions" : true, // I'm a little unsure of this one
     "_MD_IOVector" : true,
     "malloc_table_t": true, // replace_malloc
+    "malloc_hook_table_t": true, // replace_malloc
 };
 
 // Ignore calls through TYPE.FIELD, where TYPE is the class or struct name containing
@@ -80,9 +76,11 @@ var ignoreCallees = {
     "mozilla::CycleCollectedJSRuntime.NoteCustomGCThingXPCOMChildren" : true, // During tracing, cannot GC.
     "PLDHashTableOps.hashKey" : true,
     "z_stream_s.zfree" : true,
+    "z_stream_s.zalloc" : true,
     "GrGLInterface.fCallback" : true,
     "std::strstreambuf._M_alloc_fun" : true,
     "std::strstreambuf._M_free_fun" : true,
+    "struct js::gc::Callback<void (*)(JSRuntime*, void*)>.op" : true,
 };
 
 function fieldCallCannotGC(csu, fullfield)
@@ -94,8 +92,27 @@ function fieldCallCannotGC(csu, fullfield)
     return false;
 }
 
-function ignoreEdgeUse(edge, variable)
+function ignoreEdgeUse(edge, variable, body)
 {
+    // Horrible special case for ignoring a false positive in xptcstubs: there
+    // is a local variable 'paramBuffer' holding an array of nsXPTCMiniVariant
+    // on the stack, which appears to be live across a GC call because its
+    // constructor is called when the array is initialized, even though the
+    // constructor is a no-op. So we'll do a very narrow exclusion for the use
+    // that incorrectly started the live range, which was basically "__temp_1 =
+    // paramBuffer".
+    //
+    // By scoping it so narrowly, we can detect most hazards that would be
+    // caused by modifications in the PrepareAndDispatch code. It just barely
+    // avoids having a hazard already.
+    if (('Name' in variable) && (variable.Name[0] == 'paramBuffer')) {
+        if (body.BlockId.Kind == 'Function' && body.BlockId.Variable.Name[0] == 'PrepareAndDispatch')
+            if (edge.Kind == 'Assign' && edge.Type.Kind == 'Pointer')
+                if (edge.Exp[0].Kind == 'Var' && edge.Exp[1].Kind == 'Var')
+                    if (edge.Exp[1].Variable.Kind == 'Local' && edge.Exp[1].Variable.Name[0] == 'paramBuffer')
+                        return true;
+    }
+
     // Functions which should not be treated as using variable.
     if (edge.Kind == "Call") {
         var callee = edge.Exp[0];
@@ -143,6 +160,9 @@ var ignoreFunctions = {
     // generic to ignore by itself.
     "void* std::_Locale_impl::~_Locale_impl(int32)" : true,
 
+    // Bug 1056410 - devirtualization prevents the standard nsISupports::Release heuristic from working
+    "uint32 nsXPConnect::Release()" : true,
+
     // FIXME!
     "NS_LogInit": true,
     "NS_LogTerm": true,
@@ -171,7 +191,44 @@ var ignoreFunctions = {
     // And these are workarounds to avoid even more analysis work,
     // which would sadly still be needed even with bug 898815.
     "void js::AutoCompartment::AutoCompartment(js::ExclusiveContext*, JSCompartment*)": true,
+
+    // The nsScriptNameSpaceManager functions can't actually GC.  They
+    // just use a PLDHashTable which has function pointers, which makes the
+    // analysis think maybe they can.
+    "nsGlobalNameStruct* nsScriptNameSpaceManager::LookupNavigatorName(nsAString_internal*)": true,
+    "nsGlobalNameStruct* nsScriptNameSpaceManager::LookupName(nsAString_internal*, uint16**)": true,
+
+    // Similar to heap snapshot mock classes, and GTests below. This posts a
+    // synchronous runnable when a GTest fails, and we are pretty sure that the
+    // particular runnable it posts can't even GC, but the analysis isn't
+    // currently smart enough to determine that. In either case, this is (a)
+    // only in GTests, and (b) only when the Gtest has already failed. We have
+    // static and dynamic checks for no GC in the non-test code, and in the test
+    // code we fall back to only the dynamic checks.
+    "void test::RingbufferDumper::OnTestPartResult(testing::TestPartResult*)" : true,
+
+    "float64 JS_GetCurrentEmbedderTime()" : true,
+
+    "uint64 js::TenuringTracer::moveObjectToTenured(JSObject*, JSObject*, int32)" : true,
+    "uint32 js::TenuringTracer::moveObjectToTenured(JSObject*, JSObject*, int32)" : true,
 };
+
+function isProtobuf(name)
+{
+    return name.match(/\bgoogle::protobuf\b/) ||
+           name.match(/\bmozilla::devtools::protobuf\b/);
+}
+
+function isHeapSnapshotMockClass(name)
+{
+    return name.match(/\bMockWriter\b/) ||
+           name.match(/\bMockDeserializedNode\b/);
+}
+
+function isGTest(name)
+{
+    return name.match(/\btesting::/);
+}
 
 function ignoreGCFunction(mangled)
 {
@@ -181,8 +238,29 @@ function ignoreGCFunction(mangled)
     if (fun in ignoreFunctions)
         return true;
 
+    // The protobuf library, and [de]serialization code generated by the
+    // protobuf compiler, uses a _ton_ of function pointers but they are all
+    // internal. Easiest to just ignore that mess here.
+    if (isProtobuf(fun))
+        return true;
+
+    // Ignore anything that goes through heap snapshot GTests or mocked classes
+    // used in heap snapshot GTests. GTest and GMock expose a lot of virtual
+    // methods and function pointers that could potentially GC after an
+    // assertion has already failed (depending on user-provided code), but don't
+    // exhibit that behavior currently. For non-test code, we have dynamic and
+    // static checks that ensure we don't GC. However, for test code we opt out
+    // of static checks here, because of the above stated GMock/GTest issues,
+    // and rely on only the dynamic checks provided by AutoAssertCannotGC.
+    if (isHeapSnapshotMockClass(fun) || isGTest(fun))
+        return true;
+
     // Templatized function
     if (fun.indexOf("void nsCOMPtr<T>::Assert_NoQueryNeeded()") >= 0)
+        return true;
+
+    // These call through an 'op' function pointer.
+    if (fun.indexOf("js::WeakMap<Key, Value, HashPolicy>::getDelegate(") >= 0)
         return true;
 
     // XXX modify refillFreeList<NoGC> to not need data flow analysis to understand it cannot GC.
@@ -191,51 +269,41 @@ function ignoreGCFunction(mangled)
     return false;
 }
 
-function isRootedTypeName(name)
-{
-    if (name == "mozilla::ErrorResult" ||
-        name == "JSErrorResult" ||
-        name == "WrappableJSErrorResult" ||
-        name == "js::frontend::TokenStream" ||
-        name == "js::frontend::TokenStream::Position" ||
-        name == "ModuleCompiler" ||
-        name == "JSAddonId")
-    {
-        return true;
-    }
-    return false;
-}
-
 function stripUCSAndNamespace(name)
 {
-    if (name.startsWith('struct '))
-        name = name.substr(7);
-    if (name.startsWith('class '))
-        name = name.substr(6);
-    if (name.startsWith('const '))
-        name = name.substr(6);
-    if (name.startsWith('js::ctypes::'))
-        name = name.substr(12);
-    if (name.startsWith('js::'))
-        name = name.substr(4);
-    if (name.startsWith('JS::'))
-        name = name.substr(4);
-    if (name.startsWith('mozilla::dom::'))
-        name = name.substr(14);
-    if (name.startsWith('mozilla::'))
-        name = name.substr(9);
-
+    name = name.replace(/(struct|class|union|const) /g, "");
+    name = name.replace(/(js::ctypes::|js::|JS::|mozilla::dom::|mozilla::)/g, "");
     return name;
 }
 
-function isRootedPointerTypeName(name)
+function isRootedGCTypeName(name)
+{
+    return (name == "JSAddonId");
+}
+
+function isRootedGCPointerTypeName(name)
 {
     name = stripUCSAndNamespace(name);
 
     if (name.startsWith('MaybeRooted<'))
         return /\(js::AllowGC\)1u>::RootType/.test(name);
 
+    if (name == "ErrorResult" ||
+        name == "JSErrorResult" ||
+        name == "WrappableJSErrorResult" ||
+        name == "frontend::TokenStream" ||
+        name == "frontend::TokenStream::Position" ||
+        name == "ModuleValidator")
+    {
+        return true;
+    }
+
     return name.startsWith('Rooted') || name.startsWith('PersistentRooted');
+}
+
+function isRootedTypeName(name)
+{
+    return isRootedGCTypeName(name) || isRootedGCPointerTypeName(name);
 }
 
 function isUnsafeStorage(typeName)
@@ -244,13 +312,16 @@ function isUnsafeStorage(typeName)
     return typeName.startsWith('UniquePtr<');
 }
 
-function isSuppressConstructor(name)
+function isSuppressConstructor(varName)
 {
-    return name.indexOf("::AutoSuppressGC") != -1
-        || name.indexOf("::AutoAssertGCCallback") != -1
-        || name.indexOf("::AutoEnterAnalysis") != -1
-        || name.indexOf("::AutoSuppressGCAnalysis") != -1
-        || name.indexOf("::AutoIgnoreRootingHazards") != -1;
+    // varName[1] contains the unqualified name
+    return [
+        "AutoSuppressGC",
+        "AutoAssertGCCallback",
+        "AutoEnterAnalysis",
+        "AutoSuppressGCAnalysis",
+        "AutoIgnoreRootingHazards"
+    ].indexOf(varName[1]) != -1;
 }
 
 // nsISupports subclasses' methods may be scriptable (or overridden
@@ -278,6 +349,12 @@ function isOverridableField(initialCSU, csu, field)
         if (field == 'GetWindowProxy' || field == 'GetWindowProxyPreserveColor')
             return false;
     }
-
     return true;
+}
+
+function listNonGCPointers() {
+    return [
+        // Safe only because jsids are currently only made from pinned strings.
+        'NPIdentifier',
+    ];
 }

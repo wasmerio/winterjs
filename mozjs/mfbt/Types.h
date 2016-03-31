@@ -20,13 +20,6 @@
 
 /* Implement compiler and linker macros needed for APIs. */
 
-/* When building standalone JS, with the static API only, we don't want
- * to use any visibility attributes (especially not dllimport/dllexport).
- */
-#if defined(JS_STANDALONE) && defined(STATIC_JS_API)
-#define MOZ_FULLY_STATIC_MFBT 1
-#endif
-
 /*
  * MOZ_EXPORT is used to declare and define a symbol or type which is externally
  * visible to users of the current library.  It encapsulates various decorations
@@ -64,9 +57,7 @@
  * the export or import version of the macro, depending upon the compilation
  * mode.
  */
-#if defined(MOZ_FULLY_STATIC_MFBT)
-#  define MOZ_IMPORT_API /* nothing */
-#elif defined(_WIN32)
+#ifdef _WIN32
 #  if defined(__MWERKS__)
 #    define MOZ_IMPORT_API /* nothing */
 #  else
@@ -76,9 +67,7 @@
 #  define MOZ_IMPORT_API MOZ_EXPORT
 #endif
 
-#if defined(MOZ_FULLY_STATIC_MFBT)
-#  define MOZ_IMPORT_DATA /* nothing */
-#elif defined(_WIN32) && !defined(__MWERKS__)
+#if defined(_WIN32) && !defined(__MWERKS__)
 #  define MOZ_IMPORT_DATA  __declspec(dllimport)
 #else
 #  define MOZ_IMPORT_DATA  MOZ_EXPORT
@@ -89,10 +78,7 @@
  * export mfbt declarations when building mfbt, and they expose import mfbt
  * declarations when using mfbt.
  */
-#if defined(MOZ_FULLY_STATIC_MFBT)
-#  define MFBT_API     /* nothing */
-#  define MFBT_DATA    /* nothing */
-#elif defined(IMPL_MFBT)
+#if defined(IMPL_MFBT)
 #  define MFBT_API     MOZ_EXPORT
 #  define MFBT_DATA    MOZ_EXPORT
 #else

@@ -63,15 +63,15 @@ var ffi = function(enable) {
 }
 var f = asmLink(asmCompile('global','ffis',USE_ASM + "var ffi=ffis.ffi; function g(i) { i=i|0; ffi(i|0) } function f(i) { i=i|0; g(i|0) } return f"), null, {ffi});
 f(0);
-assertStackContainsSeq(stacks, "", true);
+assertStackContainsSeq(stacks, "");
 f(+1);
-assertStackContainsSeq(stacks, "", true);
+assertStackContainsSeq(stacks, "");
 f(0);
-assertStackContainsSeq(stacks, "<,g,f,>", true);
+assertStackContainsSeq(stacks, "<,g,f,>");
 f(-1);
-assertStackContainsSeq(stacks, "<,g,f,>", true);
+assertStackContainsSeq(stacks, "<,g,f,>");
 f(0);
-assertStackContainsSeq(stacks, "", true);
+assertStackContainsSeq(stacks, "");
 
 // Enable profiling for the rest of the tests.
 enableSPSProfiling();
@@ -82,43 +82,60 @@ assertEq(f(), 42);
 var stacks = disableSingleStepProfiling();
 assertStackContainsSeq(stacks, ">,f,>,>");
 
-var f = asmLink(asmCompile(USE_ASM + "function g(i) { i=i|0; return (i+1)|0 } function f() { return g(42)|0 } return f"));
-enableSingleStepProfiling();
-assertEq(f(), 43);
-var stacks = disableSingleStepProfiling();
-assertStackContainsSeq(stacks, ">,f,>,g,f,>,f,>,>");
+var m = asmCompile(USE_ASM + "function g(i) { i=i|0; return (i+1)|0 } function f() { return g(42)|0 } return f");
+for (var i = 0; i < 3; i++) {
+    var f = asmLink(m);
+    enableSingleStepProfiling();
+    assertEq(f(), 43);
+    var stacks = disableSingleStepProfiling();
+    assertStackContainsSeq(stacks, ">,f,>,g,f,>,f,>,>");
+}
 
-var f = asmLink(asmCompile(USE_ASM + "function g1() { return 1 } function g2() { return 2 } function f(i) { i=i|0; return TBL[i&1]()|0 } var TBL=[g1,g2]; return f"));
-enableSingleStepProfiling();
-assertEq(f(0), 1);
-assertEq(f(1), 2);
-var stacks = disableSingleStepProfiling();
-assertStackContainsSeq(stacks, ">,f,>,g1,f,>,f,>,>,>,f,>,g2,f,>,f,>,>");
+var m = asmCompile(USE_ASM + "function g1() { return 1 } function g2() { return 2 } function f(i) { i=i|0; return TBL[i&1]()|0 } var TBL=[g1,g2]; return f");
+for (var i = 0; i < 3; i++) {
+    var f = asmLink(m);
+    enableSingleStepProfiling();
+    assertEq(f(0), 1);
+    assertEq(f(1), 2);
+    var stacks = disableSingleStepProfiling();
+    assertStackContainsSeq(stacks, ">,f,>,g1,f,>,f,>,>,>,f,>,g2,f,>,f,>,>");
+}
 
 function testBuiltinD2D(name) {
-    var f = asmLink(asmCompile('g', USE_ASM + "var fun=g.Math." + name + "; function f(d) { d=+d; return +fun(d) } return f"), this);
-    enableSingleStepProfiling();
-    assertEq(f(.1), eval("Math." + name + "(.1)"));
-    var stacks = disableSingleStepProfiling();
-    assertStackContainsSeq(stacks, ">,f,>,Math." + name + ",f,>,f,>,>");
+    var m = asmCompile('g', USE_ASM + "var fun=g.Math." + name + "; function f(d) { d=+d; return +fun(d) } return f");
+    for (var i = 0; i < 3; i++) {
+        var f = asmLink(m, this);
+        enableSingleStepProfiling();
+        assertEq(f(.1), eval("Math." + name + "(.1)"));
+        var stacks = disableSingleStepProfiling();
+        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+    }
 }
 for (name of ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'ceil', 'floor', 'exp', 'log'])
     testBuiltinD2D(name);
+
 function testBuiltinF2F(name) {
-    var f = asmLink(asmCompile('g', USE_ASM + "var tof=g.Math.fround; var fun=g.Math." + name + "; function f(d) { d=tof(d); return tof(fun(d)) } return f"), this);
-    enableSingleStepProfiling();
-    assertEq(f(.1), eval("Math.fround(Math." + name + "(Math.fround(.1)))"));
-    var stacks = disableSingleStepProfiling();
-    assertStackContainsSeq(stacks, ">,f,>,Math." + name + ",f,>,f,>,>");
+    var m = asmCompile('g', USE_ASM + "var tof=g.Math.fround; var fun=g.Math." + name + "; function f(d) { d=tof(d); return tof(fun(d)) } return f");
+    for (var i = 0; i < 3; i++) {
+        var f = asmLink(m, this);
+        enableSingleStepProfiling();
+        assertEq(f(.1), eval("Math.fround(Math." + name + "(Math.fround(.1)))"));
+        var stacks = disableSingleStepProfiling();
+        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+    }
 }
 for (name of ['ceil', 'floor'])
     testBuiltinF2F(name);
+
 function testBuiltinDD2D(name) {
-    var f = asmLink(asmCompile('g', USE_ASM + "var fun=g.Math." + name + "; function f(d, e) { d=+d; e=+e; return +fun(d,e) } return f"), this);
-    enableSingleStepProfiling();
-    assertEq(f(.1, .2), eval("Math." + name + "(.1, .2)"));
-    var stacks = disableSingleStepProfiling();
-    assertStackContainsSeq(stacks, ">,f,>,Math." + name + ",f,>,f,>,>");
+    var m = asmCompile('g', USE_ASM + "var fun=g.Math." + name + "; function f(d, e) { d=+d; e=+e; return +fun(d,e) } return f");
+    for (var i = 0; i < 3; i++) {
+        var f = asmLink(m, this);
+        enableSingleStepProfiling();
+        assertEq(f(.1, .2), eval("Math." + name + "(.1, .2)"));
+        var stacks = disableSingleStepProfiling();
+        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+    }
 }
 for (name of ['atan2', 'pow'])
     testBuiltinDD2D(name);
@@ -185,16 +202,6 @@ var stacks = disableSingleStepProfiling();
 assertStackContainsSeq(stacks, ">,f1,>,<,f1,>,>,<,f1,>,f2,>,<,f1,>,<,f2,>,<,f1,>,f2,>,<,f1,>,>,<,f1,>,<,f1,>,f1,>,>");
 
 
-// Detachment exit
-var buf = new ArrayBuffer(BUF_CHANGE_MIN);
-var ffi = function() { neuter(buf, 'change-data') }
-var f = asmLink(asmCompile('g','ffis','buf', USE_ASM + 'var ffi = ffis.ffi; var i32 = new g.Int32Array(buf); function f() { ffi() } return f'), this, {ffi:ffi}, buf);
-enableSingleStepProfiling();
-assertThrowsInstanceOf(f, InternalError);
-var stacks = disableSingleStepProfiling();
-assertStackContainsSeq(stacks, ">,f,>,<,f,>,inline stub,f,>,<,f,>,inline stub,f,>");
-
-
 if (isSimdAvailable() && typeof SIMD !== 'undefined') {
     // SIMD out-of-bounds exit
     var buf = new ArrayBuffer(0x10000);
@@ -207,6 +214,15 @@ if (isSimdAvailable() && typeof SIMD !== 'undefined') {
     assertStackContainsSeq(stacks, ">,f,>,inline stub,f,>");
 }
 
+
+// Thunks
+setJitCompilerOption("jump-threshold", 0);
+var h = asmLink(asmCompile(USE_ASM + 'function f() {} function g() { f() } function h() { g() } return h'));
+enableSingleStepProfiling();
+h();
+var stacks = disableSingleStepProfiling();
+assertStackContainsSeq(stacks, ">,h,>,g,h,>,f,g,h,>,g,h,>,h,>,>");
+setJitCompilerOption("jump-threshold", -1);
 
 // This takes forever to run.
 // Stack-overflow exit test

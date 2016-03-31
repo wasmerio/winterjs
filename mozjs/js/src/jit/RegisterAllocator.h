@@ -31,7 +31,7 @@ class LIRGenerator;
 //   streamline the process of prototyping new allocators.
 struct AllocationIntegrityState
 {
-    explicit AllocationIntegrityState(LIRGraph &graph)
+    explicit AllocationIntegrityState(LIRGraph& graph)
       : graph(graph)
     {}
 
@@ -47,7 +47,7 @@ struct AllocationIntegrityState
 
   private:
 
-    LIRGraph &graph;
+    LIRGraph& graph;
 
     // For all instructions and phis in the graph, keep track of the virtual
     // registers for all inputs and outputs of the nodes. These are overwritten
@@ -63,11 +63,15 @@ struct AllocationIntegrityState
         InstructionInfo()
         { }
 
-        InstructionInfo(const InstructionInfo &o)
+        InstructionInfo(const InstructionInfo& o)
         {
-            inputs.appendAll(o.inputs);
-            temps.appendAll(o.temps);
-            outputs.appendAll(o.outputs);
+            AutoEnterOOMUnsafeRegion oomUnsafe;
+            if (!inputs.appendAll(o.inputs) ||
+                !temps.appendAll(o.temps) ||
+                !outputs.appendAll(o.outputs))
+            {
+                oomUnsafe.crash("InstructionInfo::InstructionInfo");
+            }
         }
     };
     Vector<InstructionInfo, 0, SystemAllocPolicy> instructions;
@@ -75,8 +79,10 @@ struct AllocationIntegrityState
     struct BlockInfo {
         Vector<InstructionInfo, 5, SystemAllocPolicy> phis;
         BlockInfo() {}
-        BlockInfo(const BlockInfo &o) {
-            phis.appendAll(o.phis);
+        BlockInfo(const BlockInfo& o) {
+            AutoEnterOOMUnsafeRegion oomUnsafe;
+            if (!phis.appendAll(o.phis))
+                oomUnsafe.crash("BlockInfo::BlockInfo");
         }
     };
     Vector<BlockInfo, 0, SystemAllocPolicy> blocks;
@@ -88,7 +94,7 @@ struct AllocationIntegrityState
     // physically stored in alloc after the register allocation.
     struct IntegrityItem
     {
-        LBlock *block;
+        LBlock* block;
         uint32_t vreg;
         LAllocation alloc;
 
@@ -96,13 +102,13 @@ struct AllocationIntegrityState
         uint32_t index;
 
         typedef IntegrityItem Lookup;
-        static HashNumber hash(const IntegrityItem &item) {
+        static HashNumber hash(const IntegrityItem& item) {
             HashNumber hash = item.alloc.hash();
             hash = mozilla::RotateLeft(hash, 4) ^ item.vreg;
             hash = mozilla::RotateLeft(hash, 4) ^ HashNumber(item.block->mir()->id());
             return hash;
         }
-        static bool match(const IntegrityItem &one, const IntegrityItem &two) {
+        static bool match(const IntegrityItem& one, const IntegrityItem& two) {
             return one.block == two.block
                 && one.vreg == two.vreg
                 && one.alloc == two.alloc;
@@ -116,11 +122,11 @@ struct AllocationIntegrityState
     typedef HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy> IntegrityItemSet;
     IntegrityItemSet seen;
 
-    bool checkIntegrity(LBlock *block, LInstruction *ins, uint32_t vreg, LAllocation alloc,
+    bool checkIntegrity(LBlock* block, LInstruction* ins, uint32_t vreg, LAllocation alloc,
                         bool populateSafepoints);
-    bool checkSafepointAllocation(LInstruction *ins, uint32_t vreg, LAllocation alloc,
+    bool checkSafepointAllocation(LInstruction* ins, uint32_t vreg, LAllocation alloc,
                                   bool populateSafepoints);
-    bool addPredecessor(LBlock *block, uint32_t vreg, LAllocation alloc);
+    bool addPredecessor(LBlock* block, uint32_t vreg, LAllocation alloc);
 
     void dump();
 };
@@ -220,30 +226,30 @@ class CodePosition
 // Structure to track all moves inserted next to instructions in a graph.
 class InstructionDataMap
 {
-    FixedList<LNode *> insData_;
+    FixedList<LNode*> insData_;
 
   public:
     InstructionDataMap()
       : insData_()
     { }
 
-    bool init(MIRGenerator *gen, uint32_t numInstructions) {
+    bool init(MIRGenerator* gen, uint32_t numInstructions) {
         if (!insData_.init(gen->alloc(), numInstructions))
             return false;
-        memset(&insData_[0], 0, sizeof(LNode *) * numInstructions);
+        memset(&insData_[0], 0, sizeof(LNode*) * numInstructions);
         return true;
     }
 
-    LNode *&operator[](CodePosition pos) {
+    LNode*& operator[](CodePosition pos) {
         return operator[](pos.ins());
     }
-    LNode *const &operator[](CodePosition pos) const {
+    LNode* const& operator[](CodePosition pos) const {
         return operator[](pos.ins());
     }
-    LNode *&operator[](uint32_t ins) {
+    LNode*& operator[](uint32_t ins) {
         return insData_[ins];
     }
-    LNode *const &operator[](uint32_t ins) const {
+    LNode* const& operator[](uint32_t ins) const {
         return insData_[ins];
     }
 };
@@ -251,22 +257,24 @@ class InstructionDataMap
 // Common superclass for register allocators.
 class RegisterAllocator
 {
-    void operator=(const RegisterAllocator &) = delete;
-    RegisterAllocator(const RegisterAllocator &) = delete;
+    void operator=(const RegisterAllocator&) = delete;
+    RegisterAllocator(const RegisterAllocator&) = delete;
 
   protected:
     // Context
-    MIRGenerator *mir;
-    LIRGenerator *lir;
-    LIRGraph &graph;
+    MIRGenerator* mir;
+    LIRGenerator* lir;
+    LIRGraph& graph;
 
     // Pool of all registers that should be considered allocateable
-    RegisterSet allRegisters_;
+    AllocatableRegisterSet allRegisters_;
 
     // Computed data
     InstructionDataMap insData;
+    Vector<CodePosition, 12, SystemAllocPolicy> entryPositions;
+    Vector<CodePosition, 12, SystemAllocPolicy> exitPositions;
 
-    RegisterAllocator(MIRGenerator *mir, LIRGenerator *lir, LIRGraph &graph)
+    RegisterAllocator(MIRGenerator* mir, LIRGenerator* lir, LIRGraph& graph)
       : mir(mir),
         lir(lir),
         graph(graph),
@@ -275,8 +283,12 @@ class RegisterAllocator
         if (mir->compilingAsmJS()) {
 #if defined(JS_CODEGEN_X64)
             allRegisters_.take(AnyRegister(HeapReg));
-#elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
+#elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
             allRegisters_.take(AnyRegister(HeapReg));
+            allRegisters_.take(AnyRegister(GlobalReg));
+#elif defined(JS_CODEGEN_ARM64)
+            allRegisters_.take(AnyRegister(HeapReg));
+            allRegisters_.take(AnyRegister(HeapLenReg));
             allRegisters_.take(AnyRegister(GlobalReg));
 #endif
         } else {
@@ -287,59 +299,57 @@ class RegisterAllocator
 
     bool init();
 
-    TempAllocator &alloc() const {
+    TempAllocator& alloc() const {
         return mir->alloc();
     }
 
-    CodePosition outputOf(const LNode *ins) const {
+    CodePosition outputOf(const LNode* ins) const {
         return ins->isPhi()
                ? outputOf(ins->toPhi())
                : outputOf(ins->toInstruction());
     }
-    CodePosition outputOf(const LPhi *ins) const {
+    CodePosition outputOf(const LPhi* ins) const {
         // All phis in a block write their outputs after all of them have
         // read their inputs. Consequently, it doesn't make sense to talk
         // about code positions in the middle of a series of phis.
-        LBlock *block = ins->block();
+        LBlock* block = ins->block();
         return CodePosition(block->getPhi(block->numPhis() - 1)->id(), CodePosition::OUTPUT);
     }
-    CodePosition outputOf(const LInstruction *ins) const {
+    CodePosition outputOf(const LInstruction* ins) const {
         return CodePosition(ins->id(), CodePosition::OUTPUT);
     }
-    CodePosition inputOf(const LNode *ins) const {
+    CodePosition inputOf(const LNode* ins) const {
         return ins->isPhi()
                ? inputOf(ins->toPhi())
                : inputOf(ins->toInstruction());
     }
-    CodePosition inputOf(const LPhi *ins) const {
+    CodePosition inputOf(const LPhi* ins) const {
         // All phis in a block read their inputs before any of them write their
         // outputs. Consequently, it doesn't make sense to talk about code
         // positions in the middle of a series of phis.
         return CodePosition(ins->block()->getPhi(0)->id(), CodePosition::INPUT);
     }
-    CodePosition inputOf(const LInstruction *ins) const {
+    CodePosition inputOf(const LInstruction* ins) const {
         return CodePosition(ins->id(), CodePosition::INPUT);
     }
-    CodePosition entryOf(const LBlock *block) {
-        return block->numPhis() != 0
-               ? CodePosition(block->getPhi(0)->id(), CodePosition::INPUT)
-               : inputOf(block->firstInstructionWithId());
+    CodePosition entryOf(const LBlock* block) {
+        return entryPositions[block->mir()->id()];
     }
-    CodePosition exitOf(const LBlock *block) {
-        return outputOf(block->lastInstructionWithId());
+    CodePosition exitOf(const LBlock* block) {
+        return exitPositions[block->mir()->id()];
     }
 
-    LMoveGroup *getInputMoveGroup(LInstruction *ins);
-    LMoveGroup *getMoveGroupAfter(LInstruction *ins);
+    LMoveGroup* getInputMoveGroup(LInstruction* ins);
+    LMoveGroup* getMoveGroupAfter(LInstruction* ins);
 
-    CodePosition minimalDefEnd(LNode *ins) {
+    CodePosition minimalDefEnd(LNode* ins) {
         // Compute the shortest interval that captures vregs defined by ins.
-        // Watch for instructions that are followed by an OSI point and/or Nop.
+        // Watch for instructions that are followed by an OSI point.
         // If moves are introduced between the instruction and the OSI point then
         // safepoint information for the instruction may be incorrect.
         while (true) {
-            LNode *next = insData[ins->id() + 1];
-            if (!next->isNop() && !next->isOsiPoint())
+            LNode* next = insData[ins->id() + 1];
+            if (!next->isOsiPoint())
                 break;
             ins = next;
         }
@@ -351,7 +361,7 @@ class RegisterAllocator
 };
 
 static inline AnyRegister
-GetFixedRegister(const LDefinition *def, const LUse *use)
+GetFixedRegister(const LDefinition* def, const LUse* use)
 {
     return def->isFloatReg()
            ? AnyRegister(FloatRegister::FromCode(use->registerCode()))

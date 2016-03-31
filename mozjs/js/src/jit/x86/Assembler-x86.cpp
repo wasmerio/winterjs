@@ -32,6 +32,7 @@ ABIArgGenerator::next(MIRType type)
         break;
       case MIRType_Int32x4:
       case MIRType_Float32x4:
+      case MIRType_Bool32x4:
         // SIMD values aren't passed in or out of C++, so we can make up
         // whatever internal ABI we like. visitAsmJSPassArg assumes
         // SimdMemoryAlignment.
@@ -52,12 +53,12 @@ const Register ABIArgGenerator::NonArg_VolatileReg = eax;
 const Register ABIArgGenerator::NonReturn_VolatileReg0 = ecx;
 
 void
-Assembler::executableCopy(uint8_t *buffer)
+Assembler::executableCopy(uint8_t* buffer)
 {
     AssemblerX86Shared::executableCopy(buffer);
 
     for (size_t i = 0; i < jumps_.length(); i++) {
-        RelativePatch &rp = jumps_[i];
+        RelativePatch& rp = jumps_[i];
         X86Encoding::SetRel32(buffer + rp.offset, rp.target);
     }
 }
@@ -68,7 +69,7 @@ class RelocationIterator
     uint32_t offset_;
 
   public:
-    RelocationIterator(CompactBufferReader &reader)
+    RelocationIterator(CompactBufferReader& reader)
       : reader_(reader)
     { }
 
@@ -84,60 +85,20 @@ class RelocationIterator
     }
 };
 
-static inline JitCode *
-CodeFromJump(uint8_t *jump)
+static inline JitCode*
+CodeFromJump(uint8_t* jump)
 {
-    uint8_t *target = (uint8_t *)X86Encoding::GetRel32Target(jump);
+    uint8_t* target = (uint8_t*)X86Encoding::GetRel32Target(jump);
     return JitCode::FromExecutable(target);
 }
 
 void
-Assembler::TraceJumpRelocations(JSTracer *trc, JitCode *code, CompactBufferReader &reader)
+Assembler::TraceJumpRelocations(JSTracer* trc, JitCode* code, CompactBufferReader& reader)
 {
     RelocationIterator iter(reader);
     while (iter.read()) {
-        JitCode *child = CodeFromJump(code->raw() + iter.offset());
-        MarkJitCodeUnbarriered(trc, &child, "rel32");
+        JitCode* child = CodeFromJump(code->raw() + iter.offset());
+        TraceManuallyBarrieredEdge(trc, &child, "rel32");
         MOZ_ASSERT(child == CodeFromJump(code->raw() + iter.offset()));
     }
-}
-
-FloatRegisterSet
-FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
-{
-    if (JitSupportsSimd())
-        return s;
-
-    // Ignore all SIMD register.
-    return FloatRegisterSet(s.bits() & (Codes::AllPhysMask * Codes::SpreadScalar));
-}
-uint32_t
-FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
-{
-    SetType all = s.bits();
-    SetType float32x4Set =
-        (all >> (uint32_t(Codes::Float32x4) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType int32x4Set =
-        (all >> (uint32_t(Codes::Int32x4) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType doubleSet =
-        (all >> (uint32_t(Codes::Double) * Codes::TotalPhys)) & Codes::AllPhysMask;
-    SetType singleSet =
-        (all >> (uint32_t(Codes::Single) * Codes::TotalPhys)) & Codes::AllPhysMask;
-
-    // PushRegsInMask pushes the largest register first, and thus avoids pushing
-    // aliased registers. So we have to filter out the physical registers which
-    // are already pushed as part of larger registers.
-    SetType set128b = int32x4Set | float32x4Set;
-    SetType set64b = doubleSet & ~set128b;
-    SetType set32b = singleSet & ~set64b  & ~set128b;
-
-    static_assert(Codes::AllPhysMask <= 0xffff, "We can safely use CountPopulation32");
-    return mozilla::CountPopulation32(set128b) * (4 * sizeof(int32_t))
-        + mozilla::CountPopulation32(set64b) * sizeof(double)
-        + mozilla::CountPopulation32(set32b) * sizeof(float);
-}
-uint32_t
-FloatRegister::getRegisterDumpOffsetInBytes()
-{
-    return uint32_t(encoding()) * sizeof(FloatRegisters::RegisterContent);
 }

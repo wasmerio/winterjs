@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-if CONFIG['MOZ_NATIVE_SQLITE']:
+if CONFIG['MOZ_SYSTEM_SQLITE']:
     Library('sqlite')
     OS_LIBS += CONFIG['SQLITE_LIBS']
 else:
@@ -19,5 +19,4 @@ else:
         SharedLibrary('sqlite')
         SHARED_LIBRARY_NAME = 'mozsqlite3'
 
-        if CONFIG['OS_ARCH'] == 'Linux' and CONFIG['GCC_USE_GNU_LD']:
-            LD_VERSION_SCRIPT = 'sqlite-processed.def'
+        SYMBOLS_FILE = '/db/sqlite3/src/sqlite.symbols'

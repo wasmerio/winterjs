@@ -21,57 +21,62 @@ namespace jit {
 
 class Linker
 {
-    MacroAssembler &masm;
+    MacroAssembler& masm;
+    mozilla::Maybe<AutoWritableJitCode> awjc;
 
-    JitCode *fail(JSContext *cx) {
+    JitCode* fail(JSContext* cx) {
         ReportOutOfMemory(cx);
         return nullptr;
     }
 
   public:
-    explicit Linker(MacroAssembler &masm)
+    explicit Linker(MacroAssembler& masm)
       : masm(masm)
     {
         masm.finish();
     }
 
     template <AllowGC allowGC>
-    JitCode *newCode(JSContext *cx, CodeKind kind) {
-        MOZ_ASSERT(masm.numAsmJSAbsoluteLinks() == 0);
+    JitCode* newCode(JSContext* cx, CodeKind kind, bool hasPatchableBackedges = false) {
+        MOZ_ASSERT(masm.numAsmJSAbsoluteAddresses() == 0);
+        MOZ_ASSERT_IF(hasPatchableBackedges, kind == ION_CODE);
 
         gc::AutoSuppressGC suppressGC(cx);
         if (masm.oom())
             return fail(cx);
 
-        ExecutablePool *pool;
-        size_t bytesNeeded = masm.bytesNeeded() + sizeof(JitCode *) + CodeAlignment;
+        ExecutablePool* pool;
+        size_t bytesNeeded = masm.bytesNeeded() + sizeof(JitCode*) + CodeAlignment;
         if (bytesNeeded >= MAX_BUFFER_SIZE)
             return fail(cx);
 
         // ExecutableAllocator requires bytesNeeded to be word-size aligned.
-        bytesNeeded = AlignBytes(bytesNeeded, sizeof(void *));
+        bytesNeeded = AlignBytes(bytesNeeded, sizeof(void*));
 
-        ExecutableAllocator &execAlloc = cx->runtime()->jitRuntime()->execAlloc();
-        uint8_t *result = (uint8_t *)execAlloc.alloc(bytesNeeded, &pool, kind);
+        ExecutableAllocator& execAlloc = hasPatchableBackedges
+                                       ? cx->runtime()->jitRuntime()->backedgeExecAlloc()
+                                       : cx->runtime()->jitRuntime()->execAlloc();
+        uint8_t* result = (uint8_t*)execAlloc.alloc(bytesNeeded, &pool, kind);
         if (!result)
             return fail(cx);
 
         // The JitCode pointer will be stored right before the code buffer.
-        uint8_t *codeStart = result + sizeof(JitCode *);
+        uint8_t* codeStart = result + sizeof(JitCode*);
 
         // Bump the code up to a nice alignment.
-        codeStart = (uint8_t *)AlignBytes((uintptr_t)codeStart, CodeAlignment);
+        codeStart = (uint8_t*)AlignBytes((uintptr_t)codeStart, CodeAlignment);
         uint32_t headerSize = codeStart - result;
-        JitCode *code = JitCode::New<allowGC>(cx, codeStart, bytesNeeded - headerSize,
+        JitCode* code = JitCode::New<allowGC>(cx, codeStart, bytesNeeded - headerSize,
                                               headerSize, pool, kind);
         if (!code)
             return nullptr;
         if (masm.oom())
             return fail(cx);
+        awjc.emplace(result, bytesNeeded);
         code->copyFrom(masm);
         masm.link(code);
         if (masm.embedsNurseryPointers())
-            cx->runtime()->gc.storeBuffer.putWholeCellFromMainThread(code);
+            cx->runtime()->gc.storeBuffer.putWholeCell(code);
         return code;
     }
 };

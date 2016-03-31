@@ -16,7 +16,7 @@ namespace js {
 namespace jit {
 
 void
-LIRGeneratorShared::emitAtUses(MInstruction *mir)
+LIRGeneratorShared::emitAtUses(MInstruction* mir)
 {
     MOZ_ASSERT(mir->canEmitAtUses());
     mir->setEmittedAtUses();
@@ -24,11 +24,12 @@ LIRGeneratorShared::emitAtUses(MInstruction *mir)
 }
 
 LUse
-LIRGeneratorShared::use(MDefinition *mir, LUse policy)
+LIRGeneratorShared::use(MDefinition* mir, LUse policy)
 {
     // It is illegal to call use() on an instruction with two defs.
 #if BOX_PIECES > 1
     MOZ_ASSERT(mir->type() != MIRType_Value);
+    MOZ_ASSERT(mir->type() != MIRType_Int64);
 #endif
     ensureDefined(mir);
     policy.setVirtualRegister(mir->virtualRegister());
@@ -36,7 +37,7 @@ LIRGeneratorShared::use(MDefinition *mir, LUse policy)
 }
 
 template <size_t X> void
-LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X> *lir, MDefinition *mir,
+LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X>* lir, MDefinition* mir,
                            LDefinition::Policy policy)
 {
     LDefinition::Type type = LDefinition::TypeFrom(mir->type());
@@ -44,8 +45,8 @@ LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X> *lir,
 }
 
 template <size_t X> void
-LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X> *lir, MDefinition *mir,
-                           const LDefinition &def)
+LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X>* lir, MDefinition* mir,
+                           const LDefinition& def)
 {
     // Call instructions should use defineReturn.
     MOZ_ASSERT(!lir->isCall());
@@ -62,23 +63,47 @@ LIRGeneratorShared::define(details::LInstructionFixedDefsTempsHelper<1, X> *lir,
 }
 
 template <size_t X, size_t Y> void
-LIRGeneratorShared::defineFixed(LInstructionHelper<1, X, Y> *lir, MDefinition *mir, const LAllocation &output)
+LIRGeneratorShared::defineFixed(LInstructionHelper<1, X, Y>* lir, MDefinition* mir, const LAllocation& output)
 {
     LDefinition::Type type = LDefinition::TypeFrom(mir->type());
 
     LDefinition def(type, LDefinition::FIXED);
     def.setOutput(output);
 
-    // Add an LNop to avoid regalloc problems if the next op uses this value
-    // with a fixed or at-start policy.
     define(lir, mir, def);
-
-    if (gen->optimizationInfo().registerAllocator() == RegisterAllocator_LSRA)
-        add(new(alloc()) LNop);
 }
 
 template <size_t Ops, size_t Temps> void
-LIRGeneratorShared::defineReuseInput(LInstructionHelper<1, Ops, Temps> *lir, MDefinition *mir, uint32_t operand)
+LIRGeneratorShared::defineInt64Fixed(LInstructionHelper<INT64_PIECES, Ops, Temps>* lir, MDefinition* mir,
+                                     const LInt64Allocation& output)
+{
+    uint32_t vreg = getVirtualRegister();
+
+#if JS_BITS_PER_WORD == 64
+    LDefinition def(LDefinition::GENERAL, LDefinition::FIXED);
+    def.setOutput(output.value());
+    lir->setDef(0, def);
+    lir->getDef(0)->setVirtualRegister(vreg);
+#else
+    LDefinition def0(LDefinition::GENERAL, LDefinition::FIXED);
+    def0.setOutput(output.low());
+    lir->setDef(0, def0);
+    lir->getDef(0)->setVirtualRegister(vreg);
+
+    getVirtualRegister();
+    LDefinition def1(LDefinition::GENERAL, LDefinition::FIXED);
+    def1.setOutput(output.high());
+    lir->setDef(1, def1);
+    lir->getDef(1)->setVirtualRegister(vreg + 1);
+#endif
+
+    lir->setMir(mir);
+    mir->setVirtualRegister(vreg);
+    add(lir);
+}
+
+template <size_t Ops, size_t Temps> void
+LIRGeneratorShared::defineReuseInput(LInstructionHelper<1, Ops, Temps>* lir, MDefinition* mir, uint32_t operand)
 {
     // The input should be used at the start of the instruction, to avoid moves.
     MOZ_ASSERT(lir->getOperand(operand)->toUse()->usedAtStart());
@@ -92,11 +117,41 @@ LIRGeneratorShared::defineReuseInput(LInstructionHelper<1, Ops, Temps> *lir, MDe
 }
 
 template <size_t Ops, size_t Temps> void
-LIRGeneratorShared::defineBox(LInstructionHelper<BOX_PIECES, Ops, Temps> *lir, MDefinition *mir,
+LIRGeneratorShared::defineInt64ReuseInput(LInstructionHelper<INT64_PIECES, Ops, Temps>* lir,
+                                          MDefinition* mir, uint32_t operand)
+{
+    // The input should be used at the start of the instruction, to avoid moves.
+    MOZ_ASSERT(lir->getOperand(operand)->toUse()->usedAtStart());
+    MOZ_ASSERT(!lir->isCall());
+
+    uint32_t vreg = getVirtualRegister();
+
+    LDefinition def1(LDefinition::GENERAL, LDefinition::MUST_REUSE_INPUT);
+    def1.setReusedInput(operand);
+    lir->setDef(0, def1);
+    lir->getDef(0)->setVirtualRegister(vreg);
+
+#if JS_BITS_PER_WORD == 32
+    getVirtualRegister();
+    LDefinition def2(LDefinition::GENERAL, LDefinition::MUST_REUSE_INPUT);
+    def2.setReusedInput(operand + 1);
+    lir->setDef(1, def2);
+    lir->getDef(1)->setVirtualRegister(vreg + 1);
+#endif
+
+    lir->setMir(mir);
+    mir->setVirtualRegister(vreg);
+    add(lir);
+
+}
+
+template <size_t Ops, size_t Temps> void
+LIRGeneratorShared::defineBox(LInstructionHelper<BOX_PIECES, Ops, Temps>* lir, MDefinition* mir,
                               LDefinition::Policy policy)
 {
     // Call instructions should use defineReturn.
     MOZ_ASSERT(!lir->isCall());
+    MOZ_ASSERT(mir->type() == MIRType_Value);
 
     uint32_t vreg = getVirtualRegister();
 
@@ -113,8 +168,55 @@ LIRGeneratorShared::defineBox(LInstructionHelper<BOX_PIECES, Ops, Temps> *lir, M
     add(lir);
 }
 
+template <size_t Ops, size_t Temps> void
+LIRGeneratorShared::defineInt64(LInstructionHelper<INT64_PIECES, Ops, Temps>* lir, MDefinition* mir,
+                                LDefinition::Policy policy)
+{
+    // Call instructions should use defineReturn.
+    MOZ_ASSERT(!lir->isCall());
+    MOZ_ASSERT(mir->type() == MIRType_Int64);
+
+    uint32_t vreg = getVirtualRegister();
+
+#if JS_BITS_PER_WORD == 32
+    lir->setDef(0, LDefinition(vreg, LDefinition::GENERAL, policy));
+    lir->setDef(1, LDefinition(vreg + 1, LDefinition::GENERAL, policy));
+    getVirtualRegister();
+#else
+    lir->setDef(0, LDefinition(vreg, LDefinition::GENERAL, policy));
+#endif
+    lir->setMir(mir);
+
+    mir->setVirtualRegister(vreg);
+    add(lir);
+}
+
 void
-LIRGeneratorShared::defineReturn(LInstruction *lir, MDefinition *mir)
+LIRGeneratorShared::defineSharedStubReturn(LInstruction* lir, MDefinition* mir)
+{
+    lir->setMir(mir);
+
+    MOZ_ASSERT(lir->isBinarySharedStub() || lir->isUnarySharedStub());
+    MOZ_ASSERT(mir->type() == MIRType_Value);
+
+    uint32_t vreg = getVirtualRegister();
+
+#if defined(JS_NUNBOX32)
+    lir->setDef(TYPE_INDEX, LDefinition(vreg + VREG_TYPE_OFFSET, LDefinition::TYPE,
+                                        LGeneralReg(JSReturnReg_Type)));
+    lir->setDef(PAYLOAD_INDEX, LDefinition(vreg + VREG_DATA_OFFSET, LDefinition::PAYLOAD,
+                                           LGeneralReg(JSReturnReg_Data)));
+    getVirtualRegister();
+#elif defined(JS_PUNBOX64)
+    lir->setDef(0, LDefinition(vreg, LDefinition::BOX, LGeneralReg(JSReturnReg)));
+#endif
+
+    mir->setVirtualRegister(vreg);
+    add(lir);
+}
+
+void
+LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir)
 {
     lir->setMir(mir);
 
@@ -140,11 +242,12 @@ LIRGeneratorShared::defineReturn(LInstruction *lir, MDefinition *mir)
       case MIRType_Double:
         lir->setDef(0, LDefinition(vreg, LDefinition::DOUBLE, LFloatReg(ReturnDoubleReg)));
         break;
+      case MIRType_Bool32x4:
       case MIRType_Int32x4:
-        lir->setDef(0, LDefinition(vreg, LDefinition::INT32X4, LFloatReg(ReturnInt32x4Reg)));
+        lir->setDef(0, LDefinition(vreg, LDefinition::INT32X4, LFloatReg(ReturnSimd128Reg)));
         break;
       case MIRType_Float32x4:
-        lir->setDef(0, LDefinition(vreg, LDefinition::FLOAT32X4, LFloatReg(ReturnFloat32x4Reg)));
+        lir->setDef(0, LDefinition(vreg, LDefinition::FLOAT32X4, LFloatReg(ReturnSimd128Reg)));
         break;
       default:
         LDefinition::Type type = LDefinition::TypeFrom(mir->type());
@@ -155,9 +258,39 @@ LIRGeneratorShared::defineReturn(LInstruction *lir, MDefinition *mir)
 
     mir->setVirtualRegister(vreg);
     add(lir);
+}
 
-    if (gen->optimizationInfo().registerAllocator() == RegisterAllocator_LSRA)
-        add(new(alloc()) LNop);
+template <size_t Ops, size_t Temps> void
+LIRGeneratorShared::defineSinCos(LInstructionHelper<2, Ops, Temps> *lir, MDefinition *mir,
+                                 LDefinition::Policy policy)
+{
+    MOZ_ASSERT(lir->isCall());
+
+    uint32_t vreg = getVirtualRegister();
+    lir->setDef(0, LDefinition(vreg, LDefinition::DOUBLE, LFloatReg(ReturnDoubleReg)));
+#if defined(JS_CODEGEN_ARM)
+    lir->setDef(1, LDefinition(vreg + VREG_INCREMENT, LDefinition::DOUBLE,
+                LFloatReg(FloatRegister(FloatRegisters::d1, FloatRegister::Double))));
+#elif defined(JS_CODEGEN_ARM64)
+    lir->setDef(1, LDefinition(vreg + VREG_INCREMENT, LDefinition::DOUBLE,
+                LFloatReg(FloatRegister(FloatRegisters::d1, FloatRegisters::Double))));
+#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+    lir->setDef(1, LDefinition(vreg + VREG_INCREMENT, LDefinition::DOUBLE, LFloatReg(f2)));
+#elif defined(JS_CODEGEN_NONE)
+    MOZ_CRASH();
+#elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+    lir->setDef(1, LDefinition(vreg + VREG_INCREMENT, LDefinition::DOUBLE, LFloatReg(xmm1)));
+#else
+#error "Unsupported architecture for SinCos"
+#endif
+
+    getVirtualRegister();
+
+    lir->setMir(mir);
+    mir->setVirtualRegister(vreg);
+    add(lir);
+
+    return;
 }
 
 // In LIR, we treat booleans and integers as the same low-level type (INTEGER).
@@ -179,8 +312,32 @@ IsCompatibleLIRCoercion(MIRType to, MIRType from)
     return false;
 }
 
+
+// We can redefine the sin(x) and cos(x) function to return the sincos result.
 void
-LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
+LIRGeneratorShared::redefine(MDefinition* def, MDefinition* as, MMathFunction::Function func)
+{
+    MOZ_ASSERT(def->isMathFunction());
+    MOZ_ASSERT(def->type() == MIRType_Double && as->type() == MIRType_SinCosDouble);
+    MOZ_ASSERT(MMathFunction::Sin == func || MMathFunction::Cos == func);
+
+    ensureDefined(as);
+    MMathFunction *math = def->toMathFunction();
+
+    MOZ_ASSERT(math->function() == MMathFunction::Cos ||
+               math->function() == MMathFunction::Sin);
+
+    // The sincos returns two values:
+    // - VREG: it returns the sin's value of the sincos;
+    // - VREG + VREG_INCREMENT: it returns the cos' value of the sincos.
+    if (math->function() == MMathFunction::Sin)
+        def->setVirtualRegister(as->virtualRegister());
+    else
+        def->setVirtualRegister(as->virtualRegister() + VREG_INCREMENT);
+}
+
+void
+LIRGeneratorShared::redefine(MDefinition* def, MDefinition* as)
 {
     MOZ_ASSERT(IsCompatibleLIRCoercion(def->type(), as->type()));
 
@@ -193,13 +350,12 @@ LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
           (def->type() == MIRType_Int32 || def->type() == MIRType_Boolean) &&
           (as->type() == MIRType_Int32 || as->type() == MIRType_Boolean))))
     {
-        MInstruction *replacement;
+        MInstruction* replacement;
         if (def->type() != as->type()) {
-            Value v = as->toConstant()->value();
             if (as->type() == MIRType_Int32)
-                replacement = MConstant::New(alloc(), BooleanValue(v.toInt32()));
+                replacement = MConstant::New(alloc(), BooleanValue(as->toConstant()->toInt32()));
             else
-                replacement = MConstant::New(alloc(), Int32Value(v.toBoolean()));
+                replacement = MConstant::New(alloc(), Int32Value(as->toConstant()->toBoolean()));
             def->block()->insertBefore(def->toInstruction(), replacement);
             emitAtUses(replacement->toInstruction());
         } else {
@@ -211,7 +367,7 @@ LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
         def->setVirtualRegister(as->virtualRegister());
 
 #ifdef DEBUG
-        if (js_JitOptions.runExtraChecks &&
+        if (JitOptions.runExtraChecks &&
             def->resultTypeSet() && as->resultTypeSet() &&
             !def->resultTypeSet()->equals(as->resultTypeSet()))
         {
@@ -220,13 +376,12 @@ LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
               case MIRType_ObjectOrNull:
               case MIRType_String:
               case MIRType_Symbol: {
-                LAssertResultT *check = new(alloc()) LAssertResultT(useRegister(def));
+                LAssertResultT* check = new(alloc()) LAssertResultT(useRegister(def));
                 add(check, def->toInstruction());
                 break;
               }
               case MIRType_Value: {
-                LAssertResultV *check = new(alloc()) LAssertResultV();
-                useBox(check, LAssertRangeV::Input, def);
+                LAssertResultV* check = new(alloc()) LAssertResultV(useBox(def));
                 add(check, def->toInstruction());
                 break;
               }
@@ -239,7 +394,7 @@ LIRGeneratorShared::redefine(MDefinition *def, MDefinition *as)
 }
 
 void
-LIRGeneratorShared::ensureDefined(MDefinition *mir)
+LIRGeneratorShared::ensureDefined(MDefinition* mir)
 {
     if (mir->isEmittedAtUses()) {
         mir->toInstruction()->accept(this);
@@ -248,118 +403,118 @@ LIRGeneratorShared::ensureDefined(MDefinition *mir)
 }
 
 LUse
-LIRGeneratorShared::useRegister(MDefinition *mir)
+LIRGeneratorShared::useRegister(MDefinition* mir)
 {
     return use(mir, LUse(LUse::REGISTER));
 }
 
 LUse
-LIRGeneratorShared::useRegisterAtStart(MDefinition *mir)
+LIRGeneratorShared::useRegisterAtStart(MDefinition* mir)
 {
     return use(mir, LUse(LUse::REGISTER, true));
 }
 
 LUse
-LIRGeneratorShared::use(MDefinition *mir)
+LIRGeneratorShared::use(MDefinition* mir)
 {
     return use(mir, LUse(LUse::ANY));
 }
 
 LUse
-LIRGeneratorShared::useAtStart(MDefinition *mir)
+LIRGeneratorShared::useAtStart(MDefinition* mir)
 {
     return use(mir, LUse(LUse::ANY, true));
 }
 
 LAllocation
-LIRGeneratorShared::useOrConstant(MDefinition *mir)
+LIRGeneratorShared::useOrConstant(MDefinition* mir)
 {
     if (mir->isConstant())
-        return LAllocation(mir->toConstant()->vp());
+        return LAllocation(mir->toConstant());
     return use(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useOrConstantAtStart(MDefinition *mir)
+LIRGeneratorShared::useOrConstantAtStart(MDefinition* mir)
 {
     if (mir->isConstant())
-        return LAllocation(mir->toConstant()->vp());
+        return LAllocation(mir->toConstant());
     return useAtStart(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useRegisterOrConstant(MDefinition *mir)
+LIRGeneratorShared::useRegisterOrConstant(MDefinition* mir)
 {
     if (mir->isConstant())
-        return LAllocation(mir->toConstant()->vp());
+        return LAllocation(mir->toConstant());
     return useRegister(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useRegisterOrConstantAtStart(MDefinition *mir)
+LIRGeneratorShared::useRegisterOrConstantAtStart(MDefinition* mir)
 {
     if (mir->isConstant())
-        return LAllocation(mir->toConstant()->vp());
+        return LAllocation(mir->toConstant());
     return useRegisterAtStart(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useRegisterOrZeroAtStart(MDefinition *mir)
+LIRGeneratorShared::useRegisterOrZeroAtStart(MDefinition* mir)
 {
-    if (mir->isConstant() && mir->toConstant()->value().isInt32(0))
+    if (mir->isConstant() && mir->toConstant()->isInt32(0))
         return LAllocation();
     return useRegisterAtStart(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useRegisterOrNonDoubleConstant(MDefinition *mir)
+LIRGeneratorShared::useRegisterOrNonDoubleConstant(MDefinition* mir)
 {
     if (mir->isConstant() && mir->type() != MIRType_Double && mir->type() != MIRType_Float32)
-        return LAllocation(mir->toConstant()->vp());
+        return LAllocation(mir->toConstant());
     return useRegister(mir);
 }
 
-#if defined(JS_CODEGEN_ARM)
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
 LAllocation
-LIRGeneratorShared::useAnyOrConstant(MDefinition *mir)
+LIRGeneratorShared::useAnyOrConstant(MDefinition* mir)
 {
     return useRegisterOrConstant(mir);
 }
 LAllocation
-LIRGeneratorShared::useStorable(MDefinition *mir)
+LIRGeneratorShared::useStorable(MDefinition* mir)
 {
     return useRegister(mir);
 }
 LAllocation
-LIRGeneratorShared::useStorableAtStart(MDefinition *mir)
+LIRGeneratorShared::useStorableAtStart(MDefinition* mir)
 {
     return useRegisterAtStart(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useAny(MDefinition *mir)
+LIRGeneratorShared::useAny(MDefinition* mir)
 {
     return useRegister(mir);
 }
 #else
 LAllocation
-LIRGeneratorShared::useAnyOrConstant(MDefinition *mir)
+LIRGeneratorShared::useAnyOrConstant(MDefinition* mir)
 {
     return useOrConstant(mir);
 }
 
 LAllocation
-LIRGeneratorShared::useAny(MDefinition *mir)
+LIRGeneratorShared::useAny(MDefinition* mir)
 {
     return use(mir);
 }
 LAllocation
-LIRGeneratorShared::useStorable(MDefinition *mir)
+LIRGeneratorShared::useStorable(MDefinition* mir)
 {
     return useRegisterOrConstant(mir);
 }
 LAllocation
-LIRGeneratorShared::useStorableAtStart(MDefinition *mir)
+LIRGeneratorShared::useStorableAtStart(MDefinition* mir)
 {
     return useRegisterOrConstantAtStart(mir);
 }
@@ -367,33 +522,39 @@ LIRGeneratorShared::useStorableAtStart(MDefinition *mir)
 #endif
 
 LAllocation
-LIRGeneratorShared::useKeepaliveOrConstant(MDefinition *mir)
+LIRGeneratorShared::useKeepalive(MDefinition* mir)
 {
-    if (mir->isConstant())
-        return LAllocation(mir->toConstant()->vp());
     return use(mir, LUse(LUse::KEEPALIVE));
 }
 
+LAllocation
+LIRGeneratorShared::useKeepaliveOrConstant(MDefinition* mir)
+{
+    if (mir->isConstant())
+        return LAllocation(mir->toConstant());
+    return useKeepalive(mir);
+}
+
 LUse
-LIRGeneratorShared::useFixed(MDefinition *mir, Register reg)
+LIRGeneratorShared::useFixed(MDefinition* mir, Register reg)
 {
     return use(mir, LUse(reg));
 }
 
 LUse
-LIRGeneratorShared::useFixedAtStart(MDefinition *mir, Register reg)
+LIRGeneratorShared::useFixedAtStart(MDefinition* mir, Register reg)
 {
     return use(mir, LUse(reg, true));
 }
 
 LUse
-LIRGeneratorShared::useFixed(MDefinition *mir, FloatRegister reg)
+LIRGeneratorShared::useFixed(MDefinition* mir, FloatRegister reg)
 {
     return use(mir, LUse(reg));
 }
 
 LUse
-LIRGeneratorShared::useFixed(MDefinition *mir, AnyRegister reg)
+LIRGeneratorShared::useFixed(MDefinition* mir, AnyRegister reg)
 {
     return reg.isFloat() ? use(mir, LUse(reg.fpu())) : use(mir, LUse(reg.gpr()));
 }
@@ -425,7 +586,7 @@ LIRGeneratorShared::tempDouble()
 }
 
 LDefinition
-LIRGeneratorShared::tempCopy(MDefinition *input, uint32_t reusedInput)
+LIRGeneratorShared::tempCopy(MDefinition* input, uint32_t reusedInput)
 {
     MOZ_ASSERT(input->virtualRegister());
     LDefinition t = temp(LDefinition::TypeFrom(input->type()), LDefinition::MUST_REUSE_INPUT);
@@ -434,13 +595,13 @@ LIRGeneratorShared::tempCopy(MDefinition *input, uint32_t reusedInput)
 }
 
 template <typename T> void
-LIRGeneratorShared::annotate(T *ins)
+LIRGeneratorShared::annotate(T* ins)
 {
     ins->setId(lirGraph_.getInstructionId());
 }
 
 template <typename T> void
-LIRGeneratorShared::add(T *ins, MInstruction *mir)
+LIRGeneratorShared::add(T* ins, MInstruction* mir)
 {
     MOZ_ASSERT(!ins->isPhi());
     current->add(ins);
@@ -457,10 +618,10 @@ LIRGeneratorShared::add(T *ins, MInstruction *mir)
 // redefines its input payload if its input is not constant. Therefore, it is
 // illegal to request a box's payload by adding VREG_DATA_OFFSET to its raw id.
 static inline uint32_t
-VirtualRegisterOfPayload(MDefinition *mir)
+VirtualRegisterOfPayload(MDefinition* mir)
 {
     if (mir->isBox()) {
-        MDefinition *inner = mir->toBox()->getOperand(0);
+        MDefinition* inner = mir->toBox()->getOperand(0);
         if (!inner->isConstant() && inner->type() != MIRType_Double && inner->type() != MIRType_Float32)
             return inner->virtualRegister();
     }
@@ -472,7 +633,7 @@ VirtualRegisterOfPayload(MDefinition *mir)
 // Note: always call ensureDefined before calling useType/usePayload,
 // so that emitted-at-use operands are handled correctly.
 LUse
-LIRGeneratorShared::useType(MDefinition *mir, LUse::Policy policy)
+LIRGeneratorShared::useType(MDefinition* mir, LUse::Policy policy)
 {
     MOZ_ASSERT(mir->type() == MIRType_Value);
 
@@ -480,7 +641,7 @@ LIRGeneratorShared::useType(MDefinition *mir, LUse::Policy policy)
 }
 
 LUse
-LIRGeneratorShared::usePayload(MDefinition *mir, LUse::Policy policy)
+LIRGeneratorShared::usePayload(MDefinition* mir, LUse::Policy policy)
 {
     MOZ_ASSERT(mir->type() == MIRType_Value);
 
@@ -488,7 +649,7 @@ LIRGeneratorShared::usePayload(MDefinition *mir, LUse::Policy policy)
 }
 
 LUse
-LIRGeneratorShared::usePayloadAtStart(MDefinition *mir, LUse::Policy policy)
+LIRGeneratorShared::usePayloadAtStart(MDefinition* mir, LUse::Policy policy)
 {
     MOZ_ASSERT(mir->type() == MIRType_Value);
 
@@ -496,13 +657,13 @@ LIRGeneratorShared::usePayloadAtStart(MDefinition *mir, LUse::Policy policy)
 }
 
 LUse
-LIRGeneratorShared::usePayloadInRegisterAtStart(MDefinition *mir)
+LIRGeneratorShared::usePayloadInRegisterAtStart(MDefinition* mir)
 {
     return usePayloadAtStart(mir, LUse::REGISTER);
 }
 
 void
-LIRGeneratorShared::fillBoxUses(LInstruction *lir, size_t n, MDefinition *mir)
+LIRGeneratorShared::fillBoxUses(LInstruction* lir, size_t n, MDefinition* mir)
 {
     ensureDefined(mir);
     lir->getOperand(n)->toUse()->setVirtualRegister(mir->virtualRegister() + VREG_TYPE_OFFSET);
@@ -511,7 +672,7 @@ LIRGeneratorShared::fillBoxUses(LInstruction *lir, size_t n, MDefinition *mir)
 #endif
 
 LUse
-LIRGeneratorShared::useRegisterForTypedLoad(MDefinition *mir, MIRType type)
+LIRGeneratorShared::useRegisterForTypedLoad(MDefinition* mir, MIRType type)
 {
     MOZ_ASSERT(type != MIRType_Value && type != MIRType_None);
     MOZ_ASSERT(mir->type() == MIRType_Object || mir->type() == MIRType_Slots);
@@ -527,17 +688,93 @@ LIRGeneratorShared::useRegisterForTypedLoad(MDefinition *mir, MIRType type)
     return useRegisterAtStart(mir);
 }
 
-void
-LIRGeneratorShared::useBox(LInstruction *lir, size_t n, MDefinition *mir,
-                           LUse::Policy policy, bool useAtStart)
+LBoxAllocation
+LIRGeneratorShared::useBox(MDefinition* mir, LUse::Policy policy, bool useAtStart)
 {
     MOZ_ASSERT(mir->type() == MIRType_Value);
 
     ensureDefined(mir);
-    lir->setOperand(n, LUse(mir->virtualRegister(), policy, useAtStart));
+
 #if defined(JS_NUNBOX32)
-    lir->setOperand(n + 1, LUse(VirtualRegisterOfPayload(mir), policy, useAtStart));
+    return LBoxAllocation(LUse(mir->virtualRegister(), policy, useAtStart),
+                          LUse(VirtualRegisterOfPayload(mir), policy, useAtStart));
+#else
+    return LBoxAllocation(LUse(mir->virtualRegister(), policy, useAtStart));
 #endif
+}
+
+LBoxAllocation
+LIRGeneratorShared::useBoxOrTypedOrConstant(MDefinition* mir, bool useConstant)
+{
+    if (mir->type() == MIRType_Value)
+        return useBox(mir);
+
+
+    if (useConstant && mir->isConstant()) {
+#if defined(JS_NUNBOX32)
+        return LBoxAllocation(LAllocation(mir->toConstant()), LAllocation());
+#else
+        return LBoxAllocation(LAllocation(mir->toConstant()));
+#endif
+    }
+
+#if defined(JS_NUNBOX32)
+    return LBoxAllocation(useRegister(mir), LAllocation());
+#else
+    return LBoxAllocation(useRegister(mir));
+#endif
+}
+
+LInt64Allocation
+LIRGeneratorShared::useInt64(MDefinition* mir, LUse::Policy policy, bool useAtStart)
+{
+    MOZ_ASSERT(mir->type() == MIRType_Int64);
+
+    ensureDefined(mir);
+
+    uint32_t vreg = mir->virtualRegister();
+#if JS_BITS_PER_WORD == 32
+    return LInt64Allocation(LUse(vreg + 1, policy, useAtStart),
+                            LUse(vreg, policy, useAtStart));
+#else
+    return LInt64Allocation(LUse(vreg, policy, useAtStart));
+#endif
+}
+
+LInt64Allocation
+LIRGeneratorShared::useInt64(MDefinition* mir, bool useAtStart)
+{
+    // On 32-bit platforms, always load the value in registers.
+#if JS_BITS_PER_WORD == 32
+    return useInt64(mir, LUse::REGISTER, useAtStart);
+#else
+    return useInt64(mir, LUse::ANY, useAtStart);
+#endif
+}
+
+LInt64Allocation
+LIRGeneratorShared::useInt64AtStart(MDefinition* mir)
+{
+    return useInt64(mir, /* useAtStart = */ true);
+}
+
+LInt64Allocation
+LIRGeneratorShared::useInt64Register(MDefinition* mir, bool useAtStart)
+{
+    return useInt64(mir, LUse::REGISTER, useAtStart);
+}
+
+LInt64Allocation
+LIRGeneratorShared::useInt64OrConstant(MDefinition* mir, bool useAtStart)
+{
+    if (mir->isConstant()) {
+#if defined(JS_NUNBOX32)
+        return LInt64Allocation(LAllocation(mir->toConstant()), LAllocation());
+#else
+        return LInt64Allocation(LAllocation(mir->toConstant()));
+#endif
+    }
+    return useInt64(mir, useAtStart);
 }
 
 } // namespace jit

@@ -7,5 +7,7 @@ be run over the binaries before deploying them.
 
 Building with default options may be performed as follows:
   cd js/src
-  ./configure
-  make
+  mkdir obj
+  cd obj
+  ../configure
+  make # or mozmake on Windows

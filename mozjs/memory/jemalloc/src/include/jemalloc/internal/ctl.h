@@ -34,8 +34,13 @@ struct ctl_arena_stats_s {
 	bool			initialized;
 	unsigned		nthreads;
 	const char		*dss;
+	ssize_t			lg_dirty_mult;
+	ssize_t			decay_time;
 	size_t			pactive;
 	size_t			pdirty;
+
+	/* The remainder are only populated if config_stats is true. */
+
 	arena_stats_t		astats;
 
 	/* Aggregate stats for small size classes, based on bin stats. */
@@ -52,13 +57,9 @@ struct ctl_arena_stats_s {
 struct ctl_stats_s {
 	size_t			allocated;
 	size_t			active;
-	size_t			bookkeeping;
+	size_t			metadata;
+	size_t			resident;
 	size_t			mapped;
-	struct {
-		size_t		current;	/* stats_chunks.curchunks */
-		uint64_t	total;		/* stats_chunks.nchunks */
-		size_t		high;		/* stats_chunks.highchunks */
-	} chunks;
 	unsigned		narenas;
 	ctl_arena_stats_t	*arenas;	/* (narenas + 1) elements. */
 };

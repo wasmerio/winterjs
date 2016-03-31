@@ -1,14 +1,20 @@
+#include <limits.h>
+#ifndef SIZE_T_MAX
+#  define SIZE_T_MAX	SIZE_MAX
+#endif
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <errno.h>
-#include <inttypes.h>
 #include <math.h>
 #include <string.h>
-#include <sys/time.h>
+#ifdef _WIN32
+#  include "msvc_compat/strings.h"
+#endif
 
 #ifdef _WIN32
 #  include <windows.h>
+#  include "msvc_compat/windows_extra.h"
 #else
 #  include <pthread.h>
 #endif
@@ -87,6 +93,7 @@
 #  define JEMALLOC_H_STRUCTS
 #  define JEMALLOC_H_EXTERNS
 #  define JEMALLOC_H_INLINES
+#  include "jemalloc/internal/nstime.h"
 #  include "jemalloc/internal/util.h"
 #  include "jemalloc/internal/qr.h"
 #  include "jemalloc/internal/ql.h"

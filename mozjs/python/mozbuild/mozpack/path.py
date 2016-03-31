@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import posixpath
 import os
 import re
@@ -26,6 +28,10 @@ def normsep(path):
 def relpath(path, start):
     rel = normsep(os.path.relpath(path, start))
     return '' if rel == '.' else rel
+
+
+def realpath(path):
+    return normsep(os.path.realpath(path))
 
 
 def abspath(path):

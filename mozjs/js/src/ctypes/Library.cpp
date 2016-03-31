@@ -20,11 +20,11 @@ namespace ctypes {
 
 namespace Library
 {
-  static void Finalize(JSFreeOp *fop, JSObject* obj);
+  static void Finalize(JSFreeOp* fop, JSObject* obj);
 
-  static bool Close(JSContext* cx, unsigned argc, jsval* vp);
-  static bool Declare(JSContext* cx, unsigned argc, jsval* vp);
-}
+  static bool Close(JSContext* cx, unsigned argc, Value* vp);
+  static bool Declare(JSContext* cx, unsigned argc, Value* vp);
+} // namespace Library
 
 /*******************************************************************************
 ** JSObject implementation
@@ -49,7 +49,7 @@ static const JSFunctionSpec sLibraryFunctions[] = {
 };
 
 bool
-Library::Name(JSContext* cx, unsigned argc, jsval *vp)
+Library::Name(JSContext* cx, unsigned argc, Value* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
   if (args.length() != 1) {
@@ -71,7 +71,7 @@ Library::Name(JSContext* cx, unsigned argc, jsval *vp)
   AppendString(resultString, str);
   AppendString(resultString, DLL_SUFFIX);
 
-  JSString *result = JS_NewUCStringCopyN(cx, resultString.begin(),
+  JSString* result = JS_NewUCStringCopyN(cx, resultString.begin(),
                                          resultString.length());
   if (!result)
     return false;
@@ -81,7 +81,7 @@ Library::Name(JSContext* cx, unsigned argc, jsval *vp)
 }
 
 JSObject*
-Library::Create(JSContext* cx, jsval path_, const JSCTypesCallbacks* callbacks)
+Library::Create(JSContext* cx, Value path_, const JSCTypesCallbacks* callbacks)
 {
   RootedValue path(cx, path_);
   RootedObject libraryObj(cx, JS_NewObject(cx, &sLibraryClass));
@@ -89,7 +89,7 @@ Library::Create(JSContext* cx, jsval path_, const JSCTypesCallbacks* callbacks)
     return nullptr;
 
   // initialize the library
-  JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(nullptr));
+  JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PrivateValue(nullptr));
 
   // attach API functions
   if (!JS_DefineFunctions(cx, libraryObj, sLibraryFunctions))
@@ -147,7 +147,7 @@ Library::Create(JSContext* cx, jsval path_, const JSCTypesCallbacks* callbacks)
   PRLibrary* library = PR_LoadLibraryWithFlags(libSpec, 0);
 
   if (!library) {
-    char *error = (char*) JS_malloc(cx, PR_GetErrorTextLength() + 1);
+    char* error = (char*) JS_malloc(cx, PR_GetErrorTextLength() + 1);
     if (error)
       PR_GetErrorText(error);
 
@@ -166,7 +166,7 @@ Library::Create(JSContext* cx, jsval path_, const JSCTypesCallbacks* callbacks)
 #endif
 
   // stash the library
-  JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(library));
+  JS_SetReservedSlot(libraryObj, SLOT_LIBRARY, PrivateValue(library));
 
   return libraryObj;
 }
@@ -182,7 +182,7 @@ Library::GetLibrary(JSObject* obj)
 {
   MOZ_ASSERT(IsLibrary(obj));
 
-  jsval slot = JS_GetReservedSlot(obj, SLOT_LIBRARY);
+  Value slot = JS_GetReservedSlot(obj, SLOT_LIBRARY);
   return static_cast<PRLibrary*>(slot.toPrivate());
 }
 
@@ -195,13 +195,13 @@ UnloadLibrary(JSObject* obj)
 }
 
 void
-Library::Finalize(JSFreeOp *fop, JSObject* obj)
+Library::Finalize(JSFreeOp* fop, JSObject* obj)
 {
   UnloadLibrary(obj);
 }
 
 bool
-Library::Open(JSContext* cx, unsigned argc, jsval *vp)
+Library::Open(JSContext* cx, unsigned argc, Value* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
   JSObject* ctypesObj = JS_THIS_OBJECT(cx, vp);
@@ -226,7 +226,7 @@ Library::Open(JSContext* cx, unsigned argc, jsval *vp)
 }
 
 bool
-Library::Close(JSContext* cx, unsigned argc, jsval* vp)
+Library::Close(JSContext* cx, unsigned argc, Value* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
   JSObject* obj = JS_THIS_OBJECT(cx, vp);
@@ -244,14 +244,14 @@ Library::Close(JSContext* cx, unsigned argc, jsval* vp)
 
   // delete our internal objects
   UnloadLibrary(obj);
-  JS_SetReservedSlot(obj, SLOT_LIBRARY, PRIVATE_TO_JSVAL(nullptr));
+  JS_SetReservedSlot(obj, SLOT_LIBRARY, PrivateValue(nullptr));
 
   args.rval().setUndefined();
   return true;
 }
 
 bool
-Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
+Library::Declare(JSContext* cx, unsigned argc, Value* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
@@ -321,7 +321,7 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
 
   void* data;
   PRFuncPtr fnptr;
-  JSString* nameStr = args[0].toString();
+  RootedString nameStr(cx, args[0].toString());
   AutoCString symbol;
   if (isFunction) {
     // Build the symbol, with mangling if necessary.
@@ -352,6 +352,9 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
   if (!result)
     return false;
 
+  if (isFunction)
+    JS_SetReservedSlot(result, SLOT_FUNNAME, StringValue(nameStr));
+
   args.rval().setObject(*result);
 
   // Seal the CData object, to prevent modification of the function pointer.
@@ -366,6 +369,6 @@ Library::Declare(JSContext* cx, unsigned argc, jsval* vp)
   return true;
 }
 
-}
-}
+} // namespace ctypes
+} // namespace js
 

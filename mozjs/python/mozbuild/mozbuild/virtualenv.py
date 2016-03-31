@@ -5,7 +5,7 @@
 # This file contains code for populating the virtualenv environment for
 # Mozilla's build system. It is typically called as part of configure.
 
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 import distutils.sysconfig
 import os
@@ -50,6 +50,13 @@ class VirtualenvManager(object):
         self.topsrcdir = topsrcdir
         self.topobjdir = topobjdir
         self.virtualenv_root = virtualenv_path
+
+        # Record the Python executable that was used to create the Virtualenv
+        # so we can check this against sys.executable when verifying the
+        # integrity of the virtualenv.
+        self.exe_info_path = os.path.join(self.virtualenv_root,
+                                          'python_exe.txt')
+
         self.log_handle = log_handle
         self.manifest_path = manifest_path
 
@@ -82,7 +89,26 @@ class VirtualenvManager(object):
     def activate_path(self):
         return os.path.join(self.bin_path, 'activate_this.py')
 
-    def up_to_date(self):
+    def get_exe_info(self):
+        """Returns the version and file size of the python executable that was in
+        use when this virutalenv was created.
+        """
+        with open(self.exe_info_path, 'r') as fh:
+            version, size = fh.read().splitlines()
+        return int(version), int(size)
+
+    def write_exe_info(self, python):
+        """Records the the version of the python executable that was in use when
+        this virutalenv was created. We record this explicitly because
+        on OS X our python path may end up being a different or modified
+        executable.
+        """
+        ver = subprocess.check_output([python, '-c', 'import sys; print(sys.hexversion)']).rstrip()
+        with open(self.exe_info_path, 'w') as fh:
+            fh.write("%s\n" % ver)
+            fh.write("%s\n" % os.path.getsize(python))
+
+    def up_to_date(self, python=sys.executable):
         """Returns whether the virtualenv is present and up to date."""
 
         deps = [self.manifest_path, __file__]
@@ -99,6 +125,15 @@ class VirtualenvManager(object):
         if dep_mtime > activate_mtime:
             return False
 
+        # Verify that the Python we're checking here is either the virutalenv
+        # python, or we have the Python version that was used to create the
+        # virtualenv. If this fails, it is likely system Python has been
+        # upgraded, and our virtualenv would not be usable.
+        python_size = os.path.getsize(python)
+        if ((python, python_size) != (self.python_path, os.path.getsize(self.python_path)) and
+            (sys.hexversion, python_size) != self.get_exe_info()):
+            return False
+
         # recursively check sub packages.txt files
         submanifests = [i[1] for i in self.packages()
                         if i[0] == 'packages.txt']
@@ -109,12 +144,12 @@ class VirtualenvManager(object):
                                            self.virtualenv_root,
                                            self.log_handle,
                                            submanifest)
-            if not submanager.up_to_date():
+            if not submanager.up_to_date(python):
                 return False
 
         return True
 
-    def ensure(self):
+    def ensure(self, python=sys.executable):
         """Ensure the virtualenv is present and up to date.
 
         If the virtualenv is up to date, this does nothing. Otherwise, it
@@ -123,11 +158,11 @@ class VirtualenvManager(object):
         This should be the main API used from this class as it is the
         highest-level.
         """
-        if self.up_to_date():
+        if self.up_to_date(python):
             return self.virtualenv_root
-        return self.build()
+        return self.build(python)
 
-    def create(self):
+    def create(self, python=sys.executable):
         """Create a new, empty virtualenv.
 
         Receives the path to virtualenv's virtualenv.py script (which will be
@@ -137,14 +172,22 @@ class VirtualenvManager(object):
         env = dict(os.environ)
         env.pop('PYTHONDONTWRITEBYTECODE', None)
 
-        args = [sys.executable, self.virtualenv_script_path,
+        args = [python, self.virtualenv_script_path,
+            # Without this, virtualenv.py may attempt to contact the outside
+            # world and search for or download a newer version of pip,
+            # setuptools, or wheel. This is bad for security, reproducibility,
+            # and speed.
+            '--no-download',
             self.virtualenv_root]
 
         result = subprocess.call(args, stdout=self.log_handle,
             stderr=subprocess.STDOUT, env=env)
 
         if result:
-            raise Exception('Error creating virtualenv.')
+            raise Exception(
+                'Failed to create virtualenv: %s' % self.virtualenv_root)
+
+        self.write_exe_info(python)
 
         return self.virtualenv_root
 
@@ -194,9 +237,9 @@ class VirtualenvManager(object):
         """
 
         packages = self.packages()
+        python_lib = distutils.sysconfig.get_python_lib()
 
         def handle_package(package):
-            python_lib = distutils.sysconfig.get_python_lib()
             if package[0] == 'setup.py':
                 assert len(package) >= 2
 
@@ -331,6 +374,16 @@ class VirtualenvManager(object):
 
             for package in packages:
                 handle_package(package)
+
+            sitecustomize = os.path.join(
+                os.path.dirname(os.__file__), 'sitecustomize.py')
+            with open(sitecustomize, 'w') as f:
+                f.write(
+                    '# Importing mach_bootstrap has the side effect of\n'
+                    '# installing an import hook\n'
+                    'import mach_bootstrap\n'
+                )
+
         finally:
             os.environ.pop('MACOSX_DEPLOYMENT_TARGET', None)
 
@@ -362,13 +415,13 @@ class VirtualenvManager(object):
 
             raise Exception('Error installing package: %s' % directory)
 
-    def build(self):
+    def build(self, python=sys.executable):
         """Build a virtualenv per tree conventions.
 
         This returns the path of the created virtualenv.
         """
 
-        self.create()
+        self.create(python)
 
         # We need to populate the virtualenv using the Python executable in
         # the virtualenv for paths to be proper.

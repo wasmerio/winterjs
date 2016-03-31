@@ -34,31 +34,52 @@
 #include "js-config.h"
 #include "jsversion.h"
 
+/***********************************************************************
+** MACROS:      JS_EXTERN_API
+**              JS_EXPORT_API
+** DESCRIPTION:
+**      These are only for externally visible routines and globals.  For
+**      internal routines, just use "extern" for type checking and that
+**      will not export internal cross-file or forward-declared symbols.
+**      Define a macro for declaring procedures return types. We use this to
+**      deal with windoze specific type hackery for DLL definitions. Use
+**      JS_EXTERN_API when the prototype for the method is declared. Use
+**      JS_EXPORT_API for the implementation of the method.
+**
+** Example:
+**   in dowhim.h
+**     JS_EXTERN_API( void ) DoWhatIMean( void );
+**   in dowhim.c
+**     JS_EXPORT_API( void ) DoWhatIMean( void ) { return; }
+**
+**
+***********************************************************************/
+
+#define JS_EXTERN_API(type)  extern MOZ_EXPORT type
+#define JS_EXPORT_API(type)  MOZ_EXPORT type
+#define JS_EXPORT_DATA(type) MOZ_EXPORT type
+#define JS_IMPORT_API(type)  MOZ_IMPORT_API type
+#define JS_IMPORT_DATA(type) MOZ_IMPORT_DATA type
+
 /*
  * The linkage of JS API functions differs depending on whether the file is
  * used within the JS library or not. Any source file within the JS
  * interpreter should define EXPORT_JS_API whereas any client of the library
  * should not. STATIC_JS_API is used to build JS as a static library.
- *
- * Example:
- *   in dowhim.h
- *     JS_PUBLIC_API( void ) DoWhatIMean( void );
  */
 #if defined(STATIC_JS_API)
 #  define JS_PUBLIC_API(t)   t
 #  define JS_PUBLIC_DATA(t)  t
+#  define JS_FRIEND_API(t)   t
+#  define JS_FRIEND_DATA(t)  t
 #elif defined(EXPORT_JS_API) || defined(STATIC_EXPORTABLE_JS_API)
 #  define JS_PUBLIC_API(t)   MOZ_EXPORT t
 #  define JS_PUBLIC_DATA(t)  MOZ_EXPORT t
-#else
-#  define JS_PUBLIC_API(t)   MOZ_IMPORT_API t
-#  define JS_PUBLIC_DATA(t)  MOZ_IMPORT_DATA t
-#endif
-
-#if defined(STATIC_JS_API) || defined(EXPORT_JS_API) || defined(STATIC_EXPORTABLE_JS_API)
 #  define JS_FRIEND_API(t)    MOZ_EXPORT t
 #  define JS_FRIEND_DATA(t)   MOZ_EXPORT t
 #else
+#  define JS_PUBLIC_API(t)   MOZ_IMPORT_API t
+#  define JS_PUBLIC_DATA(t)  MOZ_IMPORT_DATA t
 #  define JS_FRIEND_API(t)   MOZ_IMPORT_API t
 #  define JS_FRIEND_DATA(t)  MOZ_IMPORT_DATA t
 #endif
@@ -146,10 +167,10 @@
 **      Macros to get the number of elements and the pointer to one past the
 **      last element of a C array. Use them like this:
 **
-**      char16_t buf[10], *s;
-**      JSString *str;
+**      char16_t buf[10];
+**      JSString* str;
 **      ...
-**      for (s = buf; s != JS_ARRAY_END(buf); ++s) *s = ...;
+**      for (char16_t* s = buf; s != JS_ARRAY_END(buf); ++s) *s = ...;
 **      ...
 **      str = JS_NewStringCopyN(cx, buf, JS_ARRAY_LENGTH(buf));
 **      ...
@@ -176,9 +197,9 @@
 **      size. Use them like this:
 **
 **      JSGetterOp nativeGetter;
-**      JSObject *scriptedGetter;
+**      JSObject* scriptedGetter;
 **      ...
-**      scriptedGetter = JS_FUNC_TO_DATA_PTR(JSObject *, nativeGetter);
+**      scriptedGetter = JS_FUNC_TO_DATA_PTR(JSObject*, nativeGetter);
 **      ...
 **      nativeGetter = JS_DATA_TO_FUNC_PTR(JSGetterOp, scriptedGetter);
 **

@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import traceback
+from check_utils import get_all_toplevel_filenames
 
 # We don't bother checking files in these directories, because they're (a) auxiliary or (b)
 # imported code that doesn't follow our coding style.
@@ -75,8 +76,10 @@ included_inclnames_to_ignore = set([
     'prthread.h',               # NSPR
     'prtypes.h',                # NSPR
     'selfhosted.out.h',         # generated in $OBJDIR
+    'shellmoduleloader.out.h',  # generated in $OBJDIR
     'unicode/locid.h',          # ICU
     'unicode/numsys.h',         # ICU
+    'unicode/timezone.h',       # ICU
     'unicode/ucal.h',           # ICU
     'unicode/uclean.h',         # ICU
     'unicode/ucol.h',           # ICU
@@ -217,39 +220,31 @@ class FileKind(object):
         error(filename, None, 'unknown file kind')
 
 
-def get_all_filenames():
-    '''Get a list of all the files in the (Mercurial or Git) repository.'''
-    cmds = [['hg', 'manifest', '-q'], ['git', 'ls-files', '--full-name', '../..']]
-    for cmd in cmds:
-        try:
-            all_filenames = subprocess.check_output(cmd, universal_newlines=True,
-                                                    stderr=subprocess.PIPE).split('\n')
-            return all_filenames
-        except:
-            continue
-    else:
-        raise Exception('failed to run any of the repo manifest commands', cmds)
-
-
 def check_style():
     # We deal with two kinds of name.
     # - A "filename" is a full path to a file from the repository root.
     # - An "inclname" is how a file is referred to in a #include statement.
     #
     # Examples (filename -> inclname)
-    # - "mfbt/Attributes.h"     -> "mozilla/Attributes.h"
-    # - "mfbt/decimal/Decimal.h -> "mozilla/Decimal.h"
-    # - "js/public/Vector.h"    -> "js/Vector.h"
-    # - "js/src/vm/String.h"    -> "vm/String.h"
+    # - "mfbt/Attributes.h"         -> "mozilla/Attributes.h"
+    # - "mfbt/decimal/Decimal.h     -> "mozilla/Decimal.h"
+    # - "mozglue/misc/TimeStamp.h   -> "mozilla/TimeStamp.h"
+    # - "memory/mozalloc/mozalloc.h -> "mozilla/mozalloc.h"
+    # - "js/public/Vector.h"        -> "js/Vector.h"
+    # - "js/src/vm/String.h"        -> "vm/String.h"
 
-    mfbt_inclnames = set()      # type: set(inclname)
-    js_names = dict()           # type: dict(filename, inclname)
+    non_js_dirnames = ('mfbt/',
+                       'memory/mozalloc/',
+                       'mozglue/')  # type: tuple(str)
+    non_js_inclnames = set()        # type: set(inclname)
+    js_names = dict()               # type: dict(filename, inclname)
 
     # Select the appropriate files.
-    for filename in get_all_filenames():
-        if filename.startswith('mfbt/') and filename.endswith('.h'):
-            inclname = 'mozilla/' + filename.split('/')[-1]
-            mfbt_inclnames.add(inclname)
+    for filename in get_all_toplevel_filenames():
+        for non_js_dir in non_js_dirnames:
+            if filename.startswith(non_js_dir) and filename.endswith('.h'):
+                inclname = 'mozilla/' + filename.split('/')[-1]
+                non_js_inclnames.add(inclname)
 
         if filename.startswith('js/public/') and filename.endswith('.h'):
             inclname = 'js/' + filename[len('js/public/'):]
@@ -261,13 +256,13 @@ def check_style():
             inclname = filename[len('js/src/'):]
             js_names[filename] = inclname
 
-    all_inclnames = mfbt_inclnames | set(js_names.values())
+    all_inclnames = non_js_inclnames | set(js_names.values())
 
     edges = dict()      # type: dict(inclname, set(inclname))
 
-    # We don't care what's inside the MFBT files, but because they are
-    # #included from JS files we have to add them to the inclusion graph.
-    for inclname in mfbt_inclnames:
+    # We don't care what's inside the MFBT and MOZALLOC files, but because they
+    # are #included from JS files we have to add them to the inclusion graph.
+    for inclname in non_js_inclnames:
         edges[inclname] = set()
 
     # Process all the JS files.

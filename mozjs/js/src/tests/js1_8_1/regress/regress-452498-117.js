@@ -52,46 +52,15 @@ function test()
     {
     }
 
-// Assertion failure: cg->upvars.lookup(atom), at ../jsemit.cpp:2022
-// =====
-  try
-  {
-    (function(){([]) ((function(q) { return q; })for (each in [1,2]))})();
-  }
-  catch(ex)
-  {
-  }
-// Assertion failure: lexdep->frameLevel() <= funbox->level, at ../jsparse.cpp:1782
-// Opt crash [@ JSCompiler::setFunctionKinds] near null
-// =====
-
-  try
-  {
-    eval("((x1) > [(x)(function() { x;}) for each (x in x)])()");
-  }
-  catch(ex)
-  {
-  }
-
 // Assertion failure: pnu->pn_lexdef == dn, at ../jsemit.cpp:1817
 // =====
-  uneval(function(){for(var [arguments] = ({ get y(){} }) in y ) (x);});
+  uneval(function(){arguments = ({ get y(){} }); for(var [arguments] in y ) (x);});
 
 // Assertion failure: n != 0, at ../jsfun.cpp:2689
 // =====
   try
   {
     eval('(function(){{for(c in (function (){ for(x in (x1))window} )()) {const x = undefined;} }})();');
-  }
-  catch(ex)
-  {
-  }
-
-// Assertion failure: op == JSOP_GETLOCAL, at ../jsemit.cpp:4557
-// =====
-  try
-  {
-    (eval("(function(){let x , x =  (x for (x in null))});"))();
   }
   catch(ex)
   {

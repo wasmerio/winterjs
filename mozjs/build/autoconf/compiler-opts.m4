@@ -128,16 +128,14 @@ fi
 
 AC_SUBST(MOZ_NO_DEBUG_RTL)
 
-MOZ_DEBUG_ENABLE_DEFS="-DDEBUG -DTRACING"
+MOZ_DEBUG_ENABLE_DEFS="DEBUG TRACING"
 MOZ_ARG_WITH_STRING(debug-label,
 [  --with-debug-label=LABELS
                           Define DEBUG_<value> for each comma-separated
                           value given.],
 [ for option in `echo $withval | sed 's/,/ /g'`; do
-    MOZ_DEBUG_ENABLE_DEFS="$MOZ_DEBUG_ENABLE_DEFS -DDEBUG_${option}"
+    MOZ_DEBUG_ENABLE_DEFS="$MOZ_DEBUG_ENABLE_DEFS DEBUG_${option}"
 done])
-
-MOZ_DEBUG_DISABLE_DEFS="-DNDEBUG -DTRIMMED"
 
 if test -n "$MOZ_DEBUG"; then
     AC_MSG_CHECKING([for valid debug flags])
@@ -152,7 +150,13 @@ if test -n "$MOZ_DEBUG"; then
         AC_MSG_ERROR([These compiler flags are invalid: $MOZ_DEBUG_FLAGS])
     fi
     CFLAGS=$_SAVE_CFLAGS
+
+    MOZ_DEBUG_DEFINES="$MOZ_DEBUG_ENABLE_DEFS"
+else
+    MOZ_DEBUG_DEFINES="NDEBUG TRIMMED"
 fi
+
+AC_SUBST_LIST(MOZ_DEBUG_DEFINES)
 
 dnl ========================================================
 dnl = Enable generation of debug symbols
@@ -358,6 +362,20 @@ fi
 
 AC_SUBST(MOZ_PROGRAM_LDFLAGS)
 
+dnl ASan assumes no symbols are being interposed, and when that happens,
+dnl it's not happy with it. Unconveniently, since Firefox is exporting
+dnl libffi symbols and Gtk+3 pulls system libffi via libwayland-client,
+dnl system libffi interposes libffi symbols that ASan assumes are in
+dnl libxul, so it barfs about buffer overflows.
+dnl Using -Wl,-Bsymbolic ensures no exported symbol can be interposed.
+if test -n "$GCC_USE_GNU_LD"; then
+  case "$LDFLAGS" in
+  *-fsanitize=address*)
+    LDFLAGS="$LDFLAGS -Wl,-Bsymbolic"
+    ;;
+  esac
+fi
+
 ])
 
 dnl GCC and clang will fail if given an unknown warning option like -Wfoobar. 
@@ -403,5 +421,141 @@ AC_DEFUN([MOZ_CXX_SUPPORTS_WARNING],
         ])
     if test "${$3}" = "yes"; then
         _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} $1$2"
+    fi
+])
+
+AC_DEFUN([MOZ_SET_WARNINGS_CFLAGS],
+[
+    # Turn on gcc/clang warnings:
+    # https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Warning-Options.html
+
+    # -Wall - lots of useful warnings
+    # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    # -Wignored-qualifiers - catches return types with qualifiers like const
+    # -Wpointer-arith - catches pointer arithmetic using NULL or sizeof(void)
+    # -Wsign-compare - catches comparing signed/unsigned ints
+    # -Wtype-limits - catches overflow bugs, few false positives
+    # -Wunreachable-code - catches some dead code
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wall"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wempty-body"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wignored-qualifiers"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wpointer-arith"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wsign-compare"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wtype-limits"
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wunreachable-code"
+
+    # -Wclass-varargs - catches objects passed by value to variadic functions.
+    # -Wloop-analysis - catches issues around loops
+    # -Wnon-literal-null-conversion - catches expressions used as a null pointer constant
+    # -Wthread-safety - catches inconsistent use of mutexes
+    #
+    # XXX: at the time of writing, the version of clang used on the OS X test
+    # machines has a bug that causes it to reject some valid files if both
+    # -Wnon-literal-null-conversion and -Wsometimes-uninitialized are
+    # specified. We work around this by instead using
+    # -Werror=non-literal-null-conversion, but we only do that when
+    # --enable-warnings-as-errors is specified so that no unexpected fatal
+    # warnings are produced.
+    MOZ_C_SUPPORTS_WARNING(-W, class-varargs, ac_c_has_wclass_varargs)
+    MOZ_C_SUPPORTS_WARNING(-W, loop-analysis, ac_c_has_wloop_analysis)
+
+    if test "$MOZ_ENABLE_WARNINGS_AS_ERRORS"; then
+        MOZ_C_SUPPORTS_WARNING(-Werror=, non-literal-null-conversion, ac_c_has_non_literal_null_conversion)
+    fi
+
+    MOZ_C_SUPPORTS_WARNING(-W, thread-safety, ac_c_has_wthread_safety)
+
+    # Turn off some non-useful warnings that -Wall turns on.
+
+    # Prevent the following GCC warnings from being treated as errors:
+    # -Wmaybe-uninitialized - too many false positives
+    # -Wdeprecated-declarations - we don't want our builds held hostage when a
+    #   platform-specific API becomes deprecated.
+    # -Wfree-nonheap-object - false positives during PGO
+    # -Warray-bounds - false positives depending on optimization
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=maybe-uninitialized, ac_c_has_noerror_maybe_uninitialized)
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=deprecated-declarations, ac_c_has_noerror_deprecated_declarations)
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=array-bounds, ac_c_has_noerror_array_bounds)
+
+    if test -n "$MOZ_PGO"; then
+        MOZ_C_SUPPORTS_WARNING(-W, no-error=coverage-mismatch, ac_c_has_noerror_coverage_mismatch)
+        MOZ_C_SUPPORTS_WARNING(-W, no-error=free-nonheap-object, ac_c_has_noerror_free_nonheap_object)
+    fi
+])
+
+AC_DEFUN([MOZ_SET_WARNINGS_CXXFLAGS],
+[
+    # Turn on gcc/clang warnings:
+    # https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Warning-Options.html
+
+    # -Wall - lots of useful warnings
+    # -Wc++1[14z]-compat[-pedantic] - catches C++ version forward-compat issues
+    # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    # -Wignored-qualifiers - catches return types with qualifiers like const
+    # -Woverloaded-virtual - function declaration hides virtual function from base class
+    # -Wpointer-arith - catches pointer arithmetic using NULL or sizeof(void)
+    # -Wsign-compare - catches comparing signed/unsigned ints
+    # -Wtype-limits - catches overflow bugs, few false positives
+    # -Wunreachable-code - catches some dead code
+    # -Wwrite-strings - catches treating string literals as non-const
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wc++11-compat"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wempty-body"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wignored-qualifiers"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Woverloaded-virtual"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wpointer-arith"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wsign-compare"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wtype-limits"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wunreachable-code"
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wwrite-strings"
+
+    # -Wclass-varargs - catches objects passed by value to variadic functions.
+    # -Wimplicit-fallthrough - catches unintentional switch case fallthroughs
+    # -Wloop-analysis - catches issues around loops
+    # -Wnon-literal-null-conversion - catches expressions used as a null pointer constant
+    # -Wthread-safety - catches inconsistent use of mutexes
+    #
+    # XXX: at the time of writing, the version of clang used on the OS X test
+    # machines has a bug that causes it to reject some valid files if both
+    # -Wnon-literal-null-conversion and -Wsometimes-uninitialized are
+    # specified. We work around this by instead using
+    # -Werror=non-literal-null-conversion, but we only do that when
+    # --enable-warnings-as-errors is specified so that no unexpected fatal
+    # warnings are produced.
+    MOZ_CXX_SUPPORTS_WARNING(-W, c++11-compat-pedantic, ac_cxx_has_wcxx11_compat_pedantic)
+    MOZ_CXX_SUPPORTS_WARNING(-W, c++14-compat, ac_cxx_has_wcxx14_compat)
+    MOZ_CXX_SUPPORTS_WARNING(-W, c++14-compat-pedantic, ac_cxx_has_wcxx14_compat_pedantic)
+    MOZ_CXX_SUPPORTS_WARNING(-W, c++1z-compat, ac_cxx_has_wcxx1z_compat)
+    MOZ_CXX_SUPPORTS_WARNING(-W, class-varargs, ac_cxx_has_wclass_varargs)
+    MOZ_CXX_SUPPORTS_WARNING(-W, implicit-fallthrough, ac_cxx_has_wimplicit_fallthrough)
+    MOZ_CXX_SUPPORTS_WARNING(-W, loop-analysis, ac_cxx_has_wloop_analysis)
+
+    if test "$MOZ_ENABLE_WARNINGS_AS_ERRORS"; then
+        MOZ_CXX_SUPPORTS_WARNING(-Werror=, non-literal-null-conversion, ac_cxx_has_non_literal_null_conversion)
+    fi
+
+    MOZ_CXX_SUPPORTS_WARNING(-W, thread-safety, ac_cxx_has_wthread_safety)
+
+    # Turn off some non-useful warnings that -Wall turns on.
+
+    # -Wno-invalid-offsetof - we use offsetof on non-POD types frequently
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-invalid-offsetof"
+
+    # -Wno-inline-new-delete - we inline 'new' and 'delete' in mozalloc
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, inline-new-delete, ac_cxx_has_wno_inline_new_delete)
+
+    # Prevent the following GCC warnings from being treated as errors:
+    # -Wmaybe-uninitialized - too many false positives
+    # -Wdeprecated-declarations - we don't want our builds held hostage when a
+    #   platform-specific API becomes deprecated.
+    # -Wfree-nonheap-object - false positives during PGO
+    # -Warray-bounds - false positives depending on optimization
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=maybe-uninitialized, ac_cxx_has_noerror_maybe_uninitialized)
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=deprecated-declarations, ac_cxx_has_noerror_deprecated_declarations)
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=array-bounds, ac_cxx_has_noerror_array_bounds)
+
+    if test -n "$MOZ_PGO"; then
+        MOZ_CXX_SUPPORTS_WARNING(-W, no-error=coverage-mismatch, ac_cxx_has_noerror_coverage_mismatch)
+        MOZ_CXX_SUPPORTS_WARNING(-W, no-error=free-nonheap-object, ac_cxx_has_noerror_free_nonheap_object)
     fi
 ])

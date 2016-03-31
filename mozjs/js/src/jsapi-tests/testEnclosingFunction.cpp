@@ -13,10 +13,10 @@
 
 using namespace js;
 
-static JSFunction *foundFun = nullptr;
+static JSFunction* foundFun = nullptr;
 
 static bool
-CheckEnclosing(JSContext *cx, unsigned argc, Value *vp)
+CheckEnclosing(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -55,7 +55,7 @@ BEGIN_TEST(test_enclosingFunction)
     EXEC("s2()()");
     CHECK(foundFun == fun);
 
-    const char s3chars[] = "return function() { let (x) { function g() { checkEnclosing() } return g() } }";
+    const char s3chars[] = "return function() { { let x; function g() { checkEnclosing() } return g() } }";
     CHECK(JS::CompileFunction(cx, emptyScopeChain, options, "s3", 0, nullptr, s3chars,
                               strlen(s3chars), &fun));
     CHECK(fun);

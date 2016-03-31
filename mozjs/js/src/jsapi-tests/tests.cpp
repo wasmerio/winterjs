@@ -8,9 +8,10 @@
 
 #include <stdio.h>
 
+#include "js/Initialization.h"
 #include "js/RootingAPI.h"
 
-JSAPITest *JSAPITest::list;
+JSAPITest* JSAPITest::list;
 
 bool JSAPITest::init()
 {
@@ -50,7 +51,7 @@ void JSAPITest::uninit()
     }
 }
 
-bool JSAPITest::exec(const char *bytes, const char *filename, int lineno)
+bool JSAPITest::exec(const char* bytes, const char* filename, int lineno)
 {
     JS::RootedValue v(cx);
     JS::CompileOptions opts(cx);
@@ -59,7 +60,7 @@ bool JSAPITest::exec(const char *bytes, const char *filename, int lineno)
         fail(JSAPITestString(bytes), filename, lineno);
 }
 
-bool JSAPITest::evaluate(const char *bytes, const char *filename, int lineno,
+bool JSAPITest::evaluate(const char* bytes, const char* filename, int lineno,
                          JS::MutableHandleValue vp)
 {
     JS::CompileOptions opts(cx);
@@ -73,12 +74,12 @@ bool JSAPITest::definePrint()
     return JS_DefineFunction(cx, global, "print", (JSNative) print, 0, 0);
 }
 
-JSObject * JSAPITest::createGlobal(JSPrincipals *principals)
+JSObject* JSAPITest::createGlobal(JSPrincipals* principals)
 {
     /* Create the global object. */
     JS::RootedObject newGlobal(cx);
     JS::CompartmentOptions options;
-    options.setVersion(JSVERSION_LATEST);
+    options.behaviors().setVersion(JSVERSION_LATEST);
     newGlobal = JS_NewGlobalObject(cx, getGlobalClass(), principals, JS::FireOnNewGlobalHook,
                                    options);
     if (!newGlobal)
@@ -86,8 +87,8 @@ JSObject * JSAPITest::createGlobal(JSPrincipals *principals)
 
     JSAutoCompartment ac(cx, newGlobal);
 
-    /* Populate the global object with the standard globals, like Object and
-       Array. */
+    // Populate the global object with the standard globals like Object and
+    // Array.
     if (!JS_InitStandardClasses(cx, newGlobal))
         return nullptr;
 
@@ -95,19 +96,19 @@ JSObject * JSAPITest::createGlobal(JSPrincipals *principals)
     return newGlobal;
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     int total = 0;
     int failures = 0;
-    const char *filter = (argc == 2) ? argv[1] : nullptr;
+    const char* filter = (argc == 2) ? argv[1] : nullptr;
 
     if (!JS_Init()) {
         printf("TEST-UNEXPECTED-FAIL | jsapi-tests | JS_Init() failed.\n");
         return 1;
     }
 
-    for (JSAPITest *test = JSAPITest::list; test; test = test->next) {
-        const char *name = test->name();
+    for (JSAPITest* test = JSAPITest::list; test; test = test->next) {
+        const char* name = test->name();
         if (filter && strstr(name, filter) == nullptr)
             continue;
 

@@ -19,7 +19,7 @@ namespace js {
  */
 
 inline bool
-probes::CallTrackingActive(JSContext *cx)
+probes::CallTrackingActive(JSContext* cx)
 {
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_FUNCTION_ENTRY_ENABLED() || JAVASCRIPT_FUNCTION_RETURN_ENABLED())
@@ -29,24 +29,17 @@ probes::CallTrackingActive(JSContext *cx)
 }
 
 inline bool
-probes::WantNativeAddressInfo(JSContext *cx)
-{
-    return cx->reportGranularity >= JITREPORT_GRANULARITY_FUNCTION &&
-           JITGranularityRequested(cx) >= JITREPORT_GRANULARITY_FUNCTION;
-}
-
-inline bool
-probes::EnterScript(JSContext *cx, JSScript *script, JSFunction *maybeFun,
-                    InterpreterFrame *fp)
+probes::EnterScript(JSContext* cx, JSScript* script, JSFunction* maybeFun,
+                    InterpreterFrame* fp)
 {
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_FUNCTION_ENTRY_ENABLED())
         DTraceEnterJSFun(cx, maybeFun, script);
 #endif
 
-    JSRuntime *rt = cx->runtime();
+    JSRuntime* rt = cx->runtime();
     if (rt->spsProfiler.enabled()) {
-        if (!rt->spsProfiler.enter(script, maybeFun))
+        if (!rt->spsProfiler.enter(cx, script, maybeFun))
             return false;
         MOZ_ASSERT_IF(!fp->script()->isGenerator(), !fp->hasPushedSPSFrame());
         fp->setPushedSPSFrame();
@@ -56,7 +49,7 @@ probes::EnterScript(JSContext *cx, JSScript *script, JSFunction *maybeFun,
 }
 
 inline void
-probes::ExitScript(JSContext *cx, JSScript *script, JSFunction *maybeFun, bool popSPSFrame)
+probes::ExitScript(JSContext* cx, JSScript* script, JSFunction* maybeFun, bool popSPSFrame)
 {
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_FUNCTION_RETURN_ENABLED())
@@ -68,13 +61,13 @@ probes::ExitScript(JSContext *cx, JSScript *script, JSFunction *maybeFun, bool p
 }
 
 inline bool
-probes::StartExecution(JSScript *script)
+probes::StartExecution(JSScript* script)
 {
     bool ok = true;
 
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_EXECUTE_START_ENABLED())
-        JAVASCRIPT_EXECUTE_START((script->filename() ? (char *)script->filename() : nullName),
+        JAVASCRIPT_EXECUTE_START((script->filename() ? (char*)script->filename() : nullName),
                                  script->lineno());
 #endif
 
@@ -82,13 +75,13 @@ probes::StartExecution(JSScript *script)
 }
 
 inline bool
-probes::StopExecution(JSScript *script)
+probes::StopExecution(JSScript* script)
 {
     bool ok = true;
 
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_EXECUTE_DONE_ENABLED())
-        JAVASCRIPT_EXECUTE_DONE((script->filename() ? (char *)script->filename() : nullName),
+        JAVASCRIPT_EXECUTE_DONE((script->filename() ? (char*)script->filename() : nullName),
                                 script->lineno());
 #endif
 

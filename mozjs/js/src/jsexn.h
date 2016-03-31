@@ -12,16 +12,17 @@
 #define jsexn_h
 
 #include "jsapi.h"
+#include "jscntxt.h"
 #include "NamespaceImports.h"
 
 namespace js {
 class ErrorObject;
 
-JSErrorReport *
-CopyErrorReport(JSContext *cx, JSErrorReport *report);
+JSErrorReport*
+CopyErrorReport(JSContext* cx, JSErrorReport* report);
 
-JSString *
-ComputeStackString(JSContext *cx);
+JSString*
+ComputeStackString(JSContext* cx);
 
 /*
  * Given a JSErrorReport, check to see if there is an exception associated with
@@ -50,8 +51,8 @@ ComputeStackString(JSContext *cx);
  *     unless the caller decides to call CallErrorReporter explicitly.
  */
 extern bool
-ErrorToException(JSContext *cx, const char *message, JSErrorReport *reportp,
-                 JSErrorCallback callback, void *userRef);
+ErrorToException(JSContext* cx, const char* message, JSErrorReport* reportp,
+                 JSErrorCallback callback, void* userRef);
 
 /*
  * Called if a JS API call to js_Execute or js_InternalCall fails; calls the
@@ -70,10 +71,10 @@ ErrorToException(JSContext *cx, const char *message, JSErrorReport *reportp,
  * this flag.
  */
 extern bool
-ReportUncaughtException(JSContext *cx);
+ReportUncaughtException(JSContext* cx);
 
-extern JSErrorReport *
-ErrorFromException(JSContext *cx, HandleObject obj);
+extern JSErrorReport*
+ErrorFromException(JSContext* cx, HandleObject obj);
 
 /*
  * Make a copy of errobj parented to cx's compartment's global.
@@ -82,8 +83,8 @@ ErrorFromException(JSContext *cx, HandleObject obj);
  * object (not a wrapper of one) and it must not be one of the standard error
  * prototype objects (errobj->getPrivate() must not be nullptr).
  */
-extern JSObject *
-CopyErrorObject(JSContext *cx, JS::Handle<ErrorObject*> errobj);
+extern JSObject*
+CopyErrorObject(JSContext* cx, JS::Handle<ErrorObject*> errobj);
 
 static_assert(JSEXN_ERR == 0 &&
               JSProto_Error + JSEXN_INTERNALERR == JSProto_InternalError &&
@@ -93,7 +94,8 @@ static_assert(JSEXN_ERR == 0 &&
               JSProto_Error + JSEXN_SYNTAXERR == JSProto_SyntaxError &&
               JSProto_Error + JSEXN_TYPEERR == JSProto_TypeError &&
               JSProto_Error + JSEXN_URIERR == JSProto_URIError &&
-              JSEXN_URIERR + 1 == JSEXN_LIMIT,
+              JSProto_Error + JSEXN_DEBUGGEEWOULDRUN == JSProto_DebuggeeWouldRun &&
+              JSEXN_DEBUGGEEWOULDRUN + 1 == JSEXN_LIMIT,
               "GetExceptionProtoKey and ExnTypeFromProtoKey require that "
               "each corresponding JSExnType and JSProtoKey value be separated "
               "by the same constant value");
@@ -114,6 +116,37 @@ ExnTypeFromProtoKey(JSProtoKey key)
     MOZ_ASSERT(type < JSEXN_LIMIT);
     return type;
 }
+
+class AutoClearPendingException
+{
+    JSContext* cx;
+
+  public:
+    explicit AutoClearPendingException(JSContext* cxArg)
+      : cx(cxArg)
+    { }
+
+    ~AutoClearPendingException() {
+        JS_ClearPendingException(cx);
+    }
+};
+
+class AutoAssertNoPendingException
+{
+    mozilla::DebugOnly<JSContext*> cx;
+
+  public:
+    explicit AutoAssertNoPendingException(JSContext* cxArg)
+      : cx(cxArg)
+    { }
+
+    ~AutoAssertNoPendingException() {
+        MOZ_ASSERT(!JS_IsExceptionPending(cx));
+    }
+};
+
+extern const char*
+ValueToSourceForError(JSContext* cx, HandleValue val, JSAutoByteString& bytes);
 
 } // namespace js
 

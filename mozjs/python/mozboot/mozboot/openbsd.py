@@ -2,13 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import os
-
 from mozboot.base import BaseBootstrapper
 
+
 class OpenBSDBootstrapper(BaseBootstrapper):
-    def __init__(self, version):
-        BaseBootstrapper.__init__(self)
+    def __init__(self, version, **kwargs):
+        BaseBootstrapper.__init__(self, **kwargs)
 
         self.packages = [
             'mercurial',
@@ -24,8 +23,8 @@ class OpenBSDBootstrapper(BaseBootstrapper):
             'llvm',
             'yasm',
             'gtk+2',
+            'gtk+3',
             'dbus-glib',
-            'gstreamer-plugins-base',
             'pulseaudio',
         ]
 

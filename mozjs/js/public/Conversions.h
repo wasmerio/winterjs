@@ -30,35 +30,47 @@ ToBooleanSlow(JS::HandleValue v);
 
 /* DO NOT CALL THIS.  Use JS::ToNumber. */
 extern JS_PUBLIC_API(bool)
-ToNumberSlow(JSContext *cx, JS::Value v, double *dp);
+ToNumberSlow(JSContext* cx, JS::Value v, double* dp);
+
+/* DO NOT CALL THIS. Use JS::ToInt8. */
+extern JS_PUBLIC_API(bool)
+ToInt8Slow(JSContext *cx, JS::HandleValue v, int8_t *out);
+
+/* DO NOT CALL THIS. Use JS::ToUint8. */
+extern JS_PUBLIC_API(bool)
+ToUint8Slow(JSContext *cx, JS::HandleValue v, uint8_t *out);
+
+/* DO NOT CALL THIS. Use JS::ToInt16. */
+extern JS_PUBLIC_API(bool)
+ToInt16Slow(JSContext *cx, JS::HandleValue v, int16_t *out);
 
 /* DO NOT CALL THIS. Use JS::ToInt32. */
 extern JS_PUBLIC_API(bool)
-ToInt32Slow(JSContext *cx, JS::HandleValue v, int32_t *out);
+ToInt32Slow(JSContext* cx, JS::HandleValue v, int32_t* out);
 
 /* DO NOT CALL THIS. Use JS::ToUint32. */
 extern JS_PUBLIC_API(bool)
-ToUint32Slow(JSContext *cx, JS::HandleValue v, uint32_t *out);
+ToUint32Slow(JSContext* cx, JS::HandleValue v, uint32_t* out);
 
 /* DO NOT CALL THIS. Use JS::ToUint16. */
 extern JS_PUBLIC_API(bool)
-ToUint16Slow(JSContext *cx, JS::HandleValue v, uint16_t *out);
+ToUint16Slow(JSContext* cx, JS::HandleValue v, uint16_t* out);
 
 /* DO NOT CALL THIS. Use JS::ToInt64. */
 extern JS_PUBLIC_API(bool)
-ToInt64Slow(JSContext *cx, JS::HandleValue v, int64_t *out);
+ToInt64Slow(JSContext* cx, JS::HandleValue v, int64_t* out);
 
 /* DO NOT CALL THIS. Use JS::ToUint64. */
 extern JS_PUBLIC_API(bool)
-ToUint64Slow(JSContext *cx, JS::HandleValue v, uint64_t *out);
+ToUint64Slow(JSContext* cx, JS::HandleValue v, uint64_t* out);
 
 /* DO NOT CALL THIS. Use JS::ToString. */
 extern JS_PUBLIC_API(JSString*)
-ToStringSlow(JSContext *cx, JS::HandleValue v);
+ToStringSlow(JSContext* cx, JS::HandleValue v);
 
 /* DO NOT CALL THIS. Use JS::ToObject. */
 extern JS_PUBLIC_API(JSObject*)
-ToObjectSlow(JSContext *cx, JS::HandleValue v, bool reportScanStack);
+ToObjectSlow(JSContext* cx, JS::HandleValue v, bool reportScanStack);
 
 } // namespace js
 
@@ -67,21 +79,21 @@ namespace JS {
 namespace detail {
 
 #ifdef JS_DEBUG
-/*
+/**
  * Assert that we're not doing GC on cx, that we're in a request as
  * needed, and that the compartments for cx and v are correct.
  * Also check that GC would be safe at this point.
  */
 extern JS_PUBLIC_API(void)
-AssertArgumentsAreSane(JSContext *cx, HandleValue v);
+AssertArgumentsAreSane(JSContext* cx, HandleValue v);
 #else
-inline void AssertArgumentsAreSane(JSContext *cx, HandleValue v)
+inline void AssertArgumentsAreSane(JSContext* cx, HandleValue v)
 {}
 #endif /* JS_DEBUG */
 
 } // namespace detail
 
-/*
+/**
  * ES6 draft 20141224, 7.1.1, second algorithm.
  *
  * Most users shouldn't call this -- use JS::ToBoolean, ToNumber, or ToString
@@ -90,7 +102,7 @@ inline void AssertArgumentsAreSane(JSContext *cx, HandleValue v)
  * objects in JS, codified as OrdinaryToPrimitive.
  */
 extern JS_PUBLIC_API(bool)
-OrdinaryToPrimitive(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue vp);
+OrdinaryToPrimitive(JSContext* cx, HandleObject obj, JSType type, MutableHandleValue vp);
 
 /* ES6 draft 20141224, 7.1.2. */
 MOZ_ALWAYS_INLINE bool
@@ -115,7 +127,7 @@ ToBoolean(HandleValue v)
 
 /* ES6 draft 20141224, 7.1.3. */
 MOZ_ALWAYS_INLINE bool
-ToNumber(JSContext *cx, HandleValue v, double *out)
+ToNumber(JSContext* cx, HandleValue v, double* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -144,7 +156,7 @@ ToInteger(double d)
 
 /* ES6 draft 20141224, 7.1.5. */
 MOZ_ALWAYS_INLINE bool
-ToInt32(JSContext *cx, JS::HandleValue v, int32_t *out)
+ToInt32(JSContext* cx, JS::HandleValue v, int32_t* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -157,7 +169,7 @@ ToInt32(JSContext *cx, JS::HandleValue v, int32_t *out)
 
 /* ES6 draft 20141224, 7.1.6. */
 MOZ_ALWAYS_INLINE bool
-ToUint32(JSContext *cx, HandleValue v, uint32_t *out)
+ToUint32(JSContext* cx, HandleValue v, uint32_t* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -168,9 +180,22 @@ ToUint32(JSContext *cx, HandleValue v, uint32_t *out)
     return js::ToUint32Slow(cx, v, out);
 }
 
+/* ES6 draft 20141224, 7.1.7. */
+MOZ_ALWAYS_INLINE bool
+ToInt16(JSContext *cx, JS::HandleValue v, int16_t *out)
+{
+    detail::AssertArgumentsAreSane(cx, v);
+
+    if (v.isInt32()) {
+        *out = int16_t(v.toInt32());
+        return true;
+    }
+    return js::ToInt16Slow(cx, v, out);
+}
+
 /* ES6 draft 20141224, 7.1.8. */
 MOZ_ALWAYS_INLINE bool
-ToUint16(JSContext *cx, HandleValue v, uint16_t *out)
+ToUint16(JSContext* cx, HandleValue v, uint16_t* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -181,12 +206,38 @@ ToUint16(JSContext *cx, HandleValue v, uint16_t *out)
     return js::ToUint16Slow(cx, v, out);
 }
 
+/* ES6 draft 20141224, 7.1.9 */
+MOZ_ALWAYS_INLINE bool
+ToInt8(JSContext *cx, JS::HandleValue v, int8_t *out)
+{
+    detail::AssertArgumentsAreSane(cx, v);
+
+    if (v.isInt32()) {
+        *out = int8_t(v.toInt32());
+        return true;
+    }
+    return js::ToInt8Slow(cx, v, out);
+}
+
+/* ES6 ECMA-262, 7.1.10 */
+MOZ_ALWAYS_INLINE bool
+ToUint8(JSContext *cx, JS::HandleValue v, uint8_t *out)
+{
+    detail::AssertArgumentsAreSane(cx, v);
+
+    if (v.isInt32()) {
+        *out = uint8_t(v.toInt32());
+        return true;
+    }
+    return js::ToUint8Slow(cx, v, out);
+}
+
 /*
  * Non-standard, with behavior similar to that of ToInt32, except in its
  * producing an int64_t.
  */
 MOZ_ALWAYS_INLINE bool
-ToInt64(JSContext *cx, HandleValue v, int64_t *out)
+ToInt64(JSContext* cx, HandleValue v, int64_t* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -202,7 +253,7 @@ ToInt64(JSContext *cx, HandleValue v, int64_t *out)
  * producing a uint64_t.
  */
 MOZ_ALWAYS_INLINE bool
-ToUint64(JSContext *cx, HandleValue v, uint64_t *out)
+ToUint64(JSContext* cx, HandleValue v, uint64_t* out)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -215,7 +266,7 @@ ToUint64(JSContext *cx, HandleValue v, uint64_t *out)
 
 /* ES6 draft 20141224, 7.1.12. */
 MOZ_ALWAYS_INLINE JSString*
-ToString(JSContext *cx, HandleValue v)
+ToString(JSContext* cx, HandleValue v)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -225,8 +276,8 @@ ToString(JSContext *cx, HandleValue v)
 }
 
 /* ES6 draft 20141224, 7.1.13. */
-inline JSObject *
-ToObject(JSContext *cx, HandleValue v)
+inline JSObject*
+ToObject(JSContext* cx, HandleValue v)
 {
     detail::AssertArgumentsAreSane(cx, v);
 
@@ -349,7 +400,9 @@ ToIntWidth(double d)
 inline int32_t
 ToInt32(double d)
 {
-#if defined (__arm__) && defined (__GNUC__)
+    // clang crashes compiling this when targeting arm-darwin:
+    // https://llvm.org/bugs/show_bug.cgi?id=22974
+#if defined (__arm__) && defined (__GNUC__) && !defined(__APPLE__)
     int32_t i;
     uint32_t    tmp0;
     uint32_t    tmp1;
@@ -480,6 +533,33 @@ inline uint32_t
 ToUint32(double d)
 {
     return detail::ToUintWidth<uint32_t>(d);
+}
+
+/* WEBIDL 4.2.4 */
+inline int8_t
+ToInt8(double d)
+{
+    return detail::ToIntWidth<int8_t>(d);
+}
+
+/* ECMA-262 7.1.10 ToUInt8() specialized for doubles. */
+inline int8_t
+ToUint8(double d)
+{
+    return detail::ToUintWidth<uint8_t>(d);
+}
+
+/* WEBIDL 4.2.6 */
+inline int16_t
+ToInt16(double d)
+{
+    return detail::ToIntWidth<int16_t>(d);
+}
+
+inline uint16_t
+ToUint16(double d)
+{
+    return detail::ToUintWidth<uint16_t>(d);
 }
 
 /* WEBIDL 4.2.10 */

@@ -1,0 +1,732 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# vim: set filetype=python:
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+include('util.configure')
+include('checks.configure')
+
+option(env='DIST', nargs=1, help='DIST directory')
+
+# Do not allow objdir == srcdir builds.
+# ==============================================================
+@depends('--help', 'DIST')
+def check_build_environment(help, dist):
+    topobjdir = os.path.realpath(os.path.abspath('.'))
+    topsrcdir = os.path.realpath(os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..')))
+
+    if dist:
+        dist = normsep(dist[0])
+    else:
+        dist = os.path.join(topobjdir, 'dist')
+
+    result = namespace(
+        topsrcdir=topsrcdir,
+        topobjdir=topobjdir,
+        dist=dist,
+    )
+
+    if help:
+        return result
+
+    if topsrcdir == topobjdir:
+        error(
+            '  ***\n'
+            '  * Building directly in the main source directory is not allowed.\n'
+            '  *\n'
+            '  * To build, you must run configure from a separate directory\n'
+            '  * (referred to as an object directory).\n'
+            '  *\n'
+            '  * If you are building with a mozconfig, you will need to change your\n'
+            '  * mozconfig to point to a different object directory.\n'
+            '  ***'
+        )
+
+    # Check for a couple representative files in the source tree
+    conflict_files = [
+        '*         %s' % f for f in ('Makefile', 'config/autoconf.mk')
+        if os.path.exists(os.path.join(topsrcdir, f))
+    ]
+    if conflict_files:
+        error(
+            '  ***\n'
+            '  *   Your source tree contains these files:\n'
+            '  %s\n'
+            '  *   This indicates that you previously built in the source tree.\n'
+            '  *   A source tree build can confuse the separate objdir build.\n'
+            '  *\n'
+            '  *   To clean up the source tree:\n'
+            '  *     1. cd %s\n'
+            '  *     2. gmake distclean\n'
+            '  ***'
+            % ('\n  '.join(conflict_files), topsrcdir)
+        )
+
+    return result
+
+set_config('TOPSRCDIR', delayed_getattr(check_build_environment, 'topsrcdir'))
+set_config('TOPOBJDIR', delayed_getattr(check_build_environment, 'topobjdir'))
+set_config('MOZ_BUILD_ROOT', delayed_getattr(check_build_environment,
+                                             'topobjdir'))
+set_config('DIST', delayed_getattr(check_build_environment, 'dist'))
+
+
+option(env='OLD_CONFIGURE', nargs=1, help='Path to the old configure script')
+
+option(env='MOZ_CURRENT_PROJECT', nargs=1, help='Current build project')
+option(env='MOZCONFIG', nargs=1, help='Mozconfig location')
+
+# Read user mozconfig
+# ==============================================================
+# Note: the dependency on --help is only there to always read the mozconfig,
+# even when --help is passed. Without this dependency, the function wouldn't
+# be called when --help is passed, and the mozconfig wouldn't be read.
+@depends('MOZ_CURRENT_PROJECT', 'MOZCONFIG', 'OLD_CONFIGURE',
+         check_build_environment, '--help')
+@advanced
+def mozconfig(current_project, mozconfig, old_configure, build_env, help):
+    from mozbuild.mozconfig import MozconfigLoader
+
+    if not old_configure:
+        error('The OLD_CONFIGURE environment variable must be set')
+
+    # Don't read the mozconfig for the js configure (yay backwards
+    # compatibility)
+    # While the long term goal is that js and top-level use the same configure
+    # and the same overall setup, including the possibility to use mozconfigs,
+    # figuring out what we want to do wrt mozconfig vs. command line and
+    # environment variable is not a clear-cut case, and it's more important to
+    # fix the immediate problem mozconfig causes to js developers by
+    # "temporarily" returning to the previous behavior of not loading the
+    # mozconfig for the js configure.
+    # Separately to the immediate problem for js developers, there is also the
+    # need to not load a mozconfig when running js configure as a subconfigure.
+    # Unfortunately, there is no direct way to tell whether the running
+    # configure is the js configure. The indirect way is to look at the
+    # OLD_CONFIGURE path, which points to js/src/old-configure.
+    # I expect we'll have figured things out for mozconfigs well before
+    # old-configure dies.
+    if os.path.dirname(os.path.abspath(old_configure[0])).endswith('/js/src'):
+        return {'path': None}
+
+    loader = MozconfigLoader(build_env.topsrcdir)
+    current_project = current_project[0] if current_project else None
+    mozconfig = mozconfig[0] if mozconfig else None
+    mozconfig = loader.find_mozconfig(env={'MOZCONFIG': mozconfig})
+    mozconfig = loader.read_mozconfig(mozconfig, moz_build_app=current_project)
+
+    return mozconfig
+
+
+# Hacks related to old-configure
+# ==============================
+
+@depends('--help')
+def old_configure_assignments(help):
+    return []
+
+@depends('--help')
+def extra_old_configure_args(help):
+    return []
+
+@template
+@advanced
+def add_old_configure_assignment(var, value_func):
+    from mozbuild.configure import DummyFunction
+    assert isinstance(value_func, DummyFunction)
+
+    @depends(old_configure_assignments, value_func)
+    @advanced
+    def add_assignment(assignments, value):
+        if value is None:
+            return
+        if value is True:
+            assignments.append('%s=1' % var)
+        elif value is False:
+            assignments.append('%s=' % var)
+        else:
+            from mozbuild.shellutil import quote
+            assignments.append('%s=%s' % (var, quote(value)))
+
+@template
+def add_old_configure_arg(arg):
+    @depends(extra_old_configure_args)
+    def add_arg(args):
+        args.append(arg)
+
+
+option(env='PYTHON', nargs=1, help='Python interpreter')
+
+# Setup python virtualenv
+# ==============================================================
+@depends('PYTHON', check_build_environment, mozconfig)
+@advanced
+def virtualenv_python(env_python, build_env, mozconfig):
+    import os
+    import sys
+    import subprocess
+    from mozbuild.virtualenv import (
+        VirtualenvManager,
+        verify_python_version,
+    )
+
+    python = env_python[0] if env_python else None
+
+    # Ideally we'd rely on the mozconfig injection from mozconfig_options,
+    # but we'd rather avoid the verbosity when we need to reexecute with
+    # a different python.
+    if mozconfig['path']:
+        if 'PYTHON' in mozconfig['env']['added']:
+            python = mozconfig['env']['added']['PYTHON']
+        elif 'PYTHON' in mozconfig['env']['modified']:
+            python = mozconfig['env']['modified']['PYTHON'][1]
+        elif 'PYTHON' in mozconfig['vars']['added']:
+            python = mozconfig['vars']['added']['PYTHON']
+        elif 'PYTHON' in mozconfig['vars']['modified']:
+            python = mozconfig['vars']['modified']['PYTHON'][1]
+
+    verify_python_version(sys.stderr)
+    topsrcdir, topobjdir = build_env.topsrcdir, build_env.topobjdir
+    if topobjdir.endswith('/js/src'):
+        topobjdir = topobjdir[:-7]
+
+    manager = VirtualenvManager(
+        topsrcdir, topobjdir,
+        os.path.join(topobjdir, '_virtualenv'), sys.stdout,
+        os.path.join(topsrcdir, 'build', 'virtualenv_packages.txt'))
+
+    if python:
+        # If we're not in the virtualenv, we need the which module for
+        # find_program.
+        if normsep(sys.executable) != normsep(manager.python_path):
+            sys.path.append(os.path.join(topsrcdir, 'python', 'which'))
+        found_python = find_program(python)
+        if not found_python:
+            error('The PYTHON environment variable does not contain '
+                  'a valid path. Cannot find %s' % python)
+        python = found_python
+    else:
+        python = sys.executable
+
+    if not manager.up_to_date(python):
+        warn('Creating Python environment')
+        manager.build(python)
+
+    python = normsep(manager.python_path)
+
+    if python != normsep(sys.executable):
+        warn('Reexecuting in the virtualenv')
+        if env_python:
+            del os.environ['PYTHON']
+        # One would prefer to use os.execl, but that's completely borked on
+        # Windows.
+        sys.exit(subprocess.call([python] + sys.argv))
+
+    # We are now in the virtualenv
+    import distutils.sysconfig
+    if not distutils.sysconfig.get_python_lib():
+        error('Could not determine python site packages directory')
+
+    return python
+
+set_config('PYTHON', virtualenv_python)
+add_old_configure_assignment('PYTHON', virtualenv_python)
+
+# Inject mozconfig options
+# ==============================================================
+@template
+@advanced
+def command_line_helper():
+    # This escapes the sandbox. Don't copy this. This is only here because
+    # it is a one off and because the required functionality doesn't need
+    # to be exposed for other usecases.
+    return depends.__self__._helper
+
+
+# All options defined above this point can't be injected in mozconfig_options
+# below, so collect them.
+@template
+def early_options():
+    @depends('--help')
+    @advanced
+    def early_options(help):
+        return set(
+            option.env
+            for option in depends.__self__._options.itervalues()
+            if option.env
+        )
+    return early_options
+
+early_options = early_options()
+
+# At the moment, moz.configure doesn't have complete knowledge of all the
+# supported options in mozconfig because of all that is still in old.configure.
+# But we don't know all the options that moz.configure knows about until all
+# moz.configure files are executed, so we keep a manual list here, that is
+# checked in old.configure (we'll assume it's the last moz.configure file
+# processed). This is tedious but necessary for now.
+@depends('--help')
+def wanted_mozconfig_variables(help):
+     return set([
+         'AUTOCONF',
+         'AWK',
+         'DISABLE_EXPORT_JS',
+         'DISABLE_SHARED_JS',
+         'DOXYGEN',
+         'DSYMUTIL',
+         'EXTERNAL_SOURCE_DIR',
+         'GENISOIMAGE',
+         'GRADLE',
+         'GRADLE_FLAGS',
+         'GRADLE_MAVEN_REPOSITORY',
+         'JS_STANDALONE',
+         'L10NBASEDIR',
+         'MOZILLABUILD',
+         'MOZ_ARTIFACT_BUILDS',
+         'MOZ_BUILD_APP',
+         'MOZ_BUILD_MOBILE_ANDROID_WITH_GRADLE',
+         'MOZ_CALLGRIND',
+         'MOZ_DMD',
+         'MOZ_FMP4',
+         'MOZ_INSTRUMENT_EVENT_LOOP',
+         'MOZ_INSTRUMENTS',
+         'MOZ_JPROF',
+         'MOZ_PROFILING',
+         'MOZ_USE_SYSTRACE',
+         'MOZ_VTUNE',
+         'MOZTTDIR',
+         'PERL',
+         'RPMBUILD',
+         'TAR',
+         'UNZIP',
+         'USE_FC_FREETYPE',
+         'WITHOUT_X',
+         'XARGS',
+         'YASM',
+         'ZIP',
+     ])
+
+
+@depends(mozconfig, wanted_mozconfig_variables, '--help')
+def mozconfig_options(mozconfig, wanted_mozconfig_variables, help):
+    if mozconfig['path']:
+        helper = command_line_helper()
+        warn('Adding configure options from %s' % mozconfig['path'])
+        for arg in mozconfig['configure_args']:
+            warn('  %s' % arg)
+            # We could be using imply_option() here, but it has other
+            # contraints that don't really apply to the command-line
+            # emulation that mozconfig provides.
+            helper.add(arg, origin='mozconfig', args=helper._args)
+
+        def add(key, value):
+            # See comment above wanted_mozconfig_variables
+            if key in wanted_mozconfig_variables:
+                arg = '%s=%s' % (key, value)
+                warn('  %s' % arg)
+                helper.add(arg, origin='mozconfig', args=helper._args)
+
+        for key, value in mozconfig['env']['added'].iteritems():
+            add(key, value)
+        for key, (_, value) in mozconfig['env']['modified'].iteritems():
+            add(key, value)
+        for key, value in mozconfig['vars']['added'].iteritems():
+            add(key, value)
+        for key, (_, value) in mozconfig['vars']['modified'].iteritems():
+            add(key, value)
+
+
+del command_line_helper
+
+
+# Mozilla-Build
+# ==============================================================
+option(env='MOZILLABUILD', nargs=1,
+       help='Path to Mozilla Build (Windows-only)')
+
+# It feels dirty replicating this from python/mozbuild/mozbuild/mozconfig.py,
+# but the end goal being that the configure script would go away...
+@depends('MOZILLABUILD')
+@advanced
+def shell(mozillabuild):
+    import sys
+
+    shell = 'sh'
+    if mozillabuild:
+        shell = mozillabuild[0] + '/msys/bin/sh'
+    if sys.platform == 'win32':
+        shell = shell + '.exe'
+    return shell
+
+
+# Host and target systems
+# ==============================================================
+option('--host', nargs=1, help='Define the system type performing the build')
+
+option('--target', nargs=1,
+       help='Define the system type where the resulting executables will be '
+            'used')
+
+@template
+def split_triplet(triplet):
+    # The standard triplet is defined as
+    #   CPU_TYPE-MANUFACTURER-OPERATING_SYSTEM
+    # There is also a quartet form:
+    #   CPU_TYPE-MANUFACTURER-KERNEL-OPERATING_SYSTEM
+    # But we can consider the "KERNEL-OPERATING_SYSTEM" as one.
+    cpu, manufacturer, os = triplet.split('-', 2)
+
+    # Autoconf uses config.sub to validate and canonicalize those triplets,
+    # but the granularity of its results has never been satisfying to our
+    # use, so we've had our own, different, canonicalization. We've also
+    # historically not been very consistent with how we use the canonicalized
+    # values. Hopefully, this will help us make things better.
+    # The tests are inherited from our decades-old autoconf-based configure,
+    # which can probably be improved/cleaned up because they are based on a
+    # mix of uname and config.guess output, while we now only use the latter,
+    # which presumably has a cleaner and leaner output. Let's refine later.
+    os = os.replace('/', '_')
+    if 'android' in os:
+        canonical_os = 'Android'
+        canonical_kernel = 'Linux'
+    elif os.startswith('linux'):
+        canonical_os = 'GNU'
+        canonical_kernel = 'Linux'
+    elif os.startswith('kfreebsd') and os.endswith('-gnu'):
+        canonical_os = 'GNU'
+        canonical_kernel = 'kFreeBSD'
+    elif os.startswith('gnu'):
+        canonical_os = canonical_kernel = 'GNU'
+    elif os.startswith('mingw'):
+        canonical_os = canonical_kernel = 'WINNT'
+    elif os.startswith('darwin'):
+        canonical_kernel = 'Darwin'
+        canonical_os = 'OSX'
+    elif os.startswith('ios'):
+        canonical_kernel = 'Darwin'
+        canonical_os = 'iOS'
+    elif os.startswith('dragonfly'):
+        canonical_os = canonical_kernel = 'DragonFly'
+    elif os.startswith('freebsd'):
+        canonical_os = canonical_kernel = 'FreeBSD'
+    elif os.startswith('netbsd'):
+        canonical_os = canonical_kernel = 'NetBSD'
+    elif os.startswith('openbsd'):
+        canonical_os = canonical_kernel = 'OpenBSD'
+    else:
+        error('Unknown OS: %s' % os)
+
+    # The CPU granularity is probably not enough. Moving more things from
+    # old-configure will tell us if we need more
+    if cpu.endswith('86') or (cpu.startswith('i') and '86' in cpu):
+        canonical_cpu = 'x86'
+    elif cpu in ('s390', 's390x', 'x86_64', 'ia64'):
+        canonical_cpu = cpu
+    elif cpu in ('powerpc64', 'ppc64', 'powerpc64le', 'ppc64le'):
+        canonical_cpu = 'ppc64'
+    elif cpu in ('powerpc', 'ppc', 'rs6000') or cpu.startswith('powerpc'):
+        canonical_cpu = 'ppc'
+    elif cpu in ('Alpha', 'alpha', 'ALPHA'):
+        canonical_cpu = 'Alpha'
+    elif cpu.startswith('hppa') or cpu == 'parisc':
+        canonical_cpu = 'hppa'
+    elif cpu.startswith('sparc') or cpu == 'sun4u':
+        canonical_cpu = 'sparc'
+    elif cpu.startswith('arm'):
+        canonical_cpu = 'arm'
+    elif cpu in ('mips', 'mipsel'):
+        canonical_cpu = 'mips32'
+    elif cpu in ('mips64', 'mips64el'):
+        canonical_cpu = 'mips64'
+    elif cpu.startswith('aarch64'):
+        canonical_cpu = 'aarch64'
+    else:
+        canonical_cpu = cpu
+
+    return namespace(
+        alias=triplet,
+        cpu=canonical_cpu,
+        kernel=canonical_kernel,
+        os=canonical_os,
+        raw_cpu=cpu,
+        raw_os=os,
+    )
+
+
+@template
+@advanced
+def config_sub(shell, triplet):
+    import subprocess
+    config_sub = os.path.join(os.path.dirname(__file__), '..',
+                              'autoconf', 'config.sub')
+    return subprocess.check_output([shell, config_sub, triplet]).strip()
+
+
+@depends('--host', shell)
+@checking('for host system type', lambda h: h.alias)
+@advanced
+def host(value, shell):
+    if not value:
+        import subprocess
+        config_guess = os.path.join(os.path.dirname(__file__), '..',
+                                    'autoconf', 'config.guess')
+        host = subprocess.check_output([shell, config_guess]).strip()
+    else:
+        host = value[0]
+
+    return split_triplet(config_sub(shell, host))
+
+
+@depends('--target', host, shell)
+@checking('for target system type', lambda t: t.alias)
+def target(value, host, shell):
+    if not value:
+        return host
+    return split_triplet(config_sub(shell, value[0]))
+
+
+@depends(host, target)
+def host_and_target_for_old_configure(host, target):
+    # Autoconf needs these set
+    add_old_configure_arg('--host=%s' % host.alias)
+
+    target_alias = target.alias
+    # old-configure does plenty of tests against $target and $target_os
+    # and expects darwin for iOS, so make it happy.
+    if target.os == 'iOS':
+        target_alias = target_alias.replace('-ios', '-darwin')
+    add_old_configure_arg('--target=%s' % target_alias)
+
+
+# These variables are for compatibility with the current moz.builds and
+# old-configure. Eventually, we'll want to canonicalize better.
+@depends(target)
+def target_variables(target):
+    if target.kernel == 'kFreeBSD':
+        os_target = 'GNU/kFreeBSD'
+        os_arch = 'GNU_kFreeBSD'
+    elif target.kernel == 'Darwin' or (target.kernel == 'Linux' and
+                                       target.os == 'GNU'):
+        os_target = target.kernel
+        os_arch = target.kernel
+    else:
+        os_target = target.os
+        os_arch = target.kernel
+
+    if target.os == 'Darwin' and target.cpu == 'x86':
+        os_test = 'i386'
+    else:
+        os_test = target.raw_cpu
+
+    return namespace(
+        OS_TARGET=os_target,
+        OS_ARCH=os_arch,
+        OS_TEST=os_test,
+        INTEL_ARCHITECTURE=target.cpu in ('x86', 'x86_64') or None,
+    )
+
+set_config('OS_TARGET', delayed_getattr(target_variables, 'OS_TARGET'))
+add_old_configure_assignment('OS_TARGET',
+                             delayed_getattr(target_variables, 'OS_TARGET'))
+set_config('OS_ARCH', delayed_getattr(target_variables, 'OS_ARCH'))
+add_old_configure_assignment('OS_ARCH',
+                             delayed_getattr(target_variables, 'OS_ARCH'))
+set_config('OS_TEST', delayed_getattr(target_variables, 'OS_TEST'))
+add_old_configure_assignment('OS_TEST',
+                             delayed_getattr(target_variables, 'OS_TEST'))
+set_config('CPU_ARCH', delayed_getattr(target, 'cpu'))
+add_old_configure_assignment('CPU_ARCH', delayed_getattr(target, 'cpu'))
+set_config('INTEL_ARCHITECTURE', delayed_getattr(target_variables,
+                                                 'INTEL_ARCHITECTURE'))
+set_config('TARGET_CPU', delayed_getattr(target, 'raw_cpu'))
+set_config('TARGET_OS', delayed_getattr(target, 'raw_os'))
+
+
+@depends(host)
+def host_variables(host):
+    if host.kernel == 'kFreeBSD':
+        os_arch = 'GNU_kFreeBSD'
+    else:
+        os_arch = host.kernel
+    return namespace(
+        HOST_OS_ARCH=os_arch,
+    )
+
+set_config('HOST_OS_ARCH', delayed_getattr(host_variables, 'HOST_OS_ARCH'))
+add_old_configure_assignment('HOST_OS_ARCH',
+                             delayed_getattr(host_variables, 'HOST_OS_ARCH'))
+
+@depends(target)
+def target_is_windows(target):
+    if target.kernel == 'WINNT':
+        return True
+
+set_define('_WINDOWS', target_is_windows)
+set_define('WIN32', target_is_windows)
+set_define('XP_WIN', target_is_windows)
+set_define('XP_WIN32', target_is_windows)
+
+@depends(target)
+def target_is_unix(target):
+    if target.kernel != 'WINNT':
+        return True
+
+set_define('XP_UNIX', target_is_unix)
+
+@depends(target)
+def target_is_darwin(target):
+    if target.kernel == 'Darwin':
+        return True
+
+set_define('XP_DARWIN', target_is_darwin)
+
+@depends(target)
+def target_is_ios(target):
+    if target.kernel == 'Darwin' and target.os == 'iOS':
+        return True
+
+set_define('XP_IOS', target_is_ios)
+
+@depends(target)
+def target_is_osx(target):
+    if target.kernel == 'Darwin' and target.os == 'OSX':
+        return True
+
+set_define('XP_MACOSX', target_is_osx)
+
+@depends(target)
+def target_is_linux(target):
+    if target.kernel == 'Linux':
+        return True
+
+set_define('XP_LINUX', target_is_linux)
+
+# The application/project to build
+# ==============================================================
+option('--enable-application', nargs=1, env='MOZ_BUILD_APP',
+       help='Application to build. Same as --enable-project.')
+
+@depends('--enable-application', '--help')
+def application(app, help):
+    if app:
+        return app
+
+imply_option('--enable-project', application)
+
+
+@depends(check_build_environment, '--help')
+def default_project(build_env, help):
+    if build_env.topobjdir.endswith('/js/src'):
+        return 'js'
+    return 'browser'
+
+option('--enable-project', nargs=1, default=default_project,
+       help='Project to build')
+
+option('--with-external-source-dir', env='EXTERNAL_SOURCE_DIR', nargs=1,
+       help='External directory containing additional build files')
+
+@depends('--enable-project', '--with-external-source-dir',
+         check_build_environment, '--help')
+def include_project_configure(project, external_source_dir, build_env, help):
+    if not project:
+        error('--enable-project is required.')
+
+    base_dir = build_env.topsrcdir
+    if external_source_dir:
+        base_dir = os.path.join(base_dir, external_source_dir[0])
+
+    path = os.path.join(base_dir, project[0], 'moz.configure')
+    if not os.path.exists(path):
+        error('Cannot find project %s' % project[0])
+    return path
+
+@depends('--with-external-source-dir')
+def external_source_dir(value):
+    if value:
+        return value[0]
+
+set_config('EXTERNAL_SOURCE_DIR', external_source_dir)
+add_old_configure_assignment('EXTERNAL_SOURCE_DIR', external_source_dir)
+
+
+@depends(include_project_configure, check_build_environment, '--help')
+def build_project(include_project_configure, build_env, help):
+    ret = os.path.dirname(os.path.relpath(include_project_configure,
+                                          build_env.topsrcdir))
+    return ret
+
+set_config('MOZ_BUILD_APP', build_project)
+set_define('MOZ_BUILD_APP', build_project)
+add_old_configure_assignment('MOZ_BUILD_APP', build_project)
+
+
+# set RELEASE_BUILD and NIGHTLY_BUILD variables depending on the cycle we're in
+# The logic works like this:
+# - if we have "a1" in GRE_MILESTONE, we're building Nightly (define NIGHTLY_BUILD)
+# - otherwise, if we have "a" in GRE_MILESTONE, we're building Nightly or Aurora
+# - otherwise, we're building Release/Beta (define RELEASE_BUILD)
+@depends(check_build_environment)
+@advanced
+def milestone(build_env):
+    milestone_path = os.path.join(build_env.topsrcdir,
+                                  'config',
+                                  'milestone.txt')
+    with open(milestone_path, 'r') as fh:
+        milestone = fh.read().splitlines()[-1]
+
+    is_nightly = is_release = None
+
+    if 'a1' in milestone:
+        is_nightly = True
+    elif 'a' not in milestone:
+        is_release = True
+
+    return namespace(version=milestone,
+                     is_nightly=is_nightly,
+                     is_release=is_release)
+
+set_config('GRE_MILESTONE', delayed_getattr(milestone, 'version'))
+set_config('NIGHTLY_BUILD', delayed_getattr(milestone, 'is_nightly'))
+set_define('NIGHTLY_BUILD', delayed_getattr(milestone, 'is_nightly'))
+add_old_configure_assignment('NIGHTLY_BUILD',
+                             delayed_getattr(milestone, 'is_nightly'))
+set_config('RELEASE_BUILD', delayed_getattr(milestone, 'is_release'))
+set_define('RELEASE_BUILD', delayed_getattr(milestone, 'is_release'))
+add_old_configure_assignment('RELEASE_BUILD',
+                             delayed_getattr(milestone, 'is_release'))
+
+
+# This is temporary until js/src/configure and configure are merged.
+# Use instead of option() in js/moz.configure
+@template
+def js_option(*args, **kwargs):
+    opt = option(*args, **kwargs)
+
+    @depends(opt.option, build_project)
+    def js_option(value, build_project):
+        if build_project != 'js':
+            add_old_configure_arg(value.format(opt.option))
+
+
+# This is overridden in b2g/moz.configure with an option. No other project
+# needs the option directly, but it's used to influence some other things in
+# toolkit/moz.configure (and possibly top-level moz.configure later on), so
+# define a dummy default here.
+@depends('--help')
+def gonkdir(help):
+    return ''
+
+
+include(include_project_configure)
+
+# By now, gonkdir is either the dummy function above or a real function
+# depending on --with-gonk from b2g/moz.configure.
+@depends(gonkdir)
+def gonkdir_for_old_configure(value):
+    if value:
+        return value
+
+add_old_configure_assignment('gonkdir', gonkdir_for_old_configure)

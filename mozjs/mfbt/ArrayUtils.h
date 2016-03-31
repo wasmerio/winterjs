@@ -20,6 +20,7 @@
 
 #include "mozilla/Alignment.h"
 #include "mozilla/Array.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/TypeTraits.h"
 
 namespace mozilla {
@@ -64,6 +65,13 @@ ArrayLength(const Array<T, N>& aArr)
   return N;
 }
 
+template<typename E, E N, typename T>
+MOZ_CONSTEXPR size_t
+ArrayLength(const EnumeratedArray<E, N, T>& aArr)
+{
+  return size_t(N);
+}
+
 /*
  * Compute the address one past the last element of a constant-length array.
  *
@@ -92,22 +100,23 @@ ArrayEnd(const Array<T, N>& aArr)
 
 namespace detail {
 
-template<typename AlignType, typename Pointee>
+template<typename AlignType, typename Pointee,
+         typename = EnableIf<!IsVoid<AlignType>::value>>
 struct AlignedChecker
 {
   static void
-  test(Pointee* aPtr)
+  test(const Pointee* aPtr)
   {
     MOZ_ASSERT((uintptr_t(aPtr) % MOZ_ALIGNOF(AlignType)) == 0,
                "performing a range-check with a misaligned pointer");
   }
 };
 
-template<typename Pointee>
-struct AlignedChecker<void, Pointee>
+template<typename AlignType, typename Pointee>
+struct AlignedChecker<AlignType, Pointee>
 {
   static void
-  test(Pointee* aPtr)
+  test(const Pointee* aPtr)
   {
   }
 };
@@ -132,13 +141,14 @@ inline typename EnableIf<IsSame<T, U>::value ||
                          IsBaseOf<T, U>::value ||
                          IsVoid<T>::value,
                          bool>::Type
-IsInRange(T* aPtr, U* aBegin, U* aEnd)
+IsInRange(const T* aPtr, const U* aBegin, const U* aEnd)
 {
   MOZ_ASSERT(aBegin <= aEnd);
   detail::AlignedChecker<U, T>::test(aPtr);
   detail::AlignedChecker<U, U>::test(aBegin);
   detail::AlignedChecker<U, U>::test(aEnd);
-  return aBegin <= static_cast<U*>(aPtr) && static_cast<U*>(aPtr) < aEnd;
+  return aBegin <= reinterpret_cast<const U*>(aPtr) &&
+         reinterpret_cast<const U*>(aPtr) < aEnd;
 }
 
 /**
@@ -148,10 +158,11 @@ IsInRange(T* aPtr, U* aBegin, U* aEnd)
  */
 template<typename T>
 inline bool
-IsInRange(T* aPtr, uintptr_t aBegin, uintptr_t aEnd)
+IsInRange(const T* aPtr, uintptr_t aBegin, uintptr_t aEnd)
 {
   return IsInRange(aPtr,
-                   reinterpret_cast<T*>(aBegin), reinterpret_cast<T*>(aEnd));
+                   reinterpret_cast<const T*>(aBegin),
+                   reinterpret_cast<const T*>(aEnd));
 }
 
 namespace detail {

@@ -1,4 +1,6 @@
-/*
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ *
  * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,16 +35,16 @@
 
 using namespace js::jit;
 
-uint64_t ExecutableAllocator::rngSeed;
-
-size_t ExecutableAllocator::determinePageSize()
+size_t
+ExecutableAllocator::determinePageSize()
 {
     SYSTEM_INFO system_info;
     GetSystemInfo(&system_info);
     return system_info.dwPageSize;
 }
 
-void *ExecutableAllocator::computeRandomAllocationAddress()
+void*
+ExecutableAllocator::computeRandomAllocationAddress()
 {
     /*
      * Inspiration is V8's OS::Allocate in platform-win32.cc.
@@ -55,7 +57,6 @@ void *ExecutableAllocator::computeRandomAllocationAddress()
      * bits of randomness in our selection.
      * x64: [2GiB, 4TiB), with 25 bits of randomness.
      */
-    static const unsigned chunkBits = 16;
 #ifdef JS_CPU_X64
     static const uintptr_t base = 0x0000000080000000;
     static const uintptr_t mask = 0x000003ffffff0000;
@@ -65,24 +66,15 @@ void *ExecutableAllocator::computeRandomAllocationAddress()
 #else
 # error "Unsupported architecture"
 #endif
-    uint64_t rand = random_next(&rngSeed, 32) << chunkBits;
-    return (void *) (base | (rand & mask));
-}
 
-static bool
-RandomizeIsBrokenImpl()
-{
-    // We disable everything before Vista, for now.
-    return !mozilla::IsVistaOrLater();
-}
+    if (randomNumberGenerator.isNothing()) {
+        mozilla::Array<uint64_t, 2> seed;
+        js::GenerateXorShift128PlusSeed(seed);
+        randomNumberGenerator.emplace(seed[0], seed[1]);
+    }
 
-static bool
-RandomizeIsBroken()
-{
-    // Use the compiler's intrinsic guards for |static type value = expr| to avoid some potential
-    // races if runtimes are created from multiple threads.
-    static int result = RandomizeIsBrokenImpl();
-    return !!result;
+    uint64_t rand = randomNumberGenerator.ref().next();
+    return (void*) (base | (rand & mask));
 }
 
 #ifdef JS_CPU_X64
@@ -123,8 +115,8 @@ struct ExceptionHandlerRecord
 // This type is rather elusive in documentation; Wine is the best I've found:
 //   http://source.winehq.org/source/include/winnt.h
 static DWORD
-ExceptionHandler(PEXCEPTION_RECORD exceptionRecord, _EXCEPTION_REGISTRATION_RECORD *,
-                 PCONTEXT context, _EXCEPTION_REGISTRATION_RECORD **)
+ExceptionHandler(PEXCEPTION_RECORD exceptionRecord, _EXCEPTION_REGISTRATION_RECORD*,
+                 PCONTEXT context, _EXCEPTION_REGISTRATION_RECORD**)
 {
     return sJitExceptionHandler(exceptionRecord, context);
 }
@@ -132,9 +124,13 @@ ExceptionHandler(PEXCEPTION_RECORD exceptionRecord, _EXCEPTION_REGISTRATION_RECO
 // For an explanation of the problem being solved here, see
 // SetJitExceptionFilter in jsfriendapi.h.
 static bool
-RegisterExecutableMemory(void *p, size_t bytes, size_t pageSize)
+RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
 {
-    ExceptionHandlerRecord *r = reinterpret_cast<ExceptionHandlerRecord*>(p);
+    DWORD oldProtect;
+    if (!VirtualProtect(p, pageSize, PAGE_READWRITE, &oldProtect))
+        return false;
+
+    ExceptionHandlerRecord* r = reinterpret_cast<ExceptionHandlerRecord*>(p);
 
     // All these fields are specified to be offsets from the base of the
     // executable code (which is 'p'), even if they have 'Address' in their
@@ -159,14 +155,13 @@ RegisterExecutableMemory(void *p, size_t bytes, size_t pageSize)
     // mov imm64, rax
     r->thunk[0]  = 0x48;
     r->thunk[1]  = 0xb8;
-    void *handler = JS_FUNC_TO_DATA_PTR(void *, ExceptionHandler);
+    void* handler = JS_FUNC_TO_DATA_PTR(void*, ExceptionHandler);
     memcpy(&r->thunk[2], &handler, 8);
 
     // jmp rax
     r->thunk[10] = 0xff;
     r->thunk[11] = 0xe0;
 
-    DWORD oldProtect;
     if (!VirtualProtect(p, pageSize, PAGE_EXECUTE_READ, &oldProtect))
         return false;
 
@@ -174,26 +169,25 @@ RegisterExecutableMemory(void *p, size_t bytes, size_t pageSize)
 }
 
 static void
-UnregisterExecutableMemory(void *p, size_t bytes, size_t pageSize)
+UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
 {
-    ExceptionHandlerRecord *r = reinterpret_cast<ExceptionHandlerRecord*>(p);
+    ExceptionHandlerRecord* r = reinterpret_cast<ExceptionHandlerRecord*>(p);
     RtlDeleteFunctionTable(&r->runtimeFunction);
 }
 #endif
 
-void *
-js::jit::AllocateExecutableMemory(void *addr, size_t bytes, unsigned permissions, const char *tag,
+void*
+js::jit::AllocateExecutableMemory(void* addr, size_t bytes, unsigned permissions, const char* tag,
                                   size_t pageSize)
 {
     MOZ_ASSERT(bytes % pageSize == 0);
-    MOZ_ASSERT(permissions == PAGE_EXECUTE_READWRITE);
 
 #ifdef JS_CPU_X64
     if (sJitExceptionHandler)
         bytes += pageSize;
 #endif
 
-    void *p = VirtualAlloc(addr, bytes, MEM_COMMIT | MEM_RESERVE, permissions);
+    void* p = VirtualAlloc(addr, bytes, MEM_COMMIT | MEM_RESERVE, permissions);
     if (!p)
         return nullptr;
 
@@ -212,7 +206,7 @@ js::jit::AllocateExecutableMemory(void *addr, size_t bytes, unsigned permissions
 }
 
 void
-js::jit::DeallocateExecutableMemory(void *addr, size_t bytes, size_t pageSize)
+js::jit::DeallocateExecutableMemory(void* addr, size_t bytes, size_t pageSize)
 {
     MOZ_ASSERT(bytes % pageSize == 0);
 
@@ -226,31 +220,53 @@ js::jit::DeallocateExecutableMemory(void *addr, size_t bytes, size_t pageSize)
     VirtualFree(addr, 0, MEM_RELEASE);
 }
 
-ExecutablePool::Allocation ExecutableAllocator::systemAlloc(size_t n)
+ExecutablePool::Allocation
+ExecutableAllocator::systemAlloc(size_t n)
 {
-    void *allocation = nullptr;
-    // Randomization disabled to avoid a performance fault on x64 builds.
-    // See bug 728623.
-#ifndef JS_CPU_X64
-    if (!RandomizeIsBroken()) {
-        void *randomAddress = computeRandomAllocationAddress();
-        allocation = AllocateExecutableMemory(randomAddress, n, PAGE_EXECUTE_READWRITE,
-                                              "js-jit-code", pageSize);
-    }
-#endif
+    void* randomAddress = computeRandomAllocationAddress();
+    unsigned flags = initialProtectionFlags(Executable);
+    void* allocation = AllocateExecutableMemory(randomAddress, n, flags, "js-jit-code", pageSize);
     if (!allocation) {
-        allocation = AllocateExecutableMemory(nullptr, n, PAGE_EXECUTE_READWRITE,
-                                              "js-jit-code", pageSize);
+        allocation = AllocateExecutableMemory(nullptr, n, flags, "js-jit-code", pageSize);
     }
     ExecutablePool::Allocation alloc = { reinterpret_cast<char*>(allocation), n };
     return alloc;
 }
 
-void ExecutableAllocator::systemRelease(const ExecutablePool::Allocation& alloc)
+void
+ExecutableAllocator::systemRelease(const ExecutablePool::Allocation& alloc)
 {
     DeallocateExecutableMemory(alloc.pages, alloc.size, pageSize);
 }
 
-#if ENABLE_ASSEMBLER_WX_EXCLUSIVE
-#error "ASSEMBLER_WX_EXCLUSIVE not yet suported on this platform."
+bool
+ExecutableAllocator::reprotectRegion(void* start, size_t size, ProtectionSetting setting)
+{
+    MOZ_ASSERT(NON_WRITABLE_JIT_CODE);
+    MOZ_ASSERT(pageSize);
+
+    // Calculate the start of the page containing this region,
+    // and account for this extra memory within size.
+    intptr_t startPtr = reinterpret_cast<intptr_t>(start);
+    intptr_t pageStartPtr = startPtr & ~(pageSize - 1);
+    void* pageStart = reinterpret_cast<void*>(pageStartPtr);
+    size += (startPtr - pageStartPtr);
+
+    // Round size up
+    size += (pageSize - 1);
+    size &= ~(pageSize - 1);
+
+    DWORD oldProtect;
+    int flags = (setting == Writable) ? PAGE_READWRITE : PAGE_EXECUTE_READ;
+    return VirtualProtect(pageStart, size, flags, &oldProtect);
+}
+
+/* static */ unsigned
+ExecutableAllocator::initialProtectionFlags(ProtectionSetting protection)
+{
+#ifdef NON_WRITABLE_JIT_CODE
+    return (protection == Writable) ? PAGE_READWRITE : PAGE_EXECUTE_READ;
+#else
+    return PAGE_EXECUTE_READWRITE;
 #endif
+}

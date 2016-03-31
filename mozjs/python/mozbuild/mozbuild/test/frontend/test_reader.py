@@ -11,8 +11,10 @@ import unittest
 from mozunit import main
 
 from mozbuild.frontend.context import BugzillaComponent
-from mozbuild.frontend.reader import BuildReaderError
-from mozbuild.frontend.reader import BuildReader
+from mozbuild.frontend.reader import (
+    BuildReaderError,
+    BuildReader,
+)
 
 from mozbuild.test.common import MockConfig
 
@@ -29,16 +31,26 @@ data_path = mozpath.join(data_path, 'data')
 
 
 class TestBuildReader(unittest.TestCase):
+    def setUp(self):
+        self._old_env = dict(os.environ)
+        os.environ.pop('MOZ_OBJDIR', None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._old_env)
+
     def config(self, name, **kwargs):
         path = mozpath.join(data_path, name)
 
         return MockConfig(path, **kwargs)
 
-    def reader(self, name, enable_tests=False, **kwargs):
+    def reader(self, name, enable_tests=False, error_is_fatal=True, **kwargs):
         extra = {}
         if enable_tests:
             extra['ENABLE_TESTS'] = '1'
-        config = self.config(name, extra_substs=extra)
+        config = self.config(name,
+                             extra_substs=extra,
+                             error_is_fatal=error_is_fatal)
 
         return BuildReader(config, **kwargs)
 
@@ -64,6 +76,11 @@ class TestBuildReader(unittest.TestCase):
         self.assertEqual(len(contexts), 1)
 
     def test_dirs_traversal_all_variables(self):
+        reader = self.reader('traversal-all-vars')
+
+        contexts = list(reader.read_topsrcdir())
+        self.assertEqual(len(contexts), 2)
+
         reader = self.reader('traversal-all-vars', enable_tests=True)
 
         contexts = list(reader.read_topsrcdir())
@@ -214,8 +231,7 @@ class TestBuildReader(unittest.TestCase):
             list(reader.read_topsrcdir())
 
         e = bre.exception
-        self.assertIn('Directory (foo) registered multiple times in DIRS',
-            str(e))
+        self.assertIn('Directory (foo) registered multiple times', str(e))
 
     def test_error_error_func(self):
         reader = self.reader('reader-error-error-func')
@@ -226,6 +242,20 @@ class TestBuildReader(unittest.TestCase):
         e = bre.exception
         self.assertIn('A moz.build file called the error() function.', str(e))
         self.assertIn('    Some error.', str(e))
+
+    def test_error_error_func_ok(self):
+        reader = self.reader('reader-error-error-func', error_is_fatal=False)
+
+        contexts = list(reader.read_topsrcdir())
+
+    def test_error_empty_list(self):
+        reader = self.reader('reader-error-empty-list')
+
+        with self.assertRaises(BuildReaderError) as bre:
+            list(reader.read_topsrcdir())
+
+        e = bre.exception
+        self.assertIn('Variable DIRS assigned an empty value.', str(e))
 
     def test_inheriting_variables(self):
         reader = self.reader('inheriting-variables')
@@ -377,6 +407,78 @@ class TestBuildReader(unittest.TestCase):
             BugzillaComponent('Core', 'Build Config'))
         self.assertEqual(v['bug_component/final/subcomponent/bar']['BUG_COMPONENT'],
             BugzillaComponent('Another', 'Component'))
+
+    def test_file_test_deps(self):
+        reader = self.reader('files-test-metadata')
+
+        expected = {
+            'simple/src/module.jsm': set(['simple/tests/test_general.html',
+                                          'simple/browser/**.js']),
+            'simple/base.cpp': set(['simple/tests/*',
+                                    'default/tests/xpcshell/test_default_mod.js']),
+        }
+
+        v = reader.files_info([
+            'simple/src/module.jsm',
+            'simple/base.cpp',
+        ])
+
+        for path, pattern_set in expected.items():
+            self.assertEqual(v[path].test_files,
+                             expected[path])
+
+    def test_file_test_deps_default(self):
+        reader = self.reader('files-test-metadata')
+        v = reader.files_info([
+            'default/module.js',
+        ])
+
+        expected = {
+            'default/module.js': set(['default/tests/xpcshell/**',
+                                      'default/tests/reftests/**']),
+        }
+
+        for path, pattern_set in expected.items():
+            self.assertEqual(v[path].test_files,
+                             expected[path])
+
+    def test_file_test_deps_tags(self):
+        reader = self.reader('files-test-metadata')
+        v = reader.files_info([
+            'tagged/src/bar.jsm',
+            'tagged/src/submodule/foo.js',
+        ])
+
+        expected_patterns = {
+            'tagged/src/submodule/foo.js': set([]),
+            'tagged/src/bar.jsm': set(['tagged/**.js']),
+        }
+
+        for path, pattern_set in expected_patterns.items():
+            self.assertEqual(v[path].test_files,
+                             expected_patterns[path])
+
+        expected_tags = {
+            'tagged/src/submodule/foo.js': set(['submodule']),
+            'tagged/src/bar.jsm': set([]),
+        }
+        for path, pattern_set in expected_tags.items():
+            self.assertEqual(v[path].test_tags,
+                             expected_tags[path])
+
+        expected_flavors = {
+            'tagged/src/bar.jsm': set(['browser-chrome']),
+            'tagged/src/submodule/foo.js': set([]),
+        }
+        for path, pattern_set in expected_flavors.items():
+            self.assertEqual(v[path].test_flavors,
+                             expected_flavors[path])
+
+    def test_invalid_flavor(self):
+        reader = self.reader('invalid-files-flavor')
+
+        with self.assertRaises(BuildReaderError):
+            reader.files_info(['foo.js'])
 
 
 if __name__ == '__main__':

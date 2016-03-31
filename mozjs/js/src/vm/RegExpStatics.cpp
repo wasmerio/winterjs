@@ -20,31 +20,30 @@ using namespace js;
  */
 
 static void
-resc_finalize(FreeOp *fop, JSObject *obj)
+resc_finalize(FreeOp* fop, JSObject* obj)
 {
-    RegExpStatics *res = static_cast<RegExpStatics *>(obj->as<RegExpStaticsObject>().getPrivate());
+    RegExpStatics* res = static_cast<RegExpStatics*>(obj->as<RegExpStaticsObject>().getPrivate());
     fop->delete_(res);
 }
 
 static void
-resc_trace(JSTracer *trc, JSObject *obj)
+resc_trace(JSTracer* trc, JSObject* obj)
 {
-    void *pdata = obj->as<RegExpStaticsObject>().getPrivate();
-    MOZ_ASSERT(pdata);
-    RegExpStatics *res = static_cast<RegExpStatics *>(pdata);
-    res->mark(trc);
+    void* pdata = obj->as<RegExpStaticsObject>().getPrivate();
+    if (pdata)
+        static_cast<RegExpStatics*>(pdata)->mark(trc);
 }
 
 const Class RegExpStaticsObject::class_ = {
     "RegExpStatics",
-    JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS,
+    JSCLASS_HAS_PRIVATE,
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
     nullptr, /* setProperty */
     nullptr, /* enumerate */
     nullptr, /* resolve */
-    nullptr, /* convert */
+    nullptr, /* mayResolve */
     resc_finalize,
     nullptr, /* call */
     nullptr, /* hasInstance */
@@ -52,35 +51,21 @@ const Class RegExpStaticsObject::class_ = {
     resc_trace
 };
 
-RegExpStaticsObject *
-RegExpStatics::create(ExclusiveContext *cx, Handle<GlobalObject*> parent)
+RegExpStaticsObject*
+RegExpStatics::create(ExclusiveContext* cx, Handle<GlobalObject*> parent)
 {
-    RegExpStaticsObject *obj = NewObjectWithGivenProto<RegExpStaticsObject>(cx, NullPtr());
+    RegExpStaticsObject* obj = NewObjectWithGivenProto<RegExpStaticsObject>(cx, nullptr);
     if (!obj)
         return nullptr;
-    RegExpStatics *res = cx->new_<RegExpStatics>();
+    RegExpStatics* res = cx->new_<RegExpStatics>();
     if (!res)
         return nullptr;
-    obj->setPrivate(static_cast<void *>(res));
+    obj->setPrivate(static_cast<void*>(res));
     return obj;
 }
 
-void
-RegExpStatics::markFlagsSet(JSContext *cx)
-{
-    // Flags set on the RegExp function get propagated to constructed RegExp
-    // objects, which interferes with optimizations that inline RegExp cloning
-    // or avoid cloning entirely. Scripts making this assumption listen to
-    // type changes on RegExp.prototype, so mark a state change to trigger
-    // recompilation of all such code (when recompiling, a stub call will
-    // always be performed).
-    MOZ_ASSERT_IF(cx->global()->hasRegExpStatics(), this == cx->global()->getRegExpStatics(cx));
-
-    MarkObjectGroupFlags(cx, cx->global(), OBJECT_FLAG_REGEXP_FLAGS_SET);
-}
-
 bool
-RegExpStatics::executeLazy(JSContext *cx)
+RegExpStatics::executeLazy(JSContext* cx)
 {
     if (!pendingLazyEvaluation)
         return true;
@@ -101,7 +86,7 @@ RegExpStatics::executeLazy(JSContext *cx)
 
     /* Execute the full regular expression. */
     RootedLinearString input(cx, matchesInput);
-    RegExpRunStatus status = g->execute(cx, input, lazyIndex, &this->matches);
+    RegExpRunStatus status = g->execute(cx, input, lazyIndex, lazySticky, &this->matches, nullptr);
     if (status == RegExpRunStatus_Error)
         return false;
 

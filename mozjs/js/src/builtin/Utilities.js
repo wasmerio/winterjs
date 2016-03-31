@@ -10,12 +10,11 @@
 */
 
 /*global ToObject: false, ToInteger: false, IsCallable: false,
-         ThrowError: false, AssertionFailed: false,
+         ThrowRangeError: false, ThrowTypeError: false,
+         AssertionFailed: false,
          MakeConstructible: false, DecompileArg: false,
          RuntimeDefaultLocale: false,
-         ParallelDo: false, ParallelSlices: false, NewDenseArray: false,
-         UnsafePutElements: false,
-         ParallelTestsShouldPass: false,
+         NewDenseArray: false,
          Dump: false,
          callFunction: false,
          TO_UINT32: false,
@@ -25,14 +24,25 @@
 
 #include "SelfHostingDefines.h"
 
+// Assertions and debug printing, defined here instead of in the header above
+// to make `assert` invisible to C++.
+#ifdef DEBUG
+#define assert(b, info) if (!(b)) AssertionFailed(__FILE__ + ":" + __LINE__ + ": " + info)
+#define dbg(msg) DumpMessage(callFunction(std_Array_pop, \
+                                          callFunction(std_String_split, __FILE__, '/')) \
+                             + '#' + __LINE__ + ': ' + msg)
+#else
+#define assert(b, info) // Elided assertion.
+#define dbg(msg) // Elided debugging output.
+#endif
+
 // All C++-implemented standard builtins library functions used in self-hosted
 // code are installed via the std_functions JSFunctionSpec[] in
 // SelfHosting.cpp.
 //
-// The few items below here are either self-hosted or installing them under a
-// std_Foo name would require ugly contortions, so they just get aliased here.
-var std_Array_indexOf = ArrayIndexOf;
-var std_String_substring = String_substring;
+// Do not create an alias to a self-hosted builtin, otherwise it will be cloned
+// twice.
+//
 // WeakMap is a bare constructor without properties or methods.
 var std_WeakMap = WeakMap;
 // StopIteration is a bare constructor without properties or methods.
@@ -41,21 +51,11 @@ var std_StopIteration = StopIteration;
 
 /********** List specification type **********/
 
-
 /* Spec: ECMAScript Language Specification, 5.1 edition, 8.8 */
 function List() {
     this.length = 0;
 }
-
-{
-  let ListProto = std_Object_create(null);
-  ListProto.indexOf = std_Array_indexOf;
-  ListProto.join = std_Array_join;
-  ListProto.push = std_Array_push;
-  ListProto.slice = std_Array_slice;
-  ListProto.sort = std_Array_sort;
-  MakeConstructible(List, ListProto);
-}
+MakeConstructible(List, {__proto__: null});
 
 
 /********** Record specification type **********/
@@ -89,10 +89,10 @@ function ToNumber(v) {
 }
 
 
-/* Spec: ECMAScript Language Specification, 5.1 edition, 9.10 */
-function CheckObjectCoercible(v) {
+// ES6 7.2.1 (previously, ES5 9.10 under the name "CheckObjectCoercible").
+function RequireObjectCoercible(v) {
     if (v === undefined || v === null)
-        ThrowError(JSMSG_CANT_CONVERT_TO, ToString(v), "object");
+        ThrowTypeError(JSMSG_CANT_CONVERT_TO, ToString(v), "object");
 }
 
 /* Spec: ECMAScript Draft, 6 edition May 22, 2014, 7.1.15 */
@@ -125,7 +125,7 @@ function GetMethod(O, P) {
 
     // Step 5.
     if (!IsCallable(func))
-        ThrowError(JSMSG_NOT_FUNCTION, typeof func);
+        ThrowTypeError(JSMSG_NOT_FUNCTION, typeof func);
 
     // Step 6.
     return func;
@@ -144,23 +144,75 @@ function GetIterator(obj, method) {
         method = GetMethod(obj, std_iterator);
 
     // Steps 3-4.
-    var iterator = callFunction(method, obj);
+    var iterator = callContentFunction(method, obj);
 
     // Step 5.
     if (!IsObject(iterator))
-        ThrowError(JSMSG_NOT_ITERABLE, ToString(iterator));
+        ThrowTypeError(JSMSG_NOT_ITERABLE, ToString(iterator));
 
     // Step 6.
     return iterator;
 }
 
+var _builtinCtorsCache = {__proto__: null};
+
+function GetBuiltinConstructor(builtinName) {
+    var ctor = _builtinCtorsCache[builtinName] ||
+               (_builtinCtorsCache[builtinName] = GetBuiltinConstructorImpl(builtinName));
+    assert(ctor, `No builtin with name "${builtinName}" found`);
+    return ctor;
+}
+
+function GetBuiltinPrototype(builtinName) {
+    return (_builtinCtorsCache[builtinName] || GetBuiltinConstructor(builtinName)).prototype;
+}
+
+// ES6 draft 20150317 7.3.20.
 function SpeciesConstructor(obj, defaultConstructor) {
-    var C = obj.constructor;
-    if (C === undefined) {
+    // Step 1.
+    assert(IsObject(obj), "not passed an object");
+
+    // Steps 2-3.
+    var ctor = obj.constructor;
+
+    // Step 4.
+    if (ctor === undefined)
         return defaultConstructor;
+
+    // Step 5.
+    if (!IsObject(ctor))
+        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, "object's 'constructor' property");
+
+    // Steps 6-7.
+    var s = ctor[std_species];
+
+    // Step 8.
+    if (s === undefined || s === null)
+        return defaultConstructor;
+
+    // Step 9.
+    if (IsConstructor(s))
+        return s;
+
+    // Step 10.
+    ThrowTypeError(JSMSG_NOT_CONSTRUCTOR, "@@species property of object's constructor");
+}
+
+function GetTypeError(msg) {
+    try {
+        FUN_APPLY(ThrowTypeError, undefined, arguments);
+    } catch (e) {
+        return e;
     }
-    if (!IsConstructor(C)) {
-        ThrowError(JSMSG_NOT_CONSTRUCTOR, DecompileArg(1, C));
+    assert(false, "the catch block should've returned from this function.");
+}
+
+// To be used when a function is required but calling it shouldn't do anything.
+function NullFunction() {}
+
+/*************************************** Testing functions ***************************************/
+function outer() {
+    return function inner() {
+        return "foo";
     }
-    return C;
 }

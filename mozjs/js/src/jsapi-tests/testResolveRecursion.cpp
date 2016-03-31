@@ -11,7 +11,6 @@
  * Test that resolve hook recursion for the same object and property is
  * prevented.
  */
-
 BEGIN_TEST(testResolveRecursion)
 {
     static const JSClass my_resolve_class = {
@@ -43,7 +42,7 @@ BEGIN_TEST(testResolveRecursion)
     /* Start the essence of the test via invoking the first resolve hook. */
     JS::RootedValue v(cx);
     EVAL("obj1.x", &v);
-    CHECK_SAME(v, JSVAL_FALSE);
+    CHECK(v.isFalse());
     CHECK_EQUAL(resolveEntryCount, 4);
     CHECK_EQUAL(resolveExitCount, 4);
 
@@ -59,7 +58,7 @@ int resolveExitCount;
 
 struct AutoIncrCounters {
 
-    explicit AutoIncrCounters(cls_testResolveRecursion *t) : t(t) {
+    explicit AutoIncrCounters(cls_testResolveRecursion* t) : t(t) {
         t->resolveEntryCount++;
     }
 
@@ -67,11 +66,11 @@ struct AutoIncrCounters {
         t->resolveExitCount++;
     }
 
-    cls_testResolveRecursion *t;
+    cls_testResolveRecursion* t;
 };
 
 bool
-doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
+doResolve(JS::HandleObject obj, JS::HandleId id, bool* resolvedp)
 {
     CHECK_EQUAL(resolveExitCount, 0);
     AutoIncrCounters incr(this);
@@ -79,7 +78,7 @@ doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
 
     CHECK(JSID_IS_STRING(id));
 
-    JSFlatString *str = JS_FlattenString(cx, JSID_TO_STRING(id));
+    JSFlatString* str = JS_FlattenString(cx, JSID_TO_STRING(id));
     CHECK(str);
     JS::RootedValue v(cx);
     if (JS_FlatStringEqualsAscii(str, "x")) {
@@ -87,8 +86,8 @@ doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
             /* First resolve hook invocation. */
             CHECK_EQUAL(resolveEntryCount, 1);
             EVAL("obj2.y = true", &v);
-            CHECK_SAME(v, JSVAL_TRUE);
-            CHECK(JS_DefinePropertyById(cx, obj, id, JS::FalseHandleValue, 0));
+            CHECK(v.isTrue());
+            CHECK(JS_DefinePropertyById(cx, obj, id, JS::FalseHandleValue, JSPROP_RESOLVING));
             *resolvedp = true;
             return true;
         }
@@ -100,11 +99,11 @@ doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
     } else if (JS_FlatStringEqualsAscii(str, "y")) {
         if (obj == obj2) {
             CHECK_EQUAL(resolveEntryCount, 2);
-            CHECK(JS_DefinePropertyById(cx, obj, id, JS::NullHandleValue, 0));
+            CHECK(JS_DefinePropertyById(cx, obj, id, JS::NullHandleValue, JSPROP_RESOLVING));
             EVAL("obj1.x", &v);
             CHECK(v.isUndefined());
             EVAL("obj1.y", &v);
-            CHECK_SAME(v, JSVAL_ZERO);
+            CHECK(v.isInt32(0));
             *resolvedp = true;
             return true;
         }
@@ -119,7 +118,7 @@ doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
             EVAL("obj2.x", &v);
             CHECK(v.isUndefined());
             EVAL("obj1.y = 0", &v);
-            CHECK_SAME(v, JSVAL_ZERO);
+            CHECK(v.isInt32(0));
             *resolvedp = true;
             return true;
         }
@@ -129,10 +128,53 @@ doResolve(JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
 }
 
 static bool
-my_resolve(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
+my_resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id, bool* resolvedp)
 {
-    return static_cast<cls_testResolveRecursion *>(JS_GetPrivate(obj))->
+    return static_cast<cls_testResolveRecursion*>(JS_GetPrivate(obj))->
            doResolve(obj, id, resolvedp);
 }
-
 END_TEST(testResolveRecursion)
+
+/*
+ * Test that JS_InitStandardClasses does not cause resolve hooks to be called.
+ *
+ * (XPConnect apparently does have global classes, such as the one created by
+ * nsMessageManagerScriptExecutor::InitChildGlobalInternal(), that have resolve
+ * hooks which can call back into JS, and on which JS_InitStandardClasses is
+ * called. Calling back into JS in the middle of resolving `undefined` is bad.)
+ */
+BEGIN_TEST(testResolveRecursion_InitStandardClasses)
+{
+    CHECK(JS_InitStandardClasses(cx, global));
+    return true;
+}
+
+const JSClass* getGlobalClass() override {
+    static const JSClass myGlobalClass = {
+        "testResolveRecursion_InitStandardClasses_myGlobalClass",
+        JSCLASS_GLOBAL_FLAGS,
+        nullptr, // add
+        nullptr, // delete
+        nullptr, // get
+        nullptr, // set
+        nullptr, // enumerate
+        my_resolve,
+        nullptr, // mayResolve
+        nullptr, // finalize
+        nullptr, // call
+        nullptr, // hasInstance
+        nullptr, // construct
+        JS_GlobalObjectTraceHook
+    };
+
+    return &myGlobalClass;
+}
+
+static bool
+my_resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id, bool* resolvedp)
+{
+    MOZ_ASSERT_UNREACHABLE("resolve hook should not be called from InitStandardClasses");
+    JS_ReportError(cx, "FAIL");
+    return false;
+}
+END_TEST(testResolveRecursion_InitStandardClasses)

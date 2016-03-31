@@ -25,28 +25,31 @@
 **      %g - float
 */
 
+#include "mozilla/IntegerPrintfMacros.h"
+#include "mozilla/SizePrintfMacros.h"
+
 #include <stdarg.h>
 
 #include "jstypes.h"
 
 /*
 ** sprintf into a fixed size buffer. Guarantees that a NUL is at the end
-** of the buffer. Returns the length of the written output, NOT including
-** the NUL, or (uint32_t)-1 if an error occurs.
+** of the buffer. The return value is the length of the written output,
+** NOT including the NUL, which is guaranteed less than "outlen" on success.
 */
-extern JS_PUBLIC_API(uint32_t) JS_snprintf(char *out, uint32_t outlen, const char *fmt, ...);
+extern JS_PUBLIC_API(uint32_t) JS_snprintf(char* out, uint32_t outlen, const char* fmt, ...);
 
 /*
 ** sprintf into a malloc'd buffer. Return a pointer to the malloc'd
 ** buffer on success, nullptr on failure. Call "JS_smprintf_free" to release
 ** the memory returned.
 */
-extern JS_PUBLIC_API(char*) JS_smprintf(const char *fmt, ...);
+extern JS_PUBLIC_API(char*) JS_smprintf(const char* fmt, ...);
 
 /*
 ** Free the memory allocated, for the caller, by JS_smprintf
 */
-extern JS_PUBLIC_API(void) JS_smprintf_free(char *mem);
+extern JS_PUBLIC_API(void) JS_smprintf_free(char* mem);
 
 /*
 ** "append" sprintf into a malloc'd buffer. "last" is the last value of
@@ -55,13 +58,13 @@ extern JS_PUBLIC_API(void) JS_smprintf_free(char *mem);
 ** will allocate the initial string. The return value is the new value of
 ** last for subsequent calls, or nullptr if there is a malloc failure.
 */
-extern JS_PUBLIC_API(char*) JS_sprintf_append(char *last, const char *fmt, ...);
+extern JS_PUBLIC_API(char*) JS_sprintf_append(char* last, const char* fmt, ...);
 
 /*
 ** va_list forms of the above.
 */
-extern JS_PUBLIC_API(uint32_t) JS_vsnprintf(char *out, uint32_t outlen, const char *fmt, va_list ap);
-extern JS_PUBLIC_API(char*) JS_vsmprintf(const char *fmt, va_list ap);
-extern JS_PUBLIC_API(char*) JS_vsprintf_append(char *last, const char *fmt, va_list ap);
+extern JS_PUBLIC_API(uint32_t) JS_vsnprintf(char* out, uint32_t outlen, const char* fmt, va_list ap);
+extern JS_PUBLIC_API(char*) JS_vsmprintf(const char* fmt, va_list ap);
+extern JS_PUBLIC_API(char*) JS_vsprintf_append(char* last, const char* fmt, va_list ap);
 
 #endif /* jsprf_h */
