@@ -13,6 +13,8 @@ CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api
 		CONFIGURE_FLAGS += \
 			--with-android-ndk=$(ANDROID_NDK) \
 			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
+			--with-arch=armv7-a \
+			--with-fpu=neon \
 			$(NULL)
 	endif
 else
