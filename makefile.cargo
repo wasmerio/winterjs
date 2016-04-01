@@ -7,7 +7,7 @@ CPP ?= $(TARGET)-gcc -E
 CXX ?= $(TARGET)-g++
 AR ?= $(TARGET)-ar
 
-CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api
+CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api --disable-gold
 
 	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
 		CONFIGURE_FLAGS += \
