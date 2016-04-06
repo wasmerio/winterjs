@@ -335,6 +335,7 @@ UnsafeTraceRoot(JSTracer* trc, T* edgep, const char* name);
 extern JS_PUBLIC_API(void)
 TraceChildren(JSTracer* trc, GCCellPtr thing);
 
+#ifndef RUST_BINDGEN
 using ZoneSet = js::HashSet<Zone*, js::DefaultHasher<Zone*>, js::SystemAllocPolicy>;
 using CompartmentSet = js::HashSet<JSCompartment*, js::DefaultHasher<JSCompartment*>,
                                    js::SystemAllocPolicy>;
@@ -346,6 +347,7 @@ using CompartmentSet = js::HashSet<JSCompartment*, js::DefaultHasher<JSCompartme
  */
 extern JS_PUBLIC_API(void)
 TraceIncomingCCWs(JSTracer* trc, const JS::CompartmentSet& compartments);
+#endif
 
 } // namespace JS
 
