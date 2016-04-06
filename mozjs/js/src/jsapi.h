@@ -5082,7 +5082,7 @@ extern JS_PUBLIC_API(void)
 JS_ReportErrorNumber(JSContext* cx, JSErrorCallback errorCallback,
                      void* userRef, const unsigned errorNumber, ...);
 
-#ifdef va_start
+#if defined(va_start) && !defined(RUST_BINDGEN)
 extern JS_PUBLIC_API(void)
 JS_ReportErrorNumberVA(JSContext* cx, JSErrorCallback errorCallback,
                        void* userRef, const unsigned errorNumber, va_list ap);
