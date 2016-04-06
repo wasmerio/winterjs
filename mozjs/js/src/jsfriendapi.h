@@ -2337,6 +2337,9 @@ struct JSJitInfo {
         return JSValueType(returnType_);
     }
 
+#ifdef RUST_BINDGEN
+    const void *call;
+#else
     union {
         JSJitGetterOp getter;
         JSJitSetterOp setter;
@@ -2344,18 +2347,27 @@ struct JSJitInfo {
         /** A DOM static method, used for Promise wrappers */
         JSNative staticMethod;
     };
+#endif
 
+#ifdef RUST_BINDGEN
+    uint16_t protoID;
+#else
     union {
         uint16_t protoID;
         js::jit::InlinableNative inlinableNative;
     };
+#endif
 
+#ifdef RUST_BINDGEN
+    uint16_t depth;
+#else
     union {
         uint16_t depth;
 
         // Additional opcode for some InlinableNative functions.
         uint16_t nativeOp;
     };
+#endif
 
     // These fields are carefully packed to take up 4 bytes.  If you need more
     // bits for whatever reason, please see if you can steal bits from existing
