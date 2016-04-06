@@ -1989,6 +1989,10 @@ struct JSPropertySpec {
 
     const char*                 name;
     uint8_t                     flags;
+#ifdef RUST_BINDGEN
+    JSNativeWrapper             getter;
+    JSNativeWrapper             setter;
+#else
     union {
         JSNativeWrapper     native;
         SelfHostedWrapper   selfHosted;
@@ -1997,6 +2001,7 @@ struct JSPropertySpec {
         JSNativeWrapper           native;
         SelfHostedWrapper         selfHosted;
     } setter;
+#endif
 
     bool isSelfHosted() const {
 #ifdef DEBUG
