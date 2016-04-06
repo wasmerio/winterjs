@@ -114,8 +114,8 @@ class LinkedListElement
    */
 
 private:
-  LinkedListElement* mNext;
-  LinkedListElement* mPrev;
+  LinkedListElement<T>* mNext;
+  LinkedListElement<T>* mPrev;
   const bool mIsSentinel;
 
 public:
