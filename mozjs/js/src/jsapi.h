@@ -6160,6 +6160,7 @@ typedef bool
 extern JS_PUBLIC_API(bool)
 SetStopwatchStartCallback(JSRuntime*, StopwatchStartCallback, void*);
 
+#ifndef RUST_BINDGEN
 typedef bool
 (*StopwatchCommitCallback)(uint64_t, mozilla::Vector<RefPtr<PerformanceGroup>>&, void*);
 extern JS_PUBLIC_API(bool)
@@ -6169,6 +6170,7 @@ typedef bool
 (*GetGroupsCallback)(JSContext*, mozilla::Vector<RefPtr<PerformanceGroup>>&, void*);
 extern JS_PUBLIC_API(bool)
 SetGetPerformanceGroupsCallback(JSRuntime*, GetGroupsCallback, void*);
+#endif
 
 } /* namespace js */
 
