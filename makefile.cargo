@@ -1,4 +1,8 @@
-CONFIGURE_FLAGS := --disable-jemalloc
+CONFIGURE_FLAGS := \
+	--disable-jemalloc \
+	--disable-js-shell \
+	--disable-tests \
+	--disable-shared-js
 
 ifneq ($(HOST),$(TARGET))
 
@@ -65,7 +69,7 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
+	CONFIGURE_FLAGS += --disable-export-js
 
 endif
 
