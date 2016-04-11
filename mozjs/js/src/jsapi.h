@@ -1925,17 +1925,21 @@ struct JSPropertySpec {
                   "JSNativeWrapper::info");
 private:
     void checkAccessorsAreNative() const {
+#ifndef RUST_BINDGEN
         MOZ_ASSERT(getter.native.op);
         // We may not have a setter at all.  So all we can assert here, for the
         // native case is that if we have a jitinfo for the setter then we have
         // a setter op too.  This is good enough to make sure we don't have a
         // SelfHostedWrapper for the setter.
         MOZ_ASSERT_IF(setter.native.info, setter.native.op);
+#endif
     }
 
     void checkAccessorsAreSelfHosted() const {
+#ifndef RUST_BINDGEN
         MOZ_ASSERT(!getter.selfHosted.unused);
         MOZ_ASSERT(!setter.selfHosted.unused);
+#endif
     }
 };
 
