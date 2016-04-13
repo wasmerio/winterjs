@@ -47,12 +47,6 @@ def autoconf(mozconfig, autoconf):
                     brew, '..', '..', 'Cellar', 'autoconf213', '2.13', 'bin',
                     'autoconf213'))
 
-    if not autoconf:
-        die('Could not find autoconf 2.13')
-
-    if not os.path.exists(autoconf):
-        die('Could not find autoconf 2.13 at %s', autoconf)
-
     return autoconf
 
 set_config('AUTOCONF', autoconf)
@@ -81,22 +75,15 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
             old_configure = os.path.join(old_configure_dir, 'js', 'src',
                                          os.path.basename(old_configure))
 
-    refresh = True
-    if os.path.exists(old_configure):
-        mtime = getmtime(old_configure)
-        aclocal = os.path.join(build_env.topsrcdir, 'build', 'autoconf',
-                               '*.m4')
-        for input in itertools.chain(
-            (old_configure + '.in',
-             os.path.join(os.path.dirname(old_configure), 'aclocal.m4')),
-            glob.iglob(aclocal),
-        ):
-            if getmtime(input) > mtime:
-                break
-        else:
-            refresh = False
+    refresh = False
 
     if refresh:
+        if not autoconf:
+            die('Could not find autoconf 2.13')
+
+        if not os.path.exists(autoconf):
+            die('Could not find autoconf 2.13 at %s', autoconf)
+
         log.info('Refreshing %s with %s', old_configure, autoconf)
         script = subprocess.check_output([
             shell, autoconf,
@@ -130,9 +117,10 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
                 for key in mozconfig[t]['removed'].keys():
                     inject("unset %s" % key)
 
-        # Autoconf is special, because it might be passed from
-        # mozconfig['make_extra'], which we don't pass automatically above.
-        inject('export AUTOCONF=%s' % quote(autoconf))
+        if refresh:
+            # Autoconf is special, because it might be passed from
+            # mozconfig['make_extra'], which we don't pass automatically above.
+            inject('export AUTOCONF=%s' % quote(autoconf))
 
         for assignment in old_configure_assignments:
             inject(assignment)
