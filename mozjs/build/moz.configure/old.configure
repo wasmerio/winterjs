@@ -50,12 +50,6 @@ def autoconf(mozconfig, autoconf):
                     brew, '..', '..', 'Cellar', 'autoconf213', '2.13', 'bin',
                     'autoconf213'))
 
-    if not autoconf:
-        error('Could not find autoconf 2.13')
-
-    if not os.path.exists(autoconf):
-        error('Could not find autoconf 2.13 at %s' % (autoconf,))
-
     return autoconf
 
 set_config('AUTOCONF', autoconf)
@@ -105,22 +99,15 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
             old_configure = os.path.join(old_configure_dir, 'js', 'src',
                                          os.path.basename(old_configure))
 
-    refresh = True
-    if os.path.exists(old_configure):
-        mtime = getmtime(old_configure)
-        aclocal = os.path.join(build_env.topsrcdir, 'build', 'autoconf',
-                               '*.m4')
-        for input in itertools.chain(
-            (old_configure + '.in',
-             os.path.join(os.path.dirname(old_configure), 'aclocal.m4')),
-            glob.iglob(aclocal),
-        ):
-            if getmtime(input) > mtime:
-                break
-        else:
-            refresh = False
+    refresh = False
 
     if refresh:
+        if not autoconf:
+            error('Could not find autoconf 2.13')
+
+        if not os.path.exists(autoconf):
+            error('Could not find autoconf 2.13 at %s' % (autoconf,))
+
         warn('Refreshing %s with %s' % (old_configure, autoconf))
         with open(old_configure, 'wb') as fh:
             subprocess.check_call([
@@ -142,10 +129,6 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
             for t in ('env', 'vars'):
                 for key in mozconfig[t]['removed'].keys():
                     print("unset %s" % key, file=out)
-
-        # Autoconf is special, because it might be passed from
-        # mozconfig['make_extra'], which we don't pass automatically above.
-        print('export AUTOCONF=%s' % quote(autoconf), file=out)
 
         for assignment in old_configure_assignments:
             print(assignment, file=out)

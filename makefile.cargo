@@ -78,6 +78,7 @@ SRC_DIR = $(shell pwd)
 .PHONY : all
 ifneq (,$(FORCED_PYTHON))
 all:
+	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	PYTHON="$(FORCED_PYTHON)" \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
@@ -85,6 +86,7 @@ all:
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 else
 all:
+	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
