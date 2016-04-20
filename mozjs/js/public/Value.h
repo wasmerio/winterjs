@@ -265,7 +265,7 @@ typedef union jsval_layout
 typedef union jsval_layout
 {
     uint64_t asBits;
-#if !defined(_WIN64)
+#if !defined(_WIN64) && !defined(RUST_BINDGEN)
     /* MSVC does not pack these correctly :-( */
     struct {
         uint64_t           payload47 : 47;
@@ -281,7 +281,9 @@ typedef union jsval_layout
     } s;
     double asDouble;
     void* asPtr;
+    /** <div rustbindgen hide></div> */
     size_t asWord;
+    /** <div rustbindgen hide></div> */
     uintptr_t asUIntPtr;
 } JSVAL_ALIGNMENT jsval_layout;
 # endif  /* JS_PUNBOX64 */
@@ -313,10 +315,12 @@ typedef union jsval_layout
 typedef union jsval_layout
 {
     uint64_t asBits;
+#ifndef RUST_BINDGEN
     struct {
         JSValueTag         tag : 17;
         uint64_t           payload47 : 47;
     } debugView;
+#endif
     struct {
         uint32_t           padding;
         union {
@@ -327,7 +331,9 @@ typedef union jsval_layout
     } s;
     double asDouble;
     void* asPtr;
+    /** <div rustbindgen hide></div> */
     size_t asWord;
+    /** <div rustbindgen hide></div> */
     uintptr_t asUIntPtr;
 } JSVAL_ALIGNMENT jsval_layout;
 # endif /* JS_PUNBOX64 */
