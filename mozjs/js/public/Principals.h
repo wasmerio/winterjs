@@ -44,11 +44,13 @@ struct JSPrincipals {
      */
     virtual bool write(JSContext* cx, JSStructuredCloneWriter* writer) = 0;
 
+#ifndef RUST_BINDGEN
     /*
      * This is not defined by the JS engine but should be provided by the
      * embedding.
      */
     JS_PUBLIC_API(void) dump();
+#endif
 };
 
 extern JS_PUBLIC_API(void)
