@@ -15,9 +15,7 @@ fn main() {
         .status()
         .unwrap();
     assert!(result.success());
-    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
     println!("cargo:rustc-link-search=native={}/js/src", out_dir);
-    println!("cargo:rustc-link-lib=static=mozglue");
     println!("cargo:rustc-link-lib=static=js_static");
     if target.contains("windows") {
         println!("cargo:rustc-link-lib=winmm");

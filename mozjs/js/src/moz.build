@@ -625,6 +625,12 @@ USE_LIBS += [
     'zlib',
 ]
 
+if CONFIG['JS_STANDALONE']:
+    USE_LIBS += ['mozglue']
+    if CONFIG['OS_TARGET'] == 'Android':
+        DIRS += ['../../build/stlport']
+        USE_LIBS += ['stlport']
+
 if CONFIG['MOZ_ETW']:
     GENERATED_FILES = [
         'ETWProvider.h',
