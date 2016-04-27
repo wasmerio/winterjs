@@ -142,12 +142,17 @@
 
 #endif
 
+#if defined(WIN32)
+#define NSPR_API(__type) __type
+#define NSPR_DATA_API(__type) __type
+#else
 #if defined(_NSPR_BUILD_)
 #define NSPR_API(__type) PR_EXPORT(__type)
 #define NSPR_DATA_API(__type) PR_EXPORT_DATA(__type)
 #else
 #define NSPR_API(__type) PR_IMPORT(__type)
 #define NSPR_DATA_API(__type) PR_IMPORT_DATA(__type)
+#endif
 #endif
 
 /***********************************************************************
