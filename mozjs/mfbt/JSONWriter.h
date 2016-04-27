@@ -95,6 +95,7 @@
 #include "mozilla/double-conversion.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/Snprintf.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
@@ -116,7 +117,7 @@ public:
 // on Linux that caused link errors, whereas this formulation didn't.
 namespace detail {
 extern MFBT_DATA const char gTwoCharEscapes[256];
-}
+} // namespace detail
 
 class JSONWriter
 {
@@ -238,7 +239,7 @@ public:
     SingleLineStyle
   };
 
-private:
+protected:
   const UniquePtr<JSONWriteFunc> mWriter;
   Vector<bool, 8> mNeedComma;     // do we need a comma at depth N?
   Vector<bool, 8> mNeedNewlines;  // do we need newlines at depth N?
@@ -388,7 +389,7 @@ public:
   void IntProperty(const char* aName, int64_t aInt)
   {
     char buf[64];
-    sprintf(buf, "%" PRId64, aInt);
+    snprintf_literal(buf, "%" PRId64, aInt);
     Scalar(aName, buf);
   }
 

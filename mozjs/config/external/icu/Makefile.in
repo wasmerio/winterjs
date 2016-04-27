@@ -4,7 +4,7 @@
 
 # Ensure that this happens before including rules.mk
 ifdef USE_ICU
-  ifndef MOZ_NATIVE_ICU
+  ifndef MOZ_SYSTEM_ICU
   # Library names: On Windows, ICU uses modified library names for static
   # and debug libraries.
     ifdef MOZ_SHARED_ICU
@@ -24,21 +24,18 @@ ifdef USE_ICU
         ICU_TARGET := target
       endif
     else # !MOZ_SHARED_ICU
-      ifeq ($(MSYSTEM),MINGW64)
-        ICU_LIB_RENAME = $(foreach libname,$(ICU_LIB_NAMES),\
-                             cp -p $(DEPTH)/intl/icu/target/lib/libs$(libname)$(MOZ_ICU_DBG_SUFFIX).a $(DEPTH)/intl/icu/target/lib/lib$(libname)$(MOZ_ICU_DBG_SUFFIX).a;)
-      else ifeq ($(OS_ARCH),WINNT)
+      ifeq ($(OS_ARCH),WINNT)
         ICU_LIB_RENAME = $(foreach libname,$(ICU_LIB_NAMES),\
                              cp -p $(DEPTH)/intl/icu/target/lib/s$(libname)$(MOZ_ICU_DBG_SUFFIX).lib $(DEPTH)/intl/icu/target/lib/$(libname)$(MOZ_ICU_DBG_SUFFIX).lib;)
-      endif # WINNT
+      endif
     endif # MOZ_SHARED_ICU
-  endif # !MOZ_NATIVE_ICU
+  endif # !MOZ_SYSTEM_ICU
 endif # USE_ICU
 
 include $(topsrcdir)/config/rules.mk
 
 ifdef USE_ICU
-ifndef MOZ_NATIVE_ICU
+ifndef MOZ_SYSTEM_ICU
 target:: buildicu
 $(STATIC_LIBS): buildicu
 
@@ -50,9 +47,9 @@ buildicu::
 # Msys screws up GENRBOPTS when it contains spaces, so all genrb flags need
 # to be stuck together. See https://bugzilla.mozilla.org/show_bug.cgi?id=1034594#c34
 ifdef CROSS_COMPILE
-	+$(MAKE) -j1 -C $(DEPTH)/intl/icu/host STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-kRC'
+	+ASAN_OPTIONS=detect_leaks=0 $(MAKE) -j1 -C $(DEPTH)/intl/icu/host STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-kRC'
 endif
-	+$(MAKE) -j1 -C $(DEPTH)/intl/icu/target STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-kR'
+	+ASAN_OPTIONS=detect_leaks=0 $(MAKE) -j1 -C $(DEPTH)/intl/icu/target STATIC_O=$(OBJ_SUFFIX) GENRBOPTS='-kR'
 	$(ICU_LIB_RENAME)
 
 distclean clean::

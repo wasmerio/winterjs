@@ -12,23 +12,25 @@ UNIFIED_SOURCES += [
     'testArgumentsObject.cpp',
     'testArrayBuffer.cpp',
     'testArrayBufferView.cpp',
-    'testBindCallable.cpp',
     'testBug604087.cpp',
     'testCallNonGenericMethodOnProxy.cpp',
     'testChromeBuffer.cpp',
     'testClassGetter.cpp',
     'testCloneScript.cpp',
     'testContexts.cpp',
+    'testDateToLocaleString.cpp',
     'testDebugger.cpp',
     'testDeepFreeze.cpp',
     'testDefineGetterSetterNonEnumerable.cpp',
     'testDefineProperty.cpp',
     'testDefinePropertyIgnoredAttributes.cpp',
+    'testDifferentNewTargetInvokeConstructor.cpp',
     'testEnclosingFunction.cpp',
     'testErrorCopying.cpp',
     'testException.cpp',
     'testExternalStrings.cpp',
     'testFindSCCs.cpp',
+    'testForceLexicalInitialization.cpp',
     'testForOfIterator.cpp',
     'testForwardSetProperty.cpp',
     'testFreshGlobalEvalRedefinition.cpp',
@@ -40,13 +42,15 @@ UNIFIED_SOURCES += [
     'testGCFinalizeCallback.cpp',
     'testGCHeapPostBarriers.cpp',
     'testGCMarking.cpp',
-    'testGCNursery.cpp',
     'testGCOutOfMemory.cpp',
     'testGCStoreBufferRemoval.cpp',
+    'testGCUniqueId.cpp',
+    'testGCWeakRef.cpp',
     'testGetPropertyDescriptor.cpp',
     'testHashTable.cpp',
     'testIndexToString.cpp',
     'testIntern.cpp',
+    'testIntlAvailableLocales.cpp',
     'testIntString.cpp',
     'testIntTypesABI.cpp',
     'testIsInsideNursery.cpp',
@@ -56,10 +60,10 @@ UNIFIED_SOURCES += [
     'testMappedArrayBuffer.cpp',
     'testMutedErrors.cpp',
     'testNewObject.cpp',
+    'testNewTargetInvokeConstructor.cpp',
     'testNullRoot.cpp',
     'testObjectEmulatingUndefined.cpp',
     'testOOM.cpp',
-    'testOps.cpp',
     'testParseJSON.cpp',
     'testPersistentRooted.cpp',
     'testPreserveJitCode.cpp',
@@ -78,13 +82,22 @@ UNIFIED_SOURCES += [
     'testStringBuffer.cpp',
     'testStructuredClone.cpp',
     'testSymbol.cpp',
+    'testThreadingExclusiveData.cpp',
+    'testThreadingMutex.cpp',
     'testToIntWidth.cpp',
     'testTypedArrays.cpp',
     'testUbiNode.cpp',
     'testUncaughtError.cpp',
+    'testUncaughtSymbol.cpp',
     'testUTF8.cpp',
+    'testWasmLEB128.cpp',
     'testWeakMap.cpp',
     'testXDR.cpp',
+]
+
+SOURCES += [
+    # There are clashing definitions of js::jit::AssemblerBuffer.
+    'testAssemblerBuffer.cpp',
 ]
 
 if CONFIG['ENABLE_ION']:
@@ -92,19 +105,24 @@ if CONFIG['ENABLE_ION']:
         'testJitDCEinGVN.cpp',
         'testJitFoldsTo.cpp',
         'testJitGVN.cpp',
-        'testJitMoveEmitterCycles-mips.cpp',
+        'testJitMoveEmitterCycles-mips32.cpp',
         'testJitMoveEmitterCycles.cpp',
         'testJitRangeAnalysis.cpp',
+        'testJitRegisterSet.cpp',
         'testJitRValueAlloc.cpp',
     ]
 
-DEFINES['EXPORT_JS_API'] = True
-# Building against js_static requires that we declare mfbt sybols "exported"
-# on its behalf.
-DEFINES['IMPL_MFBT'] = True
+if CONFIG['SPIDERMONKEY_PROMISE']:
+    UNIFIED_SOURCES += [
+        'testPromise.cpp',
+    ]
 
-LOCAL_INCLUDES += ['..']
-GENERATED_INCLUDES += ['..']
+DEFINES['EXPORT_JS_API'] = True
+
+LOCAL_INCLUDES += [
+    '!..',
+    '..',
+]
 
 USE_LIBS += [
     'static:js',
@@ -112,5 +130,9 @@ USE_LIBS += [
 
 OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
 
-if CONFIG['GNU_CXX']:
-    FAIL_ON_WARNINGS = True
+# This is intended as a temporary workaround to enable VS2015.
+if CONFIG['_MSC_VER']:
+    CXXFLAGS += ['-wd4312']
+
+DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR
+OBJDIR_PP_FILES.js.src['jsapi-tests'] += ['jsapi-tests-gdb.py.in']

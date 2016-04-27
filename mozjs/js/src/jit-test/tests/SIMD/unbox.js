@@ -1,20 +1,19 @@
-if (typeof SIMD === "undefined")
-    quit();
+load(libdir + 'simd.js');
 
 setJitCompilerOption("baseline.warmup.trigger", 10);
 setJitCompilerOption("ion.warmup.trigger", 30);
+
 var max = 40, pivot = 35;
 
-var i32x4 = SIMD.int32x4;
-var f32x4 = SIMD.float32x4;
-var i32x4Add = SIMD.int32x4.add;
+var i32x4 = SIMD.Int32x4;
+var f32x4 = SIMD.Float32x4;
+var i32x4Add = SIMD.Int32x4.add;
 
 var FakeSIMDType = function (o) { this.x = o.x; this.y = o.y; this.z = o.z; this.w = o.w; };
 if (this.hasOwnProperty("TypedObject")) {
   var TO = TypedObject;
   FakeSIMDType = new TO.StructType({ x: TO.int32, y: TO.int32, z: TO.int32, w: TO.int32 });
 }
-
 
 function simdunbox_bail_undef(i, lhs, rhs) {
   return i32x4Add(lhs, rhs);
@@ -106,3 +105,40 @@ for (i = 0; i < max; i++) {
   assertEqX4(arr_typeobj[i], ref);
   assertEqX4(arr_badsimd[i], ref);
 }
+
+// Check that unbox operations aren't removed
+(function() {
+
+    function add(i, v, w) {
+        if (i % 2 == 0) {
+            SIMD.Int32x4.add(v, w);
+        } else {
+            SIMD.Float32x4.add(v, w);
+        }
+    }
+
+    var i = 0;
+    var caught = false;
+    var f4 = SIMD.Float32x4(1,2,3,4);
+    var i4 = SIMD.Int32x4(1,2,3,4);
+    try {
+        for (; i < 200; i++) {
+            if (i % 2 == 0) {
+                add(i, i4, i4);
+            } else if (i == 199) {
+                add(i, i4, f4);
+            } else {
+                add(i, f4, f4);
+            }
+        }
+    } catch(e) {
+        print(e);
+        assertEq(e instanceof TypeError, true);
+        assertEq(i, 199);
+        caught = true;
+    }
+
+    assertEq(i < 199 || caught, true);
+
+})();
+

@@ -61,7 +61,7 @@ struct RegExpCompileData
         capture_count(0)
     {}
 
-    RegExpTree *tree;
+    RegExpTree* tree;
     bool simple;
     bool contains_anchor;
     int capture_count;
@@ -69,8 +69,8 @@ struct RegExpCompileData
 
 struct RegExpCode
 {
-    jit::JitCode *jitCode;
-    uint8_t *byteCode;
+    jit::JitCode* jitCode;
+    uint8_t* byteCode;
 
     RegExpCode()
       : jitCode(nullptr), byteCode(nullptr)
@@ -86,21 +86,22 @@ struct RegExpCode
 };
 
 RegExpCode
-CompilePattern(JSContext *cx, RegExpShared *shared, RegExpCompileData *data,
+CompilePattern(JSContext* cx, RegExpShared* shared, RegExpCompileData* data,
                HandleLinearString sample,  bool is_global, bool ignore_case,
-               bool is_ascii, bool match_only, bool force_bytecode);
+               bool is_ascii, bool match_only, bool force_bytecode, bool sticky,
+               bool unicode);
 
 // Note: this may return RegExpRunStatus_Error if an interrupt was requested
 // while the code was executing.
 template <typename CharT>
 RegExpRunStatus
-ExecuteCode(JSContext *cx, jit::JitCode *codeBlock, const CharT *chars, size_t start,
-            size_t length, MatchPairs *matches);
+ExecuteCode(JSContext* cx, jit::JitCode* codeBlock, const CharT* chars, size_t start,
+            size_t length, MatchPairs* matches, size_t* endIndex);
 
 template <typename CharT>
 RegExpRunStatus
-InterpretCode(JSContext *cx, const uint8_t *byteCode, const CharT *chars, size_t start,
-              size_t length, MatchPairs *matches);
+InterpretCode(JSContext* cx, const uint8_t* byteCode, const CharT* chars, size_t start,
+              size_t length, MatchPairs* matches, size_t* endIndex);
 
 #define FOR_EACH_NODE_TYPE(VISIT)                                    \
   VISIT(End)                                                         \
@@ -127,8 +128,40 @@ InterpretCode(JSContext *cx, const uint8_t *byteCode, const CharT *chars, size_t
 FOR_EACH_REG_EXP_TREE_TYPE(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
+// InfallibleVector is like Vector, but all its methods are infallible (they
+// crash on OOM). We use this class instead of Vector to avoid a ton of
+// MOZ_WARN_UNUSED_RESULT warnings in irregexp code (imported from V8).
+template<typename T, size_t N>
+class InfallibleVector
+{
+    Vector<T, N, LifoAllocPolicy<Infallible>> vector_;
+
+    InfallibleVector(const InfallibleVector&) = delete;
+    void operator=(const InfallibleVector&) = delete;
+
+  public:
+    explicit InfallibleVector(const LifoAllocPolicy<Infallible>& alloc) : vector_(alloc) {}
+
+    void append(const T& t) { MOZ_ALWAYS_TRUE(vector_.append(t)); }
+    void append(const T* begin, size_t length) { MOZ_ALWAYS_TRUE(vector_.append(begin, length)); }
+
+    void clear() { vector_.clear(); }
+    void popBack() { vector_.popBack(); }
+    void reserve(size_t n) { MOZ_ALWAYS_TRUE(vector_.reserve(n)); }
+
+    size_t length() const { return vector_.length(); }
+    T popCopy() { return vector_.popCopy(); }
+
+    T* begin() { return vector_.begin(); }
+
+    T& operator[](size_t index) { return vector_[index]; }
+    const T& operator[](size_t index) const { return vector_[index]; }
+
+    InfallibleVector& operator=(InfallibleVector&& rhs) { vector_ = Move(rhs.vector_); return *this; }
+};
+
 class CharacterRange;
-typedef Vector<CharacterRange, 1, LifoAllocPolicy<Infallible> > CharacterRangeVector;
+typedef InfallibleVector<CharacterRange, 1> CharacterRangeVector;
 
 // Represents code units in the range from from_ to to_, both ends are
 // inclusive.
@@ -143,7 +176,9 @@ class CharacterRange
       : from_(from), to_(to)
     {}
 
-    static void AddClassEscape(LifoAlloc *alloc, char16_t type, CharacterRangeVector *ranges);
+    static void AddClassEscape(LifoAlloc* alloc, char16_t type, CharacterRangeVector* ranges);
+    static void AddClassEscapeUnicode(LifoAlloc* alloc, char16_t type,
+                                      CharacterRangeVector* ranges, bool ignoreCase);
 
     static inline CharacterRange Singleton(char16_t value) {
         return CharacterRange(value, value);
@@ -163,28 +198,28 @@ class CharacterRange
     bool is_valid() { return from_ <= to_; }
     bool IsEverything(char16_t max) { return from_ == 0 && to_ >= max; }
     bool IsSingleton() { return (from_ == to_); }
-    void AddCaseEquivalents(bool is_ascii, CharacterRangeVector *ranges);
+    void AddCaseEquivalents(bool is_ascii, bool unicode, CharacterRangeVector* ranges);
 
-    static void Split(const LifoAlloc *alloc,
+    static void Split(const LifoAlloc* alloc,
                       CharacterRangeVector base,
-                      const Vector<int> &overlay,
+                      const Vector<int>& overlay,
                       CharacterRangeVector* included,
                       CharacterRangeVector* excluded);
 
     // Whether a range list is in canonical form: Ranges ordered by from value,
     // and ranges non-overlapping and non-adjacent.
-    static bool IsCanonical(const CharacterRangeVector &ranges);
+    static bool IsCanonical(const CharacterRangeVector& ranges);
 
     // Convert range list to canonical form. The characters covered by the ranges
     // will still be the same, but no character is in more than one range, and
     // adjacent ranges are merged. The resulting list may be shorter than the
     // original, but cannot be longer.
-    static void Canonicalize(CharacterRangeVector &ranges);
+    static void Canonicalize(CharacterRangeVector& ranges);
 
     // Negate the contents of a character range in canonical form.
-    static void Negate(const LifoAlloc *alloc,
+    static void Negate(const LifoAlloc* alloc,
                        CharacterRangeVector src,
-                       CharacterRangeVector *dst);
+                       CharacterRangeVector* dst);
 
     static const int kStartMarker = (1 << 24);
     static const int kPayloadMask = (1 << 24) - 1;
@@ -203,33 +238,33 @@ class OutSet
       : first_(0), remaining_(nullptr), successors_(nullptr)
     {}
 
-    OutSet* Extend(LifoAlloc *alloc, unsigned value);
+    OutSet* Extend(LifoAlloc* alloc, unsigned value);
     bool Get(unsigned value);
     static const unsigned kFirstLimit = 32;
 
   private:
-    typedef Vector<OutSet *, 1, LifoAllocPolicy<Infallible> > OutSetVector;
-    typedef Vector<unsigned, 1, LifoAllocPolicy<Infallible> > RemainingVector;
+    typedef InfallibleVector<OutSet*, 1> OutSetVector;
+    typedef InfallibleVector<unsigned, 1> RemainingVector;
 
     // Destructively set a value in this set.  In most cases you want
     // to use Extend instead to ensure that only one instance exists
     // that contains the same values.
-    void Set(LifoAlloc *alloc, unsigned value);
+    void Set(LifoAlloc* alloc, unsigned value);
 
     // The successors are a list of sets that contain the same values
     // as this set and the one more value that is not present in this
     // set.
-    OutSetVector *successors() { return successors_; }
+    OutSetVector* successors() { return successors_; }
 
-    OutSet(uint32_t first, RemainingVector *remaining)
+    OutSet(uint32_t first, RemainingVector* remaining)
       : first_(first), remaining_(remaining), successors_(nullptr)
     {}
 
-    RemainingVector &remaining() { return *remaining_; }
+    RemainingVector& remaining() { return *remaining_; }
 
     uint32_t first_;
-    RemainingVector *remaining_;
-    OutSetVector *successors_;
+    RemainingVector* remaining_;
+    OutSetVector* successors_;
     friend class Trace;
 };
 
@@ -238,7 +273,7 @@ class OutSet
 class DispatchTable
 {
   public:
-    explicit DispatchTable(LifoAlloc *alloc)
+    explicit DispatchTable(LifoAlloc* alloc)
     {}
 
     class Entry {
@@ -254,7 +289,7 @@ class DispatchTable
         char16_t from() { return from_; }
         char16_t to() { return to_; }
         void set_to(char16_t value) { to_ = value; }
-        void AddValue(LifoAlloc *alloc, int value) {
+        void AddValue(LifoAlloc* alloc, int value) {
             out_set_ = out_set_->Extend(alloc, value);
         }
         OutSet* out_set() { return out_set_; }
@@ -264,7 +299,7 @@ class DispatchTable
         OutSet* out_set_;
     };
 
-    void AddRange(LifoAlloc *alloc, CharacterRange range, int value);
+    void AddRange(LifoAlloc* alloc, CharacterRange range, int value);
     OutSet* Get(char16_t value);
     void Dump();
 
@@ -314,7 +349,7 @@ class TextElement
     RegExpTree* tree_;
 };
 
-typedef Vector<TextElement, 1, LifoAllocPolicy<Infallible> > TextElementVector;
+typedef InfallibleVector<TextElement, 1> TextElementVector;
 
 class NodeVisitor;
 class RegExpCompiler;
@@ -454,7 +489,7 @@ class QuickCheckDetails
 class RegExpNode
 {
   public:
-    explicit RegExpNode(LifoAlloc *alloc);
+    explicit RegExpNode(LifoAlloc* alloc);
     virtual ~RegExpNode() {}
     virtual void Accept(NodeVisitor* visitor) = 0;
 
@@ -516,7 +551,7 @@ class RegExpNode
     // If we know that the input is ASCII then there are some nodes that can
     // never match.  This method returns a node that can be substituted for
     // itself, or nullptr if the node can never match.
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case) { return this; }
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode) { return this; }
 
     // Helper for FilterASCII.
     RegExpNode* replacement() {
@@ -552,7 +587,7 @@ class RegExpNode
         return bm_info_[not_at_start ? 1 : 0];
     }
 
-    LifoAlloc *alloc() const { return alloc_; }
+    LifoAlloc* alloc() const { return alloc_; }
 
   protected:
     enum LimitResult { DONE, CONTINUE };
@@ -577,7 +612,7 @@ class RegExpNode
     int trace_count_;
     BoyerMooreLookahead* bm_info_[2];
 
-    LifoAlloc *alloc_;
+    LifoAlloc* alloc_;
 };
 
 // A simple closed interval.
@@ -623,14 +658,14 @@ class SeqRegExpNode : public RegExpNode
 
     RegExpNode* on_success() { return on_success_; }
     void set_on_success(RegExpNode* node) { on_success_ = node; }
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case);
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode);
     virtual bool FillInBMInfo(int offset,
                               int budget,
                               BoyerMooreLookahead* bm,
                               bool not_at_start);
 
   protected:
-    RegExpNode* FilterSuccessor(int depth, bool ignore_case);
+    RegExpNode* FilterSuccessor(int depth, bool ignore_case, bool unicode);
 
   private:
     RegExpNode* on_success_;
@@ -726,8 +761,8 @@ class ActionNode : public SeqRegExpNode
 class TextNode : public SeqRegExpNode
 {
   public:
-    TextNode(TextElementVector *elements,
-             RegExpNode *on_success)
+    TextNode(TextElementVector* elements,
+             RegExpNode* on_success)
       : SeqRegExpNode(on_success),
         elements_(elements)
     {}
@@ -747,8 +782,8 @@ class TextNode : public SeqRegExpNode
                                       RegExpCompiler* compiler,
                                       int characters_filled_in,
                                       bool not_at_start);
-    TextElementVector &elements() { return *elements_; }
-    void MakeCaseIndependent(bool is_ascii);
+    TextElementVector& elements() { return *elements_; }
+    void MakeCaseIndependent(bool is_ascii, bool unicode);
     virtual int GreedyLoopTextLength();
     virtual RegExpNode* GetSuccessorOfOmnivorousTextNode(
                                                          RegExpCompiler* compiler);
@@ -757,7 +792,7 @@ class TextNode : public SeqRegExpNode
                               BoyerMooreLookahead* bm,
                               bool not_at_start);
     void CalculateOffsets();
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case);
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode);
 
   private:
     enum TextEmitPassType {
@@ -777,7 +812,7 @@ class TextNode : public SeqRegExpNode
                       bool first_element_checked,
                       int* checked_up_to);
     int Length();
-    TextElementVector *elements_;
+    TextElementVector* elements_;
 };
 
 class AssertionNode : public SeqRegExpNode
@@ -788,7 +823,9 @@ class AssertionNode : public SeqRegExpNode
         AT_START,
         AT_BOUNDARY,
         AT_NON_BOUNDARY,
-        AFTER_NEWLINE
+        AFTER_NEWLINE,
+        NOT_AFTER_LEAD_SURROGATE,
+        NOT_IN_SURROGATE_PAIR
     };
     AssertionNode(AssertionType t, RegExpNode* on_success)
       : SeqRegExpNode(on_success), assertion_type_(t)
@@ -808,6 +845,14 @@ class AssertionNode : public SeqRegExpNode
     }
     static AssertionNode* AfterNewline(RegExpNode* on_success) {
         return on_success->alloc()->newInfallible<AssertionNode>(AFTER_NEWLINE, on_success);
+    }
+    static AssertionNode* NotAfterLeadSurrogate(RegExpNode* on_success) {
+        return on_success->alloc()->newInfallible<AssertionNode>(NOT_AFTER_LEAD_SURROGATE,
+                                                                 on_success);
+    }
+    static AssertionNode* NotInSurrogatePair(RegExpNode* on_success) {
+        return on_success->alloc()->newInfallible<AssertionNode>(NOT_IN_SURROGATE_PAIR,
+                                                                 on_success);
     }
     virtual void Accept(NodeVisitor* visitor);
     virtual void Emit(RegExpCompiler* compiler, Trace* trace);
@@ -870,7 +915,7 @@ class EndNode : public RegExpNode
   public:
     enum Action { ACCEPT, BACKTRACK, NEGATIVE_SUBMATCH_SUCCESS };
 
-    explicit EndNode(LifoAlloc *alloc, Action action)
+    explicit EndNode(LifoAlloc* alloc, Action action)
       : RegExpNode(alloc), action_(action)
     {}
 
@@ -902,7 +947,7 @@ class EndNode : public RegExpNode
 class NegativeSubmatchSuccess : public EndNode
 {
   public:
-    NegativeSubmatchSuccess(LifoAlloc *alloc,
+    NegativeSubmatchSuccess(LifoAlloc* alloc,
                             int stack_pointer_reg,
                             int position_reg,
                             int clear_capture_count,
@@ -943,7 +988,7 @@ class Guard
     int value_;
 };
 
-typedef Vector<Guard *, 1, LifoAllocPolicy<Infallible> > GuardVector;
+typedef InfallibleVector<Guard*, 1> GuardVector;
 
 class GuardedAlternative
 {
@@ -952,24 +997,24 @@ class GuardedAlternative
       : node_(node), guards_(nullptr)
     {}
 
-    void AddGuard(LifoAlloc *alloc, Guard *guard);
-    RegExpNode *node() const { return node_; }
+    void AddGuard(LifoAlloc* alloc, Guard* guard);
+    RegExpNode* node() const { return node_; }
     void set_node(RegExpNode* node) { node_ = node; }
-    const GuardVector *guards() const { return guards_; }
+    const GuardVector* guards() const { return guards_; }
 
   private:
-    RegExpNode *node_;
-    GuardVector *guards_;
+    RegExpNode* node_;
+    GuardVector* guards_;
 };
 
-typedef Vector<GuardedAlternative, 0, LifoAllocPolicy<Infallible> > GuardedAlternativeVector;
+typedef InfallibleVector<GuardedAlternative, 0> GuardedAlternativeVector;
 
 class AlternativeGeneration;
 
 class ChoiceNode : public RegExpNode
 {
   public:
-    explicit ChoiceNode(LifoAlloc *alloc, int expected_size)
+    explicit ChoiceNode(LifoAlloc* alloc, int expected_size)
       : RegExpNode(alloc),
         alternatives_(*alloc),
         table_(nullptr),
@@ -984,7 +1029,7 @@ class ChoiceNode : public RegExpNode
         alternatives_.append(node);
     }
 
-    GuardedAlternativeVector &alternatives() { return alternatives_; }
+    GuardedAlternativeVector& alternatives() { return alternatives_; }
     DispatchTable* GetTable(bool ignore_case);
     virtual void Emit(RegExpCompiler* compiler, Trace* trace);
     virtual int EatsAtLeast(int still_to_find, int budget, bool not_at_start);
@@ -1006,7 +1051,7 @@ class ChoiceNode : public RegExpNode
     void set_not_at_start() { not_at_start_ = true; }
     void set_being_calculated(bool b) { being_calculated_ = b; }
     virtual bool try_to_emit_quick_check_for_alternative(int i) { return true; }
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case);
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode);
 
   protected:
     int GreedyLoopTextLengthForAlternative(GuardedAlternative* alternative);
@@ -1035,7 +1080,7 @@ class ChoiceNode : public RegExpNode
 class NegativeLookaheadChoiceNode : public ChoiceNode
 {
   public:
-    explicit NegativeLookaheadChoiceNode(LifoAlloc *alloc,
+    explicit NegativeLookaheadChoiceNode(LifoAlloc* alloc,
                                          GuardedAlternative this_must_fail,
                                          GuardedAlternative then_do_this)
       : ChoiceNode(alloc, 2)
@@ -1059,13 +1104,13 @@ class NegativeLookaheadChoiceNode : public ChoiceNode
     // characters, but on a negative lookahead the negative branch did not take
     // part in that calculation (EatsAtLeast) so the assumptions don't hold.
     virtual bool try_to_emit_quick_check_for_alternative(int i) { return i != 0; }
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case);
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode);
 };
 
 class LoopChoiceNode : public ChoiceNode
 {
   public:
-    explicit LoopChoiceNode(LifoAlloc *alloc, bool body_can_be_zero_length)
+    explicit LoopChoiceNode(LifoAlloc* alloc, bool body_can_be_zero_length)
       : ChoiceNode(alloc, 2),
         loop_node_(nullptr),
         continue_node_(nullptr),
@@ -1088,7 +1133,7 @@ class LoopChoiceNode : public ChoiceNode
     RegExpNode* continue_node() { return continue_node_; }
     bool body_can_be_zero_length() { return body_can_be_zero_length_; }
     virtual void Accept(NodeVisitor* visitor);
-    virtual RegExpNode* FilterASCII(int depth, bool ignore_case);
+    virtual RegExpNode* FilterASCII(int depth, bool ignore_case, bool unicode);
 
   private:
     // AddAlternative is made private for loop nodes because alternatives
@@ -1149,7 +1194,7 @@ AddRange(ContainedInLattice a,
 class BoyerMoorePositionInfo
 {
   public:
-    explicit BoyerMoorePositionInfo(LifoAlloc *alloc)
+    explicit BoyerMoorePositionInfo(LifoAlloc* alloc)
       : map_(*alloc),
         map_count_(0),
         w_(kNotYet),
@@ -1176,7 +1221,7 @@ class BoyerMoorePositionInfo
     bool is_word() { return w_ == kLatticeIn; }
 
   private:
-    Vector<bool, 0, LifoAllocPolicy<Infallible> > map_;
+    InfallibleVector<bool, 0> map_;
     int map_count_;  // Number of set bits in the map.
     ContainedInLattice w_;  // The \w character class.
     ContainedInLattice s_;  // The \s character class.
@@ -1184,12 +1229,12 @@ class BoyerMoorePositionInfo
     ContainedInLattice surrogate_;  // Surrogate UTF-16 code units.
 };
 
-typedef Vector<BoyerMoorePositionInfo *, 1, LifoAllocPolicy<Infallible> > BoyerMoorePositionInfoVector;
+typedef InfallibleVector<BoyerMoorePositionInfo*, 1> BoyerMoorePositionInfoVector;
 
 class BoyerMooreLookahead
 {
   public:
-    BoyerMooreLookahead(LifoAlloc *alloc, size_t length, RegExpCompiler* compiler);
+    BoyerMooreLookahead(LifoAlloc* alloc, size_t length, RegExpCompiler* compiler);
 
     int length() { return length_; }
     int max_char() { return max_char_; }
@@ -1242,7 +1287,7 @@ class BoyerMooreLookahead
 
     int GetSkipTable(int min_lookahead,
                      int max_lookahead,
-                     uint8_t *boolean_skip_table);
+                     uint8_t* boolean_skip_table);
     bool FindWorthwhileInterval(int* from, int* to);
     int FindBestInterval(int max_number_of_chars, int old_biggest_points, int* from, int* to);
 };
@@ -1410,8 +1455,8 @@ class Trace
     void AdvanceCurrentPositionInTrace(int by, RegExpCompiler* compiler);
 
   private:
-    int FindAffectedRegisters(LifoAlloc *alloc, OutSet* affected_registers);
-    void PerformDeferredActions(LifoAlloc *alloc,
+    int FindAffectedRegisters(LifoAlloc* alloc, OutSet* affected_registers);
+    void PerformDeferredActions(LifoAlloc* alloc,
                                 RegExpMacroAssembler* macro,
                                 int max_register,
                                 OutSet& affected_registers,
@@ -1459,10 +1504,11 @@ class NodeVisitor
 class Analysis : public NodeVisitor
 {
   public:
-    Analysis(JSContext *cx, bool ignore_case, bool is_ascii)
+    Analysis(JSContext* cx, bool ignore_case, bool is_ascii, bool unicode)
       : cx(cx),
         ignore_case_(ignore_case),
         is_ascii_(is_ascii),
+        unicode_(unicode),
         error_message_(nullptr)
     {}
 
@@ -1484,13 +1530,14 @@ class Analysis : public NodeVisitor
     }
 
   private:
-    JSContext *cx;
+    JSContext* cx;
     bool ignore_case_;
     bool is_ascii_;
+    bool unicode_;
     const char* error_message_;
 
-    Analysis(Analysis &) = delete;
-    void operator=(Analysis &) = delete;
+    Analysis(Analysis&) = delete;
+    void operator=(Analysis&) = delete;
 };
 
 } }  // namespace js::irregexp

@@ -34,13 +34,6 @@ skip script test262/intl402/ch12/12.2/12.2.2_L15.js
 skip script test262/ch13/13.2/13.2-15-1.js
 skip script test262/ch11/11.4/11.4.1/11.4.1-5-a-28-s.js
 
-##################################################
-# Test262 tests skipped due to SpiderMonkey bugs #
-##################################################
-
-skip script test262/ch10/10.4/10.4.3/10.4.3-1-104.js # bug 603201
-skip script test262/ch10/10.4/10.4.3/10.4.3-1-106.js # bug 603201
-
 #######################################################################
 # Tests disabled due to jstest limitations wrt imported test262 tests #
 #######################################################################
@@ -392,6 +385,3 @@ skip script test262/ch13/13.1/13.1-13gs.js
 skip script test262/ch13/13.2/13.2-19-b-3gs.js
 skip script test262/ch14/14.1/14.1-4gs.js
 skip script test262/ch14/14.1/14.1-5gs.js
-
-# Bug 917508: fails on Android x86 emulator
-skip-if(Android&&AndroidVersion>=17) script test262/ch11/11.5/11.5.3/S11.5.3_A4_T2.js

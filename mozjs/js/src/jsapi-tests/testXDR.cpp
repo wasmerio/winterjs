@@ -12,17 +12,26 @@
 
 #include "jsscriptinlines.h"
 
-static JSScript *
-FreezeThaw(JSContext *cx, JS::HandleScript script)
+static bool
+GetBuildId(JS::BuildIdCharVector* buildId)
 {
+    const char buildid[] = "testXDR";
+    return buildId->append(buildid, sizeof(buildid));
+}
+
+static JSScript*
+FreezeThaw(JSContext* cx, JS::HandleScript script)
+{
+    JS::SetBuildIdOp(cx->runtime(), GetBuildId);
+
     // freeze
     uint32_t nbytes;
-    void *memory = JS_EncodeScript(cx, script, &nbytes);
+    void* memory = JS_EncodeScript(cx, script, &nbytes);
     if (!memory)
         return nullptr;
 
     // thaw
-    JSScript *script2 = JS_DecodeScript(cx, memory, nbytes);
+    JSScript* script2 = JS_DecodeScript(cx, memory, nbytes);
     js_free(memory);
     return script2;
 }
@@ -37,11 +46,12 @@ enum TestCase {
 
 BEGIN_TEST(testXDR_bug506491)
 {
-    const char *s =
+    const char* s =
         "function makeClosure(s, name, value) {\n"
         "    eval(s);\n"
         "    Math.sin(value);\n"
-        "    return let (n = name, v = value) function () { return String(v); };\n"
+        "    let n = name, v = value;\n"
+        "    return function () { return String(v); };\n"
         "}\n"
         "var f = makeClosure('0;', 'status', 'ok');\n";
 
@@ -64,7 +74,7 @@ BEGIN_TEST(testXDR_bug506491)
 
     // confirm
     EVAL("f() === 'ok';\n", &v2);
-    JS::RootedValue trueval(cx, JSVAL_TRUE);
+    JS::RootedValue trueval(cx, JS::TrueValue());
     CHECK_SAME(v2, trueval);
     return true;
 }
@@ -90,13 +100,13 @@ END_TEST(testXDR_bug516827)
 
 BEGIN_TEST(testXDR_source)
 {
-    const char *samples[] = {
+    const char* samples[] = {
         // This can't possibly fail to compress well, can it?
         "function f(x) { return x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x }",
         "short",
         nullptr
     };
-    for (const char **s = samples; *s; s++) {
+    for (const char** s = samples; *s; s++) {
         JS::CompileOptions options(cx);
         options.setFileAndLine(__FILE__, __LINE__);
         JS::RootedScript script(cx);
@@ -104,7 +114,7 @@ BEGIN_TEST(testXDR_source)
         CHECK(script);
         script = FreezeThaw(cx, script);
         CHECK(script);
-        JSString *out = JS_DecompileScript(cx, script, "testing", 0);
+        JSString* out = JS_DecompileScript(cx, script, "testing", 0);
         CHECK(out);
         bool equal;
         CHECK(JS_StringEqualsAscii(cx, out, *s, &equal));
@@ -116,20 +126,21 @@ END_TEST(testXDR_source)
 
 BEGIN_TEST(testXDR_sourceMap)
 {
-    const char *sourceMaps[] = {
+    const char* sourceMaps[] = {
         "http://example.com/source-map.json",
         "file:///var/source-map.json",
         nullptr
     };
     JS::RootedScript script(cx);
-    for (const char **sm = sourceMaps; *sm; sm++) {
+    for (const char** sm = sourceMaps; *sm; sm++) {
         JS::CompileOptions options(cx);
         options.setFileAndLine(__FILE__, __LINE__);
         CHECK(JS_CompileScript(cx, "", 0, options, &script));
         CHECK(script);
 
         size_t len = strlen(*sm);
-        char16_t *expected = js::InflateString(cx, *sm, &len);
+        JS::UniqueTwoByteChars expected_wrapper(js::InflateString(cx, *sm, &len));
+        char16_t *expected = expected_wrapper.get();
         CHECK(expected);
 
         // The script source takes responsibility of free'ing |expected|.
@@ -139,7 +150,7 @@ BEGIN_TEST(testXDR_sourceMap)
         CHECK(script->scriptSource());
         CHECK(script->scriptSource()->hasSourceMapURL());
 
-        const char16_t *actual = script->scriptSource()->sourceMapURL();
+        const char16_t* actual = script->scriptSource()->sourceMapURL();
         CHECK(actual);
 
         while (*expected) {

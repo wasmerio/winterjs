@@ -6,7 +6,7 @@
 
 DIRS += ['crmf']
 
-if CONFIG['MOZ_NATIVE_NSS']:
+if CONFIG['MOZ_SYSTEM_NSS']:
     Library('nss')
     OS_LIBS += CONFIG['NSS_LIBS']
 elif CONFIG['MOZ_FOLD_LIBS']:
@@ -16,26 +16,15 @@ elif CONFIG['MOZ_FOLD_LIBS']:
 
     SDK_LIBRARY = True
 
-    # Normally, there should be /something/ to ensure nspr is built
-    # before this directory, but since nspr is built during "export",
-    # it actually doesn't matter.
-    if CONFIG['OS_TARGET'] == 'WINNT':
-        suffix = '_s'
-    else:
-        suffix = ''
     USE_LIBS += [
-        'static:/nsprpub/lib/ds/plds4%s' % suffix,
-        'static:/nsprpub/lib/libc/src/plc4%s' % suffix,
-        'static:/nsprpub/pr/src/nspr4%s' % suffix,
+        'nspr4',
+        'plc4',
+        'plds4',
     ]
 
     OS_LIBS += CONFIG['REALTIME_LIBS']
 
-    if CONFIG['OS_TARGET'] == 'WINNT':
-        DEFFILE = 'nss3.def'
-
-    if CONFIG['OS_ARCH'] == 'Linux' and CONFIG['GCC_USE_GNU_LD']:
-        LD_VERSION_SCRIPT = 'nss3.def'
+    SYMBOLS_FILE = 'nss.symbols'
 else:
     Library('nss')
     USE_LIBS += [
@@ -45,3 +34,9 @@ else:
         '/security/nss/lib/util/nssutil3',
         'sqlite',
     ]
+
+# XXX: We should fix these warnings.
+ALLOW_COMPILER_WARNINGS = True
+
+if CONFIG['NSS_EXTRA_SYMBOLS_FILE']:
+    DEFINES['NSS_EXTRA_SYMBOLS_FILE'] = CONFIG['NSS_EXTRA_SYMBOLS_FILE']

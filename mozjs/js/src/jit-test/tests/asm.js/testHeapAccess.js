@@ -33,14 +33,6 @@ assertEq(f(0x100),0);
         setJitCompilerOption("signals.enable", 0);
 
         var buf = new ArrayBuffer(BUF_MIN);
-
-        if (isCachingEnabled()) {
-            // Cloned modules should fail on linking if the initial module has
-            // been compiled with signals but signals are deactivated.
-            var code = asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) {i=i|0; i32[0] = i; return i8[0]|0}; return f');
-            assertAsmLinkFail(code, this, null, new ArrayBuffer(BUF_MIN));
-        }
-
         var code = asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + '/* not a clone */ function f(i) {i=i|0; i32[0] = i; return i8[0]|0}; return f');
         var f = asmLink(code, this, null, buf);
         assertEq(f(0),0);
@@ -173,9 +165,14 @@ assertEq(f(1), 0xfffeeee);
 var f = asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) {i=i|0; return i32[((i<<2)+4)>>2]|0 }; return f'), this, null, i32.buffer);
 assertEq(f(0), 0xfffeeee);
 
+// For legacy compatibility, test Int8/Uint8 accesses with no shift.
 asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { u8[7&0xffff] = 41 } return f'), this, null, BUF_64KB)();
 assertEq(new Uint8Array(BUF_64KB)[7], 41);
 asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { i8[7&0xffff] = -41 } return f'), this, null, BUF_64KB)();
+assertEq(new Int8Array(BUF_64KB)[7], -41);
+asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { u8[(7&0xffff)>>0] = 41 } return f'), this, null, BUF_64KB)();
+assertEq(new Uint8Array(BUF_64KB)[7], 41);
+asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { i8[(7&0xffff)>>0] = -41 } return f'), this, null, BUF_64KB)();
 assertEq(new Int8Array(BUF_64KB)[7], -41);
 asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { u16[(6&0xffff)>>1] = 0xabc } return f'), this, null, BUF_64KB)();
 assertEq(new Uint16Array(BUF_64KB)[3], 0xabc);
@@ -197,7 +194,9 @@ new Float64Array(BUF_64KB)[1] = 1.3;
 assertEq(asmLink(asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f() { return +f64[(8&0xffff)>>3] } return f'), this, null, BUF_64KB)(), 1.3);
 
 asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) { i=i|0; u8[255]; u8[i] } return f');
+// For legacy compatibility, test Int8/Uint8 accesses with no shift.
 asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) { i=i|0; u8[i&0xff]; u8[255] } return f');
+asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) { i=i|0; u8[(i&0xff)>>0]; u8[255] } return f');
 asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) { i=i|0; u32[63]; u32[i>>2] } return f');
 asmCompile('glob', 'imp', 'b', USE_ASM + HEAP_IMPORTS + 'function f(i) { i=i|0; u32[i>>2]; u32[63] } return f');
 
@@ -498,3 +497,20 @@ assertEq(f(0x424242),0xAA);
 assertEq(f(0x1000000),0);
 assertEq(asmLink(m, this, null, new ArrayBuffer(0x2000000))(0),0);
 assertEq(asmLink(m, this, null, new ArrayBuffer(0x3000000))(0),0);
+
+// Heap offsets
+var asmMod = function test (glob, env, b) {
+    'use asm';
+    var i8 = new glob.Int8Array(b);
+    function f(i) {
+        i = i | 0;
+        i = i & 1;
+        i = (i - 0x40000)|0;
+        i8[0x3ffff] = 0;
+        return i8[(i + 0x7fffe) >> 0] | 0;
+    }
+    return f;
+};
+var buffer = new ArrayBuffer(0x40000);
+var asm = asmMod(this, {}, buffer);
+assertEq(asm(-1),0);

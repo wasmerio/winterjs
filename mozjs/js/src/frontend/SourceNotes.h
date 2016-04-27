@@ -33,9 +33,6 @@ namespace js {
  *
  * NB: the js_SrcNoteSpec array in BytecodeEmitter.cpp is indexed by this
  * enum, so its initializers need to match the order here.
- *
- * Don't forget to update XDR_BYTECODE_VERSION in vm/Xdr.h for all such
- * incompatible source note or other bytecode changes.
  */
 #define FOR_EACH_SRC_NOTE_TYPE(M)                                                                  \
     M(SRC_NULL,         "null",        0)  /* Terminates a note vector. */                         \
@@ -84,18 +81,18 @@ static_assert(SRC_XDELTA == 24, "SRC_XDELTA should be 24");
 
 /* A source note array is terminated by an all-zero element. */
 inline void
-SN_MAKE_TERMINATOR(jssrcnote *sn)
+SN_MAKE_TERMINATOR(jssrcnote* sn)
 {
     *sn = SRC_NULL;
 }
 
 inline bool
-SN_IS_TERMINATOR(jssrcnote *sn)
+SN_IS_TERMINATOR(jssrcnote* sn)
 {
     return *sn == SRC_NULL;
 }
 
-}  // namespace js
+} // namespace js
 
 #define SN_TYPE_BITS            5
 #define SN_DELTA_BITS           3
@@ -188,7 +185,7 @@ SN_COLSPAN_TO_OFFSET(ptrdiff_t colspan) {
 #define SN_NEXT(sn)             ((sn) + SN_LENGTH(sn))
 
 struct JSSrcNoteSpec {
-    const char      *name;      /* name for disassembly/debugging output */
+    const char*     name;      /* name for disassembly/debugging output */
     int8_t          arity;      /* number of offset operands */
 };
 
@@ -197,14 +194,14 @@ extern JS_FRIEND_DATA(const JSSrcNoteSpec) js_SrcNoteSpec[];
 namespace js {
 
 extern JS_FRIEND_API(unsigned)
-SrcNoteLength(jssrcnote *sn);
+SrcNoteLength(jssrcnote* sn);
 
 /*
  * Get and set the offset operand identified by which (0 for the first, etc.).
  */
 extern JS_FRIEND_API(ptrdiff_t)
-GetSrcNoteOffset(jssrcnote *sn, unsigned which);
+GetSrcNoteOffset(jssrcnote* sn, unsigned which);
 
-}
+} // namespace js
 
 #endif /* frontend_SourceNotes_h */

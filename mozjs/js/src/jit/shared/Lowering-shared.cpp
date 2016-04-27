@@ -15,7 +15,7 @@ using namespace js;
 using namespace jit;
 
 bool
-LIRGeneratorShared::ShouldReorderCommutative(MDefinition *lhs, MDefinition *rhs, MInstruction *ins)
+LIRGeneratorShared::ShouldReorderCommutative(MDefinition* lhs, MDefinition* rhs, MInstruction* ins)
 {
     // lhs and rhs are used by the commutative operator.
     MOZ_ASSERT(lhs->hasDefUses());
@@ -60,10 +60,10 @@ LIRGeneratorShared::ShouldReorderCommutative(MDefinition *lhs, MDefinition *rhs,
 }
 
 void
-LIRGeneratorShared::ReorderCommutative(MDefinition **lhsp, MDefinition **rhsp, MInstruction *ins)
+LIRGeneratorShared::ReorderCommutative(MDefinition** lhsp, MDefinition** rhsp, MInstruction* ins)
 {
-    MDefinition *lhs = *lhsp;
-    MDefinition *rhs = *rhsp;
+    MDefinition* lhs = *lhsp;
+    MDefinition* rhs = *rhsp;
 
     if (ShouldReorderCommutative(lhs, rhs, ins)) {
         *rhsp = lhs;
@@ -72,24 +72,37 @@ LIRGeneratorShared::ReorderCommutative(MDefinition **lhsp, MDefinition **rhsp, M
 }
 
 void
-LIRGeneratorShared::visitConstant(MConstant *ins)
+LIRGeneratorShared::visitConstant(MConstant* ins)
 {
-    const Value &v = ins->value();
+    if (!IsFloatingPointType(ins->type()) && ins->canEmitAtUses()) {
+        emitAtUses(ins);
+        return;
+    }
+
     switch (ins->type()) {
+      case MIRType_Double:
+        define(new(alloc()) LDouble(ins->toDouble()), ins);
+        break;
+      case MIRType_Float32:
+        define(new(alloc()) LFloat32(ins->toFloat32()), ins);
+        break;
       case MIRType_Boolean:
-        define(new(alloc()) LInteger(v.toBoolean()), ins);
+        define(new(alloc()) LInteger(ins->toBoolean()), ins);
         break;
       case MIRType_Int32:
-        define(new(alloc()) LInteger(v.toInt32()), ins);
+        define(new(alloc()) LInteger(ins->toInt32()), ins);
+        break;
+      case MIRType_Int64:
+        defineInt64(new(alloc()) LInteger64(ins->toInt64()), ins);
         break;
       case MIRType_String:
-        define(new(alloc()) LPointer(v.toString()), ins);
+        define(new(alloc()) LPointer(ins->toString()), ins);
         break;
       case MIRType_Symbol:
-        define(new(alloc()) LPointer(v.toSymbol()), ins);
+        define(new(alloc()) LPointer(ins->toSymbol()), ins);
         break;
       case MIRType_Object:
-        define(new(alloc()) LPointer(&v.toObject()), ins);
+        define(new(alloc()) LPointer(&ins->toObject()), ins);
         break;
       default:
         // Constants of special types (undefined, null) should never flow into
@@ -99,9 +112,9 @@ LIRGeneratorShared::visitConstant(MConstant *ins)
 }
 
 void
-LIRGeneratorShared::defineTypedPhi(MPhi *phi, size_t lirIndex)
+LIRGeneratorShared::defineTypedPhi(MPhi* phi, size_t lirIndex)
 {
-    LPhi *lir = current->getPhi(lirIndex);
+    LPhi* lir = current->getPhi(lirIndex);
 
     uint32_t vreg = getVirtualRegister();
 
@@ -111,20 +124,20 @@ LIRGeneratorShared::defineTypedPhi(MPhi *phi, size_t lirIndex)
 }
 
 void
-LIRGeneratorShared::lowerTypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock *block, size_t lirIndex)
+LIRGeneratorShared::lowerTypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex)
 {
-    MDefinition *operand = phi->getOperand(inputPosition);
-    LPhi *lir = block->getPhi(lirIndex);
+    MDefinition* operand = phi->getOperand(inputPosition);
+    LPhi* lir = block->getPhi(lirIndex);
     lir->setOperand(inputPosition, LUse(operand->virtualRegister(), LUse::ANY));
 }
 
-LRecoverInfo *
-LIRGeneratorShared::getRecoverInfo(MResumePoint *rp)
+LRecoverInfo*
+LIRGeneratorShared::getRecoverInfo(MResumePoint* rp)
 {
     if (cachedRecoverInfo_ && cachedRecoverInfo_->mir() == rp)
         return cachedRecoverInfo_;
 
-    LRecoverInfo *recoverInfo = LRecoverInfo::New(gen, rp);
+    LRecoverInfo* recoverInfo = LRecoverInfo::New(gen, rp);
     if (!recoverInfo)
         return nullptr;
 
@@ -136,7 +149,7 @@ LIRGeneratorShared::getRecoverInfo(MResumePoint *rp)
 bool
 LRecoverInfo::OperandIter::canOptimizeOutIfUnused()
 {
-    MDefinition *ins = **this;
+    MDefinition* ins = **this;
 
     // We check ins->type() in addition to ins->isUnused() because
     // EliminateDeadResumePointOperands may replace nodes with the constant
@@ -152,14 +165,14 @@ LRecoverInfo::OperandIter::canOptimizeOutIfUnused()
 #endif
 
 #ifdef JS_NUNBOX32
-LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LSnapshot*
+LIRGeneratorShared::buildSnapshot(LInstruction* ins, MResumePoint* rp, BailoutKind kind)
 {
-    LRecoverInfo *recoverInfo = getRecoverInfo(rp);
+    LRecoverInfo* recoverInfo = getRecoverInfo(rp);
     if (!recoverInfo)
         return nullptr;
 
-    LSnapshot *snapshot = LSnapshot::New(gen, recoverInfo, kind);
+    LSnapshot* snapshot = LSnapshot::New(gen, recoverInfo, kind);
     if (!snapshot)
         return nullptr;
 
@@ -168,13 +181,13 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
         // Check that optimized out operands are in eliminable slots.
         MOZ_ASSERT(it.canOptimizeOutIfUnused());
 
-        MDefinition *ins = *it;
+        MDefinition* ins = *it;
 
         if (ins->isRecoveredOnBailout())
             continue;
 
-        LAllocation *type = snapshot->typeOfSlot(index);
-        LAllocation *payload = snapshot->payloadOfSlot(index);
+        LAllocation* type = snapshot->typeOfSlot(index);
+        LAllocation* payload = snapshot->payloadOfSlot(index);
         ++index;
 
         if (ins->isBox())
@@ -210,14 +223,14 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
 
 #elif JS_PUNBOX64
 
-LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LSnapshot*
+LIRGeneratorShared::buildSnapshot(LInstruction* ins, MResumePoint* rp, BailoutKind kind)
 {
-    LRecoverInfo *recoverInfo = getRecoverInfo(rp);
+    LRecoverInfo* recoverInfo = getRecoverInfo(rp);
     if (!recoverInfo)
         return nullptr;
 
-    LSnapshot *snapshot = LSnapshot::New(gen, recoverInfo, kind);
+    LSnapshot* snapshot = LSnapshot::New(gen, recoverInfo, kind);
     if (!snapshot)
         return nullptr;
 
@@ -226,7 +239,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
         // Check that optimized out operands are in eliminable slots.
         MOZ_ASSERT(it.canOptimizeOutIfUnused());
 
-        MDefinition *def = *it;
+        MDefinition* def = *it;
 
         if (def->isRecoveredOnBailout())
             continue;
@@ -242,7 +255,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
         // code between an instruction and the LOsiPoint that follows it.
         MOZ_ASSERT_IF(!def->isConstant(), !def->isEmittedAtUses());
 
-        LAllocation *a = snapshot->getEntry(index++);
+        LAllocation* a = snapshot->getEntry(index++);
 
         if (def->isUnused()) {
             *a = LAllocation();
@@ -257,13 +270,13 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
 #endif
 
 void
-LIRGeneratorShared::assignSnapshot(LInstruction *ins, BailoutKind kind)
+LIRGeneratorShared::assignSnapshot(LInstruction* ins, BailoutKind kind)
 {
     // assignSnapshot must be called before define/add, since
     // it may add new instructions for emitted-at-use operands.
     MOZ_ASSERT(ins->id() == 0);
 
-    LSnapshot *snapshot = buildSnapshot(ins, lastResumePoint_, kind);
+    LSnapshot* snapshot = buildSnapshot(ins, lastResumePoint_, kind);
     if (snapshot)
         ins->assignSnapshot(snapshot);
     else
@@ -271,15 +284,15 @@ LIRGeneratorShared::assignSnapshot(LInstruction *ins, BailoutKind kind)
 }
 
 void
-LIRGeneratorShared::assignSafepoint(LInstruction *ins, MInstruction *mir, BailoutKind kind)
+LIRGeneratorShared::assignSafepoint(LInstruction* ins, MInstruction* mir, BailoutKind kind)
 {
     MOZ_ASSERT(!osiPoint_);
     MOZ_ASSERT(!ins->safepoint());
 
     ins->initSafepoint(alloc());
 
-    MResumePoint *mrp = mir->resumePoint() ? mir->resumePoint() : lastResumePoint_;
-    LSnapshot *postSnapshot = buildSnapshot(ins, mrp, kind);
+    MResumePoint* mrp = mir->resumePoint() ? mir->resumePoint() : lastResumePoint_;
+    LSnapshot* postSnapshot = buildSnapshot(ins, mrp, kind);
     if (!postSnapshot) {
         gen->abort("buildSnapshot failed");
         return;

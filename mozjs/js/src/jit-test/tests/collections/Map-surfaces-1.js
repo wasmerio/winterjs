@@ -9,11 +9,15 @@ assertEq(desc.writable, true);
 
 assertEq(typeof Map, 'function');
 assertEq(Object.keys(Map).length, 0);
-assertEq(Map.length, 1);
+assertEq(Map.length, 0);
 assertEq(Map.name, "Map");
 
 assertEq(Object.getPrototypeOf(Map.prototype), Object.prototype);
-assertEq(Object.prototype.toString.call(Map.prototype), "[object Map]");
+assertEq("toStringTag" in Symbol, false,
+         "if this fails, congratulations!  implement " +
+         "Map.prototype[Symbol.toStringTag] = 'Map' in SpiderMonkey and make " +
+         "the next test check for '[object Map]' again");
+assertEq(Object.prototype.toString.call(Map.prototype), "[object Object]");
 assertEq(Object.prototype.toString.call(new Map()), "[object Map]");
 assertEq(Object.keys(Map.prototype).join(), "");
 assertEq(Map.prototype.constructor, Map);

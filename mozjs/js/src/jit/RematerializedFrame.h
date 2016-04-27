@@ -32,43 +32,52 @@ class RematerializedFrame
     // Has a call object been pushed?
     bool hasCallObj_;
 
+    // Is this frame constructing?
+    bool isConstructing_;
+
+    // If true, this frame has been on the stack when
+    // |js::SavedStacks::saveCurrentStack| was called, and so there is a
+    // |js::SavedFrame| object cached for this frame.
+    bool hasCachedSavedFrame_;
+
     // The fp of the top frame associated with this possibly inlined frame.
-    uint8_t *top_;
+    uint8_t* top_;
 
     // The bytecode at the time of rematerialization.
-    jsbytecode *pc_;
+    jsbytecode* pc_;
 
     size_t frameNo_;
     unsigned numActualArgs_;
 
-    JSScript *script_;
-    JSObject *scopeChain_;
-    ArgumentsObject *argsObj_;
+    JSScript* script_;
+    JSObject* scopeChain_;
+    JSFunction* callee_;
+    ArgumentsObject* argsObj_;
 
     Value returnValue_;
-    Value thisValue_;
+    Value thisArgument_;
     Value slots_[1];
 
-    RematerializedFrame(JSContext *cx, uint8_t *top, unsigned numActualArgs,
-                        InlineFrameIterator &iter, MaybeReadFallback &fallback);
+    RematerializedFrame(JSContext* cx, uint8_t* top, unsigned numActualArgs,
+                        InlineFrameIterator& iter, MaybeReadFallback& fallback);
 
   public:
-    static RematerializedFrame *New(JSContext *cx, uint8_t *top, InlineFrameIterator &iter,
-                                    MaybeReadFallback &fallback);
+    static RematerializedFrame* New(JSContext* cx, uint8_t* top, InlineFrameIterator& iter,
+                                    MaybeReadFallback& fallback);
 
     // Rematerialize all remaining frames pointed to by |iter| into |frames|
     // in older-to-younger order, e.g., frames[0] is the oldest frame.
-    static bool RematerializeInlineFrames(JSContext *cx, uint8_t *top,
-                                          InlineFrameIterator &iter,
-                                          MaybeReadFallback &fallback,
-                                          Vector<RematerializedFrame *> &frames);
+    static bool RematerializeInlineFrames(JSContext* cx, uint8_t* top,
+                                          InlineFrameIterator& iter,
+                                          MaybeReadFallback& fallback,
+                                          Vector<RematerializedFrame*>& frames);
 
     // Free a vector of RematerializedFrames; takes care to call the
     // destructor. Also clears the vector.
-    static void FreeInVector(Vector<RematerializedFrame *> &frames);
+    static void FreeInVector(Vector<RematerializedFrame*>& frames);
 
     // Mark a vector of RematerializedFrames.
-    static void MarkInVector(JSTracer *trc, Vector<RematerializedFrame *> &frames);
+    static void MarkInVector(JSTracer* trc, Vector<RematerializedFrame*>& frames);
 
     bool prevUpToDate() const {
         return prevUpToDate_;
@@ -91,14 +100,14 @@ class RematerializedFrame
         isDebuggee_ = false;
     }
 
-    uint8_t *top() const {
+    uint8_t* top() const {
         return top_;
     }
-    JSScript *outerScript() const {
-        JitFrameLayout *jsFrame = (JitFrameLayout *)top_;
+    JSScript* outerScript() const {
+        JitFrameLayout* jsFrame = (JitFrameLayout*)top_;
         return ScriptFromCalleeToken(jsFrame->calleeToken());
     }
-    jsbytecode *pc() const {
+    jsbytecode* pc() const {
         return pc_;
     }
     size_t frameNo() const {
@@ -108,22 +117,22 @@ class RematerializedFrame
         return frameNo_ > 0;
     }
 
-    JSObject *scopeChain() const {
+    JSObject* scopeChain() const {
         return scopeChain_;
     }
-    void pushOnScopeChain(ScopeObject &scope);
-    bool initFunctionScopeObjects(JSContext *cx);
+    void pushOnScopeChain(ScopeObject& scope);
+    bool initFunctionScopeObjects(JSContext* cx);
 
     bool hasCallObj() const {
-        MOZ_ASSERT(fun()->isHeavyweight());
+        MOZ_ASSERT(callee()->needsCallObject());
         return hasCallObj_;
     }
-    CallObject &callObj() const;
+    CallObject& callObj() const;
 
     bool hasArgsObj() const {
         return !!argsObj_;
     }
-    ArgumentsObject &argsObj() const {
+    ArgumentsObject& argsObj() const {
         MOZ_ASSERT(hasArgsObj());
         MOZ_ASSERT(script()->needsArgsObj());
         return *argsObj_;
@@ -133,69 +142,83 @@ class RematerializedFrame
         return !!script_->functionNonDelazifying();
     }
     bool isGlobalFrame() const {
-        return !isFunctionFrame();
+        return script_->isGlobalCode();
     }
-    bool isNonEvalFunctionFrame() const {
-        // Ion doesn't support eval frames.
-        return isFunctionFrame();
+    bool isModuleFrame() const {
+        return script_->module();
     }
 
-    JSScript *script() const {
+    JSScript* script() const {
         return script_;
     }
-    JSFunction *fun() const {
+    JSFunction* callee() const {
         MOZ_ASSERT(isFunctionFrame());
-        return script_->functionNonDelazifying();
-    }
-    JSFunction *maybeFun() const {
-        return isFunctionFrame() ? fun() : nullptr;
-    }
-    JSFunction *callee() const {
-        return fun();
+        return callee_;
     }
     Value calleev() const {
-        return ObjectValue(*fun());
+        return ObjectValue(*callee());
     }
-    Value &thisValue() {
-        return thisValue_;
+    Value& thisArgument() {
+        return thisArgument_;
+    }
+
+    bool isConstructing() const {
+        return isConstructing_;
+    }
+
+    bool hasCachedSavedFrame() const {
+        return hasCachedSavedFrame_;
+    }
+
+    void setHasCachedSavedFrame() {
+        hasCachedSavedFrame_ = true;
     }
 
     unsigned numFormalArgs() const {
-        return maybeFun() ? fun()->nargs() : 0;
+        return isFunctionFrame() ? callee()->nargs() : 0;
     }
     unsigned numActualArgs() const {
         return numActualArgs_;
     }
 
-    Value *argv() {
+    Value* argv() {
         return slots_;
     }
-    Value *locals() {
-        return slots_ + numActualArgs_;
+    Value* locals() {
+        return slots_ + numActualArgs_ + isConstructing_;
     }
 
-    Value &unaliasedLocal(unsigned i) {
+    Value& unaliasedLocal(unsigned i) {
         MOZ_ASSERT(i < script()->nfixed());
         return locals()[i];
     }
-    Value &unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
+    Value& unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
         MOZ_ASSERT(i < numFormalArgs());
         MOZ_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals() &&
                                      !script()->formalIsAliased(i));
         return argv()[i];
     }
-    Value &unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
+    Value& unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) {
         MOZ_ASSERT(i < numActualArgs());
         MOZ_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals());
         MOZ_ASSERT_IF(checkAliasing && i < numFormalArgs(), !script()->formalIsAliased(i));
         return argv()[i];
     }
 
+    Value newTarget() {
+        MOZ_ASSERT(isFunctionFrame());
+        if (callee()->isArrow())
+            return callee()->getExtendedSlot(FunctionExtended::ARROW_NEWTARGET_SLOT);
+        if (isConstructing())
+            return argv()[numActualArgs()];
+        return UndefinedValue();
+    }
+
     Value returnValue() const {
         return returnValue_;
     }
 
-    void mark(JSTracer *trc);
+    void mark(JSTracer* trc);
     void dump();
 };
 

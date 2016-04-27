@@ -82,10 +82,7 @@ def get_binary(path, app_name):
                     break
 
     if not binary:
-        # The expected binary has not been found. Make sure we clean the
-        # install folder to remove any traces
-        mozfile.remove(path)
-
+        # The expected binary has not been found.
         raise InvalidBinary('"%s" does not contain a valid binary.' % path)
 
     return binary
@@ -105,25 +102,41 @@ def install(src, dest):
     if not is_installer(src):
         raise InvalidSource(src + ' is not valid installer file.')
 
+    did_we_create = False
     if not os.path.exists(dest):
+        did_we_create = True
         os.makedirs(dest)
 
     trbk = None
     try:
         install_dir = None
-        if zipfile.is_zipfile(src) or tarfile.is_tarfile(src):
-            install_dir = mozfile.extract(src, dest)[0]
-        elif src.lower().endswith('.dmg'):
+        if src.lower().endswith('.dmg'):
             install_dir = _install_dmg(src, dest)
         elif src.lower().endswith('.exe'):
             install_dir = _install_exe(src, dest)
+        elif zipfile.is_zipfile(src) or tarfile.is_tarfile(src):
+            install_dir = mozfile.extract(src, dest)[0]
 
         return install_dir
 
-    except Exception, ex:
+    except:
         cls, exc, trbk = sys.exc_info()
-        error = InstallError('Failed to install "%s (%s)"' % (src, str(ex)))
-        raise InstallError, error, trbk
+        if did_we_create:
+            try:
+                # try to uninstall this properly
+                uninstall(dest)
+            except:
+                # uninstall may fail, let's just try to clean the folder
+                # in this case
+                try:
+                    mozfile.remove(dest)
+                except:
+                    pass
+        if issubclass(cls, Exception):
+            error = InstallError('Failed to install "%s (%s)"' % (src, str(exc)))
+            raise InstallError, error, trbk
+        # any other kind of exception like KeyboardInterrupt is just re-raised.
+        raise cls, exc, trbk
 
     finally:
         # trbk won't get GC'ed due to circular reference
@@ -233,7 +246,7 @@ def _install_dmg(src, dest):
 
     """
     try:
-        proc = subprocess.Popen('hdiutil attach -nobrowse -noautoopen %s' % src,
+        proc = subprocess.Popen('hdiutil attach -nobrowse -noautoopen "%s"' % src,
                                 shell=True,
                                 stdout=subprocess.PIPE)
 
@@ -280,10 +293,11 @@ def _install_exe(src, dest):
 
     # possibly gets around UAC in vista (still need to run as administrator)
     os.environ['__compat_layer'] = 'RunAsInvoker'
-    cmd = [src, '/S', '/D=%s' % os.path.realpath(dest)]
+    cmd = '"%s" /extractdir=%s' % (src, os.path.realpath(dest))
 
     # As long as we support Python 2.4 check_call will not be available.
     result = subprocess.call(cmd)
+
     if result is not 0:
         raise Exception('Execution of installer failed.')
 

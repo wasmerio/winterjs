@@ -56,9 +56,9 @@ BEGIN_TEST(testSetProperty_NativeGetterStubSetter)
     return true;
 }
 static bool
-NativeGet(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp)
+NativeGet(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp)
 {
-    vp.set(INT_TO_JSVAL(17));
+    vp.setInt32(17);
     return true;
 }
 END_TEST(testSetProperty_NativeGetterStubSetter)

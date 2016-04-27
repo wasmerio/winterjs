@@ -12,7 +12,7 @@
 #include "vm/Stack-inl.h"
 
 /* static */ inline bool
-js::Debugger::onLeaveFrame(JSContext *cx, AbstractFramePtr frame, bool ok)
+js::Debugger::onLeaveFrame(JSContext* cx, AbstractFramePtr frame, jsbytecode* pc, bool ok)
 {
     MOZ_ASSERT_IF(frame.isInterpreterFrame(), frame.asInterpreterFrame() == cx->interpreterFrame());
     MOZ_ASSERT_IF(frame.script()->isDebuggee(), frame.isDebuggee());
@@ -21,20 +21,28 @@ js::Debugger::onLeaveFrame(JSContext *cx, AbstractFramePtr frame, bool ok)
                                          frame.script()->hasAnyBreakpointsOrStepMode();
     MOZ_ASSERT_IF(evalTraps, frame.isDebuggee());
     if (frame.isDebuggee())
-        ok = slowPathOnLeaveFrame(cx, frame, ok);
-    assertNotInFrameMaps(frame);
+        ok = slowPathOnLeaveFrame(cx, frame, pc, ok);
+    MOZ_ASSERT(!inFrameMaps(frame));
     return ok;
 }
 
-/* static */ inline js::Debugger *
-js::Debugger::fromJSObject(JSObject *obj)
+/* static */ inline js::Debugger*
+js::Debugger::fromJSObject(const JSObject* obj)
 {
     MOZ_ASSERT(js::GetObjectClass(obj) == &jsclass);
-    return (Debugger *) obj->as<NativeObject>().getPrivate();
+    return (Debugger*) obj->as<NativeObject>().getPrivate();
+}
+
+/* static */ inline bool
+js::Debugger::checkNoExecute(JSContext* cx, HandleScript script)
+{
+    if (!cx->compartment()->isDebuggee() || !cx->runtime()->noExecuteDebuggerTop)
+        return true;
+    return slowPathCheckNoExecute(cx, script);
 }
 
 /* static */ JSTrapStatus
-js::Debugger::onEnterFrame(JSContext *cx, AbstractFramePtr frame)
+js::Debugger::onEnterFrame(JSContext* cx, AbstractFramePtr frame)
 {
     MOZ_ASSERT_IF(frame.script()->isDebuggee(), frame.isDebuggee());
     if (!frame.isDebuggee())
@@ -43,7 +51,7 @@ js::Debugger::onEnterFrame(JSContext *cx, AbstractFramePtr frame)
 }
 
 /* static */ JSTrapStatus
-js::Debugger::onDebuggerStatement(JSContext *cx, AbstractFramePtr frame)
+js::Debugger::onDebuggerStatement(JSContext* cx, AbstractFramePtr frame)
 {
     if (!cx->compartment()->isDebuggee())
         return JSTRAP_CONTINUE;
@@ -51,11 +59,21 @@ js::Debugger::onDebuggerStatement(JSContext *cx, AbstractFramePtr frame)
 }
 
 /* static */ JSTrapStatus
-js::Debugger::onExceptionUnwind(JSContext *cx, AbstractFramePtr frame)
+js::Debugger::onExceptionUnwind(JSContext* cx, AbstractFramePtr frame)
 {
     if (!cx->compartment()->isDebuggee())
         return JSTRAP_CONTINUE;
     return slowPathOnExceptionUnwind(cx, frame);
+}
+
+/* static */ void
+js::Debugger::onNewWasmModule(JSContext* cx, Handle<WasmModuleObject*> wasmModule)
+{
+    // Insert the wasm::Module into a compartment-wide list for discovery
+    // later without a heap walk.
+    cx->compartment()->wasmModuleWeakList.insertBack(&wasmModule->module());
+    if (cx->compartment()->isDebuggee())
+        slowPathOnNewWasmModule(cx, wasmModule);
 }
 
 #endif /* vm_Debugger_inl_h */

@@ -7,7 +7,7 @@
 with Files('**'):
     BUG_COMPONENT = ('Core', 'Build Config')
 
-NO_DIST_INSTALL = True
+DIST_INSTALL = False
 # For sanity's sake, we compile nsinstall without the wrapped system
 # headers, so that we can use it to set up the wrapped system headers.
 NO_VISIBILITY_FLAGS = True
@@ -24,10 +24,10 @@ if CONFIG['HOST_OS_ARCH'] != 'WINNT':
         'nsinstall.c',
         'pathsub.c',
     ]
-    HostProgram('nsinstall_real')
-
-if CONFIG['GKMEDIAS_SHARED_LIBRARY']:
-    DEFINES['GKMEDIAS_SHARED_LIBRARY'] = True
+    # stdc++compat depends on config/export, so avoid a circular
+    # dependency added by HostProgram depending on stdc++compat,
+    # while the program here is in C.
+    HostProgram('nsinstall_real', c_only=True)
 
 if CONFIG['MOZ_SHARED_ICU']:
     DEFINES['MOZ_SHARED_ICU'] = True
@@ -39,3 +39,11 @@ PYTHON_UNIT_TESTS += [
     'tests/unit-nsinstall.py',
     'tests/unit-printprereleasesuffix.py',
 ]
+
+if CONFIG['GNU_CC'] and CONFIG['MOZ_OPTIMIZE']:
+    CFLAGS += ['-O3']
+
+HOST_DEFINES = {
+    'UNICODE': True,
+    '_UNICODE': True,
+}

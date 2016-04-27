@@ -7,17 +7,8 @@
 
 #include "jsapi-tests/tests.h"
 
-static const unsigned IgnoreWithValue = JSPROP_IGNORE_ENUMERATE | JSPROP_IGNORE_READONLY |
-                               JSPROP_IGNORE_PERMANENT;
-static const unsigned IgnoreAll = IgnoreWithValue | JSPROP_IGNORE_VALUE;
-
-static const unsigned AllowConfigure = IgnoreAll & ~JSPROP_IGNORE_PERMANENT;
-static const unsigned AllowEnumerate = IgnoreAll & ~JSPROP_IGNORE_ENUMERATE;
-static const unsigned AllowWritable  = IgnoreAll & ~JSPROP_IGNORE_READONLY;
-static const unsigned ValueWithConfigurable = IgnoreWithValue & ~JSPROP_IGNORE_PERMANENT;
-
 static bool
-Getter(JSContext *cx, unsigned argc, JS::Value *vp)
+Getter(JSContext* cx, unsigned argc, JS::Value* vp)
 {
     JS::CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(true);
@@ -29,7 +20,7 @@ enum PropertyDescriptorKind {
 };
 
 static bool
-CheckDescriptor(JS::Handle<JSPropertyDescriptor> desc, PropertyDescriptorKind kind,
+CheckDescriptor(JS::Handle<JS::PropertyDescriptor> desc, PropertyDescriptorKind kind,
                 bool enumerable, bool writable, bool configurable)
 {
     if (!desc.object())
@@ -48,51 +39,59 @@ CheckDescriptor(JS::Handle<JSPropertyDescriptor> desc, PropertyDescriptorKind ki
 BEGIN_TEST(testDefinePropertyIgnoredAttributes)
 {
     JS::RootedObject obj(cx, JS_NewPlainObject(cx));
-    JS::Rooted<JSPropertyDescriptor> desc(cx);
+    JS::Rooted<JS::PropertyDescriptor> desc(cx);
     JS::RootedValue defineValue(cx);
 
-    // Try a getter. Allow it to fill in the defaults.
+    // Try a getter. Allow it to fill in the defaults. Because we're passing a
+    // JSNative, JS_DefineProperty will infer JSPROP_GETTER even though we
+    // aren't passing it.
     CHECK(JS_DefineProperty(cx, obj, "foo", defineValue,
-                            IgnoreAll | JSPROP_SHARED,
+                            JSPROP_IGNORE_ENUMERATE | JSPROP_IGNORE_PERMANENT | JSPROP_SHARED,
                             Getter));
 
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "foo", &desc));
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "foo", &desc));
 
     // Note that JSPROP_READONLY is meaningless for accessor properties.
     CHECK(CheckDescriptor(desc, AccessorDescriptor, false, true, false));
 
     // Install another configurable property, so we can futz with it.
     CHECK(JS_DefineProperty(cx, obj, "bar", defineValue,
-                            AllowConfigure | JSPROP_SHARED,
+                            JSPROP_IGNORE_ENUMERATE | JSPROP_SHARED,
                             Getter));
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "bar", &desc));
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "bar", &desc));
     CHECK(CheckDescriptor(desc, AccessorDescriptor, false, true, true));
 
-    // Rewrite the descriptor to now be enumerable, ensuring that the lack of
-    // configurablity stayed.
+    // Rewrite the descriptor to now be enumerable, leaving the configurability
+    // unchanged.
     CHECK(JS_DefineProperty(cx, obj, "bar", defineValue,
-                            AllowEnumerate |
-                            JSPROP_ENUMERATE |
-                            JSPROP_SHARED,
+                            JSPROP_IGNORE_PERMANENT | JSPROP_ENUMERATE | JSPROP_SHARED,
                             Getter));
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "bar", &desc));
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "bar", &desc));
     CHECK(CheckDescriptor(desc, AccessorDescriptor, true, true, true));
 
     // Now try the same game with a value property
     defineValue.setObject(*obj);
-    CHECK(JS_DefineProperty(cx, obj, "baz", defineValue, IgnoreWithValue));
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "baz", &desc));
+    CHECK(JS_DefineProperty(cx, obj, "baz", defineValue,
+                            JSPROP_IGNORE_ENUMERATE |
+                            JSPROP_IGNORE_READONLY |
+                            JSPROP_IGNORE_PERMANENT));
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "baz", &desc));
     CHECK(CheckDescriptor(desc, DataDescriptor, false, false, false));
 
     // Now again with a configurable property
-    CHECK(JS_DefineProperty(cx, obj, "quox", defineValue, ValueWithConfigurable));
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "quox", &desc));
+    CHECK(JS_DefineProperty(cx, obj, "quux", defineValue,
+                            JSPROP_IGNORE_ENUMERATE | JSPROP_IGNORE_READONLY));
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "quux", &desc));
     CHECK(CheckDescriptor(desc, DataDescriptor, false, false, true));
 
-    // Just make it writable. Leave the old value and everythign else alone.
+    // Just make it writable. Leave the old value and everything else alone.
     defineValue.setUndefined();
-    CHECK(JS_DefineProperty(cx, obj, "quox", defineValue, AllowWritable));
-    CHECK(JS_GetPropertyDescriptor(cx, obj, "quox", &desc));
+    CHECK(JS_DefineProperty(cx, obj, "quux", defineValue,
+                            JSPROP_IGNORE_ENUMERATE |
+                            JSPROP_IGNORE_PERMANENT |
+                            JSPROP_IGNORE_VALUE));
+
+    CHECK(JS_GetOwnPropertyDescriptor(cx, obj, "quux", &desc));
     CHECK(CheckDescriptor(desc, DataDescriptor, false, true, true));
     CHECK_SAME(JS::ObjectValue(*obj), desc.value());
 

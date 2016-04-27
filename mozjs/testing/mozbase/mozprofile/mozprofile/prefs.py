@@ -96,16 +96,16 @@ class Preferences(object):
                 return cls.read_ini(path, section)
             except PreferencesReadError:
                 raise
-            except Exception, e:
+            except Exception as e:
                 raise PreferencesReadError(str(e))
 
         # try both JSON and .ini format
         try:
             return cls.read_json(path)
-        except Exception, e:
+        except Exception as e:
             try:
                 return cls.read_ini(path)
-            except Exception, f:
+            except Exception as f:
                 for exception in e, f:
                     if isinstance(exception, PreferencesReadError):
                         raise exception
@@ -164,19 +164,16 @@ class Preferences(object):
                               to str.format to interpolate preference values.
         """
 
-        comment = re.compile('/\*([^*]|[\r\n]|(\*+([^*/]|[\r\n])))*\*+/', re.MULTILINE)
-
         marker = '##//' # magical marker
-        lines = [i.strip() for i in mozfile.load(path).readlines() if i.strip()]
+        lines = [i.strip() for i in mozfile.load(path).readlines()]
         _lines = []
         for line in lines:
-            if line.startswith(('#', '//')):
+            if not line.startswith(pref_setter):
                 continue
             if '//' in line:
                 line = line.replace('//', marker)
             _lines.append(line)
         string = '\n'.join(_lines)
-        string = re.sub(comment, '', string)
 
         # skip trailing comments
         processed_tokens = []

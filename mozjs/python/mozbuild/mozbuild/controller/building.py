@@ -2,12 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import getpass
 import json
 import logging
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -67,7 +68,7 @@ class TierStatus(object):
     def __init__(self, resources):
         """Accepts a SystemResourceMonitor to record results against."""
         self.tiers = OrderedDict()
-        self.active_tiers = set()
+        self.tier_status = OrderedDict()
         self.resources = resources
 
     def set_tiers(self, tiers):
@@ -78,29 +79,23 @@ class TierStatus(object):
                 finish_time=None,
                 duration=None,
             )
+            self.tier_status[tier] = None
 
     def begin_tier(self, tier):
         """Record that execution of a tier has begun."""
+        self.tier_status[tier] = 'active'
         t = self.tiers[tier]
         # We should ideally use a monotonic clock here. Unfortunately, we won't
         # have one until Python 3.
         t['begin_time'] = time.time()
         self.resources.begin_phase(tier)
-        self.active_tiers.add(tier)
 
     def finish_tier(self, tier):
         """Record that execution of a tier has finished."""
+        self.tier_status[tier] = 'finished'
         t = self.tiers[tier]
         t['finish_time'] = time.time()
         t['duration'] = self.resources.finish_phase(tier)
-        self.active_tiers.remove(tier)
-
-    def tier_status(self):
-        for tier, state in self.tiers.items():
-            active = tier in self.active_tiers
-            finished = state['finish_time'] is not None
-
-            yield tier, active, finished
 
     def tiered_resource_usage(self):
         """Obtains an object containing resource usage for tiers.
@@ -176,6 +171,8 @@ class BuildMonitor(MozbuildObject):
         self._warnings_collector = WarningsCollector(
             database=self.warnings_database, objdir=self.topobjdir)
 
+        self.build_objects = []
+
     def start(self):
         """Record the start of the build."""
         self.start_time = time.time()
@@ -220,6 +217,9 @@ class BuildMonitor(MozbuildObject):
             elif action == 'TIER_FINISH':
                 tier, = args
                 self.tiers.finish_tier(tier)
+            elif action == 'OBJECT_FILE':
+                self.build_objects.append(args[0])
+                update_needed = False
             else:
                 raise Exception('Unknown build status: %s' % action)
 
@@ -251,10 +251,11 @@ class BuildMonitor(MozbuildObject):
             return
 
         try:
-            usage = self.record_resource_usage()
+            usage = self.get_resource_usage()
             if not usage:
                 return
 
+            self.log_resource_usage(usage)
             with open(self._get_state_filename('build_resources.json'), 'w') as fh:
                 json.dump(usage, fh, indent=2)
         except Exception as e:
@@ -346,11 +347,9 @@ class BuildMonitor(MozbuildObject):
         """Whether resource usage is available."""
         return self.resources.start_time is not None
 
-    def record_resource_usage(self):
-        """Record the resource usage of this build.
+    def get_resource_usage(self):
+        """ Produce a data structure containing the low-level resource usage information.
 
-        We write a log message containing a high-level summary. We also produce
-        a data structure containing the low-level resource usage information.
         This data structure can e.g. be serialized into JSON and saved for
         subsequent analysis.
 
@@ -365,19 +364,9 @@ class BuildMonitor(MozbuildObject):
             per_cpu=False)
         io = self.resources.aggregate_io(phase=None)
 
-        self._log_resource_usage('Overall system resources', 'resource_usage',
-            self.end_time - self.start_time, cpu_percent, cpu_times, io)
-
-        excessive, sin, sout = self.have_excessive_swapping()
-        if excessive is not None and (sin or sout):
-            sin /= 1048576
-            sout /= 1048576
-            self.log(logging.WARNING, 'swap_activity',
-                {'sin': sin, 'sout': sout},
-                'Swap in/out (MB): {sin}/{sout}')
-
         o = dict(
-            version=1,
+            version=3,
+            argv=sys.argv,
             start=self.start_time,
             end=self.end_time,
             duration=self.end_time - self.start_time,
@@ -385,6 +374,7 @@ class BuildMonitor(MozbuildObject):
             cpu_percent=cpu_percent,
             cpu_times=cpu_times,
             io=io,
+            objects=self.build_objects
         )
 
         o['tiers'] = self.tiers.tiered_resource_usage()
@@ -409,30 +399,54 @@ class BuildMonitor(MozbuildObject):
 
             o['resources'].append(entry)
 
+
+        # If the imports for this file ran before the in-tree virtualenv
+        # was bootstrapped (for instance, for a clobber build in automation),
+        # psutil might not be available.
+        #
+        # Treat psutil as optional to avoid an outright failure to log resources
+        # TODO: it would be nice to collect data on the storage device as well
+        # in this case.
+        o['system'] = {}
+        if psutil:
+            o['system'].update(dict(
+                logical_cpu_count=psutil.cpu_count(),
+                physical_cpu_count=psutil.cpu_count(logical=False),
+                swap_total=psutil.swap_memory()[0],
+                vmem_total=psutil.virtual_memory()[0],
+            ))
+
         return o
 
-    def _log_resource_usage(self, prefix, m_type, duration, cpu_percent,
-        cpu_times, io, extra_params={}):
+    def log_resource_usage(self, usage):
+        """Summarize the resource usage of this build in a log message."""
+
+        if not usage:
+            return
 
         params = dict(
-            duration=duration,
-            cpu_percent=cpu_percent,
-            io_reads=io.read_count,
-            io_writes=io.write_count,
-            io_read_bytes=io.read_bytes,
-            io_write_bytes=io.write_bytes,
-            io_read_time=io.read_time,
-            io_write_time=io.write_time,
+            duration=self.end_time - self.start_time,
+            cpu_percent=usage['cpu_percent'],
+            io_read_bytes=usage['io'].read_bytes,
+            io_write_bytes=usage['io'].write_bytes,
+            io_read_time=usage['io'].read_time,
+            io_write_time=usage['io'].write_time,
         )
 
-        params.update(extra_params)
-
-        message = prefix + ' - Wall time: {duration:.0f}s; ' \
+        message = 'Overall system resources - Wall time: {duration:.0f}s; ' \
             'CPU: {cpu_percent:.0f}%; ' \
             'Read bytes: {io_read_bytes}; Write bytes: {io_write_bytes}; ' \
             'Read time: {io_read_time}; Write time: {io_write_time}'
 
-        self.log(logging.WARNING, m_type, params, message)
+        self.log(logging.WARNING, 'resource_usage', params, message)
+
+        excessive, sin, sout = self.have_excessive_swapping()
+        if excessive is not None and (sin or sout):
+            sin /= 1048576
+            sout /= 1048576
+            self.log(logging.WARNING, 'swap_activity',
+                {'sin': sin, 'sout': sout},
+                'Swap in/out (MB): {sin}/{sout}')
 
     def ccache_stats(self):
         ccache_stats = None

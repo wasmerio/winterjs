@@ -17,41 +17,44 @@ namespace {
 
 struct LoopUnroller
 {
-    typedef HashMap<MDefinition *, MDefinition *,
-                    PointerHasher<MDefinition *, 2>, SystemAllocPolicy> DefinitionMap;
+    typedef HashMap<MDefinition*, MDefinition*,
+                    PointerHasher<MDefinition*, 2>, SystemAllocPolicy> DefinitionMap;
 
-    explicit LoopUnroller(MIRGraph &graph)
+    explicit LoopUnroller(MIRGraph& graph)
       : graph(graph), alloc(graph.alloc())
     {}
 
-    MIRGraph &graph;
-    TempAllocator &alloc;
+    MIRGraph& graph;
+    TempAllocator& alloc;
 
     // Header and body of the original loop.
-    MBasicBlock *header, *backedge;
+    MBasicBlock* header;
+    MBasicBlock* backedge;
 
     // Header and body of the unrolled loop.
-    MBasicBlock *unrolledHeader, *unrolledBackedge;
+    MBasicBlock* unrolledHeader;
+    MBasicBlock* unrolledBackedge;
 
     // Old and new preheaders. The old preheader starts out associated with the
     // original loop, but becomes the preheader of the new loop. The new
     // preheader will be given to the original loop.
-    MBasicBlock *oldPreheader, *newPreheader;
+    MBasicBlock* oldPreheader;
+    MBasicBlock* newPreheader;
 
     // Map terms in the original loop to terms in the current unrolled iteration.
     DefinitionMap unrolledDefinitions;
 
-    MDefinition *getReplacementDefinition(MDefinition *def);
-    MResumePoint *makeReplacementResumePoint(MBasicBlock *block, MResumePoint *rp);
-    void makeReplacementInstruction(MInstruction *ins);
+    MDefinition* getReplacementDefinition(MDefinition* def);
+    MResumePoint* makeReplacementResumePoint(MBasicBlock* block, MResumePoint* rp);
+    bool makeReplacementInstruction(MInstruction* ins);
 
-    void go(LoopIterationBound *bound);
+    void go(LoopIterationBound* bound);
 };
 
-} // anonymous namespace
+} // namespace
 
-MDefinition *
-LoopUnroller::getReplacementDefinition(MDefinition *def)
+MDefinition*
+LoopUnroller::getReplacementDefinition(MDefinition* def)
 {
     if (def->block()->id() < header->id()) {
         // The definition is loop invariant.
@@ -65,7 +68,7 @@ LoopUnroller::getReplacementDefinition(MDefinition *def)
         // the block itself.
         MOZ_ASSERT(def->isConstant());
 
-        MConstant *constant = MConstant::New(alloc, def->toConstant()->value());
+        MConstant* constant = new(alloc) MConstant(*def->toConstant());
         oldPreheader->insertBefore(*oldPreheader->begin(), constant);
         return constant;
     }
@@ -73,50 +76,52 @@ LoopUnroller::getReplacementDefinition(MDefinition *def)
     return p->value();
 }
 
-void
-LoopUnroller::makeReplacementInstruction(MInstruction *ins)
+bool
+LoopUnroller::makeReplacementInstruction(MInstruction* ins)
 {
     MDefinitionVector inputs(alloc);
     for (size_t i = 0; i < ins->numOperands(); i++) {
-        MDefinition *old = ins->getOperand(i);
-        MDefinition *replacement = getReplacementDefinition(old);
+        MDefinition* old = ins->getOperand(i);
+        MDefinition* replacement = getReplacementDefinition(old);
         if (!inputs.append(replacement))
-            CrashAtUnhandlableOOM("LoopUnroller::makeReplacementDefinition");
+            return false;
     }
 
-    MInstruction *clone = ins->clone(alloc, inputs);
+    MInstruction* clone = ins->clone(alloc, inputs);
 
     unrolledBackedge->add(clone);
 
     if (!unrolledDefinitions.putNew(ins, clone))
-        CrashAtUnhandlableOOM("LoopUnroller::makeReplacementDefinition");
+        return false;
 
-    if (MResumePoint *old = ins->resumePoint()) {
-        MResumePoint *rp = makeReplacementResumePoint(unrolledBackedge, old);
+    if (MResumePoint* old = ins->resumePoint()) {
+        MResumePoint* rp = makeReplacementResumePoint(unrolledBackedge, old);
         clone->setResumePoint(rp);
     }
+
+    return true;
 }
 
-MResumePoint *
-LoopUnroller::makeReplacementResumePoint(MBasicBlock *block, MResumePoint *rp)
+MResumePoint*
+LoopUnroller::makeReplacementResumePoint(MBasicBlock* block, MResumePoint* rp)
 {
     MDefinitionVector inputs(alloc);
     for (size_t i = 0; i < rp->numOperands(); i++) {
-        MDefinition *old = rp->getOperand(i);
-        MDefinition *replacement = old->isUnused() ? old : getReplacementDefinition(old);
+        MDefinition* old = rp->getOperand(i);
+        MDefinition* replacement = old->isUnused() ? old : getReplacementDefinition(old);
         if (!inputs.append(replacement))
-            CrashAtUnhandlableOOM("LoopUnroller::makeReplacementResumePoint");
+            return nullptr;
     }
 
-    MResumePoint *clone = MResumePoint::New(alloc, block, rp, inputs);
+    MResumePoint* clone = MResumePoint::New(alloc, block, rp, inputs);
     if (!clone)
-        CrashAtUnhandlableOOM("LoopUnroller::makeReplacementResumePoint");
+        return nullptr;
 
     return clone;
 }
 
 void
-LoopUnroller::go(LoopIterationBound *bound)
+LoopUnroller::go(LoopIterationBound* bound)
 {
     // For now we always unroll loops the same number of times.
     static const size_t UnrollCount = 10;
@@ -136,7 +141,7 @@ LoopUnroller::go(LoopIterationBound *bound)
 
     // Only unroll loops with two blocks: an initial one ending with the
     // bound's test, and the body ending with the backedge.
-    MTest *test = bound->test;
+    MTest* test = bound->test;
     if (header->lastIns() != test)
         return;
     if (test->ifTrue() == backedge) {
@@ -152,18 +157,18 @@ LoopUnroller::go(LoopIterationBound *bound)
         return;
     MOZ_ASSERT(backedge->phisEmpty());
 
-    MBasicBlock *bodyBlocks[] = { header, backedge };
+    MBasicBlock* bodyBlocks[] = { header, backedge };
 
     // All instructions in the header and body must be clonable.
     for (size_t i = 0; i < ArrayLength(bodyBlocks); i++) {
-        MBasicBlock *block = bodyBlocks[i];
+        MBasicBlock* block = bodyBlocks[i];
         for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
-            MInstruction *ins = *iter;
+            MInstruction* ins = *iter;
             if (ins->canClone())
                 continue;
             if (ins->isTest() || ins->isGoto() || ins->isInterruptCheck())
                 continue;
-#ifdef DEBUG
+#ifdef JS_JITSPEW
             JitSpew(JitSpew_Unrolling, "Aborting: can't clone instruction %s", ins->opName());
 #endif
             return;
@@ -183,7 +188,7 @@ LoopUnroller::go(LoopIterationBound *bound)
     // Terms in the inequality need to be either loop invariant or phis from
     // the original header.
     for (size_t i = 0; i < remainingIterationsInequality.numTerms(); i++) {
-        MDefinition *def = remainingIterationsInequality.term(i).term;
+        MDefinition* def = remainingIterationsInequality.term(i).term;
         if (def->isDiscarded())
             return;
         if (def->block()->id() < header->id())
@@ -199,7 +204,7 @@ LoopUnroller::go(LoopIterationBound *bound)
 
     // The old preheader will go before the unrolled loop, and the old loop
     // will need a new empty preheader.
-    CompileInfo &info = oldPreheader->info();
+    const CompileInfo& info = oldPreheader->info();
     if (header->trackedPc()) {
         unrolledHeader =
             MBasicBlock::New(graph, nullptr, info,
@@ -226,16 +231,20 @@ LoopUnroller::go(LoopIterationBound *bound)
     graph.insertBlockAfter(unrolledBackedge, newPreheader);
     graph.renumberBlocksAfter(oldPreheader);
 
+    // We don't tolerate allocation failure after this point.
+    // TODO: This is a bit drastic, is it possible to improve this?
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+
     if (!unrolledDefinitions.init())
-        CrashAtUnhandlableOOM("LoopUnroller::go");
+        oomUnsafe.crash("LoopUnroller::go");
 
     // Add phis to the unrolled loop header which correspond to the phis in the
     // original loop header.
     MOZ_ASSERT(header->getPredecessor(0) == oldPreheader);
     for (MPhiIterator iter(header->phisBegin()); iter != header->phisEnd(); iter++) {
-        MPhi *old = *iter;
+        MPhi* old = *iter;
         MOZ_ASSERT(old->numOperands() == 2);
-        MPhi *phi = MPhi::New(alloc);
+        MPhi* phi = MPhi::New(alloc);
         phi->setResultType(old->type());
         phi->setResultTypeSet(old->resultTypeSet());
         phi->setRange(old->range());
@@ -243,7 +252,7 @@ LoopUnroller::go(LoopIterationBound *bound)
         unrolledHeader->addPhi(phi);
 
         if (!phi->reserveLength(2))
-            CrashAtUnhandlableOOM("LoopUnroller::go");
+            oomUnsafe.crash("LoopUnroller::go");
 
         // Set the first input for the phi for now. We'll set the second after
         // finishing the unroll.
@@ -253,14 +262,16 @@ LoopUnroller::go(LoopIterationBound *bound)
         old->replaceOperand(0, phi);
 
         if (!unrolledDefinitions.putNew(old, phi))
-            CrashAtUnhandlableOOM("LoopUnroller::go");
+            oomUnsafe.crash("LoopUnroller::go");
     }
 
     // The loop condition can bail out on e.g. integer overflow, so make a
     // resume point based on the initial resume point of the original header.
-    MResumePoint *headerResumePoint = header->entryResumePoint();
+    MResumePoint* headerResumePoint = header->entryResumePoint();
     if (headerResumePoint) {
-        MResumePoint *rp = makeReplacementResumePoint(unrolledHeader, headerResumePoint);
+        MResumePoint* rp = makeReplacementResumePoint(unrolledHeader, headerResumePoint);
+        if (!rp)
+            oomUnsafe.crash("LoopUnroller::makeReplacementResumePoint");
         unrolledHeader->setEntryResumePoint(rp);
 
         // Perform an interrupt check at the start of the unrolled loop.
@@ -269,26 +280,30 @@ LoopUnroller::go(LoopIterationBound *bound)
 
     // Generate code for the test in the unrolled loop.
     for (size_t i = 0; i < remainingIterationsInequality.numTerms(); i++) {
-        MDefinition *def = remainingIterationsInequality.term(i).term;
-        MDefinition *replacement = getReplacementDefinition(def);
+        MDefinition* def = remainingIterationsInequality.term(i).term;
+        MDefinition* replacement = getReplacementDefinition(def);
         remainingIterationsInequality.replaceTerm(i, replacement);
     }
-    MCompare *compare = ConvertLinearInequality(alloc, unrolledHeader, remainingIterationsInequality);
-    MTest *unrolledTest = MTest::New(alloc, compare, unrolledBackedge, newPreheader);
+    MCompare* compare = ConvertLinearInequality(alloc, unrolledHeader, remainingIterationsInequality);
+    MTest* unrolledTest = MTest::New(alloc, compare, unrolledBackedge, newPreheader);
     unrolledHeader->end(unrolledTest);
 
     // Make an entry resume point for the unrolled body. The unrolled header
     // does not have side effects on stack values, even if the original loop
     // header does, so use the same resume point as for the unrolled header.
     if (headerResumePoint) {
-        MResumePoint *rp = makeReplacementResumePoint(unrolledBackedge, headerResumePoint);
+        MResumePoint* rp = makeReplacementResumePoint(unrolledBackedge, headerResumePoint);
+        if (!rp)
+            oomUnsafe.crash("LoopUnroller::makeReplacementResumePoint");
         unrolledBackedge->setEntryResumePoint(rp);
     }
 
     // Make an entry resume point for the new preheader. There are no
     // instructions which use this but some other stuff wants one to be here.
     if (headerResumePoint) {
-        MResumePoint *rp = makeReplacementResumePoint(newPreheader, headerResumePoint);
+        MResumePoint* rp = makeReplacementResumePoint(newPreheader, headerResumePoint);
+        if (!rp)
+            oomUnsafe.crash("LoopUnroller::makeReplacementResumePoint");
         newPreheader->setEntryResumePoint(rp);
     }
 
@@ -298,11 +313,12 @@ LoopUnroller::go(LoopIterationBound *bound)
     while (true) {
         // Clone the contents of the original loop into the unrolled loop body.
         for (size_t i = 0; i < ArrayLength(bodyBlocks); i++) {
-            MBasicBlock *block = bodyBlocks[i];
+            MBasicBlock* block = bodyBlocks[i];
             for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
-                MInstruction *ins = *iter;
+                MInstruction* ins = *iter;
                 if (ins->canClone()) {
-                    makeReplacementInstruction(*iter);
+                    if (!makeReplacementInstruction(*iter))
+                        oomUnsafe.crash("LoopUnroller::makeReplacementDefinition");
                 } else {
                     // Control instructions are handled separately.
                     MOZ_ASSERT(ins->isTest() || ins->isGoto() || ins->isInterruptCheck());
@@ -315,10 +331,10 @@ LoopUnroller::go(LoopIterationBound *bound)
         MDefinitionVector phiValues(alloc);
         MOZ_ASSERT(header->getPredecessor(1) == backedge);
         for (MPhiIterator iter(header->phisBegin()); iter != header->phisEnd(); iter++) {
-            MPhi *old = *iter;
-            MDefinition *oldInput = old->getOperand(1);
+            MPhi* old = *iter;
+            MDefinition* oldInput = old->getOperand(1);
             if (!phiValues.append(getReplacementDefinition(oldInput)))
-                CrashAtUnhandlableOOM("LoopUnroller::go");
+                oomUnsafe.crash("LoopUnroller::go");
         }
 
         unrolledDefinitions.clear();
@@ -328,7 +344,7 @@ LoopUnroller::go(LoopIterationBound *bound)
             // backedge input for the unrolled loop phis.
             size_t phiIndex = 0;
             for (MPhiIterator iter(unrolledHeader->phisBegin()); iter != unrolledHeader->phisEnd(); iter++) {
-                MPhi *phi = *iter;
+                MPhi* phi = *iter;
                 phi->addInput(phiValues[phiIndex++]);
             }
             MOZ_ASSERT(phiIndex == phiValues.length());
@@ -338,16 +354,16 @@ LoopUnroller::go(LoopIterationBound *bound)
         // Update the map for the phis in the next iteration.
         size_t phiIndex = 0;
         for (MPhiIterator iter(header->phisBegin()); iter != header->phisEnd(); iter++) {
-            MPhi *old = *iter;
+            MPhi* old = *iter;
             if (!unrolledDefinitions.putNew(old, phiValues[phiIndex++]))
-                CrashAtUnhandlableOOM("LoopUnroller::go");
+                oomUnsafe.crash("LoopUnroller::go");
         }
         MOZ_ASSERT(phiIndex == phiValues.length());
 
         unrollIndex++;
     }
 
-    MGoto *backedgeJump = MGoto::New(alloc, unrolledHeader);
+    MGoto* backedgeJump = MGoto::New(alloc, unrolledHeader);
     unrolledBackedge->end(backedgeJump);
 
     // Place the old preheader before the unrolled loop.
@@ -360,7 +376,7 @@ LoopUnroller::go(LoopIterationBound *bound)
 
     // Cleanup the MIR graph.
     if (!unrolledHeader->addPredecessorWithoutPhis(unrolledBackedge))
-        CrashAtUnhandlableOOM("LoopUnroller::go");
+        oomUnsafe.crash("LoopUnroller::go");
     header->replacePredecessor(oldPreheader, newPreheader);
     oldPreheader->setSuccessorWithPhis(unrolledHeader, 0);
     newPreheader->setSuccessorWithPhis(header, 0);
@@ -368,7 +384,7 @@ LoopUnroller::go(LoopIterationBound *bound)
 }
 
 bool
-jit::UnrollLoops(MIRGraph &graph, const LoopIterationBoundVector &bounds)
+jit::UnrollLoops(MIRGraph& graph, const LoopIterationBoundVector& bounds)
 {
     if (bounds.empty())
         return true;

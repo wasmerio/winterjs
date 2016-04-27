@@ -30,22 +30,6 @@ endif
 -include $(DEPTH)/.mozconfig.mk
 
 ifndef EXTERNALLY_MANAGED_MAKE_FILE
-# Using $(firstword) may not be perfect. But it should be good enough for most
-# scenarios.
-_current_makefile = $(CURDIR)/$(firstword $(MAKEFILE_LIST))
-
-CHECK_MOZBUILD_VARIABLES = $(foreach var,$(_MOZBUILD_EXTERNAL_VARIABLES), \
-  $(if $(subst $($(var)_FROZEN),,'$($(var))'), \
-	  $(error Variable $(var) is defined in $(_current_makefile). It should only be defined in moz.build files),\
-  )) $(foreach var,$(_DEPRECATED_VARIABLES), \
-	$(if $(subst $($(var)_FROZEN),,'$($(var))'), \
-    $(error Variable $(var) is defined in $(_current_makefile). This variable has been deprecated. It does nothing. It must be removed in order to build),\
-    ))
-
-# Check variables set after autoconf.mk (included at the top of Makefiles) is
-# included and before config.mk is included.
-_eval_for_side_effects := $(CHECK_MOZBUILD_VARIABLES)
-
 # Import the automatically generated backend file. If this file doesn't exist,
 # the backend hasn't been properly configured. We want this to be a fatal
 # error, hence not using "-include".
@@ -54,8 +38,6 @@ GLOBAL_DEPS += backend.mk
 include backend.mk
 endif
 
-# Freeze the values specified by moz.build to catch them if they fail.
-$(foreach var,$(_MOZBUILD_EXTERNAL_VARIABLES) $(_DEPRECATED_VARIABLES),$(eval $(var)_FROZEN := '$($(var))'))
 endif
 
 space = $(NULL) $(NULL)
@@ -99,9 +81,6 @@ endif
 
 RM = rm -f
 
-# LIBXUL_DIST is not defined under js/src, thus we make it mean DIST there.
-LIBXUL_DIST ?= $(DIST)
-
 # FINAL_TARGET specifies the location into which we copy end-user-shipped
 # build products (typelibs, components, chrome). It may already be specified by
 # a moz.build file.
@@ -115,7 +94,7 @@ FINAL_TARGET ?= $(if $(XPI_NAME),$(DIST)/xpi-stage/$(XPI_NAME),$(DIST)/bin)$(DIS
 FINAL_TARGET_FROZEN := '$(FINAL_TARGET)'
 
 ifdef XPI_NAME
-DEFINES += -DXPI_NAME=$(XPI_NAME)
+ACDEFINES += -DXPI_NAME=$(XPI_NAME)
 endif
 
 # The VERSION_NUMBER is suffixed onto the end of the DLLs we ship.
@@ -140,24 +119,6 @@ endif
 CONFIG_TOOLS	= $(MOZ_BUILD_ROOT)/config
 AUTOCONF_TOOLS	= $(MOZILLA_DIR)/build/autoconf
 
-#
-# Strip off the excessively long version numbers on these platforms,
-# but save the version to allow multiple versions of the same base
-# platform to be built in the same tree.
-#
-ifneq (,$(filter FreeBSD HP-UX Linux NetBSD OpenBSD SunOS,$(OS_ARCH)))
-OS_RELEASE	:= $(basename $(OS_RELEASE))
-
-# Allow the user to ignore the OS_VERSION, which is usually irrelevant.
-ifdef WANT_MOZILLA_CONFIG_OS_VERSION
-OS_VERS		:= $(suffix $(OS_RELEASE))
-OS_VERSION	:= $(shell echo $(OS_VERS) | sed 's/-.*//')
-endif
-
-endif
-
-OS_CONFIG	:= $(OS_ARCH)$(OS_RELEASE)
-
 ifdef _MSC_VER
 CC_WRAPPER ?= $(call py_action,cl)
 CXX_WRAPPER ?= $(call py_action,cl)
@@ -176,16 +137,8 @@ _DEBUG_ASFLAGS :=
 _DEBUG_CFLAGS :=
 _DEBUG_LDFLAGS :=
 
-ifdef MOZ_DEBUG
-  _DEBUG_CFLAGS += $(MOZ_DEBUG_ENABLE_DEFS)
-  XULPPFLAGS += $(MOZ_DEBUG_ENABLE_DEFS)
-else
-  _DEBUG_CFLAGS += $(MOZ_DEBUG_DISABLE_DEFS)
-  XULPPFLAGS += $(MOZ_DEBUG_DISABLE_DEFS)
-endif
-
 ifneq (,$(MOZ_DEBUG)$(MOZ_DEBUG_SYMBOLS))
-  ifeq ($(AS),yasm)
+  ifeq ($(AS),$(YASM))
     ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
       _DEBUG_ASFLAGS += -g cv8
     else
@@ -207,19 +160,12 @@ OS_LDFLAGS += $(_DEBUG_LDFLAGS)
 
 # XXX: What does this? Bug 482434 filed for better explanation.
 ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
-ifdef MOZ_DEBUG
-ifneq (,$(MOZ_BROWSE_INFO)$(MOZ_BSCFILE))
-OS_CFLAGS += -FR
-OS_CXXFLAGS += -FR
-endif
-else # ! MOZ_DEBUG
+ifndef MOZ_DEBUG
 
 # MOZ_DEBUG_SYMBOLS generates debug symbols in separate PDB files.
 # Used for generating an optimized build with debugging symbols.
 # Used in the Windows nightlies to generate symbols for crash reporting.
 ifdef MOZ_DEBUG_SYMBOLS
-OS_CXXFLAGS += -UDEBUG -DNDEBUG
-OS_CFLAGS += -UDEBUG -DNDEBUG
 ifdef HAVE_64BIT_BUILD
 OS_LDFLAGS += -DEBUG -OPT:REF,ICF
 else
@@ -229,10 +175,8 @@ endif
 
 #
 # Handle DMD in optimized builds.
-# No opt to give sane callstacks.
 #
 ifdef MOZ_DMD
-MOZ_OPTIMIZE_FLAGS=-Zi -Od -UDEBUG -DNDEBUG
 ifdef HAVE_64BIT_BUILD
 OS_LDFLAGS = -DEBUG -OPT:REF,ICF
 else
@@ -244,19 +188,10 @@ endif # MOZ_DEBUG
 
 endif # WINNT && !GNU_CC
 
-ifdef MOZ_GLUE_IN_PROGRAM
-DEFINES += -DMOZ_GLUE_IN_PROGRAM
-endif
-
 #
 # Build using PIC by default
 #
 _ENABLE_PIC=1
-
-# No sense in profiling tools
-ifdef INTERNAL_TOOLS
-NO_PROFILE_GUIDED_OPTIMIZE = 1
-endif
 
 # Don't build SIMPLE_PROGRAMS with PGO, since they don't need it anyway,
 # and we don't have the same build logic to re-link them in the second pass.
@@ -312,23 +247,17 @@ MY_RULES	:= $(DEPTH)/config/myrules.mk
 #
 CCC = $(CXX)
 
-# Java macros
-JAVA_GEN_DIR  = _javagen
-JAVA_DIST_DIR = $(DEPTH)/$(JAVA_GEN_DIR)
-JAVA_IFACES_PKG_NAME = org/mozilla/interfaces
-
 INCLUDES = \
   -I$(srcdir) \
-  -I. \
+  -I$(CURDIR) \
   $(LOCAL_INCLUDES) \
-  -I$(DIST)/include \
+  -I$(ABS_DIST)/include \
   $(NULL)
 
 ifndef IS_GYP_DIR
 # NSPR_CFLAGS and NSS_CFLAGS must appear ahead of the other flags to avoid Linux
 # builds wrongly picking up system NSPR/NSS header files.
 OS_INCLUDES := \
-  $(if $(LIBXUL_SDK),-I$(LIBXUL_SDK)/include) \
   $(NSPR_CFLAGS) $(NSS_CFLAGS) \
   $(MOZ_JPEG_CFLAGS) \
   $(MOZ_PNG_CFLAGS) \
@@ -343,15 +272,8 @@ CFLAGS		= $(OS_CPPFLAGS) $(OS_CFLAGS)
 CXXFLAGS	= $(OS_CPPFLAGS) $(OS_CXXFLAGS)
 LDFLAGS		= $(OS_LDFLAGS) $(MOZBUILD_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
 
-# Allow each module to override the *default* optimization settings
-# by setting MODULE_OPTIMIZE_FLAGS if the developer has not given
-# arguments to --enable-optimize
 ifdef MOZ_OPTIMIZE
 ifeq (1,$(MOZ_OPTIMIZE))
-ifdef MODULE_OPTIMIZE_FLAGS
-CFLAGS		+= $(MODULE_OPTIMIZE_FLAGS)
-CXXFLAGS	+= $(MODULE_OPTIMIZE_FLAGS)
-else
 ifneq (,$(if $(MOZ_PROFILE_GENERATE)$(MOZ_PROFILE_USE),$(MOZ_PGO_OPTIMIZE_FLAGS)))
 CFLAGS		+= $(MOZ_PGO_OPTIMIZE_FLAGS)
 CXXFLAGS	+= $(MOZ_PGO_OPTIMIZE_FLAGS)
@@ -359,24 +281,22 @@ else
 CFLAGS		+= $(MOZ_OPTIMIZE_FLAGS)
 CXXFLAGS	+= $(MOZ_OPTIMIZE_FLAGS)
 endif # neq (,$(MOZ_PROFILE_GENERATE)$(MOZ_PROFILE_USE))
-endif # MODULE_OPTIMIZE_FLAGS
 else
 CFLAGS		+= $(MOZ_OPTIMIZE_FLAGS)
 CXXFLAGS	+= $(MOZ_OPTIMIZE_FLAGS)
 endif # MOZ_OPTIMIZE == 1
 LDFLAGS		+= $(MOZ_OPTIMIZE_LDFLAGS)
+RUSTFLAGS	+= $(MOZ_OPTIMIZE_RUSTFLAGS)
 endif # MOZ_OPTIMIZE
 
+HOST_CFLAGS	+= $(_DEPEND_CFLAGS)
+HOST_CXXFLAGS	+= $(_DEPEND_CFLAGS)
 ifdef CROSS_COMPILE
 HOST_CFLAGS	+= $(HOST_OPTIMIZE_FLAGS)
 else
 ifdef MOZ_OPTIMIZE
 ifeq (1,$(MOZ_OPTIMIZE))
-ifdef MODULE_OPTIMIZE_FLAGS
-HOST_CFLAGS	+= $(MODULE_OPTIMIZE_FLAGS)
-else
 HOST_CFLAGS	+= $(MOZ_OPTIMIZE_FLAGS)
-endif # MODULE_OPTIMIZE_FLAGS
 else
 HOST_CFLAGS	+= $(MOZ_OPTIMIZE_FLAGS)
 endif # MOZ_OPTIMIZE == 1
@@ -386,86 +306,45 @@ endif # CROSS_COMPILE
 CFLAGS += $(MOZ_FRAMEPTR_FLAGS)
 CXXFLAGS += $(MOZ_FRAMEPTR_FLAGS)
 
-# Check for FAIL_ON_WARNINGS (Shorthand for Makefiles to request that we use
-# the 'warnings as errors' compile flags)
+# Check for ALLOW_COMPILER_WARNINGS (shorthand for Makefiles to request that we
+# *don't* use the warnings-as-errors compile flags)
 
-# NOTE: First, we clear FAIL_ON_WARNINGS[_DEBUG] if we're doing a Windows PGO
-# build, since WARNINGS_AS_ERRORS has been suspected of causing isuses in that
-# situation. (See bug 437002.)
+# Don't use warnings-as-errors in Windows PGO builds because it is suspected of
+# causing problems in that situation. (See bug 437002.)
 ifeq (WINNT_1,$(OS_ARCH)_$(MOZ_PROFILE_GENERATE)$(MOZ_PROFILE_USE))
-FAIL_ON_WARNINGS=
+ALLOW_COMPILER_WARNINGS=1
 endif # WINNT && (MOS_PROFILE_GENERATE ^ MOZ_PROFILE_USE)
 
-# Check for normal version of flag, and add WARNINGS_AS_ERRORS if it's set to 1.
-ifdef FAIL_ON_WARNINGS
-# Never treat warnings as errors in clang-cl, because it warns about many more
+# Don't use warnings-as-errors in clang-cl because it warns about many more
 # things than MSVC does.
-ifndef CLANG_CL
+ifdef CLANG_CL
+ALLOW_COMPILER_WARNINGS=1
+endif # CLANG_CL
+
+# Use warnings-as-errors if ALLOW_COMPILER_WARNINGS is not set to 1 (which
+# includes the case where it's undefined).
+ifneq (1,$(ALLOW_COMPILER_WARNINGS))
 CXXFLAGS += $(WARNINGS_AS_ERRORS)
 CFLAGS   += $(WARNINGS_AS_ERRORS)
-endif # CLANG_CL
-endif # FAIL_ON_WARNINGS
+endif # ALLOW_COMPILER_WARNINGS
 
-ifeq ($(OS_ARCH)_$(GNU_CC),WINNT_)
-#// Currently, unless USE_STATIC_LIBS is defined, the multithreaded
-#// DLL version of the RTL is used...
-#//
-#//------------------------------------------------------------------------
-ifdef USE_STATIC_LIBS
-RTL_FLAGS=-MT          # Statically linked multithreaded RTL
-ifdef MOZ_DEBUG
-ifndef MOZ_NO_DEBUG_RTL
-RTL_FLAGS=-MTd         # Statically linked multithreaded MSVC4.0 debug RTL
-endif
-endif # MOZ_DEBUG
-
-else # !USE_STATIC_LIBS
-
-RTL_FLAGS=-MD          # Dynamically linked, multithreaded RTL
-ifdef MOZ_DEBUG
-ifndef MOZ_NO_DEBUG_RTL
-RTL_FLAGS=-MDd         # Dynamically linked, multithreaded MSVC4.0 debug RTL
-endif
-endif # MOZ_DEBUG
-endif # USE_STATIC_LIBS
-endif # WINNT && !GNU_CC
-
-ifeq ($(OS_ARCH),Darwin)
-# Compiling ObjC requires an Apple compiler anyway, so it's ok to set
-# host CMFLAGS here.
-HOST_CMFLAGS += -fobjc-exceptions
-HOST_CMMFLAGS += -fobjc-exceptions
-OS_COMPILE_CMFLAGS += -fobjc-exceptions
-OS_COMPILE_CMMFLAGS += -fobjc-exceptions
-ifeq ($(MOZ_WIDGET_TOOLKIT),uikit)
-OS_COMPILE_CMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
-OS_COMPILE_CMMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
-endif
-endif
-
-COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(OS_INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(MOZBUILD_CFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CXXFLAGS = $(if $(DISABLE_STL_WRAPPING),,$(STL_FLAGS)) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(OS_INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(MOZBUILD_CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(MOZBUILD_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(MOZBUILD_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
-ASFLAGS += $(EXTRA_ASSEMBLER_FLAGS)
+COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(OS_INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CFLAGS) $(_DEPEND_CFLAGS) $(CFLAGS) $(MOZBUILD_CFLAGS)
+COMPILE_CXXFLAGS = $(if $(DISABLE_STL_WRAPPING),,$(STL_FLAGS)) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(OS_INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_COMPILE_CXXFLAGS) $(_DEPEND_CFLAGS) $(CXXFLAGS) $(MOZBUILD_CXXFLAGS)
+COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(MOZBUILD_CMFLAGS)
+COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(MOZBUILD_CMMFLAGS)
+ASFLAGS += $(MOZBUILD_ASFLAGS)
 
 ifndef CROSS_COMPILE
 HOST_CFLAGS += $(RTL_FLAGS)
 endif
 
+HOST_CFLAGS += $(HOST_DEFINES) $(MOZBUILD_HOST_CFLAGS)
+HOST_CXXFLAGS += $(HOST_DEFINES) $(MOZBUILD_HOST_CXXFLAGS)
+
 #
 # Name of the binary code directories
 #
 # Override defaults
-
-# Default location of include files
-ifndef LIBXUL_SDK
-IDL_PARSER_DIR = $(topsrcdir)/xpcom/idl-parser
-IDL_PARSER_CACHE_DIR = $(DEPTH)/xpcom/idl-parser
-else
-IDL_PARSER_DIR = $(LIBXUL_SDK)/sdk/bin
-IDL_PARSER_CACHE_DIR = $(LIBXUL_SDK)/sdk/bin
-endif
 
 SDK_LIB_DIR = $(DIST)/sdk/lib
 SDK_BIN_DIR = $(DIST)/sdk/bin
@@ -566,7 +445,7 @@ sysinstall_cmd = install_cmd
 # overridden by the command line. (Besides, AB_CD is prettier).
 AB_CD = $(MOZ_UI_LOCALE)
 # Many locales directories want this definition.
-DEFINES += -DAB_CD=$(AB_CD)
+ACDEFINES += -DAB_CD=$(AB_CD)
 
 ifndef L10NBASEDIR
   L10NBASEDIR = $(error L10NBASEDIR not defined by configure)
@@ -614,7 +493,7 @@ EN_US_OR_L10N_FILE = $(firstword \
 EN_US_OR_L10N_FILES = $(foreach f,$(1),$(call EN_US_OR_L10N_FILE,$(f)))
 
 ifneq (WINNT,$(OS_ARCH))
-RUN_TEST_PROGRAM = $(LIBXUL_DIST)/bin/run-mozilla.sh
+RUN_TEST_PROGRAM = $(DIST)/bin/run-mozilla.sh
 endif # ! WINNT
 
 #
@@ -645,10 +524,36 @@ EXPAND_MKSHLIB_ARGS += --symbol-order $(SYMBOL_ORDER)
 endif
 EXPAND_MKSHLIB = $(EXPAND_LIBS_EXEC) $(EXPAND_MKSHLIB_ARGS) -- $(MKSHLIB)
 
+# $(call CHECK_SYMBOLS,lib,PREFIX,dep_name,test)
+# Checks that the given `lib` doesn't contain dependency on symbols with a
+# version starting with `PREFIX`_ and matching the `test`. `dep_name` is only
+# used for the error message.
+# `test` is an awk expression using the information in the variable `v` which
+# contains a list of version items ([major, minor, ...]).
+define CHECK_SYMBOLS
+@$(TOOLCHAIN_PREFIX)readelf -sW $(1) | \
+awk '$$8 ~ /@$(2)_/ { \
+	split($$8,a,"@"); \
+	split(a[2],b,"_"); \
+	split(b[2],v,"."); \
+	if ($(4)) { \
+		if (!found) { \
+			print "TEST-UNEXPECTED-FAIL | check_stdcxx | We do not want these $(3) symbol versions to be used:" \
+		} \
+		print " ",$$8; \
+		found=1 \
+	} \
+} \
+END { \
+	if (found) { \
+		exit(1) \
+	} \
+}'
+endef
+
 ifneq (,$(MOZ_LIBSTDCXX_TARGET_VERSION)$(MOZ_LIBSTDCXX_HOST_VERSION))
-ifneq ($(OS_ARCH),Darwin)
-CHECK_STDCXX = @$(TOOLCHAIN_PREFIX)objdump -p $(1) | grep -v -e 'GLIBCXX_3\.4\.\(9\|[1-9][0-9]\)' > /dev/null || ( echo 'TEST-UNEXPECTED-FAIL | check_stdcxx | We do not want these libstdc++ symbols to be used:' && $(TOOLCHAIN_PREFIX)objdump -T $(1) | grep -e 'GLIBCXX_3\.4\.\(9\|[1-9][0-9]\)' && false)
-endif
+CHECK_STDCXX = $(call CHECK_SYMBOLS,$(1),GLIBCXX,libstdc++,v[1] > 3 || (v[1] == 3 && v[2] == 4 && v[3] > 10))
+CHECK_GLIBC = $(call CHECK_SYMBOLS,$(1),GLIBC,libc,v[1] > 2 || (v[1] == 2 && v[2] > 7))
 endif
 
 ifeq (,$(filter $(OS_TARGET),WINNT Darwin))
@@ -664,6 +569,7 @@ CHECK_MOZGLUE_ORDER = @$(TOOLCHAIN_PREFIX)readelf -d $(1) | grep NEEDED | awk '{
 endif
 
 define CHECK_BINARY
+$(call CHECK_GLIBC,$(1))
 $(call CHECK_STDCXX,$(1))
 $(call CHECK_TEXTREL,$(1))
 $(call LOCAL_CHECKS,$(1))
@@ -695,8 +601,3 @@ export CL_INCLUDES_PREFIX
 # in environment variables to prevent it from breking silently on
 # non-English systems.
 export NONASCII
-
-DEFINES += -DNO_NSPR_10_SUPPORT
-
-# Freeze the values specified by moz.build to catch them if they fail.
-$(foreach var,$(_MOZBUILD_EXTERNAL_VARIABLES) $(_DEPRECATED_VARIABLES),$(eval $(var)_FROZEN := '$($(var))'))

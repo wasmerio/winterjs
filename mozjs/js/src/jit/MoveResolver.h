@@ -10,9 +10,12 @@
 #include "jit/InlineList.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/Registers.h"
+#include "jit/RegisterSets.h"
 
 namespace js {
 namespace jit {
+
+class MacroAssembler;
 
 // This is similar to Operand, but carries more information. We're also not
 // guaranteed that Operand looks like this on all ISAs.
@@ -22,6 +25,12 @@ class MoveOperand
     enum Kind {
         // A register in the "integer", aka "general purpose", class.
         REG,
+#ifdef JS_CODEGEN_REGISTER_PAIR
+        // Two consecutive "integer" register (aka "general purpose"). The even
+        // register contains the lower part, the odd register has the high bits
+        // of the content.
+        REG_PAIR,
+#endif
         // A register in the "float" register class.
         FLOAT_REG,
         // A memory region.
@@ -53,7 +62,8 @@ class MoveOperand
         if (disp == 0 && kind_ == EFFECTIVE_ADDRESS)
             kind_ = REG;
     }
-    MoveOperand(const MoveOperand &other)
+    MoveOperand(MacroAssembler& masm, const ABIArg& arg);
+    MoveOperand(const MoveOperand& other)
       : kind_(other.kind_),
         code_(other.code_),
         disp_(other.disp_)
@@ -63,6 +73,13 @@ class MoveOperand
     }
     bool isGeneralReg() const {
         return kind_ == REG;
+    }
+    bool isGeneralRegPair() const {
+#ifdef JS_CODEGEN_REGISTER_PAIR
+        return kind_ == REG_PAIR;
+#else
+        return false;
+#endif
     }
     bool isMemory() const {
         return kind_ == MEMORY;
@@ -76,6 +93,14 @@ class MoveOperand
     Register reg() const {
         MOZ_ASSERT(isGeneralReg());
         return Register::FromCode(code_);
+    }
+    Register evenReg() const {
+        MOZ_ASSERT(isGeneralRegPair());
+        return Register::FromCode(code_);
+    }
+    Register oddReg() const {
+        MOZ_ASSERT(isGeneralRegPair());
+        return Register::FromCode(code_ + 1);
     }
     FloatRegister floatReg() const {
         MOZ_ASSERT(isFloatReg());
@@ -101,6 +126,30 @@ class MoveOperand
         MOZ_ASSERT_IF(other.isMemoryOrEffectiveAddress() && isGeneralReg(),
                       other.base() != reg());
 
+        // Check if one of the operand is a registe rpair, in which case, we
+        // have to check any other register, or register pair.
+        if (isGeneralRegPair() || other.isGeneralRegPair()) {
+            if (isGeneralRegPair() && other.isGeneralRegPair()) {
+                // Assume that register pairs are aligned on even registers.
+                MOZ_ASSERT(!evenReg().aliases(other.oddReg()));
+                MOZ_ASSERT(!oddReg().aliases(other.evenReg()));
+                // Pair of registers are composed of consecutive registers, thus
+                // if the first registers are aliased, then the second registers
+                // are aliased too.
+                MOZ_ASSERT(evenReg().aliases(other.evenReg()) == oddReg().aliases(other.oddReg()));
+                return evenReg().aliases(other.evenReg());
+            } else if (other.isGeneralReg()) {
+                MOZ_ASSERT(isGeneralRegPair());
+                return evenReg().aliases(other.reg()) ||
+                       oddReg().aliases(other.reg());
+            } else if (isGeneralReg()) {
+                MOZ_ASSERT(other.isGeneralRegPair());
+                return other.evenReg().aliases(reg()) ||
+                       other.oddReg().aliases(reg());
+            }
+            return false;
+        }
+
         if (kind_ != other.kind_)
             return false;
         if (kind_ == FLOAT_REG)
@@ -112,7 +161,7 @@ class MoveOperand
         return true;
     }
 
-    bool operator ==(const MoveOperand &other) const {
+    bool operator ==(const MoveOperand& other) const {
         if (kind_ != other.kind_)
             return false;
         if (code_ != other.code_)
@@ -121,7 +170,7 @@ class MoveOperand
             return disp_ == other.disp_;
         return true;
     }
-    bool operator !=(const MoveOperand &other) const {
+    bool operator !=(const MoveOperand& other) const {
         return !operator==(other);
     }
 };
@@ -160,7 +209,7 @@ class MoveOp
   public:
     MoveOp()
     { }
-    MoveOp(const MoveOperand &from, const MoveOperand &to, Type type)
+    MoveOp(const MoveOperand& from, const MoveOperand& to, Type type)
       : from_(from),
         to_(to),
         cycleBegin_(false),
@@ -184,10 +233,10 @@ class MoveOp
         MOZ_ASSERT(cycleEndSlot_ != -1);
         return cycleEndSlot_;
     }
-    const MoveOperand &from() const {
+    const MoveOperand& from() const {
         return from_;
     }
-    const MoveOperand &to() const {
+    const MoveOperand& to() const {
         return to_;
     }
     Type type() const {
@@ -196,6 +245,12 @@ class MoveOp
     Type endCycleType() const {
         MOZ_ASSERT(isCycleBegin());
         return endCycleType_;
+    }
+    bool aliases(const MoveOperand& op) const {
+        return from().aliases(op) || to().aliases(op);
+    }
+    bool aliases(const MoveOp& other) const {
+        return aliases(other.from()) || aliases(other.to());
     }
 };
 
@@ -209,7 +264,7 @@ class MoveResolver
     {
         PendingMove()
         { }
-        PendingMove(const MoveOperand &from, const MoveOperand &to, Type type)
+        PendingMove(const MoveOperand& from, const MoveOperand& to, Type type)
           : MoveOp(from, to, type)
         { }
 
@@ -229,8 +284,6 @@ class MoveResolver
     typedef InlineList<MoveResolver::PendingMove>::iterator PendingMoveIterator;
 
   private:
-    // Moves that are definitely unblocked (constants to registers). These are
-    // emitted last.
     js::Vector<MoveOp, 16, SystemAllocPolicy> orderedMoves_;
     int numCycles_;
     int curCycles_;
@@ -238,9 +291,10 @@ class MoveResolver
 
     InlineList<PendingMove> pending_;
 
-    PendingMove *findBlockingMove(const PendingMove *last);
-    PendingMove *findCycledMove(PendingMoveIterator *stack, PendingMoveIterator end, const PendingMove *first);
-    bool addOrderedMove(const MoveOp &move);
+    PendingMove* findBlockingMove(const PendingMove* last);
+    PendingMove* findCycledMove(PendingMoveIterator* stack, PendingMoveIterator end, const PendingMove* first);
+    bool addOrderedMove(const MoveOp& move);
+    void reorderMove(size_t from, size_t to);
 
     // Internal reset function. Does not clear lists.
     void resetState();
@@ -255,22 +309,20 @@ class MoveResolver
     //
     // After calling addMove() for each parallel move, resolve() performs the
     // cycle resolution algorithm. Calling addMove() again resets the resolver.
-    bool addMove(const MoveOperand &from, const MoveOperand &to, MoveOp::Type type);
+    bool addMove(const MoveOperand& from, const MoveOperand& to, MoveOp::Type type);
     bool resolve();
+    void sortMemoryToMemoryMoves();
 
     size_t numMoves() const {
         return orderedMoves_.length();
     }
-    const MoveOp &getMove(size_t i) const {
+    const MoveOp& getMove(size_t i) const {
         return orderedMoves_[i];
     }
     uint32_t numCycles() const {
         return numCycles_;
     }
-    void clearTempObjectPool() {
-        movePool_.clear();
-    }
-    void setAllocator(TempAllocator &alloc) {
+    void setAllocator(TempAllocator& alloc) {
         movePool_.setAllocator(alloc);
     }
 };

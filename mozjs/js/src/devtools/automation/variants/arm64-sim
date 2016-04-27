@@ -1,0 +1,4 @@
+--enable-optimize
+--enable-debug
+--enable-stdcxx-compat
+--enable-simulator=arm64

@@ -34,6 +34,12 @@ EOF
 if test "$compiler" != "$cxxcompiler"; then
     AC_MSG_ERROR([Your C and C++ compilers are different.  You need to use the same compiler.])
 fi
+if test "$CC_VERSION" != "$CXX_VERSION"; then
+    # This may not be strictly necessary, but if we want to drop it, we
+    # should make sure any version checks below apply to both the C and
+    # C++ compiler versions.
+    AC_MSG_ERROR([Your C and C++ compiler versions are different.  You need to use the same compiler version.])
+fi
 CC_VERSION=`echo "$CC_VERSION" | sed 's/ //g'`
 CXX_VERSION=`echo "$CXX_VERSION" | sed 's/ //g'`
 if test "$compiler" = "gcc"; then
@@ -101,9 +107,9 @@ AC_SUBST(CLANG_CXX)
 AC_SUBST(CLANG_CL)
 
 if test -n "$GNU_CC" -a -z "$CLANG_CC" ; then
-    if test "$GCC_MAJOR_VERSION" -eq 4 -a "$GCC_MINOR_VERSION" -lt 7 ||
+    if test "$GCC_MAJOR_VERSION" -eq 4 -a "$GCC_MINOR_VERSION" -lt 8 ||
        test "$GCC_MAJOR_VERSION" -lt 4; then
-        AC_MSG_ERROR([Only GCC 4.7 or newer supported])
+        AC_MSG_ERROR([Only GCC 4.8 or newer supported])
     fi
 fi
 ])
@@ -218,19 +224,86 @@ if test "$GNU_CXX"; then
     elif test "$ac_cv_cxx0x_headers_bug" = "yes"; then
         AC_MSG_ERROR([Your toolchain does not support C++0x/C++11 mode properly. Please upgrade your toolchain])
     fi
+
+    if test -n "$CLANG_CC"; then
+        dnl We'd normally just check for the version from CC_VERSION (fed
+        dnl from __clang_major__ and __clang_minor__), but the clang that
+        dnl comes with Xcode has a completely different version scheme
+        dnl despite exposing the version with the same defines.
+        dnl So instead of a version check, check for one of the C++11
+        dnl features that was added in clang 3.3.
+        AC_TRY_COMPILE([], [#if !__has_feature(cxx_inheriting_constructors)
+                            #error inheriting constructors are not supported
+                            #endif],,AC_MSG_ERROR([Only clang/llvm 3.3 or newer supported]))
+    fi
+
+    AC_CACHE_CHECK([whether 64-bits std::atomic requires -latomic],
+        ac_cv_needs_atomic,
+        AC_TRY_LINK(
+            [#include <cstdint>
+             #include <atomic>],
+            [ std::atomic<uint64_t> foo; foo = 1; ],
+            ac_cv_needs_atomic=no,
+            _SAVE_LIBS="$LIBS"
+            LIBS="$LIBS -latomic"
+            AC_TRY_LINK(
+                [#include <cstdint>
+                 #include <atomic>],
+                [ std::atomic<uint64_t> foo; foo = 1; ],
+                ac_cv_needs_atomic=yes,
+                ac_cv_needs_atomic="do not know; assuming no")
+            LIBS="$_SAVE_LIBS"
+        )
+    )
+    if test "$ac_cv_needs_atomic" = yes; then
+      MOZ_NEEDS_LIBATOMIC=1
+    else
+      MOZ_NEEDS_LIBATOMIC=
+    fi
+    AC_SUBST(MOZ_NEEDS_LIBATOMIC)
 fi
+
 if test -n "$CROSS_COMPILE"; then
     dnl When cross compile, we have no variable telling us what the host compiler is. Figure it out.
     cat > conftest.C <<EOF
 #if defined(__clang__)
-CLANG
+COMPILER CLANG __clang_major__.__clang_minor__.__clang_patchlevel__
 #elif defined(__GNUC__)
-GCC
+COMPILER GCC __GNUC__.__GNUC_MINOR__.__GNUC_PATCHLEVEL__
 #endif
 EOF
-    host_compiler=`$HOST_CXX -E conftest.C | egrep '(CLANG|GCC)'`
+read dummy host_compiler HOST_CC_VERSION <<EOF
+$($HOST_CC -E conftest.C 2>/dev/null | grep COMPILER)
+EOF
+read dummy host_cxxcompiler HOST_CXX_VERSION <<EOF
+$($HOST_CXX -E conftest.C 2>/dev/null | grep COMPILER)
+EOF
     rm conftest.C
+    if test "$host_compiler" != "$host_cxxcompiler"; then
+        AC_MSG_ERROR([Your C and C++ host compilers are different.  You need to use the same compiler.])
+    fi
+    if test "$HOST_CC_VERSION" != "$HOST_CXX_VERSION"; then
+        # This may not be strictly necessary, but if we want to drop it,
+        # we should make sure any version checks below apply to both the
+        # C and C++ compiler versions.
+        AC_MSG_ERROR([Your C and C++ host compiler versions are different.  You need to use the same compiler version.])
+    fi
     if test -n "$host_compiler"; then
+        if test "$host_compiler" = "GCC" ; then
+            changequote(<<,>>)
+            HOST_GCC_VERSION_FULL="$HOST_CXX_VERSION"
+            HOST_GCC_VERSION=`echo "$HOST_GCC_VERSION_FULL" | $PERL -pe '(split(/\./))[0]>=4&&s/(^\d*\.\d*).*/<<$>>1/;'`
+
+            HOST_GCC_MAJOR_VERSION=`echo ${HOST_GCC_VERSION} | $AWK -F\. '{ print <<$>>1 }'`
+            HOST_GCC_MINOR_VERSION=`echo ${HOST_GCC_VERSION} | $AWK -F\. '{ print <<$>>2 }'`
+            changequote([,])
+
+            if test "$HOST_GCC_MAJOR_VERSION" -eq 4 -a "$HOST_GCC_MINOR_VERSION" -lt 8 ||
+               test "$HOST_GCC_MAJOR_VERSION" -lt 4; then
+                AC_MSG_ERROR([Only GCC 4.8 or newer supported for host compiler])
+            fi
+        fi
+
         HOST_CXXFLAGS="$HOST_CXXFLAGS -std=gnu++0x"
 
         _SAVE_CXXFLAGS="$CXXFLAGS"
@@ -260,6 +333,12 @@ EOF
         elif test "$ac_cv_host_cxx0x_headers_bug" = "yes"; then
             AC_MSG_ERROR([Your host toolchain does not support C++0x/C++11 mode properly. Please upgrade your toolchain])
         fi
+        if test "$host_compiler" = CLANG; then
+            AC_TRY_COMPILE([], [#if !__has_feature(cxx_inheriting_constructors)
+                                #error inheriting constructors are not supported
+                                #endif],,AC_MSG_ERROR([Only clang/llvm 3.3 or newer supported]))
+        fi
+
         CXXFLAGS="$_SAVE_CXXFLAGS"
         CPPFLAGS="$_SAVE_CPPFLAGS"
         CXX="$_SAVE_CXX"

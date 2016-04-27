@@ -20,9 +20,11 @@ new
 algorithm
 atomic
 deque
+functional
 ios
 iosfwd
 iostream
+istream
 iterator
 limits
 list
@@ -36,6 +38,7 @@ utility
 vector
 cassert
 climits
+cmath
 cstdarg
 cstdio
 cstdlib

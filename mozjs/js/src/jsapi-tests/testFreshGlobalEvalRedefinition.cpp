@@ -8,13 +8,13 @@
 #include "jsapi-tests/tests.h"
 
 static bool
-GlobalEnumerate(JSContext *cx, JS::Handle<JSObject*> obj)
+GlobalEnumerate(JSContext* cx, JS::Handle<JSObject*> obj)
 {
     return JS_EnumerateStandardClasses(cx, obj);
 }
 
 static bool
-GlobalResolve(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *resolvedp)
+GlobalResolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id, bool* resolvedp)
 {
     return JS_ResolveStandardClass(cx, obj, id, resolvedp);
 }
@@ -24,14 +24,13 @@ BEGIN_TEST(testRedefineGlobalEval)
     static const JSClass cls = {
         "global", JSCLASS_GLOBAL_FLAGS,
         nullptr, nullptr, nullptr, nullptr,
-        GlobalEnumerate, GlobalResolve, nullptr,
-        nullptr, nullptr, nullptr, nullptr,
+        GlobalEnumerate, GlobalResolve, nullptr, nullptr,
+        nullptr, nullptr, nullptr,
         JS_GlobalObjectTraceHook
     };
 
     /* Create the global object. */
     JS::CompartmentOptions options;
-    options.setVersion(JSVERSION_LATEST);
     JS::Rooted<JSObject*> g(cx, JS_NewGlobalObject(cx, &cls, nullptr, JS::FireOnNewGlobalHook, options));
     if (!g)
         return false;

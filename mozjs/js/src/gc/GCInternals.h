@@ -7,6 +7,10 @@
 #ifndef gc_GCInternals_h
 #define gc_GCInternals_h
 
+#include "mozilla/ArrayUtils.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/PodOperations.h"
+
 #include "jscntxt.h"
 
 #include "gc/Zone.h"
@@ -16,95 +20,72 @@
 namespace js {
 namespace gc {
 
-void
-MarkPersistentRootedChains(JSTracer *trc);
-
-class AutoCopyFreeListToArenas
-{
-    JSRuntime *runtime;
-    ZoneSelector selector;
-
-  public:
-    AutoCopyFreeListToArenas(JSRuntime *rt, ZoneSelector selector);
-    ~AutoCopyFreeListToArenas();
-};
-
-struct AutoFinishGC
-{
-    explicit AutoFinishGC(JSRuntime *rt);
-};
+void FinishGC(JSRuntime* rt);
 
 /*
  * This class should be used by any code that needs to exclusive access to the
  * heap in order to trace through it...
  */
-class AutoTraceSession
+class MOZ_RAII AutoTraceSession
 {
   public:
-    explicit AutoTraceSession(JSRuntime *rt, HeapState state = Tracing);
+    explicit AutoTraceSession(JSRuntime* rt, JS::HeapState state = JS::HeapState::Tracing);
     ~AutoTraceSession();
 
   protected:
     AutoLockForExclusiveAccess lock;
-    JSRuntime *runtime;
+    JSRuntime* runtime;
 
   private:
     AutoTraceSession(const AutoTraceSession&) = delete;
     void operator=(const AutoTraceSession&) = delete;
 
-    HeapState prevState;
+    JS::HeapState prevState;
+    AutoSPSEntry pseudoFrame;
 };
 
-struct AutoPrepareForTracing
+struct MOZ_RAII AutoPrepareForTracing
 {
-    AutoFinishGC finish;
-    AutoTraceSession session;
-    AutoCopyFreeListToArenas copy;
+    mozilla::Maybe<AutoTraceSession> session;
 
-    AutoPrepareForTracing(JSRuntime *rt, ZoneSelector selector);
+    AutoPrepareForTracing(JSRuntime* rt, ZoneSelector selector);
 };
 
 class IncrementalSafety
 {
-    const char *reason_;
+    const char* reason_;
 
-    explicit IncrementalSafety(const char *reason) : reason_(reason) {}
+    explicit IncrementalSafety(const char* reason) : reason_(reason) {}
 
   public:
     static IncrementalSafety Safe() { return IncrementalSafety(nullptr); }
-    static IncrementalSafety Unsafe(const char *reason) { return IncrementalSafety(reason); }
+    static IncrementalSafety Unsafe(const char* reason) { return IncrementalSafety(reason); }
 
     explicit operator bool() const {
         return reason_ == nullptr;
     }
 
-    const char *reason() {
+    const char* reason() {
         MOZ_ASSERT(reason_);
         return reason_;
     }
 };
 
 IncrementalSafety
-IsIncrementalGCSafe(JSRuntime *rt);
+IsIncrementalGCSafe(JSRuntime* rt);
 
 #ifdef JS_GC_ZEAL
 
-class AutoStopVerifyingBarriers
+class MOZ_RAII AutoStopVerifyingBarriers
 {
-    GCRuntime *gc;
+    GCRuntime* gc;
     bool restartPreVerifier;
-    bool restartPostVerifier;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
   public:
-    AutoStopVerifyingBarriers(JSRuntime *rt, bool isShutdown
-                              MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+    AutoStopVerifyingBarriers(JSRuntime* rt, bool isShutdown)
       : gc(&rt->gc)
     {
         restartPreVerifier = gc->endVerifyPreBarriers() && !isShutdown;
-        restartPostVerifier = gc->endVerifyPostBarriers() && !isShutdown &&
-            JS::IsGenerationalGCEnabled(rt);
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     ~AutoStopVerifyingBarriers() {
@@ -121,54 +102,101 @@ class AutoStopVerifyingBarriers
 
         if (restartPreVerifier)
             gc->startVerifyPreBarriers();
-        if (restartPostVerifier)
-            gc->startVerifyPostBarriers();
 
         if (outer != gcstats::PHASE_NONE)
             gc->stats.beginPhase(outer);
     }
 };
 #else
-struct AutoStopVerifyingBarriers
+struct MOZ_RAII AutoStopVerifyingBarriers
 {
-    AutoStopVerifyingBarriers(JSRuntime *, bool) {}
+    AutoStopVerifyingBarriers(JSRuntime*, bool) {}
 };
 #endif /* JS_GC_ZEAL */
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 void
-CheckHashTablesAfterMovingGC(JSRuntime *rt);
+CheckHashTablesAfterMovingGC(JSRuntime* rt);
 #endif
 
-struct MovingTracer : JSTracer {
-    explicit MovingTracer(JSRuntime *rt) : JSTracer(rt, Visit, TraceWeakMapKeysValues) {}
+struct MovingTracer : JS::CallbackTracer
+{
+    explicit MovingTracer(JSRuntime* rt) : CallbackTracer(rt, TraceWeakMapKeysValues) {}
 
-    static void Visit(JSTracer *jstrc, void **thingp, JSGCTraceKind kind);
-    static bool IsMovingTracer(JSTracer *trc) {
-        return trc->callback == Visit;
+    void onObjectEdge(JSObject** objp) override;
+    void onShapeEdge(Shape** shapep) override;
+    void onStringEdge(JSString** stringp) override;
+    void onChild(const JS::GCCellPtr& thing) override {
+        MOZ_ASSERT(!RelocationOverlay::isCellForwarded(thing.asCell()));
     }
+
+#ifdef DEBUG
+    TracerKind getTracerKind() const override { return TracerKind::Moving; }
+#endif
 };
 
-class AutoMaybeStartBackgroundAllocation
+class MOZ_RAII AutoMaybeStartBackgroundAllocation
 {
   private:
-    JSRuntime *runtime;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+    JSRuntime* runtime;
 
   public:
-    explicit AutoMaybeStartBackgroundAllocation(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
+    AutoMaybeStartBackgroundAllocation()
       : runtime(nullptr)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
+    {}
 
-    void tryToStartBackgroundAllocation(JSRuntime *rt) {
+    void tryToStartBackgroundAllocation(JSRuntime* rt) {
         runtime = rt;
     }
 
     ~AutoMaybeStartBackgroundAllocation() {
         if (runtime)
             runtime->gc.startBackgroundAllocTaskIfIdle();
+    }
+};
+
+// In debug builds, set/unset the GC sweeping flag for the current thread.
+struct MOZ_RAII AutoSetThreadIsSweeping
+{
+#ifdef DEBUG
+    AutoSetThreadIsSweeping()
+      : threadData_(js::TlsPerThreadData.get())
+    {
+        MOZ_ASSERT(!threadData_->gcSweeping);
+        threadData_->gcSweeping = true;
+    }
+
+    ~AutoSetThreadIsSweeping() {
+        MOZ_ASSERT(threadData_->gcSweeping);
+        threadData_->gcSweeping = false;
+    }
+
+  private:
+    PerThreadData* threadData_;
+#else
+    AutoSetThreadIsSweeping() {}
+#endif
+};
+
+// Structure for counting how many times objects in a particular group have
+// been tenured during a minor collection.
+struct TenureCount
+{
+    ObjectGroup* group;
+    int count;
+};
+
+// Keep rough track of how many times we tenure objects in particular groups
+// during minor collections, using a fixed size hash for efficiency at the cost
+// of potential collisions.
+struct TenureCountCache
+{
+    TenureCount entries[16];
+
+    TenureCountCache() { mozilla::PodZero(this); }
+
+    TenureCount& findEntry(ObjectGroup* group) {
+        return entries[PointerHasher<ObjectGroup*, 3>::hash(group) % mozilla::ArrayLength(entries)];
     }
 };
 

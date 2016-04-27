@@ -25,6 +25,39 @@ template<typename T, class D = DefaultDelete<T>> class UniquePtr;
 
 namespace mozilla {
 
+namespace detail {
+
+struct HasPointerTypeHelper
+{
+  template <class U> static double Test(...);
+  template <class U> static char Test(typename U::pointer* = 0);
+};
+
+template <class T>
+class HasPointerType : public IntegralConstant<bool, sizeof(HasPointerTypeHelper::Test<T>(0)) == 1>
+{
+};
+
+template <class T, class D, bool = HasPointerType<D>::value>
+struct PointerTypeImpl
+{
+  typedef typename D::pointer Type;
+};
+
+template <class T, class D>
+struct PointerTypeImpl<T, D, false>
+{
+  typedef T* Type;
+};
+
+template <class T, class D>
+struct PointerType
+{
+  typedef typename PointerTypeImpl<T, typename RemoveReference<D>::Type>::Type Type;
+};
+
+} // namespace detail
+
 /**
  * UniquePtr is a smart pointer that wholly owns a resource.  Ownership may be
  * transferred out of a UniquePtr through explicit action, but otherwise the
@@ -154,9 +187,9 @@ template<typename T, class D>
 class UniquePtr
 {
 public:
-  typedef T* Pointer;
   typedef T ElementType;
   typedef D DeleterType;
+  typedef typename detail::PointerType<T, DeleterType>::Type Pointer;
 
 private:
   Pair<Pointer, DeleterType> mTuple;
@@ -226,7 +259,7 @@ public:
   }
 
   UniquePtr(UniquePtr&& aOther)
-    : mTuple(aOther.release(), Forward<DeleterType>(aOther.getDeleter()))
+    : mTuple(aOther.release(), Forward<DeleterType>(aOther.get_deleter()))
   {}
 
   MOZ_IMPLICIT
@@ -238,6 +271,7 @@ public:
   }
 
   template<typename U, class E>
+  MOZ_IMPLICIT
   UniquePtr(UniquePtr<U, E>&& aOther,
             typename EnableIf<IsConvertible<typename UniquePtr<U, E>::Pointer,
                                             Pointer>::value &&
@@ -246,7 +280,7 @@ public:
                                ? IsSame<D, E>::value
                                : IsConvertible<E, D>::value),
                               int>::Type aDummy = 0)
-    : mTuple(aOther.release(), Forward<E>(aOther.getDeleter()))
+    : mTuple(aOther.release(), Forward<E>(aOther.get_deleter()))
   {
   }
 
@@ -255,7 +289,7 @@ public:
   UniquePtr& operator=(UniquePtr&& aOther)
   {
     reset(aOther.release());
-    getDeleter() = Forward<DeleterType>(aOther.getDeleter());
+    get_deleter() = Forward<DeleterType>(aOther.get_deleter());
     return *this;
   }
 
@@ -269,7 +303,7 @@ public:
                   "can't assign from UniquePtr holding an array");
 
     reset(aOther.release());
-    getDeleter() = Forward<E>(aOther.getDeleter());
+    get_deleter() = Forward<E>(aOther.get_deleter());
     return *this;
   }
 
@@ -290,10 +324,10 @@ public:
 
   Pointer get() const { return ptr(); }
 
-  DeleterType& getDeleter() { return del(); }
-  const DeleterType& getDeleter() const { return del(); }
+  DeleterType& get_deleter() { return del(); }
+  const DeleterType& get_deleter() const { return del(); }
 
-  Pointer release()
+  MOZ_WARN_UNUSED_RESULT Pointer release()
   {
     Pointer p = ptr();
     ptr() = nullptr;
@@ -305,7 +339,7 @@ public:
     Pointer old = ptr();
     ptr() = aPtr;
     if (old != nullptr) {
-      getDeleter()(old);
+      get_deleter()(old);
     }
   }
 
@@ -314,7 +348,6 @@ public:
     mTuple.swap(aOther.mTuple);
   }
 
-private:
   UniquePtr(const UniquePtr& aOther) = delete; // construct using Move()!
   void operator=(const UniquePtr& aOther) = delete; // assign using Move()!
 };
@@ -355,7 +388,6 @@ public:
     static_assert(!IsReference<D>::value, "must provide a deleter instance");
   }
 
-private:
   // delete[] knows how to handle *only* an array of a single class type.  For
   // delete[] to work correctly, it must know the size of each element, the
   // fields and base classes of each element requiring destruction, and so on.
@@ -368,7 +400,6 @@ private:
                               int>::Type aDummy = 0)
   = delete;
 
-public:
   UniquePtr(Pointer aPtr,
             typename Conditional<IsReference<D>::value,
                                  D,
@@ -388,7 +419,6 @@ public:
                   "rvalue deleter can't be stored by reference");
   }
 
-private:
   // Forbidden for the same reasons as stated above.
   template<typename U, typename V>
   UniquePtr(U&& aU, V&& aV,
@@ -397,9 +427,8 @@ private:
                               int>::Type aDummy = 0)
   = delete;
 
-public:
   UniquePtr(UniquePtr&& aOther)
-    : mTuple(aOther.release(), Forward<DeleterType>(aOther.getDeleter()))
+    : mTuple(aOther.release(), Forward<DeleterType>(aOther.get_deleter()))
   {}
 
   MOZ_IMPLICIT
@@ -415,7 +444,7 @@ public:
   UniquePtr& operator=(UniquePtr&& aOther)
   {
     reset(aOther.release());
-    getDeleter() = Forward<DeleterType>(aOther.getDeleter());
+    get_deleter() = Forward<DeleterType>(aOther.get_deleter());
     return *this;
   }
 
@@ -430,10 +459,10 @@ public:
   T& operator[](decltype(sizeof(int)) aIndex) const { return get()[aIndex]; }
   Pointer get() const { return mTuple.first(); }
 
-  DeleterType& getDeleter() { return mTuple.second(); }
-  const DeleterType& getDeleter() const { return mTuple.second(); }
+  DeleterType& get_deleter() { return mTuple.second(); }
+  const DeleterType& get_deleter() const { return mTuple.second(); }
 
-  Pointer release()
+  MOZ_WARN_UNUSED_RESULT Pointer release()
   {
     Pointer p = mTuple.first();
     mTuple.first() = nullptr;
@@ -458,19 +487,28 @@ public:
     }
   }
 
-private:
   template<typename U>
   void reset(U) = delete;
 
-public:
   void swap(UniquePtr& aOther) { mTuple.swap(aOther.mTuple); }
 
-private:
   UniquePtr(const UniquePtr& aOther) = delete; // construct using Move()!
   void operator=(const UniquePtr& aOther) = delete; // assign using Move()!
 };
 
-/** A default deletion policy using plain old operator delete. */
+/**
+ * A default deletion policy using plain old operator delete.
+ *
+ * Note that this type can be specialized, but authors should beware of the risk
+ * that the specialization may at some point cease to match (either because it
+ * gets moved to a different compilation unit or the signature changes). If the
+ * non-specialized (|delete|-based) version compiles for that type but does the
+ * wrong thing, bad things could happen.
+ *
+ * This is a non-issue for types which are always incomplete (i.e. opaque handle
+ * types), since |delete|-ing such a type will always trigger a compilation
+ * error.
+ */
 template<typename T>
 class DefaultDelete
 {
@@ -478,9 +516,9 @@ public:
   MOZ_CONSTEXPR DefaultDelete() {}
 
   template<typename U>
-  DefaultDelete(const DefaultDelete<U>& aOther,
-                typename EnableIf<mozilla::IsConvertible<U*, T*>::value,
-                                  int>::Type aDummy = 0)
+  MOZ_IMPLICIT DefaultDelete(const DefaultDelete<U>& aOther,
+                             typename EnableIf<mozilla::IsConvertible<U*, T*>::value,
+                                               int>::Type aDummy = 0)
   {}
 
   void operator()(T* aPtr) const
@@ -503,7 +541,6 @@ public:
     delete[] aPtr;
   }
 
-private:
   template<typename U>
   void operator()(U* aPtr) const = delete;
 };
@@ -634,10 +671,6 @@ struct UniqueSelector<T[N]>
  * pointer is assigned to an object that will manage its ownership.  UniquePtr
  * ably serves this function.)
  */
-
-// We don't have variadic template support everywhere, so just hard-code arities
-// 0-8 for now.  If you need more arguments, feel free to add the extra
-// overloads (and deletions for the T = E[N] case).
 
 template<typename T, typename... Args>
 typename detail::UniqueSelector<T>::SingleObject

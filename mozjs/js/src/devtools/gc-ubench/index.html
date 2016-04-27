@@ -20,6 +20,7 @@
   <script src="benchmarks/bigTextNodes.js"></script>
   <script src="benchmarks/events.js"></script>
   <script src="benchmarks/expandoEvents.js"></script>
+  <script src="benchmarks/propertyTreeSplitting.js"></script>
 
   <script src="harness.js"></script>
 
@@ -27,7 +28,15 @@
 
 <body onload="onload()" onunload="onunload()">
 
-<canvas id="graph" width="1080" height="550" style="padding-left:10px"></canvas>
+<canvas id="graph" width="1080" height="400" style="padding-left:10px"></canvas>
+<canvas id="memgraph" width="1080" height="400" style="padding-left:10px"></canvas>
+<div id="memgraph-disabled" style="display: none"><i>No performance.mozMemory object available. Set dom.enable_memory_stats to True to see heap size info.</i></div>
+
+<hr>
+
+<div id='track-sizes-div'>
+  Show heap size graph: <input id='track-sizes' type='checkbox' onclick="trackHeapSizes(this.checked)">
+</div>
 
 <div>
     <input type="button" id="stop" value="Pause" onclick="stopstart()"></input>
@@ -46,6 +55,12 @@
 
 <div>
     &nbsp;&nbsp;&nbsp;&nbsp;Time remaining: <span id="test-progress">(not running)</span>
+</div
+
+<div>
+    &nbsp;&nbsp;&nbsp;&nbsp;60 fps: <span id="pct60">n/a</span>
+    &nbsp;&nbsp;&nbsp;&nbsp;45 fps: <span id="pct45">n/a</span>
+    &nbsp;&nbsp;&nbsp;&nbsp;30 fps: <span id="pct30">n/a</span>
 </div
 
 <div>

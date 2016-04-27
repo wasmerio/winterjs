@@ -10,6 +10,7 @@
 
 #include "jsstr.h"
 
+#include "threading/LockGuard.h"
 #include "vm/TraceLogging.h"
 
 #ifndef TRACE_LOG_DIR
@@ -22,33 +23,11 @@
 
 using mozilla::NativeEndian;
 
-TraceLoggerGraphState *traceLoggerGraphState = nullptr;
-
-class AutoTraceLoggerGraphStateLock
-{
-  TraceLoggerGraphState *graph;
-
-  public:
-    explicit AutoTraceLoggerGraphStateLock(TraceLoggerGraphState *graph MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : graph(graph)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        PR_Lock(graph->lock);
-    }
-    ~AutoTraceLoggerGraphStateLock() {
-        PR_Unlock(graph->lock);
-    }
-  private:
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
+TraceLoggerGraphState* traceLoggerGraphState = nullptr;
 
 bool
 TraceLoggerGraphState::init()
 {
-    lock = PR_NewLock();
-    if (!lock)
-        return false;
-
     out = fopen(TRACE_LOG_DIR "tl-data.json", "w");
     if (!out)
         return false;
@@ -69,11 +48,6 @@ TraceLoggerGraphState::~TraceLoggerGraphState()
         out = nullptr;
     }
 
-    if (lock) {
-        PR_DestroyLock(lock);
-        lock = nullptr;
-    }
-
 #ifdef DEBUG
     initialized = false;
 #endif
@@ -82,7 +56,7 @@ TraceLoggerGraphState::~TraceLoggerGraphState()
 uint32_t
 TraceLoggerGraphState::nextLoggerId()
 {
-    AutoTraceLoggerGraphStateLock lock(this);
+    js::LockGuard<js::Mutex> guard(lock);
 
     MOZ_ASSERT(initialized);
 
@@ -191,14 +165,14 @@ TraceLoggerGraph::init(uint64_t startTimestamp)
     }
 
     // Create the top tree node and corresponding first stack item.
-    TreeEntry &treeEntry = tree.pushUninitialized();
+    TreeEntry& treeEntry = tree.pushUninitialized();
     treeEntry.setStart(startTimestamp);
     treeEntry.setStop(0);
     treeEntry.setTextId(0);
     treeEntry.setHasChildren(false);
     treeEntry.setNextId(0);
 
-    StackEntry &stackEntry = stack.pushUninitialized();
+    StackEntry& stackEntry = stack.pushUninitialized();
     stackEntry.setTreeId(0);
     stackEntry.setLastChildId(0);
     stackEntry.setActive(true);
@@ -276,7 +250,7 @@ TraceLoggerGraph::flush()
         if (bytesWritten < tree.size())
             return false;
 
-        treeOffset += tree.lastEntryId();
+        treeOffset += tree.size();
         tree.clear();
     }
 
@@ -284,7 +258,7 @@ TraceLoggerGraph::flush()
 }
 
 void
-TraceLoggerGraph::entryToBigEndian(TreeEntry *entry)
+TraceLoggerGraph::entryToBigEndian(TreeEntry* entry)
 {
     entry->start_ = NativeEndian::swapToBigEndian(entry->start_);
     entry->stop_ = NativeEndian::swapToBigEndian(entry->stop_);
@@ -294,7 +268,7 @@ TraceLoggerGraph::entryToBigEndian(TreeEntry *entry)
 }
 
 void
-TraceLoggerGraph::entryToSystemEndian(TreeEntry *entry)
+TraceLoggerGraph::entryToSystemEndian(TreeEntry* entry)
 {
     entry->start_ = NativeEndian::swapFromBigEndian(entry->start_);
     entry->stop_ = NativeEndian::swapFromBigEndian(entry->stop_);
@@ -331,7 +305,7 @@ TraceLoggerGraph::startEvent(uint32_t id, uint64_t timestamp)
     }
 }
 
-TraceLoggerGraph::StackEntry &
+TraceLoggerGraph::StackEntry&
 TraceLoggerGraph::getActiveAncestor()
 {
     uint32_t parentId = stack.lastEntryId();
@@ -350,7 +324,7 @@ TraceLoggerGraph::startEventInternal(uint32_t id, uint64_t timestamp)
     // 1) Parent has no children yet. So update parent to include children.
     // 2) Parent has already children. Update last child to link to the new
     //    child.
-    StackEntry &parent = getActiveAncestor();
+    StackEntry& parent = getActiveAncestor();
 #ifdef DEBUG
     TreeEntry entry;
     if (!getTreeEntry(parent.treeId(), &entry))
@@ -359,7 +333,7 @@ TraceLoggerGraph::startEventInternal(uint32_t id, uint64_t timestamp)
 
     if (parent.lastChildId() == 0) {
         MOZ_ASSERT(!entry.hasChildren());
-        MOZ_ASSERT(parent.treeId() == tree.lastEntryId() + treeOffset);
+        MOZ_ASSERT(parent.treeId() == treeOffset + tree.size() - 1);
 
         if (!updateHasChildren(parent.treeId()))
             return false;
@@ -371,7 +345,7 @@ TraceLoggerGraph::startEventInternal(uint32_t id, uint64_t timestamp)
     }
 
     // Add a new tree entry.
-    TreeEntry &treeEntry = tree.pushUninitialized();
+    TreeEntry& treeEntry = tree.pushUninitialized();
     treeEntry.setStart(timestamp);
     treeEntry.setStop(0);
     treeEntry.setTextId(id);
@@ -379,7 +353,7 @@ TraceLoggerGraph::startEventInternal(uint32_t id, uint64_t timestamp)
     treeEntry.setNextId(0);
 
     // Add a new stack entry.
-    StackEntry &stackEntry = stack.pushUninitialized();
+    StackEntry& stackEntry = stack.pushUninitialized();
     stackEntry.setTreeId(tree.lastEntryId() + treeOffset);
     stackEntry.setLastChildId(0);
     stackEntry.setActive(true);
@@ -463,7 +437,7 @@ TraceLoggerGraph::logTimestamp(uint32_t id, uint64_t timestamp)
 }
 
 bool
-TraceLoggerGraph::getTreeEntry(uint32_t treeId, TreeEntry *entry)
+TraceLoggerGraph::getTreeEntry(uint32_t treeId, TreeEntry* entry)
 {
     // Entry is still in memory
     if (treeId >= treeOffset) {
@@ -475,7 +449,7 @@ TraceLoggerGraph::getTreeEntry(uint32_t treeId, TreeEntry *entry)
     if (success != 0)
         return false;
 
-    size_t itemsRead = fread((void *)entry, sizeof(TreeEntry), 1, treeFile);
+    size_t itemsRead = fread((void*)entry, sizeof(TreeEntry), 1, treeFile);
     if (itemsRead < 1)
         return false;
 
@@ -484,7 +458,7 @@ TraceLoggerGraph::getTreeEntry(uint32_t treeId, TreeEntry *entry)
 }
 
 bool
-TraceLoggerGraph::saveTreeEntry(uint32_t treeId, TreeEntry *entry)
+TraceLoggerGraph::saveTreeEntry(uint32_t treeId, TreeEntry* entry)
 {
     int success = fseek(treeFile, treeId * sizeof(TreeEntry), SEEK_SET);
     if (success != 0)
@@ -561,7 +535,7 @@ TraceLoggerGraph::disable(uint64_t timestamp)
 }
 
 void
-TraceLoggerGraph::log(ContinuousSpace<EventEntry> &events)
+TraceLoggerGraph::log(ContinuousSpace<EventEntry>& events)
 {
     for (uint32_t i = 0; i < events.size(); i++) {
         if (events[i].textId == TraceLogger_Stop)
@@ -574,14 +548,16 @@ TraceLoggerGraph::log(ContinuousSpace<EventEntry> &events)
 }
 
 void
-TraceLoggerGraph::addTextId(uint32_t id, const char *text)
+TraceLoggerGraph::addTextId(uint32_t id, const char* text)
 {
     if (failed)
         return;
 
     // Assume ids are given in order. Which is currently true.
+#ifdef DEBUG
     MOZ_ASSERT(id == nextTextId);
     nextTextId++;
+#endif
 
     if (id > 0) {
         int written = fprintf(dictFile, ",\n");

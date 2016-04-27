@@ -2,10 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 import json
 import os
+import sys
 
 import mozpack.path as mozpath
 
@@ -13,6 +14,8 @@ from .base import MozbuildObject
 from .util import OrderedDefaultDict
 from collections import defaultdict
 
+import manifestparser
+import reftest
 
 def rewrite_test_base(test, new_base, honor_install_to_subdir=False):
     """Rewrite paths in a test to be under a new base path.
@@ -72,7 +75,8 @@ class TestMetadata(object):
         for path in sorted(self._tests_by_flavor.get(flavor, [])):
             yield self._tests_by_path[path]
 
-    def resolve_tests(self, paths=None, flavor=None, subsuite=None, under_path=None):
+    def resolve_tests(self, paths=None, flavor=None, subsuite=None, under_path=None,
+                      tags=None):
         """Resolve tests from an identifier.
 
         This is a generator of dicts describing each test.
@@ -80,8 +84,10 @@ class TestMetadata(object):
         ``paths`` can be an iterable of values to use to identify tests to run.
         If an entry is a known test file, tests associated with that file are
         returned (there may be multiple configurations for a single file). If
-        an entry is a directory, all tests in that directory are returned. If
-        the string appears in a known test file, that test file is considered.
+        an entry is a directory, or a prefix of a directory containing tests,
+        all tests in that directory are returned. If the string appears in a
+        known test file, that test file is considered. If the path contains
+        a wildcard pattern, tests matching that pattern are returned.
 
         If ``under_path`` is a string, it will be used to filter out tests that
         aren't in the specified path prefix relative to topsrcdir or the
@@ -93,7 +99,13 @@ class TestMetadata(object):
 
         If ``subsuite`` is a string, it will be used to filter returned tests
         to only be in the subsuite specified.
+
+        If ``tags`` are specified, they will be used to filter returned tests
+        to only those with a matching tag.
         """
+        if tags:
+            tags = set(tags)
+
         def fltr(tests):
             for test in tests:
                 if flavor:
@@ -102,6 +114,9 @@ class TestMetadata(object):
                     continue
 
                 if subsuite and test.get('subsuite') != subsuite:
+                    continue
+
+                if tags and not (tags & set(test.get('tags', '').split())):
                     continue
 
                 if under_path \
@@ -123,8 +138,15 @@ class TestMetadata(object):
                 candidate_paths |= set(self._tests_by_path.keys())
                 continue
 
-            # If the path is a directory, pull in all tests in that directory.
-            if path in self._test_dirs:
+            if '*' in path:
+                candidate_paths |= {p for p in self._tests_by_path
+                                    if mozpath.match(p, path)}
+                continue
+
+            # If the path is a directory, or the path is a prefix of a directory
+            # containing tests, pull in all tests in that directory.
+            if (path in self._test_dirs or
+                any(p.startswith(path) for p in self._tests_by_path)):
                 candidate_paths |= {p for p in self._tests_by_path
                                     if p.startswith(path)}
                 continue
@@ -160,6 +182,8 @@ class TestResolver(MozbuildObject):
                 'mochitest', 'chrome'),
             'mochitest': os.path.join(self.topobjdir, '_tests', 'testing',
                 'mochitest', 'tests'),
+            'web-platform-tests': os.path.join(self.topobjdir, '_tests', 'testing',
+                                               'web-platform'),
             'xpcshell': os.path.join(self.topobjdir, '_tests', 'xpcshell'),
         }
 
@@ -206,3 +230,92 @@ class TestResolver(MozbuildObject):
                     honor_install_to_subdir=True)
             else:
                 yield test
+
+# These definitions provide a single source of truth for modules attempting
+# to get a view of all tests for a build. Used by the emitter to figure out
+# how to read/install manifests and by test dependency annotations in Files()
+# entries to enumerate test flavors.
+
+# While there are multiple test manifests, the behavior is very similar
+# across them. We enforce this by having common handling of all
+# manifests and outputting a single class type with the differences
+# described inside the instance.
+#
+# Keys are variable prefixes and values are tuples describing how these
+# manifests should be handled:
+#
+#    (flavor, install_prefix, package_tests)
+#
+# flavor identifies the flavor of this test.
+# install_prefix is the path prefix of where to install the files in
+#     the tests directory.
+# package_tests indicates whether to package test files into the test
+#     package; suites that compile the test files should not install
+#     them into the test package.
+#
+TEST_MANIFESTS = dict(
+    A11Y=('a11y', 'testing/mochitest', 'a11y', True),
+    BROWSER_CHROME=('browser-chrome', 'testing/mochitest', 'browser', True),
+    ANDROID_INSTRUMENTATION=('instrumentation', 'instrumentation', '.', False),
+    JETPACK_PACKAGE=('jetpack-package', 'testing/mochitest', 'jetpack-package', True),
+    JETPACK_ADDON=('jetpack-addon', 'testing/mochitest', 'jetpack-addon', False),
+
+    # marionette tests are run from the srcdir
+    # TODO(ato): make packaging work as for other test suites
+    MARIONETTE=('marionette', 'marionette', '.', False),
+    MARIONETTE_LOOP=('marionette', 'marionette', '.', False),
+    MARIONETTE_UNIT=('marionette', 'marionette', '.', False),
+    MARIONETTE_UPDATE=('marionette', 'marionette', '.', False),
+    MARIONETTE_WEBAPI=('marionette', 'marionette', '.', False),
+
+    METRO_CHROME=('metro-chrome', 'testing/mochitest', 'metro', True),
+    MOCHITEST=('mochitest', 'testing/mochitest', 'tests', True),
+    MOCHITEST_CHROME=('chrome', 'testing/mochitest', 'chrome', True),
+    WEBRTC_SIGNALLING_TEST=('steeplechase', 'steeplechase', '.', True),
+    XPCSHELL_TESTS=('xpcshell', 'xpcshell', '.', True),
+)
+
+# Reftests have their own manifest format and are processed separately.
+REFTEST_FLAVORS = ('crashtest', 'reftest')
+
+# Web platform tests have their own manifest format and are processed separately.
+WEB_PLATFORM_TESTS_FLAVORS = ('web-platform-tests',)
+
+def all_test_flavors():
+    return ([v[0] for v in TEST_MANIFESTS.values()] +
+            list(REFTEST_FLAVORS) +
+            list(WEB_PLATFORM_TESTS_FLAVORS) +
+            ['python'])
+
+# Convenience methods for test manifest reading.
+def read_manifestparser_manifest(context, manifest_path):
+    path = mozpath.normpath(mozpath.join(context.srcdir, manifest_path))
+    return manifestparser.TestManifest(manifests=[path], strict=True,
+                                       rootdir=context.config.topsrcdir,
+                                       finder=context._finder)
+
+def read_reftest_manifest(context, manifest_path):
+    path = mozpath.normpath(mozpath.join(context.srcdir, manifest_path))
+    manifest = reftest.ReftestManifest(finder=context._finder)
+    manifest.load(path)
+    return manifest
+
+def read_wpt_manifest(context, paths):
+    manifest_path, tests_root = paths
+    full_path = mozpath.normpath(mozpath.join(context.srcdir, manifest_path))
+    old_path = sys.path[:]
+    try:
+        # Setup sys.path to include all the dependencies required to import
+        # the web-platform-tests manifest parser. web-platform-tests provides
+        # a the localpaths.py to do the path manipulation, which we load,
+        # providing the __file__ variable so it can resolve the relative
+        # paths correctly.
+        paths_file = os.path.join(context.config.topsrcdir, "testing",
+                                  "web-platform", "tests", "tools", "localpaths.py")
+        _globals = {"__file__": paths_file}
+        execfile(paths_file, _globals)
+        import manifest as wptmanifest
+    finally:
+        sys.path = old_path
+        f = context._finder.get(full_path)
+        return wptmanifest.manifest.load(tests_root, f)

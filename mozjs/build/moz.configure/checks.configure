@@ -1,0 +1,86 @@
+# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# vim: set filetype=python:
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Templates implementing some generic checks.
+
+# Helper to display "checking" messages
+#   @checking('for foo')
+#   def foo():
+#       return 'foo'
+# is equivalent to:
+#   def foo():
+#       sys.stdout.write('checking for foo... ')
+#       ret = foo
+#       sys.stdout.write(ret + '\n')
+#       return ret
+# This can be combined with e.g. @depends:
+#   @depends(some_option)
+#   @checking('for something')
+#   def check(value):
+#       ...
+# An optional callback can be given, that will be used to format the returned
+# value when displaying it.
+@template
+def checking(what, callback=None):
+    def decorator(func):
+        @advanced
+        def wrapped(*args, **kwargs):
+            import sys
+            print('checking', what, end='... ')
+            sys.stdout.flush()
+            ret = func(*args, **kwargs)
+            if callback:
+                print(callback(ret))
+            elif ret is True:
+                print('yes')
+            elif ret is False:
+                print('no')
+            else:
+                print(ret)
+            sys.stdout.flush()
+            return ret
+        return wrapped
+    return decorator
+
+
+# Template to check for programs in $PATH.
+#   check('PROG', ('a', 'b'))
+# will look for 'a' or 'b' in $PATH, and set_config PROG to the one
+# it can find. If PROG is already set from the environment or command line,
+# use that value instead.
+@template
+def check_prog(var, progs, allow_missing=False):
+    option(env=var, nargs=1, help='Path to the %s program' % var.lower())
+
+    if not (isinstance(progs, tuple) or isinstance(progs, list)):
+        configure_error('progs should be a list or tuple!')
+    progs = list(progs)
+
+    @depends(var)
+    @checking('for %s' % var.lower(), lambda x: x or 'not found')
+    def check(value):
+        if value:
+            progs[:] = value
+        for prog in progs:
+            result = find_program(prog)
+            if result:
+                return result
+
+    @depends(check, var)
+    @advanced
+    def postcheck(value, raw_value):
+        if value is None and (not allow_missing or raw_value):
+            from mozbuild.shellutil import quote
+            error('Cannot find %s (tried: %s)'
+                  % (var.lower(), ', '.join(quote(p) for p in progs)))
+
+    @depends(check)
+    def normalized_for_config(value):
+        return ':' if value is None else value
+
+    set_config(var, normalized_for_config)
+
+    return check

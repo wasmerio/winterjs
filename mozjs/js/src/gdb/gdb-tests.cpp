@@ -9,6 +9,7 @@
 #include "gdb-tests.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "js/Initialization.h"
 
 using namespace JS;
 
@@ -22,8 +23,8 @@ const JSClass global_class = {
 };
 
 template<typename T>
-static inline T *
-checkPtr(T *ptr)
+static inline T*
+checkPtr(T* ptr)
 {
   if (! ptr)
     abort();
@@ -38,7 +39,7 @@ checkBool(bool success)
 }
 
 /* The error reporter callback. */
-void reportError(JSContext *cx, const char *message, JSErrorReport *report)
+void reportError(JSContext* cx, const char* message, JSErrorReport* report)
 {
     fprintf(stderr, "%s:%u: %s\n",
             report->filename ? report->filename : "<no filename>",
@@ -46,7 +47,7 @@ void reportError(JSContext *cx, const char *message, JSErrorReport *report)
             message);
 }
 
-// prolog.py sets a breakpoint on this function; test functions can call it
+// prologue.py sets a breakpoint on this function; test functions can call it
 // to easily return control to GDB where desired.
 void breakpoint() {
     // If we leave this function empty, the linker will unify it with other
@@ -56,24 +57,25 @@ void breakpoint() {
     fprintf(stderr, "Called " __FILE__ ":breakpoint\n");
 }
 
-GDBFragment *GDBFragment::allFragments = nullptr;
+GDBFragment* GDBFragment::allFragments = nullptr;
 
 int
-main (int argc, const char **argv)
+main(int argc, const char** argv)
 {
     if (!JS_Init()) return 1;
-    JSRuntime *runtime = checkPtr(JS_NewRuntime(1024 * 1024));
+    JSRuntime* runtime = checkPtr(JS_NewRuntime(1024 * 1024));
     JS_SetGCParameter(runtime, JSGC_MAX_BYTES, 0xffffffff);
     JS_SetNativeStackQuota(runtime, 5000000);
 
-    JSContext *cx = checkPtr(JS_NewContext(runtime, 8192));
+    JSContext* cx = checkPtr(JS_NewContext(runtime, 8192));
     JS_SetErrorReporter(runtime, reportError);
 
     JSAutoRequest ar(cx);
 
     /* Create the global object. */
     JS::CompartmentOptions options;
-    options.setVersion(JSVERSION_LATEST);
+    options.behaviors().setVersion(JSVERSION_LATEST);
+
     RootedObject global(cx, checkPtr(JS_NewGlobalObject(cx, &global_class,
                         nullptr, JS::FireOnNewGlobalHook, options)));
     JSAutoCompartment ac(cx, global);
@@ -84,8 +86,8 @@ main (int argc, const char **argv)
 
     argv++;
     while (*argv) {
-        const char *name = *argv++;
-        GDBFragment *fragment;
+        const char* name = *argv++;
+        GDBFragment* fragment;
         for (fragment = GDBFragment::allFragments; fragment; fragment = fragment->next) {
             if (strcmp(fragment->name(), name) == 0) {
                 fragment->run(cx, argv);

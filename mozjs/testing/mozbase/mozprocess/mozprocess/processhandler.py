@@ -2,9 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
-import re
-import select
 import signal
 import subprocess
 import sys
@@ -13,7 +13,8 @@ import time
 import traceback
 from Queue import Queue, Empty
 from datetime import datetime
-__all__ = ['ProcessHandlerMixin', 'ProcessHandler']
+__all__ = ['ProcessHandlerMixin', 'ProcessHandler', 'LogOutput',
+           'StoreOutput', 'StreamOutput']
 
 # Set the MOZPROCESS_DEBUG environment variable to 1 to see some debugging output
 MOZPROCESS_DEBUG = os.getenv("MOZPROCESS_DEBUG")
@@ -25,8 +26,8 @@ isPosix = os.name == "posix" # includes MacOS X
 if isWin:
     import ctypes, ctypes.wintypes, msvcrt
     from ctypes import sizeof, addressof, c_ulong, byref, WinError, c_longlong
-    import winprocess
-    from qijo import JobObjectAssociateCompletionPortInformation,\
+    from . import winprocess
+    from .qijo import JobObjectAssociateCompletionPortInformation,\
     JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JobObjectExtendedLimitInformation,\
     JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, IO_COUNTERS
 
@@ -65,6 +66,7 @@ class ProcessHandlerMixin(object):
 
         MAX_IOCOMPLETION_PORT_NOTIFICATION_DELAY = 180
         MAX_PROCESS_KILL_DELAY = 30
+        TIMEOUT_BEFORE_SIGKILL = 1.0
 
         def __init__(self,
                      args,
@@ -134,16 +136,32 @@ class ProcessHandlerMixin(object):
                     if err is not None:
                         raise OSError(err)
             else:
-                sig = sig or signal.SIGKILL
-                if not self._ignore_children:
-                    try:
-                        os.killpg(self.pid, sig)
-                    except BaseException, e:
-                        if getattr(e, "errno", None) != 3:
-                            # Error 3 is "no such process", which is ok
-                            print >> sys.stdout, "Could not kill process, could not find pid: %s, assuming it's already dead" % self.pid
+                def send_sig(sig):
+                    if not self._ignore_children:
+                        try:
+                            os.killpg(self.pid, sig)
+                        except BaseException as e:
+                            if getattr(e, "errno", None) != 3:
+                                # Error 3 is "no such process", which is ok
+                                print >> sys.stdout, "Could not kill process, could not find pid: %s, assuming it's already dead" % self.pid
+                    else:
+                        os.kill(self.pid, sig)
+
+                if sig is None and isPosix:
+                    # ask the process for termination and wait a bit
+                    send_sig(signal.SIGTERM)
+                    limit = time.time() + self.TIMEOUT_BEFORE_SIGKILL
+                    while time.time() <= limit:
+                        if self.poll() is not None:
+                            # process terminated nicely
+                            break
+                        time.sleep(0.02)
+                    else:
+                        # process did not terminate - send SIGKILL to force
+                        send_sig(signal.SIGKILL)
                 else:
-                    os.kill(self.pid, sig)
+                    # a signal was explicitly set or not posix
+                    send_sig(sig or signal.SIGKILL)
 
             self.returncode = self.wait()
             self._cleanup()
@@ -576,7 +594,7 @@ falling back to not using job objects for managing child processes"""
                         if status > 255:
                             return status >> 8
                         return -status
-                    except OSError, e:
+                    except OSError as e:
                         if getattr(e, "errno", None) != 10:
                             # Error 10 is "no child process", which could indicate normal
                             # close

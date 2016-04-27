@@ -33,18 +33,12 @@
 
 #define ASSERT_NOT_REACHED() MOZ_ASSERT_UNREACHABLE("moz-decimal-utils.h")
 
+#define STACK_ALLOCATED() DISALLOW_NEW()
+
 #define WTF_MAKE_NONCOPYABLE(ClassName) \
   private: \
     ClassName(const ClassName&) = delete; \
     void operator=(const ClassName&) = delete;
-
-#if defined(_MSC_VER)
-namespace std {
-  inline bool isinf(double num) { return mozilla::IsInfinite(num); }
-  inline bool isnan(double num) { return mozilla::IsNaN(num); }
-  inline bool isfinite(double num) { return mozilla::IsFinite(num); }
-}
-#endif
 
 typedef std::string String;
 
@@ -106,7 +100,7 @@ private:
   std::string mStr;
 };
 
-} // namespace moz-decimal-utils
+} // namespace moz_decimal_utils
 
 #endif
 

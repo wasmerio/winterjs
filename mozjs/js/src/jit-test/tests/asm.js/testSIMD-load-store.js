@@ -1,5 +1,6 @@
 // |jit-test| test-also-noasmjs
 load(libdir + "asm.js");
+load(libdir + "simd.js");
 load(libdir + "asserts.js");
 
 // Set to true to see more JS debugging spew
@@ -13,25 +14,10 @@ if (!isSimdAvailable() || typeof SIMD === 'undefined') {
 const INT32_MAX = Math.pow(2, 31) - 1;
 const INT32_MIN = INT32_MAX + 1 | 0;
 
-function assertEqX4(real, expected, assertFunc) {
-    if (typeof assertFunc === 'undefined')
-        assertFunc = assertEq;
-
-    try {
-        assertFunc(real.x, expected[0]);
-        assertFunc(real.y, expected[1]);
-        assertFunc(real.z, expected[2]);
-        assertFunc(real.w, expected[3]);
-    } catch (e) {
-        print("Stack: " + e.stack);
-        throw e;
-    }
-}
-
 try {
 
 // Load / Store
-var IMPORTS = USE_ASM + 'var H=new glob.Uint8Array(heap); var i4=glob.SIMD.int32x4; var ci4=i4.check; var load=i4.load; var store=i4.store;';
+var IMPORTS = USE_ASM + 'var H=new glob.Uint8Array(heap); var i4=glob.SIMD.Int32x4; var ci4=i4.check; var load=i4.load; var store=i4.store;';
 
 //      Bad number of args
 assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "function f(){load();} return f");
@@ -45,7 +31,7 @@ assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "function f(){var i=0.;load(H
 assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "var H2=new glob.Int32Array(heap); function f(){var i=0;load(H2, i)} return f");
 assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "var H2=42; function f(){var i=0;load(H2, i)} return f");
 assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "function f(){var i=0;load(H2, i)} return f");
-assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "var f4=glob.SIMD.float32x4; function f(){var i=0;var vec=f4(1,2,3,4); store(H, i, vec)} return f");
+assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "var f4=glob.SIMD.Float32x4; function f(){var i=0;var vec=f4(1,2,3,4); store(H, i, vec)} return f");
 
 //      Bad coercions of returned values
 assertAsmTypeFail('glob', 'ffi', 'heap', IMPORTS + "function f(){var i=0;return load(H, i)|0;} return f");
@@ -77,12 +63,12 @@ var loadStoreCode = `
 
     var H = new glob.Uint8Array(heap);
 
-    var i4 = glob.SIMD.int32x4;
+    var i4 = glob.SIMD.Int32x4;
     var i4load = i4.load;
     var i4store = i4.store;
     var ci4 = i4.check;
 
-    var f4 = glob.SIMD.float32x4;
+    var f4 = glob.SIMD.Float32x4;
     var f4load = f4.load;
     var f4store = f4.store;
     var cf4 = f4.check;
@@ -159,7 +145,7 @@ assertThrowsInstanceOf(() => f32l(SIZE - 3), RangeError);
 
 var code = `
     "use asm";
-    var f4 = glob.SIMD.float32x4;
+    var f4 = glob.SIMD.Float32x4;
     var f4l = f4.load;
     var u8 = new glob.Uint8Array(heap);
 
@@ -183,8 +169,8 @@ assertThrowsInstanceOf(() => asmLink(asmCompile('glob', 'ffi', 'heap', code), th
 // Float32x4.store
 function f32s(n, v) { return m.f32s((n|0) << 2 | 0, v); };
 
-var vec  = SIMD.float32x4(5,6,7,8);
-var vec2 = SIMD.float32x4(0,1,2,3);
+var vec  = SIMD.Float32x4(5,6,7,8);
+var vec2 = SIMD.Float32x4(0,1,2,3);
 
 reset();
 f32s(0, vec);
@@ -242,8 +228,8 @@ assertThrowsInstanceOf(() => i32(SIZE - 3), RangeError);
 // Int32x4.store
 function i32s(n, v) { return m.i32s((n|0) << 2 | 0, v); };
 
-var vec  = SIMD.int32x4(5,6,7,8);
-var vec2 = SIMD.int32x4(0,1,2,3);
+var vec  = SIMD.Int32x4(5,6,7,8);
+var vec2 = SIMD.Int32x4(0,1,2,3);
 
 reset();
 i32s(0, vec);
@@ -280,45 +266,45 @@ function MakeCodeFor(typeName) {
     var type = glob.SIMD.${typeName};
     var c = type.check;
 
-    var lx = type.loadX;
-    var lxy = type.loadXY;
-    var lxyz = type.loadXYZ;
+    var l1 = type.load1;
+    var l2 = type.load2;
+    var l3 = type.load3;
 
-    var sx = type.storeX;
-    var sxy = type.storeXY;
-    var sxyz = type.storeXYZ;
+    var s1 = type.store1;
+    var s2 = type.store2;
+    var s3 = type.store3;
 
     var u8 = new glob.Uint8Array(heap);
 
-    function loadX(i) { i=i|0; return lx(u8, i); }
-    function loadXY(i) { i=i|0; return lxy(u8, i); }
-    function loadXYZ(i) { i=i|0; return lxyz(u8, i); }
+    function load1(i) { i=i|0; return l1(u8, i); }
+    function load2(i) { i=i|0; return l2(u8, i); }
+    function load3(i) { i=i|0; return l3(u8, i); }
 
-    function loadCstX() { return lx(u8, 41 << 2); }
-    function loadCstXY() { return lxy(u8, 41 << 2); }
-    function loadCstXYZ() { return lxyz(u8, 41 << 2); }
+    function loadCst1() { return l1(u8, 41 << 2); }
+    function loadCst2() { return l2(u8, 41 << 2); }
+    function loadCst3() { return l3(u8, 41 << 2); }
 
-    function storeX(i, x) { i=i|0; x=c(x); return sx(u8, i, x); }
-    function storeXY(i, x) { i=i|0; x=c(x); return sxy(u8, i, x); }
-    function storeXYZ(i, x) { i=i|0; x=c(x); return sxyz(u8, i, x); }
+    function store1(i, x) { i=i|0; x=c(x); return s1(u8, i, x); }
+    function store2(i, x) { i=i|0; x=c(x); return s2(u8, i, x); }
+    function store3(i, x) { i=i|0; x=c(x); return s3(u8, i, x); }
 
-    function storeCstX(x) { x=c(x); return sx(u8, 41 << 2, x); }
-    function storeCstXY(x) { x=c(x); return sxy(u8, 41 << 2, x); }
-    function storeCstXYZ(x) { x=c(x); return sxyz(u8, 41 << 2, x); }
+    function storeCst1(x) { x=c(x); return s1(u8, 41 << 2, x); }
+    function storeCst2(x) { x=c(x); return s2(u8, 41 << 2, x); }
+    function storeCst3(x) { x=c(x); return s3(u8, 41 << 2, x); }
 
     return {
-        loadX: loadX,
-        loadXY: loadXY,
-        loadXYZ: loadXYZ,
-        loadCstX: loadCstX,
-        loadCstXY: loadCstXY,
-        loadCstXYZ: loadCstXYZ,
-        storeX: storeX,
-        storeXY: storeXY,
-        storeXYZ: storeXYZ,
-        storeCstX: storeCstX,
-        storeCstXY: storeCstXY,
-        storeCstXYZ: storeCstXYZ,
+        load1: load1,
+        load2: load2,
+        load3: load3,
+        loadCst1: loadCst1,
+        loadCst2: loadCst2,
+        loadCst3: loadCst3,
+        store1: store1,
+        store2: store2,
+        store3: store3,
+        storeCst1: storeCst1,
+        storeCst2: storeCst2,
+        storeCst3: storeCst3,
     }
 `;
 }
@@ -336,45 +322,45 @@ function TestPartialLoads(m, typedArray, x, y, z, w) {
 
     // Test correct loads
     var i = 0, j = 0; // i in elems, j in bytes
-    assertEqX4(m.loadX(j),   [x(i), 0, 0, 0]);
-    assertEqX4(m.loadXY(j),  [x(i), y(i), 0, 0]);
-    assertEqX4(m.loadXYZ(j), [x(i), y(i), z(i), 0]);
+    assertEqX4(m.load1(j), [x(i), 0, 0, 0]);
+    assertEqX4(m.load2(j), [x(i), y(i), 0, 0]);
+    assertEqX4(m.load3(j), [x(i), y(i), z(i), 0]);
 
     j += 4;
-    assertEqX4(m.loadX(j),   [y(i), 0, 0, 0]);
-    assertEqX4(m.loadXY(j),  [y(i), z(i), 0, 0]);
-    assertEqX4(m.loadXYZ(j), [y(i), z(i), w(i), 0]);
+    assertEqX4(m.load1(j), [y(i), 0, 0, 0]);
+    assertEqX4(m.load2(j), [y(i), z(i), 0, 0]);
+    assertEqX4(m.load3(j), [y(i), z(i), w(i), 0]);
 
     j += 4;
-    assertEqX4(m.loadX(j),   [z(i), 0, 0, 0]);
-    assertEqX4(m.loadXY(j),  [z(i), w(i), 0, 0]);
-    assertEqX4(m.loadXYZ(j), [z(i), w(i), x(i+4), 0]);
+    assertEqX4(m.load1(j), [z(i), 0, 0, 0]);
+    assertEqX4(m.load2(j), [z(i), w(i), 0, 0]);
+    assertEqX4(m.load3(j), [z(i), w(i), x(i+4), 0]);
 
     j += 4;
-    assertEqX4(m.loadX(j),   [w(i), 0, 0, 0]);
-    assertEqX4(m.loadXY(j),  [w(i), x(i+4), 0, 0]);
-    assertEqX4(m.loadXYZ(j), [w(i), x(i+4), y(i+4), 0]);
+    assertEqX4(m.load1(j), [w(i), 0, 0, 0]);
+    assertEqX4(m.load2(j), [w(i), x(i+4), 0, 0]);
+    assertEqX4(m.load3(j), [w(i), x(i+4), y(i+4), 0]);
 
     j += 4;
     i += 4;
-    assertEqX4(m.loadX(j),   [x(i), 0, 0, 0]);
-    assertEqX4(m.loadXY(j),  [x(i), y(i), 0, 0]);
-    assertEqX4(m.loadXYZ(j), [x(i), y(i), z(i), 0]);
+    assertEqX4(m.load1(j), [x(i), 0, 0, 0]);
+    assertEqX4(m.load2(j), [x(i), y(i), 0, 0]);
+    assertEqX4(m.load3(j), [x(i), y(i), z(i), 0]);
 
     // Test loads with constant indexes (41)
-    assertEqX4(m.loadCstX(),   [y(40), 0, 0, 0]);
-    assertEqX4(m.loadCstXY(),  [y(40), z(40), 0, 0]);
-    assertEqX4(m.loadCstXYZ(), [y(40), z(40), w(40), 0]);
+    assertEqX4(m.loadCst1(), [y(40), 0, 0, 0]);
+    assertEqX4(m.loadCst2(), [y(40), z(40), 0, 0]);
+    assertEqX4(m.loadCst3(), [y(40), z(40), w(40), 0]);
 
     // Test limit and OOB accesses
-    assertEqX4(m.loadX((SIZE - 1) << 2), [w(SIZE - 4), 0, 0, 0]);
-    assertThrowsInstanceOf(() => m.loadX(((SIZE - 1) << 2) + 1), RangeError);
+    assertEqX4(m.load1((SIZE - 1) << 2), [w(SIZE - 4), 0, 0, 0]);
+    assertThrowsInstanceOf(() => m.load1(((SIZE - 1) << 2) + 1), RangeError);
 
-    assertEqX4(m.loadXY((SIZE - 2) << 2), [z(SIZE - 4), w(SIZE - 4), 0, 0]);
-    assertThrowsInstanceOf(() => m.loadXY(((SIZE - 2) << 2) + 1), RangeError);
+    assertEqX4(m.load2((SIZE - 2) << 2), [z(SIZE - 4), w(SIZE - 4), 0, 0]);
+    assertThrowsInstanceOf(() => m.load2(((SIZE - 2) << 2) + 1), RangeError);
 
-    assertEqX4(m.loadXYZ((SIZE - 3) << 2), [y(SIZE - 4), z(SIZE - 4), w(SIZE - 4), 0]);
-    assertThrowsInstanceOf(() => m.loadXYZ(((SIZE - 3) << 2) + 1), RangeError);
+    assertEqX4(m.load3((SIZE - 3) << 2), [y(SIZE - 4), z(SIZE - 4), w(SIZE - 4), 0]);
+    assertThrowsInstanceOf(() => m.load3(((SIZE - 3) << 2) + 1), RangeError);
 }
 
 // Partial stores
@@ -390,16 +376,16 @@ function TestPartialStores(m, typedArray, typeName, x, y, z, w) {
             assertEq(typedArray[i], i + 1);
     }
 
-    function TestStoreX(i) {
-        m.storeX(i, val);
+    function TestStore1(i) {
+        m.store1(i, val);
         CheckNotModified(0, i >> 2);
         assertEq(typedArray[i >> 2], x);
         CheckNotModified((i >> 2) + 1, SIZE);
         typedArray[i >> 2] = (i >> 2) + 1;
     }
 
-    function TestStoreXY(i) {
-        m.storeXY(i, val);
+    function TestStore2(i) {
+        m.store2(i, val);
         CheckNotModified(0, i >> 2);
         assertEq(typedArray[i >> 2], x);
         assertEq(typedArray[(i >> 2) + 1], y);
@@ -408,8 +394,8 @@ function TestPartialStores(m, typedArray, typeName, x, y, z, w) {
         typedArray[(i >> 2) + 1] = (i >> 2) + 2;
     }
 
-    function TestStoreXYZ(i) {
-        m.storeXYZ(i, val);
+    function TestStore3(i) {
+        m.store3(i, val);
         CheckNotModified(0, i >> 2);
         assertEq(typedArray[i >> 2], x);
         assertEq(typedArray[(i >> 2) + 1], y);
@@ -427,48 +413,48 @@ function TestPartialStores(m, typedArray, typeName, x, y, z, w) {
 
     Reset();
 
-    TestStoreX(0);
-    TestStoreX(1 << 2);
-    TestStoreX(2 << 2);
-    TestStoreX(3 << 2);
-    TestStoreX(1337 << 2);
+    TestStore1(0);
+    TestStore1(1 << 2);
+    TestStore1(2 << 2);
+    TestStore1(3 << 2);
+    TestStore1(1337 << 2);
 
     var i = (SIZE - 1) << 2;
-    TestStoreX(i);
-    TestOOBStore(() => m.storeX(i + 1, val));
-    TestOOBStore(() => m.storeX(-1, val));
+    TestStore1(i);
+    TestOOBStore(() => m.store1(i + 1, val));
+    TestOOBStore(() => m.store1(-1, val));
 
-    TestStoreXY(0);
-    TestStoreXY(1 << 2);
-    TestStoreXY(2 << 2);
-    TestStoreXY(3 << 2);
-    TestStoreXY(1337 << 2);
+    TestStore2(0);
+    TestStore2(1 << 2);
+    TestStore2(2 << 2);
+    TestStore2(3 << 2);
+    TestStore2(1337 << 2);
 
     var i = (SIZE - 2) << 2;
-    TestStoreXY(i);
-    TestOOBStore(() => m.storeXY(i + 1, val));
-    TestOOBStore(() => m.storeXY(-1, val));
+    TestStore2(i);
+    TestOOBStore(() => m.store2(i + 1, val));
+    TestOOBStore(() => m.store2(-1, val));
 
-    TestStoreXYZ(0);
-    TestStoreXYZ(1 << 2);
-    TestStoreXYZ(2 << 2);
-    TestStoreXYZ(3 << 2);
-    TestStoreXYZ(1337 << 2);
+    TestStore3(0);
+    TestStore3(1 << 2);
+    TestStore3(2 << 2);
+    TestStore3(3 << 2);
+    TestStore3(1337 << 2);
 
     var i = (SIZE - 3) << 2;
-    TestStoreXYZ(i);
-    TestOOBStore(() => m.storeXYZ(i + 1, val));
-    TestOOBStore(() => m.storeXYZ(-1, val));
-    TestOOBStore(() => m.storeXYZ(-9, val));
+    TestStore3(i);
+    TestOOBStore(() => m.store3(i + 1, val));
+    TestOOBStore(() => m.store3(-1, val));
+    TestOOBStore(() => m.store3(-9, val));
 
     // Constant indexes (41)
-    m.storeCstX(val);
+    m.storeCst1(val);
     CheckNotModified(0, 41);
     assertEq(typedArray[41], x);
     CheckNotModified(42, SIZE);
     typedArray[41] = 42;
 
-    m.storeCstXY(val);
+    m.storeCst2(val);
     CheckNotModified(0, 41);
     assertEq(typedArray[41], x);
     assertEq(typedArray[42], y);
@@ -476,7 +462,7 @@ function TestPartialStores(m, typedArray, typeName, x, y, z, w) {
     typedArray[41] = 42;
     typedArray[42] = 43;
 
-    m.storeCstXYZ(val);
+    m.storeCst3(val);
     CheckNotModified(0, 41);
     assertEq(typedArray[41], x);
     assertEq(typedArray[42], y);
@@ -488,26 +474,26 @@ function TestPartialStores(m, typedArray, typeName, x, y, z, w) {
 }
 
 var f32 = new Float32Array(SIZE);
-var mfloat32x4 = asmLink(asmCompile('glob', 'ffi', 'heap', MakeCodeFor('float32x4')), this, null, f32.buffer);
+var mFloat32x4 = asmLink(asmCompile('glob', 'ffi', 'heap', MakeCodeFor('Float32x4')), this, null, f32.buffer);
 
-TestPartialLoads(mfloat32x4, f32,
+TestPartialLoads(mFloat32x4, f32,
             (i) => i + 1,
             (i) => Math.fround(13.37),
             (i) => Math.fround(1/i),
             (i) => Math.fround(Math.sqrt(0x2000 - i)));
 
-TestPartialStores(mfloat32x4, f32, 'float32x4', 42, -0, NaN, 0.1337);
+TestPartialStores(mFloat32x4, f32, 'Float32x4', 42, -0, NaN, 0.1337);
 
 var i32 = new Int32Array(f32.buffer);
-var mint32x4 = asmLink(asmCompile('glob', 'ffi', 'heap', MakeCodeFor('int32x4')), this, null, i32.buffer);
+var mInt32x4 = asmLink(asmCompile('glob', 'ffi', 'heap', MakeCodeFor('Int32x4')), this, null, i32.buffer);
 
-TestPartialLoads(mint32x4, i32,
+TestPartialLoads(mInt32x4, i32,
             (i) => i + 1 | 0,
             (i) => -i | 0,
             (i) => i * 2 | 0,
             (i) => 42);
 
-TestPartialStores(mint32x4, i32, 'int32x4', 42, -3, 13, 37);
+TestPartialStores(mInt32x4, i32, 'Int32x4', 42, -3, 13, 37);
 
 })();
 

@@ -11,47 +11,53 @@
 
 using namespace js;
 
-template <class Base>
-bool
-SecurityWrapper<Base>::enter(JSContext *cx, HandleObject wrapper, HandleId id,
-                             Wrapper::Action act, bool *bp) const
+static void
+ReportUnwrapDenied(JSContext *cx)
 {
     JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+}
+
+template <class Base>
+bool
+SecurityWrapper<Base>::enter(JSContext* cx, HandleObject wrapper, HandleId id,
+                             Wrapper::Action act, bool* bp) const
+{
+    ReportUnwrapDenied(cx);
     *bp = false;
     return false;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl,
-                                  CallArgs args) const
+SecurityWrapper<Base>::nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
+                                  const CallArgs& args) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+    ReportUnwrapDenied(cx);
     return false;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::setPrototype(JSContext *cx, HandleObject wrapper, HandleObject proto,
-                                    ObjectOpResult &result) const
+SecurityWrapper<Base>::setPrototype(JSContext* cx, HandleObject wrapper, HandleObject proto,
+                                    ObjectOpResult& result) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+    ReportUnwrapDenied(cx);
     return false;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::setImmutablePrototype(JSContext *cx, HandleObject wrapper,
-                                             bool *succeeded) const
+SecurityWrapper<Base>::setImmutablePrototype(JSContext* cx, HandleObject wrapper,
+                                             bool* succeeded) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+    ReportUnwrapDenied(cx);
     return false;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::preventExtensions(JSContext *cx, HandleObject wrapper,
-                                         ObjectOpResult &result) const
+SecurityWrapper<Base>::preventExtensions(JSContext* cx, HandleObject wrapper,
+                                         ObjectOpResult& result) const
 {
     // Just like BaseProxyHandler, SecurityWrappers claim by default to always
     // be extensible, so as not to leak information about the state of the
@@ -61,41 +67,41 @@ SecurityWrapper<Base>::preventExtensions(JSContext *cx, HandleObject wrapper,
 
 template <class Base>
 bool
-SecurityWrapper<Base>::isExtensible(JSContext *cx, HandleObject wrapper, bool *extensible) const
+SecurityWrapper<Base>::isExtensible(JSContext* cx, HandleObject wrapper, bool* extensible) const
 {
     // See above.
     *extensible = true;
     return true;
 }
 
-// For security wrappers, we run the OrdinaryToPrimitive algorithm on the wrapper
-// itself, which means that the existing security policy on operations like
-// toString() will take effect and do the right thing here.
 template <class Base>
 bool
-SecurityWrapper<Base>::defaultValue(JSContext *cx, HandleObject wrapper,
-                                    JSType hint, MutableHandleValue vp) const
+SecurityWrapper<Base>::getBuiltinClass(JSContext* cx, HandleObject wrapper,
+                                       ESClassValue* classValue) const
 {
-    return OrdinaryToPrimitive(cx, wrapper, hint, vp);
+    *classValue = ESClass_Other;
+    return true;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::objectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx) const
+SecurityWrapper<Base>::isArray(JSContext* cx, HandleObject obj, JS::IsArrayAnswer* answer) const
 {
-    return false;
+    // This should ReportUnwrapDenied(cx), but bug 849730 disagrees.  :-(
+    *answer = JS::IsArrayAnswer::NotArray;
+    return true;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::regexp_toShared(JSContext *cx, HandleObject obj, RegExpGuard *g) const
+SecurityWrapper<Base>::regexp_toShared(JSContext* cx, HandleObject obj, RegExpGuard* g) const
 {
     return Base::regexp_toShared(cx, obj, g);
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::boxedValue_unbox(JSContext *cx, HandleObject obj, MutableHandleValue vp) const
+SecurityWrapper<Base>::boxedValue_unbox(JSContext* cx, HandleObject obj, MutableHandleValue vp) const
 {
     vp.setUndefined();
     return true;
@@ -103,17 +109,17 @@ SecurityWrapper<Base>::boxedValue_unbox(JSContext *cx, HandleObject obj, Mutable
 
 template <class Base>
 bool
-SecurityWrapper<Base>::defineProperty(JSContext *cx, HandleObject wrapper,
-                                      HandleId id, MutableHandle<PropertyDescriptor> desc,
-                                      ObjectOpResult &result) const
+SecurityWrapper<Base>::defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
+                                      Handle<PropertyDescriptor> desc,
+                                      ObjectOpResult& result) const
 {
     if (desc.getter() || desc.setter()) {
         RootedValue idVal(cx, IdToValue(id));
-        JSString *str = ValueToSource(cx, idVal);
+        JSString* str = ValueToSource(cx, idVal);
         if (!str)
             return false;
         AutoStableStringChars chars(cx);
-        const char16_t *prop = nullptr;
+        const char16_t* prop = nullptr;
         if (str->ensureFlat(cx) && chars.initTwoByte(cx, str))
             prop = chars.twoByteChars();
         JS_ReportErrorNumberUC(cx, GetErrorMessage, nullptr,
@@ -126,19 +132,19 @@ SecurityWrapper<Base>::defineProperty(JSContext *cx, HandleObject wrapper,
 
 template <class Base>
 bool
-SecurityWrapper<Base>::watch(JSContext *cx, HandleObject proxy,
+SecurityWrapper<Base>::watch(JSContext* cx, HandleObject proxy,
                              HandleId id, HandleObject callable) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+    ReportUnwrapDenied(cx);
     return false;
 }
 
 template <class Base>
 bool
-SecurityWrapper<Base>::unwatch(JSContext *cx, HandleObject proxy,
+SecurityWrapper<Base>::unwatch(JSContext* cx, HandleObject proxy,
                                HandleId id) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNWRAP_DENIED);
+    ReportUnwrapDenied(cx);
     return false;
 }
 

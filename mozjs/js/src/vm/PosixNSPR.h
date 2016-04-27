@@ -48,10 +48,10 @@ enum PRThreadState {
    PR_UNJOINABLE_THREAD
 };
 
-PRThread *
+PRThread*
 PR_CreateThread(PRThreadType type,
-                void (*start)(void *arg),
-                void *arg,
+                void (*start)(void* arg),
+                void* arg,
                 PRThreadPriority priority,
                 PRThreadScope scope,
                 PRThreadState state,
@@ -60,37 +60,64 @@ PR_CreateThread(PRThreadType type,
 typedef enum { PR_FAILURE = -1, PR_SUCCESS = 0 } PRStatus;
 
 PRStatus
-PR_JoinThread(PRThread *thread);
+PR_JoinThread(PRThread* thread);
 
-PRThread *
+PRThread*
 PR_GetCurrentThread();
 
 PRStatus
-PR_SetCurrentThreadName(const char *name);
+PR_SetCurrentThreadName(const char* name);
 
-PRLock *
+typedef void (*PRThreadPrivateDTOR)(void* priv);
+
+PRStatus
+PR_NewThreadPrivateIndex(unsigned* newIndex, PRThreadPrivateDTOR destructor);
+
+PRStatus
+PR_SetThreadPrivate(unsigned index, void* priv);
+
+void*
+PR_GetThreadPrivate(unsigned index);
+
+struct PRCallOnceType {
+    int initialized;
+    int32_t inProgress;
+    PRStatus status;
+};
+
+typedef PRStatus (*PRCallOnceFN)();
+
+PRStatus
+PR_CallOnce(PRCallOnceType* once, PRCallOnceFN func);
+
+typedef PRStatus (*PRCallOnceWithArgFN)(void*);
+
+PRStatus
+PR_CallOnceWithArg(PRCallOnceType* once, PRCallOnceWithArgFN func, void* arg);
+
+PRLock*
 PR_NewLock();
 
 void
-PR_DestroyLock(PRLock *lock);
+PR_DestroyLock(PRLock* lock);
 
 void
-PR_Lock(PRLock *lock);
+PR_Lock(PRLock* lock);
 
 PRStatus
-PR_Unlock(PRLock *lock);
+PR_Unlock(PRLock* lock);
 
-PRCondVar *
-PR_NewCondVar(PRLock *lock);
+PRCondVar*
+PR_NewCondVar(PRLock* lock);
 
 void
-PR_DestroyCondVar(PRCondVar *cvar);
+PR_DestroyCondVar(PRCondVar* cvar);
 
 PRStatus
-PR_NotifyCondVar(PRCondVar *cvar);
+PR_NotifyCondVar(PRCondVar* cvar);
 
 PRStatus
-PR_NotifyAllCondVar(PRCondVar *cvar);
+PR_NotifyAllCondVar(PRCondVar* cvar);
 
 #define PR_INTERVAL_MIN 1000UL
 #define PR_INTERVAL_MAX 100000UL
@@ -108,26 +135,7 @@ uint32_t
 PR_TicksPerSecond();
 
 PRStatus
-PR_WaitCondVar(PRCondVar *cvar, uint32_t timeout);
-
-// These are not supported, and will assert if called.
-// Present only to avoid linkage errors.
-
-struct PRCallOnceType {
-    int initialized;
-    int32_t inProgress;
-    PRStatus status;
-};
-
-typedef PRStatus (*PRCallOnceFN)();
-
-PRStatus
-PR_CallOnce(PRCallOnceType *once, PRCallOnceFN func);
-
-typedef PRStatus (*PRCallOnceWithArgFN)(void *);
-
-PRStatus
-PR_CallOnceWithArg(PRCallOnceType *once, PRCallOnceWithArgFN func, void *arg);
+PR_WaitCondVar(PRCondVar* cvar, uint32_t timeout);
 
 #endif /* JS_POSIX_NSPR */
 

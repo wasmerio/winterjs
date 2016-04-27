@@ -1,10 +1,8 @@
 /* Simple timer, for use in benchmark reporting. */
 
-#include <sys/time.h>
-
 typedef struct {
-	struct timeval tv0;
-	struct timeval tv1;
+	nstime_t t0;
+	nstime_t t1;
 } timedelta_t;
 
 void	timer_start(timedelta_t *timer);

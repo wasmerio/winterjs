@@ -1,4 +1,9 @@
-CONFIGURE_FLAGS := --disable-jemalloc
+CONFIGURE_FLAGS := \
+	--disable-jemalloc \
+	--disable-js-shell \
+	--disable-tests \
+	--disable-shared-js \
+	--without-intl-api
 
 ifneq ($(HOST),$(TARGET))
 
@@ -7,7 +12,7 @@ CPP ?= $(TARGET)-gcc -E
 CXX ?= $(TARGET)-g++
 AR ?= $(TARGET)-ar
 
-CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api --disable-gold
+CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 
 	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
 		CONFIGURE_FLAGS += \
@@ -65,7 +70,7 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
+	CONFIGURE_FLAGS += --disable-export-js
 
 endif
 
@@ -74,16 +79,18 @@ SRC_DIR = $(shell pwd)
 .PHONY : all
 ifneq (,$(FORCED_PYTHON))
 all:
+	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	PYTHON="$(FORCED_PYTHON)" \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
+	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 else
 all:
+	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
+	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 endif
 

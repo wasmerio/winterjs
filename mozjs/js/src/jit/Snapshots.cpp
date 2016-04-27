@@ -16,6 +16,8 @@
 #include "jit/MIR.h"
 #include "jit/Recover.h"
 
+#include "vm/Printer.h"
+
 using namespace js;
 using namespace js::jit;
 
@@ -56,7 +58,7 @@ using namespace js::jit;
 // Snapshot body, repeated "frame count" times, from oldest frame to newest frame.
 // Note that the first frame doesn't have the "parent PC" field.
 //
-//   [ptr] Debug only: JSScript *
+//   [ptr] Debug only: JSScript*
 //   [vwu] pc offset
 //   [vwu] # of RVA's indexes, including nargs
 //  [vwu*] List of indexes to R(ecover)ValueAllocation table. Contains
@@ -121,7 +123,7 @@ using namespace js::jit;
 //           offset on the stack.
 //
 
-const RValueAllocation::Layout &
+const RValueAllocation::Layout&
 RValueAllocation::layoutFromMode(Mode mode)
 {
     switch (mode) {
@@ -283,8 +285,8 @@ RValueAllocation::layoutFromMode(Mode mode)
 static const size_t ALLOCATION_TABLE_ALIGNMENT = 2; /* bytes */
 
 void
-RValueAllocation::readPayload(CompactBufferReader &reader, PayloadType type,
-                              uint8_t *mode, Payload *p)
+RValueAllocation::readPayload(CompactBufferReader& reader, PayloadType type,
+                              uint8_t* mode, Payload* p)
 {
     switch (type) {
       case PAYLOAD_NONE:
@@ -309,10 +311,10 @@ RValueAllocation::readPayload(CompactBufferReader &reader, PayloadType type,
 }
 
 RValueAllocation
-RValueAllocation::read(CompactBufferReader &reader)
+RValueAllocation::read(CompactBufferReader& reader)
 {
     uint8_t mode = reader.readByte();
-    const Layout &layout = layoutFromMode(Mode(mode & MODE_MASK));
+    const Layout& layout = layoutFromMode(Mode(mode & MODE_BITS_MASK));
     Payload arg1, arg2;
 
     readPayload(reader, layout.type1, &mode, &arg1);
@@ -321,8 +323,7 @@ RValueAllocation::read(CompactBufferReader &reader)
 }
 
 void
-RValueAllocation::writePayload(CompactBufferWriter &writer, PayloadType type,
-                               Payload p)
+RValueAllocation::writePayload(CompactBufferWriter& writer, PayloadType type, Payload p)
 {
     switch (type) {
       case PAYLOAD_NONE:
@@ -346,17 +347,19 @@ RValueAllocation::writePayload(CompactBufferWriter &writer, PayloadType type,
       case PAYLOAD_PACKED_TAG: {
         // This code assumes that the PACKED_TAG payload is following the
         // writeByte of the mode.
-        MOZ_ASSERT(writer.length());
-        uint8_t *mode = writer.buffer() + (writer.length() - 1);
-        MOZ_ASSERT((*mode & PACKED_TAG_MASK) == 0 && (p.type & ~PACKED_TAG_MASK) == 0);
-        *mode = *mode | p.type;
+        if (!writer.oom()) {
+            MOZ_ASSERT(writer.length());
+            uint8_t* mode = writer.buffer() + (writer.length() - 1);
+            MOZ_ASSERT((*mode & PACKED_TAG_MASK) == 0 && (p.type & ~PACKED_TAG_MASK) == 0);
+            *mode = *mode | p.type;
+        }
         break;
       }
     }
 }
 
 void
-RValueAllocation::writePadding(CompactBufferWriter &writer)
+RValueAllocation::writePadding(CompactBufferWriter& writer)
 {
     // Write 0x7f in all padding bytes.
     while (writer.length() % ALLOCATION_TABLE_ALIGNMENT)
@@ -364,9 +367,9 @@ RValueAllocation::writePadding(CompactBufferWriter &writer)
 }
 
 void
-RValueAllocation::write(CompactBufferWriter &writer) const
+RValueAllocation::write(CompactBufferWriter& writer) const
 {
-    const Layout &layout = layoutFromMode(mode());
+    const Layout& layout = layoutFromMode(mode());
     MOZ_ASSERT(layout.type2 != PAYLOAD_PACKED_TAG);
     MOZ_ASSERT(writer.length() % ALLOCATION_TABLE_ALIGNMENT == 0);
 
@@ -395,7 +398,7 @@ RValueAllocation::hash() const {
     return res;
 }
 
-static const char *
+static const char*
 ValTypeToString(JSValueType type)
 {
     switch (type) {
@@ -419,43 +422,43 @@ ValTypeToString(JSValueType type)
 }
 
 void
-RValueAllocation::dumpPayload(FILE *fp, PayloadType type, Payload p)
+RValueAllocation::dumpPayload(GenericPrinter& out, PayloadType type, Payload p)
 {
     switch (type) {
       case PAYLOAD_NONE:
         break;
       case PAYLOAD_INDEX:
-        fprintf(fp, "index %u", p.index);
+        out.printf("index %u", p.index);
         break;
       case PAYLOAD_STACK_OFFSET:
-        fprintf(fp, "stack %d", p.stackOffset);
+        out.printf("stack %d", p.stackOffset);
         break;
       case PAYLOAD_GPR:
-        fprintf(fp, "reg %s", p.gpr.name());
+        out.printf("reg %s", p.gpr.name());
         break;
       case PAYLOAD_FPU:
-        fprintf(fp, "reg %s", p.fpu.name());
+        out.printf("reg %s", p.fpu.name());
         break;
       case PAYLOAD_PACKED_TAG:
-        fprintf(fp, "%s", ValTypeToString(p.type));
+        out.printf("%s", ValTypeToString(p.type));
         break;
     }
 }
 
 void
-RValueAllocation::dump(FILE *fp) const
+RValueAllocation::dump(GenericPrinter& out) const
 {
-    const Layout &layout = layoutFromMode(mode());
-    fprintf(fp, "%s", layout.name);
+    const Layout& layout = layoutFromMode(mode());
+    out.printf("%s", layout.name);
 
     if (layout.type1 != PAYLOAD_NONE)
-        fprintf(fp, " (");
-    dumpPayload(fp, layout.type1, arg1_);
+        out.printf(" (");
+    dumpPayload(out, layout.type1, arg1_);
     if (layout.type2 != PAYLOAD_NONE)
-        fprintf(fp, ", ");
-    dumpPayload(fp, layout.type2, arg2_);
+        out.printf(", ");
+    dumpPayload(out, layout.type2, arg2_);
     if (layout.type1 != PAYLOAD_NONE)
-        fprintf(fp, ")");
+        out.printf(")");
 }
 
 bool
@@ -479,7 +482,7 @@ RValueAllocation::equalPayloads(PayloadType type, Payload lhs, Payload rhs)
     return false;
 }
 
-SnapshotReader::SnapshotReader(const uint8_t *snapshots, uint32_t offset,
+SnapshotReader::SnapshotReader(const uint8_t* snapshots, uint32_t offset,
                                uint32_t RVATableSize, uint32_t listSize)
   : reader_(snapshots + offset, snapshots + listSize),
     allocReader_(snapshots + listSize, snapshots + listSize + RVATableSize),
@@ -548,12 +551,13 @@ SnapshotReader::spewBailingFrom() const
 {
     if (JitSpewEnabled(JitSpew_IonBailouts)) {
         JitSpewHeader(JitSpew_IonBailouts);
-        fprintf(JitSpewFile, " bailing from bytecode: %s, MIR: ", js_CodeName[pcOpcode_]);
-        MDefinition::PrintOpcodeName(JitSpewFile, MDefinition::Opcode(mirOpcode_));
-        fprintf(JitSpewFile, " [%u], LIR: ", mirId_);
-        LInstruction::printName(JitSpewFile, LInstruction::Opcode(lirOpcode_));
-        fprintf(JitSpewFile, " [%u]", lirId_);
-        fprintf(JitSpewFile, "\n");
+        Fprinter& out = JitSpewPrinter();
+        out.printf(" bailing from bytecode: %s, MIR: ", CodeName[pcOpcode_]);
+        MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
+        out.printf(" [%u], LIR: ", mirId_);
+        LInstruction::printName(out, LInstruction::Opcode(lirOpcode_));
+        out.printf(" [%u]", lirId_);
+        out.printf("\n");
     }
 }
 #endif
@@ -583,7 +587,7 @@ SnapshotWriter::init()
     return allocMap_.init(32);
 }
 
-RecoverReader::RecoverReader(SnapshotReader &snapshot, const uint8_t *recovers, uint32_t size)
+RecoverReader::RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers, uint32_t size)
   : reader_(nullptr, nullptr),
     numInstructions_(0),
     numInstructionsRead_(0)
@@ -649,7 +653,7 @@ SnapshotWriter::trackSnapshot(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mi
 #endif
 
 bool
-SnapshotWriter::add(const RValueAllocation &alloc)
+SnapshotWriter::add(const RValueAllocation& alloc)
 {
     MOZ_ASSERT(allocMap_.initialized());
 
@@ -658,17 +662,20 @@ SnapshotWriter::add(const RValueAllocation &alloc)
     if (!p) {
         offset = allocWriter_.length();
         alloc.write(allocWriter_);
-        if (!allocMap_.add(p, alloc, offset))
+        if (!allocMap_.add(p, alloc, offset)) {
+            allocWriter_.setOOM();
             return false;
+        }
     } else {
         offset = p->value();
     }
 
     if (JitSpewEnabled(JitSpew_IonSnapshots)) {
         JitSpewHeader(JitSpew_IonSnapshots);
-        fprintf(JitSpewFile, "    slot %u (%d): ", allocWritten_, offset);
-        alloc.dump(JitSpewFile);
-        fprintf(JitSpewFile, "\n");
+        Fprinter& out = JitSpewPrinter();
+        out.printf("    slot %u (%d): ", allocWritten_, offset);
+        alloc.dump(out);
+        out.printf("\n");
     }
 
     allocWritten_++;
@@ -710,7 +717,7 @@ RecoverWriter::startRecover(uint32_t instructionCount, bool resumeAfter)
 }
 
 void
-RecoverWriter::writeInstruction(const MNode *rp)
+RecoverWriter::writeInstruction(const MNode* rp)
 {
     if (!rp->writeRecoverData(writer_))
         writer_.setOOM();
