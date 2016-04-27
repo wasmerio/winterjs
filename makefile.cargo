@@ -2,7 +2,8 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
-	--disable-shared-js
+	--disable-shared-js \
+	--without-intl-api
 
 ifneq ($(HOST),$(TARGET))
 
@@ -11,7 +12,7 @@ CPP ?= $(TARGET)-gcc -E
 CXX ?= $(TARGET)-g++
 AR ?= $(TARGET)-ar
 
-CONFIGURE_FLAGS += --target=$(TARGET) --without-intl-api --disable-gold
+CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 
 	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
 		CONFIGURE_FLAGS += \
