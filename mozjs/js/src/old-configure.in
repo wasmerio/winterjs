@@ -1688,7 +1688,7 @@ if test "$ac_cv_thread_keyword" = yes; then
     mips*-*)
       :
       ;;
-    *-android*|*-linuxandroid*)
+    *-android*|*-linuxandroid*|*-mingw*)
       :
       ;;
     *)
