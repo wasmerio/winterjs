@@ -38,7 +38,11 @@
  * methods or data used cross-file.
  */
 #if defined(WIN32)
-#  define MOZ_EXPORT   __declspec(dllexport)
+#  ifdef RUST_BINDGEN
+#    define MOZ_EXPORT   __attribute__((visibility("default")))
+#  else
+#    define MOZ_EXPORT   __declspec(dllexport)
+#  endif
 #else /* Unix */
 #  ifdef HAVE_VISIBILITY_ATTRIBUTE
 #    define MOZ_EXPORT       __attribute__((visibility("default")))
