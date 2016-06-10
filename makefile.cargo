@@ -84,13 +84,13 @@ all:
 	PYTHON="$(FORCED_PYTHON)" \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
-	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
 else
 all:
 	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
-	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
 endif
 
