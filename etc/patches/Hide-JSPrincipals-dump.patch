@@ -1,0 +1,27 @@
+From 696e823b4cd061245c9c19c5bcf7ab93c1fd9689 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Fri, 22 Apr 2016 13:31:18 +0200
+Subject: Hide JSPrincipals::dump
+
+
+diff --git a/mozjs/js/public/Principals.h b/mozjs/js/public/Principals.h
+index 9dcb3e9..ab53fed 100644
+--- a/mozjs/js/public/Principals.h
++++ b/mozjs/js/public/Principals.h
+@@ -44,11 +44,13 @@ struct JSPrincipals {
+      */
+     virtual bool write(JSContext* cx, JSStructuredCloneWriter* writer) = 0;
+ 
++#ifndef RUST_BINDGEN
+     /*
+      * This is not defined by the JS engine but should be provided by the
+      * embedding.
+      */
+     JS_PUBLIC_API(void) dump();
++#endif
+ };
+ 
+ extern JS_PUBLIC_API(void)
+-- 
+1.9.1
+

@@ -1,0 +1,27 @@
+From 2e589b7caeaa549a421242615f69ed1463c97a35 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Thu, 30 Jun 2016 17:49:45 +0200
+Subject: Make js/src/configure honor PYTHON
+
+
+diff --git a/mozjs/js/src/configure.in b/mozjs/js/src/configure.in
+index b97fa11..a9f1d04 100644
+--- a/mozjs/js/src/configure.in
++++ b/mozjs/js/src/configure.in
+@@ -23,4 +23,12 @@ export OLD_CONFIGURE="$SRCDIR"/old-configure
+ 
+ set -- "$@" --enable-project=js
+ 
+-which python2.7 > /dev/null && exec python2.7 "$TOPSRCDIR/configure.py" "$@" || exec python "$TOPSRCDIR/configure.py" "$@"
++if test -z "$PYTHON"; then
++	if which python2.7 >/dev/null; then
++		PYTHON=python2.7
++	else
++		PYTHON=python
++	fi
++fi
++
++exec "$PYTHON" "$TOPSRCDIR/configure.py" "$@"
+-- 
+1.9.1
+

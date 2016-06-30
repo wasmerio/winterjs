@@ -1,0 +1,22 @@
+From 15c3e001184a7303bbd3246815f6fc4c52468f83 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Wed, 6 Apr 2016 10:44:38 +0200
+Subject: Hide JS_ReportErrorNumberVA
+
+
+diff --git a/mozjs/js/src/jsapi.h b/mozjs/js/src/jsapi.h
+index 8e9bab8..6d146d6 100644
+--- a/mozjs/js/src/jsapi.h
++++ b/mozjs/js/src/jsapi.h
+@@ -5056,7 +5056,7 @@ extern JS_PUBLIC_API(void)
+ JS_ReportErrorNumber(JSContext* cx, JSErrorCallback errorCallback,
+                      void* userRef, const unsigned errorNumber, ...);
+ 
+-#ifdef va_start
++#if defined(va_start) && !defined(RUST_BINDGEN)
+ extern JS_PUBLIC_API(void)
+ JS_ReportErrorNumberVA(JSContext* cx, JSErrorCallback errorCallback,
+                        void* userRef, const unsigned errorNumber, va_list ap);
+-- 
+1.9.1
+

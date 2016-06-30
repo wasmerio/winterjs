@@ -1,0 +1,35 @@
+From ce246d33533fdb5c9af202d0f183f6fc40b8ebb8 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Wed, 6 Apr 2016 10:52:19 +0200
+Subject: Hide some callbacks that use RefPtr
+
+
+--- a/mozjs/js/src/jsapi.h
++++ b/mozjs/js/src/jsapi.h
+@@ -6140,7 +6140,9 @@ struct PerformanceGroup {
+     uint64_t refCount_;
+ };
+ 
++#ifndef RUST_BINDGEN
+ using PerformanceGroupVector = mozilla::Vector<RefPtr<js::PerformanceGroup>, 0, SystemAllocPolicy>;
++#endif
+ 
+ /**
+  * Commit any Performance Monitoring data.
+@@ -6199,6 +6201,7 @@ typedef bool
+ extern JS_PUBLIC_API(bool)
+ SetStopwatchStartCallback(JSRuntime*, StopwatchStartCallback, void*);
+ 
++#ifndef RUST_BINDGEN
+ typedef bool
+ (*StopwatchCommitCallback)(uint64_t, PerformanceGroupVector&, void*);
+ extern JS_PUBLIC_API(bool)
+@@ -6208,6 +6211,7 @@ typedef bool
+ (*GetGroupsCallback)(JSContext*, PerformanceGroupVector&, void*);
+ extern JS_PUBLIC_API(bool)
+ SetGetPerformanceGroupsCallback(JSRuntime*, GetGroupsCallback, void*);
++#endif
+ 
+ } /* namespace js */
+ 
+

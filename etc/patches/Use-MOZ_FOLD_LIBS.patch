@@ -1,0 +1,20 @@
+From aebc483022ec0e88335c163306b2f90547310968 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Tue, 26 Apr 2016 13:01:40 +0200
+Subject: Use MOZ_FOLD_LIBS
+
+
+diff --git a/mozjs/config/external/nspr/moz.build b/mozjs/config/external/nspr/moz.build
+index 653f66d..9bcebae 100644
+--- a/mozjs/config/external/nspr/moz.build
++++ b/mozjs/config/external/nspr/moz.build
+@@ -12,7 +12,7 @@ if CONFIG['MOZ_BUILD_NSPR']:
+         'ds',
+         'libc',
+     ]
+-    if CONFIG['MOZ_FOLD_LIBS']:
++    if CONFIG['MOZ_FOLD_LIBS'] and not CONFIG['JS_STANDALONE']:
+         # When folding libraries, nspr is actually in the nss library.
+         USE_LIBS += [
+             'nss',
+

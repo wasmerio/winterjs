@@ -1,0 +1,20 @@
+From 72a34c869effd5e1b212015a8f00163accc809d5 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Sat, 9 Apr 2016 00:31:20 +0200
+Subject: Fix the static library build
+
+
+--- a/mozjs/mfbt/moz.build
++++ b/mozjs/mfbt/moz.build
+@@ -118,6 +118,8 @@ SOURCES += mfbt_nonunified_src_cppsrcs
+ 
+ DISABLE_STL_WRAPPING = True
+ 
++NO_EXPAND_LIBS = True
++
+ # Suppress warnings in third-party LZ4 code.
+ # TODO: Remove these suppressions after bug 993267 is fixed.
+ 
+-- 
+1.9.1
+

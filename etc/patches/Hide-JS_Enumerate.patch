@@ -1,0 +1,29 @@
+From 3f099ba8acb1b4caa6284835dd3f1db9aae56403 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Wed, 6 Apr 2016 10:44:22 +0200
+Subject: Hide JS_Enumerate
+
+
+diff --git a/mozjs/js/src/jsapi.h b/mozjs/js/src/jsapi.h
+index 8d13907..8e9bab8 100644
+--- a/mozjs/js/src/jsapi.h
++++ b/mozjs/js/src/jsapi.h
+@@ -3249,6 +3249,7 @@ JS_DeleteProperty(JSContext* cx, JS::HandleObject obj, const char* name);
+ extern JS_PUBLIC_API(bool)
+ JS_DeleteElement(JSContext* cx, JS::HandleObject obj, uint32_t index);
+ 
++#ifndef RUST_BINDGEN
+ /**
+  * Get an array of the non-symbol enumerable properties of obj.
+  * This function is roughly equivalent to:
+@@ -3266,6 +3267,7 @@ JS_DeleteElement(JSContext* cx, JS::HandleObject obj, uint32_t index);
+  */
+ extern JS_PUBLIC_API(bool)
+ JS_Enumerate(JSContext* cx, JS::HandleObject obj, JS::MutableHandle<JS::IdVector> props);
++#endif
+ 
+ /*
+  * API for determining callability and constructability. [[Call]] and
+-- 
+1.9.1
+

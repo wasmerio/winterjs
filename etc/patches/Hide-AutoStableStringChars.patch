@@ -1,0 +1,32 @@
+From 5b2e5e99d10d545a270d1295c70f601577ffc0ae Mon Sep 17 00:00:00 2001
+From: Ms2ger <Ms2ger@gmail.com>
+Date: Fri, 1 Jul 2016 18:18:20 +0200
+Subject: Hide AutoStableStringChars.
+
+
+diff --git a/mozjs/js/src/jsfriendapi.h b/mozjs/js/src/jsfriendapi.h
+index ce06449..bc64467 100644
+--- a/mozjs/js/src/jsfriendapi.h
++++ b/mozjs/js/src/jsfriendapi.h
+@@ -1333,6 +1333,8 @@ GetErrorMessage(void* userRef, const unsigned errorNumber);
+  * need it. It's usually more efficient to use the latin1Chars/twoByteChars
+  * JSString methods and often the code can be rewritten so that only indexes
+  * instead of char pointers are used in parts of the code that can GC.
++ *
++ * <div rustbindgen hide></div>
+  */
+ class MOZ_STACK_CLASS AutoStableStringChars
+ {
+@@ -1406,6 +1408,9 @@ class MOZ_STACK_CLASS AutoStableStringChars
+     bool copyAndInflateLatin1Chars(JSContext*, JS::Handle<JSLinearString*> linearString);
+ };
+ 
++/**
++ * <div rustbindgen hide></div>
++ */
+ struct MOZ_STACK_CLASS JS_FRIEND_API(ErrorReport)
+ {
+     explicit ErrorReport(JSContext* cx);
+-- 
+1.9.1
+
