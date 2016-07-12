@@ -156,6 +156,13 @@ typedef bool HandleNaNSpecially;
 // prevent this workaround from having any consequence.  This hack
 // exists only as a stopgap; there is no ARM64 JIT support yet.
 static const Register StackPointer = RealStackPointer;
+#endif
+
+#if defined(JS_CODEGEN_ARM64) || (!defined(JS_CODEGEN_X64) && defined(JS_PUNBOX64))
+
+#if !defined(JS_CODEGEN_ARM64)
+static Register DummyScratchReg; // Doesn't matter
+#endif
 
 // FIXME: This should somehow use vixl::UseScratchRegisterScope, or we
 // should define our own scratch register independent of the masm.
@@ -163,7 +170,7 @@ class ScratchRegisterScope
 {
   public:
     ScratchRegisterScope(MacroAssembler& masm) {}
-    operator Register() const { return ScratchReg; }
+    operator Register() const { return DummyScratchReg; }
 };
 #endif
 
