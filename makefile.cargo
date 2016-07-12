@@ -3,7 +3,8 @@ CONFIGURE_FLAGS := \
 	--disable-js-shell \
 	--disable-tests \
 	--disable-shared-js \
-	--without-intl-api
+	--without-intl-api \
+	--build-backends=RecursiveMake
 
 ifneq ($(HOST),$(TARGET))
 
