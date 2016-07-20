@@ -7,6 +7,7 @@
 #ifndef js_UbiNodeShortestPaths_h
 #define js_UbiNodeShortestPaths_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Move.h"
 
@@ -32,7 +33,7 @@ struct JS_PUBLIC_API(BackEdge)
 
     BackEdge() : predecessor_(), name_(nullptr) { }
 
-    bool init(const Node& predecessor, Edge& edge) {
+    MOZ_MUST_USE bool init(const Node& predecessor, Edge& edge) {
         MOZ_ASSERT(!predecessor_);
         MOZ_ASSERT(!name_);
 
@@ -68,7 +69,7 @@ struct JS_PUBLIC_API(BackEdge)
 /**
  * A path is a series of back edges from which we discovered a target node.
  */
-using Path = mozilla::Vector<BackEdge*>;
+using Path = JS::ubi::Vector<BackEdge*>;
 
 /**
  * The `JS::ubi::ShortestPaths` type represents a collection of up to N shortest
@@ -80,7 +81,7 @@ struct JS_PUBLIC_API(ShortestPaths)
   private:
     // Types, type aliases, and data members.
 
-    using BackEdgeVector = mozilla::Vector<BackEdge::Ptr>;
+    using BackEdgeVector = JS::ubi::Vector<BackEdge::Ptr>;
     using NodeToBackEdgeVectorMap = js::HashMap<Node, BackEdgeVector, js::DefaultHasher<Node>,
                                                 js::SystemAllocPolicy>;
 
@@ -289,7 +290,7 @@ struct JS_PUBLIC_API(ShortestPaths)
      * the given target, in which case `func` will not be invoked.
      */
     template <class Func>
-    bool forEachPath(const Node& target, Func func) {
+    MOZ_MUST_USE bool forEachPath(const Node& target, Func func) {
         MOZ_ASSERT(initialized());
         MOZ_ASSERT(targets_.has(target));
 
@@ -329,6 +330,19 @@ struct JS_PUBLIC_API(ShortestPaths)
         return true;
     }
 };
+
+#ifdef DEBUG
+// A helper function to dump the first `maxNumPaths` shortest retaining paths to
+// `node` from the GC roots. Useful when GC things you expect to have been
+// reclaimed by the collector haven't been!
+//
+// Usage:
+//
+//     JSObject* foo = ...;
+//     JS::ubi::dumpPaths(rt, JS::ubi::Node(foo));
+JS_PUBLIC_API(void)
+dumpPaths(JSRuntime* rt, Node node, uint32_t maxNumPaths = 10);
+#endif
 
 } // namespace ubi
 } // namespace JS

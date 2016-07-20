@@ -32,7 +32,7 @@ namespace js {
 namespace jit {
 
 // How far forward/back can a jump go? Provide a generous buffer for thunks.
-static const uint32_t JumpImmediateRange = 100 * 1024;
+static const uint32_t JumpImmediateRange = UINT32_MAX;
 
 class Registers
 {
@@ -308,9 +308,15 @@ class FloatRegisterMIPSShared
     }
 };
 
-uint32_t GetMIPSFlags();
-bool hasFPU();
-bool isLoongson();
+namespace mips_private {
+    extern uint32_t Flags;
+    extern bool hasFPU;
+    extern bool isLoongson;
+}
+
+inline uint32_t GetMIPSFlags() { return mips_private::Flags; }
+inline bool hasFPU() { return mips_private::hasFPU; }
+inline bool isLoongson() { return mips_private::isLoongson; }
 
 // MIPS doesn't have double registers that can NOT be treated as float32.
 inline bool

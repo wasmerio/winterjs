@@ -87,29 +87,6 @@ ifdef WIN_UCRT_REDIST_DIR
   JSSHELL_BINS += ucrtbase.dll
 endif
 
-ifdef MOZ_SHARED_ICU
-ifeq ($(OS_TARGET), WINNT)
-JSSHELL_BINS += \
-  icudt$(MOZ_ICU_DBG_SUFFIX)$(MOZ_ICU_VERSION).dll \
-  icuin$(MOZ_ICU_DBG_SUFFIX)$(MOZ_ICU_VERSION).dll \
-  icuuc$(MOZ_ICU_DBG_SUFFIX)$(MOZ_ICU_VERSION).dll \
-  $(NULL)
-else
-ifeq ($(OS_TARGET), Darwin)
-JSSHELL_BINS += \
-  libicudata.$(MOZ_ICU_VERSION).dylib \
-  libicui18n.$(MOZ_ICU_VERSION).dylib \
-  libicuuc.$(MOZ_ICU_VERSION).dylib \
-  $(NULL)
-else
-JSSHELL_BINS += \
-  libicudata.so.$(MOZ_ICU_VERSION) \
-  libicui18n.so.$(MOZ_ICU_VERSION) \
-  libicuuc.so.$(MOZ_ICU_VERSION) \
-  $(NULL)
-endif # Darwin
-endif # WINNT
-endif # MOZ_STATIC_JS
 MAKE_JSSHELL  = $(call py_action,zip,-C $(DIST)/bin $(abspath $(PKG_JSSHELL)) $(JSSHELL_BINS))
 
 JARLOG_DIR = $(topobjdir)/jarlog/
@@ -308,7 +285,8 @@ endif
 
 ifdef MOZ_SIGN_PREPARED_PACKAGE_CMD
   ifeq (Darwin, $(OS_ARCH))
-    MAKE_PACKAGE    = (cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_RESPATH) && $(CREATE_PRECOMPLETE_CMD)) \
+    MAKE_PACKAGE    = $(or $(call MAKE_SIGN_EME_VOUCHER,$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(MOZ_CHILD_PROCESS_NAME).app/Contents/MacOS,$(STAGEPATH)$(MOZ_PKG_DIR)$(_RESPATH)),true) \
+                      && (cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_RESPATH) && $(CREATE_PRECOMPLETE_CMD)) \
                       && cd ./$(PKG_DMG_SOURCE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_MACBUNDLE_NAME) \
                       && cd $(PACKAGE_BASE_DIR) && $(INNER_MAKE_PACKAGE)
   else
@@ -405,16 +383,6 @@ ifndef MOZ_PKG_MANIFEST
   endif # MOZ_PKG_MANIFEST_P
 endif # MOZ_PKG_MANIFEST
 
-# For smooth transition of comm-central
-ifndef MOZ_PACKAGER_FORMAT
-  ifeq ($(MOZ_CHROME_FILE_FORMAT),flat)
-    ifdef MOZ_OMNIJAR
-      MOZ_PACKAGER_FORMAT := omni
-    else
-      MOZ_PACKAGER_FORMAT := flat
-    endif
-  endif
-endif
 ifndef MOZ_PACKAGER_FORMAT
   MOZ_PACKAGER_FORMAT = $(error MOZ_PACKAGER_FORMAT is not set)
 endif

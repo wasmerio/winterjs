@@ -18,9 +18,6 @@
  * FOR_EACH_TRAILING_UNUSED_OPCODE and updating js::detail::LastDefinedOpcode
  * below.
  *
- * When changing the bytecode, don't forget to update XDR_BYTECODE_VERSION in
- * vm/Xdr.h!
- *
  * Includers must define a macro with the following form:
  *
  * #define MACRO(op,val,name,image,length,nuses,ndefs,format) ...
@@ -606,7 +603,14 @@
      *   Stack: => null
      */ \
     macro(JSOP_NULL,      64, js_null_str,  js_null_str,  1,  0,  1, JOF_BYTE) \
-    macro(JSOP_UNUSED65,  65, "unused65",   NULL,         1,  0,  1, JOF_BYTE) \
+    /*
+     * Pushes 'JS_IS_CONSTRUCTING'
+     *   Category: Literals
+     *   Type: Constants
+     *   Operands:
+     *   Stack: => JS_IS_CONSTRUCTING
+     */ \
+    macro(JSOP_IS_CONSTRUCTING,  65, "is-constructing",   NULL,         1,  0,  1, JOF_BYTE) \
     /*
      * Pushes boolean value onto the stack.
      *   Category: Literals
@@ -1515,16 +1519,7 @@
      *   Stack: => new.target
      */ \
     macro(JSOP_NEWTARGET,  148, "newtarget", NULL,      1,  0,  1,  JOF_BYTE) \
-    \
-    /*
-     * Placeholder opcode used during bytecode generation. This never
-     * appears in a finished script. FIXME: bug 473671.
-     *   Category: Statements
-     *   Type: Jumps
-     *   Operands: int32_t offset
-     *   Stack: =>
-     */ \
-    macro(JSOP_BACKPATCH,     149,"backpatch", NULL,      5,  0,  0,  JOF_JUMP) \
+    macro(JSOP_UNUSED149,  149, "unused149", NULL,      1,  0,  0,  JOF_BYTE) \
     /*
      * Pops the top two values 'lval' and 'rval' from the stack, then pushes
      * the result of 'Math.pow(lval, rval)'.
@@ -2184,15 +2179,31 @@
      *   Operands:
      *   Stack: val => ToString(val)
      */ \
-    macro(JSOP_TOSTRING,    228, "tostring",       NULL,  1,  1,  1,  JOF_BYTE)
+    macro(JSOP_TOSTRING,    228, "tostring",       NULL,  1,  1,  1,  JOF_BYTE) \
+    /*
+     * No-op used by the decompiler to produce nicer error messages about
+     * destructuring code.
+     *   Category: Other
+     *   Operands:
+     *   Stack: =>
+     */ \
+    macro(JSOP_NOP_DESTRUCTURING, 229, "nop-destructuring", NULL, 1, 0, 0, JOF_BYTE) \
+    /*
+     * This opcode is a no-op and it indicates the location of a jump
+     * instruction target. Some other opcodes act as jump targets, such as
+     * LOOPENTRY, as well as all which are matched by BytecodeIsJumpTarget
+     * function.
+     *   Category: Other
+     *   Operands:
+     *   Stack: =>
+     */ \
+    macro(JSOP_JUMPTARGET,  230, "jumptarget",     NULL,  1,  0,  0,  JOF_BYTE)
 
 /*
  * In certain circumstances it may be useful to "pad out" the opcode space to
  * a power of two.  Use this macro to do so.
  */
 #define FOR_EACH_TRAILING_UNUSED_OPCODE(macro) \
-    macro(229) \
-    macro(230) \
     macro(231) \
     macro(232) \
     macro(233) \

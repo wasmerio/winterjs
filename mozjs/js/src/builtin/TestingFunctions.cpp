@@ -20,8 +20,9 @@
 #include "jswrapper.h"
 
 #include "asmjs/AsmJS.h"
-#include "asmjs/Wasm.h"
+#include "asmjs/WasmBinaryToExperimentalText.h"
 #include "asmjs/WasmBinaryToText.h"
+#include "asmjs/WasmJS.h"
 #include "asmjs/WasmTextToBinary.h"
 #include "builtin/Promise.h"
 #include "builtin/SelfHostingDefines.h"
@@ -359,7 +360,8 @@ MinorGC(JSContext* cx, unsigned argc, Value* vp)
     _("decommitThreshold",          JSGC_DECOMMIT_THRESHOLD,             true)  \
     _("minEmptyChunkCount",         JSGC_MIN_EMPTY_CHUNK_COUNT,          true)  \
     _("maxEmptyChunkCount",         JSGC_MAX_EMPTY_CHUNK_COUNT,          true)  \
-    _("compactingEnabled",          JSGC_COMPACTING_ENABLED,             true)
+    _("compactingEnabled",          JSGC_COMPACTING_ENABLED,             true)  \
+    _("refreshFrameSlicesEnabled",  JSGC_REFRESH_FRAME_SLICES_ENABLED,   true)
 
 static const struct ParamInfo {
     const char*     name;
@@ -559,6 +561,10 @@ WasmBinaryToText(JSContext* cx, unsigned argc, Value* vp)
     }
 
     Rooted<TypedArrayObject*> code(cx, &args[0].toObject().as<TypedArrayObject>());
+
+    if (!TypedArrayObject::ensureHasBuffer(cx, code))
+        return false;
+
     if (code->isSharedMemory()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_BUF_ARG);
         return false;
@@ -575,11 +581,30 @@ WasmBinaryToText(JSContext* cx, unsigned argc, Value* vp)
         bytes = copy.begin();
     }
 
+    bool experimental = false;
+    if (args.length() > 1) {
+        JSString* opt = JS::ToString(cx, args[1]);
+        if (!opt)
+            return false;
+        bool match;
+        if (!JS_StringEqualsAscii(cx, opt, "experimental", &match))
+            return false;
+        experimental = match;
+    }
+
     StringBuffer buffer(cx);
-    if (!wasm::BinaryToText(cx, bytes, length, buffer)) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_TEXT_FAIL,
-                             "print error");
-        return false;
+    if (experimental) {
+        if (!wasm::BinaryToExperimentalText(cx, bytes, length, buffer, wasm::ExperimentalTextFormatting())) {
+            if (!cx->isExceptionPending())
+                JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_FAIL, "print error");
+            return false;
+        }
+    } else {
+        if (!wasm::BinaryToText(cx, bytes, length, buffer)) {
+            if (!cx->isExceptionPending())
+                JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_FAIL, "print error");
+            return false;
+        }
     }
 
     JSString* result = buffer.finishString();
@@ -695,7 +720,7 @@ GCZeal(JSContext* cx, unsigned argc, Value* vp)
             return false;
     }
 
-    JS_SetGCZeal(cx, (uint8_t)zeal, frequency);
+    JS_SetGCZeal(cx->runtime(), (uint8_t)zeal, frequency);
     args.rval().setUndefined();
     return true;
 }
@@ -1122,8 +1147,13 @@ CallFunctionWithAsyncStack(JSContext* cx, unsigned argc, Value* vp)
     RootedObject function(cx, &args[0].toObject());
     RootedObject stack(cx, &args[1].toObject());
     RootedString asyncCause(cx, args[2].toString());
+    JSAutoByteString utf8Cause;
+    if (!utf8Cause.encodeUtf8(cx, asyncCause)) {
+        MOZ_ASSERT(cx->isExceptionPending());
+        return false;
+    }
 
-    JS::AutoSetAsyncStackForNewCalls sas(cx, stack, asyncCause,
+    JS::AutoSetAsyncStackForNewCalls sas(cx, stack, utf8Cause.ptr(),
                                          JS::AutoSetAsyncStackForNewCalls::AsyncCallKind::EXPLICIT);
     return Call(cx, UndefinedHandleValue, function,
                 JS::HandleValueArray::empty(), args.rval());
@@ -1132,14 +1162,14 @@ CallFunctionWithAsyncStack(JSContext* cx, unsigned argc, Value* vp)
 static bool
 EnableTrackAllocations(JSContext* cx, unsigned argc, Value* vp)
 {
-    SetObjectMetadataCallback(cx, SavedStacksMetadataCallback);
+    SetAllocationMetadataBuilder(cx, &SavedStacks::metadataBuilder);
     return true;
 }
 
 static bool
 DisableTrackAllocations(JSContext* cx, unsigned argc, Value* vp)
 {
-    SetObjectMetadataCallback(cx, nullptr);
+    SetAllocationMetadataBuilder(cx, nullptr);
     return true;
 }
 
@@ -1213,7 +1243,6 @@ ResetOOMFailure(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(js::oom::HadSimulatedOOM());
-    HelperThreadState().waitForAllThreads();
     js::oom::ResetSimulatedOOM();
     return true;
 }
@@ -1274,7 +1303,7 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
         threadEnd = threadOption + 1;
     }
 
-    JS_SetGCZeal(cx, 0, JS_DEFAULT_ZEAL_FREQ);
+    JS_SetGCZeal(cx->runtime(), 0, JS_DEFAULT_ZEAL_FREQ);
 
     for (unsigned thread = threadStart; thread < threadEnd; thread++) {
         if (verbose)
@@ -1399,8 +1428,7 @@ finalize_counter_finalize(JSFreeOp* fop, JSObject* obj)
     ++finalizeCount;
 }
 
-static const JSClass FinalizeCounterClass = {
-    "FinalizeCounter", JSCLASS_IS_ANONYMOUS,
+static const JSClassOps FinalizeCounterClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -1409,6 +1437,11 @@ static const JSClass FinalizeCounterClass = {
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     finalize_counter_finalize
+};
+
+static const JSClass FinalizeCounterClass = {
+    "FinalizeCounter", JSCLASS_IS_ANONYMOUS,
+    &FinalizeCounterClassOps
 };
 
 static bool
@@ -1677,18 +1710,27 @@ DisplayName(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
-static JSObject*
-ShellObjectMetadataCallback(JSContext* cx, HandleObject)
-{
-    AutoEnterOOMUnsafeRegion oomUnsafe;
+class ShellAllocationMetadataBuilder : public AllocationMetadataBuilder {
+  public:
+    ShellAllocationMetadataBuilder() : AllocationMetadataBuilder() { }
 
+    virtual JSObject* build(JSContext *cx, HandleObject,
+                            AutoEnterOOMUnsafeRegion& oomUnsafe) const override;
+
+    static const ShellAllocationMetadataBuilder metadataBuilder;
+};
+
+JSObject*
+ShellAllocationMetadataBuilder::build(JSContext* cx, HandleObject,
+                                      AutoEnterOOMUnsafeRegion& oomUnsafe) const
+{
     RootedObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
     if (!obj)
-        oomUnsafe.crash("ShellObjectMetadataCallback");
+        oomUnsafe.crash("ShellAllocationMetadataBuilder::build");
 
     RootedObject stack(cx, NewDenseEmptyArray(cx));
     if (!stack)
-        oomUnsafe.crash("ShellObjectMetadataCallback");
+        oomUnsafe.crash("ShellAllocationMetadataBuilder::build");
 
     static int createdIndex = 0;
     createdIndex++;
@@ -1696,13 +1738,13 @@ ShellObjectMetadataCallback(JSContext* cx, HandleObject)
     if (!JS_DefineProperty(cx, obj, "index", createdIndex, 0,
                            JS_STUBGETTER, JS_STUBSETTER))
     {
-        oomUnsafe.crash("ShellObjectMetadataCallback");
+        oomUnsafe.crash("ShellAllocationMetadataBuilder::build");
     }
 
     if (!JS_DefineProperty(cx, obj, "stack", stack, 0,
                            JS_STUBGETTER, JS_STUBSETTER))
     {
-        oomUnsafe.crash("ShellObjectMetadataCallback");
+        oomUnsafe.crash("ShellAllocationMetadataBuilder::build");
     }
 
     int stackIndex = 0;
@@ -1715,7 +1757,7 @@ ShellObjectMetadataCallback(JSContext* cx, HandleObject)
             if (!JS_DefinePropertyById(cx, stack, id, callee, 0,
                                        JS_STUBGETTER, JS_STUBSETTER))
             {
-                oomUnsafe.crash("ShellObjectMetadataCallback");
+                oomUnsafe.crash("ShellAllocationMetadataBuilder::build");
             }
             stackIndex++;
         }
@@ -1724,19 +1766,21 @@ ShellObjectMetadataCallback(JSContext* cx, HandleObject)
     return obj;
 }
 
+const ShellAllocationMetadataBuilder ShellAllocationMetadataBuilder::metadataBuilder;
+
 static bool
-EnableShellObjectMetadataCallback(JSContext* cx, unsigned argc, Value* vp)
+EnableShellAllocationMetadataBuilder(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    SetObjectMetadataCallback(cx, ShellObjectMetadataCallback);
+    SetAllocationMetadataBuilder(cx, &ShellAllocationMetadataBuilder::metadataBuilder);
 
     args.rval().setUndefined();
     return true;
 }
 
 static bool
-GetObjectMetadata(JSContext* cx, unsigned argc, Value* vp)
+GetAllocationMetadata(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     if (args.length() != 1 || !args[0].isObject()) {
@@ -1744,7 +1788,7 @@ GetObjectMetadata(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    args.rval().setObjectOrNull(GetObjectMetadata(&args[0].toObject()));
+    args.rval().setObjectOrNull(GetAllocationMetadata(&args[0].toObject()));
     return true;
 }
 
@@ -1754,6 +1798,23 @@ testingFunc_bailout(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // NOP when not in IonMonkey
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+testingFunc_bailAfter(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() != 1 || !args[0].isInt32() || args[0].toInt32() < 0) {
+        JS_ReportError(cx, "Argument must be a positive number that fits an int32");
+        return false;
+    }
+
+#ifdef DEBUG
+    cx->runtime()->setIonBailAfter(args[0].toInt32());
+#endif
+
     args.rval().setUndefined();
     return true;
 }
@@ -1883,6 +1944,8 @@ SetJitCompilerOption(JSContext* cx, unsigned argc, Value* vp)
     }
 
     JSFlatString* strArg = JS_FlattenString(cx, args[0].toString());
+    if (!strArg)
+        return false;
 
 #define JIT_COMPILER_MATCH(key, string)                 \
     else if (JS_FlatStringEqualsAscii(strArg, string))  \
@@ -2091,8 +2154,7 @@ class CloneBufferObject : public NativeObject {
     }
 };
 
-const Class CloneBufferObject::class_ = {
-    "CloneBuffer", JSCLASS_HAS_RESERVED_SLOTS(CloneBufferObject::NUM_SLOTS),
+static const ClassOps CloneBufferObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -2100,7 +2162,12 @@ const Class CloneBufferObject::class_ = {
     nullptr, /* enumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
-    Finalize
+    CloneBufferObject::Finalize
+};
+
+const Class CloneBufferObject::class_ = {
+    "CloneBuffer", JSCLASS_HAS_RESERVED_SLOTS(CloneBufferObject::NUM_SLOTS),
+    &CloneBufferObjectClassOps
 };
 
 const JSPropertySpec CloneBufferObject::props_[] = {
@@ -2425,6 +2492,13 @@ ReportOutOfMemory(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+ThrowOutOfMemory(JSContext* cx, unsigned argc, Value* vp)
+{
+    JS_ReportOutOfMemory(cx);
+    return false;
+}
+
+static bool
 ReportLargeAllocationFailure(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -2474,7 +2548,7 @@ struct FindPathHandler {
     typedef JS::ubi::BreadthFirst<FindPathHandler> Traversal;
 
     FindPathHandler(JSContext*cx, JS::ubi::Node start, JS::ubi::Node target,
-                    AutoValueVector& nodes, Vector<EdgeName>& edges)
+                    MutableHandle<GCVector<Value>> nodes, Vector<EdgeName>& edges)
       : cx(cx), start(start), target(target), foundPath(false),
         nodes(nodes), edges(edges) { }
 
@@ -2543,7 +2617,7 @@ struct FindPathHandler {
     // - edges[i] is the name of the edge from nodes[i] to nodes[i-1].
     // - edges[0] is the name of the edge from nodes[0] to the target.
     // - The last node, nodes[n-1], is the start node.
-    AutoValueVector& nodes;
+    MutableHandle<GCVector<Value>> nodes;
     Vector<EdgeName>& edges;
 };
 
@@ -2576,7 +2650,7 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    AutoValueVector nodes(cx);
+    Rooted<GCVector<Value>> nodes(cx, GCVector<Value>(cx));
     Vector<heaptools::EdgeName> edges(cx);
 
     {
@@ -2586,13 +2660,18 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
 
         JS::ubi::Node start(args[0]), target(args[1]);
 
-        heaptools::FindPathHandler handler(cx, start, target, nodes, edges);
+        heaptools::FindPathHandler handler(cx, start, target, &nodes, edges);
         heaptools::FindPathHandler::Traversal traversal(cx->runtime(), handler, autoCannotGC);
-        if (!traversal.init() || !traversal.addStart(start))
+        if (!traversal.init() || !traversal.addStart(start)) {
+            ReportOutOfMemory(cx);
             return false;
+        }
 
-        if (!traversal.traverse())
+        if (!traversal.traverse()) {
+            if (!cx->isExceptionPending())
+                ReportOutOfMemory(cx);
             return false;
+        }
 
         if (!handler.foundPath) {
             // We didn't find any paths from the start to the target.
@@ -3275,6 +3354,11 @@ SetGCCallback(JSContext* cx, unsigned argc, Value* vp)
 
     if (strcmp(action.ptr(), "minorGC") == 0) {
         auto info = js_new<gcCallback::MinorGC>();
+        if (!info) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+
         info->phases = phases;
         info->active = true;
         JS_SetGCCallback(cx->runtime(), gcCallback::minorGC, info);
@@ -3292,6 +3376,11 @@ SetGCCallback(JSContext* cx, unsigned argc, Value* vp)
         }
 
         auto info = js_new<gcCallback::MajorGC>();
+        if (!info) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+
         info->phases = phases;
         info->depth = depth;
         JS_SetGCCallback(cx->runtime(), gcCallback::majorGC, info);
@@ -3458,15 +3547,6 @@ GetModuleEnvironmentValue(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     return GetProperty(cx, env, env, id, args.rval());
-}
-
-static bool
-EnableMatchFlagArgument(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    cx->runtime()->options().setMatchFlagArgument(true);
-    args.rval().setUndefined();
-    return true;
 }
 
 static const JSFunctionSpecWithHelp TestingFunctions[] = {
@@ -3760,17 +3840,23 @@ gc::ZealModeHelpText),
 "isRelazifiableFunction(fun)",
 "  Ture if fun is a JSFunction with a relazifiable JSScript."),
 
-    JS_FN_HELP("enableShellObjectMetadataCallback", EnableShellObjectMetadataCallback, 0, 0,
-"enableShellObjectMetadataCallback()",
-"  Use ShellObjectMetadataCallback to supply metadata for all newly created objects."),
+    JS_FN_HELP("enableShellAllocationMetadataBuilder", EnableShellAllocationMetadataBuilder, 0, 0,
+"enableShellAllocationMetadataBuilder()",
+"  Use ShellAllocationMetadataBuilder to supply metadata for all newly created objects."),
 
-    JS_FN_HELP("getObjectMetadata", GetObjectMetadata, 1, 0,
-"getObjectMetadata(obj)",
+    JS_FN_HELP("getAllocationMetadata", GetAllocationMetadata, 1, 0,
+"getAllocationMetadata(obj)",
 "  Get the metadata for an object."),
 
     JS_INLINABLE_FN_HELP("bailout", testingFunc_bailout, 0, 0, TestBailout,
 "bailout()",
 "  Force a bailout out of ionmonkey (if running in ionmonkey)."),
+
+    JS_FN_HELP("bailAfter", testingFunc_bailAfter, 1, 0,
+"bailAfter(number)",
+"  Start a counter to bail once after passing the given amount of possible bailout positions in\n"
+"  ionmonkey.\n"),
+
 
     JS_FN_HELP("inJit", testingFunc_inJit, 0, 0,
 "inJit()",
@@ -3835,6 +3921,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("reportOutOfMemory", ReportOutOfMemory, 0, 0,
 "reportOutOfMemory()",
 "  Report OOM, then clear the exception and return undefined. For crash testing."),
+
+    JS_FN_HELP("throwOutOfMemory", ThrowOutOfMemory, 0, 0,
+"throwOutOfMemory()",
+"  Throw out of memory exception, for OOM handling testing."),
 
     JS_FN_HELP("reportLargeAllocationFailure", ReportLargeAllocationFailure, 0, 0,
 "reportLargeAllocationFailure()",
@@ -3981,11 +4071,6 @@ gc::ZealModeHelpText),
     JS_FN_HELP("getModuleEnvironmentValue", GetModuleEnvironmentValue, 2, 0,
 "getModuleEnvironmentValue(module, name)",
 "  Get the value of a bound name in a module environment.\n"),
-
-    JS_FN_HELP("enableMatchFlagArgument", EnableMatchFlagArgument, 0, 0,
-"enableMatchFlagArgument()",
-"  Enables the deprecated, non-standard flag argument of\n"
-"  String.prototype.{match,search,replace}.\n"),
 
     JS_FS_HELP_END
 };

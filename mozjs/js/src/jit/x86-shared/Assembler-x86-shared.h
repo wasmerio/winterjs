@@ -241,9 +241,6 @@ class CPUInfo
     static bool IsSSE42Present() { return GetSSEVersion() >= SSE4_2; }
     static bool IsPOPCNTPresent() { return popcntPresent; }
 
-#ifdef JS_CODEGEN_X86
-    static void SetFloatingPointDisabled() { maxEnabledSSEVersion = NoSSE; avxEnabled = false; }
-#endif
     static void SetSSE3Disabled() { maxEnabledSSEVersion = SSE2; avxEnabled = false; }
     static void SetSSE4Disabled() { maxEnabledSSEVersion = SSSE3; avxEnabled = false; }
     static void SetAVXEnabled() { avxEnabled = true; }
@@ -524,6 +521,9 @@ class AssemblerX86Shared : public AssemblerShared
             break;
           case Operand::MEM_SCALE:
             masm.movl_i32m(imm32.value, dest.disp(), dest.base(), dest.index(), dest.scale());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.movl_i32m(imm32.value, dest.address());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");
@@ -908,7 +908,6 @@ class AssemblerX86Shared : public AssemblerShared
 
   public:
     void nop() { masm.nop(); }
-    void twoByteNop() { masm.twoByteNop(); }
     void j(Condition cond, Label* label) { jSrc(cond, label); }
     void jmp(Label* label) { jmpSrc(label); }
     void j(Condition cond, RepatchLabel* label) { jSrc(cond, label); }
@@ -1052,6 +1051,7 @@ class AssemblerX86Shared : public AssemblerShared
     }
     void patchCall(uint32_t callerOffset, uint32_t calleeOffset) {
         unsigned char* code = masm.data();
+        X86Encoding::AutoUnprotectAssemblerBufferRegion unprotect(masm, callerOffset - 4, 4);
         X86Encoding::SetRel32(code + callerOffset, code + calleeOffset);
     }
     CodeOffset thunkWithPatch() {
@@ -1059,10 +1059,36 @@ class AssemblerX86Shared : public AssemblerShared
     }
     void patchThunk(uint32_t thunkOffset, uint32_t targetOffset) {
         unsigned char* code = masm.data();
+        X86Encoding::AutoUnprotectAssemblerBufferRegion unprotect(masm, thunkOffset - 4, 4);
         X86Encoding::SetRel32(code + thunkOffset, code + targetOffset);
     }
     static void repatchThunk(uint8_t* code, uint32_t thunkOffset, uint32_t targetOffset) {
         X86Encoding::SetRel32(code + thunkOffset, code + targetOffset);
+    }
+
+    CodeOffset twoByteNop() {
+        return CodeOffset(masm.twoByteNop().offset());
+    }
+    static void patchTwoByteNopToJump(uint8_t* jump, uint8_t* target) {
+        X86Encoding::BaseAssembler::patchTwoByteNopToJump(jump, target);
+    }
+    static void patchJumpToTwoByteNop(uint8_t* jump) {
+        X86Encoding::BaseAssembler::patchJumpToTwoByteNop(jump);
+    }
+
+    static void UpdateBoundsCheck(uint8_t* patchAt, uint32_t heapLength) {
+        // An access is out-of-bounds iff
+        //          ptr + offset + data-type-byte-size > heapLength
+        //     i.e. ptr > heapLength - data-type-byte-size - offset.
+        // data-type-byte-size and offset are already included in the addend so
+        // we just have to add the heap length here.
+        //
+        // On x64, even with signal handling being used for most bounds checks,
+        // there may be atomic operations that depend on explicit checks. All
+        // accesses that have been recorded are the only ones that need bound
+        // checks (see also
+        // CodeGeneratorX64::visitAsmJS{Load,Store,CompareExchange,Exchange,AtomicBinop}Heap)
+        X86Encoding::AddInt32(patchAt, heapLength);
     }
 
     void breakpoint() {
@@ -1071,6 +1097,7 @@ class AssemblerX86Shared : public AssemblerShared
 
     static bool HasSSE2() { return CPUInfo::IsSSE2Present(); }
     static bool HasSSE3() { return CPUInfo::IsSSE3Present(); }
+    static bool HasSSSE3() { return CPUInfo::IsSSSE3Present(); }
     static bool HasSSE41() { return CPUInfo::IsSSE41Present(); }
     static bool HasPOPCNT() { return CPUInfo::IsPOPCNTPresent(); }
     static bool SupportsFloatingPoint() { return CPUInfo::IsSSE2Present(); }
@@ -1572,14 +1599,14 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
-    void bsr(const Register& src, const Register& dest) {
-        masm.bsr_rr(src.encoding(), dest.encoding());
+    void bsrl(const Register& src, const Register& dest) {
+        masm.bsrl_rr(src.encoding(), dest.encoding());
     }
-    void bsf(const Register& src, const Register& dest) {
-        masm.bsf_rr(src.encoding(), dest.encoding());
+    void bsfl(const Register& src, const Register& dest) {
+        masm.bsfl_rr(src.encoding(), dest.encoding());
     }
-    void popcnt(const Register& src, const Register& dest) {
-        masm.popcnt_rr(src.encoding(), dest.encoding());
+    void popcntl(const Register& src, const Register& dest) {
+        masm.popcntl_rr(src.encoding(), dest.encoding());
     }
     void imull(Register multiplier) {
         masm.imull_r(multiplier.encoding());
@@ -1655,6 +1682,19 @@ class AssemblerX86Shared : public AssemblerShared
     }
     void sarl_cl(Register dest) {
         masm.sarl_CLr(dest.encoding());
+    }
+
+    void roll(const Imm32 imm, Register dest) {
+        masm.roll_ir(imm.value, dest.encoding());
+    }
+    void roll_cl(Register dest) {
+        masm.roll_CLr(dest.encoding());
+    }
+    void rorl(const Imm32 imm, Register dest) {
+        masm.rorl_ir(imm.value, dest.encoding());
+    }
+    void rorl_cl(Register dest) {
+        masm.rorl_CLr(dest.encoding());
     }
 
     void incl(const Operand& op) {
@@ -2079,39 +2119,29 @@ class AssemblerX86Shared : public AssemblerShared
         masm.divl_r(divisor.encoding());
     }
 
+    void vpinsrb(unsigned lane, Register src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE41());
+        masm.vpinsrb_irr(lane, src1.encoding(), src0.encoding(), dest.encoding());
+    }
+    void vpinsrw(unsigned lane, Register src1, FloatRegister src0, FloatRegister dest) {
+        masm.vpinsrw_irr(lane, src1.encoding(), src0.encoding(), dest.encoding());
+    }
+
     void vpinsrd(unsigned lane, Register src1, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE41());
         masm.vpinsrd_irr(lane, src1.encoding(), src0.encoding(), dest.encoding());
     }
-    void vpinsrd(unsigned lane, const Operand& src1, FloatRegister src0, FloatRegister dest) {
+
+    void vpextrb(unsigned lane, FloatRegister src, Register dest) {
         MOZ_ASSERT(HasSSE41());
-        switch (src1.kind()) {
-          case Operand::REG:
-            masm.vpinsrd_irr(lane, src1.reg(), src0.encoding(), dest.encoding());
-            break;
-          case Operand::MEM_REG_DISP:
-            masm.vpinsrd_imr(lane, src1.disp(), src1.base(), src0.encoding(), dest.encoding());
-            break;
-          default:
-            MOZ_CRASH("unexpected operand kind");
-        }
+        masm.vpextrb_irr(lane, src.encoding(), dest.encoding());
+    }
+    void vpextrw(unsigned lane, FloatRegister src, Register dest) {
+        masm.vpextrw_irr(lane, src.encoding(), dest.encoding());
     }
     void vpextrd(unsigned lane, FloatRegister src, Register dest) {
         MOZ_ASSERT(HasSSE41());
         masm.vpextrd_irr(lane, src.encoding(), dest.encoding());
-    }
-    void vpextrd(unsigned lane, FloatRegister src, const Operand& dest) {
-        MOZ_ASSERT(HasSSE41());
-        switch (dest.kind()) {
-          case Operand::REG:
-            masm.vpextrd_irr(lane, src.encoding(), dest.reg());
-            break;
-          case Operand::MEM_REG_DISP:
-            masm.vpextrd_irm(lane, src.encoding(), dest.disp(), dest.base());
-            break;
-          default:
-            MOZ_CRASH("unexpected operand kind");
-        }
     }
     void vpsrldq(Imm32 shift, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
@@ -2148,6 +2178,31 @@ class AssemblerX86Shared : public AssemblerShared
     void vpsrld(Imm32 count, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         masm.vpsrld_ir(count.value, src0.encoding(), dest.encoding());
+    }
+
+    void vpsllw(FloatRegister src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsllw_rr(src1.encoding(), src0.encoding(), dest.encoding());
+    }
+    void vpsllw(Imm32 count, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsllw_ir(count.value, src0.encoding(), dest.encoding());
+    }
+    void vpsraw(FloatRegister src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsraw_rr(src1.encoding(), src0.encoding(), dest.encoding());
+    }
+    void vpsraw(Imm32 count, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsraw_ir(count.value, src0.encoding(), dest.encoding());
+    }
+    void vpsrlw(FloatRegister src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsrlw_rr(src1.encoding(), src0.encoding(), dest.encoding());
+    }
+    void vpsrlw(Imm32 count, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpsrlw_ir(count.value, src0.encoding(), dest.encoding());
     }
 
     void vcvtsi2sd(const Operand& src1, FloatRegister src0, FloatRegister dest) {
@@ -2226,10 +2281,73 @@ class AssemblerX86Shared : public AssemblerShared
         MOZ_ASSERT(HasSSE2());
         masm.vucomiss_rr(rhs.encoding(), lhs.encoding());
     }
-    void vpcmpeqw(FloatRegister rhs, FloatRegister lhs, FloatRegister dst) {
+
+    void vpcmpeqb(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
-        masm.vpcmpeqw_rr(rhs.encoding(), lhs.encoding(), dst.encoding());
+        switch (rhs.kind()) {
+          case Operand::FPREG:
+            masm.vpcmpeqb_rr(rhs.fpu(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpcmpeqb_mr(rhs.disp(), rhs.base(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpcmpeqb_mr(rhs.address(), lhs.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
     }
+    void vpcmpgtb(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (rhs.kind()) {
+          case Operand::FPREG:
+            masm.vpcmpgtb_rr(rhs.fpu(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpcmpgtb_mr(rhs.disp(), rhs.base(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpcmpgtb_mr(rhs.address(), lhs.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+
+    void vpcmpeqw(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (rhs.kind()) {
+          case Operand::FPREG:
+            masm.vpcmpeqw_rr(rhs.fpu(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpcmpeqw_mr(rhs.disp(), rhs.base(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpcmpeqw_mr(rhs.address(), lhs.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpcmpgtw(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (rhs.kind()) {
+          case Operand::FPREG:
+            masm.vpcmpgtw_rr(rhs.fpu(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpcmpgtw_mr(rhs.disp(), rhs.base(), lhs.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpcmpgtw_mr(rhs.address(), lhs.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+
     void vpcmpeqd(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         switch (rhs.kind()) {
@@ -2262,6 +2380,7 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+
     void vcmpps(uint8_t order, Operand src1, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         // :TODO: (Bug 1132894) See LIRGeneratorX86Shared::lowerForFPU
@@ -2304,6 +2423,9 @@ class AssemblerX86Shared : public AssemblerShared
     }
     void vcmpneqps(const Operand& src1, FloatRegister src0, FloatRegister dest) {
         vcmpps(X86Encoding::ConditionCmp_NEQ, src1, src0, dest);
+    }
+    void vcmpordps(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        vcmpps(X86Encoding::ConditionCmp_ORD, src1, src0, dest);
     }
     void vrcpps(const Operand& src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
@@ -2419,6 +2541,198 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+    void vpaddb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpaddsb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddsb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddsb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddsb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpaddusb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddusb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddusb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddusb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubsb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubsb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubsb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubsb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubusb(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubusb_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubusb_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubusb_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpaddw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpaddsw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddsw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddsw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddsw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpaddusw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpaddusw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpaddusw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpaddusw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubsw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubsw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubsw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubsw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpsubusw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpsubusw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpsubusw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_ADDRESS32:
+            masm.vpsubusw_mr(src1.address(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
     void vpaddd(const Operand& src1, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE2());
         switch (src1.kind()) {
@@ -2463,6 +2777,19 @@ class AssemblerX86Shared : public AssemblerShared
             break;
           case Operand::MEM_REG_DISP:
             masm.vpmuludq_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void vpmullw(const Operand& src1, FloatRegister src0, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        switch (src1.kind()) {
+          case Operand::FPREG:
+            masm.vpmullw_rr(src1.fpu(), src0.encoding(), dest.encoding());
+            break;
+          case Operand::MEM_REG_DISP:
+            masm.vpmullw_mr(src1.disp(), src1.base(), src0.encoding(), dest.encoding());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");
@@ -2746,6 +3073,19 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+
+    void vpshuflw(uint32_t mask, FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpshuflw_irr(mask, src.encoding(), dest.encoding());
+    }
+    void vpshufhw(uint32_t mask, FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSE2());
+        masm.vpshufhw_irr(mask, src.encoding(), dest.encoding());
+    }
+    void vpshufb(FloatRegister mask, FloatRegister src, FloatRegister dest) {
+        MOZ_ASSERT(HasSSSE3());
+        masm.vpshufb_rr(mask.encoding(), src.encoding(), dest.encoding());
+    }
     void vmovddup(FloatRegister src, FloatRegister dest) {
         MOZ_ASSERT(HasSSE3());
         masm.vmovddup_rr(src.encoding(), dest.encoding());
@@ -3000,14 +3340,14 @@ class AssemblerX86Shared : public AssemblerShared
         MOZ_ASSERT(HasSSE41());
         masm.vroundss_irr(mode, src1.encoding(), src0.encoding(), dest.encoding());
     }
-    unsigned vinsertpsMask(SimdLane sourceLane, SimdLane destLane, unsigned zeroMask = 0)
+    unsigned vinsertpsMask(unsigned sourceLane, unsigned destLane, unsigned zeroMask = 0)
     {
         // Note that the sourceLane bits are ignored in the case of a source
         // memory operand, and the source is the given 32-bits memory location.
         MOZ_ASSERT(zeroMask < 16);
         unsigned ret = zeroMask ;
-        ret |= unsigned(destLane) << 4;
-        ret |= unsigned(sourceLane) << 6;
+        ret |= destLane << 4;
+        ret |= sourceLane << 6;
         MOZ_ASSERT(ret < 256);
         return ret;
     }

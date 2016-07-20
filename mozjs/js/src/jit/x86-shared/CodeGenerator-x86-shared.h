@@ -32,6 +32,8 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     void bailout(const T& t, LSnapshot* snapshot);
 
   protected:
+    void emitWasmSignedTruncateToInt32(OutOfLineWasmTruncateCheck* ool, Register output);
+
     // Load a NaN or zero into a register for an out of bounds AsmJS or static
     // typed array load.
     class OutOfLineLoadTypedArrayOutOfBounds : public OutOfLineCodeBase<CodeGeneratorX86Shared>
@@ -92,25 +94,24 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     };
 
   private:
-    MOZ_WARN_UNUSED_RESULT uint32_t
+    void
     emitAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* mir, const MInstruction* ins,
                                Register ptr, Label* fail);
 
   public:
     // For SIMD and atomic loads and stores (which throw on out-of-bounds):
-    MOZ_WARN_UNUSED_RESULT uint32_t
+    bool
     maybeEmitThrowingAsmJSBoundsCheck(const MAsmJSHeapAccess* mir, const MInstruction* ins,
                                       const LAllocation* ptr);
 
     // For asm.js plain and atomic loads that possibly require a bounds check:
-    MOZ_WARN_UNUSED_RESULT uint32_t
+    bool
     maybeEmitAsmJSLoadBoundsCheck(const MAsmJSLoadHeap* mir, LAsmJSLoadHeap* ins,
                                   OutOfLineLoadTypedArrayOutOfBounds** ool);
 
     // For asm.js plain and atomic stores that possibly require a bounds check:
-    MOZ_WARN_UNUSED_RESULT uint32_t
-    maybeEmitAsmJSStoreBoundsCheck(const MAsmJSStoreHeap* mir, LAsmJSStoreHeap* ins,
-                                   Label** rejoin);
+    bool
+    maybeEmitAsmJSStoreBoundsCheck(const MAsmJSStoreHeap* mir, LAsmJSStoreHeap* ins, Label** rejoin);
 
     void cleanupAfterAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* mir, Register ptr);
 
@@ -206,7 +207,11 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
 
     void emitTableSwitchDispatch(MTableSwitch* mir, Register index, Register base);
 
-    void emitSimdExtractLane(FloatRegister input, Register output, unsigned lane);
+    void emitSimdExtractLane8x16(FloatRegister input, Register output, unsigned lane,
+                                 SimdSign signedness);
+    void emitSimdExtractLane16x8(FloatRegister input, Register output, unsigned lane,
+                                 SimdSign signedness);
+    void emitSimdExtractLane32x4(FloatRegister input, Register output, unsigned lane);
 
   public:
     CodeGeneratorX86Shared(MIRGenerator* gen, LIRGraph* graph, MacroAssembler* masm);
@@ -266,11 +271,14 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual void visitUDivOrModConstant(LUDivOrModConstant *ins);
     virtual void visitAsmJSPassStackArg(LAsmJSPassStackArg* ins);
     virtual void visitAsmSelect(LAsmSelect* ins);
+    virtual void visitAsmReinterpret(LAsmReinterpret* lir);
     virtual void visitMemoryBarrier(LMemoryBarrier* ins);
     virtual void visitAtomicTypedArrayElementBinop(LAtomicTypedArrayElementBinop* lir);
     virtual void visitAtomicTypedArrayElementBinopForEffect(LAtomicTypedArrayElementBinopForEffect* lir);
     virtual void visitCompareExchangeTypedArrayElement(LCompareExchangeTypedArrayElement* lir);
     virtual void visitAtomicExchangeTypedArrayElement(LAtomicExchangeTypedArrayElement* lir);
+    virtual void visitCopySignD(LCopySignD* lir);
+    virtual void visitCopySignF(LCopySignF* lir);
 
     void visitOutOfLineLoadTypedArrayOutOfBounds(OutOfLineLoadTypedArrayOutOfBounds* ool);
     void visitOffsetBoundsCheck(OffsetBoundsCheck* oolCheck);
@@ -279,12 +287,16 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     void visitNegD(LNegD* lir);
     void visitNegF(LNegF* lir);
 
+    void visitOutOfLineWasmTruncateCheck(OutOfLineWasmTruncateCheck* ool);
+
     // SIMD operators
     void visitSimdValueInt32x4(LSimdValueInt32x4* lir);
     void visitSimdValueFloat32x4(LSimdValueFloat32x4* lir);
+    void visitSimdSplatX16(LSimdSplatX16* lir);
+    void visitSimdSplatX8(LSimdSplatX8* lir);
     void visitSimdSplatX4(LSimdSplatX4* lir);
-    void visitInt32x4(LInt32x4* ins);
-    void visitFloat32x4(LFloat32x4* ins);
+    void visitSimd128Int(LSimd128Int* ins);
+    void visitSimd128Float(LSimd128Float* ins);
     void visitInt32x4ToFloat32x4(LInt32x4ToFloat32x4* ins);
     void visitFloat32x4ToInt32x4(LFloat32x4ToInt32x4* ins);
     void visitFloat32x4ToUint32x4(LFloat32x4ToUint32x4* ins);
@@ -297,14 +309,22 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     void visitSimdInsertElementF(LSimdInsertElementF* lir);
     void visitSimdSwizzleI(LSimdSwizzleI* lir);
     void visitSimdSwizzleF(LSimdSwizzleF* lir);
+    void visitSimdShuffleX4(LSimdShuffleX4* lir);
     void visitSimdShuffle(LSimdShuffle* lir);
+    void visitSimdUnaryArithIx16(LSimdUnaryArithIx16* lir);
+    void visitSimdUnaryArithIx8(LSimdUnaryArithIx8* lir);
     void visitSimdUnaryArithIx4(LSimdUnaryArithIx4* lir);
     void visitSimdUnaryArithFx4(LSimdUnaryArithFx4* lir);
+    void visitSimdBinaryCompIx16(LSimdBinaryCompIx16* lir);
+    void visitSimdBinaryCompIx8(LSimdBinaryCompIx8* lir);
     void visitSimdBinaryCompIx4(LSimdBinaryCompIx4* lir);
     void visitSimdBinaryCompFx4(LSimdBinaryCompFx4* lir);
+    void visitSimdBinaryArithIx16(LSimdBinaryArithIx16* lir);
+    void visitSimdBinaryArithIx8(LSimdBinaryArithIx8* lir);
     void visitSimdBinaryArithIx4(LSimdBinaryArithIx4* lir);
     void visitSimdBinaryArithFx4(LSimdBinaryArithFx4* lir);
-    void visitSimdBinaryBitwiseX4(LSimdBinaryBitwiseX4* lir);
+    void visitSimdBinarySaturating(LSimdBinarySaturating* lir);
+    void visitSimdBinaryBitwise(LSimdBinaryBitwise* lir);
     void visitSimdShift(LSimdShift* lir);
     void visitSimdSelect(LSimdSelect* ins);
     void visitSimdAllTrue(LSimdAllTrue* ins);
@@ -334,6 +354,8 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     void atomicBinopToTypedIntArray(AtomicOp op, Scalar::Type arrayType, const S& value, const T& mem);
 
     void setReturnDoubleRegs(LiveRegisterSet* regs);
+
+    void canonicalizeIfDeterministic(Scalar::Type type, const LAllocation* value);
 };
 
 // An out-of-line bailout thunk.

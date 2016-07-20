@@ -65,6 +65,15 @@ OpaqueCrossCompartmentWrapper::setPrototype(JSContext* cx, HandleObject proxy, H
 }
 
 bool
+OpaqueCrossCompartmentWrapper::getPrototypeIfOrdinary(JSContext* cx, HandleObject proxy,
+                                                      bool* isOrdinary,
+                                                      MutableHandleObject protop) const
+{
+    *isOrdinary = false;
+    return true;
+}
+
+bool
 OpaqueCrossCompartmentWrapper::setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                                      bool* succeeded) const
 {
@@ -152,9 +161,9 @@ OpaqueCrossCompartmentWrapper::getOwnEnumerablePropertyKeys(JSContext* cx, Handl
 
 bool
 OpaqueCrossCompartmentWrapper::getBuiltinClass(JSContext* cx, HandleObject wrapper,
-                                               ESClassValue* classValue) const
+                                    ESClass* cls) const
 {
-    *classValue = ESClass_Other;
+    *cls = ESClass::Other;
     return true;
 }
 

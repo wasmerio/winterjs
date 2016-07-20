@@ -12,6 +12,8 @@
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
 
+#include "vm/Runtime-inl.h"
+
 namespace js {
 
 /* static */ void
@@ -47,7 +49,7 @@ js::TaggedProto::hashCode() const
 uint64_t
 js::TaggedProto::uniqueId() const
 {
-    if (isLazy())
+    if (isDynamic())
         return uint64_t(1);
     JSObject* obj = toObjectOrNull();
     if (!obj)

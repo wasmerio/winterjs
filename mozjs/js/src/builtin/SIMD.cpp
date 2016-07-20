@@ -18,6 +18,7 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "jsnum.h"
 #include "jsprf.h"
 
 #include "builtin/TypedObject.h"
@@ -172,12 +173,16 @@ js::ToSimdConstant(JSContext* cx, HandleValue v, jit::SimdConstant* out)
         return ErrorWrongTypeArg(cx, 1, typeDescr);
 
     Elem* mem = reinterpret_cast<Elem*>(v.toObject().as<TypedObject>().typedMem());
-    *out = jit::SimdConstant::CreateX4(mem);
+    *out = jit::SimdConstant::CreateSimd128(mem);
     return true;
 }
 
+template bool js::ToSimdConstant<Int8x16>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
+template bool js::ToSimdConstant<Int16x8>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
 template bool js::ToSimdConstant<Int32x4>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
 template bool js::ToSimdConstant<Float32x4>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
+template bool js::ToSimdConstant<Bool8x16>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
+template bool js::ToSimdConstant<Bool16x8>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
 template bool js::ToSimdConstant<Bool32x4>(JSContext* cx, HandleValue v, jit::SimdConstant* out);
 
 template<typename Elem>
@@ -188,9 +193,7 @@ TypedObjectMemory(HandleValue v)
     return reinterpret_cast<Elem>(obj.typedMem());
 }
 
-const Class SimdTypeDescr::class_ = {
-    "SIMD",
-    JSCLASS_HAS_RESERVED_SLOTS(JS_DESCR_SLOTS) | JSCLASS_BACKGROUND_FINALIZE,
+static const ClassOps SimdTypeDescrClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -199,7 +202,13 @@ const Class SimdTypeDescr::class_ = {
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     TypeDescr::finalize,
-    call
+    SimdTypeDescr::call
+};
+
+const Class SimdTypeDescr::class_ = {
+    "SIMD",
+    JSCLASS_HAS_RESERVED_SLOTS(JS_DESCR_SLOTS) | JSCLASS_BACKGROUND_FINALIZE,
+    &SimdTypeDescrClassOps
 };
 
 namespace {
@@ -268,12 +277,36 @@ static_assert(uint64_t(SimdOperation::Last) <= UINT16_MAX, "SimdOperation must f
 FLOAT32X4_FUNCTION_LIST(TDEFN)
 #undef TDEFN
 
+#define TDEFN(Name, Func, Operands) DEFN(Int8x16, Name)
+INT8X16_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
+#define TDEFN(Name, Func, Operands) DEFN(Uint8x16, Name)
+UINT8X16_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
+#define TDEFN(Name, Func, Operands) DEFN(Int16x8, Name)
+INT16X8_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
+#define TDEFN(Name, Func, Operands) DEFN(Uint16x8, Name)
+UINT16X8_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
 #define TDEFN(Name, Func, Operands) DEFN(Int32x4, Name)
 INT32X4_FUNCTION_LIST(TDEFN)
 #undef TDEFN
 
 #define TDEFN(Name, Func, Operands) DEFN(Uint32x4, Name)
 UINT32X4_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
+#define TDEFN(Name, Func, Operands) DEFN(Bool8x16, Name)
+BOOL8X16_FUNCTION_LIST(TDEFN)
+#undef TDEFN
+
+#define TDEFN(Name, Func, Operands) DEFN(Bool16x8, Name)
+BOOL16X8_FUNCTION_LIST(TDEFN)
 #undef TDEFN
 
 #define TDEFN(Name, Func, Operands) DEFN(Bool32x4, Name)
@@ -301,7 +334,7 @@ const JSFunctionSpec Float64x2Defn::Methods[]  = {
 
 const JSFunctionSpec Int8x16Defn::Methods[] = {
 #define SIMD_INT8X16_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_int8x16_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_int8x16_##Name, Operands, 0, SimdInt8x16_##Name),
     INT8X16_FUNCTION_LIST(SIMD_INT8X16_FUNCTION_ITEM)
 #undef SIMD_INT8X16_FUNCTION_ITEM
     JS_FS_END
@@ -309,7 +342,7 @@ const JSFunctionSpec Int8x16Defn::Methods[] = {
 
 const JSFunctionSpec Int16x8Defn::Methods[] = {
 #define SIMD_INT16X8_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_int16x8_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_int16x8_##Name, Operands, 0, SimdInt16x8_##Name),
     INT16X8_FUNCTION_LIST(SIMD_INT16X8_FUNCTION_ITEM)
 #undef SIMD_INT16X8_FUNCTION_ITEM
     JS_FS_END
@@ -325,7 +358,7 @@ const JSFunctionSpec Int32x4Defn::Methods[] = {
 
 const JSFunctionSpec Uint8x16Defn::Methods[] = {
 #define SIMD_UINT8X16_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_uint8x16_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_uint8x16_##Name, Operands, 0, SimdUint8x16_##Name),
     UINT8X16_FUNCTION_LIST(SIMD_UINT8X16_FUNCTION_ITEM)
 #undef SIMD_UINT8X16_FUNCTION_ITEM
     JS_FS_END
@@ -333,7 +366,7 @@ const JSFunctionSpec Uint8x16Defn::Methods[] = {
 
 const JSFunctionSpec Uint16x8Defn::Methods[] = {
 #define SIMD_UINT16X8_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_uint16x8_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_uint16x8_##Name, Operands, 0, SimdUint16x8_##Name),
     UINT16X8_FUNCTION_LIST(SIMD_UINT16X8_FUNCTION_ITEM)
 #undef SIMD_UINT16X8_FUNCTION_ITEM
     JS_FS_END
@@ -349,7 +382,7 @@ const JSFunctionSpec Uint32x4Defn::Methods[] = {
 
 const JSFunctionSpec Bool8x16Defn::Methods[] = {
 #define SIMD_BOOL8X16_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_bool8x16_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_bool8x16_##Name, Operands, 0, SimdBool8x16_##Name),
     BOOL8X16_FUNCTION_LIST(SIMD_BOOL8X16_FUNCTION_ITEM)
 #undef SIMD_BOOL8X16_FUNCTION_ITEM
     JS_FS_END
@@ -357,7 +390,7 @@ const JSFunctionSpec Bool8x16Defn::Methods[] = {
 
 const JSFunctionSpec Bool16x8Defn::Methods[] = {
 #define SIMD_BOOL16X8_FUNCTION_ITEM(Name, Func, Operands) \
-    JS_FN(#Name, js::simd_bool16x8_##Name, Operands, 0),
+    JS_INLINABLE_FN(#Name, js::simd_bool16x8_##Name, Operands, 0, SimdBool16x8_##Name),
     BOOL16X8_FUNCTION_LIST(SIMD_BOOL16X8_FUNCTION_ITEM)
 #undef SIMD_BOOL16X8_FUNCTION_ITEM
     JS_FS_END
@@ -400,9 +433,6 @@ SimdTypeDescr::call(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     Rooted<SimdTypeDescr*> descr(cx, &args.callee().as<SimdTypeDescr>());
-    MOZ_ASSERT(size_t(static_cast<TypeDescr*>(descr)->size()) <= InlineTypedObject::MaximumSize,
-               "inline storage is needed for using InternalHandle belows");
-
     Rooted<TypedObject*> result(cx, TypedObject::createZeroed(cx, descr, 0));
     if (!result)
         return false;
@@ -423,15 +453,19 @@ SimdTypeDescr::call(JSContext* cx, unsigned argc, Value* vp)
 ///////////////////////////////////////////////////////////////////////////
 // SIMD class
 
-const Class SimdObject::class_ = {
-    "SIMD",
-    JSCLASS_HAS_RESERVED_SLOTS(uint32_t(SimdType::Count)),
+static const ClassOps SimdObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
     nullptr, /* setProperty */
     nullptr, /* enumerate */
-    resolve  /* resolve */
+    SimdObject::resolve
+};
+
+const Class SimdObject::class_ = {
+    "SIMD",
+    JSCLASS_HAS_RESERVED_SLOTS(uint32_t(SimdType::Count)),
+    &SimdObjectClassOps
 };
 
 bool
@@ -1254,70 +1288,6 @@ Select(JSContext* cx, unsigned argc, Value* vp)
     return StoreResult<V>(cx, args, result);
 }
 
-// Get an integer array index from a function argument. Coerce if necessary.
-//
-// When a JS function argument represents an integer index into an array, it is
-// laundered like this:
-//
-//   1. numericIndex = ToNumber(argument)            (may throw TypeError)
-//   2. intIndex = ToInteger(numericIndex)
-//   3. if intIndex != numericIndex throw RangeError
-//
-// This function additionally bounds the range to the non-negative contiguous
-// integers:
-//
-//   4. if intIndex < 0 or intIndex > 2^53 throw RangeError
-//
-// Return true and set |*index| to the integer value if |argument| is a valid
-// array index argument. Otherwise report an TypeError or RangeError and return
-// false.
-//
-// The returned index will always be in the range 0 <= *index <= 2^53.
-static bool
-ArgumentToIntegerIndex(JSContext* cx, JS::HandleValue v, uint64_t* index)
-{
-    // Fast common case.
-    if (v.isInt32()) {
-        int32_t i = v.toInt32();
-        if (i >= 0) {
-            *index = i;
-            return true;
-        }
-    }
-
-    // Slow case. Use ToNumber() to coerce. This may throw a TypeError.
-    double d;
-    if (!ToNumber(cx, v, &d))
-        return false;
-
-    // Check that |d| is an integer in the valid range.
-    //
-    // Not all floating point integers fit in the range of a uint64_t, so we
-    // need a rough range check before the real range check in our caller. We
-    // could limit indexes to UINT64_MAX, but this would mean that our callers
-    // have to be very careful about integer overflow. The contiguous integer
-    // floating point numbers end at 2^53, so make that our upper limit. If we
-    // ever support arrays with more than 2^53 elements, this will need to
-    // change.
-    //
-    // Reject infinities, NaNs, and numbers outside the contiguous integer range
-    // with a RangeError.
-
-    // Write relation so NaNs throw a RangeError.
-    if (!(0 <= d && d <= (uint64_t(1) << 53)))
-        return ErrorBadIndex(cx);
-
-    // Check that d is an integer, throw a RangeError if not.
-    // Note that this conversion could invoke undefined behaviour without the
-    // range check above.
-    uint64_t i(d);
-    if (d != double(i))
-        return ErrorBadIndex(cx);
-
-    *index = i;
-    return true;
-}
-
 // Extract an integer lane index from a function argument.
 //
 // Register an exception and return false if the argument is not suitable.
@@ -1325,7 +1295,7 @@ static bool
 ArgumentToLaneIndex(JSContext* cx, JS::HandleValue v, unsigned limit, unsigned* lane)
 {
     uint64_t arg;
-    if (!ArgumentToIntegerIndex(cx, v, &arg))
+    if (!ToIntegerIndex(cx, v, &arg))
         return false;
     if (arg >= limit)
         return ErrorBadIndex(cx);
@@ -1352,7 +1322,7 @@ TypedArrayFromArgs(JSContext* cx, const CallArgs& args, uint32_t accessBytes,
     typedArray.set(&argobj);
 
     uint64_t index;
-    if (!ArgumentToIntegerIndex(cx, args[1], &index))
+    if (!ToIntegerIndex(cx, args[1], &index))
         return false;
 
     // Do the range check in 64 bits even when size_t is 32 bits.

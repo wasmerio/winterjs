@@ -286,7 +286,7 @@ struct AutoEnterAnalysis
     RecompileInfoVector pendingRecompiles;
 
     // Prevent us from calling the objectMetadataCallback.
-    js::AutoSuppressObjectMetadataCallback suppressMetadata;
+    js::AutoSuppressAllocationMetadataBuilder suppressMetadata;
 
     FreeOp* freeOp;
     Zone* zone;
@@ -298,7 +298,8 @@ struct AutoEnterAnalysis
     }
 
     AutoEnterAnalysis(FreeOp* fop, Zone* zone)
-      : suppressGC(zone->runtimeFromMainThread()), oom(zone), suppressMetadata(zone)
+      : suppressGC(zone->runtimeFromMainThread()->contextFromMainThread()),
+        oom(zone), suppressMetadata(zone)
     {
         init(fop, zone);
     }

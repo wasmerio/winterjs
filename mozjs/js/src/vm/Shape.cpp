@@ -47,10 +47,6 @@ ShapeTable::init(ExclusiveContext* cx, Shape* lastProp)
     if (sizeLog2 < MIN_SIZE_LOG2)
         sizeLog2 = MIN_SIZE_LOG2;
 
-    /*
-     * Use rt->calloc for memory accounting and overpressure handling
-     * without OOM reporting. See ShapeTable::change.
-     */
     size = JS_BIT(sizeLog2);
     entries_ = cx->pod_calloc<Entry>(size);
     if (!entries_)
@@ -94,7 +90,7 @@ Shape::removeFromDictionary(NativeObject* obj)
 }
 
 void
-Shape::insertIntoDictionary(HeapPtrShape* dictp)
+Shape::insertIntoDictionary(GCPtrShape* dictp)
 {
     // Don't assert inDictionaryMode() here because we may be called from
     // JSObject::toDictionaryMode via JSObject::newDictionaryShape.
@@ -108,7 +104,7 @@ Shape::insertIntoDictionary(HeapPtrShape* dictp)
     setParent(dictp->get());
     if (parent)
         parent->listp = &parent;
-    listp = (HeapPtrShape*) dictp;
+    listp = (GCPtrShape*) dictp;
     *dictp = this;
 }
 
@@ -268,7 +264,7 @@ template ShapeTable::Entry& ShapeTable::search<MaybeAdding::Adding>(jsid id);
 template ShapeTable::Entry& ShapeTable::search<MaybeAdding::NotAdding>(jsid id);
 
 bool
-ShapeTable::change(int log2Delta, ExclusiveContext* cx)
+ShapeTable::change(ExclusiveContext* cx, int log2Delta)
 {
     MOZ_ASSERT(entries_);
     MOZ_ASSERT(-1 <= log2Delta && log2Delta <= 1);
@@ -280,7 +276,7 @@ ShapeTable::change(int log2Delta, ExclusiveContext* cx)
     uint32_t newLog2 = oldLog2 + log2Delta;
     uint32_t oldSize = JS_BIT(oldLog2);
     uint32_t newSize = JS_BIT(newLog2);
-    Entry* newTable = cx->pod_calloc<Entry>(newSize);
+    Entry* newTable = cx->maybe_pod_calloc<Entry>(newSize);
     if (!newTable)
         return false;
 
@@ -318,24 +314,27 @@ ShapeTable::grow(ExclusiveContext* cx)
 
     MOZ_ASSERT(entryCount_ + removedCount_ <= size - 1);
 
-    if (!change(delta, cx)) {
-        if (entryCount_ + removedCount_ == size - 1)
+    if (!change(cx, delta)) {
+        if (entryCount_ + removedCount_ == size - 1) {
+            ReportOutOfMemory(cx);
             return false;
-
-        cx->recoverFromOutOfMemory();
+        }
     }
 
     return true;
 }
 
 void
-ShapeTable::fixupAfterMovingGC()
+ShapeTable::trace(JSTracer* trc)
 {
     for (size_t i = 0; i < capacity(); i++) {
         Entry& entry = getEntry(i);
         Shape* shape = entry.shape();
-        if (shape && IsForwarded(shape))
-            entry.setPreservingCollision(Forwarded(shape));
+        if (shape) {
+            TraceManuallyBarrieredEdge(trc, &shape, "ShapeTable shape");
+            if (shape != entry.shape())
+                entry.setPreservingCollision(shape);
+        }
     }
 }
 
@@ -484,7 +483,7 @@ js::NativeObject::toDictionaryMode(ExclusiveContext* cx)
             return false;
         }
 
-        HeapPtrShape* listp = dictionaryShape ? &dictionaryShape->parent : nullptr;
+        GCPtrShape* listp = dictionaryShape ? &dictionaryShape->parent : nullptr;
         StackShape child(shape);
         dprop->initDictionaryShape(child, self->numFixedSlots(), listp);
 
@@ -1045,7 +1044,7 @@ NativeObject::removeProperty(ExclusiveContext* cx, jsid id_)
         /* Consider shrinking table if its load factor is <= .25. */
         uint32_t size = table.capacity();
         if (size > ShapeTable::MIN_SIZE && table.entryCount() <= size >> 2)
-            (void) table.change(-1, cx);
+            (void) table.change(cx, -1);
     } else {
         /*
          * Non-dictionary-mode shape tables are shared immutables, so all we
@@ -1195,7 +1194,7 @@ JSObject::setFlags(ExclusiveContext* cx, BaseShape::Flag flags, GenerateShape ge
     if (!existingShape)
         return false;
 
-    Shape* newShape = Shape::setObjectFlags(cx, flags, self->getTaggedProto(), existingShape);
+    Shape* newShape = Shape::setObjectFlags(cx, flags, self->taggedProto(), existingShape);
     if (!newShape)
         return false;
 
@@ -1290,14 +1289,14 @@ BaseShape::adoptUnowned(UnownedBaseShape* other)
 /* static */ UnownedBaseShape*
 BaseShape::getUnowned(ExclusiveContext* cx, StackBaseShape& base)
 {
-    BaseShapeSet& table = cx->compartment()->baseShapes;
+    auto& table = cx->compartment()->baseShapes;
 
     if (!table.initialized() && !table.init()) {
         ReportOutOfMemory(cx);
         return nullptr;
     }
 
-    DependentAddPtr<BaseShapeSet> p(cx, table, base);
+    auto p = MakeDependentAddPtr(cx, table, base);
     if (p)
         return *p;
 
@@ -1329,8 +1328,13 @@ BaseShape::assertConsistency()
 void
 BaseShape::traceChildren(JSTracer* trc)
 {
-    assertConsistency();
+    traceChildrenSkipShapeTable(trc);
+    traceShapeTable(trc);
+}
 
+void
+BaseShape::traceChildrenSkipShapeTable(JSTracer* trc)
+{
     if (trc->isMarkingTracer())
         compartment()->mark();
 
@@ -1340,12 +1344,15 @@ BaseShape::traceChildren(JSTracer* trc)
     JSObject* global = compartment()->unsafeUnbarrieredMaybeGlobal();
     if (global)
         TraceManuallyBarrieredEdge(trc, &global, "global");
+
+    assertConsistency();
 }
 
 void
-JSCompartment::sweepBaseShapeTable()
+BaseShape::traceShapeTable(JSTracer* trc)
 {
-    baseShapes.sweep();
+    if (hasTable())
+        table().trace(trc);
 }
 
 #ifdef JSGC_HASH_TABLE_CHECKS
@@ -1356,7 +1363,7 @@ JSCompartment::checkBaseShapeTableAfterMovingGC()
     if (!baseShapes.initialized())
         return;
 
-    for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
+    for (decltype(baseShapes)::Enum e(baseShapes); !e.empty(); e.popFront()) {
         UnownedBaseShape* base = e.front().unbarrieredGet();
         CheckGCThingAfterMovingGC(base);
 
@@ -1424,7 +1431,7 @@ JSCompartment::checkInitialShapesTableAfterMovingGC()
      * initialShapes that points into the nursery, and that the hash table
      * entries are discoverable.
      */
-    for (InitialShapeSet::Enum e(initialShapes); !e.empty(); e.popFront()) {
+    for (decltype(initialShapes)::Enum e(initialShapes); !e.empty(); e.popFront()) {
         InitialShapeEntry entry = e.front();
         TaggedProto proto = entry.proto.unbarrieredGet();
         Shape* shape = entry.shape.unbarrieredGet();
@@ -1463,16 +1470,15 @@ EmptyShape::getInitialShape(ExclusiveContext* cx, const Class* clasp, TaggedProt
 {
     MOZ_ASSERT_IF(proto.isObject(), cx->isInsideCurrentCompartment(proto.toObject()));
 
-    InitialShapeSet& table = cx->compartment()->initialShapes;
+    auto& table = cx->compartment()->initialShapes;
 
     if (!table.initialized() && !table.init()) {
         ReportOutOfMemory(cx);
         return nullptr;
     }
 
-    typedef InitialShapeEntry::Lookup Lookup;
-    DependentAddPtr<InitialShapeSet>
-        p(cx, table, Lookup(clasp, proto, nfixed, objectFlags));
+    using Lookup = InitialShapeEntry::Lookup;
+    auto p = MakeDependentAddPtr(cx, table, Lookup(clasp, proto, nfixed, objectFlags));
     if (p)
         return p->shape;
 
@@ -1571,24 +1577,19 @@ EmptyShape::insertInitialShape(ExclusiveContext* cx, HandleShape shape, HandleOb
 }
 
 void
-JSCompartment::sweepInitialShapeTable()
-{
-    initialShapes.sweep();
-}
-
-void
 JSCompartment::fixupInitialShapeTable()
 {
     if (!initialShapes.initialized())
         return;
 
-    for (InitialShapeSet::Enum e(initialShapes); !e.empty(); e.popFront()) {
+    for (decltype(initialShapes)::Enum e(initialShapes); !e.empty(); e.popFront()) {
         // The shape may have been moved, but we can update that in place.
         Shape* shape = e.front().shape.unbarrieredGet();
         if (IsForwarded(shape)) {
             shape = Forwarded(shape);
             e.mutableFront().shape.set(shape);
         }
+        shape->updateBaseShapeAfterMovingGC();
 
         // If the prototype has moved we have to rekey the entry.
         InitialShapeEntry entry = e.front();

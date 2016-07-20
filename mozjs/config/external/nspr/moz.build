@@ -12,7 +12,7 @@ if CONFIG['MOZ_BUILD_NSPR']:
         'ds',
         'libc',
     ]
-    if CONFIG['MOZ_FOLD_LIBS'] and not CONFIG['JS_STANDALONE']:
+    if CONFIG['MOZ_FOLD_LIBS']:
         # When folding libraries, nspr is actually in the nss library.
         USE_LIBS += [
             'nss',

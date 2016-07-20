@@ -12,10 +12,11 @@
 
 #include <stddef.h>
 
-#include "jslock.h"
 #include "jsscript.h"
 
 #include "js/ProfilingStack.h"
+#include "threading/LockGuard.h"
+#include "threading/Mutex.h"
 
 /*
  * SPS Profiler integration with the JS Engine
@@ -126,7 +127,7 @@ class SPSProfiler
     uint32_t             max_;
     bool                 slowAssertions;
     uint32_t             enabled_;
-    PRLock*              lock_;
+    js::Mutex            lock_;
     void                (*eventMarker_)(const char*);
 
     const char* allocProfileString(JSScript* script, JSFunction* function);
@@ -203,25 +204,12 @@ class SPSProfiler
     uint32_t* addressOfEnabled() {
         return &enabled_;
     }
-};
 
-/*
- * This class is used to make sure the strings table
- * is only accessed on one thread at a time.
- */
-class AutoSPSLock
-{
-  public:
-    explicit AutoSPSLock(PRLock* lock)
-    {
-        MOZ_ASSERT(lock, "Parameter should not be null!");
-        lock_ = lock;
-        PR_Lock(lock);
-    }
-    ~AutoSPSLock() { PR_Unlock(lock_); }
-
-  private:
-    PRLock* lock_;
+    void trace(JSTracer* trc);
+    void fixupStringsMapAfterMovingGC();
+#ifdef JSGC_HASH_TABLE_CHECKS
+    void checkStringsMapAfterMovingGC();
+#endif
 };
 
 /*
@@ -245,14 +233,14 @@ class MOZ_RAII AutoSuppressProfilerSampling
 inline size_t
 SPSProfiler::stringsCount()
 {
-    AutoSPSLock lock(lock_);
+    LockGuard<Mutex> lock(lock_);
     return strings.count();
 }
 
 inline void
 SPSProfiler::stringsReset()
 {
-    AutoSPSLock lock(lock_);
+    LockGuard<Mutex> lock(lock_);
     strings.clear();
 }
 

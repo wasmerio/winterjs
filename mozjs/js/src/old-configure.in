@@ -6,7 +6,6 @@ dnl file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 dnl Process this file with autoconf to produce a configure script.
 dnl ========================================================
-
 AC_PREREQ(2.13)
 AC_INIT(js/src/jsapi.h)
 AC_CONFIG_AUX_DIR(${srcdir}/build/autoconf)
@@ -83,59 +82,10 @@ else
 fi
 AC_SUBST(autoconfmk)
 
-MOZ_ARG_WITH_STRING(gonk-toolchain-prefix,
-[  --with-gonk-toolchain-prefix=DIR
-                          prefix to gonk toolchain commands],
-    gonk_toolchain_prefix=$withval)
+MOZ_ANDROID_NDK
 
 if test -n "$gonkdir" ; then
-    kernel_name=`uname -s | tr "[[:upper:]]" "[[:lower:]]"`
-    dnl Default to ICS
-    ANDROID_VERSION=15
-    if test -n "${PLATFORM_SDK_VERSION}"; then
-        ANDROID_VERSION="${PLATFORM_SDK_VERSION}"
-    fi
-
-    dnl set up compilers
-    AS="$gonk_toolchain_prefix"as
-    CC="$gonk_toolchain_prefix"gcc
-    CXX="$gonk_toolchain_prefix"g++
-    CPP="$gonk_toolchain_prefix"cpp
-    LD="$gonk_toolchain_prefix"ld
-    AR="$gonk_toolchain_prefix"ar
-    RANLIB="$gonk_toolchain_prefix"ranlib
-    STRIP="$gonk_toolchain_prefix"strip
-    OBJCOPY="$gonk_toolchain_prefix"objcopy
-
-    STLPORT_CPPFLAGS="-I$_topsrcdir/build/stlport/stlport -I$gonkdir/ndk/sources/cxx-stl/system/include"
-    STLPORT_LIBS="-lstlport"
-
-    CPPFLAGS="-DANDROID $TARGET_C_INCLUDES -I$gonkdir/frameworks/base/native/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic $CPPFLAGS -I$gonkdir/external/valgrind/fxos-include"
-    CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
-    CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions $CXXFLAGS $STLPORT_CPPFLAGS"
-    LIBS="$LIBS $STLPORT_LIBS"
-
-    dnl Add -llog by default, since we use it all over the place.
-    LDFLAGS="-mandroid -L$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib --sysroot=$gonkdir/out/target/product/$GONK_PRODUCT/obj/ -llog $LDFLAGS"
-
-    dnl prevent cross compile section from using these flags as host flags
-    if test -z "$HOST_CPPFLAGS" ; then
-        HOST_CPPFLAGS=" "
-    fi
-    if test -z "$HOST_CFLAGS" ; then
-        HOST_CFLAGS=" "
-    fi
-    if test -z "$HOST_CXXFLAGS" ; then
-        HOST_CXXFLAGS=" "
-    fi
-    if test -z "$HOST_LDFLAGS" ; then
-        HOST_LDFLAGS=" "
-    fi
-
-    AC_DEFINE(ANDROID)
-    AC_DEFINE(GONK)
-else
-    MOZ_ANDROID_NDK
+    LDFLAGS="-L$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib --sysroot=$gonkdir/out/target/product/$GONK_PRODUCT/obj/ -llog $LDFLAGS"
 fi
 
 case "$target" in
@@ -176,17 +126,8 @@ else
     if test -z "$HOST_CC"; then
         HOST_CC='$(CC)'
     fi
-    if test -z "$HOST_CFLAGS"; then
-        HOST_CFLAGS='$(CFLAGS)'
-    fi
     if test -z "$HOST_CXX"; then
         HOST_CXX='$(CXX)'
-    fi
-    if test -z "$HOST_CXXFLAGS"; then
-        HOST_CXXFLAGS='$(CXXFLAGS)'
-    fi
-    if test -z "$HOST_LDFLAGS"; then
-        HOST_LDFLAGS='$(LDFLAGS)'
     fi
     if test -z "$HOST_RANLIB"; then
         HOST_RANLIB='$(RANLIB)'
@@ -201,11 +142,8 @@ fi
 
 MOZ_TOOL_VARIABLES
 
-MOZ_CHECK_COMPILER_WRAPPER
-
 AC_PROG_CPP
 AC_PROG_CXXCPP
-MOZ_RUST_SUPPORT
 
 dnl Special win32 checks
 dnl ========================================================
@@ -250,8 +188,10 @@ case "$target" in
         # secure CRT functions.
         # MSVC warning C4819 warns some UTF-8 characters (e.g. copyright sign)
         # on non-Western system locales even if it is in a comment.
+        # MSVC warning wd4595 warns non-member operator new or delete functions
+        # may not be declared inline, as of VS2015 Update 2.
         CFLAGS="$CFLAGS -wd4819"
-        CXXFLAGS="$CXXFLAGS -wd4345 -wd4351 -wd4800 -wd4819 -D_CRT_SECURE_NO_WARNINGS"
+        CXXFLAGS="$CXXFLAGS -wd4345 -wd4351 -wd4800 -wd4819 -wd4595 -D_CRT_SECURE_NO_WARNINGS"
         AC_LANG_SAVE
         AC_LANG_C
         AC_TRY_COMPILE([#include <stdio.h>],
@@ -268,27 +208,22 @@ case "$target" in
         _MSVC_VER_FILTER='s|.*[^!-~]([0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?).*|\1|p'
         changequote([,])
 
-        # Determine compiler version
-        _CC_MAJOR_VERSION=`echo ${CC_VERSION} | cut -c 1-2`
-        _CC_MINOR_VERSION=`echo ${CC_VERSION} | cut -c 3-4`
-        _MSC_VER=${CC_VERSION}
-
-        _CXX_MAJOR_VERSION=`echo ${CXX_VERSION} | cut -c 1-2`
-
-        if test "$_CC_MAJOR_VERSION" != "$_CXX_MAJOR_VERSION"; then
-            AC_MSG_ERROR([The major versions of \$CC and \$CXX do not match.])
-        fi
+        _MSC_VER=`echo ${CC_VERSION} | cut -c 1-2,4-5`
 
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
         AC_DEFINE(_USE_MATH_DEFINES) # Otherwise MSVC's math.h doesn't #define M_PI.
 
-        if test "$_CC_MAJOR_VERSION" = "18"; then
+        case "$CC_VERSION" in
+        18*)
             _CC_SUITE=12
+            MSVS_VERSION=2013
             MSVC_C_RUNTIME_DLL=msvcr120.dll
             MSVC_CXX_RUNTIME_DLL=msvcp120.dll
-        elif test "$_CC_MAJOR_VERSION" = "19"; then
+            ;;
+        19*)
             _CC_SUITE=14
+            MSVS_VERSION=2015
             MSVC_C_RUNTIME_DLL=vcruntime140.dll
             MSVC_CXX_RUNTIME_DLL=msvcp140.dll
 
@@ -304,9 +239,9 @@ case "$target" in
             # Disable C++11 thread-safe statics due to crashes on XP (bug 1204752)
             # See https://connect.microsoft.com/VisualStudio/feedback/details/1789709/visual-c-2015-runtime-broken-on-windows-server-2003-c-11-magic-statics
             CXXFLAGS="$CXXFLAGS -Zc:threadSafeInit-"
-        else
-            AC_MSG_ERROR([This version ($CC_VERSION) of the MSVC compiler is unsupported. See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
-        fi
+            ;;
+        esac
+        AC_SUBST(MSVS_VERSION)
         AC_SUBST(MSVC_C_RUNTIME_DLL)
         AC_SUBST(MSVC_CXX_RUNTIME_DLL)
 
@@ -435,8 +370,6 @@ AC_SUBST(GNU_AS)
 AC_SUBST(GNU_LD)
 AC_SUBST(GNU_CC)
 AC_SUBST(GNU_CXX)
-AC_SUBST(INTEL_CC)
-AC_SUBST(INTEL_CXX)
 
 dnl ========================================================
 dnl Checks for programs.
@@ -453,36 +386,8 @@ dnl = Mac OS X toolchain support
 dnl ========================================================
 
 dnl The universal machinery sets UNIVERSAL_BINARY to inform packager.mk
-dnl that a universal binary is being produced and MOZ_CAN_RUN_PROGRAMS
-dnl when we can run target binaries.
+dnl that a universal binary is being produced.
 AC_SUBST(UNIVERSAL_BINARY)
-AC_SUBST(MOZ_CAN_RUN_PROGRAMS)
-
-dnl ========================================================
-dnl Check for MacOS deployment target version
-dnl ========================================================
-
-MOZ_ARG_ENABLE_STRING(macos-target,
-                      [  --enable-macos-target=VER (default=10.6)
-                          Set the minimum MacOS version needed at runtime],
-                      [_MACOSX_DEPLOYMENT_TARGET=$enableval])
-
-if test "$target_cpu" != "arm"; then
-case "$target" in
-*-darwin*)
-    if test -n "$_MACOSX_DEPLOYMENT_TARGET" ; then
-        dnl Use the specified value
-        export MACOSX_DEPLOYMENT_TARGET=$_MACOSX_DEPLOYMENT_TARGET
-    else
-        dnl No value specified on the command line or in the environment,
-        dnl use architecture minimum.
-        export MACOSX_DEPLOYMENT_TARGET=10.6
-    fi
-    ;;
-esac
-fi
-
-AC_SUBST(MACOSX_DEPLOYMENT_TARGET)
 
 dnl ========================================================
 dnl = Mac OS X SDK support
@@ -614,9 +519,7 @@ dnl ========================================================
 dnl set the defaults first
 dnl ========================================================
 AS_BIN=$AS
-AR_LIST='$(AR) t'
 AR_EXTRACT='$(AR) x'
-AR_DELETE='$(AR) d'
 AS='$(CC)'
 AS_DASH_C_FLAG='-c'
 DLL_PREFIX=lib
@@ -763,14 +666,6 @@ dnl ========================================================
 dnl GNU specific defaults
 dnl ========================================================
 if test "$GNU_CC"; then
-    # Per bug 719659 comment 2, some of the headers on ancient build machines
-    # may require gnu89 inline semantics.  But otherwise, we use C99.
-    # But on OS X we just use C99 plus GNU extensions, in order to fix
-    # bug 917526.
-    CFLAGS="$CFLAGS -std=gnu99"
-    if test "${OS_ARCH}" != Darwin; then
-        CFLAGS="$CFLAGS -fgnu89-inline"
-    fi
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(DSO_SONAME) -o $@'
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(DSO_SONAME) -o $@'
     DSO_LDOPTS='-shared'
@@ -926,7 +821,7 @@ case "$target" in
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MOZ_OPTIMIZE_FLAGS="-O3 -fno-stack-protector"
     CFLAGS="$CFLAGS -fno-common"
-    CXXFLAGS="$CXXFLAGS -fno-common"
+    CXXFLAGS="$CXXFLAGS -fno-common -stdlib=libc++"
     DLL_SUFFIX=".dylib"
     DSO_LDOPTS=''
     STRIP="$STRIP -x -S"
@@ -982,13 +877,7 @@ case "$target" in
     ;;
 
 *-*linux*)
-    # Note: both GNU_CC and INTEL_CC are set when using Intel's C compiler.
-    # Similarly for GNU_CXX and INTEL_CXX.
-    if test "$INTEL_CC" -o "$INTEL_CXX"; then
-        # -Os has been broken on Intel's C/C++ compilers for quite a
-        # while; Intel recommends against using it.
-        MOZ_OPTIMIZE_FLAGS="-O2"
-    elif test "$GNU_CC" -o "$GNU_CXX"; then
+    if test "$GNU_CC" -o "$GNU_CXX"; then
         MOZ_PGO_OPTIMIZE_FLAGS="-O3"
         MOZ_OPTIMIZE_FLAGS="-O3"
         if test -z "$CLANG_CC"; then
@@ -1002,10 +891,6 @@ case "$target" in
     	CXXFLAGS="$CXXFLAGS -mieee"
     ;;
     esac
-
-    if test -z "$MC"; then
-        MC=mc.exe
-    fi
     ;;
 
 *-mingw*)
@@ -1013,7 +898,6 @@ case "$target" in
     DSO_PIC_CFLAGS=
     DLL_SUFFIX=.dll
     RC=rc.exe
-    MC=mc.exe
     if test -n "$GNU_CC" -o -n "$CLANG_CC"; then
         CC="$CC -mwindows"
         CXX="$CXX -mwindows"
@@ -1074,12 +958,18 @@ case "$target" in
         _USE_CPP_INCLUDE_FLAG=1
         _DEFINES_CFLAGS='-FI $(topobjdir)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
         _DEFINES_CXXFLAGS='-FI $(topobjdir)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
-        CFLAGS="$CFLAGS -W3 -Gy"
-        CXXFLAGS="$CXXFLAGS -W3 -Gy"
-        if test "$CPU_ARCH" = "x86"; then
-            dnl VS2012+ defaults to -arch:SSE2.
-            CFLAGS="$CFLAGS -arch:IA32"
-            CXXFLAGS="$CXXFLAGS -arch:IA32"
+        CFLAGS="$CFLAGS -W3 -Gy -Zc:inline"
+        CXXFLAGS="$CXXFLAGS -W3 -Gy -Zc:inline"
+        if test "$CPU_ARCH" = "x86";then
+          dnl VS2012+ defaults to -arch:SSE2. We want to target nothing
+          dnl more recent, so set that explicitly here unless another
+          dnl target arch has already been set.
+          if test -z `echo $CFLAGS | grep -i [-/]arch:` ; then
+            CFLAGS="$CFLAGS -arch:SSE2"
+            fi
+          if test -z `echo $CXXFLAGS | grep -i [-/]arch:` ; then
+            CXXFLAGS="$CXXFLAGS -arch:SSE2"
+          fi
         fi
         dnl VS2013+ requires -FS when parallel building by make -jN.
         dnl If nothing, compiler sometimes causes C1041 error.
@@ -1186,9 +1076,7 @@ case "$target" in
         LDFLAGS="$LDFLAGS -DYNAMICBASE"
         RCFLAGS="-nologo"
     fi
-    AC_DEFINE(HAVE_SNPRINTF)
     AC_DEFINE(HAVE__MSIZE)
-    AC_DEFINE(HW_THREADS)
     AC_DEFINE(STDC_HEADERS)
     AC_DEFINE(WIN32_LEAN_AND_MEAN)
     BIN_SUFFIX='.exe'
@@ -1370,14 +1258,7 @@ if test "$GNU_CC" -a "$OS_TARGET" != WINNT; then
     VISIBILITY_FLAGS='-fvisibility=hidden -fvisibility-inlines-hidden'
     ;;
   *)
-    case $GCC_VERSION in
-    4.6*)
-      VISIBILITY_FLAGS="-I${DIST}/system_wrappers -include ${_topsrcdir}/config/gcc_hidden_dso_handle.h"
-      ;;
-    *)
-      VISIBILITY_FLAGS="-I${DIST}/system_wrappers -include ${_topsrcdir}/config/gcc_hidden.h"
-      ;;
-    esac
+    VISIBILITY_FLAGS="-I${DIST}/system_wrappers -include ${_topsrcdir}/config/gcc_hidden.h"
     WRAP_SYSTEM_INCLUDES=1
     ;;
   esac
@@ -1602,7 +1483,6 @@ dnl Checks for math functions.
 dnl ========================================================
 AC_CHECK_LIB(m, sin)
 AC_CHECK_LIB(m, __sincos, AC_DEFINE(HAVE_SINCOS))
-AC_CHECK_FUNCS([log2 log1p expm1 sqrt1pm1 acosh asinh atanh cbrt])
 
 
 dnl check for wcrtomb/mbrtowc
@@ -1807,7 +1687,7 @@ if test "$ac_cv_thread_keyword" = yes; then
     mips*-*)
       :
       ;;
-    *-android*|*-linuxandroid*|*-mingw*)
+    *-android*|*-linuxandroid*)
       :
       ;;
     *)
@@ -1871,37 +1751,11 @@ dnl The macros used for command line options
 dnl are defined in build/autoconf/altoptions.m4.
 
 dnl ========================================================
-dnl = Mozilla update channel, used for disabling features
-dnl = not wanted for release.
-dnl ========================================================
-
-# app update channel is 'default' when not supplied.
-MOZ_ARG_ENABLE_STRING([update-channel],
-[  --enable-update-channel=CHANNEL
-                          Select application update channel (default=default)],
-    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
-
-if test -z "$MOZ_UPDATE_CHANNEL"; then
-    MOZ_UPDATE_CHANNEL=default
-fi
-AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
-AC_SUBST(MOZ_UPDATE_CHANNEL)
-
-dnl ========================================================
 dnl =
 dnl = Check for external package dependencies
 dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(External Packages)
-
-case "$OS_TARGET" in
-WINNT|Darwin|Android)
-  MOZ_FOLD_LIBS=1
-  ;;
-*)
-  MOZ_FOLD_LIBS=
-  ;;
-esac
 
 MOZ_CONFIG_NSPR(js)
 
@@ -1933,27 +1787,6 @@ dnl ========================================================
 
 MOZ_ARG_HEADER(Application)
 
-ENABLE_TESTS=1
-
-USE_ARM_KUSER=
-
-case "${target}" in
-    arm*-android*|arm*-linuxandroid*)
-        USE_ARM_KUSER=1
-        ;;
-esac
-
-dnl ========================================================
-dnl Use ARM userspace kernel helpers; tell NSPR to enable
-dnl their usage and use them in spidermonkey.
-dnl ========================================================
-MOZ_ARG_WITH_BOOL(arm-kuser,
-[  --with-arm-kuser         Use kuser helpers (Linux/ARM only -- requires kernel 2.6.13 or later)],
-    USE_ARM_KUSER=1,)
-if test -n "$USE_ARM_KUSER"; then
-   AC_DEFINE(USE_ARM_KUSER)
-fi
-
 dnl ========================================================
 dnl =
 dnl = Components & Features
@@ -1969,14 +1802,6 @@ MOZ_ARG_ENABLE_STRING(ui-locale,
                           Select the user interface locale (default: en-US)],
     MOZ_UI_LOCALE=$enableval )
 AC_SUBST(MOZ_UI_LOCALE)
-
-dnl ========================================================
-dnl build the tests by default
-dnl ========================================================
-MOZ_ARG_DISABLE_BOOL(tests,
-[  --disable-tests         Do not build test libraries & programs],
-    ENABLE_TESTS=,
-    ENABLE_TESTS=1 )
 
 dnl ========================================================
 dnl =
@@ -2066,36 +1891,18 @@ dnl ========================================================
 dnl = Enable jemalloc
 dnl ========================================================
 
-LOCAL_MOZ_MEMORY=1
-MOZ_ARG_DISABLE_BOOL(jemalloc,
-[  --disable-jemalloc       Don't replace memory allocator with jemalloc],
-    LOCAL_MOZ_MEMORY=)
-
-dnl Consult the command-line arguments in stand alone-builds only. In
-dnl non-stand-alone builds, we always use the value of MOZ_MEMORY inherited from
-dnl the top-level configure script.
-if test "$JS_STANDALONE"; then
-    MOZ_MEMORY=$LOCAL_MOZ_MEMORY
-fi
-
-dnl In stand-alone builds we always only want to link executables against mozglue.
-if test "$JS_STANDALONE"; then
-   MOZ_GLUE_IN_PROGRAM=
-else
-  case "${OS_TARGET}" in
-  Android|WINNT|Darwin)
-    MOZ_GLUE_IN_PROGRAM=
-    ;;
-  *)
-    dnl On !Android !Windows !OSX, we only want to link executables against mozglue
-    MOZ_GLUE_IN_PROGRAM=1
-    AC_DEFINE(MOZ_GLUE_IN_PROGRAM)
-    ;;
-  esac
-fi
+case "${OS_TARGET}" in
+Android|WINNT|Darwin)
+  MOZ_GLUE_IN_PROGRAM=
+  ;;
+*)
+  dnl On !Android !Windows !OSX, we only want to link executables against mozglue
+  MOZ_GLUE_IN_PROGRAM=1
+  AC_DEFINE(MOZ_GLUE_IN_PROGRAM)
+  ;;
+esac
 
 if test "$MOZ_MEMORY"; then
-  AC_DEFINE(MOZ_MEMORY)
   if test "x$MOZ_DEBUG" = "x1"; then
     AC_DEFINE(MOZ_MEMORY_DEBUG)
   fi
@@ -2103,35 +1910,10 @@ if test "$MOZ_MEMORY"; then
   dnl complicated.  Therefore, simply define special cpp variables for the
   dnl platforms we have special knowledge of.
   case "${target}" in
-  *-darwin*)
-    AC_DEFINE(MOZ_MEMORY_DARWIN)
-    ;;
-  *-*freebsd*)
-    AC_DEFINE(MOZ_MEMORY_BSD)
-    ;;
-  *-android*|*-linuxandroid*)
-    AC_DEFINE(MOZ_MEMORY_LINUX)
-    AC_DEFINE(MOZ_MEMORY_ANDROID)
-    ;;
-  *-*linux*)
-    AC_DEFINE(MOZ_MEMORY_LINUX)
-    ;;
-  *-netbsd*)
-    AC_DEFINE(MOZ_MEMORY_BSD)
-    ;;
   *-mingw*)
-    AC_DEFINE(MOZ_MEMORY_WINDOWS)
     export MOZ_NO_DEBUG_RTL=1
     ;;
-  *)
-    AC_MSG_ERROR([--enable-jemalloc not supported on ${target}])
-    ;;
   esac
-fi
-AC_SUBST(MOZ_MEMORY)
-AC_SUBST(MOZ_JEMALLOC4)
-if test -n "$MOZ_JEMALLOC4"; then
-  AC_DEFINE(MOZ_JEMALLOC4)
 fi
 AC_SUBST(MOZ_CRT)
 AC_SUBST(MOZ_GLUE_IN_PROGRAM)
@@ -2488,13 +2270,6 @@ fi
 
 CFLAGS="$_SAVE_CFLAGS"
 
-if test -n "$INTEL_CC"; then
-  PROFILE_GEN_CFLAGS="-prof-gen -prof-dir ."
-  PROFILE_GEN_LDFLAGS=
-  PROFILE_USE_CFLAGS="-prof-use -prof-dir ."
-  PROFILE_USE_LDFLAGS=
-fi
-
 AC_SUBST(PROFILE_GEN_CFLAGS)
 AC_SUBST(PROFILE_GEN_LDFLAGS)
 AC_SUBST(PROFILE_USE_CFLAGS)
@@ -2559,18 +2334,6 @@ else
     NONASCII=$'\241\241'
     AC_SUBST(NONASCII)
   fi
-fi
-
-dnl ========================================================
-dnl = Disable -fstrict-aliasing with GCC 4.4 and earlier.
-dnl = See bugs 821502 and 832623.
-dnl ========================================================
-if test -n "$GNU_CC" -a -z "$CLANG_CC"; then
-    dnl GCC 3.x isn't supported, so we don't need to check for that.
-    if test "$GCC_MAJOR_VERSION" -eq "4" -a "$GCC_MINOR_VERSION" -lt "5" ; then
-        CFLAGS="$CFLAGS -fno-strict-aliasing"
-        CXXFLAGS="$CXXFLAGS -fno-strict-aliasing"
-    fi
 fi
 
 dnl ========================================================
@@ -2656,27 +2419,21 @@ dnl ========================================================
 
 AC_SUBST(AR)
 AC_SUBST(AR_FLAGS)
-AC_SUBST(AR_LIST)
 AC_SUBST(AR_EXTRACT)
-AC_SUBST(AR_DELETE)
 AC_SUBST(AS)
 AC_SUBST(ASFLAGS)
 AC_SUBST(AS_DASH_C_FLAG)
 AC_SUBST(LD)
 AC_SUBST(RC)
 AC_SUBST(RCFLAGS)
-AC_SUBST(MC)
 AC_SUBST(WINDRES)
 AC_SUBST(IMPLIB)
 AC_SUBST(FILTER)
 AC_SUBST(BIN_FLAGS)
 AC_SUBST(MOZ_DEBUG)
-AC_SUBST(MOZ_DEBUG_SYMBOLS)
 AC_SUBST(MOZ_DEBUG_LDFLAGS)
 AC_SUBST(WARNINGS_AS_ERRORS)
 AC_SUBST(LIBICONV)
-
-AC_SUBST(ENABLE_TESTS)
 
 AC_SUBST(ENABLE_STRIP)
 AC_SUBST(PKG_SKIP_STRIP)
@@ -2738,11 +2495,11 @@ AC_SUBST(OS_COMPILE_CFLAGS)
 AC_SUBST(OS_COMPILE_CXXFLAGS)
 AC_SUBST(OS_LDFLAGS)
 AC_SUBST(OS_LIBS)
-AC_SUBST(CROSS_COMPILE)
 
 AC_SUBST(HOST_CC)
 AC_SUBST(HOST_CXX)
 AC_SUBST(HOST_CFLAGS)
+AC_SUBST(HOST_CPPFLAGS)
 AC_SUBST(HOST_CXXFLAGS)
 AC_SUBST(HOST_LDFLAGS)
 AC_SUBST(HOST_OPTIMIZE_FLAGS)
@@ -2770,11 +2527,8 @@ AC_SUBST(BIN_SUFFIX)
 AC_SUBST(IMPORT_LIB_SUFFIX)
 AC_SUBST(USE_N32)
 AC_SUBST(CC_VERSION)
-AC_SUBST(CXX_VERSION)
 AC_SUBST(MSMANIFEST_TOOL)
 AC_SUBST(MOZ_LINKER)
-AC_SUBST(MOZ_FOLD_LIBS)
-AC_SUBST(MOZ_FOLD_LIBS_FLAGS)
 AC_SUBST(WIN32_CONSOLE_EXE_LDFLAGS)
 AC_SUBST(WIN32_GUI_EXE_LDFLAGS)
 
@@ -2809,8 +2563,6 @@ _INTL_API=yes
 
 MOZ_CONFIG_ICU()
 
-MOZ_SUBCONFIGURE_ICU()
-
 dnl ========================================================
 dnl JavaScript shell
 dnl ========================================================
@@ -2822,8 +2574,6 @@ AC_CHECK_FUNCS(setlocale localeconv)
 AC_SUBST(MOZILLA_VERSION)
 
 AC_SUBST(ac_configure_args)
-
-AC_SUBST(TOOLCHAIN_PREFIX)
 
 if test -n "$JS_STANDALONE"; then
 MOZ_APP_NAME="mozjs"

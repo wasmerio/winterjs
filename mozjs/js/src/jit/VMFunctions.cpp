@@ -101,7 +101,14 @@ InvokeFunction(JSContext* cx, HandleObject obj, bool constructing, uint32_t argc
         return InternalConstructWithProvidedThis(cx, fval, thisv, cargs, newTarget, rval);
     }
 
-    return Invoke(cx, thisv, fval, argc, argvWithoutThis, rval);
+    InvokeArgs args(cx);
+    if (!args.init(argc))
+        return false;
+
+    for (size_t i = 0; i < argc; i++)
+        args[i].set(argvWithoutThis[i]);
+
+    return Call(cx, fval, thisv, args, rval);
 }
 
 bool
@@ -371,25 +378,6 @@ ArrayShiftDense(JSContext* cx, HandleObject obj, MutableHandleValue rval)
     return true;
 }
 
-JSObject*
-ArrayConcatDense(JSContext* cx, HandleObject obj1, HandleObject obj2, HandleObject objRes)
-{
-    if (objRes) {
-        // Fast path if we managed to allocate an object inline.
-        if (!js::array_concat_dense(cx, obj1, obj2, objRes))
-            return nullptr;
-        return objRes;
-    }
-
-    JS::AutoValueArray<3> argv(cx);
-    argv[0].setUndefined();
-    argv[1].setObject(*obj1);
-    argv[2].setObject(*obj2);
-    if (!js::array_concat(cx, 1, argv.begin()))
-        return nullptr;
-    return &argv[0].toObject();
-}
-
 JSString*
 ArrayJoin(JSContext* cx, HandleObject array, HandleString sep)
 {
@@ -442,7 +430,7 @@ SetProperty(JSContext* cx, HandleObject obj, HandlePropertyName name, HandleValu
 
     RootedValue receiver(cx, ObjectValue(*obj));
     ObjectOpResult result;
-    if (MOZ_LIKELY(!obj->getOps()->setProperty)) {
+    if (MOZ_LIKELY(!obj->getOpsSetProperty())) {
         if (!NativeSetProperty(
                 cx, obj.as<NativeObject>(), id, value, receiver,
                 (op == JSOP_SETNAME || op == JSOP_STRICTSETNAME ||
@@ -623,17 +611,19 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
 {
     MOZ_ASSERT(!IsInsideNursery(obj));
     if (obj->is<NativeObject>() &&
+        !obj->as<NativeObject>().isInWholeCellBuffer() &&
         uint32_t(index) < obj->as<NativeObject>().getDenseInitializedLength() &&
         (obj->as<NativeObject>().getDenseInitializedLength() > MAX_WHOLE_CELL_BUFFER_SIZE
 #ifdef JS_GC_ZEAL
          || rt->hasZealMode(gc::ZealMode::ElementsBarrier)
 #endif
-            ))
+        ))
     {
         rt->gc.storeBuffer.putSlot(&obj->as<NativeObject>(), HeapSlot::Element, index, 1);
-    } else {
-        rt->gc.storeBuffer.putWholeCell(obj);
+        return;
     }
+
+    rt->gc.storeBuffer.putWholeCell(obj);
 }
 
 void
@@ -642,7 +632,7 @@ PostGlobalWriteBarrier(JSRuntime* rt, JSObject* obj)
     MOZ_ASSERT(obj->is<GlobalObject>());
     if (!obj->compartment()->globalWriteBarriered) {
         PostWriteBarrier(rt, obj);
-        obj->compartment()->globalWriteBarriered = true;
+        obj->compartment()->globalWriteBarriered = 1;
     }
 }
 
@@ -809,22 +799,13 @@ InterpretResume(JSContext* cx, HandleObject obj, HandleValue val, HandleProperty
 
     MOZ_ASSERT(selfHostedFun.toObject().is<JSFunction>());
 
-    InvokeArgs args(cx);
-    if (!args.init(3))
-        return false;
-
-    args.setCallee(selfHostedFun);
-    args.setThis(UndefinedValue());
+    FixedInvokeArgs<3> args(cx);
 
     args[0].setObject(*obj);
     args[1].set(val);
     args[2].setString(kind);
 
-    if (!Invoke(cx, args))
-        return false;
-
-    rval.set(args.rval());
-    return true;
+    return Call(cx, selfHostedFun, UndefinedHandleValue, args, rval);
 }
 
 bool
@@ -1085,15 +1066,6 @@ CreateDerivedTypedObj(JSContext* cx, HandleObject descr,
 }
 
 JSString*
-RegExpReplace(JSContext* cx, HandleString string, HandleObject regexp, HandleString repl)
-{
-    MOZ_ASSERT(string);
-    MOZ_ASSERT(repl);
-
-    return str_replace_regexp_raw(cx, string, regexp.as<RegExpObject>(), repl);
-}
-
-JSString*
 StringReplace(JSContext* cx, HandleString string, HandleString pattern, HandleString repl)
 {
     MOZ_ASSERT(string);
@@ -1255,6 +1227,12 @@ bool
 ObjectIsCallable(JSObject* obj)
 {
     return obj->isCallable();
+}
+
+bool
+ObjectIsConstructor(JSObject* obj)
+{
+    return obj->isConstructor();
 }
 
 void

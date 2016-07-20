@@ -546,12 +546,15 @@ static const JSClass sCABIClass = {
 // Class representing ctypes.{C,Pointer,Array,Struct,Function}Type.prototype.
 // This exists to give said prototypes a class of "CType", and to provide
 // reserved slots for stashing various other prototype objects.
-static const JSClass sCTypeProtoClass = {
-  "CType",
-  JSCLASS_HAS_RESERVED_SLOTS(CTYPEPROTO_SLOTS),
+static const JSClassOps sCTypeProtoClassOps = {
   nullptr, nullptr, nullptr, nullptr,
   nullptr, nullptr, nullptr, nullptr,
   ConstructAbstract, nullptr, ConstructAbstract
+};
+static const JSClass sCTypeProtoClass = {
+  "CType",
+  JSCLASS_HAS_RESERVED_SLOTS(CTYPEPROTO_SLOTS),
+  &sCTypeProtoClassOps
 };
 
 // Class representing ctypes.CData.prototype and the 'prototype' properties
@@ -561,29 +564,38 @@ static const JSClass sCDataProtoClass = {
   0
 };
 
-static const JSClass sCTypeClass = {
-  "CType",
-  JSCLASS_HAS_RESERVED_SLOTS(CTYPE_SLOTS),
+static const JSClassOps sCTypeClassOps = {
   nullptr, nullptr, nullptr, nullptr,
   nullptr, nullptr, nullptr, CType::Finalize,
   CType::ConstructData, CType::HasInstance, CType::ConstructData,
   CType::Trace
 };
+static const JSClass sCTypeClass = {
+  "CType",
+  JSCLASS_HAS_RESERVED_SLOTS(CTYPE_SLOTS),
+  &sCTypeClassOps
+};
 
-static const JSClass sCDataClass = {
-  "CData",
-  JSCLASS_HAS_RESERVED_SLOTS(CDATA_SLOTS),
+static const JSClassOps sCDataClassOps = {
   nullptr, nullptr, ArrayType::Getter, ArrayType::Setter,
   nullptr, nullptr, nullptr, CData::Finalize,
   FunctionType::Call, nullptr, FunctionType::Call
 };
+static const JSClass sCDataClass = {
+  "CData",
+  JSCLASS_HAS_RESERVED_SLOTS(CDATA_SLOTS),
+  &sCDataClassOps
+};
 
-static const JSClass sCClosureClass = {
-  "CClosure",
-  JSCLASS_HAS_RESERVED_SLOTS(CCLOSURE_SLOTS),
+static const JSClassOps sCClosureClassOps = {
   nullptr, nullptr, nullptr, nullptr,
   nullptr, nullptr, nullptr, CClosure::Finalize,
   nullptr, nullptr, nullptr, CClosure::Trace
+};
+static const JSClass sCClosureClass = {
+  "CClosure",
+  JSCLASS_HAS_RESERVED_SLOTS(CCLOSURE_SLOTS),
+  &sCClosureClassOps
 };
 
 /*
@@ -600,11 +612,14 @@ static const JSClass sCDataFinalizerProtoClass = {
  * Instances of CDataFinalizer have both private data (with type
  * |CDataFinalizer::Private|) and slots (see |CDataFinalizerSlots|).
  */
+static const JSClassOps sCDataFinalizerClassOps = {
+  nullptr, nullptr, nullptr, nullptr,
+  nullptr, nullptr, nullptr, CDataFinalizer::Finalize
+};
 static const JSClass sCDataFinalizerClass = {
   "CDataFinalizer",
   JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(CDATAFINALIZER_SLOTS),
-  nullptr, nullptr, nullptr, nullptr,
-  nullptr, nullptr, nullptr, CDataFinalizer::Finalize
+  &sCDataFinalizerClassOps
 };
 
 
@@ -786,18 +801,21 @@ static const JSClass sUInt64ProtoClass = {
   0
 };
 
+static const JSClassOps sInt64ClassOps = {
+  nullptr, nullptr, nullptr, nullptr,
+  nullptr, nullptr, nullptr, Int64Base::Finalize
+};
+
 static const JSClass sInt64Class = {
   "Int64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
-  nullptr, nullptr, nullptr, nullptr,
-  nullptr, nullptr, nullptr, Int64Base::Finalize
+  &sInt64ClassOps
 };
 
 static const JSClass sUInt64Class = {
   "UInt64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
-  nullptr, nullptr, nullptr, nullptr,
-  nullptr, nullptr, nullptr, Int64Base::Finalize
+  &sInt64ClassOps
 };
 
 static const JSFunctionSpec sInt64StaticFunctions[] = {
@@ -3631,11 +3649,11 @@ ImplicitConvert(JSContext* cx,
                          arrObj, arrIndex);
       }
     } else {
-      ESClassValue cls;
+      ESClass cls;
       if (!GetClassOfValue(cx, val, &cls))
         return false;
 
-      if (cls == ESClass_Array) {
+      if (cls == ESClass::Array) {
         // Convert each element of the array by calling ImplicitConvert.
         uint32_t sourceLength;
         if (!JS_GetArrayLength(cx, valObj, &sourceLength) ||
@@ -3666,10 +3684,10 @@ ImplicitConvert(JSContext* cx,
         }
 
         memcpy(buffer, intermediate.get(), arraySize);
-      } else if (cls == ESClass_ArrayBuffer || cls == ESClass_SharedArrayBuffer) {
+      } else if (cls == ESClass::ArrayBuffer || cls == ESClass::SharedArrayBuffer) {
         // Check that array is consistent with type, then
         // copy the array.
-        const bool bufferShared = cls == ESClass_SharedArrayBuffer;
+        const bool bufferShared = cls == ESClass::SharedArrayBuffer;
         uint32_t sourceLength = bufferShared ? JS_GetSharedArrayBufferByteLength(valObj)
             : JS_GetArrayBufferByteLength(valObj);
         size_t elementSize = CType::GetSize(baseType);
@@ -7387,11 +7405,8 @@ CClosure::ClosureStub(ffi_cif* cif, void* result, void** args, void* userData)
   JSRuntime* rt = argClosure.cinfo->rt;
   RootedObject fun(rt, argClosure.cinfo->jsfnObj);
 
-  // Arbitrarily choose a cx in which to run this code. This is bad, as
-  // JSContexts are stateful and have options. The hope is to eliminate
-  // JSContexts (see bug 650361).
-  js::PrepareScriptEnvironmentAndInvoke(rt->contextList.getFirst(), fun,
-                                        argClosure);
+  JSContext* cx = JS_GetContext(rt);
+  js::PrepareScriptEnvironmentAndInvoke(cx, fun, argClosure);
 }
 
 bool CClosure::ArgClosure::operator()(JSContext* cx)

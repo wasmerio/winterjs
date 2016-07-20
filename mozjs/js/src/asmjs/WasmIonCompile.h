@@ -25,7 +25,7 @@
 namespace js {
 namespace wasm {
 
-class ModuleGeneratorThreadView;
+struct ModuleGeneratorData;
 
 typedef Vector<jit::MIRType, 8, SystemAllocPolicy> MIRTypeVector;
 typedef jit::ABIArgIter<MIRTypeVector> ABIArgMIRTypeIter;
@@ -42,21 +42,18 @@ class FuncBytes
     const DeclaredSig& sig_;
     uint32_t           lineOrBytecode_;
     Uint32Vector       callSiteLineNums_;
-    unsigned           generateTime_;
 
   public:
     FuncBytes(Bytes&& bytes,
               uint32_t index,
               const DeclaredSig& sig,
               uint32_t lineOrBytecode,
-              Uint32Vector&& callSiteLineNums,
-              unsigned generateTime)
+              Uint32Vector&& callSiteLineNums)
       : bytes_(Move(bytes)),
         index_(index),
         sig_(sig),
         lineOrBytecode_(lineOrBytecode),
-        callSiteLineNums_(Move(callSiteLineNums)),
-        generateTime_(generateTime)
+        callSiteLineNums_(Move(callSiteLineNums))
     {}
 
     Bytes& bytes() { return bytes_; }
@@ -65,7 +62,6 @@ class FuncBytes
     const DeclaredSig& sig() const { return sig_; }
     uint32_t lineOrBytecode() const { return lineOrBytecode_; }
     const Uint32Vector& callSiteLineNums() const { return callSiteLineNums_; }
-    unsigned generateTime() const { return generateTime_; }
 };
 
 typedef UniquePtr<FuncBytes> UniqueFuncBytes;
@@ -78,7 +74,6 @@ class FuncCompileResults
     jit::TempAllocator alloc_;
     jit::MacroAssembler masm_;
     FuncOffsets offsets_;
-    unsigned compileTime_;
 
     FuncCompileResults(const FuncCompileResults&) = delete;
     FuncCompileResults& operator=(const FuncCompileResults&) = delete;
@@ -86,16 +81,12 @@ class FuncCompileResults
   public:
     explicit FuncCompileResults(LifoAlloc& lifo)
       : alloc_(&lifo),
-        masm_(jit::MacroAssembler::AsmJSToken(), alloc_),
-        compileTime_(0)
+        masm_(jit::MacroAssembler::AsmJSToken(), alloc_)
     {}
 
     jit::TempAllocator& alloc() { return alloc_; }
     jit::MacroAssembler& masm() { return masm_; }
     FuncOffsets& offsets() { return offsets_; }
-
-    void setCompileTime(unsigned t) { MOZ_ASSERT(!compileTime_); compileTime_ = t; }
-    unsigned compileTime() const { return compileTime_; }
 };
 
 // An IonCompileTask represents the task of compiling a single function body. An
@@ -107,18 +98,23 @@ class FuncCompileResults
 
 class IonCompileTask
 {
+  public:
+    enum class CompileMode { None, Baseline, Ion };
+
+  private:
     JSRuntime* const           runtime_;
-    ModuleGeneratorThreadView& mg_;
+    const ModuleGeneratorData& mg_;
     LifoAlloc                  lifo_;
     UniqueFuncBytes            func_;
+    CompileMode                mode_;
     Maybe<FuncCompileResults>  results_;
 
     IonCompileTask(const IonCompileTask&) = delete;
     IonCompileTask& operator=(const IonCompileTask&) = delete;
 
   public:
-    IonCompileTask(JSRuntime* rt, ModuleGeneratorThreadView& mg, size_t defaultChunkSize)
-      : runtime_(rt), mg_(mg), lifo_(defaultChunkSize), func_(nullptr)
+    IonCompileTask(JSRuntime* rt, const ModuleGeneratorData& mg, size_t defaultChunkSize)
+      : runtime_(rt), mg_(mg), lifo_(defaultChunkSize), func_(nullptr), mode_(CompileMode::None)
     {}
     JSRuntime* runtime() const {
         return runtime_;
@@ -126,13 +122,17 @@ class IonCompileTask
     LifoAlloc& lifo() {
         return lifo_;
     }
-    ModuleGeneratorThreadView& mg() const {
+    const ModuleGeneratorData& mg() const {
         return mg_;
     }
-    void init(UniqueFuncBytes func) {
+    void init(UniqueFuncBytes func, CompileMode mode) {
         MOZ_ASSERT(!func_);
         func_ = Move(func);
         results_.emplace(lifo_);
+        mode_ = mode;
+    }
+    CompileMode mode() const {
+        return mode_;
     }
     const FuncBytes& func() const {
         MOZ_ASSERT(func_);
@@ -147,11 +147,15 @@ class IonCompileTask
         func_.reset(nullptr);
         results_.reset();
         lifo_.releaseAll();
+        mode_ = CompileMode::None;
     }
 };
 
-bool
+MOZ_MUST_USE bool
 IonCompileFunction(IonCompileTask* task);
+
+bool
+CompileFunction(IonCompileTask* task);
 
 } // namespace wasm
 } // namespace js

@@ -193,9 +193,18 @@ endif
 # Dummy wrapper rule to allow the faster backend to piggy back
 $(addprefix install-,$(subst /,_,$(filter dist/%,$(install_manifests)))): install-dist_%: install-dist/% ;
 
-# For compatibility
 .PHONY: install-tests
-install-tests: install-_tests
+install-tests: install-test-files
+
+# We no longer run "make install-tests" directly before running tests, but we still
+# want to depend on things like config.status, hence this target.
+.PHONY: run-tests-deps
+run-tests-deps: $(install_manifest_depends)
+
+# Force --no-remove, because $objdir/_tests is handled by multiple manifests.
+.PHONY: install-test-files
+install-test-files:
+	$(call py_action,process_install_manifest,--no-remove _tests _build_manifests/install/_test_files)
 
 include $(topsrcdir)/build/moz-automation.mk
 
@@ -227,6 +236,9 @@ endif
 # For historical reasons that are unknown, $(DIST)/sdk is always blown away
 # with no regard for PGO passes. This decision could probably be revisited.
 recurse_pre-export:: install-dist/sdk
+
+recurse_artifact:
+	$(topsrcdir)/mach --log-no-times artifact install
 
 ifndef JS_STANDALONE
 ifdef ENABLE_TESTS
@@ -277,14 +289,12 @@ MAKE_SYM_STORE_ARGS += --install-manifest=$(DEPTH)/_build_manifests/install/dist
 
 SYM_STORE_SOURCE_DIRS := $(topsrcdir)
 
+ifdef MOZ_CRASHREPORTER
 include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
-ifdef MOZ_SYMBOLS_EXTRA_BUILDID
-EXTRA_BUILDID := -$(MOZ_SYMBOLS_EXTRA_BUILDID)
-endif
-
 SYMBOL_INDEX_NAME = \
-  $(MOZ_APP_NAME)-$(MOZ_APP_VERSION)-$(OS_TARGET)-$(BUILDID)-$(CPU_ARCH)$(EXTRA_BUILDID)-symbols.txt
+  $(MOZ_APP_NAME)-$(MOZ_APP_VERSION)-$(OS_TARGET)-$(BUILDID)-$(CPU_ARCH)-symbols.txt
+endif
 
 buildsymbols:
 ifdef MOZ_CRASHREPORTER
@@ -304,20 +314,18 @@ ifdef MOZ_CRASHREPORTER
 	echo packing symbols
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 	cd $(DIST)/crashreporter-symbols && \
-          zip -r9D '../$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip' . -x '*test*' -x '*Test*'
+          zip -r5D '../$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip' . -x '*test*' -x '*Test*'
 	cd $(DIST)/crashreporter-symbols && \
 	grep 'sym' $(SYMBOL_INDEX_NAME) > $(SYMBOL_INDEX_NAME).tmp && \
 	  mv $(SYMBOL_INDEX_NAME).tmp $(SYMBOL_INDEX_NAME)
 	cd $(DIST)/crashreporter-symbols && \
-          zip -r9D '../$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' . -i '*.sym' -i '*.txt'  -x '*test*' -x '*Test*'
+          zip -r5D '../$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' . -i '*.sym' -i '*.txt'  -x '*test*' -x '*Test*'
 endif # MOZ_CRASHREPORTER
 
 uploadsymbols:
 ifdef MOZ_CRASHREPORTER
 ifdef SOCORRO_SYMBOL_UPLOAD_TOKEN_FILE
 	$(PYTHON) -u $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.py '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip'
-else
-	$(SHELL) $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.sh $(SYMBOL_INDEX_NAME) '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip'
 endif
 endif
 

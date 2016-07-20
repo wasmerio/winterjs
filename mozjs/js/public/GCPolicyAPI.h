@@ -54,7 +54,7 @@ namespace JS {
 class Symbol;
 }
 
-namespace js {
+namespace JS {
 
 // Defines a policy for container types with non-GC, i.e. C storage. This
 // policy dispatches to the underlying struct for GC interactions.
@@ -67,6 +67,10 @@ struct StructGCPolicy
 
     static void trace(JSTracer* trc, T* tp, const char* name) {
         tp->trace(trc);
+    }
+
+    static void sweep(T* tp) {
+        return tp->sweep();
     }
 
     static bool needsSweep(T* tp) {
@@ -98,9 +102,6 @@ struct GCPointerPolicy
         if (*vp)
             js::UnsafeTraceManuallyBarrieredEdge(trc, vp, name);
     }
-    static bool needsSweep(T* vp) {
-        return js::gc::EdgeNeedsSweep(vp);
-    }
 };
 template <> struct GCPolicy<JS::Symbol*> : public GCPointerPolicy<JS::Symbol*> {};
 template <> struct GCPolicy<JSAtom*> : public GCPointerPolicy<JSAtom*> {};
@@ -113,10 +114,10 @@ template <typename T>
 struct GCPolicy<JS::Heap<T>>
 {
     static void trace(JSTracer* trc, JS::Heap<T>* thingp, const char* name) {
-        JS::TraceEdge(trc, thingp, name);
+        TraceEdge(trc, thingp, name);
     }
     static bool needsSweep(JS::Heap<T>* thingp) {
-        return gc::EdgeNeedsSweep(thingp);
+        return js::gc::EdgeNeedsSweep(thingp);
     }
 };
 
@@ -133,6 +134,6 @@ struct GCPolicy<mozilla::UniquePtr<T, D>>
     }
 };
 
-} // namespace js
+} // namespace JS
 
 #endif // GCPolicyAPI_h

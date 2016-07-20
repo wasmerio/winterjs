@@ -12,6 +12,7 @@
 
 #include "ds/IdValuePair.h"
 #include "gc/Barrier.h"
+#include "js/GCHashTable.h"
 #include "vm/TaggedProto.h"
 #include "vm/TypeInference.h"
 
@@ -83,7 +84,7 @@ class ObjectGroup : public gc::TenuredCell
     const Class* clasp_;
 
     /* Prototype shared by objects in this group. */
-    HeapPtr<TaggedProto> proto_;
+    GCPtr<TaggedProto> proto_;
 
     /* Compartment shared by objects in this group. */
     JSCompartment* compartment_;
@@ -98,11 +99,15 @@ class ObjectGroup : public gc::TenuredCell
         clasp_ = clasp;
     }
 
-    const HeapPtr<TaggedProto>& proto() const {
+    bool hasDynamicPrototype() const {
+        return proto_.isDynamic();
+    }
+
+    const GCPtr<TaggedProto>& proto() const {
         return proto_;
     }
 
-    HeapPtr<TaggedProto>& proto() {
+    GCPtr<TaggedProto>& proto() {
         return proto_;
     }
 
@@ -275,7 +280,7 @@ class ObjectGroup : public gc::TenuredCell
         // Identifier for this property, JSID_VOID for the aggregate integer
         // index property, or JSID_EMPTY for properties holding constraints
         // listening to changes in the group's state.
-        HeapId id;
+        GCPtrId id;
 
         // Possible own types for this property.
         HeapTypeSet types;
@@ -419,7 +424,6 @@ class ObjectGroup : public gc::TenuredCell
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
     void finalize(FreeOp* fop);
-    void fixupAfterMovingGC() {}
 
     static const JS::TraceKind TraceKind = JS::TraceKind::ObjectGroup;
 
@@ -539,7 +543,7 @@ class ObjectGroupCompartment
     friend class ObjectGroup;
 
     struct NewEntry;
-    using NewTable = js::GCHashSet<NewEntry, NewEntry, SystemAllocPolicy>;
+    class NewTable;
 
     // Set of default 'new' or lazy groups in the compartment.
     NewTable* defaultNewTable;
@@ -556,7 +560,7 @@ class ObjectGroupCompartment
     struct PlainObjectTableSweepPolicy {
         static bool needsSweep(PlainObjectKey* key, PlainObjectEntry* entry);
     };
-    using PlainObjectTable = js::GCHashMap<PlainObjectKey,
+    using PlainObjectTable = JS::GCHashMap<PlainObjectKey,
                                            PlainObjectEntry,
                                            PlainObjectKey,
                                            SystemAllocPolicy,
@@ -575,10 +579,7 @@ class ObjectGroupCompartment
     PlainObjectTable* plainObjectTable;
 
     struct AllocationSiteKey;
-    using AllocationSiteTable = js::GCHashMap<AllocationSiteKey,
-                                              ReadBarrieredObjectGroup,
-                                              AllocationSiteKey,
-                                              SystemAllocPolicy>;
+    class AllocationSiteTable;
 
     // Table for referencing types of objects keyed to an allocation site.
     AllocationSiteTable* allocationSiteTable;

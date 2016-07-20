@@ -54,7 +54,7 @@ class MIRGenerator
     MIRGraph& graph() {
         return *graph_;
     }
-    bool ensureBallast() {
+    MOZ_MUST_USE bool ensureBallast() {
         return alloc().ensureBallast();
     }
     const JitRuntime* jitRuntime() const {
@@ -77,14 +77,14 @@ class MIRGenerator
 
     // Set an error state and prints a message. Returns false so errors can be
     // propagated up.
-    bool abort(const char* message, ...);
-    bool abortFmt(const char* message, va_list ap);
+    bool abort(const char* message, ...);           // always returns false
+    bool abortFmt(const char* message, va_list ap); // always returns false
 
     bool errored() const {
         return error_;
     }
 
-    bool instrumentedProfiling() {
+    MOZ_MUST_USE bool instrumentedProfiling() {
         if (!instrumentedProfilingIsCached_) {
             instrumentedProfiling_ = GetJitContext()->runtime->spsProfiler().enabled();
             instrumentedProfilingIsCached_ = true;
@@ -135,19 +135,14 @@ class MIRGenerator
         return info_->compilingAsmJS();
     }
 
-    uint32_t maxAsmJSStackArgBytes() const {
+    uint32_t wasmMaxStackArgBytes() const {
         MOZ_ASSERT(compilingAsmJS());
-        return maxAsmJSStackArgBytes_;
+        return wasmMaxStackArgBytes_;
     }
-    uint32_t resetAsmJSMaxStackArgBytes() {
+    void initWasmMaxStackArgBytes(uint32_t n) {
         MOZ_ASSERT(compilingAsmJS());
-        uint32_t old = maxAsmJSStackArgBytes_;
-        maxAsmJSStackArgBytes_ = 0;
-        return old;
-    }
-    void setAsmJSMaxStackArgBytes(uint32_t n) {
-        MOZ_ASSERT(compilingAsmJS());
-        maxAsmJSStackArgBytes_ = n;
+        MOZ_ASSERT(wasmMaxStackArgBytes_ == 0);
+        wasmMaxStackArgBytes_ = n;
     }
     uint32_t minAsmJSHeapLength() const {
         return minAsmJSHeapLength_;
@@ -189,10 +184,10 @@ class MIRGenerator
     mozilla::Atomic<bool, mozilla::Relaxed>* pauseBuild_;
     mozilla::Atomic<bool, mozilla::Relaxed> cancelBuild_;
 
-    uint32_t maxAsmJSStackArgBytes_;
+    uint32_t wasmMaxStackArgBytes_;
     bool performsCall_;
     bool usesSimd_;
-    bool usesSimdCached_;
+    bool cachedUsesSimd_;
 
     // Keep track of whether frame arguments are modified during execution.
     // RegAlloc needs to know this as spilling values back to their register

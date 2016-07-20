@@ -175,7 +175,7 @@ js::Nursery::allocateObject(JSContext* cx, size_t size, size_t numDynamic, const
      * heap. The finalizers for these classes must do nothing except free data
      * which was allocated via Nursery::allocateBuffer.
      */
-    MOZ_ASSERT_IF(clasp->finalize, clasp->flags & JSCLASS_SKIP_NURSERY_FINALIZE);
+    MOZ_ASSERT_IF(clasp->hasFinalize(), clasp->flags & JSCLASS_SKIP_NURSERY_FINALIZE);
 
     /* Make the object allocation. */
     JSObject* obj = static_cast<JSObject*>(allocate(size));
@@ -380,9 +380,7 @@ js::TenuringTracer::TenuringTracer(JSRuntime* rt, Nursery* nursery)
 void
 js::Nursery::collect(JSRuntime* rt, JS::gcreason::Reason reason, ObjectGroupList* pretenureGroups)
 {
-    if (rt->mainThread.suppressGC)
-        return;
-
+    MOZ_ASSERT(!rt->mainThread.suppressGC);
     JS_AbortIfWrongThread(rt);
 
     StoreBuffer& sb = rt->gc.storeBuffer;
@@ -442,7 +440,7 @@ js::Nursery::collect(JSRuntime* rt, JS::gcreason::Reason reason, ObjectGroupList
     TIME_END(traceGenericEntries);
 
     TIME_START(markRuntime);
-    rt->gc.markRuntime(&mover);
+    rt->gc.markRuntime(&mover, GCRuntime::TraceRuntime, session.lock);
     TIME_END(markRuntime);
 
     TIME_START(markDebugger);

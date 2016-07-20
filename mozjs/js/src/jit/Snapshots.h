@@ -385,14 +385,14 @@ class SnapshotWriter
     SnapshotOffset lastStart_;
 
   public:
-    bool init();
+    MOZ_MUST_USE bool init();
 
     SnapshotOffset startSnapshot(RecoverOffset recoverOffset, BailoutKind kind);
 #ifdef TRACK_SNAPSHOTS
     void trackSnapshot(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
                        uint32_t lirOpcode, uint32_t lirId);
 #endif
-    bool add(const RValueAllocation& slot);
+    MOZ_MUST_USE bool add(const RValueAllocation& slot);
 
     uint32_t allocWritten() const {
         return allocWritten_;
@@ -504,7 +504,25 @@ class SnapshotReader
     }
 };
 
-typedef mozilla::AlignedStorage<4 * sizeof(uint32_t)> RInstructionStorage;
+class RInstructionStorage
+{
+    static const size_t Size = 4 * sizeof(uint32_t);
+    mozilla::AlignedStorage<Size> mem;
+
+  public:
+    const void* addr() const { return mem.addr(); }
+    void* addr() { return mem.addr(); }
+
+    RInstructionStorage() = default;
+
+    RInstructionStorage(const RInstructionStorage& other) {
+        memcpy(addr(), other.addr(), Size);
+    }
+    void operator=(const RInstructionStorage& other) {
+        memcpy(addr(), other.addr(), Size);
+    }
+};
+
 class RInstruction;
 
 class RecoverReader

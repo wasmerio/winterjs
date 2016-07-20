@@ -33,6 +33,7 @@ template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
 
 class OutOfLineTruncateSlow;
+class OutOfLineWasmTruncateCheck;
 
 struct PatchableBackedgeInfo
 {
@@ -107,7 +108,15 @@ class CodeGeneratorShared : public LElementVisitor
     Vector<PatchableBackedgeInfo, 0, SystemAllocPolicy> patchableBackedges_;
 
 #ifdef JS_TRACE_LOGGING
+    struct PatchableTLEvent {
+        CodeOffset offset;
+        const char* event;
+        PatchableTLEvent(CodeOffset offset, const char* event)
+            : offset(offset), event(event)
+        {}
+    };
     js::Vector<CodeOffset, 0, SystemAllocPolicy> patchableTraceLoggers_;
+    js::Vector<PatchableTLEvent, 0, SystemAllocPolicy> patchableTLEvents_;
     js::Vector<CodeOffset, 0, SystemAllocPolicy> patchableTLScripts_;
 #endif
 
@@ -262,7 +271,7 @@ class CodeGeneratorShared : public LElementVisitor
     };
 
   protected:
-    MOZ_WARN_UNUSED_RESULT
+    MOZ_MUST_USE
     bool allocateData(size_t size, size_t* offset) {
         MOZ_ASSERT(size % sizeof(void*) == 0);
         *offset = runtimeData_.length();
@@ -484,12 +493,17 @@ class CodeGeneratorShared : public LElementVisitor
 
     void visitOutOfLineTruncateSlow(OutOfLineTruncateSlow* ool);
 
+    virtual void visitOutOfLineWasmTruncateCheck(OutOfLineWasmTruncateCheck* ool) {
+        MOZ_CRASH("NYI");
+    }
+
     bool omitOverRecursedCheck() const;
 
 #ifdef JS_TRACE_LOGGING
   protected:
     void emitTracelogScript(bool isStart);
     void emitTracelogTree(bool isStart, uint32_t textId);
+    void emitTracelogTree(bool isStart, const char* text, TraceLoggerTextId enabledTextId);
 
   public:
     void emitTracelogScriptStart() {
@@ -503,6 +517,15 @@ class CodeGeneratorShared : public LElementVisitor
     }
     void emitTracelogStopEvent(uint32_t textId) {
         emitTracelogTree(/* isStart =*/ false, textId);
+    }
+    // Log an arbitrary text. The TraceloggerTextId is used to toggle the
+    // logging on and off.
+    // Note: the text is not copied and need to be kept alive until linking.
+    void emitTracelogStartEvent(const char* text, TraceLoggerTextId enabledTextId) {
+        emitTracelogTree(/* isStart =*/ true, text, enabledTextId);
+    }
+    void emitTracelogStopEvent(const char* text, TraceLoggerTextId enabledTextId) {
+        emitTracelogTree(/* isStart =*/ false, text, enabledTextId);
     }
 #endif
     void emitTracelogIonStart() {
@@ -521,6 +544,8 @@ class CodeGeneratorShared : public LElementVisitor
     inline void verifyHeapAccessDisassembly(uint32_t begin, uint32_t end, bool isLoad,
                                             Scalar::Type type, unsigned numElems,
                                             const Operand& mem, LAllocation alloc);
+
+    bool isGlobalObject(JSObject* object);
 };
 
 // An out-of-line path is generated at the end of the function.
@@ -769,6 +794,34 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
     restoreLiveIgnore(lir, ool->out().clobbered());
     masm.jump(ool->rejoin());
 }
+
+class OutOfLineWasmTruncateCheck : public OutOfLineCodeBase<CodeGeneratorShared>
+{
+    MIRType fromType_;
+    MIRType toType_;
+    FloatRegister input_;
+    bool isUnsigned_;
+
+  public:
+    OutOfLineWasmTruncateCheck(MWasmTruncateToInt32* mir, FloatRegister input)
+      : fromType_(mir->input()->type()), toType_(MIRType::Int32), input_(input),
+        isUnsigned_(mir->isUnsigned())
+    { }
+
+    OutOfLineWasmTruncateCheck(MWasmTruncateToInt64* mir, FloatRegister input)
+      : fromType_(mir->input()->type()), toType_(MIRType::Int64), input_(input),
+        isUnsigned_(mir->isUnsigned())
+    { }
+
+    void accept(CodeGeneratorShared* codegen) {
+        codegen->visitOutOfLineWasmTruncateCheck(this);
+    }
+
+    FloatRegister input() const { return input_; }
+    MIRType toType() const { return toType_; }
+    MIRType fromType() const { return fromType_; }
+    bool isUnsigned() const { return isUnsigned_; }
+};
 
 } // namespace jit
 } // namespace js

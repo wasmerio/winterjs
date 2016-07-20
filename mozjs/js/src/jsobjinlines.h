@@ -78,13 +78,14 @@ JSObject::finalize(js::FreeOp* fop)
 #endif
 
     const js::Class* clasp = getClass();
-    if (clasp->finalize)
-        clasp->finalize(fop, this);
+    js::NativeObject* nobj = nullptr;
+    if (clasp->isNative())
+        nobj = &as<js::NativeObject>();
+    if (clasp->hasFinalize())
+        clasp->doFinalize(fop, this);
 
-    if (!clasp->isNative())
+    if (!nobj)
         return;
-
-    js::NativeObject* nobj = &as<js::NativeObject>();
 
     if (nobj->hasDynamicSlots())
         fop->free_(nobj->slots_);
@@ -117,7 +118,7 @@ JSObject::setSingleton(js::ExclusiveContext* cx, js::HandleObject obj)
     MOZ_ASSERT_IF(cx->isJSContext(), !IsInsideNursery(obj));
 
     js::ObjectGroup* group = js::ObjectGroup::lazySingletonGroup(cx, obj->getClass(),
-                                                                 obj->getTaggedProto());
+                                                                 obj->taggedProto());
     if (!group)
         return false;
 
@@ -152,13 +153,13 @@ JSObject::setGroup(js::ObjectGroup* group)
 inline bool
 js::GetPrototype(JSContext* cx, js::HandleObject obj, js::MutableHandleObject protop)
 {
-    if (obj->getTaggedProto().isLazy()) {
+    if (obj->hasDynamicPrototype()) {
         MOZ_ASSERT(obj->is<js::ProxyObject>());
         return js::Proxy::getPrototype(cx, obj, protop);
-    } else {
-        protop.set(obj->getTaggedProto().toObjectOrNull());
-        return true;
     }
+
+    protop.set(obj->taggedProto().toObjectOrNull());
+    return true;
 }
 
 inline bool
@@ -202,7 +203,7 @@ js::GetElement(JSContext* cx, HandleObject obj, HandleObject receiver, uint32_t 
 inline bool
 js::GetElementNoGC(JSContext* cx, JSObject* obj, const Value& receiver, uint32_t index, Value* vp)
 {
-    if (obj->getOps()->getProperty)
+    if (obj->getOpsGetProperty())
         return false;
 
     if (index > JSID_INT_MAX)
@@ -220,7 +221,7 @@ inline bool
 js::DeleteProperty(JSContext* cx, HandleObject obj, HandleId id, ObjectOpResult& result)
 {
     MarkTypePropertyNonData(cx, obj, id);
-    if (DeletePropertyOp op = obj->getOps()->deleteProperty)
+    if (DeletePropertyOp op = obj->getOpsDeleteProperty())
         return op(cx, obj, id, result);
     return NativeDeleteProperty(cx, obj.as<NativeObject>(), id, result);
 }
@@ -277,7 +278,7 @@ ClassCanHaveFixedData(const Class* clasp)
 
 // This function is meant to be called from allocation fast paths.
 //
-// If we do have an allocation metadata hook, it can cause a GC, so the object
+// If we do have an allocation metadata builder, it can cause a GC, so the object
 // must be rooted. The usual way to do this would be to make our callers pass a
 // HandleObject, but that would require them to pay the cost of rooting the
 // object unconditionally, even though collecting metadata is rare. Instead,
@@ -285,19 +286,19 @@ ClassCanHaveFixedData(const Class* clasp)
 // returned in place of the pointer passed. If a GC occurs, the returned pointer
 // may be the passed pointer, relocated by GC. If no GC could occur, it's just
 // passed through. We root nothing unless necessary.
-static MOZ_ALWAYS_INLINE MOZ_WARN_UNUSED_RESULT JSObject*
+static MOZ_ALWAYS_INLINE MOZ_MUST_USE JSObject*
 SetNewObjectMetadata(ExclusiveContext* cxArg, JSObject* obj)
 {
     MOZ_ASSERT(!cxArg->compartment()->hasObjectPendingMetadata());
 
-    // The metadata callback is invoked for each object created on the main
+    // The metadata builder is invoked for each object created on the main
     // thread, except when analysis/compilation is active, to avoid recursion.
     if (JSContext* cx = cxArg->maybeJSContext()) {
-        if (MOZ_UNLIKELY((size_t)cx->compartment()->hasObjectMetadataCallback()) &&
-            !cx->zone()->suppressObjectMetadataCallback)
+        if (MOZ_UNLIKELY((size_t)cx->compartment()->hasAllocationMetadataBuilder()) &&
+            !cx->zone()->suppressAllocationMetadataBuilder)
         {
             // Don't collect metadata on objects that represent metadata.
-            AutoSuppressObjectMetadataCallback suppressMetadata(cx);
+            AutoSuppressAllocationMetadataBuilder suppressMetadata(cx);
 
             RootedObject rooted(cx, obj);
             cx->compartment()->setNewObjectMetadata(cx, rooted);
@@ -321,7 +322,7 @@ JSObject::create(js::ExclusiveContext* cx, js::gc::AllocKind kind, js::gc::Initi
                   js::gc::GetGCKindSlots(kind, group->clasp()) == shape->numFixedSlots());
     MOZ_ASSERT_IF(group->clasp()->flags & JSCLASS_BACKGROUND_FINALIZE,
                   IsBackgroundFinalized(kind));
-    MOZ_ASSERT_IF(group->clasp()->finalize,
+    MOZ_ASSERT_IF(group->clasp()->hasFinalize(),
                   heap == js::gc::TenuredHeap ||
                   (group->clasp()->flags & JSCLASS_SKIP_NURSERY_FINALIZE));
     MOZ_ASSERT_IF(group->hasUnanalyzedPreliminaryObjects(),
@@ -337,8 +338,16 @@ JSObject::create(js::ExclusiveContext* cx, js::gc::AllocKind kind, js::gc::Initi
     MOZ_ASSERT_IF(!group->clasp()->isNative(), shape->slotSpan() == 0);
 
     const js::Class* clasp = group->clasp();
-    size_t nDynamicSlots =
-        js::NativeObject::dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
+
+    size_t nDynamicSlots = 0;
+    if (group->clasp()->isNative()) {
+        nDynamicSlots = js::NativeObject::dynamicSlotsCount(shape->numFixedSlots(),
+                                                            shape->slotSpan(), clasp);
+    } else if (group->clasp()->isProxy()) {
+        // Proxy objects overlay the |slots| field with a ProxyValueArray.
+        MOZ_ASSERT(sizeof(js::detail::ProxyValueArray) % sizeof(js::HeapSlot) == 0);
+        nDynamicSlots = sizeof(js::detail::ProxyValueArray) / sizeof(js::HeapSlot);
+    }
 
     JSObject* obj = js::Allocate<JSObject>(cx, kind, nDynamicSlots, heap, clasp);
     if (!obj)
@@ -371,7 +380,7 @@ JSObject::create(js::ExclusiveContext* cx, js::gc::AllocKind kind, js::gc::Initi
         }
     }
 
-    if (group->clasp()->shouldDelayMetadataCallback())
+    if (group->clasp()->shouldDelayMetadataBuilder())
         cx->compartment()->setObjectPendingMetadata(cx, obj);
     else
         obj = SetNewObjectMetadata(cx, obj);
@@ -479,9 +488,9 @@ JSObject::isIndexed() const
 }
 
 inline bool
-JSObject::nonLazyPrototypeIsImmutable() const
+JSObject::staticPrototypeIsImmutable() const
 {
-    MOZ_ASSERT(!hasLazyPrototype());
+    MOZ_ASSERT(hasStaticPrototype());
     return hasAllFlags(js::BaseShape::IMMUTABLE_PROTOTYPE);
 }
 
@@ -556,7 +565,7 @@ ClassMethodIsNative(JSContext* cx, NativeObject* obj, const Class* clasp, jsid m
 
     Value v;
     if (!HasDataProperty(cx, obj, methodid, &v)) {
-        JSObject* proto = obj->getProto();
+        JSObject* proto = obj->staticPrototype();
         if (!proto || proto->getClass() != clasp || !HasDataProperty(cx, &proto->as<NativeObject>(), methodid, &v))
             return false;
     }
@@ -577,7 +586,7 @@ HasObjectValueOf(JSObject* obj, JSContext* cx)
 
     Value v;
     while (!HasDataProperty(cx, &obj->as<NativeObject>(), valueOf, &v)) {
-        obj = obj->getProto();
+        obj = obj->staticPrototype();
         if (!obj || obj->is<ProxyObject>() || !obj->isNative())
             return false;
     }
@@ -801,39 +810,19 @@ GuessArrayGCKind(size_t numElements)
     return gc::AllocKind::OBJECT8;
 }
 
-// Returns ESClass_Other if the value isn't an object, or if the object
+// Returns ESClass::Other if the value isn't an object, or if the object
 // isn't of one of the enumerated classes.  Otherwise returns the appropriate
 // class.
 inline bool
-GetClassOfValue(JSContext* cx, HandleValue v, ESClassValue* classValue)
+GetClassOfValue(JSContext* cx, HandleValue v, ESClass* cls)
 {
     if (!v.isObject()) {
-        *classValue = ESClass_Other;
+        *cls = ESClass::Other;
         return true;
     }
 
     RootedObject obj(cx, &v.toObject());
-    return GetBuiltinClass(cx, obj, classValue);
-}
-
-inline bool
-Unbox(JSContext* cx, HandleObject obj, MutableHandleValue vp)
-{
-    if (MOZ_UNLIKELY(obj->is<ProxyObject>()))
-        return Proxy::boxedValue_unbox(cx, obj, vp);
-
-    if (obj->is<BooleanObject>())
-        vp.setBoolean(obj->as<BooleanObject>().unbox());
-    else if (obj->is<NumberObject>())
-        vp.setNumber(obj->as<NumberObject>().unbox());
-    else if (obj->is<StringObject>())
-        vp.setString(obj->as<StringObject>().unbox());
-    else if (obj->is<DateObject>())
-        vp.set(obj->as<DateObject>().UTCTime());
-    else
-        vp.setUndefined();
-
-    return true;
+    return GetBuiltinClass(cx, obj, cls);
 }
 
 extern NativeObject*

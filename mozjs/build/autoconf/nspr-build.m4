@@ -55,7 +55,7 @@ JS_POSIX_NSPR=unset
 ifdef([CONFIGURING_JS],[
     if test -n "$JS_STANDALONE"; then
       case "$target" in
-        *linux*|*darwin*|*dragonfly*|*freebsd*|*netbsd*|*openbsd*|*-mingw*)
+        *linux*|*darwin*|*dragonfly*|*freebsd*|*netbsd*|*openbsd*)
           if test -z "$_HAS_NSPR"; then
             JS_POSIX_NSPR_DEFAULT=1
           fi

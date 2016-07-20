@@ -220,7 +220,7 @@ function Merge(list, start, mid, end, lBuffer, rBuffer, comparefn) {
 // dense array, filling remaining slots with holes.
 function MoveHoles(sparse, sparseLen, dense, denseLen) {
     for (var i = 0; i < denseLen; i++)
-        _DefineDataProperty(sparse, i, dense[i]);
+        sparse[i] = dense[i];
     for (var j = denseLen; j < sparseLen; j++)
         delete sparse[j];
 }
@@ -235,8 +235,7 @@ function MergeSort(array, len, comparefn) {
     // Until recently typed arrays had no sort method. To work around that
     // many users passed them to Array.prototype.sort. Now that we have a
     // typed array specific sorting method it makes sense to divert to it
-    // when possible. Further, the MoveHoles utility function (used within
-    // MergeSort) is not currently compatible with typed arrays.
+    // when possible.
     if (IsPossiblyWrappedTypedArray(array)) {
         return TypedArraySort.call(array, comparefn);
     }

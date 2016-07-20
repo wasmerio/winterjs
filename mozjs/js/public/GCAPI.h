@@ -54,7 +54,7 @@ namespace JS {
     D(API)                                      \
     D(EAGER_ALLOC_TRIGGER)                      \
     D(DESTROY_RUNTIME)                          \
-    D(DESTROY_CONTEXT)                          \
+    D(UNUSED0)                                  \
     D(LAST_DITCH)                               \
     D(TOO_MUCH_MALLOC)                          \
     D(ALLOC_TRIGGER)                            \
@@ -267,13 +267,9 @@ AbortIncrementalGC(JSRuntime* rt);
 
 namespace dbg {
 
-/**
- * The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
- * `js::gcstats::Statistics` data without the uber implementation-specific bits.
- * It should generally be palatable for web developers.
- *
- * <div rustbindgen hide></div>
- */
+// The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
+// `js::gcstats::Statistics` data without the uber implementation-specific bits.
+// It should generally be palatable for web developers.
 class GarbageCollectionEvent
 {
     // The major GC number of the GC cycle this data pertains to.
@@ -348,9 +344,7 @@ struct JS_PUBLIC_API(GCDescription) {
     char16_t* formatSummaryMessage(JSRuntime* rt) const;
     char16_t* formatJSON(JSRuntime* rt, uint64_t timestamp) const;
 
-#ifndef RUST_BINDGEN
     JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSRuntime* rt) const;
-#endif
 };
 
 typedef void
@@ -426,9 +420,6 @@ IsIncrementalGCInProgress(JSRuntime* rt);
  */
 extern JS_PUBLIC_API(bool)
 IsIncrementalBarrierNeeded(JSRuntime* rt);
-
-extern JS_PUBLIC_API(bool)
-IsIncrementalBarrierNeeded(JSContext* cx);
 
 /*
  * Notify the GC that a reference to a GC thing is about to be overwritten.
@@ -557,7 +548,7 @@ class JS_PUBLIC_API(AutoSuppressGCAnalysis) : public AutoAssertNoAlloc
   public:
     AutoSuppressGCAnalysis() : AutoAssertNoAlloc() {}
     explicit AutoSuppressGCAnalysis(JSRuntime* rt) : AutoAssertNoAlloc(rt) {}
-};
+} JS_HAZ_GC_SUPPRESSED;
 
 /**
  * Assert that code is only ever called from a GC callback, disable the static
@@ -592,7 +583,8 @@ class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoAssertOnGC
 
 /**
  * Unsets the gray bit for anything reachable from |thing|. |kind| should not be
- * JS::TraceKind::Shape. |thing| should be non-null.
+ * JS::TraceKind::Shape. |thing| should be non-null. The return value indicates
+ * if anything was unmarked.
  */
 extern JS_FRIEND_API(bool)
 UnmarkGrayGCThingRecursively(GCCellPtr thing);

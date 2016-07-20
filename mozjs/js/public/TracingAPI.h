@@ -71,19 +71,37 @@ class JS_PUBLIC_API(JSTracer)
     bool isTenuringTracer() const { return tag_ == TracerKindTag::Tenuring; }
     bool isCallbackTracer() const { return tag_ == TracerKindTag::Callback; }
     inline JS::CallbackTracer* asCallbackTracer();
+#ifdef DEBUG
+    bool checkEdges() { return checkEdges_; }
+#endif
 
   protected:
     JSTracer(JSRuntime* rt, TracerKindTag tag,
              WeakMapTraceKind weakTraceKind = TraceWeakMapValues)
-      : runtime_(rt), weakMapAction_(weakTraceKind), tag_(tag)
+      : runtime_(rt)
+      , weakMapAction_(weakTraceKind)
+#ifdef DEBUG
+      , checkEdges_(true)
+#endif
+      , tag_(tag)
     {}
 
+#ifdef DEBUG
+    // Set whether to check edges are valid in debug builds.
+    void setCheckEdges(bool check) {
+        checkEdges_ = check;
+    }
+#endif
+
   private:
-    JSRuntime*          runtime_;
-    WeakMapTraceKind    weakMapAction_;
+    JSRuntime* runtime_;
+    WeakMapTraceKind weakMapAction_;
+#ifdef DEBUG
+    bool checkEdges_;
+#endif
 
   protected:
-    TracerKindTag       tag_;
+    TracerKindTag tag_;
 };
 
 namespace JS {
@@ -317,7 +335,6 @@ UnsafeTraceRoot(JSTracer* trc, T* edgep, const char* name);
 extern JS_PUBLIC_API(void)
 TraceChildren(JSTracer* trc, GCCellPtr thing);
 
-#ifndef RUST_BINDGEN
 using ZoneSet = js::HashSet<Zone*, js::DefaultHasher<Zone*>, js::SystemAllocPolicy>;
 using CompartmentSet = js::HashSet<JSCompartment*, js::DefaultHasher<JSCompartment*>,
                                    js::SystemAllocPolicy>;
@@ -329,7 +346,6 @@ using CompartmentSet = js::HashSet<JSCompartment*, js::DefaultHasher<JSCompartme
  */
 extern JS_PUBLIC_API(void)
 TraceIncomingCCWs(JSTracer* trc, const JS::CompartmentSet& compartments);
-#endif
 
 } // namespace JS
 
@@ -349,6 +365,7 @@ extern JS_PUBLIC_API(void)
 UnsafeTraceManuallyBarrieredEdge(JSTracer* trc, T* edgep, const char* name);
 
 namespace gc {
+// Return true if the given edge is not live and is about to be swept.
 template <typename T>
 extern JS_PUBLIC_API(bool)
 EdgeNeedsSweep(JS::Heap<T>* edgep);

@@ -23,7 +23,9 @@ namespace jit {
 // Does this architecture support SIMD conversions between Uint32x4 and Float32x4?
 static MOZ_CONSTEXPR_VAR bool SupportsUint32x4FloatConversions = false;
 
-// Does this architecture support comparisons of unsigned 32x4 integer vectors?
+// Does this architecture support comparisons of unsigned integer vectors?
+static MOZ_CONSTEXPR_VAR bool SupportsUint8x16Compares = false;
+static MOZ_CONSTEXPR_VAR bool SupportsUint16x8Compares = false;
 static MOZ_CONSTEXPR_VAR bool SupportsUint32x4Compares = false;
 
 #if defined(JS_CODEGEN_X86)
@@ -259,6 +261,7 @@ class FloatRegisters {
     static const SetType AllPhysMask = ((1 << TotalPhys) - 1);
     static const SetType AllMask = AllPhysMask * Spread;
     static const SetType AllDoubleMask = AllPhysMask * SpreadDouble;
+    static const SetType AllSingleMask = AllPhysMask * SpreadSingle;
 
 #if defined(JS_CODEGEN_X86)
     static const SetType NonAllocatableMask =

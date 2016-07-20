@@ -80,8 +80,14 @@ class ArrayBufferObjectMaybeShared : public NativeObject
         return AnyArrayBufferByteLength(this);
     }
 
+    inline bool isDetached() const;
+
     inline SharedMem<uint8_t*> dataPointerEither();
 };
+
+typedef Rooted<ArrayBufferObjectMaybeShared*> RootedArrayBufferObjectMaybeShared;
+typedef Handle<ArrayBufferObjectMaybeShared*> HandleArrayBufferObjectMaybeShared;
+typedef MutableHandle<ArrayBufferObjectMaybeShared*> MutableHandleArrayBufferObjectMaybeShared;
 
 /*
  * ArrayBufferObject
@@ -99,6 +105,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 {
     static bool byteLengthGetterImpl(JSContext* cx, const CallArgs& args);
     static bool fun_slice_impl(JSContext* cx, const CallArgs& args);
+
+    static const ClassOps classOps_;
 
   public:
     static const uint8_t DATA_SLOT = 0;
@@ -198,6 +206,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     static const Class protoClass;
     static const JSFunctionSpec jsfuncs[];
     static const JSFunctionSpec jsstaticfuncs[];
+    static const JSPropertySpec jsstaticprops[];
 
     static bool byteLengthGetter(JSContext* cx, unsigned argc, Value* vp);
 
@@ -207,6 +216,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 #ifdef NIGHTLY_BUILD
     static bool fun_transfer(JSContext* cx, unsigned argc, Value* vp);
 #endif
+
+    static bool fun_species(JSContext* cx, unsigned argc, Value* vp);
 
     static bool class_constructor(JSContext* cx, unsigned argc, Value* vp);
 
@@ -275,7 +286,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
     // Detach this buffer from its original memory.  (This necessarily makes
     // views of this buffer unusable for modifying that original memory.)
-    static MOZ_WARN_UNUSED_RESULT bool
+    static MOZ_MUST_USE bool
     detach(JSContext* cx, Handle<ArrayBufferObject*> buffer, BufferContents newContents);
 
   private:
@@ -361,6 +372,10 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
         setDataPointer(contents, ownsState);
     }
 };
+
+typedef Rooted<ArrayBufferObject*> RootedArrayBufferObject;
+typedef Handle<ArrayBufferObject*> HandleArrayBufferObject;
+typedef MutableHandle<ArrayBufferObject*> MutableHandleArrayBufferObject;
 
 /*
  * ArrayBufferViewObject

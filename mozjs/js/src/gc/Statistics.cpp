@@ -7,6 +7,7 @@
 #include "gc/Statistics.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/PodOperations.h"
 
@@ -27,6 +28,7 @@ using namespace js;
 using namespace js::gc;
 using namespace js::gcstats;
 
+using mozilla::DebugOnly;
 using mozilla::MakeRange;
 using mozilla::PodArrayZero;
 using mozilla::PodZero;
@@ -192,13 +194,13 @@ static ExtraPhaseInfo phaseExtra[PHASE_LIMIT] = { { 0, 0 } };
 // Mapping from all nodes with a multi-parented child to a Vector of all
 // multi-parented children and their descendants. (Single-parented children will
 // not show up in this list.)
-static mozilla::Vector<Phase> dagDescendants[Statistics::NumTimingArrays];
+static mozilla::Vector<Phase, 0, SystemAllocPolicy> dagDescendants[Statistics::NumTimingArrays];
 
 struct AllPhaseIterator {
     int current;
     int baseLevel;
     size_t activeSlot;
-    mozilla::Vector<Phase>::Range descendants;
+    mozilla::Vector<Phase, 0, SystemAllocPolicy>::Range descendants;
 
     explicit AllPhaseIterator(const Statistics::PhaseTimeTable table)
       : current(0)
@@ -761,7 +763,7 @@ Statistics::Statistics(JSRuntime* rt)
     maxPauseInInterval(0),
     phaseNestingDepth(0),
     activeDagSlot(PHASE_DAG_NONE),
-    suspendedPhaseNestingDepth(0),
+    suspended(0),
     sliceCallback(nullptr),
     nurseryCollectionCallback(nullptr),
     aborted(false)
@@ -827,7 +829,7 @@ Statistics::initialize()
 
     // Fill in the depth of each node in the tree. Multi-parented nodes
     // have depth 0.
-    mozilla::Vector<Phase> stack;
+    mozilla::Vector<Phase, 0, SystemAllocPolicy> stack;
     if (!stack.append(PHASE_LIMIT)) // Dummy entry to avoid special-casing the first node
         return false;
     for (int i = 0; i < PHASE_LIMIT; i++) {
@@ -1069,7 +1071,7 @@ Statistics::startTimingMutator()
         return false;
     }
 
-    MOZ_ASSERT(suspendedPhaseNestingDepth == 0);
+    MOZ_ASSERT(suspended == 0);
 
     timedGCTime = 0;
     phaseStartTimes[PHASE_MUTATOR] = 0;
@@ -1095,6 +1097,35 @@ Statistics::stopTimingMutator(double& mutator_ms, double& gc_ms)
 }
 
 void
+Statistics::suspendPhases(Phase suspension)
+{
+    MOZ_ASSERT(suspension == PHASE_EXPLICIT_SUSPENSION || suspension == PHASE_IMPLICIT_SUSPENSION);
+    while (phaseNestingDepth) {
+        MOZ_ASSERT(suspended < mozilla::ArrayLength(suspendedPhases));
+        Phase parent = phaseNesting[phaseNestingDepth - 1];
+        suspendedPhases[suspended++] = parent;
+        recordPhaseEnd(parent);
+    }
+    suspendedPhases[suspended++] = suspension;
+}
+
+void
+Statistics::resumePhases()
+{
+    DebugOnly<Phase> popped = suspendedPhases[--suspended];
+    MOZ_ASSERT(popped == PHASE_EXPLICIT_SUSPENSION || popped == PHASE_IMPLICIT_SUSPENSION);
+    while (suspended &&
+           suspendedPhases[suspended - 1] != PHASE_EXPLICIT_SUSPENSION &&
+           suspendedPhases[suspended - 1] != PHASE_IMPLICIT_SUSPENSION)
+    {
+        Phase resumePhase = suspendedPhases[--suspended];
+        if (resumePhase == PHASE_MUTATOR)
+            timedGCTime += PRMJ_Now() - timedGCStart;
+        beginPhase(resumePhase);
+    }
+}
+
+void
 Statistics::beginPhase(Phase phase)
 {
     Phase parent = phaseNestingDepth ? phaseNesting[phaseNestingDepth - 1] : PHASE_NO_PARENT;
@@ -1105,9 +1136,7 @@ Statistics::beginPhase(Phase phase)
     //
     // Reuse this mechanism for managing PHASE_MUTATOR.
     if (parent == PHASE_GC_BEGIN || parent == PHASE_GC_END || parent == PHASE_MUTATOR) {
-        MOZ_ASSERT(suspendedPhaseNestingDepth < mozilla::ArrayLength(suspendedPhases));
-        suspendedPhases[suspendedPhaseNestingDepth++] = parent;
-        recordPhaseEnd(parent);
+        suspendPhases(PHASE_IMPLICIT_SUSPENSION);
         parent = phaseNestingDepth ? phaseNesting[phaseNestingDepth - 1] : PHASE_NO_PARENT;
     }
 
@@ -1154,12 +1183,8 @@ Statistics::endPhase(Phase phase)
 
     // When emptying the stack, we may need to resume a callback phase
     // (PHASE_GC_BEGIN/END) or return to timing the mutator (PHASE_MUTATOR).
-    if (phaseNestingDepth == 0 && suspendedPhaseNestingDepth > 0) {
-        Phase resumePhase = suspendedPhases[--suspendedPhaseNestingDepth];
-        if (resumePhase == PHASE_MUTATOR)
-            timedGCTime += PRMJ_Now() - timedGCStart;
-        beginPhase(resumePhase);
-    }
+    if (phaseNestingDepth == 0 && suspended > 0 && suspendedPhases[suspended - 1] == PHASE_IMPLICIT_SUSPENSION)
+        resumePhases();
 }
 
 void

@@ -286,30 +286,6 @@ LIRGeneratorARM64::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStat
 }
 
 void
-LIRGeneratorARM64::visitSimdBinaryArith(MSimdBinaryArith* ins)
-{
-    MOZ_CRASH("NYI");
-}
-
-void
-LIRGeneratorARM64::visitSimdSelect(MSimdSelect* ins)
-{
-    MOZ_CRASH("NYI");
-}
-
-void
-LIRGeneratorARM64::visitSimdSplatX4(MSimdSplatX4* ins)
-{
-    MOZ_CRASH("NYI");
-}
-
-void
-LIRGeneratorARM64::visitSimdValueX4(MSimdValueX4* ins)
-{
-    MOZ_CRASH("NYI");
-}
-
-void
 LIRGeneratorARM64::visitAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins)
 {
     MOZ_CRASH("NYI");
@@ -343,13 +319,19 @@ LIRGeneratorARM64::visitRandom(MRandom* ins)
 }
 
 void
-LIRGeneratorARM64::visitTruncateToInt64(MTruncateToInt64* ins)
+LIRGeneratorARM64::visitWasmTruncateToInt64(MWasmTruncateToInt64* ins)
 {
     MOZ_CRASH("NY");
 }
 
 void
 LIRGeneratorARM64::visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins)
+{
+    MOZ_CRASH("NY");
+}
+
+void
+LIRGeneratorARM64::visitCopySign(MCopySign* ins)
 {
     MOZ_CRASH("NY");
 }

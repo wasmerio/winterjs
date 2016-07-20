@@ -6,6 +6,8 @@
 
 #include "jit/Ion.h"
 
+#include "jscompartmentinlines.h"
+
 using namespace js;
 using namespace js::jit;
 
@@ -57,6 +59,14 @@ CompileRuntime::addressOfJitStackLimit()
 {
     return runtime()->addressOfJitStackLimit();
 }
+
+#ifdef DEBUG
+const void*
+CompileRuntime::addressOfIonBailAfter()
+{
+    return runtime()->addressOfIonBailAfter();
+}
+#endif
 
 const void*
 CompileRuntime::addressOfJSContext()
@@ -262,10 +272,19 @@ CompileCompartment::jitCompartment()
     return compartment()->jitCompartment();
 }
 
-bool
-CompileCompartment::hasObjectMetadataCallback()
+const GlobalObject*
+CompileCompartment::maybeGlobal()
 {
-    return compartment()->hasObjectMetadataCallback();
+    // This uses unsafeUnbarrieredMaybeGlobal() so as not to trigger the read
+    // barrier on the global from off the main thread.  This is safe because we
+    // abort Ion compilation when we GC.
+    return compartment()->unsafeUnbarrieredMaybeGlobal();
+}
+
+bool
+CompileCompartment::hasAllocationMetadataBuilder()
+{
+    return compartment()->hasAllocationMetadataBuilder();
 }
 
 // Note: This function is thread-safe because setSingletonAsValue sets a boolean

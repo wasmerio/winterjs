@@ -34,9 +34,7 @@ resc_trace(JSTracer* trc, JSObject* obj)
         static_cast<RegExpStatics*>(pdata)->mark(trc);
 }
 
-const Class RegExpStaticsObject::class_ = {
-    "RegExpStatics",
-    JSCLASS_HAS_PRIVATE,
+static const ClassOps RegExpStaticsObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -49,6 +47,12 @@ const Class RegExpStaticsObject::class_ = {
     nullptr, /* hasInstance */
     nullptr, /* construct */
     resc_trace
+};
+
+const Class RegExpStaticsObject::class_ = {
+    "RegExpStatics",
+    JSCLASS_HAS_PRIVATE,
+    &RegExpStaticsObjectClassOps
 };
 
 RegExpStaticsObject*
@@ -86,7 +90,7 @@ RegExpStatics::executeLazy(JSContext* cx)
 
     /* Execute the full regular expression. */
     RootedLinearString input(cx, matchesInput);
-    RegExpRunStatus status = g->execute(cx, input, lazyIndex, lazySticky, &this->matches, nullptr);
+    RegExpRunStatus status = g->execute(cx, input, lazyIndex, &this->matches, nullptr);
     if (status == RegExpRunStatus_Error)
         return false;
 

@@ -9,7 +9,7 @@
 #include "mozilla/BinarySearch.h"
 #include "mozilla/MemoryReporting.h"
 
-#include "asmjs/WasmModule.h"
+#include "asmjs/WasmInstance.h"
 #include "jit/BaselineCompiler.h"
 #include "jit/BaselineIC.h"
 #include "jit/CompileInfo.h"
@@ -45,6 +45,12 @@ PCMappingSlotInfo::ToSlotLocation(const StackValue* stackVal)
     return SlotIgnore;
 }
 
+void
+ICStubSpace::freeAllAfterMinorGC(JSRuntime* rt)
+{
+    rt->gc.freeAllLifoBlocksAfterMinorGC(&allocator_);
+}
+
 BaselineScript::BaselineScript(uint32_t prologueOffset, uint32_t epilogueOffset,
                                uint32_t profilerEnterToggleOffset,
                                uint32_t profilerExitToggleOffset,
@@ -54,7 +60,7 @@ BaselineScript::BaselineScript(uint32_t prologueOffset, uint32_t epilogueOffset,
   : method_(nullptr),
     templateScope_(nullptr),
     fallbackStubSpace_(),
-    dependentWasmModules_(nullptr),
+    dependentWasmImports_(nullptr),
     prologueOffset_(prologueOffset),
     epilogueOffset_(epilogueOffset),
     profilerEnterToggleOffset_(profilerEnterToggleOffset),
@@ -181,8 +187,8 @@ jit::EnterBaselineMethod(JSContext* cx, RunState& state)
     EnterJitData data(cx);
     data.jitcode = baseline->method()->raw();
 
-    AutoValueVector vals(cx);
-    if (!SetEnterJitData(cx, data, state, vals))
+    Rooted<GCVector<Value>> vals(cx, GCVector<Value>(cx));
+    if (!SetEnterJitData(cx, data, state, &vals))
         return JitExec_Error;
 
     JitExecStatus status = EnterBaseline(cx, data);
@@ -294,7 +300,7 @@ jit::BaselineCompile(JSContext* cx, JSScript* script, bool forceDebugInstrumenta
     MOZ_ASSERT_IF(status != Method_Compiled, !script->hasBaselineScript());
 
     if (status == Method_CantCompile)
-        script->setBaselineScript(cx, BASELINE_DISABLED_SCRIPT);
+        script->setBaselineScript(cx->runtime(), BASELINE_DISABLED_SCRIPT);
 
     return status;
 }
@@ -482,68 +488,74 @@ BaselineScript::Trace(JSTracer* trc, BaselineScript* script)
 void
 BaselineScript::Destroy(FreeOp* fop, BaselineScript* script)
 {
-    /*
-     * When the script contains pointers to nursery things, the store buffer
-     * will contain entries refering to the referenced things. Since we can
-     * destroy scripts outside the context of a GC, this situation can result
-     * in invalid store buffer entries. Assert that if we do destroy scripts
-     * outside of a GC that we at least emptied the nursery first.
-     */
-    MOZ_ASSERT(fop->runtime()->gc.nursery.isEmpty());
 
     MOZ_ASSERT(!script->hasPendingIonBuilder());
 
-    script->unlinkDependentWasmModules(fop);
+    script->unlinkDependentWasmImports(fop);
+
+    /*
+     * When the script contains pointers to nursery things, the store buffer can
+     * contain entries that point into the fallback stub space. Since we can
+     * destroy scripts outside the context of a GC, this situation could result
+     * in us trying to mark invalid store buffer entries.
+     *
+     * Defer freeing any allocated blocks until after the next minor GC.
+     */
+    script->fallbackStubSpace_.freeAllAfterMinorGC(fop->runtime());
 
     fop->delete_(script);
 }
 
 void
-BaselineScript::clearDependentWasmModules()
+JS::DeletePolicy<js::jit::BaselineScript>::operator()(const js::jit::BaselineScript* script)
 {
-    // Remove any links from wasm::Modules that contain optimized import calls into
+    BaselineScript::Destroy(rt_->defaultFreeOp(), const_cast<BaselineScript*>(script));
+}
+
+void
+BaselineScript::clearDependentWasmImports()
+{
+    // Remove any links from wasm::Instances that contain optimized import calls into
     // this BaselineScript.
-    if (dependentWasmModules_) {
-        for (DependentWasmModuleImport dep : *dependentWasmModules_)
-            dep.module->deoptimizeImportExit(dep.importIndex);
-        dependentWasmModules_->clear();
+    if (dependentWasmImports_) {
+        for (DependentWasmImport& dep : *dependentWasmImports_)
+            dep.instance->deoptimizeImportExit(dep.importIndex);
+        dependentWasmImports_->clear();
     }
 }
 
 void
-BaselineScript::unlinkDependentWasmModules(FreeOp* fop)
+BaselineScript::unlinkDependentWasmImports(FreeOp* fop)
 {
-    // Remove any links from wasm::Modules that contain optimized FFI calls into
+    // Remove any links from wasm::Instances that contain optimized FFI calls into
     // this BaselineScript.
-    clearDependentWasmModules();
-    if (dependentWasmModules_) {
-        fop->delete_(dependentWasmModules_);
-        dependentWasmModules_ = nullptr;
+    clearDependentWasmImports();
+    if (dependentWasmImports_) {
+        fop->delete_(dependentWasmImports_);
+        dependentWasmImports_ = nullptr;
     }
 }
 
 bool
-BaselineScript::addDependentWasmModule(JSContext* cx, wasm::Module& module, uint32_t importIndex)
+BaselineScript::addDependentWasmImport(JSContext* cx, wasm::Instance& instance, uint32_t idx)
 {
-    if (!dependentWasmModules_) {
-        dependentWasmModules_ = cx->new_<Vector<DependentWasmModuleImport> >(cx);
-        if (!dependentWasmModules_)
+    if (!dependentWasmImports_) {
+        dependentWasmImports_ = cx->new_<Vector<DependentWasmImport>>(cx);
+        if (!dependentWasmImports_)
             return false;
     }
-    return dependentWasmModules_->emplaceBack(&module, importIndex);
+    return dependentWasmImports_->emplaceBack(instance, idx);
 }
 
 void
-BaselineScript::removeDependentWasmModule(wasm::Module& module, uint32_t importIndex)
+BaselineScript::removeDependentWasmImport(wasm::Instance& instance, uint32_t idx)
 {
-    if (!dependentWasmModules_)
+    if (!dependentWasmImports_)
         return;
 
-    for (size_t i = 0; i < dependentWasmModules_->length(); i++) {
-        if ((*dependentWasmModules_)[i].module == &module &&
-            (*dependentWasmModules_)[i].importIndex == importIndex)
-        {
-            dependentWasmModules_->erase(dependentWasmModules_->begin() + i);
+    for (DependentWasmImport& dep : *dependentWasmImports_) {
+        if (dep.instance == &instance && dep.importIndex == idx) {
+            dependentWasmImports_->erase(&dep);
             break;
         }
     }
@@ -1158,8 +1170,7 @@ jit::ToggleBaselineProfiling(JSRuntime* runtime, bool enable)
         return;
 
     for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {
-        for (gc::ZoneCellIter i(zone, gc::AllocKind::SCRIPT); !i.done(); i.next()) {
-            JSScript* script = i.get<JSScript>();
+        for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {
             if (!script->hasBaselineScript())
                 continue;
             AutoWritableJitCode awjc(script->baselineScript()->method());
@@ -1173,8 +1184,7 @@ void
 jit::ToggleBaselineTraceLoggerScripts(JSRuntime* runtime, bool enable)
 {
     for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {
-        for (gc::ZoneCellIter i(zone, gc::AllocKind::SCRIPT); !i.done(); i.next()) {
-            JSScript* script = i.get<JSScript>();
+        for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {
             if (!script->hasBaselineScript())
                 continue;
             script->baselineScript()->toggleTraceLoggerScripts(runtime, script, enable);
@@ -1186,8 +1196,7 @@ void
 jit::ToggleBaselineTraceLoggerEngine(JSRuntime* runtime, bool enable)
 {
     for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {
-        for (gc::ZoneCellIter i(zone, gc::AllocKind::SCRIPT); !i.done(); i.next()) {
-            JSScript* script = i.get<JSScript>();
+        for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {
             if (!script->hasBaselineScript())
                 continue;
             script->baselineScript()->toggleTraceLoggerEngine(enable);

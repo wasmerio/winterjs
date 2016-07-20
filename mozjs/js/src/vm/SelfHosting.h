@@ -23,6 +23,9 @@ namespace js {
 bool
 IsSelfHostedFunctionWithName(JSFunction* fun, JSAtom* name);
 
+JSAtom*
+GetSelfHostedFunctionName(JSFunction* fun);
+
 bool
 IsCallSelfHostedNonGenericMethod(NativeImpl impl);
 
@@ -34,10 +37,15 @@ void
 FillSelfHostingCompileOptions(JS::CompileOptions& options);
 
 bool
-CallSelfHostedFunction(JSContext* cx, char const* name, InvokeArgs& args);
+CallSelfHostedFunction(JSContext* cx, char const* name, HandleValue thisv,
+                       const AnyInvokeArgs& args, MutableHandleValue rval);
 
 bool
-CallSelfHostedFunction(JSContext* cx, HandlePropertyName name, InvokeArgs& args);
+CallSelfHostedFunction(JSContext* cx, HandlePropertyName name, HandleValue thisv,
+                       const AnyInvokeArgs& args, MutableHandleValue rval);
+
+bool
+intrinsic_StringSplitString(JSContext* cx, unsigned argc, JS::Value* vp);
 
 } /* namespace js */
 

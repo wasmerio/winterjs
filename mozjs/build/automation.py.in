@@ -244,7 +244,7 @@ class Automation(object):
     env['XRE_NO_WINDOWS_CRASH_DIALOG'] = '1'
 
     # Set WebRTC logging in case it is not set yet
-    env.setdefault('NSPR_LOG_MODULES', 'signaling:3,mtransport:4,datachannel:4,jsep:4,MediaPipelineFactory:4')
+    env.setdefault('MOZ_LOG', 'signaling:3,mtransport:4,datachannel:4,jsep:4,MediaPipelineFactory:4')
     env.setdefault('R_LOG_LEVEL', '6')
     env.setdefault('R_LOG_DESTINATION', 'stderr')
     env.setdefault('R_LOG_VERBOSE', '1')
@@ -453,11 +453,13 @@ class Automation(object):
           # Kill the application.
           hitMaxTime = True
           self.log.info("TEST-UNEXPECTED-FAIL | %s | application ran for longer than allowed maximum time of %d seconds", self.lastTestSeen, int(maxTime))
+          self.log.error("Force-terminating active process(es).");
           self.killAndGetStack(proc.pid, utilityPath, debuggerInfo)
       if didTimeout:
         if line:
           self.log.info(line.rstrip().decode("UTF-8", "ignore"))
         self.log.info("TEST-UNEXPECTED-FAIL | %s | application timed out after %d seconds with no output", self.lastTestSeen, int(timeout))
+        self.log.error("Force-terminating active process(es).");
         if browserProcessId == -1:
           browserProcessId = proc.pid
         self.killAndGetStack(browserProcessId, utilityPath, debuggerInfo)

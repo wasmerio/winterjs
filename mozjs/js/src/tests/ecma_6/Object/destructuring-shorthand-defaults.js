@@ -38,6 +38,7 @@ const SYNTAX_ERROR_STMTS = [
     "delete ({x=1})",
     "delete {x=1} = {}",
     "({x=1}.abc)",
+    "x > (0, {a = b} );",
     // declarations
     "var x = 0 + {a=1} = {}",
     "let o = {x=1};",
@@ -120,6 +121,15 @@ assertEq((({a = 0} = {}) => a)({a: 1}), 1);
     assertDeepEq(x, ({}));
     assertEq(i, 1);
     assertEq(j, 2);
+}
+
+// Default destructuring values, which are variables, should be defined
+// within closures (Bug 1255167).
+{
+    let f = function(a){
+        return (function({aa = a}){ return aa; })({});
+    };
+    assertEq(f(9999), 9999);
 }
 
 if (typeof reportCompare == "function")

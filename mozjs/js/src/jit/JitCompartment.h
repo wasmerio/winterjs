@@ -207,14 +207,14 @@ class JitRuntime
   public:
     explicit JitRuntime(JSRuntime* rt);
     ~JitRuntime();
-    bool initialize(JSContext* cx);
+    MOZ_MUST_USE bool initialize(JSContext* cx, js::AutoLockForExclusiveAccess& lock);
 
     uint8_t* allocateOsrTempData(size_t size);
     void freeOsrTempData();
 
-    static void Mark(JSTracer* trc);
+    static void Mark(JSTracer* trc, js::AutoLockForExclusiveAccess& lock);
     static void MarkJitcodeGlobalTableUnconditionally(JSTracer* trc);
-    static bool MarkJitcodeGlobalTableIteratively(JSTracer* trc);
+    static MOZ_MUST_USE bool MarkJitcodeGlobalTableIteratively(JSTracer* trc);
     static void SweepJitcodeGlobalTable(JSRuntime* rt);
 
     ExecutableAllocator& execAlloc() {
@@ -318,11 +318,11 @@ class JitRuntime
 
     JitCode* preBarrier(MIRType type) const {
         switch (type) {
-          case MIRType_Value: return valuePreBarrier_;
-          case MIRType_String: return stringPreBarrier_;
-          case MIRType_Object: return objectPreBarrier_;
-          case MIRType_Shape: return shapePreBarrier_;
-          case MIRType_ObjectGroup: return objectGroupPreBarrier_;
+          case MIRType::Value: return valuePreBarrier_;
+          case MIRType::String: return stringPreBarrier_;
+          case MIRType::Object: return objectPreBarrier_;
+          case MIRType::Shape: return shapePreBarrier_;
+          case MIRType::ObjectGroup: return objectGroupPreBarrier_;
           default: MOZ_CRASH();
         }
     }
@@ -403,6 +403,10 @@ struct CacheIRStubKey : public DefaultHasher<CacheIRStubKey> {
 
     explicit CacheIRStubKey(CacheIRStubInfo* info) : stubInfo(info) {}
     CacheIRStubKey(CacheIRStubKey&& other) : stubInfo(Move(other.stubInfo)) { }
+
+    void operator=(CacheIRStubKey&& other) {
+        stubInfo = Move(other.stubInfo);
+    }
 };
 
 class JitCompartment
@@ -446,12 +450,14 @@ class JitCompartment
     // CodeGenerator::link.
     JitCode* stringConcatStub_;
     JitCode* regExpMatcherStub_;
+    JitCode* regExpSearcherStub_;
     JitCode* regExpTesterStub_;
 
     mozilla::EnumeratedArray<SimdType, SimdType::Count, ReadBarrieredObject> simdTemplateObjects_;
 
     JitCode* generateStringConcatStub(JSContext* cx);
     JitCode* generateRegExpMatcherStub(JSContext* cx);
+    JitCode* generateRegExpSearcherStub(JSContext* cx);
     JitCode* generateRegExpTesterStub(JSContext* cx);
 
   public:
@@ -485,7 +491,7 @@ class JitCompartment
             return p->value();
         return nullptr;
     }
-    bool putStubCode(JSContext* cx, uint32_t key, Handle<JitCode*> stubCode) {
+    MOZ_MUST_USE bool putStubCode(JSContext* cx, uint32_t key, Handle<JitCode*> stubCode) {
         MOZ_ASSERT(stubCode);
         if (!stubCodes_->putNew(key, stubCode.get())) {
             ReportOutOfMemory(cx);
@@ -502,8 +508,8 @@ class JitCompartment
         *stubInfo = nullptr;
         return nullptr;
     }
-    bool putCacheIRStubCode(const CacheIRStubKey::Lookup& lookup, CacheIRStubKey& key,
-                            JitCode* stubCode)
+    MOZ_MUST_USE bool putCacheIRStubCode(const CacheIRStubKey::Lookup& lookup, CacheIRStubKey& key,
+                                         JitCode* stubCode)
     {
         CacheIRStubCodeMap::AddPtr p = cacheIRStubCodes_->lookupForAdd(lookup);
         MOZ_ASSERT(!p);
@@ -540,10 +546,10 @@ class JitCompartment
     JitCompartment();
     ~JitCompartment();
 
-    bool initialize(JSContext* cx);
+    MOZ_MUST_USE bool initialize(JSContext* cx);
 
     // Initialize code stubs only used by Ion, not Baseline.
-    bool ensureIonStubsExist(JSContext* cx);
+    MOZ_MUST_USE bool ensureIonStubsExist(JSContext* cx);
 
     void mark(JSTracer* trc, JSCompartment* compartment);
     void sweep(FreeOp* fop, JSCompartment* compartment);
@@ -556,18 +562,29 @@ class JitCompartment
         return regExpMatcherStub_;
     }
 
-    bool ensureRegExpMatcherStubExists(JSContext* cx) {
+    MOZ_MUST_USE bool ensureRegExpMatcherStubExists(JSContext* cx) {
         if (regExpMatcherStub_)
             return true;
         regExpMatcherStub_ = generateRegExpMatcherStub(cx);
         return regExpMatcherStub_ != nullptr;
     }
 
+    JitCode* regExpSearcherStubNoBarrier() const {
+        return regExpSearcherStub_;
+    }
+
+    MOZ_MUST_USE bool ensureRegExpSearcherStubExists(JSContext* cx) {
+        if (regExpSearcherStub_)
+            return true;
+        regExpSearcherStub_ = generateRegExpSearcherStub(cx);
+        return regExpSearcherStub_ != nullptr;
+    }
+
     JitCode* regExpTesterStubNoBarrier() const {
         return regExpTesterStub_;
     }
 
-    bool ensureRegExpTesterStubExists(JSContext* cx) {
+    MOZ_MUST_USE bool ensureRegExpTesterStubExists(JSContext* cx) {
         if (regExpTesterStub_)
             return true;
         regExpTesterStub_ = generateRegExpTesterStub(cx);

@@ -11,11 +11,13 @@ else
 endif
 endif
 
+ifndef JS_STANDALONE
 include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 include $(topsrcdir)/toolkit/mozapps/installer/upload-files.mk
 
 # Clear out DIST_FILES if it was set by upload-files.mk (for Android builds)
 DIST_FILES =
+endif
 
 # Helper variables to convert from MOZ_AUTOMATION_* variables to the
 # corresponding the make target
@@ -85,6 +87,12 @@ automation/pretty-package: automation/buildsymbols
 # with each other.
 automation/installer: automation/package
 automation/sdk: automation/installer automation/package
+
+# Universal builds need package staging happening before buildsymbols
+# (bug 834228)
+ifdef UNIVERSAL_BINARY
+automation/buildsymbols: automation/package
+endif
 
 # The 'pretty' versions of targets run before the regular ones to avoid
 # conflicts in writing to the same files.

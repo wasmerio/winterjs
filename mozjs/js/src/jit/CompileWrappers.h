@@ -43,6 +43,11 @@ class CompileRuntime
     // rt->runtime()->jitStackLimit;
     const void* addressOfJitStackLimit();
 
+#ifdef DEBUG
+    // rt->runtime()->addressOfIonBailAfter;
+    const void* addressOfIonBailAfter();
+#endif
+
     // &runtime()->jitJSContext
     const void* addressOfJSContext();
 
@@ -117,7 +122,9 @@ class CompileCompartment
 
     const JitCompartment* jitCompartment();
 
-    bool hasObjectMetadataCallback();
+    const GlobalObject* maybeGlobal();
+
+    bool hasAllocationMetadataBuilder();
 
     // Mirror CompartmentOptions.
     void setSingletonsAsValues();

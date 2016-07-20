@@ -74,8 +74,8 @@ We recommend the following tools for installing Python:
 
 # Upgrade Mercurial older than this.
 # This should match OLDEST_NON_LEGACY_VERSION from
-# tools/mercurial/hgsetup/wizard.py.
-MODERN_MERCURIAL_VERSION = LooseVersion('3.5.2')
+# the hg setup wizard in version-control-tools.
+MODERN_MERCURIAL_VERSION = LooseVersion('3.7.3')
 
 # Upgrade Python older than this.
 MODERN_PYTHON_VERSION = LooseVersion('2.7.3')
@@ -299,7 +299,8 @@ class BaseBootstrapper(object):
         making it suitable for use in scripts.
         """
         env = os.environ.copy()
-        env['HGPLAIN'] = '1'
+        env[b'HGPLAIN'] = b'1'
+
         return env
 
     def is_mercurial_modern(self):
@@ -325,23 +326,28 @@ class BaseBootstrapper(object):
         if modern:
             print('Your version of Mercurial (%s) is sufficiently modern.' %
                   version)
-            return
+            return installed, modern
 
         self._ensure_package_manager_updated()
 
         if installed:
             print('Your version of Mercurial (%s) is not modern enough.' %
                   version)
+            print('(Older versions of Mercurial have known security vulnerabilities. '
+                  'Unless you are running a patched Mercurial version, you may be '
+                  'vulnerable.')
         else:
             print('You do not have Mercurial installed')
 
         if self.upgrade_mercurial(version) is False:
-            return
+            return installed, modern
 
         installed, modern, after = self.is_mercurial_modern()
 
         if installed and not modern:
             print(MERCURIAL_UPGRADE_FAILED % (MODERN_MERCURIAL_VERSION, after))
+
+        return installed, modern
 
     def upgrade_mercurial(self, current):
         """Upgrade Mercurial.

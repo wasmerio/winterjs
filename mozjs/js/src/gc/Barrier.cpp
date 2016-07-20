@@ -9,7 +9,7 @@
 #include "jscompartment.h"
 #include "jsobj.h"
 
-#include "asmjs/WasmModule.h"
+#include "asmjs/WasmJS.h"
 #include "builtin/TypedObject.h"
 #include "gc/Policy.h"
 #include "gc/Zone.h"
@@ -80,9 +80,13 @@ ReadBarrierFunctor<S>::operator()(T* t)
 {
     InternalBarrierMethods<T*>::readBarrier(t);
 }
-template void ReadBarrierFunctor<JS::Value>::operator()<JS::Symbol>(JS::Symbol*);
-template void ReadBarrierFunctor<JS::Value>::operator()<JSObject>(JSObject*);
-template void ReadBarrierFunctor<JS::Value>::operator()<JSString>(JSString*);
+
+// All GC things may be held in a Value, either publicly or as a private GC
+// thing.
+#define JS_EXPAND_DEF(name, type, _) \
+template void ReadBarrierFunctor<JS::Value>::operator()<type>(type*);
+JS_FOR_EACH_TRACEKIND(JS_EXPAND_DEF);
+#undef JS_EXPAND_DEF
 
 template <typename S>
 template <typename T>
@@ -91,9 +95,14 @@ PreBarrierFunctor<S>::operator()(T* t)
 {
     InternalBarrierMethods<T*>::preBarrier(t);
 }
-template void PreBarrierFunctor<JS::Value>::operator()<JS::Symbol>(JS::Symbol*);
-template void PreBarrierFunctor<JS::Value>::operator()<JSObject>(JSObject*);
-template void PreBarrierFunctor<JS::Value>::operator()<JSString>(JSString*);
+
+// All GC things may be held in a Value, either publicly or as a private GC
+// thing.
+#define JS_EXPAND_DEF(name, type, _) \
+template void PreBarrierFunctor<JS::Value>::operator()<type>(type*);
+JS_FOR_EACH_TRACEKIND(JS_EXPAND_DEF);
+#undef JS_EXPAND_DEF
+
 template void PreBarrierFunctor<jsid>::operator()<JS::Symbol>(JS::Symbol*);
 template void PreBarrierFunctor<jsid>::operator()<JSString>(JSString*);
 
@@ -143,7 +152,7 @@ template struct MovableCellHasher<JSObject*>;
 template struct MovableCellHasher<GlobalObject*>;
 template struct MovableCellHasher<SavedFrame*>;
 template struct MovableCellHasher<ScopeObject*>;
-template struct MovableCellHasher<WasmModuleObject*>;
+template struct MovableCellHasher<WasmInstanceObject*>;
 template struct MovableCellHasher<JSScript*>;
 
 } // namespace js

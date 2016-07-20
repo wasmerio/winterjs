@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifdef MOZ_MEMORY
 #define MOZ_MEMORY_IMPL
 #include "mozmemory_wrap.h"
 #define MALLOC_FUNCS MALLOC_FUNCS_MALLOC
@@ -11,6 +12,7 @@
 #define MALLOC_DECL(name, return_type, ...) \
   extern "C" MOZ_MEMORY_API return_type name ## _impl(__VA_ARGS__);
 #include "malloc_decls.h"
+#endif
 
 #include <windows.h>
 #include <winternl.h>
@@ -27,6 +29,7 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WindowsVersion.h"
 #include "nsWindowsHelpers.h"
+#include "WindowsDllBlocklist.h"
 
 using namespace mozilla;
 
@@ -197,7 +200,25 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   { "grabkernel.dll", MAKE_VERSION(1, 0, 0, 1) },
 
   // ESET, bug 1229252
-  { "eOppMonitor.dll", ALL_VERSIONS },
+  { "eoppmonitor.dll", ALL_VERSIONS },
+
+  // SS2OSD, bug 1262348
+  { "ss2osd.dll", ALL_VERSIONS },
+  { "ss2devprops.dll", ALL_VERSIONS },
+
+  // NHASUSSTRIXOSD.DLL, bug 1269244
+  { "nhasusstrixosd.dll", ALL_VERSIONS },
+  { "nhasusstrixdevprops.dll", ALL_VERSIONS },
+
+  // Crashes with PremierOpinion/RelevantKnowledge, bug 1277846
+  { "opls.dll", ALL_VERSIONS },
+  { "opls64.dll", ALL_VERSIONS },
+  { "pmls.dll", ALL_VERSIONS },
+  { "pmls64.dll", ALL_VERSIONS },
+  { "prls.dll", ALL_VERSIONS },
+  { "prls64.dll", ALL_VERSIONS },
+  { "rlls.dll", ALL_VERSIONS },
+  { "rlls64.dll", ALL_VERSIONS },
 
   { nullptr, 0 }
 };
@@ -732,7 +753,7 @@ WindowsDllInterceptor NtDllIntercept;
 
 } // namespace
 
-NS_EXPORT void
+MFBT_API void
 DllBlocklist_Initialize()
 {
 #if defined(_MSC_VER) && _MSC_VER < 1900 && defined(_M_X64)
@@ -771,7 +792,7 @@ DllBlocklist_Initialize()
   }
 }
 
-NS_EXPORT void
+MFBT_API void
 DllBlocklist_SetInXPCOMLoadOnMainThread(bool inXPCOMLoadOnMainThread)
 {
   if (inXPCOMLoadOnMainThread) {
@@ -782,7 +803,7 @@ DllBlocklist_SetInXPCOMLoadOnMainThread(bool inXPCOMLoadOnMainThread)
   }
 }
 
-NS_EXPORT void
+MFBT_API void
 DllBlocklist_WriteNotes(HANDLE file)
 {
   DWORD nBytes;

@@ -53,7 +53,7 @@ Debug_SetValueRangeToCrashOnTouch(Value* vec, size_t len)
 }
 
 static MOZ_ALWAYS_INLINE void
-Debug_SetValueRangeToCrashOnTouch(HeapValue* vec, size_t len)
+Debug_SetValueRangeToCrashOnTouch(GCPtrValue* vec, size_t len)
 {
 #ifdef DEBUG
     Debug_SetValueRangeToCrashOnTouch((Value*) vec, len);
@@ -180,7 +180,7 @@ class ObjectElements
         // For TypedArrays only: this TypedArray's storage is mapping shared
         // memory.  This is a static property of the TypedArray, set when it
         // is created and never changed.
-        SHARED_MEMORY               = 0x8
+        SHARED_MEMORY               = 0x8,
     };
 
   private:
@@ -265,9 +265,9 @@ class ObjectElements
         return flags & SHARED_MEMORY;
     }
 
-    HeapPtrNativeObject& ownerObject() const {
+    GCPtrNativeObject& ownerObject() const {
         MOZ_ASSERT(isCopyOnWrite());
-        return *(HeapPtrNativeObject*)(&elements()[initializedLength]);
+        return *(GCPtrNativeObject*)(&elements()[initializedLength]);
     }
 
     static int offsetOfFlags() {
@@ -358,7 +358,7 @@ class NativeObject : public JSObject
 {
   protected:
     // Property layout description and other state.
-    HeapPtrShape shape_;
+    GCPtrShape shape_;
 
     /* Slots for object properties. */
     js::HeapSlot* slots_;
@@ -413,14 +413,14 @@ class NativeObject : public JSObject
         // Backdoor allowing direct access to copy on write elements.
         return HeapSlotArray(elements_, true);
     }
-    const Value& getDenseElement(uint32_t idx) {
+    const Value& getDenseElement(uint32_t idx) const {
         MOZ_ASSERT(idx < getDenseInitializedLength());
         return elements_[idx];
     }
     bool containsDenseElement(uint32_t idx) {
         return idx < getDenseInitializedLength() && !elements_[idx].isMagic(JS_ELEMENTS_HOLE);
     }
-    uint32_t getDenseInitializedLength() {
+    uint32_t getDenseInitializedLength() const {
         return getElementsHeader()->initializedLength;
     }
     uint32_t getDenseCapacity() const {
@@ -457,6 +457,12 @@ class NativeObject : public JSObject
     void setIsSharedMemory() {
         MOZ_ASSERT(elements_ == emptyObjectElements);
         elements_ = emptyObjectElementsShared;
+    }
+
+    bool isInWholeCellBuffer() const {
+        const gc::TenuredCell* cell = &asTenured();
+        gc::ArenaCellSet* cells = cell->arena()->bufferedCells;
+        return cells && cells->hasCell(cell);
     }
 
   protected:
@@ -1280,10 +1286,8 @@ inline void
 NativeObject::privateWriteBarrierPre(void** oldval)
 {
     JS::shadow::Zone* shadowZone = this->shadowZoneFromAnyThread();
-    if (shadowZone->needsIncrementalBarrier()) {
-        if (*oldval && getClass()->trace)
-            getClass()->trace(shadowZone->barrierTracer(), this);
-    }
+    if (shadowZone->needsIncrementalBarrier() && *oldval && getClass()->hasTrace())
+        getClass()->doTrace(shadowZone->barrierTracer(), this);
 }
 
 #ifdef DEBUG
@@ -1463,7 +1467,7 @@ MaybeNativeObject(JSObject* obj)
 inline bool
 js::HasProperty(JSContext* cx, HandleObject obj, HandleId id, bool* foundp)
 {
-    if (HasPropertyOp op = obj->getOps()->hasProperty)
+    if (HasPropertyOp op = obj->getOpsHasProperty())
         return op(cx, obj, id, foundp);
     return NativeHasProperty(cx, obj.as<NativeObject>(), id, foundp);
 }
@@ -1472,7 +1476,7 @@ inline bool
 js::GetProperty(JSContext* cx, HandleObject obj, HandleValue receiver, HandleId id,
                 MutableHandleValue vp)
 {
-    if (GetPropertyOp op = obj->getOps()->getProperty)
+    if (GetPropertyOp op = obj->getOpsGetProperty())
         return op(cx, obj, receiver, id, vp);
     return NativeGetProperty(cx, obj.as<NativeObject>(), receiver, id, vp);
 }
@@ -1480,7 +1484,7 @@ js::GetProperty(JSContext* cx, HandleObject obj, HandleValue receiver, HandleId 
 inline bool
 js::GetPropertyNoGC(JSContext* cx, JSObject* obj, const Value& receiver, jsid id, Value* vp)
 {
-    if (obj->getOps()->getProperty)
+    if (obj->getOpsGetProperty())
         return false;
     return NativeGetPropertyNoGC(cx, &obj->as<NativeObject>(), receiver, id, vp);
 }
@@ -1489,7 +1493,7 @@ inline bool
 js::SetProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue v,
                 HandleValue receiver, ObjectOpResult& result)
 {
-    if (obj->getOps()->setProperty)
+    if (obj->getOpsSetProperty())
         return JSObject::nonNativeSetProperty(cx, obj, id, v, receiver, result);
     return NativeSetProperty(cx, obj.as<NativeObject>(), id, v, receiver, Qualified, result);
 }
@@ -1498,7 +1502,7 @@ inline bool
 js::SetElement(JSContext* cx, HandleObject obj, uint32_t index, HandleValue v,
                HandleValue receiver, ObjectOpResult& result)
 {
-    if (obj->getOps()->setProperty)
+    if (obj->getOpsSetProperty())
         return JSObject::nonNativeSetElement(cx, obj, index, v, receiver, result);
     return NativeSetElement(cx, obj.as<NativeObject>(), index, v, receiver, result);
 }

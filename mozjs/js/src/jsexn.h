@@ -28,50 +28,19 @@ ComputeStackString(JSContext* cx);
  * Given a JSErrorReport, check to see if there is an exception associated with
  * the error number.  If there is, then create an appropriate exception object,
  * set it as the pending exception, and set the JSREPORT_EXCEPTION flag on the
- * error report.  Exception-aware host error reporters should probably ignore
- * error reports so flagged.
+ * error report.
  *
- * Return true if cx->throwing and cx->exception were set.
+ * It's possible we fail (due to OOM or some other error) and end up setting
+ * cx->exception to a different exception. The original error described by
+ * *reportp typically won't be reported anywhere in this case.
  *
- * This means that:
- *
- *   - If the error is successfully converted to an exception and stored in
- *     cx->exception, the return value is true. This is the "normal", happiest
- *     case for the caller.
- *
- *   - If we try to convert, but fail with OOM or some other error that ends up
- *     setting cx->throwing to true and setting cx->exception, then we also
- *     return true (because callers want to treat that case the same way).
- *     The original error described by *reportp typically won't be reported
- *     anywhere; instead OOM is reported.
- *
- *   - If *reportp is just a warning, or the error code is unrecognized, or if
- *     we decided to do nothing in order to avoid recursion, then return
- *     false. In those cases, this error is just being swept under the rug
- *     unless the caller decides to call CallErrorReporter explicitly.
+ * If the error code is unrecognized, or if we decided to do nothing in order to
+ * avoid recursion, we simply return and this error is just being swept under
+ * the rug.
  */
-extern bool
+extern void
 ErrorToException(JSContext* cx, const char* message, JSErrorReport* reportp,
                  JSErrorCallback callback, void* userRef);
-
-/*
- * Called if a JS API call to js_Execute or js_InternalCall fails; calls the
- * error reporter with the error report associated with any uncaught exception
- * that has been raised.  Returns true if there was an exception pending, and
- * the error reporter was actually called.
- *
- * The JSErrorReport * that the error reporter is called with is currently
- * associated with a JavaScript object, and is not guaranteed to persist after
- * the object is collected.  Any persistent uses of the JSErrorReport contents
- * should make their own copy.
- *
- * The flags field of the JSErrorReport will have the JSREPORT_EXCEPTION flag
- * set; embeddings that want to silently propagate JavaScript exceptions to
- * other contexts may want to use an error reporter that ignores errors with
- * this flag.
- */
-extern bool
-ReportUncaughtException(JSContext* cx);
 
 extern JSErrorReport*
 ErrorFromException(JSContext* cx, HandleObject obj);
@@ -95,7 +64,8 @@ static_assert(JSEXN_ERR == 0 &&
               JSProto_Error + JSEXN_TYPEERR == JSProto_TypeError &&
               JSProto_Error + JSEXN_URIERR == JSProto_URIError &&
               JSProto_Error + JSEXN_DEBUGGEEWOULDRUN == JSProto_DebuggeeWouldRun &&
-              JSEXN_DEBUGGEEWOULDRUN + 1 == JSEXN_LIMIT,
+              JSEXN_DEBUGGEEWOULDRUN + 1 == JSEXN_WARN &&
+              JSEXN_WARN + 1 == JSEXN_LIMIT,
               "GetExceptionProtoKey and ExnTypeFromProtoKey require that "
               "each corresponding JSExnType and JSProtoKey value be separated "
               "by the same constant value");
@@ -104,7 +74,7 @@ static inline JSProtoKey
 GetExceptionProtoKey(JSExnType exn)
 {
     MOZ_ASSERT(JSEXN_ERR <= exn);
-    MOZ_ASSERT(exn < JSEXN_LIMIT);
+    MOZ_ASSERT(exn < JSEXN_WARN);
     return JSProtoKey(JSProto_Error + int(exn));
 }
 
@@ -113,7 +83,7 @@ ExnTypeFromProtoKey(JSProtoKey key)
 {
     JSExnType type = static_cast<JSExnType>(key - JSProto_Error);
     MOZ_ASSERT(type >= JSEXN_ERR);
-    MOZ_ASSERT(type < JSEXN_LIMIT);
+    MOZ_ASSERT(type < JSEXN_WARN);
     return type;
 }
 

@@ -60,7 +60,13 @@ GetPropIRGenerator::tryAttachStub(Maybe<CacheIRWriter>& writer)
             return false;
         if (!emitted_ && !tryAttachNative(*writer, obj, objId))
             return false;
+        if (!emitted_ && !tryAttachUnboxed(*writer, obj, objId))
+            return false;
         if (!emitted_ && !tryAttachUnboxedExpando(*writer, obj, objId))
+            return false;
+        if (!emitted_ && !tryAttachTypedObject(*writer, obj, objId))
+            return false;
+        if (!emitted_ && !tryAttachModuleNamespace(*writer, obj, objId))
             return false;
     }
 
@@ -131,12 +137,10 @@ GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj, JSObject* holder, 
 
     if (obj->hasUncacheableProto()) {
         // If the shape does not imply the proto, emit an explicit proto guard.
-        writer.guardProto(objId, obj->getProto());
+        writer.guardProto(objId, obj->staticPrototype());
     }
 
-    JSObject* pobj = IsCacheableDOMProxy(obj)
-                     ? obj->getTaggedProto().toObjectOrNull()
-                     : obj->getProto();
+    JSObject* pobj = obj->staticPrototype();
     if (!pobj)
         return;
 
@@ -145,12 +149,12 @@ GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj, JSObject* holder, 
             ObjOperandId protoId = writer.loadObject(pobj);
             if (pobj->isSingleton()) {
                 // Singletons can have their group's |proto| mutated directly.
-                writer.guardProto(protoId, pobj->getProto());
+                writer.guardProto(protoId, pobj->staticPrototype());
             } else {
                 writer.guardGroup(protoId, pobj->group());
             }
         }
-        pobj = pobj->getProto();
+        pobj = pobj->staticPrototype();
     }
 }
 
@@ -193,12 +197,12 @@ EmitReadSlotResult(CacheIRWriter& writer, JSObject* obj, JSObject* holder,
             // The property does not exist. Guard on everything in the prototype
             // chain. This is guaranteed to see only Native objects because of
             // CanAttachNativeGetProp().
-            JSObject* proto = obj->getTaggedProto().toObjectOrNull();
+            JSObject* proto = obj->taggedProto().toObjectOrNull();
             ObjOperandId lastObjId = objId;
             while (proto) {
                 ObjOperandId protoId = writer.loadProto(lastObjId);
                 writer.guardShape(protoId, proto->as<NativeObject>().lastProperty());
-                proto = proto->getProto();
+                proto = proto->staticPrototype();
                 lastObjId = protoId;
             }
         }
@@ -256,6 +260,29 @@ GetPropIRGenerator::tryAttachNative(CacheIRWriter& writer, HandleObject obj, Obj
 }
 
 bool
+GetPropIRGenerator::tryAttachUnboxed(CacheIRWriter& writer, HandleObject obj, ObjOperandId objId)
+{
+    MOZ_ASSERT(!emitted_);
+
+    if (!obj->is<UnboxedPlainObject>())
+        return true;
+
+    const UnboxedLayout::Property* property = obj->as<UnboxedPlainObject>().layout().lookup(name_);
+    if (!property)
+        return true;
+
+    if (!cx_->runtime()->jitSupportsFloatingPoint)
+        return true;
+
+    writer.guardGroup(objId, obj->group());
+    writer.loadUnboxedPropertyResult(objId, property->type,
+                                     UnboxedPlainObject::offsetOfData() + property->offset);
+    emitted_ = true;
+    preliminaryObjectAction_ = PreliminaryObjectAction::Unlink;
+    return true;
+}
+
+bool
 GetPropIRGenerator::tryAttachUnboxedExpando(CacheIRWriter& writer, HandleObject obj, ObjOperandId objId)
 {
     MOZ_ASSERT(!emitted_);
@@ -274,6 +301,44 @@ GetPropIRGenerator::tryAttachUnboxedExpando(CacheIRWriter& writer, HandleObject 
     emitted_ = true;
 
     EmitReadSlotResult(writer, obj, obj, shape, objId);
+    return true;
+}
+
+bool
+GetPropIRGenerator::tryAttachTypedObject(CacheIRWriter& writer, HandleObject obj, ObjOperandId objId)
+{
+    MOZ_ASSERT(!emitted_);
+
+    if (!obj->is<TypedObject>() ||
+        !cx_->runtime()->jitSupportsFloatingPoint ||
+        cx_->compartment()->detachedTypedObjects)
+    {
+        return true;
+    }
+
+    TypedObject* typedObj = &obj->as<TypedObject>();
+    if (!typedObj->typeDescr().is<StructTypeDescr>())
+        return true;
+
+    StructTypeDescr* structDescr = &typedObj->typeDescr().as<StructTypeDescr>();
+    size_t fieldIndex;
+    if (!structDescr->fieldIndex(NameToId(name_), &fieldIndex))
+        return true;
+
+    TypeDescr* fieldDescr = &structDescr->fieldDescr(fieldIndex);
+    if (!fieldDescr->is<SimpleTypeDescr>())
+        return true;
+
+    Shape* shape = typedObj->maybeShape();
+    TypedThingLayout layout = GetTypedThingLayout(shape->getObjectClass());
+
+    uint32_t fieldOffset = structDescr->fieldOffset(fieldIndex);
+    uint32_t typeDescr = SimpleTypeDescrKey(&fieldDescr->as<SimpleTypeDescr>());
+
+    writer.guardNoDetachedTypedObjects();
+    writer.guardShape(objId, shape);
+    writer.loadTypedObjectResult(objId, fieldOffset, layout, typeDescr);
+    emitted_ = true;
     return true;
 }
 
@@ -316,5 +381,37 @@ GetPropIRGenerator::tryAttachObjectLength(CacheIRWriter& writer, HandleObject ob
         return true;
     }
 
+    return true;
+}
+
+bool
+GetPropIRGenerator::tryAttachModuleNamespace(CacheIRWriter& writer, HandleObject obj,
+                                             ObjOperandId objId)
+{
+    MOZ_ASSERT(!emitted_);
+
+    if (!obj->is<ModuleNamespaceObject>())
+        return true;
+
+    Rooted<ModuleNamespaceObject*> ns(cx_, &obj->as<ModuleNamespaceObject>());
+    RootedModuleEnvironmentObject env(cx_);
+    RootedShape shape(cx_);
+    if (!ns->bindings().lookup(NameToId(name_), env.address(), shape.address()))
+        return true;
+
+    // Don't emit a stub until the target binding has been initialized.
+    if (env->getSlot(shape->slot()).isMagic(JS_UNINITIALIZED_LEXICAL))
+        return true;
+
+    if (IsIonEnabled(cx_))
+        EnsureTrackPropertyTypes(cx_, env, shape->propid());
+
+    emitted_ = true;
+
+    // Check for the specific namespace object.
+    writer.guardSpecificObject(objId, ns);
+
+    ObjOperandId envId = writer.loadObject(env);
+    EmitLoadSlotResult(writer, envId, env, shape);
     return true;
 }
