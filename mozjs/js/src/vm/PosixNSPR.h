@@ -9,7 +9,9 @@
 
 #ifdef JS_POSIX_NSPR
 
+#ifndef _MSC_VER
 #include <pthread.h>
+#endif
 #include <stdint.h>
 
 namespace nspr {
