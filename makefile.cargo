@@ -2,7 +2,6 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
-	--disable-shared-js \
 	--without-intl-api \
 	--build-backends=RecursiveMake
 
@@ -25,22 +24,50 @@ CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 	endif
 else
 
+ifeq (,$(VSINSTALLDIR))
 CC ?= gcc
 CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
+endif
 
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0 --enable-gczeal
+	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif
 
 ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifeq ($(MSYSTEM),MINGW64)
+ifneq ($(VSINSTALLDIR),)
+        # Visual Studio build
+
+ifneq ($(MOZTOOLS_PATH),)
+        # there's no cygpath in mozilla-build, but on the plus side
+        # the python we need is going to be the one we find
+	OUT_DIR:=$(subst \,/,$(OUT_DIR))
+else
+	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
+ifneq (,$(wildcard c:/python27/python.exe))
+	FORCED_PYTHON := "c:/python27/python.exe"
+else ifneq(,$(NATIVE_WIN32_PYTHON))
+	FORCED_PYTHON := "$(NATIVE_WIN32_PYTHON)"
+else
+	$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
+	$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
+	$(error Native Win32 Python not found)
+endif
+endif
+
+ifeq ($(findstring x86_64,$(TARGET)),x86_64)
+	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+endif
+	CONFIGURE_FLAGS += --without-pthreads
+	MOZ_TOOLS=/
+
+else ifeq ($(MSYSTEM),MINGW64)
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
@@ -71,8 +98,11 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
-
+	# We don't need to build shared JS, and we need to disable export attrs
+	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js --without-pthreads
+else
+	# We don't need to build shared JS
+	CONFIGURE_FLAGS += --disable-shared-js
 endif
 
 SRC_DIR = $(shell pwd)
