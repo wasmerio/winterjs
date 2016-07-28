@@ -434,10 +434,16 @@ js::WatchHandler(JSContext* cx, JSObject* obj_, jsid id_, JS::Value old,
     if (resolving.alreadyStarted())
         return true;
 
-    JSObject* callable = (JSObject*)closure;
-    Value argv[] = { IdToValue(id), old, *nvp };
+    FixedInvokeArgs<3> args(cx);
+
+    args[0].set(IdToValue(id));
+    args[1].set(old);
+    args[2].set(*nvp);
+
+    RootedValue callable(cx, ObjectValue(*static_cast<JSObject*>(closure)));
+    RootedValue thisv(cx, ObjectValue(*obj));
     RootedValue rv(cx);
-    if (!Invoke(cx, ObjectValue(*obj), ObjectOrNullValue(callable), ArrayLength(argv), argv, &rv))
+    if (!Call(cx, callable, thisv, args, &rv))
         return false;
 
     *nvp = rv;
@@ -605,7 +611,7 @@ js::ObjectCreateImpl(JSContext* cx, HandleObject proto, NewObjectKind newKind,
 PlainObject*
 js::ObjectCreateWithTemplate(JSContext* cx, HandlePlainObject templateObj)
 {
-    RootedObject proto(cx, templateObj->getProto());
+    RootedObject proto(cx, templateObj->staticPrototype());
     RootedObjectGroup group(cx, templateObj->group());
     return ObjectCreateImpl(cx, proto, GenericObject, group);
 }
@@ -671,7 +677,7 @@ js::obj_getOwnPropertyDescriptor(JSContext* cx, unsigned argc, Value* vp)
     // Steps 5-7.
     Rooted<PropertyDescriptor> desc(cx);
     return GetOwnPropertyDescriptor(cx, obj, id, &desc) &&
-           FromPropertyDescriptor(cx, desc, args.rval());
+           JS::FromPropertyDescriptor(cx, desc, args.rval());
 }
 
 enum EnumerableOwnPropertiesKind {
@@ -1025,18 +1031,23 @@ static bool
 ProtoGetter(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    HandleValue thisv = args.thisv();
-    if (thisv.isNullOrUndefined()) {
-        ReportIncompatible(cx, args);
-        return false;
-    }
-    if (thisv.isPrimitive() && !BoxNonStrictThis(cx, args))
-        return false;
 
-    RootedObject obj(cx, &args.thisv().toObject());
+    RootedValue thisv(cx, args.thisv());
+    if (thisv.isPrimitive()) {
+        if (thisv.isNullOrUndefined()) {
+            ReportIncompatible(cx, args);
+            return false;
+        }
+
+        if (!BoxNonStrictThis(cx, thisv, &thisv))
+            return false;
+    }
+
+    RootedObject obj(cx, &thisv.toObject());
     RootedObject proto(cx);
     if (!GetPrototype(cx, obj, &proto))
         return false;
+
     args.rval().setObjectOrNull(proto);
     return true;
 }
@@ -1115,6 +1126,7 @@ static const JSFunctionSpec object_static_methods[] = {
     JS_SELF_HOSTED_FN("getPrototypeOf", "ObjectGetPrototypeOf",     1, 0),
     JS_FN("setPrototypeOf",            obj_setPrototypeOf,          2, 0),
     JS_FN("getOwnPropertyDescriptor",  obj_getOwnPropertyDescriptor,2, 0),
+    JS_SELF_HOSTED_FN("getOwnPropertyDescriptors", "ObjectGetOwnPropertyDescriptors", 1, 0),
     JS_FN("keys",                      obj_keys,                    1, 0),
     JS_FN("values",                    obj_values,                  1, 0),
     JS_FN("entries",                   obj_entries,                 1, 0),
@@ -1211,30 +1223,21 @@ FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor, JS::HandleObject pro
     return true;
 }
 
+static const ClassSpec PlainObjectClassSpec = {
+    CreateObjectConstructor,
+    CreateObjectPrototype,
+    object_static_methods,
+    nullptr,
+    object_methods,
+    object_properties,
+    FinishObjectClassInit
+};
+
 const Class PlainObject::class_ = {
     js_Object_str,
     JSCLASS_HAS_CACHED_PROTO(JSProto_Object),
-    nullptr,  /* addProperty */
-    nullptr,  /* delProperty */
-    nullptr,  /* getProperty */
-    nullptr,  /* setProperty */
-    nullptr,  /* enumerate */
-    nullptr,  /* resolve */
-    nullptr,  /* mayResolve */
-    nullptr,  /* finalize */
-    nullptr,  /* call */
-    nullptr,  /* hasInstance */
-    nullptr,  /* construct */
-    nullptr,  /* trace */
-    {
-        CreateObjectConstructor,
-        CreateObjectPrototype,
-        object_static_methods,
-        nullptr,
-        object_methods,
-        object_properties,
-        FinishObjectClassInit
-    }
+    JS_NULL_CLASS_OPS,
+    &PlainObjectClassSpec
 };
 
 const Class* const js::ObjectClassPtr = &PlainObject::class_;

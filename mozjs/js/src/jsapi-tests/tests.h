@@ -83,6 +83,9 @@ class JSAPITest
 
     bool exec(const char* bytes, const char* filename, int lineno);
 
+    // Like exec(), but doesn't call fail() if JS::Evaluate returns false.
+    bool execDontReport(const char* bytes, const char* filename, int lineno);
+
 #define EVAL(s, vp) do { if (!evaluate(s, __FILE__, __LINE__, vp)) return false; } while (false)
 
     bool evaluate(const char* bytes, const char* filename, int lineno, JS::MutableHandleValue vp);
@@ -226,12 +229,15 @@ class JSAPITest
     JSAPITestString messages() const { return msgs; }
 
     static const JSClass * basicGlobalClass() {
-        static const JSClass c = {
-            "global", JSCLASS_GLOBAL_FLAGS,
+        static const JSClassOps cOps = {
             nullptr, nullptr, nullptr, nullptr,
             nullptr, nullptr, nullptr, nullptr,
             nullptr, nullptr, nullptr,
             JS_GlobalObjectTraceHook
+        };
+        static const JSClass c = {
+            "global", JSCLASS_GLOBAL_FLAGS,
+            &cOps
         };
         return &c;
     }
@@ -283,7 +289,7 @@ class JSAPITest
         JSRuntime* rt = JS_NewRuntime(8L * 1024 * 1024);
         if (!rt)
             return nullptr;
-        JS_SetErrorReporter(rt, &reportError);
+        JS::SetWarningReporter(rt, &reportWarning);
         setNativeStackQuota(rt);
         return rt;
     }
@@ -295,15 +301,14 @@ class JSAPITest
         rt = nullptr;
     }
 
-    static void reportError(JSContext* cx, const char* message, JSErrorReport* report) {
+    static void reportWarning(JSContext* cx, const char* message, JSErrorReport* report) {
+        MOZ_RELEASE_ASSERT(report);
+        MOZ_RELEASE_ASSERT(JSREPORT_IS_WARNING(report->flags));
+
         fprintf(stderr, "%s:%u:%s\n",
                 report->filename ? report->filename : "<no filename>",
                 (unsigned int) report->lineno,
                 message);
-    }
-
-    virtual JSContext * createContext() {
-        return JS_NewContext(rt, 8192);
     }
 
     virtual const JSClass * getGlobalClass() {
@@ -431,14 +436,14 @@ class AutoLeaveZeal
     explicit AutoLeaveZeal(JSContext* cx) : cx_(cx) {
         uint32_t dummy;
         JS_GetGCZealBits(cx_, &zealBits_, &frequency_, &dummy);
-        JS_SetGCZeal(cx_, 0, 0);
+        JS_SetGCZeal(JS_GetRuntime(cx_), 0, 0);
         JS::PrepareForFullGC(JS_GetRuntime(cx_));
         JS::GCForReason(JS_GetRuntime(cx_), GC_SHRINK, JS::gcreason::DEBUG_GC);
     }
     ~AutoLeaveZeal() {
         for (size_t i = 0; i < sizeof(zealBits_) * 8; i++) {
             if (zealBits_ & (1 << i))
-                JS_SetGCZeal(cx_, i, frequency_);
+                JS_SetGCZeal(JS_GetRuntime(cx_), i, frequency_);
         }
 
 #ifdef DEBUG

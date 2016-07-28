@@ -62,6 +62,15 @@ class ZoneHeapThreshold
                                           const AutoLockGC& lock);
 };
 
+struct ZoneComponentFinder : public ComponentFinder<JS::Zone, ZoneComponentFinder>
+{
+    ZoneComponentFinder(uintptr_t sl, AutoLockForExclusiveAccess& lock)
+      : ComponentFinder<JS::Zone, ZoneComponentFinder>(sl), lock(lock)
+    {}
+
+    AutoLockForExclusiveAccess& lock;
+};
+
 struct UniqueIdGCPolicy {
     static bool needsSweep(Cell** cell, uint64_t* value);
 };
@@ -74,6 +83,9 @@ using UniqueIdMap = GCHashMap<Cell*,
                               UniqueIdGCPolicy>;
 
 extern uint64_t NextCellUniqueId(JSRuntime* rt);
+
+template <typename T>
+class ZoneCellIter;
 
 } // namespace gc
 } // namespace js
@@ -127,9 +139,9 @@ struct Zone : public JS::shadow::Zone,
 {
     explicit Zone(JSRuntime* rt);
     ~Zone();
-    MOZ_WARN_UNUSED_RESULT bool init(bool isSystem);
+    MOZ_MUST_USE bool init(bool isSystem);
 
-    void findOutgoingEdges(js::gc::ComponentFinder<JS::Zone>& finder);
+    void findOutgoingEdges(js::gc::ZoneComponentFinder& finder);
 
     void discardJitCode(js::FreeOp* fop);
 
@@ -148,10 +160,17 @@ struct Zone : public JS::shadow::Zone,
             onTooMuchMalloc();
     }
 
+    // Iterate over all cells in the zone. See the definition of ZoneCellIter
+    // in jsgcinlines.h for the possible arguments and documentation.
+    template <typename T, typename... Args>
+    js::gc::ZoneCellIter<T> cellIter(Args... args) {
+        return js::gc::ZoneCellIter<T>(const_cast<Zone*>(this), mozilla::Forward<Args>(args)...);
+    }
+
     bool isTooMuchMalloc() const { return gcMallocBytes <= 0; }
     void onTooMuchMalloc();
 
-    MOZ_WARN_UNUSED_RESULT void* onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes,
+    MOZ_MUST_USE void* onOutOfMemory(js::AllocFunction allocFunc, size_t nbytes,
                                                void* reallocPtr = nullptr) {
         if (!js::CurrentThreadCanAccessRuntime(runtime_))
             return nullptr;
@@ -287,7 +306,7 @@ struct Zone : public JS::shadow::Zone,
      *   is silly
      * And so on.
      */
-    bool suppressObjectMetadataCallback;
+    bool suppressAllocationMetadataBuilder;
 
     js::gc::ArenaLists arenas;
 
@@ -309,6 +328,12 @@ struct Zone : public JS::shadow::Zone,
     using WeakEdges = js::Vector<js::gc::TenuredCell**, 0, js::SystemAllocPolicy>;
     WeakEdges gcWeakRefs;
 
+    // List of non-ephemeron weak containers to sweep during beginSweepingZoneGroup.
+    mozilla::LinkedList<WeakCache<void*>> weakCaches_;
+    void registerWeakCache(WeakCache<void*>* cachep) {
+        weakCaches_.insertBack(cachep);
+    }
+
     /*
      * Mapping from not yet marked keys to a vector of all values that the key
      * maps to in any live weak map.
@@ -320,6 +345,15 @@ struct Zone : public JS::shadow::Zone,
     // This is used during GC while calculating zone groups to record edges that
     // can't be determined by examining this zone by itself.
     ZoneSet gcZoneGroupEdges;
+
+    // Keep track of all TypeDescr and related objects in this compartment.
+    // This is used by the GC to trace them all first when compacting, since the
+    // TypedObject trace hook may access these objects.
+    using TypeDescrObjectSet = js::GCHashSet<js::HeapPtr<JSObject*>,
+                                             js::MovableCellHasher<js::HeapPtr<JSObject*>>,
+                                             js::SystemAllocPolicy>;
+    JS::WeakCache<TypeDescrObjectSet> typeDescrObjects;
+
 
     // Malloc counter to measure memory pressure for GC scheduling. It runs from
     // gcMaxMallocBytes down to zero. This counter should be used only when it's
@@ -365,7 +399,7 @@ struct Zone : public JS::shadow::Zone,
     }
 
     // Creates a HashNumber based on getUniqueId. Returns false on OOM.
-    MOZ_WARN_UNUSED_RESULT bool getHashCode(js::gc::Cell* cell, js::HashNumber* hashp) {
+    MOZ_MUST_USE bool getHashCode(js::gc::Cell* cell, js::HashNumber* hashp) {
         uint64_t uid;
         if (!getUniqueId(cell, &uid))
             return false;
@@ -375,7 +409,7 @@ struct Zone : public JS::shadow::Zone,
 
     // Puts an existing UID in |uidp|, or creates a new UID for this Cell and
     // puts that into |uidp|. Returns false on OOM.
-    MOZ_WARN_UNUSED_RESULT bool getUniqueId(js::gc::Cell* cell, uint64_t* uidp) {
+    MOZ_MUST_USE bool getUniqueId(js::gc::Cell* cell, uint64_t* uidp) {
         MOZ_ASSERT(uidp);
         MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
 
@@ -410,7 +444,7 @@ struct Zone : public JS::shadow::Zone,
     }
 
     // Return true if this cell has a UID associated with it.
-    MOZ_WARN_UNUSED_RESULT bool hasUniqueId(js::gc::Cell* cell) {
+    MOZ_MUST_USE bool hasUniqueId(js::gc::Cell* cell) {
         MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
         return uniqueIds_.has(cell);
     }
@@ -657,7 +691,7 @@ class ZoneAllocPolicy
     void free_(void* p) { js_free(p); }
     void reportAllocOverflow() const {}
 
-    bool checkSimulatedOOM() const {
+    MOZ_MUST_USE bool checkSimulatedOOM() const {
         return !js::oom::ShouldFailWithOOM();
     }
 };

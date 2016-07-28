@@ -1,0 +1,56 @@
+From ae5b4508b8412ab457cfbf842fc4d68285bae1bb Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Wed, 20 Apr 2016 17:45:27 +0200
+Subject: Hide some stuff in jsval_layout
+
+These things are not the same between 32 and 64 bits.
+
+diff --git a/mozjs/js/public/Value.h b/mozjs/js/public/Value.h
+index 77f8919..5a3c4bb 100644
+--- a/mozjs/js/public/Value.h
++++ b/mozjs/js/public/Value.h
+@@ -322,7 +322,7 @@ typedef union jsval_layout
+ typedef union jsval_layout
+ {
+     uint64_t asBits;
+-#if !defined(_WIN64)
++#if !defined(_WIN64) && !defined(RUST_BINDGEN)
+     /* MSVC does not pack these correctly :-( */
+     struct {
+         uint64_t           payload47 : 47;
+@@ -338,7 +338,9 @@ typedef union jsval_layout
+     } s;
+     double asDouble;
+     void* asPtr;
++    /** <div rustbindgen hide></div> */
+     size_t asWord;
++    /** <div rustbindgen hide></div> */
+     uintptr_t asUIntPtr;
+ } JSVAL_ALIGNMENT jsval_layout;
+ # endif  /* JS_PUNBOX64 */
+@@ -370,10 +372,12 @@ typedef union jsval_layout
+ typedef union jsval_layout
+ {
+     uint64_t asBits;
++#ifndef RUST_BINDGEN
+     struct {
+         JSValueTag         tag : 17;
+         uint64_t           payload47 : 47;
+     } debugView;
++#endif
+     struct {
+         uint32_t           padding;
+         union {
+@@ -384,7 +388,9 @@ typedef union jsval_layout
+     } s;
+     double asDouble;
+     void* asPtr;
++    /** <div rustbindgen hide></div> */
+     size_t asWord;
++    /** <div rustbindgen hide></div> */
+     uintptr_t asUIntPtr;
+ } JSVAL_ALIGNMENT jsval_layout;
+ # endif /* JS_PUNBOX64 */
+-- 
+1.9.1
+

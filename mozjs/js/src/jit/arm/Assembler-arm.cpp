@@ -47,8 +47,8 @@ ABIArg
 ABIArgGenerator::softNext(MIRType type)
 {
     switch (type) {
-      case MIRType_Int32:
-      case MIRType_Pointer:
+      case MIRType::Int32:
+      case MIRType::Pointer:
         if (intRegIndex_ == NumIntArgRegs) {
             current_ = ABIArg(stackOffset_);
             stackOffset_ += sizeof(uint32_t);
@@ -57,7 +57,7 @@ ABIArgGenerator::softNext(MIRType type)
         current_ = ABIArg(Register::FromCode(intRegIndex_));
         intRegIndex_++;
         break;
-      case MIRType_Float32:
+      case MIRType::Float32:
         if (intRegIndex_ == NumIntArgRegs) {
             current_ = ABIArg(stackOffset_);
             stackOffset_ += sizeof(uint32_t);
@@ -66,7 +66,7 @@ ABIArgGenerator::softNext(MIRType type)
         current_ = ABIArg(Register::FromCode(intRegIndex_));
         intRegIndex_++;
         break;
-      case MIRType_Double:
+      case MIRType::Double:
         // Make sure to use an even register index. Increase to next even number
         // when odd.
         intRegIndex_ = (intRegIndex_ + 1) & ~1;
@@ -92,8 +92,8 @@ ABIArg
 ABIArgGenerator::hardNext(MIRType type)
 {
     switch (type) {
-      case MIRType_Int32:
-      case MIRType_Pointer:
+      case MIRType::Int32:
+      case MIRType::Pointer:
         if (intRegIndex_ == NumIntArgRegs) {
             current_ = ABIArg(stackOffset_);
             stackOffset_ += sizeof(uint32_t);
@@ -102,7 +102,7 @@ ABIArgGenerator::hardNext(MIRType type)
         current_ = ABIArg(Register::FromCode(intRegIndex_));
         intRegIndex_++;
         break;
-      case MIRType_Float32:
+      case MIRType::Float32:
         if (floatRegIndex_ == NumFloatArgRegs) {
             static const int align = sizeof(double) - 1;
             stackOffset_ = (stackOffset_ + align) & ~align;
@@ -113,7 +113,7 @@ ABIArgGenerator::hardNext(MIRType type)
         current_ = ABIArg(VFPRegister(floatRegIndex_, VFPRegister::Single));
         floatRegIndex_++;
         break;
-      case MIRType_Double:
+      case MIRType::Double:
         // Double register are composed of 2 float registers, thus we have to
         // skip any float register which cannot be used in a pair of float
         // registers in which a double value can be stored.
@@ -142,11 +142,6 @@ ABIArgGenerator::next(MIRType type)
         return hardNext(type);
     return softNext(type);
 }
-
-const Register ABIArgGenerator::NonArgReturnReg0 = r4;
-const Register ABIArgGenerator::NonArgReturnReg1 = r5;
-const Register ABIArgGenerator::NonReturn_VolatileReg0 = r2;
-const Register ABIArgGenerator::NonReturn_VolatileReg1 = r3;
 
 // Encode a standard register when it is being used as src1, the dest, and an
 // extra register. These should never be called with an InvalidReg.
@@ -1916,6 +1911,7 @@ Assembler::as_udiv(Register rd, Register rn, Register rm, Condition c)
 BufferOffset
 Assembler::as_clz(Register dest, Register src, Condition c)
 {
+    MOZ_ASSERT(src != pc && dest != pc);
     return writeInst(RD(dest) | src.code() | c | 0x016f0f10);
 }
 
@@ -2771,6 +2767,13 @@ Assembler::bind(Label* label, BufferOffset boff)
 #ifdef JS_DISASM_ARM
     spewLabel(label);
 #endif
+    if (oom()) {
+        // Ensure we always bind the label. This matches what we do on
+        // x86/x64 and silences the assert in ~Label.
+        label->bind(0);
+        return;
+    }
+
     if (label->used()) {
         bool more;
         // If our caller didn't give us an explicit target to bind to then we
@@ -2778,13 +2781,6 @@ Assembler::bind(Label* label, BufferOffset boff)
         BufferOffset dest = boff.assigned() ? boff : nextOffset();
         BufferOffset b(label);
         do {
-            // Even a 0 offset may be invalid if we're out of memory.
-            if (oom()) {
-                // Ensure we always bind the label. This matches what we do on
-                // x86/x64 and silences the assert in ~Label.
-                label->bind(0);
-                return;
-            }
             BufferOffset next;
             more = nextLink(b, &next);
             Instruction branch = *editSrc(b);
@@ -2799,6 +2795,7 @@ Assembler::bind(Label* label, BufferOffset boff)
         } while (more);
     }
     label->bind(nextOffset().getOffset());
+    MOZ_ASSERT(!oom());
 }
 
 void
@@ -3310,20 +3307,19 @@ Assembler::BailoutTableStart(uint8_t* code)
     return (uint8_t*) inst;
 }
 
-void Assembler::UpdateBoundsCheck(uint32_t heapSize, Instruction* inst)
+void
+Assembler::UpdateBoundsCheck(uint8_t* patchAt, uint32_t heapLength)
 {
+    Instruction* inst = (Instruction*) patchAt;
     MOZ_ASSERT(inst->is<InstCMP>());
     InstCMP* cmp = inst->as<InstCMP>();
 
     Register index;
     cmp->extractOp1(&index);
 
-#ifdef DEBUG
-    Operand2 op = cmp->extractOp2();
-    MOZ_ASSERT(op.isImm8());
-#endif
+    MOZ_ASSERT(cmp->extractOp2().isImm8());
 
-    Imm8 imm8 = Imm8(heapSize);
+    Imm8 imm8 = Imm8(heapLength);
     MOZ_ASSERT(!imm8.invalid);
 
     *inst = InstALU(InvalidReg, index, imm8, OpCmp, SetCC, Always);

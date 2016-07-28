@@ -14,6 +14,7 @@
 
 #include "vm/Shape.h"
 
+#include "vm/NativeObject-inl.h"
 #include "vm/Shape-inl.h"
 
 using namespace js;
@@ -239,7 +240,7 @@ Shape::fixupDictionaryShapeAfterMovingGC()
     // list then it points to the shape_ field of the object the list is for.
     // We can tell which it is because the base shape is owned if this is the
     // last property and not otherwise.
-    bool listpPointsIntoShape = !base()->isOwned();
+    bool listpPointsIntoShape = !MaybeForwarded(base())->isOwned();
 
 #ifdef DEBUG
     // Check that we got this right by interrogating the arena.
@@ -319,14 +320,6 @@ Shape::fixupAfterMovingGC()
 }
 
 void
-BaseShape::fixupAfterMovingGC()
-{
-    if (hasTable())
-        table().fixupAfterMovingGC();
-}
-
-
-void
 Shape::fixupGetterSetterForBarrier(JSTracer* trc)
 {
     if (!hasGetterValue() && !hasSetterValue())
@@ -384,11 +377,8 @@ KidsPointer::checkConsistency(Shape* aKid) const
 }
 
 void
-Shape::dump(JSContext* cx, FILE* fp) const
+Shape::dump(FILE* fp) const
 {
-    /* This is only used from gdb, so allowing GC here would just be confusing. */
-    gc::AutoSuppressGC suppress(cx);
-
     jsid propid = this->propid();
 
     MOZ_ASSERT(!JSID_IS_VOID(propid));
@@ -436,7 +426,7 @@ Shape::dump(JSContext* cx, FILE* fp) const
 }
 
 void
-Shape::dumpSubtree(JSContext* cx, int level, FILE* fp) const
+Shape::dumpSubtree(int level, FILE* fp) const
 {
     if (!parent) {
         MOZ_ASSERT(level == 0);
@@ -444,7 +434,7 @@ Shape::dumpSubtree(JSContext* cx, int level, FILE* fp) const
         fprintf(fp, "class %s emptyShape\n", getObjectClass()->name);
     } else {
         fprintf(fp, "%*sid ", level, "");
-        dump(cx, fp);
+        dump(fp);
     }
 
     if (!kids.isNull()) {
@@ -452,14 +442,14 @@ Shape::dumpSubtree(JSContext* cx, int level, FILE* fp) const
         if (kids.isShape()) {
             Shape* kid = kids.toShape();
             MOZ_ASSERT(kid->parent == this);
-            kid->dumpSubtree(cx, level, fp);
+            kid->dumpSubtree(level, fp);
         } else {
             const KidsHash& hash = *kids.toHash();
             for (KidsHash::Range range = hash.all(); !range.empty(); range.popFront()) {
                 Shape* kid = range.front();
 
                 MOZ_ASSERT(kid->parent == this);
-                kid->dumpSubtree(cx, level, fp);
+                kid->dumpSubtree(level, fp);
             }
         }
     }

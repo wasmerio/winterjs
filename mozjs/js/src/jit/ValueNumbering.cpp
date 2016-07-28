@@ -495,7 +495,8 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
             phi = nextDef_->toPhi();
             iter++;
             nextDef_ = iter != end ? *iter : nullptr;
-            discardDefsRecursively(phi);
+            if (!discardDefsRecursively(phi))
+                return false;
         }
     }
     nextDef_ = nullptr;
@@ -720,6 +721,31 @@ ValueNumberer::visitDefinition(MDefinition* def)
             return true;
         }
 
+        // The Nop is introduced to capture the result and make sure the operands
+        // are not live anymore when there are no further uses. Though when
+        // all operands are still needed the Nop doesn't decrease the liveness
+        // and can get removed.
+        MResumePoint* rp = nop->resumePoint();
+        if (rp && rp->numOperands() > 0 &&
+            rp->getOperand(rp->numOperands() - 1) == prev &&
+            !nop->block()->lastIns()->isThrow())
+        {
+            size_t numOperandsLive = 0;
+            for (size_t j = 0; j < prev->numOperands(); j++) {
+                for (size_t i = 0; i < rp->numOperands(); i++) {
+                    if (prev->getOperand(j) == rp->getOperand(i)) {
+                        numOperandsLive++;
+                        break;
+                    }
+                }
+            }
+
+            if (numOperandsLive == prev->numOperands()) {
+                JitSpew(JitSpew_GVN, "      Removing Nop%u", nop->id());
+                block->discard(nop);
+            }
+        }
+
         return true;
     }
 
@@ -731,7 +757,7 @@ ValueNumberer::visitDefinition(MDefinition* def)
 
     // If this instruction has a dependency() into an unreachable block, we'll
     // need to update AliasAnalysis.
-    MInstruction* dep = def->dependency();
+    MDefinition* dep = def->dependency();
     if (dep != nullptr && (dep->isDiscarded() || dep->block()->isDead())) {
         JitSpew(JitSpew_GVN, "      AliasAnalysis invalidated");
         if (updateAliasAnalysis_ && !dependenciesBroken_) {
@@ -1201,8 +1227,10 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
 
     // Adding fixup blocks only make sense iff we have a second entry point into
     // the graph which cannot be reached any more from the entry point.
-    if (graph_.osrBlock())
-        insertOSRFixups();
+    if (graph_.osrBlock()) {
+        if (!insertOSRFixups())
+            return false;
+    }
 
     // Top level non-sparse iteration loop. If an iteration performs a
     // significant change, such as discarding a block which changes the
@@ -1259,7 +1287,8 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
     }
 
     if (MOZ_UNLIKELY(hasOSRFixups_)) {
-        cleanupOSRFixups();
+        if (!cleanupOSRFixups())
+            return false;
         hasOSRFixups_ = false;
     }
 

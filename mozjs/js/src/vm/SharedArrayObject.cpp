@@ -23,7 +23,7 @@
 #endif
 
 #include "asmjs/AsmJS.h"
-#include "asmjs/Wasm.h"
+#include "asmjs/WasmTypes.h"
 #include "vm/SharedMem.h"
 #include "vm/TypedArrayCommon.h"
 
@@ -75,7 +75,7 @@ MarkValidRegion(void* addr, size_t len)
 
 #if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
 // Since this SharedArrayBuffer will likely be used for asm.js code, prepare it
-// for asm.js by mapping the 4gb protected zone described in Wasm.h.
+// for asm.js by mapping the 4gb protected zone described in WasmTypes.h.
 // Since we want to put the SharedArrayBuffer header immediately before the
 // heap but keep the heap page-aligned, allocate an extra page before the heap.
 static uint64_t
@@ -207,11 +207,6 @@ const JSFunctionSpec SharedArrayBufferObject::jsfuncs[] = {
     JS_FS_END
 };
 
-const JSFunctionSpec SharedArrayBufferObject::jsstaticfuncs[] = {
-    JS_FN("isView", SharedArrayBufferObject::fun_isView, 1, 0),
-    JS_FS_END
-};
-
 MOZ_ALWAYS_INLINE bool
 SharedArrayBufferObject::byteLengthGetterImpl(JSContext* cx, const CallArgs& args)
 {
@@ -225,15 +220,6 @@ SharedArrayBufferObject::byteLengthGetter(JSContext* cx, unsigned argc, Value* v
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     return CallNonGenericMethod<IsSharedArrayBuffer, byteLengthGetterImpl>(cx, args);
-}
-
-bool
-SharedArrayBufferObject::fun_isView(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(args.get(0).isObject() &&
-                           JS_IsTypedArrayObject(&args.get(0).toObject()));
-    return true;
 }
 
 bool
@@ -346,11 +332,7 @@ const Class SharedArrayBufferObject::protoClass = {
     JSCLASS_HAS_CACHED_PROTO(JSProto_SharedArrayBuffer)
 };
 
-const Class SharedArrayBufferObject::class_ = {
-    "SharedArrayBuffer",
-    JSCLASS_DELAY_METADATA_CALLBACK |
-    JSCLASS_HAS_RESERVED_SLOTS(SharedArrayBufferObject::RESERVED_SLOTS) |
-    JSCLASS_HAS_CACHED_PROTO(JSProto_SharedArrayBuffer),
+static const ClassOps SharedArrayBufferObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -363,6 +345,14 @@ const Class SharedArrayBufferObject::class_ = {
     nullptr, /* hasInstance */
     nullptr, /* construct */
     nullptr, /* trace */
+};
+
+const Class SharedArrayBufferObject::class_ = {
+    "SharedArrayBuffer",
+    JSCLASS_DELAY_METADATA_BUILDER |
+    JSCLASS_HAS_RESERVED_SLOTS(SharedArrayBufferObject::RESERVED_SLOTS) |
+    JSCLASS_HAS_CACHED_PROTO(JSProto_SharedArrayBuffer),
+    &SharedArrayBufferObjectClassOps,
     JS_NULL_CLASS_SPEC,
     JS_NULL_CLASS_EXT
 };
@@ -381,9 +371,6 @@ js::InitSharedArrayBufferClass(JSContext* cx, HandleObject obj)
     if (!ctor)
         return nullptr;
 
-    if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_SharedArrayBuffer, ctor, proto))
-        return nullptr;
-
     if (!LinkConstructorAndPrototype(cx, ctor, proto))
         return nullptr;
 
@@ -398,10 +385,10 @@ js::InitSharedArrayBufferClass(JSContext* cx, HandleObject obj)
                               JS_DATA_TO_FUNC_PTR(GetterOp, getter), nullptr, attrs))
         return nullptr;
 
-    if (!JS_DefineFunctions(cx, ctor, SharedArrayBufferObject::jsstaticfuncs))
+    if (!JS_DefineFunctions(cx, proto, SharedArrayBufferObject::jsfuncs))
         return nullptr;
 
-    if (!JS_DefineFunctions(cx, proto, SharedArrayBufferObject::jsfuncs))
+    if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_SharedArrayBuffer, ctor, proto))
         return nullptr;
 
     return proto;

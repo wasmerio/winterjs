@@ -15,14 +15,13 @@ from collections import (
 from StringIO import StringIO
 from itertools import chain
 
-from reftest import ReftestManifest
-
 from mozpack.manifests import (
     InstallManifest,
 )
 import mozpack.path as mozpath
 
 from mozbuild.frontend.context import (
+    AbsolutePath,
     Path,
     RenamedSourcePath,
     SourcePath,
@@ -60,6 +59,7 @@ from ..frontend.data import (
     ObjdirPreprocessedFiles,
     PerSourceFlag,
     Program,
+    RustRlibLibrary,
     SharedLibrary,
     SimpleProgram,
     Sources,
@@ -227,8 +227,6 @@ class BackendMakeFile(object):
 
     def close(self):
         if self.xpt_name:
-            self.fh.write('XPT_NAME := %s\n' % self.xpt_name)
-
             # We just recompile all xpidls because it's easier and less error
             # prone.
             self.fh.write('NONRECURSIVE_TARGETS += export\n')
@@ -507,20 +505,31 @@ class RecursiveMakeBackend(CommonBackend):
             self._process_defines(obj, backend_file)
 
         elif isinstance(obj, GeneratedFile):
-            tier = 'misc' if any(isinstance(f, ObjDirPath) for f in obj.inputs) else 'export'
+            export_suffixes = (
+                '.c',
+                '.cpp',
+                '.h',
+                '.inc',
+                '.py',
+            )
+            tier = 'export' if any(f.endswith(export_suffixes) for f in obj.outputs) else 'misc'
             self._no_skip[tier].add(backend_file.relobjdir)
-            dep_file = "%s.pp" % obj.output
-            backend_file.write('%s:: %s\n' % (tier, obj.output))
-            backend_file.write('GARBAGE += %s\n' % obj.output)
+            first_output = obj.outputs[0]
+            dep_file = "%s.pp" % first_output
+            backend_file.write('%s:: %s\n' % (tier, first_output))
+            for output in obj.outputs:
+                if output != first_output:
+                    backend_file.write('%s: %s ;\n' % (output, first_output))
+                backend_file.write('GARBAGE += %s\n' % output)
             backend_file.write('EXTRA_MDDEPEND_FILES += %s\n' % dep_file)
             if obj.script:
                 backend_file.write("""{output}: {script}{inputs}{backend}
 \t$(REPORT_BUILD)
 \t$(call py_action,file_generate,{script} {method} {output} $(MDDEPDIR)/{dep_file}{inputs}{flags})
 
-""".format(output=obj.output,
+""".format(output=first_output,
            dep_file=dep_file,
-           inputs=' ' + ' '.join([f.full_path for f in obj.inputs]) if obj.inputs else '',
+           inputs=' ' + ' '.join([self._pretty_path(f, backend_file) for f in obj.inputs]) if obj.inputs else '',
            flags=' ' + ' '.join(obj.flags) if obj.flags else '',
            backend=' backend.mk' if obj.flags else '',
            script=obj.script,
@@ -567,6 +576,10 @@ class RecursiveMakeBackend(CommonBackend):
                 self._process_android_eclipse_project_data(obj.wrapped, backend_file)
             else:
                 return False
+
+        elif isinstance(obj, RustRlibLibrary):
+            # Nothing to do because |Sources| has done the work for us.
+            pass
 
         elif isinstance(obj, SharedLibrary):
             self._process_shared_library(obj, backend_file)
@@ -1042,14 +1055,14 @@ class RecursiveMakeBackend(CommonBackend):
         # the manifest is listed as a duplicate.
         for source, (dest, is_test) in obj.installs.items():
             try:
-                self._install_manifests['_tests'].add_symlink(source, dest)
+                self._install_manifests['_test_files'].add_symlink(source, dest)
             except ValueError:
                 if not obj.dupe_manifest and is_test:
                     raise
 
         for base, pattern, dest in obj.pattern_installs:
             try:
-                self._install_manifests['_tests'].add_pattern_symlink(base,
+                self._install_manifests['_test_files'].add_pattern_symlink(base,
                     pattern, dest)
             except ValueError:
                 if not obj.dupe_manifest:
@@ -1057,7 +1070,7 @@ class RecursiveMakeBackend(CommonBackend):
 
         for dest in obj.external_installs:
             try:
-                self._install_manifests['_tests'].add_optional_exists(dest)
+                self._install_manifests['_test_files'].add_optional_exists(dest)
             except ValueError:
                 if not obj.dupe_manifest:
                     raise
@@ -1066,10 +1079,17 @@ class RecursiveMakeBackend(CommonBackend):
             (obj.install_prefix, set()))
         m[1].add(obj.manifest_obj_relpath)
 
-        if isinstance(obj.manifest, ReftestManifest):
-            # Mark included files as part of the build backend so changes
-            # result in re-config.
-            self.backend_input_files |= obj.manifest.manifests
+        try:
+            from reftest import ReftestManifest
+
+            if isinstance(obj.manifest, ReftestManifest):
+                # Mark included files as part of the build backend so changes
+                # result in re-config.
+                self.backend_input_files |= obj.manifest.manifests
+        except ImportError:
+            # Ignore errors caused by the reftest module not being present.
+            # This can happen when building SpiderMonkey standalone, for example.
+            pass
 
     def _process_local_include(self, local_include, backend_file):
         d, path = self._pretty_path_parts(local_include, backend_file)
@@ -1142,6 +1162,17 @@ class RecursiveMakeBackend(CommonBackend):
         if libdef.symbols_file:
             backend_file.write('SYMBOLS_FILE := %s\n' % libdef.symbols_file)
 
+        rust_rlibs = [o for o in libdef.linked_libraries if isinstance(o, RustRlibLibrary)]
+        if rust_rlibs:
+            # write out Rust file with extern crate declarations.
+            extern_crate_file = mozpath.join(libdef.objdir, 'rul.rs')
+            with self._write_file(extern_crate_file) as f:
+                f.write('// AUTOMATICALLY GENERATED.  DO NOT EDIT.\n\n')
+                for rlib in rust_rlibs:
+                    f.write('extern crate %s;\n' % rlib.crate_name)
+
+            backend_file.write('RS_STATICLIB_CRATE_SRC := %s\n' % extern_crate_file)
+
     def _process_static_library(self, libdef, backend_file):
         backend_file.write_once('LIBRARY_NAME := %s\n' % libdef.basename)
         backend_file.write('FORCE_STATIC_LIB := 1\n')
@@ -1188,6 +1219,9 @@ class RecursiveMakeBackend(CommonBackend):
                                         % (relpath, lib.import_name))
                     if isinstance(obj, SharedLibrary):
                         write_shared_and_system_libs(lib)
+                elif isinstance(lib, RustRlibLibrary):
+                    backend_file.write_once('RLIB_EXTERN_CRATE_OPTIONS += --extern %s=%s/%s\n'
+                                            % (lib.crate_name, relpath, lib.rlib_filename))
                 elif isinstance(obj, SharedLibrary):
                     assert lib.variant != lib.COMPONENT
                     backend_file.write_once('SHARED_LIBS += %s/%s\n'
@@ -1205,6 +1239,14 @@ class RecursiveMakeBackend(CommonBackend):
                 assert isinstance(lib, HostLibrary)
                 backend_file.write_once('HOST_LIBS += %s/%s\n'
                                    % (relpath, lib.import_name))
+
+        # We have to link the Rust super-crate after all intermediate static
+        # libraries have been listed to ensure that the Rust objects are
+        # searched after the C/C++ objects that might reference Rust symbols.
+        # Building the Rust super-crate will take care of Rust->Rust linkage.
+        if isinstance(obj, SharedLibrary) and any(isinstance(o, RustRlibLibrary)
+                                                  for o in obj.linked_libraries):
+            backend_file.write('STATIC_LIBS += librul.$(LIB_SUFFIX)\n')
 
         for lib in obj.linked_system_libs:
             if obj.KIND == 'target':
@@ -1249,14 +1291,13 @@ class RecursiveMakeBackend(CommonBackend):
                 dest = mozpath.join(reltarget, path, f.target_basename)
                 if not isinstance(f, ObjDirPath):
                     if '*' in f:
-                        if not isinstance(f, SourcePath):
-                            raise Exception("Wildcards are only supported in "
-                                            "SourcePath objects in %s. Path is: %s" % (
-                                                type(obj), f
-                                            ))
-                        if f.startswith('/'):
-                            basepath = f.full_path.rstrip('*')
-                            install_manifest.add_pattern_symlink(basepath, '*', path)
+                        if f.startswith('/') or isinstance(f, AbsolutePath):
+                            basepath, wild = os.path.split(f.full_path)
+                            if '*' in basepath:
+                                raise Exception("Wildcards are only supported in the filename part of "
+                                                "srcdir-relative or absolute paths.")
+
+                            install_manifest.add_pattern_symlink(basepath, wild, path)
                         else:
                             install_manifest.add_pattern_symlink(f.srcdir, f, path)
                     else:
@@ -1393,6 +1434,12 @@ class RecursiveMakeBackend(CommonBackend):
             self.backend_input_files.add(obj.input_path)
 
         self._makefile_out_count += 1
+
+    def _handle_linked_rust_crates(self, obj, extern_crate_file):
+        backend_file = self._get_backend_file_for(obj)
+
+        backend_file.write('RS_STATICLIB_CRATE_SRC := %s\n' % extern_crate_file)
+        backend_file.write('STATIC_LIBS += librul.$(LIB_SUFFIX)\n')
 
     def _handle_ipdl_sources(self, ipdl_dir, sorted_ipdl_sources,
                              unified_ipdl_cppsrcs_mapping):

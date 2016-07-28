@@ -567,6 +567,11 @@ TokenStream::reportStrictModeErrorNumberVA(uint32_t offset, bool strictMode, uns
 void
 CompileError::throwError(JSContext* cx)
 {
+    if (JSREPORT_IS_WARNING(report.flags)) {
+        CallWarningReporter(cx, message, &report);
+        return;
+    }
+
     // If there's a runtime exception type associated with this error
     // number, set that as the pending exception.  For errors occuring at
     // compile time, this is very likely to be a JSEXN_SYNTAXERR.
@@ -578,8 +583,7 @@ CompileError::throwError(JSContext* cx)
     // as the non-top-level "load", "eval", or "compile" native function
     // returns false, the top-level reporter will eventually receive the
     // uncaught exception report.
-    if (!ErrorToException(cx, message, &report, nullptr, nullptr))
-        CallErrorReporter(cx, message, &report);
+    ErrorToException(cx, message, &report, nullptr, nullptr);
 }
 
 CompileError::~CompileError()
@@ -636,7 +640,6 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
     bool callerFilename = false;
     if (offset != NoOffset && !err.report.filename && cx->isJSContext()) {
         NonBuiltinFrameIter iter(cx->asJSContext(),
-                                 FrameIter::ALL_CONTEXTS, FrameIter::GO_THROUGH_SAVED,
                                  FrameIter::FOLLOW_DEBUGGER_EVAL_PREV_LINK,
                                  cx->compartment()->principals());
         if (!iter.done() && iter.filename()) {
@@ -649,7 +652,7 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
     err.argumentsType = (flags & JSREPORT_UC) ? ArgumentsAreUnicode : ArgumentsAreASCII;
 
     if (!ExpandErrorArgumentsVA(cx, GetErrorMessage, nullptr, errorNumber, &err.message,
-                                &err.report, err.argumentsType, args))
+                                err.argumentsType, &err.report, args))
     {
         return false;
     }

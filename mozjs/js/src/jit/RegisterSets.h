@@ -7,7 +7,6 @@
 #ifndef jit_RegisterSets_h
 #define jit_RegisterSets_h
 
-#include "mozilla/Alignment.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include "jit/JitAllocPolicy.h"
@@ -26,8 +25,8 @@ struct AnyRegister {
     Code code_;
 
   public:
-    AnyRegister()
-    { }
+    AnyRegister() = default;
+
     explicit AnyRegister(Register gpr) {
         code_ = gpr.code();
     }
@@ -169,46 +168,25 @@ class TypedOrValueRegister
     // Type of value being stored.
     MIRType type_;
 
-    // Space to hold either an AnyRegister or a ValueOperand.
     union U {
-        mozilla::AlignedStorage2<AnyRegister> typed;
-        mozilla::AlignedStorage2<ValueOperand> value;
+        AnyRegister typed;
+        ValueOperand value;
     } data;
-
-    AnyRegister& dataTyped() {
-        MOZ_ASSERT(hasTyped());
-        return *data.typed.addr();
-    }
-    ValueOperand& dataValue() {
-        MOZ_ASSERT(hasValue());
-        return *data.value.addr();
-    }
-
-    AnyRegister dataTyped() const {
-        MOZ_ASSERT(hasTyped());
-        return *data.typed.addr();
-    }
-    const ValueOperand& dataValue() const {
-        MOZ_ASSERT(hasValue());
-        return *data.value.addr();
-    }
 
   public:
 
-    TypedOrValueRegister()
-      : type_(MIRType_None)
-    {}
+    TypedOrValueRegister() = default;
 
     TypedOrValueRegister(MIRType type, AnyRegister reg)
       : type_(type)
     {
-        dataTyped() = reg;
+        data.typed = reg;
     }
 
     MOZ_IMPLICIT TypedOrValueRegister(ValueOperand value)
-      : type_(MIRType_Value)
+      : type_(MIRType::Value)
     {
-        dataValue() = value;
+        data.value = value;
     }
 
     MIRType type() const {
@@ -216,19 +194,21 @@ class TypedOrValueRegister
     }
 
     bool hasTyped() const {
-        return type() != MIRType_None && type() != MIRType_Value;
+        return type() != MIRType::None && type() != MIRType::Value;
     }
 
     bool hasValue() const {
-        return type() == MIRType_Value;
+        return type() == MIRType::Value;
     }
 
     AnyRegister typedReg() const {
-        return dataTyped();
+        MOZ_ASSERT(hasTyped());
+        return data.typed;
     }
 
     ValueOperand valueReg() const {
-        return dataValue();
+        MOZ_ASSERT(hasValue());
+        return data.value;
     }
 
     AnyRegister scratchReg() {
@@ -246,17 +226,17 @@ class ConstantOrRegister
 
     // Space to hold either a Value or a TypedOrValueRegister.
     union U {
-        mozilla::AlignedStorage2<Value> constant;
-        mozilla::AlignedStorage2<TypedOrValueRegister> reg;
+        Value constant;
+        TypedOrValueRegister reg;
     } data;
 
     Value& dataValue() {
         MOZ_ASSERT(constant());
-        return *data.constant.addr();
+        return data.constant;
     }
     TypedOrValueRegister& dataReg() {
         MOZ_ASSERT(!constant());
-        return *data.reg.addr();
+        return data.reg;
     }
 
   public:
@@ -1116,11 +1096,6 @@ class TypedRegisterIterator
     bool more() const {
         return !regset_.empty();
     }
-    TypedRegisterIterator<T> operator ++(int) {
-        TypedRegisterIterator<T> old(*this);
-        regset_.takeAny();
-        return old;
-    }
     TypedRegisterIterator<T>& operator ++() {
         regset_.takeAny();
         return *this;
@@ -1148,11 +1123,6 @@ class TypedRegisterBackwardIterator
     bool more() const {
         return !regset_.empty();
     }
-    TypedRegisterBackwardIterator<T> operator ++(int) {
-        TypedRegisterBackwardIterator<T> old(*this);
-        regset_.takeLast();
-        return old;
-    }
     TypedRegisterBackwardIterator<T>& operator ++() {
         regset_.takeLast();
         return *this;
@@ -1178,11 +1148,6 @@ class TypedRegisterForwardIterator
 
     bool more() const {
         return !regset_.empty();
-    }
-    TypedRegisterForwardIterator<T> operator ++(int) {
-        TypedRegisterForwardIterator<T> old(*this);
-        regset_.takeFirst();
-        return old;
     }
     TypedRegisterForwardIterator<T>& operator ++() {
         regset_.takeFirst();
@@ -1224,13 +1189,12 @@ class AnyRegisterIterator
     bool more() const {
         return geniter_.more() || floatiter_.more();
     }
-    AnyRegisterIterator operator ++(int) {
-        AnyRegisterIterator old(*this);
+    AnyRegisterIterator& operator ++() {
         if (geniter_.more())
-            geniter_++;
+            ++geniter_;
         else
-            floatiter_++;
-        return old;
+            ++floatiter_;
+        return *this;
     }
     AnyRegister operator*() const {
         if (geniter_.more())
@@ -1287,6 +1251,13 @@ class ABIArg
         MOZ_ASSERT(kind() == GPR);
         return Register::FromCode(u.gpr_);
     }
+    Register64 gpr64() const {
+#ifdef JS_PUNBOX64
+        return Register64(gpr());
+#else
+        MOZ_CRASH("NYI");
+#endif
+    }
     Register evenGpr() const {
         MOZ_ASSERT(isGeneralRegPair());
         return Register::FromCode(u.gpr_);
@@ -1310,7 +1281,7 @@ SavedNonVolatileRegisters(AllocatableGeneralRegisterSet unused)
 {
     LiveGeneralRegisterSet result;
 
-    for (GeneralRegisterIterator iter(GeneralRegisterSet::NonVolatile()); iter.more(); iter++) {
+    for (GeneralRegisterIterator iter(GeneralRegisterSet::NonVolatile()); iter.more(); ++iter) {
         Register reg = *iter;
         if (!unused.has(reg))
             result.add(reg);

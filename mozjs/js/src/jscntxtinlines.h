@@ -21,7 +21,6 @@
 
 namespace js {
 
-#ifdef JS_CRASH_DIAGNOSTICS
 class CompartmentChecker
 {
     JSCompartment* compartment;
@@ -30,14 +29,6 @@ class CompartmentChecker
     explicit CompartmentChecker(ExclusiveContext* cx)
       : compartment(cx->compartment())
     {
-#ifdef DEBUG
-        // In debug builds, make sure the embedder passed the cx it claimed it
-        // was going to use.
-        JSContext* activeContext = nullptr;
-        if (cx->isJSContext())
-            activeContext = cx->asJSContext()->runtime()->activeContext;
-        MOZ_ASSERT_IF(activeContext, cx == activeContext);
-#endif
     }
 
     /*
@@ -143,7 +134,6 @@ class CompartmentChecker
         check(desc.value());
     }
 };
-#endif /* JS_CRASH_DIAGNOSTICS */
 
 /*
  * Don't perform these checks when called from a finalizer. The checking
@@ -153,6 +143,13 @@ class CompartmentChecker
     if (cx->isJSContext() && cx->asJSContext()->runtime()->isHeapBusy())      \
         return;                                                               \
     CompartmentChecker c(cx)
+
+template <class T1> inline void
+releaseAssertSameCompartment(ExclusiveContext* cx, const T1& t1)
+{
+    START_ASSERT_SAME_COMPARTMENT();
+    c.check(t1);
+}
 
 template <class T1> inline void
 assertSameCompartment(ExclusiveContext* cx, const T1& t1)
@@ -379,7 +376,7 @@ JSContext::setPendingException(js::Value v)
 inline bool
 JSContext::runningWithTrustedPrincipals() const
 {
-    return !compartment() || compartment()->principals() == runtime()->trustedPrincipals();
+    return !compartment() || compartment()->principals() == trustedPrincipals();
 }
 
 inline void
@@ -447,8 +444,8 @@ JSContext::currentScript(jsbytecode** ppc,
     if (ppc)
         *ppc = nullptr;
 
-    js::Activation* act = runtime()->activation();
-    while (act && (act->cx() != this || (act->isJit() && !act->asJit()->isActive())))
+    js::Activation* act = activation();
+    while (act && act->isJit() && !act->asJit()->isActive())
         act = act->prev();
 
     if (!act)

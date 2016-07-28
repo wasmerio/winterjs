@@ -19,7 +19,7 @@
 #include "js/GCAPI.h"
 #include "js/SliceBudget.h"
 #include "js/Vector.h"
-
+#include "threading/ConditionVariable.h"
 #include "vm/NativeObject.h"
 
 namespace js {
@@ -53,19 +53,19 @@ enum State {
     NUM_STATES
 };
 
-/* Map from C++ type to alloc kind. JSObject does not have a 1:1 mapping, so must use Arena::thingSize. */
+/*
+ * Map from C++ type to alloc kind for non-object types. JSObject does not have
+ * a 1:1 mapping, so must use Arena::thingSize.
+ *
+ * The AllocKind is available as MapTypeToFinalizeKind<SomeType>::kind.
+ */
 template <typename T> struct MapTypeToFinalizeKind {};
-template <> struct MapTypeToFinalizeKind<JSScript>          { static const AllocKind kind = AllocKind::SCRIPT; };
-template <> struct MapTypeToFinalizeKind<LazyScript>        { static const AllocKind kind = AllocKind::LAZY_SCRIPT; };
-template <> struct MapTypeToFinalizeKind<Shape>             { static const AllocKind kind = AllocKind::SHAPE; };
-template <> struct MapTypeToFinalizeKind<AccessorShape>     { static const AllocKind kind = AllocKind::ACCESSOR_SHAPE; };
-template <> struct MapTypeToFinalizeKind<BaseShape>         { static const AllocKind kind = AllocKind::BASE_SHAPE; };
-template <> struct MapTypeToFinalizeKind<ObjectGroup>       { static const AllocKind kind = AllocKind::OBJECT_GROUP; };
-template <> struct MapTypeToFinalizeKind<JSFatInlineString> { static const AllocKind kind = AllocKind::FAT_INLINE_STRING; };
-template <> struct MapTypeToFinalizeKind<JSString>          { static const AllocKind kind = AllocKind::STRING; };
-template <> struct MapTypeToFinalizeKind<JSExternalString>  { static const AllocKind kind = AllocKind::EXTERNAL_STRING; };
-template <> struct MapTypeToFinalizeKind<JS::Symbol>        { static const AllocKind kind = AllocKind::SYMBOL; };
-template <> struct MapTypeToFinalizeKind<jit::JitCode>      { static const AllocKind kind = AllocKind::JITCODE; };
+#define EXPAND_MAPTYPETOFINALIZEKIND(allocKind, traceKind, type, sizedType) \
+    template <> struct MapTypeToFinalizeKind<type> { \
+        static const AllocKind kind = AllocKind::allocKind; \
+    };
+FOR_EACH_NONOBJECT_ALLOCKIND(EXPAND_MAPTYPETOFINALIZEKIND)
+#undef EXPAND_MAPTYPETOFINALIZEKIND
 
 template <typename T> struct ParticipatesInCC {};
 #define EXPAND_PARTICIPATES_IN_CC(_, type, addToCCKind) \
@@ -155,7 +155,7 @@ CanBeFinalizedInBackground(AllocKind kind, const Class* clasp)
      * the alloc kind; kind may already be a background finalize kind.
      */
     return (!IsBackgroundFinalized(kind) &&
-            (!clasp->finalize || (clasp->flags & JSCLASS_BACKGROUND_FINALIZE)));
+            (!clasp->hasFinalize() || (clasp->flags & JSCLASS_BACKGROUND_FINALIZE)));
 }
 
 /* Capacity for slotsToThingKind */
@@ -739,9 +739,18 @@ class ArenaLists
 #endif
     }
 
+    void checkEmptyArenaLists() {
+#ifdef DEBUG
+        for (auto i : AllAllocKinds())
+            checkEmptyArenaList(i);
+#endif
+    }
+
     void checkEmptyFreeList(AllocKind kind) {
         MOZ_ASSERT(freeLists[kind]->isEmpty());
     }
+
+    void checkEmptyArenaList(AllocKind kind);
 
     bool relocateArenas(Zone* zone, Arena*& relocatedListOut, JS::gcreason::Reason reason,
                         SliceBudget& sliceBudget, gcstats::Statistics& stats);
@@ -840,7 +849,7 @@ class GCHelperState
     // Condvar for notifying the main thread when work has finished. This is
     // associated with the runtime's GC lock --- the worker thread state
     // condvars can't be used here due to lock ordering issues.
-    PRCondVar* done;
+    js::ConditionVariable done;
 
     // Activity for the helper to do, protected by the GC lock.
     State state_;
@@ -849,7 +858,7 @@ class GCHelperState
     PRThread* thread;
 
     void startBackgroundThread(State newState);
-    void waitForBackgroundThread();
+    void waitForBackgroundThread(js::AutoLockGC& lock);
 
     State state();
     void setState(State state);
@@ -870,13 +879,12 @@ class GCHelperState
   public:
     explicit GCHelperState(JSRuntime* rt)
       : rt(rt),
-        done(nullptr),
+        done(),
         state_(IDLE),
         thread(nullptr),
         shrinkFlag(false)
     { }
 
-    bool init();
     void finish();
 
     void work();
@@ -918,6 +926,8 @@ class GCParallelTask
     // Amount of time this task took to execute.
     uint64_t duration_;
 
+    explicit GCParallelTask(const GCParallelTask&) = delete;
+
   protected:
     // A flag to signal a request for early completion of the off-thread task.
     mozilla::Atomic<bool> cancel_;
@@ -926,6 +936,11 @@ class GCParallelTask
 
   public:
     GCParallelTask() : state(NotStarted), duration_(0) {}
+    GCParallelTask(GCParallelTask&& other)
+      : state(other.state),
+        duration_(0),
+        cancel_(false)
+    {}
 
     // Derived classes must override this to ensure that join() gets called
     // before members get destructed.
@@ -1034,17 +1049,14 @@ class RelocationOverlay
     /* The low bit is set so this should never equal a normal pointer. */
     static const uintptr_t Relocated = uintptr_t(0xbad0bad1);
 
-    // Arrange the fields of the RelocationOverlay so that JSObject's group
-    // pointer is not overwritten during compacting.
-
-    /* A list entry to track all relocated things. */
-    RelocationOverlay* next_;
-
     /* Set to Relocated when moved. */
     uintptr_t magic_;
 
     /* The location |this| was moved to. */
     Cell* newLocation_;
+
+    /* A list entry to track all relocated things. */
+    RelocationOverlay* next_;
 
   public:
     static RelocationOverlay* fromCell(Cell* cell) {
@@ -1060,14 +1072,7 @@ class RelocationOverlay
         return newLocation_;
     }
 
-    void forwardTo(Cell* cell) {
-        MOZ_ASSERT(!isForwarded());
-        static_assert(offsetof(JSObject, group_) == offsetof(RelocationOverlay, next_),
-                      "next pointer and group should be at same location, "
-                      "so that group is not overwritten during compacting");
-        newLocation_ = cell;
-        magic_ = Relocated;
-    }
+    void forwardTo(Cell* cell);
 
     RelocationOverlay*& nextRef() {
         MOZ_ASSERT(isForwarded());
@@ -1108,7 +1113,10 @@ struct MightBeForwarded
 
     static const bool value = mozilla::IsBaseOf<JSObject, T>::value ||
                               mozilla::IsBaseOf<Shape, T>::value ||
-                              mozilla::IsBaseOf<JSString, T>::value;
+                              mozilla::IsBaseOf<BaseShape, T>::value ||
+                              mozilla::IsBaseOf<JSString, T>::value ||
+                              mozilla::IsBaseOf<JSScript, T>::value ||
+                              mozilla::IsBaseOf<js::LazyScript, T>::value;
 };
 
 template <typename T>
@@ -1145,7 +1153,7 @@ Forwarded(T* t)
 
 struct ForwardedFunctor : public IdentityDefaultAdaptor<Value> {
     template <typename T> inline Value operator()(T* t) {
-        return js::gc::RewrapTaggedPointer<Value, T*>::wrap(Forwarded(t));
+        return js::gc::RewrapTaggedPointer<Value, T>::wrap(Forwarded(t));
     }
 };
 
@@ -1153,15 +1161,6 @@ inline Value
 Forwarded(const JS::Value& value)
 {
     return DispatchTyped(ForwardedFunctor(), value);
-}
-
-inline void
-MakeAccessibleAfterMovingGC(void* anyp) {}
-
-inline void
-MakeAccessibleAfterMovingGC(JSObject* obj) {
-    if (obj->isNative())
-        obj->as<NativeObject>().updateShapeAfterMovingGC();
 }
 
 template <typename T>
@@ -1177,13 +1176,18 @@ MaybeForwarded(T t)
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 template <typename T>
+inline bool
+IsGCThingValidAfterMovingGC(T* t)
+{
+    return !IsInsideNursery(t) && !RelocationOverlay::isCellForwarded(t);
+}
+
+template <typename T>
 inline void
 CheckGCThingAfterMovingGC(T* t)
 {
-    if (t) {
-        MOZ_RELEASE_ASSERT(!IsInsideNursery(t));
-        MOZ_RELEASE_ASSERT(!RelocationOverlay::isCellForwarded(t));
-    }
+    if (t)
+        MOZ_RELEASE_ASSERT(IsGCThingValidAfterMovingGC(t));
 }
 
 template <typename T>
@@ -1205,22 +1209,28 @@ CheckValueAfterMovingGC(const JS::Value& value)
 
 #endif // JSGC_HASH_TABLE_CHECKS
 
+#define JS_FOR_EACH_ZEAL_MODE(D)               \
+            D(Poke, 1)                         \
+            D(Alloc, 2)                        \
+            D(FrameGC, 3)                      \
+            D(VerifierPre, 4)                  \
+            D(FrameVerifierPre, 5)             \
+            D(StackRooting, 6)                 \
+            D(GenerationalGC, 7)               \
+            D(IncrementalRootsThenFinish, 8)   \
+            D(IncrementalMarkAllThenFinish, 9) \
+            D(IncrementalMultipleSlices, 10)   \
+            D(IncrementalMarkingValidator, 11) \
+            D(ElementsBarrier, 12)             \
+            D(CheckHashTablesOnMinorGC, 13)    \
+            D(Compact, 14)                     \
+            D(CheckHeapOnMovingGC, 15)
+
 enum class ZealMode {
-    Poke = 1,
-    Alloc = 2,
-    FrameGC = 3,
-    VerifierPre = 4,
-    FrameVerifierPre = 5,
-    StackRooting = 6,
-    GenerationalGC = 7,
-    IncrementalRootsThenFinish = 8,
-    IncrementalMarkAllThenFinish = 9,
-    IncrementalMultipleSlices = 10,
-    IncrementalMarkingValidator = 11,
-    ElementsBarrier = 12,
-    CheckHashTablesOnMinorGC = 13,
-    Compact = 14,
-    Limit = 14
+#define ZEAL_MODE(name, value) name = value,
+    JS_FOR_EACH_ZEAL_MODE(ZEAL_MODE)
+#undef ZEAL_MODE
+    Limit = 15
 };
 
 enum VerifierType {
@@ -1258,14 +1268,14 @@ MaybeVerifyBarriers(JSContext* cx, bool always = false)
  * read the comment in vm/Runtime.h above |suppressGC| and take all appropriate
  * precautions before instantiating this class.
  */
-class MOZ_RAII AutoSuppressGC
+class MOZ_RAII JS_HAZ_GC_SUPPRESSED AutoSuppressGC
 {
     int32_t& suppressGC_;
 
   public:
     explicit AutoSuppressGC(ExclusiveContext* cx);
     explicit AutoSuppressGC(JSCompartment* comp);
-    explicit AutoSuppressGC(JSRuntime* rt);
+    explicit AutoSuppressGC(JSContext* cx);
 
     ~AutoSuppressGC()
     {
@@ -1315,6 +1325,97 @@ struct MOZ_RAII AutoAssertNoNurseryAlloc
 #else
     explicit AutoAssertNoNurseryAlloc(JSRuntime* rt) {}
 #endif
+};
+
+/*
+ * There are a couple of classes here that serve mostly as "tokens" indicating
+ * that a condition holds. Some functions force the caller to possess such a
+ * token because they would misbehave if the condition were false, and it is
+ * far more clear to make the condition visible at the point where it can be
+ * affected rather than just crashing in an assertion down in the place where
+ * it is relied upon.
+ */
+
+/*
+ * Token meaning that the heap is busy and no allocations will be made.
+ *
+ * This class may be instantiated directly if it is known that the condition is
+ * already true, or it can be used as a base class for another RAII class that
+ * causes the condition to become true. Such base classes will use the no-arg
+ * constructor, establish the condition, then call checkCondition() to assert
+ * it and possibly record data needed to re-check the condition during
+ * destruction.
+ *
+ * Ordinarily, you would do something like this with a Maybe<> member that is
+ * emplaced during the constructor, but token-requiring functions want to
+ * require a reference to a base class instance. That said, you can always pass
+ * in the Maybe<> field as the token.
+ */
+class MOZ_RAII AutoAssertHeapBusy {
+  protected:
+    JSRuntime* rt;
+
+    // Check that the heap really is busy, and record the rt for the check in
+    // the destructor.
+    void checkCondition(JSRuntime *rt);
+
+    AutoAssertHeapBusy() : rt(nullptr) {
+    }
+
+  public:
+    explicit AutoAssertHeapBusy(JSRuntime* rt) {
+        checkCondition(rt);
+    }
+
+    ~AutoAssertHeapBusy() {
+        MOZ_ASSERT(rt); // checkCondition must always be called.
+        checkCondition(rt);
+    }
+};
+
+/*
+ * A class that serves as a token that the nursery is empty. It descends from
+ * AutoAssertHeapBusy, which means that it additionally requires the heap to be
+ * busy (which is not necessarily linked, but turns out to be true in practice
+ * for all users and simplifies the usage of these classes.)
+ */
+class MOZ_RAII AutoAssertEmptyNursery
+{
+  protected:
+    JSRuntime* rt;
+
+    mozilla::Maybe<AutoAssertNoNurseryAlloc> noAlloc;
+
+    // Check that the nursery is empty.
+    void checkCondition(JSRuntime *rt);
+
+    // For subclasses that need to empty the nursery in their constructors.
+    AutoAssertEmptyNursery() : rt(nullptr) {
+    }
+
+  public:
+    explicit AutoAssertEmptyNursery(JSRuntime* rt) : rt(nullptr) {
+        checkCondition(rt);
+    }
+
+    AutoAssertEmptyNursery(const AutoAssertEmptyNursery& other) : AutoAssertEmptyNursery(other.rt)
+    {
+    }
+};
+
+/*
+ * Evict the nursery upon construction. Serves as a token indicating that the
+ * nursery is empty. (See AutoAssertEmptyNursery, above.)
+ *
+ * Note that this is very improper subclass of AutoAssertHeapBusy, in that the
+ * heap is *not* busy within the scope of an AutoEmptyNursery. I will most
+ * likely fix this by removing AutoAssertHeapBusy, but that is currently
+ * waiting on jonco's review.
+ */
+class MOZ_RAII AutoEmptyNursery : public AutoAssertEmptyNursery
+{
+  public:
+    explicit AutoEmptyNursery(JSRuntime *rt);
 };
 
 const char*

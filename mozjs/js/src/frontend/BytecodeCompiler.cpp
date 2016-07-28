@@ -346,11 +346,15 @@ BytecodeCompiler::prepareAndEmitTree(ParseNode** ppn)
 {
     if (!FoldConstants(cx, ppn, parser.ptr()) ||
         !NameFunctions(cx, *ppn) ||
-        !emitter->updateLocalsToFrameSlots() ||
-        !emitter->emitTree(*ppn))
+        !emitter->updateLocalsToFrameSlots())
     {
         return false;
     }
+
+    emitter->setFunctionBodyEndPos((*ppn)->pn_pos);
+
+    if (!emitter->emitTree(*ppn))
+        return false;
 
     return true;
 }
@@ -764,10 +768,7 @@ frontend::CompileModule(ExclusiveContext* cx, const ReadOnlyCompileOptions& opti
                         ScriptSourceObject** sourceObjectOut /* = nullptr */)
 {
     MOZ_ASSERT(srcBuf.get());
-    MOZ_ASSERT(cx->isJSContext() == (alloc == nullptr));
-
-    if (!alloc)
-        alloc = &cx->asJSContext()->tempLifoAlloc();
+    MOZ_ASSERT(alloc);
     MOZ_ASSERT_IF(sourceObjectOut, *sourceObjectOut == nullptr);
 
     CompileOptions options(cx, optionsInput);
@@ -777,18 +778,31 @@ frontend::CompileModule(ExclusiveContext* cx, const ReadOnlyCompileOptions& opti
     Rooted<StaticScope*> staticScope(cx, &cx->global()->lexicalScope().staticBlock());
     BytecodeCompiler compiler(cx, alloc, options, srcBuf, staticScope,
                               TraceLogger_ParserCompileModule);
-    RootedModuleObject module(cx, compiler.compileModule());
+    ModuleObject* module = compiler.compileModule();
+
+    // See the comment about sourceObjectOut above.
+    if (sourceObjectOut)
+        *sourceObjectOut = compiler.sourceObjectPtr();
+
+    return module;
+}
+
+ModuleObject*
+frontend::CompileModule(JSContext* cx, const ReadOnlyCompileOptions& options,
+                        SourceBufferHolder& srcBuf)
+{
+    if (!GlobalObject::ensureModulePrototypesCreated(cx, cx->global()))
+        return nullptr;
+
+    LifoAlloc* alloc = &cx->asJSContext()->tempLifoAlloc();
+    RootedModuleObject module(cx, CompileModule(cx, options, srcBuf, alloc));
     if (!module)
         return nullptr;
 
     // This happens in GlobalHelperThreadState::finishModuleParseTask() when a
     // module is compiled off main thread.
-    if (cx->isJSContext() && !ModuleObject::FreezeArrayProperties(cx->asJSContext(), module))
+    if (!ModuleObject::FreezeArrayProperties(cx->asJSContext(), module))
         return nullptr;
-
-    // See the comment about sourceObjectOut above.
-    if (sourceObjectOut)
-        *sourceObjectOut = compiler.sourceObjectPtr();
 
     return module;
 }
@@ -846,7 +860,7 @@ frontend::CompileLazyFunction(JSContext* cx, Handle<LazyScript*> lazy, const cha
     MOZ_ASSERT(!options.forEval);
     BytecodeEmitter bce(/* parent = */ nullptr, &parser, pn->pn_funbox, script, lazy,
                         /* insideEval = */ false, /* evalCaller = */ nullptr,
-                        /* insideNonGlobalEval = */ false, options.lineno,
+                        /* insideNonGlobalEval = */ false, pn->pn_pos,
                         BytecodeEmitter::LazyFunction);
     if (!bce.init())
         return false;

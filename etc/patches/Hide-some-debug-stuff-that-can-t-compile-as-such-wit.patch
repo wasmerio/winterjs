@@ -1,0 +1,36 @@
+From 69b922e35e5a83cdd8b689bfba2aef22289bfcb5 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Mon, 11 Apr 2016 15:07:34 +0200
+Subject: Hide some debug stuff that can't compile as such with RUST_BINDGEN
+
+Because we also hide the unions related to these assertions.
+
+diff --git a/mozjs/js/src/jsapi.h b/mozjs/js/src/jsapi.h
+index 195f325..47610db 100644
+--- a/mozjs/js/src/jsapi.h
++++ b/mozjs/js/src/jsapi.h
+@@ -2022,17 +2022,21 @@ struct JSPropertySpec {
+                   "JSNativeWrapper::info");
+ private:
+     void checkAccessorsAreNative() const {
++#ifndef RUST_BINDGEN
+         MOZ_ASSERT(getter.native.op);
+         // We may not have a setter at all.  So all we can assert here, for the
+         // native case is that if we have a jitinfo for the setter then we have
+         // a setter op too.  This is good enough to make sure we don't have a
+         // SelfHostedWrapper for the setter.
+         MOZ_ASSERT_IF(setter.native.info, setter.native.op);
++#endif
+     }
+ 
+     void checkAccessorsAreSelfHosted() const {
++#ifndef RUST_BINDGEN
+         MOZ_ASSERT(!getter.selfHosted.unused);
+         MOZ_ASSERT(!setter.selfHosted.unused);
++#endif
+     }
+ };
+ 
+-- 
+1.9.1
+

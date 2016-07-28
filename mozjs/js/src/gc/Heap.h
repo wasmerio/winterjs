@@ -53,6 +53,7 @@ extern bool
 CurrentThreadIsIonCompiling();
 #endif
 
+// The return value indicates if anything was unmarked.
 extern bool
 UnmarkGrayCellRecursively(gc::Cell* cell, JS::TraceKind kind);
 
@@ -62,6 +63,7 @@ TraceManuallyBarrieredGenericPointerEdge(JSTracer* trc, gc::Cell** thingp, const
 namespace gc {
 
 class Arena;
+class ArenaCellSet;
 class ArenaList;
 class SortedArenaList;
 struct Chunk;
@@ -113,10 +115,59 @@ enum class AllocKind {
     LAST = LIMIT - 1
 };
 
+// Macro to enumerate the different allocation kinds supplying information about
+// the trace kind, C++ type and allocation size.
+#define FOR_EACH_OBJECT_ALLOCKIND(D) \
+ /* AllocKind              TraceKind    TypeName           SizedType */ \
+    D(FUNCTION,            Object,      JSObject,          JSFunction) \
+    D(FUNCTION_EXTENDED,   Object,      JSObject,          FunctionExtended) \
+    D(OBJECT0,             Object,      JSObject,          JSObject_Slots0) \
+    D(OBJECT0_BACKGROUND,  Object,      JSObject,          JSObject_Slots0) \
+    D(OBJECT2,             Object,      JSObject,          JSObject_Slots2) \
+    D(OBJECT2_BACKGROUND,  Object,      JSObject,          JSObject_Slots2) \
+    D(OBJECT4,             Object,      JSObject,          JSObject_Slots4) \
+    D(OBJECT4_BACKGROUND,  Object,      JSObject,          JSObject_Slots4) \
+    D(OBJECT8,             Object,      JSObject,          JSObject_Slots8) \
+    D(OBJECT8_BACKGROUND,  Object,      JSObject,          JSObject_Slots8) \
+    D(OBJECT12,            Object,      JSObject,          JSObject_Slots12) \
+    D(OBJECT12_BACKGROUND, Object,      JSObject,          JSObject_Slots12) \
+    D(OBJECT16,            Object,      JSObject,          JSObject_Slots16) \
+    D(OBJECT16_BACKGROUND, Object,      JSObject,          JSObject_Slots16)
+
+#define FOR_EACH_NONOBJECT_ALLOCKIND(D) \
+ /* AllocKind              TraceKind    TypeName           SizedType */ \
+    D(SCRIPT,              Script,      JSScript,          JSScript) \
+    D(LAZY_SCRIPT,         LazyScript,  js::LazyScript,    js::LazyScript) \
+    D(SHAPE,               Shape,       js::Shape,         js::Shape) \
+    D(ACCESSOR_SHAPE,      Shape,       js::AccessorShape, js::AccessorShape) \
+    D(BASE_SHAPE,          BaseShape,   js::BaseShape,     js::BaseShape) \
+    D(OBJECT_GROUP,        ObjectGroup, js::ObjectGroup,   js::ObjectGroup) \
+    D(FAT_INLINE_STRING,   String,      JSFatInlineString, JSFatInlineString) \
+    D(STRING,              String,      JSString,          JSString) \
+    D(EXTERNAL_STRING,     String,      JSExternalString,  JSExternalString) \
+    D(SYMBOL,              Symbol,      JS::Symbol,        JS::Symbol) \
+    D(JITCODE,             JitCode,     js::jit::JitCode,  js::jit::JitCode)
+
+#define FOR_EACH_ALLOCKIND(D) \
+    FOR_EACH_OBJECT_ALLOCKIND(D) \
+    FOR_EACH_NONOBJECT_ALLOCKIND(D)
+
 static_assert(int(AllocKind::FIRST) == 0, "Various places depend on AllocKind starting at 0, "
                                           "please audit them carefully!");
 static_assert(int(AllocKind::OBJECT_FIRST) == 0, "Various places depend on AllocKind::OBJECT_FIRST "
                                                  "being 0, please audit them carefully!");
+
+inline bool
+IsAllocKind(AllocKind kind)
+{
+    return kind >= AllocKind::FIRST && kind <= AllocKind::LIMIT;
+}
+
+inline bool
+IsValidAllocKind(AllocKind kind)
+{
+    return kind >= AllocKind::FIRST && kind <= AllocKind::LAST;
+}
 
 inline bool
 IsObjectAllocKind(AllocKind kind)
@@ -128,17 +179,6 @@ inline bool
 IsShapeAllocKind(AllocKind kind)
 {
     return kind == AllocKind::SHAPE || kind == AllocKind::ACCESSOR_SHAPE;
-}
-
-inline bool
-IsValidAllocKind(AllocKind kind)
-{
-    return kind >= AllocKind::FIRST && kind <= AllocKind::LAST;
-}
-
-inline bool IsAllocKind(AllocKind kind)
-{
-    return kind >= AllocKind::FIRST && kind <= AllocKind::LIMIT;
 }
 
 // Returns a sequence for use in a range-based for loop,
@@ -181,31 +221,10 @@ static inline JS::TraceKind
 MapAllocToTraceKind(AllocKind kind)
 {
     static const JS::TraceKind map[] = {
-        JS::TraceKind::Object,       /* AllocKind::FUNCTION */
-        JS::TraceKind::Object,       /* AllocKind::FUNCTION_EXTENDED */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT0 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT0_BACKGROUND */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT2 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT2_BACKGROUND */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT4 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT4_BACKGROUND */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT8 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT8_BACKGROUND */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT12 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT12_BACKGROUND */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT16 */
-        JS::TraceKind::Object,       /* AllocKind::OBJECT16_BACKGROUND */
-        JS::TraceKind::Script,       /* AllocKind::SCRIPT */
-        JS::TraceKind::LazyScript,   /* AllocKind::LAZY_SCRIPT */
-        JS::TraceKind::Shape,        /* AllocKind::SHAPE */
-        JS::TraceKind::Shape,        /* AllocKind::ACCESSOR_SHAPE */
-        JS::TraceKind::BaseShape,    /* AllocKind::BASE_SHAPE */
-        JS::TraceKind::ObjectGroup,  /* AllocKind::OBJECT_GROUP */
-        JS::TraceKind::String,       /* AllocKind::FAT_INLINE_STRING */
-        JS::TraceKind::String,       /* AllocKind::STRING */
-        JS::TraceKind::String,       /* AllocKind::EXTERNAL_STRING */
-        JS::TraceKind::Symbol,       /* AllocKind::SYMBOL */
-        JS::TraceKind::JitCode,      /* AllocKind::JITCODE */
+#define EXPAND_ELEMENT(allocKind, traceKind, type, sizedType) \
+        JS::TraceKind::traceKind,
+FOR_EACH_ALLOCKIND(EXPAND_ELEMENT)
+#undef EXPAND_ELEMENT
     };
 
     static_assert(MOZ_ARRAY_LENGTH(map) == size_t(AllocKind::LIMIT),
@@ -249,6 +268,8 @@ struct Cell
 
 #ifdef DEBUG
     inline bool isAligned() const;
+    void dump(FILE* fp) const;
+    void dump() const;
 #endif
 
   protected:
@@ -267,6 +288,7 @@ class TenuredCell : public Cell
 
     // Mark bit management.
     MOZ_ALWAYS_INLINE bool isMarked(uint32_t color = BLACK) const;
+    // The return value indicates if the cell went from unmarked to marked.
     MOZ_ALWAYS_INLINE bool markIfUnmarked(uint32_t color = BLACK) const;
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
@@ -296,6 +318,9 @@ class TenuredCell : public Cell
     static MOZ_ALWAYS_INLINE void writeBarrierPost(void* cellp, TenuredCell* prior,
                                                    TenuredCell* next);
 
+    // Default implementation for kinds that don't require fixup.
+    void fixupAfterMovingGC() {}
+
 #ifdef DEBUG
     inline bool isAligned() const;
 #endif
@@ -304,16 +329,23 @@ class TenuredCell : public Cell
 /* Cells are aligned to CellShift, so the largest tagged null pointer is: */
 const uintptr_t LargestTaggedNullCellPointer = (1 << CellShift) - 1;
 
+MOZ_CONSTEXPR size_t
+DivideAndRoundUp(size_t numerator, size_t divisor) {
+    return (numerator + divisor - 1) / divisor;
+}
+
+const size_t ArenaCellCount = ArenaSize / CellSize;
+static_assert(ArenaSize % CellSize == 0, "Arena size must be a multiple of cell size");
+
 /*
  * The mark bitmap has one bit per each GC cell. For multi-cell GC things this
  * wastes space but allows to avoid expensive devisions by thing's size when
  * accessing the bitmap. In addition this allows to use some bits for colored
  * marking during the cycle GC.
  */
-const size_t ArenaCellCount = size_t(1) << (ArenaShift - CellShift);
 const size_t ArenaBitmapBits = ArenaCellCount;
-const size_t ArenaBitmapBytes = ArenaBitmapBits / 8;
-const size_t ArenaBitmapWords = ArenaBitmapBits / JS_BITS_PER_WORD;
+const size_t ArenaBitmapBytes = DivideAndRoundUp(ArenaBitmapBits, 8);
+const size_t ArenaBitmapWords = DivideAndRoundUp(ArenaBitmapBits, JS_BITS_PER_WORD);
 
 /*
  * A FreeSpan represents a contiguous sequence of free cells in an Arena. It
@@ -496,6 +528,13 @@ class Arena
     static_assert(ArenaShift >= 8 + 1 + 1 + 1,
                   "Arena::auxNextLink packing assumes that ArenaShift has "
                   "enough bits to cover allocKind and hasDelayedMarking.");
+
+    /*
+     * If non-null, points to an ArenaCellSet that represents the set of cells
+     * in this arena that are in the nursery's store buffer.
+     */
+    ArenaCellSet* bufferedCells;
+
     /*
      * The size of data should be |ArenaSize - offsetof(data)|, but the offset
      * is not yet known to the compiler, so we do it by hand. |firstFreeSpan|
@@ -504,19 +543,7 @@ class Arena
      */
     uint8_t data[ArenaSize - ArenaHeaderSize];
 
-    void init(JS::Zone* zoneArg, AllocKind kind) {
-        MOZ_ASSERT(firstFreeSpan.isEmpty());
-        MOZ_ASSERT(!zone);
-        MOZ_ASSERT(!allocated());
-        MOZ_ASSERT(!hasDelayedMarking);
-        MOZ_ASSERT(!allocatedDuringIncremental);
-        MOZ_ASSERT(!markOverflow);
-        MOZ_ASSERT(!auxNextLink);
-
-        zone = zoneArg;
-        allocKind = size_t(kind);
-        setAsFullyUnused();
-    }
+    void init(JS::Zone* zoneArg, AllocKind kind);
 
     // Sets |firstFreeSpan| to the Arena's entire valid range, and
     // also sets the next span stored at |firstFreeSpan.last| as empty.
@@ -536,6 +563,7 @@ class Arena
         allocatedDuringIncremental = 0;
         markOverflow = 0;
         auxNextLink = 0;
+        bufferedCells = nullptr;
     }
 
     uintptr_t address() const {
@@ -660,13 +688,20 @@ class Arena
     static void staticAsserts();
 
     void unmarkAll();
+
+    static size_t offsetOfBufferedCells() {
+        return offsetof(Arena, bufferedCells);
+    }
 };
 
 static_assert(ArenaZoneOffset == offsetof(Arena, zone),
               "The hardcoded API zone offset must match the actual offset.");
 
-static_assert(sizeof(Arena) == ArenaSize, "The hardcoded API header size (ArenaHeaderSize) "
-                                          "must match the actual size of the header fields.");
+static_assert(sizeof(Arena) == ArenaSize,
+              "ArenaSize must match the actual size of the Arena structure.");
+
+static_assert(offsetof(Arena, data) == ArenaHeaderSize,
+              "ArenaHeaderSize must match the actual size of the header fields.");
 
 inline Arena*
 FreeSpan::getArena()
@@ -849,6 +884,7 @@ struct ChunkBitmap
         return *word & mask;
     }
 
+    // The return value indicates if the cell went from unmarked to marked.
     MOZ_ALWAYS_INLINE bool markIfUnmarked(const Cell* cell, uint32_t color) {
         uintptr_t* word, mask;
         getMarkWordAndMask(cell, BLACK, &word, &mask);
@@ -967,7 +1003,7 @@ struct Chunk
     void releaseArena(JSRuntime* rt, Arena* arena, const AutoLockGC& lock);
     void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-    bool decommitOneFreeArena(JSRuntime* rt, AutoLockGC& lock);
+    MOZ_MUST_USE bool decommitOneFreeArena(JSRuntime* rt, AutoLockGC& lock);
     void decommitAllArenasWithoutUnlocking(const AutoLockGC& lock);
 
     static Chunk* allocate(JSRuntime* rt);
@@ -989,7 +1025,7 @@ struct Chunk
 
   public:
     /* Unlink and return the freeArenasHead. */
-    inline Arena* fetchNextFreeArena(JSRuntime* rt);
+    Arena* fetchNextFreeArena(JSRuntime* rt);
 };
 
 static_assert(sizeof(Chunk) == ChunkSize,
@@ -1251,10 +1287,8 @@ TenuredCell::readBarrier(TenuredCell* thing)
 {
     MOZ_ASSERT(!CurrentThreadIsIonCompiling());
     MOZ_ASSERT(!isNullLike(thing));
-    if (thing->shadowRuntimeFromAnyThread()->isHeapBusy())
+    if (thing->shadowRuntimeFromAnyThread()->isHeapCollecting())
         return;
-    MOZ_ASSERT_IF(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()),
-                  !thing->shadowRuntimeFromAnyThread()->isHeapCollecting());
 
     JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
     MOZ_ASSERT_IF(!CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()),
@@ -1275,7 +1309,7 @@ TenuredCell::writeBarrierPre(TenuredCell* thing)
 {
     MOZ_ASSERT(!CurrentThreadIsIonCompiling());
     MOZ_ASSERT_IF(thing, !isNullLike(thing));
-    if (!thing || thing->shadowRuntimeFromAnyThread()->isHeapBusy())
+    if (!thing || thing->shadowRuntimeFromAnyThread()->isHeapCollecting())
         return;
 
     JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();

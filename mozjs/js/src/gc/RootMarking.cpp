@@ -65,25 +65,31 @@ MarkExactStackRootList(JSTracer* trc, JS::Rooted<void*>* rooter, const char* nam
     }
 }
 
+static inline void
+TraceStackRoots(JSTracer* trc, RootedListHeads& stackRoots)
+{
+#define MARK_ROOTS(name, type, _) \
+    MarkExactStackRootList<type*>(trc, stackRoots[JS::RootKind::name], "exact-" #name);
+JS_FOR_EACH_TRACEKIND(MARK_ROOTS)
+#undef MARK_ROOTS
+    MarkExactStackRootList<jsid>(trc, stackRoots[JS::RootKind::Id], "exact-id");
+    MarkExactStackRootList<Value>(trc, stackRoots[JS::RootKind::Value], "exact-value");
+    MarkExactStackRootList<ConcreteTraceable,
+                           js::DispatchWrapper<ConcreteTraceable>::TraceWrapped>(
+        trc, stackRoots[JS::RootKind::Traceable], "Traceable");
+}
+
 void
 js::RootLists::traceStackRoots(JSTracer* trc)
 {
-#define MARK_ROOTS(name, type, _) \
-    MarkExactStackRootList<type*>(trc, stackRoots_[JS::RootKind::name], "exact-" #name);
-JS_FOR_EACH_TRACEKIND(MARK_ROOTS)
-#undef MARK_ROOTS
-    MarkExactStackRootList<jsid>(trc, stackRoots_[JS::RootKind::Id], "exact-id");
-    MarkExactStackRootList<Value>(trc, stackRoots_[JS::RootKind::Value], "exact-value");
-    MarkExactStackRootList<ConcreteTraceable,
-                           js::DispatchWrapper<ConcreteTraceable>::TraceWrapped>(
-        trc, stackRoots_[JS::RootKind::Traceable], "Traceable");
+    TraceStackRoots(trc, stackRoots_);
 }
 
 static void
 MarkExactStackRoots(JSRuntime* rt, JSTracer* trc)
 {
-    for (ContextIter cx(rt); !cx.done(); cx.next())
-        cx->roots.traceStackRoots(trc);
+    for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next())
+        TraceStackRoots(trc, zone->stackRoots_);
     rt->mainThread.roots.traceStackRoots(trc);
 }
 
@@ -113,8 +119,6 @@ JS_FOR_EACH_TRACEKIND(MARK_ROOTS)
 static void
 MarkPersistentRooted(JSRuntime* rt, JSTracer* trc)
 {
-    for (ContextIter cx(rt); !cx.done(); cx.next())
-        cx->roots.tracePersistentRoots(trc);
     rt->mainThread.roots.tracePersistentRoots(trc);
 }
 
@@ -219,18 +223,17 @@ AutoGCRooter::trace(JSTracer* trc)
 /* static */ void
 AutoGCRooter::traceAll(JSTracer* trc)
 {
-    for (ContextIter cx(trc->runtime()); !cx.done(); cx.next())
-        traceAllInContext(&*cx, trc);
+    traceAllInContext(trc->runtime()->contextFromMainThread(), trc);
 }
 
 /* static */ void
 AutoGCRooter::traceAllWrappers(JSTracer* trc)
 {
-    for (ContextIter cx(trc->runtime()); !cx.done(); cx.next()) {
-        for (AutoGCRooter* gcr = cx->roots.autoGCRooters_; gcr; gcr = gcr->down) {
-            if (gcr->tag_ == WRAPVECTOR || gcr->tag_ == WRAPPER)
-                gcr->trace(trc);
-        }
+    JSContext* cx = trc->runtime()->contextFromMainThread();
+
+    for (AutoGCRooter* gcr = cx->roots.autoGCRooters_; gcr; gcr = gcr->down) {
+        if (gcr->tag_ == WRAPVECTOR || gcr->tag_ == WRAPPER)
+            gcr->trace(trc);
     }
 }
 
@@ -268,7 +271,8 @@ PropertyDescriptor::trace(JSTracer* trc)
 }
 
 void
-js::gc::GCRuntime::markRuntime(JSTracer* trc, TraceOrMarkRuntime traceOrMark)
+js::gc::GCRuntime::markRuntime(JSTracer* trc, TraceOrMarkRuntime traceOrMark,
+                               AutoLockForExclusiveAccess& lock)
 {
     gcstats::AutoPhase ap(stats, gcstats::PHASE_MARK_ROOTS);
 
@@ -302,19 +306,18 @@ js::gc::GCRuntime::markRuntime(JSTracer* trc, TraceOrMarkRuntime traceOrMark)
     if (!rt->isBeingDestroyed() && !rt->isHeapMinorCollecting()) {
         gcstats::AutoPhase ap(stats, gcstats::PHASE_MARK_RUNTIME_DATA);
 
-        if (traceOrMark == TraceRuntime || rt->atomsCompartment()->zone()->isCollecting()) {
+        if (traceOrMark == TraceRuntime || rt->atomsCompartment(lock)->zone()->isCollecting()) {
             MarkPermanentAtoms(trc);
-            MarkAtoms(trc);
+            MarkAtoms(trc, lock);
             MarkWellKnownSymbols(trc);
-            jit::JitRuntime::Mark(trc);
+            jit::JitRuntime::Mark(trc, lock);
         }
     }
 
     if (rt->isHeapMinorCollecting())
         jit::JitRuntime::MarkJitcodeGlobalTableUnconditionally(trc);
 
-    for (ContextIter acx(rt); !acx.done(); acx.next())
-        acx->mark(trc);
+    rt->contextFromMainThread()->mark(trc);
 
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next())
         c->traceRoots(trc, traceOrMark);
@@ -322,6 +325,8 @@ js::gc::GCRuntime::markRuntime(JSTracer* trc, TraceOrMarkRuntime traceOrMark)
     MarkInterpreterActivations(rt, trc);
 
     jit::MarkJitActivations(rt, trc);
+
+    rt->spsProfiler.trace(trc);
 
     if (!rt->isHeapMinorCollecting()) {
         gcstats::AutoPhase ap(stats, gcstats::PHASE_MARK_EMBEDDING);

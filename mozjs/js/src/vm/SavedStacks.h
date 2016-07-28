@@ -7,6 +7,7 @@
 #ifndef vm_SavedStacks_h
 #define vm_SavedStacks_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/FastBernoulliTrial.h"
 
 #include "jscntxt.h"
@@ -149,7 +150,6 @@ namespace js {
 
 class SavedStacks {
     friend class SavedFrame;
-    friend JSObject* SavedStacksMetadataCallback(JSContext* cx, HandleObject target);
     friend bool JS::ubi::ConstructSavedFrameStackSlow(JSContext* cx,
                                                       JS::ubi::StackFrame& ubiFrame,
                                                       MutableHandleObject outSavedFrameStack);
@@ -162,23 +162,36 @@ class SavedStacks {
         creatingSavedFrame(false)
     { }
 
-    bool     init();
-    bool     initialized() const { return frames.initialized(); }
-    bool     saveCurrentStack(JSContext* cx, MutableHandleSavedFrame frame, unsigned maxFrameCount = 0);
-    bool     copyAsyncStack(JSContext* cx, HandleObject asyncStack, HandleString asyncCause,
-                            MutableHandleSavedFrame adoptedStack, unsigned maxFrameCount = 0);
-    void     sweep();
-    void     trace(JSTracer* trc);
+    MOZ_MUST_USE bool init();
+    bool initialized() const { return frames.initialized(); }
+    MOZ_MUST_USE bool saveCurrentStack(JSContext* cx, MutableHandleSavedFrame frame,
+                                       unsigned maxFrameCount = 0);
+    MOZ_MUST_USE bool copyAsyncStack(JSContext* cx, HandleObject asyncStack,
+                                     HandleString asyncCause,
+                                     MutableHandleSavedFrame adoptedStack,
+                                     unsigned maxFrameCount = 0);
+    void sweep();
+    void trace(JSTracer* trc);
     uint32_t count();
-    void     clear();
-    void     chooseSamplingProbability(JSCompartment*);
+    void clear();
+    void chooseSamplingProbability(JSCompartment*);
 
     // Set the sampling random number generator's state to |state0| and
     // |state1|. One or the other must be non-zero. See the comments for
     // mozilla::non_crypto::XorShift128PlusRNG::setState for details.
-    void     setRNGState(uint64_t state0, uint64_t state1) { bernoulli.setRandomState(state0, state1); }
+    void setRNGState(uint64_t state0, uint64_t state1) { bernoulli.setRandomState(state0, state1); }
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
+
+    // An alloction metadata builder that marks cells with the JavaScript stack
+    // at which they were allocated.
+    struct MetadataBuilder : public AllocationMetadataBuilder {
+        MetadataBuilder() : AllocationMetadataBuilder() { }
+        virtual JSObject* build(JSContext *cx, HandleObject obj,
+                                AutoEnterOOMUnsafeRegion& oomUnsafe) const override;
+    };
+
+    static const MetadataBuilder metadataBuilder;
 
   private:
     SavedFrame::Set frames;
@@ -206,12 +219,13 @@ class SavedStacks {
         }
     };
 
-    bool        insertFrames(JSContext* cx, FrameIter& iter, MutableHandleSavedFrame frame,
-                             unsigned maxFrameCount = 0);
-    bool        adoptAsyncStack(JSContext* cx, HandleSavedFrame asyncStack,
-                                HandleString asyncCause,
-                                MutableHandleSavedFrame adoptedStack,
-                                unsigned maxFrameCount);
+    MOZ_MUST_USE bool insertFrames(JSContext* cx, FrameIter& iter,
+                                   MutableHandleSavedFrame frame,
+                                   unsigned maxFrameCount = 0);
+    MOZ_MUST_USE bool adoptAsyncStack(JSContext* cx, HandleSavedFrame asyncStack,
+                                      HandleString asyncCause,
+                                      MutableHandleSavedFrame adoptedStack,
+                                      unsigned maxFrameCount);
     SavedFrame* getOrCreateSavedFrame(JSContext* cx, SavedFrame::HandleLookup lookup);
     SavedFrame* createFrameFromLookup(JSContext* cx, SavedFrame::HandleLookup lookup);
 
@@ -220,7 +234,7 @@ class SavedStacks {
     struct PCKey {
         PCKey(JSScript* script, jsbytecode* pc) : script(script), pc(pc) { }
 
-        RelocatablePtrScript script;
+        HeapPtr<JSScript*> script;
         jsbytecode* pc;
 
         void trace(JSTracer* trc) { /* PCKey is weak. */ }
@@ -247,7 +261,7 @@ class SavedStacks {
             return true;
         }
 
-        RelocatablePtrAtom source;
+        HeapPtr<JSAtom*> source;
         size_t line;
         uint32_t column;
     };
@@ -296,10 +310,9 @@ class SavedStacks {
     using PCLocationMap = GCHashMap<PCKey, LocationValue, PCLocationHasher, SystemAllocPolicy>;
     PCLocationMap pcLocationMap;
 
-    bool getLocation(JSContext* cx, const FrameIter& iter, MutableHandle<LocationValue> locationp);
+    MOZ_MUST_USE bool getLocation(JSContext* cx, const FrameIter& iter,
+                                  MutableHandle<LocationValue> locationp);
 };
-
-JSObject* SavedStacksMetadataCallback(JSContext* cx, HandleObject target);
 
 template <>
 class RootedBase<SavedStacks::LocationValue>

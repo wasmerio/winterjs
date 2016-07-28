@@ -1,7 +1,16 @@
+// |jit-test| test-also-wasm-baseline
 if (!wasmIsSupported())
      quit();
- 
+
 load(libdir + "asserts.js");
+
+var caught = false;
+try {
+    wasmBinaryToText(new Int8Array(1));
+} catch (e) {
+    caught = true;
+}
+assertEq(caught, true);
 
 function runTest(code) {
   var expected = wasmTextToBinary(code);
@@ -22,7 +31,7 @@ runTest(`
            (br_if $exit (get_local 0))
            (br 2)
         )
-        (if (i32.const 1) 
+        (if (i32.const 1)
            (f64.min (f64.neg (f64.const 1)) (f64.const 0))
            (f64.add (f64.const 0.5) (f64.load offset=0 (i32.const 0)) )
         )
@@ -68,7 +77,7 @@ runTest(`
   (block $m (block (block (br $m))))
   (block $k (br_if 0 (i32.const 0)) (return))
   (block $n (block (block (br_if 2 (i32.const 1)) (nop))))
-  (block $1 (block $2 (block $3 (br_table $2 $3 $1 (i32.const 1)) )) (nop))
+  (block $1 (block $2 (block $3 (br_table $2 $3 $1 (nop) (i32.const 1)) )) (nop))
   (loop $exit $cont (br_if $cont (i32.const 0)) (nop))
   (return)
 )
@@ -142,3 +151,24 @@ runTest(`
   (func $dpromote_f32 (param $x f32) (result f64) (f64.promote/f32 (get_local $x)))
   (func $fdemote_f64 (param $x f64) (result f32) (f32.demote/f64 (get_local $x)))
 (memory 0))`);
+
+// function calls
+runTest(`
+(module
+  (type $type1 (func (param i32) (result i32)))
+  (import $import1 "mod" "test" (param f32) (result f32))
+  (table $func1 $func2)
+  (func $func1 (param i32) (param f32) (nop))
+  (func $func2 (param i32) (result i32) (get_local 0))
+  (func $test
+    (call $func1
+      (call_indirect $type1 (i32.const 1) (i32.const 2))
+      (call_import $import1 (f32.const 1.0))
+    )
+  )
+  (export "test" $test)
+  (memory 1)
+)`);
+
+// default memory export from binaryen
+runTest(`(module (func (nop)) (memory 0 65535))`);

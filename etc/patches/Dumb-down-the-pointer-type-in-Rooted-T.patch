@@ -1,0 +1,45 @@
+From e3cadfff0a06f7804ec9c0550d737a490ce7b7da Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Mon, 4 Apr 2016 17:50:08 +0200
+Subject: Dumb down the pointer type in Rooted<T>
+
+Luckily in Servo, we never use Rooted<T> where T is a special traceable
+snowflake.
+
+--- a/mozjs/js/public/RootingAPI.h
++++ b/mozjs/js/public/RootingAPI.h
+@@ -715,6 +715,7 @@ class MOZ_RAII Rooted : public js::RootedBase<T>
+     Rooted<void*>** stack;
+     Rooted<void*>* prev;
+ 
++#ifndef RUST_BINDGEN
+     /*
+      * For pointer types, the TraceKind for tracing is based on the list it is
+      * in (selected via MapTypeToRootKind), so no additional storage is
+@@ -728,6 +729,9 @@ class MOZ_RAII Rooted : public js::RootedBase<T>
+         js::DispatchWrapper<T>,
+         T>::Type;
+     MaybeWrapped ptr;
++#else
++    T ptr;
++#endif
+ 
+     Rooted(const Rooted&) = delete;
+ } JS_HAZ_ROOTED;
+@@ -1069,12 +1073,16 @@ class PersistentRooted : public js::PersistentRootedBase<T>,
+         ptr = mozilla::Forward<U>(value);
+     }
+ 
++#ifndef RUST_BINDGEN
+     // See the comment above Rooted::ptr.
+     using MaybeWrapped = typename mozilla::Conditional<
+         MapTypeToRootKind<T>::kind == JS::RootKind::Traceable,
+         js::DispatchWrapper<T>,
+         T>::Type;
+     MaybeWrapped ptr;
++#else
++    T ptr;
++#endif
+ } JS_HAZ_ROOTED;
+ 
+ class JS_PUBLIC_API(ObjectPtr)

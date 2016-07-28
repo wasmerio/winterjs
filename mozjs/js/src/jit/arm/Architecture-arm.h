@@ -274,11 +274,6 @@ class FloatRegisters
         return Names[code];
     }
 
-    static const char* GetName(uint32_t i) {
-        MOZ_ASSERT(i < Total);
-        return GetName(Encoding(i));
-    }
-
     static Code FromName(const char* name);
 
     static const Encoding Invalid = invalid_freg;
@@ -291,8 +286,9 @@ class FloatRegisters
     static uint32_t ActualTotalPhys();
 
     typedef uint64_t SetType;
-    static const SetType AllDoubleMask = ((1ull << 16) - 1) << 32;
-    static const SetType AllMask = ((1ull << 48) - 1);
+    static const SetType AllSingleMask = (1ull << TotalSingle) - 1;
+    static const SetType AllDoubleMask = ((1ull << TotalDouble) - 1) << TotalSingle;
+    static const SetType AllMask = AllDoubleMask | AllSingleMask;
 
     // d15 is the ScratchFloatReg.
     static const SetType NonVolatileDoubleMask =

@@ -217,18 +217,16 @@ class ShapeTable {
         return mallocSizeOf(this) + mallocSizeOf(entries_);
     }
 
-    /*
-     * NB: init and change are fallible but do not report OOM, so callers can
-     * cope or ignore. They do however use the context's calloc method in
-     * order to update the malloc counter on success.
-     */
+    // init() is fallible and reports OOM to the context.
     bool init(ExclusiveContext* cx, Shape* lastProp);
-    bool change(int log2Delta, ExclusiveContext* cx);
+
+    // change() is fallible but does not report OOM.
+    bool change(ExclusiveContext* cx, int log2Delta);
 
     template<MaybeAdding Adding>
     Entry& search(jsid id);
 
-    void fixupAfterMovingGC();
+    void trace(JSTracer* trc);
 #ifdef JSGC_HASH_TABLE_CHECKS
     void checkAfterMovingGC();
 #endif
@@ -381,7 +379,7 @@ class BaseShape : public gc::TenuredCell
                                          * dictionary last properties. */
 
     /* For owned BaseShapes, the canonical unowned BaseShape. */
-    HeapPtrUnownedBaseShape unowned_;
+    GCPtrUnownedBaseShape unowned_;
 
     /* For owned BaseShapes, the shape's shape table. */
     ShapeTable*      table_;
@@ -454,8 +452,7 @@ class BaseShape : public gc::TenuredCell
     static const JS::TraceKind TraceKind = JS::TraceKind::BaseShape;
 
     void traceChildren(JSTracer* trc);
-
-    void fixupAfterMovingGC();
+    void traceChildrenSkipShapeTable(JSTracer* trc);
 
   private:
     static void staticAsserts() {
@@ -464,6 +461,8 @@ class BaseShape : public gc::TenuredCell
                       "Things inheriting from gc::Cell must have a size that's "
                       "a multiple of gc::CellSize");
     }
+
+    void traceShapeTable(JSTracer* trc);
 };
 
 class UnownedBaseShape : public BaseShape {};
@@ -524,7 +523,7 @@ struct StackBaseShape : public DefaultHasher<ReadBarriered<UnownedBaseShape*>>
     static inline bool match(ReadBarriered<UnownedBaseShape*> key, const Lookup& lookup);
 };
 
-using BaseShapeSet = js::GCHashSet<ReadBarriered<UnownedBaseShape*>,
+using BaseShapeSet = JS::GCHashSet<ReadBarriered<UnownedBaseShape*>,
                                    StackBaseShape,
                                    SystemAllocPolicy>;
 
@@ -540,10 +539,11 @@ class Shape : public gc::TenuredCell
     friend struct StackBaseShape;
     friend struct StackShape;
     friend struct JS::ubi::Concrete<Shape>;
+    friend class js::gc::RelocationOverlay;
 
   protected:
-    HeapPtrBaseShape    base_;
-    PreBarrieredId      propid_;
+    GCPtrBaseShape base_;
+    PreBarrieredId propid_;
 
     enum SlotInfo : uint32_t
     {
@@ -576,15 +576,15 @@ class Shape : public gc::TenuredCell
     uint8_t             attrs;          /* attributes, see jsapi.h JSPROP_* */
     uint8_t             flags;          /* flags, see below for defines */
 
-    HeapPtrShape        parent;        /* parent node, reverse for..in order */
+    GCPtrShape   parent;          /* parent node, reverse for..in order */
     /* kids is valid when !inDictionary(), listp is valid when inDictionary(). */
     union {
-        KidsPointer kids;       /* null, single child, or a tagged ptr
-                                   to many-kids data structure */
-        HeapPtrShape* listp;    /* dictionary list starting at shape_
-                                   has a double-indirect back pointer,
-                                   either to the next shape's parent if not
-                                   last, else to obj->shape_ */
+        KidsPointer kids;         /* null, single child, or a tagged ptr
+                                     to many-kids data structure */
+        GCPtrShape* listp;        /* dictionary list starting at shape_
+                                     has a double-indirect back pointer,
+                                     either to the next shape's parent if not
+                                     last, else to obj->shape_ */
     };
 
     template<MaybeAdding Adding = MaybeAdding::NotAdding>
@@ -593,9 +593,10 @@ class Shape : public gc::TenuredCell
     static inline Shape* searchNoHashify(Shape* start, jsid id);
 
     void removeFromDictionary(NativeObject* obj);
-    void insertIntoDictionary(HeapPtrShape* dictp);
+    void insertIntoDictionary(GCPtrShape* dictp);
 
-    inline void initDictionaryShape(const StackShape& child, uint32_t nfixed, HeapPtrShape* dictp);
+    inline void initDictionaryShape(const StackShape& child, uint32_t nfixed,
+                                    GCPtrShape* dictp);
 
     /* Replace the base shape of the last shape in a non-dictionary lineage with base. */
     static Shape* replaceLastProperty(ExclusiveContext* cx, StackBaseShape& base,
@@ -652,7 +653,7 @@ class Shape : public gc::TenuredCell
         return *(AccessorShape*)this;
     }
 
-    const HeapPtrShape& previous() const { return parent; }
+    const GCPtrShape& previous() const { return parent; }
     JSCompartment* compartment() const { return base()->compartment(); }
     JSCompartment* maybeCompartment() const { return compartment(); }
 
@@ -944,8 +945,8 @@ class Shape : public gc::TenuredCell
     }
 
 #ifdef DEBUG
-    void dump(JSContext* cx, FILE* fp) const;
-    void dumpSubtree(JSContext* cx, int level, FILE* fp) const;
+    void dump(FILE* fp) const;
+    void dumpSubtree(int level, FILE* fp) const;
 #endif
 
     void sweep();
@@ -961,6 +962,7 @@ class Shape : public gc::TenuredCell
 
     void fixupAfterMovingGC();
     void fixupGetterSetterForBarrier(JSTracer* trc);
+    void updateBaseShapeAfterMovingGC();
 
     /* For JIT usage */
     static inline size_t offsetOfBase() { return offsetof(Shape, base_); }
@@ -1009,7 +1011,7 @@ StackBaseShape::StackBaseShape(Shape* shape)
 
 class MOZ_RAII AutoRooterGetterSetter
 {
-    class Inner : private JS::CustomAutoRooter
+    class Inner final : private JS::CustomAutoRooter
     {
       public:
         inline Inner(ExclusiveContext* cx, uint8_t attrs, GetterOp* pgetter_, SetterOp* psetter_);
@@ -1122,7 +1124,7 @@ struct InitialShapeEntry
     }
 };
 
-using InitialShapeSet = js::GCHashSet<InitialShapeEntry, InitialShapeEntry, SystemAllocPolicy>;
+using InitialShapeSet = JS::GCHashSet<InitialShapeEntry, InitialShapeEntry, SystemAllocPolicy>;
 
 struct StackShape
 {
@@ -1349,7 +1351,7 @@ Shape::setterObject() const
 }
 
 inline void
-Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed, HeapPtrShape* dictp)
+Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed, GCPtrShape* dictp)
 {
     if (child.isAccessorShape())
         new (this) AccessorShape(child, nfixed);

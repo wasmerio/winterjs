@@ -19,7 +19,10 @@
     macro(apply, apply, "apply") \
     macro(arguments, arguments, "arguments") \
     macro(as, as, "as") \
+    macro(ArrayBufferSpecies, ArrayBufferSpecies, "ArrayBufferSpecies") \
     macro(ArrayIteratorNext, ArrayIteratorNext, "ArrayIteratorNext") \
+    macro(ArraySpecies, ArraySpecies, "ArraySpecies") \
+    macro(ArraySpeciesCreate, ArraySpeciesCreate, "ArraySpeciesCreate") \
     macro(ArrayType, ArrayType, "ArrayType") \
     macro(ArrayValues, ArrayValues, "ArrayValues") \
     macro(ArrayValuesAt, ArrayValuesAt, "ArrayValuesAt") \
@@ -63,9 +66,9 @@
     macro(currencyDisplay, currencyDisplay, "currencyDisplay") \
     macro(DateTimeFormat, DateTimeFormat, "DateTimeFormat") \
     macro(DateTimeFormatFormatGet, DateTimeFormatFormatGet, "Intl_DateTimeFormat_format_get") \
-    macro(DateTimeFormatFormatToPartsGet, DateTimeFormatFormatToPartsGet, "Intl_DateTimeFormat_formatToParts_get") \
+    macro(DateTimeFormatFormatToParts, DateTimeFormatFormatToParts, "Intl_DateTimeFormat_formatToParts") \
     macro(day, day, "day") \
-    macro(dayperiod, dayperiod, "dayperiod") \
+    macro(dayPeriod, dayPeriod, "dayPeriod") \
     macro(decodeURI, decodeURI, "decodeURI") \
     macro(decodeURIComponent, decodeURIComponent, "decodeURIComponent") \
     macro(default_, default_, "default") \
@@ -93,6 +96,7 @@
     macro(era, era, "era") \
     macro(escape, escape, "escape") \
     macro(eval, eval, "eval") \
+    macro(exec, exec, "exec") \
     macro(false, false_, "false") \
     macro(fieldOffsets, fieldOffsets, "fieldOffsets") \
     macro(fieldTypes, fieldTypes, "fieldTypes") \
@@ -112,13 +116,18 @@
     macro(formatToParts, formatToParts, "formatToParts") \
     macro(frame, frame, "frame") \
     macro(from, from, "from") \
+    macro(futexOK, futexOK, "ok") \
+    macro(futexNotEqual, futexNotEqual, "not-equal") \
+    macro(futexTimedOut, futexTimedOut, "timed-out") \
     macro(gcCycleNumber, gcCycleNumber, "gcCycleNumber") \
     macro(GeneratorFunction, GeneratorFunction, "GeneratorFunction") \
     macro(get, get, "get") \
+    macro(getPrefix, getPrefix, "get ") \
     macro(getInternals, getInternals, "getInternals") \
     macro(getOwnPropertyDescriptor, getOwnPropertyDescriptor, "getOwnPropertyDescriptor") \
     macro(getOwnPropertyNames, getOwnPropertyNames, "getOwnPropertyNames") \
     macro(getPropertyDescriptor, getPropertyDescriptor, "getPropertyDescriptor") \
+    macro(getPrototypeOf, getPrototypeOf, "getPrototypeOf") \
     macro(global, global, "global") \
     macro(Handle, Handle, "Handle") \
     macro(has, has, "has") \
@@ -160,6 +169,7 @@
     macro(let, let, "let") \
     macro(line, line, "line") \
     macro(lineNumber, lineNumber, "lineNumber") \
+    macro(literal, literal, "literal") \
     macro(loc, loc, "loc") \
     macro(locale, locale, "locale") \
     macro(lookupGetter, lookupGetter, "__lookupGetter__") \
@@ -173,6 +183,8 @@
     macro(minute, minute, "minute") \
     macro(missingArguments, missingArguments, "missingArguments") \
     macro(module, module, "module") \
+    macro(ModuleDeclarationInstantiation, ModuleDeclarationInstantiation, "ModuleDeclarationInstantiation") \
+    macro(ModuleEvaluation, ModuleEvaluation, "ModuleEvaluation") \
     macro(month, month, "month") \
     macro(multiline, multiline, "multiline") \
     macro(name, name, "name") \
@@ -227,11 +239,13 @@
     macro(scripts, scripts, "scripts") \
     macro(second, second, "second") \
     macro(sensitivity, sensitivity, "sensitivity") \
-    macro(separator, separator, "separator") \
     macro(set, set, "set") \
+    macro(setPrefix, setPrefix, "set ") \
+    macro(setPrototypeOf, setPrototypeOf, "setPrototypeOf") \
     macro(shape, shape, "shape") \
     macro(size, size, "size") \
     macro(source, source, "source") \
+    macro(SpeciesConstructor, SpeciesConstructor, "SpeciesConstructor") \
     macro(stack, stack, "stack") \
     macro(star, star, "*") \
     macro(starDefaultStar, starDefaultStar, "*default*") \
@@ -285,6 +299,12 @@
     macro(wasm, wasm, "wasm") \
     macro(watch, watch, "watch") \
     macro(WeakSet_add, WeakSet_add, "WeakSet_add") \
+    macro(RegExp_prototype_Exec, RegExp_prototype_Exec, "RegExp_prototype_Exec") \
+    macro(UnwrapAndCallRegExpBuiltinExec, UnwrapAndCallRegExpBuiltinExec, "UnwrapAndCallRegExpBuiltinExec") \
+    macro(RegExpBuiltinExec, RegExpBuiltinExec, "RegExpBuiltinExec") \
+    macro(RegExpMatcher, RegExpMatcher, "RegExpMatcher") \
+    macro(RegExpSearcher, RegExpSearcher, "RegExpSearcher") \
+    macro(RegExpTester, RegExpTester, "RegExpTester") \
     macro(weekday, weekday, "weekday") \
     macro(writable, writable, "writable") \
     macro(year, year, "year") \
@@ -299,21 +319,6 @@
     macro(boolean, boolean, "boolean") \
     macro(null, null, "null") \
     macro(symbol, symbol, "symbol") \
-    /* Well-known atom names must be continuous and ordered, matching \
-     * enum JS::SymbolCode in jsapi.h. */ \
-    macro(iterator, iterator, "iterator") \
-    macro(match, match, "match") \
-    macro(species, species, "species") \
-    macro(toPrimitive, toPrimitive, "toPrimitive") \
-    macro(unscopables, unscopables, "unscopables") \
-    /* Same goes for the descriptions of the well-known symbols. */ \
-    macro(Symbol_hasInstance, Symbol_hasInstance, "Symbol.hasInstance") \
-    macro(Symbol_isConcatSpreadable, Symbol_isConcatSpreadable, "Symbol.isConcatSpreadable") \
-    macro(Symbol_iterator, Symbol_iterator, "Symbol.iterator") \
-    macro(Symbol_match,    Symbol_match,    "Symbol.match") \
-    macro(Symbol_species,  Symbol_species,  "Symbol.species") \
-    macro(Symbol_toPrimitive, Symbol_toPrimitive, "Symbol.toPrimitive") \
-    macro(Symbol_unscopables, Symbol_unscopables, "Symbol.unscopables") \
     /* Function names for properties named by symbols. */ \
     macro(Symbol_iterator_fun, Symbol_iterator_fun, "[Symbol.iterator]") \
 

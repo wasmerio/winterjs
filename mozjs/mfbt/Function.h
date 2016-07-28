@@ -44,7 +44,7 @@ template<typename ReturnType, typename... Arguments>
 class FunctionImplBase : public mozilla::RefCounted<FunctionImplBase<ReturnType, Arguments...>>
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(FunctionImplBase)
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(FunctionImplBase)
 
   virtual ~FunctionImplBase() {}
   virtual ReturnType call(Arguments... aArguments) = 0;
@@ -189,6 +189,34 @@ private:
   // TODO: Consider implementing a small object optimization.
   RefPtr<detail::FunctionImplBase<ReturnType, Arguments...>> mImpl;
 };
+
+template<typename Signature>
+bool
+operator==(const function<Signature>& aX, decltype(nullptr))
+{
+  return !aX;
+}
+
+template<typename Signature>
+bool
+operator==(decltype(nullptr), const function<Signature>& aX)
+{
+  return !aX;
+}
+
+template<typename Signature>
+bool
+operator!=(const function<Signature>& aX, decltype(nullptr))
+{
+  return bool(aX);
+}
+
+template<typename Signature>
+bool
+operator!=(decltype(nullptr), const function<Signature>& aX)
+{
+  return bool(aX);
+}
 
 } // namespace mozilla
 

@@ -316,6 +316,8 @@ class JSString : public js::gc::TenuredCell
     /* Avoid lame compile errors in JSRope::flatten */
     friend class JSRope;
 
+    friend class js::gc::RelocationOverlay;
+
   protected:
     template <typename CharT>
     MOZ_ALWAYS_INLINE
@@ -472,8 +474,6 @@ class JSString : public js::gc::TenuredCell
 
     inline void finalize(js::FreeOp* fop);
 
-    void fixupAfterMovingGC() {}
-
     /* Gets the number of bytes that the chars take on the heap. */
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
@@ -497,8 +497,10 @@ class JSString : public js::gc::TenuredCell
     static const JS::TraceKind TraceKind = JS::TraceKind::String;
 
 #ifdef DEBUG
+    void dump(FILE* fp);
+    void dumpCharsNoNewline(FILE* fp);
     void dump();
-    void dumpCharsNoNewline(FILE* fp=stderr);
+    void dumpCharsNoNewline();
     void dumpRepresentation(FILE* fp, int indent) const;
     void dumpRepresentationHeader(FILE* fp, int indent, const char* subclass) const;
 
@@ -987,6 +989,7 @@ class JSAtom : public JSFlatString
     }
 
 #ifdef DEBUG
+    void dump(FILE* fp);
     void dump();
 #endif
 };
@@ -1138,7 +1141,7 @@ NameToId(PropertyName* name)
     return NON_INTEGER_ATOM_TO_JSID(name);
 }
 
-using PropertyNameVector = js::GCVector<PropertyName*>;
+using PropertyNameVector = JS::GCVector<PropertyName*>;
 
 template <typename CharT>
 void

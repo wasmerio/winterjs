@@ -547,11 +547,12 @@ static const bool isthreaded = true;
 #define	CACHELINE		((size_t)(1U << CACHELINE_2POW))
 
 /*
- * Smallest size class to support.  On Linux and Mac, even malloc(1) must
- * reserve a word's worth of memory (see Mozilla bug 691003).
+ * Smallest size class to support.  On Windows the smallest allocation size
+ * must be 8 bytes on 32-bit, 16 bytes on 64-bit.  On Linux and Mac, even
+ * malloc(1) must reserve a word's worth of memory (see Mozilla bug 691003).
  */
 #ifdef MOZ_MEMORY_WINDOWS
-#define	TINY_MIN_2POW		1
+#define TINY_MIN_2POW           (sizeof(void*) == 8 ? 4 : 3)
 #else
 #define TINY_MIN_2POW           (sizeof(void*) == 8 ? 3 : 2)
 #endif
@@ -1089,7 +1090,7 @@ static const bool config_recycle = false;
  * controlling the malloc behavior are defined as compile-time constants
  * for best performance and cannot be altered at runtime.
  */
-#if !defined(__ia64__) && !defined(__sparc__) && !defined(__mips__)
+#if !defined(__ia64__) && !defined(__sparc__) && !defined(__mips__) && !defined(__aarch64__)
 #define MALLOC_STATIC_SIZES 1
 #endif
 
@@ -1103,7 +1104,7 @@ static const bool config_recycle = false;
 #if (defined(SOLARIS) || defined(__FreeBSD__)) && \
     (defined(__sparc) || defined(__sparcv9) || defined(__ia64))
 #define pagesize_2pow			((size_t) 13)
-#elif defined(__powerpc64__) || defined(__aarch64__)
+#elif defined(__powerpc64__)
 #define pagesize_2pow			((size_t) 16)
 #else
 #define pagesize_2pow			((size_t) 12)

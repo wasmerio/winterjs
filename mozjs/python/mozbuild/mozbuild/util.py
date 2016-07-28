@@ -5,7 +5,7 @@
 # This file contains miscellaneous utility functions that don't belong anywhere
 # in particular.
 
-from __future__ import absolute_import, unicode_literals
+from __future__ import absolute_import, unicode_literals, print_function
 
 import argparse
 import collections
@@ -40,6 +40,22 @@ else:
 if sys.platform == 'win32':
     _kernel32 = ctypes.windll.kernel32
     _FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = 0x2000
+
+
+def exec_(object, globals=None, locals=None):
+    """Wrapper around the exec statement to avoid bogus errors like:
+
+    SyntaxError: unqualified exec is not allowed in function ...
+    it is a nested function.
+
+    or
+
+    SyntaxError: unqualified exec is not allowed in function ...
+    it contains a nested function with free variable
+
+    which happen with older versions of python 2.7.
+    """
+    exec(object, globals, locals)
 
 
 def hash_file(path, hasher=None):
@@ -83,6 +99,15 @@ class ReadOnlyNamespace(object):
 
     def __setattr__(self, key, value):
         raise Exception('Object does not support assignment.')
+
+    def __ne__(self, other):
+        return not (self == other)
+
+    def __eq__(self, other):
+        return self is other or self.__dict__ == other.__dict__
+
+    def __repr__(self):
+        return '<%s %r>' % (self.__class__.__name__, self.__dict__)
 
 
 class ReadOnlyDict(dict):
@@ -410,7 +435,11 @@ class StrictOrderingOnAppendListMixin(object):
         if isinstance(l, StrictOrderingOnAppendList):
             return
 
-        srtd = sorted(l, key=lambda x: x.lower())
+        def _first_element(e):
+            # If the list entry is a tuple, we sort based on the first element
+            # in the tuple.
+            return e[0] if isinstance(e, tuple) else e
+        srtd = sorted(l, key=lambda x: _first_element(x).lower())
 
         if srtd != l:
             raise UnsortedError(srtd, l)
@@ -1111,3 +1140,38 @@ class DefinesAction(argparse.Action):
                 value = int(value)
         defines[name] = value
         setattr(namespace, self.dest, defines)
+
+
+class EnumStringComparisonError(Exception):
+    pass
+
+
+class EnumString(unicode):
+    '''A string type that only can have a limited set of values, similarly to
+    an Enum, and can only be compared against that set of values.
+
+    The class is meant to be subclassed, where the subclass defines
+    POSSIBLE_VALUES. The `subclass` method is a helper to create such
+    subclasses.
+    '''
+    POSSIBLE_VALUES = ()
+    def __init__(self, value):
+        if value not in self.POSSIBLE_VALUES:
+            raise ValueError("'%s' is not a valid value for %s"
+                             % (value, self.__class__.__name__))
+
+    def __eq__(self, other):
+        if other not in self.POSSIBLE_VALUES:
+            raise EnumStringComparisonError(
+                'Can only compare with %s'
+                % ', '.join("'%s'" % v for v in self.POSSIBLE_VALUES))
+        return super(EnumString, self).__eq__(other)
+
+    def __ne__(self, other):
+        return not (self == other)
+
+    @staticmethod
+    def subclass(*possible_values):
+        class EnumStringSubclass(EnumString):
+            POSSIBLE_VALUES = possible_values
+        return EnumStringSubclass

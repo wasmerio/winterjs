@@ -262,13 +262,13 @@ BitArrayIndexToWordMask(size_t i)
 }
 
 static inline bool
-IsBitArrayElementSet(size_t* array, size_t length, size_t i)
+IsBitArrayElementSet(const size_t* array, size_t length, size_t i)
 {
     return array[BitArrayIndexToWordIndex(length, i)] & BitArrayIndexToWordMask(i);
 }
 
 static inline bool
-IsAnyBitArrayElementSet(size_t* array, size_t length)
+IsAnyBitArrayElementSet(const size_t* array, size_t length)
 {
     unsigned numWords = NumWordsForBitArrayOfLength(length);
     for (unsigned i = 0; i < numWords; ++i) {
@@ -313,6 +313,36 @@ PodSet(T* aDst, T aSrc, size_t aNElem)
 }
 
 } /* namespace mozilla */
+
+/*
+ * Patterns used by SpiderMonkey to overwrite unused memory. If you are
+ * accessing an object with one of these pattern, you probably have a dangling
+ * pointer. These values should be odd, see the comment in IsThingPoisoned.
+ *
+ * Note: new patterns should also be added to the array in IsThingPoisoned!
+ */
+#define JS_FRESH_NURSERY_PATTERN 0x2F
+#define JS_SWEPT_NURSERY_PATTERN 0x2B
+#define JS_ALLOCATED_NURSERY_PATTERN 0x2D
+#define JS_FRESH_TENURED_PATTERN 0x4F
+#define JS_MOVED_TENURED_PATTERN 0x49
+#define JS_SWEPT_TENURED_PATTERN 0x4B
+#define JS_ALLOCATED_TENURED_PATTERN 0x4D
+
+/*
+ * Ensure JS_SWEPT_CODE_PATTERN is a byte pattern that will crash immediately
+ * when executed, so either an undefined instruction or an instruction that's
+ * illegal in user mode.
+ */
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_NONE)
+# define JS_SWEPT_CODE_PATTERN 0xED // IN instruction, crashes in user mode.
+#elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+# define JS_SWEPT_CODE_PATTERN 0xA3 // undefined instruction
+#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+# define JS_SWEPT_CODE_PATTERN 0x01 // undefined instruction
+#else
+# error "JS_SWEPT_CODE_PATTERN not defined for this platform"
+#endif
 
 static inline void*
 Poison(void* ptr, uint8_t value, size_t num)

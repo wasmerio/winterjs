@@ -49,31 +49,172 @@ MacroAssemblerX64::loadConstantFloat32(float f, FloatRegister dest)
 }
 
 void
-MacroAssemblerX64::loadConstantInt32x4(const SimdConstant& v, FloatRegister dest)
+MacroAssemblerX64::loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest)
 {
-    MOZ_ASSERT(v.type() == SimdConstant::Int32x4);
-    if (maybeInlineInt32x4(v, dest))
+    if (maybeInlineSimd128Int(v, dest))
         return;
     SimdData* val = getSimdData(v);
     if (!val)
         return;
-    MOZ_ASSERT(val->type() == SimdConstant::Int32x4);
     JmpSrc j = masm.vmovdqa_ripr(dest.encoding());
     propagateOOM(val->uses.append(CodeOffset(j.offset())));
 }
 
 void
-MacroAssemblerX64::loadConstantFloat32x4(const SimdConstant&v, FloatRegister dest)
+MacroAssemblerX64::loadConstantSimd128Float(const SimdConstant&v, FloatRegister dest)
 {
-    MOZ_ASSERT(v.type() == SimdConstant::Float32x4);
-    if (maybeInlineFloat32x4(v, dest))
+    if (maybeInlineSimd128Float(v, dest))
         return;
     SimdData* val = getSimdData(v);
     if (!val)
         return;
-    MOZ_ASSERT(val->type() == SimdConstant::Float32x4);
     JmpSrc j = masm.vmovaps_ripr(dest.encoding());
     propagateOOM(val->uses.append(CodeOffset(j.offset())));
+}
+
+void
+MacroAssemblerX64::convertInt64ToDouble(Register input, FloatRegister output)
+{
+    // Zero the output register to break dependencies, see convertInt32ToDouble.
+    zeroDouble(output);
+
+    vcvtsq2sd(input, output, output);
+}
+
+void
+MacroAssemblerX64::convertInt64ToFloat32(Register input, FloatRegister output)
+{
+    // Zero the output register to break dependencies, see convertInt32ToDouble.
+    zeroFloat32(output);
+
+    vcvtsq2ss(input, output, output);
+}
+void
+MacroAssemblerX64::convertUInt64ToDouble(Register input, FloatRegister output)
+{
+    // Zero the output register to break dependencies, see convertInt32ToDouble.
+    zeroDouble(output);
+
+    // If the input's sign bit is not set we use vcvtsq2sd directly.
+    // Else, we divide by 2, convert to double, and multiply the result by 2.
+    Label done;
+    Label isSigned;
+
+    testq(input, input);
+    j(Assembler::Signed, &isSigned);
+    vcvtsq2sd(input, output, output);
+    jump(&done);
+
+    bind(&isSigned);
+
+    ScratchRegisterScope scratch(asMasm());
+    mov(input, scratch);
+    shrq(Imm32(1), scratch);
+    vcvtsq2sd(scratch, output, output);
+    vaddsd(output, output, output);
+
+    bind(&done);
+}
+
+void
+MacroAssemblerX64::convertUInt64ToFloat32(Register input, FloatRegister output)
+{
+    // Zero the output register to break dependencies, see convertInt32ToDouble.
+    zeroFloat32(output);
+
+    // If the input's sign bit is not set we use vcvtsq2ss directly.
+    // Else, we divide by 2, convert to float, and multiply the result by 2.
+    Label done;
+    Label isSigned;
+
+    testq(input, input);
+    j(Assembler::Signed, &isSigned);
+    vcvtsq2ss(input, output, output);
+    jump(&done);
+
+    bind(&isSigned);
+
+    ScratchRegisterScope scratch(asMasm());
+    mov(input, scratch);
+    shrq(Imm32(1), scratch);
+    vcvtsq2ss(scratch, output, output);
+    vaddss(output, output, output);
+
+    bind(&done);
+}
+
+void
+MacroAssemblerX64::wasmTruncateDoubleToInt64(FloatRegister input, Register output, Label* oolEntry,
+                                             Label* oolRejoin, FloatRegister tempReg)
+{
+    vcvttsd2sq(input, output);
+    cmpq(Imm32(1), output);
+    j(Assembler::Overflow, oolEntry);
+}
+
+void
+MacroAssemblerX64::wasmTruncateFloat32ToInt64(FloatRegister input, Register output, Label* oolEntry,
+                                              Label* oolRejoin, FloatRegister tempReg)
+{
+    vcvttss2sq(input, output);
+    cmpq(Imm32(1), output);
+    j(Assembler::Overflow, oolEntry);
+}
+
+void
+MacroAssemblerX64::wasmTruncateDoubleToUInt64(FloatRegister input, Register output, Label* oolEntry,
+                                              Label* oolRejoin, FloatRegister tempReg)
+{
+    // If the input < INT64_MAX, vcvttsd2sq will do the right thing, so
+    // we use it directly. Else, we subtract INT64_MAX, convert to int64,
+    // and then add INT64_MAX to the result.
+
+    Label isLarge;
+
+    ScratchDoubleScope scratch(asMasm());
+    loadConstantDouble(double(0x8000000000000000), scratch);
+    asMasm().branchDouble(Assembler::DoubleGreaterThanOrEqual, input, scratch, &isLarge);
+    vcvttsd2sq(input, output);
+    testq(output, output);
+    j(Assembler::Signed, oolEntry);
+    jump(oolRejoin);
+
+    bind(&isLarge);
+
+    moveDouble(input, tempReg);
+    vsubsd(scratch, tempReg, tempReg);
+    vcvttsd2sq(tempReg, output);
+    testq(output, output);
+    j(Assembler::Signed, oolEntry);
+    asMasm().or64(Imm64(0x8000000000000000), Register64(output));
+}
+
+void
+MacroAssemblerX64::wasmTruncateFloat32ToUInt64(FloatRegister input, Register output, Label* oolEntry,
+                                               Label* oolRejoin, FloatRegister tempReg)
+{
+    // If the input < INT64_MAX, vcvttss2sq will do the right thing, so
+    // we use it directly. Else, we subtract INT64_MAX, convert to int64,
+    // and then add INT64_MAX to the result.
+
+    Label isLarge;
+
+    ScratchFloat32Scope scratch(asMasm());
+    loadConstantFloat32(float(0x8000000000000000), scratch);
+    asMasm().branchFloat(Assembler::DoubleGreaterThanOrEqual, input, scratch, &isLarge);
+    vcvttss2sq(input, output);
+    testq(output, output);
+    j(Assembler::Signed, oolEntry);
+    jump(oolRejoin);
+
+    bind(&isLarge);
+
+    moveFloat32(input, tempReg);
+    vsubss(scratch, tempReg, tempReg);
+    vcvttss2sq(tempReg, output);
+    testq(output, output);
+    j(Assembler::Signed, oolEntry);
+    asMasm().or64(Imm64(0x8000000000000000), Register64(output));
 }
 
 void
@@ -110,11 +251,7 @@ MacroAssemblerX64::finish()
         masm.haltingAlign(SimdMemoryAlignment);
     for (const SimdData& v : simds_) {
         bindOffsets(v.uses);
-        switch(v.type()) {
-          case SimdConstant::Int32x4:   masm.int32x4Constant(v.value.asInt32x4());     break;
-          case SimdConstant::Float32x4: masm.float32x4Constant(v.value.asFloat32x4()); break;
-          default: MOZ_CRASH("unexpected SimdConstant type");
-        }
+        masm.simd128Constant(v.value.bytes());
     }
 
     MacroAssemblerX86Shared::finish();
@@ -224,45 +361,6 @@ MacroAssemblerX64::handleFailureWithHandlerTail(void* handler)
     mov(ImmWord(BAILOUT_RETURN_OK), rax);
     jmp(Operand(rsp, offsetof(ResumeFromException, target)));
 }
-
-template <typename T>
-void
-MacroAssemblerX64::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const T& dest,
-                                     MIRType slotType)
-{
-    if (valueType == MIRType_Double) {
-        storeDouble(value.reg().typedReg().fpu(), dest);
-        return;
-    }
-
-    // For known integers and booleans, we can just store the unboxed value if
-    // the slot has the same type.
-    if ((valueType == MIRType_Int32 || valueType == MIRType_Boolean) && slotType == valueType) {
-        if (value.constant()) {
-            Value val = value.value();
-            if (valueType == MIRType_Int32)
-                store32(Imm32(val.toInt32()), dest);
-            else
-                store32(Imm32(val.toBoolean() ? 1 : 0), dest);
-        } else {
-            store32(value.reg().typedReg().gpr(), dest);
-        }
-        return;
-    }
-
-    if (value.constant())
-        storeValue(value.value(), dest);
-    else
-        storeValue(ValueTypeFromMIRType(valueType), value.reg().typedReg().gpr(), dest);
-}
-
-template void
-MacroAssemblerX64::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const Address& dest,
-                                     MIRType slotType);
-
-template void
-MacroAssemblerX64::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const BaseIndex& dest,
-                                     MIRType slotType);
 
 void
 MacroAssemblerX64::profilerEnterFrame(Register framePtr, Register scratch)
@@ -395,7 +493,8 @@ MacroAssembler::callWithABINoProfiler(Register fun, MoveOp::Type result)
     if (IsIntArgReg(fun)) {
         // Callee register may be clobbered for an argument. Move the callee to
         // r10, a volatile, non-argument register.
-        moveResolver_.addMove(MoveOperand(fun), MoveOperand(r10), MoveOp::GENERAL);
+        propagateOOM(moveResolver_.addMove(MoveOperand(fun), MoveOperand(r10),
+                                           MoveOp::GENERAL));
         fun = r10;
     }
 
@@ -414,7 +513,8 @@ MacroAssembler::callWithABINoProfiler(const Address& fun, MoveOp::Type result)
     if (IsIntArgReg(safeFun.base)) {
         // Callee register may be clobbered for an argument. Move the callee to
         // r10, a volatile, non-argument register.
-        moveResolver_.addMove(MoveOperand(fun.base), MoveOperand(r10), MoveOp::GENERAL);
+        propagateOOM(moveResolver_.addMove(MoveOperand(fun.base), MoveOperand(r10),
+                                           MoveOp::GENERAL));
         safeFun.base = r10;
     }
 
@@ -494,4 +594,43 @@ MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
     j(cond, label);
 }
 
+// ========================================================================
+// Memory access primitives.
+template <typename T>
+void
+MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const T& dest,
+                                  MIRType slotType)
+{
+    if (valueType == MIRType::Double) {
+        storeDouble(value.reg().typedReg().fpu(), dest);
+        return;
+    }
+
+    // For known integers and booleans, we can just store the unboxed value if
+    // the slot has the same type.
+    if ((valueType == MIRType::Int32 || valueType == MIRType::Boolean) && slotType == valueType) {
+        if (value.constant()) {
+            Value val = value.value();
+            if (valueType == MIRType::Int32)
+                store32(Imm32(val.toInt32()), dest);
+            else
+                store32(Imm32(val.toBoolean() ? 1 : 0), dest);
+        } else {
+            store32(value.reg().typedReg().gpr(), dest);
+        }
+        return;
+    }
+
+    if (value.constant())
+        storeValue(value.value(), dest);
+    else
+        storeValue(ValueTypeFromMIRType(valueType), value.reg().typedReg().gpr(), dest);
+}
+
+template void
+MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const Address& dest,
+                                  MIRType slotType);
+template void
+MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const BaseIndex& dest,
+                                  MIRType slotType);
 //}}} check_macroassembler_style
