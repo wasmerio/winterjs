@@ -1,8 +1,12 @@
+# We need to use bash here, as there are a couple of targets below
+# that use [[ to do conditional things
+SHELL := /bin/bash
+
+# Default flags
 CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
-	--disable-shared-js \
 	--without-intl-api \
 	--build-backends=RecursiveMake
 
@@ -25,22 +29,43 @@ CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 	endif
 else
 
+ifeq (,$(VSINSTALLDIR))
 CC ?= gcc
 CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
+PYTHON ?= python
+endif
 
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0 --enable-gczeal
+	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif
 
 ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifeq ($(MSYSTEM),MINGW64)
+ifneq ($(VSINSTALLDIR),)
+	# Visual Studio build
+	NEED_WIN_PYTHON := 1
+
+	# There's no cygpath in mozilla-build, and we're expecting to
+	# be building with MOZ_BUILD_TOOLS, so do our best
+	OUT_DIR:=$(subst \,/,$(OUT_DIR))
+
+ifeq ($(findstring x86_64,$(TARGET)),x86_64)
+	# This is the correct target for MSVC builds
+	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+endif
+	CONFIGURE_FLAGS += --without-pthreads
+	MOZ_TOOLS=/
+
+else ifeq ($(MSYSTEM),MINGW64)
+	# MSYS2/MINGW64 build
+	NEED_WIN_PYTHON := 1
+
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
@@ -51,49 +76,50 @@ ifeq ($(MSYSTEM),MINGW64)
 	# cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
 	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 
-	# on windows, SM requires moztools which contains prebuilt libraries like glib and libIDL.
-	# we don't need them, so just set / -- configure will check that $(MOZ_TOOLS)/bin exists
-	# and that it's in the path.
+	# Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
+	# to exist
 	MOZ_TOOLS=/
 
-	# This is a mess.  m-c/spidermonkey includes its own copy of virtualenv.py,
-	# which doesn't have the fixes needed to make it work with msys2/mingw64.
-	# The only way we can successfully build under msys2 is to use the win32-native
-	# python.
+	# We don't need to build shared JS, and we need to disable export attrs
+	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js --without-pthreads
+else
+	# We don't need to build shared JS
+	CONFIGURE_FLAGS += --disable-shared-js
+endif
 
-	ifneq (,$(wildcard c:/python27/python.exe))
-	FORCED_PYTHON := "c:/python27/python.exe"
-	else ifneq(,$(NATIVE_WIN32_PYTHON))
-	FORCED_PYTHON := "$(NATIVE_WIN32_PYTHON)"
+# If we need to do extra work to find an appropriate python on
+# Windows, do it here
+ifeq ($(NEED_WIN_PYTHON),1)
+	ifneq (,$(NATIVE_WIN32_PYTHON))
+		PYTHON := "$(NATIVE_WIN32_PYTHON)"
+	else ifneq (,$(wildcard c:/python27/python.exe))
+		PYTHON := "c:/python27/python.exe"
 	else
-	$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
-	$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
-	$(error Can't find native Win32 python)
+		$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
+		$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
+		$(error Native Win32 Python not found)
 	endif
-
-	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
-
 endif
 
 SRC_DIR = $(shell pwd)
 
-.PHONY : all
-ifneq (,$(FORCED_PYTHON))
-all:
-	touch $(SRC_DIR)/mozjs/js/src/configure
-	touch $(SRC_DIR)/mozjs/js/src/old-configure
-	cd $(OUT_DIR) && \
-	PYTHON="$(FORCED_PYTHON)" \
-	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
-	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
-else
-all:
-	touch $(SRC_DIR)/mozjs/js/src/configure
-	touch $(SRC_DIR)/mozjs/js/src/old-configure
-	cd $(OUT_DIR) && \
-	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
-	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
-	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
-endif
+.PHONY : all maybe-configure
 
+all: maybe-configure
+	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
+
+# Only touch and run configure if we need to, to avoid unnecessary rebuilds.
+# The second two time checks handle the case of configure.in and configure having
+# the same timestamp (e.g. after a git checkout)
+JSSRC := $(SRC_DIR)/mozjs/js/src
+maybe-configure:
+	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
+	[[ $(JSSRC)/old-configure -ot $(JSSRC)/old-configure.in ]] && touch $(JSSRC)/old-configure || true
+	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
+	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
+	if [[ $(JSSRC)/configure -nt $(OUT_DIR)/config.status ]] ; then \
+	  cd $(OUT_DIR) && \
+	  PYTHON="$(PYTHON)" MOZ_TOOLS="$(MOZ_TOOLS)" \
+	  CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
+	fi

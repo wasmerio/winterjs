@@ -70,8 +70,9 @@ SetThreadName(DWORD, const char*)
 }
 #endif
 
-struct nspr::Thread
+class nspr::Thread
 {
+public:
     HANDLE thread;
     DWORD threadId;
     void (*start)(void* arg);
