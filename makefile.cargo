@@ -91,9 +91,9 @@ endif
 # Windows, do it here
 ifeq ($(NEED_WIN_PYTHON),1)
 	ifneq (,$(NATIVE_WIN32_PYTHON))
-		PYTHON := "$(NATIVE_WIN32_PYTHON)"
+		PYTHON := $(NATIVE_WIN32_PYTHON)
 	else ifneq (,$(wildcard c:/python27/python.exe))
-		PYTHON := "c:/python27/python.exe"
+		PYTHON := c:/python27/python.exe
 	else
 		$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
 		$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
