@@ -26,8 +26,9 @@ fn main() {
     // Put MOZTOOLS_PATH at the beginning of PATH if specified
     if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
         let path = env::var_os("PATH").unwrap();
+        let moztools_str = moztools.into_string().unwrap();
         let mut paths = env::split_paths(&path).collect::<Vec<_>>();
-        paths.push(PathBuf::from(moztools));
+        paths.insert(0, PathBuf::from(moztools_str.clone()));
         let new_path = env::join_paths(paths).unwrap();
         env::set_var("PATH", &new_path);
         make = OsStr::new("mozmake").to_os_string();
