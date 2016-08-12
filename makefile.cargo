@@ -43,6 +43,10 @@ ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
 	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif
 
+ifneq (,$(CARGO_FEATURE_PROMISES))
+	CONFIGURE_FLAGS += --enable-sm-promise
+endif
+
 ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
