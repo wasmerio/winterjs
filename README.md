@@ -16,7 +16,7 @@ In order to upgrade to a new version of SpiderMonkey:
 1. Download the tarball corresponding to the desired mozilla-central commit
    from [treeherder's SM-tc(pkg) job][tc].
 2. Update `etc/COMMIT`.
-3. Run `etc/update.py.`
+3. Run `python3 ./etc/update.py path/to/tarball`.
 4. For each supported platform, run `etc/bindings.sh` in the rust-mozjs
    repository, with the `LIBCLANG_PATH` and `LD_LIBRARY_PATH` environment
    variables set. Move the `out.rs` file it generates to the correct
