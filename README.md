@@ -20,26 +20,9 @@ In order to upgrade to a new version of SpiderMonkey:
 4. Clone and build the [`servo/rust-bindgen`][bindgen] repository with llvm 3.9
    or newer.
 4. Clone the [`servo/rust-mozjs`][r-m] repository.
-5. For each supported platform:
+5. For each supported platform (linux 32, linux 64, macos 64, windows gcc and msvc 64):
     * `$ cd path/to/rust-mozjs`
-    * With the `LIBCLANG_PATH` and `LD_LIBRARY_PATH` environment variables
-      set:
-
-      Generate the non-`DEBUG` bindings:
-
-      ```
-      $ cargo build
-      $ ./etc/bindings.sh
-      $ mv out.rs src/jsapi_$PLATFORM.rs
-      ```
-
-      Generate the `DEBUG` bindings:
-
-      ```
-      $ cargo build --features debugmozjs
-      $ ./etc/bindings.sh
-      $ mv out.rs src/jsapi_$PLATFORM_debug.rs
-      ```
+    * `$ ./etc/bindings-all.py <platform> ../path/to/bindgen ../path/to/clang/libs`
 
 [bindgen]: https://github.com/servo/rust-bindgen
 [tc]: https://treeherder.mozilla.org/#/jobs?repo=mozilla-central&filter-searchStr=Linux%20x64%20opt%20Spider%20Monkey,%20submitted%20by%20taskcluster%20%5BTC%5D%20Spidermonkey%20Package%20SM-tc(pkg)
