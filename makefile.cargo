@@ -7,7 +7,6 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
-	--without-intl-api \
 	--build-backends=RecursiveMake
 
 ifneq ($(HOST),$(TARGET))
