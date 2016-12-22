@@ -1,6 +1,6 @@
 # We need to use bash here, as there are a couple of targets below
 # that use [[ to do conditional things
-SHELL := /bin/bash
+SHELL := /usr/bin/env bash
 
 # Default flags
 CONFIGURE_FLAGS := \
