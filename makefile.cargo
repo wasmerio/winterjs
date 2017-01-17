@@ -28,7 +28,7 @@ CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 	endif
 else
 
-ifeq (,$(VSINSTALLDIR))
+ifeq (,$(VCINSTALLDIR))
 CC ?= gcc
 CPP ?= gcc -E
 CXX ?= g++
@@ -50,7 +50,7 @@ ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifneq ($(VSINSTALLDIR),)
+ifneq ($(VCINSTALLDIR),)
 	# Visual Studio build
 	NEED_WIN_PYTHON := 1
 
