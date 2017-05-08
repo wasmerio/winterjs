@@ -92,6 +92,8 @@ def rust_target(rust_compiler, rustc, target, cross_compiling):
             # Android
             ('x86', 'Android'): 'i686-linux-android',
             ('arm', 'Android'): 'arm-linux-androideabi',
+            ('aarch64', 'Android'): 'aarch64-linux-android',
+            ('armv7', 'Android'): 'arm-linux-androideabi',
             # Windows
             # XXX better detection of CXX needed here, to figure out whether
             # we need i686-pc-windows-gnu instead, since mingw32 builds work.

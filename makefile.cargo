@@ -11,6 +11,24 @@ CONFIGURE_FLAGS := \
 
 ifneq ($(HOST),$(TARGET))
 
+	ifeq (armv7-linux-androideabi,$(TARGET))
+		# Reset TARGET variable because armv7 target name used by Rust is not 
+		# the same as the target name needed for the CXX toolchain.
+		TARGET = arm-linux-androideabi
+		CONFIGURE_FLAGS += \
+			--with-arch=armv7-a \
+			--with-fpu=neon \
+			$(NULL)
+	endif
+
+	ifeq (android,$(findstring android,$(TARGET)))
+		CONFIGURE_FLAGS += \
+			--with-android-ndk=$(ANDROID_NDK) \
+			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
+			--with-android-version=$(NDK_ANDROID_VERSION) \
+			$(NULL)
+	endif
+
 CC ?= $(TARGET)-gcc
 CPP ?= $(TARGET)-gcc -E
 CXX ?= $(TARGET)-g++
@@ -18,19 +36,6 @@ AR ?= $(TARGET)-ar
 
 CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 
-	ifeq (android,$(findstring android,$(TARGET)))
-		CONFIGURE_FLAGS += \
-			--with-android-ndk=$(ANDROID_NDK) \
-			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
-			$(NULL)
-	endif
-
-	ifeq (androideabi,$(findstring androideabi,$(TARGET)))
-		CONFIGURE_FLAGS += \
-			--with-arch=armv7-a \
-			--with-fpu=neon \
-			$(NULL)
-	endif
 else
 
 ifeq (,$(VCINSTALLDIR))

@@ -1146,6 +1146,12 @@ echo "configure:1144: checking for android platform directory" >&5
     arm)
         target_name=arm
         ;;
+    armv7)
+        target_name=arm
+        ;;
+    aarch64)
+        target_name=arm64
+        ;;
     i?86)
         target_name=x86
         ;;
@@ -5063,6 +5069,9 @@ if test "$OS_TARGET" = "Android"; then
         ;;
     arm-*)
         ANDROID_CPU_ARCH=armeabi
+        ;;
+    aarch64-*)
+        ANDROID_CPU_ARCH=arm64-v8a
         ;;
     x86-*)
         ANDROID_CPU_ARCH=x86
