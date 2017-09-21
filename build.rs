@@ -39,7 +39,7 @@ fn main() {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .unwrap();
+        .expect("Failed to run `make`");
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src", out_dir);
     if target.contains("windows") {
