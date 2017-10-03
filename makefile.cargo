@@ -39,9 +39,16 @@ CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 else
 
 ifeq (,$(VCINSTALLDIR))
-CC ?= gcc
-CPP ?= gcc -E
-CXX ?= g++
+	ifeq (freebsd,$(findstring freebsd,$(TARGET)))
+		# Does not symlink clang as "gcc" like macOS does
+		CC ?= clang
+		CPP ?= clang -E
+		CXX ?= clang++
+	else
+		CC ?= gcc
+		CPP ?= gcc -E
+		CXX ?= g++
+	endif
 AR ?= ar
 PYTHON ?= python
 endif
