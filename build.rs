@@ -42,17 +42,17 @@ fn main() {
         .expect("Failed to run `make`");
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src", out_dir);
+    println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
-    } else if target.contains("apple") {
+    } else if target.contains("apple") || target.contains("freebsd") {
         println!("cargo:rustc-link-lib=c++");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
     }
-    println!("cargo:rustc-link-lib=static=js_static");
     println!("cargo:outdir={}", out_dir);
 }
