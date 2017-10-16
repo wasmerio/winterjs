@@ -35,6 +35,7 @@ fn main() {
     }
 
     let result = Command::new(make)
+        .env("MAKEFLAGS", env::var("CARGO_MAKEFLAGS").unwrap_or_default())
         .args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
