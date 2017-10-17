@@ -34,13 +34,22 @@ fn main() {
         make = OsStr::new("mozmake").to_os_string();
     }
 
-    let result = Command::new(make)
-        .env("MAKEFLAGS", env::var("CARGO_MAKEFLAGS").unwrap_or_default())
-        .args(&["-R", "-f", "makefile.cargo"])
+    let mut cmd = Command::new(make);
+
+    // We're using the MSYS make which doesn't work with the mingw32-make-style
+    // MAKEFLAGS, so remove that from the env if present.
+    if cfg!(windows) {
+        cmd.env_remove("MAKEFLAGS").env_remove("MFLAGS");
+    } else if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
+        cmd.env("MAKEFLAGS", makeflags);
+    }
+
+    let result = cmd.args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
         .expect("Failed to run `make`");
+
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src", out_dir);
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
