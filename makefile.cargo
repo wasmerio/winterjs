@@ -126,7 +126,7 @@ SRC_DIR = $(shell pwd)
 .PHONY : all maybe-configure
 
 all: maybe-configure
-	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
+	cd $(OUT_DIR) && $(MAKE) -f Makefile
 
 # Only touch and run configure if we need to, to avoid unnecessary rebuilds.
 # The second two time checks handle the case of configure.in and configure having
