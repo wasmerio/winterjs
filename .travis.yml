@@ -16,7 +16,7 @@ script:
   - cargo build --verbose --verbose $FEATURES
 
 before_install:
-  if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install yasm; fi
+  if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install yasm; fi
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
