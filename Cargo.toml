@@ -1,5 +1,7 @@
 [package]
 name = "mozjs_sys"
+description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
+repository = "https://github.com/servo/mozjs/"
 version = "0.0.0"
 authors = ["Mozilla"]
 links = "mozjs"
