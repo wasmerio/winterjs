@@ -7,6 +7,13 @@ authors = ["Mozilla"]
 links = "mozjs"
 build = "build.rs"
 license = "MPL-2.0"
+exclude = [
+  "mozjs/js/src/tests/**",
+  "mozjs/js/src/octane/**",
+  "mozjs/js/src/jit-test/**",
+  "mozjs/js/src/jsapi-tests/**",
+  "mozjs/js/src/doc/**",
+]
 
 [features]
 debugmozjs = []
