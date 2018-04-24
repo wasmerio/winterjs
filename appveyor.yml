@@ -1,4 +1,5 @@
 version: 1.0.{build}
+image: Visual Studio 2017
 
 environment:
   # The appveyor image we use has a pretty huge set of things installed... we make the
@@ -26,8 +27,8 @@ environment:
     C:\\Program Files\\Git\\usr\\bin;\
     C:\\Program Files\\AppVeyor\\BuildAgent;"
   matrix:
-  - TARGET: nightly-x86_64-pc-windows-msvc
-  - TARGET: nightly-x86_64-pc-windows-gnu
+    - CARGO_OPTS: ""
+    - CARGO_OPTS: "--release"
 
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
@@ -37,28 +38,16 @@ environment:
 
 # called after cloning, before building
 install:
+  - set BUILD_ENV=msvc
+  - set TARGET=nightly-x86_64-pc-windows-msvc
   - ps: Start-FileDownload "http://servo-rust.s3.amazonaws.com/build/MozillaBuildSetup-2.2.0.exe"
   - ps: .\MozillaBuildSetup-2.2.0.exe /S | Out-Null
   - ps: Start-FileDownload "https://static.rust-lang.org/dist/rust-${env:TARGET}.exe" -FileName "rust-install.exe"
   - ps: .\rust-install.exe /VERYSILENT /NORESTART /DIR="C:\rust" | Out-Null
   - ps: $env:PATH="$env:PATH;C:\rust\bin"
-# I can't make this work with a multi-line script (e.g. via |+ etc.), so we copy the if before every command
-  - if %TARGET:*-msvc=msvc%==msvc set BUILD_ENV=msvc
-  - if %TARGET:*-gnu=gnu%==gnu set BUILD_ENV=gnu
-  - if %BUILD_ENV%==msvc call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\bin\amd64\vcvars64.bat"
-  - if %BUILD_ENV%==msvc copy C:\mozilla-build\yasm\yasm.exe C:\mozilla-build\msys\bin
-  - if %BUILD_ENV%==msvc copy C:\mozilla-build\mozmake\mozmake.exe C:\mozilla-build\msys\bin
-  - if %BUILD_ENV%==msvc set MOZTOOLS_PATH=C:\mozilla-build\msys\bin
-  - if %BUILD_ENV%==msvc set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
-  - if %BUILD_ENV%==gnu  set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%
-  - if %BUILD_ENV%==gnu  set MSYSTEM=MINGW64
-  - if %BUILD_ENV%==gnu  set MSYS=winsymlinks=lnk
-  - if %BUILD_ENV%==gnu  bash -lc "echo $MSYSTEM; pacman --needed --noconfirm -Sy pacman-mirrors"
-  - if %BUILD_ENV%==gnu  bash -lc "pacman --noconfirm -Sy"
-  - if %BUILD_ENV%==gnu  bash -lc "pacman -Sy --needed --noconfirm git mingw-w64-x86_64-toolchain tar make python2-setuptools"
-  - if %BUILD_ENV%==gnu  bash -lc "easy_install-2.7 pip virtualenv"
-  - if %BUILD_ENV%==gnu  bash -lc "mv /mingw64/bin/python2.exe /mingw64/bin/python2-mingw64.exe"
-  - if %BUILD_ENV%==gnu  bash -lc "mv /mingw64/bin/python2.7.exe /mingw64/bin/python2.7-mingw64.exe"
+  - call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
+  - set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
+  - set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
   - rustc -vV
   - cargo -vV
 
@@ -66,6 +55,4 @@ build_script:
   - echo PATH %PATH%
   - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - if %BUILD_ENV%==msvc cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose
-  - if %BUILD_ENV%==gnu  bash -lc "cd $APPVEYOR_BUILD_FOLDER; cargo build --verbose --verbose"
-
+  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose %CARGO_OPTS% && cargo test %CARGO_OPTS%

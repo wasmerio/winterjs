@@ -906,41 +906,48 @@ struct Class
     JSFunToStringOp  getOpsFunToString()    const { return oOps ? oOps->funToString    : nullptr; }
 };
 
-static_assert(offsetof(JSClassOps, addProperty) == offsetof(ClassOps, addProperty),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, delProperty) == offsetof(ClassOps, delProperty),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, getProperty) == offsetof(ClassOps, getProperty),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, setProperty) == offsetof(ClassOps, setProperty),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, enumerate) == offsetof(ClassOps, enumerate),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, resolve) == offsetof(ClassOps, resolve),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, mayResolve) == offsetof(ClassOps, mayResolve),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, finalize) == offsetof(ClassOps, finalize),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, call) == offsetof(ClassOps, call),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, construct) == offsetof(ClassOps, construct),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, hasInstance) == offsetof(ClassOps, hasInstance),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(offsetof(JSClassOps, trace) == offsetof(ClassOps, trace),
-              "ClassOps and JSClassOps must be consistent");
-static_assert(sizeof(JSClassOps) == sizeof(ClassOps),
-              "ClassOps and JSClassOps must be consistent");
-
-static_assert(offsetof(JSClass, name) == offsetof(Class, name),
-              "Class and JSClass must be consistent");
-static_assert(offsetof(JSClass, flags) == offsetof(Class, flags),
-              "Class and JSClass must be consistent");
-static_assert(offsetof(JSClass, cOps) == offsetof(Class, cOps),
-              "Class and JSClass must be consistent");
-static_assert(sizeof(JSClass) == sizeof(Class),
-              "Class and JSClass must be consistent");
+/**
+ * These static_asserts fail to compile with Clang under Windows,
+ * because it has stricter rules than MSVC about requiring
+ * static_asserts to be constants, which fail for MS's implementation
+ * of offsetof.
+ *
+ * static_assert(offsetof(JSClassOps, addProperty) == offsetof(ClassOps, addProperty),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, delProperty) == offsetof(ClassOps, delProperty),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, getProperty) == offsetof(ClassOps, getProperty),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, setProperty) == offsetof(ClassOps, setProperty),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, enumerate) == offsetof(ClassOps, enumerate),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, resolve) == offsetof(ClassOps, resolve),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, mayResolve) == offsetof(ClassOps, mayResolve),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, finalize) == offsetof(ClassOps, finalize),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, call) == offsetof(ClassOps, call),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, construct) == offsetof(ClassOps, construct),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, hasInstance) == offsetof(ClassOps, hasInstance),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(offsetof(JSClassOps, trace) == offsetof(ClassOps, trace),
+ *               "ClassOps and JSClassOps must be consistent");
+ * static_assert(sizeof(JSClassOps) == sizeof(ClassOps),
+ *               "ClassOps and JSClassOps must be consistent");
+ *
+ * static_assert(offsetof(JSClass, name) == offsetof(Class, name),
+ *               "Class and JSClass must be consistent");
+ * static_assert(offsetof(JSClass, flags) == offsetof(Class, flags),
+ *               "Class and JSClass must be consistent");
+ * static_assert(offsetof(JSClass, cOps) == offsetof(Class, cOps),
+ *               "Class and JSClass must be consistent");
+ * static_assert(sizeof(JSClass) == sizeof(Class),
+ *               "Class and JSClass must be consistent");
+ */
 
 static MOZ_ALWAYS_INLINE const JSClass*
 Jsvalify(const Class* c)

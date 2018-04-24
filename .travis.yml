@@ -1,6 +1,8 @@
 language: rust
 rust:
   - nightly
+  - beta
+  - stable
 sudo: 9000
 dist: trusty
 
@@ -8,12 +10,22 @@ os:
   - linux
   - osx
 
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+      - llvm-toolchain-trusty-5.0
+    packages:
+      - g++-6
+      - clang-5.0
+
 env:
   - FEATURES=""
   - FEATURES="--features debugmozjs"
 
 script:
   - cargo build --verbose --verbose $FEATURES
+  - cargo test $FEATURES
 
 before_install:
   if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install yasm; fi
