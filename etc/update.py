@@ -52,11 +52,11 @@ def generate_configure():
     cwd = os.path.join(TARGET, "js", "src")
 
     subprocess.check_call(["autoconf2.13"], cwd=cwd)
-    subprocess.check_call(["git", "add", os.path.join(cwd, "configure")], stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "add", "-f", os.path.join(cwd, "configure")], stdout=subprocess.DEVNULL)
 
     with open(os.path.join(cwd, "old-configure"), "w") as old_configure:
         subprocess.check_call(["autoconf2.13", "old-configure.in"], cwd=cwd, stdout=old_configure)
-        subprocess.check_call(["git", "add", os.path.join(cwd, "old-configure")], stdout=subprocess.DEVNULL)
+        subprocess.check_call(["git", "add", "-f", os.path.join(cwd, "old-configure")], stdout=subprocess.DEVNULL)
 
     subprocess.check_call(["git", "commit", "-m", "Generate configure."], stdout=subprocess.DEVNULL)
 
