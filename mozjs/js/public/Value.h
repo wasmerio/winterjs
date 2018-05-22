@@ -1033,7 +1033,7 @@ CanonicalizeNaN(double d)
  *   32-bit user code should avoid copying jsval/JS::Value as much as possible,
  *   preferring to pass by const Value&.
  */
-class Value
+class JS_PUBLIC_API(Value)
 {
   public:
     /*

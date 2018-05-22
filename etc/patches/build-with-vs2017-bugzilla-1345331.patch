@@ -1,0 +1,20 @@
+diff --git a/mozjs/mfbt/Compression.cpp b/mozjs/mfbt/Compression.cpp
+index c114c6c..1ac574f 100644
+--- a/mozjs/mfbt/Compression.cpp
++++ b/mozjs/mfbt/Compression.cpp
+@@ -12,6 +12,15 @@
+ // corecrt_memory.h.
+ #include <string>
+ 
++// Because we wrap lz4.c in an anonymous namespace, all of its #includes
++// go in the anonymous namespace too. This would create conflicting
++// declarations for intrinsic functions that are internally defined
++// at top-level. Including intrin.h now prevents it from being included
++// later within the anonymous namespace.
++#ifdef _MSC_VER
++#include <intrin.h>
++#endif
++
+ using namespace mozilla::Compression;
+ 
+ namespace {

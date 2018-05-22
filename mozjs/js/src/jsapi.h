@@ -1924,10 +1924,18 @@ struct JSPropertySpec {
 
     static_assert(sizeof(SelfHostedWrapper) == sizeof(JSNativeWrapper),
                   "JSPropertySpec::getter/setter must be compact");
-    static_assert(offsetof(SelfHostedWrapper, funname) == offsetof(JSNativeWrapper, info),
-                  "JS_SELF_HOSTED* macros below require that "
-                  "SelfHostedWrapper::funname overlay "
-                  "JSNativeWrapper::info");
+/**
+ * This static_assert fails to compile with Clang under Windows,
+ * because it has stricter rules than MSVC about requiring
+ * static_asserts to be constants, which fail for MS's implementation
+ * of offsetof.
+ *
+ *  static_assert(offsetof(SelfHostedWrapper, funname) == offsetof(JSNativeWrapper, info),
+ *                "JS_SELF_HOSTED* macros below require that "
+ *                "SelfHostedWrapper::funname overlay "
+ *                "JSNativeWrapper::info");
+ */
+
 private:
     void checkAccessorsAreNative() const {
 #ifndef RUST_BINDGEN
