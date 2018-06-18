@@ -169,7 +169,9 @@ fn build_jsapi_bindings() {
 
     if let Ok(flags) = env::var("CXXFLAGS") {
         for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
+            if !flag.starts_with("--sysroot") {
+                builder = builder.clang_arg(flag);
+            }
         }
     }
 
