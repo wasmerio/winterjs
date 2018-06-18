@@ -122,6 +122,14 @@ fn build_jsglue() {
         build.flag_if_supported(flag);
     }
 
+    let config = format!("{}/js/src/js-confdefs.h", out.display());
+    if cfg!(windows) {
+        build.flag("-FI");
+    } else {
+        build.flag("-include");
+    }
+    build.flag(&config);
+
     build.file("src/jsglue.cpp");
     build.include(out.join("dist/include"));
     build.compile("jsglue");
@@ -168,6 +176,9 @@ fn build_jsapi_bindings() {
     for flag in cc_flags() {
         builder = builder.clang_arg(flag);
     }
+
+    builder = builder.clang_arg("-include");
+    builder = builder.clang_arg(out.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
 
     println!("Generting bindings {:?}.", builder.command_line_flags());
 
