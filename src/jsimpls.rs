@@ -2,21 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::js;
 use jsapi::JS;
 use jsapi::JSAutoCompartment;
 use jsapi::JSContext;
 use jsapi::JSErrNum;
+use jsapi::JSFunctionSpec;
 use jsapi::JSID_VOID;
 use jsapi::JSJitGetterCallArgs;
 use jsapi::JSJitMethodCallArgs;
 use jsapi::JSJitSetterCallArgs;
 use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
+use jsapi::JSPropertySpec;
 use jsapi::JS_EnterCompartment;
 use jsapi::JS_LeaveCompartment;
-use jsapi::glue::JS_AsShadowZone;
-use jsapi::glue::JS_CallArgsFromVp;
 use jsapi::glue::JS_NewCompartmentOptions;
 use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
@@ -29,6 +28,7 @@ use jsapi::mozilla::detail::GuardObjectNotificationReceiver;
 
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::os::raw::c_void;
 use std::ptr;
 
 impl<T> Deref for JS::Handle<T> {
@@ -192,8 +192,8 @@ impl JS::AutoGCRooter {
     pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
         #[allow(non_snake_case)]
         let autoGCRooters: &mut _ = {
-            let ctxfriend = cx as *mut js::ContextFriendFields;
-            &mut (*ctxfriend).roots.autoGCRooters_
+            let rooting_cx = cx as *mut JS::RootingContext;
+            &mut (*rooting_cx).autoGCRooters_
         };
         self.stackTop = autoGCRooters;
         self.down = *autoGCRooters;
@@ -204,7 +204,7 @@ impl JS::AutoGCRooter {
 
     pub unsafe fn remove_from_root_stack(&mut self) {
         assert!(*self.stackTop == self);
-        // This hoop-dancing is needed because bindgen gives stackTop
+        // This hoop-jumping is needed because bindgen gives stackTop
         // the type *const *mut AutoGCRooter, so we need to make it
         // mutable before setting it.
         // https://github.com/rust-lang-nursery/rust-bindgen/issues/511
@@ -352,10 +352,57 @@ impl JSJitSetterCallArgs {
     }
 }
 
-impl JSNativeWrapper {
+impl JSFunctionSpec {
+    pub const ZERO: Self = JSFunctionSpec {
+        name: 0 as *const _,
+        selfHostedName: 0 as *const _,
+        flags: 0,
+        nargs: 0,
+        call: JSNativeWrapper::ZERO,
+    };
+
     pub fn is_zeroed(&self) -> bool {
-        let JSNativeWrapper { op, info } = *self;
-        op.is_none() && info.is_null()
+        self.name.is_null() &&
+            self.selfHostedName.is_null() &&
+            self.flags == 0 &&
+            self.nargs == 0 &&
+            self.call.is_zeroed()
+    }
+}
+
+impl JSPropertySpec {
+    pub const ZERO: Self = JSPropertySpec {
+        name: 0 as *const _,
+        flags: 0,
+        __bindgen_anon_1: ::jsapi::JSPropertySpec__bindgen_ty_1 {
+            accessors: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1 {
+                getter: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+                    native: JSNativeWrapper::ZERO,
+                },
+                setter: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_2 {
+                    native: JSNativeWrapper::ZERO,
+                },
+            },
+        },
+    };
+
+    pub fn is_zeroed(&self) -> bool {
+        self.name.is_null() &&
+            self.flags == 0 &&
+            unsafe { self.__bindgen_anon_1.accessors.getter.native.is_zeroed() } &&
+            unsafe { self.__bindgen_anon_1.accessors.setter.native.is_zeroed() }
+    }
+}
+
+impl JSNativeWrapper {
+    pub const ZERO: Self = JSNativeWrapper {
+        info: 0 as *const _,
+        op: None,
+    };
+
+    pub fn is_zeroed(&self) -> bool {
+        self.op.is_none() &&
+            self.info.is_null()
     }
 }
 
@@ -365,27 +412,25 @@ impl<T> JS::Rooted<T> {
             stack: ::std::ptr::null_mut(),
             prev: ::std::ptr::null_mut(),
             ptr: unsafe { ::std::mem::zeroed() },
-            _phantom_0: ::std::marker::PhantomData,
         }
     }
 
-    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) where T: RootKind {
-        let ctxfriend = cx as *mut js::ContextFriendFields;
-        let zone = (*ctxfriend).zone_;
-        let roots: *mut _ = if !zone.is_null() {
-            let shadowed = &mut *JS_AsShadowZone(zone);
-            &mut shadowed.stackRoots_
-        } else {
-            let rt = (*ctxfriend).runtime_;
-            let rt = rt as *mut js::PerThreadDataFriendFields_RuntimeDummy;
-            let main_thread = &mut (*rt).mainThread as *mut _;
-            let main_thread = main_thread as *mut js::PerThreadDataFriendFields;
-            &mut (*main_thread).roots.stackRoots_
-        };
+    unsafe fn get_rooting_context(cx: *mut JSContext) -> *mut JS::RootingContext {
+        cx as *mut JS::RootingContext
+    }
 
+    unsafe fn get_root_stack(cx: *mut JSContext) -> *mut *mut JS::Rooted<*mut c_void>
+        where T: RootKind
+    {
         let kind = T::rootKind() as usize;
-        let stack = &mut (*roots)[kind] as *mut _ as *mut _;
+        let rooting_cx = Self::get_rooting_context(cx);
+        &mut (*rooting_cx).stackRoots_[kind] as *mut _ as *mut _
+    }
 
+    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext)
+        where T: RootKind
+    {
+        let stack = Self::get_root_stack(cx);
         self.stack = stack;
         self.prev = *stack;
 

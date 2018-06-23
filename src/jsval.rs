@@ -5,12 +5,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use jsapi::jsval_layout;
 use jsapi::JSContext;
 use jsapi::JSObject;
 use jsapi::JSString;
 use jsapi::JSValueType;
 use jsapi::JS::Value;
+use jsapi::JS::Value_layout;
 use jsapi::JS::TraceKind;
 
 use libc::c_void;
@@ -79,7 +79,9 @@ const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 #[inline(always)]
 fn AsJSVal(val: u64) -> JSVal {
     JSVal {
-        data: jsval_layout {
+	#[cfg(all(target_os = "android", target_arch = "x86"))]
+	__bindgen_align: [],
+        data: Value_layout {
             asBits: val,
         }
     }
@@ -272,7 +274,7 @@ impl JSVal {
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
     pub fn is_number(&self) -> bool {
-        const JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET: u64 = ValueShiftedTag::UNDEFINED as u64;
+        const JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET: u64 = ValueShiftedTag::BOOLEAN as u64;
         self.asBits() < JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET
     }
 
@@ -519,11 +521,24 @@ fn test_representation_agreement() {
     // since the constructor has checks that fail if we try mocking.  There are no-check
     // versions of the setters, but they're private.
     use jsapi::glue::*;
-    assert_agreement(unsafe { JS_BooleanValue(true) }, BooleanValue(true));
-    assert_agreement(unsafe { JS_DoubleValue(3.14159) }, DoubleValue(3.14159));
-    assert_agreement(unsafe { JS_Int32Value(37) }, Int32Value(37));
-    assert_agreement(unsafe { JS_NullValue() }, NullValue());
-    assert_agreement(unsafe { JS_UndefinedValue() }, UndefinedValue());
+    let mut val1 = UndefinedValue();
+    let mut val2;
+
+    unsafe { JS_ValueSetBoolean(&mut val1, true); }
+    val2 = BooleanValue(true);
+    assert_agreement(val1, val2);
+
+    unsafe { JS_ValueSetDouble(&mut val1, 3.14159); }
+    val2 = DoubleValue(3.14159);
+    assert_agreement(val1, val2);
+
+    unsafe { JS_ValueSetInt32(&mut val1, 37); }
+    val2 = Int32Value(37);
+    assert_agreement(val1, val2);
+
+    unsafe { JS_ValueSetNull(&mut val1); }
+    val2 = NullValue();
+    assert_agreement(val1, val2);
 }
 
 #[cfg(test)]
@@ -545,6 +560,11 @@ fn assert_agreement(val1: JSVal, val2: JSVal) {
     assert_eq!(unsafe { JS_ValueIsInt32(val1) }, val2.is_int32());
     if val2.is_int32() {
         assert_eq!(unsafe { JS_ValueToInt32(val1) }, val2.to_int32());
+    }
+
+    assert_eq!(unsafe { JS_ValueIsNumber(val1) }, val2.is_number());
+    if val2.is_number() {
+        assert_eq!(unsafe { JS_ValueToNumber(val1) }, val2.to_number());
     }
 
     assert_eq!(unsafe { JS_ValueIsNull(val1) }, val2.is_null());

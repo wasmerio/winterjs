@@ -50,10 +50,14 @@ fn cc_flags() -> Vec<&'static str> {
         result.extend(&[
             "-std=c++14",
             "-DWIN32",
+	    // Don't use reinterpret_cast() in offsetof(),
+	    // since it's not a constant expression, so can't
+	    // be used in static_assert().
+	    "-D_CRT_USE_BUILTIN_OFFSETOF",
         ]);
     } else {
         result.extend(&[
-            "-std=gnu++11",
+            "-std=gnu++14",
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
@@ -95,11 +99,18 @@ fn build_jsapi() {
         .expect("Failed to run `make`");
 
     assert!(result.success());
-    println!("cargo:rustc-link-search=native={}/js/src", out_dir);
+    println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
+    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
+    println!("cargo:rustc-link-lib=static=mozglue");
     if target.contains("windows") {
+        println!("cargo:rustc-link-search=native={}/dist/bin", out_dir);
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
+        println!("cargo:rustc-link-lib=user32");
+        println!("cargo:rustc-link-lib=Dbghelp");
+        println!("cargo:rustc-link-search=native={}/config/external/nspr/pr", out_dir);
+        println!("cargo:rustc-link-lib=nspr4");
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
@@ -114,7 +125,7 @@ fn build_jsapi() {
 
 fn build_jsglue() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-        
+
     let mut build = cc::Build::new();
     build.cpp(true);
 
@@ -132,6 +143,8 @@ fn build_jsglue() {
 
     build.file("src/jsglue.cpp");
     build.include(out.join("dist/include"));
+    build.include(out.join("js/src"));
+
     build.compile("jsglue");
 }
 
@@ -142,6 +155,7 @@ fn build_jsglue() {
 /// generated, see the `const` configuration variables below.
 fn build_jsapi_bindings() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let rustfmt_config = Some(PathBuf::from("rustfmt.toml"));
 
     // By default, constructors, destructors and methods declared in .h files are inlined,
     // so their symbols aren't available. Adding the -fkeep-inlined-functions option
@@ -160,7 +174,10 @@ fn build_jsapi_bindings() {
         .rustified_enum(".*")
         .enable_cxx_namespaces()
         .with_codegen_config(config)
+        .rustfmt_bindings(true)
+        .rustfmt_configuration_file(rustfmt_config)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
+        .clang_arg("-I").clang_arg(out.join("js/src").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++");
 
     if cfg!(windows) {
@@ -175,6 +192,12 @@ fn build_jsapi_bindings() {
         }
     }
 
+    if let Ok(flags) = env::var("CLANGFLAGS") {
+        for flag in flags.split_whitespace() {
+            builder = builder.clang_arg(flag);
+        }
+    }
+
     for flag in cc_flags() {
         builder = builder.clang_arg(flag);
     }
@@ -182,7 +205,7 @@ fn build_jsapi_bindings() {
     builder = builder.clang_arg("-include");
     builder = builder.clang_arg(out.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
 
-    println!("Generting bindings {:?}.", builder.command_line_flags());
+    println!("Generting bindings {:?} {}.", builder.command_line_flags(), bindgen::clang_version().full);
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
         builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
@@ -218,7 +241,9 @@ fn build_jsapi_bindings() {
     bindings.write_to_file(out.join("jsapi.rs"))
         .expect("Should write bindings to file OK");
 
+    println!("cargo:rerun-if-changed=rustfmt.toml");
     println!("cargo:rerun-if-changed=src/jsglue.hpp");
+    println!("cargo:rerun-if-changed=src/jsglue.cpp");
 }
 
 /// JSAPI types for which we should implement `Sync`.
@@ -270,6 +295,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
 const OPAQUE_TYPES: &'static [&'static str] = &[
     "JS::Auto.*Impl",
     "JS::Auto.*Vector.*",
+    "JS::PersistentRooted.*",
     "JS::ReadOnlyCompileOptions",
     "JS::Rooted<JS::Auto.*Vector.*>",
     "JS::detail::CallArgsBase.*",
@@ -279,6 +305,7 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::BufferList",
     "mozilla::Maybe.*",
     "mozilla::UniquePtr.*",
+    "mozilla::Variant",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
@@ -289,6 +316,9 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // We provide our own definition because we need to express trait bounds in
     // the definition of the struct to make our Drop implementation correct.
     "JS::Heap",
+    // We provide our own definition because SM's use of templates
+    // is more than bindgen can cope with.
+    "JS::Rooted",
     // Bindgen generates bitfields with private fields, so they cannot
     // be used in const expressions.
     "JSJitInfo",
@@ -299,5 +329,6 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type FILE = ::libc::FILE;"),
     ("root", "pub type JSJitInfo = ::jsjit::JSJitInfo;"),
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
+    ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
     ("root::JS", "pub type AutoGCRooterTag = AutoGCRooter__bindgen_ty_1;"),
 ];

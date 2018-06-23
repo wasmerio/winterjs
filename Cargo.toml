@@ -17,7 +17,6 @@ exclude = [
 
 [features]
 debugmozjs = []
-promises = []
 
 [lib]
 name = "mozjs_sys"

@@ -7,15 +7,7 @@
 #ifndef _JSGLUE_INCLUDED
 #define _JSGLUE_INCLUDED
 
-#include <stdint.h>
-#ifdef _MSC_VER
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
-typedef uint32_t HashNumber;
-
+#include "jsapi.h"
 #include "jsfriendapi.h"
 #include "js/Conversions.h"
 #include "js/Initialization.h"
@@ -24,9 +16,15 @@ typedef uint32_t HashNumber;
 // Reexport some functions that are marked inline.
 
 namespace glue {
-    
+
+bool JS_Init();
+
 JS::CompartmentOptions JS_NewCompartmentOptions();
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx, JSVersion version);
+JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
+
+JS::StackCapture JS_StackCapture_AllFrames();
+JS::StackCapture JS_StackCapture_MaxFrames(uint32_t max);
+JS::StackCapture JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames);
 
 bool JS_ForOfIteratorInit(JS::ForOfIterator* iterator, JS::HandleValue iterable, JS::ForOfIterator::NonIterableBehavior nonIterableBehavior);
 bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator, JS::MutableHandleValue val, bool* done);
@@ -35,22 +33,24 @@ JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone);
 
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp);
 
-JS::Value JS_BooleanValue(bool value);
+void JS_ValueSetBoolean(JS::Value* value, bool x);
 bool JS_ValueIsBoolean(JS::Value value);
 bool JS_ValueToBoolean(JS::Value value);
 
-JS::Value JS_DoubleValue(double value);
+void JS_ValueSetDouble(JS::Value* value, double x);
 bool JS_ValueIsDouble(JS::Value value);
 double JS_ValueToDouble(JS::Value value);
 
-JS::Value JS_Int32Value(int32_t value);
+void JS_ValueSetInt32(JS::Value* value, int32_t x);
 bool JS_ValueIsInt32(JS::Value value);
 int32_t JS_ValueToInt32(JS::Value value);
 
-JS::Value JS_NullValue();
+bool JS_ValueIsNumber(JS::Value value);
+double JS_ValueToNumber(JS::Value value);
+
+void JS_ValueSetNull(JS::Value* value);
 bool JS_ValueIsNull(JS::Value value);
 
-JS::Value JS_UndefinedValue();
 bool JS_ValueIsUndefined(JS::Value value);
 
 }
