@@ -16,6 +16,9 @@ import warnings
 
 from distutils.version import LooseVersion
 
+IS_NATIVE_WIN = (sys.platform == 'win32' and os.sep == '\\')
+IS_MSYS2 = (sys.platform == 'win32' and os.sep == '/')
+IS_CYGWIN = (sys.platform == 'cygwin')
 
 # Minimum version of Python required to build.
 MINIMUM_PYTHON_VERSION = LooseVersion('2.7.3')
@@ -63,8 +66,8 @@ class VirtualenvManager(object):
     @property
     def virtualenv_script_path(self):
         """Path to virtualenv's own populator script."""
-        return os.path.join(self.topsrcdir, 'python', 'virtualenv',
-            'virtualenv.py')
+        return os.path.join(self.topsrcdir, 'third_party', 'python',
+            'virtualenv', 'virtualenv.py')
 
     @property
     def bin_path(self):
@@ -72,7 +75,7 @@ class VirtualenvManager(object):
         # we have a bit of a chicken-and-egg problem and can't reliably
         # import virtualenv. The functionality is trivial, so just implement
         # it here.
-        if sys.platform in ('win32', 'cygwin'):
+        if IS_CYGWIN or IS_NATIVE_WIN:
             return os.path.join(self.virtualenv_root, 'Scripts')
 
         return os.path.join(self.virtualenv_root, 'bin')
@@ -473,7 +476,8 @@ class VirtualenvManager(object):
         from pip.req import InstallRequirement
 
         req = InstallRequirement.from_line(package)
-        if req.check_if_exists():
+        req.check_if_exists()
+        if req.satisfied_by is not None:
             return
 
         args = [
@@ -481,6 +485,31 @@ class VirtualenvManager(object):
             '--use-wheel',
             package,
         ]
+
+        return self._run_pip(args)
+
+    def install_pip_requirements(self, path, require_hashes=True):
+        """Install a pip requirements.txt file.
+
+        The supplied path is a text file containing pip requirement
+        specifiers.
+
+        If require_hashes is True, each specifier must contain the
+        expected hash of the downloaded package. See:
+        https://pip.pypa.io/en/stable/reference/pip_install/#hash-checking-mode
+        """
+
+        if not os.path.isabs(path):
+            path = os.path.join(self.topsrcdir, path)
+
+        args = [
+            'install',
+            '--requirement',
+            path,
+        ]
+
+        if require_hashes:
+            args.append('--require-hashes')
 
         return self._run_pip(args)
 

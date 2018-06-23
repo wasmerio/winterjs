@@ -7,6 +7,6 @@ for (var i in o) {
     delete o.s;
     delete o.t;
 }
-for each (var i in a)
+for (var i of a)
     assertEq(o.hasOwnProperty(i), false);
 

@@ -13,12 +13,14 @@
 # If we add unicode_literals, optparse breaks on Python 2.6.1 (which is needed
 # to support OS X 10.6).
 
-from __future__ import print_function
+from __future__ import absolute_import, print_function
 
 WRONG_PYTHON_VERSION_MESSAGE = '''
-Bootstrap currently only runs on Python 2.7 or Python 2.6. Please try re-running with python2.7 or python2.6.
+Bootstrap currently only runs on Python 2.7 or Python 2.6.
+Please try re-running with python2.7 or python2.6.
 
-If these aren't available on your system, you may need to install them. Look for a "python2" or "python27" package in your package manager.
+If these aren't available on your system, you may need to install them.
+Look for a "python2" or "python27" package in your package manager.
 '''
 
 import sys
@@ -141,8 +143,8 @@ def main(args):
                       'content. Like --repo, you should not need to set this.')
 
     parser.add_option('--application-choice', dest='application_choice',
-                      help='Pass in an application choice (desktop/android) instead of using the '
-                      'default interactive prompt.')
+                      help='Pass in an application choice (see mozboot.bootstrap.APPLICATIONS) '
+                      'instead of using the default interactive prompt.')
     parser.add_option('--no-interactive', dest='no_interactive', action='store_true',
                       help='Answer yes to any (Y/n) interactive prompts.')
 

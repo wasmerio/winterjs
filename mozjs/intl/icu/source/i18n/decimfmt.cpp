@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 * Copyright (C) 1997-2015, International Business Machines Corporation and    *
@@ -47,6 +49,7 @@
 #include "unicode/utf16.h"
 #include "unicode/numsys.h"
 #include "unicode/localpointer.h"
+#include "unicode/ustring.h"
 #include "uresimp.h"
 #include "ucurrimp.h"
 #include "charstr.h"
@@ -445,13 +448,25 @@ DecimalFormat::construct(UErrorCode&            status,
     if (patternUsed->indexOf(kCurrencySign) != -1) {
         // initialize for currency, not only for plural format,
         // but also for mix parsing
-        if (fCurrencyPluralInfo == NULL) {
-           fCurrencyPluralInfo = new CurrencyPluralInfo(fImpl->fSymbols->getLocale(), status);
-           if (U_FAILURE(status)) {
-               return;
-           }
-        }
-        // need it for mix parsing
+        handleCurrencySignInPattern(status);
+    }
+}
+
+void
+DecimalFormat::handleCurrencySignInPattern(UErrorCode& status) {
+    // initialize for currency, not only for plural format,
+    // but also for mix parsing
+    if (U_FAILURE(status)) {
+        return;
+    }
+    if (fCurrencyPluralInfo == NULL) {
+       fCurrencyPluralInfo = new CurrencyPluralInfo(fImpl->fSymbols->getLocale(), status);
+       if (U_FAILURE(status)) {
+           return;
+       }
+    }
+    // need it for mix parsing
+    if (fAffixPatternsForCurrency == NULL) {
         setupCurrencyAffixPatterns(status);
     }
 }
@@ -828,7 +843,7 @@ DecimalFormat::format(  double number,
 
 
 UnicodeString&
-DecimalFormat::format(const StringPiece &number,
+DecimalFormat::format(StringPiece number,
                       UnicodeString &toAppendTo,
                       FieldPositionIterator *posIter,
                       UErrorCode &status) const
@@ -1408,8 +1423,8 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
 
 
         UBool strictFail = FALSE; // did we exit with a strict parse failure?
-        int32_t lastGroup = -1; // where did we last see a grouping separator?
-        int32_t digitStart = position;
+        int32_t lastGroup = -1; // after which digit index did we last see a grouping separator?
+        int32_t currGroup = -1; // for temporary storage the digit index of the current grouping separator
         int32_t gs2 = fImpl->fEffGrouping.fGrouping2 == 0 ? fImpl->fEffGrouping.fGrouping : fImpl->fEffGrouping.fGrouping2;
 
         const UnicodeString *decimalString;
@@ -1498,16 +1513,17 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
                     // before that, the group must == the secondary group
                     // length, else it can be <= the the secondary group
                     // length.
-                    if ((lastGroup != -1 && backup - lastGroup - 1 != gs2) ||
-                        (lastGroup == -1 && position - digitStart - 1 > gs2)) {
+                    if ((lastGroup != -1 && currGroup - lastGroup != gs2) ||
+                        (lastGroup == -1 && digitCount - 1 > gs2)) {
                         strictFail = TRUE;
                         break;
                     }
                     
-                    lastGroup = backup;
+                    lastGroup = currGroup;
                 }
                 
                 // Cancel out backup setting (see grouping handler below)
+                currGroup = -1;
                 backup = -1;
                 sawDigit = TRUE;
                 
@@ -1546,6 +1562,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
                 // Ignore grouping characters, if we are using them, but require
                 // that they be followed by a digit.  Otherwise we backup and
                 // reprocess them.
+                currGroup = digitCount;
                 backup = position;
                 position += groupingStringLength;
                 sawGrouping=TRUE;
@@ -1556,7 +1573,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
             {
                 if (strictParse) {
                     if (backup != -1 ||
-                        (lastGroup != -1 && position - lastGroup != fImpl->fEffGrouping.fGrouping + 1)) {
+                        (lastGroup != -1 && digitCount - lastGroup != fImpl->fEffGrouping.fGrouping)) {
                         strictFail = TRUE;
                         break;
                     }
@@ -1607,7 +1624,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
 
                         UBool sawExponentDigit = FALSE;
                         while (pos < textLength) {
-                            ch = text[(int32_t)pos];
+                            ch = text.char32At(pos);
                             digit = ch - zero;
 
                             if (digit < 0 || digit > 9) {
@@ -1619,7 +1636,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
                                     parsedNum.append(exponentSign, err);
                                     sawExponentDigit = TRUE;
                                 }
-                                ++pos;
+                                pos += U16_LENGTH(ch);
                                 parsedNum.append((char)(digit + '0'), err);
                             } else {
                                 break;
@@ -1643,7 +1660,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
         // if we didn't see a decimal and it is required, check to see if the pattern had one
         if(!sawDecimal && isDecimalPatternMatchRequired()) 
         {
-            if(formatPattern.indexOf(DecimalFormatSymbols::kDecimalSeparatorSymbol) != 0) 
+            if(formatPattern.indexOf(kPatternDecimalSeparator) != -1)
             {
                 parsePosition.setIndex(oldStart);
                 parsePosition.setErrorIndex(position);
@@ -1658,7 +1675,7 @@ UBool DecimalFormat::subparse(const UnicodeString& text,
         }
 
         if (strictParse && !sawDecimal) {
-            if (lastGroup != -1 && position - lastGroup != fImpl->fEffGrouping.fGrouping + 1) {
+            if (lastGroup != -1 && digitCount - lastGroup != fImpl->fEffGrouping.fGrouping) {
                 strictFail = TRUE;
             }
         }
@@ -1769,7 +1786,7 @@ printf("PP -> %d, SLOW = [%s]!    pp=%d, os=%d, err=%s\n", position, parsedNum.d
     // check if we missed a required decimal point
     if(fastParseOk && isDecimalPatternMatchRequired()) 
     {
-        if(formatPattern.indexOf(DecimalFormatSymbols::kDecimalSeparatorSymbol) != 0) 
+        if(formatPattern.indexOf(kPatternDecimalSeparator) != -1)
         {
             parsePosition.setIndex(oldStart);
             parsePosition.setErrorIndex(position);
@@ -2528,7 +2545,7 @@ UnicodeString DecimalFormat::getPadCharacterString() const {
 }
 
 void DecimalFormat::setPadCharacter(const UnicodeString &padChar) {
-    UChar pad;
+    UChar32 pad;
     if (padChar.length() > 0) {
         pad = padChar.char32At(0);
     }
@@ -2777,7 +2794,7 @@ DecimalFormat::setDecimalSeparatorAlwaysShown(UBool newValue)
 UBool 
 DecimalFormat::isDecimalPatternMatchRequired(void) const
 {
-    return fBoolFlags.contains(UNUM_PARSE_DECIMAL_MARK_REQUIRED);
+    return static_cast<UBool>(fBoolFlags.contains(UNUM_PARSE_DECIMAL_MARK_REQUIRED));
 }
 
 //------------------------------------------------------------------------------
@@ -2815,6 +2832,9 @@ DecimalFormat::toLocalizedPattern(UnicodeString& result) const
 void
 DecimalFormat::applyPattern(const UnicodeString& pattern, UErrorCode& status)
 {
+    if (pattern.indexOf(kCurrencySign) != -1) {
+        handleCurrencySignInPattern(status);
+    }
     fImpl->applyPattern(pattern, status);
 }
 
@@ -2825,6 +2845,9 @@ DecimalFormat::applyPattern(const UnicodeString& pattern,
                             UParseError& parseError,
                             UErrorCode& status)
 {
+    if (pattern.indexOf(kCurrencySign) != -1) {
+        handleCurrencySignInPattern(status);
+    }
     fImpl->applyPattern(pattern, parseError, status);
 }
 //------------------------------------------------------------------------------
@@ -2832,6 +2855,9 @@ DecimalFormat::applyPattern(const UnicodeString& pattern,
 void
 DecimalFormat::applyLocalizedPattern(const UnicodeString& pattern, UErrorCode& status)
 {
+    if (pattern.indexOf(kCurrencySign) != -1) {
+        handleCurrencySignInPattern(status);
+    }
     fImpl->applyLocalizedPattern(pattern, status);
 }
 
@@ -2842,6 +2868,9 @@ DecimalFormat::applyLocalizedPattern(const UnicodeString& pattern,
                                      UParseError& parseError,
                                      UErrorCode& status)
 {
+    if (pattern.indexOf(kCurrencySign) != -1) {
+        handleCurrencySignInPattern(status);
+    }
     fImpl->applyLocalizedPattern(pattern, parseError, status);
 }
 

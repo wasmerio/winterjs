@@ -16,7 +16,7 @@ using namespace JS;
 static const JSClassOps global_classOps = {
     nullptr, nullptr, nullptr, nullptr,
     nullptr, nullptr, nullptr, nullptr,
-    nullptr, nullptr, nullptr,
+    nullptr, nullptr,
     JS_GlobalObjectTraceHook
 };
 
@@ -25,6 +25,13 @@ static const JSClass global_class = {
     "global", JSCLASS_GLOBAL_FLAGS,
     &global_classOps
 };
+
+static volatile int dontOptimizeMeAway = 0;
+
+void
+usePointer(const void* ptr) {
+    dontOptimizeMeAway++;
+}
 
 template<typename T>
 static inline T*
@@ -43,12 +50,12 @@ checkBool(bool success)
 }
 
 /* The warning reporter callback. */
-void reportWarning(JSContext* cx, const char* message, JSErrorReport* report)
+void reportWarning(JSContext* cx, JSErrorReport* report)
 {
     fprintf(stderr, "%s:%u: %s\n",
             report->filename ? report->filename : "<no filename>",
             (unsigned int) report->lineno,
-            message);
+            report->message().c_str());
 }
 
 // prologue.py sets a breakpoint on this function; test functions can call it
@@ -67,20 +74,18 @@ int
 main(int argc, const char** argv)
 {
     if (!JS_Init()) return 1;
-    JSRuntime* runtime = checkPtr(JS_NewRuntime(1024 * 1024));
-    JS_SetGCParameter(runtime, JSGC_MAX_BYTES, 0xffffffff);
-    JS_SetNativeStackQuota(runtime, 5000000);
+    JSContext* cx = checkPtr(JS_NewContext(1024 * 1024));
 
-    JSContext* cx = JS_GetContext(runtime);
+    JS_SetGCParameter(cx, JSGC_MAX_BYTES, 0xffffffff);
+    JS_SetNativeStackQuota(cx, 5000000);
+
     checkBool(JS::InitSelfHostedCode(cx));
-    JS::SetWarningReporter(runtime, reportWarning);
+    JS::SetWarningReporter(cx, reportWarning);
 
     JSAutoRequest ar(cx);
 
     /* Create the global object. */
     JS::CompartmentOptions options;
-    options.behaviors().setVersion(JSVERSION_LATEST);
-
     RootedObject global(cx, checkPtr(JS_NewGlobalObject(cx, &global_class,
                         nullptr, JS::FireOnNewGlobalHook, options)));
     JSAutoCompartment ac(cx, global);

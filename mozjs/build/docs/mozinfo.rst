@@ -54,7 +54,7 @@ bits
 
    Universal Mac builds do not have this key defined.
 
-   Unkown processor architectures (see ``processor`` below) may not have
+   Unknown processor architectures (see ``processor`` below) may not have
    this key defined.
 
    Optional.
@@ -81,6 +81,13 @@ datareporting
 
 debug
    Whether this is a debug build.
+
+   Values are ``true`` and ``false``.
+
+   Always defined.
+
+devedition
+   Whether this is a devedition build.
 
    Values are ``true`` and ``false``.
 
@@ -129,16 +136,15 @@ processor
 
    Always defined.
 
-release_build
-   Whether this is a release build.
+release_or_beta
+   Whether this is a release or beta build.
 
    Values are ``true`` and ``false``.
 
    Always defined.
 
-sm_promise
-   Whether spidermonkey promises have been enabled or not.  This is set
-   by adding --enable-sm-promise to the mozconfig file.
+stylo
+   Whether the Stylo styling system is being used.
 
    Values are ``true`` and ``false``.
 
@@ -159,19 +165,5 @@ toolkit
 
 topsrcdir
    The path to the source directory the build came from.
-
-   Always defined.
-
-wave
-   Whether Wave audio support is enabled.
-
-   Values are ``true`` and ``false``.
-
-   Always defined.
-
-webm
-   Whether WebM support is enabled.
-
-   Values are ``true`` and ``false``.
 
    Always defined.

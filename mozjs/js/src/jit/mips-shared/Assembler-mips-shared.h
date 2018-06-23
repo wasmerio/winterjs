@@ -10,6 +10,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/Sprintf.h"
 
 #include "jit/CompactBuffer.h"
 #include "jit/IonCode.h"
@@ -22,45 +23,45 @@
 namespace js {
 namespace jit {
 
-static MOZ_CONSTEXPR_VAR Register zero = { Registers::zero };
-static MOZ_CONSTEXPR_VAR Register at = { Registers::at };
-static MOZ_CONSTEXPR_VAR Register v0 = { Registers::v0 };
-static MOZ_CONSTEXPR_VAR Register v1 = { Registers::v1 };
-static MOZ_CONSTEXPR_VAR Register a0 = { Registers::a0 };
-static MOZ_CONSTEXPR_VAR Register a1 = { Registers::a1 };
-static MOZ_CONSTEXPR_VAR Register a2 = { Registers::a2 };
-static MOZ_CONSTEXPR_VAR Register a3 = { Registers::a3 };
-static MOZ_CONSTEXPR_VAR Register a4 = { Registers::ta0 };
-static MOZ_CONSTEXPR_VAR Register a5 = { Registers::ta1 };
-static MOZ_CONSTEXPR_VAR Register a6 = { Registers::ta2 };
-static MOZ_CONSTEXPR_VAR Register a7 = { Registers::ta3 };
-static MOZ_CONSTEXPR_VAR Register t0 = { Registers::t0 };
-static MOZ_CONSTEXPR_VAR Register t1 = { Registers::t1 };
-static MOZ_CONSTEXPR_VAR Register t2 = { Registers::t2 };
-static MOZ_CONSTEXPR_VAR Register t3 = { Registers::t3 };
-static MOZ_CONSTEXPR_VAR Register t4 = { Registers::ta0 };
-static MOZ_CONSTEXPR_VAR Register t5 = { Registers::ta1 };
-static MOZ_CONSTEXPR_VAR Register t6 = { Registers::ta2 };
-static MOZ_CONSTEXPR_VAR Register t7 = { Registers::ta3 };
-static MOZ_CONSTEXPR_VAR Register s0 = { Registers::s0 };
-static MOZ_CONSTEXPR_VAR Register s1 = { Registers::s1 };
-static MOZ_CONSTEXPR_VAR Register s2 = { Registers::s2 };
-static MOZ_CONSTEXPR_VAR Register s3 = { Registers::s3 };
-static MOZ_CONSTEXPR_VAR Register s4 = { Registers::s4 };
-static MOZ_CONSTEXPR_VAR Register s5 = { Registers::s5 };
-static MOZ_CONSTEXPR_VAR Register s6 = { Registers::s6 };
-static MOZ_CONSTEXPR_VAR Register s7 = { Registers::s7 };
-static MOZ_CONSTEXPR_VAR Register t8 = { Registers::t8 };
-static MOZ_CONSTEXPR_VAR Register t9 = { Registers::t9 };
-static MOZ_CONSTEXPR_VAR Register k0 = { Registers::k0 };
-static MOZ_CONSTEXPR_VAR Register k1 = { Registers::k1 };
-static MOZ_CONSTEXPR_VAR Register gp = { Registers::gp };
-static MOZ_CONSTEXPR_VAR Register sp = { Registers::sp };
-static MOZ_CONSTEXPR_VAR Register fp = { Registers::fp };
-static MOZ_CONSTEXPR_VAR Register ra = { Registers::ra };
+static constexpr Register zero { Registers::zero };
+static constexpr Register at { Registers::at };
+static constexpr Register v0 { Registers::v0 };
+static constexpr Register v1 { Registers::v1 };
+static constexpr Register a0 { Registers::a0 };
+static constexpr Register a1 { Registers::a1 };
+static constexpr Register a2 { Registers::a2 };
+static constexpr Register a3 { Registers::a3 };
+static constexpr Register a4 { Registers::ta0 };
+static constexpr Register a5 { Registers::ta1 };
+static constexpr Register a6 { Registers::ta2 };
+static constexpr Register a7 { Registers::ta3 };
+static constexpr Register t0 { Registers::t0 };
+static constexpr Register t1 { Registers::t1 };
+static constexpr Register t2 { Registers::t2 };
+static constexpr Register t3 { Registers::t3 };
+static constexpr Register t4 { Registers::ta0 };
+static constexpr Register t5 { Registers::ta1 };
+static constexpr Register t6 { Registers::ta2 };
+static constexpr Register t7 { Registers::ta3 };
+static constexpr Register s0 { Registers::s0 };
+static constexpr Register s1 { Registers::s1 };
+static constexpr Register s2 { Registers::s2 };
+static constexpr Register s3 { Registers::s3 };
+static constexpr Register s4 { Registers::s4 };
+static constexpr Register s5 { Registers::s5 };
+static constexpr Register s6 { Registers::s6 };
+static constexpr Register s7 { Registers::s7 };
+static constexpr Register t8 { Registers::t8 };
+static constexpr Register t9 { Registers::t9 };
+static constexpr Register k0 { Registers::k0 };
+static constexpr Register k1 { Registers::k1 };
+static constexpr Register gp { Registers::gp };
+static constexpr Register sp { Registers::sp };
+static constexpr Register fp { Registers::fp };
+static constexpr Register ra { Registers::ra };
 
-static MOZ_CONSTEXPR_VAR Register ScratchRegister = at;
-static MOZ_CONSTEXPR_VAR Register SecondScratchReg = t8;
+static constexpr Register ScratchRegister = at;
+static constexpr Register SecondScratchReg = t8;
 
 // Helper classes for ScratchRegister usage. Asserts that only one piece
 // of code thinks it has exclusive ownership of each scratch register.
@@ -78,70 +79,67 @@ struct SecondScratchRegisterScope : public AutoRegisterScope
 };
 
 // Use arg reg from EnterJIT function as OsrFrameReg.
-static MOZ_CONSTEXPR_VAR Register OsrFrameReg = a3;
-static MOZ_CONSTEXPR_VAR Register ArgumentsRectifierReg = s3;
-static MOZ_CONSTEXPR_VAR Register CallTempReg0 = t0;
-static MOZ_CONSTEXPR_VAR Register CallTempReg1 = t1;
-static MOZ_CONSTEXPR_VAR Register CallTempReg2 = t2;
-static MOZ_CONSTEXPR_VAR Register CallTempReg3 = t3;
+static constexpr Register OsrFrameReg = a3;
+static constexpr Register CallTempReg0 = t0;
+static constexpr Register CallTempReg1 = t1;
+static constexpr Register CallTempReg2 = t2;
+static constexpr Register CallTempReg3 = t3;
 
-static MOZ_CONSTEXPR_VAR Register IntArgReg0 = a0;
-static MOZ_CONSTEXPR_VAR Register IntArgReg1 = a1;
-static MOZ_CONSTEXPR_VAR Register IntArgReg2 = a2;
-static MOZ_CONSTEXPR_VAR Register IntArgReg3 = a3;
-static MOZ_CONSTEXPR_VAR Register IntArgReg4 = a4;
-static MOZ_CONSTEXPR_VAR Register IntArgReg5 = a5;
-static MOZ_CONSTEXPR_VAR Register IntArgReg6 = a6;
-static MOZ_CONSTEXPR_VAR Register IntArgReg7 = a7;
-static MOZ_CONSTEXPR_VAR Register GlobalReg = s6; // used by Odin
-static MOZ_CONSTEXPR_VAR Register HeapReg = s7; // used by Odin
+static constexpr Register IntArgReg0 = a0;
+static constexpr Register IntArgReg1 = a1;
+static constexpr Register IntArgReg2 = a2;
+static constexpr Register IntArgReg3 = a3;
+static constexpr Register IntArgReg4 = a4;
+static constexpr Register IntArgReg5 = a5;
+static constexpr Register IntArgReg6 = a6;
+static constexpr Register IntArgReg7 = a7;
+static constexpr Register GlobalReg = s6; // used by Odin
+static constexpr Register HeapReg = s7; // used by Odin
 
-static MOZ_CONSTEXPR_VAR Register PreBarrierReg = a1;
+static constexpr Register PreBarrierReg = a1;
 
-static MOZ_CONSTEXPR_VAR Register InvalidReg = { Registers::invalid_reg };
-static MOZ_CONSTEXPR_VAR FloatRegister InvalidFloatReg;
+static constexpr Register InvalidReg { Registers::invalid_reg };
+static constexpr FloatRegister InvalidFloatReg;
 
-static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
-static MOZ_CONSTEXPR_VAR Register FramePointer = InvalidReg;
-static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
-static MOZ_CONSTEXPR_VAR FloatRegister ReturnSimd128Reg = InvalidFloatReg;
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchSimd128Reg = InvalidFloatReg;
+static constexpr Register StackPointer = sp;
+static constexpr Register FramePointer = fp;
+static constexpr Register ReturnReg = v0;
+static constexpr FloatRegister ReturnSimd128Reg = InvalidFloatReg;
+static constexpr FloatRegister ScratchSimd128Reg = InvalidFloatReg;
 
 // A bias applied to the GlobalReg to allow the use of instructions with small
 // negative immediate offsets which doubles the range of global data that can be
 // accessed with a single instruction.
-static const int32_t AsmJSGlobalRegBias = 32768;
+static const int32_t WasmGlobalRegBias = 32768;
 
 // Registers used in the GenerateFFIIonExit Enable Activation block.
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegCallee = t0;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE0 = a0;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE1 = a1;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE2 = a2;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegE3 = a3;
+static constexpr Register WasmIonExitRegCallee = t0;
+static constexpr Register WasmIonExitRegE0 = a0;
+static constexpr Register WasmIonExitRegE1 = a1;
 
 // Registers used in the GenerateFFIIonExit Disable Activation block.
 // None of these may be the second scratch register (t8).
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD0 = a0;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD1 = a1;
-static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD2 = t0;
+static constexpr Register WasmIonExitRegD0 = a0;
+static constexpr Register WasmIonExitRegD1 = a1;
+static constexpr Register WasmIonExitRegD2 = t0;
 
 // Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
-static MOZ_CONSTEXPR_VAR Register RegExpMatcherRegExpReg = CallTempReg0;
-static MOZ_CONSTEXPR_VAR Register RegExpMatcherStringReg = CallTempReg1;
-static MOZ_CONSTEXPR_VAR Register RegExpMatcherLastIndexReg = CallTempReg2;
+static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
+static constexpr Register RegExpMatcherStringReg = CallTempReg1;
+static constexpr Register RegExpMatcherLastIndexReg = CallTempReg2;
 
 // Registerd used in RegExpTester instruction (do not use ReturnReg).
-static MOZ_CONSTEXPR_VAR Register RegExpTesterRegExpReg = CallTempReg0;
-static MOZ_CONSTEXPR_VAR Register RegExpTesterStringReg = CallTempReg1;
-static MOZ_CONSTEXPR_VAR Register RegExpTesterLastIndexReg = CallTempReg2;
+static constexpr Register RegExpTesterRegExpReg = CallTempReg0;
+static constexpr Register RegExpTesterStringReg = CallTempReg1;
+static constexpr Register RegExpTesterLastIndexReg = CallTempReg2;
 
-static MOZ_CONSTEXPR_VAR uint32_t CodeAlignment = 4;
+static constexpr uint32_t CodeAlignment = 8;
 
 // This boolean indicates whether we support SIMD instructions flavoured for
 // this architecture or not. Rather than a method in the LIRGenerator, it is
 // here such that it is accessible from the entire codebase. Once full support
 // for SIMD is reached on all tier-1 platforms, this constant can be deleted.
-static MOZ_CONSTEXPR_VAR bool SupportsSimd = false;
+static constexpr bool SupportsSimd = false;
 
 // MIPS instruction types
 //                +---------------------------------------------------------------+
@@ -213,6 +211,7 @@ static const uint32_t RegMask = Registers::Total - 1;
 
 static const uint32_t BREAK_STACK_UNALIGNED = 1;
 static const uint32_t MAX_BREAK_CODE = 1024 - 1;
+static const uint32_t WASM_TRAP = 6; // BRK_OVERFLOW
 
 class Instruction;
 class InstReg;
@@ -221,15 +220,14 @@ class InstJump;
 
 uint32_t RS(Register r);
 uint32_t RT(Register r);
-uint32_t RT(uint32_t regCode);
 uint32_t RT(FloatRegister r);
 uint32_t RD(Register r);
 uint32_t RD(FloatRegister r);
-uint32_t RD(uint32_t regCode);
 uint32_t RZ(Register r);
 uint32_t RZ(FloatRegister r);
 uint32_t SA(uint32_t value);
 uint32_t SA(FloatRegister r);
+uint32_t FS(uint32_t value);
 
 Register toRS (Instruction& i);
 Register toRT (Instruction& i);
@@ -293,6 +291,7 @@ enum Opcode {
     op_ll       = 48 << OpcodeShift,
     op_lwc1     = 49 << OpcodeShift,
     op_lwc2     = 50 << OpcodeShift,
+    op_lld      = 52 << OpcodeShift,
     op_ldc1     = 53 << OpcodeShift,
     op_ldc2     = 54 << OpcodeShift,
     op_ld       = 55 << OpcodeShift,
@@ -300,6 +299,7 @@ enum Opcode {
     op_sc       = 56 << OpcodeShift,
     op_swc1     = 57 << OpcodeShift,
     op_swc2     = 58 << OpcodeShift,
+    op_scd      = 60 << OpcodeShift,
     op_sdc1     = 61 << OpcodeShift,
     op_sdc2     = 62 << OpcodeShift,
     op_sd       = 63 << OpcodeShift,
@@ -397,6 +397,8 @@ enum FunctionField {
     ff_dsra32      = 63,
 
     // special2 encoding of function field.
+    ff_madd        = 0,
+    ff_maddu       = 1,
     ff_mul         = 2,
     ff_clz         = 32,
     ff_clo         = 33,
@@ -496,7 +498,7 @@ class BOffImm16
         MOZ_ASSERT(IsInRange(offset));
     }
     static bool IsInRange(int offset) {
-        if ((offset - 4) < (INT16_MIN << 2))
+        if ((offset - 4) < int(unsigned(INT16_MIN) << 2))
             return false;
         if ((offset - 4) > (INT16_MAX << 2))
             return false;
@@ -629,7 +631,7 @@ class GSImm13
       : value(imm & ~0xf)
     { }
     uint32_t encode(uint32_t shift) {
-        return ((value >> 4) & 0x1f) << shift;
+        return ((value >> 4) & 0x1ff) << shift;
     }
     int32_t decodeSigned() {
         return value;
@@ -638,7 +640,7 @@ class GSImm13
         return value;
     }
     static bool IsInRange(int32_t imm) {
-        return imm >= (-256 << 4) && imm <= (255 << 4);
+        return imm >= int32_t(uint32_t(-256) << 4) && imm <= (255 << 4);
     }
 };
 
@@ -732,9 +734,10 @@ PatchJump(CodeLocationJump& jump_, CodeLocationLabel label,
           ReprotectCode reprotect = DontReprotect);
 
 void
-PatchBackedge(CodeLocationJump& jump_, CodeLocationLabel label, JitRuntime::BackedgeTarget target);
+PatchBackedge(CodeLocationJump& jump_, CodeLocationLabel label, JitZoneGroup::BackedgeTarget target);
 
-typedef js::jit::AssemblerBuffer<1024, Instruction> MIPSBuffer;
+static constexpr int32_t SliceSize = 1024;
+typedef js::jit::AssemblerBuffer<SliceSize, Instruction> MIPSBuffer;
 
 class MIPSBufferWithExecutableCopy : public MIPSBuffer
 {
@@ -749,16 +752,16 @@ class MIPSBufferWithExecutableCopy : public MIPSBuffer
         }
     }
 
-    bool appendBuffer(const MIPSBufferWithExecutableCopy& other) {
+    bool appendRawCode(const uint8_t* code, size_t numBytes) {
         if (this->oom())
             return false;
-
-        for (Slice* cur = other.head; cur != nullptr; cur = cur->getNext()) {
-            this->putBytes(cur->length(), &cur->instructions);
-            if (this->oom())
-                return false;
+        while (numBytes > SliceSize) {
+            this->putBytes(SliceSize, code);
+            numBytes -= SliceSize;
+            code += SliceSize;
         }
-        return true;
+        this->putBytes(numBytes, code);
+        return !this->oom();
     }
 };
 
@@ -778,6 +781,8 @@ class AssemblerMIPSShared : public AssemblerShared
         LessThan,
         LessThanOrEqual,
         Overflow,
+        CarrySet,
+        CarryClear,
         Signed,
         NotSigned,
         Zero,
@@ -823,6 +828,14 @@ class AssemblerMIPSShared : public AssemblerShared
         FEXR,
         FENR = 28,
         FCSR = 31
+    };
+
+    enum FCSRBit {
+        CauseI = 12,
+        CauseU,
+        CauseO,
+        CauseZ,
+        CauseV
     };
 
     enum FloatFormat {
@@ -873,18 +886,23 @@ class AssemblerMIPSShared : public AssemblerShared
     };
 
     js::Vector<RelativePatch, 8, SystemAllocPolicy> jumps_;
-    js::Vector<uint32_t, 8, SystemAllocPolicy> longJumps_;
 
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
-    CompactBufferWriter preBarriers_;
 
     MIPSBufferWithExecutableCopy m_buffer;
+
+#ifdef JS_JITSPEW
+   Sprinter* printer;
+#endif
 
   public:
     AssemblerMIPSShared()
       : m_buffer(),
-        isFinished(false)
+#ifdef JS_JITSPEW
+       printer(nullptr),
+#endif
+       isFinished(false)
     { }
 
     static Condition InvertCondition(Condition cond);
@@ -903,15 +921,46 @@ class AssemblerMIPSShared : public AssemblerShared
             dataRelocations_.writeUnsigned(nextOffset().getOffset());
         }
     }
-    void writePrebarrierOffset(CodeOffset label) {
-        preBarriers_.writeUnsigned(label.offset());
-    }
 
   public:
     bool oom() const;
 
     void setPrinter(Sprinter* sp) {
+#ifdef JS_JITSPEW
+            printer = sp;
+#endif
     }
+
+#ifdef JS_JITSPEW
+    inline void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3) {
+        if (MOZ_UNLIKELY(printer || JitSpewEnabled(JitSpew_Codegen))) {
+            va_list va;
+            va_start(va, fmt);
+            spew(fmt, va);
+            va_end(va);
+        }
+    }
+
+    void decodeBranchInstAndSpew(InstImm branch);
+#else
+    MOZ_ALWAYS_INLINE void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3) {
+    }
+#endif
+
+#ifdef JS_JITSPEW
+    MOZ_COLD void spew(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
+        // Buffer to hold the formatted string. Note that this may contain
+        // '%' characters, so do not pass it directly to printf functions.
+        char buf[200];
+
+        int i = VsprintfLiteral(buf, fmt, va);
+        if (i > -1) {
+            if (printer)
+                printer->printf("%s\n", buf);
+            js::jit::JitSpew(js::jit::JitSpew_Codegen, "%s", buf);
+        }
+    }
+#endif
 
     static const Register getStackPointer() {
         return StackPointer;
@@ -921,18 +970,18 @@ class AssemblerMIPSShared : public AssemblerShared
     bool isFinished;
   public:
     void finish();
-    bool asmMergeWith(const AssemblerMIPSShared& other);
-    void executableCopy(void* buffer);
+    bool appendRawCode(const uint8_t* code, size_t numBytes);
+    bool reserve(size_t size);
+    bool swapBuffer(wasm::Bytes& bytes);
+    void executableCopy(void* buffer, bool flushICache = true);
     void copyJumpRelocationTable(uint8_t* dest);
     void copyDataRelocationTable(uint8_t* dest);
-    void copyPreBarrierTable(uint8_t* dest);
 
     // Size of the instruction stream, in bytes.
     size_t size() const;
     // Size of the jump relocation table, in bytes.
     size_t jumpRelocationTableBytes() const;
     size_t dataRelocationTableBytes() const;
-    size_t preBarrierTableBytes() const;
 
     // Size of the data table, in bytes.
     size_t bytesNeeded() const;
@@ -981,6 +1030,8 @@ class AssemblerMIPSShared : public AssemblerShared
     BufferOffset as_div(Register rs, Register rt);
     BufferOffset as_divu(Register rs, Register rt);
     BufferOffset as_mul(Register rd, Register rs, Register rt);
+    BufferOffset as_madd(Register rs, Register rt);
+    BufferOffset as_maddu(Register rs, Register rt);
     BufferOffset as_ddiv(Register rs, Register rt);
     BufferOffset as_ddivu(Register rs, Register rt);
 
@@ -1028,6 +1079,7 @@ class AssemblerMIPSShared : public AssemblerShared
     BufferOffset as_lwl(Register rd, Register rs, int16_t off);
     BufferOffset as_lwr(Register rd, Register rs, int16_t off);
     BufferOffset as_ll(Register rd, Register rs, int16_t off);
+    BufferOffset as_lld(Register rd, Register rs, int16_t off);
     BufferOffset as_ld(Register rd, Register rs, int16_t off);
     BufferOffset as_ldl(Register rd, Register rs, int16_t off);
     BufferOffset as_ldr(Register rd, Register rs, int16_t off);
@@ -1037,6 +1089,7 @@ class AssemblerMIPSShared : public AssemblerShared
     BufferOffset as_swl(Register rd, Register rs, int16_t off);
     BufferOffset as_swr(Register rd, Register rs, int16_t off);
     BufferOffset as_sc(Register rd, Register rs, int16_t off);
+    BufferOffset as_scd(Register rd, Register rs, int16_t off);
     BufferOffset as_sd(Register rd, Register rs, int16_t off);
     BufferOffset as_sdl(Register rd, Register rs, int16_t off);
     BufferOffset as_sdr(Register rd, Register rs, int16_t off);
@@ -1087,13 +1140,11 @@ class AssemblerMIPSShared : public AssemblerShared
 
     // FP instructions
 
-    // Use these two functions only when you are sure address is aligned.
-    // Otherwise, use ma_ld and ma_sd.
-    BufferOffset as_ld(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_sd(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_ldc1(FloatRegister ft, Register base, int32_t off);
+    BufferOffset as_sdc1(FloatRegister ft, Register base, int32_t off);
 
-    BufferOffset as_ls(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_ss(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_lwc1(FloatRegister ft, Register base, int32_t off);
+    BufferOffset as_swc1(FloatRegister ft, Register base, int32_t off);
 
     // Loongson-specific FP load and store instructions
     BufferOffset as_gsldl(FloatRegister fd, Register base, int32_t off);
@@ -1194,21 +1245,25 @@ class AssemblerMIPSShared : public AssemblerShared
     BufferOffset as_movz(FloatFormat fmt, FloatRegister fd, FloatRegister fs, Register rt);
     BufferOffset as_movn(FloatFormat fmt, FloatRegister fd, FloatRegister fs, Register rt);
 
+    // Conditional trap operations
+    BufferOffset as_tge(Register rs, Register rt, uint32_t code = 0);
+    BufferOffset as_tgeu(Register rs, Register rt, uint32_t code = 0);
+    BufferOffset as_tlt(Register rs, Register rt, uint32_t code = 0);
+    BufferOffset as_tltu(Register rs, Register rt, uint32_t code = 0);
+    BufferOffset as_teq(Register rs, Register rt, uint32_t code = 0);
+    BufferOffset as_tne(Register rs, Register rt, uint32_t code = 0);
+
     // label operations
     void bind(Label* label, BufferOffset boff = BufferOffset());
-    void bindLater(Label* label, wasm::JumpTarget target);
+    void bindLater(Label* label, wasm::OldTrapDesc target);
     virtual void bind(InstImm* inst, uintptr_t branch, uintptr_t target) = 0;
-    virtual void Bind(uint8_t* rawCode, CodeOffset* label, const void* address) = 0;
-    void bind(CodeOffset* label) {
-        label->bind(currentOffset());
+    void bind(CodeLabel* label) {
+        label->target()->bind(currentOffset());
     }
     uint32_t currentOffset() {
         return nextOffset().getOffset();
     }
     void retarget(Label* label, Label* target);
-
-    // See Bind
-    size_t labelToPatchOffset(CodeOffset label) { return label.offset(); }
 
     void call(Label* label);
     void call(void* target);
@@ -1225,8 +1280,15 @@ class AssemblerMIPSShared : public AssemblerShared
         return false;
 #endif
     }
+    static bool SupportsUnalignedAccesses() {
+        return true;
+    }
     static bool SupportsSimd() {
         return js::jit::SupportsSimd;
+    }
+
+    static bool HasRoundInstruction(RoundingMode mode) {
+        return false;
     }
 
   protected:
@@ -1237,19 +1299,20 @@ class AssemblerMIPSShared : public AssemblerShared
             writeRelocation(src);
     }
 
-    void addLongJump(BufferOffset src) {
-        enoughMemory_ &= longJumps_.append(src.getOffset());
+    void addLongJump(BufferOffset src, BufferOffset dst) {
+        CodeLabel cl;
+        cl.patchAt()->bind(src.getOffset());
+        cl.target()->bind(dst.getOffset());
+        cl.setLinkMode(CodeLabel::JumpImmediate);
+        addCodeLabel(mozilla::Move(cl));
     }
 
   public:
-    size_t numLongJumps() const {
-        return longJumps_.length();
-    }
-    uint32_t longJump(size_t i) {
-        return longJumps_[i];
+    void flushBuffer() {
     }
 
-    void flushBuffer() {
+    void comment(const char* msg) {
+        spew("; %s", msg);
     }
 
     static uint32_t NopSize() { return 4; }
@@ -1265,7 +1328,7 @@ class AssemblerMIPSShared : public AssemblerShared
     static void ToggleToJmp(CodeLocationLabel inst_);
     static void ToggleToCmp(CodeLocationLabel inst_);
 
-    void processCodeLabels(uint8_t* rawCode);
+    static void UpdateLuiOriValue(Instruction* inst0, Instruction* inst1, uint32_t value);
 
     bool bailed() {
         return m_buffer.bail();
@@ -1381,6 +1444,9 @@ class InstReg : public Instruction
       : Instruction(op | code | ff)
     { }
     // for float point
+    InstReg(Opcode op, RSField rs, Register rt, uint32_t fs)
+      : Instruction(op | rs | RT(rt) | FS(fs))
+    { }
     InstReg(Opcode op, RSField rs, Register rt, FloatRegister rd)
       : Instruction(op | rs | RT(rt) | RD(rd))
     { }
@@ -1507,6 +1573,20 @@ class InstGS : public Instruction
       : Instruction(op | RS(rs) | RT(rt) | off.encode(6) | ff)
     { }
 };
+
+inline bool
+IsUnaligned(const wasm::MemoryAccessDesc& access)
+{
+    if (!access.align())
+        return false;
+
+#ifdef JS_CODEGEN_MIPS32
+    if (access.type() == Scalar::Int64 && access.align() >= 4)
+        return false;
+#endif
+
+    return access.align() < access.byteSize();
+}
 
 } // namespace jit
 } // namespace js

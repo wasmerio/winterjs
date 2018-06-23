@@ -10,7 +10,7 @@
 #include "jit/CompileInfo.h"
 #include "jit/JitAllocPolicy.h"
 
-#include "jsscriptinlines.h"
+#include "vm/JSScript-inl.h"
 
 namespace js {
 namespace jit {
@@ -70,18 +70,6 @@ AnalysisModeString(AnalysisMode mode)
       default:
         MOZ_CRASH("Invalid AnalysisMode");
     }
-}
-
-static inline bool
-CanIonCompile(JSScript* script, AnalysisMode mode)
-{
-    switch (mode) {
-      case Analysis_None: return script->canIonCompile();
-      case Analysis_DefiniteProperties: return true;
-      case Analysis_ArgumentsUsage: return true;
-      default:;
-    }
-    MOZ_CRASH("Invalid AnalysisMode");
 }
 
 } // namespace jit

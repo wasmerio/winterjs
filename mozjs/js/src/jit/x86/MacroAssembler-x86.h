@@ -7,14 +7,32 @@
 #ifndef jit_x86_MacroAssembler_x86_h
 #define jit_x86_MacroAssembler_x86_h
 
-#include "jscompartment.h"
-
 #include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
+#include "vm/JSCompartment.h"
 
 namespace js {
 namespace jit {
+
+// See documentation for ScratchTagScope and ScratchTagScopeRelease in
+// MacroAssembler-x64.h.
+
+class ScratchTagScope
+{
+    const ValueOperand& v_;
+  public:
+    ScratchTagScope(MacroAssembler&, const ValueOperand& v) : v_(v) {}
+    operator Register() { return v_.typeReg(); }
+    void release() {}
+    void reacquire() {}
+};
+
+class ScratchTagScopeRelease
+{
+  public:
+    explicit ScratchTagScopeRelease(ScratchTagScope*) {}
+};
 
 class MacroAssemblerX86 : public MacroAssemblerX86Shared
 {
@@ -92,38 +110,31 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     Address ToType(Address base) {
         return ToType(Operand(base)).toAddress();
     }
-    void moveValue(const Value& val, Register type, Register data) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        movl(Imm32(jv.s.tag), type);
-        if (val.isMarkable())
-            movl(ImmGCPtr(reinterpret_cast<gc::Cell*>(val.toGCThing())), data);
-        else
-            movl(Imm32(jv.s.payload.i32), data);
-    }
-    void moveValue(const Value& val, const ValueOperand& dest) {
-        moveValue(val, dest.typeReg(), dest.payloadReg());
-    }
-    void moveValue(const ValueOperand& src, const ValueOperand& dest) {
-        Register s0 = src.typeReg(), d0 = dest.typeReg(),
-                 s1 = src.payloadReg(), d1 = dest.payloadReg();
 
-        // Either one or both of the source registers could be the same as a
-        // destination register.
-        if (s1 == d0) {
-            if (s0 == d1) {
-                // If both are, this is just a swap of two registers.
-                xchgl(d0, d1);
-                return;
-            }
-            // If only one is, copy that source first.
-            mozilla::Swap(s0, s1);
-            mozilla::Swap(d0, d1);
-        }
-
-        if (s0 != d0)
-            movl(s0, d0);
-        if (s1 != d1)
-            movl(s1, d1);
+    template <typename T>
+    void add64FromMemory(const T& address, Register64 dest) {
+        addl(Operand(LowWord(address)), dest.low);
+        adcl(Operand(HighWord(address)), dest.high);
+    }
+    template <typename T>
+    void sub64FromMemory(const T& address, Register64 dest) {
+        subl(Operand(LowWord(address)), dest.low);
+        sbbl(Operand(HighWord(address)), dest.high);
+    }
+    template <typename T>
+    void and64FromMemory(const T& address, Register64 dest) {
+        andl(Operand(LowWord(address)), dest.low);
+        andl(Operand(HighWord(address)), dest.high);
+    }
+    template <typename T>
+    void or64FromMemory(const T& address, Register64 dest) {
+        orl(Operand(LowWord(address)), dest.low);
+        orl(Operand(HighWord(address)), dest.high);
+    }
+    template <typename T>
+    void xor64FromMemory(const T& address, Register64 dest) {
+        xorl(Operand(LowWord(address)), dest.low);
+        xorl(Operand(HighWord(address)), dest.high);
     }
 
     /////////////////////////////////////////////////////////////////
@@ -143,8 +154,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
     template <typename T>
     void storeValue(const Value& val, const T& dest) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        storeTypeTag(ImmTag(jv.s.tag), Operand(dest));
+        storeTypeTag(ImmTag(val.toNunboxTag()), Operand(dest));
         storePayload(val, Operand(dest));
     }
     void storeValue(ValueOperand val, BaseIndex dest) {
@@ -214,12 +224,11 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         pop(val.typeReg());
     }
     void pushValue(const Value& val) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        push(Imm32(jv.s.tag));
-        if (val.isMarkable())
-            push(ImmGCPtr(reinterpret_cast<gc::Cell*>(val.toGCThing())));
+        push(Imm32(val.toNunboxTag()));
+        if (val.isGCThing())
+            push(ImmGCPtr(val.toGCThing()));
         else
-            push(Imm32(jv.s.payload.i32));
+            push(Imm32(val.toNunboxPayload()));
     }
     void pushValue(JSValueType type, Register reg) {
         push(ImmTag(JSVAL_TYPE_TO_TAG(type)));
@@ -238,11 +247,10 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         pop(dest.high);
     }
     void storePayload(const Value& val, Operand dest) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        if (val.isMarkable())
-            movl(ImmGCPtr((gc::Cell*)jv.s.payload.ptr), ToPayload(dest));
+        if (val.isGCThing())
+            movl(ImmGCPtr(val.toGCThing()), ToPayload(dest));
         else
-            movl(Imm32(jv.s.payload.i32), ToPayload(dest));
+            movl(Imm32(val.toNunboxPayload()), ToPayload(dest));
     }
     void storePayload(Register src, Operand dest) {
         movl(src, ToPayload(dest));
@@ -258,9 +266,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         movl(src, dest);
     }
 
-    // Returns the register containing the type tag.
-    Register splitTagForTest(const ValueOperand& value) {
-        return value.typeReg();
+    void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag) {
+        MOZ_ASSERT(value.typeReg() == tag);
     }
 
     Condition testUndefined(Condition cond, Register tag) {
@@ -450,6 +457,11 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         cmp32(tagOf(address), ImmTag(JSVAL_TAG_BOOLEAN));
         return cond;
     }
+    Condition testString(Condition cond, const Address& address) {
+        MOZ_ASSERT(cond == Equal || cond == NotEqual);
+        cmp32(tagOf(address), ImmTag(JSVAL_TAG_STRING));
+        return cond;
+    }
     Condition testString(Condition cond, const BaseIndex& address) {
         MOZ_ASSERT(cond == Equal || cond == NotEqual);
         cmp32(tagOf(address), ImmTag(JSVAL_TAG_STRING));
@@ -557,13 +569,6 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         test32(lhs, Imm32(rhs.value));
     }
 
-    template <typename T1, typename T2>
-    void cmpPtrSet(Assembler::Condition cond, T1 lhs, T2 rhs, Register dest)
-    {
-        cmpPtr(lhs, rhs);
-        emitSet(cond, dest);
-    }
-
     /////////////////////////////////////////////////////////////////
     // Common interface.
     /////////////////////////////////////////////////////////////////
@@ -625,9 +630,10 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void load32(AbsoluteAddress address, Register dest) {
         movl(Operand(address), dest);
     }
-    void load64(const Address& address, Register64 dest) {
-        movl(Operand(address), dest.low);
-        movl(Operand(Address(address.base, address.offset + 4)), dest.high);
+    template <typename T>
+    void load64(const T& address, Register64 dest) {
+        movl(Operand(LowWord(address)), dest.low);
+        movl(Operand(HighWord(address)), dest.high);
     }
     template <typename T>
     void storePtr(ImmWord imm, T address) {
@@ -659,24 +665,30 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void store16(Register src, AbsoluteAddress address) {
         movw(src, Operand(address));
     }
-    void store64(Register64 src, Address address) {
-        movl(src.low, Operand(address));
-        movl(src.high, Operand(Address(address.base, address.offset + 4)));
+    template <typename T>
+    void store64(Register64 src, const T& address) {
+        movl(src.low, Operand(LowWord(address)));
+        movl(src.high, Operand(HighWord(address)));
+    }
+    void store64(Imm64 imm, Address address) {
+        movl(imm.low(), Operand(LowWord(address)));
+        movl(imm.hi(), Operand(HighWord(address)));
     }
 
     void setStackArg(Register reg, uint32_t arg) {
         movl(reg, Operand(esp, arg * sizeof(intptr_t)));
     }
 
-    // Note: this function clobbers the source register.
-    void boxDouble(FloatRegister src, const ValueOperand& dest) {
+    void boxDouble(FloatRegister src, const ValueOperand& dest, FloatRegister temp) {
         if (Assembler::HasSSE41()) {
             vmovd(src, dest.payloadReg());
             vpextrd(1, src, dest.typeReg());
         } else {
             vmovd(src, dest.payloadReg());
-            vpsrldq(Imm32(4), src, src);
-            vmovd(src, dest.typeReg());
+            if (src != temp)
+                moveDouble(src, temp);
+            vpsrldq(Imm32(4), temp, temp);
+            vmovd(temp, dest.typeReg());
         }
     }
     void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest) {
@@ -685,27 +697,101 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         movl(ImmType(type), dest.typeReg());
     }
 
-    void unboxNonDouble(const ValueOperand& src, Register dest) {
-        if (src.payloadReg() != dest)
-            movl(src.payloadReg(), dest);
+    void unboxNonDouble(const ValueOperand& src, Register dest, JSValueType type, Register scratch = InvalidReg) {
+        unboxNonDouble(Operand(src.typeReg()), Operand(src.payloadReg()), dest, type, scratch);
     }
-    void unboxNonDouble(const Address& src, Register dest) {
-        movl(payloadOf(src), dest);
+    void unboxNonDouble(const Operand& tag, const Operand& payload, Register dest, JSValueType type, Register scratch = InvalidReg) {
+        auto movPayloadToDest = [&]() {
+            if (payload.kind() != Operand::REG || !payload.containsReg(dest))
+                movl(payload, dest);
+        };
+        if (!JitOptions.spectreValueMasking) {
+            movPayloadToDest();
+            return;
+        }
+
+        // Spectre mitigation: We zero the payload if the tag does not match the
+        // expected type and if this is a pointer type.
+        if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
+            movPayloadToDest();
+            return;
+        }
+
+        if (!tag.containsReg(dest) && !payload.containsReg(dest)) {
+            // We zero the destination register and move the payload into it if
+            // the tag corresponds to the given type.
+            xorl(dest, dest);
+            cmpl(Imm32(JSVAL_TYPE_TO_TAG(type)), tag);
+            cmovCCl(Condition::Equal, payload, dest);
+            return;
+        }
+
+        if (scratch == InvalidReg || scratch == dest ||
+            tag.containsReg(scratch) || payload.containsReg(scratch))
+        {
+            // UnboxedLayout::makeConstructorCode calls extractObject with a
+            // scratch register which aliases the tag register, thus we cannot
+            // assert the above condition.
+            scratch = InvalidReg;
+        }
+
+        // The destination register aliases one of the operands. We create a
+        // zero value either in a scratch register or on the stack and use it
+        // to reset the destination register after reading both the tag and the
+        // payload.
+        Operand zero(Address(esp, 0));
+        if (scratch == InvalidReg) {
+            push(Imm32(0));
+        } else {
+            xorl(scratch, scratch);
+            zero = Operand(scratch);
+        }
+        cmpl(Imm32(JSVAL_TYPE_TO_TAG(type)), tag);
+        movPayloadToDest();
+        cmovCCl(Condition::NotEqual, zero, dest);
+        if (scratch == InvalidReg) {
+            addl(Imm32(sizeof(void*)), esp);
+        }
     }
-    void unboxNonDouble(const BaseIndex& src, Register dest) {
-        movl(payloadOf(src), dest);
+    void unboxNonDouble(const Address& src, Register dest, JSValueType type) {
+        unboxNonDouble(tagOf(src), payloadOf(src), dest, type);
     }
-    void unboxInt32(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxInt32(const Address& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxBoolean(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxBoolean(const Address& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxString(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxString(const Address& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxSymbol(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxSymbol(const Address& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxObject(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxObject(const Address& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxObject(const BaseIndex& src, Register dest) { unboxNonDouble(src, dest); }
+    void unboxNonDouble(const BaseIndex& src, Register dest, JSValueType type) {
+        unboxNonDouble(tagOf(src), payloadOf(src), dest, type);
+    }
+    void unboxInt32(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_INT32);
+    }
+    void unboxInt32(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_INT32);
+    }
+    void unboxBoolean(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_BOOLEAN);
+    }
+    void unboxBoolean(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_BOOLEAN);
+    }
+    void unboxString(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_STRING);
+    }
+    void unboxString(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_STRING);
+    }
+    void unboxSymbol(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
+    }
+    void unboxSymbol(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
+    }
+    void unboxObject(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+    }
+    void unboxObject(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+    }
+    void unboxObject(const BaseIndex& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+    }
     void unboxDouble(const Address& src, FloatRegister dest) {
         loadDouble(Operand(src), dest);
     }
@@ -736,10 +822,15 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
             vunpcklps(ScratchDoubleReg, dest, dest);
         }
     }
-    inline void unboxValue(const ValueOperand& src, AnyRegister dest);
+    inline void unboxValue(const ValueOperand& src, AnyRegister dest, JSValueType type);
     void unboxPrivate(const ValueOperand& src, Register dest) {
         if (src.payloadReg() != dest)
             movl(src.payloadReg(), dest);
+    }
+
+    // See comment in MacroAssembler-x64.h.
+    void unboxGCThingForPreBarrierTrampoline(const Address& src, Register dest) {
+        movl(payloadOf(src), dest);
     }
 
     void notBoolean(const ValueOperand& val) {
@@ -749,11 +840,20 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     // Extended unboxing API. If the payload is already in a register, returns
     // that register. Otherwise, provides a move to the given scratch register,
     // and returns that.
-    Register extractObject(const Address& address, Register scratch) {
-        movl(payloadOf(address), scratch);
-        return scratch;
+    Register extractObject(const Address& address, Register dest) {
+        unboxObject(address, dest);
+        return dest;
     }
     Register extractObject(const ValueOperand& value, Register scratch) {
+        unboxNonDouble(value, value.payloadReg(), JSVAL_TYPE_OBJECT, scratch);
+        return value.payloadReg();
+    }
+    Register extractString(const ValueOperand& value, Register scratch) {
+        unboxNonDouble(value, value.payloadReg(), JSVAL_TYPE_STRING, scratch);
+        return value.payloadReg();
+    }
+    Register extractSymbol(const ValueOperand& value, Register scratch) {
+        unboxNonDouble(value, value.payloadReg(), JSVAL_TYPE_SYMBOL, scratch);
         return value.payloadReg();
     }
     Register extractInt32(const ValueOperand& value, Register scratch) {
@@ -785,6 +885,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
     void loadConstantDouble(double d, FloatRegister dest);
     void loadConstantFloat32(float f, FloatRegister dest);
+
     void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
     void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
 
@@ -805,7 +906,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     inline void loadUnboxedValue(const T& src, MIRType type, AnyRegister dest);
 
     template <typename T>
-    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes) {
+    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes, JSValueType) {
         switch (nbytes) {
           case 4:
             storePtr(value.payloadReg(), address);
@@ -827,17 +928,22 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     // Note: this function clobbers the source register.
     inline void convertUInt32ToFloat32(Register src, FloatRegister dest);
 
-    void convertUInt64ToDouble(Register64 src, Register temp, FloatRegister dest);
-
     void incrementInt32Value(const Address& addr) {
         addl(Imm32(1), payloadOf(addr));
     }
 
     inline void ensureDouble(const ValueOperand& source, FloatRegister dest, Label* failure);
 
+    void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
+        loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, globalArea) + globalDataOffset), dest);
+    }
+    void loadWasmPinnedRegsFromTls() {
+        // x86 doesn't have any pinned registers.
+    }
+
   public:
     // Used from within an Exit frame to handle a pending exception.
-    void handleFailureWithHandlerTail(void* handler);
+    void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
 
     // Instrumentation for entering and leaving the profiler.
     void profilerEnterFrame(Register framePtr, Register scratch);

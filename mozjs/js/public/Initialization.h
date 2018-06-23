@@ -13,7 +13,12 @@
 namespace JS {
 namespace detail {
 
-enum class InitState { Uninitialized = 0, Running, ShutDown };
+enum class InitState {
+    Uninitialized = 0,
+    Initializing,
+    Running,
+    ShutDown
+};
 
 /**
  * SpiderMonkey's initialization status is tracked here, and it controls things
@@ -24,6 +29,9 @@ enum class InitState { Uninitialized = 0, Running, ShutDown };
  */
 extern JS_PUBLIC_DATA(InitState)
 libraryInitState;
+
+extern JS_PUBLIC_API(const char*)
+InitWithFailureDiagnostic(bool isDebugBuild);
 
 } // namespace detail
 } // namespace JS
@@ -47,7 +55,7 @@ JS_SetICUMemoryFunctions(JS_ICUAllocFn allocFn,
 
 /**
  * Initialize SpiderMonkey, returning true only if initialization succeeded.
- * Once this method has succeeded, it is safe to call JS_NewRuntime and other
+ * Once this method has succeeded, it is safe to call JS_NewContext and other
  * JSAPI methods.
  *
  * This method must be called before any other JSAPI method is used on any
@@ -58,16 +66,46 @@ JS_SetICUMemoryFunctions(JS_ICUAllocFn allocFn,
  * is, calling JS_Init/JSAPI methods/JS_ShutDown in that order, then doing so
  * again).  This restriction may eventually be lifted.
  */
-extern JS_PUBLIC_API(bool)
-JS_Init(void);
+inline bool
+JS_Init(void)
+{
+#ifdef DEBUG
+    return !JS::detail::InitWithFailureDiagnostic(true);
+#else
+    return !JS::detail::InitWithFailureDiagnostic(false);
+#endif
+}
 
 /**
  * A variant of JS_Init. On success it returns nullptr. On failure it returns a
  * pointer to a string literal that describes how initialization failed, which
  * can be useful for debugging purposes.
  */
-extern JS_PUBLIC_API(const char*)
-JS_InitWithFailureDiagnostic(void);
+inline const char*
+JS_InitWithFailureDiagnostic(void)
+{
+#ifdef DEBUG
+    return JS::detail::InitWithFailureDiagnostic(true);
+#else
+    return JS::detail::InitWithFailureDiagnostic(false);
+#endif
+}
+
+/*
+ * Returns true if SpiderMonkey has been initialized successfully, even if it has
+ * possibly been shut down.
+ *
+ * Note that it is the responsibility of the embedder to call JS_Init() and
+ * JS_ShutDown() at the correct times, and therefore this API should ideally not
+ * be necessary to use.  This is only intended to be used in cases where the
+ * embedder isn't in full control of deciding whether to initialize SpiderMonkey
+ * or hand off the task to another consumer.
+ */
+inline bool
+JS_IsInitialized(void)
+{
+  return JS::detail::libraryInitState >= JS::detail::InitState::Running;
+}
 
 /**
  * Destroy free-standing resources allocated by SpiderMonkey, not associated

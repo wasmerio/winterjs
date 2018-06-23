@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/supplementalData.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 supplementalData:table(nofallback){
     CurrencyMap{
         AC{
@@ -860,10 +854,21 @@ supplementalData:table(nofallback){
         BY{
             {
                 from:intvector{
+                    341,
+                    -1547615232,
+                }
+                id{"BYN"}
+            }
+            {
+                from:intvector{
                     220,
                     1791994880,
                 }
                 id{"BYR"}
+                to:intvector{
+                    345,
+                    1551482879,
+                }
             }
             {
                 from:intvector{
@@ -1058,6 +1063,13 @@ supplementalData:table(nofallback){
                     213,
                     320765951,
                 }
+            }
+            {
+                from:intvector{
+                    297,
+                    -402654208,
+                }
+                id{"CNH"}
             }
         }
         CO{
@@ -3817,10 +3829,21 @@ supplementalData:table(nofallback){
         ST{
             {
                 from:intvector{
+                    352,
+                    -1358655488,
+                }
+                id{"STN"}
+            }
+            {
+                from:intvector{
                     56,
                     2006631424,
                 }
                 id{"STD"}
+                to:intvector{
+                    352,
+                    -1358655489,
+                }
             }
         }
         SU{
@@ -4749,6 +4772,12 @@ supplementalData:table(nofallback){
             0,
             0,
         }
+        BYN:intvector{
+            2,
+            0,
+            2,
+            0,
+        }
         BYR:intvector{
             0,
             0,
@@ -4759,13 +4788,13 @@ supplementalData:table(nofallback){
             2,
             0,
             2,
-            0,
+            5,
         }
         CHF:intvector{
             2,
             0,
             2,
-            0,
+            5,
         }
         CLF:intvector{
             4,
@@ -4786,7 +4815,7 @@ supplementalData:table(nofallback){
             0,
         }
         CRC:intvector{
-            0,
+            2,
             0,
             0,
             0,
@@ -4794,7 +4823,7 @@ supplementalData:table(nofallback){
         CZK:intvector{
             2,
             0,
-            2,
+            0,
             0,
         }
         DEFAULT:intvector{
@@ -4808,6 +4837,12 @@ supplementalData:table(nofallback){
             0,
             0,
             0,
+        }
+        DKK:intvector{
+            2,
+            0,
+            2,
+            50,
         }
         ESP:intvector{
             0,
@@ -4830,7 +4865,7 @@ supplementalData:table(nofallback){
         HUF:intvector{
             2,
             0,
-            2,
+            0,
             0,
         }
         IDR:intvector{
@@ -4959,6 +4994,12 @@ supplementalData:table(nofallback){
             0,
             0,
         }
+        NOK:intvector{
+            2,
+            0,
+            0,
+            0,
+        }
         OMR:intvector{
             3,
             0,
@@ -4985,6 +5026,12 @@ supplementalData:table(nofallback){
         }
         RWF:intvector{
             0,
+            0,
+            0,
+            0,
+        }
+        SEK:intvector{
+            2,
             0,
             0,
             0,
@@ -5034,7 +5081,7 @@ supplementalData:table(nofallback){
         TWD:intvector{
             2,
             0,
-            2,
+            0,
             0,
         }
         TZS:intvector{

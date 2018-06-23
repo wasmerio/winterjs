@@ -13,12 +13,14 @@
 #include <cstring>
 #include <new> // for placement new
 
-#include "jsstr.h"
+#include "builtin/String.h"
 
 #include "js/HashTable.h"
 #include "js/Utility.h"
 
 #include "threading/ExclusiveData.h"
+
+#include "vm/MutexIDs.h"
 
 namespace js {
 
@@ -157,7 +159,7 @@ class SharedImmutableStringsCache
      * `mozilla::Nothing` on out of memory failure.
      */
     static mozilla::Maybe<SharedImmutableStringsCache> Create() {
-        auto inner = js_new<ExclusiveData<Inner>>();
+        auto inner = js_new<ExclusiveData<Inner>>(mutexid::SharedImmutableStringsCache);
         if (!inner)
             return mozilla::Nothing();
 

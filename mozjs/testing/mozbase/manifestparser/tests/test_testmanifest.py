@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 
+from __future__ import absolute_import
+
 import os
 import shutil
 import tempfile
 import unittest
+
+import mozunit
 
 from manifestparser import TestManifest, ParseError
 from manifestparser.filters import subsuite
@@ -18,9 +22,11 @@ class TestTestManifest(unittest.TestCase):
         # Test filtering based on platform:
         filter_example = os.path.join(here, 'filter-example.ini')
         manifest = TestManifest(manifests=(filter_example,), strict=False)
-        self.assertEqual([i['name'] for i in manifest.active_tests(os='win', disabled=False, exists=False)],
+        self.assertEqual([i['name'] for i in manifest.active_tests(os='win', disabled=False,
+                                                                   exists=False)],
                          ['windowstest', 'fleem'])
-        self.assertEqual([i['name'] for i in manifest.active_tests(os='linux', disabled=False, exists=False)],
+        self.assertEqual([i['name'] for i in manifest.active_tests(os='linux', disabled=False,
+                                                                   exists=False)],
                          ['fleem', 'linuxtest'])
 
         # Look for existing tests.  There is only one:
@@ -28,7 +34,7 @@ class TestTestManifest(unittest.TestCase):
                          ['fleem'])
 
         # You should be able to expect failures:
-        last = manifest.active_tests(exists=False, toolkit='gtk2')[-1]
+        last = manifest.active_tests(exists=False, toolkit='gtk3')[-1]
         self.assertEqual(last['name'], 'linuxtest')
         self.assertEqual(last['expected'], 'pass')
         last = manifest.active_tests(exists=False, toolkit='cocoa')[-1]
@@ -116,5 +122,6 @@ class TestTestManifest(unittest.TestCase):
         self.assertEqual(len(empty_manifest.test_paths()), 0)
         self.assertEqual(len(empty_manifest.active_tests()), 0)
 
+
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+
 import argparse
 import sys
 import traceback
@@ -5,12 +7,15 @@ import types
 
 from mozlog import commandline, get_default_logger
 
+
 class TestAssertion(Exception):
     pass
+
 
 def assert_equals(a, b):
     if a != b:
         raise TestAssertion("%r not equal to %r" % (a, b))
+
 
 def expected(status):
     def inner(f):
@@ -21,26 +26,32 @@ def expected(status):
         return test_func
     return inner
 
+
 def test_that_passes():
     assert_equals(1, int("1"))
+
 
 def test_that_fails():
     assert_equals(1, int("2"))
 
+
 def test_that_has_an_error():
     assert_equals(2, 1 + "1")
+
 
 @expected("FAIL")
 def test_expected_fail():
     assert_equals(2 + 2, 5)
 
+
 class TestRunner(object):
+
     def __init__(self):
         self.logger = get_default_logger(component='TestRunner')
 
     def gather_tests(self):
         for item in globals().itervalues():
-            if type(item) == types.FunctionType and item.__name__.startswith("test_"):
+            if isinstance(item, types.FunctionType) and item.__name__.startswith("test_"):
                 yield item.__name__, item
 
     def run(self):
@@ -62,16 +73,18 @@ class TestRunner(object):
         except TestAssertion as e:
             status = "FAIL"
             message = e.message
-        except:
+        except Exception:
             status = "ERROR"
             message = traceback.format_exc()
         else:
             status = "PASS"
         self.logger.test_end(name, status=status, expected=expected, message=message)
 
+
 def get_parser():
     parser = argparse.ArgumentParser()
     return parser
+
 
 def main():
     parser = get_parser()
@@ -84,8 +97,9 @@ def main():
     runner = TestRunner()
     try:
         runner.run()
-    except:
+    except Exception:
         logger.critical("Error during test run:\n%s" % traceback.format_exc())
+
 
 if __name__ == "__main__":
     main()

@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
  * Copyright (C) 2015, International Business Machines
  * Corporation and others.  All Rights Reserved.
@@ -11,19 +13,21 @@
 
 #include "unicode/dcfmtsym.h"
 #include "unicode/plurrule.h"
+#include "unicode/strenum.h"
 #include "unicode/ucurr.h"
+#include "unicode/ustring.h"
 #include "affixpatternparser.h"
 #include "charstr.h"
 #include "precision.h"
 #include "uassert.h"
 #include "unistrappender.h"
 
-        static UChar gDefaultSymbols[] = {0xa4, 0xa4, 0xa4};
+static const UChar gDefaultSymbols[] = {0xa4, 0xa4, 0xa4};
 
-static UChar gPercent = 0x25;
-static UChar gPerMill = 0x2030;
-static UChar gNegative = 0x2D;
-static UChar gPositive = 0x2B;
+static const UChar gPercent = 0x25;
+static const UChar gPerMill = 0x2030;
+static const UChar gNegative = 0x2D;
+static const UChar gPositive = 0x2B;
 
 #define PACK_TOKEN_AND_LENGTH(t, l) ((UChar) (((t) << 8) | (l & 0xFF)))
 
@@ -44,7 +48,8 @@ nextToken(const UChar *buffer, int32_t idx, int32_t len, UChar *token) {
     *token = buffer[idx + 1];
     if (buffer[idx + 1] == 0xA4) {
         int32_t i = 2;
-        for (; idx + i < len && i < 4 && buffer[idx + i] == buffer[idx + 1]; ++i);
+        for (; idx + i < len && i < 4 && buffer[idx + i] == buffer[idx + 1]; ++i)
+          ;
         return i;
     }
     return 2;
@@ -66,7 +71,8 @@ nextUserToken(const UChar *buffer, int32_t idx, int32_t len, UChar *token) {
         break;
     }
     int32_t i = 1;
-    for (; idx + i < len && i < max && buffer[idx + i] == buffer[idx]; ++i);
+    for (; idx + i < len && i < max && buffer[idx + i] == buffer[idx]; ++i)
+      ;
     return i;
 }
 
@@ -220,7 +226,7 @@ AffixPattern::append(const AffixPattern &other) {
             addLiteral(literal.getBuffer(), 0, literal.length());
             break;
         case kCurrency:
-            addCurrency(iter.getTokenLength());
+            addCurrency(static_cast<uint8_t>(iter.getTokenLength()));
             break;
         default:
             add(iter.getTokenType());
@@ -475,7 +481,7 @@ AffixPattern::parseUserAffixString(
                 break;
             case 0xA4:
                 appender.flush();
-                appendTo.add(kCurrency, tokenSize);
+                appendTo.add(kCurrency, static_cast<uint8_t>(tokenSize));
                 break;
             default:
                 appender.append(token);

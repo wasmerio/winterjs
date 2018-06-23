@@ -4,7 +4,7 @@
 
 try:
     from setuptools import setup
-except:
+except ImportError:
     from distutils.core import setup
 
 
@@ -32,7 +32,7 @@ setup(
         'blessings',
         'mozfile',
         'mozprocess',
+        'six',
     ],
     tests_require=['mock'],
 )
-

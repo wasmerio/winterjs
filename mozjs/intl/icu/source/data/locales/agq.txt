@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/agq.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 agq{
     AuxExemplarCharacters{"[q r x]"}
     ExemplarCharacters{
@@ -15,6 +9,7 @@ agq{
         "{ʉ\u030C} {ʉ\u0304} v w y z ʔ]"
     }
     ExemplarCharactersIndex{"[A B C D E Ɛ F G H I Ɨ K L M N Ŋ O Ɔ P S T U Ʉ V W Y Z ʔ]"}
+    ExemplarCharactersNumbers{"[  \\- , % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -28,7 +23,7 @@ agq{
             }
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{
@@ -73,6 +68,10 @@ agq{
         }
         gregorian{
             AmPmMarkers{
+                "a.g",
+                "a.k",
+            }
+            AmPmMarkersAbbr{
                 "a.g",
                 "a.k",
             }

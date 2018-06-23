@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/uz_Arab.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 uz_Arab{
     %%Parent{"root"}
     AuxExemplarCharacters{"[\u200C\u200D\u200E\u200F ټ ځ څ ډ ړ ږ ښ ګ ڼ ي ۍ ې]"}
@@ -13,6 +7,7 @@ uz_Arab{
         "[\u064B \u064C \u064D \u064E \u064F \u0650 \u0651 \u0652 \u0654 \u0670 ء آ أ"
         " ؤ ئ ا ب پ ة ت ث ج چ ح خ د ذ ر ز ژ س ش ص ض ط ظ ع غ ف ق ک گ ل م ن ه و ۇ ۉ ی]"
     }
+    ExemplarCharactersNumbers{"[\u200E \\- , ٫ ٬ . % ٪ ‰ ؉ + − 0۰ 1۱ 2۲ 3۳ 4۴ 5۵ 6۶ 7۷ 8۸ 9۹]"}
     NumberElements{
         arabext{
             symbols{
@@ -33,7 +28,7 @@ uz_Arab{
         }
         native{"arabext"}
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.36.86"}
     calendar{
         gregorian{
             dayNames{

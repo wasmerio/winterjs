@@ -12,8 +12,6 @@
 
 #include "vm/Stack.h"
 
-class JSAtom;
-
 namespace js {
 
 /*
@@ -46,6 +44,15 @@ CallSelfHostedFunction(JSContext* cx, HandlePropertyName name, HandleValue thisv
 
 bool
 intrinsic_StringSplitString(JSContext* cx, unsigned argc, JS::Value* vp);
+
+bool
+intrinsic_NewArrayIterator(JSContext* cx, unsigned argc, JS::Value* vp);
+
+bool
+intrinsic_NewStringIterator(JSContext* cx, unsigned argc, JS::Value* vp);
+
+bool
+intrinsic_IsSuspendedGenerator(JSContext* cx, unsigned argc, JS::Value* vp);
 
 } /* namespace js */
 

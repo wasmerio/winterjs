@@ -9,6 +9,8 @@
 
 BEGIN_TEST(testDateToLocaleString)
 {
+    JSRuntime* rt = JS_GetRuntime(cx);
+
     // This test should only attempt to run if we have Intl support: necessary
     // to properly assume that changes to the default locale will predictably
     // affect the behavior of the locale-sensitive Date methods tested here.

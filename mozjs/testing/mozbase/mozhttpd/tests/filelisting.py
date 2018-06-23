@@ -4,13 +4,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import mozhttpd
 import urllib2
 import os
 import unittest
 import re
 
+import mozunit
+
 here = os.path.dirname(os.path.abspath(__file__))
+
 
 class FileListingTest(unittest.TestCase):
 
@@ -21,14 +26,15 @@ class FileListingTest(unittest.TestCase):
         httpd.start(block=False)
         f = urllib2.urlopen("http://%s:%s/%s" % ('127.0.0.1', httpd.httpd.server_port, path))
         for line in f.readlines():
-            webline = re.sub('\<[a-zA-Z0-9\-\_\.\=\"\'\/\\\%\!\@\#\$\^\&\*\(\) ]*\>', '', line.strip('\n')).strip('/').strip().strip('@')
+            webline = re.sub('\<[a-zA-Z0-9\-\_\.\=\"\'\/\\\%\!\@\#\$\^\&\*\(\) ]*\>',
+                             '', line.strip('\n')).strip('/').strip().strip('@')
 
             if webline and not webline.startswith("Directory listing for"):
                 self.assertTrue(webline in filelist,
                                 "File %s in dir listing corresponds to a file" % webline)
                 filelist.remove(webline)
-        self.assertFalse(filelist, "Should have no items in filelist (%s) unaccounted for" % filelist)
-
+        self.assertFalse(
+            filelist, "Should have no items in filelist (%s) unaccounted for" % filelist)
 
     def test_filelist(self):
         self.check_filelisting()
@@ -38,4 +44,4 @@ class FileListingTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

@@ -41,13 +41,12 @@ namespace irregexp {
 class MOZ_STACK_CLASS RegExpMacroAssembler
 {
   public:
-    RegExpMacroAssembler(LifoAlloc& alloc, RegExpShared* shared, size_t numSavedRegisters)
+    RegExpMacroAssembler(JSContext* cx, LifoAlloc& alloc, size_t numSavedRegisters)
       : slow_safe_compiler_(false),
         global_mode_(NOT_GLOBAL),
         alloc_(alloc),
         num_registers_(numSavedRegisters),
-        num_saved_registers_(numSavedRegisters),
-        shared(shared)
+        num_saved_registers_(numSavedRegisters)
     {}
 
     enum StackCheckFlag {
@@ -137,7 +136,7 @@ class MOZ_STACK_CLASS RegExpMacroAssembler
 
     // The current character (modulus the kTableSize) is looked up in the byte
     // array, and if the found byte is non-zero, we jump to the on_bit_set label.
-    virtual void CheckBitInTable(uint8_t* table, jit::Label* on_bit_set) = 0;
+    virtual void CheckBitInTable(RegExpShared::JitCodeTable table, jit::Label* on_bit_set) = 0;
 
     // Checks whether the given offset from the current position is before
     // the end of the string. May overwrite the current character.
@@ -213,9 +212,6 @@ class MOZ_STACK_CLASS RegExpMacroAssembler
         if (num_registers_ <= reg)
             num_registers_ = reg + 1;
     }
-
-  public:
-    RegExpShared* shared;
 };
 
 template <typename CharT>
@@ -230,57 +226,57 @@ CaseInsensitiveCompareUCStrings(const CharT* substring1, const CharT* substring2
 class MOZ_STACK_CLASS InterpretedRegExpMacroAssembler final : public RegExpMacroAssembler
 {
   public:
-    InterpretedRegExpMacroAssembler(LifoAlloc* alloc, RegExpShared* shared, size_t numSavedRegisters);
+    InterpretedRegExpMacroAssembler(JSContext* cx, LifoAlloc* alloc, size_t numSavedRegisters);
     ~InterpretedRegExpMacroAssembler();
 
     // Inherited virtual methods.
-    RegExpCode GenerateCode(JSContext* cx, bool match_only);
-    void AdvanceCurrentPosition(int by);
-    void AdvanceRegister(int reg, int by);
-    void Backtrack();
-    void Bind(jit::Label* label);
-    void CheckAtStart(jit::Label* on_at_start);
-    void CheckCharacter(unsigned c, jit::Label* on_equal);
-    void CheckCharacterAfterAnd(unsigned c, unsigned and_with, jit::Label* on_equal);
-    void CheckCharacterGT(char16_t limit, jit::Label* on_greater);
-    void CheckCharacterLT(char16_t limit, jit::Label* on_less);
-    void CheckGreedyLoop(jit::Label* on_tos_equals_current_position);
-    void CheckNotAtStart(jit::Label* on_not_at_start);
-    void CheckNotBackReference(int start_reg, jit::Label* on_no_match);
-    void CheckNotBackReferenceIgnoreCase(int start_reg, jit::Label* on_no_match, bool unicode);
-    void CheckNotCharacter(unsigned c, jit::Label* on_not_equal);
-    void CheckNotCharacterAfterAnd(unsigned c, unsigned and_with, jit::Label* on_not_equal);
+    RegExpCode GenerateCode(JSContext* cx, bool match_only) override;
+    void AdvanceCurrentPosition(int by) override;
+    void AdvanceRegister(int reg, int by) override;
+    void Backtrack() override;
+    void Bind(jit::Label* label) override;
+    void CheckAtStart(jit::Label* on_at_start) override;
+    void CheckCharacter(unsigned c, jit::Label* on_equal) override;
+    void CheckCharacterAfterAnd(unsigned c, unsigned and_with, jit::Label* on_equal) override;
+    void CheckCharacterGT(char16_t limit, jit::Label* on_greater) override;
+    void CheckCharacterLT(char16_t limit, jit::Label* on_less) override;
+    void CheckGreedyLoop(jit::Label* on_tos_equals_current_position) override;
+    void CheckNotAtStart(jit::Label* on_not_at_start) override;
+    void CheckNotBackReference(int start_reg, jit::Label* on_no_match) override;
+    void CheckNotBackReferenceIgnoreCase(int start_reg, jit::Label* on_no_match, bool unicode) override;
+    void CheckNotCharacter(unsigned c, jit::Label* on_not_equal) override;
+    void CheckNotCharacterAfterAnd(unsigned c, unsigned and_with, jit::Label* on_not_equal) override;
     void CheckNotCharacterAfterMinusAnd(char16_t c, char16_t minus, char16_t and_with,
-                                        jit::Label* on_not_equal);
+                                        jit::Label* on_not_equal) override;
     void CheckCharacterInRange(char16_t from, char16_t to,
-                               jit::Label* on_in_range);
+                               jit::Label* on_in_range) override;
     void CheckCharacterNotInRange(char16_t from, char16_t to,
-                                  jit::Label* on_not_in_range);
-    void CheckBitInTable(uint8_t* table, jit::Label* on_bit_set);
-    void JumpOrBacktrack(jit::Label* to);
-    void Fail();
-    void IfRegisterGE(int reg, int comparand, jit::Label* if_ge);
-    void IfRegisterLT(int reg, int comparand, jit::Label* if_lt);
-    void IfRegisterEqPos(int reg, jit::Label* if_eq);
+                                  jit::Label* on_not_in_range) override;
+    void CheckBitInTable(RegExpShared::JitCodeTable table, jit::Label* on_bit_set) override;
+    void JumpOrBacktrack(jit::Label* to) override;
+    void Fail() override;
+    void IfRegisterGE(int reg, int comparand, jit::Label* if_ge) override;
+    void IfRegisterLT(int reg, int comparand, jit::Label* if_lt) override;
+    void IfRegisterEqPos(int reg, jit::Label* if_eq) override;
     void LoadCurrentCharacter(int cp_offset, jit::Label* on_end_of_input,
-                              bool check_bounds = true, int characters = 1);
-    void PopCurrentPosition();
-    void PopRegister(int register_index);
-    void PushCurrentPosition();
-    void PushRegister(int register_index, StackCheckFlag check_stack_limit);
-    void ReadCurrentPositionFromRegister(int reg);
-    void ReadBacktrackStackPointerFromRegister(int reg);
-    void SetCurrentPositionFromEnd(int by);
-    void SetRegister(int register_index, int to);
-    bool Succeed();
-    void WriteCurrentPositionToRegister(int reg, int cp_offset);
-    void ClearRegisters(int reg_from, int reg_to);
-    void WriteBacktrackStackPointerToRegister(int reg);
-    void PushBacktrack(jit::Label* label);
-    void BindBacktrack(jit::Label* label);
+                              bool check_bounds = true, int characters = 1) override;
+    void PopCurrentPosition() override;
+    void PopRegister(int register_index) override;
+    void PushCurrentPosition() override;
+    void PushRegister(int register_index, StackCheckFlag check_stack_limit) override;
+    void ReadCurrentPositionFromRegister(int reg) override;
+    void ReadBacktrackStackPointerFromRegister(int reg) override;
+    void SetCurrentPositionFromEnd(int by) override;
+    void SetRegister(int register_index, int to) override;
+    bool Succeed() override;
+    void WriteCurrentPositionToRegister(int reg, int cp_offset) override;
+    void ClearRegisters(int reg_from, int reg_to) override;
+    void WriteBacktrackStackPointerToRegister(int reg) override;
+    void PushBacktrack(jit::Label* label) override;
+    void BindBacktrack(jit::Label* label) override;
 
     // The byte-code interpreter checks on each push anyway.
-    int stack_limit_slack() { return 1; }
+    int stack_limit_slack() override { return 1; }
 
   private:
     void Expand();

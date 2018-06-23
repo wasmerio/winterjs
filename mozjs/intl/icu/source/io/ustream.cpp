@@ -1,6 +1,8 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 **********************************************************************
-*   Copyright (C) 2001-2014, International Business Machines
+*   Copyright (C) 2001-2016, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 **********************************************************************
 *  FILE NAME : ustream.cpp
@@ -26,8 +28,6 @@
 #include <string.h>
 
 // console IO
-
-#if U_IOSTREAM_SOURCE >= 199711
 
 #define STD_NAMESPACE std::
 
@@ -88,7 +88,7 @@ operator>>(STD_ISTREAM& stream, UnicodeString& str)
     converter = u_getDefaultConverter(&errorCode);
     if(U_SUCCESS(errorCode)) {
         UChar *us = uBuffer;
-        const UChar *uLimit = uBuffer + sizeof(uBuffer)/sizeof(*uBuffer);
+        const UChar *uLimit = uBuffer + UPRV_LENGTHOF(uBuffer);
         const char *s, *sLimit;
         char ch;
         UChar ch32;
@@ -167,5 +167,4 @@ STOP_READING:
 
 U_NAMESPACE_END
 
-#endif
 #endif

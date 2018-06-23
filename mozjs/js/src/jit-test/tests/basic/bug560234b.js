@@ -1,6 +1,6 @@
 function f(a) {
-   function g() {
-       yield function () a;
+   function* g() {
+       yield function () { return a; };
    }
    if (a == 8)
        return g();
@@ -9,4 +9,4 @@ function f(a) {
 var x;
 for (var i = 0; i < 9; i++)
    x = f(i);
-x.next()();  // ReferenceError: a is not defined.
+x.next().value();  // ReferenceError: a is not defined.

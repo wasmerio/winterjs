@@ -1,15 +1,10 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/tzm.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 tzm{
     AuxExemplarCharacters{"[o p v]"}
     ExemplarCharacters{"[a b c d ḍ e ɛ f g {gʷ} ɣ h ḥ i j k {kʷ} l m n q r ṛ s ṣ t ṭ u w x y z]"}
     ExemplarCharactersIndex{"[A B C D Ḍ E Ɛ F G Ɣ H Ḥ I J K L M N Q R Ṛ S Ṣ T Ṭ U W X Y Z]"}
+    ExemplarCharactersNumbers{"[  \\- , % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -21,7 +16,7 @@ tzm{
             }
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{
@@ -65,6 +60,10 @@ tzm{
         }
         gregorian{
             AmPmMarkers{
+                "Zdat azal",
+                "Ḍeffir aza",
+            }
+            AmPmMarkersAbbr{
                 "Zdat azal",
                 "Ḍeffir aza",
             }

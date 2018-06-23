@@ -2,6 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+import sys
+
 from mozboot.base import BaseBootstrapper
 
 
@@ -14,33 +17,37 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         self.packages = [
             'autoconf213',
             'gmake',
+            'gtar',
             'mercurial',
+            'npm',
             'pkgconf',
+            'py%s%s-sqlite3' % sys.version_info[0:2],
+            'rust',
+            'watchman',
             'zip',
         ]
 
         self.browser_packages = [
             'dbus-glib',
+            'gconf2',
             'gtk2',
             'gtk3',
-            'libGL',
+            'mesa-dri',  # depends on llvm*
             'pulseaudio',
             'v4l_compat',
             'yasm',
         ]
 
-        if self.flavor == 'dragonfly':
+        if not self.which('as'):
+            self.packages.append('binutils')
+
+        if not self.which('unzip'):
             self.packages.append('unzip')
 
-        # gcc in base is too old
-        if self.flavor == 'freebsd' and self.version < 9:
-            self.browser_packages.append('gcc')
-
     def pkg_install(self, *packages):
-        if self.which('pkg'):
-            command = ['pkg', 'install']
-        else:
-            command = ['pkg_add', '-Fr']
+        command = ['pkg', 'install']
+        if self.no_interactive:
+            command.append('-y')
 
         command.extend(packages)
         self.run_as_root(command)
@@ -49,7 +56,18 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         self.pkg_install(*self.packages)
 
     def install_browser_packages(self):
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
+
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
         self.pkg_install(*self.browser_packages)
+
+    def ensure_stylo_packages(self, state_dir, checkout_root):
+        # Already installed as browser package
+        pass
 
     def upgrade_mercurial(self, current):
         self.pkg_install('mercurial')

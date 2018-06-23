@@ -1,3 +1,4 @@
+# flake8: noqa
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -10,11 +11,12 @@ subclasses ``FirefoxProfile`` and ``ThundebirdProfile`` are available
 with preset preferences for those applications.
 """
 
-from addons import *
-from cli import *
-from diff import *
-from permissions import *
-from prefs import *
-from profile import *
-from view import *
-from webapps import *
+from __future__ import absolute_import
+
+from mozprofile.addons import *
+from mozprofile.cli import *
+from mozprofile.diff import *
+from mozprofile.permissions import *
+from mozprofile.prefs import *
+from mozprofile.profile import *
+from mozprofile.view import *

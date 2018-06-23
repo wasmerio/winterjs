@@ -37,6 +37,12 @@ class js::Thread::Id::PlatformData
   bool hasThread;
 };
 
+/* static */ js::HashNumber
+js::Thread::Hasher::hash(const Lookup& l)
+{
+  return mozilla::HashBytes(&l.platformData()->ptThread, sizeof(pthread_t));
+}
+
 inline js::Thread::Id::PlatformData*
 js::Thread::Id::platformData()
 {
@@ -59,7 +65,7 @@ js::Thread::Id::Id()
 }
 
 bool
-js::Thread::Id::operator==(const Id& aOther)
+js::Thread::Id::operator==(const Id& aOther) const
 {
   const PlatformData& self = *platformData();
   const PlatformData& other = *aOther.platformData();
@@ -68,24 +74,37 @@ js::Thread::Id::operator==(const Id& aOther)
           pthread_equal(self.ptThread, other.ptThread));
 }
 
-js::Thread::Thread(Thread&& aOther)
+js::Thread::~Thread()
 {
+  LockGuard<Mutex> lock(idMutex_);
+  MOZ_RELEASE_ASSERT(!joinable(lock));
+}
+
+js::Thread::Thread(Thread&& aOther)
+  : idMutex_(mutexid::ThreadId)
+{
+  LockGuard<Mutex> lock(aOther.idMutex_);
   id_ = aOther.id_;
   aOther.id_ = Id();
+  options_ = aOther.options_;
 }
 
 js::Thread&
 js::Thread::operator=(Thread&& aOther)
 {
-  MOZ_RELEASE_ASSERT(!joinable());
+  LockGuard<Mutex> lock(idMutex_);
+  MOZ_RELEASE_ASSERT(!joinable(lock));
   id_ = aOther.id_;
   aOther.id_ = Id();
+  options_ = aOther.options_;
   return *this;
 }
 
 bool
 js::Thread::create(void* (*aMain)(void*), void* aArg)
 {
+  LockGuard<Mutex> lock(idMutex_);
+
   pthread_attr_t attrs;
   int r = pthread_attr_init(&attrs);
   MOZ_RELEASE_ASSERT(!r);
@@ -106,16 +125,38 @@ js::Thread::create(void* (*aMain)(void*), void* aArg)
 void
 js::Thread::join()
 {
-  MOZ_RELEASE_ASSERT(joinable());
+  LockGuard<Mutex> lock(idMutex_);
+  MOZ_RELEASE_ASSERT(joinable(lock));
   int r = pthread_join(id_.platformData()->ptThread, nullptr);
   MOZ_RELEASE_ASSERT(!r);
   id_ = Id();
 }
 
+js::Thread::Id
+js::Thread::get_id()
+{
+  LockGuard<Mutex> lock(idMutex_);
+  return id_;
+}
+
+bool
+js::Thread::joinable(LockGuard<Mutex>& lock)
+{
+  return id_ != Id();
+}
+
+bool
+js::Thread::joinable()
+{
+  LockGuard<Mutex> lock(idMutex_);
+  return joinable(lock);
+}
+
 void
 js::Thread::detach()
 {
-  MOZ_RELEASE_ASSERT(joinable());
+  LockGuard<Mutex> lock(idMutex_);
+  MOZ_RELEASE_ASSERT(joinable(lock));
   int r = pthread_detach(id_.platformData()->ptThread);
   MOZ_RELEASE_ASSERT(!r);
   id_ = Id();
@@ -157,4 +198,20 @@ js::ThisThread::SetName(const char* name)
   rv = pthread_setname_np(pthread_self(), name);
 #endif
   MOZ_RELEASE_ASSERT(!rv);
+}
+
+void
+js::ThisThread::GetName(char* nameBuffer, size_t len)
+{
+  MOZ_RELEASE_ASSERT(len >= 16);
+
+  int rv = -1;
+#ifdef HAVE_PTHREAD_GETNAME_NP
+  rv = pthread_getname_np(pthread_self(), nameBuffer, len);
+#elif defined(__linux__)
+  rv = prctl(PR_GET_NAME, reinterpret_cast<unsigned long>(nameBuffer));
+#endif
+
+  if (rv)
+    nameBuffer[0] = '\0';
 }

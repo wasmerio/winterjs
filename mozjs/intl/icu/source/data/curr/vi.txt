@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/vi.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 vi{
     Currencies{
         ADP{
@@ -34,7 +28,7 @@ vi{
         }
         ANG{
             "ANG",
-            "Guilder Tây Ấn Hà Lan",
+            "Guilder Antille Hà Lan",
         }
         AOA{
             "AOA",
@@ -220,9 +214,13 @@ vi{
             "BYB",
             "Đồng Rúp Mới của Belarus (1994–1999)",
         }
+        BYN{
+            "BYN",
+            "Rúp Belarus",
+        }
         BYR{
             "BYR",
-            "Rúp Belarus",
+            "Rúp Belarus (2000–2016)",
         }
         BZD{
             "BZD",
@@ -259,6 +257,10 @@ vi{
         CLP{
             "CLP",
             "Peso Chile",
+        }
+        CNH{
+            "CNH",
+            "Nhân dân tệ (hải ngoại)",
         }
         CNY{
             "CN¥",
@@ -762,7 +764,7 @@ vi{
         }
         PEN{
             "PEN",
-            "Nuevo Sol Peru",
+            "Sol Peru",
         }
         PES{
             "PES",
@@ -1182,7 +1184,7 @@ vi{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -1199,6 +1201,7 @@ vi{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -1239,6 +1242,7 @@ vi{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -1281,7 +1285,7 @@ vi{
             other{"Dram Armenia"}
         }
         ANG{
-            other{"Guilder Tây Ấn Hà Lan"}
+            other{"Guilder Antille Hà Lan"}
         }
         AOA{
             other{"Kwanza Angola"}
@@ -1337,8 +1341,11 @@ vi{
         BWP{
             other{"Pula Botswana"}
         }
-        BYR{
+        BYN{
             other{"Rúp Belarus"}
+        }
+        BYR{
+            other{"Rúp Belarus (2000–2016)"}
         }
         BZD{
             other{"Đô la Belize"}
@@ -1354,6 +1361,9 @@ vi{
         }
         CLP{
             other{"Peso Chile"}
+        }
+        CNH{
+            other{"Nhân dân tệ (hải ngoại)"}
         }
         CNY{
             other{"Nhân dân tệ"}
@@ -1587,7 +1597,7 @@ vi{
             other{"Balboa Panama"}
         }
         PEN{
-            other{"Nuevo Sol Peru"}
+            other{"Sol Peru"}
         }
         PGK{
             other{"Kina Papua New Guinean"}
@@ -1746,5 +1756,5 @@ vi{
     CurrencyUnitPatterns{
         other{"{0} {1}"}
     }
-    Version{"2.1.19.17"}
+    Version{"2.1.37.5"}
 }

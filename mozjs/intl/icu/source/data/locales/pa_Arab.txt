@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/pa_Arab.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 pa_Arab{
     %%Parent{"root"}
     AuxExemplarCharacters{"[\u200E\u200F أ ٻ ة ٺ ټ ٽ]"}
@@ -13,6 +7,7 @@ pa_Arab{
         "[\u064F ء آ ؤ ئ ا ب پ ت ث ٹ ج چ ح خ د ذ ڈ ر ز ڑ ژ س ش ص ض ط ظ ع غ ف ق ک گ ل "
         "م ن ں ه ھ ہ و ی ے]"
     }
+    ExemplarCharactersNumbers{"[\u200E \\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         default{"arabext"}
         latn{
@@ -23,7 +18,7 @@ pa_Arab{
         }
         native{"arabext"}
     }
-    Version{"2.1.19.74"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{

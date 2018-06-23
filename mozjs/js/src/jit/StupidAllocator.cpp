@@ -81,7 +81,8 @@ StupidAllocator::init()
             registers[registerCount++].reg = AnyRegister(remainingRegisters.takeAnyGeneral());
 
         while (!remainingRegisters.emptyFloat())
-            registers[registerCount++].reg = AnyRegister(remainingRegisters.takeAnyFloat());
+            registers[registerCount++].reg =
+                AnyRegister(remainingRegisters.takeAnyFloat<RegTypeName::Any>());
 
         MOZ_ASSERT(registerCount <= MAX_REGISTERS);
     }
@@ -407,7 +408,6 @@ StupidAllocator::allocateForDefinition(LInstruction* ins, LDefinition* def)
 {
     uint32_t vreg = def->virtualRegister();
 
-    CodePosition from;
     if ((def->output()->isRegister() && def->policy() == LDefinition::FIXED) ||
         def->policy() == LDefinition::MUST_REUSE_INPUT)
     {

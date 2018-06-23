@@ -71,6 +71,7 @@ class TestWebIDLCodegenManager(unittest.TestCase):
 
         return dict(
             config_path=self._config_path,
+            webidl_root=cache_dir,
             inputs=inputs,
             exported_header_dir=mozpath.join(tmp, 'exports'),
             codegen_dir=mozpath.join(tmp, 'codegen'),
@@ -105,7 +106,7 @@ class TestWebIDLCodegenManager(unittest.TestCase):
         """generate_build_files() does the right thing from empty."""
         manager = self._get_manager()
         result = manager.generate_build_files()
-        self.assertEqual(len(result.inputs), 5)
+        self.assertEqual(len(result.inputs), 4)
 
         output = manager.expected_build_output_files()
         self.assertEqual(result.created, output)

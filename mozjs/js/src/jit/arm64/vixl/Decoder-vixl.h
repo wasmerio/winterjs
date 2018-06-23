@@ -29,15 +29,14 @@
 
 #include "mozilla/Vector.h"
 
-#include "jsalloc.h"
-
 #include "jit/arm64/vixl/Globals-vixl.h"
 #include "jit/arm64/vixl/Instructions-vixl.h"
+#include "js/AllocPolicy.h"
 
 
 // List macro containing all visitors needed by the decoder class.
 
-#define VISITOR_LIST(V)             \
+#define VISITOR_LIST_THAT_RETURN(V) \
   V(PCRelAddressing)                \
   V(AddSubImmediate)                \
   V(LogicalImmediate)               \
@@ -106,8 +105,14 @@
   V(NEONShiftImmediate)             \
   V(NEONTable)                      \
   V(NEONPerm)                       \
-  V(Unallocated)                    \
-  V(Unimplemented)
+
+#define VISITOR_LIST_THAT_DONT_RETURN(V)  \
+  V(Unallocated)                          \
+  V(Unimplemented)                        \
+
+#define VISITOR_LIST(V)             \
+  VISITOR_LIST_THAT_RETURN(V)       \
+  VISITOR_LIST_THAT_DONT_RETURN(V)  \
 
 namespace vixl {
 
@@ -145,9 +150,11 @@ class Decoder {
 
   // Top-level wrappers around the actual decoding function.
   void Decode(const Instruction* instr) {
+#ifdef DEBUG
     for (auto visitor : visitors_) {
       VIXL_ASSERT(visitor->IsConstVisitor());
     }
+#endif
     DecodeInstruction(instr);
   }
   void Decode(Instruction* instr) {

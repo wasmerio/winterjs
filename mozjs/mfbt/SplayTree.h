@@ -56,7 +56,7 @@ class SplayTree
   T* mRoot;
 
 public:
-  MOZ_CONSTEXPR SplayTree()
+  constexpr SplayTree()
     : mRoot(nullptr)
   {}
 
@@ -88,7 +88,6 @@ public:
     int cmp = Comparator::compare(*aValue, *last);
 
     finishInsertion(last, cmp, aValue);
-    return;
   }
 
   T* findOrInsert(const T& aValue);

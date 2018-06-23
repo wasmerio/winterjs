@@ -43,6 +43,7 @@ namespace disasm {
 
 // Helper function for printing to a Vector.
 static int
+MOZ_FORMAT_PRINTF(2, 3)
 SNPrintF(V8Vector<char> str, const char* format, ...)
 {
     va_list args;
@@ -951,6 +952,8 @@ Decoder::DecodeType01(Instruction* instr)
         }
     } else if ((type == 1) && instr->IsNopType1()) {
         Format(instr, "nop'cond");
+    } else if ((type == 1) && instr->IsCsdbType1()) {
+        Format(instr, "csdb'cond");
     } else {
         switch (instr->OpcodeField()) {
           case AND: {
@@ -1890,6 +1893,9 @@ Decoder::DecodeSpecialCondition(Instruction* instr)
               case 15: option = "sy";    break;
             }
             switch (instr->Bits(7, 4)) {
+              case 1:
+                Print("clrex");
+                break;
               case 4:
                 out_buffer_pos_ += SNPrintF(out_buffer_ + out_buffer_pos_,
                                             "dsb %s", option);

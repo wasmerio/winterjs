@@ -1,13 +1,10 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/ru_UA.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 ru_UA{
-    Version{"2.1.19.14"}
+    NumberElements{
+        minimumGroupingDigits{"2"}
+    }
+    Version{"2.1.37.6"}
     calendar{
         generic{
             DateTimePatterns{
@@ -35,12 +32,49 @@ ru_UA{
                 "EEEE, d MMMM y 'г'.",
                 "d MMMM y 'г'.",
                 "d MMM y 'г'.",
-                "dd.MM.yy",
+                "dd.MM.y",
                 "{1}, {0}",
                 "{1}, {0}",
                 "{1}, {0}",
                 "{1}, {0}",
                 "{1}, {0}",
+            }
+            availableFormats{
+                GyMMM{"LLL y 'г'. G"}
+                H{"HH"}
+                Hm{"HH:mm"}
+                Hms{"HH:mm:ss"}
+                Hmsv{"HH:mm:ss v"}
+                Hmv{"HH:mm v"}
+                yMEd{"ccc, d.MM.y"}
+            }
+            intervalFormats{
+                H{
+                    H{"HH–HH"}
+                }
+                Hm{
+                    H{"HH:mm–HH:mm"}
+                    m{"HH:mm–HH:mm"}
+                }
+                Hmv{
+                    H{"HH:mm–HH:mm v"}
+                    m{"HH:mm–HH:mm v"}
+                }
+                Hv{
+                    H{"HH–HH v"}
+                }
+                yMMM{
+                    y{"LLL y – LLL y"}
+                }
+                yMMMEd{
+                    y{"ccc, d MMM y – ccc, d MMM y"}
+                }
+                yMMMM{
+                    y{"LLLL y – LLLL y"}
+                }
+                yMMMd{
+                    y{"d MMM y – d MMM y"}
+                }
             }
         }
     }

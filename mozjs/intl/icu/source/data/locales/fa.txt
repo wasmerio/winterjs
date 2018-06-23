@@ -1,13 +1,10 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/fa.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 fa{
-    AuxExemplarCharacters{"[\u200C\u200D\u200E\u200F \u064E \u0650 \u064F \u0652 \u0656 \u0670 إ ك ى ي]"}
+    AuxExemplarCharacters{
+        "[ـ\u200C\u200D\u200E\u200F \u064E \u0650 \u064F \u0652 \u0656 \u0670 إ ك ى ي"
+        "]"
+    }
     Ellipsis{
         final{"{0}…"}
         initial{"…{0}"}
@@ -21,10 +18,15 @@ fa{
         "ش ص ض ط ظ ع غ ف ق ک گ ل م ن و ه ة ی]"
     }
     ExemplarCharactersIndex{"[آ ا ب پ ت ث ج چ ح خ د ذ ر ز ژ س ش ص ض ط ظ ع غ ف ق ک گ ل م ن و ه ی]"}
+    ExemplarCharactersNumbers{"[\u200E , ٫ ٬ . % ٪ ‰ ؉ + − 0۰ 1۱ 2۲ 3۳ 4۴ 5۵ 6۶ 7۷ 8۸ 9۹]"}
     ExemplarCharactersPunctuation{"[\\- ‐ ، ٫ ٬ ؛ \\: ! ؟ . … ‹ › « » ( ) \\[ \\] * / \\\\]"}
     MoreInformation{"؟"}
     NumberElements{
         arab{
+            patterns{
+                currencyFormat{"‎¤#,##0.00"}
+                percentFormat{"#,##0%"}
+            }
             symbols{
                 decimal{"٫"}
                 group{"٬"}
@@ -53,7 +55,7 @@ fa{
                 nan{"ناعدد"}
                 perMille{"؉"}
                 percentSign{"٪"}
-                plusSign{"‎+‎"}
+                plusSign{"‎+"}
                 superscriptingExponent{"×"}
                 timeSeparator{":"}
             }
@@ -62,11 +64,11 @@ fa{
         latn{
             miscPatterns{
                 atLeast{"‎{0}+‎"}
-                range{"{0} تا {1}"}
+                range{"{0}–{1}"}
             }
             patterns{
-                accountingFormat{"‎¤#,##0.00;‎(¤#,##0.00)"}
-                currencyFormat{"‎¤#,##0.00"}
+                accountingFormat{"‎¤ #,##0.00;‎(¤ #,##0.00)"}
+                currencyFormat{"‎¤ #,##0.00"}
                 decimalFormat{"#,##0.###"}
                 percentFormat{"#,##0%"}
                 scientificFormat{"#E0"}
@@ -240,11 +242,33 @@ fa{
                 timeSeparator{":"}
             }
         }
+        minimalPairs{
+            ordinal{
+                other{"در پیچ {0}ام سمت راست بپیچید."}
+            }
+            plural{
+                one{"او {0} فیلم در هفته می‌بیند که کمدی است."}
+                other{"او {0} فیلم در هفته می‌بیند که کمدی هستند."}
+            }
+        }
         minimumGroupingDigits{"1"}
         native{"arabext"}
     }
-    Version{"2.1.19.94"}
+    Version{"2.1.37.5"}
     calendar{
+        buddhist{
+            eras{
+                abbreviated{
+                    "تقویم بودایی",
+                }
+                narrow{
+                    "تقویم بودایی",
+                }
+                wide{
+                    "تقویم بودایی",
+                }
+            }
+        }
         chinese{
             cyclicNameSets{
                 zodiacs{
@@ -267,17 +291,181 @@ fa{
                 }
             }
         }
+        coptic{
+            eras{
+                abbreviated{
+                    "قبل از مسیح",
+                    "پس از مسیح",
+                }
+                narrow{
+                    "ق.م.",
+                    "ب.م.",
+                }
+                wide{
+                    "قبل از حلول مسیح",
+                    "بعد از حلول مسیح",
+                }
+            }
+            monthNames{
+                format{
+                    abbreviated{
+                        "توت",
+                        "پاوی",
+                        "اثور",
+                        "کواق",
+                        "طوفی",
+                        "ماخیر",
+                        "فامینوث",
+                        "فرموثی",
+                        "پاخون",
+                        "پاونی",
+                        "افیفی",
+                        "ماسوری",
+                        "ماه کوچک",
+                    }
+                    wide{
+                        "توت",
+                        "پاوی",
+                        "اثور",
+                        "کواق",
+                        "طوفی",
+                        "ماخیر",
+                        "فامینوث",
+                        "فرموثی",
+                        "پاخون",
+                        "پاونی",
+                        "افیفی",
+                        "ماسوری",
+                        "ماه کوچک",
+                    }
+                }
+                stand-alone{
+                    abbreviated{
+                        "توت",
+                        "پاوی",
+                        "اثور",
+                        "کواق",
+                        "طوفی",
+                        "ماخیر",
+                        "فامینوث",
+                        "فرموثی",
+                        "پاخون",
+                        "پاونی",
+                        "افیفی",
+                        "ماسوری",
+                        "ماه کوچک",
+                    }
+                    wide{
+                        "توت",
+                        "پاوی",
+                        "اثور",
+                        "کواق",
+                        "طوفی",
+                        "ماخیر",
+                        "فامینوث",
+                        "فرموثی",
+                        "پاخون",
+                        "پاونی",
+                        "افیفی",
+                        "ماسوری",
+                        "ماه کوچک",
+                    }
+                }
+            }
+        }
         default{"persian"}
+        ethiopic{
+            eras{
+                abbreviated{
+                    "ERA0",
+                    "ERA1",
+                }
+                narrow{
+                    "ERA0",
+                    "ERA1",
+                }
+                wide{
+                    "ERA0",
+                    "ERA1",
+                }
+            }
+            monthNames{
+                format{
+                    abbreviated{
+                        "مسکرم",
+                        "تکیمت",
+                        "هیدار",
+                        "طه‌ساز",
+                        "تر",
+                        "یکوتیت",
+                        "مگابیت",
+                        "میازیا",
+                        "گین‌بوت",
+                        "سنه",
+                        "حمله",
+                        "نحسه",
+                        "پاگومه",
+                    }
+                    wide{
+                        "مسکرم",
+                        "تکیمت",
+                        "هیدار",
+                        "طه‌ساز",
+                        "تر",
+                        "یکوتیت",
+                        "مگابیت",
+                        "میازیا",
+                        "گین‌بوت",
+                        "سنه",
+                        "حمله",
+                        "نحسه",
+                        "پاگومه",
+                    }
+                }
+                stand-alone{
+                    abbreviated{
+                        "مسکرم",
+                        "تکیمت",
+                        "هیدار",
+                        "طه‌ساز",
+                        "تر",
+                        "یکوتیت",
+                        "مگابیت",
+                        "میازیا",
+                        "گین‌بوت",
+                        "سنه",
+                        "حمله",
+                        "نحسه",
+                        "پاگومه",
+                    }
+                    wide{
+                        "مسکرم",
+                        "تکیمت",
+                        "هیدار",
+                        "طه‌ساز",
+                        "تر",
+                        "یکوتیت",
+                        "مگابیت",
+                        "میازیا",
+                        "گین‌بوت",
+                        "سنه",
+                        "حمله",
+                        "نحسه",
+                        "پاگومه",
+                    }
+                }
+            }
+        }
         generic{
             DateTimePatterns{
                 "H:mm:ss (zzzz)",
                 "H:mm:ss (z)",
                 "H:mm:ss",
                 "H:mm",
-                "G y MMMM d, EEEE",
-                "d MMMM y G",
-                "d MMM y G",
-                "y/M/d G",
+                "G EEEE d MMMM y",
+                "G d MMMM y",
+                "G d MMM y",
+                "G d/M/y",
                 "{1}،‏ {0}",
                 "{1}، ساعت {0}",
                 "{1}، ساعت {0}",
@@ -289,8 +477,17 @@ fa{
                 Timezone{"{0} ({1})"}
             }
             availableFormats{
+                Bh{"h B"}
+                Bhm{"h:mm B"}
+                Bhms{"h:mm:ss B"}
                 E{"ccc"}
+                EBhm{"E h:mm B"}
+                EBhms{"E h:mm:ss B"}
+                EHm{"E HH:mm"}
+                EHms{"E HH:mm:ss"}
                 Ed{"E d"}
+                Ehm{"E h:mm a"}
+                Ehms{"E h:mm:ss a"}
                 Gy{"y G"}
                 GyMMM{"MMM y G"}
                 GyMMMEd{"E d MMM y G"}
@@ -453,7 +650,12 @@ fa{
                 Timezone{"{0} ({1})"}
             }
             availableFormats{
+                Bh{"h B"}
+                Bhm{"h:mm B"}
+                Bhms{"h:mm:ss B"}
                 E{"ccc"}
+                EBhm{"E h:mm B"}
+                EBhms{"E h:mm:ss B"}
                 EHm{"E H:mm"}
                 EHms{"E H:mm:ss"}
                 Ed{"E d"}
@@ -474,6 +676,10 @@ fa{
                 MMM{"LLL"}
                 MMMEd{"E d LLL"}
                 MMMMEd{"E d LLLL"}
+                MMMMW{
+                    one{"هفته W از MMM"}
+                    other{"هفته W از MMM"}
+                }
                 MMMMd{"d LLLL"}
                 MMMd{"d LLL"}
                 Md{"M/d"}
@@ -496,6 +702,10 @@ fa{
                 yMd{"y/M/d"}
                 yQQQ{"QQQQ y"}
                 yQQQQ{"QQQQ y"}
+                yw{
+                    one{"هفته w از Y"}
+                    other{"هفته w از Y"}
+                }
             }
             dayNames{
                 format{
@@ -578,7 +788,7 @@ fa{
             dayPeriod{
                 format{
                     abbreviated{
-                        afternoon1{"عصر"}
+                        afternoon1{"ب.ظ."}
                         evening1{"عصر"}
                         midnight{"نیمه‌شب"}
                         morning1{"صبح"}
@@ -586,7 +796,7 @@ fa{
                         noon{"ظهر"}
                     }
                     narrow{
-                        afternoon1{"ب"}
+                        afternoon1{"ب.ظ."}
                         evening1{"ع"}
                         midnight{"ن"}
                         morning1{"ص"}
@@ -594,7 +804,7 @@ fa{
                         noon{"ظ"}
                     }
                     wide{
-                        afternoon1{"عصر"}
+                        afternoon1{"بعدازظهر"}
                         evening1{"عصر"}
                         midnight{"نیمه‌شب"}
                         morning1{"صبح"}
@@ -604,29 +814,29 @@ fa{
                 }
                 stand-alone{
                     abbreviated{
-                        afternoon1{"عصر"}
+                        afternoon1{"بعدازظهر"}
                         am{"ق.ظ."}
-                        evening1{"سر شب"}
-                        midnight{"نیمه‌شب"}
-                        morning1{"صبح"}
-                        night1{"شب"}
-                        noon{"ظ"}
-                        pm{"ب.ظ."}
-                    }
-                    narrow{
-                        afternoon1{"عصر"}
-                        am{"ق.ظ."}
-                        evening1{"سر شب"}
+                        evening1{"عصر"}
                         midnight{"نیمه‌شب"}
                         morning1{"صبح"}
                         night1{"شب"}
                         noon{"ظهر"}
                         pm{"ب.ظ."}
                     }
+                    narrow{
+                        afternoon1{"ب.ظ."}
+                        am{"ق.ظ."}
+                        evening1{"ع"}
+                        midnight{"ن"}
+                        morning1{"ص"}
+                        night1{"ش"}
+                        noon{"ظ"}
+                        pm{"ب.ظ."}
+                    }
                     wide{
-                        afternoon1{"عصر"}
+                        afternoon1{"بعدازظهر"}
                         am{"قبل‌ازظهر"}
-                        evening1{"سر شب"}
+                        evening1{"عصر"}
                         midnight{"نیمه‌شب"}
                         morning1{"صبح"}
                         night1{"شب"}
@@ -890,6 +1100,17 @@ fa{
             }
         }
         hebrew{
+            eras{
+                abbreviated{
+                    "تقویم عبری",
+                }
+                narrow{
+                    "تقویم عبری",
+                }
+                wide{
+                    "تقویم عبری",
+                }
+            }
             monthNames{
                 format{
                     abbreviated{
@@ -989,6 +1210,81 @@ fa{
                         "آب",
                         "ایلول",
                         "واذار الثانی",
+                    }
+                }
+            }
+        }
+        indian{
+            eras{
+                abbreviated{
+                    "تقویم ساکا",
+                }
+                narrow{
+                    "تقویم ساکا",
+                }
+                wide{
+                    "تقویم ساکا",
+                }
+            }
+            monthNames{
+                format{
+                    abbreviated{
+                        "چیتره",
+                        "ویشاکهه",
+                        "جییشته",
+                        "آشادهه",
+                        "شراونه",
+                        "بهادره",
+                        "آشوین",
+                        "کارتیکه",
+                        "آگرهینه",
+                        "پاوشه",
+                        "ماگهه",
+                        "پهالگونه",
+                    }
+                    wide{
+                        "چیتره",
+                        "ویشاکهه",
+                        "جییشته",
+                        "آشادهه",
+                        "شراونه",
+                        "بهادره",
+                        "آشوین",
+                        "کارتیکه",
+                        "آگرهینه",
+                        "پاوشه",
+                        "ماگهه",
+                        "پهالگونه",
+                    }
+                }
+                stand-alone{
+                    abbreviated{
+                        "چیتره",
+                        "ویشاکهه",
+                        "جییشته",
+                        "آشادهه",
+                        "شراونه",
+                        "بهادره",
+                        "آشوین",
+                        "کارتیکه",
+                        "آگرهینه",
+                        "پاوشه",
+                        "ماگهه",
+                        "پهالگونه",
+                    }
+                    wide{
+                        "چیتره",
+                        "ویشاکهه",
+                        "جییشته",
+                        "آشادهه",
+                        "شراونه",
+                        "بهادره",
+                        "آشوین",
+                        "کارتیکه",
+                        "آگرهینه",
+                        "پاوشه",
+                        "ماگهه",
+                        "پهالگونه",
                     }
                 }
             }
@@ -1056,6 +1352,9 @@ fa{
                 abbreviated{
                     "ه‍.ق.",
                 }
+                narrow{
+                    "ه‍.ق.",
+                }
                 wide{
                     "هجری قمری",
                 }
@@ -1065,10 +1364,10 @@ fa{
                     abbreviated{
                         "محرم",
                         "صفر",
-                        "ربیع الاول",
-                        "ربیع الثانی",
-                        "جمادی الاول",
-                        "جمادی الثانی",
+                        "ربیع‌الاول",
+                        "ربیع‌الثانی",
+                        "جمادی‌الاول",
+                        "جمادی‌الثانی",
                         "رجب",
                         "شعبان",
                         "رمضان",
@@ -1093,10 +1392,10 @@ fa{
                     wide{
                         "محرم",
                         "صفر",
-                        "ربیع الاول",
-                        "ربیع الثانی",
-                        "جمادی الاول",
-                        "جمادی الثانی",
+                        "ربیع‌الاول",
+                        "ربیع‌الثانی",
+                        "جمادی‌الاول",
+                        "جمادی‌الثانی",
                         "رجب",
                         "شعبان",
                         "رمضان",
@@ -1109,10 +1408,10 @@ fa{
                     abbreviated{
                         "محرم",
                         "صفر",
-                        "ربیع الاول",
-                        "ربیع الثانی",
-                        "جمادی الاول",
-                        "جمادی الثانی",
+                        "ربیع‌الاول",
+                        "ربیع‌الثانی",
+                        "جمادی‌الاول",
+                        "جمادی‌الثانی",
                         "رجب",
                         "شعبان",
                         "رمضان",
@@ -1137,7 +1436,7 @@ fa{
                     wide{
                         "محرم",
                         "صفر",
-                        "ربیع الاول",
+                        "ربیع‌الاول",
                         "ربیع الثانی",
                         "جمادی الاول",
                         "جمادی الثانی",
@@ -1152,12 +1451,80 @@ fa{
             }
         }
         persian{
+            DateTimePatterns{
+                "H:mm:ss (zzzz)",
+                "H:mm:ss (z)",
+                "H:mm:ss",
+                "H:mm",
+                "y MMMM d, EEEE",
+                "d MMMM y",
+                "d MMM y",
+                "y/M/d",
+                "{1}،‏ {0}",
+                "{1}، ساعت {0}",
+                "{1}، ساعت {0}",
+                "{1}،‏ {0}",
+                "{1}،‏ {0}",
+            }
+            availableFormats{
+                y{"y"}
+                yyyy{"y"}
+                yyyyM{"y/M"}
+                yyyyMEd{"E y/M/d"}
+                yyyyMMM{"MMM y"}
+                yyyyMMMEd{"E d MMM y"}
+                yyyyMMMM{"y MMMM"}
+                yyyyMMMd{"d MMM y"}
+                yyyyMd{"y/M/d"}
+                yyyyQQQ{"QQQQ y"}
+                yyyyQQQQ{"QQQQ y"}
+            }
             eras{
                 abbreviated{
                     "ه‍.ش.",
                 }
+                narrow{
+                    "ه‍.ش.",
+                }
                 wide{
                     "هجری شمسی",
+                }
+            }
+            intervalFormats{
+                y{
+                    y{"y تا y"}
+                }
+                yM{
+                    M{"y/M تا y/M"}
+                    y{"y/M تا y/M"}
+                }
+                yMEd{
+                    M{"E y/M/d تا E y/M/d"}
+                    d{"E y/M/d تا E y/M/d"}
+                    y{"E y/M/d تا E y/M/d"}
+                }
+                yMMM{
+                    M{"LLL تا MMM y"}
+                    y{"MMM y تا MMM y"}
+                }
+                yMMMEd{
+                    M{"E d LLL تا E d MMM y"}
+                    d{"E d LLL تا E d MMM y"}
+                    y{"E d MMM y تا E d MMM y"}
+                }
+                yMMMM{
+                    M{"LLLL تا MMMM y"}
+                    y{"MMMM y تا MMMM y"}
+                }
+                yMMMd{
+                    M{"d LLL تا d MMM y"}
+                    d{"d تا d MMM y"}
+                    y{"d MMM y تا d MMM y"}
+                }
+                yMd{
+                    M{"y/M/d تا y/M/d"}
+                    d{"y/M/d تا y/M/d"}
+                    y{"y/M/d تا y/M/d"}
                 }
             }
             monthNames{
@@ -1251,6 +1618,110 @@ fa{
                 }
             }
         }
+        roc{
+            eras{
+                abbreviated{
+                    "قبل از R.O.C.",
+                    "تقویم مینگو",
+                }
+                narrow{
+                    "قبل از R.O.C.",
+                    "تقویم مینگو",
+                }
+                wide{
+                    "قبل از R.O.C.",
+                    "تقویم مینگو",
+                }
+            }
+        }
+    }
+    characterLabel{
+        activities{"فعالیت"}
+        african_scripts{"دبیره‌های افریقایی"}
+        american_scripts{"دبیره‌های امریکایی"}
+        animal{"حیوان"}
+        animals_nature{"حیوانات و طبیعت"}
+        arrows{"پیکان‌ها"}
+        body{"جسم"}
+        box_drawing{"رسم جعبه"}
+        braille{"بریل"}
+        building{"ساختمان"}
+        bullets_stars{"گلوله‌ها/ستاره‌ها"}
+        consonantal_jamo{"جاموی بی‌صدا"}
+        currency_symbols{"علائم واحد پول"}
+        dash_connector{"خط فاصله/رابط"}
+        digits{"ارقام"}
+        dingbats{"نویسه‌های چاپی"}
+        divination_symbols{"نمادهای فالگیری"}
+        downwards_arrows{"پیکان‌های رو به پایین"}
+        downwards_upwards_arrows{"پیکان‌های رو به بالا"}
+        east_asian_scripts{"دبیره‌های آسیای شرقی"}
+        emoji{"اموجی"}
+        european_scripts{"دبیره‌های اروپایی"}
+        female{"زن"}
+        flag{"پرچم"}
+        flags{"پرچم‌ها"}
+        food_drink{"غذا و نوشیدنی"}
+        format{"قالب"}
+        format_whitespace{"قالب و فضای سفید"}
+        full_width_form_variant{"گونه قالب تمام‌پهنا"}
+        geometric_shapes{"اشکال هندسی"}
+        half_width_form_variant{"گونه‌های قالب پهنا"}
+        han_characters{"نویسه‌های هان"}
+        han_radicals{"ریشه‌های هان"}
+        hanja{"هانجا"}
+        hanzi_simplified{"هانزی (ساده‌شده)"}
+        hanzi_traditional{"هانزی (سنتی)"}
+        heart{"قلب"}
+        historic_scripts{"دبیره‌های تاریخی"}
+        ideographic_desc_characters{"نویسه‌های توصیفی اندیش‌نگاری"}
+        japanese_kana{"کانای ژاپنی"}
+        kanbun{"کانبوم"}
+        kanji{"کانجی"}
+        keycap{"جلد کلید"}
+        leftwards_arrows{"پیکان‌های رو به چپ"}
+        leftwards_rightwards_arrows{"پیکان‌های رو به راست رو به چپ"}
+        letterlike_symbols{"علائم حروف‌مانند"}
+        limited_use{"استفادهٔ محدود"}
+        male{"مرد"}
+        math_symbols{"علائم ریاضی"}
+        middle_eastern_scripts{"دبیره‌های آسیای میانه"}
+        miscellaneous{"متفرقه"}
+        modern_scripts{"دبیره‌های مدرن"}
+        modifier{"توصیف‌کننده"}
+        musical_symbols{"علائم موسیقی"}
+        nature{"طبیعت"}
+        nonspacing{"بدون فاصله"}
+        numbers{"اعداد"}
+        objects{"اشیاء"}
+        other{"دیگر"}
+        paired{"جفتی"}
+        person{"شخص"}
+        phonetic_alphabet{"الفبای آوانگاری"}
+        pictographs{"تصویرنگاشت"}
+        place{"جا"}
+        plant{"گیاه"}
+        punctuation{"سجاوندی"}
+        rightwards_arrows{"پیکان‌های رو به راست"}
+        sign_standard_symbols{"نمادهای استاندارد/نشان"}
+        small_form_variant{"گونه‌های کوچک"}
+        smiley{"شکلک"}
+        smileys_people{"صورتک‌ها و افراد"}
+        south_asian_scripts{"دبیره‌های آسیای جنوبی"}
+        southeast_asian_scripts{"دبیره‌های آسیای جنوب شرقی"}
+        spacing{"فاصله‌گذاری"}
+        sport{"ورزش"}
+        symbols{"علائم"}
+        technical_symbols{"علائم فنی"}
+        tone_marks{"نشانه‌های نواخت"}
+        travel{"مسافرت"}
+        travel_places{"سفر و جای‌ها"}
+        upwards_arrows{"پیکان‌های رو به بالا"}
+        variant_forms{"گونه‌ها"}
+        vocalic_jamo{"جاموی آوایی"}
+        weather{"هوا"}
+        western_asian_scripts{"دبیره‌های آسیای غربی"}
+        whitespace{"فضای سفید"}
     }
     delimiters{
         alternateQuotationEnd{"›"}
@@ -1319,10 +1790,31 @@ fa{
                 }
             }
         }
+        dayOfYear{
+            dn{"روز سال"}
+        }
+        dayOfYear-narrow{
+            dn{"روز سال"}
+        }
+        dayOfYear-short{
+            dn{"روز سال"}
+        }
         dayperiod{
             dn{"قبل/بعدازظهر"}
         }
+        dayperiod-narrow{
+            dn{"قبل/بعدازظهر"}
+        }
+        dayperiod-short{
+            dn{"قبل/بعدازظهر"}
+        }
         era{
+            dn{"دوره"}
+        }
+        era-narrow{
+            dn{"دوره"}
+        }
+        era-short{
             dn{"دوره"}
         }
         fri{
@@ -1331,12 +1823,32 @@ fa{
                 "0"{"این جمعه"}
                 "1"{"جمعهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} جمعهٔ بعد"}
+                    other{"{0} جمعهٔ بعد"}
+                }
+                past{
+                    one{"{0} جمعهٔ پیش"}
+                    other{"{0} جمعهٔ پیش"}
+                }
+            }
         }
         fri-narrow{
             relative{
                 "-1"{"جمعهٔ گذشته"}
                 "0"{"این جمعه"}
                 "1"{"جمعهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} جمعهٔ بعد"}
+                    other{"{0} جمعهٔ بعد"}
+                }
+                past{
+                    one{"{0} جمعهٔ پیش"}
+                    other{"{0} جمعهٔ پیش"}
+                }
             }
         }
         fri-short{
@@ -1345,9 +1857,22 @@ fa{
                 "0"{"این جمعه"}
                 "1"{"جمعهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} جمعهٔ بعد"}
+                    other{"{0} جمعهٔ بعد"}
+                }
+                past{
+                    one{"{0} جمعهٔ پیش"}
+                    other{"{0} جمعهٔ پیش"}
+                }
+            }
         }
         hour{
             dn{"ساعت"}
+            relative{
+                "0"{"همین ساعت"}
+            }
             relativeTime{
                 future{
                     one{"{0} ساعت بعد"}
@@ -1361,6 +1886,9 @@ fa{
         }
         hour-narrow{
             dn{"ساعت"}
+            relative{
+                "0"{"همین ساعت"}
+            }
             relativeTime{
                 future{
                     one{"{0} ساعت بعد"}
@@ -1374,6 +1902,9 @@ fa{
         }
         hour-short{
             dn{"ساعت"}
+            relative{
+                "0"{"همین ساعت"}
+            }
             relativeTime{
                 future{
                     one{"{0} ساعت بعد"}
@@ -1387,6 +1918,9 @@ fa{
         }
         minute{
             dn{"دقیقه"}
+            relative{
+                "0"{"همین دقیقه"}
+            }
             relativeTime{
                 future{
                     one{"{0} دقیقه بعد"}
@@ -1400,6 +1934,9 @@ fa{
         }
         minute-narrow{
             dn{"دقیقه"}
+            relative{
+                "0"{"همین دقیقه"}
+            }
             relativeTime{
                 future{
                     one{"{0} دقیقه بعد"}
@@ -1413,6 +1950,9 @@ fa{
         }
         minute-short{
             dn{"دقیقه"}
+            relative{
+                "0"{"همین دقیقه"}
+            }
             relativeTime{
                 future{
                     one{"{0} دقیقه بعد"}
@@ -1430,6 +1970,16 @@ fa{
                 "0"{"این دوشنبه"}
                 "1"{"دوشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} دوشنبهٔ بعد"}
+                    other{"{0} دوشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} دوشنبهٔ پیش"}
+                    other{"{0} دوشنبهٔ پیش"}
+                }
+            }
         }
         mon-narrow{
             relative{
@@ -1437,12 +1987,32 @@ fa{
                 "0"{"این دوشنبه"}
                 "1"{"دوشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} دوشنبهٔ بعد"}
+                    other{"{0} دوشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} دوشنبهٔ پیش"}
+                    other{"{0} دوشنبهٔ پیش"}
+                }
+            }
         }
         mon-short{
             relative{
                 "-1"{"دوشنبهٔ گذشته"}
                 "0"{"این دوشنبه"}
                 "1"{"دوشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} دوشنبهٔ بعد"}
+                    other{"{0} دوشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} دوشنبهٔ پیش"}
+                    other{"{0} دوشنبهٔ پیش"}
+                }
             }
         }
         month{
@@ -1559,6 +2129,16 @@ fa{
                 "0"{"این شنبه"}
                 "1"{"شنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} شنبهٔ بعد"}
+                    other{"{0} شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} شنبهٔ پیش"}
+                    other{"{0} شنبهٔ پیش"}
+                }
+            }
         }
         sat-narrow{
             relative{
@@ -1566,12 +2146,32 @@ fa{
                 "0"{"این شنبه"}
                 "1"{"شنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} شنبهٔ بعد"}
+                    other{"{0} شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} شنبهٔ پیش"}
+                    other{"{0} شنبهٔ پیش"}
+                }
+            }
         }
         sat-short{
             relative{
                 "-1"{"شنبهٔ گذشته"}
                 "0"{"این شنبه"}
                 "1"{"شنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} شنبهٔ بعد"}
+                    other{"{0} شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} شنبهٔ پیش"}
+                    other{"{0} شنبهٔ پیش"}
+                }
             }
         }
         second{
@@ -1628,12 +2228,32 @@ fa{
                 "0"{"این یکشنبه"}
                 "1"{"یکشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} یکشنبهٔ بعد"}
+                    other{"{0} یکشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} یکشنبهٔ پیش"}
+                    other{"{0} یکشنبهٔ پیش"}
+                }
+            }
         }
         sun-narrow{
             relative{
                 "-1"{"یکشنبهٔ گذشته"}
                 "0"{"این یکشنبه"}
                 "1"{"یکشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} یکشنبهٔ بعد"}
+                    other{"{0} یکشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} یکشنبهٔ پیش"}
+                    other{"{0} یکشنبهٔ پیش"}
+                }
             }
         }
         sun-short{
@@ -1642,12 +2262,32 @@ fa{
                 "0"{"این یکشنبه"}
                 "1"{"یکشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} یکشنبهٔ بعد"}
+                    other{"{0} یکشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} یکشنبهٔ پیش"}
+                    other{"{0} یکشنبهٔ پیش"}
+                }
+            }
         }
         thu{
             relative{
                 "-1"{"پنجشنبهٔ گذشته"}
                 "0"{"این پنجشنبه"}
                 "1"{"پنجشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} پنجشنبهٔ بعد"}
+                    other{"{0} پنجشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} پنجشنبهٔ پیش"}
+                    other{"{0} پنجشنبهٔ پیش"}
+                }
             }
         }
         thu-narrow{
@@ -1656,12 +2296,32 @@ fa{
                 "0"{"این پنجشنبه"}
                 "1"{"پنجشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} پنجشنبهٔ بعد"}
+                    other{"{0} پنجشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} پنجشنبهٔ پیش"}
+                    other{"{0} پنجشنبهٔ پیش"}
+                }
+            }
         }
         thu-short{
             relative{
                 "-1"{"پنجشنبهٔ گذشته"}
                 "0"{"این پنجشنبه"}
                 "1"{"پنجشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} پنجشنبهٔ بعد"}
+                    other{"{0} پنجشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} پنجشنبهٔ پیش"}
+                    other{"{0} پنجشنبهٔ پیش"}
+                }
             }
         }
         tue{
@@ -1670,12 +2330,32 @@ fa{
                 "0"{"این سه‌شنبه"}
                 "1"{"سه‌شنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} سه‌شنبهٔ بعد"}
+                    other{"{0} سه‌شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} سه‌شنبهٔ پیش"}
+                    other{"{0} سه‌شنبهٔ پیش"}
+                }
+            }
         }
         tue-narrow{
             relative{
                 "-1"{"سه‌شنبهٔ گذشته"}
                 "0"{"این سه‌شنبه"}
                 "1"{"سه‌شنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} سه‌شنبهٔ بعد"}
+                    other{"{0} سه‌شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} سه‌شنبهٔ پیش"}
+                    other{"{0} سه‌شنبهٔ پیش"}
+                }
             }
         }
         tue-short{
@@ -1684,12 +2364,32 @@ fa{
                 "0"{"این سه‌شنبه"}
                 "1"{"سه‌شنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} سه‌شنبهٔ بعد"}
+                    other{"{0} سه‌شنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} سه‌شنبهٔ پیش"}
+                    other{"{0} سه‌شنبهٔ پیش"}
+                }
+            }
         }
         wed{
             relative{
                 "-1"{"چهارشنبهٔ گذشته"}
                 "0"{"این چهارشنبه"}
                 "1"{"چهارشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} چهارشنبهٔ بعد"}
+                    other{"{0} چهارشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} چهارشنبهٔ پیش"}
+                    other{"{0} چهارشنبهٔ پیش"}
+                }
             }
         }
         wed-narrow{
@@ -1698,12 +2398,32 @@ fa{
                 "0"{"این چهارشنبه"}
                 "1"{"چهارشنبهٔ آینده"}
             }
+            relativeTime{
+                future{
+                    one{"{0} چهارشنبهٔ بعد"}
+                    other{"{0} چهارشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} چهارشنبهٔ پیش"}
+                    other{"{0} چهارشنبهٔ پیش"}
+                }
+            }
         }
         wed-short{
             relative{
                 "-1"{"چهارشنبهٔ گذشته"}
                 "0"{"این چهارشنبه"}
                 "1"{"چهارشنبهٔ آینده"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} چهارشنبهٔ بعد"}
+                    other{"{0} چهارشنبهٔ بعد"}
+                }
+                past{
+                    one{"{0} چهارشنبهٔ پیش"}
+                    other{"{0} چهارشنبهٔ پیش"}
+                }
             }
         }
         week{
@@ -1713,6 +2433,7 @@ fa{
                 "0"{"این هفته"}
                 "1"{"هفتهٔ آینده"}
             }
+            relativePeriod{"هفتهٔ {0}"}
             relativeTime{
                 future{
                     one{"{0} هفته بعد"}
@@ -1731,6 +2452,7 @@ fa{
                 "0"{"این هفته"}
                 "1"{"هفتهٔ آینده"}
             }
+            relativePeriod{"هفتهٔ {0}"}
             relativeTime{
                 future{
                     one{"{0} هفته بعد"}
@@ -1749,6 +2471,7 @@ fa{
                 "0"{"این هفته"}
                 "1"{"هفتهٔ آینده"}
             }
+            relativePeriod{"هفتهٔ {0}"}
             relativeTime{
                 future{
                     one{"{0} هفته بعد"}
@@ -1760,8 +2483,32 @@ fa{
                 }
             }
         }
+        weekOfMonth{
+            dn{"هفتهٔ ماه"}
+        }
+        weekOfMonth-narrow{
+            dn{"هفتهٔ ماه"}
+        }
+        weekOfMonth-short{
+            dn{"هفتهٔ ماه"}
+        }
         weekday{
             dn{"روز هفته"}
+        }
+        weekday-narrow{
+            dn{"روز هفته"}
+        }
+        weekday-short{
+            dn{"روز هفته"}
+        }
+        weekdayOfMonth{
+            dn{"روز کاری ماه"}
+        }
+        weekdayOfMonth-narrow{
+            dn{"روز کاری ماه"}
+        }
+        weekdayOfMonth-short{
+            dn{"روز کاری ماه"}
         }
         year{
             dn{"سال"}
@@ -1820,12 +2567,30 @@ fa{
         zone{
             dn{"منطقهٔ زمانی"}
         }
+        zone-narrow{
+            dn{"منطقهٔ زمانی"}
+        }
+        zone-short{
+            dn{"منطقهٔ زمانی"}
+        }
     }
     layout{
         characters{"right-to-left"}
     }
     listPattern{
+        or{
+            2{"{0} یا {1}"}
+            end{"{0}، یا {1}"}
+            middle{"{0}، {1}"}
+            start{"{0}، {1}"}
+        }
         standard{
+            2{"{0} و {1}"}
+            end{"{0}، و {1}"}
+            middle{"{0}،‏ {1}"}
+            start{"{0}،‏ {1}"}
+        }
+        standard-short{
             2{"{0} و {1}"}
             end{"{0}، و {1}"}
             middle{"{0}،‏ {1}"}
@@ -1855,16 +2620,12 @@ fa{
         US{"امریکایی"}
         metric{"متریک"}
     }
-    transformNames{
-        BGN{"BGN"}
-        Numeric{"سیستم اعداد"}
-        Tone{"تون"}
-        UNGEGN{"UNGEGN"}
-        x-Accents{"تکیه"}
-        x-Fullwidth{"تمام‌عرض"}
-        x-Halfwidth{"نیم‌عرض"}
-        x-Jamo{"جامو"}
-        x-Pinyin{"پین‌یین"}
-        x-Publishing{"نشر"}
+    parse{
+        date{
+            lenient{
+                "[\\--/]",
+                "[\\:∶]",
+            }
+        }
     }
 }

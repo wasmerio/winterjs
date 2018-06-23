@@ -85,6 +85,11 @@ bool Instruction::IsNOP() const {
 }
 
 
+bool Instruction::IsCSDB() const {
+  return Mask(SystemHintMask) == HINT && ImmHint() == CSDB;
+}
+
+
 bool Instruction::IsADR() const {
   return Mask(PCRelAddressingMask) == ADR;
 }
@@ -94,6 +99,17 @@ bool Instruction::IsADRP() const {
   return Mask(PCRelAddressingMask) == ADRP;
 }
 
+
+bool Instruction::IsMovz() const {
+  return (Mask(MoveWideImmediateMask) == MOVZ_x) ||
+         (Mask(MoveWideImmediateMask) == MOVZ_w);
+}
+
+
+bool Instruction::IsMovk() const {
+  return (Mask(MoveWideImmediateMask) == MOVK_x) ||
+         (Mask(MoveWideImmediateMask) == MOVK_w);
+}
 
 bool Instruction::IsBranchLinkImm() const {
   return Mask(UnconditionalBranchFMask) == (UnconditionalBranchFixed | BL);

@@ -63,11 +63,18 @@ emitted:
   Emitted when the testsuite starts running.
 
   ``tests``
-    A list of test ids. Test ids can either be strings or lists of
-    strings (an example of the latter is reftests where the id has the
-    form [test_url, ref_type, ref_url]) and are assumed to be unique
-    within a given testsuite. In cases where the test list is not
-    known upfront an empty list may be passed (list).
+    A dict of test ids keyed by group. Groups are any logical grouping
+    of tests, for example a manifest, directory or tag. For convenience,
+    a list of test ids can be used instead. In this case all tests will
+    automatically be placed in the 'default' group name. Test ids can
+    either be strings or lists of strings (an example of the latter is
+    reftests where the id has the form [test_url, ref_type, ref_url]).
+    Test ids are assumed to be unique within a given testsuite. In cases
+    where the test list is not known upfront an empty dict or list may
+    be passed (dict).
+
+  ``name``
+    An optional string to identify the suite by.
 
   ``run_info``
     An optional dictionary describing the properties of the
@@ -147,6 +154,11 @@ emitted:
   ``message``
     Text of the log message.
 
+``shutdown``
+  This is a special action that can only be logged once per logger state.
+  It is sent when calling :meth:`StructuredLogger.shutdown` or implicitly
+  when exiting the context manager.
+
 Testsuite Protocol
 ------------------
 
@@ -178,7 +190,7 @@ harness that loads JavaScript-based tests in a browser. Each url
 loaded would be a single test, with corresponding ``test_start`` and
 ``test_end`` messages. If there can be more than one JS-defined test
 on a page, however, it it useful to track the results of those tests
-seperately. Therefore each of those tests is a subtest, and one
+separately. Therefore each of those tests is a subtest, and one
 ``test_status`` message must be generated for each subtest result.
 
 Subtests must have a name that is unique within their parent test.
@@ -200,12 +212,13 @@ StructuredLogger Objects
 ------------------------
 
 .. automodule:: mozlog.structuredlog
-  :members: set_default_logger, get_default_logger
+  :members: set_default_logger, get_default_logger, LoggerShutdownError
 
 .. autoclass:: StructuredLogger
    :members: add_handler, remove_handler, handlers, suite_start,
              suite_end, test_start, test_status, test_end,
-             process_output, critical, error, warning, info, debug
+             process_output, critical, error, warning, info, debug,
+             shutdown
 
 .. autoclass:: StructuredLogFileLike
   :members:
@@ -343,6 +356,16 @@ Log to stdout::
     logger.test_end("test-id-1", "OK")
     logger.suite_end()
 
+Log with a context manager::
+
+    from mozlog.structuredlog import StructuredLogger
+    from mozlog.handlers import StreamHandler
+    from mozlog.formatters import JSONFormatter
+
+    with StructuredLogger("my-test-suite") as logger:
+        logger.add_handler(StreamHandler(sys.stdout,
+                                         JSONFormatter()))
+        logger.info("This is an info message")
 
 Populate an ``argparse.ArgumentParser`` with logging options, and
 create a logger based on the value of those options, defaulting to
@@ -378,7 +401,7 @@ More Complete Example
 ---------------------
 
 This example shows a complete toy testharness set up to used
-structured logging. It is avaliable as `structured_example.py <_static/structured_example.py>`_:
+structured logging. It is available as `structured_example.py <_static/structured_example.py>`_:
 
 .. literalinclude:: _static/structured_example.py
 

@@ -1,6 +1,10 @@
 load(libdir + "asm.js");
 load(libdir + "asserts.js");
 
+// Run test only for asm.js
+if (!isAsmJSCompilationAvailable())
+    quit();
+
 // Single-step profiling currently only works in the ARM simulator
 if (!getBuildConfiguration()["arm-simulator"])
     quit();
@@ -33,8 +37,10 @@ function assertStackContainsSeq(got, expect)
         for (var j = 0; j < parts.length; j++) {
             var frame = parts[j];
             frame = frame.replace(/ \([^\)]*\)/g, "");
-            frame = frame.replace(/(fast|slow) FFI trampoline/g, "<");
-            frame = frame.replace(/entry trampoline/g, ">");
+            frame = frame.replace(/fast exit trampoline to native/g, "N");
+            frame = frame.replace(/^call to( asm.js)? native .*\(in wasm\)$/g, "N");
+            frame = frame.replace(/(fast|slow) exit trampoline/g, "<");
+            frame = frame.replace(/(fast|slow) entry trampoline/g, ">");
             frame = frame.replace(/(\/[^\/,<]+)*\/testProfiling.js/g, "");
             frame = frame.replace(/testBuiltinD2D/g, "");
             frame = frame.replace(/testBuiltinF2F/g, "");
@@ -55,17 +61,17 @@ function assertStackContainsSeq(got, expect)
 var stacks;
 var ffi = function(enable) {
     if (enable == +1)
-        enableSPSProfiling();
+        enableGeckoProfiling();
     enableSingleStepProfiling();
     stacks = disableSingleStepProfiling();
     if (enable == -1)
-        disableSPSProfiling();
+        disableGeckoProfiling();
 }
 var f = asmLink(asmCompile('global','ffis',USE_ASM + "var ffi=ffis.ffi; function g(i) { i=i|0; ffi(i|0) } function f(i) { i=i|0; g(i|0) } return f"), null, {ffi});
 f(0);
 assertStackContainsSeq(stacks, "");
 f(+1);
-assertStackContainsSeq(stacks, "");
+assertStackContainsSeq(stacks, "<,g,f,>");
 f(0);
 assertStackContainsSeq(stacks, "<,g,f,>");
 f(-1);
@@ -74,7 +80,7 @@ f(0);
 assertStackContainsSeq(stacks, "");
 
 // Enable profiling for the rest of the tests.
-enableSPSProfiling();
+enableGeckoProfiling();
 
 var f = asmLink(asmCompile(USE_ASM + "function f() { return 42 } return f"));
 enableSingleStepProfiling();
@@ -108,7 +114,7 @@ function testBuiltinD2D(name) {
         enableSingleStepProfiling();
         assertEq(f(.1), eval("Math." + name + "(.1)"));
         var stacks = disableSingleStepProfiling();
-        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+        assertStackContainsSeq(stacks, ">,f,>,N,f,>,f,>,>");
     }
 }
 for (name of ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'ceil', 'floor', 'exp', 'log'])
@@ -121,7 +127,7 @@ function testBuiltinF2F(name) {
         enableSingleStepProfiling();
         assertEq(f(.1), eval("Math.fround(Math." + name + "(Math.fround(.1)))"));
         var stacks = disableSingleStepProfiling();
-        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+        assertStackContainsSeq(stacks, ">,f,>,N,f,>,f,>,>");
     }
 }
 for (name of ['ceil', 'floor'])
@@ -134,7 +140,7 @@ function testBuiltinDD2D(name) {
         enableSingleStepProfiling();
         assertEq(f(.1, .2), eval("Math." + name + "(.1, .2)"));
         var stacks = disableSingleStepProfiling();
-        assertStackContainsSeq(stacks, ">,f,>,native call,>,f,>,>");
+        assertStackContainsSeq(stacks, ">,f,>,N,f,>,f,>,>");
     }
 }
 for (name of ['atan2', 'pow'])
@@ -194,12 +200,15 @@ assertStackContainsSeq(stacks, ">,f1,>,<,f1,>,>,<,f1,>,f2,>,<,f1,>,<,f2,>,<,f1,>
 
 
 // Ion FFI exit
-for (var i = 0; i < 20; i++)
+var jitOptions = getJitCompilerOptions();
+if (jitOptions['baseline.enable']) {
+    for (var i = 0; i < 20; i++)
+        assertEq(f1(), 32);
+    enableSingleStepProfiling();
     assertEq(f1(), 32);
-enableSingleStepProfiling();
-assertEq(f1(), 32);
-var stacks = disableSingleStepProfiling();
-assertStackContainsSeq(stacks, ">,f1,>,<,f1,>,>,<,f1,>,f2,>,<,f1,>,<,f2,>,<,f1,>,f2,>,<,f1,>,>,<,f1,>,<,f1,>,f1,>,>");
+    var stacks = disableSingleStepProfiling();
+    assertStackContainsSeq(stacks, ">,f1,>,<,f1,>,>,<,f1,>,f2,>,<,f1,>,<,f2,>,<,f1,>,f2,>,<,f1,>,>,<,f1,>,<,f1,>,f1,>,>");
+}
 
 
 if (isSimdAvailable() && typeof SIMD !== 'undefined') {

@@ -1,4 +1,6 @@
-from __future__ import print_function
+
+from __future__ import absolute_import, print_function
+
 import argparse
 import json
 import os
@@ -49,7 +51,8 @@ def merge_start_events(events):
 
 
 def get_parser(add_help=True):
-    parser = argparse.ArgumentParser("logmerge", description='Merge multiple log files.', add_help=add_help)
+    parser = argparse.ArgumentParser(
+        "logmerge", description='Merge multiple log files.', add_help=add_help)
     parser.add_argument('-o', dest='output', help='output file, defaults to stdout')
     parser.add_argument('files', metavar='File', type=str, nargs='+', help='file to be merged')
     return parser
@@ -72,7 +75,6 @@ def main(**kwargs):
     for reader in readers:
         for entry in reader:
             dump_entry(entry, output)
-
 
 
 if __name__ == "__main__":

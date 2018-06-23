@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -12,12 +12,14 @@ UNIFIED_SOURCES += [
     'testArgumentsObject.cpp',
     'testArrayBuffer.cpp',
     'testArrayBufferView.cpp',
+    'testAtomicOperations.cpp',
+    'testBoundFunction.cpp',
     'testBug604087.cpp',
     'testCallArgs.cpp',
     'testCallNonGenericMethodOnProxy.cpp',
     'testChromeBuffer.cpp',
-    'testClassGetter.cpp',
     'testCloneScript.cpp',
+    'testCompileNonSyntactic.cpp',
     'testDateToLocaleString.cpp',
     'testDebugger.cpp',
     'testDeepFreeze.cpp',
@@ -26,9 +28,9 @@ UNIFIED_SOURCES += [
     'testDefinePropertyIgnoredAttributes.cpp',
     'testDeflateStringToUTF8Buffer.cpp',
     'testDifferentNewTargetInvokeConstructor.cpp',
-    'testEnclosingFunction.cpp',
     'testErrorCopying.cpp',
     'testException.cpp',
+    'testExecuteInJSMEnvironment.cpp',
     'testExternalArrayBuffer.cpp',
     'testExternalStrings.cpp',
     'testFindSCCs.cpp',
@@ -36,13 +38,16 @@ UNIFIED_SOURCES += [
     'testForOfIterator.cpp',
     'testForwardSetProperty.cpp',
     'testFreshGlobalEvalRedefinition.cpp',
+    'testFunctionBinding.cpp',
     'testFunctionProperties.cpp',
     'testGCAllocator.cpp',
     'testGCCellPtr.cpp',
     'testGCChunkPool.cpp',
     'testGCExactRooting.cpp',
     'testGCFinalizeCallback.cpp',
+    'testGCGrayMarking.cpp',
     'testGCHeapPostBarriers.cpp',
+    'testGCHooks.cpp',
     'testGCMarking.cpp',
     'testGCOutOfMemory.cpp',
     'testGCStoreBufferRemoval.cpp',
@@ -52,10 +57,10 @@ UNIFIED_SOURCES += [
     'testGetPropertyDescriptor.cpp',
     'testHashTable.cpp',
     'testIndexToString.cpp',
+    'testInformalValueTypeName.cpp',
     'testIntern.cpp',
     'testIntlAvailableLocales.cpp',
     'testIntString.cpp',
-    'testIntTypesABI.cpp',
     'testIsInsideNursery.cpp',
     'testIteratorObject.cpp',
     'testJSEvaluateScript.cpp',
@@ -71,8 +76,10 @@ UNIFIED_SOURCES += [
     'testParseJSON.cpp',
     'testPersistentRooted.cpp',
     'testPreserveJitCode.cpp',
+    'testPrintf.cpp',
     'testPrivateGCThingValue.cpp',
     'testProfileStrings.cpp',
+    'testPromise.cpp',
     'testPropCache.cpp',
     'testRegExp.cpp',
     'testResolveRecursion.cpp',
@@ -107,11 +114,17 @@ SOURCES += [
     'testAssemblerBuffer.cpp',
 ]
 
+SOURCES += [
+    # We don't want this in the C++ files with the test cases.
+    'hidePointer.cpp',
+]
+
 if CONFIG['ENABLE_ION']:
     UNIFIED_SOURCES += [
         'testJitDCEinGVN.cpp',
         'testJitFoldsTo.cpp',
         'testJitGVN.cpp',
+        'testJitMacroAssembler.cpp',
         'testJitMoveEmitterCycles-mips32.cpp',
         'testJitMoveEmitterCycles.cpp',
         'testJitRangeAnalysis.cpp',
@@ -119,10 +132,28 @@ if CONFIG['ENABLE_ION']:
         'testJitRValueAlloc.cpp',
     ]
 
-if CONFIG['SPIDERMONKEY_PROMISE']:
+if CONFIG['ENABLE_STREAMS']:
     UNIFIED_SOURCES += [
-        'testPromise.cpp',
+        'testReadableStream.cpp',
     ]
+
+
+if CONFIG['NIGHTLY_BUILD']:
+    # The Error interceptor only exists on Nightly.
+    UNIFIED_SOURCES += [
+        'testErrorInterceptor.cpp',
+    ]
+
+if CONFIG['JS_BUILD_BINAST'] and CONFIG['JS_STANDALONE']:
+    # Standalone builds leave the source directory untouched,
+    # which lets us run tests with the data files intact.
+    # Otherwise, in the current state of the build system,
+    # we can't have data files in js/src tests.
+    UNIFIED_SOURCES += [
+        'testBinASTReader.cpp',
+        'testBinTokenReaderTester.cpp'
+    ]
+
 
 DEFINES['EXPORT_JS_API'] = True
 
@@ -140,13 +171,16 @@ USE_LIBS += [
     'static:js',
 ]
 
+if CONFIG['MOZ_NEEDS_LIBATOMIC']:
+    OS_LIBS += ['atomic']
+
 OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
 
-if CONFIG['GNU_CXX']:
-    CXXFLAGS += ['-Wno-shadow']
+if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
+    CXXFLAGS += ['-Wno-shadow', '-Werror=format', '-fno-strict-aliasing']
 
 # This is intended as a temporary workaround to enable VS2015.
-if CONFIG['_MSC_VER']:
+if CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
     CXXFLAGS += ['-wd4312']
 
 DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR

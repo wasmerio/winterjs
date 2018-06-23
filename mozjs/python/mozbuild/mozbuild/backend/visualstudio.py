@@ -38,16 +38,16 @@ def get_id(name):
     return str(uuid.uuid5(uuid.NAMESPACE_URL, name)).upper()
 
 def visual_studio_product_to_solution_version(version):
-    if version == '2013':
-        return '12.00', '12'
+    if version == '2017':
+        return '12.00', '15'
     elif version == '2015':
         return '12.00', '14'
     else:
         raise Exception('Unknown version seen: %s' % version)
 
 def visual_studio_product_to_platform_toolset_version(version):
-    if version == '2013':
-        return 'v120'
+    if version == '2017':
+        return 'v141'
     elif version == '2015':
         return 'v140'
     else:
@@ -87,7 +87,7 @@ class VisualStudioBackend(CommonBackend):
             path=os.path.join(self._out_dir, 'mozilla.sln'))
 
     def consume_object(self, obj):
-        reldir = getattr(obj, 'relativedir', None)
+        reldir = getattr(obj, 'relsrcdir', None)
 
         if hasattr(obj, 'config') and reldir not in self._paths_to_configs:
             self._paths_to_configs[reldir] = obj.config
@@ -127,7 +127,7 @@ class VisualStudioBackend(CommonBackend):
         s.update(obj.files)
 
     def _process_unified_sources(self, obj):
-        reldir = getattr(obj, 'relativedir', None)
+        reldir = getattr(obj, 'relsrcdir', None)
 
         s = self._paths_to_sources.setdefault(reldir, set())
         s.update(obj.files)
@@ -190,8 +190,7 @@ class VisualStudioBackend(CommonBackend):
             sources = set(os.path.join('$(TopSrcDir)', path, s) for s in sources)
             sources = set(os.path.normpath(s) for s in sources)
 
-            finder = FileFinder(os.path.join(self.environment.topsrcdir, path),
-                find_executables=False)
+            finder = FileFinder(os.path.join(self.environment.topsrcdir, path))
 
             headers = [t[0] for t in finder.find('*.h')]
             headers = [os.path.normpath(os.path.join('$(TopSrcDir)',

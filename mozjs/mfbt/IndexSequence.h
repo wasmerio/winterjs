@@ -40,7 +40,7 @@
  *   containing indices corresponding to the tuple indices.
  *
  *     template <typename... Args, size_t... Indices>
- *     void Helper(const Tuple<Args...>& t, IndexSequence<Indices>)
+ *     void Helper(const Tuple<Args...>& t, IndexSequence<Indices...>)
  *     {
  *       Foo(Get<Indices>(t)...);
  *     }
@@ -74,7 +74,7 @@ namespace mozilla {
 template<size_t... Indices>
 struct IndexSequence
 {
-  static MOZ_CONSTEXPR size_t Size() { return sizeof...(Indices); }
+  static constexpr size_t Size() { return sizeof...(Indices); }
 };
 
 namespace detail {

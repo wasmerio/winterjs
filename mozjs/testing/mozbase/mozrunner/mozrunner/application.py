@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 from abc import ABCMeta, abstractmethod
 from distutils.spawn import find_executable
 import glob
@@ -12,7 +14,6 @@ from mozdevice import DeviceManagerADB, DMError, DroidADB
 from mozprofile import (
     Profile,
     FirefoxProfile,
-    MetroFirefoxProfile,
     ThunderbirdProfile
 )
 
@@ -20,12 +21,11 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 
 def get_app_context(appname):
-    context_map = { 'default': DefaultContext,
-                    'b2g': B2GContext,
-                    'firefox': FirefoxContext,
-                    'thunderbird': ThunderbirdContext,
-                    'metro': MetroContext,
-                    'fennec': FennecContext}
+    context_map = {'default': DefaultContext,
+                   'b2g': B2GContext,
+                   'firefox': FirefoxContext,
+                   'thunderbird': ThunderbirdContext,
+                   'fennec': FennecContext}
     if appname not in context_map:
         raise KeyError("Application '%s' not supported!" % appname)
     return context_map[appname]
@@ -66,7 +66,7 @@ class RemoteContext(object):
             paths = [p for p in paths if p is not None if os.path.isfile(p)]
             if not paths:
                 raise OSError(
-                    'Could not find the adb binary, make sure it is on your' \
+                    'Could not find the adb binary, make sure it is on your'
                     'path or set the $ADB_PATH environment variable.')
             self._adb = paths[0]
         return self._adb
@@ -249,17 +249,3 @@ class FirefoxContext(object):
 
 class ThunderbirdContext(object):
     profile_class = ThunderbirdProfile
-
-
-class MetroContext(object):
-    profile_class = MetroFirefoxProfile
-
-    def __init__(self, binary=None):
-        self.binary = binary or os.environ.get('BROWSER_PATH', None)
-
-    def wrap_command(self, command):
-        immersive_helper_path = os.path.join(os.path.dirname(here),
-                                             'resources',
-                                             'metrotestharness.exe')
-        command[:0] = [immersive_helper_path, '-firefoxpath']
-        return command

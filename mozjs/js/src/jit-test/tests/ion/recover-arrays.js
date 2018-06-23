@@ -269,14 +269,13 @@ function arrayAlloc2(i) {
 function build(l) { var arr = []; for (var i = 0; i < l; i++) arr.push(i); return arr }
 var uceFault_arrayAlloc3 = eval(uneval(uceFault).replace('uceFault', 'uceFault_arrayAlloc3'));
 function arrayAlloc3(i) {
-    var a = [0,1,2,3];
+    var a = [0,1,2,3,4,5,6,7,8];
     if (uceFault_arrayAlloc3(i) || uceFault_arrayAlloc3(i)) {
         assertEq(a[0], 0);
         assertEq(a[3], 3);
         return a.length;
     }
-    // TODO: Does not support NewArrayCopyOnWrite yet.
-    assertRecoveredOnBailout(a, false);
+    assertRecoveredOnBailout(a, true);
     return 0;
 };
 

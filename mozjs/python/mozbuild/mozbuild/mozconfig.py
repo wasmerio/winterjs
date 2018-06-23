@@ -80,6 +80,8 @@ class MozconfigLoader(object):
         'CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'MOZ_OBJDIR',
     }
 
+    AUTODETECT = object()
+
     def __init__(self, topsrcdir):
         self.topsrcdir = topsrcdir
 
@@ -187,11 +189,11 @@ class MozconfigLoader(object):
 
         return None
 
-    def read_mozconfig(self, path=None, moz_build_app=None):
+    def read_mozconfig(self, path=None):
         """Read the contents of a mozconfig into a data structure.
 
-        This takes the path to a mozconfig to load. If it is not defined, we
-        will try to find a mozconfig from the environment using
+        This takes the path to a mozconfig to load. If the given path is
+        AUTODETECT, will try to find a mozconfig from the environment using
         find_mozconfig().
 
         mozconfig files are shell scripts. So, we can't just parse them.
@@ -199,7 +201,7 @@ class MozconfigLoader(object):
         state from execution. Thus, the output from a mozconfig is a friendly
         static data structure.
         """
-        if path is None:
+        if path is self.AUTODETECT:
             path = self.find_mozconfig()
 
         result = {
@@ -233,7 +235,9 @@ class MozconfigLoader(object):
             shell = shell + '.exe'
 
         command = [shell, mozpath.normsep(self._loader_script),
-                   mozpath.normsep(self.topsrcdir), path]
+                   mozpath.normsep(self.topsrcdir), path, sys.executable,
+                   mozpath.join(mozpath.dirname(self._loader_script),
+                                'action', 'dump_env.py')]
 
         try:
             # We need to capture stderr because that's where the shell sends
@@ -310,10 +314,6 @@ class MozconfigLoader(object):
 
         result['configure_args'] = [self._expand(o) for o in parsed['ac']]
 
-        if moz_build_app is not None:
-            result['configure_args'].extend(self._expand(o) for o in
-                parsed['ac_app'][moz_build_app])
-
         if 'MOZ_OBJDIR' in parsed['env_before']:
             result['topobjdir'] = parsed['env_before']['MOZ_OBJDIR']
 
@@ -343,7 +343,6 @@ class MozconfigLoader(object):
     def _parse_loader_output(self, output):
         mk_options = []
         ac_options = []
-        ac_app_options = defaultdict(list)
         before_source = {}
         after_source = {}
         env_before_source = {}
@@ -381,9 +380,6 @@ class MozconfigLoader(object):
                     ac_options.append('\n'.join(current))
                 elif current_type == 'MK_OPTION':
                     mk_options.append('\n'.join(current))
-                elif current_type == 'AC_APP_OPTION':
-                    app = current.pop(0)
-                    ac_app_options[app].append('\n'.join(current))
 
                 current = None
                 current_type = None
@@ -470,7 +466,6 @@ class MozconfigLoader(object):
         return {
             'mk': mk_options,
             'ac': ac_options,
-            'ac_app': ac_app_options,
             'vars_before': before_source,
             'vars_after': after_source,
             'env_before': env_before_source,

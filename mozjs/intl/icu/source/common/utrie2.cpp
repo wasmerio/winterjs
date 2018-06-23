@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 ******************************************************************************
 *
@@ -6,7 +8,7 @@
 *
 ******************************************************************************
 *   file name:  utrie2.cpp
-*   encoding:   US-ASCII
+*   encoding:   UTF-8
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -744,7 +746,7 @@ uint16_t BackwardUTrie2StringIterator::previous16() {
     codePointLimit=codePointStart;
     if(start>=codePointStart) {
         codePoint=U_SENTINEL;
-        return 0;
+        return trie->errorValue;
     }
     uint16_t result;
     UTRIE2_U16_PREV16(trie, start, codePointStart, codePoint, result);
@@ -755,7 +757,7 @@ uint16_t ForwardUTrie2StringIterator::next16() {
     codePointStart=codePointLimit;
     if(codePointLimit==limit) {
         codePoint=U_SENTINEL;
-        return 0;
+        return trie->errorValue;
     }
     uint16_t result;
     UTRIE2_U16_NEXT16(trie, codePointLimit, limit, codePoint, result);

@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/hi.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 hi{
     Currencies{
         AED{
@@ -104,9 +98,13 @@ hi{
             "BWP",
             "बोत्सवानियाई पुला",
         }
+        BYN{
+            "BYN",
+            "बेलारूसी रूबल",
+        }
         BYR{
             "BYR",
-            "बेलारूसी रूबल",
+            "बेलारूसी रूबल (2000–2016)",
         }
         BZD{
             "BZD",
@@ -127,6 +125,10 @@ hi{
         CLP{
             "CLP",
             "चिली पेसो",
+        }
+        CNH{
+            "CNH",
+            "चीनी यूआन",
         }
         CNY{
             "CN¥",
@@ -474,7 +476,7 @@ hi{
         }
         PEN{
             "PEN",
-            "पेरूवियन नुएवो सोल",
+            "पेरूवियन सोल",
         }
         PGK{
             "PGK",
@@ -694,7 +696,7 @@ hi{
         }
         XAF{
             "FCFA",
-            "[CFA] फ़्रैंक [BEAC]",
+            "केंद्रीय अफ़्रीकी CFA फ़्रैंक",
         }
         XCD{
             "EC$",
@@ -702,7 +704,7 @@ hi{
         }
         XOF{
             "CFA",
-            "पश्चिमी अफ़्रीकी CFA फ्रैंक",
+            "पश्चिमी अफ़्रीकी CFA फ़्रैंक",
         }
         XPF{
             "CFPF",
@@ -742,7 +744,7 @@ hi{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -759,6 +761,7 @@ hi{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -786,7 +789,7 @@ hi{
         MGA{"Ar"}
         MMK{"K"}
         MNT{"₮"}
-        MUR{"₨"}
+        MUR{"Rs"}
         MXN{"$"}
         MYR{"RM"}
         NAD{"$"}
@@ -796,9 +799,10 @@ hi{
         NPR{"Rs"}
         NZD{"$"}
         PHP{"₱"}
-        PKR{"₨"}
+        PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"लेई"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -920,9 +924,13 @@ hi{
             one{"बोत्सवानियाई पुला"}
             other{"बोत्सवानियाई पुला"}
         }
-        BYR{
+        BYN{
             one{"बेलारूसी रूबल"}
             other{"बेलारूसी रूबल"}
+        }
+        BYR{
+            one{"बेलारूसी रूबल (2000–2016)"}
+            other{"बेलारूसी रूबल (2000–2016)"}
         }
         BZD{
             one{"बेलीज़ डॉलर"}
@@ -943,6 +951,10 @@ hi{
         CLP{
             one{"चिली पेसो"}
             other{"चिली पेसो"}
+        }
+        CNH{
+            one{"चीनी यूआन"}
+            other{"चीनी यूआन"}
         }
         CNY{
             one{"चीनी युआन"}
@@ -1253,8 +1265,8 @@ hi{
             other{"पनामेनियन बैल्बोआ"}
         }
         PEN{
-            one{"पेरूवियन नुएवो सोल"}
-            other{"पेरूवियन नुएवो सोल"}
+            one{"पेरूवियन सोल"}
+            other{"पेरूवियन सोल"}
         }
         PGK{
             one{"पापुआ न्यू गिनीयन किना"}
@@ -1425,16 +1437,16 @@ hi{
             other{"समोआई ताला"}
         }
         XAF{
-            one{"[CFA] फ़्रैंक [BEAC]"}
-            other{"[CFA] फ़्रैंक [BEAC]"}
+            one{"केंद्रीय अफ़्रीकी CFA फ़्रैंक"}
+            other{"केंद्रीय अफ़्रीकी CFA फ़्रैंक"}
         }
         XCD{
             one{"पूर्वी कैरिबियाई डॉलर"}
             other{"पूर्वी कैरिबियाई डॉलर"}
         }
         XOF{
-            one{"[CFA] फ़्रैंक [BCEAO]"}
-            other{"[CFA] फ़्रैंक [BCEAO]"}
+            one{"पश्चिमी अफ़्रीकी CFA फ़्रैंक"}
+            other{"पश्चिमी अफ़्रीकी CFA फ़्रैंक"}
         }
         XPF{
             one{"[CFP] फ़्रैंक"}
@@ -1461,5 +1473,5 @@ hi{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.19.47"}
+    Version{"2.1.36.86"}
 }

@@ -25,6 +25,7 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
                                bool useAtStart = false);
 
     LAllocation useByteOpRegister(MDefinition* mir);
+    LAllocation useByteOpRegisterAtStart(MDefinition* mir);
     LAllocation useByteOpRegisterOrNonDoubleConstant(MDefinition* mir);
 
     inline LDefinition tempToUnbox() {
@@ -40,6 +41,8 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
 
     void lowerUntypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex);
     void defineUntypedPhi(MPhi* phi, size_t lirIndex);
+    void lowerInt64PhiInput(MPhi*, uint32_t, LBlock*, size_t) { MOZ_CRASH("NYI"); }
+    void defineInt64Phi(MPhi*, size_t) { MOZ_CRASH("NYI"); }
     void lowerForShift(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir, MDefinition* lhs,
                        MDefinition* rhs);
     void lowerUrshD(MUrsh* mir);
@@ -48,9 +51,11 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
     void lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                      MDefinition* lhs, MDefinition* rhs);
 
-    void lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins, MDefinition* mir,
-                          MDefinition* lhs, MDefinition* rhs);
-    void lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 0>* ins,
+    void lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
+                          MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
+    void lowerForMulInt64(LMulI64* ins, MMul* mir, MDefinition* lhs, MDefinition* rhs);
+    template<size_t Temps>
+    void lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, Temps>* ins,
                             MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
 
     void lowerForFPU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir, MDefinition* input);
@@ -82,9 +87,9 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
     void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
     void lowerUDiv(MDiv* div);
     void lowerUMod(MMod* mod);
-    void visitPowHalf(MPowHalf* ins);
-    void visitAsmJSNeg(MAsmJSNeg* ins);
-    void visitAsmSelect(MAsmSelect* ins);
+    void visitPowHalf(MPowHalf* ins) override;
+    void visitWasmNeg(MWasmNeg* ins) override;
+    void visitWasmSelect(MWasmSelect* ins) override;
 
     LTableSwitchV* newLTableSwitchV(MTableSwitch* ins);
     LTableSwitch* newLTableSwitch(const LAllocation& in,
@@ -92,29 +97,29 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
                                   MTableSwitch* ins);
 
   public:
-    void visitBox(MBox* box);
-    void visitUnbox(MUnbox* unbox);
-    void visitReturn(MReturn* ret);
+    void visitBox(MBox* box) override;
+    void visitUnbox(MUnbox* unbox) override;
+    void visitReturn(MReturn* ret) override;
     void lowerPhi(MPhi* phi);
-    void visitGuardShape(MGuardShape* ins);
-    void visitGuardObjectGroup(MGuardObjectGroup* ins);
-    void visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble* ins);
-    void visitAsmJSUnsignedToFloat32(MAsmJSUnsignedToFloat32* ins);
-    void visitAsmJSLoadHeap(MAsmJSLoadHeap* ins);
-    void visitAsmJSStoreHeap(MAsmJSStoreHeap* ins);
-    void visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr* ins);
-    void visitAsmJSCompareExchangeHeap(MAsmJSCompareExchangeHeap* ins);
-    void visitAsmJSAtomicExchangeHeap(MAsmJSAtomicExchangeHeap* ins);
-    void visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap* ins);
-    void visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic* ins);
-    void visitCompareExchangeTypedArrayElement(MCompareExchangeTypedArrayElement* ins);
-    void visitAtomicExchangeTypedArrayElement(MAtomicExchangeTypedArrayElement* ins);
-    void visitAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins);
-    void visitSubstr(MSubstr* ins);
-    void visitRandom(MRandom* ins);
-    void visitWasmTruncateToInt64(MWasmTruncateToInt64* ins);
-    void visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins);
-    void visitCopySign(MCopySign* ins);
+    void visitWasmUnsignedToDouble(MWasmUnsignedToDouble* ins) override;
+    void visitWasmUnsignedToFloat32(MWasmUnsignedToFloat32* ins) override;
+    void visitAsmJSLoadHeap(MAsmJSLoadHeap* ins) override;
+    void visitAsmJSStoreHeap(MAsmJSStoreHeap* ins) override;
+    void visitWasmCompareExchangeHeap(MWasmCompareExchangeHeap* ins) override;
+    void visitWasmAtomicExchangeHeap(MWasmAtomicExchangeHeap* ins) override;
+    void visitWasmAtomicBinopHeap(MWasmAtomicBinopHeap* ins) override;
+    void visitCompareExchangeTypedArrayElement(MCompareExchangeTypedArrayElement* ins) override;
+    void visitAtomicExchangeTypedArrayElement(MAtomicExchangeTypedArrayElement* ins) override;
+    void visitAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins) override;
+    void visitSubstr(MSubstr* ins) override;
+    void visitRandom(MRandom* ins) override;
+    void visitWasmTruncateToInt64(MWasmTruncateToInt64* ins) override;
+    void visitWasmLoad(MWasmLoad* ins) override;
+    void visitWasmStore(MWasmStore* ins) override;
+    void visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins) override;
+    void visitCopySign(MCopySign* ins) override;
+    void visitExtendInt32ToInt64(MExtendInt32ToInt64* ins) override;
+    void visitSignExtendInt64(MSignExtendInt64* ins) override;
 };
 
 typedef LIRGeneratorARM64 LIRGeneratorSpecific;

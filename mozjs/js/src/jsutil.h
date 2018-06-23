@@ -15,10 +15,12 @@
 #include "mozilla/Compiler.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/PodOperations.h"
 
 #include <limits.h>
 
+#include "js/Initialization.h"
 #include "js/Utility.h"
 #include "js/Value.h"
 
@@ -46,54 +48,15 @@ js_memcpy(void* dst_, const void* src_, size_t len)
 
 namespace js {
 
-template <class T>
-struct AlignmentTestStruct
+// An internal version of JS_IsInitialized() that returns whether SpiderMonkey
+// is currently initialized or is in the process of being initialized.
+inline bool
+IsInitialized()
 {
-    char c;
-    T t;
-};
-
-/* This macro determines the alignment requirements of a type. */
-#define JS_ALIGNMENT_OF(t_) \
-  (sizeof(js::AlignmentTestStruct<t_>) - sizeof(t_))
-
-template <class T>
-class AlignedPtrAndFlag
-{
-    uintptr_t bits;
-
-  public:
-    AlignedPtrAndFlag(T* t, bool aFlag) {
-        MOZ_ASSERT((uintptr_t(t) & 1) == 0);
-        bits = uintptr_t(t) | uintptr_t(aFlag);
-    }
-
-    T* ptr() const {
-        return (T*)(bits & ~uintptr_t(1));
-    }
-
-    bool flag() const {
-        return (bits & 1) != 0;
-    }
-
-    void setPtr(T* t) {
-        MOZ_ASSERT((uintptr_t(t) & 1) == 0);
-        bits = uintptr_t(t) | uintptr_t(flag());
-    }
-
-    void setFlag() {
-        bits |= 1;
-    }
-
-    void unsetFlag() {
-        bits &= ~uintptr_t(1);
-    }
-
-    void set(T* t, bool aFlag) {
-        MOZ_ASSERT((uintptr_t(t) & 1) == 0);
-        bits = uintptr_t(t) | aFlag;
-    }
-};
+    using namespace JS::detail;
+    return libraryInitState == InitState::Initializing ||
+           libraryInitState == InitState::Running;
+}
 
 template <class T>
 static inline void
@@ -107,6 +70,28 @@ Reverse(T* beg, T* end)
         *end = tmp;
         ++beg;
     }
+}
+
+template <class T, class Pred>
+static inline T*
+RemoveIf(T* begin, T* end, Pred pred)
+{
+    T* result = begin;
+    for (T* p = begin; p != end; p++) {
+        if (!pred(*p))
+            *result++ = *p;
+    }
+    return result;
+}
+
+template <class Container, class Pred>
+static inline size_t
+EraseIf(Container& c, Pred pred)
+{
+    auto newEnd = RemoveIf(c.begin(), c.end(), pred);
+    size_t removed = c.end() - newEnd;
+    c.shrinkBy(removed);
+    return removed;
 }
 
 template <class T>
@@ -171,22 +156,6 @@ Max(T t1, T t2)
     return t1 > t2 ? t1 : t2;
 }
 
-/* Allows a const variable to be initialized after its declaration. */
-template <class T>
-static T&
-InitConst(const T& t)
-{
-    return const_cast<T&>(t);
-}
-
-template <class T, class U>
-MOZ_ALWAYS_INLINE T&
-ImplicitCast(U& u)
-{
-    T& t = u;
-    return t;
-}
-
 template<typename T>
 class MOZ_RAII AutoScopedAssign
 {
@@ -207,18 +176,14 @@ class MOZ_RAII AutoScopedAssign
     T old;
 };
 
-template <typename T>
-static inline bool
-IsPowerOfTwo(T t)
-{
-    return t && !(t & (t - 1));
-}
-
 template <typename T, typename U>
 static inline U
 ComputeByteAlignment(T bytes, U alignment)
 {
-    MOZ_ASSERT(IsPowerOfTwo(alignment));
+    static_assert(mozilla::IsUnsigned<U>::value,
+                  "alignment amount must be unsigned");
+
+    MOZ_ASSERT(mozilla::IsPowerOfTwo(alignment));
     return (alignment - (bytes % alignment)) % alignment;
 }
 
@@ -226,13 +191,10 @@ template <typename T, typename U>
 static inline T
 AlignBytes(T bytes, U alignment)
 {
-    return bytes + ComputeByteAlignment(bytes, alignment);
-}
+    static_assert(mozilla::IsUnsigned<U>::value,
+                  "alignment amount must be unsigned");
 
-static MOZ_ALWAYS_INLINE size_t
-UnsignedPtrDiff(const void* bigger, const void* smaller)
-{
-    return size_t(bigger) - size_t(smaller);
+    return bytes + ComputeByteAlignment(bytes, alignment);
 }
 
 /*****************************************************************************/
@@ -306,7 +268,7 @@ namespace mozilla {
  */
 template<typename T>
 static MOZ_ALWAYS_INLINE void
-PodSet(T* aDst, T aSrc, size_t aNElem)
+PodSet(T* aDst, const T& aSrc, size_t aNElem)
 {
     for (const T* dstend = aDst + aNElem; aDst < dstend; ++aDst)
         *aDst = aSrc;
@@ -328,6 +290,7 @@ PodSet(T* aDst, T aSrc, size_t aNElem)
 #define JS_MOVED_TENURED_PATTERN 0x49
 #define JS_SWEPT_TENURED_PATTERN 0x4B
 #define JS_ALLOCATED_TENURED_PATTERN 0x4D
+#define JS_FREED_HEAP_PTR_PATTERN 0x6B
 
 /*
  * Ensure JS_SWEPT_CODE_PATTERN is a byte pattern that will crash immediately
@@ -357,16 +320,16 @@ Poison(void* ptr, uint8_t value, size_t num)
     // Unfortunately, this adds about 2% more overhead, so we can only enable
     // it in debug.
 #if defined(DEBUG)
-    uintptr_t obj;
-    memset(&obj, value, sizeof(obj));
+    uintptr_t poison;
+    memset(&poison, value, sizeof(poison));
 # if defined(JS_PUNBOX64)
-    obj = obj & ((uintptr_t(1) << JSVAL_TAG_SHIFT) - 1);
+    poison = poison & ((uintptr_t(1) << JSVAL_TAG_SHIFT) - 1);
 # endif
-    const jsval_layout layout = OBJECT_TO_JSVAL_IMPL((JSObject*)obj);
+    JS::Value v = js::PoisonedObjectValue(poison);
 
-    size_t value_count = num / sizeof(jsval_layout);
-    size_t byte_count = num % sizeof(jsval_layout);
-    mozilla::PodSet((jsval_layout*)ptr, layout, value_count);
+    size_t value_count = num / sizeof(v);
+    size_t byte_count = num % sizeof(v);
+    mozilla::PodSet(reinterpret_cast<JS::Value*>(ptr), v, value_count);
     if (byte_count) {
         uint8_t* bytes = static_cast<uint8_t*>(ptr);
         uint8_t* end = bytes + num;
@@ -386,6 +349,7 @@ Poison(void* ptr, uint8_t value, size_t num)
 /* Enable poisoning in crash-diagnostics and zeal builds. */
 #if defined(JS_CRASH_DIAGNOSTICS) || defined(JS_GC_ZEAL)
 # define JS_POISON(p, val, size) Poison(p, val, size)
+# define JS_GC_POISONING 1
 #else
 # define JS_POISON(p, val, size) ((void) 0)
 #endif

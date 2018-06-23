@@ -1,10 +1,14 @@
 #!/usr/bin/env python
 
+from __future__ import absolute_import
+
 import mozprofile
 import os
 import shutil
 import tempfile
 import unittest
+
+import mozunit
 
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -50,4 +54,4 @@ class Bug758250(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

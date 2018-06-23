@@ -8,15 +8,14 @@
 #define jit_Snapshot_h
 
 #include "mozilla/Alignment.h"
-
-#include "jsalloc.h"
-#include "jsbytecode.h"
+#include "mozilla/Attributes.h"
 
 #include "jit/CompactBuffer.h"
 #include "jit/IonTypes.h"
 #include "jit/Registers.h"
-
+#include "js/AllocPolicy.h"
 #include "js/HashTable.h"
+#include "js/TypeDecls.h"
 
 namespace js {
 class GenericPrinter;
@@ -127,6 +126,11 @@ class RValueAllocation
         Register gpr;
         FloatRegisterBits fpu;
         JSValueType type;
+
+        Payload() : index(0) {
+            static_assert(sizeof(index) == sizeof(Payload),
+                          "All Payload bits are initialized.");
+        }
     };
 
     Payload arg1_;
@@ -181,17 +185,23 @@ class RValueAllocation
       : mode_(mode),
         arg1_(a1)
     {
+        arg2_.index = 0;
     }
 
     explicit RValueAllocation(Mode mode)
       : mode_(mode)
     {
+        arg1_.index = 0;
+        arg2_.index = 0;
     }
 
   public:
     RValueAllocation()
       : mode_(INVALID)
-    { }
+    {
+        arg1_.index = 0;
+        arg2_.index = 0;
+    }
 
     // DOUBLE_REG
     static RValueAllocation Double(FloatRegister reg) {
@@ -293,6 +303,9 @@ class RValueAllocation
     void write(CompactBufferWriter& writer) const;
 
   public:
+    bool valid() const {
+        return mode_ != INVALID;
+    }
     Mode mode() const {
         return Mode(mode_ & MODE_BITS_MASK);
     }
@@ -340,12 +353,14 @@ class RValueAllocation
 
   public:
     bool operator==(const RValueAllocation& rhs) const {
-        if (mode_ != rhs.mode_)
-            return false;
-
-        const Layout& layout = layoutFromMode(mode());
-        return equalPayloads(layout.type1, arg1_, rhs.arg1_) &&
-            equalPayloads(layout.type2, arg2_, rhs.arg2_);
+        // Note, this equality compares the verbatim content of the payload,
+        // which is made possible because we ensure that the payload content is
+        // fully initialized during the creation.
+        static_assert(sizeof(int32_t) == sizeof(Payload),
+                      "All Payload bits are compared.");
+        return mode_ == rhs.mode_ &&
+               arg1_.index == rhs.arg1_.index &&
+               arg2_.index == rhs.arg2_.index;
     }
 
     HashNumber hash() const;
@@ -504,23 +519,28 @@ class SnapshotReader
     }
 };
 
-class RInstructionStorage
+class MOZ_NON_PARAM RInstructionStorage
 {
-    static const size_t Size = 4 * sizeof(uint32_t);
-    mozilla::AlignedStorage<Size> mem;
+    static constexpr size_t Size = 4 * sizeof(uint32_t);
+
+    // This presumes all RInstructionStorage are safely void*-alignable.
+    // RInstruction::readRecoverData asserts that no RInstruction subclass
+    // has stricter alignment requirements than RInstructionStorage.
+    static constexpr size_t Alignment = alignof(void*);
+
+    alignas(Alignment) unsigned char mem[Size];
 
   public:
-    const void* addr() const { return mem.addr(); }
-    void* addr() { return mem.addr(); }
+    const void* addr() const { return mem; }
+    void* addr() { return mem; }
 
     RInstructionStorage() = default;
 
-    RInstructionStorage(const RInstructionStorage& other) {
-        memcpy(addr(), other.addr(), Size);
-    }
-    void operator=(const RInstructionStorage& other) {
-        memcpy(addr(), other.addr(), Size);
-    }
+    // Making a copy of raw bytes holding a RInstruction instance would be a
+    // strict aliasing violation: see bug 1269319 for an instance of bytewise
+    // copying having caused crashes.
+    RInstructionStorage(const RInstructionStorage&) = delete;
+    RInstructionStorage& operator=(const RInstructionStorage& other) = delete;
 };
 
 class RInstruction;
@@ -549,6 +569,8 @@ class RecoverReader
 
   public:
     RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers, uint32_t size);
+    explicit RecoverReader(const RecoverReader& rr);
+    RecoverReader& operator=(const RecoverReader& rr);
 
     uint32_t numInstructions() const {
         return numInstructions_;

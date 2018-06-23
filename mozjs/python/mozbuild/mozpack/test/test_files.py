@@ -14,10 +14,13 @@ from mozpack.files import (
     DeflatedFile,
     Dest,
     ExistingFile,
+    ExtractedTarFile,
     FileFinder,
     File,
     GeneratedFile,
+    HardlinkFile,
     JarFinder,
+    TarFinder,
     ManifestFile,
     MercurialFile,
     MercurialRevisionFinder,
@@ -55,6 +58,7 @@ import os
 import random
 import string
 import sys
+import tarfile
 import mozpack.path as mozpath
 from tempfile import mkdtemp
 from io import BytesIO
@@ -67,23 +71,37 @@ class TestWithTmpDir(unittest.TestCase):
         self.tmpdir = mkdtemp()
 
         self.symlink_supported = False
+        self.hardlink_supported = False
 
-        if not hasattr(os, 'symlink'):
-            return
+        if hasattr(os, 'symlink'):
+            dummy_path = self.tmppath('dummy_file')
+            with open(dummy_path, 'a'):
+                pass
 
-        dummy_path = self.tmppath('dummy_file')
-        with open(dummy_path, 'a'):
-            pass
+            try:
+                os.symlink(dummy_path, self.tmppath('dummy_symlink'))
+                os.remove(self.tmppath('dummy_symlink'))
+            except EnvironmentError:
+                pass
+            finally:
+                os.remove(dummy_path)
 
-        try:
-            os.symlink(dummy_path, self.tmppath('dummy_symlink'))
-            os.remove(self.tmppath('dummy_symlink'))
-        except EnvironmentError:
-            pass
-        finally:
-            os.remove(dummy_path)
+            self.symlink_supported = True
 
-        self.symlink_supported = True
+        if hasattr(os, 'link'):
+            dummy_path = self.tmppath('dummy_file')
+            with open(dummy_path, 'a'):
+                pass
+
+            try:
+                os.link(dummy_path, self.tmppath('dummy_hardlink'))
+                os.remove(self.tmppath('dummy_hardlink'))
+            except EnvironmentError:
+                pass
+            finally:
+                os.remove(dummy_path)
+
+            self.hardlink_supported = True
 
 
     def tearDown(self):
@@ -348,6 +366,98 @@ class TestAbsoluteSymlinkFile(TestWithTmpDir):
 
         link = os.readlink(dest)
         self.assertEqual(link, source)
+
+
+class TestHardlinkFile(TestWithTmpDir):
+    def test_absolute_relative(self):
+        HardlinkFile('/foo')
+        HardlinkFile('./foo')
+
+    def test_hardlink_file(self):
+        source = self.tmppath('test_path')
+        with open(source, 'wt') as fh:
+            fh.write('Hello world')
+
+        s = HardlinkFile(source)
+        dest = self.tmppath('hardlink')
+        self.assertTrue(s.copy(dest))
+
+        if self.hardlink_supported:
+            source_stat = os.stat(source)
+            dest_stat = os.stat(dest)
+            self.assertEqual(source_stat.st_dev, dest_stat.st_dev)
+            self.assertEqual(source_stat.st_ino, dest_stat.st_ino)
+        else:
+            self.assertTrue(os.path.isfile(dest))
+            with open(dest) as f:
+                content = f.read()
+            self.assertEqual(content, 'Hello world')
+
+    def test_replace_file_with_hardlink(self):
+        # If hardlink are supported, an existing file should be replaced by a
+        # symlink.
+        source = self.tmppath('test_path')
+        with open(source, 'wt') as fh:
+            fh.write('source')
+
+        dest = self.tmppath('dest')
+        with open(dest, 'a'):
+            pass
+
+        s = HardlinkFile(source)
+        s.copy(dest, skip_if_older=False)
+
+        if self.hardlink_supported:
+            source_stat = os.stat(source)
+            dest_stat = os.stat(dest)
+            self.assertEqual(source_stat.st_dev, dest_stat.st_dev)
+            self.assertEqual(source_stat.st_ino, dest_stat.st_ino)
+        else:
+            self.assertTrue(os.path.isfile(dest))
+            with open(dest) as f:
+                content = f.read()
+            self.assertEqual(content, 'source')
+
+    def test_replace_hardlink(self):
+        if not self.hardlink_supported:
+            raise unittest.SkipTest('hardlink not supported')
+
+        source = self.tmppath('source')
+        with open(source, 'a'):
+            pass
+
+        dest = self.tmppath('dest')
+
+        os.link(source, dest)
+
+        s = HardlinkFile(source)
+        self.assertFalse(s.copy(dest))
+
+        source_stat = os.lstat(source)
+        dest_stat = os.lstat(dest)
+        self.assertEqual(source_stat.st_dev, dest_stat.st_dev)
+        self.assertEqual(source_stat.st_ino, dest_stat.st_ino)
+
+    def test_noop(self):
+        if not self.hardlink_supported:
+            raise unittest.SkipTest('hardlink not supported')
+
+        source = self.tmppath('source')
+        dest = self.tmppath('dest')
+
+        with open(source, 'a'):
+            pass
+
+        os.link(source, dest)
+
+        s = HardlinkFile(source)
+        self.assertFalse(s.copy(dest))
+
+        source_stat = os.lstat(source)
+        dest_stat = os.lstat(dest)
+        self.assertEqual(source_stat.st_dev, dest_stat.st_dev)
+        self.assertEqual(source_stat.st_ino, dest_stat.st_ino)
+
 
 class TestPreprocessedFile(TestWithTmpDir):
     def test_preprocess(self):
@@ -1011,6 +1121,26 @@ class TestJarFinder(MatchTestTemplate, TestWithTmpDir):
         self.assertIsNone(self.finder.get('does-not-exist'))
         self.assertIsInstance(self.finder.get('bar'), DeflatedFile)
 
+class TestTarFinder(MatchTestTemplate, TestWithTmpDir):
+    def add(self, path):
+        self.tar.addfile(tarfile.TarInfo(name=path))
+
+    def do_check(self, pattern, result):
+        do_check(self, self.finder, pattern, result)
+
+    def test_tar_finder(self):
+        self.tar = tarfile.open(name=self.tmppath('test.tar.bz2'),
+                                mode='w:bz2')
+        self.prepare_match_test()
+        self.tar.close()
+        with tarfile.open(name=self.tmppath('test.tar.bz2'),
+                          mode='r:bz2') as tarreader:
+            self.finder = TarFinder(self.tmppath('test.tar.bz2'), tarreader)
+            self.do_match_test()
+
+            self.assertIsNone(self.finder.get('does-not-exist'))
+            self.assertIsInstance(self.finder.get('bar'), ExtractedTarFile)
+
 
 class TestComposedFinder(MatchTestTemplate, TestWithTmpDir):
     def add(self, path, content=None):
@@ -1051,24 +1181,50 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
     def setUp(self):
         super(TestMercurialRevisionFinder, self).setUp()
         hglib.init(self.tmpdir)
+        self._clients = []
+
+    def tearDown(self):
+        # Ensure the hg client process is closed. Otherwise, Windows
+        # may have trouble removing the repo directory because the process
+        # has an open handle on it.
+        for client in getattr(self, '_clients', []):
+            if client.server:
+                client.close()
+
+        self._clients[:] = []
+
+        super(TestMercurialRevisionFinder, self).tearDown()
+
+    def _client(self):
+        configs = (
+            'ui.username="Dummy User <dummy@example.com>"',
+        )
+
+        client = hglib.open(self.tmpdir, encoding='UTF-8',
+                            configs=configs)
+        self._clients.append(client)
+        return client
 
     def add(self, path):
-        c = hglib.open(self.tmpdir)
-        ensureParentDir(self.tmppath(path))
-        with open(self.tmppath(path), 'wb') as fh:
-            fh.write(path)
-        c.add(self.tmppath(path))
+        with self._client() as c:
+            ensureParentDir(self.tmppath(path))
+            with open(self.tmppath(path), 'wb') as fh:
+                fh.write(path)
+            c.add(self.tmppath(path))
 
     def do_check(self, pattern, result):
         do_check(self, self.finder, pattern, result)
 
     def _get_finder(self, *args, **kwargs):
-        return MercurialRevisionFinder(*args, **kwargs)
+        f = MercurialRevisionFinder(*args, **kwargs)
+        self._clients.append(f._client)
+        return f
 
     def test_default_revision(self):
         self.prepare_match_test()
-        c = hglib.open(self.tmpdir)
-        c.commit('initial commit')
+        with self._client() as c:
+            c.commit('initial commit')
+
         self.finder = self._get_finder(self.tmpdir)
         self.do_match_test()
 
@@ -1076,21 +1232,21 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         self.assertIsInstance(self.finder.get('bar'), MercurialFile)
 
     def test_old_revision(self):
-        c = hglib.open(self.tmpdir)
-        with open(self.tmppath('foo'), 'wb') as fh:
-            fh.write('foo initial')
-        c.add(self.tmppath('foo'))
-        c.commit('initial')
+        with self._client() as c:
+            with open(self.tmppath('foo'), 'wb') as fh:
+                fh.write('foo initial')
+            c.add(self.tmppath('foo'))
+            c.commit('initial')
 
-        with open(self.tmppath('foo'), 'wb') as fh:
-            fh.write('foo second')
-        with open(self.tmppath('bar'), 'wb') as fh:
-            fh.write('bar second')
-        c.add(self.tmppath('bar'))
-        c.commit('second')
-        # This wipes out the working directory, ensuring the finder isn't
-        # finding anything from the filesystem.
-        c.rawcommand(['update', 'null'])
+            with open(self.tmppath('foo'), 'wb') as fh:
+                fh.write('foo second')
+            with open(self.tmppath('bar'), 'wb') as fh:
+                fh.write('bar second')
+            c.add(self.tmppath('bar'))
+            c.commit('second')
+            # This wipes out the working directory, ensuring the finder isn't
+            # finding anything from the filesystem.
+            c.rawcommand(['update', 'null'])
 
         finder = self._get_finder(self.tmpdir, 0)
         f = finder.get('foo')
@@ -1098,19 +1254,20 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         self.assertEqual(f.read(), 'foo initial', 'read again for good measure')
         self.assertIsNone(finder.get('bar'))
 
-        finder = MercurialRevisionFinder(self.tmpdir, rev=1)
+        finder = self._get_finder(self.tmpdir, rev=1)
         f = finder.get('foo')
         self.assertEqual(f.read(), 'foo second')
         f = finder.get('bar')
         self.assertEqual(f.read(), 'bar second')
+        f = None
 
     def test_recognize_repo_paths(self):
-        c = hglib.open(self.tmpdir)
-        with open(self.tmppath('foo'), 'wb') as fh:
-            fh.write('initial')
-        c.add(self.tmppath('foo'))
-        c.commit('initial')
-        c.rawcommand(['update', 'null'])
+        with self._client() as c:
+            with open(self.tmppath('foo'), 'wb') as fh:
+                fh.write('initial')
+            c.add(self.tmppath('foo'))
+            c.commit('initial')
+            c.rawcommand(['update', 'null'])
 
         finder = self._get_finder(self.tmpdir, 0,
                                   recognize_repo_paths=True)
@@ -1125,6 +1282,7 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         f = finder.get(self.tmppath('foo'))
         self.assertIsInstance(f, MercurialFile)
         self.assertEqual(f.read(), 'initial')
+        f = None
 
 
 @unittest.skipUnless(MercurialNativeRevisionFinder, 'hgnative not available')

@@ -1,4 +1,4 @@
-if (!wasmIsSupported())
+if (!wasmDebuggingIsSupported())
   quit();
 
 fullcompartmentchecks(true);
@@ -7,5 +7,5 @@ var dbg = new Debugger(g);
 dbg.onNewScript = (function(script) {
     s = script;
 })
-g.eval(`Wasm.instantiateModule(wasmTextToBinary('(module (func) (export "" 0))'));`);
+g.eval(`new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary('(module (func) (export "" 0))')));`);
 s.source;

@@ -33,141 +33,19 @@
 
 #include "mozilla/Vector.h"
 
-#include "jsalloc.h"
-
 #include "jit/arm64/vixl/Assembler-vixl.h"
 #include "jit/arm64/vixl/Disasm-vixl.h"
 #include "jit/arm64/vixl/Globals-vixl.h"
 #include "jit/arm64/vixl/Instructions-vixl.h"
 #include "jit/arm64/vixl/Instrument-vixl.h"
+#include "jit/arm64/vixl/Simulator-Constants-vixl.h"
 #include "jit/arm64/vixl/Utils-vixl.h"
-
 #include "jit/IonTypes.h"
+#include "js/AllocPolicy.h"
+#include "vm/MutexIDs.h"
 #include "vm/PosixNSPR.h"
 
-#define JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, extra, onerror)             \
-    JS_BEGIN_MACRO                                                              \
-        if (cx->mainThread().simulator()->overRecursedWithExtra(extra)) {       \
-            js::ReportOverRecursed(cx);                                         \
-            onerror;                                                            \
-        }                                                                       \
-    JS_END_MACRO
-
 namespace vixl {
-
-// Debug instructions.
-//
-// VIXL's macro-assembler and simulator support a few pseudo instructions to
-// make debugging easier. These pseudo instructions do not exist on real
-// hardware.
-//
-// TODO: Provide controls to prevent the macro assembler from emitting
-// pseudo-instructions. This is important for ahead-of-time compilers, where the
-// macro assembler is built with USE_SIMULATOR but the code will eventually be
-// run on real hardware.
-//
-// TODO: Also consider allowing these pseudo-instructions to be disabled in the
-// simulator, so that users can check that the input is a valid native code.
-// (This isn't possible in all cases. Printf won't work, for example.)
-//
-// Each debug pseudo instruction is represented by a HLT instruction. The HLT
-// immediate field is used to identify the type of debug pseudo instruction.
-
-enum DebugHltOpcodes {
-  kUnreachableOpcode = 0xdeb0,
-  kPrintfOpcode,
-  kTraceOpcode,
-  kLogOpcode,
-  // Aliases.
-  kDebugHltFirstOpcode = kUnreachableOpcode,
-  kDebugHltLastOpcode = kLogOpcode
-};
-
-// Each pseudo instruction uses a custom encoding for additional arguments, as
-// described below.
-
-// Unreachable - kUnreachableOpcode
-//
-// Instruction which should never be executed. This is used as a guard in parts
-// of the code that should not be reachable, such as in data encoded inline in
-// the instructions.
-
-// Printf - kPrintfOpcode
-//  - arg_count: The number of arguments.
-//  - arg_pattern: A set of PrintfArgPattern values, packed into two-bit fields.
-//
-// Simulate a call to printf.
-//
-// Floating-point and integer arguments are passed in separate sets of registers
-// in AAPCS64 (even for varargs functions), so it is not possible to determine
-// the type of each argument without some information about the values that were
-// passed in. This information could be retrieved from the printf format string,
-// but the format string is not trivial to parse so we encode the relevant
-// information with the HLT instruction.
-//
-// Also, the following registers are populated (as if for a native A64 call):
-//    x0: The format string
-// x1-x7: Optional arguments, if type == CPURegister::kRegister
-// d0-d7: Optional arguments, if type == CPURegister::kFPRegister
-const unsigned kPrintfArgCountOffset = 1 * kInstructionSize;
-const unsigned kPrintfArgPatternListOffset = 2 * kInstructionSize;
-const unsigned kPrintfLength = 3 * kInstructionSize;
-
-const unsigned kPrintfMaxArgCount = 4;
-
-// The argument pattern is a set of two-bit-fields, each with one of the
-// following values:
-enum PrintfArgPattern {
-  kPrintfArgW = 1,
-  kPrintfArgX = 2,
-  // There is no kPrintfArgS because floats are always converted to doubles in C
-  // varargs calls.
-  kPrintfArgD = 3
-};
-static const unsigned kPrintfArgPatternBits = 2;
-
-// Trace - kTraceOpcode
-//  - parameter: TraceParameter stored as a uint32_t
-//  - command: TraceCommand stored as a uint32_t
-//
-// Allow for trace management in the generated code. This enables or disables
-// automatic tracing of the specified information for every simulated
-// instruction.
-const unsigned kTraceParamsOffset = 1 * kInstructionSize;
-const unsigned kTraceCommandOffset = 2 * kInstructionSize;
-const unsigned kTraceLength = 3 * kInstructionSize;
-
-// Trace parameters.
-enum TraceParameters {
-  LOG_DISASM     = 1 << 0,  // Log disassembly.
-  LOG_REGS       = 1 << 1,  // Log general purpose registers.
-  LOG_VREGS      = 1 << 2,  // Log NEON and floating-point registers.
-  LOG_SYSREGS    = 1 << 3,  // Log the flags and system registers.
-  LOG_WRITE      = 1 << 4,  // Log writes to memory.
-
-  LOG_NONE       = 0,
-  LOG_STATE      = LOG_REGS | LOG_VREGS | LOG_SYSREGS,
-  LOG_ALL        = LOG_DISASM | LOG_STATE | LOG_WRITE
-};
-
-// Trace commands.
-enum TraceCommand {
-  TRACE_ENABLE   = 1,
-  TRACE_DISABLE  = 2
-};
-
-// Log - kLogOpcode
-//  - parameter: TraceParameter stored as a uint32_t
-//
-// Print the specified information once. This mechanism is separate from Trace.
-// In particular, _all_ of the specified registers are printed, rather than just
-// the registers that the instruction writes.
-//
-// Any combination of the TraceParameters values can be used, except that
-// LOG_DISASM is not supported for Log.
-const unsigned kLogParamsOffset = 1 * kInstructionSize;
-const unsigned kLogLength = 2 * kInstructionSize;
-
 
 // Assemble the specified IEEE-754 components into the target type and apply
 // appropriate rounding.
@@ -817,33 +695,35 @@ class SimExclusiveGlobalMonitor {
 class Redirection;
 
 class Simulator : public DecoderVisitor {
-  friend class AutoLockSimulatorCache;
-
  public:
-  explicit Simulator(Decoder* decoder, FILE* stream = stdout);
+  explicit Simulator(JSContext* cx, Decoder* decoder, FILE* stream = stdout);
   ~Simulator();
 
   // Moz changes.
   void init(Decoder* decoder, FILE* stream);
   static Simulator* Current();
-  static Simulator* Create();
+  static Simulator* Create(JSContext* cx);
   static void Destroy(Simulator* sim);
   uintptr_t stackLimit() const;
   uintptr_t* addressOfStackLimit();
   bool overRecursed(uintptr_t newsp = 0) const;
   bool overRecursedWithExtra(uint32_t extra) const;
   int64_t call(uint8_t* entry, int argument_count, ...);
-  void setRedirection(Redirection* redirection);
-  Redirection* redirection() const;
   static void* RedirectNativeFunction(void* nativeFunction, js::jit::ABIFunctionType type);
   void setGPR32Result(int32_t result);
   void setGPR64Result(int64_t result);
   void setFP32Result(float result);
   void setFP64Result(double result);
   void VisitCallRedirection(const Instruction* instr);
-  static inline uintptr_t StackLimit() {
+  static uintptr_t StackLimit() {
     return Simulator::Current()->stackLimit();
   }
+  static bool supportsAtomics() {
+    return true;
+  }
+  template<typename T> T Read(uintptr_t address);
+  template <typename T> void Write(uintptr_t address_, T value);
+  JS::ProfilingFrameIterator::RegisterState registerState();
 
   void ResetState();
 
@@ -854,6 +734,9 @@ class Simulator : public DecoderVisitor {
   // Simulation helpers.
   const Instruction* pc() const { return pc_; }
   const Instruction* get_pc() const { return pc_; }
+  int64_t get_sp() const { return xreg(31, Reg31IsStackPointer); }
+  int64_t get_lr() const { return xreg(30); }
+  int64_t get_fp() const { return xreg(29); }
 
   template <typename T>
   T get_pc_as() const { return reinterpret_cast<T>(const_cast<Instruction*>(pc())); }
@@ -863,7 +746,10 @@ class Simulator : public DecoderVisitor {
     pc_modified_ = true;
   }
 
-  void set_resume_pc(void* new_resume_pc);
+  void trigger_wasm_interrupt();
+  void handle_wasm_interrupt();
+  bool handle_wasm_ill_fault();
+  bool handle_wasm_seg_fault(uintptr_t addr, unsigned numBytes);
 
   void increment_pc() {
     if (!pc_modified_) {
@@ -876,9 +762,11 @@ class Simulator : public DecoderVisitor {
   void ExecuteInstruction();
 
   // Declare all Visitor functions.
-  #define DECLARE(A) virtual void Visit##A(const Instruction* instr);
-  VISITOR_LIST(DECLARE)
+  #define DECLARE(A) virtual void Visit##A(const Instruction* instr) override;
+  VISITOR_LIST_THAT_RETURN(DECLARE)
+  VISITOR_LIST_THAT_DONT_RETURN(DECLARE)
   #undef DECLARE
+
 
   // Integer register accessors.
 
@@ -1434,11 +1322,11 @@ class Simulator : public DecoderVisitor {
   }
 
   void AddSubHelper(const Instruction* instr, int64_t op2);
-  int64_t AddWithCarry(unsigned reg_size,
-                       bool set_flags,
-                       int64_t src1,
-                       int64_t src2,
-                       int64_t carry_in = 0);
+  uint64_t AddWithCarry(unsigned reg_size,
+                        bool set_flags,
+                        uint64_t left,
+                        uint64_t right,
+                        int carry_in = 0);
   void LogicalHelper(const Instruction* instr, int64_t op2);
   void ConditionalCompareHelper(const Instruction* instr, int64_t op2);
   void LoadStoreHelper(const Instruction* instr,
@@ -2632,6 +2520,8 @@ class Simulator : public DecoderVisitor {
 
   // Processor state ---------------------------------------
 
+  JSContext* const cx_;
+
   // Simulated monitors for exclusive access instructions.
   SimExclusiveLocalMonitor local_monitor_;
   SimExclusiveGlobalMonitor global_monitor_;
@@ -2677,7 +2567,7 @@ class Simulator : public DecoderVisitor {
   }
 
   static int CalcZFlag(uint64_t result) {
-    return result == 0;
+    return (result == 0) ? 1 : 0;
   }
 
   static const uint32_t kConditionFlagsMask = 0xf0000000;
@@ -2693,7 +2583,7 @@ class Simulator : public DecoderVisitor {
   // automatically incremented.
   bool pc_modified_;
   const Instruction* pc_;
-  const Instruction* resume_pc_;
+  bool wasm_interrupt_;
 
   static const char* xreg_names[];
   static const char* wreg_names[];
@@ -2777,15 +2667,50 @@ class Simulator : public DecoderVisitor {
   bool oom() const { return oom_; }
 
  protected:
-  // Moz: Synchronizes access between main thread and compilation threads.
-  PRLock* lock_;
-#ifdef DEBUG
-  PRThread* lockOwner_;
-#endif
-  Redirection* redirection_;
   mozilla::Vector<int64_t, 0, js::SystemAllocPolicy> spStack_;
 };
+
 }  // namespace vixl
+
+namespace js {
+namespace jit {
+
+class SimulatorProcess
+{
+ public:
+  static SimulatorProcess* singleton_;
+
+  SimulatorProcess()
+    : lock_(mutexid::Arm64SimulatorLock)
+    , redirection_(nullptr)
+  {}
+
+  // Synchronizes access between main thread and compilation threads.
+  js::Mutex lock_;
+  vixl::Redirection* redirection_;
+
+  static void setRedirection(vixl::Redirection* redirection) {
+    MOZ_ASSERT(singleton_->lock_.ownedByCurrentThread());
+    singleton_->redirection_ = redirection;
+  }
+
+  static vixl::Redirection* redirection() {
+    MOZ_ASSERT(singleton_->lock_.ownedByCurrentThread());
+    return singleton_->redirection_;
+  }
+
+  static bool initialize() {
+    singleton_ = js_new<SimulatorProcess>();
+    return !!singleton_;
+  }
+  static void destroy() {
+    js_delete(singleton_);
+    singleton_ = nullptr;
+  }
+};
+
+} // namespace jit
+} // namespace js
 
 #endif  // JS_SIMULATOR_ARM64
 #endif  // VIXL_A64_SIMULATOR_A64_H_

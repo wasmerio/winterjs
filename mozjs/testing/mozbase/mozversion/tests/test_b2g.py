@@ -4,13 +4,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
 import tempfile
 import unittest
 import zipfile
 
+import mozunit
+
 import mozfile
-from mozversion import get_version, errors
+from mozversion import get_version
 
 
 class SourcesTest(unittest.TestCase):
@@ -68,8 +72,6 @@ class SourcesTest(unittest.TestCase):
         self.assertIsNone(v.get('gaia_changeset'))
         self.assertIsNone(v.get('gaia_date'))
 
-    def test_b2g_fallback_when_no_binary(self):
-        self.assertRaises(errors.RemoteAppNotFoundError, get_version)
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

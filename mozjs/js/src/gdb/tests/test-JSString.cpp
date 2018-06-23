@@ -1,12 +1,13 @@
 #include "gdb-tests.h"
-#include "jsatom.h"
-#include "jscntxt.h"
 
+#include "vm/JSContext.h"
 // When JSGC_ANALYSIS is #defined, Rooted<JSFlatString*> needs the definition
 // of JSFlatString in order to figure out its ThingRootKind
-#include "vm/String.h"
+#include "vm/StringType.h"
 
 FRAGMENT(JSString, simple) {
+  AutoSuppressHazardsForTest noanalysis;
+
   JS::Rooted<JSString*> empty(cx, JS_NewStringCopyN(cx, nullptr, 0));
   JS::Rooted<JSString*> x(cx, JS_NewStringCopyN(cx, "x", 1));
   JS::Rooted<JSString*> z(cx, JS_NewStringCopyZ(cx, "z"));
@@ -29,23 +30,25 @@ FRAGMENT(JSString, simple) {
 
   breakpoint();
 
-  (void) empty;
-  (void) x;
-  (void) z;
-  (void) stars;
-  (void) xz;
-  (void) doubleStars;
-  (void) xRaw;
+  use(empty);
+  use(x);
+  use(z);
+  use(stars);
+  use(xz);
+  use(doubleStars);
+  use(xRaw);
 }
 
 FRAGMENT(JSString, null) {
+  AutoSuppressHazardsForTest noanalysis;
+
   JS::Rooted<JSString*> null(cx, nullptr);
   JSString* nullRaw = null;
 
   breakpoint();
 
-  (void) null;
-  (void) nullRaw;
+  use(null);
+  use(nullRaw);
 }
 
 FRAGMENT(JSString, subclasses) {
@@ -53,12 +56,12 @@ FRAGMENT(JSString, subclasses) {
 
   breakpoint();
 
-  (void) flat;
+  use(flat);
 }
 
 FRAGMENT(JSString, atom) {
   JSAtom* molybdenum = js::Atomize(cx, "molybdenum", 10);
   breakpoint();
 
-  (void) molybdenum;
+  use(molybdenum);
 }

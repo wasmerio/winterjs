@@ -6,10 +6,11 @@
 
 #include "jit/BytecodeAnalysis.h"
 
-#include "jsopcode.h"
 #include "jit/JitSpewer.h"
-#include "jsopcodeinlines.h"
-#include "jsscriptinlines.h"
+#include "vm/BytecodeUtil.h"
+
+#include "vm/BytecodeUtil-inl.h"
+#include "vm/JSScript-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -17,9 +18,7 @@ using namespace js::jit;
 BytecodeAnalysis::BytecodeAnalysis(TempAllocator& alloc, JSScript* script)
   : script_(script),
     infos_(alloc),
-    usesScopeChain_(false),
-    hasTryFinally_(false),
-    hasSetArg_(false)
+    usesEnvironmentChain_(false)
 {
 }
 
@@ -46,12 +45,12 @@ BytecodeAnalysis::init(TempAllocator& alloc, GSNCache& gsn)
     if (!infos_.growByUninitialized(script_->length()))
         return false;
 
-    // Initialize the scope chain slot if either the function needs a CallObject
-    // or the script uses the scope chain. The latter case is handled below.
-    usesScopeChain_ = script_->module() ||
-                      (script_->functionDelazifying() &&
-                       script_->functionDelazifying()->needsCallObject());
-    MOZ_ASSERT_IF(script_->hasAnyAliasedBindings(), usesScopeChain_);
+    // Initialize the env chain slot if either the function needs some
+    // EnvironmentObject (like a CallObject) or the script uses the env
+    // chain. The latter case is handled below.
+    usesEnvironmentChain_ = script_->module() || script_->initialEnvironmentShape() ||
+                            (script_->functionDelazifying() &&
+                             script_->functionDelazifying()->needsSomeEnvironmentObject());
 
     jsbytecode* end = script_->codeEnd();
 
@@ -80,8 +79,8 @@ BytecodeAnalysis::init(TempAllocator& alloc, GSNCache& gsn)
             MOZ_ASSERT(!infos_[script_->pcToOffset(chkpc)].initialized);
 #endif
 
-        unsigned nuses = GetUseCount(script_, offset);
-        unsigned ndefs = GetDefCount(script_, offset);
+        unsigned nuses = GetUseCount(pc);
+        unsigned ndefs = GetDefCount(pc);
 
         MOZ_ASSERT(stackDepth >= nuses);
         stackDepth -= nuses;
@@ -139,6 +138,12 @@ BytecodeAnalysis::init(TempAllocator& alloc, GSNCache& gsn)
             jsbytecode* afterTry = endOfTry + GET_JUMP_OFFSET(endOfTry);
             MOZ_ASSERT(afterTry > endOfTry);
 
+            // Ensure the code following the try-block is always marked as
+            // reachable, to simplify Ion's ControlFlowGenerator.
+            uint32_t afterTryOffset = script_->pcToOffset(afterTry);
+            infos_[afterTryOffset].init(stackDepth);
+            infos_[afterTryOffset].jumpTarget = true;
+
             // Pop CatchFinallyRanges that are no longer needed.
             while (!catchFinallyRanges.empty() && catchFinallyRanges.back().end <= offset)
                 catchFinallyRanges.popBack();
@@ -168,22 +173,18 @@ BytecodeAnalysis::init(TempAllocator& alloc, GSNCache& gsn)
           case JSOP_LAMBDA_ARROW:
           case JSOP_DEFFUN:
           case JSOP_DEFVAR:
-            usesScopeChain_ = true;
+          case JSOP_PUSHLEXICALENV:
+          case JSOP_POPLEXICALENV:
+          case JSOP_IMPLICITTHIS:
+            usesEnvironmentChain_ = true;
             break;
 
           case JSOP_GETGNAME:
           case JSOP_SETGNAME:
           case JSOP_STRICTSETGNAME:
+          case JSOP_GIMPLICITTHIS:
             if (script_->hasNonSyntacticScope())
-                usesScopeChain_ = true;
-            break;
-
-          case JSOP_FINALLY:
-            hasTryFinally_ = true;
-            break;
-
-          case JSOP_SETARG:
-            hasSetArg_ = true;
+                usesEnvironmentChain_ = true;
             break;
 
           default:

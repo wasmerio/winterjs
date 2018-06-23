@@ -7,6 +7,7 @@ set -e
 
 : ${MKDIR:=mkdir}
 : ${TAR:=tar}
+: ${AUTOCONF:=$(which autoconf-2.13 autoconf2.13 | head -1)}
 : ${SRCDIR:=$(cd $(dirname $0); pwd 2>/dev/null)}
 : ${MOZJS_NAME:=mozjs}
 # The place to gather files to be added to the tarball.
@@ -34,6 +35,7 @@ echo "Environment:"
 echo "    MAKE = $MAKE"
 echo "    MKDIR = $MKDIR"
 echo "    TAR = $TAR"
+echo "    AUTOCONF = $AUTOCONF"
 echo "    STAGING = $STAGING"
 echo "    DIST = $DIST"
 echo "    SRCDIR = $SRCDIR"
@@ -71,10 +73,13 @@ case $cmd in
        ${TOPSRCDIR}/test.mozbuild \
        ${tgtpath}
 
+    cp -pPR ${TOPSRCDIR}/js/app.mozbuild ${tgtpath}/js
     cp -pPR ${TOPSRCDIR}/js/moz.configure ${tgtpath}/js
+    cp -pPR ${TOPSRCDIR}/js/ffi.configure ${tgtpath}/js
 
-    mkdir -p ${tgtpath}/taskcluster
+    mkdir -p ${tgtpath}/taskcluster/taskgraph
     cp -pPR ${TOPSRCDIR}/taskcluster/moz.build ${tgtpath}/taskcluster/
+    cp -pPR ${TOPSRCDIR}/taskcluster/taskgraph/test ${tgtpath}/taskcluster/taskgraph/
 
     # copy the embedded icu
     ${MKDIR} -p ${tgtpath}/intl
@@ -92,10 +97,21 @@ case $cmd in
     # copy build and config directory.
     cp -pPR ${TOPSRCDIR}/build ${TOPSRCDIR}/config ${tgtpath}
 
+    # copy cargo config
+    ${MKDIR} -p ${tgtpath}/.cargo
+    cp -pPR ${TOPSRCDIR}/.cargo/config.in ${tgtpath}/.cargo
+
+    # generate configure files to avoid build dependency on autoconf-2.13
+    cp -PR ${TOPSRCDIR}/js/src/configure.in ${tgtpath}/js/src/configure
+    chmod a+x ${tgtpath}/js/src/configure
+    ${AUTOCONF} --localdir=${TOPSRCDIR}/js/src \
+        ${TOPSRCDIR}/js/src/old-configure.in >${tgtpath}/js/src/old-configure
+
     # put in js itself
     cp -pPR ${TOPSRCDIR}/mfbt ${tgtpath}
     cp -p ${SRCDIR}/../moz.configure ${tgtpath}/js
     cp -pPR ${SRCDIR}/../public ${tgtpath}/js
+    cp -pPR ${SRCDIR}/../rust ${tgtpath}/js
     cp -pPR ${SRCDIR}/../examples ${tgtpath}/js
     find ${SRCDIR} -mindepth 1 -maxdepth 1 -not -path ${STAGING} -a -not -name ${pkg} \
         -exec cp -pPR {} ${tgtpath}/js/src \;
@@ -103,6 +119,10 @@ case $cmd in
     cp -pPR \
         ${TOPSRCDIR}/python \
         ${tgtpath}
+    ${MKDIR} -p ${tgtpath}/third_party
+    cp -pPR \
+        ${TOPSRCDIR}/third_party/python \
+        ${tgtpath}/third_party
     ${MKDIR} -p ${tgtpath}/dom/bindings
     cp -pPR \
         ${TOPSRCDIR}/dom/bindings/mozwebidlcodegen \
@@ -131,10 +151,13 @@ case $cmd in
         ${TOPSRCDIR}/toolkit/mozapps/installer/package-name.mk \
         ${TOPSRCDIR}/toolkit/mozapps/installer/upload-files.mk \
         ${tgtpath}/toolkit/mozapps/installer
+    ${MKDIR} -p ${tgtpath}/toolkit/crashreporter/tools
+    cp -pPR \
+        ${TOPSRCDIR}/toolkit/crashreporter/tools/symbolstore.py \
+        ${tgtpath}/toolkit/crashreporter/tools
     ${MKDIR} -p ${tgtpath}/mozglue
     cp -pPR \
         ${TOPSRCDIR}/mozglue/build \
-        ${TOPSRCDIR}/mozglue/crt \
         ${TOPSRCDIR}/mozglue/misc \
         ${TOPSRCDIR}/mozglue/moz.build \
         ${tgtpath}/mozglue
@@ -143,13 +166,22 @@ case $cmd in
         ${TOPSRCDIR}/memory/moz.build \
         ${TOPSRCDIR}/memory/build \
         ${TOPSRCDIR}/memory/fallible \
-        ${TOPSRCDIR}/memory/jemalloc \
         ${TOPSRCDIR}/memory/mozalloc \
-        ${TOPSRCDIR}/memory/mozjemalloc \
         ${tgtpath}/memory
+    ${MKDIR} -p ${tgtpath}/tools/fuzzing
+    cp -pPR \
+        ${TOPSRCDIR}/tools/fuzzing/moz.build \
+        ${TOPSRCDIR}/tools/fuzzing/interface \
+        ${TOPSRCDIR}/tools/fuzzing/registry \
+        ${TOPSRCDIR}/tools/fuzzing/libfuzzer \
+        ${tgtpath}/tools/fuzzing
 
     # remove *.pyc and *.pyo files if any
     find ${tgtpath} -type f -name "*.pyc" -o -name "*.pyo" |xargs rm -f
+
+    # Remove non-JS Cargo.toml files (for example, the invalid Cargo.toml files
+    # used for some testing).
+    find ${tgtpath} -type f -name Cargo.toml | grep -v js | xargs rm -f
 
     # copy or create INSTALL
     if [ -e ${STAGING}/INSTALL ]; then
@@ -180,7 +212,7 @@ INSTALL_EOF
 This directory contains SpiderMonkey ${MOZJS_MAJOR_VERSION}.
 
 This release is based on a revision of Mozilla ${MOZJS_MAJOR_VERSION}:
-  http://hg.mozilla.org/releases/
+  https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 
 MDN hosts the latest SpiderMonkey ${MOZJS_MAJOR_VERSION} release notes:

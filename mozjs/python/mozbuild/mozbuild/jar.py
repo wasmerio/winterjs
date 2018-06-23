@@ -372,7 +372,7 @@ class JarMaker(object):
             jarfilepath = jarfile + '.jar'
             try:
                 os.makedirs(os.path.dirname(jarfilepath))
-            except OSError, error:
+            except OSError as error:
                 if error.errno != errno.EEXIST:
                     raise
             jf = ZipFile(jarfilepath, 'a', lock=True)
@@ -399,7 +399,18 @@ class JarMaker(object):
         # pick the right sourcedir -- l10n, topsrc or src
 
         if e.is_locale:
-            src_base = self.localedirs
+            # If the file is a Fluent l10n resource, we want to skip the
+            # 'en-US' fallbacking.
+            #
+            # To achieve that, we're testing if we have more than one localedir,
+            # and if the last of those has 'en-US' in it.
+            # If that's the case, we're removing the last one.
+            if (e.source.endswith('.ftl') and
+                len(self.localedirs) > 1 and
+                'en-US' in self.localedirs[-1]):
+                src_base = self.localedirs[:-1]
+            else:
+                src_base = self.localedirs
         elif src.startswith('/'):
             # path/in/jar/file_name.xul     (/path/in/sourcetree/file_name.xul)
             # refers to a path relative to topsourcedir, use that as base
@@ -418,7 +429,7 @@ class JarMaker(object):
             prefix = ''.join(_prefix(src))
             emitted = set()
             for _srcdir in src_base:
-                finder = FileFinder(_srcdir, find_executables=False)
+                finder = FileFinder(_srcdir)
                 for path, _ in finder.find(src):
                     # If the path was already seen in one of the other source
                     # directories, skip it. That matches the non-wildcard case
@@ -514,7 +525,7 @@ class JarMaker(object):
             # remove previous link or file
             try:
                 os.remove(out)
-            except OSError, e:
+            except OSError as e:
                 if e.errno != errno.ENOENT:
                     raise
             return open(out, 'wb')
@@ -525,7 +536,7 @@ class JarMaker(object):
             if not os.path.isdir(outdir):
                 try:
                     os.makedirs(outdir)
-                except OSError, error:
+                except OSError as error:
                     if error.errno != errno.EEXIST:
                         raise
             return out
@@ -541,7 +552,7 @@ class JarMaker(object):
             # remove previous link or file
             try:
                 os.remove(out)
-            except OSError, e:
+            except OSError as e:
                 if e.errno != errno.ENOENT:
                     raise
             if sys.platform != 'win32':

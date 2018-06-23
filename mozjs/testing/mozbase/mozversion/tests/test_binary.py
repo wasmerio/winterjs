@@ -4,11 +4,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
 import sys
 import tempfile
 import shutil
 import unittest
+
+import mozunit
 
 import mozfile
 
@@ -174,4 +178,4 @@ SourceRepository = PlatformSourceRepo
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

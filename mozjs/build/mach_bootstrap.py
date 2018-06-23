@@ -32,87 +32,24 @@ Press ENTER/RETURN to continue or CTRL+c to abort.
 '''.lstrip()
 
 
-# TODO Bug 794506 Integrate with the in-tree virtualenv configuration.
-SEARCH_PATHS = [
-    'python/mach',
-    'python/mozboot',
-    'python/mozbuild',
-    'python/mozlint',
-    'python/mozversioncontrol',
-    'python/blessings',
-    'python/compare-locales',
-    'python/configobj',
-    'python/futures',
-    'python/jsmin',
-    'python/psutil',
-    'python/which',
-    'python/pystache',
-    'python/pyyaml/lib',
-    'python/requests',
-    'python/slugid',
-    'build',
-    'config',
-    'dom/bindings',
-    'dom/bindings/parser',
-    'dom/media/test/external',
-    'layout/tools/reftest',
-    'other-licenses/ply',
-    'taskcluster',
-    'testing',
-    'testing/firefox-ui/harness',
-    'testing/firefox-ui/tests',
-    'testing/luciddream',
-    'testing/marionette/harness',
-    'testing/marionette/harness/marionette/runner/mixins/browsermob-proxy-py',
-    'testing/marionette/client',
-    'testing/mozbase/mozcrash',
-    'testing/mozbase/mozdebug',
-    'testing/mozbase/mozdevice',
-    'testing/mozbase/mozfile',
-    'testing/mozbase/mozhttpd',
-    'testing/mozbase/mozinfo',
-    'testing/mozbase/mozinstall',
-    'testing/mozbase/mozleak',
-    'testing/mozbase/mozlog',
-    'testing/mozbase/moznetwork',
-    'testing/mozbase/mozprocess',
-    'testing/mozbase/mozprofile',
-    'testing/mozbase/mozrunner',
-    'testing/mozbase/mozsystemmonitor',
-    'testing/mozbase/mozscreenshot',
-    'testing/mozbase/moztest',
-    'testing/mozbase/mozversion',
-    'testing/mozbase/manifestparser',
-    'testing/puppeteer/firefox',
-    'testing/taskcluster',
-    'testing/tools/autotry',
-    'testing/web-platform',
-    'testing/web-platform/harness',
-    'testing/web-platform/tests/tools/wptserve',
-    'testing/xpcshell',
-    'xpcom/idl-parser',
-]
-
 # Individual files providing mach commands.
 MACH_MODULES = [
-    'addon-sdk/mach_commands.py',
     'build/valgrind/mach_commands.py',
+    'devtools/shared/css/generated/mach_commands.py',
     'dom/bindings/mach_commands.py',
-    'dom/media/test/external/mach_commands.py',
     'layout/tools/reftest/mach_commands.py',
     'python/mach_commands.py',
     'python/mach/mach/commands/commandinfo.py',
     'python/mach/mach/commands/settings.py',
-    'python/compare-locales/mach_commands.py',
     'python/mozboot/mozboot/mach_commands.py',
     'python/mozbuild/mozbuild/mach_commands.py',
     'python/mozbuild/mozbuild/backend/mach_commands.py',
     'python/mozbuild/mozbuild/compilation/codecomplete.py',
     'python/mozbuild/mozbuild/frontend/mach_commands.py',
-    'services/common/tests/mach_commands.py',
     'taskcluster/mach_commands.py',
+    'testing/awsy/mach_commands.py',
     'testing/firefox-ui/mach_commands.py',
-    'testing/luciddream/mach_commands.py',
+    'testing/geckodriver/mach_commands.py',
     'testing/mach_commands.py',
     'testing/marionette/mach_commands.py',
     'testing/mochitest/mach_commands.py',
@@ -120,10 +57,12 @@ MACH_MODULES = [
     'testing/talos/mach_commands.py',
     'testing/web-platform/mach_commands.py',
     'testing/xpcshell/mach_commands.py',
+    'tools/compare-locales/mach_commands.py',
     'tools/docs/mach_commands.py',
     'tools/lint/mach_commands.py',
     'tools/mach_commands.py',
     'tools/power/mach_commands.py',
+    'tools/tryselect/mach_commands.py',
     'mobile/android/mach_commands.py',
 ]
 
@@ -166,7 +105,9 @@ CATEGORIES = {
     },
     'disabled': {
         'short': 'Disabled',
-        'long': 'The disabled commands are hidden by default. Use -v to display them. These commands are unavailable for your current context, run "mach <command>" to see why.',
+        'long': 'The disabled commands are hidden by default. Use -v to display them. '
+        'These commands are unavailable for your current context, '
+        'run "mach <command>" to see why.',
         'priority': 0,
     }
 }
@@ -174,6 +115,32 @@ CATEGORIES = {
 
 # We submit data to telemetry approximately every this many mach invocations
 TELEMETRY_SUBMISSION_FREQUENCY = 10
+
+
+def search_path(mozilla_dir, packages_txt):
+    with open(os.path.join(mozilla_dir, packages_txt)) as f:
+        packages = [line.rstrip().split(':') for line in f]
+
+    def handle_package(package):
+        if package[0] == 'optional':
+            try:
+                for path in handle_package(package[1:]):
+                    yield path
+            except Exception:
+                pass
+
+        if package[0] == 'packages.txt':
+            assert len(package) == 2
+            for p in search_path(mozilla_dir, package[1]):
+                yield os.path.join(mozilla_dir, p)
+
+        if package[0].endswith('.pth'):
+            assert len(package) == 2
+            yield os.path.join(mozilla_dir, package[1])
+
+    for package in packages:
+        for path in handle_package(package):
+            yield path
 
 
 def bootstrap(topsrcdir, mozilla_dir=None):
@@ -196,9 +163,27 @@ def bootstrap(topsrcdir, mozilla_dir=None):
     # case. For default behavior, we educate users and give them an opportunity
     # to react. We always exit after creating the directory because users don't
     # like surprises.
-    sys.path[0:0] = [os.path.join(mozilla_dir, path) for path in SEARCH_PATHS]
+    sys.path[0:0] = [os.path.join(mozilla_dir, path)
+                     for path in search_path(mozilla_dir,
+                                             'build/virtualenv_packages.txt')]
+    import mach.base
     import mach.main
     from mozboot.util import get_state_dir
+
+    from mozbuild.util import patch_main
+    patch_main()
+
+    def resolve_repository():
+        import mozversioncontrol
+
+        try:
+            # This API doesn't respect the vcs binary choices from configure.
+            # If we ever need to use the VCS binary here, consider something
+            # more robust.
+            return mozversioncontrol.get_repository_object(path=mozilla_dir)
+        except (mozversioncontrol.InvalidRepoPath,
+                mozversioncontrol.MissingVCSTool):
+            return None
 
     def telemetry_handler(context, data):
         # We have not opted-in to telemetry
@@ -233,7 +218,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
             dist = list(platform.linux_distribution())
             data['system']['linux_distribution'] = dist
         elif platform.system() == 'Windows':
-            win32_ver=list((platform.win32_ver())),
+            win32_ver = list((platform.win32_ver())),
             data['system']['win32_ver'] = win32_ver
         elif platform.system() == 'Darwin':
             # mac version is a special Cupertino snowflake
@@ -287,7 +272,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
                               os.path.join(topsrcdir, 'build',
                                            'submit_telemetry_data.py'),
                               get_state_dir()[0]],
-                              stdout=devnull, stderr=devnull)
+                             stdout=devnull, stderr=devnull)
 
     def populate_context(context, key=None):
         if key is None:
@@ -301,11 +286,12 @@ def bootstrap(topsrcdir, mozilla_dir=None):
                     os.makedirs(state_dir, mode=0o770)
             else:
                 if not os.path.exists(state_dir):
-                    print(STATE_DIR_FIRST_RUN.format(userdir=state_dir))
-                    try:
-                        sys.stdin.readline()
-                    except KeyboardInterrupt:
-                        sys.exit(1)
+                    if not os.environ.get('MOZ_AUTOMATION'):
+                        print(STATE_DIR_FIRST_RUN.format(userdir=state_dir))
+                        try:
+                            sys.stdin.readline()
+                        except KeyboardInterrupt:
+                            sys.exit(1)
 
                     print('\nCreating default state directory: %s' % state_dir)
                     os.makedirs(state_dir, mode=0o770)
@@ -321,25 +307,36 @@ def bootstrap(topsrcdir, mozilla_dir=None):
         if key == 'post_dispatch_handler':
             return post_dispatch_handler
 
+        if key == 'repository':
+            return resolve_repository()
+
         raise AttributeError(key)
 
-    mach = mach.main.Mach(os.getcwd())
-    mach.populate_context_handler = populate_context
+    driver = mach.main.Mach(os.getcwd())
+    driver.populate_context_handler = populate_context
 
-    if not mach.settings_paths:
+    if not driver.settings_paths:
         # default global machrc location
-        mach.settings_paths.append(get_state_dir()[0])
+        driver.settings_paths.append(get_state_dir()[0])
     # always load local repository configuration
-    mach.settings_paths.append(mozilla_dir)
+    driver.settings_paths.append(mozilla_dir)
 
     for category, meta in CATEGORIES.items():
-        mach.define_category(category, meta['short'], meta['long'],
-            meta['priority'])
+        driver.define_category(category, meta['short'], meta['long'],
+                               meta['priority'])
+
+    repo = resolve_repository()
 
     for path in MACH_MODULES:
-        mach.load_commands_from_file(os.path.join(mozilla_dir, path))
+        # Sparse checkouts may not have all mach_commands.py files. Ignore
+        # errors from missing files.
+        try:
+            driver.load_commands_from_file(os.path.join(mozilla_dir, path))
+        except mach.base.MissingFileError:
+            if not repo or not repo.sparse_checkout_present():
+                raise
 
-    return mach
+    return driver
 
 
 # Hook import such that .pyc/.pyo files without a corresponding .py file in
@@ -398,7 +395,8 @@ class ImportHook(object):
         # python modules under our source directory (either because it
         # doesn't happen or because it doesn't matter).
         if not os.path.exists(module.__file__[:-1]):
-            os.remove(module.__file__)
+            if os.path.exists(module.__file__):
+                os.remove(module.__file__)
             del sys.modules[module.__name__]
             module = self(name, globals, locals, fromlist, level)
 

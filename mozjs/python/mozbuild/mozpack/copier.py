@@ -11,11 +11,15 @@ import sys
 from mozpack.errors import errors
 from mozpack.files import (
     BaseFile,
+    DeflatedFile,
     Dest,
+    ManifestFile,
+    XPTFile,
 )
 import mozpack.path as mozpath
 import errno
 from collections import (
+    defaultdict,
     Counter,
     OrderedDict,
 )
@@ -152,6 +156,34 @@ class FileRegistry(object):
         directory).
         '''
         return set(k for k, v in self._required_directories.items() if v > 0)
+
+    def output_to_inputs_tree(self):
+        '''
+        Return a dictionary mapping each output path to the set of its
+        required input paths.
+
+        All paths are normalized.
+        '''
+        tree = {}
+        for output, file in self:
+            output = mozpath.normpath(output)
+            tree[output] = set(mozpath.normpath(f) for f in file.inputs())
+        return tree
+
+    def input_to_outputs_tree(self):
+        '''
+        Return a dictionary mapping each input path to the set of
+        impacted output paths.
+
+        All paths are normalized.
+        '''
+        tree = defaultdict(set)
+        for output, file in self:
+            output = mozpath.normpath(output)
+            for input in file.inputs():
+                input = mozpath.normpath(input)
+                tree[input].add(output)
+        return dict(tree)
 
 
 class FileRegistrySubtree(object):
@@ -324,9 +356,9 @@ class FileCopier(FileRegistry):
                     os.mkdir(d)
 
             if not os.access(d, os.W_OK):
-                umask = os.umask(0077)
+                umask = os.umask(0o077)
                 os.umask(umask)
-                os.chmod(d, 0777 & ~umask)
+                os.chmod(d, 0o777 & ~umask)
 
         if isinstance(remove_unaccounted, FileRegistry):
             existing_files = set(os.path.normpath(os.path.join(destination, p))
@@ -412,7 +444,7 @@ class FileCopier(FileRegistry):
                 if os.name == 'nt' and not os.access(f, os.W_OK):
                     # It doesn't matter what we set permissions to since we
                     # will remove this file shortly.
-                    os.chmod(f, 0600)
+                    os.chmod(f, 0o600)
 
                 os.remove(f)
                 result.removed_files.add(f)
@@ -454,7 +486,7 @@ class FileCopier(FileRegistry):
                     if e.errno in (errno.EPERM, errno.EACCES):
                         # Permissions may not allow deletion. So ensure write
                         # access is in place before attempting to rmdir again.
-                        os.chmod(d, 0700)
+                        os.chmod(d, 0o700)
                         os.rmdir(d)
                     else:
                         raise
@@ -535,7 +567,7 @@ class Jarrer(FileRegistry, BaseFile):
             dest = Dest(dest)
         assert isinstance(dest, Dest)
 
-        from mozpack.mozjar import JarWriter, JarReader
+        from mozpack.mozjar import JarWriter, JarReader, JAR_BROTLI
         try:
             old_jar = JarReader(fileobj=dest)
         except Exception:
@@ -547,8 +579,25 @@ class Jarrer(FileRegistry, BaseFile):
                        optimize=self.optimize) as jar:
             for path, file in self:
                 compress = self._compress_options.get(path, self.compress)
+                # Temporary: Because l10n repacks can't handle brotli just yet,
+                # but need to be able to decompress those files, per
+                # UnpackFinder and formatters, we force deflate on them.
+                if compress == JAR_BROTLI and (
+                        isinstance(file, (ManifestFile, XPTFile)) or
+                        mozpath.basename(path) == 'install.rdf'):
+                    compress = True
 
-                if path in old_contents:
+                # If the added content already comes from a jar file, we just add
+                # the raw data from the original jar file to the new one.
+                if isinstance(file, DeflatedFile):
+                    jar.add(path, file.file, mode=file.mode,
+                            compress=file.file.compress)
+                    continue
+                # If the file is already in the old contents for this jar,
+                # we avoid compressing when the contents match, which requires
+                # decompressing the old content. But for e.g. l10n repacks,
+                # which can't decompress brotli, we skip this.
+                elif path in old_contents and old_contents[path].compress != JAR_BROTLI:
                     deflater = DeflaterDest(old_contents[path], compress)
                 else:
                     deflater = DeflaterDest(compress=compress)

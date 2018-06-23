@@ -5,14 +5,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jsapi.h"
-#include "jscntxt.h"
-#include "jscompartment.h"
-#include "jsobj.h"
 
 #include "vm/Interpreter.h"
+#include "vm/JSCompartment.h"
+#include "vm/JSContext.h"
+#include "vm/JSObject.h"
 #include "vm/PIC.h"
 
-#include "jsobjinlines.h"
+#include "vm/JSObject-inl.h"
 
 using namespace js;
 using JS::ForOfIterator;
@@ -41,6 +41,7 @@ ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavio
             // Got optimized stub.  Array is optimizable.
             index = 0;
             iterator = iterableObj;
+            nextMethod.setUndefined();
             return true;
         }
     }
@@ -66,7 +67,7 @@ ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavio
         UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, iterable, nullptr);
         if (!bytes)
             return false;
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_ITERABLE, bytes.get());
+        JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_NOT_ITERABLE, bytes.get());
         return false;
     }
 
@@ -74,10 +75,15 @@ ForOfIterator::init(HandleValue iterable, NonIterableBehavior nonIterableBehavio
     if (!js::Call(cx, callee, iterable, &res))
         return false;
 
-    iterator = ToObject(cx, res);
-    if (!iterator)
+    if (!res.isObject())
+        return ThrowCheckIsObject(cx, CheckIsObjectKind::GetIterator);
+
+    RootedObject iteratorObj(cx, &res.toObject());
+    if (!GetProperty(cx, iteratorObj, iteratorObj, cx->names().next, &res))
         return false;
 
+    iterator = iteratorObj;
+    nextMethod = res;
     return true;
 }
 
@@ -114,31 +120,17 @@ bool
 ForOfIterator::next(MutableHandleValue vp, bool* done)
 {
     MOZ_ASSERT(iterator);
-    if (index != NOT_ARRAY) {
-        ForOfPIC::Chain* stubChain = ForOfPIC::getOrCreate(cx_);
-        if (!stubChain)
-            return false;
-
-        if (stubChain->isArrayNextStillSane())
-            return nextFromOptimizedArray(vp, done);
-
-        // ArrayIterator.prototype.next changed, materialize a proper
-        // ArrayIterator instance and fall through to slowpath case.
-        if (!materializeArrayIterator())
-            return false;
-    }
+    if (index != NOT_ARRAY)
+        return nextFromOptimizedArray(vp, done);
 
     RootedValue v(cx_);
-    if (!GetProperty(cx_, iterator, iterator, cx_->names().next, &v))
+    if (!js::Call(cx_, nextMethod, iterator, &v))
         return false;
 
-    if (!js::Call(cx_, v, iterator, &v))
-        return false;
+    if (!v.isObject())
+        return ThrowCheckIsObject(cx_, CheckIsObjectKind::IteratorNext);
 
-    RootedObject resultObj(cx_, ToObject(cx_, v));
-    if (!resultObj)
-        return false;
-
+    RootedObject resultObj(cx_, &v.toObject());
     if (!GetProperty(cx_, resultObj, resultObj, cx_->names().done, &v))
         return false;
 
@@ -151,22 +143,50 @@ ForOfIterator::next(MutableHandleValue vp, bool* done)
     return GetProperty(cx_, resultObj, resultObj, cx_->names().value, vp);
 }
 
-bool
-ForOfIterator::materializeArrayIterator()
+// ES 2017 draft 0f10dba4ad18de92d47d421f378233a2eae8f077 7.4.6.
+// When completion.[[Type]] is throw.
+void
+ForOfIterator::closeThrow()
 {
-    MOZ_ASSERT(index != NOT_ARRAY);
+    MOZ_ASSERT(iterator);
 
-    HandlePropertyName name = cx_->names().ArrayValuesAt;
-    RootedValue val(cx_);
-    if (!GlobalObject::getSelfHostedFunction(cx_, cx_->global(), name, name, 1, &val))
-        return false;
+    RootedValue completionException(cx_);
+    if (cx_->isExceptionPending()) {
+        if (!GetAndClearException(cx_, &completionException))
+            completionException.setUndefined();
+    }
 
-    RootedValue indexOrRval(cx_, Int32Value(index));
-    if (!js::Call(cx_, val, iterator, indexOrRval, &indexOrRval))
-        return false;
+    // Steps 1-2 (implicit)
 
-    index = NOT_ARRAY;
-    // Result of call to ArrayValuesAt must be an object.
-    iterator = &indexOrRval.toObject();
-    return true;
+    // Step 3 (partial).
+    RootedValue returnVal(cx_);
+    if (!GetProperty(cx_, iterator, iterator, cx_->names().return_, &returnVal))
+        return;
+
+    // Step 4.
+    if (returnVal.isUndefined()) {
+        cx_->setPendingException(completionException);
+        return;
+    }
+
+    // Step 3 (remaining part)
+    if (!returnVal.isObject()) {
+        JS_ReportErrorNumberASCII(cx_, GetErrorMessage, nullptr, JSMSG_RETURN_NOT_CALLABLE);
+        return;
+    }
+    RootedObject returnObj(cx_, &returnVal.toObject());
+    if (!returnObj->isCallable()) {
+        JS_ReportErrorNumberASCII(cx_, GetErrorMessage, nullptr, JSMSG_RETURN_NOT_CALLABLE);
+        return;
+    }
+
+    // Step 5.
+    RootedValue innerResultValue(cx_);
+    if (!js::Call(cx_, returnVal, iterator, &innerResultValue)) {
+        if (cx_->isExceptionPending())
+            cx_->clearPendingException();
+    }
+
+    // Step 6.
+    cx_->setPendingException(completionException);
 }

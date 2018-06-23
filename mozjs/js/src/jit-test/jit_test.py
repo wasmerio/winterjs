@@ -17,7 +17,7 @@ def add_libdir_to_path():
 add_libdir_to_path()
 
 import jittests
-from tests import get_jitflags, get_cpu_count, get_environment_overlay, \
+from tests import get_jitflags, valid_jitflags, get_cpu_count, get_environment_overlay, \
                   change_env
 
 # Python 3.3 added shutil.which, but we can't use that yet.
@@ -73,8 +73,11 @@ def main(argv):
                   action='store_true',
                   help="don't print output for failed tests"
                   " (no-op with --show-output)")
-    op.add_option('-x', '--exclude', dest='exclude', action='append',
+    op.add_option('-x', '--exclude', dest='exclude',
+                  default=[], action='append',
                   help='exclude given test dir or path')
+    op.add_option('--exclude-from', dest='exclude_from', type=str,
+                  help='exclude each test dir or path in FILE')
     op.add_option('--slow', dest='run_slow', action='store_true',
                   help='also run tests marked as slow')
     op.add_option('--no-slow', dest='run_slow', action='store_false',
@@ -95,6 +98,8 @@ def main(argv):
     op.add_option('-w', '--write-failures', dest='write_failures',
                   metavar='FILE',
                   help='Write a list of failed tests to [FILE]')
+    op.add_option('-C', '--check-output', action='store_true', dest='check_output',
+                  help='Run tests to check output for different jit-flags')
     op.add_option('-r', '--read-tests', dest='read_tests', metavar='FILE',
                   help='Run test files listed in [FILE]')
     op.add_option('-R', '--retest', dest='retest', metavar='FILE',
@@ -107,23 +112,25 @@ def main(argv):
                   help='Run a single test under the specified debugger')
     op.add_option('--valgrind', dest='valgrind', action='store_true',
                   help='Enable the |valgrind| flag, if valgrind is in $PATH.')
+    op.add_option('--unusable-error-status', action='store_true',
+                  help='Ignore incorrect exit status on tests that should return nonzero.')
     op.add_option('--valgrind-all', dest='valgrind_all', action='store_true',
                   help='Run all tests with valgrind, if valgrind is in $PATH.')
-    op.add_option('--jitflags', dest='jitflags', default='none', type='string',
-                  help='IonMonkey option combinations. One of all, debug,'
-                  ' ion, and none (default %default).')
     op.add_option('--avoid-stdio', dest='avoid_stdio', action='store_true',
                   help='Use js-shell file indirection instead of piping stdio.')
     op.add_option('--write-failure-output', dest='write_failure_output',
                   action='store_true',
                   help='With --write-failures=FILE, additionally write the'
                   ' output of failed tests to [FILE]')
-    op.add_option('--ion', dest='ion', action='store_true',
+    op.add_option('--jitflags', dest='jitflags', default='none',
+                  choices=valid_jitflags(),
+                  help='IonMonkey option combinations. One of %s.' % ', '.join(valid_jitflags()))
+    op.add_option('--ion', dest='jitflags', action='store_const', const='ion',
                   help='Run tests once with --ion-eager and once with'
-                  ' --baseline-eager (ignores --jitflags)')
-    op.add_option('--tbpl', dest='tbpl', action='store_true',
+                  ' --baseline-eager (equivalent to --jitflags=ion)')
+    op.add_option('--tbpl', dest='jitflags', action='store_const', const='all',
                   help='Run tests with all IonMonkey option combinations'
-                  ' (ignores --jitflags)')
+                  ' (equivalent to --jitflags=all)')
     op.add_option('-j', '--worker-count', dest='max_jobs', type=int,
                   default=max(1, get_cpu_count()),
                   help='Number of tests to run in parallel (default %default)')
@@ -138,10 +145,6 @@ def main(argv):
     op.add_option('--deviceSerial', action='store',
                   type='string', dest='device_serial', default=None,
                   help='ADB device serial number of remote device to test')
-    op.add_option('--deviceTransport', action='store',
-                  type='string', dest='device_transport', default='sut',
-                  help='The transport to use to communicate with device:'
-                  ' [adb|sut]; default=sut')
     op.add_option('--remoteTestRoot', dest='remote_test_root', action='store',
                   type='string', default='/data/local/tests',
                   help='The remote directory to use as test root'
@@ -193,8 +196,19 @@ def main(argv):
     test_list = []
     read_all = True
 
-    # Forbid running several variants of the same asmjs test, when debugging.
-    options.can_test_also_noasmjs = not options.debugger
+    # No point in adding in noasmjs and wasm-baseline variants if the
+    # jitflags forbid asmjs in the first place. (This is to avoid getting a
+    # wasm-baseline run when requesting --jitflags=interp, but the test
+    # contains test-also-noasmjs.)
+    test_flags = get_jitflags(options.jitflags)
+    options.asmjs_enabled = True
+    options.wasm_enabled = True
+    if all(['--no-asmjs' in flags for flags in test_flags]):
+        options.asmjs_enabled = False
+        options.wasm_enabled = False
+    if all(['--no-wasm' in flags for flags in test_flags]):
+        options.asmjs_enabled = False
+        options.wasm_enabled = False
 
     if test_args:
         read_all = False
@@ -220,6 +234,33 @@ def main(argv):
 
     if read_all:
         test_list = jittests.find_tests()
+
+    # Exclude tests when code coverage is enabled.
+    # This part is equivalent to:
+    # skip-if = coverage
+    if os.getenv('GCOV_PREFIX') is not None:
+        # GCOV errors.
+        options.exclude += [os.path.join('asm.js', 'testSIMD.js')]               # Bug 1347245
+
+        # JSVM errors.
+        options.exclude += [os.path.join('basic', 'functionnames.js')]           # Bug 1369783
+        options.exclude += [os.path.join('debug', 'Debugger-findScripts-23.js')]
+        options.exclude += [os.path.join('debug', 'bug1160182.js')]
+        options.exclude += [os.path.join('xdr', 'incremental-encoder.js')]
+        options.exclude += [os.path.join('xdr', 'bug1186973.js')]                # Bug 1369785
+        options.exclude += [os.path.join('xdr', 'relazify.js')]
+        options.exclude += [os.path.join('basic', 'werror.js')]
+
+        # Prevent code coverage test that expects coverage
+        # to be off when it starts.
+        options.exclude += [os.path.join('debug', 'Script-getOffsetsCoverage-02.js')]
+
+    if options.exclude_from:
+        with open(options.exclude_from) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line.startswith("#") and len(line):
+                    options.exclude.append(line)
 
     if options.exclude:
         exclude_list = []
@@ -257,15 +298,6 @@ def main(argv):
         sys.exit(0)
 
     # The full test list is ready. Now create copies for each JIT configuration.
-    if options.tbpl:
-        # Running all bits would take forever. Instead, we test a few
-        # interesting combinations.
-        test_flags = get_jitflags('all')
-    elif options.ion:
-        test_flags = get_jitflags('ion')
-    else:
-        test_flags = get_jitflags(options.jitflags)
-
     test_list = [_ for test in test_list for _ in test.copy_variants(test_flags)]
 
     job_list = (test for test in test_list)
@@ -305,6 +337,7 @@ def main(argv):
             jobs = list(job_list)
 
             def display_job(job):
+                flags = ""
                 if len(job.jitflags) != 0:
                     flags = "({})".format(' '.join(job.jitflags))
                 return '{} {}'.format(job.path, flags)
@@ -334,7 +367,7 @@ def main(argv):
     try:
         ok = None
         if options.remote:
-            ok = jittests.run_tests_remote(job_list, job_count, prefix, options)
+            ok = jittests.run_tests(job_list, job_count, prefix, options, remote=True)
         else:
             with change_env(test_environment):
                 ok = jittests.run_tests(job_list, job_count, prefix, options)

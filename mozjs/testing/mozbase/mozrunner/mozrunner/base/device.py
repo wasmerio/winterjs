@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import print_function
+from __future__ import absolute_import, print_function
 
 import datetime
 import re
@@ -16,20 +16,21 @@ import mozfile
 from .runner import BaseRunner
 from ..devices import BaseEmulator
 
+
 class DeviceRunner(BaseRunner):
     """
     The base runner class used for running gecko on
     remote devices (or emulators), such as B2G.
     """
-    env = { 'MOZ_CRASHREPORTER': '1',
-            'MOZ_CRASHREPORTER_NO_REPORT': '1',
-            'MOZ_CRASHREPORTER_SHUTDOWN': '1',
-            'MOZ_HIDE_RESULTS_TABLE': '1',
-            'MOZ_LOG': 'signaling:5,mtransport:5,datachannel:5,jsep:5,MediaPipelineFactory:5',
-            'R_LOG_LEVEL': '6',
-            'R_LOG_DESTINATION': 'stderr',
-            'R_LOG_VERBOSE': '1',
-            'NO_EM_RESTART': '1', }
+    env = {'MOZ_CRASHREPORTER': '1',
+           'MOZ_CRASHREPORTER_NO_REPORT': '1',
+           'MOZ_CRASHREPORTER_SHUTDOWN': '1',
+           'MOZ_HIDE_RESULTS_TABLE': '1',
+           'MOZ_LOG': 'signaling:3,mtransport:4,DataChannel:4,jsep:4,MediaPipelineFactory:4',
+           'R_LOG_LEVEL': '6',
+           'R_LOG_DESTINATION': 'stderr',
+           'R_LOG_VERBOSE': '1',
+           'NO_EM_RESTART': '1', }
 
     def __init__(self, device_class, device_args=None, **kwargs):
         process_log = tempfile.NamedTemporaryFile(suffix='pidlog')
@@ -44,7 +45,7 @@ class DeviceRunner(BaseRunner):
         process_args = {'stream': sys.stdout,
                         'processOutputLine': self.on_output,
                         'onFinish': self.on_finish,
-                        'onTimeout': self.on_timeout }
+                        'onTimeout': self.on_timeout}
         process_args.update(kwargs.get('process_args') or {})
 
         kwargs['process_args'] = process_args
@@ -80,12 +81,10 @@ class DeviceRunner(BaseRunner):
 
         pid = BaseRunner.start(self, *args, **kwargs)
 
-        timeout = 10 # seconds
-        starttime = datetime.datetime.now()
-        while datetime.datetime.now() - starttime < datetime.timedelta(seconds=timeout):
-            if self.is_running():
-                break
-            time.sleep(1)
+        timeout = 10  # seconds
+        end_time = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
+        while not self.is_running() and datetime.datetime.now() < end_time:
+            time.sleep(.1)
         else:
             print("timed out waiting for '%s' process to start" % self.app_ctx.remote_process)
 
@@ -94,34 +93,52 @@ class DeviceRunner(BaseRunner):
         return pid
 
     def stop(self, sig=None):
-        def _wait_for_shutdown(pid, timeout=10):
-            start_time = datetime.datetime.now()
-            end_time = datetime.timedelta(seconds=timeout)
-            while datetime.datetime.now() - start_time < end_time:
-                if self.is_running() != pid:
-                    return True
-                time.sleep(1)
-            return False
+        if self.is_running():
+            timeout = 10
 
-        remote_pid = self.is_running()
-        if remote_pid:
-            self.app_ctx.dm.killProcess(
-                self.app_ctx.remote_process, sig=sig)
-            if not _wait_for_shutdown(remote_pid) and sig is not None:
+            self.app_ctx.dm.killProcess(self.app_ctx.remote_process, sig=sig)
+            if self.wait(timeout) is None and sig is not None:
                 print("timed out waiting for '%s' process to exit, trying "
                       "without signal {}".format(
                           self.app_ctx.remote_process, sig))
 
             # need to call adb stop otherwise the system will attempt to
             # restart the process
-            remote_pid = self.is_running() or remote_pid
             self.app_ctx.stop_application()
-            if not _wait_for_shutdown(remote_pid):
+            if self.wait(timeout) is None:
                 print("timed out waiting for '%s' process to exit".format(
                     self.app_ctx.remote_process))
 
-    def is_running(self):
-        return self.app_ctx.dm.processExist(self.app_ctx.remote_process)
+    @property
+    def returncode(self):
+        """The returncode of the remote process.
+
+        A value of None indicates the process is still running. Otherwise 0 is
+        returned, because there is no known way yet to retrieve the real exit code.
+        """
+        if self.app_ctx.dm.processExist(self.app_ctx.remote_process) is None:
+            return 0
+
+        return None
+
+    def wait(self, timeout=None):
+        """Wait for the remote process to exit.
+
+        :param timeout: if not None, will return after timeout seconds.
+
+        :returns: the process return code or None if timeout was reached
+                  and the process is still running.
+        """
+        end_time = None
+        if timeout is not None:
+            end_time = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
+
+        while self.is_running():
+            if end_time is not None and datetime.datetime.now() > end_time:
+                break
+            time.sleep(.1)
+
+        return self.returncode
 
     def on_output(self, line):
         match = re.findall(r"TEST-START \| ([^\s]*)", line)
@@ -162,18 +179,23 @@ class DeviceRunner(BaseRunner):
 
 class FennecRunner(DeviceRunner):
 
+    def __init__(self, cmdargs=None, **kwargs):
+        super(FennecRunner, self).__init__(**kwargs)
+        self.cmdargs = cmdargs or []
+
     @property
     def command(self):
         cmd = [self.app_ctx.adb]
         if self.app_ctx.dm._deviceSerial:
-            cmd.extend(['-s', self.app_ctx.dm._deviceSerial])
-        cmd.append('shell')
+            cmd.extend(["-s", self.app_ctx.dm._deviceSerial])
+        cmd.append("shell")
         app = "%s/org.mozilla.gecko.BrowserApp" % self.app_ctx.remote_process
-        cmd.extend(['am', 'start', '-a', 'android.activity.MAIN', '-n', app])
-        params = ['-no-remote', '-profile', self.app_ctx.remote_profile]
-        cmd.extend(['--es', 'args', '"%s"' % ' '.join(params)])
-        # Append env variables in the form "--es env0 MOZ_CRASHREPORTER=1"
+        am_subcommand = ["am", "start", "-a", "android.activity.MAIN", "-n", app]
+        app_params = ["-no-remote", "-profile", self.app_ctx.remote_profile]
+        app_params.extend(self.cmdargs)
+        am_subcommand.extend(["--es", "args", "'%s'" % " ".join(app_params)])
+        # Append env variables in the form |--es env0 MOZ_CRASHREPORTER=1|
         for (count, (k, v)) in enumerate(self._device_env.iteritems()):
-            cmd.extend(["--es", "env" + str(count), k + "=" + v])
-
+            am_subcommand.extend(["--es", "env%d" % count, "%s=%s" % (k, v)])
+        cmd.append("%s" % " ".join(am_subcommand))
         return cmd

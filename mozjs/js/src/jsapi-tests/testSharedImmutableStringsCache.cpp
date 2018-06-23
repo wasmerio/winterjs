@@ -8,18 +8,19 @@
 
 #include "js/Vector.h"
 #include "jsapi-tests/tests.h"
-
+#include "threading/Thread.h"
+#include "util/Text.h"
 #include "vm/SharedImmutableStringsCache.h"
 
 const int NUM_THREADS = 256;
 const int NUM_ITERATIONS = 256;
 
 const int NUM_STRINGS = 4;
-const char16_t* STRINGS[NUM_STRINGS] = {
-    MOZ_UTF16("uno"),
-    MOZ_UTF16("dos"),
-    MOZ_UTF16("tres"),
-    MOZ_UTF16("quattro")
+const char16_t *const STRINGS[NUM_STRINGS] = {
+    u"uno",
+    u"dos",
+    u"tres",
+    u"quattro"
 };
 
 struct CacheAndIndex
@@ -34,10 +35,8 @@ struct CacheAndIndex
 };
 
 static void
-getString(void* data)
+getString(CacheAndIndex* cacheAndIndex)
 {
-    auto cacheAndIndex = reinterpret_cast<CacheAndIndex*>(data);
-
     for (int i = 0; i < NUM_ITERATIONS; i++) {
         auto str = STRINGS[cacheAndIndex->index % NUM_STRINGS];
 
@@ -46,7 +45,7 @@ getString(void* data)
 
         auto deduped = cacheAndIndex->cache->getOrCreate(mozilla::Move(dupe), js_strlen(str));
         MOZ_RELEASE_ASSERT(deduped.isSome());
-        MOZ_RELEASE_ASSERT(js_strcmp(str, deduped->chars()) == 0);
+        MOZ_RELEASE_ASSERT(js::EqualChars(str, deduped->chars(), js_strlen(str) + 1));
 
         {
             auto cloned = deduped->clone();
@@ -64,26 +63,18 @@ BEGIN_TEST(testSharedImmutableStringsCache)
     CHECK(maybeCache.isSome());
     auto& cache = *maybeCache;
 
-    js::Vector<PRThread*> threads(cx);
+    js::Vector<js::Thread> threads(cx);
     CHECK(threads.reserve(NUM_THREADS));
 
-    for (auto i : mozilla::MakeRange(NUM_THREADS)) {
+    for (auto i : mozilla::IntegerRange(NUM_THREADS)) {
         auto cacheAndIndex = js_new<CacheAndIndex>(&cache, i);
         CHECK(cacheAndIndex);
-        auto thread = PR_CreateThread(PR_USER_THREAD,
-                                      getString,
-                                      (void *) cacheAndIndex,
-                                      PR_PRIORITY_NORMAL,
-                                      PR_LOCAL_THREAD,
-                                      PR_JOINABLE_THREAD,
-                                      0);
-        CHECK(thread);
-        threads.infallibleAppend(thread);
+        threads.infallibleEmplaceBack();
+        CHECK(threads.back().init(getString, cacheAndIndex));
     }
 
-    for (auto thread : threads) {
-        CHECK(PR_JoinThread(thread) == PR_SUCCESS);
-    }
+    for (auto& thread : threads)
+        thread.join();
 
     return true;
 }

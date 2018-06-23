@@ -26,6 +26,9 @@ Important Concepts
    defining-binaries
    toolchains
    locales
+   rust
+   sparse
+   Support for projects building with GN <gn>
 
 integrated development environment (IDE)
 ========================================

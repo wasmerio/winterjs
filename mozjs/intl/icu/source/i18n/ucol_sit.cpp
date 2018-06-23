@@ -1,10 +1,12 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
-*   Copyright (C) 2004-2014, International Business Machines
+*   Copyright (C) 2004-2016, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 *******************************************************************************
 *   file name:  ucol_sit.cpp
-*   encoding:   US-ASCII
+*   encoding:   UTF-8
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -130,7 +132,7 @@ static const AttributeConversion conversions[12] = {
 static UColAttributeValue
 ucol_sit_letterToAttributeValue(char letter, UErrorCode *status) {
     uint32_t i = 0;
-    for(i = 0; i < sizeof(conversions)/sizeof(conversions[0]); i++) {
+    for(i = 0; i < UPRV_LENGTHOF(conversions); i++) {
         if(conversions[i].letter == letter) {
             return conversions[i].value;
         }
@@ -463,8 +465,15 @@ ucol_prepareShortStringOpen( const char *definition,
     UResourceBundle *collElem = NULL;
     char keyBuffer[256];
     // if there is a keyword, we pick it up and try to get elements
-    if(!uloc_getKeywordValue(buffer, "collation", keyBuffer, 256, status)) {
-      // no keyword. we try to find the default setting, which will give us the keyword value
+    int32_t keyLen = uloc_getKeywordValue(buffer, "collation", keyBuffer, sizeof(keyBuffer), status);
+    // Treat too long a value as no keyword.
+    if(keyLen >= (int32_t)sizeof(keyBuffer)) {
+      keyLen = 0;
+      *status = U_ZERO_ERROR;
+    }
+    if(keyLen == 0) {
+      // no keyword
+      // we try to find the default setting, which will give us the keyword value
       UResourceBundle *defaultColl = ures_getByKeyWithFallback(collations, "default", NULL, status);
       if(U_SUCCESS(*status)) {
         int32_t defaultKeyLen = 0;

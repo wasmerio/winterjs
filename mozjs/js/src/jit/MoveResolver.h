@@ -216,7 +216,8 @@ class MoveOp
         cycleEnd_(false),
         cycleBeginSlot_(-1),
         cycleEndSlot_(-1),
-        type_(type)
+        type_(type),
+        endCycleType_(GENERAL) // initialize to silence UBSan warning
     { }
 
     bool isCycleBegin() const {
@@ -252,6 +253,13 @@ class MoveOp
     bool aliases(const MoveOp& other) const {
         return aliases(other.from()) || aliases(other.to());
     }
+#ifdef JS_CODEGEN_ARM
+    void overwrite(MoveOperand& from, MoveOperand& to, Type type) {
+        from_ = from;
+        to_ = to;
+        type_ = type;
+    }
+#endif
 };
 
 class MoveResolver
@@ -283,7 +291,6 @@ class MoveResolver
 
     typedef InlineList<MoveResolver::PendingMove>::iterator PendingMoveIterator;
 
-  private:
     js::Vector<MoveOp, 16, SystemAllocPolicy> orderedMoves_;
     int numCycles_;
     int curCycles_;
@@ -298,6 +305,10 @@ class MoveResolver
 
     // Internal reset function. Does not clear lists.
     void resetState();
+
+#ifdef JS_CODEGEN_ARM
+    bool isDoubleAliasedAsSingle(const MoveOperand& move);
+#endif
 
   public:
     MoveResolver();

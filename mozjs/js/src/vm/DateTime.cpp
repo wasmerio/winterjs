@@ -6,26 +6,29 @@
 
 #include "vm/DateTime.h"
 
-#include "mozilla/Atomics.h"
+#if defined(XP_WIN)
+#include "mozilla/UniquePtr.h"
 
+#include <cstdlib>
+#include <cstring>
+#endif /* defined(XP_WIN) */
 #include <time.h>
 
 #include "jsutil.h"
 
 #include "js/Date.h"
+#include "threading/ExclusiveData.h"
+
 #if ENABLE_INTL_API
 #include "unicode/timezone.h"
+#if defined(XP_WIN)
+#include "unicode/unistr.h"
 #endif
+#endif /* ENABLE_INTL_API */
 
-using mozilla::Atomic;
-using mozilla::ReleaseAcquire;
+#include "vm/MutexIDs.h"
+
 using mozilla::UnspecifiedNaN;
-
-/* static */ js::DateTimeInfo
-js::DateTimeInfo::instance;
-
-/* static */ mozilla::Atomic<bool, mozilla::ReleaseAcquire>
-js::DateTimeInfo::AcquireLock::spinLock;
 
 static bool
 ComputeLocalTime(time_t local, struct tm* ptm)
@@ -80,13 +83,6 @@ UTCToLocalStandardOffsetSeconds()
     using js::SecondsPerHour;
     using js::SecondsPerMinute;
 
-#if defined(XP_WIN)
-    // Windows doesn't follow POSIX: updates to the TZ environment variable are
-    // not reflected immediately on that platform as they are on other systems
-    // without this call.
-    _tzset();
-#endif
-
     // Get the current time.
     time_t currentMaybeWithDST = time(nullptr);
     if (currentMaybeWithDST == time_t(-1))
@@ -105,8 +101,11 @@ UTCToLocalStandardOffsetSeconds()
         currentNoDST = currentMaybeWithDST;
     } else {
         // If |local| respected DST, we need a time broken down into components
-        // ignoring DST.  Turn off DST in the broken-down time.
-        local.tm_isdst = 0;
+        // ignoring DST.  Turn off DST in the broken-down time.  Create a fresh
+        // copy of |local|, because mktime() will reset tm_isdst = 1 and will
+        // adjust tm_hour and tm_hour accordingly.
+        struct tm localNoDST = local;
+        localNoDST.tm_isdst = 0;
 
         // Compute a |time_t t| corresponding to the broken-down time with DST
         // off.  This has boundary-condition issues (for about the duration of
@@ -114,7 +113,7 @@ UTCToLocalStandardOffsetSeconds()
         // zone.  But 1) errors will be transient; 2) locations rarely change
         // time zone; and 3) in the absence of an API that provides the time
         // zone offset directly, this may be the best we can do.
-        currentNoDST = mktime(&local);
+        currentNoDST = mktime(&localNoDST);
         if (currentNoDST == time_t(-1))
             return 0;
     }
@@ -173,25 +172,13 @@ js::DateTimeInfo::internalUpdateTimeZoneAdjustment()
     sanityCheck();
 }
 
-/*
- * Since getDSTOffsetMilliseconds guarantees that all times seen will be
- * positive, we can initialize the range at construction time with large
- * negative numbers to ensure the first computation is always a cache miss and
- * doesn't return a bogus offset.
- */
-/* static */ void
-js::DateTimeInfo::init()
+js::DateTimeInfo::DateTimeInfo()
 {
-    DateTimeInfo* dtInfo = &DateTimeInfo::instance;
-
-    MOZ_ASSERT(dtInfo->localTZA_ == 0,
-               "we should be initializing only once, and the static instance "
-               "should have started out zeroed");
-
-    // Set to a totally impossible TZA so that the comparison above will fail
-    // and all fields will be properly initialized.
-    dtInfo->localTZA_ = UnspecifiedNaN<double>();
-    dtInfo->internalUpdateTimeZoneAdjustment();
+    // Set to an impossible TZA so that the comparison in
+    // |internalUpdateTimeZoneAdjustment()| initially fails, causing the
+    // remaining fields to be properly initialized at first adjustment.
+    localTZA_ = UnspecifiedNaN<double>();
+    internalUpdateTimeZoneAdjustment();
 }
 
 int64_t
@@ -200,17 +187,12 @@ js::DateTimeInfo::computeDSTOffsetMilliseconds(int64_t utcSeconds)
     MOZ_ASSERT(utcSeconds >= 0);
     MOZ_ASSERT(utcSeconds <= MaxUnixTimeT);
 
-#if defined(XP_WIN)
-    // Windows does not follow POSIX. Updates to the TZ environment variable
-    // are not reflected immediately on that platform as they are on UNIX
-    // systems without this call.
-    _tzset();
-#endif
-
     struct tm tm;
     if (!ComputeLocalTime(static_cast<time_t>(utcSeconds), &tm))
         return 0;
 
+    // NB: The offset isn't computed correctly when the standard local offset
+    //     at |utcSeconds| is different from |utcToLocalStandardOffsetSeconds|.
     int32_t dayoff = int32_t((utcSeconds + utcToLocalStandardOffsetSeconds) % SecondsPerDay);
     int32_t tmoff = tm.tm_sec + (tm.tm_min * SecondsPerMinute) + (tm.tm_hour * SecondsPerHour);
 
@@ -218,6 +200,8 @@ js::DateTimeInfo::computeDSTOffsetMilliseconds(int64_t utcSeconds)
 
     if (diff < 0)
         diff += SecondsPerDay;
+    else if (uint32_t(diff) >= SecondsPerDay)
+        diff -= SecondsPerDay;
 
     return diff * msPerSecond;
 }
@@ -311,22 +295,45 @@ js::DateTimeInfo::sanityCheck()
                   rangeStartSeconds <= MaxUnixTimeT && rangeEndSeconds <= MaxUnixTimeT);
 }
 
-static struct IcuTimeZoneInfo
+/* static */ js::ExclusiveData<js::DateTimeInfo>*
+js::DateTimeInfo::instance;
+
+/* static */ js::ExclusiveData<js::IcuTimeZoneStatus>*
+js::IcuTimeZoneState;
+
+bool
+js::InitDateTimeState()
 {
-    Atomic<bool, ReleaseAcquire> locked;
-    enum { Valid = 0, NeedsUpdate } status;
 
-    void acquire() {
-        while (!locked.compareExchange(false, true))
-            continue;
+    MOZ_ASSERT(!DateTimeInfo::instance,
+               "we should be initializing only once");
+
+    DateTimeInfo::instance = js_new<ExclusiveData<DateTimeInfo>>(mutexid::DateTimeInfoMutex);
+    if (!DateTimeInfo::instance)
+        return false;
+
+    MOZ_ASSERT(!IcuTimeZoneState,
+               "we should be initializing only once");
+
+    IcuTimeZoneState = js_new<ExclusiveData<IcuTimeZoneStatus>>(mutexid::IcuTimeZoneStateMutex);
+    if (!IcuTimeZoneState) {
+        js_delete(DateTimeInfo::instance);
+        DateTimeInfo::instance = nullptr;
+        return false;
     }
 
-    void release() {
-        MOZ_ASSERT(locked, "should have been acquired");
-        locked = false;
-    }
-} TZInfo;
+    return true;
+}
 
+/* static */ void
+js::FinishDateTimeState()
+{
+    js_delete(IcuTimeZoneState);
+    IcuTimeZoneState = nullptr;
+
+    js_delete(DateTimeInfo::instance);
+    DateTimeInfo::instance = nullptr;
+}
 
 JS_PUBLIC_API(void)
 JS::ResetTimeZone()
@@ -334,21 +341,92 @@ JS::ResetTimeZone()
     js::DateTimeInfo::updateTimeZoneAdjustment();
 
 #if ENABLE_INTL_API && defined(ICU_TZ_HAS_RECREATE_DEFAULT)
-    TZInfo.acquire();
-    TZInfo.status = IcuTimeZoneInfo::NeedsUpdate;
-    TZInfo.release();
+    js::IcuTimeZoneState->lock().get() = js::IcuTimeZoneStatus::NeedsUpdate;
 #endif
 }
+
+#if defined(XP_WIN)
+static bool
+IsOlsonCompatibleWindowsTimeZoneId(const char* tz)
+{
+    // ICU ignores the TZ environment variable on Windows and instead directly
+    // invokes Win API functions to retrieve the current time zone. But since
+    // we're still using the POSIX-derived localtime_s() function on Windows
+    // and localtime_s() does return a time zone adjusted value based on the
+    // TZ environment variable, we need to manually adjust the default ICU
+    // time zone if TZ is set.
+    //
+    // Windows supports the following format for TZ: tzn[+|-]hh[:mm[:ss]][dzn]
+    // where "tzn" is the time zone name for standard time, the time zone
+    // offset is positive for time zones west of GMT, and "dzn" is the
+    // optional time zone name when daylight savings are observed. Daylight
+    // savings are always based on the U.S. daylight saving rules, that means
+    // for example it's not possible to use "TZ=CET-1CEST" to select the IANA
+    // time zone "CET".
+    //
+    // When comparing this restricted format for TZ to all IANA time zone
+    // names, the following time zones are in the intersection of what's
+    // supported by Windows and is also a valid IANA time zone identifier.
+    //
+    // Even though the time zone offset is marked as mandatory on MSDN, it
+    // appears it defaults to zero when omitted. This in turn means we can
+    // also allow the time zone identifiers "UCT", "UTC", and "GMT".
+
+    static const char* const allowedIds[] = {
+        // From tzdata's "northamerica" file:
+        "EST5EDT",
+        "CST6CDT",
+        "MST7MDT",
+        "PST8PDT",
+
+        // From tzdata's "backward" file:
+        "GMT+0",
+        "GMT-0",
+        "GMT0",
+        "UCT",
+        "UTC",
+
+        // From tzdata's "etcetera" file:
+        "GMT",
+    };
+    for (const auto& allowedId : allowedIds) {
+        if (std::strcmp(allowedId, tz) == 0)
+            return true;
+    }
+    return false;
+}
+#endif
 
 void
 js::ResyncICUDefaultTimeZone()
 {
 #if ENABLE_INTL_API && defined(ICU_TZ_HAS_RECREATE_DEFAULT)
-    TZInfo.acquire();
-    if (TZInfo.status == IcuTimeZoneInfo::NeedsUpdate) {
-        icu::TimeZone::recreateDefault();
-        TZInfo.status = IcuTimeZoneInfo::Valid;
+    auto guard = IcuTimeZoneState->lock();
+    if (guard.get() == IcuTimeZoneStatus::NeedsUpdate) {
+        bool recreate = true;
+#if defined(XP_WIN)
+        // If TZ is set and its value is valid under Windows' and IANA's time
+        // zone identifier rules, update the ICU default time zone to use this
+        // value.
+        const char* tz = std::getenv("TZ");
+        if (tz && IsOlsonCompatibleWindowsTimeZoneId(tz)) {
+            icu::UnicodeString tzid(tz, -1, US_INV);
+            mozilla::UniquePtr<icu::TimeZone> newTimeZone(icu::TimeZone::createTimeZone(tzid));
+            MOZ_ASSERT(newTimeZone);
+            if (*newTimeZone != icu::TimeZone::getUnknown()) {
+                // adoptDefault() takes ownership of the time zone.
+                icu::TimeZone::adoptDefault(newTimeZone.release());
+                recreate = false;
+            }
+        } else {
+            // If |tz| isn't a supported time zone identifier, use the default
+            // Windows time zone for ICU.
+            // TODO: Handle invalid time zone identifiers (bug 342068).
+        }
+#endif
+        if (recreate)
+            icu::TimeZone::recreateDefault();
+        guard.get() = IcuTimeZoneStatus::Valid;
     }
-    TZInfo.release();
 #endif
 }

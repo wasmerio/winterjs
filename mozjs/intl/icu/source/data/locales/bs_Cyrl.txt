@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/bs_Cyrl.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 bs_Cyrl{
     %%Parent{"root"}
     AuxExemplarCharacters{"[]"}
@@ -15,6 +9,7 @@ bs_Cyrl{
     }
     ExemplarCharacters{"[а б в г д ђ е ж з и ј к л љ м н њ о п р с т ћ у ф х ц ч џ ш]"}
     ExemplarCharactersIndex{"[А Б В Г Д Ђ Е Ж З И Ј К Л Љ М Н Њ О П Р С Т Ћ У Ф Х Ц Ч Џ Ш]"}
+    ExemplarCharactersNumbers{"[\\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -162,10 +157,11 @@ bs_Cyrl{
                 perMille{"‰"}
                 percentSign{"%"}
                 plusSign{"+"}
+                superscriptingExponent{"×"}
             }
         }
     }
-    Version{"2.1.19.90"}
+    Version{"2.1.37.5"}
     calendar{
         buddhist{
             eras{
@@ -363,6 +359,10 @@ bs_Cyrl{
                 "пре подне",
                 "поподне",
             }
+            AmPmMarkersAbbr{
+                "пре подне",
+                "поподне",
+            }
             DateTimePatterns{
                 "HH:mm:ss zzzz",
                 "HH:mm:ss z",
@@ -419,8 +419,8 @@ bs_Cyrl{
                         "суб",
                     }
                     wide{
-                        "недеља",
-                        "понедељак",
+                        "недјеља",
+                        "понедјељак",
                         "уторак",
                         "сриједа",
                         "четвртак",
@@ -438,6 +438,15 @@ bs_Cyrl{
                         "п",
                         "с",
                     }
+                    wide{
+                        "недјеља",
+                        "понедјељак",
+                        "уторак",
+                        "сриједа",
+                        "четвртак",
+                        "петак",
+                        "субота",
+                    }
                 }
             }
             eras{
@@ -450,8 +459,8 @@ bs_Cyrl{
                     "н.е.",
                 }
                 wide{
-                    "Пре нове ере",
-                    "Нове ере",
+                    "прије нове ере",
+                    "нове ере",
                 }
             }
             intervalFormats{
@@ -559,7 +568,7 @@ bs_Cyrl{
                         "мај",
                         "јун",
                         "јул",
-                        "авг",
+                        "ауг",
                         "сеп",
                         "окт",
                         "нов",
@@ -573,7 +582,7 @@ bs_Cyrl{
                         "мај",
                         "јуни",
                         "јули",
-                        "август",
+                        "аугуст",
                         "септембар",
                         "октобар",
                         "новембар",
@@ -581,6 +590,20 @@ bs_Cyrl{
                     }
                 }
                 stand-alone{
+                    abbreviated{
+                        "јан",
+                        "феб",
+                        "мар",
+                        "апр",
+                        "мај",
+                        "јун",
+                        "јул",
+                        "ауг",
+                        "сеп",
+                        "окт",
+                        "нов",
+                        "дец",
+                    }
                     narrow{
                         "ј",
                         "ф",
@@ -594,6 +617,20 @@ bs_Cyrl{
                         "о",
                         "н",
                         "д",
+                    }
+                    wide{
+                        "јануар",
+                        "фебруар",
+                        "март",
+                        "април",
+                        "мај",
+                        "јуни",
+                        "јули",
+                        "аугуст",
+                        "септембар",
+                        "октобар",
+                        "новембар",
+                        "децембар",
                     }
                 }
             }
@@ -1182,17 +1219,5 @@ bs_Cyrl{
         UK{"империјални"}
         US{"САД"}
         metric{"Метрички"}
-    }
-    transformNames{
-        BGN{"БГН (BGN)"}
-        Numeric{"Нумеричка"}
-        Tone{"Тон"}
-        UNGEGN{"УНГЕГН (BGN)"}
-        x-Accents{"Акценти"}
-        x-Fullwidth{"пуна ширина"}
-        x-Halfwidth{"пола ширине"}
-        x-Jamo{"Џамо"}
-        x-Pinyin{"Пинјин"}
-        x-Publishing{"Издавачки"}
     }
 }

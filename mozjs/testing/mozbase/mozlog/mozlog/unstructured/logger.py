@@ -1,6 +1,9 @@
+# flake8: noqa
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
+
+from __future__ import absolute_import
 
 from logging import getLogger as getSysLogger
 from logging import *
@@ -14,12 +17,12 @@ _default_level = INFO
 _LoggerClass = getLoggerClass()
 
 # Define mozlog specific log levels
-START      = _default_level + 1
-END        = _default_level + 2
-PASS       = _default_level + 3
+START = _default_level + 1
+END = _default_level + 2
+PASS = _default_level + 3
 KNOWN_FAIL = _default_level + 4
-FAIL       = _default_level + 5
-CRASH      = _default_level + 6
+FAIL = _default_level + 5
+CRASH = _default_level + 6
 # Define associated text of log levels
 addLevelName(START, 'TEST-START')
 addLevelName(END, 'TEST-END')
@@ -28,12 +31,14 @@ addLevelName(KNOWN_FAIL, 'TEST-KNOWN-FAIL')
 addLevelName(FAIL, 'TEST-UNEXPECTED-FAIL')
 addLevelName(CRASH, 'PROCESS-CRASH')
 
+
 class MozLogger(_LoggerClass):
     """
     MozLogger class which adds some convenience log levels
     related to automated testing in Mozilla and ability to
     output structured log messages.
     """
+
     def testStart(self, message, *args, **kwargs):
         """Logs a test start message"""
         self.log(START, message, *args, **kwargs)
@@ -85,6 +90,7 @@ class MozLogger(_LoggerClass):
 
         self.log(level, message, extra={'params': params})
 
+
 class JSONFormatter(Formatter):
     """Log formatter for emitting structured JSON entries."""
 
@@ -107,6 +113,7 @@ class JSONFormatter(Formatter):
             output['_message'] = Formatter.format(self, record)
 
         return json.dumps(output, indent=output.get('indent'))
+
 
 class MozFormatter(Formatter):
     """
@@ -145,6 +152,7 @@ class MozFormatter(Formatter):
         self._fmt = fmt
         return Formatter.format(self, record)
 
+
 def getLogger(name, handler=None):
     """
     Returns the logger with the specified name.
@@ -162,8 +170,8 @@ def getLogger(name, handler=None):
 
     if name in Logger.manager.loggerDict:
         if handler:
-            raise ValueError('The handler parameter requires ' + \
-                             'that a logger by this name does ' + \
+            raise ValueError('The handler parameter requires ' +
+                             'that a logger by this name does ' +
                              'not already exist')
         return Logger.manager.loggerDict[name]
 
@@ -177,4 +185,3 @@ def getLogger(name, handler=None):
     logger.addHandler(handler)
     logger.propagate = False
     return logger
-

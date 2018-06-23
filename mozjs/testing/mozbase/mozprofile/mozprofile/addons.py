@@ -2,19 +2,29 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
+import json
 import os
-import shutil
 import sys
+import shutil
 import tempfile
-import urllib2
 import zipfile
+import hashlib
 from xml.dom import minidom
+
+from six import reraise, string_types
+from six.moves.urllib import request
 
 import mozfile
 from mozlog.unstructured import getLogger
 
-# Needed for the AMO's rest API - https://developer.mozilla.org/en/addons.mozilla.org_%28AMO%29_API_Developers%27_Guide/The_generic_AMO_API
+# Needed for the AMO's rest API -
+# https://developer.mozilla.org/en/addons.mozilla.org_%28AMO%29_API_Developers%27_Guide/The_generic_AMO_API
 AMO_API_VERSION = "1.5"
+_SALT = os.urandom(32).encode('hex')
+_TEMPORARY_ADDON_SUFFIX = "@temporary-addon"
+
 
 # Logger for 'mozprofile.addons' module
 module_logger = getLogger(__name__)
@@ -103,7 +113,7 @@ class AddonManager(object):
         :param target_folder: Folder to store the XPI file in
 
         """
-        response = urllib2.urlopen(url)
+        response = request.urlopen(url)
         fd, path = tempfile.mkstemp(suffix='.xpi')
         os.write(fd, response.read())
         os.close(fd)
@@ -167,14 +177,14 @@ class AddonManager(object):
 
         # install addon paths
         if addons:
-            if isinstance(addons, basestring):
+            if isinstance(addons, string_types):
                 addons = [addons]
             for addon in set(addons):
                 self.install_from_path(addon)
 
         # install addon manifests
         if manifests:
-            if isinstance(manifests, basestring):
+            if isinstance(manifests, string_types):
                 manifests = [manifests]
             for manifest in manifests:
                 self.install_from_manifest(manifest)
@@ -203,11 +213,14 @@ class AddonManager(object):
 
             # No path specified, try to grab it off AMO
             locale = addon.get('amo_locale', 'en_US')
-            query = 'https://services.addons.mozilla.org/' + locale + '/firefox/api/' + AMO_API_VERSION + '/'
+            query = 'https://services.addons.mozilla.org/' + locale + '/firefox/api/' \
+                    + AMO_API_VERSION + '/'
             if 'amo_id' in addon:
-                query += 'addon/' + addon['amo_id']                 # this query grabs information on the addon base on its id
+                # this query grabs information on the addon base on its id
+                query += 'addon/' + addon['amo_id']
             else:
-                query += 'search/' + addon['name'] + '/default/1'   # this query grabs information on the first addon returned from a search
+                # this query grabs information on the first addon returned from a search
+                query += 'search/' + addon['name'] + '/default/1'
             install_path = AddonManager.get_amo_install_path(query)
             self.install_from_path(install_path)
 
@@ -220,13 +233,19 @@ class AddonManager(object):
 
         :param query: query-documentation_
 
-        .. _query-documentation: https://developer.mozilla.org/en/addons.mozilla.org_%28AMO%29_API_Developers%27_Guide/The_generic_AMO_API
+        .. _query-documentation: https://developer.mozilla.org/en/addons.mozilla.org_%28AMO%29_API_Developers%27_Guide/The_generic_AMO_API # noqa
         """
-        response = urllib2.urlopen(query)
+        response = request.urlopen(query)
         dom = minidom.parseString(response.read())
         for node in dom.getElementsByTagName('install')[0].childNodes:
             if node.nodeType == node.TEXT_NODE:
                 return node.data
+
+    @classmethod
+    def _gen_iid(cls, addon_path):
+        hash = hashlib.sha1(_SALT)
+        hash.update(addon_path)
+        return hash.hexdigest() + _TEMPORARY_ADDON_SUFFIX
 
     @classmethod
     def addon_details(cls, addon_path):
@@ -272,50 +291,73 @@ class AddonManager(object):
         if not os.path.exists(addon_path):
             raise IOError('Add-on path does not exist: %s' % addon_path)
 
+        is_webext = False
         try:
             if zipfile.is_zipfile(addon_path):
                 # Bug 944361 - We cannot use 'with' together with zipFile because
                 # it will cause an exception thrown in Python 2.6.
                 try:
                     compressed_file = zipfile.ZipFile(addon_path, 'r')
-                    manifest = compressed_file.read('install.rdf')
+                    filenames = [f.filename for f in (compressed_file).filelist]
+                    if 'install.rdf' in filenames:
+                        manifest = compressed_file.read('install.rdf')
+                    elif 'manifest.json' in filenames:
+                        is_webext = True
+                        manifest = compressed_file.read('manifest.json')
+                        manifest = json.loads(manifest)
+                    else:
+                        raise KeyError("No manifest")
                 finally:
                     compressed_file.close()
             elif os.path.isdir(addon_path):
-                with open(os.path.join(addon_path, 'install.rdf'), 'r') as f:
-                    manifest = f.read()
+                try:
+                    with open(os.path.join(addon_path, 'install.rdf')) as f:
+                        manifest = f.read()
+                except IOError:
+                    with open(os.path.join(addon_path, 'manifest.json')) as f:
+                        manifest = json.loads(f.read())
+                        is_webext = True
             else:
                 raise IOError('Add-on path is neither an XPI nor a directory: %s' % addon_path)
         except (IOError, KeyError) as e:
-            raise AddonFormatError, str(e), sys.exc_info()[2]
+            reraise(AddonFormatError(str(e)), None, sys.exc_info()[2])
 
-        try:
-            doc = minidom.parseString(manifest)
+        if is_webext:
+            details['version'] = manifest['version']
+            details['name'] = manifest['name']
+            try:
+                details['id'] = manifest['applications']['gecko']['id']
+            except KeyError:
+                details['id'] = cls._gen_iid(addon_path)
+            details['unpack'] = False
+        else:
+            try:
+                doc = minidom.parseString(manifest)
 
-            # Get the namespaces abbreviations
-            em = get_namespace_id(doc, 'http://www.mozilla.org/2004/em-rdf#')
-            rdf = get_namespace_id(doc, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#')
+                # Get the namespaces abbreviations
+                em = get_namespace_id(doc, 'http://www.mozilla.org/2004/em-rdf#')
+                rdf = get_namespace_id(doc, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#')
 
-            description = doc.getElementsByTagName(rdf + 'Description').item(0)
-            for entry, value in description.attributes.items():
-                # Remove the namespace prefix from the tag for comparison
-                entry = entry.replace(em, "")
-                if entry in details.keys():
-                    details.update({entry: value})
-            for node in description.childNodes:
-                # Remove the namespace prefix from the tag for comparison
-                entry = node.nodeName.replace(em, "")
-                if entry in details.keys():
-                    details.update({entry: get_text(node)})
-        except Exception as e:
-            raise AddonFormatError, str(e), sys.exc_info()[2]
+                description = doc.getElementsByTagName(rdf + 'Description').item(0)
+                for entry, value in description.attributes.items():
+                    # Remove the namespace prefix from the tag for comparison
+                    entry = entry.replace(em, "")
+                    if entry in details.keys():
+                        details.update({entry: value})
+                for node in description.childNodes:
+                    # Remove the namespace prefix from the tag for comparison
+                    entry = node.nodeName.replace(em, "")
+                    if entry in details.keys():
+                        details.update({entry: get_text(node)})
+            except Exception as e:
+                reraise(AddonFormatError(str(e)), None, sys.exc_info()[2])
 
         # turn unpack into a true/false value
-        if isinstance(details['unpack'], basestring):
+        if isinstance(details['unpack'], string_types):
             details['unpack'] = details['unpack'].lower() == 'true'
 
         # If no ID is set, the add-on is invalid
-        if details.get('id') is None:
+        if details.get('id') is None and not is_webext:
             raise AddonFormatError('Add-on id could not be found.')
 
         return details
@@ -327,7 +369,6 @@ class AddonManager(object):
         :param path: url, path to .xpi, or directory of addons
         :param unpack: whether to unpack unless specified otherwise in the install.rdf
         """
-
         # if the addon is a URL, download it
         # note that this won't work with protocols urllib2 doesn't support
         if mozfile.is_url(path):

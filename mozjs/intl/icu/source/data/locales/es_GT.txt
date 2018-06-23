@@ -1,18 +1,9 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/es_GT.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 es_GT{
     %%Parent{"es_419"}
     NumberElements{
         latn{
-            miscPatterns{
-                range{"{0} al {1}"}
-            }
             patternsShort{
                 currencyFormat{
                     1000{
@@ -51,23 +42,11 @@ es_GT{
                         one{"¤000MRD "}
                         other{"¤000MRD "}
                     }
-                    1000000000000{
-                        one{"¤0 B"}
-                        other{"¤0 B"}
-                    }
-                    10000000000000{
-                        one{"¤00 B"}
-                        other{"¤00 B"}
-                    }
-                    100000000000000{
-                        one{"¤000 B"}
-                        other{"¤000 B"}
-                    }
                 }
             }
         }
     }
-    Version{"2.1.20.32"}
+    Version{"2.1.37.6"}
     calendar{
         generic{
             DateTimePatterns{
@@ -133,6 +112,14 @@ es_GT{
             }
         }
         gregorian{
+            AmPmMarkers{
+                "a. m.",
+                "p. m.",
+            }
+            AmPmMarkersAbbr{
+                "a. m.",
+                "p. m.",
+            }
             DateTimePatterns{
                 "HH:mm:ss zzzz",
                 "HH:mm:ss z",
@@ -147,6 +134,22 @@ es_GT{
                 "{1}, {0}",
                 "{1} {0}",
                 "{1} {0}",
+            }
+            dayPeriod{
+                stand-alone{
+                    abbreviated{
+                        am{"a. m."}
+                        pm{"p. m."}
+                    }
+                    narrow{
+                        am{"a. m."}
+                        pm{"p. m."}
+                    }
+                    wide{
+                        am{"a. m."}
+                        pm{"p. m."}
+                    }
+                }
             }
             intervalFormats{
                 MEd{
@@ -203,8 +206,15 @@ es_GT{
     fields{
         day{
             relative{
-                "-2"{"antier"}
+                "-1"{"ayer"}
+                "-2"{"anteayer"}
+                "0"{"hoy"}
+                "1"{"mañana"}
+                "2"{"pasado mañana"}
             }
+        }
+        dayperiod{
+            dn{"a. m./p. m."}
         }
     }
 }

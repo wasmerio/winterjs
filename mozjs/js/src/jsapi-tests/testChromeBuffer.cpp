@@ -19,7 +19,6 @@ static const JSClassOps global_classOps = {
     nullptr,
     nullptr,
     nullptr,
-    nullptr,
     JS_GlobalObjectTraceHook
 };
 
@@ -48,7 +47,7 @@ CallTrusted(JSContext* cx, unsigned argc, JS::Value* vp)
 
 BEGIN_TEST(testChromeBuffer)
 {
-    JS_SetTrustedPrincipals(rt, &system_principals);
+    JS_SetTrustedPrincipals(cx, &system_principals);
 
     JS::CompartmentOptions options;
     trusted_glob.init(cx, JS_NewGlobalObject(cx, &global_class, &system_principals,
@@ -64,8 +63,8 @@ BEGIN_TEST(testChromeBuffer)
      */
     {
         // Disable the JIT because if we don't this test fails.  See bug 1160414.
-        JS::RuntimeOptions oldOptions = JS::RuntimeOptionsRef(rt);
-        JS::RuntimeOptionsRef(rt).setIon(false).setBaseline(false);
+        JS::ContextOptions oldOptions = JS::ContextOptionsRef(cx);
+        JS::ContextOptionsRef(cx).setIon(false).setBaseline(false);
         {
             JSAutoCompartment ac(cx, trusted_glob);
             const char* paramName = "x";
@@ -102,7 +101,7 @@ BEGIN_TEST(testChromeBuffer)
         JS::RootedValue rval(cx);
         CHECK(JS_CallFunction(cx, nullptr, fun, JS::HandleValueArray(v), &rval));
         CHECK(rval.toInt32() == 100);
-        JS::RuntimeOptionsRef(rt) = oldOptions;
+        JS::ContextOptionsRef(cx) = oldOptions;
     }
 
     /*

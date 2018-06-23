@@ -1,5 +1,5 @@
 // |jit-test| exitstatus: 6;
 
-setJitCompilerOption('signals.enable', 0);
+setJitCompilerOption('ion.interrupt-without-signals', 1);
 timeout(1);
 for(;;);

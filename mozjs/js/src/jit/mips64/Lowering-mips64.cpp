@@ -15,6 +15,19 @@
 using namespace js;
 using namespace js::jit;
 
+void
+LIRGeneratorMIPS64::defineInt64Phi(MPhi* phi, size_t lirIndex)
+{
+    defineTypedPhi(phi, lirIndex);
+}
+
+void
+LIRGeneratorMIPS64::lowerInt64PhiInput(MPhi* phi, uint32_t inputPosition,
+                                       LBlock* block, size_t lirIndex)
+{
+    lowerTypedPhiInput(phi, inputPosition, block, lirIndex);
+}
+
 LBoxAllocation
 LIRGeneratorMIPS64::useBoxFixed(MDefinition* mir, Register reg1, Register reg2, bool useAtStart)
 {
@@ -22,6 +35,50 @@ LIRGeneratorMIPS64::useBoxFixed(MDefinition* mir, Register reg1, Register reg2, 
 
     ensureDefined(mir);
     return LBoxAllocation(LUse(reg1, mir->virtualRegister(), useAtStart));
+}
+
+void
+LIRGeneratorMIPS64::lowerDivI64(MDiv* div)
+{
+    if (div->isUnsigned()) {
+        lowerUDivI64(div);
+        return;
+    }
+
+    LDivOrModI64* lir = new(alloc()) LDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()),
+                                                  temp());
+    defineInt64(lir, div);
+}
+
+void
+LIRGeneratorMIPS64::lowerModI64(MMod* mod)
+{
+    if (mod->isUnsigned()) {
+        lowerUModI64(mod);
+        return;
+    }
+
+    LDivOrModI64* lir = new(alloc()) LDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()),
+                                                  temp());
+    defineInt64(lir, mod);
+}
+
+void
+LIRGeneratorMIPS64::lowerUDivI64(MDiv* div)
+{
+    LUDivOrModI64* lir = new(alloc()) LUDivOrModI64(useRegister(div->lhs()),
+                                                    useRegister(div->rhs()),
+                                                    temp());
+    defineInt64(lir, div);
+}
+
+void
+LIRGeneratorMIPS64::lowerUModI64(MMod* mod)
+{
+    LUDivOrModI64* lir = new(alloc()) LUDivOrModI64(useRegister(mod->lhs()),
+                                                    useRegister(mod->rhs()),
+                                                    temp());
+    defineInt64(lir, mod);
 }
 
 void
@@ -124,4 +181,24 @@ LIRGeneratorMIPS64::visitRandom(MRandom* ins)
 {
     LRandom *lir = new(alloc()) LRandom(temp(), temp(), temp());
     defineFixed(lir, ins, LFloatReg(ReturnDoubleReg));
+}
+
+
+void
+LIRGeneratorMIPS64::visitWasmTruncateToInt64(MWasmTruncateToInt64* ins)
+{
+    MDefinition* opd = ins->input();
+    MOZ_ASSERT(opd->type() == MIRType::Double || opd->type() == MIRType::Float32);
+
+    defineInt64(new(alloc()) LWasmTruncateToInt64(useRegister(opd)), ins);
+}
+
+void
+LIRGeneratorMIPS64::visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins)
+{
+    MDefinition* opd = ins->input();
+    MOZ_ASSERT(opd->type() == MIRType::Int64);
+    MOZ_ASSERT(IsFloatingPointType(ins->type()));
+
+    define(new(alloc()) LInt64ToFloatingPoint(useInt64Register(opd)), ins);
 }

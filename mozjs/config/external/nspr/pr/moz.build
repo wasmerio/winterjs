@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,7 +11,7 @@ else:
 
 # We allow warnings for third-party code that can be updated from upstream.
 # TODO: fix NSPR warnings and remove this
-ALLOW_COMPILER_WARNINGS = True
+AllowCompilerWarnings()
 
 DEFINES['_NSPR_BUILD_'] = True
 if CONFIG['OS_ARCH'] == 'Linux':
@@ -19,6 +19,7 @@ if CONFIG['OS_ARCH'] == 'Linux':
     DEFINES.update(
         LINUX=True,
         HAVE_FCNTL_FILE_LOCKING=True,
+        HAVE_POINTER_LOCALTIME_R=True,
         _GNU_SOURCE=True,
     )
     SOURCES += ['/nsprpub/pr/src/md/unix/linux.c']
@@ -33,15 +34,25 @@ elif CONFIG['OS_TARGET'] in ('FreeBSD', 'OpenBSD', 'NetBSD'):
     DEFINES.update(
         HAVE_BSD_FLOCK=True,
         HAVE_SOCKLEN_T=True,
+        HAVE_POINTER_LOCALTIME_R=True,
     )
     DEFINES[CONFIG['OS_TARGET'].upper()] = True
     SOURCES += ['/nsprpub/pr/src/md/unix/%s.c' % CONFIG['OS_TARGET'].lower()]
 elif CONFIG['OS_TARGET'] == 'Darwin':
     OS_LIBS += ['-framework CoreServices']
+    if not CONFIG['HOST_MAJOR_VERSION']:
+        DEFINES.update(
+            HAS_CONNECTX=True,
+        )
+    elif CONFIG['HOST_MAJOR_VERSION'] >= '15':
+        DEFINES.update(
+            HAS_CONNECTX=True,
+        )
     DEFINES.update(
         DARWIN=True,
         HAVE_BSD_FLOCK=True,
         HAVE_SOCKLEN_T=True,
+        HAVE_POINTER_LOCALTIME_R=True,
     )
     SOURCES += [
         '/nsprpub/pr/src/md/unix/darwin.c',
@@ -49,6 +60,19 @@ elif CONFIG['OS_TARGET'] == 'Darwin':
     ]
     if not CONFIG['MOZ_IOS']:
         DEFINES['HAVE_CRT_EXTERNS_H'] = True
+elif CONFIG['OS_TARGET'] == 'SunOS':
+    DEFINES.update(
+        HAVE_FCNTL_FILE_LOCKING=True,
+        HAVE_SOCKLEN_T=True,
+        _PR_HAVE_OFF64_T=True,
+        _PR_INET6=True,
+    )
+    DEFINES['SOLARIS'] = True
+    SOURCES += ['/nsprpub/pr/src/md/unix/solaris.c']
+    if CONFIG['CPU_ARCH'] == 'x86_64':
+        SOURCES += ['/nsprpub/pr/src/md/unix/os_SunOS_x86_64.s']
+    elif CONFIG['CPU_ARCH'] == 'x86':
+        SOURCES += ['/nsprpub/pr/src/md/unix/os_SunOS_x86.s']
 elif CONFIG['OS_TARGET'] == 'WINNT':
     OS_LIBS += [
         'advapi32',
@@ -65,6 +89,8 @@ elif CONFIG['OS_TARGET'] == 'WINNT':
         WINNT=False,
         _PR_GLOBAL_THREADS_ONLY=True,
     )
+    if not CONFIG['DEBUG']:
+      DEFINES['DO_NOT_WAIT_FOR_CONNECT_OVERLAPPED_OPERATIONS'] = True
     if CONFIG['CPU_ARCH'] == 'x86_64':
         DEFINES['_AMD64_'] = True
     else:
@@ -222,6 +248,7 @@ EXPORTS.nspr.md += [
     '/nsprpub/pr/include/md/_linux.cfg',
     '/nsprpub/pr/include/md/_netbsd.cfg',
     '/nsprpub/pr/include/md/_openbsd.cfg',
+    '/nsprpub/pr/include/md/_solaris.cfg',
     '/nsprpub/pr/include/md/_win95.cfg',
 ]
 

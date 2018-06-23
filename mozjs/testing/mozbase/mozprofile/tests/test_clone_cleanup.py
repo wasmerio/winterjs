@@ -4,11 +4,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 
 import os
 import tempfile
 import unittest
 import mozfile
+
+import mozunit
 
 from mozprofile.profile import Profile
 
@@ -24,20 +28,34 @@ class CloneCleanupTest(unittest.TestCase):
         path = tempfile.mktemp()
         self.addCleanup(mozfile.remove, path)
         self.profile = Profile(path,
-                          preferences={'foo': 'bar'},
-                          restore=False)
+                               preferences={'foo': 'bar'},
+                               restore=False)
         user_js = os.path.join(self.profile.profile, 'user.js')
         self.assertTrue(os.path.exists(user_js))
 
     def test_restore_true(self):
+        counter = [0]
+
+        def _feedback(dir, content):
+            # Called by shutil.copytree on each visited directory.
+            # Used here to display info.
+            #
+            # Returns the items that should be ignored by
+            # shutil.copytree when copying the tree, so always returns
+            # an empty list.
+            counter[0] += 1
+            return []
+
         # make a clone of this profile with restore=True
-        clone = Profile.clone(self.profile.profile, restore=True)
+        clone = Profile.clone(self.profile.profile, restore=True,
+                              ignore=_feedback)
         self.addCleanup(mozfile.remove, clone.profile)
 
         clone.cleanup()
 
         # clone should be deleted
         self.assertFalse(os.path.exists(clone.profile))
+        self.assertTrue(counter[0] > 0)
 
     def test_restore_false(self):
         # make a clone of this profile with restore=False
@@ -60,5 +78,4 @@ class CloneCleanupTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
-
+    mozunit.main()

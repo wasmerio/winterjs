@@ -9,7 +9,7 @@
 
 #include "vm/Probes.h"
 
-#include "jscntxt.h"
+#include "vm/JSContext.h"
 
 namespace js {
 
@@ -38,26 +38,28 @@ probes::EnterScript(JSContext* cx, JSScript* script, JSFunction* maybeFun,
 #endif
 
     JSRuntime* rt = cx->runtime();
-    if (rt->spsProfiler.enabled()) {
-        if (!rt->spsProfiler.enter(cx, script, maybeFun))
+    if (rt->geckoProfiler().enabled()) {
+        if (!cx->geckoProfiler().enter(cx, script, maybeFun))
             return false;
-        MOZ_ASSERT_IF(!fp->script()->isGenerator(), !fp->hasPushedSPSFrame());
-        fp->setPushedSPSFrame();
+        MOZ_ASSERT_IF(!fp->script()->isGenerator() &&
+                      !fp->script()->isAsync(),
+                      !fp->hasPushedGeckoProfilerFrame());
+        fp->setPushedGeckoProfilerFrame();
     }
 
     return true;
 }
 
 inline void
-probes::ExitScript(JSContext* cx, JSScript* script, JSFunction* maybeFun, bool popSPSFrame)
+probes::ExitScript(JSContext* cx, JSScript* script, JSFunction* maybeFun, bool popProfilerFrame)
 {
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_FUNCTION_RETURN_ENABLED())
         DTraceExitJSFun(cx, maybeFun, script);
 #endif
 
-    if (popSPSFrame)
-        cx->runtime()->spsProfiler.exit(script, maybeFun);
+    if (popProfilerFrame)
+        cx->geckoProfiler().exit(script, maybeFun);
 }
 
 inline bool

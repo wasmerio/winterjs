@@ -35,14 +35,21 @@ class MockConfig(object):
             'DLL_SUFFIX': '.so'
         }, **extra_substs)
 
-        self.substs_unicode = ReadOnlyDict({k.decode('utf-8'): v.decode('utf-8',
-            'replace') for k, v in self.substs.items()})
+        def decode_value(value):
+            if isinstance(value, list):
+                return [v.decode('utf-8', 'replace') for v in value]
+            return value.decode('utf-8', 'replace')
+
+        self.substs_unicode = ReadOnlyDict({k.decode('utf-8'): decode_value(v)
+                                            for k, v in self.substs.items()})
 
         self.defines = self.substs
 
         self.external_source_dir = None
         self.lib_prefix = 'lib'
+        self.rust_lib_prefix = 'lib'
         self.lib_suffix = '.a'
+        self.rust_lib_suffix = '.a'
         self.import_prefix = 'lib'
         self.import_suffix = '.so'
         self.dll_prefix = 'lib'

@@ -2713,8 +2713,13 @@ static void* _MD_Unix_mmap64(
 }  /* _MD_Unix_mmap64 */
 #endif /* defined(_PR_NO_LARGE_FILES) || defined(SOLARIS2_5) */
 
-/* Android <= 19 doesn't have mmap64. */
-#if defined(ANDROID) && __ANDROID_API__ <= 19
+/* NDK non-unified headers for API < 21 don't have mmap64. However,
+ * NDK unified headers do provide mmap64 for all API versions when building
+ * with clang. Therefore, we should provide mmap64 here for API < 21 if we're
+ * not using clang or if we're using non-unified headers. We check for
+ * non-unified headers by the lack of __ANDROID_API_L__ macro. */
+#if defined(ANDROID) && __ANDROID_API__ < 21 && \
+    (!defined(__clang__) || !defined(__ANDROID_API_L__))
 PR_IMPORT(void) *__mmap2(void *, size_t, int, int, int, size_t);
 
 #define ANDROID_PAGE_SIZE 4096
@@ -2784,9 +2789,9 @@ static void _PR_InitIOV(void)
     _md_iovector._stat64 = stat;
     _md_iovector._lseek64 = _MD_Unix_lseek64;
 #elif defined(_PR_HAVE_OFF64_T)
-#if defined(IRIX5_3) || defined(ANDROID)
+#if defined(IRIX5_3) || (defined(ANDROID) && __ANDROID_API__ < 21)
     /*
-     * Android doesn't have open64.  We pass the O_LARGEFILE flag to open
+     * Android < 21 doesn't have open64.  We pass the O_LARGEFILE flag to open
      * in _MD_open.
      */
     _md_iovector._open64 = open;
@@ -2794,8 +2799,14 @@ static void _PR_InitIOV(void)
     _md_iovector._open64 = open64;
 #endif
     _md_iovector._mmap64 = mmap64;
+#if (defined(ANDROID) && __ANDROID_API__ < 21)
+    /* Same as the open64 case for Android. */
+    _md_iovector._fstat64 = fstat;
+    _md_iovector._stat64 = stat;
+#else
     _md_iovector._fstat64 = fstat64;
     _md_iovector._stat64 = stat64;
+#endif
     _md_iovector._lseek64 = lseek64;
 #elif defined(_PR_HAVE_LARGE_OFF_T)
     _md_iovector._open64 = open;
@@ -2854,28 +2865,11 @@ void _PR_UnixInit(void)
 #endif
 #endif  /* !defined(_PR_PTHREADS) */
 
-    /*
-     * Under HP-UX DCE threads, sigaction() installs a per-thread
-     * handler, so we use sigvector() to install a process-wide
-     * handler.
-     */
-#if defined(HPUX) && defined(_PR_DCETHREADS)
-    {
-        struct sigvec vec;
-
-        vec.sv_handler = SIG_IGN;
-        vec.sv_mask = 0;
-        vec.sv_flags = 0;
-        rv = sigvector(SIGPIPE, &vec, NULL);
-        PR_ASSERT(0 == rv);
-    }
-#else
     sigact.sa_handler = SIG_IGN;
     sigemptyset(&sigact.sa_mask);
     sigact.sa_flags = 0;
     rv = sigaction(SIGPIPE, &sigact, 0);
     PR_ASSERT(0 == rv);
-#endif /* HPUX && _PR_DCETHREADS */
 
     _pr_rename_lock = PR_NewLock();
     PR_ASSERT(NULL != _pr_rename_lock);
@@ -3316,11 +3310,11 @@ int _MD_unix_get_nonblocking_connect_error(int osfd)
                 return errno;
             } else {
                 return err;
-            }		
+            }
         }
     } else {
         return ECONNREFUSED;
-    }	
+    }
 #elif defined(UNIXWARE)
     /*
      * getsockopt() fails with EPIPE, so use getmsg() instead.
@@ -3331,17 +3325,17 @@ int _MD_unix_get_nonblocking_connect_error(int osfd)
     rv = getmsg(osfd, NULL, NULL, &flags);
     PR_ASSERT(-1 == rv || 0 == rv);
     if (-1 == rv && errno != EAGAIN && errno != EWOULDBLOCK) {
-        return errno;
+      return errno;
     }
-    return 0;  /* no error */
+    return 0; /* no error */
 #else
-    int err;
-    _PRSockLen_t optlen = sizeof(err);
-    if (getsockopt(osfd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen) == -1) {
-        return errno;
-    } else {
-        return err;
-    }
+  int err;
+  _PRSockLen_t optlen = sizeof(err);
+  if (getsockopt(osfd, SOL_SOCKET, SO_ERROR, (char*)&err, &optlen) == -1) {
+    return errno;
+  }
+  return err;
+
 #endif
 }
 

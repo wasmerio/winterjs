@@ -1,15 +1,10 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/sbp.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 sbp{
     AuxExemplarCharacters{"[q r x z]"}
     ExemplarCharacters{"[a b c d e f g h i j k l m n o p s t u v w y]"}
     ExemplarCharactersIndex{"[A B C D E F G H I J K L M N O P S T U V W Y]"}
+    ExemplarCharactersNumbers{"[\\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -23,7 +18,7 @@ sbp{
             }
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{
@@ -68,6 +63,10 @@ sbp{
         }
         gregorian{
             AmPmMarkers{
+                "Lwamilawu",
+                "Pashamihe",
+            }
+            AmPmMarkersAbbr{
                 "Lwamilawu",
                 "Pashamihe",
             }

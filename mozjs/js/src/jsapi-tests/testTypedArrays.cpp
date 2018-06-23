@@ -5,10 +5,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jscompartment.h"
 #include "jsfriendapi.h"
 
 #include "jsapi-tests/tests.h"
+#include "vm/JSCompartment.h"
 
 using namespace js;
 
@@ -73,7 +73,7 @@ BEGIN_TEST(testTypedArrays)
 
 template<JSObject* Create(JSContext*, uint32_t),
          typename Element,
-         Element* GetData(JSObject*, bool* isShared, const JS::AutoCheckCannotGC&)>
+         Element* GetData(JSObject*, bool* isShared, const JS::AutoRequireNoGC&)>
 bool
 TestPlainTypedArray(JSContext* cx)
 {
@@ -111,7 +111,7 @@ template<JSObject* CreateWithBuffer(JSContext*, JS::HandleObject, uint32_t, int3
          JSObject* CreateFromArray(JSContext*, JS::HandleObject),
          typename Element,
          bool Shared,
-         Element* GetData(JSObject*, bool*, const JS::AutoCheckCannotGC&)>
+         Element* GetData(JSObject*, bool*, const JS::AutoRequireNoGC&)>
 bool
 TestArrayFromBuffer(JSContext* cx)
 {
@@ -174,7 +174,7 @@ TestArrayFromBuffer(JSContext* cx)
 
     // Make sure all 3 views reflect the same buffer at the expected locations
     JS::RootedValue v(cx, JS::Int32Value(39));
-    JS_SetElement(cx, array, 0, v);
+    CHECK(JS_SetElement(cx, array, 0, v));
     JS::RootedValue v2(cx);
     CHECK(JS_GetElement(cx, array, 0, &v2));
     CHECK_SAME(v, v2);
@@ -190,7 +190,7 @@ TestArrayFromBuffer(JSContext* cx)
     }
 
     v.setInt32(40);
-    JS_SetElement(cx, array, elts / 2, v);
+    CHECK(JS_SetElement(cx, array, elts / 2, v));
     CHECK(JS_GetElement(cx, array, elts / 2, &v2));
     CHECK_SAME(v, v2);
     CHECK(JS_GetElement(cx, ofsArray, 0, &v2));
@@ -205,7 +205,7 @@ TestArrayFromBuffer(JSContext* cx)
     }
 
     v.setInt32(41);
-    JS_SetElement(cx, array, elts - 1, v);
+    CHECK(JS_SetElement(cx, array, elts - 1, v));
     CHECK(JS_GetElement(cx, array, elts - 1, &v2));
     CHECK_SAME(v, v2);
     CHECK(JS_GetElement(cx, ofsArray, elts / 2 - 1, &v2));
@@ -226,7 +226,7 @@ TestArrayFromBuffer(JSContext* cx)
 
     /* The copy should not see changes in the original */
     v2.setInt32(42);
-    JS_SetElement(cx, array, 0, v2);
+    CHECK(JS_SetElement(cx, array, 0, v2));
     CHECK(JS_GetElement(cx, copy, 0, &v2));
     CHECK_SAME(v2, v); /* v is still the original value from 'array' */
 

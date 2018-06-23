@@ -6,14 +6,6 @@
 #ifndef primpl_h___
 #define primpl_h___
 
-/*
- * HP-UX 10.10's pthread.h (DCE threads) includes dce/cma.h, which
- * has:
- *     #define sigaction _sigaction_sys
- * This macro causes chaos if signal.h gets included before pthread.h.
- * To be safe, we include pthread.h first.
- */
-
 #if defined(_PR_PTHREADS)
 #include <pthread.h>
 #endif
@@ -1225,6 +1217,13 @@ extern PRInt32 _PR_MD_SENDTO(
     const PRNetAddr *addr, PRUint32 addrlen, PRIntervalTime timeout);
 #define    _PR_MD_SENDTO _MD_SENDTO
 
+#if defined(_WIN64) && defined(WIN95)
+extern PRInt32 _PR_MD_TCPSENDTO(
+    PRFileDesc *fd, const void *buf, PRInt32 amount, PRIntn flags,
+    const PRNetAddr *addr, PRUint32 addrlen, PRIntervalTime timeout);
+#define    _PR_MD_TCPSENDTO _MD_TCPSENDTO
+#endif
+
 extern PRInt32 _PR_MD_SOCKETPAIR(int af, int type, int flags, PROsfd *osfd);
 #define    _PR_MD_SOCKETPAIR _MD_SOCKETPAIR
 
@@ -1747,6 +1746,18 @@ struct PRFilePrivate {
                          * requires knowing the address family of the 
 			 * socket, we save the address family here. */
 #endif
+
+#if defined(_WIN64)
+    /* This is necessary for TCP Fast Open. TCP Fast Open in windows must
+     * use ConnectEx function which uses OVERLAPPED. TCPSendTo will call
+     * ConnectEx to send fast open data. If ConnectEx returns
+     * ERROR_IO_PENDING we need to save OVERLAPPED structure and we will
+     * use it in ConnectContinue to get the final result of ConnectEx.
+     */
+    PRBool alreadyConnected;
+    PRBool overlappedActive;
+    OVERLAPPED ol;
+#endif
 };
 
 #ifdef _WIN64
@@ -1858,7 +1869,7 @@ extern PRFileDesc *_pr_stderr;
 ** and functions with macros that expand to the native thread
 ** types and functions on each platform.
 */
-#if defined(_PR_PTHREADS) && !defined(_PR_DCETHREADS)
+#if defined(_PR_PTHREADS)
 #define _PR_ZONE_ALLOCATOR
 #endif
 
@@ -2145,6 +2156,18 @@ extern ConnectListNode connectList[64];
 extern PRUint32 connectCount;
 
 #endif /* XP_BEOS */
+
+#if defined(_WIN64) && defined(WIN95)
+typedef struct _PRFileDescList {
+  PRFileDesc *fd;
+  struct _PRFileDescList *next;
+} PRFileDescList;
+
+extern PRLock *_fd_waiting_for_overlapped_done_lock;
+extern PRFileDescList *_fd_waiting_for_overlapped_done;
+extern void CheckOverlappedPendingSocketsAreDone();
+#endif
+
 
 PR_END_EXTERN_C
 

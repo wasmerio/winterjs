@@ -34,28 +34,6 @@ LIRGeneratorX86Shared::newLTableSwitchV(MTableSwitch* tableswitch)
 }
 
 void
-LIRGeneratorX86Shared::visitGuardShape(MGuardShape* ins)
-{
-    MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-
-    LGuardShape* guard = new(alloc()) LGuardShape(useRegisterAtStart(ins->object()));
-    assignSnapshot(guard, ins->bailoutKind());
-    add(guard, ins);
-    redefine(ins, ins->object());
-}
-
-void
-LIRGeneratorX86Shared::visitGuardObjectGroup(MGuardObjectGroup* ins)
-{
-    MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-
-    LGuardObjectGroup* guard = new(alloc()) LGuardObjectGroup(useRegisterAtStart(ins->object()));
-    assignSnapshot(guard, ins->bailoutKind());
-    add(guard, ins);
-    redefine(ins, ins->object());
-}
-
-void
 LIRGeneratorX86Shared::visitPowHalf(MPowHalf* ins)
 {
     MDefinition* input = ins->input();
@@ -80,11 +58,19 @@ LIRGeneratorX86Shared::lowerForShift(LInstructionHelper<1, 2, 0>* ins, MDefiniti
     defineReuseInput(ins, mir, 0);
 }
 
+template<size_t Temps>
 void
-LIRGeneratorX86Shared::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 0>* ins,
+LIRGeneratorX86Shared::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, Temps>* ins,
                                           MDefinition* mir, MDefinition* lhs, MDefinition* rhs)
 {
     ins->setInt64Operand(0, useInt64RegisterAtStart(lhs));
+#if defined(JS_NUNBOX32)
+    if (mir->isRotate())
+        ins->setTemp(0, temp());
+#endif
+
+    static_assert(LShiftI64::Rhs == INT64_PIECES, "Assume Rhs is located at INT64_PIECES.");
+    static_assert(LRotateI64::Count == INT64_PIECES, "Assume Count is located at INT64_PIECES.");
 
     // shift operator should be constant or in register ecx
     // x86 can't shift a non-ecx register
@@ -95,14 +81,20 @@ LIRGeneratorX86Shared::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64
         // the RHS. On 32-bit, the code below will load that part in ecx and
         // will discard the upper half.
         ensureDefined(rhs);
-        bool useAtStart = (lhs == rhs);
-        LUse use(ecx, useAtStart);
+        LUse use(ecx);
         use.setVirtualRegister(rhs->virtualRegister());
         ins->setOperand(INT64_PIECES, use);
     }
 
     defineInt64ReuseInput(ins, mir, 0);
 }
+
+template void LIRGeneratorX86Shared::lowerForShiftInt64(
+    LInstructionHelper<INT64_PIECES, INT64_PIECES+1, 0>* ins, MDefinition* mir,
+    MDefinition* lhs, MDefinition* rhs);
+template void LIRGeneratorX86Shared::lowerForShiftInt64(
+    LInstructionHelper<INT64_PIECES, INT64_PIECES+1, 1>* ins, MDefinition* mir,
+    MDefinition* lhs, MDefinition* rhs);
 
 void
 LIRGeneratorX86Shared::lowerForALU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir,
@@ -119,16 +111,6 @@ LIRGeneratorX86Shared::lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition
     ins->setOperand(0, useRegisterAtStart(lhs));
     ins->setOperand(1, lhs != rhs ? useOrConstant(rhs) : useOrConstantAtStart(rhs));
     defineReuseInput(ins, mir, 0);
-}
-
-void
-LIRGeneratorX86Shared::lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
-                                        MDefinition* mir, MDefinition* lhs, MDefinition* rhs)
-{
-    ins->setInt64Operand(0, useInt64RegisterAtStart(lhs));
-    ins->setInt64Operand(INT64_PIECES,
-                         lhs != rhs ? useInt64OrConstant(rhs) : useInt64OrConstantAtStart(rhs));
-    defineInt64ReuseInput(ins, mir, 0);
 }
 
 template<size_t Temps>
@@ -284,28 +266,26 @@ LIRGeneratorX86Shared::lowerModI(MMod* mod)
 }
 
 void
-LIRGeneratorX86Shared::visitAsmSelect(MAsmSelect* ins)
+LIRGeneratorX86Shared::visitWasmSelect(MWasmSelect* ins)
 {
     if (ins->type() == MIRType::Int64) {
-        auto* lir = new(alloc()) LAsmSelectI64(useInt64RegisterAtStart(ins->trueExpr()),
-                                               useInt64(ins->falseExpr()),
-                                               useRegister(ins->condExpr())
-                                              );
+        auto* lir = new(alloc()) LWasmSelectI64(useInt64RegisterAtStart(ins->trueExpr()),
+                                                useInt64(ins->falseExpr()),
+                                                useRegister(ins->condExpr()));
 
-        defineInt64ReuseInput(lir, ins, LAsmSelectI64::TrueExprIndex);
+        defineInt64ReuseInput(lir, ins, LWasmSelectI64::TrueExprIndex);
         return;
     }
 
-    auto* lir = new(alloc()) LAsmSelect(useRegisterAtStart(ins->trueExpr()),
-                                        use(ins->falseExpr()),
-                                        useRegister(ins->condExpr())
-                                       );
+    auto* lir = new(alloc()) LWasmSelect(useRegisterAtStart(ins->trueExpr()),
+                                         use(ins->falseExpr()),
+                                         useRegister(ins->condExpr()));
 
-    defineReuseInput(lir, ins, LAsmSelect::TrueExprIndex);
+    defineReuseInput(lir, ins, LWasmSelect::TrueExprIndex);
 }
 
 void
-LIRGeneratorX86Shared::visitAsmJSNeg(MAsmJSNeg* ins)
+LIRGeneratorX86Shared::visitWasmNeg(MWasmNeg* ins)
 {
     switch (ins->type()) {
       case MIRType::Int32:
@@ -940,6 +920,8 @@ LIRGeneratorX86Shared::visitSimdGeneralShuffle(MSimdGeneralShuffle* ins)
 {
     MOZ_ASSERT(IsSimdType(ins->type()));
 
+    size_t numOperands = ins->numVectors() + ins->numLanes();
+
     LSimdGeneralShuffleBase* lir;
     if (IsIntegerSimdType(ins->type())) {
 #if defined(JS_CODEGEN_X86)
@@ -953,14 +935,14 @@ LIRGeneratorX86Shared::visitSimdGeneralShuffle(MSimdGeneralShuffle* ins)
 #else
         LDefinition t = temp();
 #endif
-        lir = new (alloc()) LSimdGeneralShuffleI(t);
+        lir = allocateVariadic<LSimdGeneralShuffleI>(numOperands, t);
     } else if (ins->type() == MIRType::Float32x4) {
-        lir = new (alloc()) LSimdGeneralShuffleF(temp());
+        lir = allocateVariadic<LSimdGeneralShuffleF>(numOperands, temp());
     } else {
         MOZ_CRASH("Unknown SIMD kind when doing a shuffle");
     }
 
-    if (!lir->init(alloc(), ins->numVectors() + ins->numLanes()))
+    if (!lir)
         return;
 
     for (unsigned i = 0; i < ins->numVectors(); i++) {

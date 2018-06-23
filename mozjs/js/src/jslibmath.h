@@ -13,6 +13,8 @@
 
 #include "jsnum.h"
 
+#include "vm/JSContext.h"
+
 /*
  * Use system provided math routines.
  */
@@ -48,6 +50,7 @@ namespace js {
 inline double
 NumberDiv(double a, double b)
 {
+    AutoUnsafeCallWithABI unsafe;
     if (b == 0) {
         if (a == 0 || mozilla::IsNaN(a)
 #ifdef XP_WIN
@@ -65,7 +68,9 @@ NumberDiv(double a, double b)
 }
 
 inline double
-NumberMod(double a, double b) {
+NumberMod(double a, double b)
+{
+    AutoUnsafeCallWithABI unsafe;
     if (b == 0)
         return JS::GenericNaN();
     return js_fmod(a, b);

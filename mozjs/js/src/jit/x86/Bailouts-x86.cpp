@@ -4,11 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jscntxt.h"
-#include "jscompartment.h"
-
 #include "jit/Bailouts.h"
 #include "jit/JitCompartment.h"
+#include "vm/JSCompartment.h"
+#include "vm/JSContext.h"
 
 using namespace js;
 using namespace js::jit;
@@ -85,13 +84,16 @@ BailoutFrameInfo::BailoutFrameInfo(const JitActivationIterator& activations,
     }
 
     // Compute the snapshot offset from the bailout ID.
-    JSRuntime* rt = activation->compartment()->runtimeFromMainThread();
-    JitCode* code = rt->jitRuntime()->getBailoutTable(bailout->frameClass());
+    JSRuntime* rt = activation->compartment()->runtimeFromActiveCooperatingThread();
+    TrampolinePtr code = rt->jitRuntime()->getBailoutTable(bailout->frameClass());
+#ifdef DEBUG
+    uint32_t tableSize = rt->jitRuntime()->getBailoutTableSize(bailout->frameClass());
+#endif
     uintptr_t tableOffset = bailout->tableOffset();
-    uintptr_t tableStart = reinterpret_cast<uintptr_t>(code->raw());
+    uintptr_t tableStart = reinterpret_cast<uintptr_t>(code.value);
 
     MOZ_ASSERT(tableOffset >= tableStart &&
-               tableOffset < tableStart + code->instructionsSize());
+               tableOffset < tableStart + tableSize);
     MOZ_ASSERT((tableOffset - tableStart) % BAILOUT_TABLE_ENTRY_SIZE == 0);
 
     uint32_t bailoutId = ((tableOffset - tableStart) / BAILOUT_TABLE_ENTRY_SIZE) - 1;

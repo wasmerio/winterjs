@@ -31,24 +31,45 @@ class CodeGeneratorMIPS : public CodeGeneratorMIPSShared
         emitBranch(value.typeReg(), (Imm32)ImmType(JSVAL_TYPE_OBJECT), cond, ifTrue, ifFalse);
     }
 
-    void emitTableSwitchDispatch(MTableSwitch* mir, Register index, Register base);
+    template <typename T>
+    void emitWasmLoadI64(T* ins);
+    template <typename T>
+    void emitWasmStoreI64(T* ins);
 
   public:
     void visitCompareB(LCompareB* lir);
     void visitCompareBAndBranch(LCompareBAndBranch* lir);
     void visitCompareBitwise(LCompareBitwise* lir);
     void visitCompareBitwiseAndBranch(LCompareBitwiseAndBranch* lir);
+    void visitCompareI64(LCompareI64* lir);
+    void visitCompareI64AndBranch(LCompareI64AndBranch* lir);
+    void visitDivOrModI64(LDivOrModI64* lir);
+    void visitUDivOrModI64(LUDivOrModI64* lir);
+    void visitWasmLoadI64(LWasmLoadI64* ins);
+    void visitWasmUnalignedLoadI64(LWasmUnalignedLoadI64* lir);
+    void visitWasmStoreI64(LWasmStoreI64* ins);
+    void visitWasmUnalignedStoreI64(LWasmUnalignedStoreI64* ins);
+    void visitWasmSelectI64(LWasmSelectI64* lir);
+    void visitWasmReinterpretFromI64(LWasmReinterpretFromI64* lir);
+    void visitWasmReinterpretToI64(LWasmReinterpretToI64* lir);
+    void visitExtendInt32ToInt64(LExtendInt32ToInt64* lir);
+    void visitWrapInt64ToInt32(LWrapInt64ToInt32* lir);
+    void visitSignExtendInt64(LSignExtendInt64* ins);
+    void visitClzI64(LClzI64* ins);
+    void visitCtzI64(LCtzI64* ins);
+    void visitNotI64(LNotI64* ins);
+    void visitWasmTruncateToInt64(LWasmTruncateToInt64* ins);
+    void visitInt64ToFloatingPoint(LInt64ToFloatingPoint* lir);
+    void visitTestI64AndBranch(LTestI64AndBranch* lir);
 
     // Out of line visitors.
     void visitOutOfLineBailout(OutOfLineBailout* ool);
-    void visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool);
   protected:
     ValueOperand ToValue(LInstruction* ins, size_t pos);
-    ValueOperand ToOutValue(LInstruction* ins);
     ValueOperand ToTempValue(LInstruction* ins, size_t pos);
 
     // Functions for LTestVAndBranch.
-    Register splitTagForTest(const ValueOperand& value);
+    void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag);
 
   public:
     CodeGeneratorMIPS(MIRGenerator* gen, LIRGraph* graph, MacroAssembler* masm)
@@ -60,6 +81,8 @@ class CodeGeneratorMIPS : public CodeGeneratorMIPSShared
     void visitBoxFloatingPoint(LBoxFloatingPoint* box);
     void visitUnbox(LUnbox* unbox);
     void setReturnDoubleRegs(LiveRegisterSet* regs);
+    void visitWasmAtomicLoadI64(LWasmAtomicLoadI64* lir);
+    void visitWasmAtomicStoreI64(LWasmAtomicStoreI64* lir);
 };
 
 typedef CodeGeneratorMIPS CodeGeneratorSpecific;

@@ -8,6 +8,8 @@
 #define mozilla_TimeStamp_h
 
 #include <stdint.h>
+#include <algorithm>  // for std::min, std::max
+#include <ostream>
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/FloatingPoint.h"
@@ -62,7 +64,7 @@ class BaseTimeDuration
 {
 public:
   // The default duration is 0.
-  MOZ_CONSTEXPR BaseTimeDuration() : mValue(0) {}
+  constexpr BaseTimeDuration() : mValue(0) {}
   // Allow construction using '0' as the initial value, for readability,
   // but no other numbers (so we don't have any implicit unit conversions).
   struct _SomethingVeryRandomHere;
@@ -136,7 +138,7 @@ public:
     return FromMilliseconds(aMicroseconds / 1000.0);
   }
 
-  static BaseTimeDuration Forever()
+  static constexpr BaseTimeDuration Forever()
   {
     return FromTicks(INT64_MAX);
   }
@@ -173,6 +175,17 @@ public:
     }
 
     return FromTicks(ticks);
+  }
+
+  static BaseTimeDuration Max(const BaseTimeDuration& aA,
+                              const BaseTimeDuration& aB)
+  {
+    return FromTicks(std::max(aA.mValue, aB.mValue));
+  }
+  static BaseTimeDuration Min(const BaseTimeDuration& aA,
+                              const BaseTimeDuration& aB)
+  {
+    return FromTicks(std::min(aA.mValue, aB.mValue));
   }
 
 private:
@@ -216,10 +229,7 @@ public:
   }
   double operator/(const BaseTimeDuration& aOther) const
   {
-#ifndef MOZ_B2G
-    // Bug 1066388 - This fails on B2G ICS Emulator
     MOZ_ASSERT(aOther.mValue != 0, "Division by zero");
-#endif
     return ValueCalculator::DivideDouble(mValue, aOther.mValue);
   }
   BaseTimeDuration operator%(const BaseTimeDuration& aOther) const
@@ -265,6 +275,11 @@ public:
   explicit operator bool() const
   {
     return mValue != 0;
+  }
+
+  friend std::ostream& operator<<(std::ostream& aStream,
+                                  const BaseTimeDuration& aDuration) {
+    return aStream << aDuration.ToMilliseconds() << " ms";
   }
 
   // Return a best guess at the system's current timing resolution,
@@ -395,7 +410,7 @@ public:
   /**
    * Initialize to the "null" moment
    */
-  MOZ_CONSTEXPR TimeStamp() : mValue(0) {}
+  constexpr TimeStamp() : mValue(0) {}
   // Default copy-constructor and assignment are OK
 
   /**
@@ -405,9 +420,13 @@ public:
    * on platforms that support vsync aligned refresh drivers / compositors
    * Verified true as of Jan 31, 2015: B2G and OS X
    * False on Windows 7
+   * Android's event time uses CLOCK_MONOTONIC via SystemClock.uptimeMilles.
+   * So it is same value of TimeStamp posix implementation.
+   * Wayland/GTK event time also uses CLOCK_MONOTONIC on Weston/Mutter
+   * compositors.
    * UNTESTED ON OTHER PLATFORMS
    */
-#if defined(MOZ_WIDGET_GONK) || defined(XP_DARWIN)
+#if defined(XP_DARWIN) || defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GTK)
   static TimeStamp FromSystemTime(int64_t aSystemTime)
   {
     static_assert(sizeof(aSystemTime) == sizeof(TimeStampValue),
@@ -453,12 +472,12 @@ public:
    * the @a aIsInconsistent parameter will be set to true, the returned
    * timestamp however will still be valid though inaccurate.
    *
-   * @param aIsInconsistent Set to true if an inconsistency was detected in the
-   * process creation time
+   * @param aIsInconsistent If non-null, set to true if an inconsistency was
+   * detected in the process creation time
    * @returns A timestamp representing the time when the process was created,
    * this timestamp is always valid even when errors are reported
    */
-  static MFBT_API TimeStamp ProcessCreation(bool& aIsInconsistent);
+  static MFBT_API TimeStamp ProcessCreation(bool* aIsInconsistent = nullptr);
 
   /**
    * Records a process restart. After this call ProcessCreation() will return

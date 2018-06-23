@@ -2,37 +2,29 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+
+from __future__ import absolute_import
+
 import time
-from collections import defaultdict
 
-try:
-    import blessings
-except ImportError:
-    blessings = None
+from mozterm import Terminal
 
-import base
+from . import base
 from .process import strstatus
+from ..handlers import SummaryHandler
+
 
 def format_seconds(total):
     """Format number of seconds to MM:SS.DD form."""
     minutes, seconds = divmod(total, 60)
     return '%2d:%05.2f' % (minutes, seconds)
 
-class NullTerminal(object):
-    def __getattr__(self, name):
-        return self._id
-
-    def _id(self, value):
-        return value
 
 class MachFormatter(base.BaseFormatter):
-    def __init__(self, start_time=None, write_interval=False, write_times=True,
-                 terminal=None, disable_colors=False):
 
-        if disable_colors:
-            terminal = None
-        elif terminal is None and blessings is not None:
-            terminal = blessings.Terminal()
+    def __init__(self, start_time=None, write_interval=False, write_times=True,
+                 terminal=None, disable_colors=False, summary_on_shutdown=False, **kwargs):
+        super(MachFormatter, self).__init__(**kwargs)
 
         if start_time is None:
             start_time = time.time()
@@ -43,50 +35,22 @@ class MachFormatter(base.BaseFormatter):
         self.status_buffer = {}
         self.has_unexpected = {}
         self.last_time = None
-        self.terminal = terminal
+        self.term = Terminal(disable_styling=disable_colors)
         self.verbose = False
         self._known_pids = set()
 
-        self.summary_values = {"tests": 0,
-                               "subtests": 0,
-                               "expected": 0,
-                               "unexpected": defaultdict(int),
-                               "skipped": 0}
-        self.summary_unexpected = []
+        self.summary = SummaryHandler()
+        self.summary_on_shutdown = summary_on_shutdown
 
     def __call__(self, data):
-        s = base.BaseFormatter.__call__(self, data)
+        self.summary(data)
+
+        s = super(MachFormatter, self).__call__(data)
         if s is None:
             return
 
-        time = format_seconds(self._time(data))
-        action = data["action"].upper()
-        thread = data["thread"]
-
-        # Not using the NullTerminal here is a small optimisation to cut the number of
-        # function calls
-        if self.terminal is not None:
-            test = self._get_test_id(data)
-
-            time = self.terminal.blue(time)
-
-            color = None
-
-            if data["action"] == "test_end":
-                if "expected" not in data and not self.has_unexpected[test]:
-                    color = self.terminal.green
-                else:
-                    color = self.terminal.red
-            elif data["action"] in ("suite_start", "suite_end",
-                                    "test_start", "test_status"):
-                color = self.terminal.yellow
-            elif data["action"] == "crash":
-                color = self.terminal.red
-
-            if color is not None:
-                action = color(action)
-
-        return "%s %s: %s %s\n" % (time, action, thread, s)
+        time = self.term.dim_blue(format_seconds(self._time(data)))
+        return "%s %s\n" % (time, s)
 
     def _get_test_id(self, data):
         test_id = data.get("test")
@@ -104,87 +68,96 @@ class MachFormatter(base.BaseFormatter):
         assert False, "unexpected test_id"
 
     def suite_start(self, data):
-        self.summary_values = {"tests": 0,
-                               "subtests": 0,
-                               "expected": 0,
-                               "unexpected": defaultdict(int),
-                               "skipped": 0}
-        self.summary_unexpected = []
-        return "%i" % len(data["tests"])
+        num_tests = reduce(lambda x, y: x + len(y), data['tests'].itervalues(), 0)
+        action = self.term.yellow(data['action'].upper())
+        name = ""
+        if 'name' in data:
+            name = " %s -" % (data['name'],)
+        return "%s:%s running %i tests" % (action, name, num_tests)
 
     def suite_end(self, data):
-        term = self.terminal if self.terminal is not None else NullTerminal()
-
-        heading = "Summary"
-        rv = ["", heading, "=" * len(heading), ""]
-
-        has_subtests = self.summary_values["subtests"] > 0
-
-        if has_subtests:
-            rv.append("Ran %i tests (%i parents, %i subtests)" %
-                      (self.summary_values["tests"] + self.summary_values["subtests"],
-                       self.summary_values["tests"],
-                       self.summary_values["subtests"]))
-        else:
-            rv.append("Ran %i tests" % self.summary_values["tests"])
-
-        rv.append("Expected results: %i" % self.summary_values["expected"])
-
-        unexpected_count = sum(self.summary_values["unexpected"].values())
-        if unexpected_count > 0:
-            unexpected_str = " (%s)" % ", ".join("%s: %i" % (key, value) for key, value in
-                                              sorted(self.summary_values["unexpected"].items()))
-        else:
-            unexpected_str = ""
-
-        rv.append("Unexpected results: %i%s" % (unexpected_count, unexpected_str))
-
-        if self.summary_values["skipped"] > 0:
-            rv.append("Skipped: %i" % self.summary_values["skipped"])
-        rv.append("")
-
-        if not self.summary_values["unexpected"]:
-            rv.append(term.green("OK"))
-        else:
-            heading = "Unexpected Results"
-            rv.extend([heading, "=" * len(heading), ""])
-            if has_subtests:
-                for test_id, results in self.summary_unexpected:
-                    test = self._get_file_name(test_id)
-                    rv.extend([test, "-" * len(test)])
-                    for name, status, expected, message in results:
-                        if name is None:
-                            name = "[Parent]"
-                        rv.append("%s %s" % (self.format_expected(status, expected), name))
-            else:
-                for test_id, results in self.summary_unexpected:
-                    test = self._get_file_name(test_id)
-                    assert len(results) == 1
-                    name, status, expected, messge = results[0]
-                    assert name is None
-                    rv.append("%s %s" % (self.format_expected(status, expected), test))
-
+        action = self.term.yellow(data['action'].upper())
+        rv = [action]
+        if not self.summary_on_shutdown:
+            rv.append(self._format_suite_summary(self.summary.current_suite, self.summary.current))
         return "\n".join(rv)
 
-    def format_expected(self, status, expected):
-        term = self.terminal if self.terminal is not None else NullTerminal()
-        if status == "ERROR":
-            color = term.red
-        else:
-            color = term.yellow
-
+    def _format_expected(self, status, expected):
+        color = self.term.red
         if expected in ("PASS", "OK"):
             return color(status)
 
         return color("%s expected %s" % (status, expected))
 
+    def _format_suite_summary(self, suite, summary):
+        count = summary['counts']
+        logs = summary['unexpected_logs']
+
+        rv = ["", self.term.yellow(suite), self.term.yellow("~" * len(suite))]
+
+        # Format check counts
+        checks = self.summary.aggregate('count', count)
+        rv.append("Ran {} checks ({})".format(sum(checks.values()),
+                  ', '.join(['{} {}s'.format(v, k) for k, v in checks.items() if v])))
+
+        # Format expected counts
+        checks = self.summary.aggregate('expected', count, include_skip=False)
+        rv.append("Expected results: {}".format(sum(checks.values())))
+
+        # Format skip counts
+        skip_tests = count["test"]["expected"]["skip"]
+        skip_subtests = count["subtest"]["expected"]["skip"]
+        if skip_tests:
+            skipped = "Skipped: {} tests".format(skip_tests)
+            if skip_subtests:
+                skipped = "{}, {} subtests".format(skipped, skip_subtests)
+            rv.append(skipped)
+
+        # Format unexpected counts
+        checks = self.summary.aggregate('unexpected', count)
+        unexpected_count = sum(checks.values())
+        if unexpected_count:
+            rv.append("Unexpected results: {}".format(unexpected_count))
+            for key in ('test', 'subtest', 'assert'):
+                if not count[key]['unexpected']:
+                    continue
+                status_str = ", ".join(["{} {}".format(n, s)
+                                        for s, n in count[key]['unexpected'].items()])
+                rv.append("  {}: {} ({})".format(
+                          key, sum(count[key]['unexpected'].values()), status_str))
+
+        # Format status
+        if not any(count[key]["unexpected"] for key in ('test', 'subtest', 'assert')):
+            rv.append(self.term.green("OK"))
+        else:
+            heading = "Unexpected Logs"
+            rv.extend(["", heading, "-" * len(heading)])
+            if count['subtest']['count']:
+                for test_id, results in logs.items():
+                    test = self._get_file_name(test_id)
+                    rv.append(test)
+                    for data in results:
+                        name = data.get("subtest", "[Parent]")
+                        rv.append("  %s %s" % (self._format_expected(
+                                             data["status"], data["expected"]), name))
+            else:
+                for test_id, results in logs.items():
+                    test = self._get_file_name(test_id)
+                    rv.append(test)
+                    assert len(results) == 1
+                    data = results[0]
+                    assert "subtest" not in data
+                    rv.append("  %s %s" % (self._format_expected(
+                                           data["status"], data["expected"]), test))
+
+        return "\n".join(rv)
+
     def test_start(self, data):
-        self.summary_values["tests"] += 1
-        return "%s" % (self._get_test_id(data),)
+        action = self.term.yellow(data['action'].upper())
+        return "%s: %s" % (action, self._get_test_id(data))
 
     def test_end(self, data):
         subtests = self._get_subtest_data(data)
-        unexpected = subtests["unexpected"]
 
         message = data.get("message", "")
         if "stack" in data:
@@ -196,41 +169,42 @@ class MachFormatter(base.BaseFormatter):
         if "expected" in data:
             parent_unexpected = True
             expected_str = ", expected %s" % data["expected"]
-            unexpected.append((None, data["status"], data["expected"],
-                               message))
         else:
             parent_unexpected = False
             expected_str = ""
 
         test = self._get_test_id(data)
 
-        if unexpected:
-            self.summary_unexpected.append((test, unexpected))
-        self._update_summary(data)
-
-        #Reset the counts to 0
-        self.status_buffer[test] = {"count": 0, "unexpected": [], "pass": 0}
-        self.has_unexpected[test] = bool(unexpected)
+        # Reset the counts to 0
+        self.status_buffer[test] = {"count": 0, "unexpected": 0, "pass": 0}
+        self.has_unexpected[test] = bool(subtests['unexpected'])
 
         if subtests["count"] != 0:
-            rv = "Harness %s%s. Subtests passed %i/%i. Unexpected %s" % (
+            rv = "Test %s%s. Subtests passed %i/%i. Unexpected %s" % (
                 data["status"], expected_str, subtests["pass"], subtests["count"],
-                len(unexpected))
+                subtests['unexpected'])
         else:
             rv = "%s%s" % (data["status"], expected_str)
 
+        unexpected = self.summary.current["unexpected_logs"].get(data["test"])
         if unexpected:
             rv += "\n"
             if len(unexpected) == 1 and parent_unexpected:
-                rv += "%s" % unexpected[0][-1]
+                rv += "%s" % unexpected[0].get("message", "")
             else:
-                for name, status, expected, message in unexpected:
-                    if name is None:
-                        name = "[Parent]"
-                    expected_str = "Expected %s, got %s" % (expected, status)
-                    rv += "%s\n" % ("\n".join([name, "-" * len(name), expected_str, message]))
+                for data in unexpected:
+                    name = data.get("subtest", "[Parent]")
+                    expected_str = "Expected %s, got %s" % (data["expected"], data["status"])
+                    rv += "%s\n" % (
+                        "\n".join([name, "-" * len(name), expected_str, data.get("message", "")]))
                 rv = rv[:-1]
-        return rv
+
+        if "expected" not in data and not bool(subtests['unexpected']):
+            color = self.term.green
+        else:
+            color = self.term.red
+        action = color(data['action'].upper())
+        return "%s: %s" % (action, rv)
 
     def valgrind_error(self, data):
         rv = " " + data['primary'] + "\n"
@@ -240,11 +214,9 @@ class MachFormatter(base.BaseFormatter):
         return rv
 
     def test_status(self, data):
-        self.summary_values["subtests"] += 1
-
         test = self._get_test_id(data)
         if test not in self.status_buffer:
-            self.status_buffer[test] = {"count": 0, "unexpected": [], "pass": 0}
+            self.status_buffer[test] = {"count": 0, "unexpected": 0, "pass": 0}
         self.status_buffer[test]["count"] += 1
 
         message = data.get("message", "")
@@ -256,40 +228,46 @@ class MachFormatter(base.BaseFormatter):
         if data["status"] == "PASS":
             self.status_buffer[test]["pass"] += 1
 
-        self._update_summary(data)
-
         rv = None
         status, subtest = data["status"], data["subtest"]
         unexpected = "expected" in data
         if self.verbose:
-            if self.terminal is not None:
-                status = (self.terminal.red if unexpected else self.terminal.green)(status)
+            status = (self.term.red if unexpected else self.term.green)(status)
             rv = " ".join([subtest, status, message])
-        elif unexpected:
-            # We only append an unexpected summary if it was not logged
-            # directly by verbose mode.
-            self.status_buffer[test]["unexpected"].append((subtest,
-                                                           status,
-                                                           data["expected"],
-                                                           message))
-        return rv
 
-    def _update_summary(self, data):
-        if "expected" in data:
-            self.summary_values["unexpected"][data["status"]] += 1
-        elif data["status"] == "SKIP":
-            self.summary_values["skipped"] += 1
+        if unexpected:
+            self.status_buffer[test]["unexpected"] += 1
+        if rv:
+            action = self.term.yellow(data['action'].upper())
+            return "%s: %s" % (action, rv)
+
+    def assertion_count(self, data):
+        if data["min_expected"] <= data["count"] <= data["max_expected"]:
+            return
+
+        if data["min_expected"] != data["max_expected"]:
+            expected = "%i to %i" % (data["min_expected"],
+                                     data["max_expected"])
         else:
-            self.summary_values["expected"] += 1
+            expected = "%i" % data["min_expected"]
+
+        action = self.term.red("ASSERT")
+        return "%s: Assertion count %i, expected %i assertions\n" % (
+                action, data["count"], expected)
 
     def process_output(self, data):
         rv = []
 
+        pid = data['process']
+        if pid.isdigit():
+            pid = 'pid:%s' % pid
+        pid = self.term.dim_cyan(pid)
+
         if "command" in data and data["process"] not in self._known_pids:
             self._known_pids.add(data["process"])
-            rv.append('(pid:%s) Full command: %s' % (data["process"], data["command"]))
+            rv.append('%s Full command: %s' % (pid, data["command"]))
 
-        rv.append('(pid:%s) "%s"' % (data["process"], data["data"]))
+        rv.append('%s %s' % (pid, data["data"]))
         return "\n".join(rv)
 
     def crash(self, data):
@@ -323,7 +301,8 @@ class MachFormatter(base.BaseFormatter):
         if not rv[-1] == "\n":
             rv += "\n"
 
-        return rv
+        action = self.term.red(data['action'].upper())
+        return "%s: %s" % (action, rv)
 
     def process_start(self, data):
         rv = "Started process `%s`" % data['process']
@@ -338,13 +317,12 @@ class MachFormatter(base.BaseFormatter):
     def log(self, data):
         level = data.get("level").upper()
 
-        if self.terminal is not None:
-            if level in ("CRITICAL", "ERROR"):
-                level = self.terminal.red(level)
-            elif level == "WARNING":
-                level = self.terminal.yellow(level)
-            elif level == "INFO":
-                level = self.terminal.blue(level)
+        if level in ("CRITICAL", "ERROR"):
+            level = self.term.red(level)
+        elif level == "WARNING":
+            level = self.term.yellow(level)
+        elif level == "INFO":
+            level = self.term.blue(level)
 
         if data.get('component'):
             rv = " ".join([data["component"], level, data["message"]])
@@ -356,9 +334,37 @@ class MachFormatter(base.BaseFormatter):
 
         return rv
 
+    def lint(self, data):
+        fmt = "{path}  {c1}{lineno}{column}  {c2}{level}{normal}  {message}" \
+              "  {c1}{rule}({linter}){normal}"
+        message = fmt.format(
+            path=data["path"],
+            normal=self.term.normal,
+            c1=self.term.grey,
+            c2=self.term.red if data["level"] == 'error' else self.term.yellow,
+            lineno=str(data["lineno"]),
+            column=(":" + str(data["column"])) if data.get("column") else "",
+            level=data["level"],
+            message=data["message"],
+            rule='{} '.format(data["rule"]) if data.get("rule") else "",
+            linter=data["linter"].lower() if data.get("linter") else "",
+        )
+
+        return message
+
+    def shutdown(self, data):
+        if not self.summary_on_shutdown:
+            return
+
+        heading = "Overall Summary"
+        rv = ["", self.term.bold_yellow(heading), self.term.bold_yellow("=" * len(heading))]
+        for suite, summary in self.summary:
+            rv.append(self._format_suite_summary(suite, summary))
+        return "\n".join(rv)
+
     def _get_subtest_data(self, data):
         test = self._get_test_id(data)
-        return self.status_buffer.get(test, {"count": 0, "unexpected": [], "pass": 0})
+        return self.status_buffer.get(test, {"count": 0, "unexpected": 0, "pass": 0})
 
     def _time(self, data):
         entry_time = data["time"]
@@ -369,4 +375,3 @@ class MachFormatter(base.BaseFormatter):
             t = entry_time - self.start_time
 
         return t / 1000.
-

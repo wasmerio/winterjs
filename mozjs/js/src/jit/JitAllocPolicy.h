@@ -9,13 +9,13 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/GuardObjects.h"
+#include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/TypeTraits.h"
-
-#include "jscntxt.h"
 
 #include "ds/LifoAlloc.h"
 #include "jit/InlineList.h"
 #include "jit/Ion.h"
+#include "vm/JSContext.h"
 
 namespace js {
 namespace jit {
@@ -164,6 +164,13 @@ struct TempObject
     inline void* operator new(size_t nbytes, T* pos) {
         static_assert(mozilla::IsConvertible<T*, TempObject*>::value,
                       "Placement new argument type must inherit from TempObject");
+        return pos;
+    }
+    template <class T>
+    inline void* operator new(size_t nbytes, mozilla::NotNullTag, T* pos) {
+        static_assert(mozilla::IsConvertible<T*, TempObject*>::value,
+                      "Placement new argument type must inherit from TempObject");
+        MOZ_ASSERT(pos);
         return pos;
     }
 };

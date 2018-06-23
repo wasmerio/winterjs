@@ -16,9 +16,9 @@ namespace JS {
 // A wrapper around the internal C++ representation of SpiderMonkey WeakMaps,
 // usable outside the engine.
 //
-// The supported template specializations are enumerated in WeakMapPtr.cpp. If
-// you want to use this class for a different key/value combination, add it to
-// the list and the compiler will generate the relevant machinery.
+// The supported template specializations are enumerated in gc/WeakMapPtr.cpp.
+// If you want to use this class for a different key/value combination, add it
+// to the list and the compiler will generate the relevant machinery.
 template <typename K, typename V>
 class JS_PUBLIC_API(WeakMapPtr)
 {
@@ -32,6 +32,7 @@ class JS_PUBLIC_API(WeakMapPtr)
 
     V lookup(const K& key);
     bool put(JSContext* cx, const K& key, const V& value);
+    V removeValue(const K& key);
 
   private:
     void* ptr;

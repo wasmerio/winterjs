@@ -3,10 +3,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 '''Parses a given application.ini file and outputs the corresponding
-   XULAppData structure as a C++ header file'''
+   StaticXREAppData structure as a C++ header file'''
 
 import ConfigParser
 import sys
+
 
 def main(output, file):
     config = ConfigParser.RawConfigParser()
@@ -15,14 +16,18 @@ def main(output, file):
     try:
         if config.getint('XRE', 'EnableProfileMigrator') == 1:
             flags.add('NS_XRE_ENABLE_PROFILE_MIGRATOR')
-    except: pass
+    except Exception:
+        pass
     try:
         if config.getint('Crash Reporter', 'Enabled') == 1:
             flags.add('NS_XRE_ENABLE_CRASH_REPORTER')
-    except: pass
-    appdata = dict(("%s:%s" % (s, o), config.get(s, o)) for s in config.sections() for o in config.options(s))
+    except Exception:
+        pass
+    appdata = dict(("%s:%s" % (s, o), config.get(s, o))
+                   for s in config.sections() for o in config.options(s))
     appdata['flags'] = ' | '.join(flags) if flags else '0'
-    appdata['App:profile'] = '"%s"' % appdata['App:profile'] if 'App:profile' in appdata else 'NULL'
+    appdata['App:profile'] = ('"%s"' % appdata['App:profile']
+                              if 'App:profile' in appdata else 'NULL')
     expected = ('App:vendor', 'App:name', 'App:remotingname', 'App:version', 'App:buildid',
                 'App:id', 'Gecko:minversion', 'Gecko:maxversion')
     missing = [var for var in expected if var not in appdata]
@@ -31,13 +36,11 @@ def main(output, file):
             "Missing values in %s: %s" % (file, ', '.join(missing))
         sys.exit(1)
 
-    if not 'Crash Reporter:serverurl' in appdata:
+    if 'Crash Reporter:serverurl' not in appdata:
         appdata['Crash Reporter:serverurl'] = ''
 
-    output.write('''#include "nsXREAppData.h"
-             static const nsXREAppData sAppData = {
-                 sizeof(nsXREAppData),
-                 NULL, // directory
+    output.write('''#include "mozilla/XREAppData.h"
+             static const mozilla::StaticXREAppData sAppData = {
                  "%(App:vendor)s",
                  "%(App:name)s",
                  "%(App:remotingname)s",
@@ -46,12 +49,12 @@ def main(output, file):
                  "%(App:id)s",
                  NULL, // copyright
                  %(flags)s,
-                 NULL, // xreDirectory
                  "%(Gecko:minversion)s",
                  "%(Gecko:maxversion)s",
                  "%(Crash Reporter:serverurl)s",
                  %(App:profile)s
              };''' % appdata)
+
 
 if __name__ == '__main__':
     if len(sys.argv) != 1:

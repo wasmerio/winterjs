@@ -6,7 +6,7 @@ if (!('gczeal' in this && 'oomAfterAllocations' in this))
 var lfcode = new Array();
 gczeal(14);
 loadFile(`
-for each(let e in newGlobal()) {
+for (let e of Object.values(newGlobal())) {
     if (oomAfterAllocations(100))
         continue;
 }

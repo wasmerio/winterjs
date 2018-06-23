@@ -2,9 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import math
 import time
 import unittest
+
+import mozunit
 
 from moztest.results import TestContext, TestResult, TestResultCollection
 
@@ -51,5 +55,6 @@ class Collection(unittest.TestCase):
     def test_unique_contexts(self):
         self.assertEqual(len(self.collection.contexts), 3)
 
+
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

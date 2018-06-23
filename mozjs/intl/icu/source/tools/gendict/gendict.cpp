@@ -1,6 +1,8 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 **********************************************************************
-*   Copyright (C) 2002-2015, International Business Machines
+*   Copyright (C) 2002-2016, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 **********************************************************************
 *
@@ -20,6 +22,7 @@
 #include "unicode/ucharstrie.h"
 #include "unicode/bytestrie.h"
 #include "unicode/ucnv.h"
+#include "unicode/ustring.h"
 #include "unicode/utf16.h"
 
 #include "charstr.h"
@@ -245,7 +248,7 @@ int  main(int argc, char **argv) {
     //
     U_MAIN_INIT_ARGS(argc, argv);
     progName = argv[0];
-    argc=u_parseArgs(argc, argv, sizeof(options)/sizeof(options[0]), options);
+    argc=u_parseArgs(argc, argv, UPRV_LENGTHOF(options), options);
     if(argc<0) {
         // Unrecognized option
         fprintf(stderr, "error in command line argument \"%s\"\n", argv[-argc]);
@@ -311,7 +314,7 @@ int  main(int argc, char **argv) {
     //  Read in the dictionary source file
     if (verbose) { printf("Opening file %s...\n", wordFileName); }
     const char *codepage = "UTF-8";
-    UCHARBUF *f = ucbuf_open(wordFileName, &codepage, TRUE, FALSE, status);
+    LocalUCHARBUFPointer f(ucbuf_open(wordFileName, &codepage, TRUE, FALSE, status));
     if (status.isFailure()) {
         fprintf(stderr, "error opening input file: ICU Error \"%s\"\n", status.errorName());
         exit(status.reset());
@@ -335,10 +338,10 @@ int  main(int argc, char **argv) {
     int minlen = 255;
     int maxlen = 0;
     UBool isOk = TRUE;
-    while (readLine(f, fileLine, status)) {
+    while (readLine(f.getAlias(), fileLine, status)) {
         lineCount++;
         if (fileLine.isEmpty()) continue;
-        
+ 
         // Parse word [spaces value].
         int32_t keyLen;
         for (keyLen = 0; keyLen < fileLine.length() && !u_isspace(fileLine[keyLen]); ++keyLen) {}

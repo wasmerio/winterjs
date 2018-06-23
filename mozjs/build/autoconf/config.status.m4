@@ -12,25 +12,27 @@ dnl    AC_SOMETHING(foo,AC_SUBST(),bar)
 define([AC_SUBST],
 [ifdef([AC_SUBST_SET_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_SET on the same variable ($1)])],
 [ifdef([AC_SUBST_LIST_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_LIST on the same variable ($1)])],
+[ifdef([AC_SUBST_TOML_LIST_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_TOML_LIST on the same variable ($1)])],
 [ifdef([AC_SUBST_$1], ,
 [define([AC_SUBST_$1], )dnl
 AC_DIVERT_PUSH(MOZ_DIVERSION_SUBST)dnl
     (''' $1 ''', r''' [$]$1 ''')
 AC_DIVERT_POP()dnl
-])])])])
+])])])])])
 
 dnl Like AC_SUBST, but makes the value available as a set in python,
 dnl with values got from the value of the environment variable, split on
 dnl whitespaces.
 define([AC_SUBST_SET],
 [ifdef([AC_SUBST_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_SET on the same variable ($1)])],
-[ifdef([AC_SUBST_LIST$1], [m4_fatal([Cannot use AC_SUBST_LIST and AC_SUBST_SET on the same variable ($1)])],
+[ifdef([AC_SUBST_LIST_$1], [m4_fatal([Cannot use AC_SUBST_LIST and AC_SUBST_SET on the same variable ($1)])],
+[ifdef([AC_SUBST_TOML_LIST_$1], [m4_fatal([Cannot use AC_SUBST_TOML_LIST and AC_SUBST_SET on the same variable ($1)])],
 [ifdef([AC_SUBST_SET_$1], ,
 [define([AC_SUBST_SET_$1], )dnl
 AC_DIVERT_PUSH(MOZ_DIVERSION_SUBST)dnl
-    (''' $1 ''', unique_list(r''' [$]$1 '''.split()))
+    (''' $1 ''', unique_list(split(r''' [$]$1 ''')))
 AC_DIVERT_POP()dnl
-])])])])
+])])])])])
 
 dnl Like AC_SUBST, but makes the value available as a list in python,
 dnl with values got from the value of the environment variable, split on
@@ -38,12 +40,29 @@ dnl whitespaces.
 define([AC_SUBST_LIST],
 [ifdef([AC_SUBST_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_LIST on the same variable ($1)])],
 [ifdef([AC_SUBST_SET_$1], [m4_fatal([Cannot use AC_SUBST_SET and AC_SUBST_LIST on the same variable ($1)])],
+[ifdef([AC_SUBST_TOML_LIST_$1], [m4_fatal([Cannot use AC_SUBST_TOML_LIST and AC_SUBST_LIST on the same variable ($1)])],
 [ifdef([AC_SUBST_LIST_$1], ,
 [define([AC_SUBST_LIST_$1], )dnl
 AC_DIVERT_PUSH(MOZ_DIVERSION_SUBST)dnl
-    (''' $1 ''', list(r''' [$]$1 '''.split()))
+    (''' $1 ''', list(split(r''' [$]$1 ''')))
 AC_DIVERT_POP()dnl
-])])])])
+])])])])])
+
+dnl Like AC_SUBST, but makes the value available as a string of comma-separated
+dnl quoted strings in python, with values got from the value of the environment
+dnl variable, split on whitespaces. The value is suitable for embedding into a
+dnl .toml list.
+define([AC_SUBST_TOML_LIST],
+[ifdef([AC_SUBST_$1], [m4_fatal([Cannot use AC_SUBST and AC_SUBST_TOML_LIST on the same variable ($1)])],
+[ifdef([AC_SUBST_SET_$1], [m4_fatal([Cannot use AC_SUBST_SET and AC_SUBST_TOML_LIST on the same variable ($1)])],
+[ifdef([AC_SUBST_LIST_$1], [m4_fatal([Cannot use AC_SUBST_LIST and AC_SUBST_TOML_LIST on the same variable ($1)])],
+[ifdef([AC_SUBST_TOML_LIST_$1], ,
+[define([AC_SUBST_TOML_LIST_$1], )dnl
+AC_DIVERT_PUSH(MOZ_DIVERSION_SUBST)dnl
+    (''' $1 ''', r''' %s ''' % str(', '.join("'%s'" % s for s in split(r''' [$]$1 '''))))
+AC_DIVERT_POP()dnl
+])])])])])
+
 
 dnl Ignore AC_SUBSTs for variables we don't have use for but that autoconf
 dnl itself exports.
@@ -106,12 +125,6 @@ changequote(<<<, >>>)dnl
 echo creating $CONFIG_STATUS
 
 cat > $CONFIG_STATUS <<EOF
-def unique_list(l):
-    result = []
-    for i in l:
-        if l not in result:
-            result.append(i)
-    return result
 
 dnl All defines and substs are stored with an additional space at the beginning
 dnl and at the end of the string, to avoid any problem with values starting or

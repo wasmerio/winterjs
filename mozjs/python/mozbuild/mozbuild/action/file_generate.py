@@ -23,6 +23,8 @@ import buildconfig
 def main(argv):
     parser = argparse.ArgumentParser('Generate a file from a Python script',
                                      add_help=False)
+    parser.add_argument('--locale', metavar='locale', type=str,
+                        help='The locale in use.')
     parser.add_argument('python_script', metavar='python-script', type=str,
                         help='The Python script to run')
     parser.add_argument('method_name', metavar='method-name', type=str,
@@ -37,6 +39,9 @@ def main(argv):
 
     args = parser.parse_args(argv)
 
+    kwargs = {}
+    if args.locale:
+        kwargs['locale'] = args.locale
     script = args.python_script
     # Permit the script to import modules from the same directory in which it
     # resides.  The justification for doing this is that if we were invoking
@@ -59,20 +64,40 @@ def main(argv):
 
     ret = 1
     try:
-        with FileAvoidWrite(args.output_file) as output:
-            ret = module.__dict__[method](output, *args.additional_arguments)
-            # We treat sets as a statement of success.  Everything else
-            # is an error (so scripts can conveniently |return 1| or
-            # similar).
-            if isinstance(ret, set) and ret:
-                ret |= set(iter_modules_in_path(buildconfig.topsrcdir,
-                                                buildconfig.topobjdir))
-                mk = Makefile()
-                mk.create_rule([args.output_file]).add_dependencies(ret)
-                with FileAvoidWrite(args.dep_file) as dep_file:
-                    mk.dump(dep_file)
+        with FileAvoidWrite(args.output_file, mode='rb') as output:
+            ret = module.__dict__[method](output, *args.additional_arguments, **kwargs)
+            # The following values indicate a statement of success:
+            #  - a set() (see below)
+            #  - 0
+            #  - False
+            #  - None
+            #
+            # Everything else is an error (so scripts can conveniently |return
+            # 1| or similar). If a set is returned, the elements of the set
+            # indicate additional dependencies that will be listed in the deps
+            # file. Python module imports are automatically included as
+            # dependencies.
+            if isinstance(ret, set):
+                deps = ret
                 # The script succeeded, so reset |ret| to indicate that.
                 ret = None
+            else:
+                deps = set()
+
+            # Only write out the dependencies if the script was successful
+            if not ret:
+                # Add dependencies on any python modules that were imported by
+                # the script.
+                deps |= set(iter_modules_in_path(buildconfig.topsrcdir,
+                                                 buildconfig.topobjdir))
+                # Add dependencies on any buildconfig items that were accessed
+                # by the script.
+                deps |= set(buildconfig.get_dependencies())
+
+                mk = Makefile()
+                mk.create_rule([args.output_file]).add_dependencies(deps)
+                with FileAvoidWrite(args.dep_file) as dep_file:
+                    mk.dump(dep_file)
         # Even when our file's contents haven't changed, we want to update
         # the file's mtime so make knows this target isn't still older than
         # whatever prerequisite caused it to be built this time around.

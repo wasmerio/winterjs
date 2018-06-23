@@ -45,17 +45,6 @@ namespace X86Encoding {
 
 class BaseAssembler;
 
-class AutoUnprotectAssemblerBufferRegion
-{
-    BaseAssembler* assembler;
-    size_t firstByteOffset;
-    size_t lastByteOffset;
-
-  public:
-    AutoUnprotectAssemblerBufferRegion(BaseAssembler& holder, int32_t offset, size_t size);
-    ~AutoUnprotectAssemblerBufferRegion();
-};
-
 class BaseAssembler : public GenericAssembler {
 public:
     BaseAssembler()
@@ -68,11 +57,18 @@ public:
     const unsigned char* buffer() const { return m_formatter.buffer(); }
     unsigned char* data() { return m_formatter.data(); }
     bool oom() const { return m_formatter.oom(); }
+    bool reserve(size_t size) { return m_formatter.reserve(size); }
+    bool swapBuffer(wasm::Bytes& other) { return m_formatter.swapBuffer(other); }
 
     void nop()
     {
         spew("nop");
         m_formatter.oneByteOp(OP_NOP);
+    }
+
+    void comment(const char* msg)
+    {
+        spew("; %s", msg);
     }
 
     MOZ_MUST_USE JmpSrc
@@ -103,6 +99,40 @@ public:
         MOZ_RELEASE_ASSERT(jump[0] == OP_JMP_rel8);
         jump[0] = PRE_OPERAND_SIZE;
         jump[1] = OP_NOP;
+    }
+
+    static void patchFiveByteNopToCall(uint8_t* callsite, uint8_t* target)
+    {
+        // Note: the offset is relative to the address of the instruction after
+        // the call which is five bytes.
+        uint8_t* inst = callsite - sizeof(int32_t) - 1;
+        // The nop can be already patched as call, overriding the call.
+        // See also nop_five.
+        MOZ_ASSERT(inst[0] == OP_NOP_0F || inst[0] == OP_CALL_rel32);
+        MOZ_ASSERT_IF(inst[0] == OP_NOP_0F, inst[1] == OP_NOP_1F ||
+                                            inst[2] == OP_NOP_44 ||
+                                            inst[3] == OP_NOP_00 ||
+                                            inst[4] == OP_NOP_00);
+        inst[0] = OP_CALL_rel32;
+        SetRel32(callsite, target);
+    }
+
+    static void patchCallToFiveByteNop(uint8_t* callsite)
+    {
+        // See also patchFiveByteNopToCall and nop_five.
+        uint8_t* inst = callsite - sizeof(int32_t) - 1;
+        // The call can be already patched as nop.
+        if (inst[0] == OP_NOP_0F) {
+            MOZ_ASSERT(inst[1] == OP_NOP_1F || inst[2] == OP_NOP_44 ||
+                       inst[3] == OP_NOP_00 || inst[4] == OP_NOP_00);
+            return;
+        }
+        MOZ_ASSERT(inst[0] == OP_CALL_rel32);
+        inst[0] = OP_NOP_0F;
+        inst[1] = OP_NOP_1F;
+        inst[2] = OP_NOP_44;
+        inst[3] = OP_NOP_00;
+        inst[4] = OP_NOP_00;
     }
 
     /*
@@ -272,6 +302,11 @@ public:
     {
         spew("push       " MEM_ob, ADDR_ob(offset, base));
         m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_PUSH);
+    }
+    void push_m(int32_t offset, RegisterID base, RegisterID index, int scale)
+    {
+        spew("push       " MEM_obs, ADDR_obs(offset, base, index, scale));
+        m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, index, scale, GROUP5_OP_PUSH);
     }
 
     void pop_m(int32_t offset, RegisterID base)
@@ -893,6 +928,12 @@ public:
         m_formatter.oneByteOp(OP_AND_GvEv, offset, base, dst);
     }
 
+    void andl_mr(int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
+    {
+        spew("andl       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
+        m_formatter.oneByteOp(OP_AND_GvEv, offset, base, index, scale, dst);
+    }
+
     void andl_rm(RegisterID src, int32_t offset, RegisterID base)
     {
         spew("andl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
@@ -1010,10 +1051,21 @@ public:
         spew("fld        " MEM_ob, ADDR_ob(offset, base));
         m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FLD);
     }
+    void faddp()
+    {
+        spew("addp       ");
+        m_formatter.oneByteOp(OP_FPU6_ADDP);
+        m_formatter.oneByteOp(OP_ADDP_ST0_ST1);
+    }
     void fisttp_m(int32_t offset, RegisterID base)
     {
         spew("fisttp     " MEM_ob, ADDR_ob(offset, base));
         m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FISTTP);
+    }
+    void fistp_m(int32_t offset, RegisterID base)
+    {
+        spew("fistp      " MEM_ob, ADDR_ob(offset, base));
+        m_formatter.oneByteOp(OP_FILD, offset, base, FPU6_OP_FISTP);
     }
     void fstp_m(int32_t offset, RegisterID base)
     {
@@ -1022,8 +1074,23 @@ public:
     }
     void fstp32_m(int32_t offset, RegisterID base)
     {
-        spew("fstp32       " MEM_ob, ADDR_ob(offset, base));
+        spew("fstp32     " MEM_ob, ADDR_ob(offset, base));
         m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FSTP);
+    }
+    void fnstcw_m(int32_t offset, RegisterID base)
+    {
+        spew("fnstcw     " MEM_ob, ADDR_ob(offset, base));
+        m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FISTP);
+    }
+    void fldcw_m(int32_t offset, RegisterID base)
+    {
+        spew("fldcw      " MEM_ob, ADDR_ob(offset, base));
+        m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FLDCW);
+    }
+    void fnstsw_m(int32_t offset, RegisterID base)
+    {
+        spew("fnstsw     " MEM_ob, ADDR_ob(offset, base));
+        m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FISTP);
     }
 
     void negl_r(RegisterID dst)
@@ -1174,6 +1241,12 @@ public:
             m_formatter.oneByteOp(OP_GROUP1_EvIz, offset, base, index, scale, GROUP1_OP_OR);
             m_formatter.immediate16(imm);
         }
+    }
+
+    void sbbl_rr(RegisterID src, RegisterID dst)
+    {
+        spew("sbbl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+        m_formatter.oneByteOp(OP_SBB_GvEv, src, dst);
     }
 
     void subl_rr(RegisterID src, RegisterID dst)
@@ -1464,6 +1537,18 @@ public:
         m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_SHR);
     }
 
+    void shrdl_CLr(RegisterID src, RegisterID dst)
+    {
+        spew("shrdl      %%cl, %s, %s", GPReg32Name(src), GPReg32Name(dst));
+        m_formatter.twoByteOp(OP2_SHRD_GvEv, dst, src);
+    }
+
+    void shldl_CLr(RegisterID src, RegisterID dst)
+    {
+        spew("shldl      %%cl, %s, %s", GPReg32Name(src), GPReg32Name(dst));
+        m_formatter.twoByteOp(OP2_SHLD_GvEv, dst, src);
+    }
+
     void shll_ir(int32_t imm, RegisterID dst)
     {
         MOZ_ASSERT(imm < 32);
@@ -1591,6 +1676,7 @@ public:
 
     void prefix_16_for_32()
     {
+        spew("[16-bit operands next]");
         m_formatter.prefix(PRE_OPERAND_SIZE);
     }
 
@@ -1642,6 +1728,23 @@ public:
     {
         spew("cmpxchgl   %s, " MEM_obs, GPReg32Name(src), ADDR_obs(offset, base, index, scale));
         m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, offset, base, index, scale, src);
+    }
+
+    void cmpxchg8b(RegisterID srcHi, RegisterID srcLo, RegisterID newHi, RegisterID newLo,
+                   int32_t offset, RegisterID base)
+    {
+        MOZ_ASSERT(srcHi == edx.code() && srcLo == eax.code());
+        MOZ_ASSERT(newHi == ecx.code() && newLo == ebx.code());
+        spew("cmpxchg8b  %s, " MEM_ob, "edx:eax", ADDR_ob(offset, base));
+        m_formatter.twoByteOp(OP2_CMPXCHGNB, offset, base, 1);
+    }
+    void cmpxchg8b(RegisterID srcHi, RegisterID srcLo, RegisterID newHi, RegisterID newLo,
+                   int32_t offset, RegisterID base, RegisterID index, int scale)
+    {
+        MOZ_ASSERT(srcHi == edx.code() && srcLo == eax.code());
+        MOZ_ASSERT(newHi == ecx.code() && newLo == ebx.code());
+        spew("cmpxchg8b  %s, " MEM_obs, "edx:eax", ADDR_obs(offset, base, index, scale));
+        m_formatter.twoByteOp(OP2_CMPXCHGNB, offset, base, index, scale, 1);
     }
 
 
@@ -2008,20 +2111,21 @@ public:
         m_formatter.oneByteOp(OP_XCHG_GvEv, offset, base, index, scale, src);
     }
 
-    void cmovz_rr(RegisterID src, RegisterID dst)
+    void cmovCCl_rr(Condition cond, RegisterID src, RegisterID dst)
     {
-        spew("cmovz     %s, %s", GPReg16Name(src), GPReg32Name(dst));
-        m_formatter.twoByteOp(OP2_CMOVZ_GvEv, src, dst);
+        spew("cmov%s     %s, %s", CCName(cond), GPReg32Name(src), GPReg32Name(dst));
+        m_formatter.twoByteOp(cmovccOpcode(cond), src, dst);
     }
-    void cmovz_mr(int32_t offset, RegisterID base, RegisterID dst)
+    void cmovCCl_mr(Condition cond, int32_t offset, RegisterID base, RegisterID dst)
     {
-        spew("cmovz     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
-        m_formatter.twoByteOp(OP2_CMOVZ_GvEv, offset, base, dst);
+        spew("cmov%s     " MEM_ob ", %s", CCName(cond), ADDR_ob(offset, base), GPReg32Name(dst));
+        m_formatter.twoByteOp(cmovccOpcode(cond), offset, base, dst);
     }
-    void cmovz_mr(int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
+    void cmovCCl_mr(Condition cond, int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
     {
-        spew("cmovz     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
-        m_formatter.twoByteOp(OP2_CMOVZ_GvEv, offset, base, index, scale, dst);
+        spew("cmov%s     " MEM_obs ", %s", CCName(cond), ADDR_obs(offset, base, index, scale),
+             GPReg32Name(dst));
+        m_formatter.twoByteOp(cmovccOpcode(cond), offset, base, index, scale, dst);
     }
 
     void movl_rr(RegisterID src, RegisterID dst)
@@ -3009,6 +3113,11 @@ public:
         twoByteOpSimdInt32("vmovmskps", VEX_PS, OP2_MOVMSKPD_EdVd, src, dst);
     }
 
+    void vpmovmskb_rr(XMMRegisterID src, RegisterID dst)
+    {
+        twoByteOpSimdInt32("vpmovmskb", VEX_PD, OP2_PMOVMSKB_EdVd, src, dst);
+    }
+
     void vptest_rr(XMMRegisterID rhs, XMMRegisterID lhs) {
         threeByteOpSimd("vptest", VEX_PD, OP3_PTEST_VdVd, ESCAPE_38, rhs, invalid_xmm, lhs);
     }
@@ -3634,9 +3743,13 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
         m_formatter.immediate16u(imm);
     }
 
+    void lfence() {
+        spew("lfence");
+        m_formatter.twoByteOp(OP_FENCE, (RegisterID)0, 0b101);
+    }
     void mfence() {
         spew("mfence");
-        m_formatter.twoByteOp(OP_FENCE, (RegisterID)0, 6);
+        m_formatter.twoByteOp(OP_FENCE, (RegisterID)0, 0b110);
     }
 
     // Assembler admin methods:
@@ -3702,6 +3815,11 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
         m_formatter.simd128Constant(data);
     }
 
+    void int32Constant(int32_t i)
+    {
+        spew(".int %d", i);
+        m_formatter.int32Constant(i);
+    }
     void int64Constant(int64_t i)
     {
         spew(".quad %lld", (long long)i);
@@ -3771,7 +3889,6 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
         MOZ_RELEASE_ASSERT(to.offset() == -1 || size_t(to.offset()) <= size());
 
         unsigned char* code = m_formatter.data();
-        AutoUnprotectAssemblerBufferRegion unprotect(*this, from.offset() - 4, 4);
         SetInt32(code + from.offset(), to.offset());
     }
 
@@ -3790,27 +3907,17 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
 
         spew(".set .Lfrom%d, .Llabel%d", from.offset(), to.offset());
         unsigned char* code = m_formatter.data();
-        AutoUnprotectAssemblerBufferRegion unprotect(*this, from.offset() - 4, 4);
         SetRel32(code + from.offset(), code + to.offset());
     }
 
-    void executableCopy(void* buffer)
+    void executableCopy(void* dst)
     {
-        memcpy(buffer, m_formatter.buffer(), size());
+        const unsigned char* src = m_formatter.buffer();
+        memcpy(dst, src, size());
     }
-    MOZ_MUST_USE bool appendBuffer(const BaseAssembler& other)
+    MOZ_MUST_USE bool appendRawCode(const uint8_t* code, size_t numBytes)
     {
-        return m_formatter.append(other.m_formatter.buffer(), other.size());
-    }
-
-    void enableBufferProtection() { m_formatter.enableBufferProtection(); }
-    void disableBufferProtection() { m_formatter.disableBufferProtection(); }
-
-    void unprotectDataRegion(size_t firstByteOffset, size_t lastByteOffset) {
-        m_formatter.unprotectDataRegion(firstByteOffset, lastByteOffset);
-    }
-    void reprotectDataRegion(size_t firstByteOffset, size_t lastByteOffset) {
-        m_formatter.reprotectDataRegion(firstByteOffset, lastByteOffset);
+        return m_formatter.append(code, numBytes);
     }
 
   protected:
@@ -5075,23 +5182,15 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
 
         size_t size() const { return m_buffer.size(); }
         const unsigned char* buffer() const { return m_buffer.buffer(); }
-        bool oom() const { return m_buffer.oom(); }
-        bool isAligned(int alignment) const { return m_buffer.isAligned(alignment); }
         unsigned char* data() { return m_buffer.data(); }
+        bool oom() const { return m_buffer.oom(); }
+        bool reserve(size_t size) { return m_buffer.reserve(size); }
+        bool swapBuffer(wasm::Bytes& other) { return m_buffer.swap(other); }
+        bool isAligned(int alignment) const { return m_buffer.isAligned(alignment); }
 
         MOZ_MUST_USE bool append(const unsigned char* values, size_t size)
         {
             return m_buffer.append(values, size);
-        }
-
-        void enableBufferProtection() { m_buffer.enableBufferProtection(); }
-        void disableBufferProtection() { m_buffer.disableBufferProtection(); }
-
-        void unprotectDataRegion(size_t firstByteOffset, size_t lastByteOffset) {
-            m_buffer.unprotectDataRegion(firstByteOffset, lastByteOffset);
-        }
-        void reprotectDataRegion(size_t firstByteOffset, size_t lastByteOffset) {
-            m_buffer.reprotectDataRegion(firstByteOffset, lastByteOffset);
         }
 
     private:
@@ -5325,23 +5424,6 @@ threeByteOpImmSimd("vblendps", VEX_PD, OP3_BLENDPS_VpsWpsIb, ESCAPE_3A, imm, off
 
     bool useVEX_;
 };
-
-MOZ_ALWAYS_INLINE
-AutoUnprotectAssemblerBufferRegion::AutoUnprotectAssemblerBufferRegion(BaseAssembler& holder,
-                                                                       int32_t offset, size_t size)
-{
-    assembler = &holder;
-    MOZ_ASSERT(offset >= 0);
-    firstByteOffset = size_t(offset);
-    lastByteOffset = firstByteOffset + (size - 1);
-    assembler->unprotectDataRegion(firstByteOffset, lastByteOffset);
-}
-
-MOZ_ALWAYS_INLINE
-AutoUnprotectAssemblerBufferRegion::~AutoUnprotectAssemblerBufferRegion()
-{
-    assembler->reprotectDataRegion(firstByteOffset, lastByteOffset);
-}
 
 } // namespace X86Encoding
 

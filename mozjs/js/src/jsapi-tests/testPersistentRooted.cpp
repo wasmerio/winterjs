@@ -27,7 +27,6 @@ static const JSClassOps BarkWhenTracedClassClassOps = {
     nullptr,
     nullptr,
     nullptr,
-    nullptr,
     BarkWhenTracedClass::finalize,
     nullptr,
     nullptr,
@@ -37,7 +36,7 @@ static const JSClassOps BarkWhenTracedClassClassOps = {
 
 const JSClass BarkWhenTracedClass::class_ = {
     "BarkWhenTracedClass",
-    0,
+    JSCLASS_FOREGROUND_FINALIZE,
     &BarkWhenTracedClassClassOps
 };
 
@@ -74,7 +73,7 @@ GCFinalizesNBarkers(JSContext* cx, int n)
     int preGCTrace = BarkWhenTracedClass::traceCount;
     int preGCFinalize = BarkWhenTracedClass::finalizeCount;
 
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
 
     return (BarkWhenTracedClass::finalizeCount == preGCFinalize + n &&
             BarkWhenTracedClass::traceCount > preGCTrace);
@@ -94,7 +93,7 @@ BEGIN_TEST(test_PersistentRooted)
     kennel = nullptr;
 
     // Now GC should not be able to find the barker.
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     CHECK(BarkWhenTracedClass::finalizeCount == 1);
 
     return true;
@@ -109,7 +108,7 @@ BEGIN_TEST(test_PersistentRootedNull)
     Kennel kennel(cx);
     CHECK(!kennel.obj);
 
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     CHECK(BarkWhenTracedClass::finalizeCount == 0);
 
     return true;
@@ -139,7 +138,7 @@ BEGIN_TEST(test_PersistentRootedCopy)
 
     // Now that kennel and nowKennel are both deallocated, GC should not be
     // able to find the barker.
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     CHECK(BarkWhenTracedClass::finalizeCount == 1);
 
     return true;
@@ -184,7 +183,7 @@ BEGIN_TEST(test_PersistentRootedAssign)
 
     // Now that kennel and kennel2 are both deallocated, GC should not be
     // able to find the barker.
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     CHECK(BarkWhenTracedClass::finalizeCount == 2);
 
     return true;
@@ -216,7 +215,7 @@ BEGIN_TEST(test_GlobalPersistentRooted)
     CHECK(!gGlobalRoot.initialized());
 
     // Now GC should not be able to find the barker.
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     CHECK(BarkWhenTracedClass::finalizeCount == 1);
 
     return true;

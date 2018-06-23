@@ -11,8 +11,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/Move.h"
 
-#include "jsalloc.h"
-
+#include "js/AllocPolicy.h"
 #include "js/UbiNodeBreadthFirst.h"
 #include "js/Vector.h"
 
@@ -109,7 +108,7 @@ struct JS_PUBLIC_API(ShortestPaths)
         }
 
         bool
-        operator()(Traversal& traversal, JS::ubi::Node origin, JS::ubi::Edge& edge,
+        operator()(Traversal& traversal, const JS::ubi::Node& origin, JS::ubi::Edge& edge,
                    BackEdge* back, bool first)
         {
             MOZ_ASSERT(back);
@@ -245,7 +244,7 @@ struct JS_PUBLIC_API(ShortestPaths)
      * responsibility to handle and report the OOM.
      */
     static mozilla::Maybe<ShortestPaths>
-    Create(JSRuntime* rt, AutoCheckCannotGC& noGC, uint32_t maxNumPaths, const Node& root, NodeSet&& targets) {
+    Create(JSContext* cx, AutoCheckCannotGC& noGC, uint32_t maxNumPaths, const Node& root, NodeSet&& targets) {
         MOZ_ASSERT(targets.count() > 0);
         MOZ_ASSERT(maxNumPaths > 0);
 
@@ -255,7 +254,7 @@ struct JS_PUBLIC_API(ShortestPaths)
             return mozilla::Nothing();
 
         Handler handler(paths);
-        Traversal traversal(rt, handler, noGC);
+        Traversal traversal(cx, handler, noGC);
         traversal.wantNames = true;
         if (!traversal.init() || !traversal.addStart(root) || !traversal.traverse())
             return mozilla::Nothing();

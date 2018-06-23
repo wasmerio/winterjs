@@ -1,7 +1,9 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 ******************************************************************************
 *
-*   Copyright (C) 1997-2015, International Business Machines
+*   Copyright (C) 1997-2016, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 *
 ******************************************************************************
@@ -153,12 +155,13 @@ U_NAMESPACE_BEGIN
 template<typename T>
 class LocalMemory : public LocalPointerBase<T> {
 public:
+    using LocalPointerBase<T>::operator*;
+    using LocalPointerBase<T>::operator->;
     /**
      * Constructor takes ownership.
      * @param p simple pointer to an array of T items that is adopted
      */
     explicit LocalMemory(T *p=NULL) : LocalPointerBase<T>(p) {}
-#if U_HAVE_RVALUE_REFERENCES
     /**
      * Move constructor, leaves src with isNull().
      * @param src source smart pointer
@@ -166,14 +169,12 @@ public:
     LocalMemory(LocalMemory<T> &&src) U_NOEXCEPT : LocalPointerBase<T>(src.ptr) {
         src.ptr=NULL;
     }
-#endif
     /**
      * Destructor deletes the memory it owns.
      */
     ~LocalMemory() {
         uprv_free(LocalPointerBase<T>::ptr);
     }
-#if U_HAVE_RVALUE_REFERENCES
     /**
      * Move assignment operator, leaves src with isNull().
      * The behavior is undefined if *this and src are the same object.
@@ -183,7 +184,6 @@ public:
     LocalMemory<T> &operator=(LocalMemory<T> &&src) U_NOEXCEPT {
         return moveFrom(src);
     }
-#endif
     /**
      * Move assignment, leaves src with isNull().
      * The behavior is undefined if *this and src are the same object.
@@ -279,7 +279,7 @@ inline T *LocalMemory<T>::allocateInsteadAndCopy(int32_t newCapacity, int32_t le
                 if(length>newCapacity) {
                     length=newCapacity;
                 }
-                uprv_memcpy(p, LocalPointerBase<T>::ptr, length*sizeof(T));
+                uprv_memcpy(p, LocalPointerBase<T>::ptr, (size_t)length*sizeof(T));
             }
             uprv_free(LocalPointerBase<T>::ptr);
             LocalPointerBase<T>::ptr=p;
@@ -308,6 +308,14 @@ public:
      * Default constructor initializes with internal T[stackCapacity] buffer.
      */
     MaybeStackArray() : ptr(stackArray), capacity(stackCapacity), needToRelease(FALSE) {}
+    /**
+     * Automatically allocates the heap array if the argument is larger than the stack capacity.
+     * Intended for use when an approximate capacity is known at compile time but the true
+     * capacity is not known until runtime.
+     */
+    MaybeStackArray(int32_t newCapacity) : MaybeStackArray() {
+        if (capacity < newCapacity) { resize(newCapacity); }
+    };
     /**
      * Destructor deletes the array (if owned).
      */
@@ -426,7 +434,7 @@ inline T *MaybeStackArray<T, stackCapacity>::resize(int32_t newCapacity, int32_t
                 if(length>newCapacity) {
                     length=newCapacity;
                 }
-                uprv_memcpy(p, ptr, length*sizeof(T));
+                uprv_memcpy(p, ptr, (size_t)length*sizeof(T));
             }
             releaseArray();
             ptr=p;
@@ -457,7 +465,7 @@ inline T *MaybeStackArray<T, stackCapacity>::orphanOrClone(int32_t length, int32
         if(p==NULL) {
             return NULL;
         }
-        uprv_memcpy(p, ptr, length*sizeof(T));
+        uprv_memcpy(p, ptr, (size_t)length*sizeof(T));
     }
     resultCapacity=length;
     ptr=stackArray;
@@ -605,7 +613,7 @@ inline H *MaybeStackHeaderAndArray<H, T, stackCapacity>::resize(int32_t newCapac
                     length=newCapacity;
                 }
             }
-            uprv_memcpy(p, ptr, sizeof(H)+length*sizeof(T));
+            uprv_memcpy(p, ptr, sizeof(H)+(size_t)length*sizeof(T));
             releaseMemory();
             ptr=p;
             capacity=newCapacity;
@@ -636,7 +644,7 @@ inline H *MaybeStackHeaderAndArray<H, T, stackCapacity>::orphanOrClone(int32_t l
         if(p==NULL) {
             return NULL;
         }
-        uprv_memcpy(p, ptr, sizeof(H)+length*sizeof(T));
+        uprv_memcpy(p, ptr, sizeof(H)+(size_t)length*sizeof(T));
     }
     resultCapacity=length;
     ptr=&stackHeader;

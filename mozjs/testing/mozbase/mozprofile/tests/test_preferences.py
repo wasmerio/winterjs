@@ -4,17 +4,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import mozfile
 import mozhttpd
 import os
 import shutil
 import tempfile
 import unittest
+
+import mozunit
+
 from mozprofile.cli import MozProfileCLI
-from mozprofile.prefs import Preferences
+from mozprofile.prefs import Preferences, PreferencesReadError
 from mozprofile.profile import Profile
 
 here = os.path.dirname(os.path.abspath(__file__))
+
 
 class PreferencesTest(unittest.TestCase):
     """test mozprofile preference handling"""
@@ -121,7 +127,7 @@ general.warnOnAboutConfig = False
             os.close(fd)
             commandline = ["--preferences", name]
 
-             # test the [DEFAULT] section
+            # test the [DEFAULT] section
             _prefs = {'general.warnOnAboutConfig': 'False'}
             self.compare_generated(_prefs, commandline)
 
@@ -137,14 +143,14 @@ general.warnOnAboutConfig = False
         # we shouldn't have any initial preferences
         initial_prefs = Preferences.read_prefs(prefs_file)
         self.assertFalse(initial_prefs)
-        initial_prefs = file(prefs_file).read().strip()
+        initial_prefs = open(prefs_file).read().strip()
         self.assertFalse(initial_prefs)
 
         # add some preferences
         prefs1 = [("mr.t.quotes", "i aint getting on no plane!")]
         profile.set_preferences(prefs1)
         self.assertEqual(prefs1, Preferences.read_prefs(prefs_file))
-        lines = file(prefs_file).read().strip().splitlines()
+        lines = open(prefs_file).read().strip().splitlines()
         self.assertTrue(any(line.startswith('#MozRunner Prefs Start') for line in lines))
         self.assertTrue(any(line.startswith('#MozRunner Prefs End') for line in lines))
 
@@ -161,14 +167,14 @@ general.warnOnAboutConfig = False
         # we shouldn't have any initial preferences
         initial_prefs = Preferences.read_prefs(prefs_file)
         self.assertFalse(initial_prefs)
-        initial_prefs = file(prefs_file).read().strip()
+        initial_prefs = open(prefs_file).read().strip()
         self.assertFalse(initial_prefs)
 
         # add some preferences
         prefs1 = [("mr.t.quotes", "i aint getting on no plane!")]
         profile.set_persistent_preferences(prefs1)
         self.assertEqual(prefs1, Preferences.read_prefs(prefs_file))
-        lines = file(prefs_file).read().strip().splitlines()
+        lines = open(prefs_file).read().strip().splitlines()
         self.assertTrue(any(line.startswith('#MozRunner Prefs Start') for line in lines))
         self.assertTrue(any(line.startswith('#MozRunner Prefs End') for line in lines))
 
@@ -186,15 +192,15 @@ general.warnOnAboutConfig = False
         # we shouldn't have any initial preferences
         initial_prefs = Preferences.read_prefs(prefs_file)
         self.assertFalse(initial_prefs)
-        initial_prefs = file(prefs_file).read().strip()
+        initial_prefs = open(prefs_file).read().strip()
         self.assertFalse(initial_prefs)
 
         # add some preferences
         prefs1 = [("browser.startup.homepage", "http://planet.mozilla.org/"),
-                   ("zoom.minPercent", 30)]
+                  ("zoom.minPercent", 30)]
         profile.set_preferences(prefs1)
         self.assertEqual(prefs1, Preferences.read_prefs(prefs_file))
-        lines = file(prefs_file).read().strip().splitlines()
+        lines = open(prefs_file).read().strip().splitlines()
         self.assertTrue(bool([line for line in lines
                               if line.startswith('#MozRunner Prefs Start')]))
         self.assertTrue(bool([line for line in lines
@@ -202,10 +208,10 @@ general.warnOnAboutConfig = False
 
         # add some more preferences
         prefs2 = [("zoom.maxPercent", 300),
-                   ("webgl.verbose", 'false')]
+                  ("webgl.verbose", 'false')]
         profile.set_preferences(prefs2)
         self.assertEqual(prefs1 + prefs2, Preferences.read_prefs(prefs_file))
-        lines = file(prefs_file).read().strip().splitlines()
+        lines = open(prefs_file).read().strip().splitlines()
         self.assertTrue(len([line for line in lines
                              if line.startswith('#MozRunner Prefs Start')]) == 2)
         self.assertTrue(len([line for line in lines
@@ -215,7 +221,7 @@ general.warnOnAboutConfig = False
         profile.clean_preferences()
         final_prefs = Preferences.read_prefs(prefs_file)
         self.assertFalse(final_prefs)
-        lines = file(prefs_file).read().strip().splitlines()
+        lines = open(prefs_file).read().strip().splitlines()
         self.assertTrue('#MozRunner Prefs Start' not in lines)
         self.assertTrue('#MozRunner Prefs End' not in lines)
 
@@ -232,7 +238,7 @@ user_pref("webgl.enabled_for_all_sites", true);
 user_pref("webgl.force-enabled", true);
 """
             user_js = os.path.join(tempdir, 'user.js')
-            f = file(user_js, 'w')
+            f = open(user_js, 'w')
             f.write(contents)
             f.close()
 
@@ -299,6 +305,17 @@ user_pref("webgl.force-enabled", true);
             commandline = ["--preferences", f.name]
             self.compare_generated(_prefs, commandline)
 
+    def test_json_datatypes(self):
+        # minPercent is at 30.1 to test if non-integer data raises an exception
+        json = """{"zoom.minPercent": 30.1, "zoom.maxPercent": 300}"""
+
+        with mozfile.NamedTemporaryFile(suffix='.json') as f:
+            f.write(json)
+            f.flush()
+
+            with self.assertRaises(PreferencesReadError):
+                Preferences.read_json(f._path)
+
     def test_prefs_write(self):
         """test that the Preferences.write() method correctly serializes preferences"""
 
@@ -342,11 +359,11 @@ user_pref("webgl.force-enabled", true);
             "zoom.minPercent": 30,
             "webgl.verbose": "false",
             "browser.bar": "somethingxyz"
-            }
+        }
         values = {
             "server": "server-name",
             "abc": "something"
-            }
+        }
         path = os.path.join(here, 'files', 'prefs_with_interpolation.js')
         read_prefs = Preferences.read_prefs(path, interpolation=values)
         self.assertEqual(dict(read_prefs), expected_prefs)
@@ -373,5 +390,6 @@ user_pref("webgl.force-enabled", true);
         finally:
             httpd.stop()
 
+
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

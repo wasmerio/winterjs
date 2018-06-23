@@ -1,5 +1,7 @@
+# Copyright (C) 2016 and later: Unicode, Inc. and others.
+# License & terms of use: http://www.unicode.org/copyright.html
 #**********************************************************************
-#* Copyright (C) 1999-2015, International Business Machines Corporation
+#* Copyright (C) 1999-2016, International Business Machines Corporation
 #* and others.  All Rights Reserved.
 #**********************************************************************
 # nmake file for creating data files on win32
@@ -10,10 +12,14 @@
 
 ##############################################################################
 # Keep the following in sync with the version - see common/unicode/uvernum.h
-U_ICUDATA_NAME=icudt56
+U_ICUDATA_NAME=icudt60
 ##############################################################################
+!IF "$(UWP)" == "UWP"
+# Optionally change the name of the data file for the UWP version.
+U_ICUDATA_NAME=icudt60
+!ENDIF
 U_ICUDATA_ENDIAN_SUFFIX=l
-UNICODE_VERSION=8.0
+UNICODE_VERSION=10.0
 ICU_LIB_TARGET=$(DLL_OUTPUT)\$(U_ICUDATA_NAME).dll
 
 #  ICUMAKE
@@ -117,10 +123,14 @@ ICUDATA=$(ICUP)\source\data
 #      This is the same place that all of the other ICU DLLs go (the code-containing DLLs)
 #      The lib file for the data DLL goes in $(DLL_OUTPUT)/../lib/
 #
-!IF "$(CFG)" == "x64\Release" || "$(CFG)" == "x64\Debug"
-DLL_OUTPUT=$(ICUP)\bin64
+!IF "$(CFG)" == "ARM\Release" || "$(CFG)" == "ARM\Debug"
+DLL_OUTPUT=$(ICUP)\binARM$(UWP)
+!ELSE IF "$(CFG)" == "x64\Release" || "$(CFG)" == "x64\Debug"
+DLL_OUTPUT=$(ICUP)\bin64$(UWP)
+!ELSE IF "$(UWP)" == "UWP"
+DLL_OUTPUT=$(ICUP)\bin32$(UWP)
 !ELSE
-DLL_OUTPUT=$(ICUP)\bin
+DLL_OUTPUT=$(ICUP)\bin$(UWP)
 !ENDIF
 
 #
@@ -145,14 +155,28 @@ TESTDATABLD=$(ICUP)\source\test\testdata\out\build
 #       Directory under which all of the ICU data building tools live.
 #
 ICUTOOLS=$(ICUP)\source\tools
+!MESSAGE ICU tools path is $(ICUTOOLS)
+
+#
+#  TOOLS CFG PATH
+#      ARM needs to use one of the other tools, so make sure to get an usable cfg path
+#      Since tools, particularly pkggen, have architecture built-in, we made x64 on
+#      Windows be machine-independent and use those tools.
+#
+CFGTOOLS=$(CFG)
+!IF "$(CFG)" == "ARM\Release" || "$(CFG)" == "ARM\Debug"
+CFGTOOLS=x64\Release
+!ENDIF
+!MESSAGE ICU tools CFG subpath is $(CFGTOOLS)
 
 # The current ICU tools need to be in the path first.
-!IF "$(CFG)" == "x64\Release" || "$(CFG)" == "x64\Debug"
-PATH = $(ICUP)\bin64;$(PATH)
-ICUPBIN=$(ICUP)\bin64
-!ELSE
+# x86 uses x86, x64 and arm use x64
+!IF "$(CFG)" == "x86\Release" || "$(CFG)" == "x86\Debug"
 PATH = $(ICUP)\bin;$(PATH)
 ICUPBIN=$(ICUP)\bin
+!ELSE
+PATH = $(ICUP)\bin64;$(PATH)
+ICUPBIN=$(ICUP)\bin64
 !ENDIF
 
 
@@ -217,7 +241,9 @@ UCM_SOURCE_SPECIAL=$(UCM_SOURCE_EBCDIC_IGNORE_SISO)
 
 !IF EXISTS("$(ICUSRCDATA)\$(ICUUCM)\ucmlocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUUCM)\ucmlocal.mk"
+!IFDEF UCM_SOURCE_LOCAL
 UCM_SOURCE=$(UCM_SOURCE) $(UCM_SOURCE_LOCAL)
+!ENDIF
 !IFDEF UCM_SOURCE_EBCDIC_IGNORE_SISO_LOCAL
 UCM_SOURCE_SPECIAL=$(UCM_SOURCE_SPECIAL) $(UCM_SOURCE_EBCDIC_IGNORE_SISO_LOCAL)
 BUILD_SPECIAL_CNV_FILES=YES
@@ -235,9 +261,15 @@ CNV_FILES_SPECIAL=$(UCM_SOURCE_SPECIAL:.ucm=.cnv)
 !INCLUDE "$(ICUSRCDATA)\$(ICUBRK)\brkfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICUBRK)\brklocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUBRK)\brklocal.mk"
+!IFDEF BRK_SOURCE_LOCAL
 BRK_SOURCE=$(BRK_SOURCE) $(BRK_SOURCE_LOCAL)
+!ENDIF
+!IFDEF BRK_DICT_SOURCE_LOCAL
 BRK_DICT_SOURCE=$(BRK_DICT_SOURCE) $(BRK_DICT_SOURCE_LOCAL)
+!ENDIF
+!IFDEF BRK_RES_SOURCE_LOCAL
 BRK_RES_SOURCE=$(BRK_RES_SOURCE) $(BRK_RES_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "brklocal.mk". Not building user-additional break iterator files.
 !ENDIF
@@ -270,7 +302,9 @@ ALL_RES = $(ALL_RES) $(ICUBRK)\res_index.res
 !INCLUDE "$(ICUSRCDATA)\$(ICULOC)\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICULOC)\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICULOC)\reslocal.mk"
+!IFDEF GENRB_SOURCE_LOCAL
 GENRB_SOURCE=$(GENRB_SOURCE) $(GENRB_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -289,7 +323,9 @@ ALL_RES = $(ALL_RES) res_index.res
 !INCLUDE "$(ICUSRCDATA)\curr\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\curr\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\curr\reslocal.mk"
+!IFDEF CURR_SOURCE_LOCAL
 CURR_SOURCE=$(CURR_SOURCE) $(CURR_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "curr\reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -310,7 +346,9 @@ ALL_RES = $(ALL_RES) curr\res_index.res
 !INCLUDE "$(ICUSRCDATA)\lang\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\lang\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\lang\reslocal.mk"
+!IFDEF LANG_SOURCE_LOCAL
 LANG_SOURCE=$(LANG_SOURCE) $(LANG_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "lang\reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -331,7 +369,9 @@ ALL_RES = $(ALL_RES) lang\res_index.res
 !INCLUDE "$(ICUSRCDATA)\region\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\region\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\region\reslocal.mk"
+!IFDEF REGION_SOURCE_LOCAL
 REGION_SOURCE=$(REGION_SOURCE) $(REGION_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "region\reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -352,7 +392,9 @@ ALL_RES = $(ALL_RES) region\res_index.res
 !INCLUDE "$(ICUSRCDATA)\zone\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\zone\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\zone\reslocal.mk"
+!IFDEF ZONE_SOURCE_LOCAL
 ZONE_SOURCE=$(ZONE_SOURCE) $(ZONE_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "zone\reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -374,7 +416,9 @@ ALL_RES = $(ALL_RES) zone\res_index.res
 !INCLUDE "$(ICUSRCDATA)\unit\resfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\unit\reslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\unit\reslocal.mk"
+!IFDEF UNIT_SOURCE_LOCAL
 UNIT_SOURCE=$(UNIT_SOURCE) $(UNIT_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "unit\reslocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -395,7 +439,9 @@ ALL_RES = $(ALL_RES) unit\res_index.res
 !INCLUDE "$(ICUSRCDATA)\$(ICUCOL)\colfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICUCOL)\collocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUCOL)\collocal.mk"
+!IFDEF COLLATION_SOURCE_LOCAL
 COLLATION_SOURCE=$(COLLATION_SOURCE) $(COLLATION_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "collocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -416,7 +462,9 @@ ALL_RES = $(ALL_RES) $(ICUCOL)\res_index.res
 !INCLUDE "$(ICUSRCDATA)\$(ICURBNF)\rbnffiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICURBNF)\rbnflocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICURBNF)\rbnflocal.mk"
+!IFDEF RBNF_SOURCE_LOCAL
 RBNF_SOURCE=$(RBNF_SOURCE) $(RBNF_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "rbnflocal.mk". Not building user-additional resource bundle files.
 !ENDIF
@@ -437,7 +485,9 @@ ALL_RES = $(ALL_RES) $(ICURBNF)\res_index.res
 !INCLUDE "$(ICUSRCDATA)\$(ICUTRNS)\trnsfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICUTRNS)\trnslocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUTRNS)\trnslocal.mk"
+!IFDEF TRANSLIT_SOURCE_LOCAL
 TRANSLIT_SOURCE=$(TRANSLIT_SOURCE) $(TRANSLIT_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "trnslocal.mk". Not building user-additional transliterator files.
 !ENDIF
@@ -458,7 +508,9 @@ TRANSLIT_RES_FILES = $(TRANSLIT_RES_FILES:translit\ =translit\)
 !INCLUDE "$(ICUSRCDATA)\$(ICUMISC2)\miscfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICUMISC2)\misclocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUMISC2)\misclocal.mk"
+!IFDEF MISC_SOURCE_LOCAL
 MISC_SOURCE=$(MISC_SOURCE) $(MISC_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "misclocal.mk". Not building user-additional miscellaenous files.
 !ENDIF
@@ -477,7 +529,9 @@ ALL_RES = $(ALL_RES) $(RB_FILES) $(MISC_FILES)
 !INCLUDE "$(ICUSRCDATA)\$(ICUSPREP)\sprepfiles.mk"
 !IF EXISTS("$(ICUSRCDATA)\$(ICUSPREP)\spreplocal.mk")
 !INCLUDE "$(ICUSRCDATA)\$(ICUSPREP)\spreplocal.mk"
+!IFDEF SPREP_SOURCE_LOCAL
 SPREP_SOURCE=$(SPREP_SOURCE) $(SPREP_SOURCE_LOCAL)
+!ENDIF
 !ELSE
 !MESSAGE Information: cannot find "spreplocal.mk". Not building user-additional stringprep files.
 !ENDIF
@@ -490,6 +544,12 @@ SPREP_FILES = $(SPREP_SOURCE:.txt=.spp)
 # Common defines for both ways of building ICU's data library.
 COMMON_ICUDATA_DEPENDENCIES="$(ICUPBIN)\pkgdata.exe" "$(ICUTMP)\icudata.res" "$(ICUP)\source\stubdata\stubdatabuilt.txt"
 COMMON_ICUDATA_ARGUMENTS=-f -e $(U_ICUDATA_NAME) -v $(ICU_PACKAGE_MODE) -c -p $(ICUPKG) -T "$(ICUTMP)" -L $(U_ICUDATA_NAME) -d "$(ICUBLD_PKG)" -s .
+!IF "$(UWP)" == "UWP"
+COMMON_ICUDATA_ARGUMENTS=$(COMMON_ICUDATA_ARGUMENTS) -u
+!IF "$(CFG)" == "ARM\Release" || "$(CFG)" == "ARM\Debug"
+COMMON_ICUDATA_ARGUMENTS=$(COMMON_ICUDATA_ARGUMENTS) -a
+!ENDIF
+!ENDIF
 
 #############################################################################
 #
@@ -502,6 +562,11 @@ COMMON_ICUDATA_ARGUMENTS=-f -e $(U_ICUDATA_NAME) -v $(ICU_PACKAGE_MODE) -c -p $(
 #############################################################################
 ALL : GODATA "$(ICU_LIB_TARGET)" "$(TESTDATAOUT)\testdata.dat"
 	@echo All targets are up to date
+
+!IF "$(UWP)" == "UWP"
+	@if not exist "$(ICUMAKE)\..\..\commondata\" mkdir "$(ICUMAKE)\..\..\commondata\"
+    copy "$(ICUOUT)\$(U_ICUDATA_NAME)$(U_ICUDATA_ENDIAN_SUFFIX).dat" "$(ICUMAKE)\..\..\commondata\"
+!ENDIF
 
 # The core Unicode properties files (uprops.icu, ucase.icu, ubidi.icu)
 # are hardcoded in the common DLL and therefore not included in the data package any more.
@@ -554,9 +619,9 @@ DEBUGUTILITIESDATA_DIR=main\tests\core\src\com\ibm\icu\dev\test\util
 DEBUGUTILITIESDATA_SRC=DebugUtilitiesData.java
 
 # Build DebugUtilitiesData.java
-"$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)\$(DEBUGUTILITIESDATA_SRC)" : {"$(ICUTOOLS)\gentest\$(CFG)"}gentest.exe
+"$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)\$(DEBUGUTILITIESDATA_SRC)" : {"$(ICUTOOLS)\gentest\$(CFGTOOLS)"}gentest.exe
 	if not exist "$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)" mkdir "$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)"
-	"$(ICUTOOLS)\gentest\$(CFG)\gentest" -j -d"$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)"
+	"$(ICUTOOLS)\gentest\$(CFGTOOLS)\gentest" -j -d"$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)"
 
 ICU4J_DATA="$(ICUOUT)\icu4j\icudata.jar" "$(ICUOUT)\icu4j\testdata.jar"  "$(ICUOUT)\icu4j\src\$(DEBUGUTILITIESDATA_DIR)\$(DEBUGUTILITIESDATA_SRC)"
 
@@ -600,10 +665,10 @@ icu4j-data-install :
 #
 # testdata - nmake will invoke pkgdata, which will create testdata.dat
 #
-"$(TESTDATAOUT)\testdata.dat": "$(TESTDATA)\*" "$(ICUBLD_PKG)\$(ICUCOL)\ucadata.icu" $(TRANSLIT_RES_FILES) $(MISC_FILES) $(RB_FILES) {"$(ICUTOOLS)\genrb\$(CFG)"}genrb.exe
+"$(TESTDATAOUT)\testdata.dat": "$(TESTDATA)\*" "$(ICUBLD_PKG)\$(ICUCOL)\ucadata.icu" $(TRANSLIT_RES_FILES) $(MISC_FILES) $(RB_FILES) {"$(ICUTOOLS)\genrb\$(CFGTOOLS)"}genrb.exe
 	@cd "$(TESTDATA)"
 	@echo building testdata...
-	nmake /nologo /f "$(TESTDATA)\testdata.mak" TESTDATA=. ICUTOOLS="$(ICUTOOLS)" ICUPBIN="$(ICUPBIN)" ICUP="$(ICUP)" CFG=$(CFG) TESTDATAOUT="$(TESTDATAOUT)" TESTDATABLD="$(TESTDATABLD)"
+	nmake /nologo /f "$(TESTDATA)\testdata.mak" TESTDATA=. ICUTOOLS="$(ICUTOOLS)" ICUPBIN="$(ICUPBIN)" ICUP="$(ICUP)" CFG=$(CFGTOOLS) TESTDATAOUT="$(TESTDATAOUT)" TESTDATABLD="$(TESTDATABLD)"
 
 #invoke pkgdata for ICU common data
 #  pkgdata will drop all output files (.dat, .dll, .lib) into the target (ICUBLD_PKG) directory.
@@ -667,6 +732,7 @@ $(SPREP_FILES:.spp=.spp
 )
 <<KEEP
 	-@erase "$(ICU_LIB_TARGET)"
+    @if not exist "$(DLL_OUTPUT)" mkdir "$(DLL_OUTPUT)"
 	copy "$(U_ICUDATA_NAME).dll" "$(ICU_LIB_TARGET)"
 	-@erase "$(U_ICUDATA_NAME).dll"
 	copy "$(ICUTMP)\$(ICUPKG).dat" "$(ICUOUT)\$(U_ICUDATA_NAME)$(U_ICUDATA_ENDIAN_SUFFIX).dat"
@@ -753,42 +819,42 @@ CLEAN : GODATA
 
 
 # RBBI .brk file generation.
-{$(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)}.txt.brk:
+{$(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\rules}.txt.brk:
 	@echo Creating $@
-	@"$(ICUTOOLS)\genbrk\$(CFG)\genbrk" -c -r $< -o $@ -d"$(ICUBLD_PKG)" -i "$(ICUBLD_PKG)"
+	@"$(ICUTOOLS)\genbrk\$(CFGTOOLS)\genbrk" -c -r $< -o $@ -d"$(ICUBLD_PKG)" -i "$(ICUBLD_PKG)"
 
 #RBBI .dict file generation.
-{$(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)}.txt.dict:
+{$(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\dictionaries}.txt.dict:
     @echo Creating $@
-    @"$(ICUTOOLS)\gendict\$(CFG)\gendict" -c --uchars $<  "$(ICUBLD_PKG)\$@"
+    @"$(ICUTOOLS)\gendict\$(CFGTOOLS)\gendict" -c --uchars $<  "$(ICUBLD_PKG)\$@"
 
 $(ICUBRK)\thaidict.dict:
 	@echo Creating $(ICUBRK)\thaidict.dict
-	@"$(ICUTOOLS)\gendict\$(CFG)\gendict" -c --bytes --transform offset-0x0e00 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\thaidict.txt "$(ICUBLD_PKG)\$(ICUBRK)\thaidict.dict"
+	@"$(ICUTOOLS)\gendict\$(CFGTOOLS)\gendict" -c --bytes --transform offset-0x0e00 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\dictionaries\thaidict.txt "$(ICUBLD_PKG)\$(ICUBRK)\thaidict.dict"
 
 $(ICUBRK)\laodict.dict:
 	@echo Creating $(ICUBRK)\laodict.dict
-	@"$(ICUTOOLS)\gendict\$(CFG)\gendict" -c --bytes --transform offset-0x0e80 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\laodict.txt "$(ICUBLD_PKG)\$(ICUBRK)\laodict.dict"
+	@"$(ICUTOOLS)\gendict\$(CFGTOOLS)\gendict" -c --bytes --transform offset-0x0e80 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\dictionaries\laodict.txt "$(ICUBLD_PKG)\$(ICUBRK)\laodict.dict"
 
 $(ICUBRK)\burmesedict.dict:
 	@echo Creating $(ICUBRK)\burmesedict.dict
-	@"$(ICUTOOLS)\gendict\$(CFG)\gendict" -c --bytes --transform offset-0x1000 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\burmesedict.txt "$(ICUBLD_PKG)\$(ICUBRK)\burmesedict.dict"
+	@"$(ICUTOOLS)\gendict\$(CFGTOOLS)\gendict" -c --bytes --transform offset-0x1000 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\dictionaries\burmesedict.txt "$(ICUBLD_PKG)\$(ICUBRK)\burmesedict.dict"
 
 $(ICUBRK)\khmerdict.dict:
 	@echo Creating $(ICUBRK)\khmerdict.dict
-	@"$(ICUTOOLS)\gendict\$(CFG)\gendict" -c --bytes --transform offset-0x1780 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\khmerdict.txt "$(ICUBLD_PKG)\$(ICUBRK)\khmerdict.dict"
+	@"$(ICUTOOLS)\gendict\$(CFGTOOLS)\gendict" -c --bytes --transform offset-0x1780 $(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)\dictionaries\khmerdict.txt "$(ICUBLD_PKG)\$(ICUBRK)\khmerdict.dict"
 
 !IFNDEF ICUDATA_SOURCE_ARCHIVE
 # Rule for creating converters
 $(CNV_FILES): $(UCM_SOURCE)
 	@echo Building Charset Conversion table $(@B)
-	@"$(ICUTOOLS)\makeconv\$(CFG)\makeconv" -c -d"$(ICUBLD_PKG)" $(ICUSRCDATA_RELATIVE_PATH)\$(ICUUCM)\$(@B).ucm
+	@"$(ICUTOOLS)\makeconv\$(CFGTOOLS)\makeconv" -c -d"$(ICUBLD_PKG)" $(ICUSRCDATA_RELATIVE_PATH)\$(ICUUCM)\$(@B).ucm
 !ENDIF
 
 !IFDEF BUILD_SPECIAL_CNV_FILES
 $(CNV_FILES_SPECIAL): $(UCM_SOURCE_SPECIAL)
 	@echo Building Special Charset Conversion table $(@B)
-	@"$(ICUTOOLS)\makeconv\$(CFG)\makeconv" -c --ignore-siso-check -d"$(ICUBLD_PKG)" $(ICUSRCDATA_RELATIVE_PATH)\$(ICUUCM)\$(@B).ucm
+	@"$(ICUTOOLS)\makeconv\$(CFGTOOLS)\makeconv" -c --ignore-siso-check -d"$(ICUBLD_PKG)" $(ICUSRCDATA_RELATIVE_PATH)\$(ICUUCM)\$(@B).ucm
 !ENDIF
 
 # Batch inference rule for creating miscellaneous resource files
@@ -798,12 +864,12 @@ $(CNV_FILES_SPECIAL): $(UCM_SOURCE_SPECIAL)
 #       way, remove the -q.
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICUMISC2)}.txt.res::
 	@echo Making Miscellaneous Resource Bundle files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -q -d"$(ICUBLD_PKG)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -q -d"$(ICUBLD_PKG)" $<
 
 # Inference rule for creating resource bundle files
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICULOC)}.txt.res::
 	@echo Making Locale Resource Bundle files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\$(ICULOC) -k -d"$(ICUBLD_PKG)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\$(ICULOC) -k -d"$(ICUBLD_PKG)" $<
 
 # copy the locales/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -820,12 +886,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)" .\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)" .\res_index.txt
 	
 
 {$(ICUSRCDATA_RELATIVE_PATH)\curr}.txt{curr}.res::
 	@echo Making currency display name files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\curr -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\curr" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\curr -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\curr" $<
 
 # copy the curr/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -842,12 +908,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\curr" .\curr\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\curr" .\curr\res_index.txt
 
 
 {$(ICUSRCDATA_RELATIVE_PATH)\lang}.txt{lang}.res::
 	@echo Making language/script display name files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\lang -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\lang" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\lang -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\lang" $<
 
 # copy the lang/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -864,12 +930,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\lang" .\lang\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\lang" .\lang\res_index.txt
 
 
 {$(ICUSRCDATA_RELATIVE_PATH)\region}.txt{region}.res::
 	@echo Making region display name files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\region -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\region" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\region -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\region" $<
 
 # copy the region/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -886,12 +952,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\region" .\region\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\region" .\region\res_index.txt
 
 
 {$(ICUSRCDATA_RELATIVE_PATH)\zone}.txt{zone}.res::
 	@echo Making time zone display name files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\zone -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\zone" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\zone -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\zone" $<
 
 # copy the zone/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -908,12 +974,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\zone" .\zone\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\zone" .\zone\res_index.txt
 
 
 {$(ICUSRCDATA_RELATIVE_PATH)\unit}.txt{unit}.res::
 	@echo Making unit display name files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\unit -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\unit" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" --usePoolBundle $(ICUSRCDATA_RELATIVE_PATH)\unit -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\unit" $<
 
 # copy the unit/pool.res file from the source folder to the build output folder
 # and swap it to native endianness
@@ -930,12 +996,12 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\unit" .\unit\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\unit" .\unit\res_index.txt
 
 
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICUCOL)}.txt{$(ICUCOL)}.res::
 	@echo Making Collation files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUCOL)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUCOL)" $<
 
 $(ICUCOL)\res_index.res:
 	@echo Generating <<$(ICUCOL)\res_index.txt
@@ -947,11 +1013,11 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\$(ICUCOL)" .\$(ICUCOL)\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\$(ICUCOL)" .\$(ICUCOL)\res_index.txt
 
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICURBNF)}.txt{$(ICURBNF)}.res::
 	@echo Making RBNF files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICURBNF)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICURBNF)" $<
 
 $(ICURBNF)\res_index.res:
 	@echo Generating <<$(ICURBNF)\res_index.txt
@@ -963,7 +1029,7 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\$(ICURBNF)" .\$(ICURBNF)\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\$(ICURBNF)" .\$(ICURBNF)\res_index.txt
 
 $(ICUBRK)\res_index.res:
 	@echo Generating <<$(ICUBRK)\res_index.txt
@@ -975,15 +1041,15 @@ res_index:table(nofallback) {
     }
 }
 <<KEEP
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -d"$(ICUBLD_PKG)\$(ICUBRK)" .\$(ICUBRK)\res_index.txt
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -d"$(ICUBLD_PKG)\$(ICUBRK)" .\$(ICUBRK)\res_index.txt
 
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICUBRK)}.txt{$(ICUBRK)}.res::
 	@echo Making Break Iterator Resource files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUBRK)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUBRK)" $<
 
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICUTRNS)}.txt{$(ICUTRNS)}.res::
 	@echo Making Transliterator files
-	@"$(ICUTOOLS)\genrb\$(CFG)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUTRNS)" $<
+	@"$(ICUTOOLS)\genrb\$(CFGTOOLS)\genrb" -k -i "$(ICUBLD_PKG)" -d"$(ICUBLD_PKG)\$(ICUTRNS)" $<
 
 
 # DLL version information
@@ -993,9 +1059,9 @@ res_index:table(nofallback) {
 	@rc.exe /i "..\..\..\..\common" /r /fo $@ $**
 
 # Targets for converters
-"$(ICUBLD_PKG)\cnvalias.icu" : {"$(ICUSRCDATA)\$(ICUUCM)"}\convrtrs.txt "$(ICUTOOLS)\gencnval\$(CFG)\gencnval.exe"
+"$(ICUBLD_PKG)\cnvalias.icu" : {"$(ICUSRCDATA)\$(ICUUCM)"}\convrtrs.txt "$(ICUTOOLS)\gencnval\$(CFGTOOLS)\gencnval.exe"
 	@echo Creating data file for Converter Aliases
-	@"$(ICUTOOLS)\gencnval\$(CFG)\gencnval" -d "$(ICUBLD_PKG)" "$(ICUSRCDATA)\$(ICUUCM)\convrtrs.txt"
+	@"$(ICUTOOLS)\gencnval\$(CFGTOOLS)\gencnval" -d "$(ICUBLD_PKG)" "$(ICUSRCDATA)\$(ICUUCM)\convrtrs.txt"
 
 # Targets for prebuilt Unicode data
 "$(ICUBLD_PKG)\pnames.icu": $(ICUSRCDATA_RELATIVE_PATH)\in\pnames.icu
@@ -1031,32 +1097,32 @@ res_index:table(nofallback) {
 # Stringprep .spp file generation.
 {$(ICUSRCDATA_RELATIVE_PATH)\$(ICUSPREP)}.txt.spp:
 	@echo Creating $@
-	@"$(ICUTOOLS)\gensprep\$(CFG)\gensprep" -s $(<D) -d "$(ICUBLD_PKG)" -b $(@B) -m "$(ICUUNIDATA)" -u 3.2.0 $(<F)
+	@"$(ICUTOOLS)\gensprep\$(CFGTOOLS)\gensprep" -s $(<D) -d "$(ICUBLD_PKG)" -b $(@B) -m "$(ICUUNIDATA)" -u 3.2.0 $(<F)
 
 # Confusables .cfu file generation
 #     Can't use an inference rule because two .txt source files combine to produce a single .cfu output file
-"$(ICUBLD_PKG)\confusables.cfu": "$(ICUUNIDATA)\confusables.txt" "$(ICUUNIDATA)\confusablesWholeScript.txt" "$(ICUTOOLS)\gencfu\$(CFG)\gencfu.exe"
+"$(ICUBLD_PKG)\confusables.cfu": "$(ICUUNIDATA)\confusables.txt" "$(ICUUNIDATA)\confusablesWholeScript.txt" "$(ICUTOOLS)\gencfu\$(CFGTOOLS)\gencfu.exe"
 	@echo Creating $@
-	@"$(ICUTOOLS)\gencfu\$(CFG)\gencfu" -c -r "$(ICUUNIDATA)\confusables.txt" -w "$(ICUUNIDATA)\confusablesWholeScript.txt" -o $@ -i "$(ICUBLD_PKG)"
+	@"$(ICUTOOLS)\gencfu\$(CFGTOOLS)\gencfu" -c -r "$(ICUUNIDATA)\confusables.txt" -w "$(ICUUNIDATA)\confusablesWholeScript.txt" -o $@ -i "$(ICUBLD_PKG)"
 
 !IFDEF ICUDATA_ARCHIVE
-"$(ICUDATA_SOURCE_ARCHIVE)": CREATE_DIRS $(ICUDATA_ARCHIVE) "$(ICUTOOLS)\icupkg\$(CFG)\icupkg.exe"
-	"$(ICUTOOLS)\icupkg\$(CFG)\icupkg" -t$(U_ICUDATA_ENDIAN_SUFFIX) "$(ICUDATA_ARCHIVE)" "$(ICUDATA_SOURCE_ARCHIVE)"
+"$(ICUDATA_SOURCE_ARCHIVE)": CREATE_DIRS $(ICUDATA_ARCHIVE) "$(ICUTOOLS)\icupkg\$(CFGTOOLS)\icupkg.exe"
+	"$(ICUTOOLS)\icupkg\$(CFGTOOLS)\icupkg" -t$(U_ICUDATA_ENDIAN_SUFFIX) "$(ICUDATA_ARCHIVE)" "$(ICUDATA_SOURCE_ARCHIVE)"
 !ENDIF
 
 # Dependencies on the tools for the batch inference rules
 
 !IFNDEF ICUDATA_SOURCE_ARCHIVE
-$(UCM_SOURCE) : {"$(ICUTOOLS)\makeconv\$(CFG)"}makeconv.exe
+$(UCM_SOURCE) : {"$(ICUTOOLS)\makeconv\$(CFGTOOLS)"}makeconv.exe
 
 !IFDEF BUILD_SPECIAL_CNV_FILES
-$(UCM_SOURCE_SPECIAL): {"$(ICUTOOLS)\makeconv\$(CFG)"}makeconv.exe
+$(UCM_SOURCE_SPECIAL): {"$(ICUTOOLS)\makeconv\$(CFGTOOLS)"}makeconv.exe
 !ENDIF
 
 # This used to depend on "$(ICUBLD_PKG)\uprops.icu" "$(ICUBLD_PKG)\ucase.icu" "$(ICUBLD_PKG)\ubidi.icu"
 # This data is now hard coded as a part of the library.
 # See Jitterbug 4497 for details.
-$(MISC_SOURCE) $(RB_FILES) $(CURR_FILES) $(LANG_FILES) $(REGION_FILES) $(ZONE_FILES) $(UNIT_FILES) $(COL_COL_FILES) $(RBNF_RES_FILES) $(BRK_RES_FILES) $(TRANSLIT_RES_FILES): {"$(ICUTOOLS)\genrb\$(CFG)"}genrb.exe "$(ICUBLD_PKG)\$(ICUCOL)\ucadata.icu"
+$(MISC_SOURCE) $(RB_FILES) $(CURR_FILES) $(LANG_FILES) $(REGION_FILES) $(ZONE_FILES) $(UNIT_FILES) $(COL_COL_FILES) $(RBNF_RES_FILES) $(BRK_RES_FILES) $(TRANSLIT_RES_FILES): {"$(ICUTOOLS)\genrb\$(CFGTOOLS)"}genrb.exe "$(ICUBLD_PKG)\$(ICUCOL)\ucadata.icu"
 
 # This used to depend on "$(ICUBLD_PKG)\pnames.icu" "$(ICUBLD_PKG)\uprops.icu" "$(ICUBLD_PKG)\ucase.icu" "$(ICUBLD_PKG)\ubidi.icu"
 # These are now hardcoded in ICU4C and only loaded in ICU4J.

@@ -13,8 +13,9 @@ var proxyStr = "new Proxy({},                              "+
 var proxy1 = g1.eval(proxyStr);
 var proxy2 = g2.eval(proxyStr);
 
-function test(str, f, isGeneric = false) {
-    "use strict";
+var test = (function() {
+"use strict";
+return function test(str, f, isGeneric = false) {
 
     var x = f(eval(str));
     assertEq(x, f(g1.eval(str)));
@@ -53,6 +54,7 @@ function test(str, f, isGeneric = false) {
     }
     assertEq(threw, !isGeneric);
 }
+})();
 
 test("new Boolean(true)", b => Boolean.prototype.toSource.call(b));
 test("new Boolean(true)", b => Boolean.prototype.toString.call(b));
@@ -63,8 +65,7 @@ test("new Number(1)", n => Number.prototype.valueOf.call(n));
 test("new Number(1)", n => Number.prototype.toFixed.call(n));
 test("new Number(1)", n => Number.prototype.toExponential.call(n));
 test("new Number(1)", n => Number.prototype.toPrecision.call(n));
-test("new Iterator({x:1})", i => Iterator.prototype.next.call(i).toString());
-test("(function(){yield 1})()", i => (function(){yield})().next.call(i).toString());
+test("(function*(){yield 1})()", i => (function*(){yield})().next.call(i).toString());
 test("new String('one')", s => String.prototype.toSource.call(s));
 test("new String('one')", s => String.prototype.toString.call(s));
 test("new RegExp('1')", r => RegExp.prototype.exec.call(r, '1').toString());
@@ -147,11 +148,10 @@ test("new Date()", d => justDontThrow(Date.prototype.toISOString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toLocaleString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toLocaleDateString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toLocaleTimeString.call(d)));
-test("new Date()", d => justDontThrow(Date.prototype.toLocaleFormat.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toTimeString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toDateString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.toSource.call(d)));
-test("new Date()", d => justDontThrow(Date.prototype.toString.call(d)), true);
+test("new Date()", d => justDontThrow(Date.prototype.toString.call(d)));
 test("new Date()", d => justDontThrow(Date.prototype.valueOf.call(d)));
 
 throw "done";

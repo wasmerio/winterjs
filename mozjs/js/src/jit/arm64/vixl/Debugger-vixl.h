@@ -24,6 +24,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef JS_SIMULATOR_ARM64
+
 #ifndef VIXL_A64_DEBUGGER_A64_H_
 #define VIXL_A64_DEBUGGER_A64_H_
 
@@ -52,11 +54,11 @@ class FormatToken;
 
 class Debugger : public Simulator {
  public:
-  explicit Debugger(Decoder* decoder, FILE* stream = stdout);
+  explicit Debugger(JSContext* cx, Decoder* decoder, FILE* stream = stdout);
   ~Debugger();
 
-  virtual void Run();
-  virtual void VisitException(const Instruction* instr);
+  virtual void Run() override;
+  virtual void VisitException(const Instruction* instr) override;
 
   int debug_parameters() const { return debug_parameters_; }
   void set_debug_parameters(int parameters) {
@@ -111,3 +113,5 @@ class Debugger : public Simulator {
 }  // namespace vixl
 
 #endif  // VIXL_A64_DEBUGGER_A64_H_
+
+#endif  // JS_SIMULATOR_ARM64

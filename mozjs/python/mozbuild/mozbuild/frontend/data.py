@@ -23,6 +23,9 @@ from mozpack.chrome.manifest import ManifestEntry
 import mozpack.path as mozpath
 from .context import FinalTargetValue
 
+from collections import defaultdict, OrderedDict
+import itertools
+
 from ..util import (
     group_unified_files,
 )
@@ -52,7 +55,7 @@ class ContextDerived(TreeMetadata):
         'context_all_paths',
         'topsrcdir',
         'topobjdir',
-        'relativedir',
+        'relsrcdir',
         'srcdir',
         'objdir',
         'config',
@@ -70,7 +73,7 @@ class ContextDerived(TreeMetadata):
         self.topsrcdir = context.config.topsrcdir
         self.topobjdir = context.config.topobjdir
 
-        self.relativedir = context.relsrcdir
+        self.relsrcdir = context.relsrcdir
         self.srcdir = context.srcdir
         self.objdir = context.objdir
 
@@ -157,6 +160,30 @@ class VariablePassthru(ContextDerived):
         ContextDerived.__init__(self, context)
         self.variables = {}
 
+
+class ComputedFlags(ContextDerived):
+    """Aggregate flags for consumption by various backends.
+    """
+    __slots__ = ('flags',)
+
+    def __init__(self, context, reader_flags):
+        ContextDerived.__init__(self, context)
+        self.flags = reader_flags
+
+    def resolve_flags(self, key, value):
+        # Bypass checks done by CompileFlags that would keep us from
+        # setting a value here.
+        dict.__setitem__(self.flags, key, value)
+
+    def get_flags(self):
+        flags = defaultdict(list)
+        for key, _, dest_vars in self.flags.flag_variables:
+            value = self.flags.get(key)
+            if value:
+                for dest_var in dest_vars:
+                    flags[dest_var].extend(value)
+        return flags.items()
+
 class XPIDLFile(ContextDerived):
     """Describes an XPIDL file to be compiled."""
 
@@ -206,132 +233,181 @@ class Defines(BaseDefines):
 class HostDefines(BaseDefines):
     pass
 
-class IPDLFile(ContextDerived):
-    """Describes an individual .ipdl source file."""
+class WebIDLCollection(ContextDerived):
+    """Collects WebIDL info referenced during the build."""
 
-    __slots__ = (
-        'basename',
-    )
-
-    def __init__(self, context, path):
+    def __init__(self, context):
         ContextDerived.__init__(self, context)
+        self.sources = set()
+        self.generated_sources = set()
+        self.generated_events_sources = set()
+        self.preprocessed_sources = set()
+        self.test_sources = set()
+        self.preprocessed_test_sources = set()
+        self.example_interfaces = set()
 
-        self.basename = path
+    def all_regular_sources(self):
+        return self.sources | self.generated_sources | \
+            self.generated_events_sources | self.preprocessed_sources
 
-class WebIDLFile(ContextDerived):
-    """Describes an individual .webidl source file."""
+    def all_regular_basenames(self):
+        return [mozpath.basename(source) for source in self.all_regular_sources()]
 
-    __slots__ = (
-        'basename',
-    )
+    def all_regular_stems(self):
+        return [mozpath.splitext(b)[0] for b in self.all_regular_basenames()]
 
-    def __init__(self, context, path):
+    def all_regular_bindinggen_stems(self):
+        for stem in self.all_regular_stems():
+            yield '%sBinding' % stem
+
+        for source in self.generated_events_sources:
+            yield mozpath.splitext(mozpath.basename(source))[0]
+
+    def all_regular_cpp_basenames(self):
+        for stem in self.all_regular_bindinggen_stems():
+            yield '%s.cpp' % stem
+
+    def all_test_sources(self):
+        return self.test_sources | self.preprocessed_test_sources
+
+    def all_test_basenames(self):
+        return [mozpath.basename(source) for source in self.all_test_sources()]
+
+    def all_test_stems(self):
+        return [mozpath.splitext(b)[0] for b in self.all_test_basenames()]
+
+    def all_test_cpp_basenames(self):
+        return sorted('%sBinding.cpp' % s for s in self.all_test_stems())
+
+    def all_static_sources(self):
+        return self.sources | self.generated_events_sources | \
+            self.test_sources
+
+    def all_non_static_sources(self):
+        return self.generated_sources | self.all_preprocessed_sources()
+
+    def all_non_static_basenames(self):
+        return [mozpath.basename(s) for s in self.all_non_static_sources()]
+
+    def all_preprocessed_sources(self):
+        return self.preprocessed_sources | self.preprocessed_test_sources
+
+    def all_sources(self):
+        return set(self.all_regular_sources()) | set(self.all_test_sources())
+
+    def all_basenames(self):
+        return [mozpath.basename(source) for source in self.all_sources()]
+
+    def all_stems(self):
+        return [mozpath.splitext(b)[0] for b in self.all_basenames()]
+
+    def generated_events_basenames(self):
+        return [mozpath.basename(s) for s in self.generated_events_sources]
+
+    def generated_events_stems(self):
+        return [mozpath.splitext(b)[0] for b in self.generated_events_basenames()]
+
+    @property
+    def unified_source_mapping(self):
+        # Bindings are compiled in unified mode to speed up compilation and
+        # to reduce linker memory size. Note that test bindings are separated
+        # from regular ones so tests bindings aren't shipped.
+        return list(group_unified_files(self.all_regular_cpp_basenames(),
+                                        unified_prefix='UnifiedBindings',
+                                        unified_suffix='cpp',
+                                        files_per_unified_file=32))
+
+    def all_source_files(self):
+        from mozwebidlcodegen import WebIDLCodegenManager
+        return (sorted(list(WebIDLCodegenManager.GLOBAL_DEFINE_FILES)) +
+                sorted(set(p for p, _ in self.unified_source_mapping)))
+
+
+class IPDLCollection(ContextDerived):
+    """Collects IPDL files during the build."""
+
+    def __init__(self, context):
         ContextDerived.__init__(self, context)
+        self.sources = set()
+        self.preprocessed_sources = set()
 
-        self.basename = path
+    def all_sources(self):
+        return self.sources | self.preprocessed_sources
 
-class GeneratedEventWebIDLFile(ContextDerived):
-    """Describes an individual .webidl source file."""
+    def all_regular_sources(self):
+        return self.sources
 
-    __slots__ = (
-        'basename',
-    )
+    def all_preprocessed_sources(self):
+        return self.preprocessed_sources
 
-    def __init__(self, context, path):
-        ContextDerived.__init__(self, context)
+    def all_generated_sources(self):
+        sorted_ipdl_sources = list(sorted(self.all_sources()))
 
-        self.basename = path
+        def files_from(ipdl):
+            base = mozpath.basename(ipdl)
+            root, ext = mozpath.splitext(base)
 
-class TestWebIDLFile(ContextDerived):
-    """Describes an individual test-only .webidl source file."""
+            # Both .ipdl and .ipdlh become .cpp files
+            files = ['%s.cpp' % root]
+            if ext == '.ipdl':
+                # .ipdl also becomes Child/Parent.cpp files
+                files.extend(['%sChild.cpp' % root,
+                              '%sParent.cpp' % root])
+            return files
 
-    __slots__ = (
-        'basename',
-    )
+        return list(itertools.chain(*[files_from(p) for p in sorted_ipdl_sources]))
 
-    def __init__(self, context, path):
-        ContextDerived.__init__(self, context)
+    @property
+    def unified_source_mapping(self):
+        return list(group_unified_files(self.all_generated_sources(),
+                                        unified_prefix='UnifiedProtocols',
+                                        unified_suffix='cpp',
+                                        files_per_unified_file=16))
 
-        self.basename = path
-
-class PreprocessedTestWebIDLFile(ContextDerived):
-    """Describes an individual test-only .webidl source file that requires
-    preprocessing."""
-
-    __slots__ = (
-        'basename',
-    )
-
-    def __init__(self, context, path):
-        ContextDerived.__init__(self, context)
-
-        self.basename = path
-
-class PreprocessedWebIDLFile(ContextDerived):
-    """Describes an individual .webidl source file that requires preprocessing."""
-
-    __slots__ = (
-        'basename',
-    )
-
-    def __init__(self, context, path):
-        ContextDerived.__init__(self, context)
-
-        self.basename = path
-
-class GeneratedWebIDLFile(ContextDerived):
-    """Describes an individual .webidl source file that is generated from
-    build rules."""
-
-    __slots__ = (
-        'basename',
-    )
-
-    def __init__(self, context, path):
-        ContextDerived.__init__(self, context)
-
-        self.basename = path
-
-
-class ExampleWebIDLInterface(ContextDerived):
-    """An individual WebIDL interface to generate."""
-
-    __slots__ = (
-        'name',
-    )
-
-    def __init__(self, context, name):
-        ContextDerived.__init__(self, context)
-
-        self.name = name
+    def all_source_files(self):
+        return sorted(set(p for p, _ in self.unified_source_mapping))
 
 
 class LinkageWrongKindError(Exception):
     """Error thrown when trying to link objects of the wrong kind"""
 
 
+class LinkageMultipleRustLibrariesError(Exception):
+    """Error thrown when trying to link multiple Rust libraries to an object"""
+
+
 class Linkable(ContextDerived):
     """Generic context derived container object for programs and libraries"""
     __slots__ = (
+        'cxx_link',
         'lib_defines',
         'linked_libraries',
         'linked_system_libs',
+        'sources',
     )
 
     def __init__(self, context):
         ContextDerived.__init__(self, context)
+        self.cxx_link = False
         self.linked_libraries = []
         self.linked_system_libs = []
         self.lib_defines = Defines(context, {})
+        self.sources = defaultdict(list)
 
     def link_library(self, obj):
         assert isinstance(obj, BaseLibrary)
-        if isinstance(obj, SharedLibrary) and obj.variant == obj.COMPONENT:
-            raise LinkageWrongKindError(
-                'Linkable.link_library() does not take components.')
         if obj.KIND != self.KIND:
             raise LinkageWrongKindError('%s != %s' % (obj.KIND, self.KIND))
+        # Linking multiple Rust libraries into an object would result in
+        # multiple copies of the Rust standard library, as well as linking
+        # errors from duplicate symbols.
+        if isinstance(obj, RustLibrary) and any(isinstance(l, RustLibrary)
+                                                for l in self.linked_libraries):
+            raise LinkageMultipleRustLibrariesError("Cannot link multiple Rust libraries into %s",
+                                                    self)
         self.linked_libraries.append(obj)
+        if obj.cxx_link and not isinstance(obj, SharedLibrary):
+            self.cxx_link = True
         obj.refs.append(self)
 
     def link_system_library(self, lib):
@@ -347,6 +423,26 @@ class Linkable(ContextDerived):
                     self.config.import_suffix,
                 )
         self.linked_system_libs.append(lib)
+
+    def source_files(self):
+        all_sources = []
+        # This is ordered for reproducibility and consistently w/
+        # config/rules.mk
+        for suffix in ('.c', '.S', '.cpp', '.m', '.mm', '.s'):
+            all_sources += self.sources.get(suffix, [])
+        return all_sources
+
+    @property
+    def objs(self):
+        obj_prefix = ''
+        if self.KIND == 'host':
+            obj_prefix = 'host_'
+
+        return [mozpath.join(self.objdir, '%s%s.%s' % (obj_prefix,
+                                                       mozpath.splitext(mozpath.basename(f))[0],
+                                                       self.config.substs.get('OBJ_SUFFIX', '')))
+                for f in self.source_files()]
+
 
 class BaseProgram(Linkable):
     """Context derived container object for programs, which is a unicode
@@ -397,12 +493,74 @@ class SimpleProgram(BaseProgram):
     SUFFIX_VAR = 'BIN_SUFFIX'
     KIND = 'target'
 
+    def source_files(self):
+        for srcs in self.sources.values():
+            for f in srcs:
+                if mozpath.basename(mozpath.splitext(f)[0]) == mozpath.splitext(self.program)[0]:
+                    return [f]
+        return []
+
 
 class HostSimpleProgram(HostMixin, BaseProgram):
     """Context derived container object for each program in
     HOST_SIMPLE_PROGRAMS"""
     SUFFIX_VAR = 'HOST_BIN_SUFFIX'
     KIND = 'host'
+
+
+def cargo_output_directory(context, target_var):
+    # cargo creates several directories and places its build artifacts
+    # in those directories.  The directory structure depends not only
+    # on the target, but also what sort of build we are doing.
+    rust_build_kind = 'release'
+    if context.config.substs.get('MOZ_DEBUG_RUST'):
+        rust_build_kind = 'debug'
+    return mozpath.join(context.config.substs[target_var], rust_build_kind)
+
+
+# Rust programs aren't really Linkable, since Cargo handles all the details
+# of linking things.
+class BaseRustProgram(ContextDerived):
+    __slots__ = (
+        'name',
+        'cargo_file',
+        'location',
+        'SUFFIX_VAR',
+        'KIND',
+        'TARGET_SUBST_VAR',
+    )
+
+    def __init__(self, context, name, cargo_file):
+        ContextDerived.__init__(self, context)
+        self.name = name
+        self.cargo_file = cargo_file
+        cargo_dir = cargo_output_directory(context, self.TARGET_SUBST_VAR)
+        exe_file = '%s%s' % (name, context.config.substs.get(self.SUFFIX_VAR, ''))
+        self.location = mozpath.join(cargo_dir, exe_file)
+
+
+class RustProgram(BaseRustProgram):
+    SUFFIX_VAR = 'BIN_SUFFIX'
+    KIND = 'target'
+    TARGET_SUBST_VAR = 'RUST_TARGET'
+
+
+class HostRustProgram(BaseRustProgram):
+    SUFFIX_VAR = 'HOST_BIN_SUFFIX'
+    KIND = 'host'
+    TARGET_SUBST_VAR = 'RUST_HOST_TARGET'
+
+
+class RustTest(ContextDerived):
+    __slots__ = (
+        'name',
+        'features',
+    )
+
+    def __init__(self, context, name, features):
+        ContextDerived.__init__(self, context)
+        self.name = name
+        self.features = features
 
 
 class BaseLibrary(Linkable):
@@ -436,23 +594,11 @@ class Library(BaseLibrary):
     """Context derived container object for a library"""
     KIND = 'target'
     __slots__ = (
-        'is_sdk',
     )
 
-    def __init__(self, context, basename, real_name=None, is_sdk=False):
+    def __init__(self, context, basename, real_name=None):
         BaseLibrary.__init__(self, context, real_name or basename)
         self.basename = basename
-        self.is_sdk = is_sdk
-
-
-class RustRlibLibrary(Library):
-    """Context derived container object for a Rust rlib"""
-
-    def __init__(self, context, basename, crate_name, rlib_filename, link_into):
-        Library.__init__(self, context, basename)
-        self.crate_name = crate_name
-        self.rlib_filename = rlib_filename
-        self.link_into = link_into
 
 
 class StaticLibrary(Library):
@@ -462,11 +608,54 @@ class StaticLibrary(Library):
         'no_expand_lib',
     )
 
-    def __init__(self, context, basename, real_name=None, is_sdk=False,
+    def __init__(self, context, basename, real_name=None,
         link_into=None, no_expand_lib=False):
-        Library.__init__(self, context, basename, real_name, is_sdk)
+        Library.__init__(self, context, basename, real_name)
         self.link_into = link_into
         self.no_expand_lib = no_expand_lib
+
+
+class RustLibrary(StaticLibrary):
+    """Context derived container object for a static library"""
+    __slots__ = (
+        'cargo_file',
+        'crate_type',
+        'dependencies',
+        'deps_path',
+        'features',
+        'target_dir',
+    )
+    TARGET_SUBST_VAR = 'RUST_TARGET'
+    FEATURES_VAR = 'RUST_LIBRARY_FEATURES'
+    LIB_FILE_VAR = 'RUST_LIBRARY_FILE'
+
+    def __init__(self, context, basename, cargo_file, crate_type, dependencies,
+                 features, target_dir, **args):
+        StaticLibrary.__init__(self, context, basename, **args)
+        self.cargo_file = cargo_file
+        self.crate_type = crate_type
+        # We need to adjust our naming here because cargo replaces '-' in
+        # package names defined in Cargo.toml with underscores in actual
+        # filenames. But we need to keep the basename consistent because
+        # many other things in the build system depend on that.
+        assert self.crate_type == 'staticlib'
+        self.lib_name = '%s%s%s' % (context.config.rust_lib_prefix,
+                                     basename.replace('-', '_'),
+                                     context.config.rust_lib_suffix)
+        self.dependencies = dependencies
+        self.features = features
+        self.target_dir = target_dir
+        # Skip setting properties below which depend on cargo
+        # when we don't have a compile environment. The required
+        # config keys won't be available, but the instance variables
+        # that we don't set should never be accessed by the actual
+        # build in that case.
+        if not context.config.substs.get('COMPILE_ENVIRONMENT'):
+            return
+        build_dir = mozpath.join(target_dir,
+                                 cargo_output_directory(context, self.TARGET_SUBST_VAR))
+        self.import_name = mozpath.join(build_dir, self.lib_name)
+        self.deps_path = mozpath.join(build_dir, 'deps')
 
 
 class SharedLibrary(Library):
@@ -487,13 +676,12 @@ class SharedLibrary(Library):
     }
 
     FRAMEWORK = 1
-    COMPONENT = 2
-    MAX_VARIANT = 3
+    MAX_VARIANT = 2
 
-    def __init__(self, context, basename, real_name=None, is_sdk=False,
-            soname=None, variant=None, symbols_file=False):
+    def __init__(self, context, basename, real_name=None,
+                 soname=None, variant=None, symbols_file=False):
         assert(variant in range(1, self.MAX_VARIANT) or variant is None)
-        Library.__init__(self, context, basename, real_name, is_sdk)
+        Library.__init__(self, context, basename, real_name)
         self.variant = variant
         self.lib_name = real_name or basename
         assert self.lib_name
@@ -520,12 +708,19 @@ class SharedLibrary(Library):
         else:
             self.soname = self.lib_name
 
-        if not symbols_file:
+        if symbols_file is False:
+            # No symbols file.
             self.symbols_file = None
-        elif context.config.substs['OS_TARGET'] == 'WINNT':
-            self.symbols_file = '%s.def' % self.lib_name
+        elif symbols_file is True:
+            # Symbols file with default name.
+            if context.config.substs['OS_TARGET'] == 'WINNT':
+                self.symbols_file = '%s.def' % self.lib_name
+            else:
+                self.symbols_file = '%s.symbols' % self.lib_name
         else:
-            self.symbols_file = '%s.symbols' % self.lib_name
+            # Explicitly provided name.
+            self.symbols_file = symbols_file
+
 
 
 class ExternalLibrary(object):
@@ -545,6 +740,14 @@ class ExternalSharedLibrary(SharedLibrary, ExternalLibrary):
 class HostLibrary(HostMixin, BaseLibrary):
     """Context derived container object for a host library"""
     KIND = 'host'
+
+
+class HostRustLibrary(HostMixin, RustLibrary):
+    """Context derived container object for a host rust library"""
+    KIND = 'host'
+    TARGET_SUBST_VAR = 'RUST_HOST_TARGET'
+    FEATURES_VAR = 'HOST_RUST_LIBRARY_FEATURES'
+    LIB_FILE_VAR = 'HOST_RUST_LIBRARY_FILE'
 
 
 class TestManifest(ContextDerived):
@@ -593,18 +796,17 @@ class TestManifest(ContextDerived):
         # The relative path of the parsed manifest within the objdir.
         'manifest_obj_relpath',
 
+        # The relative paths to all source files for this manifest.
+        'source_relpaths',
+
         # If this manifest is a duplicate of another one, this is the
         # manifestparser.TestManifest of the other one.
         'dupe_manifest',
-
-        # The support files appearing in the DEFAULT section of this
-        # manifest. This enables a space optimization in all-tests.json,
-        # see the comment in mozbuild/backend/common.py.
-        'default_support_files',
     )
 
     def __init__(self, context, path, manifest, flavor=None,
-            install_prefix=None, relpath=None, dupe_manifest=False):
+            install_prefix=None, relpath=None, sources=(),
+            dupe_manifest=False):
         ContextDerived.__init__(self, context)
 
         assert flavor in all_test_flavors()
@@ -616,13 +818,13 @@ class TestManifest(ContextDerived):
         self.install_prefix = install_prefix
         self.manifest_relpath = relpath
         self.manifest_obj_relpath = relpath
+        self.source_relpaths = sources
         self.dupe_manifest = dupe_manifest
         self.installs = {}
         self.pattern_installs = []
         self.tests = []
         self.external_installs = set()
         self.deferred_installs = set()
-        self.default_support_files = None
 
 
 class LocalInclude(ContextDerived):
@@ -762,7 +964,7 @@ class UnifiedSources(BaseSources):
         'unified_source_mapping'
     )
 
-    def __init__(self, context, files, canonical_suffix, files_per_unified_file=16):
+    def __init__(self, context, files, canonical_suffix, files_per_unified_file):
         BaseSources.__init__(self, context, files, canonical_suffix)
 
         self.have_unified_mapping = files_per_unified_file > 1
@@ -843,32 +1045,33 @@ class FinalTargetPreprocessedFiles(ContextDerived):
         ContextDerived.__init__(self, sandbox)
         self.files = files
 
+class LocalizedFiles(FinalTargetFiles):
+    """Sandbox container object for LOCALIZED_FILES, which is a
+    HierarchicalStringList.
+    """
+    pass
 
-class ObjdirFiles(ContextDerived):
+
+class LocalizedPreprocessedFiles(FinalTargetPreprocessedFiles):
+    """Sandbox container object for LOCALIZED_PP_FILES, which is a
+    HierarchicalStringList.
+    """
+    pass
+
+
+class ObjdirFiles(FinalTargetFiles):
     """Sandbox container object for OBJDIR_FILES, which is a
     HierarchicalStringList.
     """
-    __slots__ = ('files')
-
-    def __init__(self, sandbox, files):
-        ContextDerived.__init__(self, sandbox)
-        self.files = files
-
     @property
     def install_target(self):
         return ''
 
 
-class ObjdirPreprocessedFiles(ContextDerived):
+class ObjdirPreprocessedFiles(FinalTargetPreprocessedFiles):
     """Sandbox container object for OBJDIR_PP_FILES, which is a
     HierarchicalStringList.
     """
-    __slots__ = ('files')
-
-    def __init__(self, sandbox, files):
-        ContextDerived.__init__(self, sandbox)
-        self.files = files
-
     @property
     def install_target(self):
         return ''
@@ -896,32 +1099,6 @@ class Exports(FinalTargetFiles):
         return 'dist/include'
 
 
-class BrandingFiles(FinalTargetFiles):
-    """Sandbox container object for BRANDING_FILES, which is a
-    HierarchicalStringList.
-
-    We need an object derived from ContextDerived for use in the backend, so
-    this object fills that role. It just has a reference to the underlying
-    HierarchicalStringList, which is created when parsing BRANDING_FILES.
-    """
-    @property
-    def install_target(self):
-        return 'dist/branding'
-
-
-class SdkFiles(FinalTargetFiles):
-    """Sandbox container object for SDK_FILES, which is a
-    HierarchicalStringList.
-
-    We need an object derived from ContextDerived for use in the backend, so
-    this object fills that role. It just has a reference to the underlying
-    HierarchicalStringList, which is created when parsing SDK_FILES.
-    """
-    @property
-    def install_target(self):
-        return 'dist/sdk'
-
-
 class GeneratedFile(ContextDerived):
     """Represents a generated file."""
 
@@ -931,128 +1108,30 @@ class GeneratedFile(ContextDerived):
         'outputs',
         'inputs',
         'flags',
+        'required_for_compile',
+        'localized',
     )
 
-    def __init__(self, context, script, method, outputs, inputs, flags=()):
+    def __init__(self, context, script, method, outputs, inputs, flags=(), localized=False):
         ContextDerived.__init__(self, context)
         self.script = script
         self.method = method
         self.outputs = outputs if isinstance(outputs, tuple) else (outputs,)
         self.inputs = inputs
         self.flags = flags
+        self.localized = localized
 
+        suffixes = (
+            '.c',
+            '.cpp',
+            '.h',
+            '.inc',
+            '.py',
+            '.rs',
+            'new', # 'new' is an output from make-stl-wrappers.py
+        )
+        self.required_for_compile = any(f.endswith(suffixes) for f in self.outputs)
 
-class ClassPathEntry(object):
-    """Represents a classpathentry in an Android Eclipse project."""
-
-    __slots__ = (
-        'dstdir',
-        'srcdir',
-        'path',
-        'exclude_patterns',
-        'ignore_warnings',
-    )
-
-    def __init__(self):
-        self.dstdir = None
-        self.srcdir = None
-        self.path = None
-        self.exclude_patterns = []
-        self.ignore_warnings = False
-
-
-class AndroidEclipseProjectData(object):
-    """Represents an Android Eclipse project."""
-
-    __slots__ = (
-        'name',
-        'package_name',
-        'is_library',
-        'res',
-        'assets',
-        'libs',
-        'manifest',
-        'recursive_make_targets',
-        'extra_jars',
-        'included_projects',
-        'referenced_projects',
-        '_classpathentries',
-        'filtered_resources',
-    )
-
-    def __init__(self, name):
-        self.name = name
-        self.is_library = False
-        self.manifest = None
-        self.res = None
-        self.assets = None
-        self.libs = []
-        self.recursive_make_targets = []
-        self.extra_jars = []
-        self.included_projects = []
-        self.referenced_projects = []
-        self._classpathentries = []
-        self.filtered_resources = []
-
-    def add_classpathentry(self, path, srcdir, dstdir, exclude_patterns=[], ignore_warnings=False):
-        cpe = ClassPathEntry()
-        cpe.srcdir = srcdir
-        cpe.dstdir = dstdir
-        cpe.path = path
-        cpe.exclude_patterns = list(exclude_patterns)
-        cpe.ignore_warnings = ignore_warnings
-        self._classpathentries.append(cpe)
-        return cpe
-
-
-class AndroidResDirs(ContextDerived):
-    """Represents Android resource directories."""
-
-    __slots__ = (
-        'paths',
-    )
-
-    def __init__(self, context, paths):
-        ContextDerived.__init__(self, context)
-        self.paths = paths
-
-class AndroidAssetsDirs(ContextDerived):
-    """Represents Android assets directories."""
-
-    __slots__ = (
-        'paths',
-    )
-
-    def __init__(self, context, paths):
-        ContextDerived.__init__(self, context)
-        self.paths = paths
-
-class AndroidExtraResDirs(ContextDerived):
-    """Represents Android extra resource directories.
-
-    Extra resources are resources provided by libraries and including in a
-    packaged APK, but not otherwise redistributed.  In practice, this means
-    resources included in Fennec but not in GeckoView.
-    """
-
-    __slots__ = (
-        'paths',
-    )
-
-    def __init__(self, context, paths):
-        ContextDerived.__init__(self, context)
-        self.paths = paths
-
-class AndroidExtraPackages(ContextDerived):
-    """Represents Android extra packages."""
-
-    __slots__ = (
-        'packages',
-    )
-
-    def __init__(self, context, packages):
-        ContextDerived.__init__(self, context)
-        self.packages = packages
 
 class ChromeManifestEntry(ContextDerived):
     """Represents a chrome.manifest entry."""
@@ -1071,3 +1150,13 @@ class ChromeManifestEntry(ContextDerived):
         entry = entry.rebase(mozpath.dirname(manifest_path))
         # Then add the install_target to the entry base directory.
         self.entry = entry.move(mozpath.dirname(self.path))
+
+
+class GnProjectData(ContextDerived):
+    def __init__(self, context, target_dir, gn_dir_attrs, non_unified_sources):
+        ContextDerived.__init__(self, context)
+        self.target_dir = target_dir
+        self.non_unified_sources = non_unified_sources
+        self.gn_input_variables = gn_dir_attrs.variables
+        self.gn_sandbox_variables = gn_dir_attrs.sandbox_vars
+        self.mozilla_flags = gn_dir_attrs.mozilla_flags

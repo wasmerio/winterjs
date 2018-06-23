@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/ln.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 ln{
     AuxExemplarCharacters{"[j q x]"}
     ExemplarCharacters{
@@ -17,6 +11,7 @@ ln{
         "[A B C D E Ɛ F G {Gb} H I K L M {Mb} {Mp} N {Nd} {Ng} {Nk} {Ns} {Nt} {Ny} {N"
         "z} O Ɔ P R S T U V W Y Z]"
     }
+    ExemplarCharactersNumbers{"[\\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -29,7 +24,7 @@ ln{
             }
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{
@@ -74,6 +69,10 @@ ln{
         }
         gregorian{
             AmPmMarkers{
+                "ntɔ́ngɔ́",
+                "mpókwa",
+            }
+            AmPmMarkersAbbr{
                 "ntɔ́ngɔ́",
                 "mpókwa",
             }

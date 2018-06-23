@@ -10,7 +10,7 @@
 #include "mozilla/Tuple.h"
 #include "mozilla/TypeTraits.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/unused.h"
+#include "mozilla/Unused.h"
 
 #include <stddef.h>
 #include <utility>
@@ -26,12 +26,6 @@ using mozilla::Tuple;
 using mozilla::UniquePtr;
 using mozilla::Unused;
 using std::pair;
-
-#if (_MSC_VER == 1800)
-// Optimizations in VS2013 on Windows 10 cause an internal compiler error
-// with this file.
-#pragma optimize("", off)
-#endif
 
 #define CHECK(c) \
   do { \

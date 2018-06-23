@@ -1,10 +1,8 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # Any copyright is dedicated to the Public Domain.
 # http://creativecommons.org/publicdomain/zero/1.0/
 
 DIST_INSTALL = False
-
-NO_VISIBILITY_FLAGS = True
 
 DELAYLOAD_DLLS = ['foo.dll', 'bar.dll']
 
@@ -13,13 +11,4 @@ RESFILE = 'bar.res'
 RCINCLUDE = 'bar.rc'
 DEFFILE = 'baz.def'
 
-CFLAGS += ['-fno-exceptions', '-w']
-CXXFLAGS += ['-fcxx-exceptions', '-include foo.h']
-LDFLAGS += ['-framework Foo', '-x']
-HOST_CFLAGS += ['-funroll-loops', '-wall']
-HOST_CXXFLAGS += ['-funroll-loops-harder', '-wall-day-everyday']
 WIN32_EXE_LDFLAGS += ['-subsystem:console']
-
-DISABLE_STL_WRAPPING = True
-
-ALLOW_COMPILER_WARNINGS = True

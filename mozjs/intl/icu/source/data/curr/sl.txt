@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/sl.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 sl{
     Currencies{
         ADP{
@@ -69,7 +63,7 @@ sl{
             "avstrijski šiling",
         }
         AUD{
-            "A$",
+            "AUD",
             "avstralski dolar",
         }
         AWG{
@@ -161,7 +155,7 @@ sl{
             "stari brazilski kruzeiro (1990–1993)",
         }
         BRL{
-            "R$",
+            "BRL",
             "brazilski real",
         }
         BRN{
@@ -192,9 +186,13 @@ sl{
             "BYB",
             "beloruski novi rubelj (1994–1999)",
         }
+        BYN{
+            "BYN",
+            "beloruski rubelj",
+        }
         BYR{
             "BYR",
-            "beloruski rubelj",
+            "beloruski rubelj (2000–2016)",
         }
         BZD{
             "BZD",
@@ -227,6 +225,10 @@ sl{
         CLP{
             "CLP",
             "čilski peso",
+        }
+        CNH{
+            "CNH",
+            "kitajski juan (offshore)",
         }
         CNY{
             "CN¥",
@@ -353,7 +355,7 @@ sl{
             "francoski frank",
         }
         GBP{
-            "£",
+            "GBP",
             "britanski funt",
         }
         GEK{
@@ -637,7 +639,7 @@ sl{
             "malavijska kvača",
         }
         MXN{
-            "MX$",
+            "MXN",
             "mehiški peso",
         }
         MXP{
@@ -693,7 +695,7 @@ sl{
             "nepalska rupija",
         }
         NZD{
-            "NZ$",
+            "NZD",
             "novozelandski dolar",
         }
         OMR{
@@ -710,11 +712,11 @@ sl{
         }
         PEN{
             "PEN",
-            "perujski novi sol",
+            "perujski sol",
         }
         PES{
             "PES",
-            "perujski sol",
+            "perujski sol (1863–1965)",
         }
         PGK{
             "PGK",
@@ -861,7 +863,7 @@ sl{
             "svazijski lilangeni",
         }
         THB{
-            "฿",
+            "THB",
             "tajski baht",
         }
         TJR{
@@ -905,7 +907,7 @@ sl{
             "dolar Trinidada in Tobaga",
         }
         TWD{
-            "NT$",
+            "TWD",
             "novi tajvanski dolar",
         }
         TZS{
@@ -1001,7 +1003,7 @@ sl{
             "evropska obračunska enota (XBD)",
         }
         XCD{
-            "EC$",
+            "XCD",
             "vzhodnokaribski dolar",
         }
         XDR{
@@ -1110,7 +1112,7 @@ sl{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -1127,6 +1129,7 @@ sl{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -1167,6 +1170,7 @@ sl{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -1203,22 +1207,22 @@ sl{
             two{"dirhama Združenih arabskih emiratov"}
         }
         AFN{
-            few{"afgani"}
+            few{"afganiji"}
             one{"afgani"}
-            other{"afgani"}
-            two{"afgani"}
+            other{"afganijev"}
+            two{"afganija"}
         }
         ALL{
             few{"albanski leki"}
             one{"albanski lek"}
-            other{"albanski lek"}
+            other{"albanskih lekov"}
             two{"albanska leka"}
         }
         AMD{
             few{"armenski drami"}
             one{"armenski dram"}
             other{"armenskih dramov"}
-            two{"armenski dram"}
+            two{"armenska drama"}
         }
         ANG{
             few{"nizozemsko-antilski guldni"}
@@ -1235,7 +1239,7 @@ sl{
         ARS{
             few{"argentinski pesi"}
             one{"argentinski peso"}
-            other{"argentinski peso"}
+            other{"argentinskih pesov"}
             two{"argentinska pesa"}
         }
         AUD{
@@ -1247,8 +1251,8 @@ sl{
         AWG{
             few{"arubski florin"}
             one{"arubski florin"}
-            other{"arubski florin"}
-            two{"arubski florin"}
+            other{"arubskih florinov"}
+            two{"arubska florina"}
         }
         AZN{
             few{"azerbajdžanski manati"}
@@ -1281,10 +1285,10 @@ sl{
             two{"bolgarska leva"}
         }
         BHD{
-            few{"bahranski dinar"}
+            few{"bahranski dinarji"}
             one{"bahranski dinar"}
-            other{"bahranski dinar"}
-            two{"bahranski dinar"}
+            other{"bahranskih dinarjev"}
+            two{"bahranska dinarja"}
         }
         BIF{
             few{"burundski franki"}
@@ -1334,11 +1338,17 @@ sl{
             other{"bocvanskih pul"}
             two{"bocvanski puli"}
         }
-        BYR{
+        BYN{
             few{"beloruski rublji"}
             one{"beloruski rubelj"}
             other{"beloruskih rubljev"}
             two{"beloruska rublja"}
+        }
+        BYR{
+            few{"beloruski rublji (2000–2016)"}
+            one{"beloruski rubelj (2000–2016)"}
+            other{"beloruskih rubljev (2000–2016)"}
+            two{"beloruska rublja (2000–2016)"}
         }
         BZD{
             few{"belizejski dolarji"}
@@ -1355,7 +1365,7 @@ sl{
         CDF{
             few{"kongoški frank"}
             one{"kongoški frank"}
-            other{"kongoški frank"}
+            other{"kongoških frankov"}
             two{"kongoška franka"}
         }
         CHF{
@@ -1370,11 +1380,17 @@ sl{
             other{"čilskih pesov"}
             two{"čilska pesa"}
         }
+        CNH{
+            few{"kitajski juani renminbi (offshore)"}
+            one{"kitajski juan renminbi (offshore)"}
+            other{"kitajskih juanov renminbi (offshore)"}
+            two{"kitajska juana renminbi (offshore)"}
+        }
         CNY{
-            few{"kitajski juan renminbi"}
+            few{"kitajski juani renminbi"}
             one{"kitajski juan renminbi"}
-            other{"kitajski juan renminbi"}
-            two{"kitajski juan renminbi"}
+            other{"kitajskih juanov renminbi"}
+            two{"kitajska juana renmibi"}
         }
         COP{
             few{"kolumbijski pesi"}
@@ -1481,14 +1497,14 @@ sl{
         GEL{
             few{"gruzijski lari"}
             one{"gruzijski lari"}
-            other{"gruzijskih larov"}
-            two{"gruzijska lara"}
+            other{"gruzijskih larijev"}
+            two{"gruzijska larija"}
         }
         GHS{
             few{"ganski cedi"}
             one{"ganski cedi"}
-            other{"ganski cedi"}
-            two{"ganski cedi"}
+            other{"ganskih cedov"}
+            two{"ganska ceda"}
         }
         GIP{
             few{"gibraltarski funti"}
@@ -1577,7 +1593,7 @@ sl{
         IRR{
             few{"iranski riali"}
             one{"iranski rial"}
-            other{"iranski rial"}
+            other{"iranskih rialov"}
             two{"iranska riala"}
         }
         ISK{
@@ -1655,8 +1671,8 @@ sl{
         KZT{
             few{"kazahstanski tenge"}
             one{"kazahstanski tenge"}
-            other{"kazahstanski tenge"}
-            two{"kazahstanski tenge"}
+            other{"kazahstanskih tengov"}
+            two{"kazahstanska tenga"}
         }
         LAK{
             few{"laoški kipi"}
@@ -1709,8 +1725,8 @@ sl{
         MDL{
             few{"moldavijski leu"}
             one{"moldavijski leu"}
-            other{"moldavijski leu"}
-            two{"moldavijski leu"}
+            other{"moldavijskih leuov"}
+            two{"moldavijska leua"}
         }
         MGA{
             few{"malgaški ariariji"}
@@ -1833,16 +1849,22 @@ sl{
             two{"panamski balboi"}
         }
         PEN{
-            few{"perujski novi soli"}
-            one{"perujski novi sol"}
-            other{"perujskih novih solov"}
-            two{"perujska nova sola"}
+            few{"perujski soli"}
+            one{"perujski sol"}
+            other{"perujskih solov"}
+            two{"perujska sola"}
+        }
+        PES{
+            few{"perujski soli (1863–1965)"}
+            one{"perujski sol (1863–1965)"}
+            other{"perujskih solov (1863–1965)"}
+            two{"perujska sola (1863–1965)"}
         }
         PGK{
-            few{"kina Papue Nove Gvineje"}
+            few{"kine Papue Nove Gvineje"}
             one{"kina Papue Nove Gvineje"}
-            other{"kina Papue Nove Gvineje"}
-            two{"kina Papue Nove Gvineje"}
+            other{"kin Papue Nove Gvineje"}
+            two{"kini Papue Nove Gvineje"}
         }
         PHP{
             few{"filipinski pesi"}
@@ -1865,8 +1887,8 @@ sl{
         PYG{
             few{"paragvajski gvarani"}
             one{"paragvajski gvarani"}
-            other{"paragvajski gvarani"}
-            two{"paragvajski gvarani"}
+            other{"paragvajskih gvaranijev"}
+            two{"paragvajska gvaranija"}
         }
         QAR{
             few{"katarski riali"}
@@ -1877,8 +1899,8 @@ sl{
         RON{
             few{"romunski leu"}
             one{"romunski leu"}
-            other{"romunski leu"}
-            two{"romunski leu"}
+            other{"romunskih leuov"}
+            two{"romunska leua"}
         }
         RSD{
             few{"srbski dinarji"}
@@ -1979,8 +2001,8 @@ sl{
         SZL{
             few{"svazijski lilangeni"}
             one{"svazijski lilangeni"}
-            other{"svazijski lilangeni"}
-            two{"svazijski lilangeni"}
+            other{"svazijskih lilangenijev"}
+            two{"svazijska lilangenija"}
         }
         THB{
             few{"tajski bahti"}
@@ -1991,8 +2013,8 @@ sl{
         TJS{
             few{"tadžikistanski somoni"}
             one{"tadžikistanski somoni"}
-            other{"tadžikistanski somoni"}
-            two{"tadžikistanski somoni"}
+            other{"tadžikistanskih somonov"}
+            two{"tadžikistanska somona"}
         }
         TMT{
             few{"turkmenistanski novi manati"}
@@ -2003,13 +2025,13 @@ sl{
         TND{
             few{"tunizijski dinarji"}
             one{"tunizijski dinar"}
-            other{"tunizijski dinar"}
+            other{"tunizijskih dinarjev"}
             two{"tunizijska dinarja"}
         }
         TOP{
             few{"tongovske paange"}
             one{"tongovska paanga"}
-            other{"tongovska paanga"}
+            other{"tongovskih paang"}
             two{"tongovski paangi"}
         }
         TRY{
@@ -2073,16 +2095,16 @@ sl{
             two{"venezuelska bolivarja"}
         }
         VND{
-            few{"vientnamski dong"}
+            few{"vietnamski dongi"}
             one{"vientnamski dong"}
-            other{"vientnamski dong"}
-            two{"vientnamski dong"}
+            other{"vietnamskih dongov"}
+            two{"vietnamska donga"}
         }
         VUV{
             few{"vanuatujski vati"}
             one{"vanuatujski vatu"}
-            other{"vanuatujskih vatov"}
-            two{"vanuatujska vata"}
+            other{"vanuatujskih vatujev"}
+            two{"vanuatujska vatuja"}
         }
         WST{
             few{"samoanske tale"}
@@ -2115,10 +2137,10 @@ sl{
             two{"franka CFP"}
         }
         XXX{
-            few{"neznana ali neveljavna valuta"}
-            one{"neznana ali neveljavna valuta"}
-            other{"neznana ali neveljavna valuta"}
-            two{"neznana ali neveljavna valuta"}
+            few{"(neznana valuta)"}
+            one{"(neznana enota valute)"}
+            other{"(neznana valuta)"}
+            two{"(neznana valuta)"}
         }
         YER{
             few{"jemenski riali"}
@@ -2145,5 +2167,5 @@ sl{
         other{"{0} {1}"}
         two{"{0} {1}"}
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
 }

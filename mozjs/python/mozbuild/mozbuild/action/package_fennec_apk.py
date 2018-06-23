@@ -24,21 +24,43 @@ from mozpack.mozjar import JarReader
 import mozpack.path as mozpath
 
 
-def package_fennec_apk(inputs=[], omni_ja=None, classes_dex=None,
+def package_fennec_apk(inputs=[], omni_ja=None,
                        lib_dirs=[],
                        assets_dirs=[],
                        features_dirs=[],
-                       szip_assets_libs_with=None,
                        root_files=[],
                        verbose=False):
     jarrer = Jarrer(optimize=False)
 
     # First, take input files.  The contents of the later files overwrites the
-    # content of earlier files.
+    # content of earlier files.  Multidexing requires special care: we want a
+    # coherent set of classesN.dex files, so we only take DEX files from a
+    # single input.  This avoids taking, say, classes{1,2,3}.dex from the first
+    # input and only classes{1,2}.dex from the second input, leading to
+    # (potentially) duplicated symbols at runtime.
+    last_input_with_dex_files = None
     for input in inputs:
         jar = JarReader(input)
         for file in jar:
             path = file.filename
+
+            if mozpath.match(path, '/classes*.dex'):
+                last_input_with_dex_files = input
+                continue
+
+            if jarrer.contains(path):
+                jarrer.remove(path)
+            jarrer.add(path, DeflatedFile(file), compress=file.compressed)
+
+    # If we have an input with DEX files, take them all here.
+    if last_input_with_dex_files:
+        jar = JarReader(last_input_with_dex_files)
+        for file in jar:
+            path = file.filename
+
+            if not mozpath.match(path, '/classes*.dex'):
+                continue
+
             if jarrer.contains(path):
                 jarrer.remove(path)
             jarrer.add(path, DeflatedFile(file), compress=file.compressed)
@@ -55,31 +77,57 @@ def package_fennec_apk(inputs=[], omni_ja=None, classes_dex=None,
         jarrer.add(path, file, compress=compress)
 
     for features_dir in features_dirs:
-        finder = FileFinder(features_dir, find_executables=False)
+        finder = FileFinder(features_dir)
         for p, f in finder.find('**'):
             add(mozpath.join('assets', 'features', p), f, False)
 
     for assets_dir in assets_dirs:
-        finder = FileFinder(assets_dir, find_executables=False)
+        finder = FileFinder(assets_dir)
         for p, f in finder.find('**'):
             compress = None  # Take default from Jarrer.
             if p.endswith('.so'):
                 # Asset libraries are special.
-                if szip_assets_libs_with:
-                    # We need to szip libraries before packing.  The file
-                    # returned by the finder is not yet opened.  When it is
-                    # opened, it will "see" the content updated by szip.
-                    subprocess.check_output([szip_assets_libs_with,
-                                             mozpath.join(finder.base, p)])
-
-                if f.open().read(4) == 'SeZz':
-                    # We need to store (rather than deflate) szipped libraries
-                    # (even if we don't szip them ourselves).
+                if f.open().read(5)[1:] == '7zXZ':
+                    print('%s is already compressed' % p)
+                    # We need to store (rather than deflate) compressed libraries
+                    # (even if we don't compress them ourselves).
                     compress = False
+                elif buildconfig.substs.get('XZ'):
+                    cmd = [buildconfig.substs.get('XZ'), '-zkf',
+                           mozpath.join(finder.base, p)]
+
+                    # For now, the mozglue XZStream ELF loader can only support xz files
+                    # with a single stream that contains a single block. In xz, there is no
+                    # explicit option to set the max block count. Instead, we force xz to use
+                    # single thread mode, which results in a single block.
+                    cmd.extend(['--threads=1'])
+
+                    bcj = None
+                    if buildconfig.substs.get('MOZ_THUMB2'):
+                        bcj = '--armthumb'
+                    elif buildconfig.substs.get('CPU_ARCH') == 'arm':
+                        bcj = '--arm'
+                    elif buildconfig.substs.get('CPU_ARCH') == 'x86':
+                        bcj = '--x86'
+
+                    if bcj:
+                        cmd.extend([bcj])
+                    # We need to explicitly specify the LZMA filter chain to ensure consistent builds
+                    # across platforms. Note that the dict size must be less then 16MiB per the hardcoded
+                    # value in mozglue/linker/XZStream.cpp. This is the default LZMA filter chain for for
+                    # xz-utils version 5.0. See:
+                    # https://github.com/xz-mirror/xz/blob/v5.0.0/src/liblzma/lzma/lzma_encoder_presets.c
+                    # https://github.com/xz-mirror/xz/blob/v5.0.0/src/liblzma/api/lzma/container.h#L31
+                    cmd.extend(['--lzma2=dict=8MiB,lc=3,lp=0,pb=2,mode=normal,nice=64,mf=bt4,depth=0'])
+                    print('xz-compressing %s with %s' % (p, ' '.join(cmd)))
+                    subprocess.check_output(cmd)
+                    os.rename(f.path + '.xz', f.path)
+                    compress = False
+
             add(mozpath.join('assets', p), f, compress=compress)
 
     for lib_dir in lib_dirs:
-        finder = FileFinder(lib_dir, find_executables=False)
+        finder = FileFinder(lib_dir)
         for p, f in finder.find('**'):
             add(mozpath.join('lib', p), f)
 
@@ -88,9 +136,6 @@ def package_fennec_apk(inputs=[], omni_ja=None, classes_dex=None,
 
     if omni_ja:
         add(mozpath.join('assets', 'omni.ja'), File(omni_ja), compress=False)
-
-    if classes_dex:
-        add('classes.dex', File(classes_dex))
 
     return jarrer
 
@@ -105,32 +150,25 @@ def main(args):
                         help='Output APK file.')
     parser.add_argument('--omnijar', default=None,
                         help='Optional omni.ja to pack into APK file.')
-    parser.add_argument('--classes-dex', default=None,
-                        help='Optional classes.dex to pack into APK file.')
     parser.add_argument('--lib-dirs', nargs='*', default=[],
                         help='Optional lib/ dirs to pack into APK file.')
     parser.add_argument('--assets-dirs', nargs='*', default=[],
                         help='Optional assets/ dirs to pack into APK file.')
     parser.add_argument('--features-dirs', nargs='*', default=[],
                         help='Optional features/ dirs to pack into APK file.')
-    parser.add_argument('--szip-assets-libs-with', default=None,
-                        help='IN PLACE szip assets/**/*.so BEFORE packing '
-                        'into APK file using the given szip executable.')
     parser.add_argument('--root-files', nargs='*', default=[],
                         help='Optional files to pack into APK file root.')
     args = parser.parse_args(args)
 
     if buildconfig.substs.get('OMNIJAR_NAME') != 'assets/omni.ja':
-        raise ValueError("Don't know how package Fennec APKs when "
+        raise ValueError("Don't know how to package Fennec APKs when "
                          " OMNIJAR_NAME is not 'assets/omni.jar'.")
 
     jarrer = package_fennec_apk(inputs=args.inputs,
                                 omni_ja=args.omnijar,
-                                classes_dex=args.classes_dex,
                                 lib_dirs=args.lib_dirs,
                                 assets_dirs=args.assets_dirs,
                                 features_dirs=args.features_dirs,
-                                szip_assets_libs_with=args.szip_assets_libs_with,
                                 root_files=args.root_files,
                                 verbose=args.verbose)
     jarrer.copy(args.output)

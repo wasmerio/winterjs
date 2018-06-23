@@ -1,1 +1,0 @@
-for each(e in [].some) {}

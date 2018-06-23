@@ -10,60 +10,55 @@ is the default:
 http://docs.python.org/2/library/configparser.html
 """
 
+from __future__ import absolute_import
+
 import unittest
 from manifestparser import read_ini
-from ConfigParser import ConfigParser
 from StringIO import StringIO
+
+import mozunit
+
 
 class IniParserTest(unittest.TestCase):
 
+    def parse_manifest(self, string):
+        buf = StringIO()
+        buf.write(string)
+        buf.seek(0)
+        return read_ini(buf)
+
     def test_inline_comments(self):
-        """
-        We have no inline comments; so we're testing to ensure we don't:
-        https://bugzilla.mozilla.org/show_bug.cgi?id=855288
-        """
-
-        # test '#' inline comments (really, the lack thereof)
-        string = """[test_felinicity.py]
+        result = self.parse_manifest("""
+[test_felinicity.py]
 kittens = true # This test requires kittens
-"""
-        buffer = StringIO()
-        buffer.write(string)
-        buffer.seek(0)
-        result = read_ini(buffer)[0][1]['kittens']
-        self.assertEqual(result, "true # This test requires kittens")
+cats = false#but not cats
+""")[0][1]
 
-        # compare this to ConfigParser
-        # python 2.7 ConfigParser does not support '#' as an
-        # inline comment delimeter (for "backwards compatability"):
-        # http://docs.python.org/2/library/configparser.html
-        buffer.seek(0)
-        parser = ConfigParser()
-        parser.readfp(buffer)
-        control = parser.get('test_felinicity.py', 'kittens')
-        self.assertEqual(result, control)
+        # make sure inline comments get stripped out, but comments without a space in front don't
+        self.assertEqual(result['kittens'], 'true')
+        self.assertEqual(result['cats'], "false#but not cats")
 
-        # test ';' inline comments (really, the lack thereof)
-        string = string.replace('#', ';')
-        buffer = StringIO()
-        buffer.write(string)
-        buffer.seek(0)
-        result = read_ini(buffer)[0][1]['kittens']
-        self.assertEqual(result, "true ; This test requires kittens")
+    def test_line_continuation(self):
+        result = self.parse_manifest("""
+[test_caninicity.py]
+breeds =
+  sheppard
+  retriever
+  terrier
 
-        # compare this to ConfigParser
-        # python 2.7 ConfigParser *does* support ';' as an
-        # inline comment delimeter (ibid).
-        # Python 3.x configparser, OTOH, does not support
-        # inline-comments by default.  It does support their specification,
-        # though they are weakly discouraged:
-        # http://docs.python.org/dev/library/configparser.html
-        buffer.seek(0)
-        parser = ConfigParser()
-        parser.readfp(buffer)
-        control = parser.get('test_felinicity.py', 'kittens')
-        self.assertNotEqual(result, control)
+[test_cats_and_dogs.py]
+  cats=yep
+  dogs=
+    yep
+      yep
+birds=nope
+  fish=nope
+""")
+        self.assertEqual(result[0][1]['breeds'].split(), ['sheppard', 'retriever', 'terrier'])
+        self.assertEqual(result[1][1]['cats'], 'yep')
+        self.assertEqual(result[1][1]['dogs'].split(), ['yep', 'yep'])
+        self.assertEqual(result[1][1]['birds'].split(), ['nope', 'fish=nope'])
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

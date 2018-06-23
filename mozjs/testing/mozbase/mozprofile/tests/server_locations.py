@@ -4,11 +4,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import mozfile
 import unittest
+
+import mozunit
+
 from mozprofile.permissions import ServerLocations, \
     MissingPrimaryLocationError, MultiplePrimaryLocationsError, \
     DuplicateLocationError, BadPortLocationError, LocationsSyntaxError
+
 
 class ServerLocationsTest(unittest.TestCase):
     """test server locations"""
@@ -59,21 +65,21 @@ http://example.org:80           privileged
         # ensure that they're what we expect
         self.assertEqual(len(locations), 6)
         i = iter(locations)
-        self.compare_location(i.next(), 'http', 'mochi.test', '8888',
+        self.compare_location(next(i), 'http', 'mochi.test', '8888',
                               ['primary', 'privileged'])
-        self.compare_location(i.next(), 'http', '127.0.0.1', '80',
+        self.compare_location(next(i), 'http', '127.0.0.1', '80',
                               ['privileged'])
-        self.compare_location(i.next(), 'http', '127.0.0.1', '8888',
+        self.compare_location(next(i), 'http', '127.0.0.1', '8888',
                               ['privileged'])
-        self.compare_location(i.next(), 'https', 'test', '80', ['privileged'])
-        self.compare_location(i.next(), 'http', 'example.org', '80',
+        self.compare_location(next(i), 'https', 'test', '80', ['privileged'])
+        self.compare_location(next(i), 'http', 'example.org', '80',
                               ['privileged'])
-        self.compare_location(i.next(), 'http', 'test1.example.org', '8888',
+        self.compare_location(next(i), 'http', 'test1.example.org', '8888',
                               ['privileged'])
 
         locations.add_host('mozilla.org')
         self.assertEqual(len(locations), 7)
-        self.compare_location(i.next(), 'http', 'mozilla.org', '80',
+        self.compare_location(next(i), 'http', 'mozilla.org', '80',
                               ['privileged'])
 
         # test some errors
@@ -147,4 +153,4 @@ http://example.org:80           privileged
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

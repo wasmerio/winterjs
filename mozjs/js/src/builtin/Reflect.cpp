@@ -7,9 +7,10 @@
 #include "builtin/Reflect.h"
 
 #include "jsarray.h"
-#include "jscntxt.h"
 
+#include "jit/InlinableNatives.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/JSContext.h"
 #include "vm/Stack.h"
 
 #include "vm/Interpreter-inl.h"
@@ -19,134 +20,6 @@ using namespace js;
 
 /*** Reflect methods *****************************************************************************/
 
-/*
- * ES draft rev 32 (2015 Feb 2) 7.3.17 CreateListFromArrayLike.
- * The elementTypes argument is not supported. The result list is
- * pushed to *args.
- */
-template <class InvokeArgs>
-static bool
-InitArgsFromArrayLike(JSContext* cx, HandleValue v, InvokeArgs* args)
-{
-    // Step 3.
-    RootedObject obj(cx, NonNullObject(cx, v));
-    if (!obj)
-        return false;
-
-    // Steps 4-5.
-    uint32_t len;
-    if (!GetLengthProperty(cx, obj, &len))
-        return false;
-
-    // Allocate space for the arguments.
-    if (len > ARGS_LENGTH_MAX) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TOO_MANY_FUN_APPLY_ARGS);
-        return false;
-    }
-    if (!args->init(len))
-        return false;
-
-    // Steps 6-8.
-    for (uint32_t index = 0; index < len; index++) {
-        if (!GetElement(cx, obj, obj, index, (*args)[index]))
-            return false;
-    }
-
-    // Step 9.
-    return true;
-}
-
-/* ES6 26.1.1 Reflect.apply(target, thisArgument, argumentsList) */
-static bool
-Reflect_apply(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    // Step 1.
-    if (!IsCallable(args.get(0))) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_FUNCTION,
-                             "Reflect.apply argument");
-        return false;
-    }
-
-    // Steps 2-3.
-    FastCallGuard fig(cx, args.get(0));
-    InvokeArgs& invokeArgs = fig.args();
-    if (!InitArgsFromArrayLike(cx, args.get(2), &invokeArgs))
-        return false;
-
-    // Steps 4-5. This is specified to be a tail call, but isn't.
-    return fig.call(cx, args.get(0), args.get(1), args.rval());
-}
-
-/* ES6 26.1.2 Reflect.construct(target, argumentsList [, newTarget]) */
-static bool
-Reflect_construct(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    // Step 1.
-    if (!IsConstructor(args.get(0))) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_CONSTRUCTOR,
-                             "Reflect.construct argument");
-        return false;
-    }
-
-    // Steps 2-3.
-    RootedValue newTarget(cx, args.get(0));
-    if (argc > 2) {
-        newTarget = args[2];
-        if (!IsConstructor(newTarget)) {
-            JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_CONSTRUCTOR,
-                                 "Reflect.construct argument 3");
-            return false;
-        }
-    }
-
-    // Step 4-5.
-    ConstructArgs constructArgs(cx);
-    if (!InitArgsFromArrayLike(cx, args.get(1), &constructArgs))
-        return false;
-
-    // Step 6.
-    RootedObject obj(cx);
-    if (!Construct(cx, args.get(0), constructArgs, newTarget, &obj))
-        return false;
-
-    args.rval().setObject(*obj);
-    return true;
-}
-
-/* ES6 26.1.3 Reflect.defineProperty(target, propertyKey, attributes) */
-static bool
-Reflect_defineProperty(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    // Step 1.
-    RootedObject obj(cx, NonNullObject(cx, args.get(0)));
-    if (!obj)
-        return false;
-
-    // Steps 2-3.
-    RootedValue propertyKey(cx, args.get(1));
-    RootedId key(cx);
-    if (!ToPropertyKey(cx, propertyKey, &key))
-        return false;
-
-    // Steps 4-5.
-    Rooted<PropertyDescriptor> desc(cx);
-    if (!ToPropertyDescriptor(cx, args.get(2), true, &desc))
-        return false;
-
-    // Step 6.
-    ObjectOpResult result;
-    if (!DefineProperty(cx, obj, key, desc, result))
-        return false;
-    args.rval().setBoolean(bool(result));
-    return true;
-}
-
 /* ES6 26.1.4 Reflect.deleteProperty (target, propertyKey) */
 static bool
 Reflect_deleteProperty(JSContext* cx, unsigned argc, Value* vp)
@@ -154,7 +27,8 @@ Reflect_deleteProperty(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject target(cx, NonNullObject(cx, args.get(0)));
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.deleteProperty",
+                                             args.get(0)));
     if (!target)
         return false;
 
@@ -172,44 +46,6 @@ Reflect_deleteProperty(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
-/* ES6 26.1.6 Reflect.get(target, propertyKey [, receiver]) */
-static bool
-Reflect_get(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    // Step 1.
-    RootedObject obj(cx, NonNullObject(cx, args.get(0)));
-    if (!obj)
-        return false;
-
-    // Steps 2-3.
-    RootedValue propertyKey(cx, args.get(1));
-    RootedId key(cx);
-    if (!ToPropertyKey(cx, propertyKey, &key))
-        return false;
-
-    // Step 4.
-    RootedValue receiver(cx, args.length() > 2 ? args[2] : args.get(0));
-
-    // Step 5.
-    return GetProperty(cx, obj, receiver, key, args.rval());
-}
-
-/* ES6 26.1.7 Reflect.getOwnPropertyDescriptor(target, propertyKey) */
-static bool
-Reflect_getOwnPropertyDescriptor(JSContext* cx, unsigned argc, Value* vp)
-{
-    // Step 1.
-    CallArgs args = CallArgsFromVp(argc, vp);
-    if (!NonNullObject(cx, args.get(0)))
-        return false;
-
-    // The other steps are identical to ES6 draft rev 32 (2015 Feb 2) 19.1.2.6
-    // Object.getOwnPropertyDescriptor.
-    return js::obj_getOwnPropertyDescriptor(cx, argc, vp);
-}
-
 /* ES6 26.1.8 Reflect.getPrototypeOf(target) */
 bool
 js::Reflect_getPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
@@ -217,7 +53,8 @@ js::Reflect_getPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject target(cx, NonNullObject(cx, args.get(0)));
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.getPrototypeOf",
+                                             args.get(0)));
     if (!target)
         return false;
 
@@ -236,7 +73,7 @@ js::Reflect_isExtensible(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject target(cx, NonNullObject(cx, args.get(0)));
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.isExtensible", args.get(0)));
     if (!target)
         return false;
 
@@ -248,18 +85,21 @@ js::Reflect_isExtensible(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
-/* ES6 26.1.11 Reflect.ownKeys(target) */
+// ES2018 draft rev c164be80f7ea91de5526b33d54e5c9321ed03d3f
+// 26.1.10 Reflect.ownKeys ( target )
 static bool
 Reflect_ownKeys(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    if (!NonNullObject(cx, args.get(0)))
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.ownKeys", args.get(0)));
+    if (!target)
         return false;
 
-    // Steps 2-4.
-    return GetOwnPropertyKeys(cx, args, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS);
+    // Steps 2-3.
+    return GetOwnPropertyKeys(cx, target, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS,
+                              args.rval());
 }
 
 /* ES6 26.1.12 Reflect.preventExtensions(target) */
@@ -269,7 +109,8 @@ Reflect_preventExtensions(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject target(cx, NonNullObject(cx, args.get(0)));
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.preventExtensions",
+                                             args.get(0)));
     if (!target)
         return false;
 
@@ -288,7 +129,7 @@ Reflect_set(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject target(cx, NonNullObject(cx, args.get(0)));
+    RootedObject target(cx, NonNullObjectArg(cx, "`target`", "Reflect.set", args.get(0)));
     if (!target)
         return false;
 
@@ -322,15 +163,15 @@ Reflect_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     // Step 1.
-    RootedObject obj(cx, NonNullObject(cx, args.get(0)));
+    RootedObject obj(cx, NonNullObjectArg(cx, "`target`", "Reflect.setPrototypeOf", args.get(0)));
     if (!obj)
         return false;
 
     // Step 2.
     if (!args.get(1).isObjectOrNull()) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
-                             "Reflect.setPrototypeOf", "an object or null",
-                             InformalValueTypeName(args.get(1)));
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
+                                  "Reflect.setPrototypeOf", "an object or null",
+                                  InformalValueTypeName(args.get(1)));
         return false;
     }
     RootedObject proto(cx, args.get(1).toObjectOrNull());
@@ -344,13 +185,13 @@ Reflect_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static const JSFunctionSpec methods[] = {
-    JS_FN("apply", Reflect_apply, 3, 0),
-    JS_FN("construct", Reflect_construct, 2, 0),
-    JS_FN("defineProperty", Reflect_defineProperty, 3, 0),
+    JS_SELF_HOSTED_FN("apply", "Reflect_apply", 3, 0),
+    JS_SELF_HOSTED_FN("construct", "Reflect_construct", 2, 0),
+    JS_SELF_HOSTED_FN("defineProperty", "Reflect_defineProperty", 3, 0),
     JS_FN("deleteProperty", Reflect_deleteProperty, 2, 0),
-    JS_FN("get", Reflect_get, 2, 0),
-    JS_FN("getOwnPropertyDescriptor", Reflect_getOwnPropertyDescriptor, 2, 0),
-    JS_FN("getPrototypeOf", Reflect_getPrototypeOf, 1, 0),
+    JS_SELF_HOSTED_FN("get", "Reflect_get", 2, 0),
+    JS_SELF_HOSTED_FN("getOwnPropertyDescriptor", "Reflect_getOwnPropertyDescriptor", 2, 0),
+    JS_INLINABLE_FN("getPrototypeOf", Reflect_getPrototypeOf, 1, 0, ReflectGetPrototypeOf),
     JS_SELF_HOSTED_FN("has", "Reflect_has", 2, 0),
     JS_FN("isExtensible", Reflect_isExtensible, 1, 0),
     JS_FN("ownKeys", Reflect_ownKeys, 1, 0),
@@ -366,7 +207,8 @@ static const JSFunctionSpec methods[] = {
 JSObject*
 js::InitReflect(JSContext* cx, HandleObject obj)
 {
-    RootedObject proto(cx, obj->as<GlobalObject>().getOrCreateObjectPrototype(cx));
+    Handle<GlobalObject*> global = obj.as<GlobalObject>();
+    RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
     if (!proto)
         return nullptr;
 
@@ -377,7 +219,7 @@ js::InitReflect(JSContext* cx, HandleObject obj)
         return nullptr;
 
     RootedValue value(cx, ObjectValue(*reflect));
-    if (!DefineProperty(cx, obj, cx->names().Reflect, value, nullptr, nullptr, JSPROP_RESOLVING))
+    if (!DefineDataProperty(cx, obj, cx->names().Reflect, value, JSPROP_RESOLVING))
         return nullptr;
 
     obj->as<GlobalObject>().setConstructor(JSProto_Reflect, value);

@@ -5,7 +5,9 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from collections import defaultdict
+import json
 import os
+import sys
 
 from mach.decorators import (
     CommandArgument,
@@ -17,6 +19,7 @@ from mach.decorators import (
 from mozbuild.base import MachCommandBase
 import mozpack.path as mozpath
 
+TOPSRCDIR = os.path.abspath(os.path.join(__file__, '../../../../../'))
 
 class InvalidPathException(Exception):
     """Represents an error due to an invalid path."""
@@ -95,9 +98,11 @@ class MozbuildFileCommands(MachCommandBase):
                 'Show Bugzilla component info for files listed.')
     @CommandArgument('-r', '--rev',
                      help='Version control revision to look up info from')
+    @CommandArgument('--format', choices={'json', 'plain'}, default='plain',
+                     help='Output format', dest='fmt')
     @CommandArgument('paths', nargs='+',
                      help='Paths whose data to query')
-    def file_info_bugzilla(self, paths, rev=None):
+    def file_info_bugzilla(self, paths, rev=None, fmt=None):
         """Show Bugzilla component for a set of files.
 
         Given a requested set of files (which can be specified using
@@ -111,24 +116,145 @@ class MozbuildFileCommands(MachCommandBase):
             print(e.message)
             return 1
 
-        for component, files in sorted(components.items(), key=lambda x: (x is None, x)):
-            print('%s :: %s' % (component.product, component.component) if component else 'UNKNOWN')
-            for f in sorted(files):
-                print('  %s' % f)
+        if fmt == 'json':
+            data = {}
+            for component, files in components.items():
+                if not component:
+                    continue
+                for f in files:
+                    data[f] = [component.product, component.component]
+
+            json.dump(data, sys.stdout, sort_keys=True, indent=2)
+            return
+        elif fmt == 'plain':
+            data = sorted(components.items(),
+                          key=lambda x: (x is None, x))
+            for component, files in data:
+                if component:
+                    s = '%s :: %s' % (component.product, component.component)
+                else:
+                    s = 'UNKNOWN'
+
+                print(s)
+                for f in sorted(files):
+                    print('  %s' % f)
+        else:
+            print('unhandled output format: %s' % fmt)
+            return 1
 
     @SubCommand('file-info', 'missing-bugzilla',
                 'Show files missing Bugzilla component info')
     @CommandArgument('-r', '--rev',
                      help='Version control revision to look up info from')
+    @CommandArgument('--format', choices={'json', 'plain'}, dest='fmt',
+                     default='plain',
+                     help='Output format')
     @CommandArgument('paths', nargs='+',
                      help='Paths whose data to query')
-    def file_info_missing_bugzilla(self, paths, rev=None):
+    def file_info_missing_bugzilla(self, paths, rev=None, fmt=None):
+        missing = set()
+
         try:
-            for p, m in sorted(self._get_files_info(paths, rev=rev).items()):
+            for p, m in self._get_files_info(paths, rev=rev).items():
                 if 'BUG_COMPONENT' not in m:
-                    print(p)
+                    missing.add(p)
         except InvalidPathException as e:
             print(e.message)
+            return 1
+
+        if fmt == 'json':
+            json.dump({'missing': sorted(missing)}, sys.stdout,
+                      indent=2)
+            return
+        elif fmt == 'plain':
+            for f in sorted(missing):
+                print(f)
+        else:
+            print('unhandled output format: %s' % fmt)
+            return 1
+
+    @SubCommand('file-info', 'bugzilla-automation',
+                'Perform Bugzilla metadata analysis as required for automation')
+    @CommandArgument('out_dir', help='Where to write files')
+    def bugzilla_automation(self, out_dir):
+        """Analyze and validate Bugzilla metadata as required by automation.
+
+        This will write out JSON and gzipped JSON files for Bugzilla metadata.
+
+        The exit code will be non-0 if Bugzilla metadata fails validation.
+        """
+        import gzip
+
+        missing_component = set()
+        seen_components = set()
+        component_by_path = {}
+
+        # TODO operate in VCS space. This requires teaching the VCS reader
+        # to understand wildcards and/or for the relative path issue in the
+        # VCS finder to be worked out.
+        for p, m in sorted(self._get_files_info(['**']).items()):
+            if 'BUG_COMPONENT' not in m:
+                missing_component.add(p)
+                print('Missing Bugzilla component: %s' % p)
+                continue
+
+            c = m['BUG_COMPONENT']
+            seen_components.add(c)
+            component_by_path[p] = [c.product, c.component]
+
+        print('Examined %d files' % len(component_by_path))
+
+        # We also have a normalized versions of the file to components mapping
+        # that requires far less storage space by eliminating redundant strings.
+        indexed_components = {i: [c.product, c.component]
+                              for i, c in enumerate(sorted(seen_components))}
+        components_index = {tuple(v): k for k, v in indexed_components.items()}
+        normalized_component = {
+            'components': indexed_components,
+            'paths': {}
+        }
+
+        for p, c in component_by_path.items():
+            d = normalized_component['paths']
+            while '/' in p:
+                base, p = p.split('/', 1)
+                d = d.setdefault(base, {})
+
+            d[p] = components_index[tuple(c)]
+
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        components_json = os.path.join(out_dir, 'components.json')
+        print('Writing %s' % components_json)
+        with open(components_json, 'wb') as fh:
+            json.dump(component_by_path, fh, sort_keys=True, indent=2)
+
+        missing_json = os.path.join(out_dir, 'missing.json')
+        print('Writing %s' % missing_json)
+        with open(missing_json, 'wb') as fh:
+            json.dump({'missing': sorted(missing_component)}, fh, indent=2)
+
+        indexed_components_json = os.path.join(out_dir,
+                                               'components-normalized.json')
+        print('Writing %s' % indexed_components_json)
+        with open(indexed_components_json, 'wb') as fh:
+            # Don't indent so file is as small as possible.
+            json.dump(normalized_component, fh, sort_keys=True)
+
+        # Write compressed versions of JSON files.
+        for p in (components_json, indexed_components_json, missing_json):
+            gzip_path = '%s.gz' % p
+            print('Writing %s' % gzip_path)
+            with open(p, 'rb') as ifh, gzip.open(gzip_path, 'wb') as ofh:
+                while True:
+                    data = ifh.read(32768)
+                    if not data:
+                        break
+                    ofh.write(data)
+
+        # Causes CI task to fail if files are missing Bugzilla annotation.
+        if missing_component:
             return 1
 
     @SubCommand('file-info', 'dep-tests',
@@ -159,18 +285,8 @@ class MozbuildFileCommands(MachCommandBase):
             return 1
 
 
-    def _get_reader(self, finder):
-        from mozbuild.frontend.reader import (
-            BuildReader,
-            EmptyConfig,
-        )
-
-        config = EmptyConfig(self.topsrcdir)
-        return BuildReader(config, finder=finder)
-
     def _get_files_info(self, paths, rev=None):
-        from mozbuild.frontend.reader import default_finder
-        from mozpack.files import FileFinder, MercurialRevisionFinder
+        reader = self.mozbuild_reader(config_mode='empty', vcs_revision=rev)
 
         # Normalize to relative from topsrcdir.
         relpaths = []
@@ -181,38 +297,53 @@ class MozbuildFileCommands(MachCommandBase):
 
             relpaths.append(mozpath.relpath(a, self.topsrcdir))
 
-        repo = None
-        if rev:
-            hg_path = os.path.join(self.topsrcdir, '.hg')
-            if not os.path.exists(hg_path):
-                raise InvalidPathException('a Mercurial repo is required '
-                        'when specifying a revision')
-
-            repo = self.topsrcdir
-
-        # We need two finders because the reader's finder operates on
-        # absolute paths.
-        finder = FileFinder(self.topsrcdir, find_executables=False)
-        if repo:
-            reader_finder = MercurialRevisionFinder(repo, rev=rev,
-                                                    recognize_repo_paths=True)
-        else:
-            reader_finder = default_finder
-
         # Expand wildcards.
+        # One variable is for ordering. The other for membership tests.
+        # (Membership testing on a list can be slow.)
         allpaths = []
+        all_paths_set = set()
         for p in relpaths:
             if '*' not in p:
-                if p not in allpaths:
+                if p not in all_paths_set:
+                    if not os.path.exists(mozpath.join(self.topsrcdir, p)):
+                        print('(%s does not exist; ignoring)' % p,
+                              file=sys.stderr)
+                        continue
+
+                    all_paths_set.add(p)
                     allpaths.append(p)
                 continue
 
-            if repo:
+            if rev:
                 raise InvalidPathException('cannot use wildcard in version control mode')
 
-            for path, f in finder.find(p):
-                if path not in allpaths:
+            # finder is rooted at / for now.
+            # TODO bug 1171069 tracks changing to relative.
+            search = mozpath.join(self.topsrcdir, p)[1:]
+            for path, f in reader.finder.find(search):
+                path = path[len(self.topsrcdir):]
+                if path not in all_paths_set:
+                    all_paths_set.add(path)
                     allpaths.append(path)
 
-        reader = self._get_reader(finder=reader_finder)
         return reader.files_info(allpaths)
+
+
+    @SubCommand('file-info', 'schedules',
+                'Show the combined SCHEDULES for the files listed.')
+    @CommandArgument('paths', nargs='+',
+                     help='Paths whose data to query')
+    def file_info_schedules(self, paths):
+        """Show what is scheduled by the given files.
+
+        Given a requested set of files (which can be specified using
+        wildcards), print the total set of scheduled components.
+        """
+        from mozbuild.frontend.reader import EmptyConfig, BuildReader
+        config = EmptyConfig(TOPSRCDIR)
+        reader = BuildReader(config)
+        schedules = set()
+        for p, m in reader.files_info(paths).items():
+            schedules |= set(m['SCHEDULES'].components)
+
+        print(", ".join(schedules))
