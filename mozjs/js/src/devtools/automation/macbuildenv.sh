@@ -14,7 +14,7 @@ if [ -n "$AUTOMATION" ]; then
     # Download clang and some other things from tooltool server.
     # This should be done before running mozconfig to make clang detection
     # there work properly.
-    TT_SERVER=${TT_SERVER:-https://api.pub.build.mozilla.org/tooltool/}
+    TT_SERVER=${TT_SERVER:-https://tooltool.mozilla-releng.net/}
     ( cd $SOURCE/..; \
       ./scripts/scripts/tooltool/tooltool_wrapper.sh \
           $SOURCE/browser/config/tooltool-manifests/macosx64/releng.manifest \
