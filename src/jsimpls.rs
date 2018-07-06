@@ -183,9 +183,9 @@ impl JSAutoCompartment {
 impl JS::AutoGCRooter {
     pub fn new_unrooted(tag: JS::AutoGCRooterTag) -> JS::AutoGCRooter {
         JS::AutoGCRooter {
-            down: ptr::null(),
+            down: ptr::null_mut(),
             tag_: tag as isize,
-            stackTop: ptr::null(),
+            stackTop: ptr::null_mut(),
         }
     }
 
