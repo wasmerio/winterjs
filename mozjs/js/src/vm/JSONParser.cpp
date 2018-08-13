@@ -8,15 +8,15 @@
 
 #include "mozilla/Range.h"
 #include "mozilla/RangedPtr.h"
+#include "mozilla/Sprintf.h"
 
 #include <ctype.h>
 
 #include "jsarray.h"
-#include "jscompartment.h"
 #include "jsnum.h"
-#include "jsprf.h"
 
-#include "vm/StringBuffer.h"
+#include "util/StringBuffer.h"
+#include "vm/JSCompartment.h"
 
 #include "vm/NativeObject-inl.h"
 
@@ -90,12 +90,12 @@ JSONParser<CharT>::error(const char* msg)
 
         const size_t MaxWidth = sizeof("4294967295");
         char columnNumber[MaxWidth];
-        JS_snprintf(columnNumber, sizeof columnNumber, "%" PRIu32, column);
+        SprintfLiteral(columnNumber, "%" PRIu32, column);
         char lineNumber[MaxWidth];
-        JS_snprintf(lineNumber, sizeof lineNumber, "%" PRIu32, line);
+        SprintfLiteral(lineNumber, "%" PRIu32, line);
 
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_JSON_BAD_PARSE,
-                             msg, lineNumber, columnNumber);
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_JSON_BAD_PARSE,
+                                  msg, lineNumber, columnNumber);
     }
 }
 
@@ -605,8 +605,8 @@ JSONParserBase::finishArray(MutableHandleValue vp, ElementVector& elements)
 {
     MOZ_ASSERT(&elements == &stack.back().elements());
 
-    JSObject* obj = ObjectGroup::newArrayObject(cx, elements.begin(), elements.length(),
-                                                GenericObject);
+    ArrayObject* obj = ObjectGroup::newArrayObject(cx, elements.begin(), elements.length(),
+                                                   GenericObject);
     if (!obj)
         return false;
 

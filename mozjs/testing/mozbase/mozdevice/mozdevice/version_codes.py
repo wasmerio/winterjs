@@ -7,6 +7,7 @@ VERSION CODES of the android releases.
 
 See http://developer.android.com/reference/android/os/Build.VERSION_CODES.html.
 """
+from __future__ import absolute_import
 
 # Magic version number for a current development build, which has
 # not yet turned into an official release.
@@ -17,9 +18,9 @@ BASE = 1
 # February 2009: First Android update, officially called 1.1
 BASE_1_1 = 2
 # May 2009: Android 1.5
-CUPCAKE  = 3
+CUPCAKE = 3
 # September 2009: Android 1.6
-DONUT  = 4
+DONUT = 4
 # November 2009: Android 2.0
 ECLAIR = 5
 # December 2009: Android 2.0.1
@@ -57,3 +58,5 @@ LOLLIPOP = 21
 LOLLIPOP_MR1 = 22
 # M
 M = 23
+# N
+N = 24

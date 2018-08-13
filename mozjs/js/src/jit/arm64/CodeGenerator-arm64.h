@@ -97,72 +97,71 @@ class CodeGeneratorARM64 : public CodeGeneratorShared
 
   public:
     // Instruction visitors.
-    virtual void visitMinMaxD(LMinMaxD* ins);
-    virtual void visitMinMaxF(LMinMaxF* math);
-    virtual void visitAbsD(LAbsD* ins);
-    virtual void visitAbsF(LAbsF* ins);
-    virtual void visitSqrtD(LSqrtD* ins);
-    virtual void visitSqrtF(LSqrtF* ins);
-    virtual void visitAddI(LAddI* ins);
-    virtual void visitSubI(LSubI* ins);
-    virtual void visitBitNotI(LBitNotI* ins);
-    virtual void visitBitOpI(LBitOpI* ins);
+    void visitMinMaxD(LMinMaxD* ins);
+    void visitMinMaxF(LMinMaxF* math);
+    void visitAbsD(LAbsD* ins);
+    void visitAbsF(LAbsF* ins);
+    void visitSqrtD(LSqrtD* ins);
+    void visitSqrtF(LSqrtF* ins);
+    void visitAddI(LAddI* ins);
+    void visitSubI(LSubI* ins);
+    void visitBitNotI(LBitNotI* ins);
+    void visitBitOpI(LBitOpI* ins);
 
-    virtual void visitMulI(LMulI* ins);
+    void visitMulI(LMulI* ins);
 
-    virtual void visitDivI(LDivI* ins);
-    virtual void visitDivPowTwoI(LDivPowTwoI* ins);
-    virtual void visitModI(LModI* ins);
-    virtual void visitModPowTwoI(LModPowTwoI* ins);
-    virtual void visitModMaskI(LModMaskI* ins);
-    virtual void visitPowHalfD(LPowHalfD* ins);
-    virtual void visitShiftI(LShiftI* ins);
-    virtual void visitUrshD(LUrshD* ins);
+    void visitDivI(LDivI* ins);
+    void visitDivPowTwoI(LDivPowTwoI* ins);
+    void visitModI(LModI* ins);
+    void visitModPowTwoI(LModPowTwoI* ins);
+    void visitModMaskI(LModMaskI* ins);
+    void visitPowHalfD(LPowHalfD* ins);
+    void visitShiftI(LShiftI* ins);
+    void visitUrshD(LUrshD* ins);
 
-    virtual void visitTestIAndBranch(LTestIAndBranch* test);
-    virtual void visitCompare(LCompare* comp);
-    virtual void visitCompareAndBranch(LCompareAndBranch* comp);
-    virtual void visitTestDAndBranch(LTestDAndBranch* test);
-    virtual void visitTestFAndBranch(LTestFAndBranch* test);
-    virtual void visitCompareD(LCompareD* comp);
-    virtual void visitCompareF(LCompareF* comp);
-    virtual void visitCompareDAndBranch(LCompareDAndBranch* comp);
-    virtual void visitCompareFAndBranch(LCompareFAndBranch* comp);
-    virtual void visitCompareB(LCompareB* lir);
-    virtual void visitCompareBAndBranch(LCompareBAndBranch* lir);
-    virtual void visitCompareBitwise(LCompareBitwise* lir);
-    virtual void visitCompareBitwiseAndBranch(LCompareBitwiseAndBranch* lir);
-    virtual void visitBitAndAndBranch(LBitAndAndBranch* baab);
-    virtual void visitAsmJSUInt32ToDouble(LAsmJSUInt32ToDouble* lir);
-    virtual void visitAsmJSUInt32ToFloat32(LAsmJSUInt32ToFloat32* lir);
-    virtual void visitNotI(LNotI* ins);
-    virtual void visitNotD(LNotD* ins);
-    virtual void visitNotF(LNotF* ins);
+    void visitTestIAndBranch(LTestIAndBranch* test);
+    void visitCompare(LCompare* comp);
+    void visitCompareAndBranch(LCompareAndBranch* comp);
+    void visitTestDAndBranch(LTestDAndBranch* test);
+    void visitTestFAndBranch(LTestFAndBranch* test);
+    void visitCompareD(LCompareD* comp);
+    void visitCompareF(LCompareF* comp);
+    void visitCompareDAndBranch(LCompareDAndBranch* comp);
+    void visitCompareFAndBranch(LCompareFAndBranch* comp);
+    void visitCompareB(LCompareB* lir);
+    void visitCompareBAndBranch(LCompareBAndBranch* lir);
+    void visitCompareBitwise(LCompareBitwise* lir);
+    void visitCompareBitwiseAndBranch(LCompareBitwiseAndBranch* lir);
+    void visitBitAndAndBranch(LBitAndAndBranch* baab);
+    void visitWasmUint32ToDouble(LWasmUint32ToDouble* lir);
+    void visitWasmUint32ToFloat32(LWasmUint32ToFloat32* lir);
+    void visitNotI(LNotI* ins);
+    void visitNotD(LNotD* ins);
+    void visitNotF(LNotF* ins);
 
-    virtual void visitMathD(LMathD* math);
-    virtual void visitMathF(LMathF* math);
-    virtual void visitFloor(LFloor* lir);
-    virtual void visitFloorF(LFloorF* lir);
-    virtual void visitCeil(LCeil* lir);
-    virtual void visitCeilF(LCeilF* lir);
-    virtual void visitRound(LRound* lir);
-    virtual void visitRoundF(LRoundF* lir);
-    virtual void visitTruncateDToInt32(LTruncateDToInt32* ins);
-    virtual void visitTruncateFToInt32(LTruncateFToInt32* ins);
+    void visitMathD(LMathD* math);
+    void visitMathF(LMathF* math);
+    void visitFloor(LFloor* lir);
+    void visitFloorF(LFloorF* lir);
+    void visitCeil(LCeil* lir);
+    void visitCeilF(LCeilF* lir);
+    void visitRound(LRound* lir);
+    void visitRoundF(LRoundF* lir);
+    void visitTruncateDToInt32(LTruncateDToInt32* ins);
+    void visitTruncateFToInt32(LTruncateFToInt32* ins);
 
-    virtual void visitClzI(LClzI* lir);
-    virtual void visitCtzI(LCtzI* lir);
+    void visitClzI(LClzI* lir);
+    void visitCtzI(LCtzI* lir);
     // Out of line visitors.
     void visitOutOfLineBailout(OutOfLineBailout* ool);
     void visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool);
 
   protected:
     ValueOperand ToValue(LInstruction* ins, size_t pos);
-    ValueOperand ToOutValue(LInstruction* ins);
     ValueOperand ToTempValue(LInstruction* ins, size_t pos);
 
     // Functions for LTestVAndBranch.
-    Register splitTagForTest(const ValueOperand& value);
+    void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag);
 
     void storeElementTyped(const LAllocation* value, MIRType valueType, MIRType elementType,
                            Register elements, const LAllocation* index);
@@ -185,37 +184,26 @@ class CodeGeneratorARM64 : public CodeGeneratorShared
 
     void visitLoadElementT(LLoadElementT* load);
 
-    void visitGuardShape(LGuardShape* guard);
-    void visitGuardObjectGroup(LGuardObjectGroup* guard);
-    void visitGuardClass(LGuardClass* guard);
-
     void visitInterruptCheck(LInterruptCheck* lir);
 
     void visitNegI(LNegI* lir);
     void visitNegD(LNegD* lir);
     void visitNegF(LNegF* lir);
-    void visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic* ins);
-    void visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic* ins);
     void visitCompareExchangeTypedArrayElement(LCompareExchangeTypedArrayElement* lir);
     void visitAtomicExchangeTypedArrayElement(LAtomicExchangeTypedArrayElement* lir);
-    void visitAsmJSCall(LAsmJSCall* ins);
     void visitAsmJSLoadHeap(LAsmJSLoadHeap* ins);
     void visitAsmJSStoreHeap(LAsmJSStoreHeap* ins);
-    void visitAsmJSCompareExchangeHeap(LAsmJSCompareExchangeHeap* ins);
-    void visitAsmJSAtomicBinopHeap(LAsmJSAtomicBinopHeap* ins);
-    void visitAsmJSLoadGlobalVar(LAsmJSLoadGlobalVar* ins);
-    void visitAsmJSStoreGlobalVar(LAsmJSStoreGlobalVar* ins);
-    void visitAsmJSLoadFuncPtr(LAsmJSLoadFuncPtr* ins);
-    void visitAsmJSLoadFFIFunc(LAsmJSLoadFFIFunc* ins);
-    void visitAsmJSPassStackArg(LAsmJSPassStackArg* ins);
+    void visitWasmCompareExchangeHeap(LWasmCompareExchangeHeap* ins);
+    void visitWasmAtomicBinopHeap(LWasmAtomicBinopHeap* ins);
+    void visitWasmStackArg(LWasmStackArg* ins);
 
     void generateInvalidateEpilogue();
 
     void setReturnDoubleRegs(LiveRegisterSet* regs);
 
   protected:
-    void postAsmJSCall(LAsmJSCall* lir) {
-        MOZ_CRASH("postAsmJSCall");
+    void postWasmCall(LWasmCall* lir) {
+        MOZ_CRASH("postWasmCall");
     }
 
     void visitEffectiveAddress(LEffectiveAddress* ins);
@@ -249,7 +237,7 @@ class OutOfLineBailout : public OutOfLineCodeBase<CodeGeneratorARM64>
       : snapshot_(snapshot)
     { }
 
-    void accept(CodeGeneratorARM64* codegen);
+    void accept(CodeGeneratorARM64* codegen) override;
 
     LSnapshot* snapshot() const {
         return snapshot_;

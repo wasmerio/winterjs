@@ -16,14 +16,12 @@
  *
  *   - AllocPolicy: An interface for the js allocators, for use with templates.
  *     These allocators are for system memory whose lifetime is not associated
- *     with a GC thing. See js/src/jsalloc.h.
+ *     with a GC thing. See js/public/AllocPolicy.h.
  *
  *       - SystemAllocPolicy: No extra functionality over bare allocators.
  *
  *       - TempAllocPolicy: Adds automatic error reporting to the provided
  *         JSContext when allocations fail.
- *
- *       - RuntimeAllocPolicy: Forwards to the JSRuntime MallocProvider.
  *
  *       - ZoneAllocPolicy: Forwards to the Zone MallocProvider.
  *
@@ -34,8 +32,7 @@
  *
  *       - gc::Zone:  Automatically triggers zone GC.
  *       - JSRuntime: Automatically triggers full GC.
- *       - ThreadsafeContext > ExclusiveContext > JSContext:
- *                    Dispatches directly to the runtime.
+ *       - JSContext: Dispatches directly to the runtime.
  */
 
 #ifndef vm_MallocProvider_h

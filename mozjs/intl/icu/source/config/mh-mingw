@@ -1,4 +1,6 @@
 ## -*-makefile-*-
+## Copyright (C) 2016 and later: Unicode, Inc. and others.
+## License & terms of use: http://www.unicode.org/copyright.html
 ## Cygwin/MinGW specific setup
 ## Copyright (c) 2001-2014, International Business Machines Corporation and
 ## others. All Rights Reserved.
@@ -25,6 +27,10 @@ else
 ## Make sure that the static libraries can be built
 STATICCPPFLAGS = -DU_STATIC_IMPLEMENTATION
 endif
+
+## ICU requires a minimum target of Windows 7, and MinGW does not set this by default.
+## https://msdn.microsoft.com/en-us/library/aa383745.aspx
+CPPFLAGS += -DWINVER=0x0601 -D_WIN32_WINNT=0x0601
 
 ## Flags for position independent code
 SHAREDLIBCFLAGS = 
@@ -66,13 +72,13 @@ SO_TARGET_VERSION_SUFFIX =
 endif
 
 # Static library prefix and file extension
-LIBSICU = lib$(LIBPREFIX)$(STATIC_PREFIX)$(ICUPREFIX)
+LIBSICU = $(LIBPREFIX)$(STATIC_PREFIX)$(ICUPREFIX)
 A = a
 
 ## An import library is needed for z/OS and MSVC
 IMPORT_LIB_EXT = .dll.a
 
-LIBPREFIX=
+LIBPREFIX=lib
 
 # Change the stubnames so that poorly working FAT disks and installation programs can work.
 # This is also for backwards compatibility.

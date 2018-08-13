@@ -15,25 +15,28 @@
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerTypeTraits.h"
+#include "mozilla/Sprintf.h"
+#include "mozilla/TypeTraits.h"
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jsnum.h"
-#include "jsprf.h"
 
 #include "builtin/TypedObject.h"
+#include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
 #include "js/Value.h"
 
-#include "jsobjinlines.h"
+#include "vm/JSObject-inl.h"
 
 using namespace js;
 
-using mozilla::ArrayLength;
-using mozilla::IsFinite;
 using mozilla::IsNaN;
-using mozilla::FloorLog2;
-using mozilla::NumberIsInt32;
+using mozilla::EnableIf;
+using mozilla::IsIntegral;
+using mozilla::IsFloatingPoint;
+using mozilla::IsSigned;
+using mozilla::MakeUnsigned;
 
 ///////////////////////////////////////////////////////////////////////////
 // SIMD
@@ -124,24 +127,24 @@ js::IsSimdTypeName(const JSAtomState& atoms, const PropertyName* name, SimdType*
 static inline bool
 ErrorBadArgs(JSContext* cx)
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_BAD_ARGS);
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_BAD_ARGS);
     return false;
 }
 
 static inline bool
-ErrorWrongTypeArg(JSContext* cx, size_t argIndex, Handle<TypeDescr*> typeDescr)
+ErrorWrongTypeArg(JSContext* cx, unsigned argIndex, Handle<TypeDescr*> typeDescr)
 {
     MOZ_ASSERT(argIndex < 10);
     char charArgIndex[2];
-    JS_snprintf(charArgIndex, sizeof charArgIndex, "%d", argIndex);
+    SprintfLiteral(charArgIndex, "%u", argIndex);
 
     HeapSlot& typeNameSlot = typeDescr->getReservedSlotRef(JS_DESCR_SLOT_STRING_REPR);
     char* typeNameStr = JS_EncodeString(cx, typeNameSlot.toString());
     if (!typeNameStr)
         return false;
 
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_SIMD_NOT_A_VECTOR,
-                         typeNameStr, charArgIndex);
+    JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_SIMD_NOT_A_VECTOR,
+                               typeNameStr, charArgIndex);
     JS_free(cx, typeNameStr);
     return false;
 }
@@ -149,8 +152,74 @@ ErrorWrongTypeArg(JSContext* cx, size_t argIndex, Handle<TypeDescr*> typeDescr)
 static inline bool
 ErrorBadIndex(JSContext* cx)
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
     return false;
+}
+
+/* Non-standard: convert and range check an index value for SIMD operations.
+ *
+ *   1. numericIndex = ToNumber(argument)            (may throw TypeError)
+ *   2. intIndex = ToInteger(numericIndex)
+ *   3. if intIndex != numericIndex throw RangeError
+ *
+ * This function additionally bounds the range to the non-negative contiguous
+ * integers:
+ *
+ *   4. if intIndex < 0 or intIndex > 2^53 throw RangeError
+ *
+ * Return true and set |*index| to the integer value if |argument| is a valid
+ * array index argument. Otherwise report an TypeError or RangeError and return
+ * false.
+ *
+ * The returned index will always be in the range 0 <= *index <= 2^53.
+ */
+static bool
+NonStandardToIndex(JSContext* cx, HandleValue v, uint64_t* index)
+{
+    // Fast common case.
+    if (v.isInt32()) {
+        int32_t i = v.toInt32();
+        if (i >= 0) {
+            *index = i;
+            return true;
+        }
+    }
+
+    // Slow case. Use ToNumber() to coerce. This may throw a TypeError.
+    double d;
+    if (!ToNumber(cx, v, &d))
+        return false;
+
+    // Check that |d| is an integer in the valid range.
+    //
+    // Not all floating point integers fit in the range of a uint64_t, so we
+    // need a rough range check before the real range check in our caller. We
+    // could limit indexes to UINT64_MAX, but this would mean that our callers
+    // have to be very careful about integer overflow. The contiguous integer
+    // floating point numbers end at 2^53, so make that our upper limit. If we
+    // ever support arrays with more than 2^53 elements, this will need to
+    // change.
+    //
+    // Reject infinities, NaNs, and numbers outside the contiguous integer range
+    // with a RangeError.
+
+    // Write relation so NaNs throw a RangeError.
+    if (!(0 <= d && d <= (uint64_t(1) << 53))) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
+        return false;
+    }
+
+    // Check that d is an integer, throw a RangeError if not.
+    // Note that this conversion could invoke undefined behaviour without the
+    // range check above.
+    uint64_t i(d);
+    if (d != double(i)) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_BAD_INDEX);
+        return false;
+    }
+
+    *index = i;
+    return true;
 }
 
 template<typename T>
@@ -172,7 +241,8 @@ js::ToSimdConstant(JSContext* cx, HandleValue v, jit::SimdConstant* out)
     if (!IsVectorObject<V>(v))
         return ErrorWrongTypeArg(cx, 1, typeDescr);
 
-    Elem* mem = reinterpret_cast<Elem*>(v.toObject().as<TypedObject>().typedMem());
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* mem = reinterpret_cast<Elem*>(v.toObject().as<TypedObject>().typedMem(nogc));
     *out = jit::SimdConstant::CreateSimd128(mem);
     return true;
 }
@@ -187,18 +257,17 @@ template bool js::ToSimdConstant<Bool32x4>(JSContext* cx, HandleValue v, jit::Si
 
 template<typename Elem>
 static Elem
-TypedObjectMemory(HandleValue v)
+TypedObjectMemory(HandleValue v, const JS::AutoRequireNoGC& nogc)
 {
     TypedObject& obj = v.toObject().as<TypedObject>();
-    return reinterpret_cast<Elem>(obj.typedMem());
+    return reinterpret_cast<Elem>(obj.typedMem(nogc));
 }
 
 static const ClassOps SimdTypeDescrClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     TypeDescr::finalize,
@@ -421,7 +490,11 @@ FillLanes(JSContext* cx, Handle<TypedObject*> result, const CallArgs& args)
     for (unsigned i = 0; i < T::lanes; i++) {
         if (!T::Cast(cx, args.get(i), &tmp))
             return false;
-        reinterpret_cast<Elem*>(result->typedMem())[i] = tmp;
+        // Reassure typedMem() that we won't GC while holding onto the returned
+        // pointer, even though we could GC on every iteration of this loop
+        // (but it is safe because we re-fetch each time.)
+        JS::AutoCheckCannotGC nogc(cx);
+        reinterpret_cast<Elem*>(result->typedMem(nogc))[i] = tmp;
     }
     args.rval().setObject(*result);
     return true;
@@ -456,9 +529,8 @@ SimdTypeDescr::call(JSContext* cx, unsigned argc, Value* vp)
 static const ClassOps SimdObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     SimdObject::resolve
 };
 
@@ -468,7 +540,7 @@ const Class SimdObject::class_ = {
     &SimdObjectClassOps
 };
 
-bool
+/* static */ bool
 GlobalObject::initSimdObject(JSContext* cx, Handle<GlobalObject*> global)
 {
     // SIMD relies on the TypedObject module being initialized.
@@ -476,11 +548,11 @@ GlobalObject::initSimdObject(JSContext* cx, Handle<GlobalObject*> global)
     // to be able to call GetTypedObjectModule(). It is NOT necessary
     // to install the TypedObjectModule global, but at the moment
     // those two things are not separable.
-    if (!global->getOrCreateTypedObjectModule(cx))
+    if (!GlobalObject::getOrCreateTypedObjectModule(cx, global))
         return false;
 
     RootedObject globalSimdObject(cx);
-    RootedObject objProto(cx, global->getOrCreateObjectPrototype(cx));
+    RootedObject objProto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
     if (!objProto)
         return false;
 
@@ -489,11 +561,8 @@ GlobalObject::initSimdObject(JSContext* cx, Handle<GlobalObject*> global)
         return false;
 
     RootedValue globalSimdValue(cx, ObjectValue(*globalSimdObject));
-    if (!DefineProperty(cx, global, cx->names().SIMD, globalSimdValue, nullptr, nullptr,
-                        JSPROP_RESOLVING))
-    {
+    if (!DefineDataProperty(cx, global, cx->names().SIMD, globalSimdValue, JSPROP_RESOLVING))
         return false;
-    }
 
     global->setConstructor(JSProto_SIMD, globalSimdValue);
     return true;
@@ -503,7 +572,7 @@ static bool
 CreateSimdType(JSContext* cx, Handle<GlobalObject*> global, HandlePropertyName stringRepr,
                SimdType simdType, const JSFunctionSpec* methods)
 {
-    RootedObject funcProto(cx, global->getOrCreateFunctionPrototype(cx));
+    RootedObject funcProto(cx, GlobalObject::getOrCreateFunctionPrototype(cx, global));
     if (!funcProto)
         return false;
 
@@ -524,7 +593,7 @@ CreateSimdType(JSContext* cx, Handle<GlobalObject*> global, HandlePropertyName s
         return false;
 
     // Create prototype property, which inherits from Object.prototype.
-    RootedObject objProto(cx, global->getOrCreateObjectPrototype(cx));
+    RootedObject objProto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
     if (!objProto)
         return false;
     Rooted<TypedProto*> proto(cx);
@@ -544,13 +613,13 @@ CreateSimdType(JSContext* cx, Handle<GlobalObject*> global, HandlePropertyName s
     }
 
     // Bind type descriptor to the global SIMD object
-    RootedObject globalSimdObject(cx, global->getOrCreateSimdGlobalObject(cx));
+    RootedObject globalSimdObject(cx, GlobalObject::getOrCreateSimdGlobalObject(cx, global));
     MOZ_ASSERT(globalSimdObject);
 
     RootedValue typeValue(cx, ObjectValue(*typeDescr));
     if (!JS_DefineFunctions(cx, typeDescr, methods) ||
-        !DefineProperty(cx, globalSimdObject, stringRepr, typeValue, nullptr, nullptr,
-                        JSPROP_READONLY | JSPROP_PERMANENT | JSPROP_RESOLVING))
+        !DefineDataProperty(cx, globalSimdObject, stringRepr, typeValue,
+                            JSPROP_READONLY | JSPROP_PERMANENT | JSPROP_RESOLVING))
     {
         return false;
     }
@@ -561,7 +630,7 @@ CreateSimdType(JSContext* cx, Handle<GlobalObject*> global, HandlePropertyName s
     return !!typeDescr;
 }
 
-bool
+/* static */ bool
 GlobalObject::initSimdType(JSContext* cx, Handle<GlobalObject*> global, SimdType simdType)
 {
 #define CREATE_(Type) \
@@ -577,13 +646,13 @@ GlobalObject::initSimdType(JSContext* cx, Handle<GlobalObject*> global, SimdType
 #undef CREATE_
 }
 
-SimdTypeDescr*
+/* static */ SimdTypeDescr*
 GlobalObject::getOrCreateSimdTypeDescr(JSContext* cx, Handle<GlobalObject*> global,
                                        SimdType simdType)
 {
     MOZ_ASSERT(unsigned(simdType) < unsigned(SimdType::Count), "Invalid SIMD type");
 
-    RootedObject globalSimdObject(cx, global->getOrCreateSimdGlobalObject(cx));
+    RootedObject globalSimdObject(cx, GlobalObject::getOrCreateSimdGlobalObject(cx, global));
     if (!globalSimdObject)
        return nullptr;
 
@@ -621,8 +690,8 @@ SimdObject::resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id, bool* 
 JSObject*
 js::InitSimdClass(JSContext* cx, HandleObject obj)
 {
-    Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
-    return global->getOrCreateSimdGlobalObject(cx);
+    Handle<GlobalObject*> global = obj.as<GlobalObject>();
+    return GlobalObject::getOrCreateSimdGlobalObject(cx, global);
 }
 
 template<typename V>
@@ -638,7 +707,8 @@ js::CreateSimd(JSContext* cx, const typename V::Elem* data)
     if (!result)
         return nullptr;
 
-    Elem* resultMem = reinterpret_cast<Elem*>(result->typedMem());
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* resultMem = reinterpret_cast<Elem*>(result->typedMem(nogc));
     memcpy(resultMem, data, sizeof(Elem) * V::lanes);
     return result;
 }
@@ -653,6 +723,21 @@ FOR_EACH_SIMD(InstantiateCreateSimd_)
 #undef FOR_EACH_SIMD
 
 namespace js {
+
+namespace detail {
+
+template<typename T, typename Enable = void>
+struct MaybeMakeUnsigned {
+    using Type = T;
+};
+
+template<typename T>
+struct MaybeMakeUnsigned<T, typename EnableIf<IsIntegral<T>::value && IsSigned<T>::value>::Type> {
+    using Type = typename MakeUnsigned<T>::Type;
+};
+
+} // namespace detail
+
 // Unary SIMD operators
 template<typename T>
 struct Identity {
@@ -664,7 +749,16 @@ struct Abs {
 };
 template<typename T>
 struct Neg {
-    static T apply(T x) { return -1 * x; }
+    using MaybeUnsignedT = typename detail::MaybeMakeUnsigned<T>::Type;
+    static T apply(T x) {
+        // Prepend |1U| to force integral promotion through *unsigned* types.
+        // Otherwise when |T = uint16_t| and |int| is 32-bit, we could have
+        // |uint16_t(-1) * uint16_t(65535)| which would really be
+        // |int(65535) * int(65535)|, but as |4294836225 > 2147483647| would
+        // perform signed integer overflow.
+        // https://stackoverflow.com/questions/24795651/whats-the-best-c-way-to-multiply-unsigned-integers-modularly-safely
+        return static_cast<MaybeUnsignedT>(1U * MaybeUnsignedT(-1) * MaybeUnsignedT(x));
+    }
 };
 template<typename T>
 struct Not {
@@ -676,33 +770,40 @@ struct LogicalNot {
 };
 template<typename T>
 struct RecApprox {
+    static_assert(IsFloatingPoint<T>::value, "RecApprox only supported for floating points");
     static T apply(T x) { return 1 / x; }
 };
 template<typename T>
 struct RecSqrtApprox {
+    static_assert(IsFloatingPoint<T>::value, "RecSqrtApprox only supported for floating points");
     static T apply(T x) { return 1 / sqrt(x); }
 };
 template<typename T>
 struct Sqrt {
+    static_assert(IsFloatingPoint<T>::value, "Sqrt only supported for floating points");
     static T apply(T x) { return sqrt(x); }
 };
 
 // Binary SIMD operators
 template<typename T>
 struct Add {
-    static T apply(T l, T r) { return l + r; }
+    using MaybeUnsignedT = typename detail::MaybeMakeUnsigned<T>::Type;
+    static T apply(T l, T r) { return MaybeUnsignedT(l) + MaybeUnsignedT(r); }
 };
 template<typename T>
 struct Sub {
-    static T apply(T l, T r) { return l - r; }
+    using MaybeUnsignedT = typename detail::MaybeMakeUnsigned<T>::Type;
+    static T apply(T l, T r) { return MaybeUnsignedT(l) - MaybeUnsignedT(r); }
 };
 template<typename T>
 struct Div {
+    static_assert(IsFloatingPoint<T>::value, "Div only supported for floating points");
     static T apply(T l, T r) { return l / r; }
 };
 template<typename T>
 struct Mul {
-    static T apply(T l, T r) { return l * r; }
+    using MaybeUnsignedT = typename detail::MaybeMakeUnsigned<T>::Type;
+    static T apply(T l, T r) { return MaybeUnsignedT(l) * MaybeUnsignedT(r); }
 };
 template<typename T>
 struct Minimum {
@@ -834,6 +935,35 @@ StoreResult(JSContext* cx, CallArgs& args, typename Out::Elem* result)
     return true;
 }
 
+// StoreResult can GC, and it is commonly used after pulling something out of a
+// TypedObject:
+//
+//   Elem result = op(TypedObjectMemory<Elem>(args[0]));
+//   StoreResult<Out>(..., result);
+//
+// The pointer extracted from the typed object in args[0] in the above example
+// could be an interior pointer, and therefore be invalidated by GC.
+// TypedObjectMemory() requires an assertion token to be passed in to prove
+// that we won't GC, but the scope of eg an AutoCheckCannotGC RAII object
+// extends to the end of its containing scope -- which would include the call
+// to StoreResult, resulting in a rooting hazard.
+//
+// TypedObjectElemArray fixes this by wrapping the problematic pointer in a
+// type, and the analysis is able to see that it is dead before calling
+// StoreResult. (But if another GC called is made before the pointer is dead,
+// it will correctly report a hazard.)
+//
+template <typename Elem>
+class TypedObjectElemArray {
+    Elem* elements;
+  public:
+    explicit TypedObjectElemArray(HandleValue objVal) {
+        JS::AutoCheckCannotGC nogc;
+        elements = TypedObjectMemory<Elem*>(objVal, nogc);
+    }
+    Elem& operator[](int i) { return elements[i]; }
+} JS_HAZ_GC_POINTER;
+
 // Coerces the inputs of type In to the type Coercion, apply the operator Op
 // and converts the result to the type Out.
 template<typename In, typename Coercion, template<typename C> class Op, typename Out>
@@ -848,7 +978,7 @@ CoercedUnaryFunc(JSContext* cx, unsigned argc, Value* vp)
         return ErrorBadArgs(cx);
 
     CoercionElem result[Coercion::lanes];
-    CoercionElem* val = TypedObjectMemory<CoercionElem*>(args[0]);
+    TypedObjectElemArray<CoercionElem> val(args[0]);
     for (unsigned i = 0; i < Coercion::lanes; i++)
         result[i] = Op<CoercionElem>::apply(val[i]);
     return StoreResult<Out>(cx, args, (RetElem*) result);
@@ -868,8 +998,8 @@ CoercedBinaryFunc(JSContext* cx, unsigned argc, Value* vp)
         return ErrorBadArgs(cx);
 
     CoercionElem result[Coercion::lanes];
-    CoercionElem* left = TypedObjectMemory<CoercionElem*>(args[0]);
-    CoercionElem* right = TypedObjectMemory<CoercionElem*>(args[1]);
+    TypedObjectElemArray<CoercionElem> left(args[0]);
+    TypedObjectElemArray<CoercionElem> right(args[1]);
     for (unsigned i = 0; i < Coercion::lanes; i++)
         result[i] = Op<CoercionElem>::apply(left[i], right[i]);
     return StoreResult<Out>(cx, args, (RetElem*) result);
@@ -904,7 +1034,8 @@ ExtractLane(JSContext* cx, unsigned argc, Value* vp)
     if (!ArgumentToLaneIndex(cx, args[1], V::lanes, &lane))
         return false;
 
-    Elem* vec = TypedObjectMemory<Elem*>(args[0]);
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* vec = TypedObjectMemory<Elem*>(args[0], nogc);
     Elem val = vec[lane];
     args.rval().set(V::ToValue(val));
     return true;
@@ -920,7 +1051,8 @@ AllTrue(JSContext* cx, unsigned argc, Value* vp)
     if (args.length() < 1 || !IsVectorObject<V>(args[0]))
         return ErrorBadArgs(cx);
 
-    Elem* vec = TypedObjectMemory<Elem*>(args[0]);
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* vec = TypedObjectMemory<Elem*>(args[0], nogc);
     bool allTrue = true;
     for (unsigned i = 0; allTrue && i < V::lanes; i++)
         allTrue = vec[i];
@@ -939,7 +1071,8 @@ AnyTrue(JSContext* cx, unsigned argc, Value* vp)
     if (args.length() < 1 || !IsVectorObject<V>(args[0]))
         return ErrorBadArgs(cx);
 
-    Elem* vec = TypedObjectMemory<Elem*>(args[0]);
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* vec = TypedObjectMemory<Elem*>(args[0], nogc);
     bool anyTrue = false;
     for (unsigned i = 0; !anyTrue && i < V::lanes; i++)
         anyTrue = vec[i];
@@ -959,9 +1092,6 @@ ReplaceLane(JSContext* cx, unsigned argc, Value* vp)
     if (args.length() < 2 || !IsVectorObject<V>(args[0]))
         return ErrorBadArgs(cx);
 
-    Elem* vec = TypedObjectMemory<Elem*>(args[0]);
-    Elem result[V::lanes];
-
     unsigned lane;
     if (!ArgumentToLaneIndex(cx, args[1], V::lanes, &lane))
         return false;
@@ -970,8 +1100,11 @@ ReplaceLane(JSContext* cx, unsigned argc, Value* vp)
     if (!V::Cast(cx, args.get(2), &value))
         return false;
 
+    TypedObjectElemArray<Elem> vec(args[0]);
+    Elem result[V::lanes];
     for (unsigned i = 0; i < V::lanes; i++)
         result[i] = i == lane ? value : vec[i];
+
     return StoreResult<V>(cx, args, result);
 }
 
@@ -991,8 +1124,7 @@ Swizzle(JSContext* cx, unsigned argc, Value* vp)
             return false;
     }
 
-    Elem* val = TypedObjectMemory<Elem*>(args[0]);
-
+    TypedObjectElemArray<Elem> val(args[0]);
     Elem result[V::lanes];
     for (unsigned i = 0; i < V::lanes; i++)
         result[i] = val[lanes[i]];
@@ -1016,13 +1148,16 @@ Shuffle(JSContext* cx, unsigned argc, Value* vp)
             return false;
     }
 
-    Elem* lhs = TypedObjectMemory<Elem*>(args[0]);
-    Elem* rhs = TypedObjectMemory<Elem*>(args[1]);
-
     Elem result[V::lanes];
-    for (unsigned i = 0; i < V::lanes; i++) {
-        Elem* selectedInput = lanes[i] < V::lanes ? lhs : rhs;
-        result[i] = selectedInput[lanes[i] % V::lanes];
+    {
+        JS::AutoCheckCannotGC nogc(cx);
+        Elem* lhs = TypedObjectMemory<Elem*>(args[0], nogc);
+        Elem* rhs = TypedObjectMemory<Elem*>(args[1], nogc);
+
+        for (unsigned i = 0; i < V::lanes; i++) {
+            Elem* selectedInput = lanes[i] < V::lanes ? lhs : rhs;
+            result[i] = selectedInput[lanes[i] % V::lanes];
+        }
     }
 
     return StoreResult<V>(cx, args, result);
@@ -1038,17 +1173,18 @@ BinaryScalar(JSContext* cx, unsigned argc, Value* vp)
     if (args.length() != 2)
         return ErrorBadArgs(cx);
 
-    Elem result[V::lanes];
     if (!IsVectorObject<V>(args[0]))
         return ErrorBadArgs(cx);
 
-    Elem* val = TypedObjectMemory<Elem*>(args[0]);
     int32_t bits;
     if (!ToInt32(cx, args[1], &bits))
         return false;
 
+    TypedObjectElemArray<Elem> val(args[0]);
+    Elem result[V::lanes];
     for (unsigned i = 0; i < V::lanes; i++)
         result[i] = Op<Elem>::apply(val[i], bits);
+
     return StoreResult<V>(cx, args, result);
 }
 
@@ -1064,8 +1200,8 @@ CompareFunc(JSContext* cx, unsigned argc, Value* vp)
         return ErrorBadArgs(cx);
 
     OutElem result[Out::lanes];
-    InElem* left = TypedObjectMemory<InElem*>(args[0]);
-    InElem* right = TypedObjectMemory<InElem*>(args[1]);
+    TypedObjectElemArray<InElem> left(args[0]);
+    TypedObjectElemArray<InElem> right(args[1]);
     for (unsigned i = 0; i < Out::lanes; i++) {
         unsigned j = (i * In::lanes) / Out::lanes;
         result[i] = Op<InElem>::apply(left[j], right[j]) ? -1 : 0;
@@ -1159,13 +1295,11 @@ FuncConvert(JSContext* cx, unsigned argc, Value* vp)
     if (args.length() != 1 || !IsVectorObject<V>(args[0]))
         return ErrorBadArgs(cx);
 
-    Elem* val = TypedObjectMemory<Elem*>(args[0]);
-
+    TypedObjectElemArray<Elem> val(args[0]);
     RetElem result[Vret::lanes];
     for (unsigned i = 0; i < V::lanes; i++) {
         if (ThrowOnConvert<Elem, RetElem>::value(val[i])) {
-            JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
-                                 JSMSG_SIMD_FAILED_CONVERSION);
+            JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_SIMD_FAILED_CONVERSION);
             return false;
         }
         result[i] = ConvertScalar<RetElem>(val[i]);
@@ -1194,7 +1328,10 @@ FuncConvertBits(JSContext* cx, unsigned argc, Value* vp)
     // For consistency with other SIMD functions, simply copy the input in a
     // temporary array.
     RetElem copy[Vret::lanes];
-    memcpy(copy, TypedObjectMemory<RetElem*>(args[0]), Vret::lanes * sizeof(RetElem));
+    {
+        JS::AutoCheckCannotGC nogc(cx);
+        memcpy(copy, TypedObjectMemory<RetElem*>(args[0], nogc), Vret::lanes * sizeof(RetElem));
+    }
     return StoreResult<Vret>(cx, args, copy);
 }
 
@@ -1243,9 +1380,9 @@ SelectBits(JSContext* cx, unsigned argc, Value* vp)
         return ErrorBadArgs(cx);
     }
 
-    MaskTypeElem* val = TypedObjectMemory<MaskTypeElem*>(args[0]);
-    MaskTypeElem* tv = TypedObjectMemory<MaskTypeElem*>(args[1]);
-    MaskTypeElem* fv = TypedObjectMemory<MaskTypeElem*>(args[2]);
+    TypedObjectElemArray<MaskTypeElem> val(args[0]);
+    TypedObjectElemArray<MaskTypeElem> tv(args[1]);
+    TypedObjectElemArray<MaskTypeElem> fv(args[2]);
 
     MaskTypeElem tr[MaskType::lanes];
     for (unsigned i = 0; i < MaskType::lanes; i++)
@@ -1277,9 +1414,9 @@ Select(JSContext* cx, unsigned argc, Value* vp)
         return ErrorBadArgs(cx);
     }
 
-    MaskTypeElem* mask = TypedObjectMemory<MaskTypeElem*>(args[0]);
-    Elem* tv = TypedObjectMemory<Elem*>(args[1]);
-    Elem* fv = TypedObjectMemory<Elem*>(args[2]);
+    TypedObjectElemArray<MaskTypeElem> mask(args[0]);
+    TypedObjectElemArray<Elem> tv(args[1]);
+    TypedObjectElemArray<Elem> fv(args[2]);
 
     Elem result[V::lanes];
     for (unsigned i = 0; i < V::lanes; i++)
@@ -1295,7 +1432,7 @@ static bool
 ArgumentToLaneIndex(JSContext* cx, JS::HandleValue v, unsigned limit, unsigned* lane)
 {
     uint64_t arg;
-    if (!ToIntegerIndex(cx, v, &arg))
+    if (!NonStandardToIndex(cx, v, &arg))
         return false;
     if (arg >= limit)
         return ErrorBadIndex(cx);
@@ -1322,7 +1459,7 @@ TypedArrayFromArgs(JSContext* cx, const CallArgs& args, uint32_t accessBytes,
     typedArray.set(&argobj);
 
     uint64_t index;
-    if (!ToIntegerIndex(cx, args[1], &index))
+    if (!NonStandardToIndex(cx, args[1], &index))
         return false;
 
     // Do the range check in 64 bits even when size_t is 32 bits.
@@ -1360,9 +1497,10 @@ Load(JSContext* cx, unsigned argc, Value* vp)
     if (!result)
         return false;
 
+    JS::AutoCheckCannotGC nogc(cx);
     SharedMem<Elem*> src =
         typedArray->as<TypedArrayObject>().viewDataEither().addBytes(byteStart).cast<Elem*>();
-    Elem* dst = reinterpret_cast<Elem*>(result->typedMem());
+    Elem* dst = reinterpret_cast<Elem*>(result->typedMem(nogc));
     jit::AtomicOperations::podCopySafeWhenRacy(SharedMem<Elem*>::unshared(dst), src, NumElem);
 
     args.rval().setObject(*result);
@@ -1387,7 +1525,8 @@ Store(JSContext* cx, unsigned argc, Value* vp)
     if (!IsVectorObject<V>(args[2]))
         return ErrorBadArgs(cx);
 
-    Elem* src = TypedObjectMemory<Elem*>(args[2]);
+    JS::AutoCheckCannotGC nogc(cx);
+    Elem* src = TypedObjectMemory<Elem*>(args[2], nogc);
     SharedMem<Elem*> dst =
         typedArray->as<TypedArrayObject>().viewDataEither().addBytes(byteStart).cast<Elem*>();
     js::jit::AtomicOperations::podCopySafeWhenRacy(dst, SharedMem<Elem*>::unshared(src), NumElem);

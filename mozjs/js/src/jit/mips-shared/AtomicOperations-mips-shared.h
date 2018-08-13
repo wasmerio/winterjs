@@ -6,235 +6,554 @@
 
 /* For documentation, see jit/AtomicOperations.h */
 
+// NOTE, MIPS32 unlike MIPS64 doesn't provide hardware support for lock-free
+// 64-bit atomics. We lie down below about 8-byte atomics being always lock-
+// free in order to support wasm jit. The 64-bit atomic for MIPS32 do not use
+// __atomic intrinsic and therefore do not relay on -latomic.
+// Access to a aspecific 64-bit variable in memory is protected by an AddressLock
+// whose instance is shared between jit and AtomicOperations.
+
 #ifndef jit_mips_shared_AtomicOperations_mips_shared_h
 #define jit_mips_shared_AtomicOperations_mips_shared_h
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Types.h"
 
-#if defined(__clang__) || defined(__GNUC__)
+#include "builtin/AtomicsObject.h"
+#include "vm/ArrayBufferObject.h"
 
-// The default implementation tactic for gcc/clang is to use the newer
-// __atomic intrinsics added for use in C++11 <atomic>.  Where that
-// isn't available, we use GCC's older __sync functions instead.
-//
-// ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS is kept as a backward
-// compatible option for older compilers: enable this to use GCC's old
-// __sync functions instead of the newer __atomic functions.  This
-// will be required for GCC 4.6.x and earlier, and probably for Clang
-// 3.1, should we need to use those versions.
+#if !defined(__clang__) && !defined(__GNUC__)
+# error "This file only for gcc-compatible compilers"
+#endif
 
-//#define ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
+#if defined(JS_SIMULATOR_MIPS32) && !defined(__i386__)
+# error "The MIPS32 simulator atomics assume x86"
+#endif
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+struct AddressLock
+{
+  public:
+    void acquire();
+    void release();
+  private:
+    uint32_t spinlock;
+};
+
+static_assert(sizeof(AddressLock) == sizeof(uint32_t),
+              "AddressLock must be 4 bytes for it to be consumed by jit");
+
+// For now use a single global AddressLock.
+static AddressLock gAtomic64Lock;
+
+struct MOZ_RAII AddressGuard
+{
+  explicit AddressGuard(void* addr)
+  {
+    gAtomic64Lock.acquire();
+  }
+
+  ~AddressGuard() {
+    gAtomic64Lock.release();
+  }
+};
+
+#endif
+
+} }
+
+inline bool
+js::jit::AtomicOperations::hasAtomic8()
+{
+    return true;
+}
 
 inline bool
 js::jit::AtomicOperations::isLockfree8()
 {
-# ifndef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
     MOZ_ASSERT(__atomic_always_lock_free(sizeof(int8_t), 0));
     MOZ_ASSERT(__atomic_always_lock_free(sizeof(int16_t), 0));
     MOZ_ASSERT(__atomic_always_lock_free(sizeof(int32_t), 0));
-#  if _MIPS_SIM == _ABI64
+# if defined(JS_64BIT)
     MOZ_ASSERT(__atomic_always_lock_free(sizeof(int64_t), 0));
-#  endif
-    return true;
-# else
-    return false;
 # endif
+    return true;
 }
 
 inline void
 js::jit::AtomicOperations::fenceSeqCst()
 {
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    __sync_synchronize();
-# else
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
-# endif
 }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::loadSeqCst(T* addr)
 {
-    MOZ_ASSERT(sizeof(T) < 8 || isLockfree8());
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    __sync_synchronize();
-    T v = *addr;
-    __sync_synchronize();
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     T v;
     __atomic_load(addr, &v, __ATOMIC_SEQ_CST);
-# endif
     return v;
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::loadSeqCst(int64_t* addr)
+{
+    AddressGuard guard(addr);
+    return *addr;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::loadSeqCst(uint64_t* addr)
+{
+    AddressGuard guard(addr);
+    return *addr;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline void
 js::jit::AtomicOperations::storeSeqCst(T* addr, T val)
 {
-    MOZ_ASSERT(sizeof(T) < 8 || isLockfree8());
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    __sync_synchronize();
-    *addr = val;
-    __sync_synchronize();
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     __atomic_store(addr, &val, __ATOMIC_SEQ_CST);
-# endif
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    *addr = val;
+}
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    *addr = val;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::compareExchangeSeqCst(T* addr, T oldval, T newval)
 {
-    MOZ_ASSERT(sizeof(T) < 8 || isLockfree8());
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_val_compare_and_swap(addr, oldval, newval);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     __atomic_compare_exchange(addr, &oldval, &newval, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     return oldval;
-# endif
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::compareExchangeSeqCst(int64_t* addr, int64_t oldval, int64_t newval)
+{
+    AddressGuard guard(addr);
+    int64_t val = *addr;
+    if (val == oldval)
+        *addr = newval;
+    return val;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::compareExchangeSeqCst(uint64_t* addr, uint64_t oldval, uint64_t newval)
+{
+    AddressGuard guard(addr);
+    uint64_t val = *addr;
+    if (val == oldval)
+        *addr = newval;
+    return val;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::fetchAddSeqCst(T* addr, T val)
 {
-    static_assert(sizeof(T) <= 4, "not available for 8-byte values yet");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_fetch_and_add(addr, val);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     return __atomic_fetch_add(addr, val, __ATOMIC_SEQ_CST);
-# endif
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::fetchAddSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = old + val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::fetchAddSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = old + val;
+    return old;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::fetchSubSeqCst(T* addr, T val)
 {
-    static_assert(sizeof(T) <= 4, "not available for 8-byte values yet");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_fetch_and_sub(addr, val);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     return __atomic_fetch_sub(addr, val, __ATOMIC_SEQ_CST);
-# endif
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::fetchSubSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = old - val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::fetchSubSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = old - val;
+    return old;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::fetchAndSeqCst(T* addr, T val)
 {
-    static_assert(sizeof(T) <= 4, "not available for 8-byte values yet");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_fetch_and_and(addr, val);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     return __atomic_fetch_and(addr, val, __ATOMIC_SEQ_CST);
-# endif
 }
+
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::fetchAndSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = old & val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::fetchAndSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = old & val;
+    return old;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::fetchOrSeqCst(T* addr, T val)
 {
-    static_assert(sizeof(T) <= 4, "not available for 8-byte values yet");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_fetch_and_or(addr, val);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     return __atomic_fetch_or(addr, val, __ATOMIC_SEQ_CST);
-# endif
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::fetchOrSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = old | val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::fetchOrSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = old | val;
+    return old;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::fetchXorSeqCst(T* addr, T val)
 {
-    static_assert(sizeof(T) <= 4, "not available for 8-byte values yet");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    return __sync_fetch_and_xor(addr, val);
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     return __atomic_fetch_xor(addr, val, __ATOMIC_SEQ_CST);
-# endif
+
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::fetchXorSeqCst(int64_t* addr, int64_t val)
+{
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = old ^ val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::fetchXorSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = old ^ val;
+    return old;
+}
+
+#endif
+
+} }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::loadSafeWhenRacy(T* addr)
 {
-    return *addr;               // FIXME (1208663): not yet safe
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
+    T v;
+    __atomic_load(addr, &v, __ATOMIC_RELAXED);
+    return v;
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::loadSafeWhenRacy(int64_t* addr)
+{
+    return *addr;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::loadSafeWhenRacy(uint64_t* addr)
+{
+    return *addr;
+}
+
+#endif
+
+template<>
+inline uint8_clamped
+js::jit::AtomicOperations::loadSafeWhenRacy(uint8_clamped* addr)
+{
+    uint8_t v;
+    __atomic_load(&addr->val, &v, __ATOMIC_RELAXED);
+    return uint8_clamped(v);
+}
+
+template<>
+inline float
+js::jit::AtomicOperations::loadSafeWhenRacy(float* addr)
+{
+    return *addr;
+}
+
+template<>
+inline double
+js::jit::AtomicOperations::loadSafeWhenRacy(double* addr)
+{
+    return *addr;
+}
+
+} }
 
 template<typename T>
 inline void
 js::jit::AtomicOperations::storeSafeWhenRacy(T* addr, T val)
 {
-    *addr = val;                // FIXME (1208663): not yet safe
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
+    __atomic_store(addr, &val, __ATOMIC_RELAXED);
 }
+
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSafeWhenRacy(int64_t* addr, int64_t val)
+{
+    *addr = val;
+}
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSafeWhenRacy(uint64_t* addr, uint64_t val)
+{
+    *addr = val;
+}
+
+#endif
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSafeWhenRacy(uint8_clamped* addr, uint8_clamped val)
+{
+    __atomic_store(&addr->val, &val.val, __ATOMIC_RELAXED);
+}
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSafeWhenRacy(float* addr, float val)
+{
+    *addr = val;
+}
+
+template<>
+inline void
+js::jit::AtomicOperations::storeSafeWhenRacy(double* addr, double val)
+{
+    *addr = val;
+}
+
+} }
 
 inline void
 js::jit::AtomicOperations::memcpySafeWhenRacy(void* dest, const void* src, size_t nbytes)
 {
-    ::memcpy(dest, src, nbytes); // FIXME (1208663): not yet safe
+    MOZ_ASSERT(!((char*)dest <= (char*)src && (char*)src < (char*)dest+nbytes));
+    MOZ_ASSERT(!((char*)src <= (char*)dest && (char*)dest < (char*)src+nbytes));
+    ::memcpy(dest, src, nbytes);
 }
 
 inline void
 js::jit::AtomicOperations::memmoveSafeWhenRacy(void* dest, const void* src, size_t nbytes)
 {
-    ::memmove(dest, src, nbytes); // FIXME (1208663): not yet safe
+    ::memmove(dest, src, nbytes);
 }
 
 template<typename T>
 inline T
 js::jit::AtomicOperations::exchangeSeqCst(T* addr, T val)
 {
-    MOZ_ASSERT(sizeof(T) < 8 || isLockfree8());
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    T v;
-    __sync_synchronize();
-    do {
-	v = *addr;
-    } while (__sync_val_compare_and_swap(addr, v, val) != v);
-    return v;
-# else
+    static_assert(sizeof(T) <= sizeof(void*), "atomics supported up to pointer size only");
     T v;
     __atomic_exchange(addr, &val, &v, __ATOMIC_SEQ_CST);
     return v;
-# endif
 }
 
-template<size_t nbytes>
-inline void
-js::jit::RegionLock::acquire(void* addr)
+namespace js { namespace jit {
+
+#if defined(JS_CODEGEN_MIPS32)
+
+template<>
+inline int64_t
+js::jit::AtomicOperations::exchangeSeqCst(int64_t* addr, int64_t val)
 {
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    while (!__sync_bool_compare_and_swap(&spinlock, 0, 1))
-        ;
-# else
+    AddressGuard guard(addr);
+    int64_t old = *addr;
+    *addr = val;
+    return old;
+}
+
+template<>
+inline uint64_t
+js::jit::AtomicOperations::exchangeSeqCst(uint64_t* addr, uint64_t val)
+{
+    AddressGuard guard(addr);
+    uint64_t old = *addr;
+    *addr = val;
+    return old;
+}
+
+#endif
+
+} }
+
+#if defined(JS_CODEGEN_MIPS32)
+
+inline void
+js::jit::AddressLock::acquire()
+{
     uint32_t zero = 0;
     uint32_t one = 1;
-    while (!__atomic_compare_exchange(&spinlock, &zero, &one, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+    while (!__atomic_compare_exchange(&spinlock, &zero, &one, true, __ATOMIC_SEQ_CST,
+          __ATOMIC_SEQ_CST))
+    {
         zero = 0;
-        continue;
     }
-# endif
 }
 
-template<size_t nbytes>
 inline void
-js::jit::RegionLock::release(void* addr)
+js::jit::AddressLock::release()
 {
-    MOZ_ASSERT(AtomicOperations::loadSeqCst(&spinlock) == 1, "releasing unlocked region lock");
-# ifdef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-    __sync_sub_and_fetch(&spinlock, 1);
-# else
     uint32_t zero = 0;
     __atomic_store(&spinlock, &zero, __ATOMIC_SEQ_CST);
-# endif
 }
-
-# undef ATOMICS_IMPLEMENTED_WITH_SYNC_INTRINSICS
-
-#elif defined(ENABLE_SHARED_ARRAY_BUFFER)
-
-# error "Either disable JS shared memory at compile time, use GCC or Clang, or add code here"
 
 #endif
 

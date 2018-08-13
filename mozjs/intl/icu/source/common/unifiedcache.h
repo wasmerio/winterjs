@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 ******************************************************************************
 * Copyright (C) 2015, International Business Machines Corporation and
@@ -105,7 +107,7 @@ class CacheKey : public CacheKeyBase {
     */
    virtual int32_t hashCode() const {
        const char *s = typeid(T).name();
-       return ustr_hashCharsN(s, uprv_strlen(s));
+       return ustr_hashCharsN(s, static_cast<int32_t>(uprv_strlen(s)));
    }
 
    /**
@@ -140,7 +142,7 @@ class LocaleCacheKey : public CacheKey<T> {
            : CacheKey<T>(other), fLoc(other.fLoc) { }
    virtual ~LocaleCacheKey() { }
    virtual int32_t hashCode() const {
-       return 37 *CacheKey<T>::hashCode() + fLoc.hashCode();
+       return (int32_t)(37u * (uint32_t)CacheKey<T>::hashCode() + (uint32_t)fLoc.hashCode());
    }
    virtual UBool operator == (const CacheKeyBase &other) const {
        // reflexive

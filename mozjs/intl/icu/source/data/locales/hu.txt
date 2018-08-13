@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/hu.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 hu{
     AuxExemplarCharacters{"[à ă â å ä ã ā æ ç è ĕ ê ë ē ì ĭ î ï ī ñ ò ŏ ô ø ō œ q ù ŭ û ū w x y ÿ]"}
     Ellipsis{
@@ -25,6 +19,7 @@ hu{
         "[A Á B C {CS} D {DZ} {DZS} E É F G {GY} H I Í J K L {LY} M N {NY} O Ó Ö Ő P "
         "Q R S {SZ} T {TY} U Ú Ü Ű V W X Y Z {ZS}]"
     }
+    ExemplarCharactersNumbers{"[  \\- , % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     ExemplarCharactersPunctuation{
         "[\\- – , ; \\: ! ? . … ' ’ \u0022 ” „ « » ( ) \\[ \\] \\{ \\} ⟨ ⟩ § @ * / "
         "\\& # ~ ⁒]"
@@ -213,14 +208,30 @@ hu{
                 timeSeparator{":"}
             }
         }
-        minimumGroupingDigits{"1"}
+        minimalPairs{
+            ordinal{
+                one{"Az {0}. lehetőségnél forduljon jobbra."}
+                other{"A {0}. lehetőségnél forduljon jobbra."}
+            }
+            plural{
+                one{"A kosár tartalma: {0} X. Megveszi?"}
+                other{"A kosár tartalma: {0} X. Megveszi őket?"}
+            }
+        }
+        minimumGroupingDigits{"4"}
         native{"latn"}
     }
-    Version{"2.1.19.17"}
+    Version{"2.1.37.5"}
     calendar{
         buddhist{
             eras{
                 abbreviated{
+                    "BK",
+                }
+                narrow{
+                    "BK",
+                }
+                wide{
                     "BK",
                 }
             }
@@ -290,22 +301,36 @@ hu{
             }
         }
         coptic{
+            eras{
+                abbreviated{
+                    "ERA0",
+                    "ERA1",
+                }
+                narrow{
+                    "ERA0",
+                    "ERA1",
+                }
+                wide{
+                    "ERA0",
+                    "ERA1",
+                }
+            }
             monthNames{
                 format{
                     abbreviated{
-                        "Tout",
-                        "Baba",
-                        "Hator",
-                        "Kiahk",
-                        "Toba",
-                        "Amshir",
-                        "Baramhat",
-                        "Baramouda",
-                        "Bashans",
-                        "Paona",
-                        "Epep",
-                        "Mesra",
-                        "Nasie",
+                        "Thot",
+                        "Paophi",
+                        "Athür",
+                        "Koiak",
+                        "Tübi",
+                        "Mehir",
+                        "Phamenóth",
+                        "Pharmuthi",
+                        "Pakhónsz",
+                        "Pauni",
+                        "Epip",
+                        "Meszoré",
+                        "Pi Kogi Enavot",
                     }
                     narrow{
                         "1",
@@ -322,42 +347,71 @@ hu{
                         "12",
                         "13",
                     }
+                    wide{
+                        "Thot",
+                        "Paophi",
+                        "Athür",
+                        "Koiak",
+                        "Tübi",
+                        "Mehir",
+                        "Phamenóth",
+                        "Pharmuthi",
+                        "Pakhónsz",
+                        "Pauni",
+                        "Epip",
+                        "Meszoré",
+                        "Pi Kogi Enavot",
+                    }
                 }
                 stand-alone{
                     abbreviated{
-                        "Tout",
-                        "Baba",
-                        "Hator",
-                        "Kiahk",
-                        "Toba",
-                        "Amshir",
-                        "Baramhat",
-                        "Baramouda",
-                        "Bashans",
-                        "Paona",
-                        "Epep",
-                        "Mesra",
-                        "Nasie",
+                        "Thot",
+                        "Paophi",
+                        "Athür",
+                        "Koiak",
+                        "Tübi",
+                        "Mehir",
+                        "Phamenóth",
+                        "Pharmuthi",
+                        "Pakhónsz",
+                        "Pauni",
+                        "Epip",
+                        "Meszoré",
+                        "Pi Kogi Enavot",
                     }
                     wide{
-                        "Tout",
-                        "Baba",
-                        "Hator",
-                        "Kiahk",
-                        "Toba",
-                        "Amshir",
-                        "Baramhat",
-                        "Baramouda",
-                        "Bashans",
-                        "Paona",
-                        "Epep",
-                        "Mesra",
-                        "Nasie",
+                        "Thot",
+                        "Paophi",
+                        "Athür",
+                        "Koiak",
+                        "Tübi",
+                        "Mehir",
+                        "Phamenóth",
+                        "Pharmuthi",
+                        "Pakhónsz",
+                        "Pauni",
+                        "Epip",
+                        "Meszoré",
+                        "Pi Kogi Enavot",
                     }
                 }
             }
         }
         ethiopic{
+            eras{
+                abbreviated{
+                    "ERA0",
+                    "ERA1",
+                }
+                narrow{
+                    "ERA0",
+                    "ERA1",
+                }
+                wide{
+                    "ERA0",
+                    "ERA1",
+                }
+            }
             monthNames{
                 format{
                     abbreviated{
@@ -442,8 +496,17 @@ hu{
                 "{1} {0}",
             }
             availableFormats{
+                Bh{"B h"}
+                Bhm{"B h:mm"}
+                Bhms{"B h:mm:ss"}
                 E{"ccc"}
+                EBhm{"E h:mm"}
+                EBhms{"E h:mm:ss"}
+                EHm{"E HH:mm"}
+                EHms{"E HH:mm:ss"}
                 Ed{"d., E"}
+                Ehm{"E h:mm"}
+                Ehms{"E h:mm:ss"}
                 Gy{"G y."}
                 GyMMM{"G y. MMM"}
                 GyMMMEd{"G y. MMM d., E"}
@@ -603,7 +666,12 @@ hu{
                 Timezone{"{0} {1}"}
             }
             availableFormats{
+                Bh{"B h"}
+                Bhm{"B h:mm"}
+                Bhms{"B h:mm:ss"}
                 E{"ccc"}
+                EBhm{"E B h:mm"}
+                EBhms{"E B h:mm:ss"}
                 EHm{"E HH:mm"}
                 EHms{"E HH:mm:ss"}
                 Ed{"d., E"}
@@ -622,6 +690,10 @@ hu{
                 MEd{"M. d., E"}
                 MMM{"LLL"}
                 MMMEd{"MMM d., E"}
+                MMMMW{
+                    one{"MMM W. 'hete'"}
+                    other{"MMM W. 'hete'"}
+                }
                 MMMMd{"MMMM d."}
                 MMMd{"MMM d."}
                 Md{"M. d."}
@@ -629,8 +701,8 @@ hu{
                 h{"a h"}
                 hm{"a h:mm"}
                 hms{"a h:mm:ss"}
-                hmsv{"h:mm:ss a v"}
-                hmv{"h:mm a v"}
+                hmsv{"a h:mm:ss v"}
+                hmv{"a h:mm v"}
                 mmss{"mm:ss"}
                 ms{"mm:ss"}
                 y{"y."}
@@ -643,6 +715,10 @@ hu{
                 yMd{"y. MM. dd."}
                 yQQQ{"y. QQQ"}
                 yQQQQ{"y. QQQQ"}
+                yw{
+                    one{"Y w. 'hete'"}
+                    other{"Y w. 'hete'"}
+                }
             }
             dayNames{
                 format{
@@ -725,23 +801,23 @@ hu{
             dayPeriod{
                 format{
                     abbreviated{
-                        afternoon1{"délután"}
+                        afternoon1{"du."}
                         evening1{"este"}
                         midnight{"éjfél"}
                         morning1{"reggel"}
-                        morning2{"reggel"}
-                        night1{"éjszaka"}
-                        night2{"éjszaka"}
+                        morning2{"de."}
+                        night1{"éjjel"}
+                        night2{"hajnal"}
                         noon{"dél"}
                     }
                     narrow{
-                        afternoon1{"délután"}
-                        evening1{"délután"}
+                        afternoon1{"du."}
+                        evening1{"este"}
                         midnight{"éjfél"}
                         morning1{"reggel"}
-                        morning2{"reggel"}
-                        night1{"éjszaka"}
-                        night2{"éjszaka"}
+                        morning2{"de."}
+                        night1{"éjjel"}
+                        night2{"hajnal"}
                         noon{"dél"}
                     }
                     wide{
@@ -749,32 +825,32 @@ hu{
                         evening1{"este"}
                         midnight{"éjfél"}
                         morning1{"reggel"}
-                        morning2{"reggel"}
-                        night1{"éjszaka"}
-                        night2{"éjszaka"}
+                        morning2{"délelőtt"}
+                        night1{"éjjel"}
+                        night2{"hajnal"}
                         noon{"dél"}
                     }
                 }
                 stand-alone{
                     abbreviated{
-                        afternoon1{"délután"}
+                        afternoon1{"du."}
                         am{"de."}
                         evening1{"este"}
                         midnight{"éjfél"}
                         morning1{"reggel"}
-                        morning2{"délelőtt"}
+                        morning2{"de."}
                         night1{"éjjel"}
                         night2{"hajnal"}
                         noon{"dél"}
                         pm{"du."}
                     }
                     narrow{
-                        afternoon1{"délután"}
+                        afternoon1{"du."}
                         am{"de."}
                         evening1{"este"}
                         midnight{"éjfél"}
                         morning1{"reggel"}
-                        morning2{"délelőtt"}
+                        morning2{"de."}
                         night1{"éjjel"}
                         night2{"hajnal"}
                         noon{"dél"}
@@ -804,11 +880,11 @@ hu{
                     "isz.",
                 }
                 wide{
-                    "időszámításunk előtt",
+                    "Krisztus előtt",
                     "időszámításunk szerint",
                 }
                 wide%variant{
-                    "i. e.",
+                    "időszámításunk előtt",
                     "i. sz.",
                 }
             }
@@ -1000,16 +1076,16 @@ hu{
             quarters{
                 format{
                     abbreviated{
-                        "N1",
-                        "N2",
-                        "N3",
-                        "N4",
+                        "I. n.év",
+                        "II. n.év",
+                        "III. n.év",
+                        "IV. n.év",
                     }
                     narrow{
-                        "1.",
-                        "2.",
-                        "3.",
-                        "4.",
+                        "I.",
+                        "II.",
+                        "III.",
+                        "IV.",
                     }
                     wide{
                         "I. negyedév",
@@ -1020,10 +1096,10 @@ hu{
                 }
                 stand-alone{
                     abbreviated{
-                        "N1",
-                        "N2",
-                        "N3",
-                        "N4",
+                        "1. n.év",
+                        "2. n.év",
+                        "3. n.év",
+                        "4. n.év",
                     }
                     narrow{
                         "1.",
@@ -1043,6 +1119,12 @@ hu{
         hebrew{
             eras{
                 abbreviated{
+                    "TÉ",
+                }
+                narrow{
+                    "TÉ",
+                }
+                wide{
                     "TÉ",
                 }
             }
@@ -1186,6 +1268,12 @@ hu{
                 abbreviated{
                     "MF",
                 }
+                narrow{
+                    "MF",
+                }
+                wide{
+                    "MF",
+                }
             }
             monthNames{
                 format{
@@ -1270,20 +1358,6 @@ hu{
         persian{
             monthNames{
                 format{
-                    abbreviated{
-                        "Farvardin",
-                        "Ordibehesht",
-                        "Khordad",
-                        "Tir",
-                        "Mordad",
-                        "Shahrivar",
-                        "Mehr",
-                        "Aban",
-                        "Azar",
-                        "Dey",
-                        "Bahman",
-                        "Esfand",
-                    }
                     narrow{
                         "1",
                         "2",
@@ -1298,35 +1372,49 @@ hu{
                         "11",
                         "12",
                     }
+                    wide{
+                        "farvardin",
+                        "ordibehesht",
+                        "khordad",
+                        "tir",
+                        "mordad",
+                        "shahrivar",
+                        "mehr",
+                        "aban",
+                        "azar",
+                        "dey",
+                        "bahman",
+                        "esfand",
+                    }
                 }
                 stand-alone{
                     abbreviated{
-                        "Farvardin",
-                        "Ordibehesht",
-                        "Khordad",
-                        "Tir",
-                        "Mordad",
-                        "Shahrivar",
-                        "Mehr",
-                        "Aban",
-                        "Azar",
-                        "Dey",
-                        "Bahman",
-                        "Esfand",
+                        "farvardin",
+                        "ordibehesht",
+                        "khordad",
+                        "tir",
+                        "mordad",
+                        "shahrivar",
+                        "mehr",
+                        "aban",
+                        "azar",
+                        "dey",
+                        "bahman",
+                        "esfand",
                     }
                     wide{
-                        "Farvardin",
-                        "Ordibehesht",
-                        "Khordad",
-                        "Tir",
-                        "Mordad",
-                        "Shahrivar",
-                        "Mehr",
-                        "Aban",
-                        "Azar",
-                        "Dey",
-                        "Bahman",
-                        "Esfand",
+                        "farvardin",
+                        "ordibehesht",
+                        "khordad",
+                        "tir",
+                        "mordad",
+                        "shahrivar",
+                        "mehr",
+                        "aban",
+                        "azar",
+                        "dey",
+                        "bahman",
+                        "esfand",
                     }
                 }
             }
@@ -1337,8 +1425,104 @@ hu{
                     "R.O.C. előtt",
                     "R.O.C.",
                 }
+                narrow{
+                    "R.O.C. előtt",
+                    "R.O.C.",
+                }
+                wide{
+                    "R.O.C. előtt",
+                    "R.O.C.",
+                }
             }
         }
+    }
+    characterLabel{
+        activities{"tevékenység"}
+        african_scripts{"afrikai írásrendszerek"}
+        american_scripts{"amerikai írásrendszerek"}
+        animal{"állat"}
+        animals_nature{"állatok és természet"}
+        arrows{"nyilak"}
+        body{"test"}
+        box_drawing{"grafikus karakterek"}
+        braille{"braille"}
+        building{"épület"}
+        bullets_stars{"felsorolásjelek és csillagok"}
+        consonantal_jamo{"mássalhangzói jamo"}
+        currency_symbols{"pénznemek szimbólumai"}
+        dash_connector{"gondolatjel/kötőjel"}
+        digits{"számjegyek"}
+        dingbats{"dingbatok"}
+        divination_symbols{"jóslási jelek"}
+        downwards_arrows{"lefelé mutató nyilak"}
+        downwards_upwards_arrows{"felfelé-lefelé mutató nyilak"}
+        east_asian_scripts{"kelet-ázsiai írásrendszerek"}
+        emoji{"emodzsi"}
+        european_scripts{"európai írásrendszerek"}
+        female{"nő"}
+        flag{"zászló"}
+        flags{"zászlók"}
+        food_drink{"étel-ital"}
+        format{"formátum"}
+        format_whitespace{"formátum és térköz"}
+        full_width_form_variant{"teljes szélességű formavariációk"}
+        geometric_shapes{"geometriai alakzatok"}
+        half_width_form_variant{"félszélességű formavariációk"}
+        han_characters{"han karakterek"}
+        han_radicals{"han gyökök"}
+        hanja{"handzsa"}
+        hanzi_simplified{"hanzi (egyszerűsített)"}
+        hanzi_traditional{"hanzi (hagyományos)"}
+        heart{"szív"}
+        historic_scripts{"történelmi írásrendszerek"}
+        ideographic_desc_characters{"ideografikus leíró karakterek"}
+        japanese_kana{"japán kana"}
+        kanbun{"kanbun"}
+        kanji{"kandzsi"}
+        keycap{"gombfej"}
+        leftwards_arrows{"balra mutató nyilak"}
+        leftwards_rightwards_arrows{"jobbra-balra mutató nyilak"}
+        letterlike_symbols{"betűszerű szimbólumok"}
+        limited_use{"korlátozott használat"}
+        male{"férfi"}
+        math_symbols{"matematikai szimbólumok"}
+        middle_eastern_scripts{"matematikai szimbólumok"}
+        miscellaneous{"egyéb"}
+        modern_scripts{"modern írásrendszerek"}
+        modifier{"módosító"}
+        musical_symbols{"zenei szimbólumok"}
+        nature{"természet"}
+        nonspacing{"szóközt nem alkalmazó"}
+        numbers{"számok"}
+        objects{"tárgyak"}
+        other{"egyéb"}
+        paired{"párosított"}
+        person{"ember"}
+        phonetic_alphabet{"fonetikus ábécé"}
+        pictographs{"piktogramok"}
+        place{"hely"}
+        plant{"növény"}
+        punctuation{"írásjel"}
+        rightwards_arrows{"jobbra mutató nyilak"}
+        sign_standard_symbols{"jelek/normál szimbólumok"}
+        small_form_variant{"kis formavariánsok"}
+        smiley{"hangulatjel"}
+        smileys_people{"hangulatjelek és emberek"}
+        south_asian_scripts{"dél-ázsiai írásrendszerek"}
+        southeast_asian_scripts{"délkelet-ázsiai írásrendszerek"}
+        spacing{"szóközt alkalmazó"}
+        sport{"sport"}
+        symbols{"szimbólumok"}
+        technical_symbols{"műszaki szimbólumok"}
+        tone_marks{"hangsúlyjelek"}
+        travel{"utazás"}
+        travel_places{"utazás és helyek"}
+        upwards_arrows{"felfelé mutató nyilak"}
+        variant_forms{"variánsformák"}
+        vocalic_jamo{"magánhangzói jamo"}
+        weather{"időjárás"}
+        western_asian_scripts{"nyugat-ázsiai írásrendszerek"}
+        whitespace{"térköz"}
     }
     delimiters{
         alternateQuotationEnd{"«"}
@@ -1370,7 +1554,10 @@ hu{
         day-narrow{
             dn{"nap"}
             relative{
+                "-1"{"tegnap"}
                 "-2"{"tegnapelőtt"}
+                "0"{"ma"}
+                "1"{"holnap"}
                 "2"{"holnapután"}
             }
             relativeTime{
@@ -1387,7 +1574,10 @@ hu{
         day-short{
             dn{"nap"}
             relative{
+                "-1"{"tegnap"}
                 "-2"{"tegnapelőtt"}
+                "0"{"ma"}
+                "1"{"holnap"}
                 "2"{"holnapután"}
             }
             relativeTime{
@@ -1401,10 +1591,31 @@ hu{
                 }
             }
         }
+        dayOfYear{
+            dn{"év napja"}
+        }
+        dayOfYear-narrow{
+            dn{"év napja"}
+        }
+        dayOfYear-short{
+            dn{"év napja"}
+        }
         dayperiod{
             dn{"napszak"}
         }
+        dayperiod-narrow{
+            dn{"napszak"}
+        }
+        dayperiod-short{
+            dn{"napszak"}
+        }
         era{
+            dn{"éra"}
+        }
+        era-narrow{
+            dn{"éra"}
+        }
+        era-short{
             dn{"éra"}
         }
         fri{
@@ -1413,12 +1624,32 @@ hu{
                 "0"{"ez a péntek"}
                 "1"{"következő péntek"}
             }
+            relativeTime{
+                future{
+                    one{"{0} péntek múlva"}
+                    other{"{0} péntek múlva"}
+                }
+                past{
+                    one{"{0} péntekkel ezelőtt"}
+                    other{"{0} péntekkel ezelőtt"}
+                }
+            }
         }
         fri-narrow{
             relative{
                 "-1"{"előző péntek"}
                 "0"{"ez a péntek"}
                 "1"{"következő péntek"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} péntek múlva"}
+                    other{"{0} péntek múlva"}
+                }
+                past{
+                    one{"{0} péntekkel ezelőtt"}
+                    other{"{0} péntekkel ezelőtt"}
+                }
             }
         }
         fri-short{
@@ -1427,9 +1658,22 @@ hu{
                 "0"{"ez a péntek"}
                 "1"{"következő péntek"}
             }
+            relativeTime{
+                future{
+                    one{"{0} péntek múlva"}
+                    other{"{0} péntek múlva"}
+                }
+                past{
+                    one{"{0} péntekkel ezelőtt"}
+                    other{"{0} péntekkel ezelőtt"}
+                }
+            }
         }
         hour{
             dn{"óra"}
+            relative{
+                "0"{"ebben az órában"}
+            }
             relativeTime{
                 future{
                     one{"{0} óra múlva"}
@@ -1469,6 +1713,9 @@ hu{
         }
         minute{
             dn{"perc"}
+            relative{
+                "0"{"ebben a percben"}
+            }
             relativeTime{
                 future{
                     one{"{0} perc múlva"}
@@ -1512,6 +1759,16 @@ hu{
                 "0"{"ez a hétfő"}
                 "1"{"következő hétfő"}
             }
+            relativeTime{
+                future{
+                    one{"{0} hétfő múlva"}
+                    other{"{0} hétfő múlva"}
+                }
+                past{
+                    one{"{0} hétfővel ezelőtt"}
+                    other{"{0} hétfővel ezelőtt"}
+                }
+            }
         }
         mon-narrow{
             relative{
@@ -1519,12 +1776,32 @@ hu{
                 "0"{"ez a hétfő"}
                 "1"{"következő hétfő"}
             }
+            relativeTime{
+                future{
+                    one{"{0} hétfő múlva"}
+                    other{"{0} hétfő múlva"}
+                }
+                past{
+                    one{"{0} hétfővel ezelőtt"}
+                    other{"{0} hétfővel ezelőtt"}
+                }
+            }
         }
         mon-short{
             relative{
                 "-1"{"előző hétfő"}
                 "0"{"ez a hétfő"}
                 "1"{"következő hétfő"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} hétfő múlva"}
+                    other{"{0} hétfő múlva"}
+                }
+                past{
+                    one{"{0} hétfővel ezelőtt"}
+                    other{"{0} hétfővel ezelőtt"}
+                }
             }
         }
         month{
@@ -1600,7 +1877,7 @@ hu{
             }
         }
         quarter-narrow{
-            dn{"negyedév"}
+            dn{"n.év"}
             relative{
                 "-1"{"előző negyedév"}
                 "0"{"ez a negyedév"}
@@ -1608,8 +1885,8 @@ hu{
             }
             relativeTime{
                 future{
-                    one{"{0} negyedév múlva"}
-                    other{"{0} negyedév múlva"}
+                    one{"{0} n.év múlva"}
+                    other{"{0} n.év múlva"}
                 }
                 past{
                     one{"{0} negyedévvel ezelőtt"}
@@ -1618,7 +1895,7 @@ hu{
             }
         }
         quarter-short{
-            dn{"negyedév"}
+            dn{"n.év"}
             relative{
                 "-1"{"előző negyedév"}
                 "0"{"ez a negyedév"}
@@ -1641,6 +1918,16 @@ hu{
                 "0"{"ez a szombat"}
                 "1"{"következő szombat"}
             }
+            relativeTime{
+                future{
+                    one{"{0} szombat múlva"}
+                    other{"{0} szombat múlva"}
+                }
+                past{
+                    one{"{0} szombattal ezelőtt"}
+                    other{"{0} szombattal ezelőtt"}
+                }
+            }
         }
         sat-narrow{
             relative{
@@ -1648,12 +1935,32 @@ hu{
                 "0"{"ez a szombat"}
                 "1"{"következő szombat"}
             }
+            relativeTime{
+                future{
+                    one{"{0} szombat múlva"}
+                    other{"{0} szombat múlva"}
+                }
+                past{
+                    one{"{0} szombattal ezelőtt"}
+                    other{"{0} szombattal ezelőtt"}
+                }
+            }
         }
         sat-short{
             relative{
                 "-1"{"előző szombat"}
                 "0"{"ez a szombat"}
                 "1"{"következő szombat"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} szombat múlva"}
+                    other{"{0} szombat múlva"}
+                }
+                past{
+                    one{"{0} szombattal ezelőtt"}
+                    other{"{0} szombattal ezelőtt"}
+                }
             }
         }
         second{
@@ -1704,12 +2011,32 @@ hu{
                 "0"{"ez a vasárnap"}
                 "1"{"következő vasárnap"}
             }
+            relativeTime{
+                future{
+                    one{"{0} vasárnap múlva"}
+                    other{"{0} vasárnap múlva"}
+                }
+                past{
+                    one{"{0} vasárnappal ezelőtt"}
+                    other{"{0} vasárnappal ezelőtt"}
+                }
+            }
         }
         sun-narrow{
             relative{
                 "-1"{"előző vasárnap"}
                 "0"{"ez a vasárnap"}
                 "1"{"következő vasárnap"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} vasárnap múlva"}
+                    other{"{0} vasárnap múlva"}
+                }
+                past{
+                    one{"{0} vasárnappal ezelőtt"}
+                    other{"{0} vasárnappal ezelőtt"}
+                }
             }
         }
         sun-short{
@@ -1718,12 +2045,32 @@ hu{
                 "0"{"ez a vasárnap"}
                 "1"{"következő vasárnap"}
             }
+            relativeTime{
+                future{
+                    one{"{0} vasárnap múlva"}
+                    other{"{0} vasárnap múlva"}
+                }
+                past{
+                    one{"{0} vasárnappal ezelőtt"}
+                    other{"{0} vasárnappal ezelőtt"}
+                }
+            }
         }
         thu{
             relative{
                 "-1"{"előző csütörtök"}
                 "0"{"ez a csütörtök"}
                 "1"{"következő csütörtök"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} csütörtök múlva"}
+                    other{"{0} csütörtök múlva"}
+                }
+                past{
+                    one{"{0} csütörtökkel ezelőtt"}
+                    other{"{0} csütörtökkel ezelőtt"}
+                }
             }
         }
         thu-narrow{
@@ -1732,12 +2079,32 @@ hu{
                 "0"{"ez a csütörtök"}
                 "1"{"következő csütörtök"}
             }
+            relativeTime{
+                future{
+                    one{"{0} csütörtök múlva"}
+                    other{"{0} csütörtök múlva"}
+                }
+                past{
+                    one{"{0} csütörtökkel ezelőtt"}
+                    other{"{0} csütörtökkel ezelőtt"}
+                }
+            }
         }
         thu-short{
             relative{
                 "-1"{"előző csütörtök"}
                 "0"{"ez a csütörtök"}
                 "1"{"következő csütörtök"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} csütörtök múlva"}
+                    other{"{0} csütörtök múlva"}
+                }
+                past{
+                    one{"{0} csütörtökkel ezelőtt"}
+                    other{"{0} csütörtökkel ezelőtt"}
+                }
             }
         }
         tue{
@@ -1746,12 +2113,32 @@ hu{
                 "0"{"ez a kedd"}
                 "1"{"következő kedd"}
             }
+            relativeTime{
+                future{
+                    one{"{0} kedd múlva"}
+                    other{"{0} kedd múlva"}
+                }
+                past{
+                    one{"{0} keddel ezelőtt"}
+                    other{"{0} keddel ezelőtt"}
+                }
+            }
         }
         tue-narrow{
             relative{
                 "-1"{"előző kedd"}
                 "0"{"ez a kedd"}
                 "1"{"következő kedd"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} kedd múlva"}
+                    other{"{0} kedd múlva"}
+                }
+                past{
+                    one{"{0} keddel ezelőtt"}
+                    other{"{0} keddel ezelőtt"}
+                }
             }
         }
         tue-short{
@@ -1760,12 +2147,32 @@ hu{
                 "0"{"ez a kedd"}
                 "1"{"következő kedd"}
             }
+            relativeTime{
+                future{
+                    one{"{0} kedd múlva"}
+                    other{"{0} kedd múlva"}
+                }
+                past{
+                    one{"{0} keddel ezelőtt"}
+                    other{"{0} keddel ezelőtt"}
+                }
+            }
         }
         wed{
             relative{
                 "-1"{"előző szerda"}
                 "0"{"ez a szerda"}
                 "1"{"következő szerda"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} szerda múlva"}
+                    other{"{0} szerda múlva"}
+                }
+                past{
+                    one{"{0} szerdával ezelőtt"}
+                    other{"{0} szerdával ezelőtt"}
+                }
             }
         }
         wed-narrow{
@@ -1774,12 +2181,32 @@ hu{
                 "0"{"ez a szerda"}
                 "1"{"következő szerda"}
             }
+            relativeTime{
+                future{
+                    one{"{0} szerda múlva"}
+                    other{"{0} szerda múlva"}
+                }
+                past{
+                    one{"{0} szerdával ezelőtt"}
+                    other{"{0} szerdával ezelőtt"}
+                }
+            }
         }
         wed-short{
             relative{
                 "-1"{"előző szerda"}
                 "0"{"ez a szerda"}
                 "1"{"következő szerda"}
+            }
+            relativeTime{
+                future{
+                    one{"{0} szerda múlva"}
+                    other{"{0} szerda múlva"}
+                }
+                past{
+                    one{"{0} szerdával ezelőtt"}
+                    other{"{0} szerdával ezelőtt"}
+                }
             }
         }
         week{
@@ -1789,6 +2216,7 @@ hu{
                 "0"{"ez a hét"}
                 "1"{"következő hét"}
             }
+            relativePeriod{"{0} hete"}
             relativeTime{
                 future{
                     one{"{0} hét múlva"}
@@ -1807,6 +2235,7 @@ hu{
                 "0"{"ez a hét"}
                 "1"{"következő hét"}
             }
+            relativePeriod{"{0} hete"}
             relativeTime{
                 future{
                     one{"{0} hét múlva"}
@@ -1825,6 +2254,7 @@ hu{
                 "0"{"ez a hét"}
                 "1"{"következő hét"}
             }
+            relativePeriod{"{0} hete"}
             relativeTime{
                 future{
                     one{"{0} hét múlva"}
@@ -1836,8 +2266,32 @@ hu{
                 }
             }
         }
+        weekOfMonth{
+            dn{"hónap hete"}
+        }
+        weekOfMonth-narrow{
+            dn{"hónap hete"}
+        }
+        weekOfMonth-short{
+            dn{"hónap hete"}
+        }
         weekday{
             dn{"hét napja"}
+        }
+        weekday-narrow{
+            dn{"hét napja"}
+        }
+        weekday-short{
+            dn{"hét napja"}
+        }
+        weekdayOfMonth{
+            dn{"hónap hétköznapja"}
+        }
+        weekdayOfMonth-narrow{
+            dn{"hónap hétköznapja"}
+        }
+        weekdayOfMonth-short{
+            dn{"hónap hétköznapja"}
         }
         year{
             dn{"év"}
@@ -1896,9 +2350,27 @@ hu{
         zone{
             dn{"időzóna"}
         }
+        zone-narrow{
+            dn{"időzóna"}
+        }
+        zone-short{
+            dn{"időzóna"}
+        }
     }
     listPattern{
+        or{
+            2{"{0} vagy {1}"}
+            end{"{0} vagy {1}"}
+            middle{"{0}, {1}"}
+            start{"{0}, {1}"}
+        }
         standard{
+            2{"{0} és {1}"}
+            end{"{0} és {1}"}
+            middle{"{0}, {1}"}
+            start{"{0}, {1}"}
+        }
+        standard-short{
             2{"{0} és {1}"}
             end{"{0} és {1}"}
             middle{"{0}, {1}"}
@@ -1927,17 +2399,5 @@ hu{
         UK{"angol"}
         US{"amerikai"}
         metric{"metrikus"}
-    }
-    transformNames{
-        BGN{"BGN"}
-        Numeric{"Szám"}
-        Tone{"Hangsúly"}
-        UNGEGN{"UNGEGN"}
-        x-Accents{"Ékezetek"}
-        x-Fullwidth{"Teljes szélesség"}
-        x-Halfwidth{"Fél szélesség"}
-        x-Jamo{"Jamo"}
-        x-Pinyin{"Pinjin"}
-        x-Publishing{"Kiadásra"}
     }
 }

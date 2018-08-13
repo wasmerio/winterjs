@@ -275,7 +275,7 @@ In some cases, for convenience, it is possible to set both
 This allows to use ``mylib`` in the ``USE_LIBS`` of another library or
 executable.
 
-When refering to a ``Library`` name building both types of libraries in
+When referring to a ``Library`` name building both types of libraries in
 ``USE_LIBS``, the shared library is chosen to be linked. But sometimes,
 it is wanted to link the static version, in which case the ``Library`` name
 needs to be prefixed with ``static:`` in ``USE_LIBS``
@@ -296,9 +296,6 @@ needs to be prefixed with ``static:`` in ``USE_LIBS``
 
 Miscellaneous
 =============
-
-The ``SDK_LIBRARY`` boolean variable defines whether the library in the current
-directory is going to be installed in the SDK.
 
 The ``SONAME`` variable declares a "shared object name" for the library. It
 defaults to the ``Library`` name or the ``SHARED_LIBRARY_NAME`` if set. When
@@ -340,9 +337,6 @@ essentially the same as the above mentioned templates, prefixed with "Gecko":
   - ``GeckoCppUnitTests``
   - ``GeckoSharedLibrary``
   - ``GeckoFramework``
-
-There is also ``XPCOMBinaryComponent`` for XPCOM components, which is a
-special kind of library.
 
 All the Gecko-prefixed templates take the same arguments as their
 non-Gecko-prefixed counterparts, and can take a few more arguments

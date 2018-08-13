@@ -4,6 +4,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import os
 import mozinfo
 from collections import namedtuple
@@ -61,12 +63,13 @@ _DEBUGGER_INFO = {
 
 # Maps each OS platform to the preferred debugger programs found in _DEBUGGER_INFO.
 _DEBUGGER_PRIORITIES = {
-      'win': ['devenv.exe', 'wdexpress.exe'],
-      'linux': ['gdb', 'cgdb', 'lldb'],
-      'mac': ['lldb', 'gdb'],
-      'android': ['gdb'],
-      'unknown': ['gdb']
+    'win': ['devenv.exe', 'wdexpress.exe'],
+    'linux': ['gdb', 'cgdb', 'lldb'],
+    'mac': ['lldb', 'gdb'],
+    'android': ['gdb'],
+    'unknown': ['gdb']
 }
+
 
 def _windbg_installation_paths():
     programFilesSuffixes = ['', ' (x86)']
@@ -80,6 +83,7 @@ def _windbg_installation_paths():
         for version in windowsKitsVersions:
             yield os.path.join(windowsKitsPrefix, version,
                                'Debuggers', 'x86', 'windbg.exe')
+
 
 def get_debugger_path(debugger):
     '''
@@ -99,13 +103,14 @@ def get_debugger_path(debugger):
             path = check_output(['xcrun', '--find', 'lldb']).strip()
             if path:
                 return path
-        except:
+        except Exception:
             # Just default to find_executable instead.
             pass
 
     return find_executable(debugger)
 
-def get_debugger_info(debugger, debuggerArgs = None, debuggerInteractive = False):
+
+def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
     '''
     Get the information about the requested debugger.
 
@@ -127,7 +132,7 @@ def get_debugger_info(debugger, debuggerArgs = None, debuggerInteractive = False
         # Append '.exe' to the debugger on Windows if it's not present,
         # so things like '--debugger=devenv' work.
         if (os.name == 'nt'
-            and not debugger.lower().endswith('.exe')):
+                and not debugger.lower().endswith('.exe')):
             debugger += '.exe'
 
         debuggerPath = get_debugger_path(debugger)
@@ -147,7 +152,7 @@ def get_debugger_info(debugger, debuggerArgs = None, debuggerInteractive = False
                 debuggerPath = debugger
 
     if not debuggerPath:
-        print 'Error: Could not find debugger %s.' % debugger
+        print('Error: Could not find debugger %s.' % debugger)
         return None
 
     debuggerName = os.path.basename(debuggerPath).lower()
@@ -186,9 +191,12 @@ def get_debugger_info(debugger, debuggerArgs = None, debuggerInteractive = False
     return d
 
 # Defines the search policies to use in get_default_debugger_name.
+
+
 class DebuggerSearch:
-  OnlyFirst = 1
-  KeepLooking = 2
+    OnlyFirst = 1
+    KeepLooking = 2
+
 
 def get_default_debugger_name(search=DebuggerSearch.OnlyFirst):
     '''
@@ -259,6 +267,8 @@ def get_default_debugger_name(search=DebuggerSearch.OnlyFirst):
 # --px-file-backed=unwindregs-at-mem-access
 #                             [these reduce PX overheads as described above]
 #
+
+
 def get_default_valgrind_args():
     return (['--fair-sched=yes',
              '--smc-check=all-non-file',
@@ -268,14 +278,16 @@ def get_default_valgrind_args():
              ('--trace-children-skip='
               + '/usr/bin/hg,/bin/rm,*/bin/certutil,*/bin/pk12util,'
               + '*/bin/ssltunnel,*/bin/uname,*/bin/which,*/bin/ps,'
-              + '*/bin/grep,*/bin/java'),
-            ]
+              + '*/bin/grep,*/bin/java,*/bin/lsb_release'),
+             ]
             + get_default_valgrind_tool_specific_args())
 
 # The default tool is Memcheck.  Feeding these arguments to a different
 # Valgrind tool will cause it to fail at startup, so don't do that!
+
+
 def get_default_valgrind_tool_specific_args():
     return ['--partial-loads-ok=yes',
-            '--leak-check=full',
+            '--leak-check=summary',
             '--show-possibly-lost=no',
-           ]
+            ]

@@ -8,8 +8,8 @@ import argparse
 import os
 import re
 import sys
-from buildconfig import topobjdir
-from mozbuild.backend.configenvironment import ConfigEnvironment
+from buildconfig import topsrcdir, topobjdir
+from mozbuild.backend.configenvironment import PartialConfigEnvironment
 from mozbuild.util import FileAvoidWrite
 import mozpack.path as mozpath
 
@@ -30,14 +30,12 @@ def process_define_file(output, input):
 
     path = os.path.abspath(input)
 
-    config = ConfigEnvironment.from_config_status(
-        mozpath.join(topobjdir, 'config.status'))
+    config = PartialConfigEnvironment(topobjdir)
 
     if mozpath.basedir(path,
-                       [mozpath.join(config.topsrcdir, 'js/src')]) and \
+                       [mozpath.join(topsrcdir, 'js/src')]) and \
             not config.substs.get('JS_STANDALONE'):
-        config = ConfigEnvironment.from_config_status(
-            mozpath.join(topobjdir, 'js', 'src', 'config.status'))
+        config = PartialConfigEnvironment(mozpath.join(topobjdir, 'js', 'src'))
 
     with open(path, 'rU') as input:
         r = re.compile('^\s*#\s*(?P<cmd>[a-z]+)(?:\s+(?P<name>\S+)(?:\s+(?P<value>\S+))?)?', re.U)
@@ -55,28 +53,30 @@ def process_define_file(output, input):
                                 'CONFIGURE_DEFINE_FILE')
                         defines = '\n'.join(sorted(
                             '#define %s %s' % (name, val)
-                            for name, val in config.defines.iteritems()
-                            if name not in config.non_global_defines))
+                            for name, val in config.defines['ALLDEFINES'].iteritems()))
                         l = l[:m.start('cmd') - 1] \
                             + defines + l[m.end('name'):]
-                    elif name in config.defines:
-                        if cmd == 'define' and value:
+                    elif cmd == 'define':
+                        if value and name in config.defines:
                             l = l[:m.start('value')] \
                                 + str(config.defines[name]) \
                                 + l[m.end('value'):]
-                        elif cmd == 'undef':
+                    elif cmd == 'undef':
+                        if name in config.defines:
                             l = l[:m.start('cmd')] \
                                 + 'define' \
                                 + l[m.end('cmd'):m.end('name')] \
                                 + ' ' \
                                 + str(config.defines[name]) \
                                 + l[m.end('name'):]
-                    elif cmd == 'undef':
-                       l = '/* ' + l[:m.end('name')] + ' */' + l[m.end('name'):]
+                        else:
+                            l = '/* ' + l[:m.end('name')] + ' */' + l[m.end('name'):]
 
             output.write(l)
 
-    return {path, config.source}
+    deps = {path}
+    deps.update(config.get_dependencies())
+    return deps
 
 
 def main(argv):

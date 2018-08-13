@@ -1,9 +1,9 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-NO_VISIBILITY_FLAGS = True
+NoVisibilityFlags()
 
 EXPORTS.mozilla += [
     'mozalloc.h',
@@ -12,36 +12,41 @@ EXPORTS.mozilla += [
 ]
 
 if CONFIG['WRAP_STL_INCLUDES']:
-    if CONFIG['GNU_CXX']:
+    if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
         EXPORTS.mozilla += ['throw_gcc.h']
-    elif CONFIG['_MSC_VER']:
+    elif CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
         DEFINES['_HAS_EXCEPTIONS'] = 0
         if CONFIG['MOZ_MSVC_STL_WRAP_RAISE']:
-            EXPORTS.mozilla += [
-                'msvc_raise_wrappers.h',
-                'throw_msvc.h',
-            ]
             SOURCES += [
                 'msvc_raise_wrappers.cpp',
             ]
 
+if CONFIG['OS_TARGET'] == 'WINNT':
+    # Keep this file separate to avoid #include'ing windows.h everywhere.
+    SOURCES += [
+        'winheap.cpp',
+    ]
+
 UNIFIED_SOURCES += [
     'mozalloc.cpp',
-    'mozalloc_abort.cpp',
     'mozalloc_oom.cpp',
 ]
+
+SOURCES += [
+    'mozalloc_abort.cpp',
+]
+
+if CONFIG['CPU_ARCH'] == 'arm' and CONFIG['CC_TYPE'] == 'clang':
+    SOURCES['mozalloc_abort.cpp'].flags += ['-Wno-infinite-recursion']
 
 FINAL_LIBRARY = 'mozglue'
 
 # The strndup declaration in string.h is in an ifdef __USE_GNU section
 DEFINES['_GNU_SOURCE'] = True
 
-DISABLE_STL_WRAPPING = True
+DisableStlWrapping()
 
 DEFINES['IMPL_MFBT'] = True
-
-if CONFIG['_MSC_VER']:
-    DIRS += ['staticruntime']
 
 LOCAL_INCLUDES += [
     '!/xpcom',

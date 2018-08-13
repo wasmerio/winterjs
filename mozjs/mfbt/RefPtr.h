@@ -15,10 +15,12 @@
 
 // template <class T> class RefPtrGetterAddRefs;
 
+class nsQueryReferent;
 class nsCOMPtr_helper;
 
 namespace mozilla {
 template<class T> class OwningNonNull;
+template<class T> class StaticRefPtr;
 
 // Traditionally, RefPtr supports automatic refcounting of any pointer type
 // with AddRef() and Release() methods that follow the traditional semantics.
@@ -43,7 +45,7 @@ struct RefPtrTraits
 } // namespace mozilla
 
 template <class T>
-class RefPtr
+class MOZ_IS_REFPTR RefPtr
 {
 private:
   void
@@ -81,7 +83,7 @@ public:
   // Constructors
 
   RefPtr()
-    : mRawPtr(0)
+    : mRawPtr(nullptr)
     // default constructor
   {
   }
@@ -109,6 +111,11 @@ public:
     if (mRawPtr) {
       ConstRemovingRefPtrTraits<T>::AddRef(mRawPtr);
     }
+  }
+
+  MOZ_IMPLICIT RefPtr(decltype(nullptr))
+    : mRawPtr(nullptr)
+  {
   }
 
   template <typename I>
@@ -142,13 +149,25 @@ public:
   {
   }
 
+  MOZ_IMPLICIT RefPtr(const nsQueryReferent& aHelper);
   MOZ_IMPLICIT RefPtr(const nsCOMPtr_helper& aHelper);
 
   // Defined in OwningNonNull.h
   template<class U>
   MOZ_IMPLICIT RefPtr(const mozilla::OwningNonNull<U>& aOther);
 
+  // Defined in StaticPtr.h
+  template<class U>
+  MOZ_IMPLICIT RefPtr(const mozilla::StaticRefPtr<U>& aOther);
+
   // Assignment operators
+
+  RefPtr<T>&
+  operator=(decltype(nullptr))
+  {
+    assign_assuming_AddRef(nullptr);
+    return *this;
+  }
 
   RefPtr<T>&
   operator=(const RefPtr<T>& aRhs)
@@ -193,6 +212,7 @@ public:
     return *this;
   }
 
+  RefPtr<T>& operator=(const nsQueryReferent& aQueryReferent);
   RefPtr<T>& operator=(const nsCOMPtr_helper& aHelper);
 
   RefPtr<T>&
@@ -207,6 +227,11 @@ public:
   template<class U>
   RefPtr<T>&
   operator=(const mozilla::OwningNonNull<U>& aOther);
+
+  // Defined in StaticPtr.h
+  template<class U>
+  RefPtr<T>&
+  operator=(const mozilla::StaticRefPtr<U>& aOther);
 
   // Other pointer operators
 
@@ -229,11 +254,12 @@ public:
   }
 
   already_AddRefed<T>
+  MOZ_MAY_CALL_AFTER_MUST_RETURN
   forget()
   // return the value of mRawPtr and null out mRawPtr. Useful for
   // already_AddRefed return values.
   {
-    T* temp = 0;
+    T* temp = nullptr;
     swap(temp);
     return already_AddRefed<T>(temp);
   }
@@ -248,7 +274,7 @@ public:
   {
     MOZ_ASSERT(aRhs, "Null pointer passed to forget!");
     *aRhs = mRawPtr;
-    mRawPtr = 0;
+    mRawPtr = nullptr;
   }
 
   T*
@@ -261,10 +287,7 @@ public:
     return const_cast<T*>(mRawPtr);
   }
 
-  operator T*() const
-#ifdef MOZ_HAVE_REF_QUALIFIERS
-  &
-#endif
+  operator T*() const &
   /*
     ...makes an |RefPtr| act like its underlying raw pointer type whenever it
     is used in a context where a raw pointer is expected.  It is this operator
@@ -277,7 +300,6 @@ public:
     return get();
   }
 
-#ifdef MOZ_HAVE_REF_QUALIFIERS
   // Don't allow implicit conversion of temporary RefPtr to raw pointer,
   // because the refcount might be one and the pointer will immediately become
   // invalid.
@@ -288,12 +310,11 @@ public:
   // operator bool instead of the deleted operator T*?
   explicit operator bool() const { return !!mRawPtr; }
   bool operator!() const { return !mRawPtr; }
-#endif
 
   T*
   operator->() const MOZ_NO_ADDREF_RELEASE_ON_RETURN
   {
-    MOZ_ASSERT(mRawPtr != 0,
+    MOZ_ASSERT(mRawPtr != nullptr,
                "You can't dereference a NULL RefPtr with operator->().");
     return get();
   }
@@ -320,7 +341,7 @@ public:
   template <typename R, typename... Args>
   Proxy<R, Args...> operator->*(R (T::*aFptr)(Args...)) const
   {
-    MOZ_ASSERT(mRawPtr != 0,
+    MOZ_ASSERT(mRawPtr != nullptr,
                "You can't dereference a NULL RefPtr with operator->*().");
     return Proxy<R, Args...>(get(), aFptr);
   }
@@ -345,7 +366,7 @@ public:
   T&
   operator*() const
   {
-    MOZ_ASSERT(mRawPtr != 0,
+    MOZ_ASSERT(mRawPtr != nullptr,
                "You can't dereference a NULL RefPtr with operator*().");
     return *get();
   }
@@ -353,7 +374,7 @@ public:
   T**
   StartAssignment()
   {
-    assign_assuming_AddRef(0);
+    assign_assuming_AddRef(nullptr);
     return reinterpret_cast<T**>(&mRawPtr);
   }
 private:
@@ -602,6 +623,14 @@ do_AddRef(T* aObj)
   return ref.forget();
 }
 
+template <class T>
+inline already_AddRefed<T>
+do_AddRef(const RefPtr<T>& aObj)
+{
+  RefPtr<T> ref(aObj);
+  return ref.forget();
+}
+
 namespace mozilla {
 
 /**
@@ -619,6 +648,20 @@ MakeAndAddRef(Args&&... aArgs)
 {
   RefPtr<T> p(new T(Forward<Args>(aArgs)...));
   return p.forget();
+}
+
+/**
+ * Helper function to be able to conveniently write things like:
+ *
+ *   auto runnable = MakeRefPtr<ErrorCallbackRunnable<nsIDOMGetUserMediaSuccessCallback>>(
+ *       mOnSuccess, mOnFailure, *error, mWindowID);
+ */
+template<typename T, typename... Args>
+RefPtr<T>
+MakeRefPtr(Args&&... aArgs)
+{
+  RefPtr<T> p(new T(Forward<Args>(aArgs)...));
+  return p;
 }
 
 } // namespace mozilla

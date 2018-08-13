@@ -4,12 +4,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import unittest
 import os
+
+import mozunit
+
 from mozprofile import Profile
 
 
 class TestProfile(unittest.TestCase):
+
     def test_with_profile_should_cleanup(self):
         with Profile() as profile:
             self.assertTrue(os.path.exists(profile.profile))
@@ -20,10 +26,10 @@ class TestProfile(unittest.TestCase):
         with self.assertRaises(ZeroDivisionError):
             with Profile() as profile:
                 self.assertTrue(os.path.exists(profile.profile))
-                1/0  # will raise ZeroDivisionError
+                1 / 0  # will raise ZeroDivisionError
         # profile is cleaned
         self.assertFalse(os.path.exists(profile.profile))
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

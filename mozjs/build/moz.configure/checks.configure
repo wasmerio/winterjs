@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,6 +11,8 @@
 # lot of them, let's stack them all here. When adding a new one, put it in the
 # _declare_exceptions template, and add it to the return statement. Then
 # destructure in the assignment below the function declaration.
+
+
 @template
 @imports(_from='__builtin__', _import='Exception')
 def _declare_exceptions():
@@ -20,6 +22,7 @@ def _declare_exceptions():
         Debugging messages emitted from the decorated function will also be
         printed out.'''
     return (FatalCheckError,)
+
 
 (FatalCheckError,) = _declare_exceptions()
 
@@ -42,6 +45,8 @@ del _declare_exceptions
 #       ...
 # An optional callback can be given, that will be used to format the returned
 # value when displaying it.
+
+
 @template
 def checking(what, callback=None):
     def decorator(func):
@@ -60,7 +65,7 @@ def checking(what, callback=None):
                     log.info('no')
                 else:
                     log.info(display_ret)
-                if error:
+                if error is not None:
                     die(error)
             return ret
         return wrapped
@@ -93,12 +98,11 @@ def checking(what, callback=None):
 # use that value instead.
 @template
 @imports(_from='mozbuild.shellutil', _import='quote')
-@imports(_from='mozbuild.configure', _import='DependsFunction')
 def check_prog(var, progs, what=None, input=None, allow_missing=False,
-               paths=None):
-    if input:
+               paths=None, when=None):
+    if input is not None:
         # Wrap input with type checking and normalization.
-        @depends(input)
+        @depends(input, when=when)
         def input(value):
             if not value:
                 return
@@ -109,18 +113,16 @@ def check_prog(var, progs, what=None, input=None, allow_missing=False,
             configure_error('input must resolve to a tuple or a list with a '
                             'single element, or a string')
     else:
-        option(env=var, nargs=1,
+        option(env=var, nargs=1, when=when,
                help='Path to %s' % (what or 'the %s program' % var.lower()))
         input = var
     what = what or var.lower()
 
     # Trick to make a @depends function out of an immediate value.
-    if not isinstance(progs, DependsFunction):
-        progs = depends('--help')(lambda h: progs)
-    if not isinstance(paths, DependsFunction):
-        paths = depends('--help')(lambda h: paths)
+    progs = dependable(progs)
+    paths = dependable(paths)
 
-    @depends_if(input, progs, paths)
+    @depends_if(input, progs, paths, when=when)
     @checking('for %s' % what, lambda x: quote(x) if x else 'not found')
     def check(value, progs, paths):
         if progs is None:
@@ -138,7 +140,7 @@ def check_prog(var, progs, what=None, input=None, allow_missing=False,
         if not allow_missing or value:
             raise FatalCheckError('Cannot find %s' % what)
 
-    @depends_if(check, progs)
+    @depends_if(check, progs, when=when)
     def normalized_for_config(value, progs):
         return ':' if value is None else value
 

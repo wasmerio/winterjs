@@ -26,6 +26,7 @@ from ..util import (
     simple_diff,
 )
 from ..frontend.data import ContextDerived
+from ..frontend.reader import EmptyConfig
 from .configenvironment import ConfigEnvironment
 from mozbuild.base import ExecutionSummary
 
@@ -41,8 +42,7 @@ class BuildBackend(LoggingMixin):
     __metaclass__ = ABCMeta
 
     def __init__(self, environment):
-        assert isinstance(environment, ConfigEnvironment)
-
+        assert isinstance(environment, (ConfigEnvironment, EmptyConfig))
         self.populate_logger()
 
         self.environment = environment
@@ -194,6 +194,74 @@ class BuildBackend(LoggingMixin):
     def consume_finished(self):
         """Called when consume() has completed handling all objects."""
 
+    def build(self, config, output, jobs, verbose):
+        """Called when 'mach build' is executed.
+
+        This should return the status value of a subprocess, where 0 denotes
+        success and any other value is an error code. A return value of None
+        indicates that the default 'make -f client.mk' should run.
+        """
+        return None
+
+    def _write_purgecaches(self, config):
+        """Write .purgecaches sentinels.
+
+        The purgecaches mechanism exists to allow the platform to
+        invalidate the XUL cache (which includes some JS) at application
+        startup-time.  The application checks for .purgecaches in the
+        application directory, which varies according to
+        --enable-application.  There's a further wrinkle on macOS, where
+        the real application directory is part of a Cocoa bundle
+        produced from the regular application directory by the build
+        system.  In this case, we write to both locations, since the
+        build system recreates the Cocoa bundle from the contents of the
+        regular application directory and might remove a sentinel
+        created here.
+        """
+
+        app = config.substs['MOZ_BUILD_APP']
+        if app == 'mobile/android':
+            # In order to take effect, .purgecaches sentinels would need to be
+            # written to the Android device file system.
+            return
+
+        root = mozpath.join(config.topobjdir, 'dist', 'bin')
+
+        if app == 'browser':
+            root = mozpath.join(config.topobjdir, 'dist', 'bin', 'browser')
+
+        purgecaches_dirs = [root]
+        if app == 'browser' and 'cocoa' == config.substs['MOZ_WIDGET_TOOLKIT']:
+            bundledir = mozpath.join(config.topobjdir, 'dist',
+                                     config.substs['MOZ_MACBUNDLE_NAME'],
+                                     'Contents', 'Resources',
+                                     'browser')
+            purgecaches_dirs.append(bundledir)
+
+        for dir in purgecaches_dirs:
+            with open(mozpath.join(dir, '.purgecaches'), 'wt') as f:
+                f.write('\n')
+
+    def post_build(self, config, output, jobs, verbose, status):
+        """Called late during 'mach build' execution, after `build(...)` has finished.
+
+        `status` is the status value returned from `build(...)`.
+
+        In the case where `build` returns `None`, this is called after
+        the default `make` command has completed, with the status of
+        that command.
+
+        This should return the status value from `build(...)`, or the
+        status value of a subprocess, where 0 denotes success and any
+        other value is an error code.
+
+        If an exception is raised, |mach build| will fail with a
+        non-zero exit code.
+        """
+        self._write_purgecaches(config)
+
+        return status
+
     @contextmanager
     def _write_file(self, path=None, fh=None, mode='rU'):
         """Context manager to write a file.
@@ -241,7 +309,10 @@ class BuildBackend(LoggingMixin):
         in the current environment.'''
         pp = Preprocessor()
         srcdir = mozpath.dirname(obj.input_path)
-        pp.context.update(obj.config.substs)
+        pp.context.update({
+            k: ' '.join(v) if isinstance(v, list) else v
+            for k, v in obj.config.substs.iteritems()
+        })
         pp.context.update(
             top_srcdir=obj.topsrcdir,
             topobjdir=obj.topobjdir,
@@ -298,7 +369,7 @@ def HybridBackend(*backends):
                     files |= getattr(b, attr)
 
     name = '+'.join(itertools.chain(
-        (b.__name__.replace('Backend', '') for b in backends[:1]),
+        (b.__name__.replace('Backend', '') for b in backends[:-1]),
         (b.__name__ for b in backends[-1:])
     ))
 

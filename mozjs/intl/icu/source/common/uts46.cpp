@@ -1,10 +1,12 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 *   Copyright (C) 2010-2015, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 *******************************************************************************
 *   file name:  uts46.cpp
-*   encoding:   US-ASCII
+*   encoding:   UTF-8
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -68,7 +70,7 @@ isASCIIOkBiDi(const char *s, int32_t length);
 IDNA::~IDNA() {}
 
 void
-IDNA::labelToASCII_UTF8(const StringPiece &label, ByteSink &dest,
+IDNA::labelToASCII_UTF8(StringPiece label, ByteSink &dest,
                         IDNAInfo &info, UErrorCode &errorCode) const {
     if(U_SUCCESS(errorCode)) {
         UnicodeString destString;
@@ -78,7 +80,7 @@ IDNA::labelToASCII_UTF8(const StringPiece &label, ByteSink &dest,
 }
 
 void
-IDNA::labelToUnicodeUTF8(const StringPiece &label, ByteSink &dest,
+IDNA::labelToUnicodeUTF8(StringPiece label, ByteSink &dest,
                          IDNAInfo &info, UErrorCode &errorCode) const {
     if(U_SUCCESS(errorCode)) {
         UnicodeString destString;
@@ -88,7 +90,7 @@ IDNA::labelToUnicodeUTF8(const StringPiece &label, ByteSink &dest,
 }
 
 void
-IDNA::nameToASCII_UTF8(const StringPiece &name, ByteSink &dest,
+IDNA::nameToASCII_UTF8(StringPiece name, ByteSink &dest,
                        IDNAInfo &info, UErrorCode &errorCode) const {
     if(U_SUCCESS(errorCode)) {
         UnicodeString destString;
@@ -98,7 +100,7 @@ IDNA::nameToASCII_UTF8(const StringPiece &name, ByteSink &dest,
 }
 
 void
-IDNA::nameToUnicodeUTF8(const StringPiece &name, ByteSink &dest,
+IDNA::nameToUnicodeUTF8(StringPiece name, ByteSink &dest,
                         IDNAInfo &info, UErrorCode &errorCode) const {
     if(U_SUCCESS(errorCode)) {
         UnicodeString destString;
@@ -131,19 +133,19 @@ public:
                   IDNAInfo &info, UErrorCode &errorCode) const;
 
     virtual void
-    labelToASCII_UTF8(const StringPiece &label, ByteSink &dest,
+    labelToASCII_UTF8(StringPiece label, ByteSink &dest,
                       IDNAInfo &info, UErrorCode &errorCode) const;
 
     virtual void
-    labelToUnicodeUTF8(const StringPiece &label, ByteSink &dest,
+    labelToUnicodeUTF8(StringPiece label, ByteSink &dest,
                        IDNAInfo &info, UErrorCode &errorCode) const;
 
     virtual void
-    nameToASCII_UTF8(const StringPiece &name, ByteSink &dest,
+    nameToASCII_UTF8(StringPiece name, ByteSink &dest,
                      IDNAInfo &info, UErrorCode &errorCode) const;
 
     virtual void
-    nameToUnicodeUTF8(const StringPiece &name, ByteSink &dest,
+    nameToUnicodeUTF8(StringPiece name, ByteSink &dest,
                       IDNAInfo &info, UErrorCode &errorCode) const;
 
 private:
@@ -154,7 +156,7 @@ private:
             IDNAInfo &info, UErrorCode &errorCode) const;
 
     void
-    processUTF8(const StringPiece &src,
+    processUTF8(StringPiece src,
                 UBool isLabel, UBool toASCII,
                 ByteSink &dest,
                 IDNAInfo &info, UErrorCode &errorCode) const;
@@ -251,25 +253,25 @@ UTS46::nameToUnicode(const UnicodeString &name, UnicodeString &dest,
 }
 
 void
-UTS46::labelToASCII_UTF8(const StringPiece &label, ByteSink &dest,
+UTS46::labelToASCII_UTF8(StringPiece label, ByteSink &dest,
                          IDNAInfo &info, UErrorCode &errorCode) const {
     processUTF8(label, TRUE, TRUE, dest, info, errorCode);
 }
 
 void
-UTS46::labelToUnicodeUTF8(const StringPiece &label, ByteSink &dest,
+UTS46::labelToUnicodeUTF8(StringPiece label, ByteSink &dest,
                           IDNAInfo &info, UErrorCode &errorCode) const {
     processUTF8(label, TRUE, FALSE, dest, info, errorCode);
 }
 
 void
-UTS46::nameToASCII_UTF8(const StringPiece &name, ByteSink &dest,
+UTS46::nameToASCII_UTF8(StringPiece name, ByteSink &dest,
                         IDNAInfo &info, UErrorCode &errorCode) const {
     processUTF8(name, FALSE, TRUE, dest, info, errorCode);
 }
 
 void
-UTS46::nameToUnicodeUTF8(const StringPiece &name, ByteSink &dest,
+UTS46::nameToUnicodeUTF8(StringPiece name, ByteSink &dest,
                          IDNAInfo &info, UErrorCode &errorCode) const {
     processUTF8(name, FALSE, FALSE, dest, info, errorCode);
 }
@@ -401,7 +403,7 @@ UTS46::process(const UnicodeString &src,
 }
 
 void
-UTS46::processUTF8(const StringPiece &src,
+UTS46::processUTF8(StringPiece src,
                    UBool isLabel, UBool toASCII,
                    ByteSink &dest,
                    IDNAInfo &info, UErrorCode &errorCode) const {
@@ -1013,8 +1015,8 @@ UTS46::checkLabelBiDi(const UChar *label, int32_t labelLength, IDNAInfo &info) c
     ) {
         info.isOkBiDi=FALSE;
     }
-    // Get the directionalities of the intervening characters.
-    uint32_t mask=0;
+    // Add the directionalities of the intervening characters.
+    uint32_t mask=firstMask|lastMask;
     while(i<labelLength) {
         U16_NEXT_UNSAFE(label, i, c);
         mask|=U_MASK(u_charDirection(c));
@@ -1043,7 +1045,7 @@ UTS46::checkLabelBiDi(const UChar *label, int32_t labelLength, IDNAInfo &info) c
     // label. [...]
     // The following rule, consisting of six conditions, applies to labels
     // in BIDI domain names.
-    if(((firstMask|mask|lastMask)&R_AL_AN_MASK)!=0) {
+    if((mask&R_AL_AN_MASK)!=0) {
         info.isBiDi=TRUE;
     }
 }
@@ -1413,7 +1415,7 @@ uidna_labelToASCII_UTF8(const UIDNA *idna,
     if(!checkArgs(label, length, dest, capacity, pInfo, pErrorCode)) {
         return 0;
     }
-    StringPiece src(label, length<0 ? uprv_strlen(label) : length);
+    StringPiece src(label, length<0 ? static_cast<int32_t>(uprv_strlen(label)) : length);
     CheckedArrayByteSink sink(dest, capacity);
     IDNAInfo info;
     reinterpret_cast<const IDNA *>(idna)->labelToASCII_UTF8(src, sink, info, *pErrorCode);
@@ -1429,7 +1431,7 @@ uidna_labelToUnicodeUTF8(const UIDNA *idna,
     if(!checkArgs(label, length, dest, capacity, pInfo, pErrorCode)) {
         return 0;
     }
-    StringPiece src(label, length<0 ? uprv_strlen(label) : length);
+    StringPiece src(label, length<0 ? static_cast<int32_t>(uprv_strlen(label)) : length);
     CheckedArrayByteSink sink(dest, capacity);
     IDNAInfo info;
     reinterpret_cast<const IDNA *>(idna)->labelToUnicodeUTF8(src, sink, info, *pErrorCode);
@@ -1445,7 +1447,7 @@ uidna_nameToASCII_UTF8(const UIDNA *idna,
     if(!checkArgs(name, length, dest, capacity, pInfo, pErrorCode)) {
         return 0;
     }
-    StringPiece src(name, length<0 ? uprv_strlen(name) : length);
+    StringPiece src(name, length<0 ? static_cast<int32_t>(uprv_strlen(name)) : length);
     CheckedArrayByteSink sink(dest, capacity);
     IDNAInfo info;
     reinterpret_cast<const IDNA *>(idna)->nameToASCII_UTF8(src, sink, info, *pErrorCode);
@@ -1461,7 +1463,7 @@ uidna_nameToUnicodeUTF8(const UIDNA *idna,
     if(!checkArgs(name, length, dest, capacity, pInfo, pErrorCode)) {
         return 0;
     }
-    StringPiece src(name, length<0 ? uprv_strlen(name) : length);
+    StringPiece src(name, length<0 ? static_cast<int32_t>(uprv_strlen(name)) : length);
     CheckedArrayByteSink sink(dest, capacity);
     IDNAInfo info;
     reinterpret_cast<const IDNA *>(idna)->nameToUnicodeUTF8(src, sink, info, *pErrorCode);

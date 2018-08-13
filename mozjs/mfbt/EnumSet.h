@@ -11,7 +11,8 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/InitializerList.h"
+
+#include <initializer_list>
 
 #include <stdint.h>
 
@@ -26,10 +27,11 @@ template<typename T>
 class EnumSet
 {
 public:
+  typedef uint32_t serializedType;
+
   EnumSet()
     : mBitField(0)
   {
-    initVersion();
   }
 
   MOZ_IMPLICIT EnumSet(T aEnum)
@@ -40,7 +42,6 @@ public:
     : mBitField(bitFor(aEnum1) |
                 bitFor(aEnum2))
   {
-    initVersion();
   }
 
   EnumSet(T aEnum1, T aEnum2, T aEnum3)
@@ -48,7 +49,6 @@ public:
                 bitFor(aEnum2) |
                 bitFor(aEnum3))
   {
-    initVersion();
   }
 
   EnumSet(T aEnum1, T aEnum2, T aEnum3, T aEnum4)
@@ -57,7 +57,6 @@ public:
                 bitFor(aEnum3) |
                 bitFor(aEnum4))
   {
-    initVersion();
   }
 
   MOZ_IMPLICIT EnumSet(std::initializer_list<T> list)
@@ -66,13 +65,11 @@ public:
     for (auto value : list) {
       (*this) += value;
     }
-    initVersion();
   }
 
   EnumSet(const EnumSet& aEnumSet)
     : mBitField(aEnumSet.mBitField)
   {
-    initVersion();
   }
 
   /**
@@ -214,12 +211,12 @@ public:
     return mBitField == 0;
   }
 
-  uint32_t serialize() const
+  serializedType serialize() const
   {
     return mBitField;
   }
 
-  void deserialize(uint32_t aValue)
+  void deserialize(serializedType aValue)
   {
     incVersion();
     mBitField = aValue;
@@ -233,7 +230,7 @@ public:
     uint64_t mVersion;
 #endif
 
-    void checkVersion() {
+    void checkVersion() const {
       // Check that the set has not been modified while being iterated.
       MOZ_ASSERT_IF(mSet, mSet->mVersion == mVersion);
     }
@@ -273,17 +270,17 @@ public:
       checkVersion();
     }
 
-    bool operator==(const ConstIterator& other) {
+    bool operator==(const ConstIterator& other) const {
       MOZ_ASSERT(mSet == other.mSet);
       checkVersion();
       return mPos == other.mPos;
     }
 
-    bool operator!=(const ConstIterator& other) {
+    bool operator!=(const ConstIterator& other) const {
       return !(*this == other);
     }
 
-    T operator*() {
+    T operator*() const {
       MOZ_ASSERT(mSet);
       MOZ_ASSERT(mPos < kMaxBits);
       MOZ_ASSERT(mSet->contains(T(mPos)));
@@ -318,12 +315,6 @@ private:
     return 1U << bitNumber;
   }
 
-  void initVersion() {
-#ifdef DEBUG
-    mVersion = 0;
-#endif
-  }
-
   void incVersion() {
 #ifdef DEBUG
     mVersion++;
@@ -331,10 +322,10 @@ private:
   }
 
   static const size_t kMaxBits = 32;
-  uint32_t mBitField;
+  serializedType mBitField;
 
 #ifdef DEBUG
-  uint64_t mVersion;
+  uint64_t mVersion = 0;
 #endif
 };
 

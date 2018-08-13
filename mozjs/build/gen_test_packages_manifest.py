@@ -9,7 +9,7 @@ import json
 from argparse import ArgumentParser
 
 ALL_HARNESSES = [
-    'common', # Harnesses without a specific package will look here.
+    'common',  # Harnesses without a specific package will look here.
     'mochitest',
     'reftest',
     'xpcshell',
@@ -18,6 +18,7 @@ ALL_HARNESSES = [
     'mozbase',
     'web-platform',
     'talos',
+    'awsy',
     'gtest',
 ]
 
@@ -28,6 +29,7 @@ PACKAGE_SPECIFIED_HARNESSES = [
     'xpcshell',
     'web-platform',
     'talos',
+    'awsy',
 ]
 
 # These packages are not present for every build configuration.
@@ -37,10 +39,13 @@ OPTIONAL_PACKAGES = [
 
 
 def parse_args():
-    parser = ArgumentParser(description='Generate a test_packages.json file to tell automation which harnesses require which test packages.')
+    parser = ArgumentParser(
+        description="Generate a test_packages.json file to tell automation which harnesses "
+        "require which test packages.")
     parser.add_argument("--common", required=True,
                         action="store", dest="tests_common",
-                        help="Name of the \"common\" archive, a package to be used by all harnesses.")
+                        help="Name of the \"common\" archive, a package to be used by all "
+                        "harnesses.")
     parser.add_argument("--jsshell", required=True,
                         action="store", dest="jsshell",
                         help="Name of the jsshell zip.")
@@ -76,6 +81,7 @@ def generate_package_data(args):
             continue
         harness_requirements[harness].append(pkg_name)
     return harness_requirements
+
 
 if __name__ == '__main__':
     args = parse_args()

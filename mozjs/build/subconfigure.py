@@ -7,7 +7,6 @@
 
 import argparse
 import errno
-import itertools
 import os
 import re
 import subprocess
@@ -15,25 +14,6 @@ import sys
 import pickle
 
 import mozpack.path as mozpath
-
-
-class Pool(object):
-    def __new__(cls, size):
-        try:
-            import multiprocessing
-            size = min(size, multiprocessing.cpu_count())
-            return multiprocessing.Pool(size)
-        except:
-            return super(Pool, cls).__new__(cls)
-
-    def imap_unordered(self, fn, iterable):
-        return itertools.imap(fn, iterable)
-
-    def close(self):
-        pass
-
-    def join(self):
-        pass
 
 
 class File(object):
@@ -131,11 +111,10 @@ def maybe_clear_cache(data):
         is_set = cache.get('ac_cv_env_%s_set' % precious) == 'set'
         value = cache.get('ac_cv_env_%s_value' % precious) if is_set else None
         if value != env.get(precious):
-            print 'Removing %s because of %s value change from:' \
-                % (data['cache-file'], precious)
-            print '  %s' % (value if value is not None else 'undefined')
-            print 'to:'
-            print '  %s' % env.get(precious, 'undefined')
+            print('Removing %s because of %s value change from:' % (data['cache-file'], precious))
+            print('  %s' % (value if value is not None else 'undefined'))
+            print('to:')
+            print('  %s' % env.get(precious, 'undefined'))
             os.remove(data['cache-file'])
             return True
     return False
@@ -150,11 +129,14 @@ def split_template(s):
 
 
 def get_config_files(data):
+    # config.status in js/src never contains the output we try to scan here.
+    if data['relobjdir'] == 'js/src':
+        return [], []
+
     config_status = mozpath.join(data['objdir'], 'config.status')
     if not os.path.exists(config_status):
         return [], []
 
-    configure = mozpath.join(data['srcdir'], 'configure')
     config_files = []
     command_files = []
 
@@ -206,16 +188,19 @@ def prepare(srcdir, objdir, shell, args):
     # Msys likes to break environment variables and command line arguments,
     # so read those from stdin, as they are passed from the configure script
     # when necessary (on windows).
-    # However, for some reason, $PATH is not handled like other environment
-    # variables, and msys remangles it even when giving it is already a msys
-    # $PATH. Fortunately, the mangling/demangling is just find for $PATH, so
-    # we can just take the value from the environment. Msys will convert it
-    # back properly when calling subconfigure.
     input = sys.stdin.read()
     if input:
         data = {a: b for [a, b] in eval(input)}
         environ = {a: b for a, b in data['env']}
-        environ['PATH'] = os.environ['PATH']
+        # These environment variables as passed from old-configure may contain
+        # posix-style paths, which will not be meaningful to the js
+        # subconfigure, which runs as a native python process, so use their
+        # values from the environment. In the case of autoconf implemented
+        # subconfigures, Msys will re-convert them properly.
+        for var in ('HOME', 'TERM', 'PATH', 'TMPDIR', 'TMP',
+                    'TEMP', 'INCLUDE'):
+            if var in environ and var in os.environ:
+                environ[var] = os.environ[var]
         args = data['args']
     else:
         environ = os.environ
@@ -234,7 +219,7 @@ def prepare(srcdir, objdir, shell, args):
 
     if args.cache_file:
         data['cache-file'] = mozpath.normpath(mozpath.join(os.getcwd(),
-            args.cache_file))
+                                                           args.cache_file))
     else:
         data['cache-file'] = mozpath.join(objdir, 'config.cache')
 
@@ -255,14 +240,28 @@ def prefix_lines(text, prefix):
     return ''.join('%s> %s' % (prefix, line) for line in text.splitlines(True))
 
 
+def execute_and_prefix(*args, **kwargs):
+    prefix = kwargs['prefix']
+    del kwargs['prefix']
+    proc = subprocess.Popen(*args, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, **kwargs)
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            break
+        print(prefix_lines(line.rstrip(), prefix))
+        sys.stdout.flush()
+    return proc.wait()
+
+
 def run(objdir):
     ret = 0
-    output = ''
 
     with open(os.path.join(objdir, CONFIGURE_DATA), 'rb') as f:
         data = pickle.load(f)
 
     data['objdir'] = objdir
+    relobjdir = data['relobjdir'] = os.path.relpath(objdir, os.getcwd())
 
     cache_file = data['cache-file']
     cleared_cache = True
@@ -300,8 +299,6 @@ def run(objdir):
                 cleared_cache:
             skip_configure = False
 
-    relobjdir = os.path.relpath(objdir, os.getcwd())
-
     if not skip_configure:
         if mozpath.normsep(relobjdir) == 'js/src':
             # Because configure is a shell script calling a python script
@@ -330,14 +327,13 @@ def run(objdir):
         # We're going to run it ourselves.
         command += ['--no-create']
 
-        print prefix_lines('configuring', relobjdir)
-        print prefix_lines('running %s' % ' '.join(command[:-1]), relobjdir)
+        print(prefix_lines('configuring', relobjdir))
+        print(prefix_lines('running %s' % ' '.join(command[:-1]), relobjdir))
         sys.stdout.flush()
-        try:
-            output += subprocess.check_output(command,
-                stderr=subprocess.STDOUT, cwd=objdir, env=data['env'])
-        except subprocess.CalledProcessError as e:
-            return relobjdir, e.returncode, e.output
+        returncode = execute_and_prefix(command, cwd=objdir, env=data['env'],
+                                        prefix=relobjdir)
+        if returncode:
+            return returncode
 
         # Leave config.status with a new timestamp if configure is newer than
         # its original mtime.
@@ -349,7 +345,11 @@ def run(objdir):
     # - one of the templates for config files is newer than the corresponding
     #   config file.
     skip_config_status = True
-    if not config_status or config_status.modified:
+    if mozpath.normsep(relobjdir) == 'js/src':
+        # Running config.status in js/src actually does nothing, so we just
+        # skip it.
+        pass
+    elif not config_status or config_status.modified:
         # If config.status doesn't exist after configure (because it's not
         # an autoconf configure), skip it.
         if os.path.exists(config_status_path):
@@ -365,30 +365,25 @@ def run(objdir):
 
     if not skip_config_status:
         if skip_configure:
-            print prefix_lines('running config.status', relobjdir)
+            print(prefix_lines('running config.status', relobjdir))
             sys.stdout.flush()
-        try:
-            output += subprocess.check_output([data['shell'], '-c',
-                './config.status'], stderr=subprocess.STDOUT, cwd=objdir,
-                env=data['env'])
-        except subprocess.CalledProcessError as e:
-            ret = e.returncode
-            output += e.output
+        ret = execute_and_prefix([data['shell'], '-c', './config.status'],
+                                 cwd=objdir, env=data['env'], prefix=relobjdir)
 
         for f in contents:
             f.update_time()
 
-    return relobjdir, ret, output
+    return ret
 
 
 def subconfigure(args):
     parser = argparse.ArgumentParser()
     parser.add_argument('--list', type=str,
-        help='File containing a list of subconfigures to run')
+                        help='File containing a list of subconfigures to run')
     parser.add_argument('--skip', type=str,
-        help='File containing a list of Subconfigures to skip')
+                        help='File containing a list of Subconfigures to skip')
     parser.add_argument('subconfigures', type=str, nargs='*',
-        help='Subconfigures to run if no list file is given')
+                        help='Subconfigures to run if no list file is given')
     args, others = parser.parse_known_args(args)
     subconfigures = args.subconfigures
     if args.list:
@@ -401,19 +396,11 @@ def subconfigure(args):
         return 0
 
     ret = 0
-    # One would think using a ThreadPool would be faster, considering
-    # everything happens in subprocesses anyways, but no, it's actually
-    # slower on Windows. (20s difference overall!)
-    pool = Pool(len(subconfigures))
-    for relobjdir, returncode, output in \
-            pool.imap_unordered(run, subconfigures):
-        print prefix_lines(output, relobjdir)
-        sys.stdout.flush()
+    for subconfigure in subconfigures:
+        returncode = run(subconfigure)
         ret = max(returncode, ret)
         if ret:
             break
-    pool.close()
-    pool.join()
     return ret
 
 

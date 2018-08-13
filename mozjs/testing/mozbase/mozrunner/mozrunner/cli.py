@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
 
@@ -14,10 +16,11 @@ from .utils import findInPath
 # Map of debugging programs to information about them
 # from http://mxr.mozilla.org/mozilla-central/source/build/automationutils.py#59
 DEBUGGERS = {'gdb': {'interactive': True,
-                     'args': ['-q', '--args'],},
+                     'args': ['-q', '--args'], },
              'valgrind': {'interactive': False,
                           'args': ['--leak-check=full']}
              }
+
 
 def debugger_arguments(debugger, arguments=None, interactive=None):
     """Finds debugger arguments from debugger given and defaults
@@ -90,7 +93,7 @@ class CLI(MozProfileCLI):
                           action='store_true',
                           help="run the program interactively")
 
-    ### methods for running
+    # methods for running
 
     def command_args(self):
         """additional arguments for the mozilla application"""
@@ -122,7 +125,8 @@ class CLI(MozProfileCLI):
             debug_args = debug_args.split()
         interactive = self.options.interactive
         if self.options.debugger:
-            debug_args, interactive = debugger_arguments(self.options.debugger, debug_args, interactive)
+            debug_args, interactive = debugger_arguments(self.options.debugger, debug_args,
+                                                         interactive)
         return debug_args, interactive
 
     def start(self, runner):
@@ -135,7 +139,7 @@ class CLI(MozProfileCLI):
         # attach a debugger if specified
         debug_args, interactive = self.debugger_arguments()
         runner.start(debug_args=debug_args, interactive=interactive)
-        print 'Starting: ' + ' '.join(runner.command)
+        print('Starting: ' + ' '.join(runner.command))
         try:
             runner.wait()
         except KeyboardInterrupt:

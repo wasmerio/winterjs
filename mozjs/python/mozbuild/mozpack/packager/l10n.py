@@ -37,6 +37,7 @@ from mozpack.chrome.manifest import (
     Manifest,
 )
 from mozpack.errors import errors
+from mozpack.mozjar import JAR_DEFLATED
 from mozpack.packager.unpack import UnpackFinder
 from createprecomplete import generate_precomplete
 
@@ -97,8 +98,12 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
 
     # The code further below assumes there's only one locale replaced with
     # another one.
-    if len(app.locales) > 1 or len(l10n.locales) > 1:
-        errors.fatal("Multiple locales aren't supported")
+    if len(app.locales) > 1:
+        errors.fatal("Multiple app locales aren't supported: " +
+                     ",".join(app.locales))
+    if len(l10n.locales) > 1:
+        errors.fatal("Multiple l10n locales aren't supported: " +
+                     ",".join(l10n.locales))
     locale = app.locales[0]
     l10n_locale = l10n.locales[0]
 
@@ -108,12 +113,22 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
     #     locale foo en-US path/to/files
     # keep track that the locale path for foo in app is
     # app/chrome/path/to/files.
+    # As there may be multiple locale entries with the same base, but with
+    # different flags, that tracking takes the flags into account when there
+    # are some. Example:
+    #     locale foo en-US path/to/files/win os=Win
+    #     locale foo en-US path/to/files/mac os=Darwin
+    def key(entry):
+        if entry.flags:
+            return '%s %s' % (entry.name, entry.flags)
+        return entry.name
+
     l10n_paths = {}
     for e in l10n.entries:
         if isinstance(e, ManifestChrome):
             base = mozpath.basedir(e.path, app.bases)
             l10n_paths.setdefault(base, {})
-            l10n_paths[base][e.name] = e.path
+            l10n_paths[base][key(e)] = e.path
 
     # For chrome and non chrome files or directories, store what langpack path
     # corresponds to a package path.
@@ -125,12 +140,12 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
                 errors.fatal("Locale doesn't contain %s/" % base)
                 # Allow errors to accumulate
                 continue
-            if e.name not in l10n_paths[base]:
+            if key(e) not in l10n_paths[base]:
                 errors.fatal("Locale doesn't have a manifest entry for '%s'" %
                     e.name)
                 # Allow errors to accumulate
                 continue
-            paths[e.path] = l10n_paths[base][e.name]
+            paths[e.path] = l10n_paths[base][key(e)]
 
     for pattern in non_chrome:
         for base in app.bases:
@@ -167,8 +182,11 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
             files = [f for p, f in l10n_finder.find(path)]
             if not len(files):
                 if base not in non_chrome:
+                    finderBase = ""
+                    if hasattr(l10n_finder, 'base'):
+                        finderBase = l10n_finder.base
                     errors.error("Missing file: %s" %
-                                 os.path.join(l10n_finder.base, path))
+                                 os.path.join(finderBase, path))
             else:
                 packager.add(path, files[0])
         else:
@@ -197,6 +215,13 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
             for p, f in l10n_finder.find(mozpath.join(base, pattern)):
                 if not formatter.contains(p):
                     formatter.add(p, f)
+
+    # Resources in `localization` directories are packaged from the source and then
+    # if localized versions are present in the l10n dir, we package them as well
+    # keeping the source dir resources as a runtime fallback.
+    for p, f in l10n_finder.find('**/localization'):
+        if not formatter.contains(p):
+            formatter.add(p, f)
 
     # Transplant jar preloading information.
     for path, log in app_finder.jarlogs.iteritems():
@@ -234,16 +259,17 @@ def repack(source, l10n, extra_l10n={}, non_resources=[], non_chrome=set()):
             finders[base] = UnpackFinder(path)
         l10n_finder = ComposedFinder(finders)
     copier = FileCopier()
+    compress = min(app_finder.compressed, JAR_DEFLATED)
     if app_finder.kind == 'flat':
         formatter = FlatFormatter(copier)
     elif app_finder.kind == 'jar':
         formatter = JarFormatter(copier,
                                  optimize=app_finder.optimizedjars,
-                                 compress=app_finder.compressed)
+                                 compress=compress)
     elif app_finder.kind == 'omni':
         formatter = OmniJarFormatter(copier, app_finder.omnijar,
                                      optimize=app_finder.optimizedjars,
-                                     compress=app_finder.compressed,
+                                     compress=compress,
                                      non_resources=non_resources)
 
     with errors.accumulate():

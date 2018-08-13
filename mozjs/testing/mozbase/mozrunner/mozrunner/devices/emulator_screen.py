@@ -2,6 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
+
 class EmulatorScreen(object):
     """Class for screen related emulator commands."""
 
@@ -86,4 +89,3 @@ SCREEN_ORIENTATIONS = {"portrait": EmulatorScreen.SO_PORTRAIT_PRIMARY,
                        "landscape-primary": EmulatorScreen.SO_LANDSCAPE_PRIMARY,
                        "portrait-secondary": EmulatorScreen.SO_PORTRAIT_SECONDARY,
                        "landscape-secondary": EmulatorScreen.SO_LANDSCAPE_SECONDARY}
-

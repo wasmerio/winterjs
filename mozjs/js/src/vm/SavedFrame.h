@@ -9,10 +9,9 @@
 
 #include "mozilla/Attributes.h"
 
-#include "jswrapper.h"
-
 #include "js/GCHashTable.h"
 #include "js/UbiNode.h"
+#include "js/Wrapper.h"
 
 namespace js {
 
@@ -49,49 +48,18 @@ class SavedFrame : public NativeObject {
     JSAtom*       getAsyncCause();
     SavedFrame*   getParent() const;
     JSPrincipals* getPrincipals();
-    bool          isSelfHosted();
+    bool          isSelfHosted(JSContext* cx);
 
-    // Iterators for use with C++11 range based for loops, eg:
-    //
-    //     SavedFrame* stack = getSomeSavedFrameStack();
-    //     for (const SavedFrame* frame : *stack) {
-    //         ...
-    //     }
-    //
-    // If you need to keep each frame rooted during iteration, you can use
-    // `SavedFrame::RootedRange`. Each frame yielded by
-    // `SavedFrame::RootedRange` is only a valid handle to a rooted `SavedFrame`
-    // within the loop's block for a single loop iteration. When the next
-    // iteration begins, the value is invalidated.
+    // Iterator for use with C++11 range based for loops, eg:
     //
     //     RootedSavedFrame stack(cx, getSomeSavedFrameStack());
     //     for (HandleSavedFrame frame : SavedFrame::RootedRange(cx, stack)) {
     //         ...
     //     }
-
-    class Iterator {
-        SavedFrame* frame_;
-      public:
-        explicit Iterator(SavedFrame* frame) : frame_(frame) { }
-        SavedFrame& operator*() const { MOZ_ASSERT(frame_); return *frame_; }
-        bool operator!=(const Iterator& rhs) const { return rhs.frame_ != frame_; }
-        inline void operator++();
-    };
-
-    Iterator begin() { return Iterator(this); }
-    Iterator end() { return Iterator(nullptr); }
-
-    class ConstIterator {
-        const SavedFrame* frame_;
-      public:
-        explicit ConstIterator(const SavedFrame* frame) : frame_(frame) { }
-        const SavedFrame& operator*() const { MOZ_ASSERT(frame_); return *frame_; }
-        bool operator!=(const ConstIterator& rhs) const { return rhs.frame_ != frame_; }
-        inline void operator++();
-    };
-
-    ConstIterator begin() const { return ConstIterator(this); }
-    ConstIterator end() const { return ConstIterator(nullptr); }
+    //
+    // Each frame yielded by `SavedFrame::RootedRange` is only a valid handle to
+    // a rooted `SavedFrame` within the loop's block for a single loop
+    // iteration. When the next iteration begins, the value is invalidated.
 
     class RootedRange;
 
@@ -159,7 +127,7 @@ class SavedFrame : public NativeObject {
   private:
     static SavedFrame* create(JSContext* cx);
     static MOZ_MUST_USE bool finishSavedFrameInit(JSContext* cx, HandleObject ctor, HandleObject proto);
-    void initFromLookup(HandleLookup lookup);
+    void initFromLookup(JSContext* cx, HandleLookup lookup);
     void initSource(JSAtom* source);
     void initLine(uint32_t line);
     void initColumn(uint32_t column);
@@ -182,22 +150,32 @@ class SavedFrame : public NativeObject {
         // The total number of reserved slots in the SavedFrame class.
         JSSLOT_COUNT
     };
-
-    static MOZ_MUST_USE bool checkThis(JSContext* cx, CallArgs& args, const char* fnName,
-                                       MutableHandleObject frame);
 };
 
 struct SavedFrame::HashPolicy
 {
     typedef SavedFrame::Lookup              Lookup;
     typedef MovableCellHasher<SavedFrame*>  SavedFramePtrHasher;
-    typedef PointerHasher<JSPrincipals*, 3> JSPrincipalsPtrHasher;
+    typedef PointerHasher<JSPrincipals*> JSPrincipalsPtrHasher;
 
+    static bool       hasHash(const Lookup& l);
+    static bool       ensureHash(const Lookup& l);
     static HashNumber hash(const Lookup& lookup);
     static bool       match(SavedFrame* existing, const Lookup& lookup);
 
     typedef ReadBarriered<SavedFrame*> Key;
     static void rekey(Key& key, const Key& newKey);
+};
+
+template <>
+struct FallibleHashMethods<SavedFrame::HashPolicy>
+{
+    template <typename Lookup> static bool hasHash(Lookup&& l) {
+        return SavedFrame::HashPolicy::hasHash(mozilla::Forward<Lookup>(l));
+    }
+    template <typename Lookup> static bool ensureHash(Lookup&& l) {
+        return SavedFrame::HashPolicy::ensureHash(mozilla::Forward<Lookup>(l));
+    }
 };
 
 // Assert that if the given object is not null, that it must be either a
@@ -238,18 +216,6 @@ struct ReconstructedSavedFramePrincipals : public JSPrincipals
         return f.isSystem() ? &IsSystem : &IsNotSystem;
     }
 };
-
-inline void
-SavedFrame::Iterator::operator++()
-{
-    frame_ = frame_->getParent();
-}
-
-inline void
-SavedFrame::ConstIterator::operator++()
-{
-    frame_ = frame_->getParent();
-}
 
 inline void
 SavedFrame::RootedIterator::operator++()
@@ -296,7 +262,9 @@ class ConcreteStackFrame<SavedFrame> : public BaseStackFrame {
             ptr = next;
     }
 
-    bool isSelfHosted() const override { return get().isSelfHosted(); }
+    bool isSelfHosted(JSContext* cx) const override {
+        return get().isSelfHosted(cx);
+    }
 
     bool isSystem() const override;
 

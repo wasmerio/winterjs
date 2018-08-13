@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 * Copyright (C) 1997-2015, International Business Machines Corporation and
@@ -193,13 +195,26 @@ BreakIterator::getAvailableLocales(int32_t& count)
 
 // ------------------------------------------
 //
-// Default constructor and destructor
+// Constructors, destructor and assignment operator
 //
 //-------------------------------------------
 
 BreakIterator::BreakIterator()
 {
     *validLocale = *actualLocale = 0;
+}
+
+BreakIterator::BreakIterator(const BreakIterator &other) : UObject(other) {
+    uprv_strncpy(actualLocale, other.actualLocale, sizeof(actualLocale));
+    uprv_strncpy(validLocale, other.validLocale, sizeof(validLocale));
+}
+
+BreakIterator &BreakIterator::operator =(const BreakIterator &other) {
+    if (this != &other) {
+        uprv_strncpy(actualLocale, other.actualLocale, sizeof(actualLocale));
+        uprv_strncpy(validLocale, other.validLocale, sizeof(validLocale));
+    }
+    return *this;
 }
 
 BreakIterator::~BreakIterator()
@@ -263,7 +278,7 @@ ICUBreakIteratorService::~ICUBreakIteratorService() {}
 // defined in ucln_cmn.h
 U_NAMESPACE_END
 
-static icu::UInitOnce gInitOnce;
+static icu::UInitOnce gInitOnceBrkiter;
 static icu::ICULocaleService* gService = NULL;
 
 
@@ -278,7 +293,7 @@ static UBool U_CALLCONV breakiterator_cleanup(void) {
         delete gService;
         gService = NULL;
     }
-    gInitOnce.reset();
+    gInitOnceBrkiter.reset();
 #endif
     return TRUE;
 }
@@ -294,7 +309,7 @@ initService(void) {
 static ICULocaleService*
 getService(void)
 {
-    umtx_initOnce(gInitOnce, &initService);
+    umtx_initOnce(gInitOnceBrkiter, &initService);
     return gService;
 }
 
@@ -304,7 +319,7 @@ getService(void)
 static inline UBool
 hasService(void)
 {
-    return !gInitOnce.isReset() && getService() != NULL;
+    return !gInitOnceBrkiter.isReset() && getService() != NULL;
 }
 
 // -------------------------------------
@@ -418,6 +433,7 @@ BreakIterator::makeInstance(const Locale& loc, int32_t kind, UErrorCode& status)
         break;
     case UBRK_SENTENCE:
         result = BreakIterator::buildInstance(loc, "sentence", kind, status);
+#if !UCONFIG_NO_FILTERED_BREAK_ITERATION
         {
             char ssKeyValue[kKeyValueLenMax] = {0};
             UErrorCode kvStatus = U_ZERO_ERROR;
@@ -430,6 +446,7 @@ BreakIterator::makeInstance(const Locale& loc, int32_t kind, UErrorCode& status)
                 }
             }
         }
+#endif
         break;
     case UBRK_TITLE:
         result = BreakIterator::buildInstance(loc, "title", kind, status);

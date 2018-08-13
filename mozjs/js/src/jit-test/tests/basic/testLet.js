@@ -9,7 +9,7 @@ function test(str, arg, result)
     var fun = new Function('x', str);
 
     var got = fun.toSource();
-    var expect = '(function anonymous(x) {\n' + str + '\n})';
+    var expect = '(function anonymous(x\n) {\n' + str + '\n})';
     if (got !== expect) {
         print("GOT:    " + got);
         print("EXPECT: " + expect);
@@ -163,7 +163,6 @@ isParseError('for (let [x, [y, [x]]] = a;;) {}');
 // for(in)
 test('for (let i in x) {return x;}');
 test('for (let i in x) {let y;return x;}');
-test('for each (let [a, b] in x) {let y;return x;}');
 test('for (let i in x) {let i = x;return i;}');
 test('var s = "";for (let a in x) {for (let b in x) {s += a + b;}}return s;', [1,2], '00011011');
 test('var res = "";for (let i in x) {res += x[i];}return res;');
@@ -179,16 +178,12 @@ isParseError('for (let [x, y, x] in o) {}');
 isParseError('for (let [x, [y, [x]]] in o) {}');
 
 // for(let ... in ...) scoping bugs (bug 1069480)
-test('for each (let [x, y] in x) {return x + y;}', [['ponies', '']], undefined);
-test('for each (let [{0: x, 1: y}, z] in x) {return x + y + z;}', [[['po','nies'], '']], undefined);
-test('for (let x in eval("x")) {return x;}', {ponies:true}, undefined);
-test('for (let x in x) {return eval("x");}', {ponies:true}, undefined);
-test('for (let x in eval("x")) {return eval("x");}', {ponies:true}, undefined);
-test('for (let x in x) {break;}return x;');
-test('for (let x in x) {break;}return eval("x");');
-test('try {for (let x in eval("throw x")) {}} catch (e) {return e;}', undefined, undefined);
-test('try {for each (let x in x) {eval("throw x");}} catch (e) {return e;}', ['ponies'], undefined);
-test('for each (let {x: y, y: x} in [{x: x, y: x}]) {return y;}', undefined, undefined);
+isReferenceError('for (let x in eval("x")) {return x;}', {ponies:true}, undefined);
+isReferenceError('for (let x in x) {return eval("x");}', {ponies:true}, undefined);
+isReferenceError('for (let x in eval("x")) {return eval("x");}', {ponies:true}, undefined);
+isReferenceError('for (let x in x) {break;}return x;');
+isReferenceError('for (let x in x) {break;}return eval("x");');
+isReferenceError('for (let x in eval("throw x")) {}', undefined, undefined);
 
 // don't forget about switch craziness
 test('var y = 3;switch (function () {return eval("y");}()) {case 3:let y;return x;default:;}');

@@ -1,7 +1,11 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+from __future__ import absolute_import
+
 import json
+
 
 def read(log_f, raise_on_error=False):
     """Return a generator that will return the entries in a structured log file.
@@ -35,6 +39,7 @@ def imap_log(log_iter, action_map):
         if item["action"] in action_map:
             yield action_map[item["action"]](item)
 
+
 def each_log(log_iter, action_map):
     """Call a callback for each item in an iterable containing structured
     log entries
@@ -46,6 +51,7 @@ def each_log(log_iter, action_map):
     for item in log_iter:
         if item["action"] in action_map:
             action_map[item["action"]](item)
+
 
 class LogHandler(object):
     """Base class for objects that act as log handlers. A handler is a callable
@@ -66,6 +72,7 @@ class LogHandler(object):
         if hasattr(self, data["action"]):
             handler = getattr(self, data["action"])
             return handler(data)
+
 
 def handle_log(log_iter, handler):
     """Call a handler for each item in a log, discarding the return value"""

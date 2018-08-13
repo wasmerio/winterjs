@@ -50,6 +50,13 @@ GDBTestInitAbstractFramePtr(AbstractFramePtr& frame, jit::RematerializedFrame* p
     frame.ptr_ = uintptr_t(ptr) | AbstractFramePtr::Tag_RematerializedFrame;
 }
 
+void
+GDBTestInitAbstractFramePtr(AbstractFramePtr& frame, wasm::DebugFrame* ptr)
+{
+    MOZ_ASSERT((uintptr_t(ptr) & AbstractFramePtr::TagMask) == 0);
+    frame.ptr_ = uintptr_t(ptr) | AbstractFramePtr::Tag_WasmDebugFrame;
+}
+
 } // namespace js
 
 FRAGMENT(Interpreter, Regs) {
@@ -66,7 +73,7 @@ FRAGMENT(Interpreter, Regs) {
 
   breakpoint();
 
-  (void) regs;
+  use(regs);
 }
 
 FRAGMENT(Interpreter, AbstractFramePtr) {
@@ -83,10 +90,13 @@ FRAGMENT(Interpreter, AbstractFramePtr) {
     js::AbstractFramePtr rfptr;
     GDBTestInitAbstractFramePtr(rfptr, (js::jit::RematerializedFrame*) uintptr_t(0xdabbad00));
 
+    js::AbstractFramePtr sfptr;
+    GDBTestInitAbstractFramePtr(sfptr, (js::wasm::DebugFrame*) uintptr_t(0xcb98ad00));
+
     breakpoint();
 
-    (void) sfidptr;
-    (void) ifptr;
-    (void) bfptr;
-    (void) rfptr;
+    use(sfidptr);
+    use(ifptr);
+    use(bfptr);
+    use(rfptr);
 }

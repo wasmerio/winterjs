@@ -9,10 +9,9 @@
 
 #include "jit/JitFrames.h"
 
-#include "jit/JitFrameIterator.h"
 #include "jit/LIR.h"
 
-#include "jit/JitFrameIterator-inl.h"
+#include "jit/JSJitFrameIter-inl.h"
 
 namespace js {
 namespace jit {
@@ -27,44 +26,16 @@ SafepointIndex::resolve()
 #endif
 }
 
-inline uint8_t*
-JitFrameIterator::returnAddress() const
-{
-    CommonFrameLayout* current = (CommonFrameLayout*) current_;
-    return current->returnAddress();
-}
-
-inline size_t
-JitFrameIterator::prevFrameLocalSize() const
-{
-    CommonFrameLayout* current = (CommonFrameLayout*) current_;
-    return current->prevFrameLocalSize();
-}
-
-inline FrameType
-JitFrameIterator::prevType() const
-{
-    CommonFrameLayout* current = (CommonFrameLayout*) current_;
-    return current->prevType();
-}
-
-inline ExitFrameLayout*
-JitFrameIterator::exitFrame() const
-{
-    MOZ_ASSERT(isExitFrame());
-    return (ExitFrameLayout*) fp();
-}
-
 inline BaselineFrame*
 GetTopBaselineFrame(JSContext* cx)
 {
-    JitFrameIterator iter(cx);
-    MOZ_ASSERT(iter.type() == JitFrame_Exit);
-    ++iter;
-    if (iter.isBaselineStub())
-        ++iter;
-    MOZ_ASSERT(iter.isBaselineJS());
-    return iter.baselineFrame();
+    JSJitFrameIter frame(cx->activation()->asJit());
+    MOZ_ASSERT(frame.type() == JitFrame_Exit);
+    ++frame;
+    if (frame.isBaselineStub())
+        ++frame;
+    MOZ_ASSERT(frame.isBaselineJS());
+    return frame.baselineFrame();
 }
 
 } // namespace jit

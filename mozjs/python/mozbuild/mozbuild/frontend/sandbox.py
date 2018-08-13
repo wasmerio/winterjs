@@ -31,7 +31,7 @@ from .context import Context
 from mozpack.files import FileFinder
 
 
-default_finder = FileFinder('/', find_executables=False)
+default_finder = FileFinder('/')
 
 
 def alphabetical_sorted(iterable, cmp=None, key=lambda x: x.lower(),
@@ -110,12 +110,14 @@ class Sandbox(dict):
         'True': True,
         'sorted': alphabetical_sorted,
         'int': int,
+        'set': set,
+        'tuple': tuple,
     })
 
-    def __init__(self, context, builtins=None, finder=default_finder):
+    def __init__(self, context, finder=default_finder):
         """Initialize a Sandbox ready for execution.
         """
-        self._builtins = builtins or self.BUILTINS
+        self._builtins = self.BUILTINS
         dict.__setitem__(self, '__builtins__', self._builtins)
 
         assert isinstance(self._builtins, ReadOnlyDict)

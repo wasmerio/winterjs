@@ -6,14 +6,15 @@
 
 #include "frontend/ParseNode-inl.h"
 
+#include "mozilla/FloatingPoint.h"
+
 #include "frontend/Parser.h"
 
-#include "jscntxtinlines.h"
+#include "vm/JSContext-inl.h"
 
 using namespace js;
 using namespace js::frontend;
 
-using mozilla::ArrayLength;
 using mozilla::IsFinite;
 
 #ifdef DEBUG
@@ -47,15 +48,6 @@ ParseNodeAllocator::freeNode(ParseNode* pn)
 {
     /* Catch back-to-back dup recycles. */
     MOZ_ASSERT(pn != freelist);
-
-    /*
-     * It's too hard to clear these nodes from the AtomDefnMaps, etc. that
-     * hold references to them, so we never free them. It's our caller's job to
-     * recognize and process these, since their children do need to be dealt
-     * with.
-     */
-    MOZ_ASSERT(!pn->isUsed());
-    MOZ_ASSERT(!pn->isDefn());
 
 #ifdef DEBUG
     /* Poison the node, to catch attempts to use it without initializing it. */
@@ -140,27 +132,21 @@ PushNameNodeChildren(ParseNode* node, NodeStack* stack)
 {
     MOZ_ASSERT(node->isArity(PN_NAME));
 
-    /*
-     * Because used/defn nodes appear in AtomDefnMaps and elsewhere, we
-     * don't recycle them. (We'll recover their storage when we free the
-     * temporary arena.) However, we do recycle the nodes around them, so
-     * clean up the pointers to avoid dangling references. The top-level
-     * decls table carries references to them that later iterations through
-     * the compileScript loop may find, so they need to be neat.
-     *
-     * pn_expr and pn_lexdef share storage; the latter isn't an owning
-     * reference.
-     */
-    if (!node->isUsed()) {
-        if (node->pn_expr)
-            stack->push(node->pn_expr);
-        node->pn_expr = nullptr;
-    }
+    if (node->pn_expr)
+        stack->push(node->pn_expr);
+    node->pn_expr = nullptr;
+    return PushResult::Recyclable;
+}
 
-    if (!node->isUsed() && !node->isDefn())
-        return PushResult::Recyclable;
+static PushResult
+PushScopeNodeChildren(ParseNode* node, NodeStack* stack)
+{
+    MOZ_ASSERT(node->isArity(PN_SCOPE));
 
-    return PushResult::CleanUpLater;
+    if (node->scopeBody())
+        stack->push(node->scopeBody());
+    node->setScopeBody(nullptr);
+    return PushResult::Recyclable;
 }
 
 static PushResult
@@ -198,55 +184,53 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
     switch (pn->getKind()) {
       // Trivial nodes that refer to no nodes, are referred to by nothing
       // but their parents, are never used, and are never a definition.
-      case PNK_NOP:
-      case PNK_STRING:
-      case PNK_TEMPLATE_STRING:
-      case PNK_REGEXP:
-      case PNK_TRUE:
-      case PNK_FALSE:
-      case PNK_NULL:
-      case PNK_ELISION:
-      case PNK_GENERATOR:
-      case PNK_NUMBER:
-      case PNK_BREAK:
-      case PNK_CONTINUE:
-      case PNK_DEBUGGER:
-      case PNK_EXPORT_BATCH_SPEC:
-      case PNK_OBJECT_PROPERTY_NAME:
-      case PNK_POSHOLDER:
+      case ParseNodeKind::EmptyStatement:
+      case ParseNodeKind::String:
+      case ParseNodeKind::TemplateString:
+      case ParseNodeKind::RegExp:
+      case ParseNodeKind::True:
+      case ParseNodeKind::False:
+      case ParseNodeKind::Null:
+      case ParseNodeKind::RawUndefined:
+      case ParseNodeKind::Elision:
+      case ParseNodeKind::Generator:
+      case ParseNodeKind::Number:
+      case ParseNodeKind::Break:
+      case ParseNodeKind::Continue:
+      case ParseNodeKind::Debugger:
+      case ParseNodeKind::ExportBatchSpec:
+      case ParseNodeKind::ObjectPropertyName:
+      case ParseNodeKind::PosHolder:
         MOZ_ASSERT(pn->isArity(PN_NULLARY));
-        MOZ_ASSERT(!pn->isUsed(), "handle non-trivial cases separately");
-        MOZ_ASSERT(!pn->isDefn(), "handle non-trivial cases separately");
         return PushResult::Recyclable;
 
       // Nodes with a single non-null child.
-      case PNK_TYPEOFNAME:
-      case PNK_TYPEOFEXPR:
-      case PNK_VOID:
-      case PNK_NOT:
-      case PNK_BITNOT:
-      case PNK_THROW:
-      case PNK_DELETENAME:
-      case PNK_DELETEPROP:
-      case PNK_DELETEELEM:
-      case PNK_DELETEEXPR:
-      case PNK_POS:
-      case PNK_NEG:
-      case PNK_PREINCREMENT:
-      case PNK_POSTINCREMENT:
-      case PNK_PREDECREMENT:
-      case PNK_POSTDECREMENT:
-      case PNK_COMPUTED_NAME:
-      case PNK_ARRAYPUSH:
-      case PNK_SPREAD:
-      case PNK_MUTATEPROTO:
-      case PNK_EXPORT:
-      case PNK_SUPERBASE:
+      case ParseNodeKind::ExpressionStatement:
+      case ParseNodeKind::TypeOfName:
+      case ParseNodeKind::TypeOfExpr:
+      case ParseNodeKind::Void:
+      case ParseNodeKind::Not:
+      case ParseNodeKind::BitNot:
+      case ParseNodeKind::Throw:
+      case ParseNodeKind::DeleteName:
+      case ParseNodeKind::DeleteProp:
+      case ParseNodeKind::DeleteElem:
+      case ParseNodeKind::DeleteExpr:
+      case ParseNodeKind::Pos:
+      case ParseNodeKind::Neg:
+      case ParseNodeKind::PreIncrement:
+      case ParseNodeKind::PostIncrement:
+      case ParseNodeKind::PreDecrement:
+      case ParseNodeKind::PostDecrement:
+      case ParseNodeKind::ComputedName:
+      case ParseNodeKind::Spread:
+      case ParseNodeKind::MutateProto:
+      case ParseNodeKind::Export:
+      case ParseNodeKind::SuperBase:
         return PushUnaryNodeChild(pn, stack);
 
       // Nodes with a single nullable child.
-      case PNK_THIS:
-      case PNK_SEMI: {
+      case ParseNodeKind::This: {
         MOZ_ASSERT(pn->isArity(PN_UNARY));
         if (pn->pn_kid)
             stack->push(pn->pn_kid);
@@ -256,46 +240,44 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
       // Binary nodes with two non-null children.
 
       // All assignment and compound assignment nodes qualify.
-      case PNK_ASSIGN:
-      case PNK_ADDASSIGN:
-      case PNK_SUBASSIGN:
-      case PNK_BITORASSIGN:
-      case PNK_BITXORASSIGN:
-      case PNK_BITANDASSIGN:
-      case PNK_LSHASSIGN:
-      case PNK_RSHASSIGN:
-      case PNK_URSHASSIGN:
-      case PNK_MULASSIGN:
-      case PNK_DIVASSIGN:
-      case PNK_MODASSIGN:
-      case PNK_POWASSIGN:
+      case ParseNodeKind::Assign:
+      case ParseNodeKind::AddAssign:
+      case ParseNodeKind::SubAssign:
+      case ParseNodeKind::BitOrAssign:
+      case ParseNodeKind::BitXorAssign:
+      case ParseNodeKind::BitAndAssign:
+      case ParseNodeKind::LshAssign:
+      case ParseNodeKind::RshAssign:
+      case ParseNodeKind::UrshAssign:
+      case ParseNodeKind::MulAssign:
+      case ParseNodeKind::DivAssign:
+      case ParseNodeKind::ModAssign:
+      case ParseNodeKind::PowAssign:
       // ...and a few others.
-      case PNK_ELEM:
-      case PNK_IMPORT_SPEC:
-      case PNK_EXPORT_SPEC:
-      case PNK_COLON:
-      case PNK_SHORTHAND:
-      case PNK_DOWHILE:
-      case PNK_WHILE:
-      case PNK_SWITCH:
-      case PNK_LETBLOCK:
-      case PNK_CLASSMETHOD:
-      case PNK_NEWTARGET:
-      case PNK_SETTHIS:
-      case PNK_FOR:
-      case PNK_COMPREHENSIONFOR:
-      case PNK_ANNEXB_FUNCTION: {
+      case ParseNodeKind::Elem:
+      case ParseNodeKind::ImportSpec:
+      case ParseNodeKind::ExportSpec:
+      case ParseNodeKind::Colon:
+      case ParseNodeKind::Shorthand:
+      case ParseNodeKind::DoWhile:
+      case ParseNodeKind::While:
+      case ParseNodeKind::Switch:
+      case ParseNodeKind::ClassMethod:
+      case ParseNodeKind::NewTarget:
+      case ParseNodeKind::SetThis:
+      case ParseNodeKind::For:
+      case ParseNodeKind::With: {
         MOZ_ASSERT(pn->isArity(PN_BINARY));
         stack->push(pn->pn_left);
         stack->push(pn->pn_right);
         return PushResult::Recyclable;
       }
 
-      // Default clauses are PNK_CASE but do not have case expressions.
-      // Named class expressions do not have outer binding nodes.
+      // Default clauses are ParseNodeKind::Case but do not have case
+      // expressions. Named class expressions do not have outer binding nodes.
       // So both are binary nodes with a possibly-null pn_left.
-      case PNK_CASE:
-      case PNK_CLASSNAMES: {
+      case ParseNodeKind::Case:
+      case ParseNodeKind::ClassNames: {
         MOZ_ASSERT(pn->isArity(PN_BINARY));
         if (pn->pn_left)
             stack->push(pn->pn_left);
@@ -303,38 +285,30 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
         return PushResult::Recyclable;
       }
 
-      // PNK_WITH is PN_BINARY_OBJ -- that is, PN_BINARY with (irrelevant for
-      // this method's purposes) the addition of the StaticWithScope as
-      // pn_binary_obj.  Both left (expression) and right (statement) are
-      // non-null.
-      case PNK_WITH: {
-        MOZ_ASSERT(pn->isArity(PN_BINARY_OBJ));
-        stack->push(pn->pn_left);
-        stack->push(pn->pn_right);
+      // The child is an assignment of a ParseNodeKind::Generator node to the
+      // '.generator' local, for a synthesized, prepended initial yield.
+      case ParseNodeKind::InitialYield: {
+        MOZ_ASSERT(pn->isArity(PN_UNARY));
+        MOZ_ASSERT(pn->pn_kid->isKind(ParseNodeKind::Assign) &&
+                   pn->pn_kid->pn_left->isKind(ParseNodeKind::Name) &&
+                   pn->pn_kid->pn_right->isKind(ParseNodeKind::Generator));
+        stack->push(pn->pn_kid);
         return PushResult::Recyclable;
       }
 
-      // The left half is the expression being yielded.  The right half is
-      // internal goop: a name reference to the invisible '.generator' local
-      // variable, or an assignment of a PNK_GENERATOR node to the '.generator'
-      // local, for a synthesized, prepended initial yield.  Yum!
-      case PNK_YIELD_STAR:
-      case PNK_YIELD: {
-        MOZ_ASSERT(pn->isArity(PN_BINARY));
-        MOZ_ASSERT(pn->pn_right);
-        MOZ_ASSERT(pn->pn_right->isKind(PNK_NAME) ||
-                   (pn->pn_right->isKind(PNK_ASSIGN) &&
-                    pn->pn_right->pn_left->isKind(PNK_NAME) &&
-                    pn->pn_right->pn_right->isKind(PNK_GENERATOR)));
-        if (pn->pn_left)
-            stack->push(pn->pn_left);
-        stack->push(pn->pn_right);
+      // The child is the expression being yielded.
+      case ParseNodeKind::YieldStar:
+      case ParseNodeKind::Yield:
+      case ParseNodeKind::Await: {
+        MOZ_ASSERT(pn->isArity(PN_UNARY));
+        if (pn->pn_kid)
+            stack->push(pn->pn_kid);
         return PushResult::Recyclable;
       }
 
       // A return node's child is what you'd expect: the return expression,
       // if any.
-      case PNK_RETURN: {
+      case ParseNodeKind::Return: {
         MOZ_ASSERT(pn->isArity(PN_UNARY));
         if (pn->pn_kid)
             stack->push(pn->pn_kid);
@@ -343,21 +317,23 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
 
       // Import and export-from nodes have a list of specifiers on the left
       // and a module string on the right.
-      case PNK_IMPORT:
-      case PNK_EXPORT_FROM: {
+      case ParseNodeKind::Import:
+      case ParseNodeKind::ExportFrom: {
         MOZ_ASSERT(pn->isArity(PN_BINARY));
-        MOZ_ASSERT_IF(pn->isKind(PNK_IMPORT), pn->pn_left->isKind(PNK_IMPORT_SPEC_LIST));
-        MOZ_ASSERT_IF(pn->isKind(PNK_EXPORT_FROM), pn->pn_left->isKind(PNK_EXPORT_SPEC_LIST));
+        MOZ_ASSERT_IF(pn->isKind(ParseNodeKind::Import),
+                      pn->pn_left->isKind(ParseNodeKind::ImportSpecList));
+        MOZ_ASSERT_IF(pn->isKind(ParseNodeKind::ExportFrom),
+                      pn->pn_left->isKind(ParseNodeKind::ExportSpecList));
         MOZ_ASSERT(pn->pn_left->isArity(PN_LIST));
-        MOZ_ASSERT(pn->pn_right->isKind(PNK_STRING));
+        MOZ_ASSERT(pn->pn_right->isKind(ParseNodeKind::String));
         stack->pushList(pn->pn_left);
         stack->push(pn->pn_right);
         return PushResult::Recyclable;
       }
 
-      case PNK_EXPORT_DEFAULT: {
+      case ParseNodeKind::ExportDefault: {
         MOZ_ASSERT(pn->isArity(PN_BINARY));
-        MOZ_ASSERT_IF(pn->pn_right, pn->pn_right->isKind(PNK_NAME));
+        MOZ_ASSERT_IF(pn->pn_right, pn->pn_right->isKind(ParseNodeKind::Name));
         stack->push(pn->pn_left);
         if (pn->pn_right)
             stack->push(pn->pn_right);
@@ -365,7 +341,7 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
       }
 
       // Ternary nodes with all children non-null.
-      case PNK_CONDITIONAL: {
+      case ParseNodeKind::Conditional: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
         stack->push(pn->pn_kid1);
         stack->push(pn->pn_kid2);
@@ -373,24 +349,22 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
         return PushResult::Recyclable;
       }
 
-      // For for-in and for-of, the first child is any declaration present in
-      // the for-loop (and null if not).  The second child is the expression or
-      // pattern assigned every loop, and the third child is the expression
-      // looped over.  For example, in |for (var p in obj)|, the first child is
-      // |var p|, the second child is |p| (a node distinct from the one in
-      // |var p|), and the third child is |obj|.
-      case PNK_FORIN:
-      case PNK_FOROF: {
+      // For for-in and for-of, the first child is the left-hand side of the
+      // 'in' or 'of' (a declaration or an assignment target). The second
+      // child is always null, and the third child is the expression looped
+      // over.  For example, in |for (var p in obj)|, the first child is |var
+      // p|, the second child is null, and the third child is |obj|.
+      case ParseNodeKind::ForIn:
+      case ParseNodeKind::ForOf: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
-        if (pn->pn_kid1)
-            stack->push(pn->pn_kid1);
-        stack->push(pn->pn_kid2);
+        MOZ_ASSERT(!pn->pn_kid2);
+        stack->push(pn->pn_kid1);
         stack->push(pn->pn_kid3);
         return PushResult::Recyclable;
       }
 
       // for (;;) nodes have one child per optional component of the loop head.
-      case PNK_FORHEAD: {
+      case ParseNodeKind::ForHead: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
         if (pn->pn_kid1)
             stack->push(pn->pn_kid1);
@@ -402,7 +376,7 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
       }
 
       // classes might have an optional node for the heritage, as well as the names
-      case PNK_CLASS: {
+      case ParseNodeKind::Class: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
         if (pn->pn_kid1)
             stack->push(pn->pn_kid1);
@@ -414,7 +388,7 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
 
       // if-statement nodes have condition and consequent children and a
       // possibly-null alternative.
-      case PNK_IF: {
+      case ParseNodeKind::If: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
         stack->push(pn->pn_kid1);
         stack->push(pn->pn_kid2);
@@ -425,7 +399,7 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
 
       // try-statements have statements to execute, and one or both of a
       // catch-list and a finally-block.
-      case PNK_TRY: {
+      case ParseNodeKind::Try: {
         MOZ_ASSERT(pn->isArity(PN_TERNARY));
         MOZ_ASSERT(pn->pn_kid2 || pn->pn_kid3);
         stack->push(pn->pn_kid1);
@@ -436,90 +410,74 @@ PushNodeChildren(ParseNode* pn, NodeStack* stack)
         return PushResult::Recyclable;
       }
 
-      // A catch node has first kid as catch-variable pattern, the second kid
-      // as catch condition (which, if non-null, records the |<cond>| in
-      // SpiderMonkey's |catch (e if <cond>)| extension), and third kid as the
-      // statements in the catch block.
-      case PNK_CATCH: {
-        MOZ_ASSERT(pn->isArity(PN_TERNARY));
-        stack->push(pn->pn_kid1);
-        if (pn->pn_kid2)
-            stack->push(pn->pn_kid2);
-        stack->push(pn->pn_kid3);
+      // A catch node has left node as catch-variable pattern (or null if
+      // omitted) and right node as the statements in the catch block.
+      case ParseNodeKind::Catch: {
+        MOZ_ASSERT(pn->isArity(PN_BINARY));
+        if (pn->pn_left)
+            stack->push(pn->pn_left);
+        stack->push(pn->pn_right);
         return PushResult::Recyclable;
       }
 
       // List nodes with all non-null children.
-      case PNK_OR:
-      case PNK_AND:
-      case PNK_BITOR:
-      case PNK_BITXOR:
-      case PNK_BITAND:
-      case PNK_STRICTEQ:
-      case PNK_EQ:
-      case PNK_STRICTNE:
-      case PNK_NE:
-      case PNK_LT:
-      case PNK_LE:
-      case PNK_GT:
-      case PNK_GE:
-      case PNK_INSTANCEOF:
-      case PNK_IN:
-      case PNK_LSH:
-      case PNK_RSH:
-      case PNK_URSH:
-      case PNK_ADD:
-      case PNK_SUB:
-      case PNK_STAR:
-      case PNK_DIV:
-      case PNK_MOD:
-      case PNK_POW:
-      case PNK_COMMA:
-      case PNK_NEW:
-      case PNK_CALL:
-      case PNK_SUPERCALL:
-      case PNK_GENEXP:
-      case PNK_ARRAY:
-      case PNK_OBJECT:
-      case PNK_TEMPLATE_STRING_LIST:
-      case PNK_TAGGED_TEMPLATE:
-      case PNK_CALLSITEOBJ:
-      case PNK_VAR:
-      case PNK_CONST:
-      case PNK_LET:
-      case PNK_CATCHLIST:
-      case PNK_STATEMENTLIST:
-      case PNK_IMPORT_SPEC_LIST:
-      case PNK_EXPORT_SPEC_LIST:
-      case PNK_ARGSBODY:
-      case PNK_CLASSMETHODLIST:
+      case ParseNodeKind::Or:
+      case ParseNodeKind::And:
+      case ParseNodeKind::BitOr:
+      case ParseNodeKind::BitXor:
+      case ParseNodeKind::BitAnd:
+      case ParseNodeKind::StrictEq:
+      case ParseNodeKind::Eq:
+      case ParseNodeKind::StrictNe:
+      case ParseNodeKind::Ne:
+      case ParseNodeKind::Lt:
+      case ParseNodeKind::Le:
+      case ParseNodeKind::Gt:
+      case ParseNodeKind::Ge:
+      case ParseNodeKind::InstanceOf:
+      case ParseNodeKind::In:
+      case ParseNodeKind::Lsh:
+      case ParseNodeKind::Rsh:
+      case ParseNodeKind::Ursh:
+      case ParseNodeKind::Add:
+      case ParseNodeKind::Sub:
+      case ParseNodeKind::Star:
+      case ParseNodeKind::Div:
+      case ParseNodeKind::Mod:
+      case ParseNodeKind::Pow:
+      case ParseNodeKind::Pipeline:
+      case ParseNodeKind::Comma:
+      case ParseNodeKind::New:
+      case ParseNodeKind::Call:
+      case ParseNodeKind::SuperCall:
+      case ParseNodeKind::Array:
+      case ParseNodeKind::Object:
+      case ParseNodeKind::TemplateStringList:
+      case ParseNodeKind::TaggedTemplate:
+      case ParseNodeKind::CallSiteObj:
+      case ParseNodeKind::Var:
+      case ParseNodeKind::Const:
+      case ParseNodeKind::Let:
+      case ParseNodeKind::StatementList:
+      case ParseNodeKind::ImportSpecList:
+      case ParseNodeKind::ExportSpecList:
+      case ParseNodeKind::ParamsBody:
+      case ParseNodeKind::ClassMethodList:
         return PushListNodeChildren(pn, stack);
 
-      // Array comprehension nodes are lists with a single child:
-      // PNK_COMPREHENSIONFOR for comprehensions, PNK_LEXICALSCOPE for legacy
-      // comprehensions.  Probably this should be a non-list eventually.
-      case PNK_ARRAYCOMP: {
-#ifdef DEBUG
-        MOZ_ASSERT(pn->isKind(PNK_ARRAYCOMP));
-        MOZ_ASSERT(pn->isArity(PN_LIST));
-        MOZ_ASSERT(pn->pn_count == 1);
-        MOZ_ASSERT(pn->pn_head->isKind(PNK_LEXICALSCOPE) ||
-                   pn->pn_head->isKind(PNK_COMPREHENSIONFOR));
-#endif
-        return PushListNodeChildren(pn, stack);
-      }
-
-      case PNK_LABEL:
-      case PNK_DOT:
-      case PNK_LEXICALSCOPE:
-      case PNK_NAME:
+      case ParseNodeKind::Label:
+      case ParseNodeKind::Dot:
+      case ParseNodeKind::Name:
         return PushNameNodeChildren(pn, stack);
 
-      case PNK_FUNCTION:
-      case PNK_MODULE:
+      case ParseNodeKind::LexicalScope:
+        return PushScopeNodeChildren(pn, stack);
+
+      case ParseNodeKind::Function:
+      case ParseNodeKind::Module:
         return PushCodeNodeChildren(pn, stack);
 
-      case PNK_LIMIT: // invalid sentinel value
+      case ParseNodeKind::Limit: // invalid sentinel value
         MOZ_CRASH("invalid node kind");
     }
 
@@ -588,6 +546,7 @@ ParseNodeAllocator::allocNode()
         return pn;
     }
 
+    LifoAlloc::AutoFallibleScope fallibleAllocator(&alloc);
     void* p = alloc.alloc(sizeof (ParseNode));
     if (!p)
         ReportOutOfMemory(cx);
@@ -595,8 +554,8 @@ ParseNodeAllocator::allocNode()
 }
 
 ParseNode*
-ParseNode::appendOrCreateList(ParseNodeKind kind, JSOp op, ParseNode* left, ParseNode* right,
-                              FullParseHandler* handler, ParseContext<FullParseHandler>* pc)
+ParseNode::appendOrCreateList(ParseNodeKind kind, ParseNode* left, ParseNode* right,
+                              FullParseHandler* handler, ParseContext* pc)
 {
     // The asm.js specification is written in ECMAScript grammar terms that
     // specify *only* a binary tree.  It's a royal pain to implement the asm.js
@@ -617,9 +576,7 @@ ParseNode::appendOrCreateList(ParseNodeKind kind, JSOp op, ParseNode* left, Pars
         // processed with a left fold because (+) is left-associative.
         //
         if (left->isKind(kind) &&
-            left->isOp(op) &&
-            (CodeSpec[op].format & JOF_LEFTASSOC ||
-             (kind == PNK_POW && !left->pn_parens)))
+            (kind == ParseNodeKind::Pow ? !left->pn_parens : left->isBinaryOperation()))
         {
             ListNode* list = &left->as<ListNode>();
 
@@ -630,275 +587,13 @@ ParseNode::appendOrCreateList(ParseNodeKind kind, JSOp op, ParseNode* left, Pars
         }
     }
 
-    ParseNode* list = handler->new_<ListNode>(kind, op, left);
+    ParseNode* list = handler->new_<ListNode>(kind, JSOP_NOP, left);
     if (!list)
         return nullptr;
 
     list->append(right);
     return list;
 }
-
-const char*
-Definition::kindString(Kind kind)
-{
-    static const char* const table[] = {
-        "",
-        js_var_str,
-        js_const_str,
-        js_let_str,
-        "argument",
-        js_function_str,
-        "unknown",
-        js_import_str
-    };
-
-    MOZ_ASSERT(size_t(kind) < ArrayLength(table));
-    return table[kind];
-}
-
-namespace js {
-namespace frontend {
-
-/*
- * This function assumes the cloned tree is for use in the same statement and
- * binding context as the original tree.
- */
-template <>
-ParseNode*
-Parser<FullParseHandler>::cloneParseTree(ParseNode* opn)
-{
-    JS_CHECK_RECURSION(context, return nullptr);
-
-    if (opn->isKind(PNK_COMPUTED_NAME)) {
-        report(ParseError, false, opn, JSMSG_COMPUTED_NAME_IN_PATTERN);
-        return null();
-    }
-
-    ParseNode* pn = handler.new_<ParseNode>(opn->getKind(), opn->getOp(), opn->getArity(),
-                                            opn->pn_pos);
-    if (!pn)
-        return nullptr;
-    pn->setInParens(opn->isInParens());
-    pn->setDefn(opn->isDefn());
-    pn->setUsed(opn->isUsed());
-
-    switch (pn->getArity()) {
-#define NULLCHECK(e)    JS_BEGIN_MACRO if (!(e)) return nullptr; JS_END_MACRO
-
-      case PN_CODE: {
-        RootedFunction fun(context, opn->pn_funbox->function());
-        NULLCHECK(pn->pn_funbox = newFunctionBox(pn, fun, pc,
-                                                 Directives(/* strict = */ opn->pn_funbox->strict()),
-                                                 opn->pn_funbox->generatorKind()));
-        NULLCHECK(pn->pn_body = cloneParseTree(opn->pn_body));
-        pn->pn_scopecoord = opn->pn_scopecoord;
-        pn->pn_dflags = opn->pn_dflags;
-        pn->pn_blockid = opn->pn_blockid;
-        break;
-      }
-
-      case PN_LIST:
-        pn->makeEmpty();
-        for (ParseNode* opn2 = opn->pn_head; opn2; opn2 = opn2->pn_next) {
-            ParseNode* pn2;
-            NULLCHECK(pn2 = cloneParseTree(opn2));
-            pn->append(pn2);
-        }
-        pn->pn_xflags = opn->pn_xflags;
-        break;
-
-      case PN_TERNARY:
-        if (opn->pn_kid1)
-            NULLCHECK(pn->pn_kid1 = cloneParseTree(opn->pn_kid1));
-        if (opn->pn_kid2)
-            NULLCHECK(pn->pn_kid2 = cloneParseTree(opn->pn_kid2));
-        if (opn->pn_kid3)
-            NULLCHECK(pn->pn_kid3 = cloneParseTree(opn->pn_kid3));
-        break;
-
-      case PN_BINARY:
-      case PN_BINARY_OBJ:
-        if (opn->pn_left)
-            NULLCHECK(pn->pn_left = cloneParseTree(opn->pn_left));
-        if (opn->pn_right) {
-            if (opn->pn_right != opn->pn_left)
-                NULLCHECK(pn->pn_right = cloneParseTree(opn->pn_right));
-            else
-                pn->pn_right = pn->pn_left;
-        }
-        if (opn->isArity(PN_BINARY)) {
-            pn->pn_iflags = opn->pn_iflags;
-        } else {
-            MOZ_ASSERT(opn->isArity(PN_BINARY_OBJ));
-            pn->pn_binary_obj = opn->pn_binary_obj;
-        }
-        break;
-
-      case PN_UNARY:
-        if (opn->pn_kid)
-            NULLCHECK(pn->pn_kid = cloneParseTree(opn->pn_kid));
-        break;
-
-      case PN_NAME:
-        // PN_NAME could mean several arms in pn_u, so copy the whole thing.
-        pn->pn_u = opn->pn_u;
-        if (opn->isUsed()) {
-            /*
-             * The old name is a use of its pn_lexdef. Make the clone also be a
-             * use of that definition.
-             */
-            Definition* dn = pn->pn_lexdef;
-
-            pn->pn_link = dn->dn_uses;
-            pn->pn_dflags = opn->pn_dflags;
-            dn->dn_uses = pn;
-        } else if (opn->pn_expr) {
-            NULLCHECK(pn->pn_expr = cloneParseTree(opn->pn_expr));
-
-            /*
-             * If the old name is a definition, the new one has pn_defn set.
-             * Make the old name a use of the new node.
-             */
-            if (opn->isDefn()) {
-                opn->setDefn(false);
-                handler.linkUseToDef(opn, (Definition*) pn);
-            }
-        }
-        break;
-
-      case PN_NULLARY:
-        pn->pn_u = opn->pn_u;
-        break;
-
-#undef NULLCHECK
-    }
-    return pn;
-}
-
-/*
- * Used by Parser::cloneLeftHandSide to clone a default expression
- * in the form of
- *    [a = default] or {a: b = default}
- */
-template <>
-ParseNode*
-Parser<FullParseHandler>::cloneDestructuringDefault(ParseNode* opn)
-{
-    MOZ_ASSERT(opn->isKind(PNK_ASSIGN));
-
-    report(ParseError, false, opn, JSMSG_DEFAULT_IN_PATTERN);
-    return null();
-}
-
-/*
- * Used by Parser::forStatement and comprehensionTail to clone the TARGET in
- *   for (var/const/let TARGET in EXPR)
- *
- * opn must be the pn_head of a node produced by Parser::variables, so its form
- * is known to be LHS = NAME | [LHS] | {id:LHS}.
- *
- * The cloned tree is for use only in the same statement and binding context as
- * the original tree.
- */
-template <>
-ParseNode*
-Parser<FullParseHandler>::cloneLeftHandSide(ParseNode* opn)
-{
-    ParseNode* pn = handler.new_<ParseNode>(opn->getKind(), opn->getOp(), opn->getArity(),
-                                            opn->pn_pos);
-    if (!pn)
-        return nullptr;
-    pn->setInParens(opn->isInParens());
-    pn->setDefn(opn->isDefn());
-    pn->setUsed(opn->isUsed());
-
-    if (opn->isArity(PN_LIST)) {
-        MOZ_ASSERT(opn->isKind(PNK_ARRAY) || opn->isKind(PNK_OBJECT));
-        pn->makeEmpty();
-        for (ParseNode* opn2 = opn->pn_head; opn2; opn2 = opn2->pn_next) {
-            ParseNode* pn2;
-            if (opn->isKind(PNK_OBJECT)) {
-                if (opn2->isKind(PNK_MUTATEPROTO)) {
-                    ParseNode* target = opn2->pn_kid->isKind(PNK_ASSIGN)
-                                        ? cloneDestructuringDefault(opn2->pn_kid)
-                                        : cloneLeftHandSide(opn2->pn_kid);
-                    if (!target)
-                        return nullptr;
-                    pn2 = handler.new_<UnaryNode>(PNK_MUTATEPROTO, JSOP_NOP, opn2->pn_pos, target);
-                } else {
-                    MOZ_ASSERT(opn2->isArity(PN_BINARY));
-                    MOZ_ASSERT(opn2->isKind(PNK_COLON) || opn2->isKind(PNK_SHORTHAND));
-
-                    ParseNode* tag = cloneParseTree(opn2->pn_left);
-                    if (!tag)
-                        return nullptr;
-                    ParseNode* target = opn2->pn_right->isKind(PNK_ASSIGN)
-                                        ? cloneDestructuringDefault(opn2->pn_right)
-                                        : cloneLeftHandSide(opn2->pn_right);
-                    if (!target)
-                        return nullptr;
-
-                    pn2 = handler.new_<BinaryNode>(opn2->getKind(), JSOP_INITPROP, opn2->pn_pos, tag, target);
-                }
-            } else if (opn2->isArity(PN_NULLARY)) {
-                MOZ_ASSERT(opn2->isKind(PNK_ELISION));
-                pn2 = cloneParseTree(opn2);
-            } else if (opn2->isKind(PNK_SPREAD)) {
-                ParseNode* target = cloneLeftHandSide(opn2->pn_kid);
-                if (!target)
-                    return nullptr;
-                pn2 = handler.new_<UnaryNode>(PNK_SPREAD, JSOP_NOP, opn2->pn_pos, target);
-            } else if (opn2->isKind(PNK_ASSIGN)) {
-                pn2 = cloneDestructuringDefault(opn2);
-            } else {
-                pn2 = cloneLeftHandSide(opn2);
-            }
-
-            if (!pn2)
-                return nullptr;
-            pn->append(pn2);
-        }
-        pn->pn_xflags = opn->pn_xflags;
-        return pn;
-    }
-
-    MOZ_ASSERT(opn->isArity(PN_NAME));
-    MOZ_ASSERT(opn->isKind(PNK_NAME));
-
-    /* If opn is a definition or use, make pn a use. */
-    pn->pn_u.name = opn->pn_u.name;
-    pn->setOp(JSOP_SETNAME);
-    if (opn->isUsed()) {
-        Definition* dn = pn->pn_lexdef;
-
-        pn->pn_link = dn->dn_uses;
-        dn->dn_uses = pn;
-    } else {
-        pn->pn_expr = nullptr;
-        if (opn->isDefn()) {
-            /* We copied some definition-specific state into pn. Clear it out. */
-            pn->pn_scopecoord.makeFree();
-            pn->pn_dflags &= ~(PND_LEXICAL | PND_BOUND);
-            pn->setDefn(false);
-
-            handler.linkUseToDef(pn, (Definition*) opn);
-        }
-    }
-    return pn;
-}
-
-template <>
-SyntaxParseHandler::Node
-Parser<SyntaxParseHandler>::cloneLeftHandSide(Node node)
-{
-    // See the comment in SyntaxParseHandler::singleBindingFromDeclaration for
-    // why this is okay.
-    MOZ_ASSERT(node == SyntaxParseHandler::NodeUnparenthesizedName);
-    return SyntaxParseHandler::NodeGeneric;
-}
-
-} /* namespace frontend */
-} /* namespace js */
 
 #ifdef DEBUG
 
@@ -909,230 +604,247 @@ static const char * const parseNodeNames[] = {
 };
 
 void
-frontend::DumpParseTree(ParseNode* pn, int indent)
+frontend::DumpParseTree(ParseNode* pn, GenericPrinter& out, int indent)
 {
     if (pn == nullptr)
-        fprintf(stderr, "#NULL");
+        out.put("#NULL");
     else
-        pn->dump(indent);
+        pn->dump(out, indent);
 }
 
 static void
-IndentNewLine(int indent)
+IndentNewLine(GenericPrinter& out, int indent)
 {
-    fputc('\n', stderr);
+    out.putChar('\n');
     for (int i = 0; i < indent; ++i)
-        fputc(' ', stderr);
+        out.putChar(' ');
+}
+
+void
+ParseNode::dump(GenericPrinter& out)
+{
+    dump(out, 0);
+    out.putChar('\n');
 }
 
 void
 ParseNode::dump()
 {
-    dump(0);
-    fputc('\n', stderr);
+    js::Fprinter out(stderr);
+    dump(out);
 }
 
 void
-ParseNode::dump(int indent)
+ParseNode::dump(GenericPrinter& out, int indent)
 {
     switch (pn_arity) {
       case PN_NULLARY:
-        ((NullaryNode*) this)->dump();
+        ((NullaryNode*) this)->dump(out);
         break;
       case PN_UNARY:
-        ((UnaryNode*) this)->dump(indent);
+        ((UnaryNode*) this)->dump(out, indent);
         break;
       case PN_BINARY:
-        ((BinaryNode*) this)->dump(indent);
-        break;
-      case PN_BINARY_OBJ:
-        ((BinaryObjNode*) this)->dump(indent);
+        ((BinaryNode*) this)->dump(out, indent);
         break;
       case PN_TERNARY:
-        ((TernaryNode*) this)->dump(indent);
+        ((TernaryNode*) this)->dump(out, indent);
         break;
       case PN_CODE:
-        ((CodeNode*) this)->dump(indent);
+        ((CodeNode*) this)->dump(out, indent);
         break;
       case PN_LIST:
-        ((ListNode*) this)->dump(indent);
+        ((ListNode*) this)->dump(out, indent);
         break;
       case PN_NAME:
-        ((NameNode*) this)->dump(indent);
+        ((NameNode*) this)->dump(out, indent);
+        break;
+      case PN_SCOPE:
+        ((LexicalScopeNode*) this)->dump(out, indent);
         break;
       default:
-        fprintf(stderr, "#<BAD NODE %p, kind=%u, arity=%u>",
+        out.printf("#<BAD NODE %p, kind=%u, arity=%u>",
                 (void*) this, unsigned(getKind()), unsigned(pn_arity));
         break;
     }
 }
 
 void
-NullaryNode::dump()
+NullaryNode::dump(GenericPrinter& out)
 {
     switch (getKind()) {
-      case PNK_TRUE:  fprintf(stderr, "#true");  break;
-      case PNK_FALSE: fprintf(stderr, "#false"); break;
-      case PNK_NULL:  fprintf(stderr, "#null");  break;
+      case ParseNodeKind::True:  out.put("#true");  break;
+      case ParseNodeKind::False: out.put("#false"); break;
+      case ParseNodeKind::Null:  out.put("#null");  break;
+      case ParseNodeKind::RawUndefined: out.put("#undefined"); break;
 
-      case PNK_NUMBER: {
+      case ParseNodeKind::Number: {
         ToCStringBuf cbuf;
         const char* cstr = NumberToCString(nullptr, &cbuf, pn_dval);
         if (!IsFinite(pn_dval))
-            fputc('#', stderr);
+            out.put("#");
         if (cstr)
-            fprintf(stderr, "%s", cstr);
+            out.printf("%s", cstr);
         else
-            fprintf(stderr, "%g", pn_dval);
+            out.printf("%g", pn_dval);
         break;
       }
 
-      case PNK_STRING:
-        pn_atom->dumpCharsNoNewline();
+      case ParseNodeKind::String:
+        pn_atom->dumpCharsNoNewline(out);
         break;
 
       default:
-        fprintf(stderr, "(%s)", parseNodeNames[getKind()]);
+        out.printf("(%s)", parseNodeNames[size_t(getKind())]);
     }
 }
 
 void
-UnaryNode::dump(int indent)
+UnaryNode::dump(GenericPrinter& out, int indent)
 {
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s ", name);
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s ", name);
     indent += strlen(name) + 2;
-    DumpParseTree(pn_kid, indent);
-    fprintf(stderr, ")");
+    DumpParseTree(pn_kid, out, indent);
+    out.printf(")");
 }
 
 void
-BinaryNode::dump(int indent)
+BinaryNode::dump(GenericPrinter& out, int indent)
 {
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s ", name);
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s ", name);
     indent += strlen(name) + 2;
-    DumpParseTree(pn_left, indent);
-    IndentNewLine(indent);
-    DumpParseTree(pn_right, indent);
-    fprintf(stderr, ")");
+    DumpParseTree(pn_left, out, indent);
+    IndentNewLine(out, indent);
+    DumpParseTree(pn_right, out, indent);
+    out.printf(")");
 }
 
 void
-BinaryObjNode::dump(int indent)
+TernaryNode::dump(GenericPrinter& out, int indent)
 {
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s ", name);
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s ", name);
     indent += strlen(name) + 2;
-    DumpParseTree(pn_left, indent);
-    IndentNewLine(indent);
-    DumpParseTree(pn_right, indent);
-    fprintf(stderr, ")");
+    DumpParseTree(pn_kid1, out, indent);
+    IndentNewLine(out, indent);
+    DumpParseTree(pn_kid2, out, indent);
+    IndentNewLine(out, indent);
+    DumpParseTree(pn_kid3, out, indent);
+    out.printf(")");
 }
 
 void
-TernaryNode::dump(int indent)
+CodeNode::dump(GenericPrinter& out, int indent)
 {
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s ", name);
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s ", name);
     indent += strlen(name) + 2;
-    DumpParseTree(pn_kid1, indent);
-    IndentNewLine(indent);
-    DumpParseTree(pn_kid2, indent);
-    IndentNewLine(indent);
-    DumpParseTree(pn_kid3, indent);
-    fprintf(stderr, ")");
+    DumpParseTree(pn_body, out, indent);
+    out.printf(")");
 }
 
 void
-CodeNode::dump(int indent)
+ListNode::dump(GenericPrinter& out, int indent)
 {
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s ", name);
-    indent += strlen(name) + 2;
-    DumpParseTree(pn_body, indent);
-    fprintf(stderr, ")");
-}
-
-void
-ListNode::dump(int indent)
-{
-    const char* name = parseNodeNames[getKind()];
-    fprintf(stderr, "(%s [", name);
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s [", name);
     if (pn_head != nullptr) {
         indent += strlen(name) + 3;
-        DumpParseTree(pn_head, indent);
+        DumpParseTree(pn_head, out, indent);
         ParseNode* pn = pn_head->pn_next;
         while (pn != nullptr) {
-            IndentNewLine(indent);
-            DumpParseTree(pn, indent);
+            IndentNewLine(out, indent);
+            DumpParseTree(pn, out, indent);
             pn = pn->pn_next;
         }
     }
-    fprintf(stderr, "])");
+    out.printf("])");
 }
 
 template <typename CharT>
 static void
-DumpName(const CharT* s, size_t len)
+DumpName(GenericPrinter& out, const CharT* s, size_t len)
 {
     if (len == 0)
-        fprintf(stderr, "#<zero-length name>");
+        out.put("#<zero-length name>");
 
     for (size_t i = 0; i < len; i++) {
         char16_t c = s[i];
         if (c > 32 && c < 127)
-            fputc(c, stderr);
+            out.putChar(c);
         else if (c <= 255)
-            fprintf(stderr, "\\x%02x", unsigned(c));
+            out.printf("\\x%02x", unsigned(c));
         else
-            fprintf(stderr, "\\u%04x", unsigned(c));
+            out.printf("\\u%04x", unsigned(c));
     }
 }
 
 void
-NameNode::dump(int indent)
+NameNode::dump(GenericPrinter& out, int indent)
 {
-    if (isKind(PNK_NAME) || isKind(PNK_DOT)) {
-        if (isKind(PNK_DOT))
-            fprintf(stderr, "(.");
+    if (isKind(ParseNodeKind::Name) || isKind(ParseNodeKind::Dot)) {
+        if (isKind(ParseNodeKind::Dot))
+            out.put("(.");
 
         if (!pn_atom) {
-            fprintf(stderr, "#<null name>");
+            out.put("#<null name>");
         } else if (getOp() == JSOP_GETARG && pn_atom->length() == 0) {
             // Dump destructuring parameter.
-            fprintf(stderr, "(#<zero-length name> ");
-            DumpParseTree(expr(), indent + 21);
-            fputc(')', stderr);
+            out.put("(#<zero-length name> ");
+            DumpParseTree(expr(), out, indent + 21);
+            out.printf(")");
         } else {
             JS::AutoCheckCannotGC nogc;
             if (pn_atom->hasLatin1Chars())
-                DumpName(pn_atom->latin1Chars(nogc), pn_atom->length());
+                DumpName(out, pn_atom->latin1Chars(nogc), pn_atom->length());
             else
-                DumpName(pn_atom->twoByteChars(nogc), pn_atom->length());
+                DumpName(out, pn_atom->twoByteChars(nogc), pn_atom->length());
         }
 
-        if (isKind(PNK_DOT)) {
-            fputc(' ', stderr);
+        if (isKind(ParseNodeKind::Dot)) {
+            out.putChar(' ');
             if (as<PropertyAccess>().isSuper())
-                fprintf(stderr, "super");
+                out.put("super");
             else
-                DumpParseTree(expr(), indent + 2);
-            fputc(')', stderr);
+                DumpParseTree(expr(), out, indent + 2);
+            out.printf(")");
         }
         return;
     }
 
-    MOZ_ASSERT(!isUsed());
-    const char* name = parseNodeNames[getKind()];
-    if (isUsed())
-        fprintf(stderr, "(%s)", name);
-    else {
-        fprintf(stderr, "(%s ", name);
-        indent += strlen(name) + 2;
-        DumpParseTree(expr(), indent);
-        fprintf(stderr, ")");
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s ", name);
+    indent += strlen(name) + 2;
+    DumpParseTree(expr(), out, indent);
+    out.printf(")");
+}
+
+void
+LexicalScopeNode::dump(GenericPrinter& out, int indent)
+{
+    const char* name = parseNodeNames[size_t(getKind())];
+    out.printf("(%s [", name);
+    int nameIndent = indent + strlen(name) + 3;
+    if (!isEmptyScope()) {
+        LexicalScope::Data* bindings = scopeBindings();
+        for (uint32_t i = 0; i < bindings->length; i++) {
+            JSAtom* name = bindings->names[i].name();
+            JS::AutoCheckCannotGC nogc;
+            if (name->hasLatin1Chars())
+                DumpName(out, name->latin1Chars(nogc), name->length());
+            else
+                DumpName(out, name->twoByteChars(nogc), name->length());
+            if (i < bindings->length - 1)
+                IndentNewLine(out, nameIndent);
+        }
     }
+    out.putChar(']');
+    indent += 2;
+    IndentNewLine(out, indent);
+    DumpParseTree(scopeBody(), out, indent);
+    out.printf(")");
 }
 #endif
 
@@ -1162,19 +874,6 @@ ObjectBox::asFunctionBox()
     return static_cast<FunctionBox*>(this);
 }
 
-bool
-ObjectBox::isModuleBox()
-{
-    return object->is<ModuleObject>();
-}
-
-ModuleBox*
-ObjectBox::asModuleBox()
-{
-    MOZ_ASSERT(isModuleBox());
-    return static_cast<ModuleBox*>(this);
-}
-
 /* static */ void
 ObjectBox::TraceList(JSTracer* trc, ObjectBox* listHead)
 {
@@ -1192,14 +891,24 @@ void
 FunctionBox::trace(JSTracer* trc)
 {
     ObjectBox::trace(trc);
-    bindings.trace(trc);
-    if (enclosingStaticScope_)
-        TraceRoot(trc, &enclosingStaticScope_, "funbox-enclosingStaticScope");
+    if (enclosingScope_)
+        TraceRoot(trc, &enclosingScope_, "funbox-enclosingScope");
 }
 
-void
-ModuleBox::trace(JSTracer* trc)
+bool
+js::frontend::IsAnonymousFunctionDefinition(ParseNode* pn)
 {
-    ObjectBox::trace(trc);
-    bindings.trace(trc);
+    // ES 2017 draft
+    // 12.15.2 (ArrowFunction, AsyncArrowFunction).
+    // 14.1.12 (FunctionExpression).
+    // 14.4.8 (GeneratorExpression).
+    // 14.6.8 (AsyncFunctionExpression)
+    if (pn->isKind(ParseNodeKind::Function) && !pn->pn_funbox->function()->explicitName())
+        return true;
+
+    // 14.5.8 (ClassExpression)
+    if (pn->is<ClassNode>() && !pn->as<ClassNode>().names())
+        return true;
+
+    return false;
 }

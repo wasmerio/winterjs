@@ -1,0 +1,2 @@
+# Try to get all function signatures to fit on one line, so the jsapi file can be post-processed more easily
+max_width = 500

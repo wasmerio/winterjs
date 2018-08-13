@@ -4,18 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* API for getting a stack trace of the C/C++ stack on the current thread */
+/* APIs for getting a stack trace of the current thread */
 
 #ifndef mozilla_StackWalk_h
 #define mozilla_StackWalk_h
-
-/* WARNING: This file is intended to be included from C or C++ files. */
 
 #include "mozilla/Types.h"
 #include <stdint.h>
 
 /**
- * The callback for MozStackWalk.
+ * The callback for MozStackWalk and MozStackWalkThread.
  *
  * @param aFrameNumber  The frame number (starts at 1, not 0).
  * @param aPC           The program counter value.
@@ -23,14 +21,15 @@
  *                      pointer will be pointing to when the execution returns
  *                      to executing that at aPC. If no approximation can
  *                      be made it will be nullptr.
- * @param aClosure      Extra data passed in via MozStackWalk().
+ * @param aClosure      Extra data passed in from MozStackWalk() or
+ *                      MozStackWalkThread().
  */
 typedef void
 (*MozWalkStackCallback)(uint32_t aFrameNumber, void* aPC, void* aSP,
                         void* aClosure);
 
 /**
- * Call aCallback for the C/C++ stack frames on the current thread, from
+ * Call aCallback for each stack frame on the current thread, from
  * the caller of MozStackWalk to main (or above).
  *
  * @param aCallback    Callback function, called once per frame.
@@ -39,26 +38,46 @@ typedef void
  *                     MozStackWalk.
  * @param aMaxFrames   Maximum number of frames to trace.  0 means no limit.
  * @param aClosure     Caller-supplied data passed through to aCallback.
- * @param aThread      The thread for which the stack is to be retrieved.
- *                     Passing null causes us to walk the stack of the
- *                     current thread. On Windows, this is a thread HANDLE.
- *                     It is currently not supported on any other platform.
- * @param aPlatformData Platform specific data that can help in walking the
- *                      stack, this should be nullptr unless you really know
- *                      what you're doing! This needs to be a pointer to a
- *                      CONTEXT on Windows and should not be passed on other
- *                      platforms.
  *
  * May skip some stack frames due to compiler optimizations or code
  * generation.
- *
- * Note: this (and other helper methods) will only be available when
- * MOZ_STACKWALKING is defined, so any new consumers must #if based on that.
  */
-MFBT_API bool
+MFBT_API void
 MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-             uint32_t aMaxFrames, void* aClosure, uintptr_t aThread,
-             void* aPlatformData);
+             uint32_t aMaxFrames, void* aClosure);
+
+#if defined(_WIN32) && \
+    (defined(_M_IX86) || defined(_M_AMD64) || defined(_M_IA64))
+
+#include <windows.h>
+
+#define MOZ_STACKWALK_SUPPORTS_WINDOWS 1
+
+/**
+ * Like MozStackWalk, but walks the stack for another thread.
+ * Call aCallback for each stack frame on the current thread, from
+ * the caller of MozStackWalk to main (or above).
+ *
+ * @param aCallback    Same as for MozStackWalk().
+ * @param aSkipFrames  Same as for MozStackWalk().
+ * @param aMaxFrames   Same as for MozStackWalk().
+ * @param aClosure     Same as for MozStackWalk().
+ * @param aThread      The handle of the thread whose stack is to be walked.
+ *                     If 0, walks the current thread.
+ * @param aContext     A CONTEXT, presumably obtained with GetThreadContext()
+ *                     after suspending the thread with SuspendThread(). If
+ *                     null, the CONTEXT will be re-obtained.
+ */
+MFBT_API void
+MozStackWalkThread(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+                   uint32_t aMaxFrames, void* aClosure,
+                   HANDLE aThread, CONTEXT* aContext);
+
+#else
+
+#define MOZ_STACKWALK_SUPPORTS_WINDOWS 0
+
+#endif
 
 typedef struct
 {
@@ -148,18 +167,11 @@ MozFormatCodeAddressDetails(char* aBuffer, uint32_t aBufferSize,
 
 namespace mozilla {
 
-MFBT_API bool
+MFBT_API void
 FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
                       uint32_t aMaxFrames, void* aClosure, void** aBp,
                       void* aStackEnd);
 
 } // namespace mozilla
-
-/**
- * Initialize the critical sections for this platform so that we can
- * abort stack walks when needed.
- */
-MFBT_API void
-StackWalkInitCriticalAddress(void);
 
 #endif

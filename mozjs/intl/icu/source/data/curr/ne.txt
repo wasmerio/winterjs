@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/ne.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 ne{
     Currencies{
         AED{
@@ -104,9 +98,13 @@ ne{
             "BWP",
             "बोट्सवानान पुला",
         }
+        BYN{
+            "BYN",
+            "बेलारूसी रूबल",
+        }
         BYR{
             "BYR",
-            "बेलारूसी रूबल",
+            "बेलारूसी रूबल (2000–2016)",
         }
         BZD{
             "BZD",
@@ -127,6 +125,10 @@ ne{
         CLP{
             "CLP",
             "चिलियन पेसो",
+        }
+        CNH{
+            "CNH",
+            "चिनियाँ युआन(तटवर्ती)",
         }
         CNY{
             "CN¥",
@@ -366,7 +368,7 @@ ne{
         }
         MMK{
             "MMK",
-            "म्यान्मा क्याट",
+            "म्यान्मार क्याट",
         }
         MNT{
             "MNT",
@@ -438,7 +440,7 @@ ne{
         }
         PEN{
             "PEN",
-            "पेरूभियाली न्यूभो सोल",
+            "पेरूभियाली सोल",
         }
         PGK{
             "PGK",
@@ -653,11 +655,12 @@ ne{
         BBD{"$"}
         BDT{"৳"}
         BMD{"$"}
+        BND{"$"}
         BOB{"Bs"}
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -674,6 +677,7 @@ ne{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -682,32 +686,39 @@ ne{
         HNL{"L"}
         HRK{"kn"}
         HUF{"Ft"}
+        IDR{"Rp"}
         ILS{"₪"}
         INR{"₹"}
         ISK{"kr"}
         JMD{"$"}
         JPY{"¥"}
+        KHR{"៛"}
         KMF{"CF"}
         KPW{"₩"}
         KRW{"₩"}
         KYD{"$"}
         KZT{"₸"}
+        LAK{"₭"}
         LBP{"L£"}
         LKR{"Rs"}
         LRD{"$"}
         MGA{"Ar"}
+        MMK{"K"}
         MNT{"₮"}
         MUR{"Rs"}
         MXN{"$"}
+        MYR{"RM"}
         NAD{"$"}
         NGN{"₦"}
         NIO{"C$"}
         NOK{"kr"}
-        NPR{"Rs"}
+        NPR{"रू"}
         NZD{"$"}
+        PHP{"₱"}
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -734,6 +745,7 @@ ne{
     }
     Currencies%variant{
         GEL{"₾"}
+        NPR{"Rs"}
         TRY{"TL"}
     }
     CurrencyPlurals{
@@ -829,9 +841,13 @@ ne{
             one{"बोट्सवानान पुला"}
             other{"बोट्सवानान पुला"}
         }
-        BYR{
+        BYN{
             one{"बेलारूसी रूबल"}
             other{"बेलारूसी रूबल"}
+        }
+        BYR{
+            one{"बेलारूसी रूबल (2000–2016)"}
+            other{"बेलारूसी रूबल (2000–2016)"}
         }
         BZD{
             one{"वेलिज डलर"}
@@ -852,6 +868,10 @@ ne{
         CLP{
             one{"चिलियन पेसो"}
             other{"चिलियन पेसो"}
+        }
+        CNH{
+            one{"चिनियाँ युआन(तटवर्ती)"}
+            other{"चिनियाँ युआन(तटवर्ती)"}
         }
         CNY{
             one{"चिनिँया युआन"}
@@ -1162,8 +1182,8 @@ ne{
             other{"पानामानियाली बाल्बोआ"}
         }
         PEN{
-            one{"पेरूभियाली न्यूभो सोल"}
-            other{"पेरूभियाली न्यूभो सोल"}
+            one{"पेरूभियाली सोल"}
+            other{"पेरूभियाली सोल"}
         }
         PGK{
             one{"पपुआ न्यू गिनियाली किना"}
@@ -1370,5 +1390,5 @@ ne{
             other{"जाम्बियाली क्वाचा"}
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.36.86"}
 }

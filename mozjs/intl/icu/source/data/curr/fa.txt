@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/fa.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 fa{
     Currencies{
         ADP{
@@ -140,9 +134,13 @@ fa{
             "BYB",
             "روبل جدید بیلوروسی (۱۹۹۴ تا ۱۹۹۹)",
         }
+        BYN{
+            "BYN",
+            "روبل بلاروسی",
+        }
         BYR{
             "BYR",
-            "روبل بیلوروسی",
+            "روبل بلاروسی (۲۰۱۶–۲۰۰۰)",
         }
         BZD{
             "BZD",
@@ -163,6 +161,10 @@ fa{
         CLP{
             "CLP",
             "پزوی شیلی",
+        }
+        CNH{
+            "CNH",
+            "یوآن چین (برون‌مرزی)",
         }
         CNY{
             "¥CN",
@@ -226,7 +228,7 @@ fa{
         }
         EGP{
             "EGP",
-            "لیرهٔ مصر",
+            "پوند مصر",
         }
         ERN{
             "ERN",
@@ -634,7 +636,7 @@ fa{
         }
         SDG{
             "SDG",
-            "لیرهٔ سودان",
+            "پوند سودان",
         }
         SEK{
             "SEK",
@@ -878,7 +880,7 @@ fa{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -895,6 +897,7 @@ fa{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -935,6 +938,7 @@ fa{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -1069,9 +1073,13 @@ fa{
             one{"پولای بوتسوانا"}
             other{"پولای بوتسوانا"}
         }
+        BYN{
+            one{"روبل بلاروسی"}
+            other{"روبل بلاروسی"}
+        }
         BYR{
-            one{"روبل بیلوروسی"}
-            other{"روبل بیلوروسی"}
+            one{"روبل بلاروسی (۲۰۱۶–۲۰۰۰)"}
+            other{"روبل بلاروسی (۲۰۱۶–۲۰۰۰)"}
         }
         BZD{
             one{"دلار بلیز"}
@@ -1092,6 +1100,10 @@ fa{
         CLP{
             one{"پزوی شیلی"}
             other{"پزوی شیلی"}
+        }
+        CNH{
+            one{"یوآن چین (برون‌مرزی)"}
+            other{"یوآن چین (برون‌مرزی)"}
         }
         CNY{
             one{"یوآن چین"}
@@ -1142,8 +1154,8 @@ fa{
             other{"دینار الجزایر"}
         }
         EGP{
-            one{"لیرهٔ مصر"}
-            other{"لیرهٔ مصر"}
+            one{"پوند مصر"}
+            other{"پوند مصر"}
         }
         ERN{
             one{"ناکفای اریتره"}
@@ -1474,8 +1486,8 @@ fa{
             other{"روپیهٔ سیشل"}
         }
         SDG{
-            one{"لیرهٔ سودان"}
-            other{"لیرهٔ سودان"}
+            one{"پوند سودان"}
+            other{"پوند سودان"}
         }
         SEK{
             one{"کرون سوئد"}
@@ -1634,5 +1646,5 @@ fa{
             other{"کواچای زامبیا"}
         }
     }
-    Version{"2.1.19.94"}
+    Version{"2.1.37.5"}
 }

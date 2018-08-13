@@ -75,13 +75,18 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
                                     yield p + '/'
                         prefix = ''.join(_prefix(f.full_path))
 
+                        if '*' in f.target_basename:
+                            target = path
+                        else:
+                            target = mozpath.join(path, f.target_basename)
+                        mozpath.join(path, f.target_basename)
                         self._install_manifests[obj.install_target] \
-                            .add_pattern_symlink(
+                            .add_pattern_link(
                                 prefix,
                                 f.full_path[len(prefix):],
-                                mozpath.join(path, f.target_basename))
+                                target)
                     else:
-                        self._install_manifests[obj.install_target].add_symlink(
+                        self._install_manifests[obj.install_target].add_link(
                             f.full_path,
                             mozpath.join(path, f.target_basename)
                         )
@@ -158,6 +163,22 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
                     mozpath.join(self.environment.topobjdir, 'faster',
                                  'install_%s' % base.replace('/', '_'))) as fh:
                 install_manifest.write(fileobj=fh)
+
+        # For artifact builds only, write a single unified manifest for consumption by |mach watch|.
+        if self.environment.is_artifact_build:
+            unified_manifest = InstallManifest()
+            for base, install_manifest in self._install_manifests.iteritems():
+                # Expect 'dist/bin/**', which includes 'dist/bin' with no trailing slash.
+                assert base.startswith('dist/bin')
+                base = base[len('dist/bin'):]
+                if base and base[0] == '/':
+                    base = base[1:]
+                unified_manifest.add_entries_from(install_manifest, base=base)
+
+            with self._write_file(
+                    mozpath.join(self.environment.topobjdir, 'faster',
+                                 'unified_install_dist_bin')) as fh:
+                unified_manifest.write(fileobj=fh)
 
         with self._write_file(
                 mozpath.join(self.environment.topobjdir, 'faster',

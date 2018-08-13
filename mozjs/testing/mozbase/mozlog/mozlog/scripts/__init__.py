@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 
+from __future__ import absolute_import
+
 import argparse
 import unstable
 import format as formatlog
 import logmerge
+
 
 def get_parser():
     parser = argparse.ArgumentParser("structlog",
@@ -23,6 +26,7 @@ def get_parser():
         command_parser.set_defaults(func=main_func)
 
     return parser
+
 
 def main():
     parser = get_parser()

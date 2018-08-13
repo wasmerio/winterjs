@@ -32,13 +32,31 @@ build-clang.py accepts a JSON config format with the following fields:
 * stages: Use 1, 2, or 3 to select different compiler stages.  The default is 3.
 * llvm_repo: SVN path to the LLVM repo.
 * clang_repo: SVN path to the Clang repo.
+* extra_repo: SVN path to the clang-tools-extra repo.
+* lld_repo: SVN path to the lld repo.
 * compiler_repo: SVN path to the compiler-rt repo.
 * libcxx_repo: SVN path to the libcxx repo.
+* libcxxabi_repo: SVN path to the libcxxabi repo.
 * python_path: Path to the Python 2.7 installation on the machine building clang.
 * gcc_dir: Path to the gcc toolchain installation, only required on Linux.
 * cc: Path to the bootsraping C Compiler.
 * cxx: Path to the bootsraping C++ Compiler.
-* patches: Optional list of patches to apply per platform.  Supported platforms: macosx64, linux32, linux64.  The default is Release.
+* as: Path to the assembler tool.
+* ar: Path to the library archiver tool.
+* ranlib: Path to the ranlib tool (optional).
+* libtool: Path to the libtool tool (optional).
+* ld: Path to the linker.
+* patches: Optional list of patches to apply.
 * build_type: The type of build to make.  Supported types: Release, Debug, RelWithDebInfo or MinSizeRel.
 * build_libcxx: Whether to build with libcxx.  The default is false.
+* build_clang_tidy: Whether to build clang-tidy with the Mozilla checks imported.  The default is false.
+* osx_cross_compile: Whether to invoke CMake for OS X cross compile builds.
 * assertions: Whether to enable LLVM assertions.  The default is false.
+
+Environment Variables
+---------------------
+
+The following environment variables are used for cross-compile builds targeting OS X on Linux.
+
+* CROSS_CCTOOLS_PATH: Path to the cctools directory where the cross compiler toolchain is located.
+* CROSS_SYSROOT: Path to the OS X SDK directory for cross compile builds.

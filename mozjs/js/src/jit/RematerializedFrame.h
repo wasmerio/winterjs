@@ -9,11 +9,10 @@
 
 #include <algorithm>
 
-#include "jsfun.h"
-
-#include "jit/JitFrameIterator.h"
 #include "jit/JitFrames.h"
-
+#include "jit/JSJitFrameIter.h"
+#include "vm/EnvironmentObject.h"
+#include "vm/JSFunction.h"
 #include "vm/Stack.h"
 
 namespace js {
@@ -31,8 +30,10 @@ class RematerializedFrame
     // Propagated to the Baseline frame once this is popped.
     bool isDebuggee_;
 
-    // Has a call object been pushed?
-    bool hasCallObj_;
+    // Has an initial environment has been pushed on the environment chain for
+    // function frames that need a CallObject or eval frames that need a
+    // VarEnvironmentObject?
+    bool hasInitialEnv_;
 
     // Is this frame constructing?
     bool isConstructing_;
@@ -52,12 +53,13 @@ class RematerializedFrame
     unsigned numActualArgs_;
 
     JSScript* script_;
-    JSObject* scopeChain_;
+    JSObject* envChain_;
     JSFunction* callee_;
     ArgumentsObject* argsObj_;
 
     Value returnValue_;
     Value thisArgument_;
+    Value newTarget_;
     Value slots_[1];
 
     RematerializedFrame(JSContext* cx, uint8_t* top, unsigned numActualArgs,
@@ -72,14 +74,11 @@ class RematerializedFrame
     static MOZ_MUST_USE bool RematerializeInlineFrames(JSContext* cx, uint8_t* top,
                                                        InlineFrameIterator& iter,
                                                        MaybeReadFallback& fallback,
-                                                       Vector<RematerializedFrame*>& frames);
+                                                       GCVector<RematerializedFrame*>& frames);
 
     // Free a vector of RematerializedFrames; takes care to call the
     // destructor. Also clears the vector.
-    static void FreeInVector(Vector<RematerializedFrame*>& frames);
-
-    // Mark a vector of RematerializedFrames.
-    static void MarkInVector(JSTracer* trc, Vector<RematerializedFrame*>& frames);
+    static void FreeInVector(GCVector<RematerializedFrame*>& frames);
 
     bool prevUpToDate() const {
         return prevUpToDate_;
@@ -119,15 +118,29 @@ class RematerializedFrame
         return frameNo_ > 0;
     }
 
-    JSObject* scopeChain() const {
-        return scopeChain_;
+    JSObject* environmentChain() const {
+        return envChain_;
     }
-    void pushOnScopeChain(ScopeObject& scope);
-    MOZ_MUST_USE bool initFunctionScopeObjects(JSContext* cx);
 
-    bool hasCallObj() const {
-        MOZ_ASSERT(callee()->needsCallObject());
-        return hasCallObj_;
+    template <typename SpecificEnvironment>
+    void pushOnEnvironmentChain(SpecificEnvironment& env) {
+        MOZ_ASSERT(*environmentChain() == env.enclosingEnvironment());
+        envChain_ = &env;
+        if (IsFrameInitialEnvironment(this, env))
+            hasInitialEnv_ = true;
+    }
+
+    template <typename SpecificEnvironment>
+    void popOffEnvironmentChain() {
+        MOZ_ASSERT(envChain_->is<SpecificEnvironment>());
+        envChain_ = &envChain_->as<SpecificEnvironment>().enclosingEnvironment();
+    }
+
+    MOZ_MUST_USE bool initFunctionEnvironmentObjects(JSContext* cx);
+    MOZ_MUST_USE bool pushVarEnvironment(JSContext* cx, HandleScope scope);
+
+    bool hasInitialEnvironment() const {
+        return hasInitialEnv_;
     }
     CallObject& callObj() const;
 
@@ -155,6 +168,7 @@ class RematerializedFrame
     }
     JSFunction* callee() const {
         MOZ_ASSERT(isFunctionFrame());
+        MOZ_ASSERT(callee_);
         return callee_;
     }
     Value calleev() const {
@@ -190,7 +204,7 @@ class RematerializedFrame
         return slots_;
     }
     Value* locals() {
-        return slots_ + numArgSlots() + isConstructing_;
+        return slots_ + numArgSlots();
     }
 
     Value& unaliasedLocal(unsigned i) {
@@ -214,20 +228,38 @@ class RematerializedFrame
         MOZ_ASSERT(isFunctionFrame());
         if (callee()->isArrow())
             return callee()->getExtendedSlot(FunctionExtended::ARROW_NEWTARGET_SLOT);
-        if (isConstructing())
-            return argv()[numActualArgs()];
-        return UndefinedValue();
+        MOZ_ASSERT_IF(!isConstructing(), newTarget_.isUndefined());
+        return newTarget_;
     }
 
-    Value returnValue() const {
+    void setReturnValue(const Value& value) {
+        returnValue_ = value;
+    }
+
+    Value& returnValue() {
         return returnValue_;
     }
 
-    void mark(JSTracer* trc);
+    void trace(JSTracer* trc);
     void dump();
 };
 
 } // namespace jit
 } // namespace js
+
+namespace JS {
+
+template <>
+struct MapTypeToRootKind<js::jit::RematerializedFrame*>
+{
+    static const RootKind kind = RootKind::Traceable;
+};
+
+template <>
+struct GCPolicy<js::jit::RematerializedFrame*>
+  : public NonGCPointerPolicy<js::jit::RematerializedFrame*>
+{};
+
+} // namespace JS
 
 #endif // jit_RematerializedFrame_h

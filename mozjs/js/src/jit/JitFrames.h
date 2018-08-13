@@ -9,11 +9,10 @@
 
 #include <stdint.h>
 
-#include "jscntxt.h"
-#include "jsfun.h"
-
-#include "jit/JitFrameIterator.h"
+#include "jit/JSJitFrameIter.h"
 #include "jit/Safepoints.h"
+#include "vm/JSContext.h"
+#include "vm/JSFunction.h"
 
 namespace js {
 namespace jit {
@@ -95,10 +94,11 @@ ScriptFromCalleeToken(CalleeToken token)
 // to. The exact mechanism in which frames are laid out is architecture
 // dependent.
 //
-// Two special frame types exist. Entry frames begin an ion activation, and
-// therefore there is exactly one per activation of jit::Cannon. Exit frames
-// are necessary to leave JIT code and enter C++, and thus, C++ code will
-// always begin iterating from the topmost exit frame.
+// Two special frame types exist:
+// - Entry frames begin a JitActivation, and therefore there is exactly one
+// per activation of EnterIon or EnterBaseline. These reuse JitFrameLayout.
+// - Exit frames are necessary to leave JIT code and enter C++, and thus,
+// C++ code will always begin iterating from the topmost exit frame.
 
 class LSafepoint;
 
@@ -268,6 +268,7 @@ struct ResumeFromException
     static const uint32_t RESUME_FINALLY = 2;
     static const uint32_t RESUME_FORCED_RETURN = 3;
     static const uint32_t RESUME_BAILOUT = 4;
+    static const uint32_t RESUME_WASM = 5;
 
     uint8_t* framePointer;
     uint8_t* stackPointer;
@@ -282,14 +283,11 @@ struct ResumeFromException
 
 void HandleException(ResumeFromException* rfe);
 
-void EnsureBareExitFrame(JSContext* cx, JitFrameLayout* frame);
+void EnsureBareExitFrame(JitActivation* act, JitFrameLayout* frame);
 
-void MarkJitActivations(JSRuntime* rt, JSTracer* trc);
+void TraceJitActivations(JSContext* cx, const CooperatingContext& target, JSTracer* trc);
 
-JSCompartment*
-TopmostIonActivationCompartment(JSRuntime* rt);
-
-void UpdateJitActivationsForMinorGC(JSRuntime* rt, JSTracer* trc);
+void UpdateJitActivationsForMinorGC(JSRuntime* rt);
 
 static inline uint32_t
 EncodeFrameHeaderSize(size_t headerSize)
@@ -313,17 +311,17 @@ MakeFrameDescriptor(uint32_t frameSize, FrameType type, uint32_t headerSize)
 inline JSScript*
 GetTopJitJSScript(JSContext* cx)
 {
-    JitFrameIterator iter(cx);
-    MOZ_ASSERT(iter.type() == JitFrame_Exit);
-    ++iter;
+    JSJitFrameIter frame(cx->activation()->asJit());
+    MOZ_ASSERT(frame.type() == JitFrame_Exit);
+    ++frame;
 
-    if (iter.isBaselineStub()) {
-        ++iter;
-        MOZ_ASSERT(iter.isBaselineJS());
+    if (frame.isBaselineStub()) {
+        ++frame;
+        MOZ_ASSERT(frame.isBaselineJS());
     }
 
-    MOZ_ASSERT(iter.isScripted());
-    return iter.script();
+    MOZ_ASSERT(frame.isScripted());
+    return frame.script();
 }
 
 #ifdef JS_CODEGEN_MIPS32
@@ -438,15 +436,6 @@ class JitFrameLayout : public CommonFrameLayout
     }
 };
 
-// this is the layout of the frame that is used when we enter Ion code from platform ABI code
-class EntryFrameLayout : public JitFrameLayout
-{
-  public:
-    static inline size_t Size() {
-        return sizeof(EntryFrameLayout);
-    }
-};
-
 class RectifierFrameLayout : public JitFrameLayout
 {
   public:
@@ -455,7 +444,15 @@ class RectifierFrameLayout : public JitFrameLayout
     }
 };
 
-class IonAccessorICFrameLayout : public CommonFrameLayout
+class WasmToJSJitFrameLayout : public JitFrameLayout
+{
+  public:
+    static inline size_t Size() {
+        return sizeof(WasmToJSJitFrameLayout);
+    }
+};
+
+class IonICCallFrameLayout : public CommonFrameLayout
 {
   protected:
     // Pointer to root the stub's JitCode.
@@ -466,28 +463,51 @@ class IonAccessorICFrameLayout : public CommonFrameLayout
         return &stubCode_;
     }
     static size_t Size() {
-        return sizeof(IonAccessorICFrameLayout);
+        return sizeof(IonICCallFrameLayout);
     }
+};
+
+enum class ExitFrameType : uint8_t
+{
+    CallNative        = 0x0,
+    ConstructNative   = 0x1,
+    IonDOMGetter      = 0x2,
+    IonDOMSetter      = 0x3,
+    IonDOMMethod      = 0x4,
+    IonOOLNative      = 0x5,
+    IonOOLProxy       = 0x6,
+    WasmJitEntry      = 0x7,
+    InterpreterStub   = 0xFC,
+    VMFunction        = 0xFD,
+    LazyLink          = 0xFE,
+    Bare              = 0xFF,
 };
 
 // GC related data used to keep alive data surrounding the Exit frame.
 class ExitFooterFrame
 {
-    const VMFunction* function_;
-    JitCode* jitCode_;
+    // Stores the ExitFrameType or, for ExitFrameType::VMFunction, the
+    // VMFunction*.
+    uintptr_t data_;
 
   public:
     static inline size_t Size() {
         return sizeof(ExitFooterFrame);
     }
-    inline JitCode* jitCode() const {
-        return jitCode_;
+    void setBareExitFrame() {
+        data_ = uintptr_t(ExitFrameType::Bare);
     }
-    inline JitCode** addressOfJitCode() {
-        return &jitCode_;
+    ExitFrameType type() const {
+        static_assert(sizeof(ExitFrameType) == sizeof(uint8_t),
+                      "Code assumes ExitFrameType fits in a byte");
+        if (data_ > UINT8_MAX)
+            return ExitFrameType::VMFunction;
+        MOZ_ASSERT(ExitFrameType(data_) != ExitFrameType::VMFunction);
+        return ExitFrameType(data_);
     }
     inline const VMFunction* function() const {
-        return function_;
+        MOZ_ASSERT(type() == ExitFrameType::VMFunction);
+        return reinterpret_cast<const VMFunction*>(data_);
     }
 
     // This should only be called for function()->outParam == Type_Handle
@@ -501,24 +521,8 @@ class ExitFooterFrame
 
 class NativeExitFrameLayout;
 class IonOOLNativeExitFrameLayout;
-class IonOOLPropertyOpExitFrameLayout;
 class IonOOLProxyExitFrameLayout;
 class IonDOMExitFrameLayout;
-
-enum ExitFrameTokenValues
-{
-    CallNativeExitFrameLayoutToken        = 0x0,
-    ConstructNativeExitFrameLayoutToken   = 0x1,
-    IonDOMExitFrameLayoutGetterToken      = 0x2,
-    IonDOMExitFrameLayoutSetterToken      = 0x3,
-    IonDOMMethodExitFrameLayoutToken      = 0x4,
-    IonOOLNativeExitFrameLayoutToken      = 0x5,
-    IonOOLPropertyOpExitFrameLayoutToken  = 0x6,
-    IonOOLSetterOpExitFrameLayoutToken    = 0x7,
-    IonOOLProxyExitFrameLayoutToken       = 0x8,
-    LazyLinkExitFrameLayoutToken          = 0xFE,
-    ExitFrameLayoutBareToken              = 0xFF
-};
 
 // this is the frame layout when we are exiting ion code, and about to enter platform ABI code
 class ExitFrameLayout : public CommonFrameLayout
@@ -528,10 +532,6 @@ class ExitFrameLayout : public CommonFrameLayout
     }
 
   public:
-    // Pushed for "bare" fake exit frames that have no GC things on stack to be
-    // marked.
-    static JitCode* BareToken() { return (JitCode*)ExitFrameLayoutBareToken; }
-
     static inline size_t Size() {
         return sizeof(ExitFrameLayout);
     }
@@ -548,20 +548,20 @@ class ExitFrameLayout : public CommonFrameLayout
     // each wrapper are pushed before the exit frame.  This correspond exactly
     // to the value of the argBase register of the generateVMWrapper function.
     inline uint8_t* argBase() {
-        MOZ_ASSERT(footer()->jitCode() != nullptr);
+        MOZ_ASSERT(isWrapperExit());
         return top();
     }
 
     inline bool isWrapperExit() {
-        return footer()->function() != nullptr;
+        return footer()->type() == ExitFrameType::VMFunction;
     }
     inline bool isBareExit() {
-        return footer()->jitCode() == BareToken();
+        return footer()->type() == ExitFrameType::Bare;
     }
 
     // See the various exit frame layouts below.
     template <typename T> inline bool is() {
-        return footer()->jitCode() == T::Token();
+        return footer()->type() == T::Type();
     }
     template <typename T> inline T* as() {
         MOZ_ASSERT(this->is<T>());
@@ -602,13 +602,13 @@ class NativeExitFrameLayout
 class CallNativeExitFrameLayout : public NativeExitFrameLayout
 {
   public:
-    static JitCode* Token() { return (JitCode*)CallNativeExitFrameLayoutToken; }
+    static ExitFrameType Type() { return ExitFrameType::CallNative; }
 };
 
 class ConstructNativeExitFrameLayout : public NativeExitFrameLayout
 {
   public:
-    static JitCode* Token() { return (JitCode*)ConstructNativeExitFrameLayoutToken; }
+    static ExitFrameType Type() { return ExitFrameType::ConstructNative; }
 };
 
 template<>
@@ -639,7 +639,7 @@ class IonOOLNativeExitFrameLayout
     uint32_t hiThis_;
 
   public:
-    static JitCode* Token() { return (JitCode*)IonOOLNativeExitFrameLayoutToken; }
+    static ExitFrameType Type() { return ExitFrameType::IonOOLNative; }
 
     static inline size_t Size(size_t argc) {
         // The frame accounts for the callee/result and |this|, so we only need args.
@@ -661,76 +661,6 @@ class IonOOLNativeExitFrameLayout
     }
     inline uintptr_t argc() const {
         return argc_;
-    }
-};
-
-class IonOOLPropertyOpExitFrameLayout
-{
-  protected:
-    ExitFooterFrame footer_;
-    ExitFrameLayout exit_;
-
-    // Object for HandleObject
-    JSObject* obj_;
-
-    // id for HandleId
-    jsid id_;
-
-    // space for MutableHandleValue result
-    // use two uint32_t so compiler doesn't align.
-    uint32_t vp0_;
-    uint32_t vp1_;
-
-    // pointer to root the stub's JitCode
-    JitCode* stubCode_;
-
-  public:
-    static JitCode* Token() { return (JitCode*)IonOOLPropertyOpExitFrameLayoutToken; }
-
-    static inline size_t Size() {
-        return sizeof(IonOOLPropertyOpExitFrameLayout);
-    }
-
-    static size_t offsetOfObject() {
-        return offsetof(IonOOLPropertyOpExitFrameLayout, obj_);
-    }
-
-    static size_t offsetOfId() {
-        return offsetof(IonOOLPropertyOpExitFrameLayout, id_);
-    }
-
-    static size_t offsetOfResult() {
-        return offsetof(IonOOLPropertyOpExitFrameLayout, vp0_);
-    }
-
-    inline JitCode** stubCode() {
-        return &stubCode_;
-    }
-    inline Value* vp() {
-        return reinterpret_cast<Value*>(&vp0_);
-    }
-    inline jsid* id() {
-        return &id_;
-    }
-    inline JSObject** obj() {
-        return &obj_;
-    }
-};
-
-class IonOOLSetterOpExitFrameLayout : public IonOOLPropertyOpExitFrameLayout
-{
-  protected: // only to silence a clang warning about unused private fields
-    JS::ObjectOpResult result_;
-
-  public:
-    static JitCode* Token() { return (JitCode*)IonOOLSetterOpExitFrameLayoutToken; }
-
-    static size_t offsetOfObjectOpResult() {
-        return offsetof(IonOOLSetterOpExitFrameLayout, result_);
-    }
-
-    static size_t Size() {
-        return sizeof(IonOOLSetterOpExitFrameLayout);
     }
 };
 
@@ -759,7 +689,7 @@ class IonOOLProxyExitFrameLayout
     JitCode* stubCode_;
 
   public:
-    static JitCode* Token() { return (JitCode*)IonOOLProxyExitFrameLayoutToken; }
+    static ExitFrameType Type() { return ExitFrameType::IonOOLProxy; }
 
     static inline size_t Size() {
         return sizeof(IonOOLProxyExitFrameLayout);
@@ -796,8 +726,8 @@ class IonDOMExitFrameLayout
     uint32_t hiCalleeResult_;
 
   public:
-    static JitCode* GetterToken() { return (JitCode*)IonDOMExitFrameLayoutGetterToken; }
-    static JitCode* SetterToken() { return (JitCode*)IonDOMExitFrameLayoutSetterToken; }
+    static ExitFrameType GetterType() { return ExitFrameType::IonDOMGetter; }
+    static ExitFrameType SetterType() { return ExitFrameType::IonDOMSetter; }
 
     static inline size_t Size() {
         return sizeof(IonDOMExitFrameLayout);
@@ -836,7 +766,7 @@ class IonDOMMethodExitFrameLayout
     friend struct IonDOMMethodExitFrameLayoutTraits;
 
   public:
-    static JitCode* Token() { return (JitCode*)IonDOMMethodExitFrameLayoutToken; }
+    static ExitFrameType Type() { return ExitFrameType::IonDOMMethod; }
 
     static inline size_t Size() {
         return sizeof(IonDOMMethodExitFrameLayout);
@@ -863,18 +793,18 @@ class IonDOMMethodExitFrameLayout
 inline bool
 IonDOMExitFrameLayout::isMethodFrame()
 {
-    return footer_.jitCode() == IonDOMMethodExitFrameLayout::Token();
+    return footer_.type() == IonDOMMethodExitFrameLayout::Type();
 }
 
 template <>
 inline bool
 ExitFrameLayout::is<IonDOMExitFrameLayout>()
 {
-    JitCode* code = footer()->jitCode();
+    ExitFrameType type = footer()->type();
     return
-        code == IonDOMExitFrameLayout::GetterToken() ||
-        code == IonDOMExitFrameLayout::SetterToken() ||
-        code == IonDOMMethodExitFrameLayout::Token();
+        type == IonDOMExitFrameLayout::GetterType() ||
+        type == IonDOMExitFrameLayout::SetterType() ||
+        type == IonDOMMethodExitFrameLayout::Type();
 }
 
 template <>
@@ -893,39 +823,59 @@ struct IonDOMMethodExitFrameLayoutTraits {
 
 // Cannot inherit implementation since we need to extend the top of
 // ExitFrameLayout.
-class LazyLinkExitFrameLayout
+class CalledFromJitExitFrameLayout
 {
   protected: // silence clang warning about unused private fields
-    JitCode* stubCode_;
     ExitFooterFrame footer_;
     JitFrameLayout exit_;
 
   public:
-    static JitCode* Token() { return (JitCode*) LazyLinkExitFrameLayoutToken; }
-
     static inline size_t Size() {
-        return sizeof(LazyLinkExitFrameLayout);
-    }
-
-    inline JitCode** stubCode() {
-        return &stubCode_;
+        return sizeof(CalledFromJitExitFrameLayout);
     }
     inline JitFrameLayout* jsFrame() {
         return &exit_;
     }
     static size_t offsetOfExitFrame() {
-        return offsetof(LazyLinkExitFrameLayout, exit_);
+        return offsetof(CalledFromJitExitFrameLayout, exit_);
     }
 };
 
-template <>
-inline LazyLinkExitFrameLayout*
-ExitFrameLayout::as<LazyLinkExitFrameLayout>()
+class LazyLinkExitFrameLayout : public CalledFromJitExitFrameLayout
 {
-    MOZ_ASSERT(is<LazyLinkExitFrameLayout>());
+  public:
+    static ExitFrameType Type() { return ExitFrameType::LazyLink; }
+};
+
+class InterpreterStubExitFrameLayout : public CalledFromJitExitFrameLayout
+{
+  public:
+    static ExitFrameType Type() { return ExitFrameType::InterpreterStub; }
+};
+
+class WasmExitFrameLayout : CalledFromJitExitFrameLayout
+{
+  public:
+    static ExitFrameType Type() { return ExitFrameType::WasmJitEntry; }
+};
+
+template<>
+inline bool
+ExitFrameLayout::is<CalledFromJitExitFrameLayout>()
+{
+    return is<InterpreterStubExitFrameLayout>() ||
+           is<LazyLinkExitFrameLayout>() ||
+           is<WasmExitFrameLayout>();
+}
+
+template <>
+inline CalledFromJitExitFrameLayout*
+ExitFrameLayout::as<CalledFromJitExitFrameLayout>()
+{
+    MOZ_ASSERT(is<CalledFromJitExitFrameLayout>());
     uint8_t* sp = reinterpret_cast<uint8_t*>(this);
-    sp -= LazyLinkExitFrameLayout::offsetOfExitFrame();
-    return reinterpret_cast<LazyLinkExitFrameLayout*>(sp);
+    sp -= CalledFromJitExitFrameLayout::offsetOfExitFrame();
+    return reinterpret_cast<CalledFromJitExitFrameLayout*>(sp);
 }
 
 class ICStub;
@@ -1033,13 +983,10 @@ void
 GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes);
 
 CalleeToken
-MarkCalleeToken(JSTracer* trc, CalleeToken token);
+TraceCalleeToken(JSTracer* trc, CalleeToken token);
 
-// The minimum stack size is two. Two slots are needed because INITGLEXICAL
-// (stack depth 1) is compiled as a SETPROP (stack depth 2) on the global
-// lexical scope. Baseline also requires one slot for this/argument type
-// checks.
-static const uint32_t MinJITStackSize = 2;
+// Baseline requires one slot for this/argument type checks.
+static const uint32_t MinJITStackSize = 1;
 
 } /* namespace jit */
 } /* namespace js */

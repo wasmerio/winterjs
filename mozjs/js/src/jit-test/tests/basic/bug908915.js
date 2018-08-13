@@ -11,10 +11,11 @@ var blacklist = {
     'readline': true,
     'terminate': true,
     'nestedShell': true,
+    'nukeAllCCWs': true,
 };
 
 function f(y) {}
-for each(let e in newGlobal()) {
+for (let e of Object.values(newGlobal())) {
     if (e.name in blacklist)
 	continue;
     print(e.name);
@@ -31,7 +32,7 @@ for each(let e in newGlobal()) {
     }
     var arr = [];
     arr.__proto__ = newGlobal();
-    for each (b in arr) {
+    for (b of Object.values(arr)) {
         if (b.name in blacklist)
             continue;
         try {

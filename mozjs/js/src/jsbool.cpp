@@ -11,14 +11,15 @@
 #include "jsboolinlines.h"
 
 #include "jsapi.h"
-#include "jsatom.h"
-#include "jscntxt.h"
-#include "jsobj.h"
 #include "jstypes.h"
 
+#include "jit/InlinableNatives.h"
+#include "util/StringBuffer.h"
 #include "vm/GlobalObject.h"
+#include "vm/JSAtom.h"
+#include "vm/JSContext.h"
+#include "vm/JSObject.h"
 #include "vm/ProxyObject.h"
-#include "vm/StringBuffer.h"
 
 #include "vm/BooleanObject-inl.h"
 
@@ -35,7 +36,6 @@ IsBoolean(HandleValue v)
     return v.isBoolean() || (v.isObject() && v.toObject().is<BooleanObject>());
 }
 
-#if JS_HAS_TOSOURCE
 MOZ_ALWAYS_INLINE bool
 bool_toSource_impl(JSContext* cx, const CallArgs& args)
 {
@@ -61,7 +61,6 @@ bool_toSource(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     return CallNonGenericMethod<IsBoolean, bool_toSource_impl>(cx, args);
 }
-#endif
 
 MOZ_ALWAYS_INLINE bool
 bool_toString_impl(JSContext* cx, const CallArgs& args)
@@ -100,9 +99,7 @@ bool_valueOf(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static const JSFunctionSpec boolean_methods[] = {
-#if JS_HAS_TOSOURCE
     JS_FN(js_toSource_str,  bool_toSource,  0, 0),
-#endif
     JS_FN(js_toString_str,  bool_toString,  0, 0),
     JS_FN(js_valueOf_str,   bool_valueOf,   0, 0),
     JS_FS_END
@@ -116,10 +113,8 @@ Boolean(JSContext* cx, unsigned argc, Value* vp)
     bool b = args.length() != 0 ? JS::ToBoolean(args[0]) : false;
 
     if (args.isConstructing()) {
-        RootedObject newTarget (cx, &args.newTarget().toObject());
         RootedObject proto(cx);
-
-        if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+        if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
             return false;
 
         JSObject* obj = BooleanObject::create(cx, b, proto);
@@ -137,14 +132,16 @@ js::InitBooleanClass(JSContext* cx, HandleObject obj)
 {
     MOZ_ASSERT(obj->isNative());
 
-    Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
+    Handle<GlobalObject*> global = obj.as<GlobalObject>();
 
-    Rooted<BooleanObject*> booleanProto(cx, global->createBlankPrototype<BooleanObject>(cx));
+    Rooted<BooleanObject*> booleanProto(cx, GlobalObject::createBlankPrototype<BooleanObject>(cx, global));
     if (!booleanProto)
         return nullptr;
     booleanProto->setFixedSlot(BooleanObject::PRIMITIVE_VALUE_SLOT, BooleanValue(false));
 
-    RootedFunction ctor(cx, global->createConstructor(cx, Boolean, cx->names().Boolean, 1));
+    RootedFunction ctor(cx, GlobalObject::createConstructor(cx, Boolean, cx->names().Boolean, 1,
+                                                            gc::AllocKind::FUNCTION,
+                                                            &jit::JitInfo_Boolean));
     if (!ctor)
         return nullptr;
 
@@ -161,7 +158,7 @@ js::InitBooleanClass(JSContext* cx, HandleObject obj)
 }
 
 JSString*
-js::BooleanToString(ExclusiveContext* cx, bool b)
+js::BooleanToString(JSContext* cx, bool b)
 {
     return b ? cx->names().true_ : cx->names().false_;
 }

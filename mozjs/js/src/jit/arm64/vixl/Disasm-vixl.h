@@ -43,7 +43,7 @@ class Disassembler: public DecoderVisitor {
   char* GetOutput();
 
   // Declare all Visitor functions.
-  #define DECLARE(A) virtual void Visit##A(const Instruction* instr);
+  #define DECLARE(A) virtual void Visit##A(const Instruction* instr) override;
   VISITOR_LIST(DECLARE)
   #undef DECLARE
 
@@ -167,11 +167,14 @@ class PrintDisassembler: public Disassembler {
   explicit PrintDisassembler(FILE* stream) : stream_(stream) { }
 
  protected:
-  virtual void ProcessOutput(const Instruction* instr);
+  virtual void ProcessOutput(const Instruction* instr) override;
 
  private:
   FILE *stream_;
 };
+
+void DisassembleInstruction(char* buffer, size_t bufsize, const Instruction* instr);
+
 }  // namespace vixl
 
 #endif  // VIXL_A64_DISASM_A64_H

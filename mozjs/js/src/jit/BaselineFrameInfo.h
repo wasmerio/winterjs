@@ -67,7 +67,7 @@ class StackValue
 
     union {
         struct {
-            Value v;
+            JS::UninitializedValue v;
         } constant;
         struct {
             mozilla::AlignedStorage2<ValueOperand> reg;
@@ -112,7 +112,7 @@ class StackValue
     }
     Value constant() const {
         MOZ_ASSERT(kind_ == Constant);
-        return data.constant.v;
+        return data.constant.v.asValueRef();
     }
     ValueOperand reg() const {
         MOZ_ASSERT(kind_ == Register);
@@ -186,12 +186,6 @@ class FrameInfo
     }
     size_t nargs() const {
         return script->functionNonDelazifying()->nargs();
-    }
-    size_t nvars() const {
-        return script->nfixedvars();
-    }
-    size_t nlexicals() const {
-        return script->fixedLexicalEnd() - script->fixedLexicalBegin();
     }
 
   private:
@@ -274,8 +268,8 @@ class FrameInfo
     Address addressOfCalleeToken() const {
         return Address(BaselineFrameReg, BaselineFrame::offsetOfCalleeToken());
     }
-    Address addressOfScopeChain() const {
-        return Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfScopeChain());
+    Address addressOfEnvironmentChain() const {
+        return Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfEnvironmentChain());
     }
     Address addressOfFlags() const {
         return Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfFlags());

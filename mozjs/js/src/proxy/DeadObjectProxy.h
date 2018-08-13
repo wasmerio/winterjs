@@ -11,10 +11,19 @@
 
 namespace js {
 
+class ProxyObject;
+
+enum DeadObjectProxyFlags
+{
+    DeadObjectProxyIsCallable            = 1 << 0,
+    DeadObjectProxyIsConstructor         = 1 << 1,
+    DeadObjectProxyIsBackgroundFinalized = 1 << 2
+};
+
 class DeadObjectProxy : public BaseProxyHandler
 {
   public:
-    explicit MOZ_CONSTEXPR DeadObjectProxy()
+    explicit constexpr DeadObjectProxy()
       : BaseProxyHandler(&family)
     { }
 
@@ -48,15 +57,38 @@ class DeadObjectProxy : public BaseProxyHandler
     virtual bool getBuiltinClass(JSContext* cx, HandleObject proxy, ESClass* cls) const override;
     virtual bool isArray(JSContext* cx, HandleObject proxy, JS::IsArrayAnswer* answer) const override;
     virtual const char* className(JSContext* cx, HandleObject proxy) const override;
-    virtual JSString* fun_toString(JSContext* cx, HandleObject proxy, unsigned indent) const override;
-    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const override;
+    virtual JSString* fun_toString(JSContext* cx, HandleObject proxy,
+                                   bool isToSource) const override;
+    virtual RegExpShared* regexp_toShared(JSContext* cx, HandleObject proxy) const override;
 
-    static const char family;
+    virtual bool isCallable(JSObject* obj) const override {
+        return flags(obj) & DeadObjectProxyIsCallable;
+    }
+    virtual bool isConstructor(JSObject* obj) const override {
+        return flags(obj) & DeadObjectProxyIsConstructor;
+    }
+
+    virtual bool finalizeInBackground(const JS::Value& priv) const override {
+        return priv.toInt32() & DeadObjectProxyIsBackgroundFinalized;
+    }
+
     static const DeadObjectProxy singleton;
+    static const char family;
+
+  private:
+    static int32_t flags(JSObject* obj) {
+        return GetProxyPrivate(obj).toInt32();
+    }
 };
 
 bool
 IsDeadProxyObject(JSObject* obj);
+
+Value
+DeadProxyTargetValue(ProxyObject* obj);
+
+JSObject*
+NewDeadProxyObject(JSContext* cx, JSObject* origObj = nullptr);
 
 } /* namespace js */
 

@@ -9,8 +9,8 @@
 #include "jit/BaselineIC.h"
 #include "jit/VMFunctions.h"
 
-#include "jsscriptinlines.h"
 #include "jit/MacroAssembler-inl.h"
+#include "vm/JSScript-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -19,8 +19,7 @@ BaselineCompilerShared::BaselineCompilerShared(JSContext* cx, TempAllocator& all
   : cx(cx),
     script(script),
     pc(script->code()),
-    ionCompileable_(jit::IsIonEnabled(cx) && CanIonCompileScript(cx, script, false)),
-    ionOSRCompileable_(jit::IsIonEnabled(cx) && CanIonCompileScript(cx, script, true)),
+    ionCompileable_(jit::IsIonEnabled(cx) && CanIonCompileScript(cx, script)),
     compileDebugInstrumentation_(script->isDebuggee()),
     alloc_(alloc),
     analysis_(alloc, script),
@@ -33,11 +32,10 @@ BaselineCompilerShared::BaselineCompilerShared(JSContext* cx, TempAllocator& all
 #ifdef DEBUG
     inCall_(false),
 #endif
-    spsPushToggleOffset_(),
+    profilerPushToggleOffset_(),
     profilerEnterFrameToggleOffset_(),
     profilerExitFrameToggleOffset_(),
-    traceLoggerEnterToggleOffset_(),
-    traceLoggerExitToggleOffset_(),
+    traceLoggerToggleOffsets_(cx),
     traceLoggerScriptTextIdOffset_()
 { }
 
@@ -59,9 +57,7 @@ BaselineCompilerShared::prepareVMCall()
 bool
 BaselineCompilerShared::callVM(const VMFunction& fun, CallVMPhase phase)
 {
-    JitCode* code = cx->runtime()->jitRuntime()->getVMWrapper(fun);
-    if (!code)
-        return false;
+    TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(fun);
 
 #ifdef DEBUG
     // Assert prepareVMCall() has been called.

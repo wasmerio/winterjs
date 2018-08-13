@@ -228,6 +228,7 @@ Elf::Elf(std::ifstream &file)
     if (ehdr->e_phnum == 0)
         return;
 
+    bool adjusted_phdr_section = false;
     // Read program headers
     file.seekg(ehdr->e_phoff);
     for (int i = 0; i < ehdr->e_phnum; i++) {
@@ -247,12 +248,20 @@ Elf::Elf(std::ifstream &file)
         if ((phdr.p_type == PT_LOAD) && (phdr.p_offset == 0)) {
             // Use a fake section for ehdr and phdr
             ehdr->getShdr().sh_addr = phdr.p_vaddr;
-            phdr_section->getShdr().sh_addr += phdr.p_vaddr;
+            if (!adjusted_phdr_section) {
+                phdr_section->getShdr().sh_addr += phdr.p_vaddr;
+                adjusted_phdr_section = true;
+            }
             segment->addSection(ehdr);
             segment->addSection(phdr_section);
         }
-        if (phdr.p_type == PT_PHDR)
+        if (phdr.p_type == PT_PHDR) {
+            if (!adjusted_phdr_section) {
+                phdr_section->getShdr().sh_addr = phdr.p_vaddr;
+                adjusted_phdr_section = true;
+            }
             segment->addSection(phdr_section);
+        }
         for (int j = 1; j < ehdr->e_shnum; j++)
             if (phdr.contains(sections[j]))
                 segment->addSection(sections[j]);
@@ -411,6 +420,18 @@ void Elf::normalize()
     ehdr->e_shoff = shdr_section->getOffset();
     ehdr->e_entry = eh_entry.getValue();
     ehdr->e_shstrndx = eh_shstrndx->getIndex();
+
+    // Check sections consistency
+    unsigned int minOffset = 0;
+    for (ElfSection *section = ehdr; section != nullptr; section = section->getNext()) {
+        unsigned int offset = section->getOffset();
+        if (offset < minOffset) {
+           throw std::runtime_error("Sections overlap");
+        }
+        if (section->getType() != SHT_NOBITS) {
+           minOffset = offset + section->getSize();
+        }
+    }
 }
 
 void Elf::write(std::ofstream &file)

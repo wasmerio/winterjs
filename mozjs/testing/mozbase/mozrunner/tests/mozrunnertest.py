@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
 import unittest
 
@@ -15,7 +17,7 @@ class MozrunnerTestCase(unittest.TestCase):
 
     def setUp(self):
         self.pids = []
-        self.threads = [ ]
+        self.threads = []
 
         self.profile = mozprofile.FirefoxProfile()
         self.runner = mozrunner.FirefoxRunner(os.environ['BROWSER_PATH'],

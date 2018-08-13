@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import unicode_literals
+from __future__ import absolute_import, unicode_literals
 
 from ..result import ResultContainer
 
@@ -16,7 +16,7 @@ class TreeherderFormatter(object):
     """
     fmt = "TEST-UNEXPECTED-{level} | {path}:{lineno}{column} | {message} ({rule})"
 
-    def __call__(self, result):
+    def __call__(self, result, **kwargs):
         message = []
         for path, errors in sorted(result.iteritems()):
             for err in errors:

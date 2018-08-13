@@ -6,59 +6,67 @@
 
 #include "jit/Linker.h"
 
+#include "gc/GC.h"
+
 #include "gc/StoreBuffer-inl.h"
 
 namespace js {
 namespace jit {
 
-template <AllowGC allowGC>
 JitCode*
 Linker::newCode(JSContext* cx, CodeKind kind, bool hasPatchableBackedges /* = false */)
 {
-    MOZ_ASSERT(masm.numAsmJSAbsoluteAddresses() == 0);
-    MOZ_ASSERT_IF(hasPatchableBackedges, kind == ION_CODE);
+    MOZ_ASSERT_IF(hasPatchableBackedges, kind == CodeKind::Ion);
 
-    gc::AutoSuppressGC suppressGC(cx);
+    JS::AutoAssertNoGC nogc(cx);
     if (masm.oom())
         return fail(cx);
 
-    ExecutablePool* pool;
-    size_t bytesNeeded = masm.bytesNeeded() + sizeof(JitCode*) + CodeAlignment;
+    masm.performPendingReadBarriers();
+
+    static const size_t ExecutableAllocatorAlignment = sizeof(void*);
+    static_assert(CodeAlignment >= ExecutableAllocatorAlignment,
+                  "Unexpected alignment requirements");
+
+    // We require enough bytes for the code, header, and worst-case alignment padding.
+    size_t bytesNeeded = masm.bytesNeeded() +
+                         sizeof(JitCodeHeader) +
+                         (CodeAlignment - ExecutableAllocatorAlignment);
     if (bytesNeeded >= MAX_BUFFER_SIZE)
         return fail(cx);
 
-    // ExecutableAllocator requires bytesNeeded to be word-size aligned.
-    bytesNeeded = AlignBytes(bytesNeeded, sizeof(void*));
+    // ExecutableAllocator requires bytesNeeded to be aligned.
+    bytesNeeded = AlignBytes(bytesNeeded, ExecutableAllocatorAlignment);
 
     ExecutableAllocator& execAlloc = hasPatchableBackedges
-        ? cx->runtime()->jitRuntime()->backedgeExecAlloc()
-        : cx->runtime()->jitRuntime()->execAlloc();
-    uint8_t* result = (uint8_t*)execAlloc.alloc(bytesNeeded, &pool, kind);
+                                     ? cx->runtime()->jitRuntime()->backedgeExecAlloc()
+                                     : cx->runtime()->jitRuntime()->execAlloc();
+
+    ExecutablePool* pool;
+    uint8_t* result = (uint8_t*)execAlloc.alloc(cx, bytesNeeded, &pool, kind);
     if (!result)
         return fail(cx);
 
-    // The JitCode pointer will be stored right before the code buffer.
-    uint8_t* codeStart = result + sizeof(JitCode*);
+    // The JitCodeHeader will be stored right before the code buffer.
+    uint8_t* codeStart = result + sizeof(JitCodeHeader);
 
     // Bump the code up to a nice alignment.
     codeStart = (uint8_t*)AlignBytes((uintptr_t)codeStart, CodeAlignment);
+    MOZ_ASSERT(codeStart + masm.bytesNeeded() <= result + bytesNeeded);
     uint32_t headerSize = codeStart - result;
-    JitCode* code = JitCode::New<allowGC>(cx, codeStart, bytesNeeded - headerSize,
-                                          headerSize, pool, kind);
+    JitCode* code = JitCode::New<NoGC>(cx, codeStart, bytesNeeded - headerSize,
+                                       headerSize, pool, kind);
     if (!code)
-        return nullptr;
+        return fail(cx);
     if (masm.oom())
         return fail(cx);
     awjc.emplace(result, bytesNeeded);
     code->copyFrom(masm);
     masm.link(code);
     if (masm.embedsNurseryPointers())
-        cx->runtime()->gc.storeBuffer.putWholeCell(code);
+        cx->zone()->group()->storeBuffer().putWholeCell(code);
     return code;
 }
-
-template JitCode* Linker::newCode<CanGC>(JSContext* cx, CodeKind kind, bool hasPatchableBackedges);
-template JitCode* Linker::newCode<NoGC>(JSContext* cx, CodeKind kind, bool hasPatchableBackedges);
 
 } // namespace jit
 } // namespace js

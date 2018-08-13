@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 * Copyright (C) 2013-2015, International Business Machines
@@ -147,7 +149,7 @@ CollationFastLatinBuilder::loadGroups(const CollationData &data, UErrorCode &err
             // missing data
             return FALSE;
         }
-        result.append(0);  // reserve a slot for this group
+        result.append((UChar)0);  // reserve a slot for this group
     }
 
     firstDigitPrimary = data.getFirstPrimaryForGroup(UCOL_REORDER_CODE_DIGIT);
@@ -564,7 +566,7 @@ CollationFastLatinBuilder::encodeCharCEs(UErrorCode &errorCode) {
     if(U_FAILURE(errorCode)) { return FALSE; }
     int32_t miniCEsStart = result.length();
     for(int32_t i = 0; i < CollationFastLatin::NUM_FAST_CHARS; ++i) {
-        result.append(0);  // initialize to completely ignorable
+        result.append((UChar)0);  // initialize to completely ignorable
     }
     int32_t indexBase = result.length();
     for(int32_t i = 0; i < CollationFastLatin::NUM_FAST_CHARS; ++i) {
@@ -605,7 +607,7 @@ CollationFastLatinBuilder::encodeContractions(UErrorCode &errorCode) {
         }
         UBool firstTriple = TRUE;
         for(int32_t index = (int32_t)ce & 0x7fffffff;; index += 3) {
-            int32_t x = contractionCEs.elementAti(index);
+            int32_t x = static_cast<int32_t>(contractionCEs.elementAti(index));
             if((uint32_t)x == CollationFastLatin::CONTR_CHAR_MASK && !firstTriple) { break; }
             int64_t cce0 = contractionCEs.elementAti(index + 1);
             int64_t cce1 = contractionCEs.elementAti(index + 2);

@@ -29,12 +29,11 @@
 
 #include "mozilla/Vector.h"
 
-#include "jsalloc.h"
-
 #include "jit/arm64/vixl/Constants-vixl.h"
 #include "jit/arm64/vixl/Decoder-vixl.h"
 #include "jit/arm64/vixl/Globals-vixl.h"
 #include "jit/arm64/vixl/Utils-vixl.h"
+#include "js/AllocPolicy.h"
 
 namespace vixl {
 
@@ -84,7 +83,7 @@ class Instrument: public DecoderVisitor {
   void Disable();
 
   // Declare all Visitor functions.
-  #define DECLARE(A) void Visit##A(const Instruction* instr);
+  #define DECLARE(A) void Visit##A(const Instruction* instr) override;
   VISITOR_LIST(DECLARE)
   #undef DECLARE
 

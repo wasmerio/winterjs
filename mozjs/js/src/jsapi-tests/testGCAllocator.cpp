@@ -12,20 +12,20 @@
 #include "jsapi-tests/tests.h"
 
 #if defined(XP_WIN)
-#include "jswin.h"
-#include <psapi.h>
+# include "util/Windows.h"
+# include <psapi.h>
 #elif defined(SOLARIS)
 // This test doesn't apply to Solaris.
 #elif defined(XP_UNIX)
-#include <algorithm>
-#include <errno.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+# include <algorithm>
+# include <errno.h>
+# include <sys/mman.h>
+# include <sys/resource.h>
+# include <sys/stat.h>
+# include <sys/types.h>
+# include <unistd.h>
 #else
-#error "Memory mapping functions are not defined for your OS."
+# error "Memory mapping functions are not defined for your OS."
 #endif
 
 BEGIN_TEST(testGCAllocator)
@@ -48,7 +48,7 @@ BEGIN_TEST(testGCAllocator)
 #endif
 
     /* Finish any ongoing background free activity. */
-    js::gc::FinishGC(rt);
+    js::gc::FinishGC(cx);
 
     bool growUp;
     CHECK(addressesGrowUp(&growUp));
@@ -143,8 +143,14 @@ testGCAllocatorUp(const size_t PageSize)
     CHECK(positionIsCorrect("x--xooxxx-------", stagingArea, chunkPool, tempChunks));
     // Check that we fall back to the slow path after two unalignable chunks.
     CHECK(positionIsCorrect("x--xx--xoo--xxx-", stagingArea, chunkPool, tempChunks));
+#ifndef __aarch64__
+    // Bug 1440330 - this test is incorrect for aarch64 because MapMemory only
+    // looks for 1MB-aligned chunks on that platform, and will find one at
+    // position 6 here.
+
     // Check that we also fall back after an unalignable and an alignable chunk.
     CHECK(positionIsCorrect("x--xx---x-oo--x-", stagingArea, chunkPool, tempChunks));
+#endif
     // Check that the last ditch allocator works as expected.
     CHECK(positionIsCorrect("x--xx--xx-oox---", stagingArea, chunkPool, tempChunks,
                             UseLastDitchAllocator));
@@ -312,8 +318,10 @@ void unmapPages(void* p, size_t size) { }
 void*
 mapMemoryAt(void* desired, size_t length)
 {
-#if defined(__ia64__) || (defined(__sparc64__) && defined(__NetBSD__)) || defined(__aarch64__)
-    MOZ_RELEASE_ASSERT(0xffff800000000000ULL & (uintptr_t(desired) + length - 1) == 0);
+
+#if defined(__ia64__) || defined(__aarch64__) || \
+    (defined(__sparc__) && defined(__arch64__) && (defined(__NetBSD__) || defined(__linux__)))
+    MOZ_RELEASE_ASSERT((0xffff800000000000ULL & (uintptr_t(desired) + length - 1)) == 0);
 #endif
     void* region = mmap(desired, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (region == MAP_FAILED)
@@ -334,7 +342,7 @@ mapMemory(size_t length)
     int fd = -1;
     off_t offset = 0;
     // The test code must be aligned with the implementation in gc/Memory.cpp.
-#if defined(__ia64__) || (defined(__sparc64__) && defined(__NetBSD__))
+#if defined(__ia64__) || (defined(__sparc__) && defined(__arch64__) && defined(__NetBSD__))
     void* region = mmap((void*)0x0000070000000000, length, prot, flags, fd, offset);
     if (region == MAP_FAILED)
         return nullptr;
@@ -344,7 +352,7 @@ mapMemory(size_t length)
         return nullptr;
     }
     return region;
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || (defined(__sparc__) && defined(__arch64__) && defined(__linux__))
     const uintptr_t start = UINT64_C(0x0000070000000000);
     const uintptr_t end   = UINT64_C(0x0000800000000000);
     const uintptr_t step  = js::gc::ChunkSize;

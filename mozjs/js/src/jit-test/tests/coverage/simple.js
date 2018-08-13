@@ -101,9 +101,24 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
   //LH:2
 });
 
+checkLcov(function () { ','.split(','); //FN:$,top-level //FNDA:1,% //DA:$,1
+  //FNF:1
+  //FNH:1
+  //LF:1
+  //LH:1
+});
+
+checkLcov(function () { function f() { ','.split(','); } //FN:$,top-level //FNDA:1,% //FN:$,f //FNDA:1,f //DA:$,1
+  f(); //DA:$,1
+  //FNF:2
+  //FNH:2
+  //LF:2
+  //LH:2
+});
+
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  if (l.length == 3)      //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,-
+  if (l.length == 3)      //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,0
     l.push('');           //DA:$,0
   l.pop();                //DA:$,1
   //FNF:1
@@ -116,7 +131,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
     l.push('');           //DA:$,1
   l.pop();                //DA:$,1
   //FNF:1
@@ -129,7 +144,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  if (l.length == 3)      //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,-
+  if (l.length == 3)      //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,0
     l.push('');           //DA:$,0
   else
     l.pop();              //DA:$,1
@@ -143,7 +158,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
     l.push('');           //DA:$,1
   else
     l.pop();              //DA:$,0
@@ -157,7 +172,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+  if (l.length == 2)      //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
     l.push('');           //DA:$,1
   else {
     if (l.length == 1)    //DA:$,0 //BRDA:$,1,0,- //BRDA:$,1,1,-
@@ -193,7 +208,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   try {                     //DA:$,1
     var l = ",".split(','); //DA:$,1
-    if (l.length == 2) {    //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+    if (l.length == 2) {    //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
       l.push('');           //DA:$,1
       throw l;              //DA:$,1
     }
@@ -203,9 +218,8 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
   }
   //FNF:1
   //FNH:1
-  //LF:9 // Expected LF:8 , Apparently if the first statement is a try, the
-         // statement following the "try{" statement is visited twice.
-  //LH:8 // Expected LH:7
+  //LF:8
+  //LH:7
   //BRF:2
   //BRH:1
 });
@@ -214,7 +228,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(',');   //DA:$,1
   try {                     //DA:$,1
     try {                   //DA:$,1
-      if (l.length == 2) {  //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+      if (l.length == 2) {  //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
         l.push('');         //DA:$,1
         throw l;            //DA:$,1
       }
@@ -254,7 +268,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 // Test TableSwitch opcode
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,- //BRDA:$,0,4,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0 //BRDA:$,0,4,0
     case 0:
       l.push('0');        //DA:$,0
       break;
@@ -279,7 +293,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,- //BRDA:$,0,4,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0 //BRDA:$,0,4,0
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -301,7 +315,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
                           // Branches are ordered, and starting at 0
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,- //BRDA:$,0,2,- //BRDA:$,0,3,- //BRDA:$,0,4,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,0 //BRDA:$,0,2,0 //BRDA:$,0,3,0 //BRDA:$,0,4,0
     case 5:
       l.push('5');        //DA:$,0
     case 4:
@@ -322,7 +336,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,- //BRDA:$,0,2,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,0 //BRDA:$,0,2,0
     case 2:
       l.push('2');        //DA:$,1
     case 5:
@@ -339,7 +353,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1
     case 3:
       l.push('1');        //DA:$,0
     case 5:
@@ -362,9 +376,9 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
   }
   var l = ",".split(','); //DA:$,1
   switch (l.length) {     //DA:$,1
-    case f(-42):          //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1
+    case f(-42):          //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1
       l.push('1');        //DA:$,0
-    case f(51):           //DA:$,1 //BRDA:$,1,0,- //BRDA:$,1,1,1
+    case f(51):           //DA:$,1 //BRDA:$,1,0,0 //BRDA:$,1,1,1
       l.push('5');        //DA:$,0
   }
   l.pop();                //DA:$,1
@@ -378,7 +392,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,1 //BRDA:$,0,2,- //BRDA:$,0,3,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,1 //BRDA:$,0,2,0 //BRDA:$,0,3,0
     case 0:
     case 1:
       l.push('0');        //DA:$,0
@@ -399,7 +413,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -420,7 +434,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -442,7 +456,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -464,7 +478,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,1 //BRDA:$,0,3,- //BRDA:$,0,4,-
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,1 //BRDA:$,0,3,0 //BRDA:$,0,4,0
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -487,7 +501,7 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
 
 checkLcov(function () { //FN:$,top-level //FNDA:1,%
   var l = ",".split(','); //DA:$,1
-  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,- //BRDA:$,0,1,- //BRDA:$,0,2,- //BRDA:$,0,3,1
+  switch (l.length) {     //DA:$,1 //BRDA:$,0,0,0 //BRDA:$,0,1,0 //BRDA:$,0,2,0 //BRDA:$,0,3,1
     case 0:
       l.push('0');        //DA:$,0
     case 1:
@@ -505,6 +519,60 @@ checkLcov(function () { //FN:$,top-level //FNDA:1,%
   //BRF:4
   //BRH:1
 });
+
+checkLcov(function () { //FN:$,top-level //FNDA:1,%
+  var l = ','.split(','); //DA:$,1
+  if (l.length === 45) {  //DA:$,1 //BRDA:$,0,0,1 //BRDA:$,0,1,0
+    switch (l[0]) {       //DA:$,0 //BRDA:$,1,0,- //BRDA:$,1,1,-
+      case ',':
+        l.push('0');      //DA:$,0
+      default:
+        l.push('1');      //DA:$,0
+    }
+  }
+  l.pop();                //DA:$,1
+  //FNF:1
+  //FNH:1
+  //LF:6
+  //LH:3
+  //BRF:4
+  //BRH:1
+});
+
+// These tests are not included in ../debug/Script-getOffsetsCoverage-01.js
+// because we're specifically testing a feature of Lcov output that
+// Debugger.Script doesn't have (the aggregation of hits that are on the
+// same line but in different functions).
+{
+    checkLcov(function () { //FN:$,top-level //FNDA:1,%
+        function f() { return 0; } var l = f(); //DA:$,2
+        //FNF:2
+        //FNH:2
+        //LF:1
+        //LH:1
+    });
+
+    // A single line has two functions on it, and both hit.
+    checkLcov(function () { //FN:$,top-level //FNDA:1,%
+        function f() { return 0; } function g() { return 1; } //DA:$,2
+        var v = f() + g(); //DA:$,1
+        //FNF:3
+        //FNH:3
+        //LF:2
+        //LH:2
+    });
+
+    // A line has both function code and toplevel code, and only one of them hits.
+    checkLcov(function () { //FN:$,top-level //FNDA:1,%
+        if (1 === 2)  //DA:$,1
+            throw "0 hits here"; function f() { return "1 hit here"; } //DA:$,1
+        f();  //DA:$,1
+        //FNF:2
+        //FNH:2
+        //LF:3
+        //LH:3
+    });
+}
 
 // If you add a test case here, do the same in
 // jit-test/tests/debug/Script-getOffsetsCoverage-01.js

@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/zh_Hant_HK.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 zh_Hant_HK{
     Currencies{
         AED{
@@ -39,6 +33,10 @@ zh_Hant_HK{
         BIF{
             "BIF",
             "布隆迪法郎",
+        }
+        BMD{
+            "BMD",
+            "百慕達元",
         }
         BWP{
             "BWP",
@@ -114,7 +112,7 @@ zh_Hant_HK{
         }
         KRW{
             "₩",
-            "韓圓",
+            "韓元",
         }
         KZT{
             "KZT",
@@ -208,6 +206,10 @@ zh_Hant_HK{
             "STD",
             "聖多美和普林西比多布拉",
         }
+        SYP{
+            "SYP",
+            "敍利亞鎊",
+        }
         SZL{
             "SZL",
             "斯威士蘭里朗吉尼",
@@ -279,6 +281,9 @@ zh_Hant_HK{
         BIF{
             other{"布隆迪法郎"}
         }
+        BMD{
+            other{"百慕達元"}
+        }
         BWP{
             other{"博茨瓦納普拉"}
         }
@@ -296,9 +301,6 @@ zh_Hant_HK{
         }
         DJF{
             other{"吉布提法郎"}
-        }
-        DKK{
-            other{"丹麥克羅納"}
         }
         DOP{
             other{"多米尼加披索"}
@@ -366,9 +368,6 @@ zh_Hant_HK{
         NGN{
             other{"尼日利亞奈拉"}
         }
-        NOK{
-            other{"挪威克羅納"}
-        }
         NZD{
             other{"紐西蘭元"}
         }
@@ -396,9 +395,6 @@ zh_Hant_HK{
         SCR{
             other{"塞舌爾盧比"}
         }
-        SEK{
-            other{"瑞典克羅納"}
-        }
         SGD{
             other{"新加坡元"}
         }
@@ -413,6 +409,9 @@ zh_Hant_HK{
         }
         STD{
             other{"聖多美和普林西比多布拉"}
+        }
+        SYP{
+            other{"敍利亞鎊"}
         }
         SZL{
             other{"斯威士蘭里朗吉尼"}
@@ -448,5 +447,5 @@ zh_Hant_HK{
             other{"贊比亞克瓦查"}
         }
     }
-    Version{"2.1.19.94"}
+    Version{"2.1.37.6"}
 }

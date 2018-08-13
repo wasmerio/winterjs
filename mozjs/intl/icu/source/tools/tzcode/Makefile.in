@@ -1,3 +1,5 @@
+# Copyright (C) 2016 and later: Unicode, Inc. and others.
+# License & terms of use: http://www.unicode.org/copyright.html
 # Some Portions Copyright (c) 2006-2012 IBM and others. All Rights Reserved.
 
 srcdir = @srcdir@
@@ -72,6 +74,10 @@ tzorig:	$(TZCODE) $(TZDATA)
 	cp $(srcdir)/zdump.c $(TZORIG)/zdump.c
 	-mv $(TZORIG)/factory $(TZORIG)/factory.orig
 	cat $(TZORIG)/factory.orig $(srcdir)/icuzones > $(TZORIG)/factory
+	-mv $(TZORIG)/zishrink.awk $(TZORIG)/zishrink.awk.orig
+	sed -e '/if (line ~ \/^R SystemV \/) return/s/^/#/' $(TZORIG)/zishrink.awk.orig > $(TZORIG)/zishrink.awk
+	-mv $(TZORIG)/Makefile $(TZORIG)/Makefile.orig
+	sed -e "s/BACKWARD=\$$(BACKWARD)/BACKWARD='\$$(BACKWARD)'/" $(TZORIG)/Makefile.orig > $(TZORIG)/Makefile
 	$(MAKE) -C $@ $(TZORIG_OPTS) zdump zones
 
 $(ZDUMPOUT): tzorig
@@ -119,7 +125,7 @@ $(ZICTARG):		$(OBJECTS) $(TDATA) yearistype $(srcdir)/tz2icu.h
 		$(CC) $(CFLAGS) $(TZORIG_EXTRA_CFLAGS) $(LFLAGS) -I$(srcdir) $(OBJECTS) $(LDLIBS) -o $@
 
 $(TZ2ICUTARG):	$(srcdir)/tz2icu.cpp $(srcdir)/tz2icu.h
-		$(CXX) -W -Wall  -I$(srcdir) -I$(top_srcdir)/common -pedantic $(srcdir)/tz2icu.cpp -o $@
+		$(CXX) $(CXXFLAGS) -I$(srcdir) -I$(top_srcdir)/common $(srcdir)/tz2icu.cpp -o $@
 
 $(ICUZDUMPTARG):	$(srcdir)/icuzdump.cpp
 		$(LINK.cc)  -I$(srcdir) -I$(top_srcdir)/common -I$(top_srcdir)/i18n -I$(top_srcdir)/tools/toolutil -I$(top_srcdir)/io  -pedantic $(srcdir)/icuzdump.cpp $(LIBICUUC) $(LIBICUDT) $(LIBICUI18N) $(LIBICUIO) $(LIBICUTOOLUTIL) -o $@

@@ -12,6 +12,8 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include "jit/shared/Architecture-shared.h"
+
 #include "js/Utility.h"
 
 // gcc appears to use _mips_hard_float to denote
@@ -180,6 +182,7 @@ class Registers
         (1 << Registers::s5) |
         (1 << Registers::s6) |
         (1 << Registers::s7) |
+        (1 << Registers::fp) |
         (1 << Registers::ra);
 
     static const SetType WrapperMask =
@@ -196,11 +199,7 @@ class Registers
         (1 << Registers::k1) |
         (1 << Registers::gp) |
         (1 << Registers::sp) |
-        (1 << Registers::fp) |
         (1 << Registers::ra);
-
-    // Registers that can be allocated without being saved, generally.
-    static const SetType TempMask = VolatileMask & ~NonAllocatableMask;
 
     // Registers returned from a JS -> JS call.
     static const SetType JSCallMask;
@@ -264,7 +263,7 @@ class FloatRegistersMIPSShared
         f31,
         invalid_freg
     };
-    typedef FPRegisterID Code;
+    typedef uint32_t Code;
     typedef FPRegisterID Encoding;
 
     // Content spilled during bailouts.
@@ -272,7 +271,7 @@ class FloatRegistersMIPSShared
         double d;
     };
 
-    static const char* GetName(Code code) {
+    static const char* GetName(Encoding code) {
         static const char * const Names[] = { "f0", "f1", "f2", "f3",  "f4", "f5",  "f6", "f7",
                                               "f8", "f9",  "f10", "f11", "f12", "f13",
                                               "f14", "f15", "f16", "f17", "f18", "f19",
@@ -281,9 +280,13 @@ class FloatRegistersMIPSShared
         return Names[code];
     }
 
-    static const Code Invalid = invalid_freg;
+    static const Encoding Invalid = invalid_freg;
 
+#if defined(JS_CODEGEN_MIPS32)
+    typedef uint32_t SetType;
+#elif defined(JS_CODEGEN_MIPS64)
     typedef uint64_t SetType;
+#endif
 };
 
 template <typename T>
@@ -296,27 +299,46 @@ class FloatRegisterMIPSShared
 
     typedef FloatRegistersMIPSShared::SetType SetType;
 
+#if defined(JS_CODEGEN_MIPS32)
     static uint32_t SetSize(SetType x) {
-        static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
+        static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
         return mozilla::CountPopulation32(x);
     }
     static uint32_t FirstBit(SetType x) {
+        static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
+        return mozilla::CountTrailingZeroes32(x);
+    }
+    static uint32_t LastBit(SetType x) {
+        static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
+        return 31 - mozilla::CountLeadingZeroes32(x);
+    }
+#elif defined(JS_CODEGEN_MIPS64)
+    static uint32_t SetSize(SetType x) {
+        static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
+        return mozilla::CountPopulation64(x);
+    }
+    static uint32_t FirstBit(SetType x) {
+        static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
         return mozilla::CountTrailingZeroes64(x);
     }
     static uint32_t LastBit(SetType x) {
+        static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
         return 63 - mozilla::CountLeadingZeroes64(x);
     }
+#endif
 };
 
 namespace mips_private {
     extern uint32_t Flags;
     extern bool hasFPU;
     extern bool isLoongson;
+    extern bool hasR2;
 }
 
 inline uint32_t GetMIPSFlags() { return mips_private::Flags; }
 inline bool hasFPU() { return mips_private::hasFPU; }
 inline bool isLoongson() { return mips_private::isLoongson; }
+inline bool hasR2() { return mips_private::hasR2; }
 
 // MIPS doesn't have double registers that can NOT be treated as float32.
 inline bool
@@ -324,19 +346,13 @@ hasUnaliasedDouble() {
     return false;
 }
 
-// On MIPS, fn-double aliases both fn-float32 and fn+1-float32, so if you need
-// to convert a float32 to a double as a temporary, you need a temporary
-// double register.
+// MIPS64 doesn't support it and on MIPS32 we don't allocate odd single fp
+// registers thus not exposing multi aliasing to the jit.
+// See comments in Arhitecture-mips32.h.
 inline bool
 hasMultiAlias() {
-    return true;
+    return false;
 }
-
-// See MIRGenerator::foldableOffsetRange for more info.
-// TODO: Implement this for MIPS. Note that it requires Codegen to respect the
-// offset field of AsmJSHeapAccess.
-static const size_t WasmCheckedImmediateRange = 0;
-static const size_t WasmImmediateRange = 0;
 
 } // namespace jit
 } // namespace js

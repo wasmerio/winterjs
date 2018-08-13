@@ -6,6 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gc/Barrier.h"
+#include "gc/Zone.h"
 #include "js/RootingAPI.h"
 
 #include "jsapi-tests/tests.h"
@@ -32,7 +33,7 @@ BEGIN_TEST(testGCWeakRef)
     JS::Rooted<MyHeap> heap(cx, MyHeap(obj));
     obj = nullptr;
 
-    rt->gc.minorGC(JS::gcreason::API);
+    cx->runtime()->gc.minorGC(JS::gcreason::API);
 
     // The minor collection should have treated the weak ref as a strong ref,
     // so the object should still be live, despite not having any other live
@@ -46,7 +47,7 @@ BEGIN_TEST(testGCWeakRef)
 
     // A full collection with a second ref should keep the object as well.
     CHECK(obj == heap.get().weak);
-    JS_GC(rt);
+    JS_GC(cx);
     CHECK(obj == heap.get().weak);
     v = JS::UndefinedValue();
     CHECK(JS_GetProperty(cx, obj, "x", &v));
@@ -56,7 +57,7 @@ BEGIN_TEST(testGCWeakRef)
     // A full collection after nulling the root should collect the object, or
     // at least null out the weak reference before returning to the mutator.
     obj = nullptr;
-    JS_GC(rt);
+    JS_GC(cx);
     CHECK(heap.get().weak == nullptr);
 
     return true;

@@ -136,18 +136,25 @@ section, without adding possible included tests.
 Manifests are included relative to the directory of the manifest with
 the `[include:]` directive unless they are absolute paths.
 
-By default you can use both '#' and ';' as comment characters. Comments
-must start on a new line, inline comments are not supported.
+By default you can use '#' as a comment character. Comments can start a
+new line, or be inline.
 
 .. code-block:: text
 
     [roses.js]
     # a valid comment
-    ; another valid comment
-    color = red # not a valid comment
+    color = red # another valid comment
 
-In the example above, the 'color' property will have the value 'red #
-not a valid comment'.
+Comment characters must be preceded by a space, or they will not be
+treated as comments.
+
+.. code-block:: text
+
+    [test1.js]
+    url = https://foo.com/bar#baz
+
+The '#baz' anchor will not be stripped off, as it wasn't preceded by
+a space.
 
 Special variable server-root
 ````````````````````````````
@@ -252,12 +259,12 @@ There is a two- or three-layered approach to the manifestparser
 architecture, depending on your needs:
 
 1. ManifestParser: this is a generic parser for .ini manifests that
-facilitates the `[include:]` logic and the inheritence of
+facilitates the `[include:]` logic and the inheritance of
 metadata. Despite the internal variable being called `self.tests`
 (an oversight), this layer has nothing in particular to do with tests.
 
 2. TestManifest: this is a harness-agnostic integration layer that is
-test-specific. TestManifest faciliates `skip-if` logic.
+test-specific. TestManifest facilitates `skip-if` logic.
 
 3. Optionally, a harness will have an integration layer than inherits
 from TestManifest if more harness-specific customization is desired at
@@ -455,12 +462,10 @@ To update from a directory of tests in `~/mozmill/src/mozmill-tests/firefox/` ru
 Tests
 `````
 
-manifestparser includes a suite of tests:
-
-https://github.com/mozilla/mozbase/tree/master/manifestparsery/tests
+manifestparser includes a suite of tests.
 
 `test_manifest.txt` is a doctest that may be helpful in figuring out
-how to use the API.  Tests are run via `python test.py`.
+how to use the API.  Tests are run via `mach python-test testing/mozbase/manifestparser`.
 
 Bugs
 ````

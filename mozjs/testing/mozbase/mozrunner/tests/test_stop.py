@@ -3,7 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import signal
+
+import mozunit
 
 import mozrunnertest
 
@@ -37,3 +41,7 @@ class MozrunnerStopTestCase(mozrunnertest.MozrunnerTestCase):
         self.assertIsNotNone(self.runner.process_handler)
 
         self.assertEqual(self.runner.wait(1), returncode)
+
+
+if __name__ == '__main__':
+    mozunit.main()

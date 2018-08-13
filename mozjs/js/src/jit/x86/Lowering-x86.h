@@ -30,6 +30,7 @@ class LIRGeneratorX86 : public LIRGeneratorX86Shared
     // will assert on us.) Ideally, we'd just ask the register allocator to
     // give us one of {al,bl,cl,dl}. For now, just useFixed(al).
     LAllocation useByteOpRegister(MDefinition* mir);
+    LAllocation useByteOpRegisterAtStart(MDefinition* mir);
     LAllocation useByteOpRegisterOrNonDoubleConstant(MDefinition* mir);
     LDefinition tempByteOpRegister();
 
@@ -42,29 +43,40 @@ class LIRGeneratorX86 : public LIRGeneratorX86Shared
     void lowerUntypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex);
     void defineUntypedPhi(MPhi* phi, size_t lirIndex);
 
+    void lowerInt64PhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex);
+    void defineInt64Phi(MPhi* phi, size_t lirIndex);
+
+    void lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
+                          MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
+    void lowerForMulInt64(LMulI64* ins, MMul* mir, MDefinition* lhs, MDefinition* rhs);
+
     void lowerDivI64(MDiv* div);
     void lowerModI64(MMod* mod);
+    void lowerUDivI64(MDiv* div);
+    void lowerUModI64(MMod* mod);
 
   public:
-    void visitBox(MBox* box);
-    void visitUnbox(MUnbox* unbox);
-    void visitReturn(MReturn* ret);
-    void visitCompareExchangeTypedArrayElement(MCompareExchangeTypedArrayElement* ins);
-    void visitAtomicExchangeTypedArrayElement(MAtomicExchangeTypedArrayElement* ins);
-    void visitAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins);
-    void visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble* ins);
-    void visitAsmJSUnsignedToFloat32(MAsmJSUnsignedToFloat32* ins);
-    void visitAsmJSLoadHeap(MAsmJSLoadHeap* ins);
-    void visitAsmJSStoreHeap(MAsmJSStoreHeap* ins);
-    void visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr* ins);
-    void visitAsmJSCompareExchangeHeap(MAsmJSCompareExchangeHeap* ins);
-    void visitAsmJSAtomicExchangeHeap(MAsmJSAtomicExchangeHeap* ins);
-    void visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap* ins);
-    void visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic* ins);
-    void visitSubstr(MSubstr* ins);
-    void visitRandom(MRandom* ins);
-    void visitWasmTruncateToInt64(MWasmTruncateToInt64* ins);
-    void visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins);
+    void visitBox(MBox* box) override;
+    void visitUnbox(MUnbox* unbox) override;
+    void visitReturn(MReturn* ret) override;
+    void visitCompareExchangeTypedArrayElement(MCompareExchangeTypedArrayElement* ins) override;
+    void visitAtomicExchangeTypedArrayElement(MAtomicExchangeTypedArrayElement* ins) override;
+    void visitAtomicTypedArrayElementBinop(MAtomicTypedArrayElementBinop* ins) override;
+    void visitWasmUnsignedToDouble(MWasmUnsignedToDouble* ins) override;
+    void visitWasmUnsignedToFloat32(MWasmUnsignedToFloat32* ins) override;
+    void visitAsmJSLoadHeap(MAsmJSLoadHeap* ins) override;
+    void visitAsmJSStoreHeap(MAsmJSStoreHeap* ins) override;
+    void visitWasmCompareExchangeHeap(MWasmCompareExchangeHeap* ins) override;
+    void visitWasmAtomicExchangeHeap(MWasmAtomicExchangeHeap* ins) override;
+    void visitWasmAtomicBinopHeap(MWasmAtomicBinopHeap* ins) override;
+    void visitWasmLoad(MWasmLoad* ins) override;
+    void visitWasmStore(MWasmStore* ins) override;
+    void visitSubstr(MSubstr* ins) override;
+    void visitRandom(MRandom* ins) override;
+    void visitWasmTruncateToInt64(MWasmTruncateToInt64* ins) override;
+    void visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins) override;
+    void visitExtendInt32ToInt64(MExtendInt32ToInt64* ins) override;
+    void visitSignExtendInt64(MSignExtendInt64* ins) override;
     void lowerPhi(MPhi* phi);
 
     static bool allowTypedElementHoleCheck() {

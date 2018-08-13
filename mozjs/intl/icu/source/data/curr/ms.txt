@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/ms.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 ms{
     Currencies{
         AED{
@@ -26,7 +20,7 @@ ms{
         }
         ANG{
             "ANG",
-            "Guilder Antillean Netherland",
+            "Guilder Antillen Belanda",
         }
         AOA{
             "AOA",
@@ -70,7 +64,7 @@ ms{
         }
         BIF{
             "BIF",
-            "Franc Burundia",
+            "Franc Burundi",
         }
         BMD{
             "BMD",
@@ -100,9 +94,13 @@ ms{
             "BWP",
             "Pula Botswana",
         }
+        BYN{
+            "BYN",
+            "Rubel Belarus baharu",
+        }
         BYR{
             "BYR",
-            "Ruble Belarus",
+            "Rubel Belarus (2000–2016)",
         }
         BZD{
             "BZD",
@@ -123,6 +121,10 @@ ms{
         CLP{
             "CLP",
             "Peso Chile",
+        }
+        CNH{
+            "CNH",
+            "Yuan China (luar pesisir)",
         }
         CNY{
             "CN¥",
@@ -250,7 +252,7 @@ ms{
         }
         ILS{
             "₪",
-            "Sheqel Baru Israel",
+            "Syekel Baharu Israel",
         }
         INR{
             "₹",
@@ -382,7 +384,7 @@ ms{
         }
         MUR{
             "MUR",
-            "Rupee Mauritia",
+            "Rupee Mauritius",
         }
         MVR{
             "MVR",
@@ -438,7 +440,7 @@ ms{
         }
         PEN{
             "PEN",
-            "Nuevo Sol Peru",
+            "Sol Peru",
         }
         PGK{
             "PGK",
@@ -474,7 +476,7 @@ ms{
         }
         RUB{
             "RUB",
-            "Ruble Rusia",
+            "Rubel Rusia",
         }
         RWF{
             "RWF",
@@ -554,7 +556,7 @@ ms{
         }
         TOP{
             "TOP",
-            "Tongan Paʻanga",
+            "Pa’anga Tonga",
         }
         TRY{
             "TRY",
@@ -586,7 +588,7 @@ ms{
         }
         UYU{
             "UYU",
-            "UYU",
+            "Peso Uruguay",
         }
         UZS{
             "UZS",
@@ -658,7 +660,7 @@ ms{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -675,6 +677,7 @@ ms{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -715,6 +718,7 @@ ms{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -744,7 +748,7 @@ ms{
     }
     CurrencyPlurals{
         AED{
-            other{"Dirham Emiriah Arab Bersatu"}
+            other{"Dirham UAE"}
         }
         AFN{
             other{"Afghani Afghanistan"}
@@ -756,7 +760,7 @@ ms{
             other{"Dram Armenia"}
         }
         ANG{
-            other{"Guilder Antillean Netherland"}
+            other{"Guilder Antillen Belanda"}
         }
         AOA{
             other{"Kwanza Angola"}
@@ -789,7 +793,7 @@ ms{
             other{"Dinar Bahrain"}
         }
         BIF{
-            other{"Franc Burundia"}
+            other{"Franc Burundi"}
         }
         BMD{
             other{"Dolar Bermuda"}
@@ -812,8 +816,11 @@ ms{
         BWP{
             other{"Pula Botswana"}
         }
+        BYN{
+            other{"rubel lama Belarus"}
+        }
         BYR{
-            other{"Ruble Belarus"}
+            other{"Rubel Belarus"}
         }
         BZD{
             other{"Dolar Belize"}
@@ -829,6 +836,9 @@ ms{
         }
         CLP{
             other{"Peso Chile"}
+        }
+        CNH{
+            other{"Yuan China (luar pesisir)"}
         }
         CNY{
             other{"Yuan Cina"}
@@ -924,7 +934,7 @@ ms{
             other{"Rupiah Indonesia"}
         }
         ILS{
-            other{"Sheqel Baru Israel"}
+            other{"Syekel baharu Israel"}
         }
         INR{
             other{"Rupee India"}
@@ -1020,7 +1030,7 @@ ms{
             other{"Ouguiya Mauritania"}
         }
         MUR{
-            other{"Rupee Mauritia"}
+            other{"Rupee Mauritius"}
         }
         MVR{
             other{"Rufiyaa Maldives"}
@@ -1062,7 +1072,7 @@ ms{
             other{"Balboa Panama"}
         }
         PEN{
-            other{"Nuevo Sol Peru"}
+            other{"Sol Peru"}
         }
         PGK{
             other{"Kina Papua New Guinea"}
@@ -1089,7 +1099,7 @@ ms{
             other{"Dinar Serbia"}
         }
         RUB{
-            other{"Ruble Rusia"}
+            other{"Rubel Rusia"}
         }
         RWF{
             other{"Franc Rwanda"}
@@ -1149,7 +1159,7 @@ ms{
             other{"Dinar Tunisia"}
         }
         TOP{
-            other{"Tongan Paʻanga"}
+            other{"Pa’anga Tonga"}
         }
         TRY{
             other{"Lira Turki"}
@@ -1218,5 +1228,5 @@ ms{
     CurrencyUnitPatterns{
         other{"{0} {1}"}
     }
-    Version{"2.1.19.94"}
+    Version{"2.1.37.5"}
 }

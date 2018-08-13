@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 * Copyright (C) 2013-2015, International Business Machines
@@ -222,7 +224,7 @@ CollationDataWriter::write(UBool isBase, const UVersionInfo dataVersion,
     int32_t totalSize = indexesLength * 4;
 
     if(hasMappings && (isBase || data.jamoCE32s != baseData->jamoCE32s)) {
-        indexes[CollationDataReader::IX_JAMO_CE32S_START] = data.jamoCE32s - data.ce32s;
+        indexes[CollationDataReader::IX_JAMO_CE32S_START] = static_cast<int32_t>(data.jamoCE32s - data.ce32s);
     } else {
         indexes[CollationDataReader::IX_JAMO_CE32S_START] = -1;
     }

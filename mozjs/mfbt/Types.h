@@ -38,11 +38,7 @@
  * methods or data used cross-file.
  */
 #if defined(WIN32)
-#  ifdef RUST_BINDGEN
-#    define MOZ_EXPORT   __attribute__((visibility("default")))
-#  else
-#    define MOZ_EXPORT   __declspec(dllexport)
-#  endif
+#  define MOZ_EXPORT   __declspec(dllexport)
 #else /* Unix */
 #  ifdef HAVE_VISIBILITY_ATTRIBUTE
 #    define MOZ_EXPORT       __attribute__((visibility("default")))
@@ -77,34 +73,34 @@
 #  define MOZ_IMPORT_DATA  MOZ_EXPORT
 #endif
 
-#if defined(_WIN32)
-#  define MFBT_API
-#  define MFBT_DATA
-#else
 /*
  * Consistent with the above comment, the MFBT_API and MFBT_DATA macros expose
  * export mfbt declarations when building mfbt, and they expose import mfbt
  * declarations when using mfbt.
  */
-#if defined(IMPL_MFBT)
+#if defined(IMPL_MFBT) || (defined(JS_STANDALONE) && !defined(MOZ_MEMORY) && (defined(EXPORT_JS_API) || defined(STATIC_EXPORTABLE_JS_API)))
 #  define MFBT_API     MOZ_EXPORT
 #  define MFBT_DATA    MOZ_EXPORT
 #else
-  /*
-   * On linux mozglue is linked in the program and we link libxul.so with
-   * -z,defs. Normally that causes the linker to reject undefined references in
-   * libxul.so, but as a loophole it allows undefined references to weak
-   * symbols. We add the weak attribute to the import version of the MFBT API
-   * macros to exploit this.
-   */
-#  if defined(MOZ_GLUE_IN_PROGRAM)
-#    define MFBT_API   __attribute__((weak)) MOZ_IMPORT_API
-#    define MFBT_DATA  __attribute__((weak)) MOZ_IMPORT_DATA
+#  if defined(JS_STANDALONE) && !defined(MOZ_MEMORY) && defined(STATIC_JS_API)
+#    define MFBT_API
+#    define MFBT_DATA
 #  else
-#    define MFBT_API   MOZ_IMPORT_API
-#    define MFBT_DATA  MOZ_IMPORT_DATA
+    /*
+     * On linux mozglue is linked in the program and we link libxul.so with
+     * -z,defs. Normally that causes the linker to reject undefined references in
+     * libxul.so, but as a loophole it allows undefined references to weak
+     * symbols. We add the weak attribute to the import version of the MFBT API
+     * macros to exploit this.
+     */
+#    if defined(MOZ_GLUE_IN_PROGRAM)
+#      define MFBT_API   __attribute__((weak)) MOZ_IMPORT_API
+#      define MFBT_DATA  __attribute__((weak)) MOZ_IMPORT_DATA
+#    else
+#      define MFBT_API   MOZ_IMPORT_API
+#      define MFBT_DATA  MOZ_IMPORT_DATA
+#    endif
 #  endif
-#endif
 #endif
 
 /*

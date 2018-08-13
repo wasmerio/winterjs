@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/am.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 am{
     AuxExemplarCharacters{"[]"}
     Ellipsis{
@@ -26,6 +20,7 @@ am{
         " ጡ ጢ ጣ ጤ ጥ ጦ ጧ ጨ ጩ ጪ ጫ ጬ ጭ ጮ ጯ ጰ ጱ ጲ ጳ ጴ ጵ ጶ ጷ ጸ ጹ ጺ ጻ ጼ ጽ ጾ ጿ ፀ ፁ ፂ ፃ ፄ ፅ ፆ"
         " ፈ ፉ ፊ ፋ ፌ ፍ ፎ ፏ ፐ ፑ ፒ ፓ ፔ ፕ ፖ ፗ]"
     }
+    ExemplarCharactersNumbers{"[\\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     ExemplarCharactersPunctuation{"[‐ – , ፡ ፣ ፤ ፥ ፦ ! ? . ። ‹ › « » ( ) \\[ \\]]"}
     MoreInformation{"?"}
     NumberElements{
@@ -211,11 +206,20 @@ am{
                 timeSeparator{":"}
             }
         }
+        minimalPairs{
+            ordinal{
+                other{"በቀኝ በኩል ባለው በ{0}ኛው መታጠፊያ ግባ።"}
+            }
+            plural{
+                one{"{0} ቀን"}
+                other{"{0} ቀናት"}
+            }
+        }
         minimumGroupingDigits{"1"}
         native{"latn"}
         traditional{"ethi"}
     }
-    Version{"2.1.19.96"}
+    Version{"2.1.37.5"}
     calendar{
         buddhist{
             DateTimePatterns{
@@ -651,8 +655,17 @@ am{
                 "{1} {0}",
             }
             availableFormats{
+                Bh{"h B"}
+                Bhm{"h:mm B"}
+                Bhms{"h:mm:ss B"}
                 E{"ccc"}
+                EBhm{"E h:mm B"}
+                EBhms{"E h:mm:ss B"}
+                EHm{"E HH:mm"}
+                EHms{"E HH:mm:ss"}
                 Ed{"E d"}
+                Ehm{"E h:mm a"}
+                Ehms{"E h:mm:ss a"}
                 Gy{"y G"}
                 GyMMM{"MMM፣ y G"}
                 GyMMMEd{"E MMM d፣ y G"}
@@ -822,7 +835,12 @@ am{
                 Timezone{"{0} {1}"}
             }
             availableFormats{
+                Bh{"h B"}
+                Bhm{"h:mm B"}
+                Bhms{"h:mm:ss B"}
                 E{"ccc"}
+                EBhm{"E h:mm B"}
+                EBhms{"E h:mm:ss B"}
                 EHm{"E HH:mm"}
                 EHms{"E HH:mm:ss"}
                 Ed{"E d"}
@@ -842,6 +860,10 @@ am{
                 MMM{"LLL"}
                 MMMEd{"E፣ MMM d"}
                 MMMMEd{"E፣ MMMM d"}
+                MMMMW{
+                    one{"'week' W 'of' MMM"}
+                    other{"'week' W 'of' MMM"}
+                }
                 MMMMd{"MMMM d"}
                 MMMd{"MMM d"}
                 Md{"M/d"}
@@ -862,6 +884,10 @@ am{
                 yMd{"d/M/y"}
                 yQQQ{"QQQ y"}
                 yQQQQ{"QQQQ y"}
+                yw{
+                    one{"'week' w 'of' Y"}
+                    other{"'week' w 'of' Y"}
+                }
             }
             dayNames{
                 format{
@@ -1019,7 +1045,7 @@ am{
                     "ዓመተ ምሕረት",
                 }
                 wide%variant{
-                    "BCE",
+                    "ዓ/ዓ",
                     "ዓ/ም",
                 }
             }
@@ -1252,6 +1278,94 @@ am{
             }
         }
     }
+    characterLabel{
+        activities{"እንቅስቃሴዎች"}
+        african_scripts{"የአፍሪካ ስክሪፕቶች"}
+        american_scripts{"የአሜሪካ ስክሪፕቶች"}
+        animal{"እንስሳ"}
+        animals_nature{"እንስሳት እና ተፈጥሮ"}
+        arrows{"ቀስቶች"}
+        body{"ሰውነት"}
+        box_drawing{"Box Drawing"}
+        braille{"ብሬይል"}
+        building{"ህንጻ"}
+        bullets_stars{"ጥይቶች/ኮከቦች"}
+        consonantal_jamo{"Consonantal Jamo"}
+        currency_symbols{"የምንዛሪ ምልክቶች"}
+        dash_connector{"Dash/Connector"}
+        digits{"ዲጂት"}
+        dingbats{"Dingbats"}
+        divination_symbols{"የመለኮት ምልክቶች"}
+        downwards_arrows{"ወደታች ቀስቶች"}
+        downwards_upwards_arrows{"ወደታች ወደላይ ቀስቶች"}
+        east_asian_scripts{"ምስራቅ ኤስያ ስክሪፕቶች"}
+        emoji{"ስሜት ገላጭ ምስሎች"}
+        european_scripts{"የኤውሮጳ ስክሪፕቶች"}
+        female{"ሴት"}
+        flag{"ባንዲራ"}
+        flags{"Flags"}
+        food_drink{"ምግብ እና መጠጥ"}
+        format{"ቅርጸት"}
+        format_whitespace{"ቅርጸት እና ባዶቦታ"}
+        full_width_form_variant{"Full-Width Form Variants"}
+        geometric_shapes{"ጂኦሜትሪክ ቅርጽ"}
+        half_width_form_variant{"Half-Width Form Variants"}
+        han_characters{"Han Characters"}
+        han_radicals{"ሃን ራዲካልስ"}
+        hanja{"ሃንጃ"}
+        hanzi_simplified{"ሃንዚ(በቀላሉ)"}
+        hanzi_traditional{"ሃንዚ(ባህላዊ)"}
+        heart{"ልብ"}
+        historic_scripts{"ታሪካዊ ስክሪፕቶች"}
+        ideographic_desc_characters{"Ideographic Desc. Characters"}
+        japanese_kana{"Japanese Kana"}
+        kanbun{"ካንቡን"}
+        kanji{"ካንጂ"}
+        keycap{"የአብይ ሆሄ ቁልፍ ማብሪያ"}
+        leftwards_arrows{"ወደግራ ቀስቶች"}
+        leftwards_rightwards_arrows{"ወደግራ ወደቀኝ ቀስቶች"}
+        letterlike_symbols{"ፊደል መሰል ምልክቶች"}
+        limited_use{"የተወሰነ ኣጠቃቀም"}
+        male{"ወንድ"}
+        math_symbols{"የሂሳብ ምልክቶች"}
+        middle_eastern_scripts{"Middle Eastern Scripts"}
+        miscellaneous{"የተለያዩ"}
+        modern_scripts{"Modern Scripts"}
+        modifier{"ማሻሻያ"}
+        musical_symbols{"የሙዚቃ ምልክቶች"}
+        nature{"ተፈጥሮ"}
+        nonspacing{"Nonspacing"}
+        numbers{"ቁጥሮች"}
+        objects{"ነገሮች"}
+        other{"ሌሎች"}
+        paired{"የተጣመረ"}
+        person{"ሰው"}
+        phonetic_alphabet{"Phonetic Alphabet"}
+        pictographs{"Pictographs"}
+        place{"ቦታ"}
+        plant{"አትክልት"}
+        punctuation{"ስርዓተ ነጥብ"}
+        rightwards_arrows{"ወደቀኝ ቀስቶች"}
+        sign_standard_symbols{"Sign/Standard Symbols"}
+        small_form_variant{"Small Form Variants"}
+        smiley{"ሳቅ"}
+        smileys_people{"Smileys & People"}
+        south_asian_scripts{"ደቡብ ኤስያ ስክሪፕት"}
+        southeast_asian_scripts{"Southeast Asian Scripts"}
+        spacing{"Spacing"}
+        sport{"ስፖርት"}
+        symbols{"ምልክቶች"}
+        technical_symbols{"ቴክኒካል ምልክቶች"}
+        tone_marks{"Tone Marks"}
+        travel{"ጉዞ"}
+        travel_places{"ጉዞ እና ቦታ"}
+        upwards_arrows{"ወደላይ ቀስቶች"}
+        variant_forms{"Variant Forms"}
+        vocalic_jamo{"ቮልካኒክ ጃሞ"}
+        weather{"የአየር ሁኔታ"}
+        western_asian_scripts{"ምእራባዊ ኤስያ ስክሪፕት"}
+        whitespace{"Whitespace"}
+    }
     delimiters{
         alternateQuotationEnd{"›"}
         alternateQuotationStart{"‹"}
@@ -1319,10 +1433,31 @@ am{
                 }
             }
         }
+        dayOfYear{
+            dn{"የዓመቱ ቀን"}
+        }
+        dayOfYear-narrow{
+            dn{"የዓመቱ ቀን"}
+        }
+        dayOfYear-short{
+            dn{"የዓመቱ ቀን"}
+        }
         dayperiod{
             dn{"ጥዋት/ከሰዓት"}
         }
+        dayperiod-narrow{
+            dn{"ጥዋት/ከሰዓት"}
+        }
+        dayperiod-short{
+            dn{"ጥዋት/ከሰዓት"}
+        }
         era{
+            dn{"ዘመን"}
+        }
+        era-narrow{
+            dn{"ዘመን"}
+        }
+        era-short{
             dn{"ዘመን"}
         }
         fri{
@@ -1331,12 +1466,32 @@ am{
                 "0"{"የአሁኑ ዓርብ"}
                 "1"{"የሚቀጥለው ዓርብ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ዓርብ ውስጥ"}
+                    other{"በ{0} ዓርብዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ዓርብ በፊት"}
+                    other{"ከ{0} ዓርብዎች በፊት"}
+                }
+            }
         }
         fri-narrow{
             relative{
                 "-1"{"ያለፈው ዓርብ"}
                 "0"{"የአሁኑ ዓርብ"}
                 "1"{"የሚቀጥለው ዓርብ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ዓርብዎች ውስጥ"}
+                    other{"በ{0} ዓርብዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ዓርብዎች በፊት"}
+                    other{"ከ{0} ዓርብዎች በፊት"}
+                }
             }
         }
         fri-short{
@@ -1345,9 +1500,22 @@ am{
                 "0"{"የአሁኑ ዓርብ"}
                 "1"{"የሚቀጥለው ዓርብ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ዓርብዎች ውስጥ"}
+                    other{"በ{0} ዓርብዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ዓርብዎች በፊት"}
+                    other{"ከ{0} ዓርብዎች በፊት"}
+                }
+            }
         }
         hour{
             dn{"ሰዓት"}
+            relative{
+                "0"{"ይህ ሰዓት"}
+            }
             relativeTime{
                 future{
                     one{"በ{0} ሰዓት ውስጥ"}
@@ -1387,6 +1555,9 @@ am{
         }
         minute{
             dn{"ደቂቃ"}
+            relative{
+                "0"{"ይህ ደቂቃ"}
+            }
             relativeTime{
                 future{
                     one{"በ{0} ደቂቃ ውስጥ"}
@@ -1430,6 +1601,16 @@ am{
                 "0"{"የአሁኑ ሰኞ"}
                 "1"{"የሚቀጥለው ሰኞ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ሰኞ ውስጥ"}
+                    other{"በ{0} ሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሰኞ በፊት"}
+                    other{"ከ{0} ሰኞዎች በፊት"}
+                }
+            }
         }
         mon-narrow{
             relative{
@@ -1437,12 +1618,32 @@ am{
                 "0"{"የአሁኑ ሰኞ"}
                 "1"{"የሚቀጥለው ሰኞ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ሰኞዎች ውስጥ"}
+                    other{"በ{0} ሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሰኞዎች በፊት"}
+                    other{"ከ{0} ሰኞዎች በፊት"}
+                }
+            }
         }
         mon-short{
             relative{
                 "-1"{"ያለፈው ሰኞ"}
                 "0"{"የአሁኑ ሰኞ"}
                 "1"{"የሚቀጥለው ሰኞ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ሰኞዎች ውስጥ"}
+                    other{"በ{0} ሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሰኞዎች በፊት"}
+                    other{"ከ{0} ሰኞዎች በፊት"}
+                }
             }
         }
         month{
@@ -1559,6 +1760,16 @@ am{
                 "0"{"የአሁኑ ቅዳሜ"}
                 "1"{"የሚቀጥለው ቅዳሜ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ቅዳሜ ውስጥ"}
+                    other{"በ{0} ቅዳሜዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ቅዳሜ በፊት"}
+                    other{"ከ{0} ቅዳሜዎች በፊት"}
+                }
+            }
         }
         sat-narrow{
             relative{
@@ -1566,12 +1777,32 @@ am{
                 "0"{"የአሁኑ ቅዳሜ"}
                 "1"{"የሚቀጥለው ቅዳሜ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ቅዳሜዎች ውስጥ"}
+                    other{"በ{0} ቅዳሜዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ቅዳሜዎች በፊት"}
+                    other{"ከ{0} ቅዳሜዎች በፊት"}
+                }
+            }
         }
         sat-short{
             relative{
                 "-1"{"ያለፈው ቅዳሜ"}
                 "0"{"የአሁኑ ቅዳሜ"}
                 "1"{"የሚቀጥለው ቅዳሜ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ቅዳሜዎች ውስጥ"}
+                    other{"በ{0} ቅዳሜዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ቅዳሜዎች በፊት"}
+                    other{"ከ{0} ቅዳሜዎች በፊት"}
+                }
             }
         }
         second{
@@ -1628,12 +1859,32 @@ am{
                 "0"{"የአሁኑ እሑድ"}
                 "1"{"የሚቀጥለው እሑድ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} እሑድ ውስጥ"}
+                    other{"በ{0} እሑዶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} እሑድ በፊት"}
+                    other{"ከ{0} እሑዶች በፊት"}
+                }
+            }
         }
         sun-narrow{
             relative{
                 "-1"{"ያለፈው እሑድ"}
                 "0"{"የአሁኑ እሑድ"}
                 "1"{"የሚቀጥለው እሑድ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} እሑዶች ውስጥ"}
+                    other{"በ{0} እሑዶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} እሑዶች በፊት"}
+                    other{"ከ{0} እሑዶች በፊት"}
+                }
             }
         }
         sun-short{
@@ -1642,12 +1893,32 @@ am{
                 "0"{"የአሁኑ እሑድ"}
                 "1"{"የሚቀጥለው እሑድ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} እሑዶች ውስጥ"}
+                    other{"በ{0} እሑዶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} እሑዶች በፊት"}
+                    other{"ከ{0} እሑዶች በፊት"}
+                }
+            }
         }
         thu{
             relative{
                 "-1"{"ያለፈው ሐሙስ"}
                 "0"{"የአሁኑ ሐሙስ"}
                 "1"{"የሚቀጥለው ሐሙስ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ሐሙስ ውስጥ"}
+                    other{"በ{0} ሐሙሶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሐሙስ በፊት"}
+                    other{"ከ{0} ሐሙሶች በፊት"}
+                }
             }
         }
         thu-narrow{
@@ -1656,12 +1927,32 @@ am{
                 "0"{"የአሁኑ ሐሙስ"}
                 "1"{"የሚቀጥለው ሐሙስ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ሐሙሶች ውስጥ"}
+                    other{"በ{0} ሐሙሶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሐሙሶች በፊት"}
+                    other{"ከ{0} ሐሙሶች በፊት"}
+                }
+            }
         }
         thu-short{
             relative{
                 "-1"{"ያለፈው ሐሙስ"}
                 "0"{"የአሁኑ ሐሙስ"}
                 "1"{"የሚቀጥለው ሐሙስ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ሐሙሶች ውስጥ"}
+                    other{"በ{0} ሐሙሶች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ሐሙሶች በፊት"}
+                    other{"ከ{0} ሐሙሶች በፊት"}
+                }
             }
         }
         tue{
@@ -1670,12 +1961,32 @@ am{
                 "0"{"የአሁኑ ማክሰኞ"}
                 "1"{"የሚቀጥለው ማክሰኞ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ማክሰኞ ውስጥ"}
+                    other{"በ{0} ማክሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ማክሰኞ በፊት"}
+                    other{"ከ{0} ማክሰኞዎች በፊት"}
+                }
+            }
         }
         tue-narrow{
             relative{
                 "-1"{"ያለፈው ማክሰኞ"}
                 "0"{"የአሁኑ ማክሰኞ"}
                 "1"{"የሚቀጥለው ማክሰኞ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ማክሰኞዎች ውስጥ"}
+                    other{"በ{0} ማክሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ማክሰኞዎች በፊት"}
+                    other{"ከ{0} ማክሰኞዎች በፊት"}
+                }
             }
         }
         tue-short{
@@ -1684,12 +1995,32 @@ am{
                 "0"{"የአሁኑ ማክሰኞ"}
                 "1"{"የሚቀጥለው ማክሰኞ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ማክሰኞዎች ውስጥ"}
+                    other{"በ{0} ማክሰኞዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ማክሰኞዎች በፊት"}
+                    other{"ከ{0} ማክሰኞዎች በፊት"}
+                }
+            }
         }
         wed{
             relative{
                 "-1"{"ያለፈው ረቡዕ"}
                 "0"{"የአሁኑ ረቡዕ"}
                 "1"{"የሚቀጥለው ረቡዕ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ረቡዕ ውስጥ"}
+                    other{"በ{0} ረቡዕዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ረቡዕ በፊት"}
+                    other{"ከ{0} ረቡዕዎች በፊት"}
+                }
             }
         }
         wed-narrow{
@@ -1698,12 +2029,32 @@ am{
                 "0"{"የአሁኑ ረቡዕ"}
                 "1"{"የሚቀጥለው ረቡዕ"}
             }
+            relativeTime{
+                future{
+                    one{"በ{0} ረቡዕዎች ውስጥ"}
+                    other{"በ{0} ረቡዕዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ረቡዕዎች በፊት"}
+                    other{"ከ{0} ረቡዕዎች በፊት"}
+                }
+            }
         }
         wed-short{
             relative{
                 "-1"{"ያለፈው ረቡዕ"}
                 "0"{"የአሁኑ ረቡዕ"}
                 "1"{"የሚቀጥለው ረቡዕ"}
+            }
+            relativeTime{
+                future{
+                    one{"በ{0} ረቡዕዎች ውስጥ"}
+                    other{"በ{0} ረቡዕዎች ውስጥ"}
+                }
+                past{
+                    one{"ከ{0} ረቡዕዎች በፊት"}
+                    other{"ከ{0} ረቡዕዎች በፊት"}
+                }
             }
         }
         week{
@@ -1713,6 +2064,7 @@ am{
                 "0"{"በዚህ ሳምንት"}
                 "1"{"የሚቀጥለው ሳምንት"}
             }
+            relativePeriod{"{0} ሳምንት"}
             relativeTime{
                 future{
                     one{"በ{0} ሳምንት ውስጥ"}
@@ -1731,6 +2083,7 @@ am{
                 "0"{"በዚህ ሣምንት"}
                 "1"{"የሚቀጥለው ሳምንት"}
             }
+            relativePeriod{"{0} ሳምንት"}
             relativeTime{
                 future{
                     one{"በ{0} ሳምንታት ውስጥ"}
@@ -1749,6 +2102,7 @@ am{
                 "0"{"በዚህ ሣምንት"}
                 "1"{"የሚቀጥለው ሳምንት"}
             }
+            relativePeriod{"{0} ሳምንት"}
             relativeTime{
                 future{
                     one{"በ{0} ሳምንታት ውስጥ"}
@@ -1760,8 +2114,32 @@ am{
                 }
             }
         }
+        weekOfMonth{
+            dn{"የወሩ ሳምንት"}
+        }
+        weekOfMonth-narrow{
+            dn{"የወሩ ሳምንት"}
+        }
+        weekOfMonth-short{
+            dn{"የወሩ ሳምንት"}
+        }
         weekday{
             dn{"አዘቦት"}
+        }
+        weekday-narrow{
+            dn{"አዘቦት"}
+        }
+        weekday-short{
+            dn{"አዘቦት"}
+        }
+        weekdayOfMonth{
+            dn{"የወሩ የሳምንት ቀን"}
+        }
+        weekdayOfMonth-narrow{
+            dn{"የወሩ የሳምንት ቀን"}
+        }
+        weekdayOfMonth-short{
+            dn{"የወሩ የሳምንት ቀን"}
         }
         year{
             dn{"ዓመት"}
@@ -1820,29 +2198,47 @@ am{
         zone{
             dn{"የሰዓት ሰቅ"}
         }
+        zone-narrow{
+            dn{"የሰዓት ሰቅ"}
+        }
+        zone-short{
+            dn{"የሰዓት ሰቅ"}
+        }
     }
     listPattern{
+        or{
+            2{"{0} ወይም {1}﻿"}
+            end{"{0} ወይም {1}﻿"}
+            middle{"{0}፣ {1}"}
+            start{"{0}፣ {1}"}
+        }
         standard{
             2{"{0} እና {1}"}
             end{"{0}, እና {1}"}
             middle{"{0}፣ {1}"}
             start{"{0}፣ {1}"}
         }
-        unit{
+        standard-short{
             2{"{0} እና {1}"}
             end{"{0}, እና {1}"}
+            middle{"{0}፣ {1}"}
+            start{"{0}፣ {1}"}
+        }
+        unit{
+            2{"{0}፣ {1}"}
+            end{"{0}፣ {1}"}
             middle{"{0}፣ {1}"}
             start{"{0}፣ {1}"}
         }
         unit-narrow{
-            2{"{0} እና {1}"}
-            end{"{0}, እና {1}"}
+            2{"{0} {1}"}
+            end{"{0} {1}"}
             middle{"{0}፣ {1}"}
             start{"{0}፣ {1}"}
         }
         unit-short{
-            2{"{0} እና {1}"}
-            end{"{0}, እና {1}"}
+            2{"{0}፣ {1}"}
+            end{"{0}፣ {1}"}
             middle{"{0}፣ {1}"}
             start{"{0}፣ {1}"}
         }
@@ -1852,16 +2248,31 @@ am{
         US{"ዩ ኤስ"}
         metric{"ሜትሪክ"}
     }
-    transformNames{
-        BGN{"ቢ ጂ ኤን"}
-        Numeric{"አሃዛዊ"}
-        Tone{"የድምፅ ቃና"}
-        UNGEGN{"UNGEGN"}
-        x-Accents{"ትእምርት"}
-        x-Fullwidth{"ሙሉ ወርድ"}
-        x-Halfwidth{"ሃልፍዊድዝ"}
-        x-Jamo{"ጃሞ"}
-        x-Pinyin{"ፒንዪን"}
-        x-Publishing{"ማሳተም"}
+    parse{
+        date{
+            lenient{
+                "[\\--/]",
+                "[\\:∶]",
+            }
+        }
+        general{
+            lenient{
+                "[.․。︒﹒．｡]",
+                "[\$﹩＄$]",
+                "[£₤]",
+                "[₨₹{Rp}{Rs}]",
+            }
+        }
+        number{
+            lenient{
+                "[\\-‒⁻₋−➖﹣－]",
+                "[,،٫、︐︑﹐﹑，､]",
+                "[+⁺₊➕﬩﹢＋]",
+            }
+            stricter{
+                "[,٫︐﹐，]",
+                "[.․﹒．｡]",
+            }
+        }
     }
 }

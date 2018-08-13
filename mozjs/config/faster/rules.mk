@@ -59,8 +59,7 @@ endif
 .PHONY: FORCE
 
 # Extra define to trigger some workarounds. We should strive to limit the
-# use of those. As of writing the only ones are in
-# toolkit/content/buildconfig.html and browser/locales/jar.mn.
+# use of those. As of writing the only one is in browser/locales/jar.mn.
 ACDEFINES += -DBUILD_FASTER
 
 # Files under the faster/ sub-directory, however, are not meant to use the
@@ -108,3 +107,11 @@ endif
 # It also requires all the install manifests for dist/bin to have been processed
 # because it adds interfaces.manifest references with buildlist.py.
 $(TOPOBJDIR)/config/makefiles/xpidl/xpidl: $(addprefix install-,$(filter dist/bin%,$(INSTALL_MANIFESTS)))
+
+$(TOPOBJDIR)/build/application.ini: $(TOPOBJDIR)/buildid.h $(TOPOBJDIR)/source-repo.h
+
+# The manifest of allowed system add-ons should be re-built when using
+# "build faster".
+ifeq ($(MOZ_BUILD_APP),browser/app)
+default: $(TOPOBJDIR)/browser/app/features
+endif

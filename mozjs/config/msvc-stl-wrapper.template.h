@@ -19,12 +19,6 @@
 #  define MOZ_INCLUDE_MOZALLOC_H_FROM_${HEADER}
 #endif
 
-// Code built with !_HAS_EXCEPTIONS calls std::_Throw(), but the win2k
-// CRT doesn't export std::_Throw().  So we define it.
-#ifndef mozilla_Throw_h
-#  include "mozilla/throw_msvc.h"
-#endif
-
 #ifdef _DEBUG
 // From
 //   http://msdn.microsoft.com/en-us/library/aa985982%28VS.80%29.aspx
@@ -59,15 +53,17 @@
 #pragma warning( push )
 #pragma warning( disable : 4275 4530 )
 
+#ifdef __clang__
+#include_next <${HEADER}>
+#else
 #include <${HEADER_PATH}>
+#endif
 
 #pragma warning( pop )
 
 #ifdef MOZ_INCLUDE_MOZALLOC_H_FROM_${HEADER}
-// See if we're in code that can use mozalloc.  NB: this duplicates
-// code in nscore.h because nscore.h pulls in prtypes.h, and chromium
-// can't build with that being included before base/basictypes.h.
-#  if !defined(XPCOM_GLUE) && !defined(NS_NO_XPCOM) && !defined(MOZ_NO_MOZALLOC)
+// See if we're in code that can use mozalloc.
+#  if !defined(NS_NO_XPCOM) && !defined(MOZ_NO_MOZALLOC)
 #    include "mozilla/mozalloc.h"
 #  else
 #    error "STL code can only be used with infallible ::operator new()"

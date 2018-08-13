@@ -4,13 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsiter.h"
-
 #include "jit/BaselineCompiler.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Linker.h"
 #include "jit/SharedICHelpers.h"
+#include "vm/Iteration.h"
 
 #include "jsboolinlines.h"
 
@@ -124,7 +123,7 @@ ICBinaryArith_Int32::Compiler::generateStubCode(MacroAssembler& masm)
 
             masm.bind(&toUint);
             masm.convertUInt32ToDouble(scratchReg, FloatReg1);
-            masm.boxDouble(FloatReg1, R0);
+            masm.boxDouble(FloatReg1, R0, ScratchDoubleReg);
         } else {
             masm.ma_b(scratchReg, Imm32(0), &failure, Assembler::LessThan, ShortJump);
             // Move result for return.

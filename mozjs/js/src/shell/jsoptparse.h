@@ -9,9 +9,9 @@
 
 #include <stdio.h>
 
-#include "jsalloc.h"
 #include "jsutil.h"
 
+#include "js/AllocPolicy.h"
 #include "js/Vector.h"
 
 namespace js {
@@ -106,7 +106,7 @@ struct ValuedOption : public Option
     {}
 
     virtual ~ValuedOption() = 0;
-    virtual bool isValued() const { return true; }
+    virtual bool isValued() const override { return true; }
 };
 
 inline ValuedOption::~ValuedOption() {}
@@ -152,7 +152,7 @@ struct MultiStringOption : public ValuedOption
 
     virtual ~MultiStringOption() {}
 
-    virtual bool isVariadic() const { return true; }
+    virtual bool isVariadic() const override { return true; }
 };
 
 } /* namespace detail */
@@ -228,7 +228,7 @@ class OptionParser
     Option* findArgument(const char* name);
     const Option* findArgument(const char* name) const;
 
-    Result error(const char* fmt, ...);
+    Result error(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
     Result extractValue(size_t argc, char** argv, size_t* i, char** value);
     Result handleArg(size_t argc, char** argv, size_t* i, bool* optsAllowed);
     Result handleOption(Option* opt, size_t argc, char** argv, size_t* i, bool* optsAllowed);

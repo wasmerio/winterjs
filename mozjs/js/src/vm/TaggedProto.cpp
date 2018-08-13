@@ -6,13 +6,9 @@
 
 #include "vm/TaggedProto.h"
 
-#include "jsfun.h"
-#include "jsobj.h"
-
 #include "gc/Barrier.h"
-#include "gc/Zone.h"
-
-#include "vm/Runtime-inl.h"
+#include "vm/JSFunction.h"
+#include "vm/JSObject.h"
 
 namespace js {
 
@@ -39,20 +35,3 @@ InternalBarrierMethods<TaggedProto>::readBarrier(const TaggedProto& proto)
 }
 
 } // namespace js
-
-js::HashNumber
-js::TaggedProto::hashCode() const
-{
-    return Zone::UniqueIdToHash(uniqueId());
-}
-
-uint64_t
-js::TaggedProto::uniqueId() const
-{
-    if (isDynamic())
-        return uint64_t(1);
-    JSObject* obj = toObjectOrNull();
-    if (!obj)
-        return uint64_t(0);
-    return obj->zone()->getUniqueIdInfallible(obj);
-}

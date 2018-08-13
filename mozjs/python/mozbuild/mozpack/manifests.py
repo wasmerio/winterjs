@@ -13,6 +13,7 @@ from .files import (
     File,
     FileFinder,
     GeneratedFile,
+    HardlinkFile,
     PreprocessedFile,
 )
 import mozpack.path as mozpath
@@ -55,8 +56,8 @@ class InstallManifest(object):
       copy -- The file specified as the source path will be copied to the
           destination path.
 
-      symlink -- The destination path will be a symlink to the source path.
-          If symlinks are not supported, a copy will be performed.
+      link -- The destination path will be a symlink or hardlink to the source
+          path. If symlinks are not supported, a copy will be performed.
 
       exists -- The destination path is accounted for and won't be deleted by
           the FileCopier. If the destination path doesn't exist, an error is
@@ -66,11 +67,11 @@ class InstallManifest(object):
           the FileCopier. No error is raised if the destination path does not
           exist.
 
-      patternsymlink -- Paths matched by the expression in the source path
-          will be symlinked to the destination directory.
+      patternlink -- Paths matched by the expression in the source path
+          will be symlinked or hardlinked to the destination directory.
 
-      patterncopy -- Similar to patternsymlink except files are copied, not
-          symlinked.
+      patterncopy -- Similar to patternlink except files are copied, not
+          symlinked/hardlinked.
 
       preprocess -- The file specified at the source path will be run through
           the preprocessor, and the output will be written to the destination
@@ -91,11 +92,11 @@ class InstallManifest(object):
 
     # Negative values are reserved for non-actionable items, that is, metadata
     # that doesn't describe files in the destination.
-    SYMLINK = 1
+    LINK = 1
     COPY = 2
     REQUIRED_EXISTS = 3
     OPTIONAL_EXISTS = 4
-    PATTERN_SYMLINK = 5
+    PATTERN_LINK = 5
     PATTERN_COPY = 6
     PREPROCESS = 7
     CONTENT = 8
@@ -132,9 +133,9 @@ class InstallManifest(object):
 
             record_type = int(fields[0])
 
-            if record_type == self.SYMLINK:
+            if record_type == self.LINK:
                 dest, source = fields[1:]
-                self.add_symlink(source, dest)
+                self.add_link(source, dest)
                 continue
 
             if record_type == self.COPY:
@@ -152,9 +153,9 @@ class InstallManifest(object):
                 self.add_optional_exists(path)
                 continue
 
-            if record_type == self.PATTERN_SYMLINK:
+            if record_type == self.PATTERN_LINK:
                 _, base, pattern, dest = fields[1:]
-                self.add_pattern_symlink(base, pattern, dest)
+                self.add_pattern_link(base, pattern, dest)
                 continue
 
             if record_type == self.PATTERN_COPY:
@@ -199,16 +200,7 @@ class InstallManifest(object):
         if not isinstance(other, InstallManifest):
             raise ValueError('Can only | with another instance of InstallManifest.')
 
-        # We must copy source files to ourselves so extra dependencies from
-        # the preprocessor are taken into account. Ideally, we would track
-        # which source file each entry came from. However, this is more
-        # complicated and not yet implemented. The current implementation
-        # will result in over invalidation, possibly leading to performance
-        # loss.
-        self._source_files |= other._source_files
-
-        for dest in sorted(other._dests):
-            self._add_entry(dest, other._dests[dest])
+        self.add_entries_from(other)
 
         return self
 
@@ -228,7 +220,7 @@ class InstallManifest(object):
         """
         return json.loads(data)
 
-    def write(self, path=None, fileobj=None):
+    def write(self, path=None, fileobj=None, expand_pattern=False):
         """Serialize this manifest to a file or file object.
 
         If path is specified, that file will be written to. If fileobj is specified,
@@ -242,17 +234,28 @@ class InstallManifest(object):
             for dest in sorted(self._dests):
                 entry = self._dests[dest]
 
-                parts = ['%d' % entry[0], dest]
-                parts.extend(entry[1:])
-                fh.write('%s\n' % self.FIELD_SEPARATOR.join(
-                    p.encode('utf-8') for p in parts))
+                if expand_pattern and entry[0] in (self.PATTERN_LINK, self.PATTERN_COPY):
+                    type, base, pattern, dest = entry
+                    type = self.LINK if type == self.PATTERN_LINK else self.COPY
+                    finder = FileFinder(base)
+                    paths = [f[0] for f in finder.find(pattern)]
+                    for path in paths:
+                        source = mozpath.join(base, path)
+                        parts = ['%d' % type, mozpath.join(dest, path), source]
+                        fh.write('%s\n' % self.FIELD_SEPARATOR.join(
+                            p.encode('utf-8') for p in parts))
+                else:
+                    parts = ['%d' % entry[0], dest]
+                    parts.extend(entry[1:])
+                    fh.write('%s\n' % self.FIELD_SEPARATOR.join(
+                        p.encode('utf-8') for p in parts))
 
-    def add_symlink(self, source, dest):
-        """Add a symlink to this manifest.
+    def add_link(self, source, dest):
+        """Add a link to this manifest.
 
-        dest will be a symlink to source.
+        dest will be either a symlink or hardlink to source.
         """
-        self._add_entry(dest, (self.SYMLINK, source))
+        self._add_entry(dest, (self.LINK, source))
 
     def add_copy(self, source, dest):
         """Add a copy to this manifest.
@@ -277,27 +280,28 @@ class InstallManifest(object):
         """
         self._add_entry(dest, (self.OPTIONAL_EXISTS,))
 
-    def add_pattern_symlink(self, base, pattern, dest):
-        """Add a pattern match that results in symlinks being created.
+    def add_pattern_link(self, base, pattern, dest):
+        """Add a pattern match that results in links being created.
 
         A ``FileFinder`` will be created with its base set to ``base``
         and ``FileFinder.find()`` will be called with ``pattern`` to discover
-        source files. Each source file will be symlinked under ``dest``.
+        source files. Each source file will be either symlinked or hardlinked
+        under ``dest``.
 
         Filenames under ``dest`` are constructed by taking the path fragment
         after ``base`` and concatenating it with ``dest``. e.g.
 
            <base>/foo/bar.h -> <dest>/foo/bar.h
         """
-        self._add_entry(mozpath.join(base, pattern, dest),
-            (self.PATTERN_SYMLINK, base, pattern, dest))
+        self._add_entry(mozpath.join(dest, pattern),
+            (self.PATTERN_LINK, base, pattern, dest))
 
     def add_pattern_copy(self, base, pattern, dest):
         """Add a pattern match that results in copies.
 
-        See ``add_pattern_symlink()`` for usage.
+        See ``add_pattern_link()`` for usage.
         """
-        self._add_entry(mozpath.join(base, pattern, dest),
+        self._add_entry(mozpath.join(dest, pattern),
             (self.PATTERN_COPY, base, pattern, dest))
 
     def add_preprocess(self, source, dest, deps, marker='#', defines={},
@@ -329,7 +333,36 @@ class InstallManifest(object):
 
         self._dests[dest] = entry
 
-    def populate_registry(self, registry, defines_override={}):
+    def add_entries_from(self, other, base=''):
+        """
+        Copy data from another mozpack.copier.InstallManifest
+        instance, adding an optional base prefix to the destination.
+
+        This allows to merge two manifests into a single manifest, or
+        two take the tagged union of two manifests.
+        """
+        # We must copy source files to ourselves so extra dependencies from
+        # the preprocessor are taken into account. Ideally, we would track
+        # which source file each entry came from. However, this is more
+        # complicated and not yet implemented. The current implementation
+        # will result in over invalidation, possibly leading to performance
+        # loss.
+        self._source_files |= other._source_files
+
+        for dest in sorted(other._dests):
+            new_dest = mozpath.join(base, dest) if base else dest
+            entry = other._dests[dest]
+            if entry[0] in (self.PATTERN_LINK, self.PATTERN_COPY):
+                entry_type, entry_base, entry_pattern, entry_dest = entry
+                new_entry_dest = mozpath.join(base, entry_dest) if base else entry_dest
+                new_entry = (entry_type, entry_base, entry_pattern, new_entry_dest)
+            else:
+                new_entry = tuple(entry)
+
+            self._add_entry(new_dest, new_entry)
+
+    def populate_registry(self, registry, defines_override={},
+                          link_policy='symlink'):
         """Populate a mozpack.copier.FileRegistry instance with data from us.
 
         The caller supplied a FileRegistry instance (or at least something that
@@ -338,13 +371,23 @@ class InstallManifest(object):
 
         Defines can be given to override the ones in the manifest for
         preprocessing.
+
+        The caller can set a link policy. This determines whether symlinks,
+        hardlinks, or copies are used for LINK and PATTERN_LINK.
         """
+        assert link_policy in ("symlink", "hardlink", "copy")
         for dest in sorted(self._dests):
             entry = self._dests[dest]
             install_type = entry[0]
 
-            if install_type == self.SYMLINK:
-                registry.add(dest, AbsoluteSymlinkFile(entry[1]))
+            if install_type == self.LINK:
+                if link_policy == "symlink":
+                    cls = AbsoluteSymlinkFile
+                elif link_policy == "hardlink":
+                    cls = HardlinkFile
+                else:
+                    cls = File
+                registry.add(dest, cls(entry[1]))
                 continue
 
             if install_type == self.COPY:
@@ -359,13 +402,18 @@ class InstallManifest(object):
                 registry.add(dest, ExistingFile(required=False))
                 continue
 
-            if install_type in (self.PATTERN_SYMLINK, self.PATTERN_COPY):
+            if install_type in (self.PATTERN_LINK, self.PATTERN_COPY):
                 _, base, pattern, dest = entry
-                finder = FileFinder(base, find_executables=False)
+                finder = FileFinder(base)
                 paths = [f[0] for f in finder.find(pattern)]
 
-                if install_type == self.PATTERN_SYMLINK:
-                    cls = AbsoluteSymlinkFile
+                if install_type == self.PATTERN_LINK:
+                    if link_policy == "symlink":
+                        cls = AbsoluteSymlinkFile
+                    elif link_policy == "hardlink":
+                        cls = HardlinkFile
+                    else:
+                        cls = File
                 else:
                     cls = File
 

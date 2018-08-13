@@ -32,6 +32,44 @@ struct ImmTag : public Imm32
     { }
 };
 
+// ScratchTagScope and ScratchTagScopeRelease are used to manage the tag
+// register for splitTagForTest(), which has different register management on
+// different platforms.  On 64-bit platforms it requires a scratch register that
+// does not interfere with other operations; on 32-bit platforms it uses a
+// register that is already part of the Value.
+//
+// The ScratchTagScope RAII type acquires the appropriate register; a reference
+// to a variable of this type is then passed to splitTagForTest().
+//
+// On 64-bit platforms ScratchTagScopeRelease makes the owned scratch register
+// available in a dynamic scope during compilation.  However it is important to
+// remember that that does not preserve the register value in any way, so this
+// RAII type should only be used along paths that eventually branch past further
+// uses of the extracted tag value.
+//
+// On 32-bit platforms ScratchTagScopeRelease has no effect, since it does not
+// manage a register, it only aliases a register in the ValueOperand.
+
+class ScratchTagScope : public ScratchRegisterScope
+{
+  public:
+    ScratchTagScope(MacroAssembler& masm, const ValueOperand&)
+      : ScratchRegisterScope(masm)
+    {}
+};
+
+class ScratchTagScopeRelease
+{
+    ScratchTagScope* ts_;
+  public:
+    explicit ScratchTagScopeRelease(ScratchTagScope* ts) : ts_(ts) {
+        ts_->release();
+    }
+    ~ScratchTagScopeRelease() {
+        ts_->reacquire();
+    }
+};
+
 class MacroAssemblerX64 : public MacroAssemblerX86Shared
 {
   private:
@@ -58,8 +96,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     // X64 helpers.
     /////////////////////////////////////////////////////////////////
     void writeDataRelocation(const Value& val) {
-        if (val.isMarkable()) {
-            gc::Cell* cell = reinterpret_cast<gc::Cell*>(val.toGCThing());
+        if (val.isGCThing()) {
+            gc::Cell* cell = val.toGCThing();
             if (cell && gc::IsInsideNursery(cell))
                 embedsNurseryPointers_ = true;
             dataRelocations_.writeUnsigned(masm.currentOffset());
@@ -132,12 +170,11 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     template <typename T>
     void storeValue(const Value& val, const T& dest) {
         ScratchRegisterScope scratch(asMasm());
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        if (val.isMarkable()) {
-            movWithPatch(ImmWord(jv.asBits), scratch);
+        if (val.isGCThing()) {
+            movWithPatch(ImmWord(val.asRawBits()), scratch);
             writeDataRelocation(val);
         } else {
-            mov(ImmWord(jv.asBits), scratch);
+            mov(ImmWord(val.asRawBits()), scratch);
         }
         movq(scratch, Operand(dest));
     }
@@ -172,14 +209,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         pop(val.valueReg());
     }
     void pushValue(const Value& val) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        if (val.isMarkable()) {
+        if (val.isGCThing()) {
             ScratchRegisterScope scratch(asMasm());
-            movWithPatch(ImmWord(jv.asBits), scratch);
+            movWithPatch(ImmWord(val.asRawBits()), scratch);
             writeDataRelocation(val);
             push(scratch);
         } else {
-            push(ImmWord(jv.asBits));
+            push(ImmWord(val.asRawBits()));
         }
     }
     void pushValue(JSValueType type, Register reg) {
@@ -191,18 +227,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         push(Operand(addr));
     }
 
-    void moveValue(const Value& val, Register dest) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        movWithPatch(ImmWord(jv.asBits), dest);
-        writeDataRelocation(val);
-    }
-    void moveValue(const Value& src, const ValueOperand& dest) {
-        moveValue(src, dest.valueReg());
-    }
-    void moveValue(const ValueOperand& src, const ValueOperand& dest) {
-        if (src.valueReg() != dest.valueReg())
-            movq(src.valueReg(), dest.valueReg());
-    }
     void boxValue(JSValueType type, Register src, Register dest);
 
     Condition testUndefined(Condition cond, Register tag) {
@@ -516,13 +540,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         testq(rhs, lhs);
     }
 
-    template <typename T1, typename T2>
-    void cmpPtrSet(Assembler::Condition cond, T1 lhs, T2 rhs, Register dest)
-    {
-        cmpPtr(lhs, rhs);
-        emitSet(cond, dest);
-    }
-
     /////////////////////////////////////////////////////////////////
     // Common interface.
     /////////////////////////////////////////////////////////////////
@@ -573,6 +590,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void loadPtr(const Address& address, Register dest) {
         movq(Operand(address), dest);
     }
+    void load64(const Address& address, Register dest) {
+        movq(Operand(address), dest);
+    }
     void loadPtr(const Operand& src, Register dest) {
         movq(src, dest);
     }
@@ -618,6 +638,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void storePtr(Register src, const Address& address) {
         movq(src, Operand(address));
     }
+    void store64(Register src, const Address& address) {
+        movq(src, Operand(address));
+    }
     void storePtr(Register src, const BaseIndex& address) {
         movq(src, Operand(address));
     }
@@ -652,7 +675,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         }
     }
     void store64(Register64 src, Address address) {
-        movq(src.reg, Operand(address));
+        storePtr(src.reg, address);
+    }
+    void store64(Imm64 imm, Address address) {
+        storePtr(ImmWord(imm.value), address);
     }
 
     void splitTag(Register src, Register dest) {
@@ -674,19 +700,19 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         splitTag(Operand(operand), dest);
     }
 
-    // Extracts the tag of a value and places it in ScratchReg.
-    Register splitTagForTest(const ValueOperand& value) {
-        splitTag(value, ScratchReg);
-        return ScratchReg;
+    // Extracts the tag of a value and places it in tag.
+    void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag) {
+        splitTag(value, tag);
     }
     void cmpTag(const ValueOperand& operand, ImmTag tag) {
-        Register reg = splitTagForTest(operand);
+        ScratchTagScope reg(asMasm(), operand);
+        splitTagForTest(operand, reg);
         cmp32(reg, tag);
     }
 
     Condition testMagic(Condition cond, const ValueOperand& src) {
-        ScratchRegisterScope scratch(asMasm());
-        splitTag(src, scratch);
+        ScratchTagScope scratch(asMasm(), src);
+        splitTagForTest(src, scratch);
         return testMagic(cond, scratch);
     }
     Condition testError(Condition cond, const ValueOperand& src) {
@@ -708,7 +734,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         emitSet(cond, dest);
     }
 
-    void boxDouble(FloatRegister src, const ValueOperand& dest) {
+    void boxDouble(FloatRegister src, const ValueOperand& dest, FloatRegister) {
         vmovq(src, dest.valueReg());
     }
     void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest) {
@@ -767,45 +793,95 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         xorq(Imm32(1), val.valueReg());
     }
 
-    // Unbox any non-double value into dest. Prefer unboxInt32 or unboxBoolean
-    // instead if the source type is known.
-    void unboxNonDouble(const ValueOperand& src, Register dest) {
+    void unboxNonDouble(const ValueOperand& src, Register dest, JSValueType type) {
+        MOZ_ASSERT(type != JSVAL_TYPE_DOUBLE);
+        if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
+            movl(src.valueReg(), dest);
+            return;
+        }
         if (src.valueReg() == dest) {
             ScratchRegisterScope scratch(asMasm());
-            mov(ImmWord(JSVAL_PAYLOAD_MASK), scratch);
-            andq(scratch, dest);
+            mov(ImmWord(JSVAL_TYPE_TO_SHIFTED_TAG(type)), scratch);
+            xorq(scratch, dest);
         } else {
-            mov(ImmWord(JSVAL_PAYLOAD_MASK), dest);
-            andq(src.valueReg(), dest);
+            mov(ImmWord(JSVAL_TYPE_TO_SHIFTED_TAG(type)), dest);
+            xorq(src.valueReg(), dest);
         }
     }
-    void unboxNonDouble(const Operand& src, Register dest) {
+    void unboxNonDouble(const Operand& src, Register dest, JSValueType type) {
+        MOZ_ASSERT(type != JSVAL_TYPE_DOUBLE);
+        if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
+            movl(src, dest);
+            return;
+        }
         // Explicitly permits |dest| to be used in |src|.
         ScratchRegisterScope scratch(asMasm());
         MOZ_ASSERT(dest != scratch);
         if (src.containsReg(dest)) {
-            mov(ImmWord(JSVAL_PAYLOAD_MASK), scratch);
+            mov(ImmWord(JSVAL_TYPE_TO_SHIFTED_TAG(type)), scratch);
             // If src is already a register, then src and dest are the same
             // thing and we don't need to move anything into dest.
             if (src.kind() != Operand::REG)
                 movq(src, dest);
-            andq(scratch, dest);
+            xorq(scratch, dest);
         } else {
-            mov(ImmWord(JSVAL_PAYLOAD_MASK), dest);
-            andq(src, dest);
+            mov(ImmWord(JSVAL_TYPE_TO_SHIFTED_TAG(type)), dest);
+            xorq(src, dest);
         }
     }
+    void unboxNonDouble(const Address& src, Register dest, JSValueType type) {
+        unboxNonDouble(Operand(src), dest, type);
+    }
+    void unboxNonDouble(const BaseIndex& src, Register dest, JSValueType type) {
+        unboxNonDouble(Operand(src), dest, type);
+    }
 
-    void unboxString(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxString(const Operand& src, Register dest) { unboxNonDouble(src, dest); }
+    void unboxString(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_STRING);
+    }
+    void unboxString(const Operand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_STRING);
+    }
+    void unboxString(const Address& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_STRING);
+    }
 
-    void unboxSymbol(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxSymbol(const Operand& src, Register dest) { unboxNonDouble(src, dest); }
+    void unboxSymbol(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
+    }
+    void unboxSymbol(const Operand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
+    }
 
-    void unboxObject(const ValueOperand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxObject(const Operand& src, Register dest) { unboxNonDouble(src, dest); }
-    void unboxObject(const Address& src, Register dest) { unboxNonDouble(Operand(src), dest); }
-    void unboxObject(const BaseIndex& src, Register dest) { unboxNonDouble(Operand(src), dest); }
+    void unboxObject(const ValueOperand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+    }
+    void unboxObject(const Operand& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+    }
+    void unboxObject(const Address& src, Register dest) {
+        unboxNonDouble(Operand(src), dest, JSVAL_TYPE_OBJECT);
+    }
+    void unboxObject(const BaseIndex& src, Register dest) {
+        unboxNonDouble(Operand(src), dest, JSVAL_TYPE_OBJECT);
+    }
+
+    template <typename T>
+    void unboxObjectOrNull(const T& src, Register dest) {
+        unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
+        ScratchRegisterScope scratch(asMasm());
+        mov(ImmWord(~JSVAL_OBJECT_OR_NULL_BIT), scratch);
+        andq(scratch, dest);
+    }
+
+    // This should only be used for the pre-barrier trampoline, to unbox a
+    // string/symbol/object Value. It's fine there because we don't depend on
+    // the actual Value type. In almost all other cases, this would be
+    // Spectre-unsafe - use unboxNonDouble and friends instead.
+    void unboxGCThingForPreBarrierTrampoline(const Address& src, Register dest) {
+        movq(ImmWord(JSVAL_PAYLOAD_MASK_GCTHING), dest);
+        andq(Operand(src), dest);
+    }
 
     // Extended unboxing API. If the payload is already in a register, returns
     // that register. Otherwise, provides a move to the given scratch register,
@@ -818,6 +894,16 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     Register extractObject(const ValueOperand& value, Register scratch) {
         MOZ_ASSERT(scratch != ScratchReg);
         unboxObject(value, scratch);
+        return scratch;
+    }
+    Register extractString(const ValueOperand& value, Register scratch) {
+        MOZ_ASSERT(scratch != ScratchReg);
+        unboxString(value, scratch);
+        return scratch;
+    }
+    Register extractSymbol(const ValueOperand& value, Register scratch) {
+        MOZ_ASSERT(scratch != ScratchReg);
+        unboxSymbol(value, scratch);
         return scratch;
     }
     Register extractInt32(const ValueOperand& value, Register scratch) {
@@ -842,7 +928,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         return scratch;
     }
 
-    inline void unboxValue(const ValueOperand& src, AnyRegister dest);
+    inline void unboxValue(const ValueOperand& src, AnyRegister dest, JSValueType type);
 
     // These two functions use the low 32-bits of the full value register.
     void boolValueToDouble(const ValueOperand& operand, FloatRegister dest) {
@@ -861,24 +947,16 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
 
     void loadConstantDouble(double d, FloatRegister dest);
     void loadConstantFloat32(float f, FloatRegister dest);
+
     void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
     void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
 
-    void convertInt64ToDouble(Register input, FloatRegister output);
-    void convertInt64ToFloat32(Register input, FloatRegister output);
-
-    void convertUInt64ToDouble(Register input, FloatRegister output);
-    void convertUInt64ToFloat32(Register input, FloatRegister output);
-
-    void wasmTruncateDoubleToInt64(FloatRegister input, Register output, Label* oolEntry,
-                                   Label* oolRejoin, FloatRegister tempDouble);
-    void wasmTruncateDoubleToUInt64(FloatRegister input, Register output, Label* oolEntry,
-                                    Label* oolRejoin, FloatRegister tempDouble);
-
-    void wasmTruncateFloat32ToInt64(FloatRegister input, Register output, Label* oolEntry,
-                                    Label* oolRejoin, FloatRegister tempDouble);
-    void wasmTruncateFloat32ToUInt64(FloatRegister input, Register output, Label* oolEntry,
-                                     Label* oolRejoin, FloatRegister tempDouble);
+    void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
+        loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, globalArea) + globalDataOffset), dest);
+    }
+    void loadWasmPinnedRegsFromTls() {
+        loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, memoryBase)), HeapReg);
+    }
 
   public:
     Condition testInt32Truthy(bool truthy, const ValueOperand& operand) {
@@ -899,19 +977,26 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void loadUnboxedValue(const T& src, MIRType type, AnyRegister dest) {
         if (dest.isFloat())
             loadInt32OrDouble(src, dest.fpu());
-        else if (type == MIRType::Int32 || type == MIRType::Boolean)
-            movl(Operand(src), dest.gpr());
+        else if (type == MIRType::ObjectOrNull)
+            unboxObjectOrNull(src, dest.gpr());
         else
-            unboxNonDouble(Operand(src), dest.gpr());
+            unboxNonDouble(Operand(src), dest.gpr(), ValueTypeFromMIRType(type));
     }
 
     template <typename T>
-    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes) {
+    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes, JSValueType type) {
         switch (nbytes) {
           case 8: {
             ScratchRegisterScope scratch(asMasm());
-            unboxNonDouble(value, scratch);
+            unboxNonDouble(value, scratch, type);
             storePtr(scratch, address);
+            if (type == JSVAL_TYPE_OBJECT) {
+                // Ideally we would call unboxObjectOrNull, but we need an extra
+                // scratch register for that. So unbox as object, then clear the
+                // object-or-null bit.
+                mov(ImmWord(~JSVAL_OBJECT_OR_NULL_BIT), scratch);
+                andq(scratch, Operand(address));
+            }
             return;
           }
           case 4:
@@ -929,15 +1014,17 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     }
 
     void convertUInt32ToDouble(Register src, FloatRegister dest) {
+        // Zero the output register to break dependencies, see convertInt32ToDouble.
+        zeroDouble(dest);
+
         vcvtsq2sd(src, dest, dest);
     }
 
     void convertUInt32ToFloat32(Register src, FloatRegister dest) {
-        vcvtsq2ss(src, dest, dest);
-    }
+        // Zero the output register to break dependencies, see convertInt32ToDouble.
+        zeroDouble(dest);
 
-    void convertUInt64ToDouble(Register64 src, Register temp, FloatRegister dest) {
-        vcvtsi2sdq(src.reg, dest);
+        vcvtsq2ss(src, dest, dest);
     }
 
     inline void incrementInt32Value(const Address& addr);
@@ -945,7 +1032,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     inline void ensureDouble(const ValueOperand& source, FloatRegister dest, Label* failure);
 
   public:
-    void handleFailureWithHandlerTail(void* handler);
+    void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
 
     // Instrumentation for entering and leaving the profiler.
     void profilerEnterFrame(Register framePtr, Register scratch);

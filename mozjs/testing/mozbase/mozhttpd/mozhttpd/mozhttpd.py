@@ -4,6 +4,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import BaseHTTPServer
 import SimpleHTTPServer
 import errno
@@ -20,12 +22,13 @@ import moznetwork
 import time
 from SocketServer import ThreadingMixIn
 
+
 class EasyServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
     allow_reuse_address = True
     acceptable_errors = (errno.EPIPE, errno.ECONNABORTED)
 
     def handle_error(self, request, client_address):
-        error = sys.exc_value
+        error = sys.exc_info()[1]
 
         if ((isinstance(error, socket.error) and
              isinstance(error.args, tuple) and
@@ -62,7 +65,7 @@ class Request(object):
 
 class RequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
-    docroot = os.getcwd() # current working directory at time of import
+    docroot = os.getcwd()  # current working directory at time of import
     proxy_host_dirs = False
     request_log = []
     log_requests = False
@@ -74,9 +77,9 @@ class RequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def _try_handler(self, method):
         if self.log_requests:
-            self.request_log.append({ 'method': method,
-                                      'path': self.request.path,
-                                      'time': time.time() })
+            self.request_log.append({'method': method,
+                                     'path': self.request.path,
+                                     'time': time.time()})
 
         handlers = [handler for handler in self.urlhandlers
                     if handler['method'] == method]
@@ -162,10 +165,10 @@ class RequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         for word in words:
             drive, word = os.path.splitdrive(word)
             head, word = os.path.split(word)
-            if word in (os.curdir, os.pardir): continue
+            if word in (os.curdir, os.pardir):
+                continue
             path = os.path.join(path, word)
         return path
-
 
     # I found on my local network that calls to this were timing out
     # I believe all of these calls are from log_message
@@ -261,7 +264,7 @@ class MozHttpd(object):
             self.httpd.serve_forever()
         else:
             self.server = threading.Thread(target=self.httpd.serve_forever)
-            self.server.setDaemon(True) # don't hang on exit
+            self.server.setDaemon(True)  # don't hang on exit
             self.server.start()
 
     def stop(self):
@@ -271,7 +274,7 @@ class MozHttpd(object):
         If the server is not running, this method has no effect.
         """
         if self.httpd:
-            ### FIXME: There is no shutdown() method in Python 2.4...
+            # FIXME: There is no shutdown() method in Python 2.4...
             try:
                 self.httpd.shutdown()
             except AttributeError:
@@ -322,8 +325,9 @@ def main(args=sys.argv[1:]):
     # create the server
     server = MozHttpd(host=host, port=options.port, docroot=options.docroot)
 
-    print "Serving '%s' at %s:%s" % (server.docroot, server.host, server.port)
+    print("Serving '%s' at %s:%s" % (server.docroot, server.host, server.port))
     server.start(block=True)
+
 
 if __name__ == '__main__':
     main()

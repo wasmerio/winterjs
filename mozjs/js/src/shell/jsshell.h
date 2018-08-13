@@ -7,7 +7,25 @@
 #ifndef jsshell_js_h
 #define jsshell_js_h
 
+#include "mozilla/Atomics.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/TimeStamp.h"
+#include "mozilla/Variant.h"
+
 #include "jsapi.h"
+
+#include "js/GCVector.h"
+#include "threading/ConditionVariable.h"
+#include "threading/LockGuard.h"
+#include "threading/Mutex.h"
+#include "threading/Thread.h"
+#include "vm/GeckoProfiler.h"
+#include "vm/Monitor.h"
+
+// Some platform hooks must be implemented for single-step profiling.
+#if defined(JS_SIMULATOR_ARM) || defined(JS_SIMULATOR_MIPS64)
+# define SINGLESTEP_PROFILING
+#endif
 
 namespace js {
 namespace shell {
@@ -24,7 +42,7 @@ const JSErrorFormatString*
 my_GetErrorMessage(void* userRef, const unsigned errorNumber);
 
 void
-WarningReporter(JSContext* cx, const char* message, JSErrorReport* report);
+WarningReporter(JSContext* cx, JSErrorReport* report);
 
 class MOZ_STACK_CLASS AutoReportException
 {
@@ -40,7 +58,7 @@ bool
 GenerateInterfaceHelp(JSContext* cx, JS::HandleObject obj, const char* name);
 
 JSString*
-FileAsString(JSContext* cx, const char* pathname);
+FileAsString(JSContext* cx, JS::HandleString pathnameStr);
 
 class AutoCloseFile
 {
@@ -77,6 +95,96 @@ struct RCFile {
     bool isOpen() const { return fp; }
     bool release();
 };
+
+// Alias the global dstName to namespaceObj.srcName. For example, if dstName is
+// "snarf", namespaceObj represents "os.file", and srcName is "readFile", then
+// this is equivalent to the JS code:
+//
+//   snarf = os.file.readFile;
+//
+// This provides a mechanism for namespacing the various JS shell helper
+// functions without breaking backwards compatibility with things that use the
+// global names.
+bool
+CreateAlias(JSContext* cx, const char* dstName, JS::HandleObject namespaceObj, const char* srcName);
+
+enum class ScriptKind
+{
+    Script,
+    DecodeScript,
+    Module
+};
+
+class NonshrinkingGCObjectVector : public GCVector<JSObject*, 0, SystemAllocPolicy>
+{
+  public:
+    void sweep() {
+        for (uint32_t i = 0; i < this->length(); i++) {
+            if (JS::GCPolicy<JSObject*>::needsSweep(&(*this)[i]))
+                (*this)[i] = nullptr;
+        }
+    }
+};
+
+using MarkBitObservers = JS::WeakCache<NonshrinkingGCObjectVector>;
+
+#ifdef SINGLESTEP_PROFILING
+using StackChars = Vector<char16_t, 0, SystemAllocPolicy>;
+#endif
+
+class OffThreadJob;
+
+// Per-context shell state.
+struct ShellContext
+{
+    explicit ShellContext(JSContext* cx);
+    ~ShellContext();
+
+    bool isWorker;
+    double timeoutInterval;
+    double startTime;
+    mozilla::Atomic<bool> serviceInterrupt;
+    mozilla::Atomic<bool> haveInterruptFunc;
+    JS::PersistentRootedValue interruptFunc;
+    bool lastWarningEnabled;
+    JS::PersistentRootedValue lastWarning;
+    JS::PersistentRootedValue promiseRejectionTrackerCallback;
+#ifdef SINGLESTEP_PROFILING
+    Vector<StackChars, 0, SystemAllocPolicy> stacks;
+#endif
+
+    /*
+     * Watchdog thread state.
+     */
+    js::Mutex watchdogLock;
+    js::ConditionVariable watchdogWakeup;
+    mozilla::Maybe<js::Thread> watchdogThread;
+    mozilla::Maybe<mozilla::TimeStamp> watchdogTimeout;
+
+    js::ConditionVariable sleepWakeup;
+
+    int exitCode;
+    bool quitting;
+
+    JS::UniqueChars readLineBuf;
+    size_t readLineBufPos;
+
+    js::shell::RCFile** errFilePtr;
+    js::shell::RCFile** outFilePtr;
+
+    UniquePtr<PseudoStack> geckoProfilingStack;
+
+    JS::UniqueChars moduleLoadPath;
+    UniquePtr<MarkBitObservers> markObservers;
+
+    // Off-thread parse state.
+    js::Monitor offThreadMonitor;
+    Vector<OffThreadJob*, 0, SystemAllocPolicy> offThreadJobs;
+
+};
+
+extern ShellContext*
+GetShellContext(JSContext* cx);
 
 } /* namespace shell */
 } /* namespace js */

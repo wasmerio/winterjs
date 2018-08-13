@@ -3,7 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # If we add unicode_literals, Python 2.6.1 (required for OS X 10.6) breaks.
-from __future__ import print_function
+from __future__ import absolute_import, print_function
 
 import errno
 import os
@@ -11,22 +11,10 @@ import stat
 import subprocess
 import sys
 
-# These are the platform and build-tools versions for building
-# mobile/android, respectively. Try to keep these in synch with the
-# build system and Mozilla's automation.
-ANDROID_TARGET_SDK = '23'
-ANDROID_BUILD_TOOLS_VERSION = '23.0.3'
-
-# These are the "Android packages" needed for building Firefox for Android.
-# Use |android list sdk --extended| to see these identifiers.
-ANDROID_PACKAGES = [
-    'tools',
-    'platform-tools',
-    'build-tools-%s' % ANDROID_BUILD_TOOLS_VERSION,
-    'android-%s' % ANDROID_TARGET_SDK,
-    'extra-google-m2repository',
-    'extra-android-m2repository',
-]
+# We need the NDK version in multiple different places, and it's inconvenient
+# to pass down the NDK version to all relevant places, so we have this global
+# variable.
+NDK_VERSION = 'r15c'
 
 ANDROID_NDK_EXISTS = '''
 Looks like you have the Android NDK installed at:
@@ -39,10 +27,12 @@ Looks like you have the Android SDK installed at:
 We will install all required Android packages.
 '''
 
-NOT_INSTALLING_ANDROID_PACKAGES = '''
-It looks like you already have the following Android packages:
+ANDROID_SDK_TOO_OLD = '''
+Looks like you have an outdated Android SDK installed at:
 %s
-No need to update!
+I can't update outdated Android SDKs to have the required 'sdkmanager'
+tool.  Move it out of the way (or remove it entirely) and then run
+bootstrap again.
 '''
 
 INSTALLING_ANDROID_PACKAGES = '''
@@ -50,14 +40,6 @@ We are now installing the following Android packages:
 %s
 You may be prompted to agree to the Android license. You may see some of
 output as packages are downloaded and installed.
-'''
-
-MISSING_ANDROID_PACKAGES = '''
-We tried to install the following Android packages:
-%s
-But it looks like we couldn't install:
-%s
-Install these Android packages manually and run this bootstrapper again.
 '''
 
 MOBILE_ANDROID_MOZCONFIG_TEMPLATE = '''
@@ -68,9 +50,10 @@ Paste the lines between the chevrons (>>> and <<<) into your mozconfig file:
 ac_add_options --enable-application=mobile/android
 ac_add_options --target=arm-linux-androideabi
 
+{extra_lines}
 # With the following Android SDK and NDK:
-ac_add_options --with-android-sdk="%s"
-ac_add_options --with-android-ndk="%s"
+ac_add_options --with-android-sdk="{sdk_path}"
+ac_add_options --with-android-ndk="{ndk_path}"
 >>>
 '''
 
@@ -83,53 +66,14 @@ ac_add_options --enable-application=mobile/android
 ac_add_options --target=arm-linux-androideabi
 ac_add_options --enable-artifact-builds
 
+{extra_lines}
 # With the following Android SDK:
-ac_add_options --with-android-sdk="%s"
+ac_add_options --with-android-sdk="{sdk_path}"
 
 # Write build artifacts to:
 mk_add_options MOZ_OBJDIR=./objdir-frontend
 >>>
 '''
-
-
-def check_output(*args, **kwargs):
-    """Run subprocess.check_output even if Python doesn't provide it."""
-    from base import BaseBootstrapper
-    fn = getattr(subprocess, 'check_output', BaseBootstrapper._check_output)
-
-    return fn(*args, **kwargs)
-
-
-def list_missing_android_packages(android_tool, packages):
-    '''
-    Use the given |android| tool to return the sub-list of Android
-    |packages| given that are not installed.
-    '''
-    missing = []
-
-    # There's no obvious way to see what's been installed already,
-    # but packages that are installed don't appear in the list of
-    # available packages.
-    lines = check_output([android_tool,
-                          'list', 'sdk', '--no-ui', '--extended']).splitlines()
-
-    # Lines look like: 'id: 59 or "extra-google-simulators"'
-    for line in lines:
-        is_id_line = False
-        try:
-            is_id_line = line.startswith("id:")
-        except:
-            # Some lines contain non-ASCII characters.  Ignore them.
-            pass
-        if not is_id_line:
-            continue
-
-        for package in packages:
-            if '"%s"' % package in line:
-                # Not installed!
-                missing.append(package)
-
-    return missing
 
 
 def install_mobile_android_sdk_or_ndk(url, path):
@@ -194,10 +138,65 @@ def install_mobile_android_sdk_or_ndk(url, path):
         os.chdir(old_path)
 
 
-def ensure_android_sdk_and_ndk(path, sdk_path, sdk_url, ndk_path, ndk_url, artifact_mode):
+def get_paths(os_name):
+    mozbuild_path = os.environ.get('MOZBUILD_STATE_PATH',
+                                   os.path.expanduser(os.path.join('~', '.mozbuild')))
+    sdk_path = os.environ.get('ANDROID_SDK_HOME',
+                              os.path.join(mozbuild_path, 'android-sdk-{0}'.format(os_name)))
+    ndk_path = os.environ.get('ANDROID_NDK_HOME',
+                              os.path.join(mozbuild_path, 'android-ndk-{0}'.format(NDK_VERSION)))
+    return (mozbuild_path, sdk_path, ndk_path)
+
+
+def ensure_dir(dir):
+    '''Ensures the given directory exists'''
+    if dir and not os.path.exists(dir):
+        try:
+            os.makedirs(dir)
+        except OSError as error:
+            if error.errno != errno.EEXIST:
+                raise
+
+
+def ensure_android(os_name, artifact_mode=False, ndk_only=False, no_interactive=False):
+    '''
+    Ensure the Android SDK (and NDK, if `artifact_mode` is falsy) are
+    installed.  If not, fetch and unpack the SDK and/or NDK from the
+    given URLs.  Ensure the required Android SDK packages are
+    installed.
+
+    `os_name` can be 'linux' or 'macosx'.
+    '''
+    # The user may have an external Android SDK (in which case we
+    # save them a lengthy download), or they may have already
+    # completed the download. We unpack to
+    # ~/.mozbuild/{android-sdk-$OS_NAME, android-ndk-$VER}.
+    mozbuild_path, sdk_path, ndk_path = get_paths(os_name)
+    os_tag = 'darwin' if os_name == 'macosx' else os_name
+    sdk_url = 'https://dl.google.com/android/repository/sdk-tools-{0}-3859397.zip'.format(os_tag)
+    ndk_url = android_ndk_url(os_name)
+
+    ensure_android_sdk_and_ndk(mozbuild_path, os_name,
+                               sdk_path=sdk_path, sdk_url=sdk_url,
+                               ndk_path=ndk_path, ndk_url=ndk_url,
+                               artifact_mode=artifact_mode,
+                               ndk_only=ndk_only)
+
+    if ndk_only:
+        return
+
+    # We expect the |sdkmanager| tool to be at
+    # ~/.mozbuild/android-sdk-$OS_NAME/tools/bin/sdkmanager.
+    sdkmanager_tool = os.path.join(sdk_path, 'tools', 'bin', 'sdkmanager')
+    ensure_android_packages(sdkmanager_tool=sdkmanager_tool, no_interactive=no_interactive)
+
+
+def ensure_android_sdk_and_ndk(mozbuild_path, os_name, sdk_path, sdk_url, ndk_path, ndk_url,
+                               artifact_mode, ndk_only):
     '''
     Ensure the Android SDK and NDK are found at the given paths.  If not, fetch
-    and unpack the SDK and/or NDK from the given URLs into |path|.
+    and unpack the SDK and/or NDK from the given URLs into
+    |mozbuild_path/{android-sdk-$OS_NAME,android-ndk-$VER}|.
     '''
 
     # It's not particularly bad to overwrite the NDK toolchain, but it does take
@@ -208,59 +207,98 @@ def ensure_android_sdk_and_ndk(path, sdk_path, sdk_url, ndk_path, ndk_url, artif
         if os.path.isdir(ndk_path):
             print(ANDROID_NDK_EXISTS % ndk_path)
         else:
-            install_mobile_android_sdk_or_ndk(ndk_url, path)
+            # The NDK archive unpacks into a top-level android-ndk-$VER directory.
+            install_mobile_android_sdk_or_ndk(ndk_url, mozbuild_path)
 
-    # We don't want to blindly overwrite, since we use the |android| tool to
-    # install additional parts of the Android toolchain.  If we overwrite,
-    # we lose whatever Android packages the user may have already installed.
-    if os.path.isdir(sdk_path):
-        print(ANDROID_SDK_EXISTS % sdk_path)
-    else:
-        install_mobile_android_sdk_or_ndk(sdk_url, path)
-
-
-def ensure_android_packages(android_tool, packages=None):
-    '''
-    Use the given android tool (like 'android') to install required Android
-    packages.
-    '''
-
-    if not packages:
-        packages = ANDROID_PACKAGES
-
-    # Bug 1171232: The |android| tool behaviour has changed; we no longer can
-    # see what packages are installed easily.  Force installing everything until
-    # we find a way to actually see the missing packages.
-    missing = packages
-    if not missing:
-        print(NOT_INSTALLING_ANDROID_PACKAGES % ', '.join(packages))
+    if ndk_only:
         return
+
+    # We don't want to blindly overwrite, since we use the
+    # |sdkmanager| tool to install additional parts of the Android
+    # toolchain.  If we overwrite, we lose whatever Android packages
+    # the user may have already installed.
+    if os.path.isfile(os.path.join(sdk_path, 'tools', 'bin', 'sdkmanager')):
+        print(ANDROID_SDK_EXISTS % sdk_path)
+    elif os.path.isdir(sdk_path):
+        raise NotImplementedError(ANDROID_SDK_TOO_OLD % sdk_path)
+    else:
+        # The SDK archive used to include a top-level
+        # android-sdk-$OS_NAME directory; it no longer does so.  We
+        # preserve the old convention to smooth detecting existing SDK
+        # installations.
+        install_mobile_android_sdk_or_ndk(sdk_url, os.path.join(mozbuild_path,
+                                          'android-sdk-{0}'.format(os_name)))
+
+
+def ensure_android_packages(sdkmanager_tool, packages=None, no_interactive=False):
+    '''
+    Use the given sdkmanager tool (like 'sdkmanager') to install required
+    Android packages.
+    '''
 
     # This tries to install all the required Android packages.  The user
     # may be prompted to agree to the Android license.
-    print(INSTALLING_ANDROID_PACKAGES % ', '.join(missing))
-    subprocess.check_call([android_tool,
-                           'update', 'sdk', '--no-ui', '--all',
-                           '--filter', ','.join(missing)])
+    package_file_name = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                        'android-packages.txt'))
+    print(INSTALLING_ANDROID_PACKAGES % open(package_file_name, 'rt').read())
 
-    # Bug 1171232: The |android| tool behaviour has changed; we no longer can
-    # see what packages are installed easily.  Don't check until we find a way
-    # to actually verify.
-    failing = []
-    if failing:
-        raise Exception(MISSING_ANDROID_PACKAGES % (', '.join(missing), ', '.join(failing)))
+    args = [sdkmanager_tool, '--package_file={0}'.format(package_file_name)]
+    if not no_interactive:
+        subprocess.check_call(args)
+        return
+
+    # Emulate yes.  For a discussion of passing input to check_output,
+    # see https://stackoverflow.com/q/10103551.
+    yes = '\n'.join(['y']*100)
+    proc = subprocess.Popen(args,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            stdin=subprocess.PIPE)
+    output, unused_err = proc.communicate(yes)
+
+    retcode = proc.poll()
+    if retcode:
+        cmd = args[0]
+        e = subprocess.CalledProcessError(retcode, cmd)
+        e.output = output
+        raise e
+
+    print(output)
 
 
-def suggest_mozconfig(sdk_path=None, ndk_path=None, artifact_mode=False):
+def suggest_mozconfig(os_name, artifact_mode=False, java_bin_path=None):
+    _mozbuild_path, sdk_path, ndk_path = get_paths(os_name)
+
+    extra_lines = []
+    if java_bin_path:
+        extra_lines += [
+            '# With the following java and javac:',
+            'ac_add_options --with-java-bin-path="{}"'.format(java_bin_path),
+        ]
+    if extra_lines:
+        extra_lines.append('')
+
     if artifact_mode:
-        print(MOBILE_ANDROID_ARTIFACT_MODE_MOZCONFIG_TEMPLATE % (sdk_path))
+        template = MOBILE_ANDROID_ARTIFACT_MODE_MOZCONFIG_TEMPLATE
     else:
-        print(MOBILE_ANDROID_MOZCONFIG_TEMPLATE % (sdk_path, ndk_path))
+        template = MOBILE_ANDROID_MOZCONFIG_TEMPLATE
+
+    kwargs = dict(
+        sdk_path=sdk_path,
+        ndk_path=ndk_path,
+        extra_lines='\n'.join(extra_lines),
+    )
+    print(template.format(**kwargs))
 
 
-def android_ndk_url(os_name, ver='r11b'):
-    # Produce a URL like 'https://dl.google.com/android/repository/android-ndk-r11b-linux-x86_64.zip
+def android_ndk_url(os_name, ver=NDK_VERSION):
+    # Produce a URL like
+    # 'https://dl.google.com/android/repository/android-ndk-$VER-linux-x86_64.zip
     base_url = 'https://dl.google.com/android/repository/android-ndk'
+
+    if os_name == 'macosx':
+        # |mach bootstrap| uses 'macosx', but Google uses 'darwin'.
+        os_name = 'darwin'
 
     if sys.maxsize > 2**32:
         arch = 'x86_64'
@@ -268,3 +306,43 @@ def android_ndk_url(os_name, ver='r11b'):
         arch = 'x86'
 
     return '%s-%s-%s-%s.zip' % (base_url, ver, os_name, arch)
+
+
+def main(argv):
+    import optparse  # No argparse, which is new in Python 2.7.
+    import platform
+
+    parser = optparse.OptionParser()
+    parser.add_option('-a', '--artifact-mode', dest='artifact_mode', action='store_true',
+                      help='If true, install only the Android SDK (and not the Android NDK).')
+    parser.add_option('--ndk-only', dest='ndk_only', action='store_true',
+                      help='If true, install only the Android NDK (and not the Android SDK).')
+    parser.add_option('--no-interactive', dest='no_interactive', action='store_true',
+                      help='Accept the Android SDK licenses without user interaction.')
+
+    options, _ = parser.parse_args(argv)
+
+    if options.artifact_mode and options.ndk_only:
+        raise NotImplementedError('Use no options to install the NDK and the SDK.')
+
+    os_name = None
+    if platform.system() == 'Darwin':
+        os_name = 'macosx'
+    elif platform.system() == 'Linux':
+        os_name = 'linux'
+    elif platform.system() == 'Windows':
+        os_name = 'windows'
+    else:
+        raise NotImplementedError("We don't support bootstrapping the Android SDK (or Android "
+                                  "NDK) on {0} yet!".format(platform.system()))
+
+    ensure_android(os_name, artifact_mode=options.artifact_mode,
+                   ndk_only=options.ndk_only,
+                   no_interactive=options.no_interactive)
+    suggest_mozconfig(os_name, options.artifact_mode)
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

@@ -7,7 +7,7 @@ that it has been built from. This is commonly used in reporting or for
 conditional logic based on the application under test.
 
 Note that mozversion can report the version of remote devices (e.g. Firefox OS)
-but it requires the :mod:`mozdevice` dependency in that case. You can require it
+but it requires the mozdevice dependency in that case. You can require it
 along with mozversion by using the extra *device* dependency:
 
 .. code-block:: bash
@@ -60,7 +60,7 @@ Options
 '''''''''
 
 This is the path to the target application binary or .apk. If this is omitted
-then the current directory is checked for the existance of an
+then the current directory is checked for the existence of an
 application.ini file. If not found, then it is assumed the target
 application is a remote Firefox OS instance.
 
@@ -70,7 +70,7 @@ application is a remote Firefox OS instance.
 
 The path to the sources.xml that accompanies the target application (Firefox OS
 only). If this is omitted then the current directory is checked for the
-existance of a sources.xml file.
+existence of a sources.xml file.
 
 Examples
 ````````

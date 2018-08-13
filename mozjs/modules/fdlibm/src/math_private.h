@@ -38,8 +38,10 @@
  * endianness at run time.
  */
 
-#ifdef WIN32
+#ifndef u_int32_t
 #define u_int32_t uint32_t
+#endif
+#ifndef u_int64_t
 #define u_int64_t uint64_t
 #endif
 
@@ -276,7 +278,7 @@ do {								\
 /*
  * Attempt to get strict C99 semantics for assignment with non-C99 compilers.
  */
-#if FLT_EVAL_METHOD == 0 || __GNUC__ == 0
+#if !defined(_MSC_VER) && (FLT_EVAL_METHOD == 0 || __GNUC__ == 0)
 #define	STRICT_ASSIGN(type, lval, rval)	((lval) = (rval))
 #else
 #define	STRICT_ASSIGN(type, lval, rval) do {	\
@@ -317,9 +319,21 @@ do {								\
 		fpsetprec(__oprec);		\
 	RETURNF(__retval);			\
 } while (0)
+#define	ENTERV()				\
+	fp_prec_t __oprec;			\
+						\
+	if ((__oprec = fpgetprec()) != FP_PE)	\
+		fpsetprec(FP_PE)
+#define	RETURNV() do {				\
+	if (__oprec != FP_PE)			\
+		fpsetprec(__oprec);		\
+	return;			\
+} while (0)
 #else
-#define	ENTERI(x)
+#define	ENTERI()
 #define	RETURNI(x)	RETURNF(x)
+#define	ENTERV()
+#define	RETURNV()	return
 #endif
 
 /* Default return statement if hack*_t() is not used. */
@@ -776,6 +790,10 @@ irintl(long double x)
 #define trunc fdlibm::trunc
 #define truncf fdlibm::truncf
 #define floorf fdlibm::floorf
+#define nearbyint fdlibm::nearbyint
+#define nearbyintf fdlibm::nearbyintf
+#define rint fdlibm::rint
+#define rintf fdlibm::rintf
 
 /* fdlibm kernel function */
 int	__kernel_rem_pio2(double*,double*,int,int,int);

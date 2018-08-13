@@ -8,22 +8,26 @@
 #define jit_VMFunctions_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/HashFunctions.h"
 
 #include "jspubtd.h"
 
 #include "jit/CompileInfo.h"
 #include "jit/JitFrames.h"
+#include "vm/Interpreter.h"
 
 namespace js {
 
-class DeclEnvObject;
-class StaticWithScope;
+class NamedLambdaObject;
+class WithScope;
 class InlineTypedObject;
 class GeneratorObject;
+class RegExpObject;
+class TypedArrayObject;
 
 namespace jit {
 
-enum DataType {
+enum DataType : uint8_t {
     Type_Void,
     Type_Bool,
     Type_Int32,
@@ -36,19 +40,17 @@ enum DataType {
 
 struct PopValues
 {
-    uint32_t numValues;
+    uint8_t numValues;
 
-    explicit PopValues(uint32_t numValues)
+    explicit constexpr PopValues(uint8_t numValues)
       : numValues(numValues)
     { }
 };
 
-enum MaybeTailCall {
+enum MaybeTailCall : bool {
     TailCall,
     NonTailCall
 };
-
-static const char UnknownVMFunction[]        = "Unknown VM call";
 
 // Contains information about a virtual machine function that can be called
 // from JIT code. Functions described in this manner must conform to a simple
@@ -70,11 +72,24 @@ struct VMFunction
     // Address of the C function.
     void* wrapped;
 
+#ifdef JS_TRACE_LOGGING
     const char* name_;
+#endif
 
-    // Number of arguments expected, excluding JSContext * as an implicit
-    // first argument and an outparam as a possible implicit final argument.
-    uint32_t explicitArgs;
+    // Note: a maximum of seven root types is supported.
+    enum RootType : uint8_t {
+        RootNone = 0,
+        RootObject,
+        RootString,
+        RootId,
+        RootFunction,
+        RootValue,
+        RootCell
+    };
+
+    // Contains an combination of enumerated types used by the gc for marking
+    // arguments of the VM wrapper.
+    uint64_t argumentRootTypes;
 
     enum ArgProperties {
         WordByValue = 0,
@@ -94,6 +109,13 @@ struct VMFunction
     // have them.
     uint32_t argumentPassedInFloatRegs;
 
+    // Number of arguments expected, excluding JSContext * as an implicit
+    // first argument and an outparam as a possible implicit final argument.
+    uint8_t explicitArgs;
+
+    // The root type of the out param if outParam == Type_Handle.
+    RootType outParamRootType;
+
     // The outparam may be any Type_*, and must be the final argument to the
     // function, if not Void. outParam != Void implies that the return type
     // has a boolean failure mode.
@@ -108,28 +130,10 @@ struct VMFunction
     // nullptr before discarding its value.
     DataType returnType;
 
-    // Note: a maximum of seven root types is supported.
-    enum RootType {
-        RootNone = 0,
-        RootObject,
-        RootString,
-        RootPropertyName,
-        RootFunction,
-        RootValue,
-        RootCell
-    };
-
-    // Contains an combination of enumerated types used by the gc for marking
-    // arguments of the VM wrapper.
-    uint64_t argumentRootTypes;
-
-    // The root type of the out param if outParam == Type_Handle.
-    RootType outParamRootType;
-
     // Number of Values the VM wrapper should pop from the stack when it returns.
     // Used by baseline IC stubs so that they can use tail calls to call the VM
     // wrapper.
-    uint32_t extraValuesToPop;
+    uint8_t extraValuesToPop;
 
     // On some architectures, called functions need to explicitly push their
     // return address, for a tail call, there is nothing to push, so tail-callness
@@ -145,6 +149,12 @@ struct VMFunction
         return returnType;
     }
 
+    // Whether this function returns anything more than a boolean flag for
+    // failures.
+    bool returnsData() const {
+        return returnType == Type_Pointer || outParam != Type_Void;
+    }
+
     ArgProperties argProperties(uint32_t explicitArg) const {
         return ArgProperties((argumentProperties >> (2 * explicitArg)) & 3);
     }
@@ -157,9 +167,11 @@ struct VMFunction
         return ((argumentPassedInFloatRegs >> explicitArg) & 1) == 1;
     }
 
+#ifdef JS_TRACE_LOGGING
     const char* name() const {
         return name_;
     }
+#endif
 
     // Return the stack size consumed by explicit arguments.
     size_t explicitStackSlots() const {
@@ -227,45 +239,83 @@ struct VMFunction
         return count;
     }
 
-    VMFunction()
-      : wrapped(nullptr),
-        name_(UnknownVMFunction),
-        explicitArgs(0),
-        argumentProperties(0),
-        argumentPassedInFloatRegs(0),
-        outParam(Type_Void),
-        returnType(Type_Void),
-        outParamRootType(RootNone),
-        extraValuesToPop(0)
-    {
-    }
-
-
+    constexpr
     VMFunction(void* wrapped, const char* name, uint32_t explicitArgs, uint32_t argumentProperties,
                uint32_t argumentPassedInFloatRegs, uint64_t argRootTypes,
                DataType outParam, RootType outParamRootType, DataType returnType,
-               uint32_t extraValuesToPop = 0, MaybeTailCall expectTailCall = NonTailCall)
-      : wrapped(wrapped),
+               uint8_t extraValuesToPop = 0, MaybeTailCall expectTailCall = NonTailCall)
+      : next(nullptr),
+        wrapped(wrapped),
+#ifdef JS_TRACE_LOGGING
         name_(name),
-        explicitArgs(explicitArgs),
+#endif
+        argumentRootTypes(argRootTypes),
         argumentProperties(argumentProperties),
         argumentPassedInFloatRegs(argumentPassedInFloatRegs),
+        explicitArgs(explicitArgs),
+        outParamRootType(outParamRootType),
         outParam(outParam),
         returnType(returnType),
-        argumentRootTypes(argRootTypes),
-        outParamRootType(outParamRootType),
         extraValuesToPop(extraValuesToPop),
         expectTailCall(expectTailCall)
+    { }
+
+    VMFunction(const VMFunction& o)
+      : next(nullptr),
+        wrapped(o.wrapped),
+#ifdef JS_TRACE_LOGGING
+        name_(o.name_),
+#endif
+        argumentRootTypes(o.argumentRootTypes),
+        argumentProperties(o.argumentProperties),
+        argumentPassedInFloatRegs(o.argumentPassedInFloatRegs),
+        explicitArgs(o.explicitArgs),
+        outParamRootType(o.outParamRootType),
+        outParam(o.outParam),
+        returnType(o.returnType),
+        extraValuesToPop(o.extraValuesToPop),
+        expectTailCall(o.expectTailCall)
     {
         // Check for valid failure/return type.
-        MOZ_ASSERT_IF(outParam != Type_Void, returnType == Type_Bool);
-        MOZ_ASSERT(returnType == Type_Bool ||
+        MOZ_ASSERT_IF(outParam != Type_Void,
+                      returnType == Type_Void ||
+                      returnType == Type_Bool);
+        MOZ_ASSERT(returnType == Type_Void ||
+                   returnType == Type_Bool ||
                    returnType == Type_Object);
+        addToFunctions();
     }
 
-    VMFunction(const VMFunction& o) {
-        *this = o;
-        addToFunctions();
+    typedef const VMFunction* Lookup;
+
+    static HashNumber hash(const VMFunction* f) {
+        // The hash is based on the wrapped function, not the VMFunction*, to
+        // avoid generating duplicate wrapper code.
+        HashNumber hash = 0;
+        hash = mozilla::AddToHash(hash, f->wrapped);
+        hash = mozilla::AddToHash(hash, f->expectTailCall);
+        return hash;
+    }
+    static bool match(const VMFunction* f1, const VMFunction* f2) {
+        if (f1->wrapped != f2->wrapped ||
+            f1->expectTailCall != f2->expectTailCall)
+        {
+            return false;
+        }
+
+        // If this starts failing, add extraValuesToPop to the if-statement and
+        // hash() method above.
+        MOZ_ASSERT(f1->extraValuesToPop == f2->extraValuesToPop);
+
+        MOZ_ASSERT(strcmp(f1->name_, f2->name_) == 0);
+        MOZ_ASSERT(f1->explicitArgs == f2->explicitArgs);
+        MOZ_ASSERT(f1->argumentProperties == f2->argumentProperties);
+        MOZ_ASSERT(f1->argumentPassedInFloatRegs == f2->argumentPassedInFloatRegs);
+        MOZ_ASSERT(f1->outParam == f2->outParam);
+        MOZ_ASSERT(f1->returnType == f2->returnType);
+        MOZ_ASSERT(f1->argumentRootTypes == f2->argumentRootTypes);
+        MOZ_ASSERT(f1->outParamRootType == f2->outParamRootType);
+        return true;
     }
 
   private:
@@ -274,13 +324,19 @@ struct VMFunction
 };
 
 template <class> struct TypeToDataType { /* Unexpected return type for a VMFunction. */ };
+template <> struct TypeToDataType<void> { static const DataType result = Type_Void; };
 template <> struct TypeToDataType<bool> { static const DataType result = Type_Bool; };
 template <> struct TypeToDataType<JSObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<JSFunction*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<NativeObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<PlainObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<InlineTypedObject*> { static const DataType result = Type_Object; };
-template <> struct TypeToDataType<DeclEnvObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<NamedLambdaObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<LexicalEnvironmentObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<ArrayObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<TypedArrayObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<ArrayIteratorObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<StringIteratorObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSString*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSFlatString*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<HandleObject> { static const DataType result = Type_Handle; };
@@ -292,11 +348,13 @@ template <> struct TypeToDataType<Handle<InlineTypedObject*> > { static const Da
 template <> struct TypeToDataType<Handle<ArrayObject*> > { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<Handle<GeneratorObject*> > { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<Handle<PlainObject*> > { static const DataType result = Type_Handle; };
-template <> struct TypeToDataType<Handle<StaticWithScope*> > { static const DataType result = Type_Handle; };
-template <> struct TypeToDataType<Handle<StaticBlockScope*> > { static const DataType result = Type_Handle; };
+template <> struct TypeToDataType<Handle<WithScope*> > { static const DataType result = Type_Handle; };
+template <> struct TypeToDataType<Handle<LexicalScope*> > { static const DataType result = Type_Handle; };
+template <> struct TypeToDataType<Handle<Scope*> > { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<HandleScript> { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<HandleValue> { static const DataType result = Type_Handle; };
 template <> struct TypeToDataType<MutableHandleValue> { static const DataType result = Type_Handle; };
+template <> struct TypeToDataType<HandleId> { static const DataType result = Type_Handle; };
 
 // Convert argument types to properties of the argument known by the jit.
 template <class T> struct TypeToArgProperties {
@@ -333,11 +391,17 @@ template <> struct TypeToArgProperties<Handle<GeneratorObject*> > {
 template <> struct TypeToArgProperties<Handle<PlainObject*> > {
     static const uint32_t result = TypeToArgProperties<PlainObject*>::result | VMFunction::ByRef;
 };
-template <> struct TypeToArgProperties<Handle<StaticWithScope*> > {
-    static const uint32_t result = TypeToArgProperties<StaticWithScope*>::result | VMFunction::ByRef;
+template <> struct TypeToArgProperties<Handle<RegExpObject*> > {
+    static const uint32_t result = TypeToArgProperties<RegExpObject*>::result | VMFunction::ByRef;
 };
-template <> struct TypeToArgProperties<Handle<StaticBlockScope*> > {
-    static const uint32_t result = TypeToArgProperties<StaticBlockScope*>::result | VMFunction::ByRef;
+template <> struct TypeToArgProperties<Handle<WithScope*> > {
+    static const uint32_t result = TypeToArgProperties<WithScope*>::result | VMFunction::ByRef;
+};
+template <> struct TypeToArgProperties<Handle<LexicalScope*> > {
+    static const uint32_t result = TypeToArgProperties<LexicalScope*>::result | VMFunction::ByRef;
+};
+template <> struct TypeToArgProperties<Handle<Scope*> > {
+    static const uint32_t result = TypeToArgProperties<Scope*>::result | VMFunction::ByRef;
 };
 template <> struct TypeToArgProperties<HandleScript> {
     static const uint32_t result = TypeToArgProperties<JSScript*>::result | VMFunction::ByRef;
@@ -347,6 +411,9 @@ template <> struct TypeToArgProperties<HandleValue> {
 };
 template <> struct TypeToArgProperties<MutableHandleValue> {
     static const uint32_t result = TypeToArgProperties<Value>::result | VMFunction::ByRef;
+};
+template <> struct TypeToArgProperties<HandleId> {
+    static const uint32_t result = TypeToArgProperties<jsid>::result | VMFunction::ByRef;
 };
 template <> struct TypeToArgProperties<HandleShape> {
     static const uint32_t result = TypeToArgProperties<Shape*>::result | VMFunction::ByRef;
@@ -375,7 +442,7 @@ template <> struct TypeToRootType<HandleString> {
     static const uint32_t result = VMFunction::RootString;
 };
 template <> struct TypeToRootType<HandlePropertyName> {
-    static const uint32_t result = VMFunction::RootPropertyName;
+    static const uint32_t result = VMFunction::RootString;
 };
 template <> struct TypeToRootType<HandleFunction> {
     static const uint32_t result = VMFunction::RootFunction;
@@ -385,6 +452,9 @@ template <> struct TypeToRootType<HandleValue> {
 };
 template <> struct TypeToRootType<MutableHandleValue> {
     static const uint32_t result = VMFunction::RootValue;
+};
+template <> struct TypeToRootType<HandleId> {
+    static const uint32_t result = VMFunction::RootId;
 };
 template <> struct TypeToRootType<HandleShape> {
     static const uint32_t result = VMFunction::RootCell;
@@ -410,10 +480,16 @@ template <> struct TypeToRootType<Handle<GeneratorObject*> > {
 template <> struct TypeToRootType<Handle<PlainObject*> > {
     static const uint32_t result = VMFunction::RootObject;
 };
-template <> struct TypeToRootType<Handle<StaticBlockScope*> > {
+template <> struct TypeToRootType<Handle<RegExpObject*> > {
     static const uint32_t result = VMFunction::RootObject;
 };
-template <> struct TypeToRootType<Handle<StaticWithScope*> > {
+template <> struct TypeToRootType<Handle<LexicalScope*> > {
+    static const uint32_t result = VMFunction::RootCell;
+};
+template <> struct TypeToRootType<Handle<WithScope*> > {
+    static const uint32_t result = VMFunction::RootCell;
+};
+template <> struct TypeToRootType<Handle<Scope*> > {
     static const uint32_t result = VMFunction::RootCell;
 };
 template <class T> struct TypeToRootType<Handle<T> > {
@@ -448,9 +524,6 @@ template <class> struct MatchContext { };
 template <> struct MatchContext<JSContext*> {
     static const bool valid = true;
 };
-template <> struct MatchContext<ExclusiveContext*> {
-    static const bool valid = true;
-};
 
 // Extract the last element of a list of types.
 template <typename... ArgTypes>
@@ -460,21 +533,21 @@ template <>
 struct LastArg<>
 {
     typedef void Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = 0;
+    static constexpr size_t nbArgs = 0;
 };
 
 template <typename HeadType>
 struct LastArg<HeadType>
 {
     typedef HeadType Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = 1;
+    static constexpr size_t nbArgs = 1;
 };
 
 template <typename HeadType, typename... TailTypes>
 struct LastArg<HeadType, TailTypes...>
 {
     typedef typename LastArg<TailTypes...>::Type Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = LastArg<TailTypes...>::nbArgs + 1;
+    static constexpr size_t nbArgs = LastArg<TailTypes...>::nbArgs + 1;
 };
 
 // Construct a bit mask from a list of types.  The mask is constructed as an OR
@@ -489,7 +562,7 @@ struct BitMask;
 template <template<typename> class Each, typename ResultType, size_t Shift>
 struct BitMask<Each, ResultType, Shift>
 {
-    static MOZ_CONSTEXPR_VAR ResultType result = ResultType();
+    static constexpr ResultType result = ResultType();
 };
 
 template <template<typename> class Each, typename ResultType, size_t Shift,
@@ -501,7 +574,7 @@ struct BitMask<Each, ResultType, Shift, HeadType, TailTypes...>
     static_assert(LastArg<TailTypes...>::nbArgs < (8 * sizeof(ResultType) / Shift),
                   "not enough bits in the result type to store all bit masks");
 
-    static MOZ_CONSTEXPR_VAR ResultType result =
+    static constexpr ResultType result =
         ResultType(Each<HeadType>::result) |
         (BitMask<Each, ResultType, Shift, TailTypes...>::result << Shift);
 };
@@ -540,23 +613,6 @@ struct FunctionInfo<R (*)(Context, Args...)> : public VMFunction
     }
     static uint64_t argumentRootTypes() {
         return BitMask<TypeToRootType, uint64_t, 3, Args...>::result;
-    }
-    explicit FunctionInfo(pf fun, PopValues extraValuesToPop = PopValues(0))
-        : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), UnknownVMFunction, explicitArgs(),
-                     argumentProperties(), argumentPassedInFloatRegs(),
-                     argumentRootTypes(), outParam(), outParamRootType(),
-                     returnType(), extraValuesToPop.numValues, NonTailCall)
-    {
-        static_assert(MatchContext<Context>::valid, "Invalid cx type in VMFunction");
-    }
-    explicit FunctionInfo(pf fun, MaybeTailCall expectTailCall,
-                          PopValues extraValuesToPop = PopValues(0))
-        : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), UnknownVMFunction, explicitArgs(),
-                     argumentProperties(), argumentPassedInFloatRegs(),
-                     argumentRootTypes(), outParam(), outParamRootType(),
-                     returnType(), extraValuesToPop.numValues, expectTailCall)
-    {
-        static_assert(MatchContext<Context>::valid, "Invalid cx type in VMFunction");
     }
     explicit FunctionInfo(pf fun, const char* name, PopValues extraValuesToPop = PopValues(0))
         : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), name, explicitArgs(),
@@ -600,18 +656,25 @@ class AutoDetectInvalidation
         disabled_ = true;
     }
 
+    bool shouldSetReturnOverride() const {
+        return !disabled_ && ionScript_->invalidated();
+    }
+
     ~AutoDetectInvalidation() {
-        if (!disabled_ && ionScript_->invalidated())
+        if (MOZ_UNLIKELY(shouldSetReturnOverride()))
             setReturnOverride();
     }
 };
 
 MOZ_MUST_USE bool
-InvokeFunction(JSContext* cx, HandleObject obj0, bool constructing, uint32_t argc, Value* argv,
-               MutableHandleValue rval);
+InvokeFunction(JSContext* cx, HandleObject obj0, bool constructing, bool ignoresReturnValue,
+               uint32_t argc, Value* argv, MutableHandleValue rval);
 MOZ_MUST_USE bool
 InvokeFunctionShuffleNewTarget(JSContext* cx, HandleObject obj, uint32_t numActualArgs,
                                uint32_t numFormalArgs, Value* argv, MutableHandleValue rval);
+
+class InterpreterStubExitFrameLayout;
+bool InvokeFromInterpreterStub(JSContext* cx, InterpreterStubExitFrameLayout* frame);
 
 bool CheckOverRecursed(JSContext* cx);
 bool CheckOverRecursedWithExtra(JSContext* cx, BaselineFrame* frame,
@@ -644,14 +707,21 @@ bool GreaterThanOrEqual(JSContext* cx, MutableHandleValue lhs, MutableHandleValu
 template<bool Equal>
 bool StringsEqual(JSContext* cx, HandleString left, HandleString right, bool* res);
 
+MOZ_MUST_USE bool StringSplitHelper(JSContext* cx, HandleString str, HandleString sep,
+                                    HandleObjectGroup group, uint32_t limit,
+                                    MutableHandleValue result);
+
 MOZ_MUST_USE bool ArrayPopDense(JSContext* cx, HandleObject obj, MutableHandleValue rval);
-MOZ_MUST_USE bool ArrayPushDense(JSContext* cx, HandleObject obj, HandleValue v, uint32_t* length);
+MOZ_MUST_USE bool ArrayPushDense(JSContext* cx, HandleArrayObject arr, HandleValue v,
+                                 uint32_t* length);
 MOZ_MUST_USE bool ArrayShiftDense(JSContext* cx, HandleObject obj, MutableHandleValue rval);
 JSString* ArrayJoin(JSContext* cx, HandleObject array, HandleString sep);
+MOZ_MUST_USE bool SetArrayLength(JSContext* cx, HandleObject obj, HandleValue value, bool strict);
 
 MOZ_MUST_USE bool
 CharCodeAt(JSContext* cx, HandleString str, int32_t index, uint32_t* code);
 JSFlatString* StringFromCharCode(JSContext* cx, int32_t code);
+JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint);
 
 MOZ_MUST_USE bool
 SetProperty(JSContext* cx, HandleObject obj, HandlePropertyName name, HandleValue value,
@@ -660,10 +730,9 @@ SetProperty(JSContext* cx, HandleObject obj, HandlePropertyName name, HandleValu
 MOZ_MUST_USE bool
 InterruptCheck(JSContext* cx);
 
-void* MallocWrapper(JSRuntime* rt, size_t nbytes);
-JSObject* NewCallObject(JSContext* cx, HandleShape shape, HandleObjectGroup group,
-                        uint32_t lexicalBegin);
-JSObject* NewSingletonCallObject(JSContext* cx, HandleShape shape, uint32_t lexicalBegin);
+void* MallocWrapper(JS::Zone* zone, size_t nbytes);
+JSObject* NewCallObject(JSContext* cx, HandleShape shape, HandleObjectGroup group);
+JSObject* NewSingletonCallObject(JSContext* cx, HandleShape shape);
 JSObject* NewStringObject(JSContext* cx, HandleString str);
 
 bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
@@ -678,10 +747,18 @@ CreateThis(JSContext* cx, HandleObject callee, HandleObject newTarget, MutableHa
 void GetDynamicName(JSContext* cx, JSObject* scopeChain, JSString* str, Value* vp);
 
 void PostWriteBarrier(JSRuntime* rt, JSObject* obj);
-void PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index);
 void PostGlobalWriteBarrier(JSRuntime* rt, JSObject* obj);
 
-uint32_t GetIndexFromString(JSString* str);
+enum class IndexInBounds { Yes, Maybe };
+
+template <IndexInBounds InBounds>
+void PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index);
+
+// If |str| is an index in the range [0, INT32_MAX], return it. If the string
+// is not an index in this range, return -1.
+int32_t GetIndexFromString(JSString* str);
+
+JSObject* WrapObjectPure(JSContext* cx, JSObject* obj);
 
 MOZ_MUST_USE bool
 DebugPrologue(JSContext* cx, BaselineFrame* frame, jsbytecode* pc, bool* mustReturn);
@@ -692,29 +769,32 @@ DebugEpilogueOnBaselineReturn(JSContext* cx, BaselineFrame* frame, jsbytecode* p
 void FrameIsDebuggeeCheck(BaselineFrame* frame);
 
 JSObject* CreateGenerator(JSContext* cx, BaselineFrame* frame);
+
 MOZ_MUST_USE bool
 NormalSuspend(JSContext* cx, HandleObject obj, BaselineFrame* frame, jsbytecode* pc,
               uint32_t stackDepth);
 MOZ_MUST_USE bool
-FinalSuspend(JSContext* cx, HandleObject obj, BaselineFrame* frame, jsbytecode* pc);
+FinalSuspend(JSContext* cx, HandleObject obj, jsbytecode* pc);
 MOZ_MUST_USE bool
 InterpretResume(JSContext* cx, HandleObject obj, HandleValue val, HandlePropertyName kind,
                 MutableHandleValue rval);
 MOZ_MUST_USE bool
 DebugAfterYield(JSContext* cx, BaselineFrame* frame);
 MOZ_MUST_USE bool
-GeneratorThrowOrClose(JSContext* cx, BaselineFrame* frame, Handle<GeneratorObject*> genObj,
-                      HandleValue arg, uint32_t resumeKind);
+GeneratorThrowOrReturn(JSContext* cx, BaselineFrame* frame, Handle<GeneratorObject*> genObj,
+                       HandleValue arg, uint32_t resumeKind);
 
 MOZ_MUST_USE bool
 GlobalNameConflictsCheckFromIon(JSContext* cx, HandleScript script);
 MOZ_MUST_USE bool
-InitGlobalOrEvalScopeObjects(JSContext* cx, BaselineFrame* frame);
+CheckGlobalOrEvalDeclarationConflicts(JSContext* cx, BaselineFrame* frame);
 MOZ_MUST_USE bool
-InitFunctionScopeObjects(JSContext* cx, BaselineFrame* frame);
+InitFunctionEnvironmentObjects(JSContext* cx, BaselineFrame* frame);
 
 MOZ_MUST_USE bool
 NewArgumentsObject(JSContext* cx, BaselineFrame* frame, MutableHandleValue res);
+
+JSObject* CopyLexicalEnvironmentObject(JSContext* cx, HandleObject env, bool copySlots);
 
 JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest, HandleObject templateObj,
                             HandleObject res);
@@ -727,32 +807,38 @@ MOZ_MUST_USE bool
 GlobalHasLiveOnDebuggerStatement(JSContext* cx);
 
 MOZ_MUST_USE bool
-EnterWith(JSContext* cx, BaselineFrame* frame, HandleValue val, Handle<StaticWithScope*> templ);
+EnterWith(JSContext* cx, BaselineFrame* frame, HandleValue val, Handle<WithScope*> templ);
 MOZ_MUST_USE bool
 LeaveWith(JSContext* cx, BaselineFrame* frame);
 
 MOZ_MUST_USE bool
-PushBlockScope(JSContext* cx, BaselineFrame* frame, Handle<StaticBlockScope*> block);
+PushLexicalEnv(JSContext* cx, BaselineFrame* frame, Handle<LexicalScope*> scope);
 MOZ_MUST_USE bool
-PopBlockScope(JSContext* cx, BaselineFrame* frame);
+PopLexicalEnv(JSContext* cx, BaselineFrame* frame);
 MOZ_MUST_USE bool
-DebugLeaveThenPopBlockScope(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
+DebugLeaveThenPopLexicalEnv(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
 MOZ_MUST_USE bool
-FreshenBlockScope(JSContext* cx, BaselineFrame* frame);
+FreshenLexicalEnv(JSContext* cx, BaselineFrame* frame);
 MOZ_MUST_USE bool
-DebugLeaveThenFreshenBlockScope(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
+DebugLeaveThenFreshenLexicalEnv(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
 MOZ_MUST_USE bool
-DebugLeaveBlock(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
+RecreateLexicalEnv(JSContext* cx, BaselineFrame* frame);
+MOZ_MUST_USE bool
+DebugLeaveThenRecreateLexicalEnv(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
+MOZ_MUST_USE bool
+DebugLeaveLexicalEnv(JSContext* cx, BaselineFrame* frame, jsbytecode* pc);
+
+MOZ_MUST_USE bool
+PushVarEnv(JSContext* cx, BaselineFrame* frame, HandleScope scope);
+MOZ_MUST_USE bool
+PopVarEnv(JSContext* cx, BaselineFrame* frame);
 
 MOZ_MUST_USE bool
 InitBaselineFrameForOsr(BaselineFrame* frame, InterpreterFrame* interpFrame,
-                        uint32_t numStackValues);
+                             uint32_t numStackValues);
 
 JSObject* CreateDerivedTypedObj(JSContext* cx, HandleObject descr,
                                 HandleObject owner, int32_t offset);
-
-MOZ_MUST_USE bool
-ArraySpliceDense(JSContext* cx, HandleObject obj, uint32_t start, uint32_t deleteCount);
 
 MOZ_MUST_USE bool
 Recompile(JSContext* cx);
@@ -761,8 +847,8 @@ ForcedRecompile(JSContext* cx);
 JSString* StringReplace(JSContext* cx, HandleString string, HandleString pattern,
                         HandleString repl);
 
-MOZ_MUST_USE bool SetDenseOrUnboxedArrayElement(JSContext* cx, HandleObject obj, int32_t index,
-                                                HandleValue value, bool strict);
+MOZ_MUST_USE bool SetDenseElement(JSContext* cx, HandleNativeObject obj, int32_t index,
+                                  HandleValue value, bool strict);
 
 void AssertValidObjectPtr(JSContext* cx, JSObject* obj);
 void AssertValidObjectOrNullPtr(JSContext* cx, JSObject* obj);
@@ -770,27 +856,27 @@ void AssertValidStringPtr(JSContext* cx, JSString* str);
 void AssertValidSymbolPtr(JSContext* cx, JS::Symbol* sym);
 void AssertValidValue(JSContext* cx, Value* v);
 
-void MarkValueFromIon(JSRuntime* rt, Value* vp);
-void MarkStringFromIon(JSRuntime* rt, JSString** stringp);
-void MarkObjectFromIon(JSRuntime* rt, JSObject** objp);
-void MarkShapeFromIon(JSRuntime* rt, Shape** shapep);
-void MarkObjectGroupFromIon(JSRuntime* rt, ObjectGroup** groupp);
+void MarkValueFromJit(JSRuntime* rt, Value* vp);
+void MarkStringFromJit(JSRuntime* rt, JSString** stringp);
+void MarkObjectFromJit(JSRuntime* rt, JSObject** objp);
+void MarkShapeFromJit(JSRuntime* rt, Shape** shapep);
+void MarkObjectGroupFromJit(JSRuntime* rt, ObjectGroup** groupp);
 
 // Helper for generatePreBarrier.
 inline void*
-IonMarkFunction(MIRType type)
+JitMarkFunction(MIRType type)
 {
     switch (type) {
       case MIRType::Value:
-        return JS_FUNC_TO_DATA_PTR(void*, MarkValueFromIon);
+        return JS_FUNC_TO_DATA_PTR(void*, MarkValueFromJit);
       case MIRType::String:
-        return JS_FUNC_TO_DATA_PTR(void*, MarkStringFromIon);
+        return JS_FUNC_TO_DATA_PTR(void*, MarkStringFromJit);
       case MIRType::Object:
-        return JS_FUNC_TO_DATA_PTR(void*, MarkObjectFromIon);
+        return JS_FUNC_TO_DATA_PTR(void*, MarkObjectFromJit);
       case MIRType::Shape:
-        return JS_FUNC_TO_DATA_PTR(void*, MarkShapeFromIon);
+        return JS_FUNC_TO_DATA_PTR(void*, MarkShapeFromJit);
       case MIRType::ObjectGroup:
-        return JS_FUNC_TO_DATA_PTR(void*, MarkObjectGroupFromIon);
+        return JS_FUNC_TO_DATA_PTR(void*, MarkObjectGroupFromJit);
       default: MOZ_CRASH();
     }
 }
@@ -800,8 +886,16 @@ bool ObjectIsConstructor(JSObject* obj);
 
 MOZ_MUST_USE bool
 ThrowRuntimeLexicalError(JSContext* cx, unsigned errorNumber);
+
+MOZ_MUST_USE bool
+ThrowReadOnlyError(JSContext* cx, HandleObject obj, int32_t index);
+
 MOZ_MUST_USE bool
 BaselineThrowUninitializedThis(JSContext* cx, BaselineFrame* frame);
+
+MOZ_MUST_USE bool
+BaselineThrowInitializedThis(JSContext* cx);
+
 MOZ_MUST_USE bool
 ThrowBadDerivedReturn(JSContext* cx, HandleValue v);
 
@@ -810,6 +904,53 @@ ThrowObjectCoercible(JSContext* cx, HandleValue v);
 
 MOZ_MUST_USE bool
 BaselineGetFunctionThis(JSContext* cx, BaselineFrame* frame, MutableHandleValue res);
+
+MOZ_MUST_USE bool
+CallNativeGetter(JSContext* cx, HandleFunction callee, HandleObject obj,
+                 MutableHandleValue result);
+
+MOZ_MUST_USE bool
+CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
+                 HandleValue rhs);
+
+MOZ_MUST_USE bool
+EqualStringsHelper(JSString* str1, JSString* str2);
+
+MOZ_MUST_USE bool
+CheckIsCallable(JSContext* cx, HandleValue v, CheckIsCallableKind kind);
+
+template <bool HandleMissing>
+bool
+GetNativeDataProperty(JSContext* cx, JSObject* obj, PropertyName* name, Value* vp);
+
+template <bool HandleMissing>
+bool
+GetNativeDataPropertyByValue(JSContext* cx, JSObject* obj, Value* vp);
+
+template <bool HasOwn>
+bool
+HasNativeDataProperty(JSContext* cx, JSObject* obj, Value* vp);
+
+bool
+HasNativeElement(JSContext* cx, NativeObject* obj, int32_t index, Value* vp);
+
+template <bool NeedsTypeBarrier>
+bool
+SetNativeDataProperty(JSContext* cx, JSObject* obj, PropertyName* name, Value* val);
+
+bool
+ObjectHasGetterSetter(JSContext* cx, JSObject* obj, Shape* propShape);
+
+JSString*
+TypeOfObject(JSObject* obj, JSRuntime* rt);
+
+bool
+GetPrototypeOf(JSContext* cx, HandleObject target, MutableHandleValue rval);
+
+void
+CloseIteratorFromIon(JSContext* cx, JSObject* obj);
+
+extern const VMFunction SetObjectElementInfo;
 
 } // namespace jit
 } // namespace js

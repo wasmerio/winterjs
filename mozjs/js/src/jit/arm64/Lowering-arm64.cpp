@@ -30,6 +30,12 @@ LIRGeneratorARM64::useByteOpRegister(MDefinition* mir)
 }
 
 LAllocation
+LIRGeneratorARM64::useByteOpRegisterAtStart(MDefinition* mir)
+{
+    MOZ_CRASH("useByteOpRegister");
+}
+
+LAllocation
 LIRGeneratorARM64::useByteOpRegisterOrNonDoubleConstant(MDefinition* mir)
 {
     MOZ_CRASH("useByteOpRegisterOrNonDoubleConstant");
@@ -95,11 +101,25 @@ LIRGeneratorARM64::lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_P
 }
 
 void
-LIRGeneratorARM64::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 0>* ins,
+LIRGeneratorARM64::lowerForMulInt64(LMulI64* ins, MMul* mir, MDefinition* lhs, MDefinition* rhs)
+{
+    MOZ_CRASH("NYI");
+}
+
+template<size_t Temps>
+void
+LIRGeneratorARM64::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, Temps>* ins,
                                       MDefinition* mir, MDefinition* lhs, MDefinition* rhs)
 {
     MOZ_CRASH("NYI");
 }
+
+template void LIRGeneratorARM64::lowerForShiftInt64(
+    LInstructionHelper<INT64_PIECES, INT64_PIECES+1, 0>* ins, MDefinition* mir,
+    MDefinition* lhs, MDefinition* rhs);
+template void LIRGeneratorARM64::lowerForShiftInt64(
+    LInstructionHelper<INT64_PIECES, INT64_PIECES+1, 1>* ins, MDefinition* mir,
+    MDefinition* lhs, MDefinition* rhs);
 
 void
 LIRGeneratorARM64::lowerForBitAndAndBranch(LBitAndAndBranch* baab, MInstruction* mir,
@@ -178,33 +198,21 @@ LIRGeneratorARM64::newLTableSwitchV(MTableSwitch* tableswitch)
 }
 
 void
-LIRGeneratorARM64::visitGuardShape(MGuardShape* ins)
-{
-    MOZ_CRASH("visitGuardShape");
-}
-
-void
-LIRGeneratorARM64::visitGuardObjectGroup(MGuardObjectGroup* ins)
-{
-    MOZ_CRASH("visitGuardObjectGroup");
-}
-
-void
 LIRGeneratorARM64::lowerUrshD(MUrsh* mir)
 {
     MOZ_CRASH("lowerUrshD");
 }
 
 void
-LIRGeneratorARM64::visitAsmJSNeg(MAsmJSNeg* ins)
+LIRGeneratorARM64::visitWasmNeg(MWasmNeg* ins)
 {
-    MOZ_CRASH("visitAsmJSNeg");
+    MOZ_CRASH("visitWasmNeg");
 }
 
 void
-LIRGeneratorARM64::visitAsmSelect(MAsmSelect* ins)
+LIRGeneratorARM64::visitWasmSelect(MWasmSelect* ins)
 {
-    MOZ_CRASH("visitAsmSelect");
+    MOZ_CRASH("visitWasmSelect");
 }
 
 void
@@ -220,15 +228,15 @@ LIRGeneratorARM64::lowerUMod(MMod* mod)
 }
 
 void
-LIRGeneratorARM64::visitAsmJSUnsignedToDouble(MAsmJSUnsignedToDouble* ins)
+LIRGeneratorARM64::visitWasmUnsignedToDouble(MWasmUnsignedToDouble* ins)
 {
-    MOZ_CRASH("visitAsmJSUnsignedToDouble");
+    MOZ_CRASH("visitWasmUnsignedToDouble");
 }
 
 void
-LIRGeneratorARM64::visitAsmJSUnsignedToFloat32(MAsmJSUnsignedToFloat32* ins)
+LIRGeneratorARM64::visitWasmUnsignedToFloat32(MWasmUnsignedToFloat32* ins)
 {
-    MOZ_CRASH("visitAsmJSUnsignedToFloat32");
+    MOZ_CRASH("visitWasmUnsignedToFloat32");
 }
 
 void
@@ -244,27 +252,21 @@ LIRGeneratorARM64::visitAsmJSStoreHeap(MAsmJSStoreHeap* ins)
 }
 
 void
-LIRGeneratorARM64::visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr* ins)
+LIRGeneratorARM64::visitWasmCompareExchangeHeap(MWasmCompareExchangeHeap* ins)
 {
-    MOZ_CRASH("visitAsmJSLoadFuncPtr");
+    MOZ_CRASH("visitWasmCompareExchangeHeap");
 }
 
 void
-LIRGeneratorARM64::visitAsmJSCompareExchangeHeap(MAsmJSCompareExchangeHeap* ins)
+LIRGeneratorARM64::visitWasmAtomicExchangeHeap(MWasmAtomicExchangeHeap* ins)
 {
-    MOZ_CRASH("visitAsmJSCompareExchangeHeap");
+    MOZ_CRASH("visitWasmAtomicExchangeHeap");
 }
 
 void
-LIRGeneratorARM64::visitAsmJSAtomicExchangeHeap(MAsmJSAtomicExchangeHeap* ins)
+LIRGeneratorARM64::visitWasmAtomicBinopHeap(MWasmAtomicBinopHeap* ins)
 {
-    MOZ_CRASH("visitAsmJSAtomicExchangeHeap");
-}
-
-void
-LIRGeneratorARM64::visitAsmJSAtomicBinopHeap(MAsmJSAtomicBinopHeap* ins)
-{
-    MOZ_CRASH("visitAsmJSAtomicBinopHeap");
+    MOZ_CRASH("visitWasmAtomicBinopHeap");
 }
 
 void
@@ -277,12 +279,6 @@ void
 LIRGeneratorARM64::lowerTruncateFToInt32(MTruncateToInt32* ins)
 {
     MOZ_CRASH("lowerTruncateFToInt32");
-}
-
-void
-LIRGeneratorARM64::visitStoreTypedArrayElementStatic(MStoreTypedArrayElementStatic* ins)
-{
-    MOZ_CRASH("NYI");
 }
 
 void
@@ -325,6 +321,18 @@ LIRGeneratorARM64::visitWasmTruncateToInt64(MWasmTruncateToInt64* ins)
 }
 
 void
+LIRGeneratorARM64::visitWasmLoad(MWasmLoad* ins)
+{
+    MOZ_CRASH("NY");
+}
+
+void
+LIRGeneratorARM64::visitWasmStore(MWasmStore* ins)
+{
+    MOZ_CRASH("NY");
+}
+
+void
 LIRGeneratorARM64::visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins)
 {
     MOZ_CRASH("NY");
@@ -334,4 +342,16 @@ void
 LIRGeneratorARM64::visitCopySign(MCopySign* ins)
 {
     MOZ_CRASH("NY");
+}
+
+void
+LIRGeneratorARM64::visitExtendInt32ToInt64(MExtendInt32ToInt64* ins)
+{
+    MOZ_CRASH("NYI");
+}
+
+void
+LIRGeneratorARM64::visitSignExtendInt64(MSignExtendInt64* ins)
+{
+    MOZ_CRASH("NYI");
 }

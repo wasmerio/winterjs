@@ -431,8 +431,7 @@ ValueNumberer::fixupOSROnlyLoop(MBasicBlock* block, MBasicBlock* backedge)
     // which is hard, especially if the OSR is into a nested loop. Doing all
     // that would produce slightly more optimal code, but this is so
     // extraordinarily rare that it isn't worth the complexity.
-    MBasicBlock* fake = MBasicBlock::NewAsmJS(graph_, block->info(),
-                                              nullptr, MBasicBlock::NORMAL);
+    MBasicBlock* fake = MBasicBlock::New(graph_, block->info(), nullptr, MBasicBlock::NORMAL);
     if (fake == nullptr)
         return false;
 
@@ -481,6 +480,7 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
     for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd()); iter != end; ) {
         MPhi* phi = *iter++;
         MOZ_ASSERT(!values_.has(phi), "Visited phi in block having predecessor removed");
+        MOZ_ASSERT(!phi->isGuard());
 
         MDefinition* op = phi->getOperand(predIndex);
         phi->removeOperand(predIndex);
@@ -489,9 +489,9 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
         if (!handleUseReleased(op, DontSetUseRemoved) || !processDeadDefs())
             return false;
 
-        // If |nextDef_| became dead while we had it pinned, advance the iterator
-        // and discard it now.
-        while (nextDef_ && !nextDef_->hasUses()) {
+        // If |nextDef_| became dead while we had it pinned, advance the
+        // iterator and discard it now.
+        while (nextDef_ && !nextDef_->hasUses() && !nextDef_->isGuardRangeBailouts()) {
             phi = nextDef_->toPhi();
             iter++;
             nextDef_ = iter != end ? *iter : nullptr;
@@ -582,7 +582,7 @@ ValueNumberer::removePredecessorAndCleanUp(MBasicBlock* block, MBasicBlock* pred
             MOZ_ASSERT(nextDef_ == nullptr);
             for (MInstructionIterator iter(block->begin()), end(block->end()); iter != end; ) {
                 MInstruction* ins = *iter++;
-                nextDef_ = *iter;
+                nextDef_ = iter != end ? *iter : nullptr;
                 if (MResumePoint* resume = ins->resumePoint()) {
                     if (!releaseResumePointOperands(resume) || !processDeadDefs())
                         return false;
@@ -728,7 +728,8 @@ ValueNumberer::visitDefinition(MDefinition* def)
         MResumePoint* rp = nop->resumePoint();
         if (rp && rp->numOperands() > 0 &&
             rp->getOperand(rp->numOperands() - 1) == prev &&
-            !nop->block()->lastIns()->isThrow())
+            !nop->block()->lastIns()->isThrow() &&
+            !prev->isAssertRecoveredOnBailout())
         {
             size_t numOperandsLive = 0;
             for (size_t j = 0; j < prev->numOperands(); j++) {
@@ -797,6 +798,9 @@ ValueNumberer::visitDefinition(MDefinition* def)
         // needed, so we can clear |def|'s guard flag and let it be discarded.
         def->setNotGuardUnchecked();
 
+        if (def->isGuardRangeBailouts())
+            sim->setGuardRangeBailoutsUnchecked();
+
         if (DeadIfUnused(def)) {
             if (!discardDefsRecursively(def))
                 return false;
@@ -804,6 +808,12 @@ ValueNumberer::visitDefinition(MDefinition* def)
             // If that ended up discarding |sim|, then we're done here.
             if (sim->isDiscarded())
                 return true;
+        }
+
+        if (!rerun_ && def->isPhi() && !sim->isPhi()) {
+            rerun_ = true;
+            JitSpew(JitSpew_GVN, "      Replacing phi%u may have enabled cascading optimisations; "
+                                 "will re-run", def->id());
         }
 
         // Otherwise, procede to optimize with |sim| in place of |def|.
@@ -857,7 +867,7 @@ ValueNumberer::visitDefinition(MDefinition* def)
 
 // Visit the control instruction at the end of |block|.
 bool
-ValueNumberer::visitControlInstruction(MBasicBlock* block, const MBasicBlock* dominatorRoot)
+ValueNumberer::visitControlInstruction(MBasicBlock* block)
 {
     // Look for a simplified form of the control instruction.
     MControlInstruction* control = block->lastIns();
@@ -948,7 +958,7 @@ ValueNumberer::visitUnreachableBlock(MBasicBlock* block)
         MDefinition* def = *iter++;
         if (def->hasUses())
             continue;
-        nextDef_ = *iter;
+        nextDef_ = iter ? *iter : nullptr;
         if (!discardDefsRecursively(def))
             return false;
     }
@@ -960,7 +970,7 @@ ValueNumberer::visitUnreachableBlock(MBasicBlock* block)
 
 // Visit all the phis and instructions |block|.
 bool
-ValueNumberer::visitBlock(MBasicBlock* block, const MBasicBlock* dominatorRoot)
+ValueNumberer::visitBlock(MBasicBlock* block)
 {
     MOZ_ASSERT(!block->isMarked(), "Blocks marked unreachable during GVN");
     MOZ_ASSERT(!block->isDead(), "Block to visit is already dead");
@@ -975,7 +985,7 @@ ValueNumberer::visitBlock(MBasicBlock* block, const MBasicBlock* dominatorRoot)
         MDefinition* def = *iter++;
 
         // Remember where our iterator is so that we don't invalidate it.
-        nextDef_ = *iter;
+        nextDef_ = iter ? *iter : nullptr;
 
         // If the definition is dead, discard it.
         if (IsDiscardable(def)) {
@@ -989,14 +999,17 @@ ValueNumberer::visitBlock(MBasicBlock* block, const MBasicBlock* dominatorRoot)
     }
     nextDef_ = nullptr;
 
-    return visitControlInstruction(block, dominatorRoot);
+    if (!graph_.alloc().ensureBallast())
+        return false;
+
+    return visitControlInstruction(block);
 }
 
 // Visit all the blocks dominated by dominatorRoot.
 bool
 ValueNumberer::visitDominatorTree(MBasicBlock* dominatorRoot)
 {
-    JitSpew(JitSpew_GVN, "  Visiting dominator tree (with %llu blocks) rooted at block%u%s",
+    JitSpew(JitSpew_GVN, "  Visiting dominator tree (with %" PRIu64 " blocks) rooted at block%u%s",
             uint64_t(dominatorRoot->numDominated()), dominatorRoot->id(),
             dominatorRoot == graph_.entryBlock() ? " (normal entry block)" :
             dominatorRoot == graph_.osrBlock() ? " (OSR entry block)" :
@@ -1029,7 +1042,7 @@ ValueNumberer::visitDominatorTree(MBasicBlock* dominatorRoot)
             ++numDiscarded;
         } else {
             // Visit the block!
-            if (!visitBlock(block, dominatorRoot))
+            if (!visitBlock(block))
                 return false;
             ++numVisited;
         }
@@ -1222,7 +1235,7 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
 {
     updateAliasAnalysis_ = updateAliasAnalysis == UpdateAliasAnalysis;
 
-    JitSpew(JitSpew_GVN, "Running GVN on graph (with %llu blocks)",
+    JitSpew(JitSpew_GVN, "Running GVN on graph (with %" PRIu64 " blocks)",
             uint64_t(graph_.numBlocks()));
 
     // Adding fixup blocks only make sense iff we have a second entry point into
@@ -1282,7 +1295,7 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
             break;
         }
 
-        JitSpew(JitSpew_GVN, "Re-running GVN on graph (run %d, now with %llu blocks)",
+        JitSpew(JitSpew_GVN, "Re-running GVN on graph (run %d, now with %" PRIu64 " blocks)",
                 runs, uint64_t(graph_.numBlocks()));
     }
 

@@ -54,8 +54,6 @@ BEGIN_TEST(testGCCellPtr)
     JS::GCCellPtr copy = objcell;
     CHECK(copy == objcell);
 
-    CHECK(js::gc::detail::GetGCThingRuntime(scriptcell.unsafeAsUIntPtr()) == rt);
-
     return true;
 }
 END_TEST(testGCCellPtr)

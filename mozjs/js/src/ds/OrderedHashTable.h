@@ -29,12 +29,15 @@
  *
  * See the comment about "Hash policy" in HashTable.h for general features that
  * hash policy classes must provide. Hash policies for OrderedHashMaps and Sets
- * must additionally provide a distinguished "empty" key value and the
+ * differ in that the hash() method takes an extra argument:
+ *     static js::HashNumber hash(Lookup, const HashCodeScrambler&);
+ * They must additionally provide a distinguished "empty" key value and the
  * following static member functions:
  *     bool isEmpty(const Key&);
  *     void makeEmpty(Key*);
  */
 
+#include "mozilla/HashFunctions.h"
 #include "mozilla/Move.h"
 
 using mozilla::Forward;
@@ -76,12 +79,37 @@ class OrderedHashTable
     uint32_t dataCapacity;      // size of data, in elements
     uint32_t liveCount;         // dataLength less empty (removed) entries
     uint32_t hashShift;         // multiplicative hash shift
-    Range* ranges;              // list of all live Ranges on this table
+    Range* ranges;              // list of all live Ranges on this table in malloc memory
+    Range* nurseryRanges;       // list of all live Ranges on this table in the GC nursery
     AllocPolicy alloc;
+    mozilla::HashCodeScrambler hcs;  // don't reveal pointer hash codes
+
+    // TODO: This should be templated on a functor type and receive lambda
+    // arguments but this causes problems for the hazard analysis builds. See
+    // bug 1398213.
+    template <void (*f)(Range* range, uint32_t arg)>
+    void forEachRange(uint32_t arg = 0) {
+        Range* next;
+        for (Range* r = ranges; r; r = next) {
+            next = r->next;
+            f(r, arg);
+        }
+        for (Range* r = nurseryRanges; r; r = next) {
+            next = r->next;
+            f(r, arg);
+        }
+    }
 
   public:
-    explicit OrderedHashTable(AllocPolicy& ap)
-        : hashTable(nullptr), data(nullptr), dataLength(0), ranges(nullptr), alloc(ap) {}
+    OrderedHashTable(AllocPolicy& ap, mozilla::HashCodeScrambler hcs)
+      : hashTable(nullptr),
+        data(nullptr),
+        dataLength(0),
+        ranges(nullptr),
+        nurseryRanges(nullptr),
+        alloc(ap),
+        hcs(hcs)
+    {}
 
     MOZ_MUST_USE bool init() {
         MOZ_ASSERT(!hashTable, "init must be called at most once");
@@ -113,11 +141,7 @@ class OrderedHashTable
     }
 
     ~OrderedHashTable() {
-        for (Range* r = ranges; r; ) {
-            Range* next = r->next;
-            r->onTableDestroyed();
-            r = next;
-        }
+        forEachRange<Range::onTableDestroyed>();
         alloc.free_(hashTable);
         freeData(data, dataLength);
     }
@@ -200,8 +224,7 @@ class OrderedHashTable
 
         // Update active Ranges.
         uint32_t pos = e - data;
-        for (Range* r = ranges; r; r = r->next)
-            r->onRemove(pos);
+        forEachRange<&Range::onRemove>(pos);
 
         // If many entries have been removed, try to shrink the table.
         if (hashBuckets() > initialBuckets() && liveCount < dataLength * minDataFill()) {
@@ -236,8 +259,7 @@ class OrderedHashTable
 
             alloc.free_(oldHashTable);
             freeData(oldData, oldDataLength);
-            for (Range* r = ranges; r; r = r->next)
-                r->onClear();
+            forEachRange<&Range::onClear>();
         }
 
         MOZ_ASSERT(hashTable);
@@ -314,7 +336,9 @@ class OrderedHashTable
          * Create a Range over all the entries in ht.
          * (This is private on purpose. End users must use ht->all().)
          */
-        explicit Range(OrderedHashTable* ht) : ht(ht), i(0), count(0), prevp(&ht->ranges), next(ht->ranges) {
+        Range(OrderedHashTable* ht, Range** listp)
+          : ht(ht), i(0), count(0), prevp(listp), next(*listp)
+        {
             *prevp = this;
             if (next)
                 next->prevp = &next;
@@ -432,8 +456,8 @@ class OrderedHashTable
         void rekeyFront(const Key& k) {
             MOZ_ASSERT(valid());
             Data& entry = ht->data[i];
-            HashNumber oldHash = prepareHash(Ops::getKey(entry.element)) >> ht->hashShift;
-            HashNumber newHash = prepareHash(k) >> ht->hashShift;
+            HashNumber oldHash = ht->prepareHash(Ops::getKey(entry.element)) >> ht->hashShift;
+            HashNumber newHash = ht->prepareHash(k) >> ht->hashShift;
             Ops::setKey(entry.element, k);
             if (newHash != oldHash) {
                 // Remove this entry from its old hash chain. (If this crashes
@@ -475,9 +499,39 @@ class OrderedHashTable
         static size_t offsetOfNext() {
             return offsetof(Range, next);
         }
+
+        static void onTableDestroyed(Range* range, uint32_t arg) {
+            range->onTableDestroyed();
+        }
+        static void onRemove(Range* range, uint32_t arg) {
+            range->onRemove(arg);
+        }
+        static void onClear(Range* range, uint32_t arg) {
+            range->onClear();
+        }
+        static void onCompact(Range* range, uint32_t arg) {
+            range->onCompact();
+        }
     };
 
-    Range all() { return Range(this); }
+    Range all() { return Range(this, &ranges); }
+
+    /*
+     * Allocate a new Range, possibly in nursery memory. The buffer must be
+     * large enough to hold a Range object.
+     *
+     * All nursery-allocated ranges can be freed in one go by calling
+     * destroyNurseryRanges().
+     */
+    Range* createRange(void* buffer, bool inNursery) {
+        auto range = static_cast<Range*>(buffer);
+        new (range) Range(this, inNursery ? &nurseryRanges : &ranges);
+        return range;
+    }
+
+    void destroyNurseryRanges() {
+        nurseryRanges = nullptr;
+    }
 
     /*
      * Change the value of the given key.
@@ -528,11 +582,14 @@ class OrderedHashTable
     static size_t offsetOfData() {
         return offsetof(OrderedHashTable, data);
     }
-#ifdef DEBUG
-    static size_t sizeofData() {
+    static constexpr size_t offsetOfDataElement() {
+        static_assert(offsetof(Data, element) == 0,
+                      "RangeFront and RangePopFront depend on offsetof(Data, element) being 0");
+        return offsetof(Data, element);
+    }
+    static constexpr size_t sizeofData() {
         return sizeof(Data);
     }
-#endif
 
   private:
     /* Logarithm base 2 of the number of buckets in the hash table initially. */
@@ -557,10 +614,12 @@ class OrderedHashTable
      */
     static double minDataFill() { return 0.25; }
 
-    static HashNumber prepareHash(const Lookup& l) {
-        return ScrambleHashCode(Ops::hash(l));
+  public:
+    HashNumber prepareHash(const Lookup& l) const {
+        return ScrambleHashCode(Ops::hash(l, hcs));
     }
 
+  private:
     /* The size of hashTable, in elements. Always a power of two. */
     uint32_t hashBuckets() const {
         return 1 << (HashNumberSizeBits - hashShift);
@@ -592,8 +651,7 @@ class OrderedHashTable
     void compacted() {
         // If we had any empty entries, compacting may have moved live entries
         // to the left within |data|. Notify all live Ranges of the change.
-        for (Range* r = ranges; r; r = r->next)
-            r->onCompact();
+        forEachRange<&Range::onCompact>();
     }
 
     /* Compact the entries in |data| and rehash them. */
@@ -739,7 +797,7 @@ class OrderedHashMap
   public:
     typedef typename Impl::Range Range;
 
-    explicit OrderedHashMap(AllocPolicy ap = AllocPolicy()) : impl(ap) {}
+    OrderedHashMap(AllocPolicy ap, mozilla::HashCodeScrambler hcs) : impl(ap, hcs) {}
     MOZ_MUST_USE bool init()                        { return impl.init(); }
     uint32_t count() const                          { return impl.count(); }
     bool has(const Key& key) const                  { return impl.has(key); }
@@ -754,6 +812,8 @@ class OrderedHashMap
         return impl.put(Entry(key, Forward<V>(value)));
     }
 
+    HashNumber hash(const Key& key) const { return impl.prepareHash(key); }
+
     void rekeyOneEntry(const Key& current, const Key& newKey) {
         const Entry* e = get(current);
         if (!e)
@@ -761,17 +821,29 @@ class OrderedHashMap
         return impl.rekeyOneEntry(current, newKey, Entry(newKey, e->value));
     }
 
+    Range* createRange(void* buffer, bool inNursery) {
+        return impl.createRange(buffer, inNursery);
+    }
+
+    void destroyNurseryRanges() {
+        impl.destroyNurseryRanges();
+    }
+
+    static size_t offsetOfEntryKey() {
+        return Entry::offsetOfKey();
+    }
     static size_t offsetOfImplDataLength() {
         return Impl::offsetOfDataLength();
     }
     static size_t offsetOfImplData() {
         return Impl::offsetOfData();
     }
-#ifdef DEBUG
-    static size_t sizeofImplData() {
+    static constexpr size_t offsetOfImplDataElement() {
+        return Impl::offsetOfDataElement();
+    }
+    static constexpr size_t sizeofImplData() {
         return Impl::sizeofData();
     }
-#endif
 };
 
 template <class T, class OrderedHashPolicy, class AllocPolicy>
@@ -791,7 +863,7 @@ class OrderedHashSet
   public:
     typedef typename Impl::Range Range;
 
-    explicit OrderedHashSet(AllocPolicy ap = AllocPolicy()) : impl(ap) {}
+    explicit OrderedHashSet(AllocPolicy ap, mozilla::HashCodeScrambler hcs) : impl(ap, hcs) {}
     MOZ_MUST_USE bool init()                        { return impl.init(); }
     uint32_t count() const                          { return impl.count(); }
     bool has(const T& value) const                  { return impl.has(value); }
@@ -800,8 +872,34 @@ class OrderedHashSet
     bool remove(const T& value, bool* foundp)       { return impl.remove(value, foundp); }
     MOZ_MUST_USE bool clear()                       { return impl.clear(); }
 
+    HashNumber hash(const T& value) const { return impl.prepareHash(value); }
+
     void rekeyOneEntry(const T& current, const T& newKey) {
         return impl.rekeyOneEntry(current, newKey, newKey);
+    }
+
+    Range* createRange(void* buffer, bool inNursery) {
+        return impl.createRange(buffer, inNursery);
+    }
+
+    void destroyNurseryRanges() {
+        impl.destroyNurseryRanges();
+    }
+
+    static size_t offsetOfEntryKey() {
+        return 0;
+    }
+    static size_t offsetOfImplDataLength() {
+        return Impl::offsetOfDataLength();
+    }
+    static size_t offsetOfImplData() {
+        return Impl::offsetOfData();
+    }
+    static constexpr size_t offsetOfImplDataElement() {
+        return Impl::offsetOfDataElement();
+    }
+    static constexpr size_t sizeofImplData() {
+        return Impl::sizeofData();
     }
 };
 

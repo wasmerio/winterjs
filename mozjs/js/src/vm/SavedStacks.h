@@ -10,10 +10,11 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/FastBernoulliTrial.h"
 
-#include "jscntxt.h"
 #include "jsmath.h"
-#include "jswrapper.h"
+
 #include "js/HashTable.h"
+#include "js/Wrapper.h"
+#include "vm/JSContext.h"
 #include "vm/SavedFrame.h"
 #include "vm/Stack.h"
 
@@ -82,35 +83,35 @@ namespace js {
 //
 // Consider the following diagram:
 //
-//                                              Content Compartment
-//                                    +---------------------------------------+
-//                                    |                                       |
-//                                    |           +------------------------+  |
-//      Chrome Compartment            |           |                        |  |
-//    +--------------------+          |           | SavedFrame C (content) |  |
-//    |                    |          |           |                        |  |
-//    |                  +--------------+         +------------------------+  |
-//    |                  |              |                    ^                |
-//    |     var x -----> | Xray Wrapper |-----.              |                |
-//    |                  |              |     |              |                |
-//    |                  +--------------+     |   +------------------------+  |
-//    |                    |          |       |   |                        |  |
-//    |                  +--------------+     |   | SavedFrame B (content) |  |
-//    |                  |              |     |   |                        |  |
-//    |     var y -----> | CCW (waived) |--.  |   +------------------------+  |
-//    |                  |              |  |  |              ^                |
-//    |                  +--------------+  |  |              |                |
-//    |                    |          |    |  |              |                |
-//    +--------------------+          |    |  |   +------------------------+  |
-//                                    |    |  '-> |                        |  |
-//                                    |    |      | SavedFrame A (chrome)  |  |
-//                                    |    '----> |                        |  |
-//                                    |           +------------------------+  |
-//                                    |                      ^                |
-//                                    |                      |                |
-//                                    |           var z -----'                |
-//                                    |                                       |
-//                                    +---------------------------------------+
+//                                              Content Compartment
+//                                    +---------------------------------------+
+//                                    |                                       |
+//                                    |           +------------------------+  |
+//      Chrome Compartment            |           |                        |  |
+//    +--------------------+          |           | SavedFrame C (content) |  |
+//    |                    |          |           |                        |  |
+//    |                  +--------------+         +------------------------+  |
+//    |                  |              |                    ^                |
+//    |     var x -----> | Xray Wrapper |-----.              |                |
+//    |                  |              |     |              |                |
+//    |                  +--------------+     |   +------------------------+  |
+//    |                    |          |       |   |                        |  |
+//    |                  +--------------+     |   | SavedFrame B (content) |  |
+//    |                  |              |     |   |                        |  |
+//    |     var y -----> | CCW (waived) |--.  |   +------------------------+  |
+//    |                  |              |  |  |              ^                |
+//    |                  +--------------+  |  |              |                |
+//    |                    |          |    |  |              |                |
+//    +--------------------+          |    |  |   +------------------------+  |
+//                                    |    |  '-> |                        |  |
+//                                    |    |      | SavedFrame A (chrome)  |  |
+//                                    |    '----> |                        |  |
+//                                    |           +------------------------+  |
+//                                    |                      ^                |
+//                                    |                      |                |
+//                                    |           var z -----'                |
+//                                    |                                       |
+//                                    +---------------------------------------+
 //
 // CCW is a plain cross-compartment wrapper, yielded by waiving Xray vision. A
 // is the youngest `SavedFrame` and represents a frame that was from the chrome
@@ -165,11 +166,11 @@ class SavedStacks {
     MOZ_MUST_USE bool init();
     bool initialized() const { return frames.initialized(); }
     MOZ_MUST_USE bool saveCurrentStack(JSContext* cx, MutableHandleSavedFrame frame,
-                                       unsigned maxFrameCount = 0);
+                                       JS::StackCapture&& capture = JS::StackCapture(JS::AllFrames()));
     MOZ_MUST_USE bool copyAsyncStack(JSContext* cx, HandleObject asyncStack,
                                      HandleString asyncCause,
                                      MutableHandleSavedFrame adoptedStack,
-                                     unsigned maxFrameCount = 0);
+                                     const Maybe<size_t>& maxFrameCount);
     void sweep();
     void trace(JSTracer* trc);
     uint32_t count();
@@ -219,13 +220,12 @@ class SavedStacks {
         }
     };
 
-    MOZ_MUST_USE bool insertFrames(JSContext* cx, FrameIter& iter,
-                                   MutableHandleSavedFrame frame,
-                                   unsigned maxFrameCount = 0);
-    MOZ_MUST_USE bool adoptAsyncStack(JSContext* cx, HandleSavedFrame asyncStack,
-                                      HandleString asyncCause,
-                                      MutableHandleSavedFrame adoptedStack,
-                                      unsigned maxFrameCount);
+    MOZ_MUST_USE bool insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
+                                   JS::StackCapture&& capture);
+    MOZ_MUST_USE bool adoptAsyncStack(JSContext* cx, MutableHandleSavedFrame asyncStack,
+                                      HandleAtom asyncCause,
+                                      const Maybe<size_t>& maxFrameCount);
+    MOZ_MUST_USE bool checkForEvalInFramePrev(JSContext* cx, SavedFrame::HandleLookup lookup);
     SavedFrame* getOrCreateSavedFrame(JSContext* cx, SavedFrame::HandleLookup lookup);
     SavedFrame* createFrameFromLookup(JSContext* cx, SavedFrame::HandleLookup lookup);
 
@@ -266,24 +266,6 @@ class SavedStacks {
         uint32_t column;
     };
 
-    template <typename Outer>
-    struct LocationValueOperations {
-        JSAtom* source() const { return loc().source; }
-        size_t line() const { return loc().line; }
-        uint32_t column() const { return loc().column; }
-      private:
-        const LocationValue& loc() const { return static_cast<const Outer*>(this)->get(); }
-    };
-
-    template <typename Outer>
-    struct MutableLocationValueOperations : public LocationValueOperations<Outer> {
-        void setSource(JSAtom* v) { loc().source = v; }
-        void setLine(size_t v) { loc().line = v; }
-        void setColumn(uint32_t v) { loc().column = v; }
-      private:
-        LocationValue& loc() { return static_cast<Outer*>(this)->get(); }
-    };
-
   private:
     struct PCLocationHasher : public DefaultHasher<PCKey> {
         using ScriptPtrHasher = DefaultHasher<JSScript*>;
@@ -301,7 +283,7 @@ class SavedStacks {
     };
 
     // We eagerly Atomize the script source stored in LocationValue because
-    // asm.js does not always have a JSScript and the source might not be
+    // wasm does not always have a JSScript and the source might not be
     // available when we need it later. However, since the JSScript does not
     // actually hold this atom, we have to trace it strongly to keep it alive.
     // Thus, it takes two GC passes to fully clean up this table: the first GC
@@ -314,15 +296,35 @@ class SavedStacks {
                                   MutableHandle<LocationValue> locationp);
 };
 
-template <>
-class RootedBase<SavedStacks::LocationValue>
-  : public SavedStacks::MutableLocationValueOperations<JS::Rooted<SavedStacks::LocationValue>>
-{};
+template <typename Wrapper>
+struct WrappedPtrOperations<SavedStacks::LocationValue, Wrapper>
+{
+    JSAtom* source() const { return loc().source; }
+    size_t line() const { return loc().line; }
+    uint32_t column() const { return loc().column; }
 
-template <>
-class MutableHandleBase<SavedStacks::LocationValue>
-  : public SavedStacks::MutableLocationValueOperations<JS::MutableHandle<SavedStacks::LocationValue>>
-{};
+  private:
+    const SavedStacks::LocationValue& loc() const {
+        return static_cast<const Wrapper*>(this)->get();
+    }
+};
+
+template <typename Wrapper>
+struct MutableWrappedPtrOperations<SavedStacks::LocationValue, Wrapper>
+    : public WrappedPtrOperations<SavedStacks::LocationValue, Wrapper>
+{
+    void setSource(JSAtom* v) { loc().source = v; }
+    void setLine(size_t v) { loc().line = v; }
+    void setColumn(uint32_t v) { loc().column = v; }
+
+  private:
+    SavedStacks::LocationValue& loc() {
+        return static_cast<Wrapper*>(this)->get();
+    }
+};
+
+UTF8CharsZ
+BuildUTF8StackString(JSContext* cx, HandleObject stack);
 
 } /* namespace js */
 

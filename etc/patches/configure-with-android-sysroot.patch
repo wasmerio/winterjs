@@ -1,0 +1,13 @@
+diff --git a/mozjs/build/moz.configure/android-ndk.configure b/mozjs/build/moz.configure/android-ndk.configure
+index 1067b86..5193332 100644
+--- a/mozjs/build/moz.configure/android-ndk.configure
++++ b/mozjs/build/moz.configure/android-ndk.configure
+@@ -301,6 +301,8 @@ def extra_toolchain_flags(android_system, android_sysroot, toolchain_dir,
+              android_system,
+              '-isystem',
+              os.path.join(android_sysroot, 'usr', 'include'),
++             '--sysroot',
++             android_sysroot,
+              '-gcc-toolchain',
+              toolchain_dir,
+              '-D__ANDROID_API__=%d' % android_version]

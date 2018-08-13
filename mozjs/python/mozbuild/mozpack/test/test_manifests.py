@@ -32,11 +32,11 @@ class TestInstallManifest(TestWithTmpDir):
 
     def test_adds(self):
         m = InstallManifest()
-        m.add_symlink('s_source', 's_dest')
+        m.add_link('s_source', 's_dest')
         m.add_copy('c_source', 'c_dest')
         m.add_required_exists('e_dest')
         m.add_optional_exists('o_dest')
-        m.add_pattern_symlink('ps_base', 'ps/*', 'ps_dest')
+        m.add_pattern_link('ps_base', 'ps/*', 'ps_dest')
         m.add_pattern_copy('pc_base', 'pc/**', 'pc_dest')
         m.add_preprocess('p_source', 'p_dest', 'p_source.pp')
         m.add_content('content', 'content')
@@ -50,7 +50,7 @@ class TestInstallManifest(TestWithTmpDir):
         self.assertIn('content', m)
 
         with self.assertRaises(ValueError):
-            m.add_symlink('s_other', 's_dest')
+            m.add_link('s_other', 's_dest')
 
         with self.assertRaises(ValueError):
             m.add_copy('c_other', 'c_dest')
@@ -65,7 +65,7 @@ class TestInstallManifest(TestWithTmpDir):
             m.add_optional_exists('o_dest')
 
         with self.assertRaises(ValueError):
-            m.add_pattern_symlink('ps_base', 'ps/*', 'ps_dest')
+            m.add_pattern_link('ps_base', 'ps/*', 'ps_dest')
 
         with self.assertRaises(ValueError):
             m.add_pattern_copy('pc_base', 'pc/**', 'pc_dest')
@@ -75,12 +75,12 @@ class TestInstallManifest(TestWithTmpDir):
 
     def _get_test_manifest(self):
         m = InstallManifest()
-        m.add_symlink(self.tmppath('s_source'), 's_dest')
+        m.add_link(self.tmppath('s_source'), 's_dest')
         m.add_copy(self.tmppath('c_source'), 'c_dest')
         m.add_preprocess(self.tmppath('p_source'), 'p_dest', self.tmppath('p_source.pp'), '#', {'FOO':'BAR', 'BAZ':'QUX'})
         m.add_required_exists('e_dest')
         m.add_optional_exists('o_dest')
-        m.add_pattern_symlink('ps_base', '*', 'ps_dest')
+        m.add_pattern_link('ps_base', '*', 'ps_dest')
         m.add_pattern_copy('pc_base', '**', 'pc_dest')
         m.add_content('the content\non\nmultiple lines', 'content')
 
@@ -135,17 +135,39 @@ class TestInstallManifest(TestWithTmpDir):
             pass
 
         m = InstallManifest()
-        m.add_pattern_symlink('%s/base' % source, '**', 'dest')
+        m.add_pattern_link('%s/base' % source, '**', 'dest')
 
         c = FileCopier()
         m.populate_registry(c)
         self.assertEqual(c.paths(), ['dest/foo/file1', 'dest/foo/file2'])
 
+    def test_write_expand_pattern(self):
+        source = self.tmppath('source')
+        os.mkdir(source)
+        os.mkdir('%s/base' % source)
+        os.mkdir('%s/base/foo' % source)
+
+        with open('%s/base/foo/file1' % source, 'a'):
+            pass
+
+        with open('%s/base/foo/file2' % source, 'a'):
+            pass
+
+        m = InstallManifest()
+        m.add_pattern_link('%s/base' % source, '**', 'dest')
+
+        track = self.tmppath('track')
+        m.write(path=track, expand_pattern=True)
+
+        m = InstallManifest(path=track)
+        self.assertEqual([dest for dest in m._dests],
+                         ['dest/foo/file1', 'dest/foo/file2'])
+
     def test_or(self):
         m1 = self._get_test_manifest()
         orig_length = len(m1)
         m2 = InstallManifest()
-        m2.add_symlink('s_source2', 's_dest2')
+        m2.add_link('s_source2', 's_dest2')
         m2.add_copy('c_source2', 'c_dest2')
 
         m1 |= m2
@@ -370,6 +392,57 @@ class TestInstallManifest(TestWithTmpDir):
         m.populate_registry(c)
         e = c._files['p_dest']
         self.assertEqual(e.extra_depends, [manifest])
+
+    def test_add_entries_from(self):
+        source = self.tmppath('source')
+        os.mkdir(source)
+        os.mkdir('%s/base' % source)
+        os.mkdir('%s/base/foo' % source)
+
+        with open('%s/base/foo/file1' % source, 'a'):
+            pass
+
+        with open('%s/base/foo/file2' % source, 'a'):
+            pass
+
+        m = InstallManifest()
+        m.add_pattern_link('%s/base' % source, '**', 'dest')
+
+        p = InstallManifest()
+        p.add_entries_from(m)
+        self.assertEqual(len(p), 1)
+
+        c = FileCopier()
+        p.populate_registry(c)
+        self.assertEqual(c.paths(), ['dest/foo/file1', 'dest/foo/file2'])
+
+        q = InstallManifest()
+        q.add_entries_from(m, base='target')
+        self.assertEqual(len(q), 1)
+
+        d = FileCopier()
+        q.populate_registry(d)
+        self.assertEqual(d.paths(), ['target/dest/foo/file1', 'target/dest/foo/file2'])
+
+        # Some of the values in an InstallManifest include destination
+        # information that is present in the keys.  Verify that we can
+        # round-trip serialization.
+        r = InstallManifest()
+        r.add_entries_from(m)
+        r.add_entries_from(m, base='target')
+        self.assertEqual(len(r), 2)
+
+        temp_path = self.tmppath('temp_path')
+        r.write(path=temp_path)
+
+        s = InstallManifest(path=temp_path)
+        e = FileCopier()
+        s.populate_registry(e)
+
+        self.assertEqual(e.paths(),
+                         ['dest/foo/file1', 'dest/foo/file2',
+                          'target/dest/foo/file1', 'target/dest/foo/file2'])
+
 
 if __name__ == '__main__':
     mozunit.main()

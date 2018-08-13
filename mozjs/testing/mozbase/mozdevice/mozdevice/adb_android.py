@@ -2,15 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import os
 import re
 import time
 
 from abc import ABCMeta
 
-import version_codes
+from . import version_codes
 
-from adb import ADBDevice, ADBError
+from .adb import ADBDevice, ADBError, ADBRootError
 
 
 class ADBAndroid(ADBDevice):
@@ -22,9 +24,9 @@ class ADBAndroid(ADBDevice):
        from mozdevice import ADBAndroid
 
        adbdevice = ADBAndroid()
-       print adbdevice.list_files("/mnt/sdcard")
+       print(adbdevice.list_files("/mnt/sdcard"))
        if adbdevice.process_exist("org.mozilla.fennec"):
-           print "Fennec is running"
+           print("Fennec is running")
     """
     __metaclass__ = ABCMeta
 
@@ -90,8 +92,12 @@ class ADBAndroid(ADBDevice):
             if self.shell_output('getenforce', timeout=timeout) != 'Permissive':
                 self._logger.info('Setting SELinux Permissive Mode')
                 self.shell_output("setenforce Permissive", timeout=timeout, root=True)
-        except ADBError:
+        except (ADBError, ADBRootError) as e:
+            self._logger.warning('Unable to set SELinux Permissive due to %s.' % e)
             self.selinux = False
+
+        self.version = int(self.shell_output("getprop ro.build.version.sdk",
+                                             timeout=timeout))
 
     def reboot(self, timeout=None):
         """Reboots the device.
@@ -142,7 +148,7 @@ class ADBAndroid(ADBDevice):
         percentage = 0
         cmd = "dumpsys battery"
         re_parameter = re.compile(r'\s+(\w+):\s+(\d+)')
-        lines = self.shell_output(cmd, timeout=timeout).split('\r')
+        lines = self.shell_output(cmd, timeout=timeout).splitlines()
         for line in lines:
             match = re_parameter.match(line)
             if match:
@@ -153,9 +159,45 @@ class ADBAndroid(ADBDevice):
                 elif parameter == 'scale':
                     scale = float(value)
                 if parameter is not None and scale is not None:
-                    percentage = 100.0*level/scale
+                    percentage = 100.0 * level / scale
                     break
         return percentage
+
+    def get_top_activity(self, timeout=None):
+        """Returns the name of the top activity (focused app) reported by dumpsys
+
+        :param timeout: The maximum time in
+            seconds for any spawned adb process to complete before
+            throwing an ADBTimeoutError.
+            This timeout is per adb call. The total time spent
+            may exceed this value. If it is not specified, the value
+            set in the ADBDevice constructor is used.
+        :type timeout: integer or None
+        :returns: package name of top activity or None (cannot be determined)
+        :raises: * ADBTimeoutError
+                 * ADBError
+        """
+        package = None
+        data = None
+        cmd = "dumpsys window windows"
+        try:
+            data = self.shell_output(cmd, timeout=timeout)
+        except Exception:
+            # dumpsys intermittently fails on some platforms (4.3 arm emulator)
+            return package
+        m = re.search('mFocusedApp(.+)/', data)
+        if not m:
+            # alternative format seen on newer versions of Android
+            m = re.search('FocusedApplication(.+)/', data)
+        if m:
+            line = m.group(0)
+            # Extract package name: string of non-whitespace ending in forward slash
+            m = re.search('(\S+)/$', line)
+            if m:
+                package = m.group(1)
+        if self._verbose:
+            self._logger.debug('get_top_activity: %s' % str(package))
+        return package
 
     # System control methods
 
@@ -195,15 +237,14 @@ class ADBAndroid(ADBDevice):
                     failure = "Device state: %s" % state
                     success = False
                 else:
-                    if (self.selinux and
-                        self.shell_output('getenforce',
-                                          timeout=timeout) != 'Permissive'):
+                    if (self.selinux and self.shell_output('getenforce',
+                                                           timeout=timeout) != 'Permissive'):
                         self._logger.info('Setting SELinux Permissive Mode')
                         self.shell_output("setenforce Permissive", timeout=timeout, root=True)
-                    if self.is_dir(ready_path, timeout=timeout, root=True):
-                        self.rmdir(ready_path, timeout=timeout, root=True)
-                    self.mkdir(ready_path, timeout=timeout, root=True)
-                    self.rmdir(ready_path, timeout=timeout, root=True)
+                    if self.is_dir(ready_path, timeout=timeout):
+                        self.rmdir(ready_path, timeout=timeout)
+                    self.mkdir(ready_path, timeout=timeout)
+                    self.rmdir(ready_path, timeout=timeout)
                     # Invoke the pm list commands to see if it is up and
                     # running.
                     for pm_list_cmd in pm_list_commands:
@@ -219,7 +260,7 @@ class ADBAndroid(ADBDevice):
 
             if not success:
                 self._logger.debug('Attempt %s of %s device not ready: %s' % (
-                    attempt+1, self._device_ready_retry_attempts,
+                    attempt + 1, self._device_ready_retry_attempts,
                     failure))
                 time.sleep(self._device_ready_retry_wait)
 
@@ -251,10 +292,11 @@ class ADBAndroid(ADBDevice):
 
     # Application management methods
 
-    def install_app(self, apk_path, timeout=None):
+    def install_app(self, apk_path, replace=False, timeout=None):
         """Installs an app on the device.
 
         :param str apk_path: The apk file name to be installed.
+        :param bool replace: If True, replace existing application.
         :param timeout: The maximum time in
             seconds for any spawned adb process to complete before
             throwing an ADBTimeoutError.
@@ -265,7 +307,13 @@ class ADBAndroid(ADBDevice):
         :raises: * ADBTimeoutError
                  * ADBError
         """
-        data = self.command_output(["install", apk_path], timeout=timeout)
+        cmd = ["install"]
+        if self.version >= version_codes.M:
+            cmd.append("-g")
+        if replace:
+            cmd.append("-r")
+        cmd.append(apk_path)
+        data = self.command_output(cmd, timeout=timeout)
         if data.find('Success') == -1:
             raise ADBError("install failed for %s. Got: %s" %
                            (apk_path, data))
@@ -293,8 +341,8 @@ class ADBAndroid(ADBDevice):
         return True
 
     def launch_application(self, app_name, activity_name, intent, url=None,
-                          extras=None, wait=True, fail_if_running=True,
-                          timeout=None):
+                           extras=None, wait=True, fail_if_running=True,
+                           timeout=None):
         """Launches an Android application
 
         :param str app_name: Name of application (e.g. `com.android.chrome`)
@@ -326,7 +374,7 @@ class ADBAndroid(ADBDevice):
             raise ADBError("Only one instance of an application may be running "
                            "at once")
 
-        acmd = [ "am", "start" ] + \
+        acmd = ["am", "start"] + \
             ["-W" if wait else '', "-n", "%s/%s" % (app_name, activity_name)]
 
         if intent:
@@ -334,9 +382,9 @@ class ADBAndroid(ADBDevice):
 
         if extras:
             for (key, val) in extras.iteritems():
-                if type(val) is int:
+                if isinstance(val, int):
                     extra_type_param = "--ei"
-                elif type(val) is bool:
+                elif isinstance(val, bool):
                     extra_type_param = "--ez"
                 else:
                     extra_type_param = "--es"
@@ -349,8 +397,8 @@ class ADBAndroid(ADBDevice):
         self.shell_output(cmd, timeout=timeout)
 
     def launch_fennec(self, app_name, intent="android.intent.action.VIEW",
-                     moz_env=None, extra_args=None, url=None, wait=True,
-                     fail_if_running=True, timeout=None):
+                      moz_env=None, extra_args=None, url=None, wait=True,
+                      fail_if_running=True, timeout=None):
         """Convenience method to launch Fennec on Android with various
         debugging arguments
 
@@ -391,9 +439,10 @@ class ADBAndroid(ADBDevice):
         if extra_args:
             extras['args'] = " ".join(extra_args)
 
-        self.launch_application(app_name, "org.mozilla.gecko.BrowserApp", intent, url=url, extras=extras,
-                               wait=wait, fail_if_running=fail_if_running,
-                               timeout=timeout)
+        self.launch_application(app_name, ".App",
+                                intent, url=url, extras=extras,
+                                wait=wait, fail_if_running=fail_if_running,
+                                timeout=timeout)
 
     def stop_application(self, app_name, timeout=None, root=False):
         """Stops the specified application
@@ -417,9 +466,7 @@ class ADBAndroid(ADBDevice):
         :raises: * ADBTimeoutError
                  * ADBError
         """
-        version = self.shell_output("getprop ro.build.version.sdk",
-                                    timeout=timeout, root=root)
-        if int(version) >= version_codes.HONEYCOMB:
+        if self.version >= version_codes.HONEYCOMB:
             self.shell_output("am force-stop %s" % app_name,
                               timeout=timeout, root=root)
         else:
@@ -428,7 +475,7 @@ class ADBAndroid(ADBDevice):
             while self.process_exist(app_name, timeout=timeout):
                 if num_tries > max_tries:
                     raise ADBError("Couldn't successfully kill %s after %s "
-                                  "tries" % (app_name, max_tries))
+                                   "tries" % (app_name, max_tries))
                 self.pkill(app_name, timeout=timeout, root=root)
                 num_tries += 1
 
@@ -479,7 +526,10 @@ class ADBAndroid(ADBDevice):
         :raises: * ADBTimeoutError
                  * ADBError
         """
-        output = self.command_output(["install", "-r", apk_path],
-                                     timeout=timeout)
+        cmd = ["install", "-r"]
+        if self.version >= version_codes.M:
+            cmd.append("-g")
+        cmd.append(apk_path)
+        output = self.command_output(cmd, timeout=timeout)
         self.reboot(timeout=timeout)
         return output

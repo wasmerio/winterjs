@@ -1,7 +1,9 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
  *******************************************************************************
- * Copyright (C) 2011-2014, International Business Machines Corporation and    *
- * others. All Rights Reserved.                                                *
+ * Copyright (C) 2011-2016, International Business Machines Corporation and
+ * others. All Rights Reserved.
  *******************************************************************************
  */
 
@@ -24,6 +26,9 @@
 #include "uhash.h"
 #include "uvector.h"
 #include "umutex.h"
+
+// Some zone display names involving supplementary characters can be over 50 chars, 100 UTF-16 code units, 200 UTF-8 bytes
+#define ZONE_NAME_U16_MAX 128
 
 U_NAMESPACE_BEGIN
 
@@ -159,8 +164,8 @@ private:
 
 
 class ZNames;
-class TZNames;
 class TextTrieMap;
+class ZNameSearchHandler;
 
 class TimeZoneNamesImpl : public TimeZoneNames {
 public:
@@ -184,6 +189,9 @@ public:
 
     TimeZoneNames::MatchInfoCollection* find(const UnicodeString& text, int32_t start, uint32_t types, UErrorCode& status) const;
 
+    void loadAllDisplayNames(UErrorCode& status);
+    void getDisplayNames(const UnicodeString& tzID, const UTimeZoneNameType types[], int32_t numTypes, UDate date, UnicodeString dest[], UErrorCode& status) const;
+
     static UnicodeString& getDefaultExemplarLocationName(const UnicodeString& tzID, UnicodeString& name);
 
     static StringEnumeration* _getAvailableMetaZoneIDs(UErrorCode& status);
@@ -201,15 +209,23 @@ private:
     UHashtable* fMZNamesMap;
 
     UBool fNamesTrieFullyLoaded;
+    UBool fNamesFullyLoaded;
     TextTrieMap fNamesTrie;
 
     void initialize(const Locale& locale, UErrorCode& status);
     void cleanup();
 
-    void loadStrings(const UnicodeString& tzCanonicalID);
+    void loadStrings(const UnicodeString& tzCanonicalID, UErrorCode& status);
 
-    ZNames* loadMetaZoneNames(const UnicodeString& mzId);
-    TZNames* loadTimeZoneNames(const UnicodeString& mzId);
+    ZNames* loadMetaZoneNames(const UnicodeString& mzId, UErrorCode& status);
+    ZNames* loadTimeZoneNames(const UnicodeString& mzId, UErrorCode& status);
+    TimeZoneNames::MatchInfoCollection* doFind(ZNameSearchHandler& handler,
+        const UnicodeString& text, int32_t start, UErrorCode& status) const;
+    void addAllNamesIntoTrie(UErrorCode& errorCode);
+
+    void internalLoadAllDisplayNames(UErrorCode& status);
+
+    struct ZoneStringsLoader;
 };
 
 class TZDBNames;
@@ -233,6 +249,8 @@ public:
 
     TimeZoneNames::MatchInfoCollection* find(const UnicodeString& text, int32_t start, uint32_t types, UErrorCode& status) const;
 
+    // When TZDBNames for the metazone is not available, this method returns NULL,
+    // but does NOT set U_MISSING_RESOURCE_ERROR to status.
     static const TZDBNames* getMetaZoneNames(const UnicodeString& mzId, UErrorCode& status);
 
 private:

@@ -9,11 +9,18 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/IndexSequence.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tuple.h"
 
 #include <stdint.h>
+
+#include "jsutil.h"
+
+#include "threading/LockGuard.h"
+#include "threading/Mutex.h"
+#include "vm/MutexIDs.h"
 
 #ifdef XP_WIN
 # define THREAD_RETURN_TYPE unsigned int
@@ -34,8 +41,11 @@ class ThreadTrampoline;
 class Thread
 {
 public:
+  struct Hasher;
+
   class Id
   {
+    friend struct Hasher;
     class PlatformData;
     void* platformData_[2];
 
@@ -47,8 +57,8 @@ public:
     Id& operator=(const Id&) = default;
     Id& operator=(Id&&) = default;
 
-    bool operator==(const Id& aOther);
-    bool operator!=(const Id& aOther) { return !operator==(aOther); }
+    bool operator==(const Id& aOther) const;
+    bool operator!=(const Id& aOther) const { return !operator==(aOther); }
 
     inline PlatformData* platformData();
     inline const PlatformData* platformData() const;
@@ -66,39 +76,56 @@ public:
     size_t stackSize() const { return stackSize_; }
   };
 
+  // A js::HashTable hash policy for keying hash tables by js::Thread::Id.
+  struct Hasher
+  {
+    typedef Id Lookup;
+
+    static HashNumber hash(const Lookup& l);
+
+    static bool match(const Id& key, const Lookup& lookup) {
+      return key == lookup;
+    }
+  };
+
   // Create a Thread in an initially unjoinable state. A thread of execution can
   // be created for this Thread by calling |init|. Some of the thread's
   // properties may be controlled by passing options to this constructor.
-  explicit Thread(const Options& options = Options()) : id_(Id()), options_(options) {}
-
-  // Start a thread of execution at functor |f| with parameters |args|. Note
-  // that the arguments must be either POD or rvalue references (mozilla::Move).
-  // Attempting to pass a reference will result in the value being copied, which
-  // may not be the intended behavior. See the comment below on
-  // ThreadTrampoline::args for an explanation.
-  template <typename F, typename... Args>
-  explicit Thread(F&& f, Args&&... args) {
-    MOZ_RELEASE_ASSERT(init(mozilla::Forward<F>(f),
-                            mozilla::Forward<Args>(args)...));
+  template <typename O = Options,
+            // SFINAE to make sure we don't try and treat functors for the other
+            // constructor as an Options and vice versa.
+            typename NonConstO = typename mozilla::RemoveConst<O>::Type,
+            typename DerefO = typename mozilla::RemoveReference<NonConstO>::Type,
+            typename = typename mozilla::EnableIf<mozilla::IsSame<DerefO, Options>::value,
+                                                  void*>::Type>
+  explicit Thread(O&& options = Options())
+    : idMutex_(mutexid::ThreadId)
+    , id_(Id())
+    , options_(mozilla::Forward<O>(options))
+  {
+    MOZ_ASSERT(js::IsInitialized());
   }
 
   // Start a thread of execution at functor |f| with parameters |args|. This
   // method will return false if thread creation fails. This Thread must not
-  // already have been created.
+  // already have been created. Note that the arguments must be either POD or
+  // rvalue references (mozilla::Move). Attempting to pass a reference will
+  // result in the value being copied, which may not be the intended behavior.
+  // See the comment below on ThreadTrampoline::args for an explanation.
   template <typename F, typename... Args>
   MOZ_MUST_USE bool init(F&& f, Args&&... args) {
-    MOZ_RELEASE_ASSERT(!joinable());
+    MOZ_RELEASE_ASSERT(id_ == Id());
     using Trampoline = detail::ThreadTrampoline<F, Args...>;
-    auto trampoline = new Trampoline(mozilla::Forward<F>(f),
-                                     mozilla::Forward<Args>(args)...);
-    MOZ_RELEASE_ASSERT(trampoline);
+    AutoEnterOOMUnsafeRegion oom;
+    auto trampoline = js_new<Trampoline>(mozilla::Forward<F>(f),
+                                         mozilla::Forward<Args>(args)...);
+    if (!trampoline)
+      oom.crash("js::Thread::init");
     return create(Trampoline::Start, trampoline);
   }
 
   // The thread must be joined or detached before destruction.
-  ~Thread() {
-    MOZ_RELEASE_ASSERT(!joinable());
-  }
+  ~Thread();
 
   // Move the thread into the detached state without blocking. In the detatched
   // state, the thread continues to run until it exits, but cannot be joined.
@@ -117,14 +144,12 @@ public:
   // Return true if this thread has not yet been joined or detached. If this
   // method returns false, this Thread does not have an associated thread of
   // execution, for example, if it has been previously moved or joined.
-  bool joinable() const {
-    return get_id() != Id();
-  }
+  bool joinable();
 
   // Returns the id of this thread if this represents a thread of execution or
   // the default constructed Id() if not. The thread ID is guaranteed to
   // uniquely identify a thread and can be compared with the == operator.
-  Id get_id() const { return id_; }
+  Id get_id();
 
   // Allow threads to be moved so that they can be stored in containers.
   Thread(Thread&& aOther);
@@ -134,6 +159,11 @@ private:
   // Disallow copy as that's not sensible for unique resources.
   Thread(const Thread&) = delete;
   void operator=(const Thread&) = delete;
+
+  bool joinable(LockGuard<Mutex>& lock);
+
+  // Synchronize id_ initialization during thread startup.
+  Mutex idMutex_;
 
   // Provide a process global ID to each thread.
   Id id_;
@@ -150,10 +180,16 @@ namespace ThisThread {
 // Return the thread id of the calling thread.
 Thread::Id GetId();
 
-// Set the current thread name. Returns true if successful. Note that setting
-// the thread name may not be available on all platforms; on these platforms
-// setName() will simply do nothing.
+// Set the current thread name. Note that setting the thread name may not be
+// available on all platforms; on these platforms setName() will simply do
+// nothing.
 void SetName(const char* name);
+
+// Get the current thread name. As with SetName, not available on all
+// platforms. On these platforms getName() will give back an empty string (by
+// storing NUL in nameBuffer[0]). 'len' is the bytes available to be written in
+// 'nameBuffer', including the terminating NUL.
+void GetName(char* nameBuffer, size_t len);
 
 } // namespace ThisThread
 
@@ -197,7 +233,7 @@ public:
   static THREAD_RETURN_TYPE THREAD_CALL_API Start(void* aPack) {
     auto* pack = static_cast<ThreadTrampoline<F, Args...>*>(aPack);
     pack->callMain(typename mozilla::IndexSequenceFor<Args...>::Type());
-    delete pack;
+    js_delete(pack);
     return 0;
   }
 

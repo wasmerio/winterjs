@@ -4,10 +4,6 @@ dnl file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 AC_DEFUN([MOZ_CONFIG_CLANG_PLUGIN], [
 
-MOZ_ARG_ENABLE_BOOL(clang-plugin,
-[  --enable-clang-plugin   Enable building with the mozilla clang plugin ],
-   ENABLE_CLANG_PLUGIN=1,
-   ENABLE_CLANG_PLUGIN= )
 if test -n "$ENABLE_CLANG_PLUGIN"; then
     if test -z "${CLANG_CC}${CLANG_CL}"; then
         AC_MSG_ERROR([Can't use clang plugin without clang.])
@@ -37,24 +33,31 @@ if test -n "$ENABLE_CLANG_PLUGIN"; then
     if test -z "$LLVMCONFIG"; then
         AC_MSG_ERROR([Cannot find an llvm-config binary for building a clang plugin])
     fi
-    LLVM_CXXFLAGS=`$LLVMCONFIG --cxxflags`
-    dnl The clang package we use on OSX is old, and its llvm-config doesn't
-    dnl recognize --system-libs, so ask for that separately.  llvm-config's
-    dnl failure here is benign, so we can ignore it if it happens.
-    dnl Use tr instead of xargs in order to avoid problems with path separators on Windows.
-    LLVM_LDFLAGS=`$LLVMCONFIG --system-libs | tr '\n' ' '`
-    LLVM_LDFLAGS="$LLVM_LDFLAGS `$LLVMCONFIG --ldflags --libs core mc analysis asmparser mcparser bitreader option profiledata | tr '\n' ' '`"
+    dnl For some reason the llvm-config downloaded from clang.llvm.org for clang3_8
+    dnl produces a -isysroot flag for a sysroot which might not ship when passed
+    dnl --cxxflags. We use sed to remove this argument so that builds work on OSX
+    LLVM_CXXFLAGS=`$LLVMCONFIG --cxxflags | sed -e 's/-isysroot [[^ ]]*//'`
+
+    LLVM_LDFLAGS=`$LLVMCONFIG --ldflags | tr '\n' ' '`
 
     if test "${HOST_OS_ARCH}" = "Darwin"; then
-        CLANG_LDFLAGS="-lclangFrontend -lclangDriver -lclangSerialization"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS -lclangParse -lclangSema -lclangAnalysis"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS -lclangEdit -lclangAST -lclangLex"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS -lclangBasic -lclangASTMatchers"
+        dnl We need to make sure that we use the symbols coming from the clang
+        dnl binary. In order to do this, we need to pass -flat_namespace and
+        dnl -undefined suppress to the linker. This makes sure that we link the
+        dnl symbols into the flat namespace provided by clang, and thus get
+        dnl access to all of the symbols which are undefined in our dylib as we
+        dnl are building it right now, and also that we don't fail the build
+        dnl due to undefined symbols (which will be provided by clang).
+        CLANG_LDFLAGS="-Wl,-flat_namespace -Wl,-undefined,suppress"
+        dnl We are loaded into clang, so we don't need to link to very many things,
+        dnl we just need to link to clangASTMatchers because it is not used by clang
+        CLANG_LDFLAGS="$CLANG_LDFLAGS `$LLVMCONFIG --prefix`/lib/libclangASTMatchers.a"
+        dnl We need to remove -L/path/to/clang/lib from LDFLAGS to ensure that we
+        dnl don't accidentally link against the libc++ there which is a newer
+        dnl version that what our build machines have installed.
+        LLVM_LDFLAGS=`echo "$LLVM_LDFLAGS" | sed -E 's/-L[[^ ]]+\/clang\/lib//'`
     elif test "${HOST_OS_ARCH}" = "WINNT"; then
-        CLANG_LDFLAGS="clangFrontend.lib clangDriver.lib clangSerialization.lib"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS clangParse.lib clangSema.lib clangAnalysis.lib"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS clangEdit.lib clangAST.lib clangLex.lib"
-        CLANG_LDFLAGS="$CLANG_LDFLAGS clangBasic.lib clangASTMatchers.lib"
+        CLANG_LDFLAGS="clang.lib clangASTMatchers.lib"
     else
         CLANG_LDFLAGS="-lclangASTMatchers"
     fi
@@ -102,6 +105,8 @@ if test -n "$ENABLE_CLANG_PLUGIN"; then
             AC_LANG_CPLUSPLUS
             _SAVE_CXXFLAGS="$CXXFLAGS"
             _SAVE_CXX="$CXX"
+            _SAVE_MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
+            unset MACOSX_DEPLOYMENT_TARGET
             CXXFLAGS="${LLVM_CXXFLAGS}"
             CXX="${HOST_CXX}"
             AC_TRY_COMPILE([#include "clang/ASTMatchers/ASTMatchers.h"],
@@ -110,19 +115,72 @@ if test -n "$ENABLE_CLANG_PLUGIN"; then
                            ac_cv_have_new_ASTMatcher_names="no")
             CXX="$_SAVE_CXX"
             CXXFLAGS="$_SAVE_CXXFLAGS"
+            export MACOSX_DEPLOYMENT_TARGET="$_SAVE_MACOSX_DEPLOYMENT_TARGET"
             AC_LANG_RESTORE
         ])
     if test "$ac_cv_have_new_ASTMatcher_names" = "yes"; then
       LLVM_CXXFLAGS="$LLVM_CXXFLAGS -DHAVE_NEW_ASTMATCHER_NAMES"
     fi
 
+    dnl Check if we can compile has(ignoringParenImpCasts()) because
+    dnl before 3.9 that ignoringParenImpCasts was done internally by "has".
+    dnl See https://www.mail-archive.com/cfe-commits@lists.llvm.org/msg25234.html
+    AC_CACHE_CHECK(for has with ignoringParenImpCasts,
+                   ac_cv_has_accepts_ignoringParenImpCasts,
+        [
+            AC_LANG_SAVE
+            AC_LANG_CPLUSPLUS
+            _SAVE_CXXFLAGS="$CXXFLAGS"
+            _SAVE_CXX="$CXX"
+            _SAVE_MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
+            unset MACOSX_DEPLOYMENT_TARGET
+            CXXFLAGS="${LLVM_CXXFLAGS}"
+            CXX="${HOST_CXX}"
+            AC_TRY_COMPILE([#include "clang/ASTMatchers/ASTMatchers.h"],
+                           [using namespace clang::ast_matchers;
+                            expr(has(ignoringParenImpCasts(declRefExpr())));
+                           ],
+                           ac_cv_has_accepts_ignoringParenImpCasts="yes",
+                           ac_cv_has_accepts_ignoringParenImpCasts="no")
+            CXX="$_SAVE_CXX"
+            CXXFLAGS="$_SAVE_CXXFLAGS"
+            export MACOSX_DEPLOYMENT_TARGET="$_SAVE_MACOSX_DEPLOYMENT_TARGET"
+            AC_LANG_RESTORE
+        ])
+    if test "$ac_cv_has_accepts_ignoringParenImpCasts" = "yes"; then
+      LLVM_CXXFLAGS="$LLVM_CXXFLAGS -DHAS_ACCEPTS_IGNORINGPARENIMPCASTS"
+    fi
+
+    CLANG_PLUGIN_FLAGS="-Xclang -load -Xclang $CLANG_PLUGIN -Xclang -add-plugin -Xclang moz-check"
+
     AC_DEFINE(MOZ_CLANG_PLUGIN)
 fi
 
-AC_SUBST(LLVM_CXXFLAGS)
-AC_SUBST(LLVM_LDFLAGS)
-AC_SUBST(CLANG_LDFLAGS)
+if test -n "$ENABLE_MOZSEARCH_PLUGIN"; then
+    if test -z "${ENABLE_CLANG_PLUGIN}"; then
+        AC_MSG_ERROR([Can't use mozsearch plugin without --enable-clang-plugin.])
+    fi
+
+    dnl We use this construct rather than $_objdir to avoid getting /js/src in the
+    dnl path when compiling JS code.
+    OBJDIR="$(dirname $(dirname $(dirname $CLANG_PLUGIN)))"
+
+    CLANG_PLUGIN_FLAGS="$CLANG_PLUGIN_FLAGS -Xclang -add-plugin -Xclang mozsearch-index"
+
+    dnl Parameters are: srcdir, outdir (path where output JSON is stored), objdir.
+    CLANG_PLUGIN_FLAGS="$CLANG_PLUGIN_FLAGS -Xclang -plugin-arg-mozsearch-index -Xclang $_topsrcdir"
+    CLANG_PLUGIN_FLAGS="$CLANG_PLUGIN_FLAGS -Xclang -plugin-arg-mozsearch-index -Xclang $OBJDIR/mozsearch_index"
+    CLANG_PLUGIN_FLAGS="$CLANG_PLUGIN_FLAGS -Xclang -plugin-arg-mozsearch-index -Xclang $OBJDIR"
+
+    AC_DEFINE(MOZ_MOZSEARCH_PLUGIN)
+fi
+
+AC_SUBST_LIST(CLANG_PLUGIN_FLAGS)
+AC_SUBST_LIST(LLVM_CXXFLAGS)
+AC_SUBST_LIST(LLVM_LDFLAGS)
+AC_SUBST_LIST(CLANG_LDFLAGS)
 
 AC_SUBST(ENABLE_CLANG_PLUGIN)
+AC_SUBST(ENABLE_MOZSEARCH_PLUGIN)
 
 ])

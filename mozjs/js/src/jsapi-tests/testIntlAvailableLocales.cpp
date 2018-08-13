@@ -9,6 +9,8 @@
 
 BEGIN_TEST(testIntlAvailableLocales)
 {
+    JSRuntime* rt = JS_GetRuntime(cx);
+
     // This test should only attempt to run if we have Intl support.
     JS::Rooted<JS::Value> haveIntl(cx);
     EVAL("typeof Intl !== 'undefined'", &haveIntl);

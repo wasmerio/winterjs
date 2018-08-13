@@ -3,16 +3,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-OS_CXXFLAGS := $(filter-out -fno-exceptions,$(OS_CXXFLAGS)) -fexceptions
-
 include $(topsrcdir)/config/rules.mk
 
 test-array$(DLL_SUFFIX) test-ctors$(DLL_SUFFIX): %$(DLL_SUFFIX): %.$(OBJ_SUFFIX) elfhack
 	$(MKSHLIB) $(LDFLAGS) $< -nostartfiles
 	@echo ===
 	@echo === If you get failures below, please file a bug describing the error
-	@echo === and your environment \(compiler and linker versions\), and use
-	@echo === --disable-elf-hack until this is fixed.
+	@echo === and your environment \(compiler and linker versions\), and
+	@echo === provide the pre-elfhacked library as an attachment.
+	@echo === Use --disable-elf-hack until this is fixed.
 	@echo ===
 	# Fail if the library doesn't have $(DT_TYPE) .dynamic info
 	$(TOOLCHAIN_PREFIX)readelf -d $@ | grep '($(DT_TYPE))'

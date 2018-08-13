@@ -31,7 +31,7 @@ if test -z "$MOZ_ARCH"; then
     arm-Android)
         MOZ_THUMB=yes
         MOZ_ARCH=armv7-a
-        MOZ_FPU=vfp
+        MOZ_FPU=vfpv3-d16
         MOZ_FLOAT_ABI=softfp
         MOZ_ALIGN=no
         ;;
@@ -42,8 +42,7 @@ if test -z "$MOZ_ARCH"; then
 fi
 
 if test "$MOZ_ARCH" = "armv6" -a "$OS_TARGET" = "Android"; then
-   MOZ_FPU=vfp
-   MOZ_FLOAT_ABI=softfp
+    AC_MSG_ERROR([Android/armv6 is not supported])
 fi
 
 MOZ_ARG_WITH_STRING(thumb,
@@ -202,6 +201,7 @@ fi
 AC_SUBST(MOZ_THUMB2)
 
 if test "$CPU_ARCH" = "arm"; then
+  NEON_FLAGS="-mfpu=neon"
   AC_MSG_CHECKING(for ARM SIMD support in compiler)
   # We try to link so that this also fails when
   # building with LTO.
@@ -248,5 +248,6 @@ AC_SUBST(HAVE_ARM_SIMD)
 AC_SUBST(HAVE_ARM_NEON)
 AC_SUBST(BUILD_ARM_NEON)
 AC_SUBST(ARM_ARCH)
+AC_SUBST_LIST(NEON_FLAGS)
 
 ])

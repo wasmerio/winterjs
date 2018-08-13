@@ -10,14 +10,17 @@ namespace glue {
 
 // Reexport some functions that are marked inline.
 
+bool JS_Init() {
+    return ::JS_Init();
+}
+
 JS::CompartmentOptions JS_NewCompartmentOptions() {
     JS::CompartmentOptions result;
     return result;
 }
 
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx, JSVersion version) {
+JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx) {
     JS::OwningCompileOptions result(cx);
-    result.setVersion(version);
     return result;
 }
 
@@ -27,6 +30,18 @@ JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
 
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
     return JS::CallArgsFromVp(argc, vp);
+}
+
+JS::StackCapture JS_StackCapture_AllFrames() {
+    return JS::StackCapture(JS::AllFrames());
+}
+
+JS::StackCapture JS_StackCapture_MaxFrames(uint32_t max) {
+    return JS::StackCapture(JS::MaxFrames(max));
+}
+
+JS::StackCapture JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames) {
+    return JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
 }
 
 // Reexport some methods
@@ -43,8 +58,8 @@ bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator, JS::MutableHandleValue va
 // to make sure that the Rust implementation of JS::Value
 // agrees with the C++ implementation.
 
-JS::Value JS_BooleanValue(bool value) {
-    return JS::BooleanValue(value);
+void JS_ValueSetBoolean(JS::Value* value, bool x) {
+    value->setBoolean(x);
 }
 
 bool JS_ValueIsBoolean(JS::Value value) {
@@ -55,8 +70,8 @@ bool JS_ValueToBoolean(JS::Value value) {
     return value.toBoolean();
 }
 
-JS::Value JS_DoubleValue(double value) {
-    return JS::DoubleValue(value);
+void JS_ValueSetDouble(JS::Value* value, double x) {
+    value->setDouble(x);
 }
 
 bool JS_ValueIsDouble(JS::Value value) {
@@ -67,8 +82,8 @@ double JS_ValueToDouble(JS::Value value) {
     return value.toDouble();
 }
 
-JS::Value JS_Int32Value(int32_t value) {
-    return JS::Int32Value(value);
+void JS_ValueSetInt32(JS::Value* value, int32_t x) {
+    value->setInt32(x);
 }
 
 bool JS_ValueIsInt32(JS::Value value) {
@@ -79,20 +94,23 @@ int32_t JS_ValueToInt32(JS::Value value) {
     return value.toInt32();
 }
 
-JS::Value JS_NullValue() {
-    return JS::NullValue();
+bool JS_ValueIsNumber(JS::Value value) {
+    return value.isNumber();
+}
+
+double JS_ValueToNumber(JS::Value value) {
+    return value.toNumber();
+}
+
+void JS_ValueSetNull(JS::Value* value) {
+    value->setNull();
 }
 
 bool JS_ValueIsNull(JS::Value value) {
     return value.isNull();
 }
 
-JS::Value JS_UndefinedValue() {
-    return JS::UndefinedValue();
-}
-
 bool JS_ValueIsUndefined(JS::Value value) {
     return value.isUndefined();
 }
-
 }

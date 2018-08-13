@@ -92,10 +92,10 @@
 #ifndef mozilla_JSONWriter_h
 #define mozilla_JSONWriter_h
 
-#include "mozilla/double-conversion.h"
+#include "double-conversion/double-conversion.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/Snprintf.h"
+#include "mozilla/Sprintf.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
@@ -389,7 +389,7 @@ public:
   void IntProperty(const char* aName, int64_t aInt)
   {
     char buf[64];
-    snprintf_literal(buf, "%" PRId64, aInt);
+    SprintfLiteral(buf, "%" PRId64, aInt);
     Scalar(aName, buf);
   }
 

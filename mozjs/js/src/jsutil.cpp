@@ -10,6 +10,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/ThreadLocal.h"
 
@@ -17,13 +18,9 @@
 
 #include "jstypes.h"
 
-#include "vm/HelperThreads.h"
-
-#ifdef WIN32
-#    include "jswin.h"
-#endif
-
 #include "js/Utility.h"
+#include "util/Windows.h"
+#include "vm/HelperThreads.h"
 
 using namespace js;
 
@@ -39,10 +36,20 @@ mozilla::Atomic<AutoEnterOOMUnsafeRegion*> AutoEnterOOMUnsafeRegion::owner_;
 namespace oom {
 
 JS_PUBLIC_DATA(uint32_t) targetThread = 0;
-JS_PUBLIC_DATA(MOZ_THREAD_LOCAL(uint32_t)) threadType;
+MOZ_THREAD_LOCAL(uint32_t) threadType;
 JS_PUBLIC_DATA(uint64_t) maxAllocations = UINT64_MAX;
 JS_PUBLIC_DATA(uint64_t) counter = 0;
 JS_PUBLIC_DATA(bool) failAlways = true;
+
+JS_PUBLIC_DATA(uint32_t) stackTargetThread = 0;
+JS_PUBLIC_DATA(uint64_t) maxStackChecks = UINT64_MAX;
+JS_PUBLIC_DATA(uint64_t) stackCheckCounter = 0;
+JS_PUBLIC_DATA(bool) stackCheckFailAlways = true;
+
+JS_PUBLIC_DATA(uint32_t) interruptTargetThread = 0;
+JS_PUBLIC_DATA(uint64_t) maxInterruptChecks = UINT64_MAX;
+JS_PUBLIC_DATA(uint64_t) interruptCheckCounter = 0;
+JS_PUBLIC_DATA(bool) interruptCheckFailAlways = true;
 
 bool
 InitThreadType(void) {
@@ -59,28 +66,120 @@ GetThreadType(void) {
     return threadType.get();
 }
 
+static inline bool
+IsHelperThreadType(uint32_t thread)
+{
+    return thread != THREAD_TYPE_NONE && thread != THREAD_TYPE_COOPERATING;
+}
+
 void
-SimulateOOMAfter(uint64_t allocations, uint32_t thread, bool always) {
+SimulateOOMAfter(uint64_t allocations, uint32_t thread, bool always)
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(targetThread) || IsHelperThreadType(thread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
     MOZ_ASSERT(counter + allocations > counter);
-    MOZ_ASSERT(thread > js::oom::THREAD_TYPE_NONE && thread < js::oom::THREAD_TYPE_MAX);
+    MOZ_ASSERT(thread > js::THREAD_TYPE_NONE && thread < js::THREAD_TYPE_MAX);
     targetThread = thread;
     maxAllocations = counter + allocations;
     failAlways = always;
 }
 
 void
-ResetSimulatedOOM() {
-    if (targetThread != THREAD_TYPE_NONE && targetThread != THREAD_TYPE_MAIN)
-        HelperThreadState().waitForAllThreads();
+ResetSimulatedOOM()
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(targetThread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
     targetThread = THREAD_TYPE_NONE;
     maxAllocations = UINT64_MAX;
     failAlways = false;
 }
 
+void
+SimulateStackOOMAfter(uint64_t checks, uint32_t thread, bool always)
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(stackTargetThread) || IsHelperThreadType(thread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
+    MOZ_ASSERT(stackCheckCounter + checks > stackCheckCounter);
+    MOZ_ASSERT(thread > js::THREAD_TYPE_NONE && thread < js::THREAD_TYPE_MAX);
+    stackTargetThread = thread;
+    maxStackChecks = stackCheckCounter + checks;
+    stackCheckFailAlways = always;
+}
+
+void
+ResetSimulatedStackOOM()
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(stackTargetThread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
+    stackTargetThread = THREAD_TYPE_NONE;
+    maxStackChecks = UINT64_MAX;
+    stackCheckFailAlways = false;
+}
+
+void
+SimulateInterruptAfter(uint64_t checks, uint32_t thread, bool always)
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(interruptTargetThread) || IsHelperThreadType(thread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
+    MOZ_ASSERT(interruptCheckCounter + checks > interruptCheckCounter);
+    MOZ_ASSERT(thread > js::THREAD_TYPE_NONE && thread < js::THREAD_TYPE_MAX);
+    interruptTargetThread = thread;
+    maxInterruptChecks = interruptCheckCounter + checks;
+    interruptCheckFailAlways = always;
+}
+
+void
+ResetSimulatedInterrupt()
+{
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(interruptTargetThread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
+    interruptTargetThread = THREAD_TYPE_NONE;
+    maxInterruptChecks = UINT64_MAX;
+    interruptCheckFailAlways = false;
+}
 
 } // namespace oom
 } // namespace js
 #endif // defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
+
+JS_PUBLIC_DATA(arena_id_t) js::MallocArena;
+
+void
+js::InitMallocAllocator()
+{
+    MallocArena = moz_create_arena();
+}
+
+void
+js::ShutDownMallocAllocator()
+{
+    // Until Bug 1364359 is fixed it is unsafe to call moz_dispose_arena.
+    // moz_dispose_arena(MallocArena);
+}
 
 JS_PUBLIC_API(void)
 JS_Assert(const char* s, const char* file, int ln)

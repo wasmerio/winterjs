@@ -3,13 +3,19 @@
 # Any copyright is dedicated to the Public Domain.
 # http://creativecommons.org/publicdomain/zero/1.0/
 
+from __future__ import absolute_import
+
 from mozfile import TemporaryDirectory
 import mozhttpd
 import os
 import unittest
 import urllib2
 
+import mozunit
+
+
 class PathTest(unittest.TestCase):
+
     def try_get(self, url, expected_contents):
         f = urllib2.urlopen(url)
         self.assertEqual(f.getcode(), 200)
@@ -42,7 +48,7 @@ class PathTest(unittest.TestCase):
             open(os.path.join(d2, "test2.txt"), "w").write("test 2 contents")
             httpd = mozhttpd.MozHttpd(port=0,
                                       path_mappings={'/abcxyz': d1,
-                                                     '/abc': d2,}
+                                                     '/abc': d2, }
                                       )
             httpd.start(block=False)
             self.try_get(httpd.get_url("/abcxyz/test1.txt"), "test 1 contents")
@@ -71,5 +77,6 @@ class PathTest(unittest.TestCase):
             self.try_get_expect_404(httpd.get_url())
             httpd.stop()
 
+
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

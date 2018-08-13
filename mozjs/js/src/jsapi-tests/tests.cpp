@@ -15,14 +15,14 @@ JSAPITest* JSAPITest::list;
 
 bool JSAPITest::init()
 {
-    rt = createRuntime();
-    if (!rt)
+    cx = createContext();
+    if (!cx)
         return false;
-    cx = JS_GetContext(rt);
+    js::UseInternalJobQueues(cx);
     if (!JS::InitSelfHostedCode(cx))
         return false;
     JS_BeginRequest(cx);
-    global.init(rt);
+    global.init(cx);
     createGlobal();
     if (!global)
         return false;
@@ -42,12 +42,10 @@ void JSAPITest::uninit()
     }
     if (cx) {
         JS_EndRequest(cx);
+        destroyContext();
         cx = nullptr;
     }
-    if (rt) {
-        destroyRuntime();
-        rt = nullptr;
-    }
+    msgs.clear();
 }
 
 bool JSAPITest::exec(const char* bytes, const char* filename, int lineno)
@@ -86,7 +84,9 @@ JSObject* JSAPITest::createGlobal(JSPrincipals* principals)
     /* Create the global object. */
     JS::RootedObject newGlobal(cx);
     JS::CompartmentOptions options;
-    options.behaviors().setVersion(JSVERSION_LATEST);
+#ifdef ENABLE_STREAMS
+    options.creationOptions().setStreamsEnabled(true);
+#endif
     newGlobal = JS_NewGlobalObject(cx, getGlobalClass(), principals, JS::FireOnNewGlobalHook,
                                    options);
     if (!newGlobal)
@@ -142,6 +142,7 @@ int main(int argc, char* argv[])
         test->uninit();
     }
 
+    MOZ_RELEASE_ASSERT(!JSRuntime::hasLiveRuntimes());
     JS_ShutDown();
 
     if (failures) {

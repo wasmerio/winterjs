@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import, print_function
+
 import os
 import sys
 import tempfile
@@ -9,9 +11,10 @@ import subprocess
 import glob
 
 from mozboot.base import BaseBootstrapper
+from mozboot.linux_common import StyloInstall
 
 
-class ArchlinuxBootstrapper(BaseBootstrapper):
+class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
     '''Archlinux experimental bootstrapper.'''
 
     SYSTEM_PACKAGES = [
@@ -19,6 +22,8 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         'base-devel',
         'ccache',
         'mercurial',
+        'nodejs',
+        'npm',
         'python2',
         'python2-setuptools',
         'unzip',
@@ -29,6 +34,7 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         'alsa-lib',
         'dbus-glib',
         'desktop-file-utils',
+        'gconf',
         'gtk2',
         'gtk3',
         'hicolor-icon-theme',
@@ -47,13 +53,8 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         'imake',
         'inetutils',
         'libpulse',
-        'mercurial',
-        'mesa',
-        'python2',
-        'unzip',
         'xorg-server-xvfb',
         'yasm',
-        'zip',
         'gst-libav',
         'gst-plugins-good',
         'networkmanager',
@@ -64,25 +65,30 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
     ]
 
     MOBILE_ANDROID_COMMON_PACKAGES = [
-        'zlib',  # mobile/android requires system zlib.
-        'jdk7-openjdk', # It would be nice to handle alternative JDKs.  See https://wiki.archlinux.org/index.php/Java.
-        'wget',  # For downloading the Android SDK and NDK.
-        'multilib/lib32-libstdc++5', # See comment about 32 bit binaries and multilib below.
+        # It would be nice to handle alternative JDKs.  See
+        # https://wiki.archlinux.org/index.php/Java.
+        'jdk8-openjdk',
+        # For downloading the Android SDK and NDK.
+        'wget',
+        # See comment about 32 bit binaries and multilib below.
+        'multilib/lib32-libstdc++5',
         'multilib/lib32-ncurses',
         'multilib/lib32-readline',
         'multilib/lib32-zlib',
     ]
 
     def __init__(self, version, dist_id, **kwargs):
-        print 'Using an experimental bootstrapper for Archlinux.'
+        print('Using an experimental bootstrapper for Archlinux.')
         BaseBootstrapper.__init__(self, **kwargs)
 
     def install_system_packages(self):
         self.pacman_install(*self.SYSTEM_PACKAGES)
 
     def install_browser_packages(self):
-        self.aur_install(*self.BROWSER_AUR_PACKAGES)
-        self.pacman_install(*self.BROWSER_PACKAGES)
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
 
     def install_mobile_android_packages(self):
         self.ensure_mobile_android_packages()
@@ -90,13 +96,15 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
     def install_mobile_android_artifact_mode_packages(self):
         self.ensure_mobile_android_packages(artifact_mode=True)
 
-    def ensure_mobile_android_packages(self, artifact_mode=False):
-        import android
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
+        self.aur_install(*self.BROWSER_AUR_PACKAGES)
+        self.pacman_install(*self.BROWSER_PACKAGES)
 
+    def ensure_mobile_android_packages(self, artifact_mode=False):
         # Multi-part process:
         # 1. System packages.
-        # 2. Android SDK. Android NDK only if we are not in artifact mode.
-        # 3. Android packages.
+        # 2. Android SDK. Android NDK only if we are not in artifact mode. Android packages.
 
         # 1. This is hard to believe, but the Android SDK binaries are 32-bit
         # and that conflicts with 64-bit Arch installations out of the box.  The
@@ -104,7 +112,7 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         # requires manual intervention.
         try:
             self.pacman_install(*self.MOBILE_ANDROID_COMMON_PACKAGES)
-        except e:
+        except Exception as e:
             print('Failed to install all packages.  The Android developer '
                   'toolchain requires 32 bit binaries be enabled (see '
                   'https://wiki.archlinux.org/index.php/Android).  You may need to '
@@ -112,27 +120,14 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
                   'at https://wiki.archlinux.org/index.php/Multilib.')
             raise e
 
-        # 2. The user may have an external Android SDK (in which case we save
-        # them a lengthy download), or they may have already completed the
-        # download. We unpack to ~/.mozbuild/{android-sdk-linux, android-ndk-r11b}.
-        mozbuild_path = os.environ.get('MOZBUILD_STATE_PATH', os.path.expanduser(os.path.join('~', '.mozbuild')))
-        self.sdk_path = os.environ.get('ANDROID_SDK_HOME', os.path.join(mozbuild_path, 'android-sdk-linux'))
-        self.ndk_path = os.environ.get('ANDROID_NDK_HOME', os.path.join(mozbuild_path, 'android-ndk-r11b'))
-        self.sdk_url = 'https://dl.google.com/android/android-sdk_r24.0.1-linux.tgz'
-        self.ndk_url = android.android_ndk_url('linux')
-
-        android.ensure_android_sdk_and_ndk(path=mozbuild_path,
-                                           sdk_path=self.sdk_path, sdk_url=self.sdk_url,
-                                           ndk_path=self.ndk_path, ndk_url=self.ndk_url,
-                                           artifact_mode=artifact_mode)
-        android_tool = os.path.join(self.sdk_path, 'tools', 'android')
-        android.ensure_android_packages(android_tool=android_tool)
+        # 2. Android pieces.
+        from mozboot import android
+        android.ensure_android('linux', artifact_mode=artifact_mode,
+                               no_interactive=self.no_interactive)
 
     def suggest_mobile_android_mozconfig(self, artifact_mode=False):
-        import android
-        android.suggest_mozconfig(sdk_path=self.sdk_path,
-                                  ndk_path=self.ndk_path,
-                                  artifact_mode=artifact_mode)
+        from mozboot import android
+        android.suggest_mozconfig('linux', artifact_mode=artifact_mode)
 
     def suggest_mobile_android_artifact_mode_mozconfig(self):
         self.suggest_mobile_android_mozconfig(artifact_mode=True)
@@ -160,8 +155,8 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
 
         self.run_as_root(command)
 
-    def run(self, command):
-        subprocess.check_call(command, stdin=sys.stdin)
+    def run(self, command, env=None):
+        subprocess.check_call(command, stdin=sys.stdin, env=env)
 
     def download(self, uri):
         command = ['curl', '-L', '-O', uri]
@@ -181,8 +176,10 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
 
     def makepkg(self, name):
         command = ['makepkg', '-s']
-        self.run(command)
-        pack = glob.glob(name + '*.tar.xz')[0]
+        makepkg_env = os.environ.copy()
+        makepkg_env['PKGEXT'] = '.pkg.tar.xz'
+        self.run(command, env=makepkg_env)
+        pack = glob.glob(name + '*.pkg.tar.xz')[0]
         command = ['pacman', '-U']
         if self.no_interactive:
             command.append('--noconfirm')

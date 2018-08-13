@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 //
 //  rbbirb.h
 //
@@ -13,6 +15,9 @@
 #define RBBIRB_H
 
 #include "unicode/utypes.h"
+
+#if !UCONFIG_NO_BREAK_ITERATION
+
 #include "unicode/uobject.h"
 #include "unicode/rbbi.h"
 #include "unicode/uniset.h"
@@ -205,6 +210,9 @@ struct RBBISetTableEl {
 #endif
 
 U_NAMESPACE_END
+
+#endif /* #if !UCONFIG_NO_BREAK_ITERATION */
+
 #endif
 
 

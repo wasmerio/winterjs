@@ -4,11 +4,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+
 import os
 import shutil
 import tempfile
 import unittest
-import urllib2
+import zipfile
+
+import mozunit
 
 from manifestparser import ManifestParser
 import mozfile
@@ -17,6 +21,7 @@ import mozlog.unstructured as mozlog
 import mozprofile
 
 from addon_stubs import generate_addon, generate_manifest
+from six.moves.urllib import error
 
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -99,7 +104,7 @@ class TestAddonsManager(unittest.TestCase):
 
         # Download from an invalid URL
         addon = server.get_url() + 'not_existent.xpi'
-        self.assertRaises(urllib2.HTTPError,
+        self.assertRaises(error.HTTPError,
                           self.am.download, addon, self.tmpdir)
         self.assertEqual(os.listdir(self.tmpdir), [])
 
@@ -110,6 +115,45 @@ class TestAddonsManager(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmpdir), [])
 
         server.stop()
+
+    def test_install_webextension_from_dir(self):
+        addon = os.path.join(here, 'addons', 'apply-css.xpi')
+        zipped = zipfile.ZipFile(addon)
+        try:
+            zipped.extractall(self.tmpdir)
+        finally:
+            zipped.close()
+        self.am.install_from_path(self.tmpdir)
+        self.assertEqual(len(self.am.installed_addons), 1)
+        self.assertTrue(os.path.isdir(self.am.installed_addons[0]))
+
+    def test_install_webextension(self):
+        server = mozhttpd.MozHttpd(docroot=os.path.join(here, 'addons'))
+        server.start()
+        try:
+            addon = server.get_url() + 'apply-css.xpi'
+            self.am.install_from_path(addon)
+        finally:
+            server.stop()
+
+        self.assertEqual(len(self.am.downloaded_addons), 1)
+        self.assertTrue(os.path.isfile(self.am.downloaded_addons[0]))
+        self.assertIn('test-webext@quality.mozilla.org.xpi',
+                      os.path.basename(self.am.downloaded_addons[0]))
+
+    def test_install_webextension_sans_id(self):
+        server = mozhttpd.MozHttpd(docroot=os.path.join(here, 'addons'))
+        server.start()
+        try:
+            addon = server.get_url() + 'apply-css-sans-id.xpi'
+            self.am.install_from_path(addon)
+        finally:
+            server.stop()
+
+        self.assertEqual(len(self.am.downloaded_addons), 1)
+        self.assertTrue(os.path.isfile(self.am.downloaded_addons[0]))
+        self.assertIn('temporary-addon.xpi',
+                      os.path.basename(self.am.downloaded_addons[0]))
 
     def test_install_from_path_xpi(self):
         addons_to_install = []
@@ -122,7 +166,7 @@ class TestAddonsManager(unittest.TestCase):
             self.am.install_from_path(temp_addon)
 
         # Generate a list of addons installed in the profile
-        addons_installed = [unicode(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
+        addons_installed = [str(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
                             self.profile.profile, 'extensions', 'staged'))]
         self.assertEqual(addons_to_install.sort(), addons_installed.sort())
 
@@ -258,10 +302,10 @@ class TestAddonsManager(unittest.TestCase):
         # Generate installer stubs for all possible types of addons
         addons = []
         addons.append(generate_addon('test-addon-invalid-no-manifest@mozilla.org',
-                      path=self.tmpdir,
-                      xpi=False))
+                                     path=self.tmpdir,
+                                     xpi=False))
         addons.append(generate_addon('test-addon-invalid-no-id@mozilla.org',
-                      path=self.tmpdir))
+                                     path=self.tmpdir))
 
         self.am.install_from_path(self.tmpdir)
 
@@ -287,7 +331,7 @@ class TestAddonsManager(unittest.TestCase):
 
         self.am.install_from_manifest(temp_manifest)
         # Generate a list of addons installed in the profile
-        addons_installed = [unicode(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
+        addons_installed = [str(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
                             self.profile.profile, 'extensions', 'staged'))]
         self.assertEqual(addons_installed.sort(), addons_to_install.sort())
 
@@ -327,7 +371,7 @@ class TestAddonsManager(unittest.TestCase):
         addon_two = generate_addon('test-addon-2@mozilla.org')
 
         self.am.install_addons(addon_one)
-        installed_addons = [unicode(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
+        installed_addons = [str(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
                             self.profile.profile, 'extensions', 'staged'))]
 
         # Create a new profile based on an existing profile
@@ -337,7 +381,7 @@ class TestAddonsManager(unittest.TestCase):
                                                        addons=addon_two)
         duplicate_profile.addon_manager.clean()
 
-        addons_after_cleanup = [unicode(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
+        addons_after_cleanup = [str(x[:-len('.xpi')]) for x in os.listdir(os.path.join(
                                 duplicate_profile.profile, 'extensions', 'staged'))]
         # New addons installed should be removed by clean_addons()
         self.assertEqual(installed_addons, addons_after_cleanup)
@@ -412,4 +456,4 @@ class TestAddonsManager(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

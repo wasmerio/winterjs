@@ -23,17 +23,25 @@
 */
 
 #include "SelfHostingDefines.h"
+#include "TypedObjectConstants.h"
 
 // Assertions and debug printing, defined here instead of in the header above
 // to make `assert` invisible to C++.
 #ifdef DEBUG
-#define assert(b, info) if (!(b)) AssertionFailed(__FILE__ + ":" + __LINE__ + ": " + info)
-#define dbg(msg) DumpMessage(callFunction(std_Array_pop, \
-                                          StringSplitString(__FILE__, '/')) \
-                             + '#' + __LINE__ + ': ' + msg)
+#define assert(b, info) \
+    do { \
+        if (!(b)) \
+            AssertionFailed(__FILE__ + ":" + __LINE__ + ": " + info) \
+    } while (false)
+#define dbg(msg) \
+    do { \
+        DumpMessage(callFunction(std_Array_pop, \
+                                 StringSplitString(__FILE__, '/')) + \
+                    '#' + __LINE__ + ': ' + msg) \
+    } while (false)
 #else
-#define assert(b, info) // Elided assertion.
-#define dbg(msg) // Elided debugging output.
+#define assert(b, info) ; // Elided assertion.
+#define dbg(msg) ; // Elided debugging output.
 #endif
 
 // All C++-implemented standard builtins library functions used in self-hosted
@@ -43,10 +51,8 @@
 // Do not create an alias to a self-hosted builtin, otherwise it will be cloned
 // twice.
 //
-// WeakMap is a bare constructor without properties or methods.
-var std_WeakMap = WeakMap;
-// StopIteration is a bare constructor without properties or methods.
-var std_StopIteration = StopIteration;
+// Symbol is a bare constructor without properties or methods.
+var std_Symbol = Symbol;
 
 
 /********** List specification type **********/
@@ -71,12 +77,6 @@ MakeConstructible(Record, {});
 /********** Abstract operations defined in ECMAScript Language Specification **********/
 
 
-/* Spec: ECMAScript Language Specification, 5.1 edition, 8.12.6 and 11.8.7 */
-function HasProperty(o, p) {
-    return p in o;
-}
-
-
 /* Spec: ECMAScript Language Specification, 5.1 edition, 9.2 and 11.4.9 */
 function ToBoolean(v) {
     return !!v;
@@ -97,16 +97,30 @@ function RequireObjectCoercible(v) {
 
 /* Spec: ECMAScript Draft, 6 edition May 22, 2014, 7.1.15 */
 function ToLength(v) {
+    // Step 1.
     v = ToInteger(v);
 
-    if (v <= 0)
-        return 0;
+    // Step 2.
+    // Use max(v, 0) here, because it's easier to optimize in Ion.
+    // This is correct even for -0.
+    v = std_Math_max(v, 0);
 
+    // Step 3.
     // Math.pow(2, 53) - 1 = 0x1fffffffffffff
     return std_Math_min(v, 0x1fffffffffffff);
 }
 
-/* Spec: ECMAScript Draft, 6th edition Oct 14, 2014, 7.2.4 */
+// ES2017 draft rev aebf014403a3e641fb1622aec47c40f051943527
+// 7.2.9 SameValue ( x, y )
+function SameValue(x, y) {
+    if (x === y) {
+        return (x !== 0) || (1 / x === 1 / y);
+    }
+    return (x !== x && y !== y);
+}
+
+// ES2017 draft rev aebf014403a3e641fb1622aec47c40f051943527
+// 7.2.10 SameValueZero ( x, y )
 function SameValueZero(x, y) {
     return x === y || (x !== x && y !== y);
 }
@@ -137,22 +151,8 @@ function IsPropertyKey(argument) {
     return type === "string" || type === "symbol";
 }
 
-/* Spec: ECMAScript Draft, 6th edition Dec 24, 2014, 7.4.1 */
-function GetIterator(obj, method) {
-    // Steps 1-2.
-    if (arguments.length === 1)
-        method = GetMethod(obj, std_iterator);
-
-    // Steps 3-4.
-    var iterator = callContentFunction(method, obj);
-
-    // Step 5.
-    if (!IsObject(iterator))
-        ThrowTypeError(JSMSG_NOT_ITERABLE, ToString(iterator));
-
-    // Step 6.
-    return iterator;
-}
+#define TO_PROPERTY_KEY(name) \
+(typeof name !== "string" && typeof name !== "number" && typeof name !== "symbol" ? ToPropertyKey(name) : name)
 
 var _builtinCtorsCache = {__proto__: null};
 
@@ -207,12 +207,84 @@ function GetTypeError(msg) {
     assert(false, "the catch block should've returned from this function.");
 }
 
+function GetInternalError(msg) {
+    try {
+        FUN_APPLY(ThrowInternalError, undefined, arguments);
+    } catch (e) {
+        return e;
+    }
+    assert(false, "the catch block should've returned from this function.");
+}
+
 // To be used when a function is required but calling it shouldn't do anything.
 function NullFunction() {}
+
+// Object Rest/Spread Properties proposal
+// Abstract operation: CopyDataProperties (target, source, excluded)
+function CopyDataProperties(target, source, excluded) {
+    // Step 1.
+    assert(IsObject(target), "target is an object");
+
+    // Step 2.
+    assert(IsObject(excluded), "excluded is an object");
+
+    // Steps 3, 6.
+    if (source === undefined || source === null)
+        return;
+
+    // Step 4.a.
+    source = ToObject(source);
+
+    // Step 4.b.
+    var keys = OwnPropertyKeys(source);
+
+    // Step 5.
+    for (var index = 0; index < keys.length; index++) {
+        var key = keys[index];
+
+        // We abbreviate this by calling propertyIsEnumerable which is faster
+        // and returns false for not defined properties.
+        if (!hasOwn(key, excluded) && callFunction(std_Object_propertyIsEnumerable, source, key))
+            _DefineDataProperty(target, key, source[key]);
+    }
+
+    // Step 6 (Return).
+}
+
+// Object Rest/Spread Properties proposal
+// Abstract operation: CopyDataProperties (target, source, excluded)
+function CopyDataPropertiesUnfiltered(target, source) {
+    // Step 1.
+    assert(IsObject(target), "target is an object");
+
+    // Step 2 (Not applicable).
+
+    // Steps 3, 6.
+    if (source === undefined || source === null)
+        return;
+
+    // Step 4.a.
+    source = ToObject(source);
+
+    // Step 4.b.
+    var keys = OwnPropertyKeys(source);
+
+    // Step 5.
+    for (var index = 0; index < keys.length; index++) {
+        var key = keys[index];
+
+        // We abbreviate this by calling propertyIsEnumerable which is faster
+        // and returns false for not defined properties.
+        if (callFunction(std_Object_propertyIsEnumerable, source, key))
+            _DefineDataProperty(target, key, source[key]);
+    }
+
+    // Step 6 (Return).
+}
 
 /*************************************** Testing functions ***************************************/
 function outer() {
     return function inner() {
         return "foo";
-    }
+    };
 }

@@ -48,6 +48,12 @@ set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-
 set LIBCLANG_PATH=C:\Program Files\LLVM\lib
 ```
 
+5. Set environment variables so the build script can find Python 2.7 and Autoconf 2.13:
+```
+set AUTOCONF=C:\mozilla-build\msys\local\bin\autoconf-2.13
+set NATIVE_WIN32_PYTHON=C:\mozilla-build\python\python2.7.exe
+```
+
 You can now build and test the crate using cargo:
 ```
 cargo build
@@ -61,10 +67,22 @@ Upgrading
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Download the tarball corresponding to the desired mozilla-central commit
-   from [treeherder's SM-tc(pkg) job][tc].
-2. Update `etc/COMMIT`.
-3. Run `python3 ./etc/update.py path/to/tarball`.
+1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
+   https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg.
+   You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
+   Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
+
+2. Click on the SM(pkg) link, which will open a panel with details of the
+   commit, including an artefact uploaded link, with a name of the form
+   mozjs-*version*.tar.bz2. Download it and save it locally.
+
+3. Look at the patches in `etc/patches/*.patch`, and remove any that no longer apply
+   (with a bit of luck this will be all of them).
+
+4. Run `python3 ./etc/update.py path/to/tarball`.
+
+5. Update `etc/COMMIT` with the commit number.
+
+6. Build and test the bindings as above, then submit a PR!
 
 [bindgen]: https://github.com/servo/rust-bindgen
-[tc]: https://treeherder.mozilla.org/#/jobs?repo=mozilla-central&filter-searchStr=Linux%20x64%20opt%20Spider%20Monkey,%20submitted%20by%20taskcluster%20%5BTC%5D%20Spidermonkey%20Package%20SM-tc(pkg)

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import absolute_import
+
 import os
 import tempfile
 import zipfile
@@ -34,7 +36,7 @@ def generate_addon(addon_id, path=None, name=None, xpi=True):
     Returns the file-path of the addon's .xpi file
     """
 
-    if not addon_id in stubs.keys():
+    if addon_id not in stubs.keys():
         raise IOError('Requested addon stub "%s" does not exist' % addon_id)
 
     # Generate directory structure for addon

@@ -12,14 +12,40 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MemoryChecking.h"
 #include "mozilla/Move.h"
+#include "mozilla/OperatorNewExtensions.h"
+#include "mozilla/Poison.h"
 #include "mozilla/TypeTraits.h"
 
 #include <new>  // for placement new
+#include <ostream>
+#include <type_traits>
 
 namespace mozilla {
 
 struct Nothing { };
+
+namespace detail {
+
+template<typename T>
+struct MaybePoisoner
+{
+  static const size_t N = sizeof(T);
+
+  static void poison(void* aPtr)
+  {
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
+    // Avoid MOZ_ASSERT in mozWritePoison.
+    if (N >= sizeof(uintptr_t)) {
+      mozWritePoison(aPtr, N);
+    }
+#endif
+    MOZ_MAKE_MEM_UNDEFINED(aPtr, N);
+  }
+};
+
+} // namespace detail
 
 /*
  * Maybe is a container class which contains either zero or one elements. It
@@ -80,24 +106,59 @@ struct Nothing { };
  * whether or not this is still a problem.
  */
 template<class T>
-class Maybe
+class MOZ_NON_PARAM MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS Maybe
 {
-  bool mIsSome;
-  AlignedStorage2<T> mStorage;
+  MOZ_ALIGNAS_IN_STRUCT(T) unsigned char mStorage[sizeof(T)];
+  char mIsSome; // not bool -- guarantees minimal space consumption
+
+  // GCC fails due to -Werror=strict-aliasing if |mStorage| is directly cast to
+  // T*.  Indirecting through these functions addresses the problem.
+  void* data() { return mStorage; }
+  const void* data() const { return mStorage; }
+
+  void poisonData()
+  {
+    detail::MaybePoisoner<T>::poison(data());
+  }
 
 public:
-  typedef T ValueType;
+  using ValueType = T;
 
-  Maybe() : mIsSome(false) { }
+  Maybe() : mIsSome(false)
+  {
+    poisonData();
+  }
   ~Maybe() { reset(); }
 
-  MOZ_IMPLICIT Maybe(Nothing) : mIsSome(false) { }
+  MOZ_IMPLICIT Maybe(Nothing) : mIsSome(false)
+  {
+    poisonData();
+  }
 
   Maybe(const Maybe& aOther)
     : mIsSome(false)
   {
     if (aOther.mIsSome) {
       emplace(*aOther);
+    } else {
+      poisonData();
+    }
+  }
+
+  /**
+   * Maybe<T> can be copy-constructed from a Maybe<U> if U is convertible to T.
+   */
+  template<typename U,
+           typename =
+             typename std::enable_if<std::is_convertible<U, T>::value>::type>
+  MOZ_IMPLICIT
+  Maybe(const Maybe<U>& aOther)
+    : mIsSome(false)
+  {
+    if (aOther.isSome()) {
+      emplace(*aOther);
+    } else {
+      poisonData();
     }
   }
 
@@ -107,6 +168,26 @@ public:
     if (aOther.mIsSome) {
       emplace(Move(*aOther));
       aOther.reset();
+    } else {
+      poisonData();
+    }
+  }
+
+  /**
+   * Maybe<T> can be move-constructed from a Maybe<U> if U is convertible to T.
+   */
+  template<typename U,
+           typename =
+             typename std::enable_if<std::is_convertible<U, T>::value>::type>
+  MOZ_IMPLICIT
+  Maybe(Maybe<U>&& aOther)
+    : mIsSome(false)
+  {
+    if (aOther.isSome()) {
+      emplace(Move(*aOther));
+      aOther.reset();
+    } else {
+      poisonData();
     }
   }
 
@@ -115,13 +196,7 @@ public:
     if (&aOther != this) {
       if (aOther.mIsSome) {
         if (mIsSome) {
-          // XXX(seth): The correct code for this branch, below, can't be used
-          // due to a bug in Visual Studio 2010. See bug 1052940.
-          /*
           ref() = aOther.ref();
-          */
-          reset();
-          emplace(*aOther);
         } else {
           emplace(*aOther);
         }
@@ -132,11 +207,47 @@ public:
     return *this;
   }
 
+  template<typename U,
+           typename =
+             typename std::enable_if<std::is_convertible<U, T>::value>::type>
+  Maybe& operator=(const Maybe<U>& aOther)
+  {
+    if (aOther.isSome()) {
+      if (mIsSome) {
+        ref() = aOther.ref();
+      } else {
+        emplace(*aOther);
+      }
+    } else {
+      reset();
+    }
+    return *this;
+  }
+
   Maybe& operator=(Maybe&& aOther)
   {
     MOZ_ASSERT(this != &aOther, "Self-moves are prohibited");
 
     if (aOther.mIsSome) {
+      if (mIsSome) {
+        ref() = Move(aOther.ref());
+      } else {
+        emplace(Move(*aOther));
+      }
+      aOther.reset();
+    } else {
+      reset();
+    }
+
+    return *this;
+  }
+
+  template<typename U,
+           typename =
+             typename std::enable_if<std::is_convertible<U, T>::value>::type>
+  Maybe& operator=(Maybe<U>&& aOther)
+  {
+    if (aOther.isSome()) {
       if (mIsSome) {
         ref() = Move(aOther.ref());
       } else {
@@ -259,13 +370,13 @@ public:
   T& ref()
   {
     MOZ_ASSERT(mIsSome);
-    return *mStorage.addr();
+    return *static_cast<T*>(data());
   }
 
   const T& ref() const
   {
     MOZ_ASSERT(mIsSome);
-    return *mStorage.addr();
+    return *static_cast<const T*>(data());
   }
 
   /*
@@ -374,8 +485,9 @@ public:
   void reset()
   {
     if (isSome()) {
-      ref().~T();
+      ref().T::~T();
       mIsSome = false;
+      poisonData();
     }
   }
 
@@ -387,8 +499,19 @@ public:
   void emplace(Args&&... aArgs)
   {
     MOZ_ASSERT(!mIsSome);
-    ::new (mStorage.addr()) T(Forward<Args>(aArgs)...);
+    ::new (KnownNotNull, data()) T(Forward<Args>(aArgs)...);
     mIsSome = true;
+  }
+
+  friend std::ostream&
+  operator<<(std::ostream& aStream, const Maybe<T>& aMaybe)
+  {
+    if (aMaybe) {
+      aStream << aMaybe.ref();
+    } else {
+      aStream << "<Nothing>";
+    }
+    return aStream;
   }
 };
 
@@ -402,11 +525,12 @@ public:
  * if you need to construct a Maybe value that holds a const, volatile, or
  * reference value, you need to use emplace() instead.
  */
-template<typename T>
-Maybe<typename RemoveCV<typename RemoveReference<T>::Type>::Type>
+template<typename T,
+         typename U = typename std::remove_cv<
+           typename std::remove_reference<T>::type>::type>
+Maybe<U>
 Some(T&& aValue)
 {
-  typedef typename RemoveCV<typename RemoveReference<T>::Type>::Type U;
   Maybe<U> value;
   value.emplace(Forward<T>(aValue));
   return value;

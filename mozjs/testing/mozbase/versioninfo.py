@@ -9,6 +9,8 @@ List mozbase package dependencies or generate changelogs
 from commit messages.
 """
 
+from __future__ import absolute_import, print_function
+
 from collections import Iterable
 from distutils.version import StrictVersion
 import argparse
@@ -19,6 +21,7 @@ import sys
 import setup_development
 
 here = os.path.abspath(os.path.dirname(__file__))
+
 
 def run_hg(command):
     command = command[:]
@@ -73,7 +76,9 @@ def changelog(args):
         to_ref = get_version_rev(to_ref)
 
     delim = '\x12\x59\x52\x99\x05'
-    changelog = run_hg(['log', '-r', '%s:children(%s)' % (to_ref, from_ref), '--template={desc}%s' % delim, '-M', args.module]).split(delim)[:-1]
+    changelog = run_hg(['log', '-r', '%s:children(%s)' % (to_ref, from_ref),
+                        '--template={desc}%s' % delim,
+                        '-M', args.module]).split(delim)[:-1]
 
     def prettify(desc):
         lines = desc.splitlines()
@@ -81,7 +86,7 @@ def changelog(args):
         return '\n'.join(lines)
 
     changelog = map(prettify, changelog)
-    print '\n'.join(changelog)
+    print('\n'.join(changelog))
 
 
 def dependencies(args):
@@ -97,8 +102,8 @@ def dependencies(args):
 
     # print package version information
     for value in info.values():
-        print '%s %s : %s' % (value['Name'], value['Version'],
-                              ', '.join(dependencies[value['Name']]))
+        print('%s %s : %s' % (value['Name'], value['Version'],
+                              ', '.join(dependencies[value['Name']])))
 
 
 def main(args=sys.argv[1:]):
@@ -111,9 +116,11 @@ def main(args=sys.argv[1:]):
     p_changelog = subcommands.add_parser('changelog', help="Print a changelog.")
     p_changelog.add_argument('module', help="Module to get changelog from.")
     p_changelog.add_argument('--from', dest='from_ref', default=None,
-                             help="Starting version or revision to list changes from. [defaults to latest version]")
+                             help="Starting version or revision to list "
+                             "changes from. [defaults to latest version]")
     p_changelog.add_argument('--to', dest='to_ref', default=None,
-                             help="Ending version or revision to list changes to. [defaults to tip]")
+                             help="Ending version or revision to list "
+                             "changes to. [defaults to tip]")
     p_changelog.set_defaults(func=changelog)
 
     # default to showing dependencies

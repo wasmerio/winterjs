@@ -11,7 +11,7 @@ The in-tree copy is updated by running
   sh update.sh
 from within the modules/fdlibm directory.
 
-Current version: [commit 9e7434b2c5c2ce4f2a9aa3e84de3e7cf33a910d5].
+Current version: [commit b21ccf63f28a3a4692d8a31419e0a725a1b1a800 (2018-02-14T07:59:30Z)].
 
 patches 01-14 fixes files to be usable within mozilla-central tree.
 See https://bugzilla.mozilla.org/show_bug.cgi?id=933257

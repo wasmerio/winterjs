@@ -10,9 +10,9 @@ char test_data[] = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 
 static void GC(JSContext* cx)
 {
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
     // Trigger another to wait for background finalization to end.
-    JS_GC(JS_GetRuntime(cx));
+    JS_GC(cx);
 }
 
 BEGIN_TEST(testExternalArrayBuffer)
@@ -22,7 +22,7 @@ BEGIN_TEST(testExternalArrayBuffer)
     GC(cx);
     CHECK(VerifyObject(obj, length));
     GC(cx);
-    JS_DetachArrayBuffer(cx, obj, KeepData);
+    JS_DetachArrayBuffer(cx, obj);
     GC(cx);
     CHECK(VerifyObject(obj, 0));
 

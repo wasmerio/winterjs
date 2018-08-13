@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/ro.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 ro{
     Currencies{
         ADP{
@@ -74,7 +68,7 @@ ro{
         }
         BBD{
             "BBD",
-            "dolar Barbados",
+            "dolar din Barbados",
         }
         BDT{
             "BDT",
@@ -152,9 +146,13 @@ ro{
             "BWP",
             "pula Botswana",
         }
+        BYN{
+            "BYN",
+            "rublă belarusă",
+        }
         BYR{
             "BYR",
-            "rublă belarusă",
+            "rublă belarusă (2000–2016)",
         }
         BZD{
             "BZD",
@@ -175,6 +173,10 @@ ro{
         CLP{
             "CLP",
             "peso chilian",
+        }
+        CNH{
+            "CNH",
+            "yuan chinezesc (offshore)",
         }
         CNY{
             "CNY",
@@ -450,7 +452,7 @@ ro{
         }
         LKR{
             "LKR",
-            "rupie din Sri Lanka",
+            "rupie srilankeză",
         }
         LRD{
             "LRD",
@@ -618,7 +620,7 @@ ro{
         }
         PEN{
             "PEN",
-            "sol nou peruvian",
+            "sol peruvian",
         }
         PES{
             "PES",
@@ -706,7 +708,7 @@ ro{
         }
         SGD{
             "SGD",
-            "dolar Singapore",
+            "dolar singaporez",
         }
         SHP{
             "SHP",
@@ -738,7 +740,7 @@ ro{
         }
         SSP{
             "SSP",
-            "liră sud-sudaneză",
+            "liră din Sudanul de Sud",
         }
         STD{
             "STD",
@@ -1006,7 +1008,7 @@ ro{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -1023,6 +1025,7 @@ ro{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -1063,6 +1066,7 @@ ro{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"lei"}
         RUB{"₽"}
         RWF{"RF"}
         SBD{"$"}
@@ -1168,9 +1172,9 @@ ro{
             other{"mărci convertibile din Bosnia și Herțegovina"}
         }
         BBD{
-            few{"dolari Barbados"}
-            one{"dolar Barbados"}
-            other{"dolari Barbados"}
+            few{"dolari din Barbados"}
+            one{"dolar din Barbados"}
+            other{"dolari din Barbados"}
         }
         BDT{
             few{"taka din Bangladesh"}
@@ -1243,14 +1247,19 @@ ro{
             other{"ngultrum din Bhutan"}
         }
         BWP{
-            few{"pule Botswana"}
-            one{"pulă Botswana"}
-            other{"pule Botswana"}
+            few{"pula Botswana"}
+            one{"pula Botswana"}
+            other{"pula Botswana"}
         }
-        BYR{
+        BYN{
             few{"ruble belaruse"}
             one{"rublă belarusă"}
             other{"ruble belaruse"}
+        }
+        BYR{
+            few{"ruble belaruse (2000–2016)"}
+            one{"rublă belarusă (2000–2016)"}
+            other{"ruble belaruse (2000–2016)"}
         }
         BZD{
             few{"dolari din Belize"}
@@ -1276,6 +1285,11 @@ ro{
             few{"pesos chilieni"}
             one{"peso chilian"}
             other{"pesos chilieni"}
+        }
+        CNH{
+            few{"yuani chinezești (offshore)"}
+            one{"yuan chinezesc (offshore)"}
+            other{"yuani chinezești (offshore)"}
         }
         CNY{
             few{"yuani chinezești"}
@@ -1598,9 +1612,9 @@ ro{
             other{"lire libaneze"}
         }
         LKR{
-            few{"rupii din Sri Lanka"}
-            one{"rupie din Sri Lanka"}
-            other{"rupii Sri Lanka"}
+            few{"rupii srilankeze"}
+            one{"rupie srilankeză"}
+            other{"rupii srilankeze"}
         }
         LRD{
             few{"dolari liberieni"}
@@ -1783,14 +1797,14 @@ ro{
             other{"balboa panameze"}
         }
         PEN{
-            few{"soli noi peruvieni"}
-            one{"sol nou peruvian"}
-            other{"soli noi peruvieni"}
+            few{"soli peruvieni"}
+            one{"sol peruvian"}
+            other{"soli peruvieni"}
         }
         PES{
-            few{"soli Peru (1863–1965)"}
+            few{"soli peruvieni (1863–1965)"}
             one{"sol peruvian (1863–1965)"}
-            other{"soli Peru (1863–1965)"}
+            other{"soli peruvieni (1863–1965)"}
         }
         PGK{
             few{"kina din Papua-Noua Guinee"}
@@ -1893,9 +1907,9 @@ ro{
             other{"coroane suedeze"}
         }
         SGD{
-            few{"dolari Singapore"}
-            one{"dolar Singapore"}
-            other{"dolari Singapore"}
+            few{"dolari singaporezi"}
+            one{"dolar singaporez"}
+            other{"dolari singaporezi"}
         }
         SHP{
             few{"lire Insula Sf. Elena"}
@@ -1933,9 +1947,9 @@ ro{
             other{"guldeni Surinam"}
         }
         SSP{
-            few{"lire sud-sudaneze"}
-            one{"liră sud-sudaneză"}
-            other{"lire sud-sudaneze"}
+            few{"lire din Sudanul de Sud"}
+            one{"liră din Sudanul de Sud"}
+            other{"lire din Sudanul de Sud"}
         }
         STD{
             few{"dobre Sao Tome și Principe"}
@@ -2100,7 +2114,7 @@ ro{
         XAF{
             few{"franci CFA BEAC"}
             one{"franc CFA BEAC"}
-            other{"franci Comunitatea Financiară"}
+            other{"franci CFA central-africani"}
         }
         XCD{
             few{"dolari din Caraibele de Est"}
@@ -2183,5 +2197,5 @@ ro{
         one{"{0} {1}"}
         other{"{0} de {1}"}
     }
-    Version{"2.1.19.17"}
+    Version{"2.1.37.5"}
 }

@@ -49,7 +49,6 @@ class Version(LooseVersion):
             itertools.takewhile(lambda x:isinstance(x, int), self.version),
             (0, 0, 0)))[:3]
 
-
     def __cmp__(self, other):
         # LooseVersion checks isinstance(StringType), so work around it.
         if isinstance(other, unicode):
@@ -150,7 +149,7 @@ class ConfigureOutputHandler(logging.Handler):
                 msg = '%s\n' % self.format(record)
             stream.write(msg)
             stream.flush()
-        except (KeyboardInterrupt, SystemExit):
+        except (KeyboardInterrupt, SystemExit, IOError):
             raise
         except:
             self.handleError(record)
@@ -194,14 +193,15 @@ class LineIO(object):
     '''File-like class that sends each line of the written data to a callback
     (without carriage returns).
     '''
-    def __init__(self, callback):
+    def __init__(self, callback, errors='strict'):
         self._callback = callback
         self._buf = ''
         self._encoding = getpreferredencoding()
+        self._errors = errors
 
     def write(self, buf):
         if self._encoding and isinstance(buf, str):
-            buf = buf.decode(self._encoding)
+            buf = buf.decode(self._encoding, self._errors)
         lines = buf.splitlines()
         if not lines:
             return

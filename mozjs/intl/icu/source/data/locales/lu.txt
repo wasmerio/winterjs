@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/lu.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 lu{
     AuxExemplarCharacters{"[g r x]"}
     ExemplarCharacters{
@@ -13,6 +7,7 @@ lu{
         " ɔ {ɔ\u0301} {ɔ\u0300} p {ph} q s {shi} t u ú ù v w y z]"
     }
     ExemplarCharactersIndex{"[A B C D E F H I J K L M N O P Q S T U V W Y Z]"}
+    ExemplarCharactersNumbers{"[\\- , . % ‰ + 0 1 2 3 4 5 6 7 8 9]"}
     NumberElements{
         latn{
             patterns{
@@ -25,7 +20,7 @@ lu{
             }
         }
     }
-    Version{"2.1.19.14"}
+    Version{"2.1.37.1"}
     calendar{
         generic{
             DateTimePatterns{
@@ -70,6 +65,10 @@ lu{
         }
         gregorian{
             AmPmMarkers{
+                "Dinda",
+                "Dilolo",
+            }
+            AmPmMarkersAbbr{
                 "Dinda",
                 "Dilolo",
             }

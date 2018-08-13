@@ -1,11 +1,5 @@
-﻿// ***************************************************************************
-// *
-// * Copyright (C) 2015 International Business Machines
-// * Corporation and others. All Rights Reserved.
-// * Tool: org.unicode.cldr.icu.NewLdml2IcuConverter
-// * Source File: <path>/common/main/cs.xml
-// *
-// ***************************************************************************
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
 cs{
     Currencies{
         ADP{
@@ -130,15 +124,15 @@ cs{
         }
         BGL{
             "BGL",
-            "BGL",
+            "bulharský tvrdý leva",
         }
         BGM{
             "BGM",
-            "BGM",
+            "bulharský socialistický leva",
         }
         BGN{
             "BGN",
-            "bulharský lev",
+            "bulharský leva",
         }
         BGO{
             "BGO",
@@ -224,9 +218,13 @@ cs{
             "BYB",
             "běloruský rubl (1994–1999)",
         }
+        BYN{
+            "BYN",
+            "běloruský rubl",
+        }
         BYR{
             "BYR",
-            "běloruský rubl",
+            "běloruský rubl (2000–2016)",
         }
         BZD{
             "BZD",
@@ -263,6 +261,14 @@ cs{
         CLP{
             "CLP",
             "chilské peso",
+        }
+        CNH{
+            "CNH",
+            "čínský jüan (offshore)",
+        }
+        CNX{
+            "CNX",
+            "čínský dolar ČLB",
         }
         CNY{
             "CN¥",
@@ -778,7 +784,7 @@ cs{
         }
         PEN{
             "PEN",
-            "peruánský nový sol",
+            "peruánský sol",
         }
         PES{
             "PES",
@@ -826,7 +832,7 @@ cs{
         }
         RON{
             "RON",
-            "rumunské leu",
+            "rumunský leu",
         }
         RSD{
             "RSD",
@@ -1206,7 +1212,7 @@ cs{
         BRL{"R$"}
         BSD{"$"}
         BWP{"P"}
-        BYR{"р."}
+        BYN{"р."}
         BZD{"$"}
         CAD{"$"}
         CLP{"$"}
@@ -1224,6 +1230,7 @@ cs{
         FJD{"$"}
         FKP{"£"}
         GBP{"£"}
+        GEL{"₾"}
         GIP{"£"}
         GNF{"FG"}
         GTQ{"Q"}
@@ -1248,6 +1255,8 @@ cs{
         LBP{"L£"}
         LKR{"Rs"}
         LRD{"$"}
+        LTL{"Lt"}
+        LVL{"Ls"}
         MGA{"Ar"}
         MMK{"K"}
         MNT{"₮"}
@@ -1264,6 +1273,7 @@ cs{
         PKR{"Rs"}
         PLN{"zł"}
         PYG{"₲"}
+        RON{"L"}
         RUB{"₽"}
         RUR{"р."}
         RWF{"RF"}
@@ -1474,11 +1484,23 @@ cs{
             one{"belgický finanční frank"}
             other{"belgických finančních franků"}
         }
+        BGL{
+            few{"bulharské tvrdé leva"}
+            many{"bulharského tvrdého leva"}
+            one{"bulharský tvrdý leva"}
+            other{"bulharských tvrdých leva"}
+        }
+        BGM{
+            few{"bulharské socialistické leva"}
+            many{"bulharského socialistického leva"}
+            one{"bulharský socialistický leva"}
+            other{"bulharských socialistických leva"}
+        }
         BGN{
-            few{"bulharské lvy"}
-            many{"bulharského lva"}
-            one{"bulharský lev"}
-            other{"bulharských lvů"}
+            few{"bulharské leva"}
+            many{"bulharského leva"}
+            one{"bulharský leva"}
+            other{"bulharských leva"}
         }
         BGO{
             few{"bulharské leva (1879–1952)"}
@@ -1606,11 +1628,17 @@ cs{
             one{"běloruský rubl (1994–1999)"}
             other{"běloruských rublů (1994–1999)"}
         }
-        BYR{
+        BYN{
             few{"běloruské rubly"}
             many{"běloruského rublu"}
             one{"běloruský rubl"}
             other{"běloruských rublů"}
+        }
+        BYR{
+            few{"běloruské rubly (2000–2016)"}
+            many{"běloruského rublu (2000–2016)"}
+            one{"běloruský rubl (2000–2016)"}
+            other{"běloruských rublů (2000–2016)"}
         }
         BZD{
             few{"belizské dolary"}
@@ -1665,6 +1693,18 @@ cs{
             many{"chilského pesa"}
             one{"chilské peso"}
             other{"chilských pes"}
+        }
+        CNH{
+            few{"čínské jüany (offshore)"}
+            many{"čínského jüanu (offshore)"}
+            one{"čínský jüan (offshore)"}
+            other{"čínských jüanů (offshore)"}
+        }
+        CNX{
+            few{"čínské dolary ČLB"}
+            many{"čínského dolaru ČLB"}
+            one{"čínský dolar ČLB"}
+            other{"čínských dolarů ČLB"}
         }
         CNY{
             few{"čínské jüany"}
@@ -2435,10 +2475,10 @@ cs{
             other{"peruánských inti"}
         }
         PEN{
-            few{"peruánské nové soly"}
-            many{"peruánského nového solu"}
-            one{"peruánský nový sol"}
-            other{"peruánských nových solů"}
+            few{"peruánské soly"}
+            many{"peruánského solu"}
+            one{"peruánský sol"}
+            other{"peruánských solů"}
         }
         PES{
             few{"peruánské soly (1863–1965)"}
@@ -2509,7 +2549,7 @@ cs{
         RON{
             few{"rumunské lei"}
             many{"rumunského leu"}
-            one{"rumunské leu"}
+            one{"rumunský leu"}
             other{"rumunských lei"}
         }
         RSD{
@@ -2932,6 +2972,12 @@ cs{
             one{"trojská unce platiny"}
             other{"trojských uncí platiny"}
         }
+        XRE{
+            few{"kód fondů RINET"}
+            many{"kód fondů RINET"}
+            one{"kód fondů RINET"}
+            other{"kód fondů RINET"}
+        }
         XSU{
             few{"sucre"}
             many{"sucre"}
@@ -3047,5 +3093,5 @@ cs{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.20.4"}
+    Version{"2.1.37.11"}
 }

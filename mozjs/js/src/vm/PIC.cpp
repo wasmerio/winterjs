@@ -5,15 +5,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "vm/PIC.h"
-#include "jscntxt.h"
-#include "jscompartment.h"
-#include "jsobj.h"
-#include "gc/Marking.h"
 
+#include "gc/FreeOp.h"
+#include "gc/Marking.h"
 #include "vm/GlobalObject.h"
+#include "vm/JSCompartment.h"
+#include "vm/JSContext.h"
+#include "vm/JSObject.h"
 #include "vm/SelfHosting.h"
 
-#include "jsobjinlines.h"
+#include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
@@ -47,7 +48,7 @@ js::ForOfPIC::Chain::initialize(JSContext* cx)
 
     // Look up Array.prototype[@@iterator], ensure it's a slotful shape.
     Shape* iterShape = arrayProto->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator));
-    if (!iterShape || !iterShape->hasSlot() || !iterShape->hasDefaultGetter())
+    if (!iterShape || !iterShape->isDataProperty())
         return true;
 
     // Get the referred value, and ensure it holds the canonical ArrayValues function.
@@ -60,7 +61,7 @@ js::ForOfPIC::Chain::initialize(JSContext* cx)
 
     // Look up the 'next' value on ArrayIterator.prototype
     Shape* nextShape = arrayIteratorProto->lookup(cx, cx->names().next);
-    if (!nextShape || !nextShape->hasSlot())
+    if (!nextShape || !nextShape->isDataProperty())
         return true;
 
     // Get the referred value, ensure it holds the canonical ArrayIteratorNext function.
@@ -81,24 +82,6 @@ js::ForOfPIC::Chain::initialize(JSContext* cx)
     return true;
 }
 
-js::ForOfPIC::Stub*
-js::ForOfPIC::Chain::isArrayOptimized(ArrayObject* obj)
-{
-    Stub* stub = getMatchingStub(obj);
-    if (!stub)
-        return nullptr;
-
-    // Ensure that this is an otherwise optimizable array.
-    if (!isOptimizableArray(obj))
-        return nullptr;
-
-    // Not yet enough!  Ensure that the world as we know it remains sane.
-    if (!isArrayStateStillSane())
-        return nullptr;
-
-    return stub;
-}
-
 bool
 js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx, HandleArrayObject array, bool* optimized)
 {
@@ -113,7 +96,7 @@ js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx, HandleArrayObject array, bo
 
     } else if (!disabled_ && !isArrayStateStillSane()) {
         // Otherwise, if array state is no longer sane, reinitialize.
-        reset(cx);
+        reset();
 
         if (!initialize(cx))
             return false;
@@ -127,12 +110,19 @@ js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx, HandleArrayObject array, bo
     // By the time we get here, we should have a sane array state to work with.
     MOZ_ASSERT(isArrayStateStillSane());
 
+    // Ensure array's prototype is the actual Array.prototype
+    if (array->staticPrototype() != arrayProto_)
+        return true;
+
     // Check if stub already exists.
-    ForOfPIC::Stub* stub = isArrayOptimized(&array->as<ArrayObject>());
-    if (stub) {
+    if (hasMatchingStub(array)) {
         *optimized = true;
         return true;
     }
+
+    // Ensure array doesn't define @@iterator directly.
+    if (array->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator)))
+        return true;
 
     // If the number of stubs is about to exceed the limit, throw away entire
     // existing cache before adding new stubs.  We shouldn't really have heavy
@@ -140,17 +130,9 @@ js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx, HandleArrayObject array, bo
     if (numStubs() >= MAX_STUBS)
         eraseChain();
 
-    // Ensure array's prototype is the actual Array.prototype
-    if (!isOptimizableArray(array))
-        return true;
-
-    // Ensure array doesn't define @@iterator directly.
-    if (array->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator)))
-        return true;
-
     // Good to optimize now, create stub to add.
     RootedShape shape(cx, array->lastProperty());
-    stub = cx->new_<Stub>(shape);
+    Stub* stub = cx->new_<Stub>(shape);
     if (!stub)
         return false;
 
@@ -161,27 +143,19 @@ js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx, HandleArrayObject array, bo
     return true;
 }
 
-js::ForOfPIC::Stub*
-js::ForOfPIC::Chain::getMatchingStub(JSObject* obj)
+bool
+js::ForOfPIC::Chain::hasMatchingStub(ArrayObject* obj)
 {
     // Ensure PIC is initialized and not disabled.
-    if (!initialized_ || disabled_)
-        return nullptr;
+    MOZ_ASSERT(initialized_ && !disabled_);
 
     // Check if there is a matching stub.
     for (Stub* stub = stubs(); stub != nullptr; stub = stub->next()) {
-        if (stub->shape() == obj->maybeShape())
-            return stub;
+        if (stub->shape() == obj->shape())
+            return true;
     }
 
-    return nullptr;
-}
-
-bool
-js::ForOfPIC::Chain::isOptimizableArray(JSObject* obj)
-{
-    MOZ_ASSERT(obj->is<ArrayObject>());
-    return obj->staticPrototype() == arrayProto_;
+    return false;
 }
 
 bool
@@ -201,7 +175,7 @@ js::ForOfPIC::Chain::isArrayStateStillSane()
 }
 
 void
-js::ForOfPIC::Chain::reset(JSContext* cx)
+js::ForOfPIC::Chain::reset()
 {
     // Should never reset a disabled_ stub.
     MOZ_ASSERT(!disabled_);
@@ -242,7 +216,7 @@ js::ForOfPIC::Chain::eraseChain()
 
 // Trace the pointers stored directly on the stub.
 void
-js::ForOfPIC::Chain::mark(JSTracer* trc)
+js::ForOfPIC::Chain::trace(JSTracer* trc)
 {
     if (!initialized_ || disabled_)
         return;
@@ -276,6 +250,7 @@ js::ForOfPIC::Chain::sweep(FreeOp* fop)
 static void
 ForOfPIC_finalize(FreeOp* fop, JSObject* obj)
 {
+    MOZ_ASSERT(fop->maybeOnHelperThread());
     if (ForOfPIC::Chain* chain = ForOfPIC::fromJSObject(&obj->as<NativeObject>()))
         chain->sweep(fop);
 }
@@ -284,12 +259,12 @@ static void
 ForOfPIC_traceObject(JSTracer* trc, JSObject* obj)
 {
     if (ForOfPIC::Chain* chain = ForOfPIC::fromJSObject(&obj->as<NativeObject>()))
-        chain->mark(trc);
+        chain->trace(trc);
 }
 
 static const ClassOps ForOfPICClassOps = {
-    nullptr, nullptr, nullptr, nullptr,
-    nullptr, nullptr, nullptr, ForOfPIC_finalize,
+    nullptr, nullptr, nullptr, nullptr, nullptr,
+    nullptr, ForOfPIC_finalize,
     nullptr,              /* call        */
     nullptr,              /* hasInstance */
     nullptr,              /* construct   */
@@ -297,7 +272,9 @@ static const ClassOps ForOfPICClassOps = {
 };
 
 const Class ForOfPIC::class_ = {
-    "ForOfPIC", JSCLASS_HAS_PRIVATE,
+    "ForOfPIC",
+    JSCLASS_HAS_PRIVATE |
+    JSCLASS_BACKGROUND_FINALIZE,
     &ForOfPICClassOps
 };
 

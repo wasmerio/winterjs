@@ -45,24 +45,9 @@
  * standardly, by checking whether __cplusplus has a C++11 or greater value.
  * Current versions of g++ do not correctly set __cplusplus, so we check both
  * for forward compatibility.
- *
- * Even though some versions of MSVC support explicit conversion operators, we
- * don't indicate support for them here, due to
- * http://stackoverflow.com/questions/20498142/visual-studio-2013-explicit-keyword-bug
  */
 #  define MOZ_HAVE_NEVER_INLINE          __declspec(noinline)
 #  define MOZ_HAVE_NORETURN              __declspec(noreturn)
-#  if _MSC_VER >= 1900
-#    define MOZ_HAVE_CXX11_CONSTEXPR
-#    define MOZ_HAVE_CXX11_CONSTEXPR_IN_TEMPLATES
-#    define MOZ_HAVE_EXPLICIT_CONVERSION
-#  endif
-#  ifdef __clang__
-     /* clang-cl probably supports explicit conversions. */
-#    if __has_extension(cxx_explicit_conversions)
-#      define MOZ_HAVE_EXPLICIT_CONVERSION
-#    endif
-#  endif
 #elif defined(__clang__)
    /*
     * Per Clang documentation, "Note that marketing version numbers should not
@@ -72,12 +57,6 @@
 #  ifndef __has_extension
 #    define __has_extension __has_feature /* compatibility, for older versions of clang */
 #  endif
-#  if __has_extension(cxx_constexpr)
-#    define MOZ_HAVE_CXX11_CONSTEXPR
-#  endif
-#  if __has_extension(cxx_explicit_conversions)
-#    define MOZ_HAVE_EXPLICIT_CONVERSION
-#  endif
 #  if __has_attribute(noinline)
 #    define MOZ_HAVE_NEVER_INLINE        __attribute__((noinline))
 #  endif
@@ -85,13 +64,9 @@
 #    define MOZ_HAVE_NORETURN            __attribute__((noreturn))
 #  endif
 #elif defined(__GNUC__)
-#  if defined(__GXX_EXPERIMENTAL_CXX0X__) || __cplusplus >= 201103L
-#    define MOZ_HAVE_CXX11_CONSTEXPR
-#    define MOZ_HAVE_CXX11_CONSTEXPR_IN_TEMPLATES
-#    define MOZ_HAVE_EXPLICIT_CONVERSION
-#  endif
 #  define MOZ_HAVE_NEVER_INLINE          __attribute__((noinline))
 #  define MOZ_HAVE_NORETURN              __attribute__((noreturn))
+#  define MOZ_HAVE_NORETURN_PTR          __attribute__((noreturn))
 #endif
 
 /*
@@ -102,55 +77,6 @@
 #  if __has_extension(attribute_analyzer_noreturn)
 #    define MOZ_HAVE_ANALYZER_NORETURN __attribute__((analyzer_noreturn))
 #  endif
-#endif
-
-/*
- * The MOZ_CONSTEXPR specifier declares that a C++11 compiler can evaluate a
- * function at compile time. A constexpr function cannot examine any values
- * except its arguments and can have no side effects except its return value.
- * The MOZ_CONSTEXPR_VAR specifier tells a C++11 compiler that a variable's
- * value may be computed at compile time.  It should be prefered to just
- * marking variables as MOZ_CONSTEXPR because if the compiler does not support
- * constexpr it will fall back to making the variable const, and some compilers
- * do not accept variables being marked both const and constexpr.
- */
-#ifdef MOZ_HAVE_CXX11_CONSTEXPR
-#  define MOZ_CONSTEXPR         constexpr
-#  define MOZ_CONSTEXPR_VAR     constexpr
-#  ifdef MOZ_HAVE_CXX11_CONSTEXPR_IN_TEMPLATES
-#    define MOZ_CONSTEXPR_TMPL  constexpr
-#  else
-#    define MOZ_CONSTEXPR_TMPL
-#  endif
-#else
-#  define MOZ_CONSTEXPR         /* no support */
-#  define MOZ_CONSTEXPR_VAR     const
-#  define MOZ_CONSTEXPR_TMPL
-#endif
-
-/*
- * MOZ_EXPLICIT_CONVERSION is a specifier on a type conversion
- * overloaded operator that declares that a C++11 compiler should restrict
- * this operator to allow only explicit type conversions, disallowing
- * implicit conversions.
- *
- * Example:
- *
- *   template<typename T>
- *   class Ptr
- *   {
- *     T* mPtr;
- *     MOZ_EXPLICIT_CONVERSION operator bool() const
- *     {
- *       return mPtr != nullptr;
- *     }
- *   };
- *
- */
-#ifdef MOZ_HAVE_EXPLICIT_CONVERSION
-#  define MOZ_EXPLICIT_CONVERSION explicit
-#else
-#  define MOZ_EXPLICIT_CONVERSION /* no support */
 #endif
 
 /*
@@ -177,12 +103,20 @@
  * warnings about not initializing variables, or about any other seemingly-dodgy
  * operations performed after the function returns.
  *
+ * There are two variants. The GCC version of NORETURN may be applied to a
+ * function pointer, while for MSVC it may not.
+ *
  * This modifier does not affect the corresponding function's linking behavior.
  */
 #if defined(MOZ_HAVE_NORETURN)
 #  define MOZ_NORETURN          MOZ_HAVE_NORETURN
 #else
 #  define MOZ_NORETURN          /* no support */
+#endif
+#if defined(MOZ_HAVE_NORETURN_PTR)
+#  define MOZ_NORETURN_PTR      MOZ_HAVE_NORETURN_PTR
+#else
+#  define MOZ_NORETURN_PTR      /* no support */
 #endif
 
 /**
@@ -220,6 +154,21 @@
 #  define MOZ_NONNULL(...) __attribute__ ((nonnull(__VA_ARGS__)))
 #else
 #  define MOZ_NONNULL(...)
+#endif
+
+/**
+ * MOZ_NONNULL_RETURN tells the compiler that the function's return value is
+ * guaranteed to be a non-null pointer, which may enable the compiler to
+ * optimize better at call sites.
+ *
+ * Place this attribute at the end of a function declaration. For example,
+ *
+ *   char* foo(char *p, char *q) MOZ_NONNULL_RETURN;
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MOZ_NONNULL_RETURN __attribute__ ((returns_nonnull))
+#else
+#  define MOZ_NONNULL_RETURN
 #endif
 
 /*
@@ -283,6 +232,89 @@
 #  define MOZ_TSAN_BLACKLIST /* nothing */
 #endif
 
+#if defined(__has_attribute)
+#  if __has_attribute(no_sanitize)
+#    define MOZ_HAVE_NO_SANITIZE_ATTR
+#  endif
+#endif
+
+#ifdef __clang__
+#  ifdef MOZ_HAVE_NO_SANITIZE_ATTR
+#    define MOZ_HAVE_UNSIGNED_OVERFLOW_SANITIZE_ATTR
+#    define MOZ_HAVE_SIGNED_OVERFLOW_SANITIZE_ATTR
+#  endif
+#endif
+
+/*
+ * MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW disables *un*signed integer overflow
+ * checking on the function it annotates, in builds configured to perform it.
+ * (Currently this is only Clang using -fsanitize=unsigned-integer-overflow, or
+ * via --enable-unsigned-overflow-sanitizer in Mozilla's build system.)  It has
+ * no effect in other builds.
+ *
+ * Place this attribute at the very beginning of a function declaration.
+ *
+ * Unsigned integer overflow isn't *necessarily* a bug.  It's well-defined in
+ * C/C++, and code may reasonably depend upon it.  For example,
+ *
+ *   MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW inline bool
+ *   IsDecimal(char aChar)
+ *   {
+ *     // For chars less than '0', unsigned integer underflow occurs, to a value
+ *     // much greater than 10, so the overall test is false.
+ *     // For chars greater than '0', no overflow occurs, and only '0' to '9'
+ *     // pass the overall test.
+ *     return static_cast<unsigned int>(aChar) - '0' < 10;
+ *   }
+ *
+ * But even well-defined unsigned overflow often causes bugs when it occurs, so
+ * it should be restricted to functions annotated with this attribute.
+ *
+ * The compiler instrumentation to detect unsigned integer overflow has costs
+ * both at compile time and at runtime.  Functions that are repeatedly inlined
+ * at compile time will also implicitly inline the necessary instrumentation,
+ * increasing compile time.  Similarly, frequently-executed functions that
+ * require large amounts of instrumentation will also notice significant runtime
+ * slowdown to execute that instrumentation.  Use this attribute to eliminate
+ * those costs -- but only after carefully verifying that no overflow can occur.
+ */
+#ifdef MOZ_HAVE_UNSIGNED_OVERFLOW_SANITIZE_ATTR
+#  define MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW __attribute__((no_sanitize("unsigned-integer-overflow")))
+#else
+#  define MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW /* nothing */
+#endif
+
+/*
+ * MOZ_NO_SANITIZE_SIGNED_OVERFLOW disables *signed* integer overflow checking
+ * on the function it annotates, in builds configured to perform it.  (Currently
+ * this is only Clang using -fsanitize=signed-integer-overflow, or via
+ * --enable-signed-overflow-sanitizer in Mozilla's build system.  GCC support
+ * will probably be added in the future.)  It has no effect in other builds.
+ *
+ * Place this attribute at the very beginning of a function declaration.
+ *
+ * Signed integer overflow is undefined behavior in C/C++: *anything* can happen
+ * when it occurs.  *Maybe* wraparound behavior will occur, but maybe also the
+ * compiler will assume no overflow happens and will adversely optimize the rest
+ * of your code.  Code that contains signed integer overflow needs to be fixed.
+ *
+ * The compiler instrumentation to detect signed integer overflow has costs both
+ * at compile time and at runtime.  Functions that are repeatedly inlined at
+ * compile time will also implicitly inline the necessary instrumentation,
+ * increasing compile time.  Similarly, frequently-executed functions that
+ * require large amounts of instrumentation will also notice significant runtime
+ * slowdown to execute that instrumentation.  Use this attribute to eliminate
+ * those costs -- but only after carefully verifying that no overflow can occur.
+ */
+#ifdef MOZ_HAVE_SIGNED_OVERFLOW_SANITIZE_ATTR
+#  define MOZ_NO_SANITIZE_SIGNED_OVERFLOW __attribute__((no_sanitize("signed-integer-overflow")))
+#else
+#  define MOZ_NO_SANITIZE_SIGNED_OVERFLOW /* nothing */
+#endif
+
+#undef MOZ_HAVE_NO_SANITIZE_ATTR
+
+
 /**
  * MOZ_ALLOCATOR tells the compiler that the function it marks returns either a
  * "fresh", "pointer-free" block of memory, or nullptr. "Fresh" means that the
@@ -320,16 +352,57 @@
  * example, write
  *
  *   MOZ_MUST_USE int foo();
- *
  * or
- *
  *   MOZ_MUST_USE int foo() { return 42; }
+ *
+ * MOZ_MUST_USE is most appropriate for functions where the return value is
+ * some kind of success/failure indicator -- often |nsresult|, |bool| or |int|
+ * -- because these functions are most commonly the ones that have missing
+ * checks. There are three cases of note.
+ *
+ * - Fallible functions whose return values should always be checked. For
+ *   example, a function that opens a file should always be checked because any
+ *   subsequent operations on the file will fail if opening it fails. Such
+ *   functions should be given a MOZ_MUST_USE annotation.
+ *
+ * - Fallible functions whose return value need not always be checked. For
+ *   example, a function that closes a file might not be checked because it's
+ *   common that no further operations would be performed on the file. Such
+ *   functions do not need a MOZ_MUST_USE annotation.
+ *
+ * - Infallible functions, i.e. ones that always return a value indicating
+ *   success. These do not need a MOZ_MUST_USE annotation. Ideally, they would
+ *   be converted to not return a success/failure indicator, though sometimes
+ *   interface constraints prevent this.
  */
 #if defined(__GNUC__) || defined(__clang__)
 #  define MOZ_MUST_USE __attribute__ ((warn_unused_result))
 #else
 #  define MOZ_MUST_USE
 #endif
+
+/**
+ * MOZ_MAYBE_UNUSED suppresses compiler warnings about functions that are
+ * never called (in this build configuration, at least).
+ *
+ * Place this attribute at the very beginning of a function declaration. For
+ * example, write
+ *
+ *   MOZ_MAYBE_UNUSED int foo();
+ *
+ * or
+ *
+ *   MOZ_MAYBE_UNUSED int foo() { return 42; }
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MOZ_MAYBE_UNUSED __attribute__ ((__unused__))
+#elif defined(_MSC_VER)
+#  define MOZ_MAYBE_UNUSED __pragma(warning(suppress:4505))
+#else
+#  define MOZ_MAYBE_UNUSED
+#endif
+
+#ifdef __cplusplus
 
 /**
  * MOZ_FALLTHROUGH is an annotation to suppress compiler warnings about switch
@@ -357,9 +430,14 @@
  *     return 5;
  * }
  */
-#if defined(__clang__) && __cplusplus >= 201103L
-   /* clang's fallthrough annotations are only available starting in C++11. */
+#ifndef __has_cpp_attribute
+#  define __has_cpp_attribute(x) 0
+#endif
+
+#if __has_cpp_attribute(clang::fallthrough)
 #  define MOZ_FALLTHROUGH [[clang::fallthrough]]
+#elif __has_cpp_attribute(gnu::fallthrough)
+#  define MOZ_FALLTHROUGH [[gnu::fallthrough]]
 #elif defined(_MSC_VER)
    /*
     * MSVC's __fallthrough annotations are checked by /analyze (Code Analysis):
@@ -370,8 +448,6 @@
 #else
 #  define MOZ_FALLTHROUGH /* FALLTHROUGH */
 #endif
-
-#ifdef __cplusplus
 
 /*
  * The following macros are attributes that support the static analysis plugin
@@ -418,6 +494,13 @@
  *
  * The static analyses that are performed by the plugin are as follows:
  *
+ * MOZ_CAN_RUN_SCRIPT: Applies to functions which can run script. Callers of
+ *   this function must also be marked as MOZ_CAN_RUN_SCRIPT, and all refcounted
+ *   arguments must be strongly held in the caller.
+ * MOZ_CAN_RUN_SCRIPT_BOUNDARY: Applies to functions which need to call
+ *   MOZ_CAN_RUN_SCRIPT functions, but should not themselves be considered
+ *   MOZ_CAN_RUN_SCRIPT. This is important for some bindings and low level code
+ *   which need to opt out of the safety checks performed by MOZ_CAN_RUN_SCRIPT.
  * MOZ_MUST_OVERRIDE: Applies to all C++ member functions. All immediate
  *   subclasses must provide an exact override of this method; if a subclass
  *   does not override this method, the compiler will emit an error. This
@@ -448,6 +531,10 @@
  *   class uses this class or if another class inherits from this class, then it
  *   is considered to be a non-temporary class as well, although this attribute
  *   need not be provided in such cases.
+ * MOZ_TEMPORARY_CLASS: Applies to all classes. Any class with this annotation
+ *   is expected to only live in a temporary. If another class inherits from
+ *   this class, then it is considered to be a non-temporary class as well,
+ *   although this attribute need not be provided in such cases.
  * MOZ_RAII: Applies to all classes. Any class with this annotation is assumed
  *   to be a RAII guard, which is expected to live on the stack in an automatic
  *   allocation. It is prohibited from being allocated in a temporary, static
@@ -470,6 +557,14 @@
  *   are disallowed by default unless they are marked as MOZ_IMPLICIT. This
  *   attribute must be used for constructors which intend to provide implicit
  *   conversions.
+ * MOZ_IS_REFPTR: Applies to class declarations of ref pointer to mark them as
+ *   such for use with static-analysis.
+ *   A ref pointer is an object wrapping a pointer and automatically taking care
+ *   of its refcounting upon construction/destruction/transfer of ownership.
+ *   This annotation implies MOZ_IS_SMARTPTR_TO_REFCOUNTED.
+ * MOZ_IS_SMARTPTR_TO_REFCOUNTED: Applies to class declarations of smart
+ *   pointers to ref counted classes to mark them as such for use with
+ *   static-analysis.
  * MOZ_NO_ARITHMETIC_EXPR_IN_ARGUMENT: Applies to functions. Makes it a compile
  *   time error to pass arithmetic expressions on variables to the function.
  * MOZ_OWNING_REF: Applies to declarations of pointers to reference counted
@@ -496,7 +591,7 @@
  *   conditions.  This can make the compiler ignore these pointers when validating
  *   the usage of pointers elsewhere.
  *
- *   Examples include an nsIAtom* member which is known at compile time to point to a
+ *   Examples include an nsAtom* member which is known at compile time to point to a
  *   static atom which is valid throughout the lifetime of the program, or an API which
  *   stores a pointer, but doesn't take ownership over it, instead requiring the API
  *   consumer to correctly null the value before it becomes invalid.
@@ -523,6 +618,14 @@
  * MOZ_NEEDS_MEMMOVABLE_MEMBERS: Applies to class declarations where each member
  *   must be safe to move in memory using memmove().  MOZ_NON_MEMMOVABLE types
  *   used in members of these classes are compile time errors.
+ * MOZ_NO_DANGLING_ON_TEMPORARIES: Applies to method declarations which return
+ *   a pointer that is freed when the destructor of the class is called. This
+ *   prevents these methods from being called on temporaries of the class,
+ *   reducing risks of use-after-free.
+ *   This attribute cannot be applied to && methods.
+ *   In some cases, adding a deleted &&-qualified overload is too restrictive as
+ *   this method should still be callable as a non-escaping argument to another
+ *   function. This annotation can be used in those cases.
  * MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS: Applies to template class
  *   declarations where an instance of the template should be considered, for
  *   static analysis purposes, to inherit any type annotations (such as
@@ -533,17 +636,41 @@
  *   Using this attribute on a member disables the check that this member must be
  *   initialized in constructors via list-initialization, in the constructor body,
  *   or via functions called from the constructor body.
+ * MOZ_IS_CLASS_INIT: Applies to class method declarations. Occasionally the
+ *   constructor doesn't initialize all of the member variables and another function
+ *   is used to initialize the rest. This marker is used to make the static analysis
+ *   tool aware that the marked function is part of the initialization process
+ *   and to include the marked function in the scan mechanism that determines witch
+ *   member variables still remain uninitialized.
+ * MOZ_NON_PARAM: Applies to types. Makes it compile time error to use the type
+ *   in parameter without pointer or reference.
  * MOZ_NON_AUTOABLE: Applies to class declarations. Makes it a compile time error to
  *   use `auto` in place of this type in variable declarations.  This is intended to
  *   be used with types which are intended to be implicitly constructed into other
  *   other types before being assigned to variables.
+ * MOZ_REQUIRED_BASE_METHOD: Applies to virtual class method declarations.
+ *   Sometimes derived classes override methods that need to be called by their
+ *   overridden counterparts. This marker indicates that the marked method must
+ *   be called by the method that it overrides.
+ * MOZ_MUST_RETURN_FROM_CALLER: Applies to function or method declarations.
+ *   Callers of the annotated function/method must return from that function
+ *   within the calling block using an explicit `return` statement.
+ *   Only calls to Constructors, references to local and member variables,
+ *   and calls to functions or methods marked as MOZ_MAY_CALL_AFTER_MUST_RETURN
+ *   may be made after the MUST_RETURN_FROM_CALLER call.
+ * MOZ_MAY_CALL_AFTER_MUST_RETURN: Applies to function or method declarations.
+ *   Calls to these methods may be made in functions after calls a
+ *   MOZ_MUST_RETURN_FROM_CALLER function or method.
  */
 #ifdef MOZ_CLANG_PLUGIN
+#  define MOZ_CAN_RUN_SCRIPT __attribute__((annotate("moz_can_run_script")))
+#  define MOZ_CAN_RUN_SCRIPT_BOUNDARY __attribute__((annotate("moz_can_run_script_boundary")))
 #  define MOZ_MUST_OVERRIDE __attribute__((annotate("moz_must_override")))
 #  define MOZ_STACK_CLASS __attribute__((annotate("moz_stack_class")))
 #  define MOZ_NONHEAP_CLASS __attribute__((annotate("moz_nonheap_class")))
 #  define MOZ_HEAP_CLASS __attribute__((annotate("moz_heap_class")))
 #  define MOZ_NON_TEMPORARY_CLASS __attribute__((annotate("moz_non_temporary_class")))
+#  define MOZ_TEMPORARY_CLASS __attribute__((annotate("moz_temporary_class")))
 #  define MOZ_TRIVIAL_CTOR_DTOR __attribute__((annotate("moz_trivial_ctor_dtor")))
 #  ifdef DEBUG
      /* in debug builds, these classes do have non-trivial constructors. */
@@ -553,6 +680,9 @@
             MOZ_TRIVIAL_CTOR_DTOR
 #  endif
 #  define MOZ_IMPLICIT __attribute__((annotate("moz_implicit")))
+#  define MOZ_IS_SMARTPTR_TO_REFCOUNTED __attribute__((annotate("moz_is_smartptr_to_refcounted")))
+#  define MOZ_IS_REFPTR __attribute__((annotate("moz_is_refptr"))) \
+                        MOZ_IS_SMARTPTR_TO_REFCOUNTED
 #  define MOZ_NO_ARITHMETIC_EXPR_IN_ARGUMENT __attribute__((annotate("moz_no_arith_expr_in_arg")))
 #  define MOZ_OWNING_REF __attribute__((annotate("moz_strong_ref")))
 #  define MOZ_NON_OWNING_REF __attribute__((annotate("moz_weak_ref")))
@@ -563,11 +693,22 @@
 #  define MOZ_NON_MEMMOVABLE __attribute__((annotate("moz_non_memmovable")))
 #  define MOZ_NEEDS_MEMMOVABLE_TYPE __attribute__((annotate("moz_needs_memmovable_type")))
 #  define MOZ_NEEDS_MEMMOVABLE_MEMBERS __attribute__((annotate("moz_needs_memmovable_members")))
+#  define MOZ_NO_DANGLING_ON_TEMPORARIES __attribute__((annotate("moz_no_dangling_on_temporaries")))
 #  define MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS \
     __attribute__((annotate("moz_inherit_type_annotations_from_template_args")))
 #  define MOZ_NON_AUTOABLE __attribute__((annotate("moz_non_autoable")))
 #  define MOZ_INIT_OUTSIDE_CTOR \
     __attribute__((annotate("moz_ignore_ctor_initialization")))
+#  define MOZ_IS_CLASS_INIT \
+    __attribute__((annotate("moz_is_class_init")))
+#  define MOZ_NON_PARAM \
+    __attribute__((annotate("moz_non_param")))
+#  define MOZ_REQUIRED_BASE_METHOD \
+    __attribute__((annotate("moz_required_base_method")))
+#  define MOZ_MUST_RETURN_FROM_CALLER \
+    __attribute__((annotate("moz_must_return_from_caller")))
+#  define MOZ_MAY_CALL_AFTER_MUST_RETURN \
+    __attribute__((annotate("moz_may_call_after_must_return")))
 /*
  * It turns out that clang doesn't like void func() __attribute__ {} without a
  * warning, so use pragmas to disable the warning. This code won't work on GCC
@@ -579,14 +720,19 @@
     __attribute__((annotate("moz_heap_allocator"))) \
     _Pragma("clang diagnostic pop")
 #else
+#  define MOZ_CAN_RUN_SCRIPT /* nothing */
+#  define MOZ_CAN_RUN_SCRIPT_BOUNDARY /* nothing */
 #  define MOZ_MUST_OVERRIDE /* nothing */
 #  define MOZ_STACK_CLASS /* nothing */
 #  define MOZ_NONHEAP_CLASS /* nothing */
 #  define MOZ_HEAP_CLASS /* nothing */
 #  define MOZ_NON_TEMPORARY_CLASS /* nothing */
+#  define MOZ_TEMPORARY_CLASS /* nothing */
 #  define MOZ_TRIVIAL_CTOR_DTOR /* nothing */
 #  define MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS /* nothing */
 #  define MOZ_IMPLICIT /* nothing */
+#  define MOZ_IS_SMARTPTR_TO_REFCOUNTED /* nothing */
+#  define MOZ_IS_REFPTR /* nothing */
 #  define MOZ_NO_ARITHMETIC_EXPR_IN_ARGUMENT /* nothing */
 #  define MOZ_HEAP_ALLOCATOR /* nothing */
 #  define MOZ_OWNING_REF /* nothing */
@@ -598,29 +744,75 @@
 #  define MOZ_NON_MEMMOVABLE /* nothing */
 #  define MOZ_NEEDS_MEMMOVABLE_TYPE /* nothing */
 #  define MOZ_NEEDS_MEMMOVABLE_MEMBERS /* nothing */
+#  define MOZ_NO_DANGLING_ON_TEMPORARIES /* nothing */
 #  define MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS /* nothing */
 #  define MOZ_INIT_OUTSIDE_CTOR /* nothing */
+#  define MOZ_IS_CLASS_INIT /* nothing */
+#  define MOZ_NON_PARAM /* nothing */
 #  define MOZ_NON_AUTOABLE /* nothing */
+#  define MOZ_REQUIRED_BASE_METHOD /* nothing */
+#  define MOZ_MUST_RETURN_FROM_CALLER /* nothing */
+#  define MOZ_MAY_CALL_AFTER_MUST_RETURN /* nothing */
 #endif /* MOZ_CLANG_PLUGIN */
 
 #define MOZ_RAII MOZ_NON_TEMPORARY_CLASS MOZ_STACK_CLASS
 
-/*
- * MOZ_HAVE_REF_QUALIFIERS is defined for compilers that support C++11's rvalue
- * qualifier, "&&".
+#endif /* __cplusplus */
+
+/**
+ * Printf style formats.  MOZ_FORMAT_PRINTF can be used to annotate a
+ * function or method that is "printf-like"; this will let (some)
+ * compilers check that the arguments match the template string.
+ *
+ * This macro takes two arguments.  The first argument is the argument
+ * number of the template string.  The second argument is the argument
+ * number of the '...' argument holding the arguments.
+ *
+ * Argument numbers start at 1.  Note that the implicit "this"
+ * argument of a non-static member function counts as an argument.
+ *
+ * So, for a simple case like:
+ *   void print_something (int whatever, const char *fmt, ...);
+ * The corresponding annotation would be
+ *   MOZ_FORMAT_PRINTF(2, 3)
+ * However, if "print_something" were a non-static member function,
+ * then the annotation would be:
+ *   MOZ_FORMAT_PRINTF(3, 4)
+ *
+ * The second argument should be 0 for vprintf-like functions; that
+ * is, those taking a va_list argument.
+ *
+ * Note that the checking is limited to standards-conforming
+ * printf-likes, and in particular this should not be used for
+ * PR_snprintf and friends, which are "printf-like" but which assign
+ * different meanings to the various formats.
+ *
+ * MinGW requires special handling due to different format specifiers
+ * on different platforms. The macro __MINGW_PRINTF_FORMAT maps to
+ * either gnu_printf or ms_printf depending on where we are compiling
+ * to avoid warnings on format specifiers that are legal.
  */
-#if defined(_MSC_VER) && _MSC_VER >= 1900
-#  define MOZ_HAVE_REF_QUALIFIERS
-#elif defined(__clang__)
-// All supported Clang versions
-#  define MOZ_HAVE_REF_QUALIFIERS
-#elif defined(__GNUC__)
-#  include "mozilla/Compiler.h"
-#  if MOZ_GCC_VERSION_AT_LEAST(4, 8, 1)
-#    define MOZ_HAVE_REF_QUALIFIERS
-#  endif
+#ifdef __MINGW32__
+#define MOZ_FORMAT_PRINTF(stringIndex, firstToCheck)  \
+    __attribute__ ((format (__MINGW_PRINTF_FORMAT, stringIndex, firstToCheck)))
+#elif __GNUC__
+#define MOZ_FORMAT_PRINTF(stringIndex, firstToCheck)  \
+    __attribute__ ((format (printf, stringIndex, firstToCheck)))
+#else
+#define MOZ_FORMAT_PRINTF(stringIndex, firstToCheck)
 #endif
 
-#endif /* __cplusplus */
+/**
+ * To manually declare an XPCOM ABI-compatible virtual function, the following
+ * macros can be used to handle the non-standard ABI used on Windows for COM
+ * compatibility. E.g.:
+ *
+ *   virtual ReturnType MOZ_XPCOM_ABI foo();
+ */
+#if defined(XP_WIN)
+#  define MOZ_XPCOM_ABI         __stdcall
+#else
+#  define MOZ_XPCOM_ABI
+#endif
 
 #endif /* mozilla_Attributes_h */

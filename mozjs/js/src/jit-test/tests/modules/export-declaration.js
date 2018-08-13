@@ -316,7 +316,7 @@ program([
 program([
     exportDeclaration(
         functionDeclaration(
-            ident("*default*"),
+            ident("default"),
             [],
             blockStatement([])
         ),
@@ -342,7 +342,7 @@ program([
 program([
     exportDeclaration(
         classDeclaration(
-            ident("*default*")
+            ident("default")
         ),
         null,
         null,
@@ -403,12 +403,52 @@ assertThrowsInstanceOf(function() {
     parseAsModule("export {,} from 'a'");
 }, SyntaxError);
 
+program([
+    exportDeclaration(
+        null,
+        [
+            exportSpecifier(
+                ident("true"),
+                ident("true")
+            ),
+        ],
+        lit("b"),
+        false
+    )
+]).assert(parseAsModule("export { true } from 'b'"));
+
+program([
+    exportDeclaration(
+        null,
+        [
+            exportSpecifier(
+                ident("true"),
+                ident("name")
+            ),
+        ],
+        lit("b"),
+        false
+    )
+]).assert(parseAsModule("export { true as name } from 'b'"));
+
 assertThrowsInstanceOf(function() {
-    parseAsModule("export { true as a } from 'b'");
+    parseAsModule("export { true }");
+}, SyntaxError);
+
+assertThrowsInstanceOf(function() {
+    parseAsModule("export { true as name }");
+}, SyntaxError);
+
+assertThrowsInstanceOf(function() {
+    parseAsModule("export { static }");
+}, SyntaxError);
+
+assertThrowsInstanceOf(function() {
+    parseAsModule("export { static as name }");
 }, SyntaxError);
 
 assertThrowsInstanceOf(function () {
-    parseAsModule("export { a } from 'b' f();");
+    parseAsModule("export { name } from 'b' f();");
 }, SyntaxError);
 
 assertThrowsInstanceOf(function () {

@@ -1,4 +1,6 @@
 #!/usr/bin/perl 
+# Copyright (C) 2016 and later: Unicode, Inc. and others.
+# License & terms of use: http://www.unicode.org/copyright.html
 #*
 #*******************************************************************************
 #*   Copyright (C) 2001-2012, International Business Machines
@@ -6,7 +8,7 @@
 #*******************************************************************************
 #*
 #*   file name:  genren.pl
-#*   encoding:   US-ASCII
+#*   encoding:   UTF-8
 #*   tab size:   8 (not used)
 #*   indentation:4
 #*
@@ -68,17 +70,17 @@ $HEADERDEF =~ s/\./_/;
 
 #We will print our copyright here + warnings
 
-$YEAR = strftime "%Y",localtime;
-
 print HEADER <<"EndOfHeaderComment";
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
-*   Copyright (C) 2002-$YEAR, International Business Machines
+*   Copyright (C) 2002-2016, International Business Machines
 *   Corporation and others.  All Rights Reserved.
 *******************************************************************************
 *
 *   file name:  $headername
-*   encoding:   US-ASCII
+*   encoding:   UTF-8
 *   tab size:   8 (not used)
 *   indentation:4
 *

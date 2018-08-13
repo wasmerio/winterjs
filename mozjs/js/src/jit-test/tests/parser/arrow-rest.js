@@ -39,7 +39,7 @@ testThrow(`
 
 testThrow(`
 ({...a)=>
-`, 2);
+`, 6);
 
 testThrow(`
 function f([... ...a)=>
@@ -47,7 +47,7 @@ function f([... ...a)=>
 
 testThrow(`
 function f({...a)=>
-`, 12);
+`, 16);
 
 // arrow
 
@@ -67,7 +67,7 @@ var [... ...a)=>
 
 testThrow(`
 var {...a)=>
-`, 5);
+`, 9);
 
 // initializer
 
@@ -135,10 +135,6 @@ testThrow(`
 throw ...a) =>
 `, 6);
 
-testThrow(`
-try {} catch (x if ...a) =>
-`, 19);
-
 // class
 
 testThrow(`
@@ -172,20 +168,6 @@ testThrow(`
 testThrow(`
 delete ...a) =>
 `, 7);
-
-// array comprehension
-
-testThrow(`
-[for (...a) =>
-`, 6);
-
-testThrow(`
-[for (x of y) if (...a) =>
-`, 18);
-
-testThrow(`
-[for (x of y) if (x) ...a) =>
-`, 21);
 
 // new
 

@@ -6,10 +6,12 @@ from __future__ import absolute_import, print_function
 
 r'''This module contains code for managing clobbering of the tree.'''
 
+import errno
 import os
+import subprocess
 import sys
 
-from mozfile.mozfile import rmtree
+from mozfile.mozfile import remove as mozfileremove
 from textwrap import TextWrapper
 
 
@@ -85,6 +87,55 @@ class Clobberer(object):
             lines = [l.strip() for l in fh.readlines()]
             return [l for l in lines if l and not l.startswith('#')]
 
+    def have_winrm(self):
+        # `winrm -h` should print 'winrm version ...' and exit 1
+        try:
+            p = subprocess.Popen(['winrm.exe', '-h'],
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+            return p.wait() == 1 and p.stdout.read().startswith('winrm')
+        except:
+            return False
+
+    def remove_objdir(self, full=True):
+        """Remove the object directory.
+
+        ``full`` controls whether to fully delete the objdir. If False,
+        some directories (e.g. Visual Studio Project Files) will not be
+        deleted.
+        """
+        # Top-level files and directories to not clobber by default.
+        no_clobber = {
+            '.mozbuild',
+            'msvc',
+        }
+
+        if full:
+            # mozfile doesn't like unicode arguments (bug 818783).
+            paths = [self.topobjdir.encode('utf-8')]
+        else:
+            try:
+                paths = []
+                for p in os.listdir(self.topobjdir):
+                    if p not in no_clobber:
+                        paths.append(os.path.join(self.topobjdir, p).encode('utf-8'))
+            except OSError as e:
+                if e.errno != errno.ENOENT:
+                    raise
+                return
+
+        procs = []
+        for p in sorted(paths):
+            path = os.path.join(self.topobjdir, p)
+            if sys.platform.startswith('win') and self.have_winrm() and os.path.isdir(path):
+                procs.append(subprocess.Popen(['winrm', '-rf', path]))
+            else:
+                # We use mozfile because it is faster than shutil.rmtree().
+                mozfileremove(path)
+
+        for p in procs:
+            p.wait()
+
     def ensure_objdir_state(self):
         """Ensure the CLOBBER file in the objdir exists.
 
@@ -138,20 +189,10 @@ class Clobberer(object):
             return True, False, self._message(
                 'Cannot clobber while the shell is inside the object directory.')
 
-        print('Automatically clobbering %s' % self.topobjdir, file=fh)
+        objdir = self.topobjdir.encode('utf-8', 'replace')
+        print('Automatically clobbering %s' % objdir, file=fh)
         try:
-            if cwd == self.topobjdir:
-                for entry in os.listdir(self.topobjdir):
-                    full = os.path.join(self.topobjdir, entry)
-
-                    if os.path.isdir(full):
-                        rmtree(full)
-                    else:
-                        os.unlink(full)
-
-            else:
-                rmtree(self.topobjdir)
-
+            self.remove_objdir(False)
             self.ensure_objdir_state()
             print('Successfully completed auto clobber.', file=fh)
             return True, True, None
@@ -164,34 +205,3 @@ class Clobberer(object):
 
         return CLOBBER_MESSAGE.format(clobber_reason='\n'.join(lines),
             no_reason='  ' + reason, clobber_file=self.obj_clobber)
-
-
-def main(args, env, cwd, fh=sys.stderr):
-    if len(args) != 2:
-        print('Usage: clobber.py topsrcdir topobjdir', file=fh)
-        return 1
-
-    topsrcdir, topobjdir = args
-
-    if not os.path.isabs(topsrcdir):
-        topsrcdir = os.path.abspath(topsrcdir)
-
-    if not os.path.isabs(topobjdir):
-        topobjdir = os.path.abspath(topobjdir)
-
-    auto = True if env.get('AUTOCLOBBER', False) else False
-    clobber = Clobberer(topsrcdir, topobjdir)
-    required, performed, message = clobber.maybe_do_clobber(cwd, auto, fh)
-
-    if not required or performed:
-        if performed and env.get('TINDERBOX_OUTPUT'):
-            print('TinderboxPrint: auto clobber', file=fh)
-        return 0
-
-    print(message, file=fh)
-    return 1
-
-
-if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:], os.environ, os.getcwd(), sys.stdout))
-

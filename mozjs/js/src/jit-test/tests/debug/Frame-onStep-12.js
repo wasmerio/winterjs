@@ -1,3 +1,5 @@
+// Check that stepping doesn't make it look like unreachable code is running.
+
 // Because our script source notes record only those bytecode offsets
 // at which source positions change, the default behavior in the
 // absence of a source note is to attribute a bytecode instruction to
@@ -8,20 +10,20 @@
 // bytecode was a back edge of a loop, or the jump at the end of a
 // 'then' clause, its source position can be completely unrelated to
 // that of its successor.
-
+//
 // We try to avoid showing such nonsense offsets to the user by
 // requiring breakpoints and single-stepping to stop only at a line's
 // entry points, as reported by Debugger.Script.prototype.getLineOffsets;
 // and then ensuring that those entry points are all offsets mentioned
 // explicitly in the source notes, and hence deliberately attributed
 // to the given bytecode.
-
+//
 // This bit of JavaScript compiles to bytecode ending in a branch
 // instruction whose source position is the body of an unreachable
 // loop. The first instruction of the bytecode we emit following it
 // will inherit this nonsense position, if we have not explicitly
 // emitted a source note for said instruction.
-
+//
 // This test steps across such code and verifies that control never
 // appears to enter the unreachable loop.
 
@@ -86,19 +88,6 @@ testOne("testCatchFinally",
          }                      // +7
          nothing();             // +8
         `, "1689");
-
-// The same but without a finally clause.  This relies on a
-// SpiderMonkey extension, because otherwise there's no way to see
-// extra instructions at the end of a catch.
-testOne("testCatch",
-        `try {
-           throw new TypeError();
-         } catch (e if e instanceof TypeError) {
-           ${bitOfCode}
-         } catch (e) {          // +6
-         }                      // +7
-         nothing();             // +8
-        `, "189");
 
 // Test the instruction at the end of a "finally" clause.
 testOne("testFinally",

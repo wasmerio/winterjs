@@ -6,18 +6,18 @@
 #ifndef ctypes_CTypes_h
 #define ctypes_CTypes_h
 
+#include "mozilla/Sprintf.h"
 #include "mozilla/Vector.h"
 
 #include "ffi.h"
-#include "jsalloc.h"
-#include "jsprf.h"
 #include "prlink.h"
 
 #include "ctypes/typedefs.h"
+#include "js/AllocPolicy.h"
 #include "js/GCHashTable.h"
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
-#include "vm/String.h"
+#include "vm/StringType.h"
 
 namespace js {
 namespace ctypes {
@@ -64,7 +64,7 @@ void
 AppendUInt(mozilla::Vector<T, N, AP>& v, unsigned n)
 {
   char array[16];
-  size_t alen = JS_snprintf(array, 16, "%u", n);
+  size_t alen = SprintfLiteral(array, "%u", n);
   size_t vlen = v.length();
   if (!v.resize(vlen + alen))
     return;
@@ -317,7 +317,7 @@ struct FunctionInfo
 // Parameters necessary for invoking a JS function from a C closure.
 struct ClosureInfo
 {
-  JSRuntime* rt;
+  JSContext* cx;
   JS::Heap<JSObject*> closureObj;  // CClosure object
   JS::Heap<JSObject*> typeObj;     // FunctionType describing the C function
   JS::Heap<JSObject*> thisObj;     // 'this' object to use for the JS function call
@@ -327,8 +327,8 @@ struct ClosureInfo
 
   // Anything conditionally freed in the destructor should be initialized to
   // nullptr here.
-  explicit ClosureInfo(JSRuntime* runtime)
-    : rt(runtime)
+  explicit ClosureInfo(JSContext* context)
+    : cx(context)
     , errResult(nullptr)
     , closure(nullptr)
   {}
@@ -443,11 +443,12 @@ enum Int64FunctionSlot {
 
 namespace CType {
   JSObject* Create(JSContext* cx, HandleObject typeProto, HandleObject dataProto,
-    TypeCode type, JSString* name, Value size, Value align, ffi_type* ffiType);
+    TypeCode type, JSString* name, HandleValue size, HandleValue align,
+                   ffi_type* ffiType);
 
   JSObject* DefineBuiltin(JSContext* cx, HandleObject ctypesObj, const char* propName,
     JSObject* typeProto, JSObject* dataProto, const char* name, TypeCode type,
-    Value size, Value align, ffi_type* ffiType);
+    HandleValue size, HandleValue align, ffi_type* ffiType);
 
   bool IsCType(JSObject* obj);
   bool IsCTypeProto(JSObject* obj);
@@ -505,7 +506,7 @@ namespace FunctionType {
 
 namespace CClosure {
   JSObject* Create(JSContext* cx, HandleObject typeObj, HandleObject fnObj,
-    HandleObject thisObj, Value errVal, PRFuncPtr* fnptr);
+    HandleObject thisObj, HandleValue errVal, PRFuncPtr* fnptr);
 } // namespace CClosure
 
 namespace CData {
@@ -515,6 +516,7 @@ namespace CData {
   JSObject* GetCType(JSObject* dataObj);
   void* GetData(JSObject* dataObj);
   bool IsCData(JSObject* obj);
+  bool IsCDataMaybeUnwrap(MutableHandleObject obj);
   bool IsCData(HandleValue v);
   bool IsCDataProto(JSObject* obj);
 

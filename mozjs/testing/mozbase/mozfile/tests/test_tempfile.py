@@ -7,10 +7,14 @@
 """
 tests for mozfile.NamedTemporaryFile
 """
+from __future__ import absolute_import
 
 import mozfile
 import os
 import unittest
+
+import mozunit
+import six
 
 
 class TestNamedTemporaryFile(unittest.TestCase):
@@ -23,7 +27,7 @@ class TestNamedTemporaryFile(unittest.TestCase):
             and https://bugzilla.mozilla.org/show_bug.cgi?id=821362
         """
 
-        test_string = "A simple test"
+        test_string = b"A simple test"
         with mozfile.NamedTemporaryFile() as temp:
             # Test we can write to file
             temp.write(test_string)
@@ -40,7 +44,7 @@ class TestNamedTemporaryFile(unittest.TestCase):
         tf = mozfile.NamedTemporaryFile()
         notes = ['doe', 'rae', 'mi']
         for note in notes:
-            tf.write('%s\n' % note)
+            tf.write(b'%s\n' % note)
         tf.flush()
 
         # now read from it
@@ -66,7 +70,7 @@ class TestNamedTemporaryFile(unittest.TestCase):
         path = None
         with mozfile.NamedTemporaryFile(delete=True) as tf:
             path = tf.name
-        self.assertTrue(isinstance(path, basestring))
+        self.assertTrue(isinstance(path, six.string_types))
         self.assertFalse(os.path.exists(path))
 
         # it is also deleted when __del__ is called
@@ -98,5 +102,6 @@ class TestNamedTemporaryFile(unittest.TestCase):
             if path and os.path.exists(path):
                 os.remove(path)
 
+
 if __name__ == '__main__':
-    unittest.main()
+    mozunit.main()

@@ -15,7 +15,9 @@ namespace jit {
 class LUnboxBase : public LInstructionHelper<1, 1, 0>
 {
   public:
-    explicit LUnboxBase(const LAllocation& input) {
+    LUnboxBase(LNode::Opcode op, const LAllocation& input)
+      : LInstructionHelper<1, 1, 0>(op)
+    {
         setOperand(0, input);
     }
 
@@ -31,7 +33,7 @@ class LUnbox : public LUnboxBase {
     LIR_HEADER(Unbox)
 
     explicit LUnbox(const LAllocation& input)
-      : LUnboxBase(input)
+      : LUnboxBase(classOpcode, input)
     { }
 
     const char* extraName() const {
@@ -46,7 +48,7 @@ class LUnboxFloatingPoint : public LUnboxBase {
     LIR_HEADER(UnboxFloatingPoint)
 
     LUnboxFloatingPoint(const LAllocation& input, MIRType type)
-      : LUnboxBase(input),
+      : LUnboxBase(classOpcode, input),
         type_(type)
     { }
 
@@ -59,43 +61,28 @@ class LUnboxFloatingPoint : public LUnboxBase {
 };
 
 // Convert a 32-bit unsigned integer to a double.
-class LAsmJSUInt32ToDouble : public LInstructionHelper<1, 1, 0>
+class LWasmUint32ToDouble : public LInstructionHelper<1, 1, 0>
 {
   public:
-    LIR_HEADER(AsmJSUInt32ToDouble)
+    LIR_HEADER(WasmUint32ToDouble)
 
-    explicit LAsmJSUInt32ToDouble(const LAllocation& input) {
+    explicit LWasmUint32ToDouble(const LAllocation& input)
+      : LInstructionHelper(classOpcode)
+    {
         setOperand(0, input);
     }
 };
 
 // Convert a 32-bit unsigned integer to a float32.
-class LAsmJSUInt32ToFloat32 : public LInstructionHelper<1, 1, 0>
+class LWasmUint32ToFloat32 : public LInstructionHelper<1, 1, 0>
 {
   public:
-    LIR_HEADER(AsmJSUInt32ToFloat32)
+    LIR_HEADER(WasmUint32ToFloat32)
 
-    explicit LAsmJSUInt32ToFloat32(const LAllocation& input) {
+    explicit LWasmUint32ToFloat32(const LAllocation& input)
+      : LInstructionHelper(classOpcode)
+    {
         setOperand(0, input);
-    }
-};
-
-class LAsmJSLoadFuncPtr : public LInstructionHelper<1, 1, 1>
-{
-  public:
-    LIR_HEADER(AsmJSLoadFuncPtr);
-    LAsmJSLoadFuncPtr(const LAllocation& index, const LDefinition& temp) {
-        setOperand(0, index);
-        setTemp(0, temp);
-    }
-    MAsmJSLoadFuncPtr* mir() const {
-        return mir_->toAsmJSLoadFuncPtr();
-    }
-    const LAllocation* index() {
-        return getOperand(0);
-    }
-    const LDefinition* temp() {
-        return getTemp(0);
     }
 };
 
@@ -104,7 +91,9 @@ class LDivOrModI64 : public LBinaryMath<1>
   public:
     LIR_HEADER(DivOrModI64)
 
-    LDivOrModI64(const LAllocation& lhs, const LAllocation& rhs, const LDefinition& temp) {
+    LDivOrModI64(const LAllocation& lhs, const LAllocation& rhs, const LDefinition& temp)
+      : LBinaryMath(classOpcode)
+    {
         setOperand(0, lhs);
         setOperand(1, rhs);
         setTemp(0, temp);
@@ -128,17 +117,25 @@ class LDivOrModI64 : public LBinaryMath<1>
             return mir_->toMod()->canBeNegativeDividend();
         return mir_->toDiv()->canBeNegativeOverflow();
     }
+    wasm::BytecodeOffset bytecodeOffset() const {
+        MOZ_ASSERT(mir_->isDiv() || mir_->isMod());
+        if (mir_->isMod())
+            return mir_->toMod()->bytecodeOffset();
+        return mir_->toDiv()->bytecodeOffset();
+    }
 };
 
 // This class performs a simple x86 'div', yielding either a quotient or
 // remainder depending on whether this instruction is defined to output
 // rax (quotient) or rdx (remainder).
-class LUDivOrMod64 : public LBinaryMath<1>
+class LUDivOrModI64 : public LBinaryMath<1>
 {
   public:
-    LIR_HEADER(UDivOrMod64);
+    LIR_HEADER(UDivOrModI64);
 
-    LUDivOrMod64(const LAllocation& lhs, const LAllocation& rhs, const LDefinition& temp) {
+    LUDivOrModI64(const LAllocation& lhs, const LAllocation& rhs, const LDefinition& temp)
+      : LBinaryMath(classOpcode)
+    {
         setOperand(0, lhs);
         setOperand(1, rhs);
         setTemp(0, temp);
@@ -162,6 +159,13 @@ class LUDivOrMod64 : public LBinaryMath<1>
             return mir_->toMod()->canBeDivideByZero();
         return mir_->toDiv()->canBeDivideByZero();
     }
+
+    wasm::BytecodeOffset bytecodeOffset() const {
+        MOZ_ASSERT(mir_->isDiv() || mir_->isMod());
+        if (mir_->isMod())
+            return mir_->toMod()->bytecodeOffset();
+        return mir_->toDiv()->bytecodeOffset();
+    }
 };
 
 class LWasmTruncateToInt64 : public LInstructionHelper<1, 1, 1>
@@ -169,31 +173,15 @@ class LWasmTruncateToInt64 : public LInstructionHelper<1, 1, 1>
   public:
     LIR_HEADER(WasmTruncateToInt64);
 
-    LWasmTruncateToInt64(const LAllocation& in, const LDefinition& temp) {
+    LWasmTruncateToInt64(const LAllocation& in, const LDefinition& temp)
+      : LInstructionHelper(classOpcode)
+    {
         setOperand(0, in);
         setTemp(0, temp);
     }
 
     MWasmTruncateToInt64* mir() const {
         return mir_->toWasmTruncateToInt64();
-    }
-
-    const LDefinition* temp() {
-        return getTemp(0);
-    }
-};
-
-class LInt64ToFloatingPoint : public LInstructionHelper<1, INT64_PIECES, 0>
-{
-  public:
-    LIR_HEADER(Int64ToFloatingPoint);
-
-    explicit LInt64ToFloatingPoint(const LInt64Allocation& in) {
-        setInt64Operand(0, in);
-    }
-
-    MInt64ToFloatingPoint* mir() const {
-        return mir_->toInt64ToFloatingPoint();
     }
 
     const LDefinition* temp() {

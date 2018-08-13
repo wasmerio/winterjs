@@ -21,30 +21,9 @@
 #include "mozilla/Compiler.h"
 #include "mozilla/TypeTraits.h"
 
-#include <stdint.h>
+#include <atomic>
 
-/*
- * Our minimum deployment target on clang/OS X is OS X 10.6, whose SDK
- * does not have <atomic>.  So be sure to check for <atomic> support
- * along with C++0x support.
- */
-#if defined(_MSC_VER)
-#  define MOZ_HAVE_CXX11_ATOMICS
-#elif defined(__clang__) || defined(__GNUC__)
-   /*
-    * Clang doesn't like <atomic> from libstdc++ before 4.7 due to the
-    * loose typing of the atomic builtins. GCC 4.5 and 4.6 lacks inline
-    * definitions for unspecialized std::atomic and causes linking errors.
-    * Therefore, we require at least 4.7.0 for using libstdc++.
-    *
-    * libc++ <atomic> is only functional with clang.
-    */
-#  if MOZ_USING_LIBSTDCXX && MOZ_LIBSTDCXX_VERSION_AT_LEAST(4, 7, 0)
-#    define MOZ_HAVE_CXX11_ATOMICS
-#  elif MOZ_USING_LIBCXX && defined(__clang__)
-#    define MOZ_HAVE_CXX11_ATOMICS
-#  endif
-#endif
+#include <stdint.h>
 
 namespace mozilla {
 
@@ -162,14 +141,6 @@ enum MemoryOrdering {
   SequentiallyConsistent,
 };
 
-} // namespace mozilla
-
-// Build up the underlying intrinsics.
-#ifdef MOZ_HAVE_CXX11_ATOMICS
-
-#  include <atomic>
-
-namespace mozilla {
 namespace detail {
 
 /*
@@ -323,216 +294,8 @@ struct AtomicIntrinsics<T*, Order>
 template<typename T>
 struct ToStorageTypeArgument
 {
-  static MOZ_CONSTEXPR T convert (T aT) { return aT; }
+  static constexpr T convert (T aT) { return aT; }
 };
-
-} // namespace detail
-} // namespace mozilla
-
-#elif defined(__GNUC__)
-
-namespace mozilla {
-namespace detail {
-
-/*
- * The __sync_* family of intrinsics is documented here:
- *
- * http://gcc.gnu.org/onlinedocs/gcc-4.6.4/gcc/Atomic-Builtins.html
- *
- * While these intrinsics are deprecated in favor of the newer __atomic_*
- * family of intrincs:
- *
- * http://gcc.gnu.org/onlinedocs/gcc-4.7.3/gcc/_005f_005fatomic-Builtins.html
- *
- * any GCC version that supports the __atomic_* intrinsics will also support
- * the <atomic> header and so will be handled above.  We provide a version of
- * atomics using the __sync_* intrinsics to support older versions of GCC.
- *
- * All __sync_* intrinsics that we use below act as full memory barriers, for
- * both compiler and hardware reordering, except for __sync_lock_test_and_set,
- * which is a only an acquire barrier.  When we call __sync_lock_test_and_set,
- * we add a barrier above it as appropriate.
- */
-
-template<MemoryOrdering Order> struct Barrier;
-
-/*
- * Some processors (in particular, x86) don't require quite so many calls to
- * __sync_sychronize as our specializations of Barrier produce.  If
- * performance turns out to be an issue, defining these specializations
- * on a per-processor basis would be a good first tuning step.
- */
-
-template<>
-struct Barrier<Relaxed>
-{
-  static void beforeLoad() {}
-  static void afterLoad() {}
-  static void beforeStore() {}
-  static void afterStore() {}
-};
-
-template<>
-struct Barrier<ReleaseAcquire>
-{
-  static void beforeLoad() {}
-  static void afterLoad() { __sync_synchronize(); }
-  static void beforeStore() { __sync_synchronize(); }
-  static void afterStore() {}
-};
-
-template<>
-struct Barrier<SequentiallyConsistent>
-{
-  static void beforeLoad() { __sync_synchronize(); }
-  static void afterLoad() { __sync_synchronize(); }
-  static void beforeStore() { __sync_synchronize(); }
-  static void afterStore() { __sync_synchronize(); }
-};
-
-template<typename T, bool TIsEnum = IsEnum<T>::value>
-struct AtomicStorageType
-{
-  // For non-enums, just use the type directly.
-  typedef T Type;
-};
-
-template<typename T>
-struct AtomicStorageType<T, true>
-  : Conditional<sizeof(T) == 4, uint32_t, uint64_t>
-{
-  static_assert(sizeof(T) == 4 || sizeof(T) == 8,
-                "wrong type computed in conditional above");
-};
-
-template<typename T, MemoryOrdering Order>
-struct IntrinsicMemoryOps
-{
-  typedef typename AtomicStorageType<T>::Type ValueType;
-
-  static T load(const ValueType& aPtr)
-  {
-    Barrier<Order>::beforeLoad();
-    T val = T(aPtr);
-    Barrier<Order>::afterLoad();
-    return val;
-  }
-
-  static void store(ValueType& aPtr, T aVal)
-  {
-    Barrier<Order>::beforeStore();
-    aPtr = ValueType(aVal);
-    Barrier<Order>::afterStore();
-  }
-
-  static T exchange(ValueType& aPtr, T aVal)
-  {
-    // __sync_lock_test_and_set is only an acquire barrier; loads and stores
-    // can't be moved up from after to before it, but they can be moved down
-    // from before to after it.  We may want a stricter ordering, so we need
-    // an explicit barrier.
-    Barrier<Order>::beforeStore();
-    return T(__sync_lock_test_and_set(&aPtr, ValueType(aVal)));
-  }
-
-  static bool compareExchange(ValueType& aPtr, T aOldVal, T aNewVal)
-  {
-    return __sync_bool_compare_and_swap(&aPtr, ValueType(aOldVal), ValueType(aNewVal));
-  }
-};
-
-template<typename T, MemoryOrdering Order>
-struct IntrinsicAddSub
-  : public IntrinsicMemoryOps<T, Order>
-{
-  typedef IntrinsicMemoryOps<T, Order> Base;
-  typedef typename Base::ValueType ValueType;
-
-  static T add(ValueType& aPtr, T aVal)
-  {
-    return T(__sync_fetch_and_add(&aPtr, ValueType(aVal)));
-  }
-
-  static T sub(ValueType& aPtr, T aVal)
-  {
-    return T(__sync_fetch_and_sub(&aPtr, ValueType(aVal)));
-  }
-};
-
-template<typename T, MemoryOrdering Order>
-struct IntrinsicAddSub<T*, Order>
-  : public IntrinsicMemoryOps<T*, Order>
-{
-  typedef IntrinsicMemoryOps<T*, Order> Base;
-  typedef typename Base::ValueType ValueType;
-
-  /*
-   * The reinterpret_casts are needed so that
-   * __sync_fetch_and_{add,sub} will properly type-check.
-   *
-   * Also, these functions do not provide standard semantics for
-   * pointer types, so we need to adjust the addend.
-   */
-  static ValueType add(ValueType& aPtr, ptrdiff_t aVal)
-  {
-    ValueType amount = reinterpret_cast<ValueType>(aVal * sizeof(T));
-    return __sync_fetch_and_add(&aPtr, amount);
-  }
-
-  static ValueType sub(ValueType& aPtr, ptrdiff_t aVal)
-  {
-    ValueType amount = reinterpret_cast<ValueType>(aVal * sizeof(T));
-    return __sync_fetch_and_sub(&aPtr, amount);
-  }
-};
-
-template<typename T, MemoryOrdering Order>
-struct IntrinsicIncDec : public IntrinsicAddSub<T, Order>
-{
-  typedef IntrinsicAddSub<T, Order> Base;
-  typedef typename Base::ValueType ValueType;
-
-  static T inc(ValueType& aPtr) { return Base::add(aPtr, 1); }
-  static T dec(ValueType& aPtr) { return Base::sub(aPtr, 1); }
-};
-
-template<typename T, MemoryOrdering Order>
-struct AtomicIntrinsics : public IntrinsicIncDec<T, Order>
-{
-  static T or_( T& aPtr, T aVal) { return __sync_fetch_and_or(&aPtr, aVal); }
-  static T xor_(T& aPtr, T aVal) { return __sync_fetch_and_xor(&aPtr, aVal); }
-  static T and_(T& aPtr, T aVal) { return __sync_fetch_and_and(&aPtr, aVal); }
-};
-
-template<typename T, MemoryOrdering Order>
-struct AtomicIntrinsics<T*, Order> : public IntrinsicIncDec<T*, Order>
-{
-};
-
-template<typename T, bool TIsEnum = IsEnum<T>::value>
-struct ToStorageTypeArgument
-{
-  typedef typename AtomicStorageType<T>::Type ResultType;
-
-  static MOZ_CONSTEXPR ResultType convert (T aT) { return ResultType(aT); }
-};
-
-template<typename T>
-struct ToStorageTypeArgument<T, false>
-{
-  static MOZ_CONSTEXPR T convert (T aT) { return aT; }
-};
-
-} // namespace detail
-} // namespace mozilla
-
-#else
-# error "Atomic compiler intrinsics are not supported on your platform"
-#endif
-
-namespace mozilla {
-
-namespace detail {
 
 template<typename T, MemoryOrdering Order>
 class AtomicBase
@@ -546,8 +309,8 @@ protected:
   ValueType mValue;
 
 public:
-  MOZ_CONSTEXPR AtomicBase() : mValue() {}
-  explicit MOZ_CONSTEXPR AtomicBase(T aInit)
+  constexpr AtomicBase() : mValue() {}
+  explicit constexpr AtomicBase(T aInit)
     : mValue(ToStorageTypeArgument<T>::convert(aInit))
   {}
 
@@ -598,8 +361,8 @@ class AtomicBaseIncDec : public AtomicBase<T, Order>
   typedef typename detail::AtomicBase<T, Order> Base;
 
 public:
-  MOZ_CONSTEXPR AtomicBaseIncDec() : Base() {}
-  explicit MOZ_CONSTEXPR AtomicBaseIncDec(T aInit) : Base(aInit) {}
+  constexpr AtomicBaseIncDec() : Base() {}
+  explicit constexpr AtomicBaseIncDec(T aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -654,8 +417,8 @@ class Atomic<T, Order, typename EnableIf<IsIntegral<T>::value &&
   typedef typename detail::AtomicBaseIncDec<T, Order> Base;
 
 public:
-  MOZ_CONSTEXPR Atomic() : Base() {}
-  explicit MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
+  constexpr Atomic() : Base() {}
+  explicit constexpr Atomic(T aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -702,8 +465,8 @@ class Atomic<T*, Order> : public detail::AtomicBaseIncDec<T*, Order>
   typedef typename detail::AtomicBaseIncDec<T*, Order> Base;
 
 public:
-  MOZ_CONSTEXPR Atomic() : Base() {}
-  explicit MOZ_CONSTEXPR Atomic(T* aInit) : Base(aInit) {}
+  constexpr Atomic() : Base() {}
+  explicit constexpr Atomic(T* aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -733,8 +496,8 @@ class Atomic<T, Order, typename EnableIf<IsEnum<T>::value>::Type>
   typedef typename detail::AtomicBase<T, Order> Base;
 
 public:
-  MOZ_CONSTEXPR Atomic() : Base() {}
-  explicit MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
+  constexpr Atomic() : Base() {}
+  explicit constexpr Atomic(T aInit) : Base(aInit) {}
 
   operator T() const { return T(Base::Intrinsics::load(Base::mValue)); }
 
@@ -767,8 +530,8 @@ class Atomic<bool, Order>
   typedef typename detail::AtomicBase<uint32_t, Order> Base;
 
 public:
-  MOZ_CONSTEXPR Atomic() : Base() {}
-  explicit MOZ_CONSTEXPR Atomic(bool aInit) : Base(aInit) {}
+  constexpr Atomic() : Base() {}
+  explicit constexpr Atomic(bool aInit) : Base(aInit) {}
 
   // We provide boolean wrappers for the underlying AtomicBase methods.
   MOZ_IMPLICIT operator bool() const
@@ -794,6 +557,11 @@ public:
 private:
   Atomic(Atomic<bool, Order>& aOther) = delete;
 };
+
+// If you want to atomically swap two atomic values, use exchange().
+template<typename T, MemoryOrdering Order>
+void
+Swap(Atomic<T, Order>&, Atomic<T, Order>&) = delete;
 
 } // namespace mozilla
 

@@ -1,3 +1,5 @@
+// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
 * Copyright (C) 2013-2015, International Business Machines
@@ -417,7 +419,8 @@ CollationDataReader::read(const CollationTailoring *base, const uint8_t *inBytes
             tailoring.data, ts, fastLatinPrimaries, UPRV_LENGTHOF(fastLatinPrimaries));
     if(options == ts.options && ts.variableTop != 0 &&
             reorderCodesLength == ts.reorderCodesLength &&
-            uprv_memcmp(reorderCodes, ts.reorderCodes, reorderCodesLength * 4) == 0 &&
+            (reorderCodesLength == 0 ||
+                uprv_memcmp(reorderCodes, ts.reorderCodes, reorderCodesLength * 4) == 0) &&
             fastLatinOptions == ts.fastLatinOptions &&
             (fastLatinOptions < 0 ||
                 uprv_memcmp(fastLatinPrimaries, ts.fastLatinPrimaries,

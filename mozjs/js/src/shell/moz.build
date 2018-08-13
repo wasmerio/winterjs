@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -22,7 +22,7 @@ DEFINES['EXPORT_JS_API'] = True
 # Also set in ../moz.build
 DEFINES['ENABLE_SHARED_ARRAY_BUFFER'] = True
 
-if CONFIG['_MSC_VER']:
+if CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
     # unnecessary PGO for js shell.  But gcc cannot turn off pgo because it is
     # necessary to link PGO lib on gcc when a object/static lib are compiled
     # for PGO.
@@ -42,19 +42,19 @@ if CONFIG['ENABLE_INTL_API'] and CONFIG['MOZ_ICU_DATA_ARCHIVE']:
     USE_LIBS += ['icudata']
 
 # Prepare module loader JS code for embedding
-GENERATED_FILES += ['shellmoduleloader.out.h']
-shellmoduleloader = GENERATED_FILES['shellmoduleloader.out.h']
+GENERATED_FILES += [('shellmoduleloader.out.h', 'shellmoduleloader.js')]
+shellmoduleloader = GENERATED_FILES[('shellmoduleloader.out.h', 'shellmoduleloader.js')]
 shellmoduleloader.script = '../builtin/embedjs.py:generate_shellmoduleloader'
 shellmoduleloader.inputs = [
     '../js.msg',
     'ModuleLoader.js',
 ]
 
-if CONFIG['GNU_CXX']:
-    CXXFLAGS += ['-Wno-shadow']
+if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
+    CXXFLAGS += ['-Wno-shadow', '-Werror=format']
 
 # This is intended as a temporary workaround to enable VS2015.
-if CONFIG['_MSC_VER']:
+if CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
     CXXFLAGS += ['-wd4312']
 
 # Place a GDB Python auto-load file next to the shell executable, both in

@@ -5,12 +5,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Implement TimeStamp::Now() with QueryPerformanceCounter() controlled with
-// values of GetTickCount().
+// values of GetTickCount64().
 
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/TimeStamp.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <intrin.h>
 #include <windows.h>
 
@@ -20,7 +21,7 @@
 class AutoCriticalSection
 {
 public:
-  AutoCriticalSection(LPCRITICAL_SECTION aSection)
+  explicit AutoCriticalSection(LPCRITICAL_SECTION aSection)
     : mSection(aSection)
   {
     ::EnterCriticalSection(mSection);
@@ -69,7 +70,7 @@ static const DWORD kDefaultTimeIncrement = 156001;
  * further just referred as [mt], meaning milli-ticks.
  *
  * This is needed to preserve maximum precision of the performance frequency
- * representation.  GetTickCount values in milliseconds are multiplied with
+ * representation.  GetTickCount64 values in milliseconds are multiplied with
  * frequency per second.  Therefor we need to multiply QPC value by 1000 to
  * have the same units to allow simple arithmentic with both QPC and GTC.
  */
@@ -79,7 +80,9 @@ static const DWORD kDefaultTimeIncrement = 156001;
 #define mt2ms_f(x) (double(x) / sFrequencyPerSec)
 
 // Result of QueryPerformanceFrequency
-static LONGLONG sFrequencyPerSec = 0;
+// We use default of 1 for the case we can't use QueryPerformanceCounter
+// to make mt/ms conversions work despite that.
+static LONGLONG sFrequencyPerSec = 1;
 
 // How much we are tolerant to GTC occasional loose of resoltion.
 // This number says how many multiples of the minimal GTC resolution
@@ -87,17 +90,17 @@ static LONGLONG sFrequencyPerSec = 0;
 static const LONGLONG kGTCTickLeapTolerance = 4;
 
 // Base tolerance (more: "inability of detection" range) threshold is calculated
-// dynamically, and kept in sGTCResulutionThreshold.
+// dynamically, and kept in sGTCResolutionThreshold.
 //
 // Schematically, QPC worked "100%" correctly if ((GTC_now - GTC_epoch) -
-// (QPC_now - QPC_epoch)) was in  [-sGTCResulutionThreshold, sGTCResulutionThreshold]
+// (QPC_now - QPC_epoch)) was in  [-sGTCResolutionThreshold, sGTCResolutionThreshold]
 // interval every time we'd compared two time stamps.
 // If not, then we check the overflow behind this basic threshold
 // is in kFailureThreshold.  If not, we condider it as a QPC failure.  If too many
 // failures in short time are detected, QPC is considered faulty and disabled.
 //
 // Kept in [mt]
-static LONGLONG sGTCResulutionThreshold;
+static LONGLONG sGTCResolutionThreshold;
 
 // If QPC is found faulty for two stamps in this interval, we engage
 // the fault detection algorithm.  For duration larger then this limit
@@ -156,40 +159,7 @@ static CRITICAL_SECTION sTimeStampLock;
 // Kept in [mt]
 static ULONGLONG sFaultIntoleranceCheckpoint = 0;
 
-// Used only when GetTickCount64 is not available on the platform.
-// Last result of GetTickCount call.
-//
-// Kept in [ms]
-static DWORD sLastGTCResult = 0;
-
-// Higher part of the 64-bit value of MozGetTickCount64,
-// incremented atomically.
-static DWORD sLastGTCRollover = 0;
-
 namespace mozilla {
-
-typedef ULONGLONG (WINAPI* GetTickCount64_t)();
-static GetTickCount64_t sGetTickCount64 = nullptr;
-
-// Function protecting GetTickCount result from rolling over,
-// result is in [ms]
-static ULONGLONG WINAPI
-MozGetTickCount64()
-{
-  DWORD GTC = ::GetTickCount();
-
-  // Cheaper then CMPXCHG8B
-  AutoCriticalSection lock(&sTimeStampLock);
-
-  // Pull the rollover counter forward only if new value of GTC goes way
-  // down under the last saved result
-  if ((sLastGTCResult > GTC) && ((sLastGTCResult - GTC) > (1UL << 30))) {
-    ++sLastGTCRollover;
-  }
-
-  sLastGTCResult = GTC;
-  return ULONGLONG(sLastGTCRollover) << 32 | sLastGTCResult;
-}
 
 // Result is in [mt]
 static inline ULONGLONG
@@ -197,6 +167,18 @@ PerformanceCounter()
 {
   LARGE_INTEGER pc;
   ::QueryPerformanceCounter(&pc);
+
+  if (!sHasStableTSC) {
+    // This is a simple go-backward protection for faulty hardware
+    AutoCriticalSection lock(&sTimeStampLock);
+
+    static decltype(LARGE_INTEGER::QuadPart) last;
+    if (last > pc.QuadPart) {
+      return last * 1000ULL;
+    }
+    last = pc.QuadPart;
+  }
+
   return pc.QuadPart * 1000ULL;
 }
 
@@ -232,7 +214,7 @@ InitThresholds()
     (int64_t(timeIncrementCeil) * sFrequencyPerSec) / 10000LL;
 
   // GTC may jump by 32 (2*16) ms in two steps, therefor use the ceiling value.
-  sGTCResulutionThreshold =
+  sGTCResolutionThreshold =
     LONGLONG(kGTCTickLeapTolerance * ticksPerGetTickCountResolutionCeiling);
 
   sHardFailureLimit = ms2mt(kHardFailureLimit);
@@ -248,19 +230,24 @@ InitResolution()
   // switch or signal, or being bitten by paging/cache effects
 
   ULONGLONG minres = ~0ULL;
-  int loops = 10;
-  do {
-    ULONGLONG start = PerformanceCounter();
-    ULONGLONG end = PerformanceCounter();
+  if (sUseQPC) {
+    int loops = 10;
+    do {
+      ULONGLONG start = PerformanceCounter();
+      ULONGLONG end = PerformanceCounter();
 
-    ULONGLONG candidate = (end - start);
-    if (candidate < minres) {
-      minres = candidate;
+      ULONGLONG candidate = (end - start);
+      if (candidate < minres) {
+        minres = candidate;
+      }
+    } while (--loops && minres);
+
+    if (0 == minres) {
+      minres = 1;
     }
-  } while (--loops && minres);
-
-  if (0 == minres) {
-    minres = 1;
+  } else {
+    // GetTickCount has only ~16ms known resolution
+    minres = ms2mt(16);
   }
 
   // Converting minres that is in [mt] to nanosecods, multiplicating
@@ -329,13 +316,13 @@ TimeStampValue::CheckQPC(const TimeStampValue& aOther) const
 
   // Check QPC is sane before using it.
   int64_t diff = DeprecatedAbs(int64_t(deltaQPC) - int64_t(deltaGTC));
-  if (diff <= sGTCResulutionThreshold) {
+  if (diff <= sGTCResolutionThreshold) {
     return deltaQPC;
   }
 
   // Treat absolutely for calibration purposes
   int64_t duration = DeprecatedAbs(int64_t(deltaGTC));
-  int64_t overflow = diff - sGTCResulutionThreshold;
+  int64_t overflow = diff - sGTCResolutionThreshold;
 
   LOG(("TimeStamp: QPC check after %llums with overflow %1.4fms",
        mt2ms(duration), mt2ms_f(overflow)));
@@ -355,7 +342,7 @@ TimeStampValue::CheckQPC(const TimeStampValue& aOther) const
   if (duration < sHardFailureLimit) {
     // Interval between the two time stamps is very short, consider
     // QPC as unstable and record a failure.
-    uint64_t now = ms2mt(sGetTickCount64());
+    uint64_t now = ms2mt(GetTickCount64());
 
     AutoCriticalSection lock(&sTimeStampLock);
 
@@ -452,10 +439,12 @@ HasStableTSC()
   } cpuInfo;
 
   __cpuid(cpuInfo.regs, 0);
-  // Only allow Intel CPUs for now
+  // Only allow Intel or AMD CPUs for now.
   // The order of the registers is reg[1], reg[3], reg[2].  We just adjust the
   // string so that we can compare in one go.
   if (_strnicmp(cpuInfo.cpuString, "GenuntelineI",
+                sizeof(cpuInfo.cpuString)) &&
+      _strnicmp(cpuInfo.cpuString, "AuthcAMDenti",
                 sizeof(cpuInfo.cpuString))) {
     return false;
   }
@@ -464,44 +453,57 @@ HasStableTSC()
 
   // detect if the Advanced Power Management feature is supported
   __cpuid(regs, 0x80000000);
-  if (regs[0] < 0x80000007) {
+  if ((unsigned int)regs[0] < 0x80000007) {
+    // XXX should we return true here?  If there is no APM there may be
+    // no way how TSC can run out of sync among cores.
     return false;
   }
 
   __cpuid(regs, 0x80000007);
   // if bit 8 is set than TSC will run at a constant rate
-  // in all ACPI P-state, C-states and T-states
+  // in all ACPI P-states, C-states and T-states
   return regs[3] & (1 << 8);
 }
+
+static bool gInitialized = false;
 
 MFBT_API void
 TimeStamp::Startup()
 {
-  // Decide which implementation to use for the high-performance timer.
-
-  HMODULE kernelDLL = GetModuleHandleW(L"kernel32.dll");
-  sGetTickCount64 = reinterpret_cast<GetTickCount64_t>(
-    GetProcAddress(kernelDLL, "GetTickCount64"));
-  if (!sGetTickCount64) {
-    // If the platform does not support the GetTickCount64 (Windows XP doesn't),
-    // then use our fallback implementation based on GetTickCount.
-    sGetTickCount64 = MozGetTickCount64;
+  if (gInitialized) {
+    return;
   }
+
+  gInitialized = true;
+
+  // Decide which implementation to use for the high-performance timer.
 
   InitializeCriticalSectionAndSpinCount(&sTimeStampLock, kLockSpinCount);
 
-  sHasStableTSC = HasStableTSC();
-  LOG(("TimeStamp: HasStableTSC=%d", sHasStableTSC));
+  bool forceGTC = false;
+  bool forceQPC = false;
+
+  char* modevar = getenv("MOZ_TIMESTAMP_MODE");
+  if (modevar) {
+    if (!strcmp(modevar, "QPC")) {
+      forceQPC = true;
+    } else if (!strcmp(modevar, "GTC")) {
+      forceGTC = true;
+    }
+  }
 
   LARGE_INTEGER freq;
-  sUseQPC = ::QueryPerformanceFrequency(&freq);
+  sUseQPC = !forceGTC && ::QueryPerformanceFrequency(&freq);
   if (!sUseQPC) {
-    // No Performance Counter.  Fall back to use GetTickCount.
+    // No Performance Counter.  Fall back to use GetTickCount64.
     InitResolution();
 
-    LOG(("TimeStamp: using GetTickCount"));
+    LOG(("TimeStamp: using GetTickCount64"));
     return;
   }
+
+  sHasStableTSC = forceQPC || HasStableTSC();
+  LOG(("TimeStamp: HasStableTSC=%d", sHasStableTSC));
 
   sFrequencyPerSec = freq.QuadPart;
   LOG(("TimeStamp: QPC frequency=%llu", sFrequencyPerSec));
@@ -526,7 +528,7 @@ TimeStamp::Now(bool aHighResolution)
 
   // Both values are in [mt] units.
   ULONGLONG QPC = useQPC ? PerformanceCounter() : uint64_t(0);
-  ULONGLONG GTC = ms2mt(sGetTickCount64());
+  ULONGLONG GTC = ms2mt(GetTickCount64());
   return TimeStamp(TimeStampValue(GTC, QPC, useQPC));
 }
 

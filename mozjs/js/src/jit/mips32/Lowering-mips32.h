@@ -31,14 +31,24 @@ class LIRGeneratorMIPS : public LIRGeneratorMIPSShared
     void lowerUntypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex);
     void defineUntypedPhi(MPhi* phi, size_t lirIndex);
 
+    void lowerInt64PhiInput(MPhi* phi, uint32_t inputPosition, LBlock* block, size_t lirIndex);
+    void defineInt64Phi(MPhi* phi, size_t lirIndex);
+
     void lowerTruncateDToInt32(MTruncateToInt32* ins);
     void lowerTruncateFToInt32(MTruncateToInt32* ins);
+
+    void lowerDivI64(MDiv* div);
+    void lowerModI64(MMod* mod);
+    void lowerUDivI64(MDiv* div);
+    void lowerUModI64(MMod* mod);
 
   public:
     void visitBox(MBox* box);
     void visitUnbox(MUnbox* unbox);
     void visitReturn(MReturn* ret);
     void visitRandom(MRandom* ins);
+    void visitWasmTruncateToInt64(MWasmTruncateToInt64* ins);
+    void visitInt64ToFloatingPoint(MInt64ToFloatingPoint* ins);
 };
 
 typedef LIRGeneratorMIPS LIRGeneratorSpecific;

@@ -10,7 +10,13 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/MathAlgorithms.h"
 
+#include "jit/arm64/vixl/Instructions-vixl.h"
+#include "jit/shared/Architecture-shared.h"
+
 #include "js/Utility.h"
+
+#define JS_HAS_HIDDEN_SP
+static const uint32_t HiddenSPEncoding = vixl::kSPRegInternalCode;
 
 namespace js {
 namespace jit {
@@ -165,9 +171,6 @@ class Registers {
         (1 << Registers::lr) |
         (1 << Registers::sp);
 
-    // Registers that can be allocated without being saved, generally.
-    static const SetType TempMask = VolatileMask & ~NonAllocatableMask;
-
     static const SetType WrapperMask = VolatileMask;
 
     // Registers returned from a JS -> JS call.
@@ -269,16 +272,13 @@ class FloatRegisters
                 (1 << FloatRegisters::d30)) * SpreadCoefficient;
 
     static const SetType VolatileMask = AllMask & ~NonVolatileMask;
-    static const SetType AllDoubleMask = AllMask;
-    static const SetType AllSingleMask = AllMask;
+    static const SetType AllDoubleMask = AllPhysMask << TotalPhys;
+    static const SetType AllSingleMask = AllPhysMask;
 
     static const SetType WrapperMask = VolatileMask;
 
     // d31 is the ScratchFloatReg.
     static const SetType NonAllocatableMask = (SetType(1) << FloatRegisters::d31) * SpreadCoefficient;
-
-    // Registers that can be allocated without being saved, generally.
-    static const SetType TempMask = VolatileMask & ~NonAllocatableMask;
 
     static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
     union RegisterContent {
@@ -397,14 +397,14 @@ struct FloatRegister
     bool equiv(FloatRegister other) const {
         return k_ == other.k_;
     }
-    MOZ_CONSTEXPR uint32_t size() const {
+    constexpr uint32_t size() const {
         return k_ == FloatRegisters::Double ? sizeof(double) : sizeof(float);
     }
     uint32_t numAlignedAliased() {
         return numAliased();
     }
     void alignedAliased(uint32_t aliasIdx, FloatRegister* ret) {
-        MOZ_ASSERT(aliasIdx == 0);
+        MOZ_ASSERT(aliasIdx < numAliased());
         aliased(aliasIdx, ret);
     }
     SetType alignedOrDominatedAliasedSet() const {
@@ -421,6 +421,10 @@ struct FloatRegister
         return false;
     }
 
+    FloatRegister asSingle() const { return FloatRegister(code_, FloatRegisters::Single); }
+    FloatRegister asDouble() const { return FloatRegister(code_, FloatRegisters::Double); }
+    FloatRegister asSimd128() const { MOZ_CRASH(); }
+
     static uint32_t FirstBit(SetType x) {
         JS_STATIC_ASSERT(sizeof(SetType) == 8);
         return mozilla::CountTrailingZeroes64(x);
@@ -428,6 +432,19 @@ struct FloatRegister
     static uint32_t LastBit(SetType x) {
         JS_STATIC_ASSERT(sizeof(SetType) == 8);
         return 63 - mozilla::CountLeadingZeroes64(x);
+    }
+
+    static constexpr RegTypeName DefaultType = RegTypeName::Float64;
+
+    template <RegTypeName Name = DefaultType>
+    static SetType LiveAsIndexableSet(SetType s) {
+        return SetType(0);
+    }
+
+    template <RegTypeName Name = DefaultType>
+    static SetType AllocatableAsIndexableSet(SetType s) {
+        static_assert(Name != RegTypeName::Any, "Allocatable set are not iterable");
+        return LiveAsIndexableSet<Name>(s);
     }
 
     static TypedRegisterSet<FloatRegister> ReduceSetForPush(const TypedRegisterSet<FloatRegister>& s);
@@ -439,6 +456,24 @@ struct FloatRegister
     Code code_ : 8;
     FloatRegisters::Kind k_ : 1;
 };
+
+template <> inline FloatRegister::SetType
+FloatRegister::LiveAsIndexableSet<RegTypeName::Float32>(SetType set)
+{
+    return set & FloatRegisters::AllSingleMask;
+}
+
+template <> inline FloatRegister::SetType
+FloatRegister::LiveAsIndexableSet<RegTypeName::Float64>(SetType set)
+{
+    return set & FloatRegisters::AllDoubleMask;
+}
+
+template <> inline FloatRegister::SetType
+FloatRegister::LiveAsIndexableSet<RegTypeName::Any>(SetType set)
+{
+    return set;
+}
 
 // ARM/D32 has double registers that cannot be treated as float32.
 // Luckily, ARMv8 doesn't have the same misfortune.
@@ -456,8 +491,7 @@ hasMultiAlias()
     return false;
 }
 
-static const size_t WasmCheckedImmediateRange = 0;
-static const size_t WasmImmediateRange = 0;
+uint32_t GetARM64Flags();
 
 } // namespace jit
 } // namespace js

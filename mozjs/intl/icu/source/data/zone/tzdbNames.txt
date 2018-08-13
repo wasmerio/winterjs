@@ -1,4 +1,6 @@
 // ***************************************************************************
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 // *
 // * Copyright (C) 2014 International Business Machines
 // * Corporation and others. All Rights Reserved.
@@ -199,7 +201,7 @@ tzdbNames{
         "meta:China"{
             sd{"CDT"}
             ss{"CST"}
-            parseRegions{"CN", "MO", "TW"}
+            parseRegions{"CN", "MO"}
         }
         "meta:Choibalsan"{
             sd{"CHOST"}
@@ -425,6 +427,7 @@ tzdbNames{
             ss{"LINT"}
         }
         "meta:Lord_Howe"{
+            sd{"LHDT"}
             ss{"LHST"}
         }
         "meta:Macau"{
@@ -559,6 +562,10 @@ tzdbNames{
         "meta:Ponape"{
             ss{"PONT"}
         }
+        "meta:Pyongyang"{
+            ss{"KST"}
+            parseRegions{"KP"}
+        }
         "meta:Qyzylorda"{
             sd{"QYZST"}
             ss{"QYZT"}
@@ -614,6 +621,7 @@ tzdbNames{
         "meta:Taipei"{
             sd{"CDT"}
             ss{"CST"}
+            parseRegions{"TW"}
         }
         "meta:Tajikistan"{
             ss{"TJT"}

@@ -16,12 +16,24 @@ import argparse
 import sys
 import re
 
+# Python 2/3 version independence polyfills
+
+anystring_t = str if sys.version_info[0] > 2 else basestring
+
+try:
+    execfile
+except:
+    def execfile(thefile, globals):
+        exec(compile(open(thefile).read(), filename=thefile, mode="exec"), globals)
+
 def env(config):
     e = dict(os.environ)
     e['PATH'] = ':'.join(p for p in (config.get('gcc_bin'), config.get('sixgill_bin'), e['PATH']) if p)
     e['XDB'] = '%(sixgill_bin)s/xdb.so' % config
     e['SOURCE'] = config['source']
     e['ANALYZED_OBJDIR'] = config['objdir']
+    bindir = os.path.dirname(config['js'])
+    e['LD_LIBRARY_PATH'] = ':'.join(p for p in (e.get('LD_LIBRARY_PATH'), bindir) if p)
     return e
 
 def fill(command, config):
@@ -61,7 +73,7 @@ def print_command(command, outfile=None, env=None):
                     outputs.append("%s='%s'" % (key, value))
             output = ' '.join(outputs) + " " + output
 
-    print output
+    print(output)
 
 def generate_hazards(config, outfilename):
     jobs = []
@@ -98,7 +110,7 @@ def generate_hazards(config, outfilename):
         subprocess.call(command, stdout=output)
 
 JOBS = { 'dbs':
-             (('%(ANALYSIS_SCRIPTDIR)s/run_complete',
+             (('%(analysis_scriptdir)s/run_complete',
                '--foreground',
                '--no-logs',
                '--build-root=%(objdir)s',
@@ -139,7 +151,11 @@ JOBS = { 'dbs':
                '%(analysis_scriptdir)s/explain.py',
                '%(hazards)s', '%(gcFunctions)s',
                '[explained_hazards]', '[unnecessary]', '[refs]'),
-              ('hazards.txt', 'unnecessary.txt', 'refs.txt'))
+              ('hazards.txt', 'unnecessary.txt', 'refs.txt')),
+
+         'heapwrites':
+             (('%(js)s', '%(analysis_scriptdir)s/analyzeHeapWrites.js'),
+              'heapWriteHazards.txt'),
          }
 
 def out_indexes(command):
@@ -156,7 +172,7 @@ def run_job(name, config):
     else:
         temp_map = {}
         cmdspec = fill(cmdspec, config)
-        if isinstance(outfiles, basestring):
+        if isinstance(outfiles, anystring_t):
             stdout_filename = '%s.tmp' % name
             temp_map[stdout_filename] = outfiles
             if config['verbose']:
@@ -191,9 +207,9 @@ def run_job(name, config):
                 print("Error renaming %s -> %s" % (temp, final))
                 raise
 
-config = { 'ANALYSIS_SCRIPTDIR': os.path.dirname(__file__) }
+config = { 'analysis_scriptdir': os.path.dirname(__file__) }
 
-defaults = [ '%s/defaults.py' % config['ANALYSIS_SCRIPTDIR'],
+defaults = [ '%s/defaults.py' % config['analysis_scriptdir'],
              '%s/defaults.py' % os.getcwd() ]
 
 parser = argparse.ArgumentParser(description='Statically analyze build tree for rooting hazards.')
@@ -217,10 +233,13 @@ parser.add_argument('--tag', '-t', type=str, nargs='?',
                     help='name of job, also sets build command to "build.<tag>"')
 parser.add_argument('--expect-file', type=str, nargs='?',
                     help='deprecated option, temporarily still present for backwards compatibility')
-parser.add_argument('--verbose', '-v', action='store_true',
+parser.add_argument('--verbose', '-v', action='count', default=1,
                     help='Display cut & paste commands to run individual steps')
+parser.add_argument('--quiet', '-q', action='count', default=0,
+                    help='Suppress output')
 
 args = parser.parse_args()
+args.verbose = max(0, args.verbose - args.quiet)
 
 for default in defaults:
     try:
@@ -242,7 +261,7 @@ if args.tag and not args.buildcommand:
 if args.jobs is not None:
     data['jobs'] = args.jobs
 if not data.get('jobs'):
-    data['jobs'] = subprocess.check_output(['nproc', '--ignore=1']).strip()
+    data['jobs'] = int(subprocess.check_output(['nproc', '--ignore=1']).strip())
 
 if args.buildcommand:
     data['buildcommand'] = args.buildcommand
@@ -256,9 +275,14 @@ if 'ANALYZED_OBJDIR' in os.environ:
 
 if 'SOURCE' in os.environ:
     data['source'] = os.environ['SOURCE']
-if not data.get('source') and data.get('sixgill_bin'):
-    path = subprocess.check_output(['sh', '-c', data['sixgill_bin'] + '/xdbkeys file_source.xdb | grep jsapi.cpp'])
-    data['source'] = path.replace("/js/src/jsapi.cpp", "")
+
+if data.get('sixgill_bin'):
+    if not data.get('source'):
+        path = subprocess.check_output(['sh', '-c', data['sixgill_bin'] + '/xdbkeys file_source.xdb | grep jsapi.cpp']).decode()
+        data['source'] = path.replace("\n", "").replace("/js/src/jsapi.cpp", "")
+    if not data.get('objdir'):
+        path = subprocess.check_output(['sh', '-c', data['sixgill_bin'] + '/xdbkeys file_source.xdb | grep jsapi.h']).decode()
+        data['objdir'] = path.replace("\n", "").replace("/jsapi.h", "")
 
 steps = [ 'dbs',
           'gcTypes',
@@ -266,7 +290,8 @@ steps = [ 'dbs',
           'gcFunctions',
           'allFunctions',
           'hazards',
-          'explain' ]
+          'explain',
+          'heapwrites' ]
 
 if args.list:
     for step in steps:
@@ -279,7 +304,7 @@ if args.list:
 
 for step in steps:
     command, outfiles = JOBS[step]
-    if isinstance(outfiles, basestring):
+    if isinstance(outfiles, anystring_t):
         data[step] = outfiles
     else:
         outfile = 0

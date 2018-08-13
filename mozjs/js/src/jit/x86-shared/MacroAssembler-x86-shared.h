@@ -15,23 +15,6 @@
 # include "jit/x64/Assembler-x64.h"
 #endif
 
-#ifdef DEBUG
-  #define CHECK_BYTEREG(reg)                                               \
-      JS_BEGIN_MACRO                                                       \
-        AllocatableGeneralRegisterSet byteRegs(Registers::SingleByteRegs); \
-        MOZ_ASSERT(byteRegs.has(reg));                                     \
-      JS_END_MACRO
-  #define CHECK_BYTEREGS(r1, r2)                                           \
-      JS_BEGIN_MACRO                                                       \
-        AllocatableGeneralRegisterSet byteRegs(Registers::SingleByteRegs); \
-        MOZ_ASSERT(byteRegs.has(r1));                                      \
-        MOZ_ASSERT(byteRegs.has(r2));                                      \
-      JS_END_MACRO
-#else
-  #define CHECK_BYTEREG(reg) (void)0
-  #define CHECK_BYTEREGS(r1, r2) (void)0
-#endif
-
 namespace js {
 namespace jit {
 
@@ -63,7 +46,7 @@ class MacroAssemblerX86Shared : public Assembler
         explicit Constant(const Constant<T>&) = delete;
     };
 
-    // Containers use SystemAllocPolicy since asm.js releases memory after each
+    // Containers use SystemAllocPolicy since wasm releases memory after each
     // function is compiled, and these need to live until after all functions
     // are compiled.
     using Double = Constant<double>;
@@ -100,15 +83,14 @@ class MacroAssemblerX86Shared : public Assembler
     MacroAssemblerX86Shared()
     { }
 
-    bool asmMergeWith(const MacroAssemblerX86Shared& other);
+    bool appendRawCode(const uint8_t* code, size_t numBytes) {
+        return masm.appendRawCode(code, numBytes);
+    }
 
     // Evaluate srcDest = minmax<isMax>{Float32,Double}(srcDest, second).
-    // Handle NaN specially if handleNaN is true.
-    void minMaxDouble(FloatRegister srcDest, FloatRegister second, bool handleNaN, bool isMax);
-    void minMaxFloat32(FloatRegister srcDest, FloatRegister second, bool handleNaN, bool isMax);
-
-    void outOfLineWasmTruncateCheck(FloatRegister input, MIRType fromType, MIRType toType,
-                                    bool isUnsigned, Label* rejoin);
+    // Checks for NaN if canBeNaN is true.
+    void minMaxDouble(FloatRegister srcDest, FloatRegister second, bool canBeNaN, bool isMax);
+    void minMaxFloat32(FloatRegister srcDest, FloatRegister second, bool canBeNaN, bool isMax);
 
     void compareDouble(DoubleCondition cond, FloatRegister lhs, FloatRegister rhs) {
         if (cond & DoubleConditionBitInvert)
@@ -185,340 +167,6 @@ class MacroAssemblerX86Shared : public Assembler
         lock_decl(addr);
     }
 
-    template <typename T>
-    void atomicFetchAdd8SignExtend(Register src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREGS(src, output);
-        if (src != output)
-            movl(src, output);
-        lock_xaddb(output, Operand(mem));
-        movsbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd8ZeroExtend(Register src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREGS(src, output);
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        lock_xaddb(output, Operand(mem));
-        movzbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd8SignExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREG(output);
-        MOZ_ASSERT(temp == InvalidReg);
-        movb(src, output);
-        lock_xaddb(output, Operand(mem));
-        movsbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd8ZeroExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREG(output);
-        MOZ_ASSERT(temp == InvalidReg);
-        movb(src, output);
-        lock_xaddb(output, Operand(mem));
-        movzbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd16SignExtend(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        lock_xaddw(output, Operand(mem));
-        movswl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd16ZeroExtend(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        lock_xaddw(output, Operand(mem));
-        movzwl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd16SignExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        movl(src, output);
-        lock_xaddw(output, Operand(mem));
-        movswl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd16ZeroExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        movl(src, output);
-        lock_xaddw(output, Operand(mem));
-        movzwl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchAdd32(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        lock_xaddl(output, Operand(mem));
-    }
-
-    template <typename T>
-    void atomicFetchAdd32(Imm32 src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        movl(src, output);
-        lock_xaddl(output, Operand(mem));
-    }
-
-    template <typename T>
-    void atomicFetchSub8SignExtend(Register src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREGS(src, output);
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        negl(output);
-        lock_xaddb(output, Operand(mem));
-        movsbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub8ZeroExtend(Register src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREGS(src, output);
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        negl(output);
-        lock_xaddb(output, Operand(mem));
-        movzbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub8SignExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREG(output);
-        MOZ_ASSERT(temp == InvalidReg);
-        movb(Imm32(-src.value), output);
-        lock_xaddb(output, Operand(mem));
-        movsbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub8ZeroExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        CHECK_BYTEREG(output);
-        MOZ_ASSERT(temp == InvalidReg);
-        movb(Imm32(-src.value), output);
-        lock_xaddb(output, Operand(mem));
-        movzbl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub16SignExtend(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        negl(output);
-        lock_xaddw(output, Operand(mem));
-        movswl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub16ZeroExtend(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        negl(output);
-        lock_xaddw(output, Operand(mem));
-        movzwl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub16SignExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        movl(Imm32(-src.value), output);
-        lock_xaddw(output, Operand(mem));
-        movswl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub16ZeroExtend(Imm32 src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        movl(Imm32(-src.value), output);
-        lock_xaddw(output, Operand(mem));
-        movzwl(output, output);
-    }
-
-    template <typename T>
-    void atomicFetchSub32(Register src, const T& mem, Register temp, Register output) {
-        MOZ_ASSERT(temp == InvalidReg);
-        if (src != output)
-            movl(src, output);
-        negl(output);
-        lock_xaddl(output, Operand(mem));
-    }
-
-    template <typename T>
-    void atomicFetchSub32(Imm32 src, const T& mem, Register temp, Register output) {
-        movl(Imm32(-src.value), output);
-        lock_xaddl(output, Operand(mem));
-    }
-
-    // requires output == eax
-#define ATOMIC_BITOP_BODY(LOAD, OP, LOCK_CMPXCHG) \
-        MOZ_ASSERT(output == eax);                \
-        LOAD(Operand(mem), eax);                  \
-        Label again;                              \
-        bind(&again);                             \
-        movl(eax, temp);                          \
-        OP(src, temp);                            \
-        LOCK_CMPXCHG(temp, Operand(mem));         \
-        j(NonZero, &again);
-
-    template <typename S, typename T>
-    void atomicFetchAnd8SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, andl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movsbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchAnd8ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, andl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movzbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchAnd16SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, andl, lock_cmpxchgw)
-        movswl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchAnd16ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, andl, lock_cmpxchgw)
-        movzwl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchAnd32(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movl, andl, lock_cmpxchgl)
-    }
-
-    template <typename S, typename T>
-    void atomicFetchOr8SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, orl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movsbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchOr8ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, orl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movzbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchOr16SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, orl, lock_cmpxchgw)
-        movswl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchOr16ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, orl, lock_cmpxchgw)
-        movzwl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchOr32(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movl, orl, lock_cmpxchgl)
-    }
-
-    template <typename S, typename T>
-    void atomicFetchXor8SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, xorl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movsbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchXor8ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movb, xorl, lock_cmpxchgb)
-        CHECK_BYTEREG(temp);
-        movzbl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchXor16SignExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, xorl, lock_cmpxchgw)
-        movswl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchXor16ZeroExtend(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movw, xorl, lock_cmpxchgw)
-        movzwl(eax, eax);
-    }
-    template <typename S, typename T>
-    void atomicFetchXor32(const S& src, const T& mem, Register temp, Register output) {
-        ATOMIC_BITOP_BODY(movl, xorl, lock_cmpxchgl)
-    }
-
-#undef ATOMIC_BITOP_BODY
-
-    // S is Register or Imm32; T is Address or BaseIndex.
-
-    template <typename S, typename T>
-    void atomicAdd8(const S& src, const T& mem) {
-        lock_addb(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicAdd16(const S& src, const T& mem) {
-        lock_addw(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicAdd32(const S& src, const T& mem) {
-        lock_addl(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicSub8(const S& src, const T& mem) {
-        lock_subb(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicSub16(const S& src, const T& mem) {
-        lock_subw(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicSub32(const S& src, const T& mem) {
-        lock_subl(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicAnd8(const S& src, const T& mem) {
-        lock_andb(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicAnd16(const S& src, const T& mem) {
-        lock_andw(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicAnd32(const S& src, const T& mem) {
-        lock_andl(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicOr8(const S& src, const T& mem) {
-        lock_orb(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicOr16(const S& src, const T& mem) {
-        lock_orw(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicOr32(const S& src, const T& mem) {
-        lock_orl(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicXor8(const S& src, const T& mem) {
-        lock_xorb(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicXor16(const S& src, const T& mem) {
-        lock_xorw(src, Operand(mem));
-    }
-    template <typename S, typename T>
-    void atomicXor32(const S& src, const T& mem) {
-        lock_xorl(src, Operand(mem));
-    }
-
     void storeLoadFence() {
         // This implementation follows Linux.
         if (HasSSE2())
@@ -542,6 +190,9 @@ class MacroAssemblerX86Shared : public Assembler
     void jump(JitCode* code) {
         jmp(code);
     }
+    void jump(TrampolinePtr code) {
+        jmp(ImmPtr(code.value));
+    }
     void jump(RepatchLabel* label) {
         jmp(label);
     }
@@ -551,7 +202,7 @@ class MacroAssemblerX86Shared : public Assembler
     void jump(const Address& addr) {
         jmp(Operand(addr));
     }
-    void jump(wasm::JumpTarget target) {
+    void jump(wasm::OldTrapDesc target) {
         jmp(target);
     }
 
@@ -664,38 +315,6 @@ class MacroAssemblerX86Shared : public Assembler
         AutoEnsureByteRegister ensure(this, dest, src);
         movb(ensure.reg(), Operand(dest));
     }
-    template <typename T>
-    void compareExchange8ZeroExtend(const T& mem, Register oldval, Register newval, Register output) {
-        MOZ_ASSERT(output == eax);
-        CHECK_BYTEREG(newval);
-        if (oldval != output)
-            movl(oldval, output);
-        lock_cmpxchgb(newval, Operand(mem));
-        movzbl(output, output);
-    }
-    template <typename T>
-    void compareExchange8SignExtend(const T& mem, Register oldval, Register newval, Register output) {
-        MOZ_ASSERT(output == eax);
-        CHECK_BYTEREG(newval);
-        if (oldval != output)
-            movl(oldval, output);
-        lock_cmpxchgb(newval, Operand(mem));
-        movsbl(output, output);
-    }
-    template <typename T>
-    void atomicExchange8ZeroExtend(const T& mem, Register value, Register output) {
-        if (value != output)
-            movl(value, output);
-        xchgb(output, Operand(mem));
-        movzbl(output, output);
-    }
-    template <typename T>
-    void atomicExchange8SignExtend(const T& mem, Register value, Register output) {
-        if (value != output)
-            movl(value, output);
-        xchgb(output, Operand(mem));
-        movsbl(output, output);
-    }
     void load16ZeroExtend(const Operand& src, Register dest) {
         movzwl(src, dest);
     }
@@ -708,36 +327,6 @@ class MacroAssemblerX86Shared : public Assembler
     template <typename S, typename T>
     void store16(const S& src, const T& dest) {
         movw(src, Operand(dest));
-    }
-    template <typename T>
-    void compareExchange16ZeroExtend(const T& mem, Register oldval, Register newval, Register output) {
-        MOZ_ASSERT(output == eax);
-        if (oldval != output)
-            movl(oldval, output);
-        lock_cmpxchgw(newval, Operand(mem));
-        movzwl(output, output);
-    }
-    template <typename T>
-    void compareExchange16SignExtend(const T& mem, Register oldval, Register newval, Register output) {
-        MOZ_ASSERT(output == eax);
-        if (oldval != output)
-            movl(oldval, output);
-        lock_cmpxchgw(newval, Operand(mem));
-        movswl(output, output);
-    }
-    template <typename T>
-    void atomicExchange16ZeroExtend(const T& mem, Register value, Register output) {
-        if (value != output)
-            movl(value, output);
-        xchgw(output, Operand(mem));
-        movzwl(output, output);
-    }
-    template <typename T>
-    void atomicExchange16SignExtend(const T& mem, Register value, Register output) {
-        if (value != output)
-            movl(value, output);
-        xchgw(output, Operand(mem));
-        movswl(output, output);
     }
     void load16SignExtend(const Operand& src, Register dest) {
         movswl(src, dest);
@@ -760,19 +349,6 @@ class MacroAssemblerX86Shared : public Assembler
     template <typename S, typename T>
     void store32(const S& src, const T& dest) {
         movl(src, Operand(dest));
-    }
-    template <typename T>
-    void compareExchange32(const T& mem, Register oldval, Register newval, Register output) {
-        MOZ_ASSERT(output == eax);
-        if (oldval != output)
-            movl(oldval, output);
-        lock_cmpxchgl(newval, Operand(mem));
-    }
-    template <typename T>
-    void atomicExchange32(const T& mem, Register value, Register output) {
-        if (value != output)
-            movl(value, output);
-        xchgl(output, Operand(mem));
     }
     template <typename S, typename T>
     void store32_NoSecondScratch(const S& src, const T& dest) {
@@ -811,6 +387,19 @@ class MacroAssemblerX86Shared : public Assembler
     }
     void convertDoubleToFloat32(FloatRegister src, FloatRegister dest) {
         vcvtsd2ss(src, dest, dest);
+    }
+
+    void loadInt32x4(const Address& addr, FloatRegister dest) {
+        vmovdqa(Operand(addr), dest);
+    }
+    void loadFloat32x4(const Address& addr, FloatRegister dest) {
+        vmovaps(Operand(addr), dest);
+    }
+    void storeInt32x4(FloatRegister src, const Address& addr) {
+        vmovdqa(src, Operand(addr));
+    }
+    void storeFloat32x4(FloatRegister src, const Address& addr) {
+        vmovaps(src, Operand(addr));
     }
 
     void convertFloat32x4ToInt32x4(FloatRegister src, FloatRegister dest) {
@@ -1214,10 +803,8 @@ class MacroAssemblerX86Shared : public Assembler
     inline void clampIntToUint8(Register reg);
 
     bool maybeInlineDouble(double d, FloatRegister dest) {
-        uint64_t u = mozilla::BitwiseCast<uint64_t>(d);
-
         // Loading zero with xor is specially optimized in hardware.
-        if (u == 0) {
+        if (mozilla::IsPositiveZero(d)) {
             zeroDouble(dest);
             return true;
         }
@@ -1234,10 +821,8 @@ class MacroAssemblerX86Shared : public Assembler
     }
 
     bool maybeInlineFloat(float f, FloatRegister dest) {
-        uint32_t u = mozilla::BitwiseCast<uint32_t>(f);
-
         // See comment above
-        if (u == 0) {
+        if (mozilla::IsPositiveZero(f)) {
             zeroFloat32(dest);
             return true;
         }
@@ -1309,13 +894,6 @@ class MacroAssemblerX86Shared : public Assembler
         }
     }
 
-    template <typename T1, typename T2>
-    void cmp32Set(Assembler::Condition cond, T1 lhs, T2 rhs, Register dest)
-    {
-        cmp32(lhs, rhs);
-        emitSet(cond, dest);
-    }
-
     // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().
     CodeOffset toggledJump(Label* label) {
         CodeOffset offset(size());
@@ -1339,14 +917,6 @@ class MacroAssemblerX86Shared : public Assembler
     void abiret() {
         ret();
     }
-
-    template<typename T>
-    void compareExchangeToTypedIntArray(Scalar::Type arrayType, const T& mem, Register oldval, Register newval,
-                                        Register temp, AnyRegister output);
-
-    template<typename T>
-    void atomicExchangeToTypedIntArray(Scalar::Type arrayType, const T& mem, Register value,
-                                       Register temp, AnyRegister output);
 
   protected:
     bool buildOOLFakeExitFrame(void* fakeReturnAddr);
@@ -1418,8 +988,5 @@ MacroAssemblerX86Shared::storeScalar<float>(FloatRegister src, const Address& de
 
 } // namespace jit
 } // namespace js
-
-#undef CHECK_BYTEREG
-#undef CHECK_BYTEREGS
 
 #endif /* jit_x86_shared_MacroAssembler_x86_shared_h */

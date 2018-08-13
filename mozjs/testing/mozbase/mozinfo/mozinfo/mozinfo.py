@@ -8,35 +8,42 @@
 # linux) to the information; I certainly wouldn't want anyone parsing this
 # information and having behaviour depend on it
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function
 
 import os
 import platform
 import re
 import sys
 from .string_version import StringVersion
-
+from ctypes.util import find_library
 
 # keep a copy of the os module since updating globals overrides this
 _os = os
 
+
 class unknown(object):
     """marker class for unknown information"""
+
     def __nonzero__(self):
         return False
+
     def __str__(self):
         return 'UNKNOWN'
-unknown = unknown() # singleton
+
+
+unknown = unknown()  # singleton
+
 
 def get_windows_version():
     import ctypes
+
     class OSVERSIONINFOEXW(ctypes.Structure):
         _fields_ = [('dwOSVersionInfoSize', ctypes.c_ulong),
                     ('dwMajorVersion', ctypes.c_ulong),
                     ('dwMinorVersion', ctypes.c_ulong),
                     ('dwBuildNumber', ctypes.c_ulong),
                     ('dwPlatformId', ctypes.c_ulong),
-                    ('szCSDVersion', ctypes.c_wchar*128),
+                    ('szCSDVersion', ctypes.c_wchar * 128),
                     ('wServicePackMajor', ctypes.c_ushort),
                     ('wServicePackMinor', ctypes.c_ushort),
                     ('wSuiteMask', ctypes.c_ushort),
@@ -51,13 +58,15 @@ def get_windows_version():
 
     return os_version.dwMajorVersion, os_version.dwMinorVersion, os_version.dwBuildNumber
 
+
 # get system information
 info = {'os': unknown,
         'processor': unknown,
         'version': unknown,
         'os_version': unknown,
         'bits': unknown,
-        'has_sandbox': unknown }
+        'has_sandbox': unknown,
+        'webrender': bool(os.environ.get("MOZ_WEBRENDER", False))}
 (system, node, release, version, machine, processor) = platform.uname()
 (bits, linkage) = platform.architecture()
 
@@ -82,7 +91,7 @@ if system in ["Microsoft", "Windows"]:
         version = "%d.%d.%d" % (major, minor, build_number)
 
     os_version = "%d.%d" % (major, minor)
-elif system.startswith('MINGW'):
+elif system.startswith(('MINGW', 'MSYS_NT')):
     # windows/mingw python build (msys)
     info['os'] = 'win'
     os_version = version = unknown
@@ -138,14 +147,14 @@ elif processor == "Power Macintosh":
 bits = re.search('(\d+)bit', bits).group(1)
 info.update({'processor': processor,
              'bits': int(bits),
-            })
+             })
 
 if info['os'] == 'linux':
     import ctypes
     import errno
     PR_SET_SECCOMP = 22
     SECCOMP_MODE_FILTER = 2
-    ctypes.CDLL("libc.so.6", use_errno=True).prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, 0)
+    ctypes.CDLL(find_library("c"), use_errno=True).prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, 0)
     info['has_sandbox'] = ctypes.get_errno() == errno.EFAULT
 else:
     info['has_sandbox'] = True
@@ -161,7 +170,7 @@ def sanitize(info):
     to handle universal Mac builds."""
     if "processor" in info and info["processor"] == "universal-x86-x86_64":
         # If we're running on OS X 10.6 or newer, assume 64-bit
-        if release[:4] >= "10.6": # Note this is a string comparison
+        if release[:4] >= "10.6":  # Note this is a string comparison
             info["processor"] = "x86_64"
             info["bits"] = 64
         else:
@@ -169,6 +178,8 @@ def sanitize(info):
             info["bits"] = 32
 
 # method for updating information
+
+
 def update(new_info):
     """
     Update the info.
@@ -177,7 +188,12 @@ def update(new_info):
                      to a json file containing the new info.
     """
 
-    if isinstance(new_info, basestring):
+    PY3 = sys.version_info[0] == 3
+    if PY3:
+        string_types = str,
+    else:
+        string_types = basestring,
+    if isinstance(new_info, string_types):
         # lazy import
         import mozfile
         import json
@@ -193,8 +209,9 @@ def update(new_info):
     for os_name in choices['os']:
         globals()['is' + os_name.title()] = info['os'] == os_name
     # unix is special
-    if isLinux or isBsd:
+    if isLinux or isBsd:  # noqa
         globals()['isUnix'] = True
+
 
 def find_and_update_from_json(*dirs):
     """
@@ -210,6 +227,7 @@ def find_and_update_from_json(*dirs):
     # First, see if we're in an objdir
     try:
         from mozbuild.base import MozbuildObject, BuildEnvironmentNotFoundException
+        from mozbuild.mozconfig import MozconfigFindException
         build = MozbuildObject.from_environment()
         json_path = _os.path.join(build.topobjdir, "mozinfo.json")
         if _os.path.isfile(json_path):
@@ -217,7 +235,7 @@ def find_and_update_from_json(*dirs):
             return json_path
     except ImportError:
         pass
-    except BuildEnvironmentNotFoundException:
+    except (BuildEnvironmentNotFoundException, MozconfigFindException):
         pass
 
     for d in dirs:
@@ -229,15 +247,17 @@ def find_and_update_from_json(*dirs):
 
     return None
 
+
 def output_to_file(path):
     import json
     with open(path, 'w') as f:
-        f.write(json.dumps(info));
+        f.write(json.dumps(info))
+
 
 update({})
 
 # exports
-__all__ = info.keys()
+__all__ = list(info.keys())
 __all__ += ['is' + os_name.title() for os_name in choices['os']]
 __all__ += [
     'info',
@@ -248,7 +268,8 @@ __all__ += [
     'find_and_update_from_json',
     'output_to_file',
     'StringVersion',
-    ]
+]
+
 
 def main(args=None):
 
@@ -267,7 +288,7 @@ def main(args=None):
         import json
         for arg in args:
             if _os.path.exists(arg):
-                string = file(arg).read()
+                string = open(arg).read()
             else:
                 string = arg
             update(json.loads(string))
@@ -276,14 +297,16 @@ def main(args=None):
     flag = False
     for key, value in options.__dict__.items():
         if value is True:
-            print '%s choices: %s' % (key, ' '.join([str(choice)
-                                                     for choice in choices[key]]))
+            print('%s choices: %s' % (key, ' '.join([str(choice)
+                                                     for choice in choices[key]])))
             flag = True
-    if flag: return
+    if flag:
+        return
 
     # otherwise, print out all info
     for key, value in info.items():
-        print '%s: %s' % (key, value)
+        print('%s: %s' % (key, value))
+
 
 if __name__ == '__main__':
     main()

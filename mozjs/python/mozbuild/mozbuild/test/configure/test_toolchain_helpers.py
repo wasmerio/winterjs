@@ -24,15 +24,20 @@ from mozpack import path as mozpath
 
 
 class CompilerPreprocessor(Preprocessor):
-    VARSUBST = re.compile('(?P<VAR>\w+)', re.U)
+    # The C preprocessor only expands macros when they are not in C strings.
+    # For now, we don't look very hard for C strings because they don't matter
+    # that much for our unit tests, but we at least avoid expanding in the
+    # simple "FOO" case.
+    VARSUBST = re.compile('(?<!")(?P<VAR>\w+)(?!")', re.U)
     NON_WHITESPACE = re.compile('\S')
+    HAS_FEATURE = re.compile('(__has_feature)\(([^\)]*)\)')
 
     def __init__(self, *args, **kwargs):
         Preprocessor.__init__(self, *args, **kwargs)
         self.do_filter('c_substitution')
         self.setMarker('#\s*')
 
-    def do_if(self, *args, **kwargs):
+    def do_if(self, expression, **kwargs):
         # The C preprocessor handles numbers following C rules, which is a
         # different handling than what our Preprocessor does out of the box.
         # Hack around it enough that the configure tests work properly.
@@ -42,11 +47,17 @@ class CompilerPreprocessor(Preprocessor):
                 if value[-1:] == 'L' and value[:-1].isdigit():
                     value = int(value[:-1])
             return value
+        # Our Preprocessor doesn't handle macros with parameters, so we hack
+        # around that for __has_feature()-like things.
+        def normalize_has_feature(expr):
+            return self.HAS_FEATURE.sub(r'\1\2', expr)
         self.context = self.Context(
-            (k, normalize_numbers(v)) for k, v in context.iteritems()
+            (normalize_has_feature(k), normalize_numbers(v))
+            for k, v in context.iteritems()
         )
         try:
-            return Preprocessor.do_if(self, *args, **kwargs)
+            return Preprocessor.do_if(self, normalize_has_feature(expression),
+                                      **kwargs)
         finally:
             self.context = context
 
@@ -77,13 +88,14 @@ class TestCompilerPreprocessor(unittest.TestCase):
             'A': 1,
             'B': '2',
             'C': 'c',
+            'D': 'd'
         })
         pp.out = StringIO()
-        input = StringIO('A.B.C')
+        input = StringIO('A.B.C "D"')
         input.name = 'foo'
         pp.do_include(input)
 
-        self.assertEquals(pp.out.getvalue(), '1 . 2 . c')
+        self.assertEquals(pp.out.getvalue(), '1 . 2 . c "D"')
 
     def test_condition(self):
         pp = CompilerPreprocessor({
@@ -183,6 +195,10 @@ class FakeCompiler(dict):
             pp.out = StringIO()
             pp.do_include(file)
             return 0, pp.out.getvalue(), ''
+        elif '-c' in flags:
+            if '-funknown-flag' in flags:
+                return 1, '', ''
+            return 0, '', ''
 
         return 1, '', ''
 
@@ -337,7 +353,7 @@ class CompilerResult(ReadOnlyNamespace):
     '''
 
     def __init__(self, wrapper=None, compiler='', version='', type='',
-                 flags=None):
+                 language='', flags=None):
         if flags is None:
             flags = []
         if wrapper is None:
@@ -348,6 +364,7 @@ class CompilerResult(ReadOnlyNamespace):
             type=type,
             compiler=mozpath.abspath(compiler),
             wrapper=wrapper,
+            language=language,
         )
 
     def __add__(self, other):
@@ -369,6 +386,7 @@ class TestCompilerResult(unittest.TestCase):
             'compiler': mozpath.abspath(''),
             'version': '',
             'type': '',
+            'language': '',
             'flags': [],
         })
 
@@ -376,6 +394,7 @@ class TestCompilerResult(unittest.TestCase):
             compiler='/usr/bin/gcc',
             version='4.2.1',
             type='gcc',
+            language='C',
             flags=['-std=gnu99'],
         )
         self.assertEquals(result.__dict__, {
@@ -383,6 +402,7 @@ class TestCompilerResult(unittest.TestCase):
             'compiler': mozpath.abspath('/usr/bin/gcc'),
             'version': '4.2.1',
             'type': 'gcc',
+            'language': 'C',
             'flags': ['-std=gnu99'],
         })
 
@@ -392,6 +412,7 @@ class TestCompilerResult(unittest.TestCase):
             'compiler': mozpath.abspath('/usr/bin/gcc'),
             'version': '4.2.1',
             'type': 'gcc',
+            'language': 'C',
             'flags': ['-std=gnu99', '-m32'],
         })
         # Original flags are untouched.
@@ -407,6 +428,7 @@ class TestCompilerResult(unittest.TestCase):
             'compiler': mozpath.abspath('/usr/bin/gcc-4.7'),
             'version': '4.7.3',
             'type': 'gcc',
+            'language': 'C',
             'flags': ['-std=gnu99', '-m32'],
         })
 

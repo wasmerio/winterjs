@@ -13,19 +13,16 @@ use mozjs_sys::jsapi::JSClass;
 use mozjs_sys::jsapi::JSClassOps;
 use mozjs_sys::jsapi::JSContext;
 use mozjs_sys::jsapi::JSProtoKey;
-use mozjs_sys::jsapi::JSRuntime;
-use mozjs_sys::jsapi::JSVersion::JSVERSION_DEFAULT;
 use mozjs_sys::jsapi::JS_BeginRequest;
-use mozjs_sys::jsapi::JS_DestroyRuntime;
+use mozjs_sys::jsapi::JS_DestroyContext;
 use mozjs_sys::jsapi::JS_EndRequest;
 use mozjs_sys::jsapi::JS_EnterCompartment;
-use mozjs_sys::jsapi::JS_GetContext;
 use mozjs_sys::jsapi::JS_GlobalObjectTraceHook;
-use mozjs_sys::jsapi::JS_Init;
 use mozjs_sys::jsapi::JS_LeaveCompartment;
 use mozjs_sys::jsapi::JS_NewGlobalObject;
-use mozjs_sys::jsapi::JS_NewRuntime;
+use mozjs_sys::jsapi::JS_NewContext;
 use mozjs_sys::jsapi::JS_ShutDown;
+use mozjs_sys::jsapi::glue::JS_Init;
 use mozjs_sys::jsapi::glue::JS_NewCompartmentOptions;
 use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
 
@@ -40,9 +37,8 @@ const JSCLASS_GLOBAL_FLAGS: u32 = JSCLASS_IS_GLOBAL | (JSCLASS_GLOBAL_SLOT_COUNT
 static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     addProperty: None,
     delProperty: None,
-    getProperty: None,
-    setProperty: None,
     enumerate: None,
+    newEnumerate: None,
     resolve: None,
     mayResolve: None,
     finalize: None,
@@ -67,14 +63,10 @@ fn main() {
         // Initialize the JS engine.
         assert!(JS_Init());
 
-        // Create a JS runtime.
+        // Create a JS context.
         let heap_size = 64 * 1024 * 1024;
         let nursery_size = 8 * 1024 * 1024;
-        let rt: *mut JSRuntime = JS_NewRuntime(heap_size, nursery_size, ptr::null_mut());
-        assert!(!rt.is_null());
-
-        // Create a context.
-        let cx: *mut JSContext = JS_GetContext(rt);
+        let cx: *mut JSContext = JS_NewContext(heap_size, nursery_size, ptr::null_mut());
         assert!(!cx.is_null());
         assert!(JS::InitSelfHostedCode(cx));
         JS_BeginRequest(cx);
@@ -93,7 +85,7 @@ fn main() {
 
         // Evaluate 1+1.
         let script: Vec<u16> = "1+1".encode_utf16().collect();
-        let options = JS_NewOwningCompileOptions(cx, JSVERSION_DEFAULT);
+        let options = JS_NewOwningCompileOptions(cx);
         let mut rval: JS::Value = mem::zeroed();
         let mut rval_handle: JS::MutableHandleValue = mem::zeroed();
         rval_handle.ptr = &mut rval;
@@ -104,7 +96,7 @@ fn main() {
         // Shut everything down.
         JS_LeaveCompartment(cx, compartment);
         JS_EndRequest(cx);
-        JS_DestroyRuntime(rt);
+        JS_DestroyContext(cx);
         JS_ShutDown();
     }
 }

@@ -7,9 +7,8 @@
 #ifndef vm_WrapperObject_h
 #define vm_WrapperObject_h
 
-#include "jsobj.h"
-#include "jswrapper.h"
-
+#include "js/Wrapper.h"
+#include "vm/JSObject.h"
 #include "vm/ProxyObject.h"
 
 namespace js {
@@ -24,6 +23,8 @@ class WrapperObject : public ProxyObject
 
 class CrossCompartmentWrapperObject : public WrapperObject
 {
+  public:
+    static const unsigned GrayLinkReservedSlot = 1;
 };
 
 } // namespace js

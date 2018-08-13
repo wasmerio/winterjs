@@ -10,11 +10,11 @@
 #include "mozilla/Atomics.h"
 
 #include "jsapi.h"
-#include "jsobj.h"
 #include "jstypes.h"
 
 #include "gc/Barrier.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/JSObject.h"
 
 typedef struct JSProperty JSProperty;
 
@@ -40,28 +40,68 @@ class FutexWaiter;
  * else would have to change throughout the engine, the SARB would point to
  * the data array using a constant pointer, instead of computing its
  * address.
+ *
+ * If preparedForAsmJS_ is true then length_ never changes.
+ *
+ * If preparedForWasm_ is true then length_ can change following initialization;
+ * it may grow toward maxSize_.  See extensive comments above WasmArrayRawBuffer
+ * in ArrayBufferObject.cpp.
+ *
+ * length_ only grows when the lock is held.
  */
 class SharedArrayRawBuffer
 {
   private:
     mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> refcount_;
-    uint32_t length;
+    Mutex    lock_;
+    uint32_t length_;
+    uint32_t maxSize_;
+    size_t   mappedSize_;         // Does not include the page for the header
+    bool     preparedForAsmJS_;
+    bool     preparedForWasm_;
 
     // A list of structures representing tasks waiting on some
     // location within this buffer.
     FutexWaiter* waiters_;
 
+    uint8_t* basePointer() {
+        SharedMem<uint8_t*> p = dataPointerShared() - gc::SystemPageSize();
+        MOZ_ASSERT(p.asValue() % gc::SystemPageSize() == 0);
+        return p.unwrap(/* we trust you won't abuse it */);
+    }
+
   protected:
-    SharedArrayRawBuffer(uint8_t* buffer, uint32_t length)
+    SharedArrayRawBuffer(uint8_t* buffer, uint32_t length, uint32_t maxSize, size_t mappedSize,
+                         bool preparedForAsmJS, bool preparedForWasm)
       : refcount_(1),
-        length(length),
+        lock_(mutexid::SharedArrayGrow),
+        length_(length),
+        maxSize_(maxSize),
+        mappedSize_(mappedSize),
+        preparedForAsmJS_(preparedForAsmJS),
+        preparedForWasm_(preparedForWasm),
         waiters_(nullptr)
     {
         MOZ_ASSERT(buffer == dataPointerShared());
     }
 
   public:
-    static SharedArrayRawBuffer* New(JSContext* cx, uint32_t length);
+    class Lock;
+    friend class Lock;
+
+    class MOZ_STACK_CLASS Lock {
+        SharedArrayRawBuffer* buf;
+      public:
+        explicit Lock(SharedArrayRawBuffer* buf) : buf(buf) {
+            buf->lock_.lock();
+        }
+        ~Lock() {
+            buf->lock_.unlock();
+        }
+    };
+
+    // max must be Something for wasm, Nothing for other uses
+    static SharedArrayRawBuffer* Allocate(uint32_t initial, const mozilla::Maybe<uint32_t>& max);
 
     // This may be called from multiple threads.  The caller must take
     // care of mutual exclusion.
@@ -80,14 +120,44 @@ class SharedArrayRawBuffer
         return SharedMem<uint8_t*>::shared(ptr + sizeof(SharedArrayRawBuffer));
     }
 
-    uint32_t byteLength() const {
-        return length;
+    uint32_t byteLength(const Lock&) const {
+        return length_;
     }
+
+    uint32_t maxSize() const {
+        return maxSize_;
+    }
+
+    size_t mappedSize() const {
+        return mappedSize_;
+    }
+
+#ifndef WASM_HUGE_MEMORY
+    uint32_t boundsCheckLimit() const {
+        return mappedSize_ - wasm::GuardSize;
+    }
+#endif
+
+    bool isPreparedForAsmJS() const {
+        return preparedForAsmJS_;
+    }
+
+    bool isWasm() const {
+        return preparedForWasm_;
+    }
+
+#ifndef WASM_HUGE_MEMORY
+    void tryGrowMaxSizeInPlace(uint32_t deltaMaxSize);
+#endif
+
+    bool wasmGrowToSizeInPlace(const Lock&, uint32_t newLength);
 
     uint32_t refcount() const { return refcount_; }
 
-    void addReference();
+    MOZ_MUST_USE bool addReference();
     void dropReference();
+
+    static int32_t liveBuffers();
 };
 
 /*
@@ -118,11 +188,16 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared
     // SharedArrayRawBuffer object, which is manually managed storage.
     static const uint8_t RAWBUF_SLOT = 0;
 
-    static const uint8_t RESERVED_SLOTS = 1;
+    // LENGTH_SLOT holds the length of the underlying buffer as it was when this
+    // object was created.  For JS and AsmJS use cases this is the same length
+    // as the buffer, but for Wasm the buffer can grow, and the buffer's length
+    // may be greater than the object's length.
+    static const uint8_t LENGTH_SLOT = 1;
+
+    static const uint8_t RESERVED_SLOTS = 2;
 
     static const Class class_;
-    static const Class protoClass;
-    static const JSFunctionSpec jsfuncs[];
+    static const Class protoClass_;
 
     static bool byteLengthGetter(JSContext* cx, unsigned argc, Value* vp);
 
@@ -133,15 +208,21 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared
                                         uint32_t length,
                                         HandleObject proto = nullptr);
 
-    // Create a SharedArrayBufferObject using an existing SharedArrayRawBuffer.
+    // Create a SharedArrayBufferObject using an existing SharedArrayRawBuffer,
+    // recording the given length in the SharedArrayBufferObject.
     static SharedArrayBufferObject* New(JSContext* cx,
                                         SharedArrayRawBuffer* buffer,
+                                        uint32_t length,
                                         HandleObject proto = nullptr);
 
     static void Finalize(FreeOp* fop, JSObject* obj);
 
     static void addSizeOfExcludingThis(JSObject* obj, mozilla::MallocSizeOf mallocSizeOf,
                                        JS::ClassInfo* info);
+
+    static void copyData(Handle<SharedArrayBufferObject*> toBuffer, uint32_t toIndex,
+                         Handle<SharedArrayBufferObject*> fromBuffer, uint32_t fromIndex,
+                         uint32_t count);
 
     SharedArrayRawBuffer* rawBufferObject() const;
 
@@ -155,15 +236,41 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared
     }
 
     uint32_t byteLength() const {
-        return rawBufferObject()->byteLength();
+        return getReservedSlot(LENGTH_SLOT).toPrivateUint32();
     }
 
+    bool isPreparedForAsmJS() const {
+        return rawBufferObject()->isPreparedForAsmJS();
+    }
+    bool isWasm() const {
+        return rawBufferObject()->isWasm();
+    }
     SharedMem<uint8_t*> dataPointerShared() const {
         return rawBufferObject()->dataPointerShared();
     }
 
+    // WebAssembly support:
+
+    // Create a SharedArrayBufferObject using the provided buffer and size.
+    // Assumes ownership of a reference to |buffer| even in case of failure,
+    // i.e. on failure |buffer->dropReference()| is performed.
+    static SharedArrayBufferObject*
+    createFromNewRawBuffer(JSContext* cx, SharedArrayRawBuffer* buffer, uint32_t initialSize);
+
+    mozilla::Maybe<uint32_t> wasmMaxSize() const {
+        return mozilla::Some(rawBufferObject()->maxSize());
+    }
+
+    size_t wasmMappedSize() const {
+        return rawBufferObject()->mappedSize();
+    }
+
+#ifndef WASM_HUGE_MEMORY
+    uint32_t wasmBoundsCheckLimit() const;
+#endif
+
 private:
-    void acceptRawBuffer(SharedArrayRawBuffer* buffer);
+    void acceptRawBuffer(SharedArrayRawBuffer* buffer, uint32_t length);
     void dropRawBuffer();
 };
 
@@ -172,6 +279,10 @@ bool IsSharedArrayBuffer(HandleObject o);
 bool IsSharedArrayBuffer(JSObject* o);
 
 SharedArrayBufferObject& AsSharedArrayBuffer(HandleObject o);
+
+typedef Rooted<SharedArrayBufferObject*> RootedSharedArrayBufferObject;
+typedef Handle<SharedArrayBufferObject*> HandleSharedArrayBufferObject;
+typedef MutableHandle<SharedArrayBufferObject*> MutableHandleSharedArrayBufferObject;
 
 } // namespace js
 

@@ -9,10 +9,13 @@ import org.mozilla.gecko.annotationProcessors.AnnotationInfo;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.Locale;
 
 /**
  * A collection of utility methods used by CodeGenerator. Largely used for translating types.
@@ -96,6 +99,10 @@ public class Utils {
             return "mozilla::jni::Throwable::Param";
         }
 
+        if (type.equals(ByteBuffer.class)) {
+            return "mozilla::jni::ByteBuffer::Param";
+        }
+
         return "mozilla::jni::Object::Param";
     }
 
@@ -126,6 +133,10 @@ public class Utils {
 
         if (type.equals(Throwable.class)) {
             return "mozilla::jni::Throwable::LocalRef";
+        }
+
+        if (type.equals(ByteBuffer.class)) {
+            return "mozilla::jni::ByteBuffer::LocalRef";
         }
 
         return "mozilla::jni::Object::LocalRef";
@@ -210,7 +221,7 @@ public class Utils {
      */
     public static String getNativeName(Member member) {
         final String name = getMemberName(member);
-        return name.substring(0, 1).toUpperCase() + name.substring(1);
+        return name.substring(0, 1).toUpperCase(Locale.ROOT) + name.substring(1);
     }
 
     /**
@@ -221,7 +232,7 @@ public class Utils {
      */
     public static String getNativeName(Class<?> clz) {
         final String name = clz.getName();
-        return name.substring(0, 1).toUpperCase() + name.substring(1);
+        return name.substring(0, 1).toUpperCase(Locale.ROOT) + name.substring(1);
     }
 
     /**
@@ -275,5 +286,61 @@ public class Utils {
      */
     public static boolean isFinal(final Member member) {
         return Modifier.isFinal(member.getModifiers());
+    }
+
+    /**
+     * Return an enum value with the given name.
+     *
+     * @param type Enum class type.
+     * @param name Enum value name.
+     * @return Enum value with the given name.
+     */
+    public static <T extends Enum<T>> T getEnumValue(Class<T> type, String name) {
+        try {
+            return Enum.valueOf(type, name.toUpperCase(Locale.ROOT));
+
+        } catch (IllegalArgumentException e) {
+            final Object[] values;
+            try {
+                values = (Object[]) type.getDeclaredMethod("values").invoke(null);
+            } catch (final NoSuchMethodException |
+                           IllegalAccessException |
+                           InvocationTargetException exception) {
+                throw new RuntimeException("Cannot access enum: " + type, exception);
+            }
+
+            StringBuilder names = new StringBuilder();
+
+            for (int i = 0; i < values.length; i++) {
+                if (i != 0) {
+                    names.append(", ");
+                }
+                names.append(values[i].toString().toLowerCase(Locale.ROOT));
+            }
+
+            System.err.println("***");
+            System.err.println("*** Invalid value \"" + name + "\" for " + type.getSimpleName());
+            System.err.println("*** Specify one of " + names.toString());
+            System.err.println("***");
+            e.printStackTrace(System.err);
+            System.exit(1);
+            return null;
+        }
+    }
+
+    public static String getIfdefHeader(String ifdef) {
+        if (ifdef.isEmpty()) {
+            return "";
+        } else if (ifdef.startsWith("!")) {
+            return "#ifndef " + ifdef.substring(1) + "\n";
+        }
+        return "#ifdef " + ifdef + "\n";
+    }
+
+    public static String getIfdefFooter(String ifdef) {
+        if (ifdef.isEmpty()) {
+            return "";
+        }
+        return "#endif // " + ifdef + "\n";
     }
 }

@@ -127,13 +127,13 @@ class WebIDLCodegenManager(LoggingMixin):
 
     # Global parser derived declaration files.
     GLOBAL_DECLARE_FILES = {
-        'FeatureList.h',
         'GeneratedAtomList.h',
         'GeneratedEventList.h',
         'PrototypeList.h',
         'RegisterBindings.h',
         'RegisterWorkerBindings.h',
         'RegisterWorkerDebuggerBindings.h',
+        'RegisterWorkletBindings.h',
         'ResolveSystemBinding.h',
         'UnionConversions.h',
         'UnionTypes.h',
@@ -144,12 +144,13 @@ class WebIDLCodegenManager(LoggingMixin):
         'RegisterBindings.cpp',
         'RegisterWorkerBindings.cpp',
         'RegisterWorkerDebuggerBindings.cpp',
+        'RegisterWorkletBindings.cpp',
         'ResolveSystemBinding.cpp',
         'UnionTypes.cpp',
         'PrototypeList.cpp',
     }
 
-    def __init__(self, config_path, inputs, exported_header_dir,
+    def __init__(self, config_path, webidl_root, inputs, exported_header_dir,
                  codegen_dir, state_path, cache_dir=None, make_deps_path=None,
                  make_deps_target=None):
         """Create an instance that manages WebIDLs in the build system.
@@ -175,6 +176,7 @@ class WebIDLCodegenManager(LoggingMixin):
         input_paths, exported_stems, generated_events_stems, example_interfaces = inputs
 
         self._config_path = config_path
+        self._webidl_root = webidl_root
         self._input_paths = set(input_paths)
         self._exported_stems = set(exported_stems)
         self._generated_events_stems = set(generated_events_stems)
@@ -308,7 +310,11 @@ class WebIDLCodegenManager(LoggingMixin):
 
         root = CGExampleRoot(self.config, interface)
 
-        return self._maybe_write_codegen(root, *self._example_paths(interface))
+        example_paths = self._example_paths(interface)
+        for path in example_paths:
+            print "Generating %s" % path
+
+        return self._maybe_write_codegen(root, *example_paths)
 
     def _parse_webidl(self):
         import WebIDL
@@ -327,8 +333,26 @@ class WebIDLCodegenManager(LoggingMixin):
                 hashes[path] = hashlib.sha1(data).hexdigest()
                 parser.parse(data, path)
 
+        # Only these directories may contain WebIDL files with interfaces
+        # which are exposed to the web. WebIDL files in these roots may not
+        # be changed without DOM peer review.
+        #
+        # Other directories may contain WebIDL files as long as they only
+        # contain ChromeOnly interfaces. These are not subject to mandatory
+        # DOM peer review.
+        web_roots = (
+            # The main WebIDL root.
+            self._webidl_root,
+            # The binding config root, which contains some test-only
+            # interfaces.
+            os.path.dirname(self._config_path),
+            # The objdir sub-directory which contains generated WebIDL files.
+            self._codegen_dir,
+        )
+
         self._parser_results = parser.finish()
-        self._config = Configuration(self._config_path, self._parser_results,
+        self._config = Configuration(self._config_path, web_roots,
+                                     self._parser_results,
                                      self._generated_events_stems_as_array)
         self._input_hashes = hashes
 
@@ -541,6 +565,7 @@ def create_build_system_manager(topsrcdir, topobjdir, dist_dir):
     """Create a WebIDLCodegenManager for use by the build system."""
     src_dir = os.path.join(topsrcdir, 'dom', 'bindings')
     obj_dir = os.path.join(topobjdir, 'dom', 'bindings')
+    webidl_root = os.path.join(topsrcdir, 'dom', 'webidl')
 
     with open(os.path.join(obj_dir, 'file-lists.json'), 'rb') as fh:
         files = json.load(fh)
@@ -557,6 +582,7 @@ def create_build_system_manager(topsrcdir, topobjdir, dist_dir):
 
     return WebIDLCodegenManager(
         os.path.join(src_dir, 'Bindings.conf'),
+        webidl_root,
         inputs,
         os.path.join(dist_dir, 'include', 'mozilla', 'dom'),
         obj_dir,

@@ -55,7 +55,7 @@ JS_POSIX_NSPR=unset
 ifdef([CONFIGURING_JS],[
     if test -n "$JS_STANDALONE"; then
       case "$target" in
-        *linux*|*darwin*|*dragonfly*|*freebsd*|*netbsd*|*openbsd*|*-mingw*)
+        *linux*|*darwin*|*dragonfly*|*freebsd*|*netbsd*|*openbsd*)
           if test -z "$_HAS_NSPR"; then
             JS_POSIX_NSPR_DEFAULT=1
           fi
@@ -156,6 +156,8 @@ if test -n "$MOZ_SYSTEM_NSPR" -o -n "$NSPR_CFLAGS" -o -n "$NSPR_LIBS"; then
                 ,
                 AC_MSG_ERROR([system NSPR does not support PR_UINT64 or including prtypes.h does not provide it]))
     CFLAGS=$_SAVE_CFLAGS
+    NSPR_INCLUDE_DIR=`echo ${NSPR_CFLAGS} | sed -e 's/.*-I\([^ ]*\).*/\1/'`
+    NSPR_LIB_DIR=`echo ${NSPR_LIBS} | sed -e 's/.*-L\([^ ]*\).*/\1/'`
 elif test -z "$JS_POSIX_NSPR"; then
     NSPR_INCLUDE_DIR="${DIST}/include/nspr"
     NSPR_CFLAGS="-I${NSPR_INCLUDE_DIR}"
@@ -177,11 +179,8 @@ AC_SUBST_LIST(NSPR_CFLAGS)
 AC_SUBST(NSPR_INCLUDE_DIR)
 AC_SUBST(NSPR_LIB_DIR)
 
-NSPR_PKGCONF_CHECK="nspr"
+PKGCONF_REQUIRES_PRIVATE="Requires.private: nspr"
 if test -n "$MOZ_SYSTEM_NSPR"; then
-    # piggy back on $MOZ_SYSTEM_NSPR to set a variable for the nspr check for js.pc
-    NSPR_PKGCONF_CHECK="nspr >= $NSPR_MINVER"
-
     _SAVE_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS $NSPR_CFLAGS"
     AC_TRY_COMPILE([#include "prlog.h"],
@@ -191,8 +190,12 @@ if test -n "$MOZ_SYSTEM_NSPR"; then
                 ,
                 AC_MSG_ERROR([system NSPR does not support PR_STATIC_ASSERT]))
     CFLAGS=$_SAVE_CFLAGS
+    # piggy back on $MOZ_SYSTEM_NSPR to set a variable for the nspr check for js.pc
+    PKGCONF_REQUIRES_PRIVATE="Requires.private: nspr >= $NSPR_MINVER"
+elif test -n "$JS_POSIX_NSPR"; then
+    PKGCONF_REQUIRES_PRIVATE=
 fi
-AC_SUBST(NSPR_PKGCONF_CHECK)
+AC_SUBST([PKGCONF_REQUIRES_PRIVATE])
 
 fi # _IS_OUTER_CONFIGURE
 

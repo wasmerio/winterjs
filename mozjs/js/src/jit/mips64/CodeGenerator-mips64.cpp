@@ -23,122 +23,10 @@
 using namespace js;
 using namespace js::jit;
 
-class js::jit::OutOfLineTableSwitch : public OutOfLineCodeBase<CodeGeneratorMIPS64>
-{
-    MTableSwitch* mir_;
-    CodeLabel jumpLabel_;
-
-    void accept(CodeGeneratorMIPS64* codegen) {
-        codegen->visitOutOfLineTableSwitch(this);
-    }
-
-  public:
-    OutOfLineTableSwitch(MTableSwitch* mir)
-      : mir_(mir)
-    {}
-
-    MTableSwitch* mir() const {
-        return mir_;
-    }
-
-    CodeLabel* jumpLabel() {
-        return &jumpLabel_;
-    }
-};
-
-void
-CodeGeneratorMIPS64::visitOutOfLineBailout(OutOfLineBailout* ool)
-{
-    masm.push(ImmWord(ool->snapshot()->snapshotOffset()));
-
-    masm.jump(&deoptLabel_);
-}
-
-void
-CodeGeneratorMIPS64::visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool)
-{
-    MTableSwitch* mir = ool->mir();
-
-    masm.haltingAlign(sizeof(void*));
-    masm.bind(ool->jumpLabel()->target());
-    masm.addCodeLabel(*ool->jumpLabel());
-
-    for (size_t i = 0; i < mir->numCases(); i++) {
-        LBlock* caseblock = skipTrivialBlocks(mir->getCase(i))->lir();
-        Label* caseheader = caseblock->label();
-        uint32_t caseoffset = caseheader->offset();
-
-        // The entries of the jump table need to be absolute addresses and thus
-        // must be patched after codegen is finished. Each table entry uses 8
-        // instructions (4 for load address, 2 for branch, and 2 padding).
-        CodeLabel cl;
-        masm.ma_li(ScratchRegister, cl.patchAt());
-        masm.branch(ScratchRegister);
-        masm.as_nop();
-        masm.as_nop();
-        cl.target()->bind(caseoffset);
-        masm.addCodeLabel(cl);
-    }
-}
-
-void
-CodeGeneratorMIPS64::emitTableSwitchDispatch(MTableSwitch* mir, Register index,
-                                             Register address)
-{
-    Label* defaultcase = skipTrivialBlocks(mir->getDefault())->lir()->label();
-
-    // Lower value with low value
-    if (mir->low() != 0)
-        masm.subPtr(Imm32(mir->low()), index);
-
-    // Jump to default case if input is out of range
-    int32_t cases = mir->numCases();
-    masm.branch32(Assembler::AboveOrEqual, index, Imm32(cases), defaultcase);
-
-    // To fill in the CodeLabels for the case entries, we need to first
-    // generate the case entries (we don't yet know their offsets in the
-    // instruction stream).
-    OutOfLineTableSwitch* ool = new(alloc()) OutOfLineTableSwitch(mir);
-    addOutOfLineCode(ool, mir);
-
-    // Compute the position where a pointer to the right case stands.
-    masm.ma_li(address, ool->jumpLabel()->patchAt());
-    // index = size of table entry * index.
-    // See CodeGeneratorMIPS64::visitOutOfLineTableSwitch
-    masm.lshiftPtr(Imm32(5), index);
-    masm.addPtr(index, address);
-
-    masm.branch(address);
-}
-
-FrameSizeClass
-FrameSizeClass::FromDepth(uint32_t frameDepth)
-{
-    return FrameSizeClass::None();
-}
-
-FrameSizeClass
-FrameSizeClass::ClassLimit()
-{
-    return FrameSizeClass(0);
-}
-
-uint32_t
-FrameSizeClass::frameSize() const
-{
-    MOZ_CRASH("MIPS64 does not use frame size classes");
-}
-
 ValueOperand
 CodeGeneratorMIPS64::ToValue(LInstruction* ins, size_t pos)
 {
     return ValueOperand(ToRegister(ins->getOperand(pos)));
-}
-
-ValueOperand
-CodeGeneratorMIPS64::ToOutValue(LInstruction* ins)
-{
-    return ValueOperand(ToRegister(ins->getDef(0)));
 }
 
 ValueOperand
@@ -225,12 +113,10 @@ CodeGeneratorMIPS64::visitUnbox(LUnbox* unbox)
     }
 }
 
-Register
-CodeGeneratorMIPS64::splitTagForTest(const ValueOperand& value)
+void
+CodeGeneratorMIPS64::splitTagForTest(const ValueOperand& value, ScratchTagScope& tag)
 {
-    MOZ_ASSERT(value.valueReg() != SecondScratchReg);
-    masm.splitTag(value.valueReg(), SecondScratchReg);
-    return SecondScratchReg;
+    masm.splitTag(value.valueReg(), tag);
 }
 
 void
@@ -247,7 +133,7 @@ CodeGeneratorMIPS64::visitCompareB(LCompareB* lir)
 
     // Load boxed boolean in ScratchRegister.
     if (rhs->isConstant())
-        masm.moveValue(rhs->toConstant()->toJSValue(), ScratchRegister);
+        masm.moveValue(rhs->toConstant()->toJSValue(), ValueOperand(ScratchRegister));
     else
         masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), ScratchRegister);
 
@@ -266,7 +152,7 @@ CodeGeneratorMIPS64::visitCompareBAndBranch(LCompareBAndBranch* lir)
 
     // Load boxed boolean in ScratchRegister.
     if (rhs->isConstant())
-        masm.moveValue(rhs->toConstant()->toJSValue(), ScratchRegister);
+        masm.moveValue(rhs->toConstant()->toJSValue(), ValueOperand(ScratchRegister));
     else
         masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), ScratchRegister);
 
@@ -304,28 +190,207 @@ CodeGeneratorMIPS64::visitCompareBitwiseAndBranch(LCompareBitwiseAndBranch* lir)
 }
 
 void
-CodeGeneratorMIPS64::visitAsmSelectI64(LAsmSelectI64* lir)
+CodeGeneratorMIPS64::visitCompareI64(LCompareI64* lir)
+{
+    MCompare* mir = lir->mir();
+    MOZ_ASSERT(mir->compareType() == MCompare::Compare_Int64 ||
+               mir->compareType() == MCompare::Compare_UInt64);
+
+    const LInt64Allocation lhs = lir->getInt64Operand(LCompareI64::Lhs);
+    const LInt64Allocation rhs = lir->getInt64Operand(LCompareI64::Rhs);
+    Register lhsReg = ToRegister64(lhs).reg;
+    Register output = ToRegister(lir->output());
+    Register rhsReg;
+
+    if (IsConstant(rhs)) {
+        rhsReg = ScratchRegister;
+        masm.ma_li(rhsReg, ImmWord(ToInt64(rhs)));
+    } else {
+        rhsReg = ToRegister64(rhs).reg;
+    }
+
+    bool isSigned = mir->compareType() == MCompare::Compare_Int64;
+    masm.cmpPtrSet(JSOpToCondition(lir->jsop(), isSigned), lhsReg, rhsReg, output);
+}
+
+void
+CodeGeneratorMIPS64::visitCompareI64AndBranch(LCompareI64AndBranch* lir)
+{
+    MCompare* mir = lir->cmpMir();
+    MOZ_ASSERT(mir->compareType() == MCompare::Compare_Int64 ||
+               mir->compareType() == MCompare::Compare_UInt64);
+
+    const LInt64Allocation lhs = lir->getInt64Operand(LCompareI64::Lhs);
+    const LInt64Allocation rhs = lir->getInt64Operand(LCompareI64::Rhs);
+    Register lhsReg = ToRegister64(lhs).reg;
+    Register rhsReg;
+
+    if (IsConstant(rhs)) {
+        rhsReg = ScratchRegister;
+        masm.ma_li(rhsReg, ImmWord(ToInt64(rhs)));
+    } else {
+        rhsReg = ToRegister64(rhs).reg;
+    }
+
+    bool isSigned = mir->compareType() == MCompare::Compare_Int64;
+    Assembler::Condition cond = JSOpToCondition(lir->jsop(), isSigned);
+    emitBranch(lhsReg, rhsReg, cond, lir->ifTrue(), lir->ifFalse());
+}
+
+void
+CodeGeneratorMIPS64::visitDivOrModI64(LDivOrModI64* lir)
+{
+    Register lhs = ToRegister(lir->lhs());
+    Register rhs = ToRegister(lir->rhs());
+    Register output = ToRegister(lir->output());
+
+    Label done;
+
+    // Handle divide by zero.
+    if (lir->canBeDivideByZero()) {
+        Label nonZero;
+        masm.ma_b(rhs, rhs, &nonZero, Assembler::NonZero);
+        masm.wasmTrap(wasm::Trap::IntegerDivideByZero, lir->bytecodeOffset());
+        masm.bind(&nonZero);
+    }
+
+    // Handle an integer overflow exception from INT64_MIN / -1.
+    if (lir->canBeNegativeOverflow()) {
+        Label notOverflow;
+        masm.branchPtr(Assembler::NotEqual, lhs, ImmWord(INT64_MIN), &notOverflow);
+        masm.branchPtr(Assembler::NotEqual, rhs, ImmWord(-1), &notOverflow);
+        if (lir->mir()->isMod())
+            masm.ma_xor(output, output);
+        else
+            masm.wasmTrap(wasm::Trap::IntegerOverflow, lir->bytecodeOffset());
+        masm.jump(&done);
+        masm.bind(&notOverflow);
+    }
+
+    masm.as_ddiv(lhs, rhs);
+
+    if (lir->mir()->isMod())
+        masm.as_mfhi(output);
+    else
+        masm.as_mflo(output);
+
+    masm.bind(&done);
+}
+
+void
+CodeGeneratorMIPS64::visitUDivOrModI64(LUDivOrModI64* lir)
+{
+    Register lhs = ToRegister(lir->lhs());
+    Register rhs = ToRegister(lir->rhs());
+    Register output = ToRegister(lir->output());
+
+    Label done;
+
+    // Prevent divide by zero.
+    if (lir->canBeDivideByZero()) {
+        Label nonZero;
+        masm.ma_b(rhs, rhs, &nonZero, Assembler::NonZero);
+        masm.wasmTrap(wasm::Trap::IntegerDivideByZero, lir->bytecodeOffset());
+        masm.bind(&nonZero);
+    }
+
+    masm.as_ddivu(lhs, rhs);
+
+    if (lir->mir()->isMod())
+        masm.as_mfhi(output);
+    else
+        masm.as_mflo(output);
+
+    masm.bind(&done);
+}
+
+template <typename T>
+void
+CodeGeneratorMIPS64::emitWasmLoadI64(T* lir)
+{
+    const MWasmLoad* mir = lir->mir();
+
+    Register ptrScratch = InvalidReg;
+    if(!lir->ptrCopy()->isBogusTemp()){
+        ptrScratch = ToRegister(lir->ptrCopy());
+    }
+
+    if (IsUnaligned(mir->access())) {
+        masm.wasmUnalignedLoadI64(mir->access(), HeapReg, ToRegister(lir->ptr()),
+                                  ptrScratch, ToOutRegister64(lir), ToRegister(lir->getTemp(1)));
+    } else {
+        masm.wasmLoadI64(mir->access(), HeapReg, ToRegister(lir->ptr()), ptrScratch,
+                         ToOutRegister64(lir));
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitWasmLoadI64(LWasmLoadI64* lir)
+{
+    emitWasmLoadI64(lir);
+}
+
+void
+CodeGeneratorMIPS64::visitWasmUnalignedLoadI64(LWasmUnalignedLoadI64* lir)
+{
+    emitWasmLoadI64(lir);
+}
+
+template <typename T>
+void
+CodeGeneratorMIPS64::emitWasmStoreI64(T* lir)
+{
+    const MWasmStore* mir = lir->mir();
+
+    Register ptrScratch = InvalidReg;
+    if(!lir->ptrCopy()->isBogusTemp()){
+        ptrScratch = ToRegister(lir->ptrCopy());
+    }
+
+    if (IsUnaligned(mir->access())) {
+        masm.wasmUnalignedStoreI64(mir->access(), ToRegister64(lir->value()), HeapReg,
+                                   ToRegister(lir->ptr()), ptrScratch, ToRegister(lir->getTemp(1)));
+    } else {
+        masm.wasmStoreI64(mir->access(), ToRegister64(lir->value()), HeapReg,
+                          ToRegister(lir->ptr()), ptrScratch);
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitWasmStoreI64(LWasmStoreI64* lir)
+{
+    emitWasmStoreI64(lir);
+}
+
+void
+CodeGeneratorMIPS64::visitWasmUnalignedStoreI64(LWasmUnalignedStoreI64* lir)
+{
+    emitWasmStoreI64(lir);
+}
+
+void
+CodeGeneratorMIPS64::visitWasmSelectI64(LWasmSelectI64* lir)
 {
     MOZ_ASSERT(lir->mir()->type() == MIRType::Int64);
 
     Register cond = ToRegister(lir->condExpr());
-    const LAllocation* falseExpr = lir->falseExpr();
+    const LInt64Allocation falseExpr = lir->falseExpr();
 
-    Register out = ToRegister(lir->output());
-    MOZ_ASSERT(ToRegister(lir->trueExpr()) == out, "true expr is reused for input");
+    Register64 out = ToOutRegister64(lir);
+    MOZ_ASSERT(ToRegister64(lir->trueExpr()) == out, "true expr is reused for input");
 
-    if (falseExpr->isRegister()) {
-        masm.as_movz(out, ToRegister(falseExpr), cond);
+    if (falseExpr.value().isRegister()) {
+        masm.as_movz(out.reg, ToRegister(falseExpr.value()), cond);
     } else {
         Label done;
         masm.ma_b(cond, cond, &done, Assembler::NonZero, ShortJump);
-        masm.loadPtr(ToAddress(falseExpr), out);
+        masm.loadPtr(ToAddress(falseExpr.value()), out.reg);
         masm.bind(&done);
     }
 }
 
 void
-CodeGeneratorMIPS64::visitAsmReinterpretFromI64(LAsmReinterpretFromI64* lir)
+CodeGeneratorMIPS64::visitWasmReinterpretFromI64(LWasmReinterpretFromI64* lir)
 {
     MOZ_ASSERT(lir->mir()->type() == MIRType::Double);
     MOZ_ASSERT(lir->mir()->input()->type() == MIRType::Int64);
@@ -333,11 +398,151 @@ CodeGeneratorMIPS64::visitAsmReinterpretFromI64(LAsmReinterpretFromI64* lir)
 }
 
 void
-CodeGeneratorMIPS64::visitAsmReinterpretToI64(LAsmReinterpretToI64* lir)
+CodeGeneratorMIPS64::visitWasmReinterpretToI64(LWasmReinterpretToI64* lir)
 {
     MOZ_ASSERT(lir->mir()->type() == MIRType::Int64);
     MOZ_ASSERT(lir->mir()->input()->type() == MIRType::Double);
     masm.as_dmfc1(ToRegister(lir->output()), ToFloatRegister(lir->input()));
+}
+
+void
+CodeGeneratorMIPS64::visitExtendInt32ToInt64(LExtendInt32ToInt64* lir)
+{
+    const LAllocation* input = lir->getOperand(0);
+    Register output = ToRegister(lir->output());
+
+    if (lir->mir()->isUnsigned())
+        masm.ma_dext(output, ToRegister(input), Imm32(0), Imm32(32));
+    else
+        masm.ma_sll(output, ToRegister(input), Imm32(0));
+}
+
+void
+CodeGeneratorMIPS64::visitWrapInt64ToInt32(LWrapInt64ToInt32* lir)
+{
+    const LAllocation* input = lir->getOperand(0);
+    Register output = ToRegister(lir->output());
+
+    if (lir->mir()->bottomHalf()) {
+        if (input->isMemory())
+            masm.load32(ToAddress(input), output);
+        else
+            masm.ma_sll(output, ToRegister(input), Imm32(0));
+    } else {
+        MOZ_CRASH("Not implemented.");
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitSignExtendInt64(LSignExtendInt64* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    Register64 output = ToOutRegister64(lir);
+    switch (lir->mode()) {
+      case MSignExtendInt64::Byte:
+        masm.move32To64SignExtend(input.reg, output);
+        masm.move8SignExtend(output.reg, output.reg);
+        break;
+      case MSignExtendInt64::Half:
+        masm.move32To64SignExtend(input.reg, output);
+        masm.move16SignExtend(output.reg, output.reg);
+        break;
+      case MSignExtendInt64::Word:
+        masm.move32To64SignExtend(input.reg, output);
+        break;
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitClzI64(LClzI64* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    Register64 output = ToOutRegister64(lir);
+    masm.clz64(input, output.reg);
+}
+
+void
+CodeGeneratorMIPS64::visitCtzI64(LCtzI64* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    Register64 output = ToOutRegister64(lir);
+    masm.ctz64(input, output.reg);
+}
+
+void
+CodeGeneratorMIPS64::visitNotI64(LNotI64* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    Register output = ToRegister(lir->output());
+
+    masm.cmp64Set(Assembler::Equal, input.reg, Imm32(0), output);
+}
+
+void
+CodeGeneratorMIPS64::visitWasmTruncateToInt64(LWasmTruncateToInt64* lir)
+{
+    FloatRegister input = ToFloatRegister(lir->input());
+    Register64 output = ToOutRegister64(lir);
+
+    MWasmTruncateToInt64* mir = lir->mir();
+    MIRType fromType = mir->input()->type();
+
+    MOZ_ASSERT(fromType == MIRType::Double || fromType == MIRType::Float32);
+
+    auto* ool = new (alloc()) OutOfLineWasmTruncateCheck(mir, input, output);
+    addOutOfLineCode(ool, mir);
+
+    Label* oolEntry = ool->entry();
+    Label* oolRejoin = ool->rejoin();
+    bool isSaturating = mir->isSaturating();
+
+    if (fromType == MIRType::Double) {
+        if (mir->isUnsigned())
+            masm.wasmTruncateDoubleToUInt64(input, output, isSaturating, oolEntry, oolRejoin,
+                                            InvalidFloatReg);
+        else
+            masm.wasmTruncateDoubleToInt64(input, output, isSaturating, oolEntry, oolRejoin,
+                                           InvalidFloatReg);
+    } else {
+        if (mir->isUnsigned())
+            masm.wasmTruncateFloat32ToUInt64(input, output, isSaturating, oolEntry, oolRejoin,
+                                             InvalidFloatReg);
+        else
+            masm.wasmTruncateFloat32ToInt64(input, output, isSaturating, oolEntry, oolRejoin,
+                                            InvalidFloatReg);
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitInt64ToFloatingPoint(LInt64ToFloatingPoint* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    FloatRegister output = ToFloatRegister(lir->output());
+
+    MIRType outputType = lir->mir()->type();
+    MOZ_ASSERT(outputType == MIRType::Double || outputType == MIRType::Float32);
+
+    if (outputType == MIRType::Double) {
+        if (lir->mir()->isUnsigned())
+            masm.convertUInt64ToDouble(input, output, Register::Invalid());
+        else
+            masm.convertInt64ToDouble(input, output);
+    } else {
+        if (lir->mir()->isUnsigned())
+            masm.convertUInt64ToFloat32(input, output, Register::Invalid());
+        else
+            masm.convertInt64ToFloat32(input, output);
+    }
+}
+
+void
+CodeGeneratorMIPS64::visitTestI64AndBranch(LTestI64AndBranch* lir)
+{
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    MBasicBlock* ifTrue = lir->ifTrue();
+    MBasicBlock* ifFalse = lir->ifFalse();
+
+    emitBranch(input.reg, Imm32(0), Assembler::NonZero, ifTrue, ifFalse);
 }
 
 void

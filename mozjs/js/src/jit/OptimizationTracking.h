@@ -12,6 +12,7 @@
 #include "jit/CompactBuffer.h"
 #include "jit/CompileInfo.h"
 #include "jit/JitAllocPolicy.h"
+#include "jit/JitSpewer.h"
 #include "js/TrackedOptimizationInfo.h"
 #include "vm/TypeInference.h"
 
@@ -87,7 +88,7 @@ class OptimizationTypeInfo
 
     HashNumber hash() const;
 
-    MOZ_MUST_USE bool writeCompact(JSContext* cx, CompactBufferWriter& writer,
+    MOZ_MUST_USE bool writeCompact(CompactBufferWriter& writer,
                                    UniqueTrackedTypes& uniqueTypes) const;
 };
 
@@ -124,7 +125,7 @@ class TrackedOptimizations : public TempObject
     bool matchTypes(const TempOptimizationTypeInfoVector& other) const;
     bool matchAttempts(const TempOptimizationAttemptsVector& other) const;
 
-    void spew() const;
+    void spew(JitSpewChannel channel) const;
 };
 
 // Assigns each unique sequence of optimization attempts an index; outputs a

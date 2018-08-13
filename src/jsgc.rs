@@ -12,10 +12,9 @@ use jsapi::JSScript;
 use jsapi::JSString;
 use jsapi::JSTracer;
 
-use libc::c_void;
-
 use std::cell::UnsafeCell;
 use std::mem;
+use std::os::raw::c_void;
 use std::ptr;
 
 /// A trait for JS types that can be registered as roots.
@@ -69,6 +68,15 @@ impl RootKind for JS::Value {
 impl RootKind for JS::PropertyDescriptor {
     #[inline(always)]
     fn rootKind() -> JS::RootKind { JS::RootKind::Traceable }
+}
+
+// Annoyingly, bindgen can't cope with SM's use of templates, so we have to roll our own.
+#[repr(C)]
+#[derive(Debug)]
+pub struct Rooted<T> {
+    pub stack: *mut *mut Rooted<*mut c_void>,
+    pub prev: *mut Rooted<*mut c_void>,
+    pub ptr: T,
 }
 
 /// A trait for types which can place appropriate GC barriers.
@@ -267,5 +275,16 @@ impl<T: IntoMutableHandle> From<T> for JS::MutableHandle<T::Target> {
 /// Methods for a CustomAutoRooter
 #[repr(C)]
 pub struct CustomAutoRooterVFTable {
+    #[cfg(windows)]
+    pub padding: [usize; 1],
+    #[cfg(not(windows))]
+    pub padding: [usize; 2],
     pub trace: unsafe extern "C" fn (this: *mut c_void, trc: *mut JSTracer),
+}
+
+impl CustomAutoRooterVFTable {
+    #[cfg(windows)]
+    pub const PADDING: [usize; 1] = [0];
+    #[cfg(not(windows))]
+    pub const PADDING: [usize; 2] = [0, 0];
 }

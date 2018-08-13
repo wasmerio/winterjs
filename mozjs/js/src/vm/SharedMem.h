@@ -12,12 +12,12 @@
 template<typename T>
 class SharedMem
 {
-    static_assert(mozilla::IsPointer<T>::value,
-                  "SharedMem encapsulates pointer types");
+    // static_assert(mozilla::IsPointer<T>::value,
+    //               "SharedMem encapsulates pointer types");
 
     enum Sharedness {
-	IsUnshared,
-	IsShared
+        IsUnshared,
+        IsShared
     };
 
     T ptr_;
@@ -69,6 +69,7 @@ class SharedMem
     }
 
     // Reinterpret-cast the pointer to type U, preserving sharedness.
+    // Eg, "obj->dataPointerEither().cast<uint8_t*>()" yields a SharedMem<uint8_t*>.
     template<typename U>
     inline SharedMem<U> cast() const {
 #ifdef DEBUG

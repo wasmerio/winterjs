@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -7,15 +7,15 @@
 with Files('**'):
     BUG_COMPONENT = ('Core', 'Build Config')
 
+with Files('mozunit.py'):
+    BUG_COMPONENT = ('Testing', 'Python Test')
+
 DIST_INSTALL = False
 # For sanity's sake, we compile nsinstall without the wrapped system
 # headers, so that we can use it to set up the wrapped system headers.
-NO_VISIBILITY_FLAGS = True
+NoVisibilityFlags()
 
 CONFIGURE_SUBST_FILES += [
-    'doxygen.cfg',
-    'makefiles/test/Makefile',
-    'tests/makefiles/autodeps/Makefile',
     'tests/src-simple/Makefile',
 ]
 
@@ -24,26 +24,51 @@ if CONFIG['HOST_OS_ARCH'] != 'WINNT':
         'nsinstall.c',
         'pathsub.c',
     ]
-    # stdc++compat depends on config/export, so avoid a circular
-    # dependency added by HostProgram depending on stdc++compat,
-    # while the program here is in C.
-    HostProgram('nsinstall_real', c_only=True)
+    HostProgram('nsinstall_real')
 
 if CONFIG['MOZ_SYSTEM_ICU']:
     DEFINES['MOZ_SYSTEM_ICU'] = True
 
-PYTHON_UNIT_TESTS += [
-    'tests/test_mozbuild_reading.py',
-    'tests/unit-expandlibs.py',
-    'tests/unit-mozunit.py',
-    'tests/unit-nsinstall.py',
-    'tests/unit-printprereleasesuffix.py',
+PYTHON_UNITTEST_MANIFESTS += [
+    'tests/python.ini',
 ]
 
-if CONFIG['GNU_CC'] and CONFIG['MOZ_OPTIMIZE']:
+if CONFIG['CC_TYPE'] in ('clang', 'gcc') and CONFIG['MOZ_OPTIMIZE']:
     CFLAGS += ['-O3']
 
 HOST_DEFINES = {
     'UNICODE': True,
     '_UNICODE': True,
 }
+
+include('stl-headers.mozbuild')
+if CONFIG['WRAP_STL_INCLUDES']:
+    stl_compiler = None
+    if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
+        stl_compiler = 'gcc'
+    elif CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
+        stl_compiler = 'msvc'
+
+    if stl_compiler:
+        template_file = SRCDIR + '/%s-stl-wrapper.template.h' % stl_compiler
+        output_dir = '../dist/stl_wrappers'
+        # We have to use a sentinel file as the first file because the
+        # file_generate action will create it for us, but we want to create all
+        # the files in gen_wrappers()
+        outputs = tuple(['stl.sentinel'] + ['%s/%s' % (output_dir, h) for h in stl_headers])
+        GENERATED_FILES += [outputs]
+        stl = GENERATED_FILES[outputs]
+        stl.script = 'make-stl-wrappers.py:gen_wrappers'
+        stl.flags = [output_dir, stl_compiler, template_file]
+        stl.flags.extend(stl_headers)
+
+if CONFIG['WRAP_SYSTEM_INCLUDES']:
+    include('system-headers.mozbuild')
+    output_dir = '../dist/system_wrappers'
+    outputs = tuple(['system-header.sentinel'] + ['%s/%s' % (output_dir, h) for h in stl_headers + system_headers])
+    GENERATED_FILES += [outputs]
+    system = GENERATED_FILES[outputs]
+    system.script = 'make-system-wrappers.py:gen_wrappers'
+    system.flags = [output_dir]
+    system.flags.extend(stl_headers)
+    system.flags.extend(system_headers)
