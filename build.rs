@@ -11,7 +11,8 @@ use std::ffi::{OsStr, OsString};
 use std::process::{Command, Stdio};
 
 fn main() {
-    if cfg!(feature = "debugmozjs") && cfg!(windows) {
+    let target = env::var("TARGET").unwrap();
+    if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() && target.contains("windows") {
         // https://github.com/rust-lang/rust/issues/39016
         panic!("Rustc doesn't support MSVC debug runtime.");
     }
@@ -38,7 +39,7 @@ fn cc_flags() -> Vec<&'static str> {
         "-DSTATIC_JS_API",
     ];
 
-    if cfg!(feature = "debugmozjs") {
+    if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         result.extend(&[
             "-DJS_GC_ZEAL",
             "-DDEBUG",
@@ -46,14 +47,15 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
-    if cfg!(windows) {
+    let target = env::var("TARGET").unwrap();
+    if target.contains("windows") {
         result.extend(&[
             "-std=c++14",
             "-DWIN32",
-	    // Don't use reinterpret_cast() in offsetof(),
-	    // since it's not a constant expression, so can't
-	    // be used in static_assert().
-	    "-D_CRT_USE_BUILTIN_OFFSETOF",
+            // Don't use reinterpret_cast() in offsetof(),
+            // since it's not a constant expression, so can't
+            // be used in static_assert().
+            "-D_CRT_USE_BUILTIN_OFFSETOF",
         ]);
     } else {
         result.extend(&[
@@ -62,6 +64,13 @@ fn cc_flags() -> Vec<&'static str> {
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
         ]);
+    }
+
+    let is_apple = target.contains("apple");
+    let is_freebsd = target.contains("freebsd");
+
+    if is_apple || is_freebsd {
+        result.push("-stdlib=libc++");
     }
 
     result
@@ -86,7 +95,7 @@ fn build_jsapi() {
 
     // We're using the MSYS make which doesn't work with the mingw32-make-style
     // MAKEFLAGS, so remove that from the env if present.
-    if cfg!(windows) {
+    if target.contains("windows") {
         cmd.env_remove("MAKEFLAGS").env_remove("MFLAGS");
     } else if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
         cmd.env("MAKEFLAGS", makeflags);
@@ -133,8 +142,9 @@ fn build_jsglue() {
         build.flag_if_supported(flag);
     }
 
+    let target = env::var("TARGET").unwrap();
     let config = format!("{}/js/src/js-confdefs.h", out.display());
-    if cfg!(windows) {
+    if target.contains("windows") {
         build.flag("-FI");
     } else {
         build.flag("-include");
@@ -180,7 +190,8 @@ fn build_jsapi_bindings() {
         .clang_arg("-I").clang_arg(out.join("js/src").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++");
 
-    if cfg!(windows) {
+    let target = env::var("TARGET").unwrap();
+    if target.contains("windows") {
         builder = builder.clang_arg("-fms-compatibility");
     }
 
