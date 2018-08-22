@@ -26,7 +26,7 @@ env:
 
 before_script:
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC=gcc-6; export CXX=g++-6; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install autoconf@2.13 ccache yasm; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install autoconf@2.13 ccache llvm yasm; fi
 
 script:
   - ccache -z
