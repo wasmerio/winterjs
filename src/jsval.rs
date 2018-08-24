@@ -79,8 +79,6 @@ const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 #[inline(always)]
 fn AsJSVal(val: u64) -> JSVal {
     JSVal {
-	#[cfg(all(target_os = "android", target_arch = "x86"))]
-	__bindgen_align: [],
         data: Value_layout {
             asBits: val,
         }
