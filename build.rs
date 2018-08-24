@@ -171,10 +171,10 @@ fn build_jsapi_bindings() {
     // so their symbols aren't available. Adding the -fkeep-inlined-functions option
     // causes the jsapi library to bloat from 500M to 6G, so that's not an option.
     let mut config = bindgen::CodegenConfig::all();
-    config.constructors = false;
-    config.destructors = false;
-    config.methods = false;
-    
+    config &= !bindgen::CodegenConfig::CONSTRUCTORS;
+    config &= !bindgen::CodegenConfig::DESTRUCTORS;
+    config &= !bindgen::CodegenConfig::METHODS;
+
     let mut builder = bindgen::builder()
         .rust_target(bindgen::RustTarget::Stable_1_19)
         .header("./src/jsglue.hpp")
