@@ -176,7 +176,7 @@ fn build_jsapi_bindings() {
     config &= !bindgen::CodegenConfig::METHODS;
 
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_19)
+        .rust_target(bindgen::RustTarget::Stable_1_25)
         .header("./src/jsglue.hpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
