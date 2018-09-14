@@ -1,0 +1,87 @@
+diff --git a/mozjs/build/moz.configure/android-ndk.configure b/mozjs/build/moz.configure/android-ndk.configure
+index 5193332f3..21f7e2767 100644
+--- a/mozjs/build/moz.configure/android-ndk.configure
++++ b/mozjs/build/moz.configure/android-ndk.configure
+@@ -8,6 +8,15 @@
+ js_option('--with-android-ndk', nargs=1,
+           help='location where the Android NDK can be found')
+ 
++js_option('--with-android-ndk-version', nargs=1,
++          help='android NDK version')
++
++js_option('--with-android-platform', nargs=1,
++          help='location of the Android platform')
++
++js_option('--with-android-clang', nargs=1,
++          help='location of the Android clang compiler')
++
+ js_option('--with-android-toolchain', nargs=1,
+           help='location of the Android toolchain')
+ 
+@@ -66,13 +75,17 @@ set_config('ANDROID_NDK', ndk)
+ add_old_configure_assignment('android_ndk', ndk)
+ 
+ 
+-@depends(ndk)
++@depends('--with-android-ndk-version', ndk)
+ @checking('for android ndk version')
+ @imports(_from='__builtin__', _import='open')
+-def ndk_version(ndk):
++def ndk_version(value, ndk):
+     if not ndk:
+         # Building 'js/src' for non-Android.
+         return
++
++    if value:
++        return value[0]
++
+     with open(os.path.join(ndk, 'source.properties'), 'r') as f:
+         for line in f:
+             if not line.startswith('Pkg.Revision'):
+@@ -112,13 +125,16 @@ def ndk_minor_version(ndk_version):
+ set_config('ANDROID_NDK_MINOR_VERSION', ndk_minor_version)
+ 
+ 
+-@depends(target, android_version, ndk, '--help')
++@depends('--with-android-platform', target, android_version, ndk, '--help')
+ @checking('for android platform directory')
+ @imports(_from='os.path', _import='isdir')
+-def android_platform(target, android_version, ndk, _):
++def android_platform(value, target, android_version, ndk, _):
+     if target.os != 'Android':
+         return
+ 
++    if value:
++        return value[0]
++
+     if 'mips' in target.cpu:
+         target_dir_name = 'mips'
+     elif 'aarch64' == target.cpu:
+@@ -257,7 +273,7 @@ option(env='STLPORT_CPPFLAGS',
+ @imports(_from='os.path', _import='isdir')
+ def stlport_cppflags(value, ndk, _):
+     if value and len(value):
+-        return value.split()
++        return value[0].split()
+     if not ndk:
+         return
+ 
+@@ -339,13 +355,16 @@ def bindgen_cflags_defaults(toolchain_flags, toolchain, toolchain_prefix, _):
+                             os.path.join(gcc_include, 'include-fixed'))
+ 
+ 
+-@depends(host, ndk)
++@depends('--with-android-clang', host, ndk)
+ @imports(_from='os.path', _import='exists')
+ @imports(_from='os.path', _import='isdir')
+-def android_clang_compiler(host, ndk):
++def android_clang_compiler(value, host, ndk):
+     if not ndk:
+         return
+ 
++    if value:
++        return value[0]
++
+     llvm_path = '%s/toolchains/llvm/prebuilt/%s-%s/bin' % (ndk,
+                                                            host.kernel.lower(),
+                                                            host.cpu)
