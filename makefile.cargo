@@ -22,11 +22,27 @@ ifneq ($(HOST),$(TARGET))
 	endif
 
 	ifeq (android,$(findstring android,$(TARGET)))
-		CONFIGURE_FLAGS += \
-			--with-android-ndk=$(ANDROID_NDK) \
-			--with-android-toolchain=$(ANDROID_TOOLCHAIN) \
-			--with-android-version=$(NDK_ANDROID_VERSION) \
-			$(NULL)
+		ifneq (,$(STLPORT_CPPFLAGS))
+			CONFIGURE_FLAGS += STLPORT_CPPFLAGS="$(STLPORT_CPPFLAGS)"
+		endif
+		ifneq (,$(ANDROID_NDK))
+			CONFIGURE_FLAGS += --with-android-ndk=$(ANDROID_NDK)
+		endif
+		ifneq (,$(ANDROID_NDK_VERSION))
+			CONFIGURE_FLAGS += --with-android-ndk-version=$(ANDROID_NDK_VERSION)
+		endif
+		ifneq (,$(ANDROID_VERSION))
+			CONFIGURE_FLAGS += --with-android-version=$(ANDROID_VERSION)
+		endif
+		ifneq (,$(ANDROID_PLATFORM_DIR))
+			CONFIGURE_FLAGS += --with-android-platform=$(ANDROID_PLATFORM_DIR)
+		endif
+		ifneq (,$(ANDROID_TOOLCHAIN_DIR))
+			CONFIGURE_FLAGS += --with-android-toolchain=$(ANDROID_TOOLCHAIN_DIR)
+		endif
+		ifneq (,$(ANDROID_CLANG))
+			CONFIGURE_FLAGS += --with-android-clang=$(ANDROID_CLANG)
+		endif
 	endif
 
 CC ?= $(TARGET)-gcc
@@ -143,6 +159,10 @@ maybe-configure:
 	if [[ $(JSSRC)/configure -nt $(OUT_DIR)/config.status ]] ; then \
 	  cd $(OUT_DIR) && \
 	  PYTHON="$(PYTHON)" MOZ_TOOLS="$(MOZ_TOOLS)" \
-	  CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
+	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
+	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
+	  AS="$(AS)" AR="$(AR)" \
+	  STLPORT_LIBS="$(STLPORT_LIBS)" \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi
