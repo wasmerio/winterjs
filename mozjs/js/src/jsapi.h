@@ -4391,6 +4391,12 @@ extern JS_PUBLIC_API(JS::Value)
 GetPromiseResult(JS::HandleObject promise);
 
 /**
+ * Returns thhe given Promise's internal slot of `isHandled`.
+ */
+extern JS_PUBLIC_API(bool)
+GetPromiseIsHandled(JS::HandleObject promise);
+
+/**
  * Returns a js::SavedFrame linked list of the stack that lead to the given
  * Promise's allocation.
  */
