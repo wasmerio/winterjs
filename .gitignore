@@ -8,6 +8,8 @@ js/src/builtin/jsmin.pyc
 js/src/build/ConfigStatus.pyc
 js/src/config/Preprocessor.pyc
 mozjs/python/psutil/build
+mozjs/third_party/python/psutil/build
+mozjs/third_party/python/psutil/tmp
 /doc
 /target
 /Cargo.lock
