@@ -53,4 +53,4 @@ build_script:
   - echo PATH %PATH%
   - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose && cargo test
+  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose && cargo test --lib

@@ -32,7 +32,7 @@ before_script:
 script:
   - ccache -z
   - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
-  - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --verbose $FEATURES
+  - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --lib --verbose $FEATURES
   - ccache -s
 
 notifications:
