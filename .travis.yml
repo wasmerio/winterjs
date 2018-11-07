@@ -35,7 +35,4 @@ script:
   - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --lib --verbose $FEATURES
   - ccache -s
 
-notifications:
-  webhooks: http://build.servo.org:54856/travis
-
 cache: ccache
