@@ -39,7 +39,7 @@ Under Windows:
 
 3. Set the `MOZTOOLS_PATH` environment variable to point to the tools from the Mozilla Build Package:
 ```
-set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
+set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\bin
 ```
 
 4. Download and install Clang for Windows (64 bit) from https://releases.llvm.org/download.html
