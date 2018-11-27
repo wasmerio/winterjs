@@ -101,6 +101,10 @@ fn build_jsapi() {
         cmd.env("MAKEFLAGS", makeflags);
     }
 
+    if target.contains("apple") || target.contains("freebsd") {
+        cmd.env("CXXFLAGS", "-stdlib=libc++");
+    }
+
     let result = cmd.args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
