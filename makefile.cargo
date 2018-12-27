@@ -21,6 +21,15 @@ ifneq ($(HOST),$(TARGET))
 			$(NULL)
 	endif
 
+	ifeq (aarch64-unknown-linux-gnu,$(TARGET))
+	    # Reset TARGET variable because aarch64 target name used by Rust is not 
+		# the same as the target name needed for the CXX toolchain.
+		TARGET = aarch64-linux-gnu
+		CONFIGURE_FLAGS += \
+			--with-arch=armv8-a \
+			$(NULL)
+	endif
+
 	ifeq (android,$(findstring android,$(TARGET)))
 		ifneq (,$(STLPORT_CPPFLAGS))
 			CONFIGURE_FLAGS += STLPORT_CPPFLAGS="$(STLPORT_CPPFLAGS)"
