@@ -3,7 +3,6 @@ rust:
   - nightly
   - beta
   - stable
-  - 1.27.0
 sudo: 9000
 dist: trusty
 os:
