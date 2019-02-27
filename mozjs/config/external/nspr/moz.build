@@ -18,11 +18,12 @@ if CONFIG['MOZ_BUILD_NSPR']:
             'nss',
         ]
     else:
-        USE_LIBS += [
-            'nspr4',
-            'plc4',
-            'plds4',
-        ]
+        #USE_LIBS += [
+        #    'nspr4',
+        #    'plc4',
+        #    'plds4',
+        #]
+        pass
     EXPORTS.nspr += ['prcpucfg.h']
 else:
     OS_LIBS += CONFIG['NSPR_LIBS']
