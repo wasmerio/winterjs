@@ -14,8 +14,8 @@ bool JS_Init() {
     return ::JS_Init();
 }
 
-JS::CompartmentOptions JS_NewCompartmentOptions() {
-    JS::CompartmentOptions result;
+JS::RealmOptions JS_NewRealmOptions() {
+    JS::RealmOptions result;
     return result;
 }
 

@@ -21,6 +21,9 @@ profilemozjs = []
 
 [lib]
 name = "mozjs_sys"
+# The generated jsapi.rs contains #[doc] strings which look like
+# doctests but are definitely not.
+doctest = false
 
 [dependencies]
 libc = "0.2"

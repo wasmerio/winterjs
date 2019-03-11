@@ -12,6 +12,9 @@
 #include "js/Conversions.h"
 #include "js/Initialization.h"
 #include "js/MemoryMetrics.h"
+#include "js/PropertySpec.h"
+#include "js/CompilationAndEvaluation.h"
+#include "js/SourceText.h"
 
 // Reexport some functions that are marked inline.
 
@@ -19,7 +22,7 @@ namespace glue {
 
 bool JS_Init();
 
-JS::CompartmentOptions JS_NewCompartmentOptions();
+JS::RealmOptions JS_NewRealmOptions();
 JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
 
 JS::StackCapture JS_StackCapture_AllFrames();

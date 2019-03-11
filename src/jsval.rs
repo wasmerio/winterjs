@@ -10,7 +10,6 @@ use jsapi::JSObject;
 use jsapi::JSString;
 use jsapi::JSValueType;
 use jsapi::JS::Value;
-use jsapi::JS::Value_layout;
 use jsapi::JS::TraceKind;
 
 use libc::c_void;
@@ -79,9 +78,7 @@ const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 #[inline(always)]
 fn AsJSVal(val: u64) -> JSVal {
     JSVal {
-        data: Value_layout {
-            asBits: val,
-        }
+        asBits_: val,
     }
 }
 
@@ -201,7 +198,7 @@ pub fn PrivateValue(o: *const c_void) -> JSVal {
 impl JSVal {
     #[inline(always)]
     fn asBits(&self) -> u64 {
-        unsafe { self.data.asBits }
+        unsafe { self.asBits_ }
     }
 
     #[inline(always)]

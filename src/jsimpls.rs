@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use jsapi::JS;
-use jsapi::JSAutoCompartment;
+use jsapi::JSAutoRealm;
 use jsapi::JSContext;
 use jsapi::JSErrNum;
 use jsapi::JSFunctionSpec;
@@ -14,9 +14,7 @@ use jsapi::JSJitSetterCallArgs;
 use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
 use jsapi::JSPropertySpec;
-use jsapi::JS_EnterCompartment;
-use jsapi::JS_LeaveCompartment;
-use jsapi::glue::JS_NewCompartmentOptions;
+use jsapi::glue::JS_NewRealmOptions;
 use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
 use jsapi::jsid;
@@ -57,9 +55,9 @@ impl Default for jsid {
     fn default() -> Self { unsafe { JSID_VOID } }
 }
 
-impl Default for JS::CompartmentOptions {
+impl Default for JS::RealmOptions {
     fn default() -> Self {
-        unsafe { JS_NewCompartmentOptions() }
+        unsafe { JS_NewRealmOptions() }
     }
 }
 
@@ -75,9 +73,9 @@ impl Default for JS::PropertyDescriptor {
     }
 }
 
-impl Drop for JSAutoCompartment {
+impl Drop for JSAutoRealm {
     fn drop(&mut self) {
-        unsafe { JS_LeaveCompartment(self.cx_, self.oldCompartment_); }
+        unsafe { JS::LeaveRealm(self.cx_, self.oldRealm_); }
     }
 }
 
@@ -167,11 +165,11 @@ impl JS::HandleObject {
 // ___________________________________________________________________________
 // Implementations for various things in jsapi.rs
 
-impl JSAutoCompartment {
-    pub fn new(cx: *mut JSContext, target: *mut JSObject) -> JSAutoCompartment {
-        JSAutoCompartment {
+impl JSAutoRealm {
+    pub fn new(cx: *mut JSContext, target: *mut JSObject) -> JSAutoRealm {
+        JSAutoRealm {
             cx_: cx,
-            oldCompartment_: unsafe { JS_EnterCompartment(cx, target) },
+            oldRealm_: unsafe { JS::EnterRealm(cx, target) },
             #[cfg(feature = "debugmozjs")]
             _mCheckNotUsedAsTemporary: GuardObjectNotificationReceiver {
                 mStatementDone: false,
@@ -181,10 +179,10 @@ impl JSAutoCompartment {
 }
 
 impl JS::AutoGCRooter {
-    pub fn new_unrooted(tag: JS::AutoGCRooterTag) -> JS::AutoGCRooter {
+    pub fn new_unrooted(tag: JS::AutoGCRooter_Tag) -> JS::AutoGCRooter {
         JS::AutoGCRooter {
             down: ptr::null_mut(),
-            tag_: tag as isize,
+            tag_: tag,
             stackTop: ptr::null_mut(),
         }
     }
