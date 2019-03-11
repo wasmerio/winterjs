@@ -5,7 +5,7 @@
 /*---
 description: It is a Syntax Error if BoundNames of FormalParameters contains any duplicate elements. (async function nameless expression)
 esid: sec-async-function-definitions
-features: [default-parameters]
+features: [default-parameters, async-functions]
 flags: [generated]
 negative:
   phase: parse
@@ -15,6 +15,7 @@ info: |
 
     AsyncFunctionExpression :
       async function ( FormalParameters ) { AsyncFunctionBody }
+
 
     14.1.2 Static Semantics: Early Errors
 
@@ -30,7 +31,7 @@ info: |
       elements.
 
 ---*/
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 
 (async function(x = 0, x) {

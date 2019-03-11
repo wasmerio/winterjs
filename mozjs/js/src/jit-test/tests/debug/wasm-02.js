@@ -1,9 +1,8 @@
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
+
 // Tests that wasm module scripts are available via onNewScript.
 
-if (!wasmDebuggingIsSupported())
-  quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger(g);
 
 var gotScript;

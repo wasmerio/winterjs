@@ -7,6 +7,8 @@ description: >
 features: [Array.prototype.flatMap]
 ---*/
 
+assert.sameValue(typeof Array.prototype.flatMap, 'function');
+
 assert.throws(TypeError, function() {
   [].flatMap.call(null);
 }, 'null value');
@@ -18,6 +20,5 @@ assert.throws(TypeError, function() {
 assert.throws(TypeError, function() {
   [].flatMap.call(void 0);
 }, 'undefined');
-
 
 reportCompare(0, 0);

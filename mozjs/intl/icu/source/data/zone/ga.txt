@@ -1,8 +1,19 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ga{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Am Uilíoch Lárnach"}
+        }
+        "Europe:Dublin"{
+            ld{"Am Caighdéanach na hÉireann"}
+            sd{"ACÉ"}
+        }
+        "Europe:London"{
+            ld{"Am Samhraidh na Breataine"}
+            sd{"ASB"}
+        }
         "meta:Acre"{
             ld{"Am Samhraidh Acre"}
             lg{"Am Acre"}

@@ -6,16 +6,30 @@
 #include "CustomMatchers.h"
 
 void CanRunScriptChecker::registerMatchers(MatchFinder *AstMatcher) {
+  auto Refcounted = qualType(hasDeclaration(cxxRecordDecl(isRefCounted())));
   auto InvalidArg =
       // We want to find any expression,
       ignoreTrivials(expr(
           // which has a refcounted pointer type,
-          hasType(pointerType(
-              pointee(hasDeclaration(cxxRecordDecl(isRefCounted()))))),
+          anyOf(
+            hasType(Refcounted),
+            hasType(pointsTo(Refcounted)),
+            hasType(references(Refcounted))
+          ),
           // and which is not this,
           unless(cxxThisExpr()),
           // and which is not a method call on a smart ptr,
           unless(cxxMemberCallExpr(on(hasType(isSmartPtrToRefCounted())))),
+          // and which is not calling operator* on a smart ptr.
+          unless(
+            allOf(
+              cxxOperatorCallExpr(hasOverloadedOperatorName("*")),
+              callExpr(allOf(
+                hasAnyArgument(hasType(isSmartPtrToRefCounted())),
+                argumentCountIs(1)
+              ))
+            )
+          ),
           // and which is not a parameter of the parent function,
           unless(declRefExpr(to(parmVarDecl()))),
           // and which is not a MOZ_KnownLive wrapped value.
@@ -96,7 +110,7 @@ void FuncSetCallback::run(const MatchFinder::MatchResult &Result) {
   const FunctionDecl *Func;
   if (auto *Lambda = Result.Nodes.getNodeAs<LambdaExpr>("lambda")) {
     Func = Lambda->getCallOperator();
-    if (!Func || !hasCustomAnnotation(Func, "moz_can_run_script"))
+    if (!Func || !hasCustomAttribute<moz_can_run_script>(Func))
       return;
   } else {
     Func = Result.Nodes.getNodeAs<FunctionDecl>("canRunScriptFunction");
@@ -197,7 +211,7 @@ void CanRunScriptChecker::check(const MatchFinder::MatchResult &Result) {
   // Bindings.
   if (ParentFunction &&
       (CanRunScriptFuncs.count(ParentFunction) ||
-       hasCustomAnnotation(ParentFunction, "moz_can_run_script_boundary"))) {
+       hasCustomAttribute<moz_can_run_script_boundary>(ParentFunction))) {
     ParentFunction = nullptr;
   }
 
@@ -215,14 +229,14 @@ void CanRunScriptChecker::check(const MatchFinder::MatchResult &Result) {
   // If we have an invalid argument in the call, we emit the diagnostic to
   // signal it.
   if (InvalidArg) {
-    diag(CallRange.getBegin(), ErrorInvalidArg, DiagnosticIDs::Error)
+    diag(InvalidArg->getExprLoc(), ErrorInvalidArg, DiagnosticIDs::Error)
         << CallRange;
   }
 
   // If the parent function is not marked as MOZ_CAN_RUN_SCRIPT, we emit an
   // error and a not indicating it.
   if (ParentFunction) {
-    assert(!hasCustomAnnotation(ParentFunction, "moz_can_run_script") &&
+    assert(!hasCustomAttribute<moz_can_run_script>(ParentFunction) &&
            "Matcher missed something");
 
     diag(CallRange.getBegin(), ErrorNonCanRunScriptParent, DiagnosticIDs::Error)

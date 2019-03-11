@@ -7,21 +7,21 @@ description: >
 
     Returns true if trap returns true and target property is not configurable
     but writable.
-features: [Reflect]
+features: [Proxy, Reflect, Reflect.set]
 ---*/
 
 var target = {};
 var handler = {
-    set: function(t, prop, value, receiver) {
-        return true;
-    }
+  set: function(t, prop, value, receiver) {
+    return true;
+  }
 };
 var p = new Proxy(target, handler);
 
 Object.defineProperty(target, 'attr', {
-    configurable: false,
-    writable: true,
-    value: 'foo'
+  configurable: false,
+  writable: true,
+  value: 'foo'
 });
 
 assert(Reflect.set(p, "attr", 1));

@@ -2,10 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
 import unittest
 
 from compare_locales import compare, paths
-from cPickle import loads, dumps
 
 
 class TestTree(unittest.TestCase):
@@ -84,7 +84,7 @@ two/other
 class TestObserver(unittest.TestCase):
     def test_simple(self):
         obs = compare.Observer()
-        f = paths.File('/some/real/sub/path', 'sub/path', locale='de')
+        f = paths.File('/some/real/sub/path', 'de/sub/path', locale='de')
         obs.notify('missingEntity', f, 'one')
         obs.notify('missingEntity', f, 'two')
         obs.updateStats(f, {'missing': 15})
@@ -100,13 +100,9 @@ class TestObserver(unittest.TestCase):
                      {'missingEntity': 'two'}]
             }
         })
-        clone = loads(dumps(obs))
-        self.assertDictEqual(clone.summary, obs.summary)
-        self.assertDictEqual(clone.details.toJSON(), obs.details.toJSON())
-        self.assertIsNone(clone.file_stats)
 
     def test_module(self):
-        obs = compare.Observer(file_stats=True)
+        obs = compare.Observer()
         f = paths.File('/some/real/sub/path', 'path',
                        module='sub', locale='de')
         obs.notify('missingEntity', f, 'one')
@@ -128,57 +124,6 @@ class TestObserver(unittest.TestCase):
                     ]
             }
         })
-        self.assertDictEqual(obs.file_stats, {
-            'de': {
-                'sub/path': {
-                    'missing': 15
-                }
-            }
-        })
-        self.assertEqual(obs.serialize(), '''\
-de/sub/path
-    +one
-    -bar
-    +two
-de:
-missing: 15
-0% of entries changed''')
-        clone = loads(dumps(obs))
-        self.assertDictEqual(clone.summary, obs.summary)
-        self.assertDictEqual(clone.details.toJSON(), obs.details.toJSON())
-        self.assertDictEqual(clone.file_stats, obs.file_stats)
-
-    def test_file_stats(self):
-        obs = compare.Observer(file_stats=True)
-        f = paths.File('/some/real/sub/path', 'sub/path', locale='de')
-        obs.notify('missingEntity', f, 'one')
-        obs.notify('missingEntity', f, 'two')
-        obs.updateStats(f, {'missing': 15})
-        self.assertDictEqual(obs.toJSON(), {
-            'summary': {
-                'de': {
-                    'missing': 15
-                }
-            },
-            'details': {
-                'de/sub/path':
-                    [
-                     {'missingEntity': 'one'},
-                     {'missingEntity': 'two'},
-                    ]
-            }
-        })
-        self.assertDictEqual(obs.file_stats, {
-            'de': {
-                'sub/path': {
-                    'missing': 15
-                }
-            }
-        })
-        clone = loads(dumps(obs))
-        self.assertDictEqual(clone.summary, obs.summary)
-        self.assertDictEqual(clone.details.toJSON(), obs.details.toJSON())
-        self.assertDictEqual(clone.file_stats, obs.file_stats)
 
 
 class TestAddRemove(unittest.TestCase):

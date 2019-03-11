@@ -1,8 +1,13 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 en_001{
-    Version{"2.1.35.71"}
+    Version{"2.1.44.18"}
     zoneStrings{
+        "Pacific:Honolulu"{
+            sd{"∅∅∅"}
+            sg{"∅∅∅"}
+            ss{"∅∅∅"}
+        }
         "meta:Alaska"{
             sd{"∅∅∅"}
             sg{"∅∅∅"}

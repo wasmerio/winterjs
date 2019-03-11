@@ -7,7 +7,7 @@
 #
 # The rules in this file are applied at compile time; changes to this list
 # usually require a full rebuild to apply. If you can modify the source in
-# question to exempt individual functions using MOZ_NO_SANITIZE_UINT_OVERFLOW,
+# question to exempt specific functions using MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW,
 # do that instead.
 #
 # The extensive number of entries below is for two reasons.
@@ -88,11 +88,6 @@ fun:*nsDisplayOpacity*ShouldFlattenAway*
 fun:*pref_InitInitialObjects*
 # Code in netwerk/base/nsIOService.cpp
 fun:*nsIOService*GetCachedProtocolHandler*
-# Code in layout/style/nsCSSRuleProcessor.cpp
-fun:*0nsCSSRuleProcessor@@*
-fun:*nsCSSRuleProcessor*ClearSheets*
-fun:*TreeMatchContext*InitAncestors*
-fun:*TreeMatchContext*InitStyleScopes*
 # Code in layout/xul/nsXULPopupManager.cpp
 fun:*nsXULPopupManager*AdjustPopupsOnWindowChange*
 # Code in dom/base/nsDocument.cpp

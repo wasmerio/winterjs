@@ -1,3 +1,4 @@
+# flake8: noqa: F821
 import re
 
 test.compile("source.cpp")
@@ -21,12 +22,12 @@ assert('other2' in body['Variables'])
 js_GC = test.process_body(test.load_db_entry("src_body", re.compile(r'js_GC'))[0])
 annotations = js_GC['Variables']['void js_GC()']['Annotation']
 assert(annotations)
-found_call_tag = False
+found_call_annotate = False
 for annotation in annotations:
     (annType, value) = annotation['Name']
-    if annType == 'Tag' and value == 'GC Call':
-        found_call_tag = True
-assert(found_call_tag)
+    if annType == 'annotate' and value == 'GC Call':
+        found_call_annotate = True
+assert(found_call_annotate)
 
 # Test type annotations
 
@@ -36,12 +37,12 @@ assert(cell['Kind'] == 'Struct')
 annotations = cell['Annotation']
 assert(len(annotations) == 1)
 (tag, value) = annotations[0]['Name']
-assert(tag == 'Tag')
+assert(tag == 'annotate')
 assert(value == 'GC Thing')
 
 # Check JSObject inheritance.
 JSObject = test.load_db_entry("src_comp", 'JSObject')[0]
-bases = [ b['Base'] for b in JSObject['CSUBaseClass'] ]
+bases = [b['Base'] for b in JSObject['CSUBaseClass']]
 assert('js::gc::Cell' in bases)
 assert('Bogon' in bases)
 assert(len(bases) == 2)

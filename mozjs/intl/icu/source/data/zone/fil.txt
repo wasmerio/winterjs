@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 fil{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Coordinated Universal Time"}
+        }
+        "Europe:Dublin"{
+            ld{"Standard na Oras sa Ireland"}
+        }
+        "Europe:London"{
+            ld{"Oras sa Tag-init ng Britain"}
+        }
         "meta:Afghanistan"{
             ls{"Oras sa Afghanistan"}
         }

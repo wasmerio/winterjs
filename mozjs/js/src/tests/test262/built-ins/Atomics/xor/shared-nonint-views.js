@@ -1,3 +1,4 @@
+// |reftest| skip-if(!this.hasOwnProperty('Atomics')||!this.hasOwnProperty('SharedArrayBuffer')) -- Atomics,SharedArrayBuffer is not enabled unconditionally
 // Copyright (C) 2017 Mozilla Corporation.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -6,17 +7,15 @@ esid: sec-atomics.xor
 description: >
   Test Atomics.xor on shared non-integer TypedArrays
 includes: [testTypedArray.js]
-features: [TypedArray]
+features: [Atomics, SharedArrayBuffer, TypedArray]
 ---*/
 
-var sab = new SharedArrayBuffer(1024);
+var buffer = new SharedArrayBuffer(1024);
 
-var other_views = [Uint8ClampedArray, Float32Array, Float64Array];
-
-testWithTypedArrayConstructors(function(View) {
-    var view = new View(sab);
-
-    assert.throws(TypeError, (() => Atomics.xor(view, 0, 0)));
-}, other_views);
+testWithTypedArrayConstructors(function(TA) {
+  assert.throws(TypeError, function() {
+    Atomics.xor(new TA(buffer), 0, 0);
+  }, '`Atomics.xor(new TA(buffer), 0, 0)` throws TypeError');
+}, floatArrayConstructors);
 
 reportCompare(0, 0);

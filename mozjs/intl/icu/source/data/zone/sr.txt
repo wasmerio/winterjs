@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 sr{
-    Version{"2.1.37.5"}
+    Version{"2.1.43.94"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Координисано универзално време"}
+        }
+        "Europe:Dublin"{
+            ld{"Ирска, стандардно време"}
+        }
+        "Europe:London"{
+            ld{"Британија, летње време"}
+        }
         "meta:Acre"{
             ld{"Акре летње рачунање времена"}
             lg{"Акре време"}

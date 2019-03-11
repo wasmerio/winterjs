@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 Josh Wolfe. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -8,7 +8,7 @@ info: |
   BigInt.asUintN ( bits, bigint )
 
   1. Let bits be ? ToIndex(bits).
-features: [BigInt, Symbol.toPrimitive, computed-property-names]
+features: [BigInt, computed-property-names, Symbol, Symbol.toPrimitive]
 ---*/
 
 assert.sameValue(BigInt.asUintN(Object(0), 1n), 0n, "ToPrimitive: unbox object with internal slot");

@@ -121,6 +121,7 @@ def test_environment(xrePath, env=None, crashreporter=True, debugger=False,
     if crashreporter and not debugger:
         env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
         env['MOZ_CRASHREPORTER'] = '1'
+        env['MOZ_CRASHREPORTER_SHUTDOWN'] = '1'
     else:
         env['MOZ_CRASHREPORTER_DISABLE'] = '1'
 
@@ -156,8 +157,8 @@ def test_environment(xrePath, env=None, crashreporter=True, debugger=False,
                 log.info("INFO | runtests.py | ASan using symbolizer at %s"
                          % llvmsym)
             else:
-                log.info("TEST-UNEXPECTED-FAIL | runtests.py | Failed to find"
-                         " ASan symbolizer at %s" % llvmsym)
+                log.error("TEST-UNEXPECTED-FAIL | runtests.py | Failed to find"
+                          " ASan symbolizer at %s" % llvmsym)
 
             # Returns total system memory in kilobytes.
             if mozinfo.isWin:
@@ -217,8 +218,8 @@ def test_environment(xrePath, env=None, crashreporter=True, debugger=False,
             log.info("INFO | runtests.py | TSan using symbolizer at %s"
                      % llvmsym)
         else:
-            log.info("TEST-UNEXPECTED-FAIL | runtests.py | Failed to find TSan"
-                     " symbolizer at %s" % llvmsym)
+            log.error("TEST-UNEXPECTED-FAIL | runtests.py | Failed to find TSan"
+                      " symbolizer at %s" % llvmsym)
 
     ubsan = bool(mozinfo.info.get("ubsan"))
     if ubsan and (mozinfo.isLinux or mozinfo.isMac):

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 gu{
-    Version{"2.1.36.86"}
+    Version{"2.1.44.2"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"સંકલિત યુનિવર્સલ સમય"}
+        }
+        "Europe:Dublin"{
+            ld{"આઈરિશ માનક સમય"}
+        }
+        "Europe:London"{
+            ld{"બ્રિટિશ ગ્રીષ્મ સમય"}
+        }
         "meta:Acre"{
             ld{"એકર ગ્રીષ્મ સમય"}
             lg{"એકર સમય"}

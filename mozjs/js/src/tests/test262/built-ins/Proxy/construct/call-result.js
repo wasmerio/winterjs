@@ -8,15 +8,18 @@ info: |
     [[Construct]] ( argumentsList, newTarget)
 
     12. Return newObj
+features: [Proxy]
 ---*/
 
 function Target(a, b) {
-    this.sum = a + b;
+  this.sum = a + b;
 };
 var handler = {
-    construct: function(t, c, args) {
-        return { sum: 42 };
-    }
+  construct: function(t, c, args) {
+    return {
+      sum: 42
+    };
+  }
 };
 var P = new Proxy(Target, handler);
 

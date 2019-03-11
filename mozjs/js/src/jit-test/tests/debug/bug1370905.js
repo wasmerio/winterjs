@@ -1,10 +1,7 @@
-// |jit-test| allow-oom
+// |jit-test| allow-oom; skip-if: !('oomTest' in this)
 
-if (!('oomTest' in this))
-    quit();
-
-var source = `
-    var global = newGlobal();
+function x() {
+    var global = newGlobal({sameZoneAs: this});
     global.eval('function f() { debugger; }');
     var debug = new Debugger(global);
     var foo;
@@ -13,8 +10,6 @@ var source = `
         return null;
     };
     global.eval('f(0)');
-`;
-function test() {
-    oomTest(new Function(source), false);
 }
-test();
+
+oomTest(x, false);

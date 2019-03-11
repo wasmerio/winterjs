@@ -3,7 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # All heap allocations in SpiderMonkey must go through js_malloc, js_calloc,
 # js_realloc, and js_free.  This is so that any embedder who uses a custom
 # allocator (by defining JS_USE_CUSTOM_ALLOCATOR) will see all heap allocation
@@ -34,7 +34,7 @@
 # because vanilla delete/delete[] calls don't make sense without corresponding
 # vanilla new/new[] calls, and any explicit calls will be caught by Valgrind's
 # mismatched alloc/free checking.
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 
 from __future__ import print_function
 
@@ -42,6 +42,7 @@ import argparse
 import re
 import subprocess
 import sys
+import buildconfig
 
 # The obvious way to implement this script is to search for occurrences of
 # malloc et al, succeed if none are found, and fail is some are found.
@@ -76,7 +77,8 @@ def main():
     # -u: show only undefined symbols
     # -C: demangle symbol names
     # -A: show an object filename for each undefined symbol
-    cmd = ['nm', '-u', '-C', '-A', args.file]
+    nm = buildconfig.substs.get('NM') or 'nm'
+    cmd = [nm, '-u', '-C', '-A', args.file]
     lines = subprocess.check_output(cmd, universal_newlines=True,
                                     stderr=subprocess.PIPE).split('\n')
 
@@ -92,9 +94,9 @@ def main():
 
         r'memalign',
         # These three aren't available on all Linux configurations.
-        #r'posix_memalign',
-        #r'aligned_alloc',
-        #r'valloc',
+        # r'posix_memalign',
+        # r'aligned_alloc',
+        # r'valloc',
     ]
 
     if args.aggressive:
@@ -143,6 +145,11 @@ def main():
         if "Fuzzer" in filename:
             continue
 
+        # Ignore the profiling pseudo-stack, since it needs to run even when
+        # SpiderMonkey's allocator isn't initialized.
+        if "ProfilingStack" in filename:
+            continue
+
         fn = m.group(2)
         if filename == 'jsutil.o':
             jsutil_cpp.add(fn)
@@ -151,7 +158,6 @@ def main():
             fail("'" + fn + "' present in " + filename)
             # Try to give more precise information about the offending code.
             emit_line_info = True
-
 
     # Check that all functions we expect are used in jsutil.cpp.  (This will
     # fail if the function-detection code breaks at any point.)
@@ -192,7 +198,8 @@ def main():
         for line in lines:
             m = re.search(alloc_lines_re, line)
             if m:
-                print('check_vanilla_allocations.py:', m.group(1), 'called at', m.group(3))
+                print('check_vanilla_allocations.py:',
+                      m.group(1), 'called at', m.group(3))
 
     if has_failed:
         sys.exit(1)

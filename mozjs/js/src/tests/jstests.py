@@ -11,14 +11,19 @@ See the adjacent README.txt for more details.
 
 from __future__ import print_function
 
-import os, sys, textwrap, platform
+import os
+import sys
+import tempfile
+import textwrap
+import platform
 from os.path import abspath, dirname, isfile, realpath
 from contextlib import contextmanager
 from copy import copy
+from itertools import chain
 from subprocess import list2cmdline, call
 
 from lib.tests import RefTestCase, get_jitflags, get_cpu_count, \
-                      get_environment_overlay, change_env
+    get_environment_overlay, change_env
 from lib.results import ResultsSink
 from lib.progressbar import ProgressBar
 
@@ -26,6 +31,8 @@ if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
     from lib.tasks_unix import run_all_tests
 else:
     from lib.tasks_win import run_all_tests
+
+here = dirname(abspath(__file__))
 
 
 @contextmanager
@@ -36,6 +43,43 @@ def changedir(dirname):
         yield
     finally:
         os.chdir(pwd)
+
+
+class PathOptions(object):
+    def __init__(self, location, requested_paths, excluded_paths):
+        self.requested_paths = requested_paths
+        self.excluded_files, self.excluded_dirs = PathOptions._split_files_and_dirs(
+            location, excluded_paths)
+
+    @staticmethod
+    def _split_files_and_dirs(location, paths):
+        """Split up a set of paths into files and directories"""
+        files, dirs = set(), set()
+        for path in paths:
+            fullpath = os.path.join(location, path)
+            if path.endswith('/'):
+                dirs.add(path[:-1])
+            elif os.path.isdir(fullpath):
+                dirs.add(path)
+            elif os.path.exists(fullpath):
+                files.add(path)
+
+        return files, dirs
+
+    def should_run(self, filename):
+        # If any tests are requested by name, skip tests that do not match.
+        if self.requested_paths and not any(req in filename for req in self.requested_paths):
+            return False
+
+        # Skip excluded tests.
+        if filename in self.excluded_files:
+            return False
+
+        for dir in self.excluded_dirs:
+            if filename.startswith(dir + '/'):
+                return False
+
+        return True
 
 
 def parse_args():
@@ -111,6 +155,12 @@ def parse_args():
                         help='Get tests from the given file.')
     input_og.add_option('-x', '--exclude-file', action='append',
                         help='Exclude tests from the given file.')
+    input_og.add_option('--wpt', dest='wpt',
+                        type='choice',
+                        choices=['enabled', 'disabled', 'if-running-everything'],
+                        default='if-running-everything',
+                        help="Enable or disable shell web-platform-tests "
+                        "(default: enable if no test paths are specified).")
     input_og.add_option('--include', action='append', dest='requested_paths', default=[],
                         help='Include the given test file or directory.')
     input_og.add_option('--exclude', action='append', dest='excluded_paths', default=[],
@@ -156,9 +206,11 @@ def parse_args():
                          const='automation',
                          help='Use automation-parseable output format.')
     output_og.add_option('--format', dest='format', default='none',
-                          type='choice', choices=['automation', 'none'],
-                          help='Output format. Either automation or none'
+                         type='choice', choices=['automation', 'none'],
+                         help='Output format. Either automation or none'
                          ' (default %default).')
+    output_og.add_option('--log-wptreport', dest='wptreport', action='store',
+                         help='Path to write a Web Platform Tests report (wptreport)')
     op.add_option_group(output_og)
 
     special_og = OptionGroup(op, "Special",
@@ -225,15 +277,14 @@ def parse_args():
     # excluded tests set.
     if options.exclude_file:
         for filename in options.exclude_file:
-            try:
-                fp = open(filename, 'r')
+            with open(filename, 'r') as fp:
                 for line in fp:
-                    if line.startswith('#'): continue
+                    if line.startswith('#'):
+                        continue
                     line = line.strip()
-                    if not line: continue
-                    excluded_paths |= set((line,))
-            finally:
-                fp.close()
+                    if not line:
+                        continue
+                    excluded_paths.add(line)
 
     # Handle output redirection, if requested and relevant.
     options.output_fp = sys.stdout
@@ -253,9 +304,120 @@ def parse_args():
     return (options, prefix, requested_paths, excluded_paths)
 
 
+def load_wpt_tests(xul_tester, requested_paths, excluded_paths):
+    """Return a list of `RefTestCase` objects for the jsshell testharness.js
+    tests filtered by the given paths and debug-ness."""
+    repo_root = abspath(os.path.join(here, "..", "..", ".."))
+    wp = os.path.join(repo_root, "testing", "web-platform")
+    wpt = os.path.join(wp, "tests")
+
+    sys_paths = [
+        "python/mozterm",
+        "python/mozboot",
+        "testing/mozbase/mozcrash",
+        "testing/mozbase/mozdevice",
+        "testing/mozbase/mozfile",
+        "testing/mozbase/mozinfo",
+        "testing/mozbase/mozleak",
+        "testing/mozbase/mozlog",
+        "testing/mozbase/mozprocess",
+        "testing/mozbase/mozprofile",
+        "testing/mozbase/mozrunner",
+        "testing/web-platform/",
+        "testing/web-platform/tests/tools",
+        "testing/web-platform/tests/tools/third_party/html5lib",
+        "testing/web-platform/tests/tools/third_party/webencodings",
+        "testing/web-platform/tests/tools/wptrunner",
+        "testing/web-platform/tests/tools/wptserve",
+        "third_party/python/requests",
+    ]
+    abs_sys_paths = [os.path.join(repo_root, path) for path in sys_paths]
+
+    failed = False
+    for path in abs_sys_paths:
+        if not os.path.isdir(path):
+            failed = True
+            print("Could not add '%s' to the path")
+    if failed:
+        return []
+
+    sys.path[0:0] = abs_sys_paths
+
+    import manifestupdate
+    from wptrunner import products, testloader, wptcommandline, wpttest, wptlogging
+
+    manifest_root = tempfile.gettempdir()
+    path_split = os.path.dirname(xul_tester.js_bin).split(os.path.sep)
+    if path_split[-2:] == ["dist", "bin"]:
+        maybe_root = os.path.join(*path_split[:-2])
+        if os.path.exists(os.path.join(maybe_root, "_tests")):
+            # Assume this is a gecko objdir.
+            manifest_root = maybe_root
+
+    logger = wptlogging.setup({}, {})
+
+    manifestupdate.run(repo_root, manifest_root, logger)
+
+    kwargs = vars(wptcommandline.create_parser().parse_args([]))
+    kwargs.update({
+        "config": os.path.join(manifest_root, "_tests", "web-platform", "wptrunner.local.ini"),
+        "gecko_e10s": False,
+        "verify": False,
+        "wasm": xul_tester.test("wasmIsSupported()"),
+    })
+    wptcommandline.set_from_config(kwargs)
+    test_paths = kwargs["test_paths"]
+
+    def filter_jsshell_tests(it):
+        for test in it:
+            if test[1].get("jsshell"):
+                yield test
+
+    test_manifests = testloader.ManifestLoader(test_paths, types=["testharness"],
+                                               meta_filters=[filter_jsshell_tests]).load()
+
+    run_info_extras = products.load_product(kwargs["config"], "firefox")[-1](**kwargs)
+    run_info = wpttest.get_run_info(kwargs["test_paths"]["/"]["metadata_path"],
+                                    "firefox",
+                                    debug=xul_tester.test("isDebugBuild"),
+                                    extras=run_info_extras)
+
+    path_filter = testloader.TestFilter(test_manifests,
+                                        include=requested_paths,
+                                        exclude=excluded_paths)
+    loader = testloader.TestLoader(test_manifests,
+                                   ["testharness"],
+                                   run_info,
+                                   manifest_filters=[path_filter])
+
+    extra_helper_paths = [
+        os.path.join(here, "web-platform-test-shims.js"),
+        os.path.join(wpt, "resources", "testharness.js"),
+        os.path.join(here, "testharnessreport.js"),
+    ]
+
+    def resolve(test_path, script):
+        if script.startswith("/"):
+            return os.path.join(wpt, script[1:])
+
+        return os.path.join(wpt, os.path.dirname(test_path), script)
+
+    return [
+        RefTestCase(
+            wpt,
+            test_path,
+            extra_helper_paths=extra_helper_paths + [resolve(test_path, s) for s in test.scripts],
+            wpt=test
+        )
+        for test_path, test in (
+            (os.path.relpath(test.path, wpt), test) for test in loader.tests["testharness"]
+        )
+    ]
+
+
 def load_tests(options, requested_paths, excluded_paths):
     """
-    Returns a tuple: (skipped_tests, test_list)
+    Returns a tuple: (test_count, test_gen)
         test_count: [int] Number of tests that will be in test_gen
         test_gen: [iterable<Test>] Tests found that should be run.
     """
@@ -273,9 +435,21 @@ def load_tests(options, requested_paths, excluded_paths):
         xul_tester = manifest.XULInfoTester(xul_info, options.js_shell)
 
     test_dir = dirname(abspath(__file__))
-    test_count = manifest.count_tests(test_dir, requested_paths, excluded_paths)
-    test_gen = manifest.load_reftests(test_dir, requested_paths, excluded_paths,
-                                      xul_tester)
+    path_options = PathOptions(test_dir, requested_paths, excluded_paths)
+    test_count = manifest.count_tests(test_dir, path_options)
+    test_gen = manifest.load_reftests(test_dir, path_options, xul_tester)
+
+    # WPT tests are already run in the browser in their own harness.
+    wpt_enabled = (options.wpt == 'enabled' or
+                   (options.wpt == 'if-running-everything' and
+                    len(requested_paths) == 0 and
+                    not options.make_manifests))
+    if wpt_enabled:
+        wpt_tests = load_wpt_tests(xul_tester,
+                                   requested_paths,
+                                   excluded_paths)
+        test_count += len(wpt_tests)
+        test_gen = chain(test_gen, wpt_tests)
 
     if options.test_reflect_stringify is not None:
         def trs_gen(tests):
@@ -348,9 +522,9 @@ def main():
         if (platform.system() != 'Windows' or
             isfile(options.js_shell) or not
             isfile(options.js_shell + ".exe") or not
-            os.access(options.js_shell + ".exe", os.X_OK)):
-           print('Could not find executable shell: ' + options.js_shell)
-           return 1
+                os.access(options.js_shell + ".exe", os.X_OK)):
+            print('Could not find executable shell: ' + options.js_shell)
+            return 1
 
     test_count, test_gen = load_tests(options, requested_paths, excluded_paths)
     test_environment = get_environment_overlay(options.js_shell)
@@ -388,6 +562,7 @@ def main():
         return 0 if results.all_passed() else 1
 
     return 0
+
 
 if __name__ == '__main__':
     sys.exit(main())

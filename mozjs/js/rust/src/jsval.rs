@@ -25,6 +25,8 @@ enum ValueTag {
     UNDEFINED = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
     STRING    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_STRING as u32),
     SYMBOL    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
+    #[cfg(feature = "bigint")]
+    BIGINT    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BIGINT as u32),
     BOOLEAN   = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
     MAGIC     = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_MAGIC as u32),
     NULL      = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_NULL as u32),
@@ -41,6 +43,8 @@ enum ValueTag {
     UNDEFINED = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
     STRING    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_STRING as u32),
     SYMBOL    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
+    #[cfg(feature = "bigint")]
+    BIGINT    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BIGINT as u32),
     BOOLEAN   = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
     MAGIC     = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_MAGIC as u32),
     NULL      = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_NULL as u32),
@@ -57,6 +61,8 @@ enum ValueShiftedTag {
     UNDEFINED  = ((ValueTag::UNDEFINED as u64)  << JSVAL_TAG_SHIFT),
     STRING     = ((ValueTag::STRING as u64)     << JSVAL_TAG_SHIFT),
     SYMBOL     = ((ValueTag::SYMBOL as u64)     << JSVAL_TAG_SHIFT),
+    #[cfg(feature = "bigint")]
+    BIGINT     = ((ValueTag::BIGINT as u64)     << JSVAL_TAG_SHIFT),
     BOOLEAN    = ((ValueTag::BOOLEAN as u64)    << JSVAL_TAG_SHIFT),
     MAGIC      = ((ValueTag::MAGIC as u64)      << JSVAL_TAG_SHIFT),
     NULL       = ((ValueTag::NULL as u64)       << JSVAL_TAG_SHIFT),
@@ -70,9 +76,7 @@ const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 #[inline(always)]
 fn AsJSVal(val: u64) -> JS::Value {
     JS::Value {
-        data: JS::Value_layout {
-            asBits: val,
-        }
+        asBits_: val,
     }
 }
 
@@ -189,10 +193,27 @@ pub fn PrivateValue(o: *const c_void) -> JS::Value {
     BuildJSVal(ValueTag::PRIVATE, ptrBits)
 }
 
+#[inline(always)]
+#[cfg(feature = "bigint")]
+#[cfg(target_pointer_width = "64")]
+pub fn BigIntValue(b: &JS::BigInt) -> JS::Value {
+    let bits = b as *const JS::BigInt as usize as u64;
+    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
+    BuildJSVal(ValueTag::BIGINT, bits)
+}
+
+#[inline(always)]
+#[cfg(target_pointer_width = "32")]
+#[inline(always)]
+pub fn BigIntValue(s: &JS::BigInt) -> JS::Value {
+    let bits = s as *const JS::BigInt as usize as u64;
+    BuildJSVal(ValueTag::BIGINT, bits)
+}
+
 impl JS::Value {
     #[inline(always)]
     unsafe fn asBits(&self) -> u64 {
-        self.data.asBits
+        self.asBits_
     }
 
     #[inline(always)]
@@ -353,7 +374,7 @@ impl JS::Value {
     #[cfg(target_pointer_width = "64")]
     pub fn is_symbol(&self) -> bool {
         unsafe {
-            self.asBits() == ValueShiftedTag::SYMBOL as u64
+            (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::SYMBOL as u64
         }
     }
 
@@ -362,6 +383,24 @@ impl JS::Value {
     pub fn is_symbol(&self) -> bool {
         unsafe {
             (self.asBits() >> 32) == ValueTag::SYMBOL as u64
+        }
+    }
+
+    #[inline(always)]
+    #[cfg(feature = "bigint")]
+    #[cfg(target_pointer_width = "64")]
+    pub fn is_bigint(&self) -> bool {
+        unsafe {
+            (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::BIGINT as u64
+        }
+    }
+
+    #[inline(always)]
+    #[cfg(feature = "bigint")]
+    #[cfg(target_pointer_width = "32")]
+    pub fn is_bigint(&self) -> bool {
+        unsafe {
+            (self.asBits() >> 32) == ValueTag::BIGINT as u64
         }
     }
 

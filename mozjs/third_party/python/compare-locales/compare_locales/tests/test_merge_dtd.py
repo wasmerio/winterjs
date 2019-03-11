@@ -17,7 +17,7 @@ class TestMergeDTD(unittest.TestCase):
 <!ENTITY foo "Foo 2">
 """)
         self.assertEqual(
-            merge_channels(self.name, *channels), b"""
+            merge_channels(self.name, channels), b"""
 <!ENTITY foo "Foo 1">
 """)
 
@@ -27,7 +27,7 @@ class TestMergeDTD(unittest.TestCase):
 """, b"""
 <!ENTITY foo "Foo 2"> \n""")
         self.assertEqual(
-            merge_channels(self.name, *channels), b"""
+            merge_channels(self.name, channels), b"""
 <!ENTITY foo "Foo 1"> \n""")
 
     def test_browser_dtd(self):
@@ -64,7 +64,7 @@ class TestMergeDTD(unittest.TestCase):
 """)
 
         self.assertMultiLineEqual(
-            merge_channels(self.name, *channels), b"""\
+            merge_channels(self.name, channels).decode("utf-8"), """\
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
@@ -116,8 +116,8 @@ class TestMergeDTD(unittest.TestCase):
 <!ENTITY warning_no_serviceworkers "No Service Workers registered.">
 """)
 
-        self.assertMultiLineEqual(
-            merge_channels(self.name, *channels), b"""\
+        self.assertEqual(
+            merge_channels(self.name, channels), b"""\
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->

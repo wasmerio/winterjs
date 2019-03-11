@@ -35,8 +35,6 @@ from mozscreenshot import printstatus, dump_screen
 
 # ---------------------------------------------------------------
 
-_DEFAULT_PREFERENCE_FILE = os.path.join(SCRIPT_DIR, 'prefs_general.js')
-
 _DEFAULT_WEB_SERVER = "127.0.0.1"
 _DEFAULT_HTTP_PORT = 8888
 _DEFAULT_SSL_PORT = 4443
@@ -53,7 +51,6 @@ _IS_CYGWIN = False
 #endif
 #expand _BIN_SUFFIX = __BIN_SUFFIX__
 
-#expand _DEFAULT_APP = "./" + __BROWSER_PATH__
 #expand _CERTS_SRC_DIR = __CERTS_SRC_DIR__
 #expand _IS_TEST_BUILD = __IS_TEST_BUILD__
 #expand _IS_DEBUG_BUILD = __IS_DEBUG_BUILD__
@@ -99,7 +96,6 @@ class Automation(object):
 
   UNIXISH = not IS_WIN32 and not IS_MAC
 
-  DEFAULT_APP = _DEFAULT_APP
   CERTS_SRC_DIR = _CERTS_SRC_DIR
   IS_TEST_BUILD = _IS_TEST_BUILD
   IS_DEBUG_BUILD = _IS_DEBUG_BUILD
@@ -138,7 +134,6 @@ class Automation(object):
            "runApp",
            "Process",
            "DIST_BIN",
-           "DEFAULT_APP",
            "CERTS_SRC_DIR",
            "environment",
            "IS_TEST_BUILD",
@@ -509,7 +504,7 @@ class Automation(object):
              debuggerInfo = None, symbolsPath = None,
              timeout = -1, maxTime = None, onLaunch = None,
              detectShutdownLeaks = False, screenshotOnFail=False, testPath=None, bisectChunk=None,
-             valgrindPath=None, valgrindArgs=None, valgrindSuppFiles=None, outputHandler=None):
+             valgrindPath=None, valgrindArgs=None, valgrindSuppFiles=None, outputHandler=None, e10s=True):
     """
     Run the app, log the duration it took to execute, return the status code.
     Kills the app if it runs for longer than |maxTime| seconds, or outputs nothing for |timeout| seconds.
@@ -526,7 +521,6 @@ class Automation(object):
 
     # copy env so we don't munge the caller's environment
     env = dict(env);
-    env["NO_EM_RESTART"] = "1"
     tmpfd, processLog = tempfile.mkstemp(suffix='pidlog')
     os.close(tmpfd)
     env["MOZ_PROCESS_LOG"] = processLog

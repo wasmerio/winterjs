@@ -684,6 +684,10 @@ lt{
         }
         MRO{
             "MRO",
+            "Mauritanijos ugija (1973–2017)",
+        }
+        MRU{
+            "MRU",
             "Mauritanijos ugija",
         }
         MTL{
@@ -916,6 +920,10 @@ lt{
         }
         STD{
             "STD",
+            "San Tomės ir Principės dobra (1977–2017)",
+        }
+        STN{
+            "STN",
             "San Tomės ir Principės dobra",
         }
         SUR{
@@ -1036,6 +1044,10 @@ lt{
         }
         VEF{
             "VEF",
+            "Venesuelos bolivaras (2008–2018)",
+        }
+        VES{
+            "VES",
             "Venesuelos bolivaras",
         }
         VND{
@@ -1135,7 +1147,7 @@ lt{
             "Azijos plėtros banko apskaitos vienetas",
         }
         XXX{
-            "XXX",
+            "¤",
             "nežinoma valiuta",
         }
         YDD{
@@ -1279,7 +1291,7 @@ lt{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -2322,6 +2334,12 @@ lt{
             other{"Makao patakų"}
         }
         MRO{
+            few{"Mauritanijos ugijos (1973–2017)"}
+            many{"Mauritanijos ugijos (1973–2017)"}
+            one{"Mauritanijos ugija (1973–2017)"}
+            other{"Mauritanijos ugijų (1973–2017)"}
+        }
+        MRU{
             few{"Mauritanijos ugijos"}
             many{"Mauritanijos ugijos"}
             one{"Mauritanijos ugija"}
@@ -2670,6 +2688,12 @@ lt{
             other{"Pietų Sudano svarų"}
         }
         STD{
+            few{"San Tomės ir Principės dobros (1977–2017)"}
+            many{"San Tomės ir Principės dobros (1977–2017)"}
+            one{"San Tomės ir Principės dobra (1977–2017)"}
+            other{"Sao Tomės ir Principės dobrų (1977–2017)"}
+        }
+        STN{
             few{"San Tomės ir Principės dobros"}
             many{"San Tomės ir Principės dobros"}
             one{"San Tomės ir Principės dobra"}
@@ -2850,6 +2874,12 @@ lt{
             other{"Venesuelos bolivarų (1871–2008)"}
         }
         VEF{
+            few{"Venesuelos bolivarai (2008–2018)"}
+            many{"Venesuelos bolivaro (2008–2018)"}
+            one{"Venesuelos bolivaras (2008–2018)"}
+            other{"Venesuelos bolivarų (2008–2018)"}
+        }
+        VES{
             few{"Venesuelos bolivarai"}
             many{"Venesuelos bolivaro"}
             one{"Venesuelos bolivaras"}
@@ -3096,5 +3126,5 @@ lt{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
 }

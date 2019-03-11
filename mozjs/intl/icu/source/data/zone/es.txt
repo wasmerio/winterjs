@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 es{
-    Version{"2.1.37.22"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"tiempo universal coordinado"}
+        }
+        "Europe:Dublin"{
+            ld{"hora de verano de Irlanda"}
+        }
+        "Europe:London"{
+            ld{"hora de verano británica"}
+        }
         "meta:Acre"{
             ld{"Hora de verano de Acre"}
             lg{"Hora de Acre"}

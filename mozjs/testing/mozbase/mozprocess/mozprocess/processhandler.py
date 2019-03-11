@@ -23,6 +23,9 @@ __all__ = ['ProcessHandlerMixin', 'ProcessHandler', 'LogOutput',
 # Set the MOZPROCESS_DEBUG environment variable to 1 to see some debugging output
 MOZPROCESS_DEBUG = os.getenv("MOZPROCESS_DEBUG")
 
+
+INTERVAL_PROCESS_ALIVE_CHECK = 0.02
+
 # We dont use mozinfo because it is expensive to import, see bug 933558.
 isWin = os.name == "nt"
 isPosix = os.name == "posix"  # includes MacOS X
@@ -189,7 +192,7 @@ class ProcessHandlerMixin(object):
                         if self.poll() is not None:
                             # process terminated nicely
                             break
-                        time.sleep(0.02)
+                        time.sleep(INTERVAL_PROCESS_ALIVE_CHECK)
                     else:
                         # process did not terminate - send SIGKILL to force
                         send_sig(signal.SIGKILL)
@@ -316,12 +319,19 @@ class ProcessHandlerMixin(object):
                             sizeof(joacp)
                         )
 
-                        # Allow subprocesses to break away from us - necessary for
-                        # flash with protected mode
+                        # Allow subprocesses to break away from us - necessary when
+                        # Firefox restarts, or flash with protected mode
+                        limit_flags = winprocess.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        if not can_nest_jobs:
+                            # This allows sandbox processes to create their own job,
+                            # and is necessary to set for older versions of Windows
+                            # without nested job support.
+                            limit_flags |= winprocess.JOB_OBJECT_LIMIT_BREAKAWAY_OK
+
                         jbli = JOBOBJECT_BASIC_LIMIT_INFORMATION(
                             c_longlong(0),  # per process time limit (ignored)
                             c_longlong(0),  # per job user time limit (ignored)
-                            winprocess.JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+                            limit_flags,
                             0,  # min working set (ignored)
                             0,  # max working set (ignored)
                             0,  # active process limit (ignored)
@@ -782,9 +792,9 @@ falling back to not using job objects for managing child processes""", file=sys.
         :param sig: Signal used to kill the process, defaults to SIGKILL
                     (has no effect on Windows)
         """
-        if not hasattr(self, 'proc'):
-            raise RuntimeError("Calling kill() on a non started process is not"
-                               " allowed.")
+        if not hasattr(self, "proc"):
+            raise RuntimeError("Process hasn't been started yet")
+
         self.proc.kill(sig=sig)
 
         # When we kill the the managed process we also have to wait for the
@@ -801,16 +811,16 @@ falling back to not using job objects for managing child processes""", file=sys.
         - '0' if the process ended without failures
 
         """
+        if not hasattr(self, "proc"):
+            raise RuntimeError("Process hasn't been started yet")
+
         # Ensure that we first check for the reader status. Otherwise
         # we might mark the process as finished while output is still getting
         # processed.
-        if not hasattr(self, 'proc'):
-            raise RuntimeError("Calling poll() on a non started process is not"
-                               " allowed.")
         elif self.reader.is_alive():
             return None
-        elif hasattr(self.proc, "returncode"):
-            return self.proc.returncode
+        elif hasattr(self, "returncode"):
+            return self.returncode
         else:
             return self.proc.poll()
 
@@ -850,12 +860,12 @@ falling back to not using job objects for managing child processes""", file=sys.
         - '0' if the process ended without failures
 
         """
+        # Thread.join() blocks the main thread until the reader thread is finished
+        # wake up once a second in case a keyboard interrupt is sent
         if self.reader.thread and self.reader.thread is not threading.current_thread():
-            # Thread.join() blocks the main thread until the reader thread is finished
-            # wake up once a second in case a keyboard interrupt is sent
             count = 0
             while self.reader.is_alive():
-                self.reader.thread.join(timeout=1)
+                self.reader.join(timeout=1)
                 count += 1
                 if timeout is not None and count > timeout:
                     return None
@@ -863,14 +873,11 @@ falling back to not using job objects for managing child processes""", file=sys.
         self.returncode = self.proc.wait()
         return self.returncode
 
-    # TODO Remove this method when consumers have been fixed
-    def waitForFinish(self, timeout=None):
-        print("MOZPROCESS WARNING: ProcessHandler.waitForFinish() is deprecated, "
-              "use ProcessHandler.wait() instead", file=sys.stderr)
-        return self.wait(timeout=timeout)
-
     @property
     def pid(self):
+        if not hasattr(self, "proc"):
+            raise RuntimeError("Process hasn't been started yet")
+
         return self.proc.pid
 
     @staticmethod
@@ -923,8 +930,8 @@ falling back to not using job objects for managing child processes""", file=sys.
 
         new_pid is the new process id of the child process.
         """
-        if not self.proc:
-            return
+        if not hasattr(self, "proc"):
+            raise RuntimeError("Process hasn't been started yet")
 
         if isPosix:
             new_pgid = self._getpgid(new_pid)
@@ -1013,7 +1020,7 @@ class ProcessReader(object):
                 or (stderr_reader and stderr_reader.is_alive()):
             has_line = True
             try:
-                line, callback = queue.get(True, 0.02)
+                line, callback = queue.get(True, INTERVAL_PROCESS_ALIVE_CHECK)
             except Empty:
                 has_line = False
             now = time.time()
@@ -1046,6 +1053,11 @@ class ProcessReader(object):
         if self.thread:
             return self.thread.is_alive()
         return False
+
+    def join(self, timeout=None):
+        if self.thread:
+            self.thread.join(timeout=timeout)
+
 
 # default output handlers
 # these should be callables that take the output line

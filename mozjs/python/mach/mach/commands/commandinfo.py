@@ -4,6 +4,9 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import argparse
+from itertools import chain
+
 from mach.decorators import (
     CommandProvider,
     Command,
@@ -25,7 +28,7 @@ class BuiltinCommands(object):
     @Command('mach-commands', category='misc',
              description='List all mach commands.')
     def commands(self):
-        print("\n".join(self.command_keys))
+        print("\n".join(sorted(self.command_keys)))
 
     @Command('mach-debug-commands', category='misc',
              description='Show info about available mach commands.')
@@ -50,3 +53,53 @@ class BuiltinCommands(object):
             print('Class: %s' % cls.__name__)
             print('Method: %s' % handler.method)
             print('')
+
+    @Command('mach-completion', category='misc',
+             description='Prints a list of completion strings for the specified command.')
+    @CommandArgument('args', default=None, nargs=argparse.REMAINDER,
+                     help="Command to complete.")
+    def completion(self, args):
+        all_commands = sorted(self.command_keys)
+        if not args:
+            print("\n".join(all_commands))
+            return
+
+        is_help = 'help' in args
+        command = None
+        for i, arg in enumerate(args):
+            if arg in all_commands:
+                command = arg
+                args = args[i+1:]
+                break
+
+        # If no command is typed yet, just offer the commands.
+        if not command:
+            print("\n".join(all_commands))
+            return
+
+        handler = self.context.commands.command_handlers[command]
+        # If a subcommand was typed, update the handler.
+        for arg in args:
+            if arg in handler.subcommand_handlers:
+                handler = handler.subcommand_handlers[arg]
+                break
+
+        targets = sorted(handler.subcommand_handlers.keys())
+        if is_help:
+            print("\n".join(targets))
+            return
+
+        targets.append('help')
+
+        # The 'option_strings' are of the form [('-f', '--foo'), ('-b', '--bar'), ...].
+        option_strings = [item[0] for item in handler.arguments]
+        # Filter out positional arguments (we don't want to complete their metavar).
+        option_strings = [opt for opt in option_strings if opt[0].startswith('-')]
+        targets.extend(chain(*option_strings))
+
+        # If the command uses its own ArgumentParser, extract options from there as well.
+        if handler.parser:
+            targets.extend(chain(*[action.option_strings
+                                   for action in handler.parser._actions]))
+
+        print("\n".join(targets))

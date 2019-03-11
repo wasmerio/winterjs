@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99: */
+ * vim: set ts=8 sts=2 et sw=2 tw=80: */
 
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
@@ -172,7 +172,7 @@ class MOZ_STACK_CLASS NativeRegExpMacroAssembler final : public RegExpMacroAssem
     void LoadCurrentCharacterUnchecked(int cp_offset, int characters);
 
   private:
-    jit::MacroAssembler masm;
+    jit::StackMacroAssembler masm;
     RegExpShared::JitCodeTables& tables;
 
     JSContext* cx;

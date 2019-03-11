@@ -3,7 +3,7 @@
 
 #include "unicode/utypes.h"
 
-#if !UCONFIG_NO_FORMATTING && !UPRV_INCOMPLETE_CPP11_SUPPORT
+#if !UCONFIG_NO_FORMATTING
 
 #include "unicode/numberformatter.h"
 #include "number_types.h"
@@ -36,6 +36,19 @@ ScientificNotation Notation::engineering() {
     return {NTN_SCIENTIFIC, union_};
 }
 
+ScientificNotation::ScientificNotation(int8_t fEngineeringInterval, bool fRequireMinInt,
+                                       impl::digits_t fMinExponentDigits,
+                                       UNumberSignDisplay fExponentSignDisplay) {
+    ScientificSettings settings;
+    settings.fEngineeringInterval = fEngineeringInterval;
+    settings.fRequireMinInt = fRequireMinInt;
+    settings.fMinExponentDigits = fMinExponentDigits;
+    settings.fExponentSignDisplay = fExponentSignDisplay;
+    NotationUnion union_;
+    union_.scientific = settings;
+    *this = {NTN_SCIENTIFIC, union_};
+}
+
 Notation Notation::compactShort() {
     NotationUnion union_;
     union_.compactStyle = CompactStyle::UNUM_SHORT;
@@ -54,13 +67,13 @@ Notation Notation::simple() {
 
 ScientificNotation
 ScientificNotation::withMinExponentDigits(int32_t minExponentDigits) const {
-    if (minExponentDigits >= 0 && minExponentDigits < kMaxIntFracSig) {
+    if (minExponentDigits >= 1 && minExponentDigits <= kMaxIntFracSig) {
         ScientificSettings settings = fUnion.scientific;
-        settings.fMinExponentDigits = (int8_t) minExponentDigits;
+        settings.fMinExponentDigits = static_cast<digits_t>(minExponentDigits);
         NotationUnion union_ = {settings};
         return {NTN_SCIENTIFIC, union_};
     } else {
-        return {U_NUMBER_DIGIT_WIDTH_OUTOFBOUNDS_ERROR};
+        return {U_NUMBER_ARG_OUTOFBOUNDS_ERROR};
     }
 }
 

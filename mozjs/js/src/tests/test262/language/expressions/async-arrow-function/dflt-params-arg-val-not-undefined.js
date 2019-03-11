@@ -2,9 +2,9 @@
 // - src/function-forms/dflt-params-arg-val-not-undefined.case
 // - src/function-forms/default/async-arrow-function.template
 /*---
-description: Use of intializer when argument value is not `undefined` (async arrow function expression)
+description: Use of initializer when argument value is not `undefined` (async arrow function expression)
 esid: sec-async-arrow-function-definitions
-features: [default-parameters]
+features: [default-parameters, async-functions]
 flags: [generated, async]
 info: |
     14.7 Async Arrow Function Definitions

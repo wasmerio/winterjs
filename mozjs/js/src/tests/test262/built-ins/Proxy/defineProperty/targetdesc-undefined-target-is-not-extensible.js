@@ -12,19 +12,20 @@ info: |
     19. If targetDesc is undefined, then
         a. If extensibleTarget is false, throw a TypeError exception.
     ...
+features: [Proxy]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    defineProperty: function(t, prop, desc) {
-        return true;
-    }
+  defineProperty: function(t, prop, desc) {
+    return true;
+  }
 });
 
 Object.preventExtensions(target);
 
 assert.throws(TypeError, function() {
-    Object.defineProperty(p, "foo", {});
+  Object.defineProperty(p, "foo", {});
 });
 
 reportCompare(0, 0);

@@ -31,7 +31,7 @@ if test -z "$MOZ_ARCH"; then
     arm-Android)
         MOZ_THUMB=yes
         MOZ_ARCH=armv7-a
-        MOZ_FPU=vfpv3-d16
+        MOZ_FPU=neon
         MOZ_FLOAT_ABI=softfp
         MOZ_ALIGN=no
         ;;
@@ -216,7 +216,7 @@ if test "$CPU_ARCH" = "arm"; then
 
   AC_MSG_CHECKING(ARM version support in compiler)
   dnl Determine the target ARM architecture (5 for ARMv5, v5T, v5E, etc.; 6 for ARMv6, v6K, etc.)
-  ARM_ARCH=`${CC-cc} ${CFLAGS} -dM -E - < /dev/null | sed -n 's/.*__ARM_ARCH_\([[0-9]][[0-9]]*\).*/\1/p'`
+  ARM_ARCH=`${CC-cc} ${CFLAGS} -dM -E - < /dev/null | sed -n 's/.*__ARM_ARCH_\([[0-9]][[0-9]]*\).*/\1/p' | head -n 1`
   AC_MSG_RESULT("$ARM_ARCH")
 
   AC_MSG_CHECKING(for ARM NEON support in compiler)
@@ -242,6 +242,24 @@ if test "$CPU_ARCH" = "arm"; then
       fi
   fi
 
+  dnl Building with -mfpu=neon requires either the "softfp" or the
+  dnl "hardfp" ABI. Depending on the compiler's default target, and the
+  dnl CFLAGS, the default ABI might be neither, in which case it is the
+  dnl "softfloat" ABI.
+  dnl The "softfloat" ABI is binary-compatible with the "softfp" ABI, so
+  dnl we can safely mix code built with both ABIs. So, if we detect
+  dnl that compiling uses the "softfloat" ABI, force the use of the
+  dnl "softfp" ABI instead.
+  dnl Confusingly, the __SOFTFP__ preprocessor variable indicates the
+  dnl "softfloat" ABI, not the "softfp" ABI.
+  dnl Note: VPX_ASFLAGS is also used in CFLAGS.
+  AC_TRY_COMPILE([],
+    [#ifndef __SOFTFP__
+     #error "compiler target supports -mfpu=neon, so we don't have to add extra flags"
+     #endif],
+     NEON_FLAGS="$NEON_FLAGS -mfloat-abi=softfp"
+  )
+
 fi # CPU_ARCH = arm
 
 AC_SUBST(HAVE_ARM_SIMD)
@@ -249,5 +267,6 @@ AC_SUBST(HAVE_ARM_NEON)
 AC_SUBST(BUILD_ARM_NEON)
 AC_SUBST(ARM_ARCH)
 AC_SUBST_LIST(NEON_FLAGS)
+AC_SUBST(MOZ_FPU)
 
 ])

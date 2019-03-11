@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99: */
+ * vim: set ts=8 sts=2 et sw=2 tw=80: */
 
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,9 @@
 
 #include "irregexp/RegExpEngine.h"
 
+#include <utility>
+
+#include "gc/GC.h"
 #include "irregexp/NativeRegExpMacroAssembler.h"
 #include "irregexp/RegExpCharacters.h"
 #include "irregexp/RegExpMacroAssembler.h"
@@ -1052,7 +1055,7 @@ ChoiceNode::FilterLATIN1(int depth, bool ignore_case, bool unicode)
         }
     }
 
-    alternatives_ = Move(new_alternatives);
+    alternatives_ = std::move(new_alternatives);
     return this;
 }
 
@@ -1323,6 +1326,7 @@ Analysis::VisitAssertion(AssertionNode* that)
     EnsureAnalyzed(that->on_success());
 }
 
+// [SMDOC] Irregexp internals
 // -------------------------------------------------------------------
 // Implementation of the Irregexp regular expression engine.
 //
@@ -1649,6 +1653,7 @@ RegExpCompiler::RegExpCompiler(JSContext* cx, LifoAlloc* alloc, int capture_coun
                                bool ignore_case, bool latin1, bool match_only, bool unicode)
   : next_register_(2 * (capture_count + 1)),
     recursion_depth_(0),
+    macro_assembler_(nullptr),
     ignore_case_(ignore_case),
     latin1_(latin1),
     match_only_(match_only),
@@ -1694,6 +1699,7 @@ RegExpCompiler::Assemble(JSContext* cx,
 
     if (reg_exp_too_big_) {
         code.destroy();
+        js::gc::AutoSuppressGC suppress(cx);
         JS_ReportErrorASCII(cx, "regexp too big");
         return RegExpCode();
     }
@@ -1729,17 +1735,16 @@ IsNativeRegExpEnabled(JSContext* cx)
 }
 
 RegExpCode
-irregexp::CompilePattern(JSContext* cx, HandleRegExpShared shared, RegExpCompileData* data,
-                         HandleLinearString sample, bool is_global, bool ignore_case,
-                         bool is_latin1, bool match_only, bool force_bytecode, bool sticky,
-                         bool unicode, RegExpShared::JitCodeTables& tables)
+irregexp::CompilePattern(JSContext* cx, LifoAlloc& alloc, HandleRegExpShared shared,
+                         RegExpCompileData* data, HandleLinearString sample, bool is_global,
+                         bool ignore_case, bool is_latin1, bool match_only, bool force_bytecode,
+                         bool sticky, bool unicode, RegExpShared::JitCodeTables& tables)
 {
     if ((data->capture_count + 1) * 2 - 1 > RegExpMacroAssembler::kMaxRegister) {
         JS_ReportErrorASCII(cx, "regexp too big");
         return RegExpCode();
     }
 
-    LifoAlloc& alloc = cx->tempLifoAlloc();
     RegExpCompiler compiler(cx, &alloc, data->capture_count, ignore_case, is_latin1, match_only,
                             unicode);
 
@@ -1811,6 +1816,11 @@ irregexp::CompilePattern(JSContext* cx, HandleRegExpShared shared, RegExpCompile
         JS_ReportErrorASCII(cx, "%s", analysis.errorMessage());
         return RegExpCode();
     }
+
+    // We should not GC when we have a jit::MacroAssembler on the stack. Check
+    // this here because the static analysis does not understand the
+    // Maybe<NativeRegExpMacroAssembler> below.
+    JS::AutoCheckCannotGC nogc(cx);
 
     Maybe<jit::JitContext> ctx;
     Maybe<NativeRegExpMacroAssembler> native_assembler;
@@ -2526,7 +2536,7 @@ BoyerMooreLookahead::EmitSkipInstructions(RegExpMacroAssembler* masm)
     jit::Label cont, again;
     masm->Bind(&again);
     masm->LoadCurrentCharacter(max_lookahead, &cont, true);
-    masm->CheckBitInTable(Move(boolean_skip_table), &cont);
+    masm->CheckBitInTable(std::move(boolean_skip_table), &cont);
     masm->AdvanceCurrentPosition(skip_distance);
     masm->JumpOrBacktrack(&again);
     masm->Bind(&cont);
@@ -2537,7 +2547,13 @@ BoyerMooreLookahead::EmitSkipInstructions(RegExpMacroAssembler* masm)
 bool
 RegExpCompiler::CheckOverRecursed()
 {
-    if (!CheckRecursionLimit(cx())) {
+    if (!CheckRecursionLimitDontReport(cx())) {
+#ifdef JS_MORE_DETERMINISTIC
+        // We don't report overrecursion here, but we throw an exception later
+        // and this still affects differential testing. Mimic ReportOverRecursed
+        // (the fuzzers check for this particular string).
+        fprintf(stderr, "ReportOverRecursed called\n");
+#endif
         SetRegExpTooBig();
         return false;
     }
@@ -3318,7 +3334,7 @@ EmitUseLookupTable(RegExpMacroAssembler* masm,
     for (int i = 0; i < kSize; i++)
         ba[i] = templ[i];
 
-    masm->CheckBitInTable(Move(ba), on_bit_set);
+    masm->CheckBitInTable(std::move(ba), on_bit_set);
     if (on_bit_clear != fall_through)
         masm->JumpOrBacktrack(on_bit_clear);
 }
@@ -3903,6 +3919,9 @@ TextNode::TextEmitPass(RegExpCompiler* compiler,
                     break;
                 }
                 if (emit_function != nullptr) {
+                    // emit_function is a function pointer. Suppress static
+                    // analysis false positives.
+                    JS::AutoSuppressGCAnalysis suppress;
                     bool bound_checked = emit_function(compiler,
                                                        quarks[j],
                                                        backtrack,

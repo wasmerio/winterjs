@@ -2,8 +2,17 @@
 // License & terms of use: http://www.unicode.org/copyright.html#License
 zh_Hant{
     %%Parent{"root"}
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"世界標準時間"}
+        }
+        "Europe:Dublin"{
+            ld{"愛爾蘭標準時間"}
+        }
+        "Europe:London"{
+            ld{"英國夏令時間"}
+        }
         "meta:Acre"{
             ld{"艾克夏令時間"}
             lg{"艾克時間"}

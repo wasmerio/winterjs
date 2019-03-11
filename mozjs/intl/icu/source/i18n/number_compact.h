@@ -3,7 +3,7 @@
 
 #include "unicode/utypes.h"
 
-#if !UCONFIG_NO_FORMATTING && !UPRV_INCOMPLETE_CPP11_SUPPORT
+#if !UCONFIG_NO_FORMATTING
 #ifndef __NUMBER_COMPACT_H__
 #define __NUMBER_COMPACT_H__
 
@@ -52,7 +52,6 @@ class CompactData : public MultiplierProducer {
 struct CompactModInfo {
     const ImmutablePatternModifier *mod;
     const UChar* patternString;
-    int32_t numDigits;
 };
 
 class CompactHandler : public MicroPropsGenerator, public UMemory {

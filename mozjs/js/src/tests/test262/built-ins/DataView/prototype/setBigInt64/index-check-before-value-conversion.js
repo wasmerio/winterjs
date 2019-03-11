@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -13,7 +13,9 @@ features: [DataView, ArrayBuffer, BigInt]
 var dataView = new DataView(new ArrayBuffer(8), 0);
 
 var poisoned = {
-  valueOf() { throw new Test262Error("valueOf called"); }
+  valueOf() {
+    throw new Test262Error("valueOf called");
+  }
 };
 
 assert.throws(RangeError, function() {

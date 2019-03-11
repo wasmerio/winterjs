@@ -311,13 +311,6 @@ from its prototype:
     when it was resolved. If the referent hasn't been resolved or is not a
     [`Promise`][promise], throw a `TypeError` exception.
 
-`global`
-:   A `Debugger.Object` instance referring to the global object in whose
-    scope the referent was allocated. This does not unwrap cross-compartment
-    wrappers: if the referent is a wrapper, the result refers to the
-    wrapper's global, not the wrapped object's global. The result refers to
-    the global directly, not via a wrapper.
-
 <code id="allocationsite">allocationSite</code>
 :   If [object allocation site tracking][tracking-allocs] was enabled when this
     `Debugger.Object`'s referent was allocated, return the
@@ -342,18 +335,28 @@ These methods may throw if the referent is not a native object. Even simple
 accessors like `isExtensible` may throw if the referent is a proxy or some sort
 of exotic object like an opaque wrapper.
 
-<code>getProperty(<i>name</i>)</code>
-:   Return the value of the referent's property named <i>name</i>, or
-    `undefined` if it has no such property. <i>Name</i> must be a string.
-    The result is a debuggee value.
+<code>getProperty(<i>key</i>, [<i>receiver</i>])</code>
+:   Return a [completion value][cv] with "return" being the value of the
+    referent's property named <i>key</i>, or `undefined` if it has no such
+    property. <i>key</i> must be a string or symbol; <i>receiver</i> must be
+    a debuggee value. If the property is a getter, it will be evaluated with
+    <i>receiver</i> as the receiver, defaulting to the `Debugger.Object`
+    if omitted. All extant handler methods, breakpoints, and so on remain
+    active during the call.
 
-<code>setProperty(<i>name</i>, <i>value</i>)</code>
+<code>setProperty(<i>key</i>, <i>value</i>, [<i>receiver</i>])</code>
 :   Store <i>value</i> as the value of the referent's property named
-    <i>name</i>, creating the property if it does not exist. <i>Name</i>
-    must be a string; <i>value</i> must be a debuggee value.
+    <i>key</i>, creating the property if it does not exist. <i>key</i>
+    must be a string or symbol; <i>value</i> and <i>receiver</i> must be
+    debuggee values. If the property is a setter, it will be evaluated with
+    <i>receiver</i> as the receiver, defaulting to the `Debugger.Object`
+    if omitted. Return a [completion value][cv] with "return" being a
+    success/failure boolean, or else "throw" being the exception thrown
+    during property assignment. All extant handler methods, breakpoints,
+    and so on remain active during the call.
 
-<code>getOwnPropertyDescriptor(<i>name</i>)</code>
-:   Return a property descriptor for the property named <i>name</i> of the
+<code>getOwnPropertyDescriptor(<i>key</i>)</code>
+:   Return a property descriptor for the property named <i>key</i> of the
     referent. If the referent has no such property, return `undefined`.
     (This function behaves like the standard
     `Object.getOwnPropertyDescriptor` function, except that the object being
@@ -374,8 +377,8 @@ of exotic object like an opaque wrapper.
     called in the debuggee, and the result copied in the scope of the
     debugger's global object.
 
-<code>defineProperty(<i>name</i>, <i>attributes</i>)</code>
-:   Define a property on the referent named <i>name</i>, as described by
+<code>defineProperty(<i>key</i>, <i>attributes</i>)</code>
+:   Define a property on the referent named <i>key</i>, as described by
     the property descriptor <i>descriptor</i>. Any `value`, `get`, and
     `set` properties of <i>attributes</i> must be debuggee values. (This
     function behaves like `Object.defineProperty`, except that the target
@@ -388,8 +391,8 @@ of exotic object like an opaque wrapper.
     object is implicit, and in a different compartment from the
     <i>properties</i> argument.)
 
-<code>deleteProperty(<i>name</i>)</code>
-:   Remove the referent's property named <i>name</i>. Return true if the
+<code>deleteProperty(<i>key</i>)</code>
+:   Remove the referent's property named <i>key</i>. Return true if the
     property was successfully removed, or if the referent has no such
     property. Return false if the property is non-configurable.
 

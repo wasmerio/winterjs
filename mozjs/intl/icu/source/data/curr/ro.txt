@@ -532,6 +532,10 @@ ro{
         }
         MRO{
             "MRO",
+            "ouguiya mauritană (1973–2017)",
+        }
+        MRU{
+            "MRU",
             "ouguiya mauritană",
         }
         MTL{
@@ -744,6 +748,10 @@ ro{
         }
         STD{
             "STD",
+            "dobra Sao Tome și Principe (1977–2017)",
+        }
+        STN{
+            "STN",
             "dobra Sao Tome și Principe",
         }
         SUR{
@@ -856,6 +864,10 @@ ro{
         }
         VEF{
             "VEF",
+            "bolivar venezuelean (2008–2018)",
+        }
+        VES{
+            "VES",
             "bolivar venezuelean",
         }
         VND{
@@ -939,7 +951,7 @@ ro{
             "cod monetar de test",
         }
         XXX{
-            "XXX",
+            "¤",
             "monedă necunoscută",
         }
         YDD{
@@ -1075,7 +1087,7 @@ ro{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -1707,6 +1719,11 @@ ro{
             other{"pataca din Macao"}
         }
         MRO{
+            few{"ouguiya mauritane (1973–2017)"}
+            one{"ouguiya mauritană (1973–2017)"}
+            other{"ouguiya mauritane (1973–2017)"}
+        }
+        MRU{
             few{"ouguiya mauritane"}
             one{"ouguiya mauritană"}
             other{"ouguiya mauritane"}
@@ -1952,6 +1969,11 @@ ro{
             other{"lire din Sudanul de Sud"}
         }
         STD{
+            few{"dobre Sao Tome și Principe (1977–2017)"}
+            one{"dobra Sao Tome și Principe (1977–2017)"}
+            other{"dobre Sao Tome și Principe (1977–2017)"}
+        }
+        STN{
             few{"dobre Sao Tome și Principe"}
             one{"dobra Sao Tome și Principe"}
             other{"dobre Sao Tome și Principe"}
@@ -2092,6 +2114,11 @@ ro{
             other{"bolivari Venezuela (1871–2008)"}
         }
         VEF{
+            few{"bolivari venezueleni (2008–2018)"}
+            one{"bolivar venezuelean (2008–2018)"}
+            other{"bolivari venezueleni (2008–2018)"}
+        }
+        VES{
             few{"bolivari venezueleni"}
             one{"bolivar venezuelean"}
             other{"bolivari venezueleni"}
@@ -2197,5 +2224,5 @@ ro{
         one{"{0} {1}"}
         other{"{0} de {1}"}
     }
-    Version{"2.1.37.5"}
+    Version{"2.1.43.94"}
 }

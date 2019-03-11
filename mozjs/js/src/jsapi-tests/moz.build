@@ -6,6 +6,8 @@
 
 GeckoProgram('jsapi-tests', linkage=None)
 
+include('../js-cxxflags.mozbuild')
+
 UNIFIED_SOURCES += [
     'selfTest.cpp',
     'testAddPropertyPropcache.cpp',
@@ -20,6 +22,7 @@ UNIFIED_SOURCES += [
     'testChromeBuffer.cpp',
     'testCloneScript.cpp',
     'testCompileNonSyntactic.cpp',
+    'testCompileUtf8.cpp',
     'testDateToLocaleString.cpp',
     'testDebugger.cpp',
     'testDeepFreeze.cpp',
@@ -28,7 +31,9 @@ UNIFIED_SOURCES += [
     'testDefinePropertyIgnoredAttributes.cpp',
     'testDeflateStringToUTF8Buffer.cpp',
     'testDifferentNewTargetInvokeConstructor.cpp',
+    'testEmptyWindowIsOmitted.cpp',
     'testErrorCopying.cpp',
+    'testErrorLineOfContext.cpp',
     'testException.cpp',
     'testExecuteInJSMEnvironment.cpp',
     'testExternalArrayBuffer.cpp',
@@ -81,6 +86,7 @@ UNIFIED_SOURCES += [
     'testProfileStrings.cpp',
     'testPromise.cpp',
     'testPropCache.cpp',
+    'testReadableStream.cpp',
     'testRegExp.cpp',
     'testResolveRecursion.cpp',
     'tests.cpp',
@@ -88,24 +94,27 @@ UNIFIED_SOURCES += [
     'testSavedStacks.cpp',
     'testScriptInfo.cpp',
     'testScriptObject.cpp',
+    'testScriptSourceCompression.cpp',
     'testSetProperty.cpp',
     'testSetPropertyIgnoringNamedGetter.cpp',
     'testSharedImmutableStringsCache.cpp',
     'testSourcePolicy.cpp',
     'testStringBuffer.cpp',
+    'testStringIsArrayIndex.cpp',
     'testStructuredClone.cpp',
     'testSymbol.cpp',
     'testThreadingConditionVariable.cpp',
     'testThreadingExclusiveData.cpp',
     'testThreadingMutex.cpp',
     'testThreadingThread.cpp',
-    'testToIntWidth.cpp',
+    'testToSignedOrUnsignedInteger.cpp',
     'testTypedArrays.cpp',
     'testUbiNode.cpp',
     'testUncaughtSymbol.cpp',
     'testUTF8.cpp',
     'testWasmLEB128.cpp',
     'testWeakMap.cpp',
+    'testWindowNonConfigurable.cpp',
     'testXDR.cpp',
 ]
 
@@ -132,26 +141,22 @@ if CONFIG['ENABLE_ION']:
         'testJitRValueAlloc.cpp',
     ]
 
-if CONFIG['ENABLE_STREAMS']:
-    UNIFIED_SOURCES += [
-        'testReadableStream.cpp',
-    ]
-
-
 if CONFIG['NIGHTLY_BUILD']:
     # The Error interceptor only exists on Nightly.
     UNIFIED_SOURCES += [
         'testErrorInterceptor.cpp',
+        'testErrorInterceptorGC.cpp',
     ]
 
-if CONFIG['JS_BUILD_BINAST'] and CONFIG['JS_STANDALONE']:
+if CONFIG['JS_BUILD_BINAST'] and CONFIG['JS_STANDALONE'] and not CONFIG['FUZZING']:
     # Standalone builds leave the source directory untouched,
     # which lets us run tests with the data files intact.
     # Otherwise, in the current state of the build system,
     # we can't have data files in js/src tests.
+    # Also, fuzzing builds modify the const matching in the
+    # token reader and hence affect the correctness of the tests.
     UNIFIED_SOURCES += [
         'testBinASTReader.cpp',
-        'testBinTokenReaderTester.cpp'
     ]
 
 
@@ -162,26 +167,19 @@ LOCAL_INCLUDES += [
     '..',
 ]
 
-if CONFIG['ENABLE_INTL_API'] and CONFIG['MOZ_ICU_DATA_ARCHIVE']:
-    # The ICU libraries linked into libmozjs will not include the ICU data,
-    # so link it directly.
-    USE_LIBS += ['icudata']
-
 USE_LIBS += [
     'static:js',
 ]
+
+if CONFIG['ENABLE_WASM_CRANELIFT']:
+    USE_LIBS += [
+        'jsrust'
+    ]
 
 if CONFIG['MOZ_NEEDS_LIBATOMIC']:
     OS_LIBS += ['atomic']
 
 OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
-
-if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
-    CXXFLAGS += ['-Wno-shadow', '-Werror=format', '-fno-strict-aliasing']
-
-# This is intended as a temporary workaround to enable VS2015.
-if CONFIG['CC_TYPE'] in ('msvc', 'clang-cl'):
-    CXXFLAGS += ['-wd4312']
 
 DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR
 OBJDIR_PP_FILES.js.src['jsapi-tests'] += ['jsapi-tests-gdb.py.in']

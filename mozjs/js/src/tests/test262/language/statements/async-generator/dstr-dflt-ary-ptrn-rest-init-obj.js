@@ -3,7 +3,7 @@
 // - src/dstr-binding/ary-ptrn-rest-init-obj.case
 // - src/dstr-binding/default/async-gen-func-decl-dflt.template
 /*---
-description: Reset element (nested object pattern) does not support initializer (async generator function declaration (default parameter))
+description: Rest element (nested object pattern) does not support initializer (async generator function declaration (default parameter))
 esid: sec-asyncgenerator-definitions-instantiatefunctionobject
 features: [async-iteration]
 flags: [generated, async]
@@ -26,7 +26,7 @@ info: |
         [ BindingElementList[?Yield] ]
         [ BindingElementList[?Yield] , Elisionopt BindingRestElement[?Yield]opt ]
 ---*/
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 
 var callCount = 0;

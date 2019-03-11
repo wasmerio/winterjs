@@ -1,8 +1,29 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 fi{
-    Version{"2.1.37.67"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "America:Godthab"{
+            ec%secondary{"Godthåb"}
+        }
+        "America:Scoresbysund"{
+            ec%secondary{"Scoresbysund"}
+        }
+        "America:Thule"{
+            ec%secondary{"Qaanaaq"}
+        }
+        "Etc:UTC"{
+            ls{"UTC-yleisaika"}
+        }
+        "Europe:Dublin"{
+            ld{"Irlannin kesäaika"}
+        }
+        "Europe:London"{
+            ld{"Britannian kesäaika"}
+        }
+        "Europe:Mariehamn"{
+            ec%secondary{"Mariehamn"}
+        }
         "meta:Acre"{
             ld{"Acren kesäaika"}
             lg{"Acren aika"}

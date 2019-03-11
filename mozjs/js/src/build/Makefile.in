@@ -4,17 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Ensure symbol versions of shared library on Linux do not conflict
-# with those in libxul.
-ifeq (Linux,$(OS_TARGET))
-
-symverscript: symverscript.in
-	$(call py_action,preprocessor, \
-		-DVERSION='$(subst -,_,$(LIBRARY_NAME))' $< -o $@)
-
-EXTRA_DEPS += symverscript
-endif
-
 include $(topsrcdir)/config/rules.mk
 
 # check_vanilla_allocations.py is tailored to Linux, so only run it there.
@@ -42,7 +31,7 @@ install:: $(LIBRARY_NAME).pc
 	$(SYSINSTALL) $(JS_LIBRARY_NAME).pc $(DESTDIR)$(libdir)/pkgconfig
 
 install:: ../js-config.h
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)
+	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
 
 ######################################################
 # BEGIN SpiderMonkey header installation
@@ -56,7 +45,7 @@ install:: ../js-config.h
 # The overall directory structure of the installed headers looks like so:
 #
 #   $(includedir)/
-#      $(LIBRARY_NAME)/
+#      $(JS_LIBRARY_NAME)/
 #        jsapi.h, jspubtd.h, etc. (all of EXPORTS)
 #        js/
 #          js/public/* headers (all are public)
@@ -69,7 +58,7 @@ install:: ../js-config.h
 #
 
 install::
-	$(call py_action,process_install_manifest,--track install_dist_include.track --no-symlinks $(DESTDIR)$(includedir) $(DEPTH)/_build_manifests/install/dist_include)
+	$(call py_action,process_install_manifest,--track install_dist_include.track --no-symlinks $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME) $(DEPTH)/_build_manifests/install/dist_include)
 
 #
 # END SpiderMonkey header installation

@@ -38,7 +38,7 @@
  * and/or from other macros that are predefined by the compiler
  * or defined in standard (POSIX or platform or compiler) headers.
  *
- * As a temporary workaround, you can add an explicit <code>#define</code> for some macros
+ * As a temporary workaround, you can add an explicit \#define for some macros
  * before it is first tested, or add an equivalent -D macro definition
  * to the compiler's command line.
  *
@@ -197,20 +197,6 @@
 #endif
 
 /**
- * \def UPRV_INCOMPLETE_CPP11_SUPPORT
- * This switch turns off ICU 60 NumberFormatter code.
- * By default, this switch is enabled on AIX and z/OS,
- * which have poor C++11 support.
- *
- * NOTE: This switch is intended to be temporary; see #13393.
- *
- * @internal
- */
-#ifndef UPRV_INCOMPLETE_CPP11_SUPPORT
-#   define UPRV_INCOMPLETE_CPP11_SUPPORT (U_PLATFORM == U_PF_AIX || U_PLATFORM == U_PF_OS390 || U_PLATFORM == U_PF_SOLARIS )
-#endif
-
-/**
  * \def CYGWINMSVC
  * Defined if this is Windows with Cygwin, but using MSVC rather than gcc.
  * Otherwise undefined.
@@ -221,6 +207,9 @@
 #   define CYGWINMSVC
 #endif
 */
+#ifdef U_IN_DOXYGEN
+#   define CYGWINMSVC
+#endif
 
 /**
  * \def U_PLATFORM_USES_ONLY_WIN32_API
@@ -431,6 +420,9 @@
 #ifndef __has_cpp_attribute
 #    define __has_cpp_attribute(x) 0
 #endif
+#ifndef __has_declspec_attribute
+#    define __has_declspec_attribute(x) 0
+#endif
 #ifndef __has_builtin
 #    define __has_builtin(x) 0
 #endif
@@ -482,9 +474,9 @@
     /* Otherwise use the predefined value. */
 #elif !defined(__cplusplus)
 #   define U_CPLUSPLUS_VERSION 0
-#elif __cplusplus >= 201402L
+#elif __cplusplus >= 201402L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201402L)
 #   define U_CPLUSPLUS_VERSION 14
-#elif __cplusplus >= 201103L
+#elif __cplusplus >= 201103L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
 #   define U_CPLUSPLUS_VERSION 11
 #else
     // C++98 or C++03
@@ -507,13 +499,8 @@ namespace std {
  */
 #ifdef U_NOEXCEPT
     /* Use the predefined value. */
-#elif defined(_HAS_EXCEPTIONS) && !_HAS_EXCEPTIONS  /* Visual Studio */
-#   define U_NOEXCEPT
-#elif U_CPLUSPLUS_VERSION >= 11 || __has_feature(cxx_noexcept) || __has_extension(cxx_noexcept) \
-        || (defined(_MSC_VER) && _MSC_VER >= 1900)  /* Visual Studio 2015 */
-#   define U_NOEXCEPT noexcept
 #else
-#   define U_NOEXCEPT
+#   define U_NOEXCEPT noexcept
 #endif
 
 /**
@@ -533,6 +520,8 @@ namespace std {
             (__has_feature(cxx_attributes) && __has_warning("-Wimplicit-fallthrough"))
 #       define U_FALLTHROUGH [[clang::fallthrough]]
 #   endif
+#elif defined(__GNUC__) && (__GNUC__ >= 7)
+#   define U_FALLTHROUGH __attribute__((fallthrough))
 #endif
 
 #ifndef U_FALLTHROUGH
@@ -631,7 +620,7 @@ namespace std {
  */
 #ifdef U_CHARSET_IS_UTF8
     /* Use the predefined value. */
-#elif U_PLATFORM == U_PF_ANDROID || U_PLATFORM_IS_DARWIN_BASED
+#elif U_PLATFORM_IS_LINUX_BASED || U_PLATFORM_IS_DARWIN_BASED
 #   define U_CHARSET_IS_UTF8 1
 #else
 #   define U_CHARSET_IS_UTF8 0
@@ -749,8 +738,10 @@ namespace std {
 #else
     /*
      * Notes:
-     * Visual Studio 10 (_MSC_VER>=1600) defines char16_t but
-     * does not support u"abc" string literals.
+     * Visual Studio 2010 (_MSC_VER==1600) defines char16_t as a typedef
+     * and does not support u"abc" string literals.
+     * Visual Studio 2015 (_MSC_VER>=1900) and above adds support for
+     * both char16_t and u"abc" string literals.
      * gcc 4.4 defines the __CHAR16_TYPE__ macro to a usable type but
      * does not support u"abc" string literals.
      * C++11 and C11 require support for UTF-16 literals
@@ -775,7 +766,8 @@ namespace std {
 #elif U_HAVE_CHAR16_T \
     || (defined(__xlC__) && defined(__IBM_UTF_LITERAL) && U_SIZEOF_WCHAR_T != 2) \
     || (defined(__HP_aCC) && __HP_aCC >= 035000) \
-    || (defined(__HP_cc) && __HP_cc >= 111106)
+    || (defined(__HP_cc) && __HP_cc >= 111106) \
+    || (defined(U_IN_DOXYGEN))
 #   define U_DECLARE_UTF16(string) u ## string
 #elif U_SIZEOF_WCHAR_T == 2 \
     && (U_CHARSET_FAMILY == 0 || (U_PF_OS390 <= U_PLATFORM && U_PLATFORM <= U_PF_OS400 && defined(__UCS2__)))
@@ -794,6 +786,8 @@ namespace std {
     /* Use the predefined value. */
 #elif defined(U_STATIC_IMPLEMENTATION)
 #   define U_EXPORT
+#elif defined(_MSC_VER) || (__has_declspec_attribute(dllexport) && __has_declspec_attribute(dllimport))
+#   define U_EXPORT __declspec(dllexport)
 #elif defined(__GNUC__)
 #   define U_EXPORT __attribute__((visibility("default")))
 #elif (defined(__SUNPRO_CC) && __SUNPRO_CC >= 0x550) \
@@ -801,8 +795,6 @@ namespace std {
 #   define U_EXPORT __global
 /*#elif defined(__HP_aCC) || defined(__HP_cc)
 #   define U_EXPORT __declspec(dllexport)*/
-#elif defined(_MSC_VER)
-#   define U_EXPORT __declspec(dllexport)
 #else
 #   define U_EXPORT
 #endif
@@ -818,7 +810,7 @@ namespace std {
 
 #ifdef U_IMPORT
     /* Use the predefined value. */
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) || (__has_declspec_attribute(dllexport) && __has_declspec_attribute(dllimport))
     /* Windows needs to export/import data. */
 #   define U_IMPORT __declspec(dllimport)
 #else

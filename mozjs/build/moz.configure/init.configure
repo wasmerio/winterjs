@@ -7,12 +7,14 @@
 include('util.configure')
 include('checks.configure')
 
+# Make `toolkit` available when toolkit/moz.configure is not included.
+toolkit = dependable(None)
+
 option(env='DIST', nargs=1, help='DIST directory')
+
 
 # Do not allow objdir == srcdir builds.
 # ==============================================================
-
-
 @depends('--help', 'DIST')
 @imports(_from='__builtin__', _import='open')
 @imports(_from='os.path', _import='exists')
@@ -230,10 +232,11 @@ def virtualenv_python(env_python, build_env, mozconfig, help):
     if topobjdir.endswith('/js/src'):
         topobjdir = topobjdir[:-7]
 
+    virtualenvs_root = os.path.join(topobjdir, '_virtualenvs')
     with LineIO(lambda l: log.info(l), 'replace') as out:
         manager = VirtualenvManager(
             topsrcdir, topobjdir,
-            os.path.join(topobjdir, '_virtualenv'), out,
+            os.path.join(virtualenvs_root, 'init'), out,
             os.path.join(topsrcdir, 'build', 'virtualenv_packages.txt'))
 
     if python:
@@ -256,7 +259,7 @@ def virtualenv_python(env_python, build_env, mozconfig, help):
 
     python = normsep(manager.python_path)
 
-    if python != normsep(sys.executable):
+    if not normsep(sys.executable).startswith(normsep(virtualenvs_root)):
         log.info('Reexecuting in the virtualenv')
         if env_python:
             del os.environ['PYTHON']
@@ -362,19 +365,30 @@ def shell(value, mozillabuild):
     return find_program(shell)
 
 
+# This defines a reasonable shell for when running with --help.
+# If one was passed in the environment, though, fall back to that.
+@depends('--help', 'CONFIG_SHELL')
+def help_shell(help, shell):
+    if help and not shell:
+        return 'sh'
+
+
+shell = help_shell | shell
+
+
 # Python 3
 # ========
 
 option(env='PYTHON3', nargs=1, help='Python 3 interpreter (3.5 or later)')
 
 
-@depends('PYTHON3')
+@depends('PYTHON3', 'MOZILLABUILD')
 @checking('for Python 3',
           callback=lambda x: '%s (%s)' % (x.path, x.str_version) if x else 'no')
 @imports(_from='__builtin__', _import='Exception')
 @imports(_from='mozbuild.pythonutil', _import='find_python3_executable')
 @imports(_from='mozbuild.pythonutil', _import='python_executable_version')
-def python3(env_python):
+def python3(env_python, mozillabuild):
     python = env_python[0] if env_python else None
 
     # If Python given by environment variable, it must work.
@@ -384,19 +398,33 @@ def python3(env_python):
         except Exception as e:
             raise FatalCheckError('could not determine version of PYTHON '
                                   '(%s): %s' % (python, e))
+    elif mozillabuild:
+        # MozillaBuild provides a Python 3.
+        python = normsep('%s/python3/python3.exe' % mozillabuild)
 
-        if version < (3, 5, 0):
-            raise FatalCheckError('PYTHON3 must point to Python 3.5 or newer; '
-                                  '%d.%d found' % (version[0], version[1]))
+        try:
+            version = python_executable_version(python).version
+        except Exception as e:
+            raise FatalCheckError('could not determine version of '
+                                  'MozillaBuild python: %s' % e)
     else:
         # Fall back to the search routine.
         python, version = find_python3_executable(min_version='3.5.0')
 
-        if not python:
-            return None
-
         # The API returns a bytes whereas everything in configure is unicode.
-        python = python.decode('utf-8')
+        if python:
+            python = python.decode('utf-8')
+
+    if not python:
+        raise FatalCheckError('Python 3.5 or newer is required to build. '
+                              'Ensure a `python3.x` executable is in your '
+                              'PATH or define PYTHON3 to point to a Python '
+                              '3.5 executable.')
+
+    if version < (3, 5, 0):
+        raise FatalCheckError('Python 3.5 or newer is required to build; '
+                              '%s is Python %d.%d' % (python, version[0],
+                                                      version[1]))
 
     return namespace(
         path=python,
@@ -577,7 +605,16 @@ def split_triplet(triplet, allow_unknown=False):
     # There is also a quartet form:
     #   CPU_TYPE-MANUFACTURER-KERNEL-OPERATING_SYSTEM
     # But we can consider the "KERNEL-OPERATING_SYSTEM" as one.
-    cpu, manufacturer, os = triplet.split('-', 2)
+    # Additionally, some may omit "unknown" when the manufacturer
+    # is not specified and emit
+    #   CPU_TYPE-OPERATING_SYSTEM
+    parts = triplet.split('-', 2)
+    if len(parts) == 3:
+        cpu, _, os = parts
+    elif len(parts) == 2:
+        cpu, os = parts
+    else:
+        die("Unexpected triplet string: %s" % triplet)
 
     # Autoconf uses config.sub to validate and canonicalize those triplets,
     # but the granularity of its results has never been satisfying to our
@@ -700,9 +737,11 @@ def split_triplet(triplet, allow_unknown=False):
 
 
 # This defines a fake target/host namespace for when running with --help
-@depends('--help')
-def help_host_target(help):
-    if help:
+# If either --host or --target is passed on the command line, then fall
+# back to the real deal.
+@depends('--help', '--host', '--target')
+def help_host_target(help, host, target):
+    if help and not host and not target:
         return namespace(
             alias='unknown-unknown-unknown',
             cpu='unknown',
@@ -745,7 +784,13 @@ host = help_host_target | host
 def target(value, host, shell):
     if not value:
         return host
-    return split_triplet(config_sub(shell, value[0]))
+    # If --target was only given a cpu arch, expand it with the
+    # non-cpu part of the host.
+    target = value[0]
+    if '-' not in target:
+        cpu, rest = host.alias.split('-', 1)
+        target = '-'.join((target, rest))
+    return split_triplet(config_sub(shell, target))
 
 
 target = help_host_target | target
@@ -821,15 +866,9 @@ def target_variables(target):
         os_target = target.os
         os_arch = target.kernel
 
-    if target.kernel == 'Darwin' and target.cpu == 'x86':
-        os_test = 'i386'
-    else:
-        os_test = target.raw_cpu
-
     return namespace(
         OS_TARGET=os_target,
         OS_ARCH=os_arch,
-        OS_TEST=os_test,
         INTEL_ARCHITECTURE=target.cpu in ('x86', 'x86_64') or None,
     )
 
@@ -840,14 +879,12 @@ add_old_configure_assignment('OS_TARGET',
 set_config('OS_ARCH', target_variables.OS_ARCH)
 add_old_configure_assignment('OS_ARCH',
                              target_variables.OS_ARCH)
-set_config('OS_TEST', target_variables.OS_TEST)
-add_old_configure_assignment('OS_TEST',
-                             target_variables.OS_TEST)
 set_config('CPU_ARCH', target.cpu)
 add_old_configure_assignment('CPU_ARCH', target.cpu)
 set_config('INTEL_ARCHITECTURE', target_variables.INTEL_ARCHITECTURE)
 set_config('TARGET_CPU', target.raw_cpu)
 set_config('TARGET_OS', target.raw_os)
+set_config('TARGET_ENDIANNESS', target.endianness)
 
 
 @depends(host)
@@ -925,6 +962,30 @@ set_define('XP_LINUX', target_is_linux)
 
 
 @depends(target)
+def target_is_openbsd(target):
+    if target.kernel == 'OpenBSD':
+        return True
+
+
+set_define('XP_OPENBSD', target_is_openbsd)
+
+@depends(target)
+def target_is_netbsd(target):
+    if target.kernel == 'NetBSD':
+        return True
+
+
+set_define('XP_NETBSD', target_is_netbsd)
+
+@depends(target)
+def target_is_freebsd(target):
+    if target.kernel == 'FreeBSD':
+        return True
+
+
+set_define('XP_FREEBSD', target_is_freebsd)
+
+@depends(target)
 def target_is_solaris(target):
     if target.kernel == 'SunOS':
         return True
@@ -938,8 +999,8 @@ option('--enable-application', nargs=1, env='MOZ_BUILD_APP',
        help='Application to build. Same as --enable-project.')
 
 
-@depends('--enable-application', '--help')
-def application(app, help):
+@depends('--enable-application')
+def application(app):
     if app:
         return app
 
@@ -947,8 +1008,8 @@ def application(app, help):
 imply_option('--enable-project', application)
 
 
-@depends(check_build_environment, '--help')
-def default_project(build_env, help):
+@depends(check_build_environment)
+def default_project(build_env):
     if build_env.topobjdir.endswith('/js/src'):
         return 'js'
     return 'browser'
@@ -975,8 +1036,8 @@ def include_project_configure(project, external_source_dir, build_env, help):
     return path
 
 
-@depends(include_project_configure, check_build_environment, '--help')
-def build_project(include_project_configure, build_env, help):
+@depends(include_project_configure, check_build_environment)
+def build_project(include_project_configure, build_env):
     ret = os.path.dirname(os.path.relpath(include_project_configure,
                                           build_env.topsrcdir))
     return ret
@@ -987,20 +1048,77 @@ set_define('MOZ_BUILD_APP', build_project)
 add_old_configure_assignment('MOZ_BUILD_APP', build_project)
 
 
+# This is temporary until js/src/configure and configure are merged.
+# Use instead of option() in js/moz.configure and more generally, for
+# options that are shared between configure and js/src/configure.
+@template
+def js_option(*args, **kwargs):
+    opt = option(*args, **kwargs)
+
+    @depends(opt.option, build_project, when=kwargs.get('when'))
+    def js_option(value, build_project):
+        if build_project != 'js':
+            return value.format(opt.option)
+
+    add_old_configure_arg(js_option)
+
+
+js_option(env='MOZILLA_OFFICIAL',
+          help='Build an official release')
+
+
+@depends('MOZILLA_OFFICIAL')
+def mozilla_official(official):
+    if official:
+        return True
+
+
+set_config('MOZILLA_OFFICIAL', mozilla_official)
+set_define('MOZILLA_OFFICIAL', mozilla_official)
+add_old_configure_assignment('MOZILLA_OFFICIAL', mozilla_official)
+
+
 # set RELEASE_OR_BETA and NIGHTLY_BUILD variables depending on the cycle we're in
 # The logic works like this:
 # - if we have "a1" in GRE_MILESTONE, we're building Nightly (define NIGHTLY_BUILD)
 # - otherwise, if we have "a" in GRE_MILESTONE, we're building Nightly or Aurora
 # - otherwise, we're building Release/Beta (define RELEASE_OR_BETA)
-@depends(check_build_environment, '--help')
+@depends(check_build_environment, build_project, '--help')
 @imports(_from='__builtin__', _import='open')
+@imports('os')
 @imports('re')
-def milestone(build_env, _):
-    milestone_path = os.path.join(build_env.topsrcdir,
-                                  'config',
-                                  'milestone.txt')
-    with open(milestone_path, 'r') as fh:
-        milestone = fh.read().splitlines()[-1]
+def milestone(build_env, build_project, _):
+    versions = []
+    paths = ['config/milestone.txt']
+    if build_project == 'js':
+        paths = paths * 3
+    else:
+        paths += [
+            'browser/config/version.txt',
+            'browser/config/version_display.txt',
+        ]
+    for f in ('version.txt', 'version_display.txt'):
+        f = os.path.join(build_project, 'config', f)
+        if not os.path.exists(os.path.join(build_env.topsrcdir, f)):
+            break
+        paths.append(f)
+
+    for p in paths:
+        with open(os.path.join(build_env.topsrcdir, p), 'r') as fh:
+            content = fh.read().splitlines()
+            if not content:
+                die('Could not find a version number in {}'.format(p))
+            versions.append(content[-1])
+
+    milestone, firefox_version, firefox_version_display = versions[:3]
+
+    # version.txt content from the project directory if there is one, otherwise
+    # the firefox version.
+    app_version = versions[3] if len(versions) > 3 else firefox_version
+    # version_display.txt content from the project directory if there is one,
+    # otherwise version.txt content from the project directory, otherwise the
+    # firefox version for display.
+    app_version_display = versions[-1] if len(versions) > 3 else firefox_version_display
 
     is_nightly = is_release_or_beta = None
 
@@ -1022,13 +1140,14 @@ def milestone(build_env, _):
                      uaversion='%s.0' % major_version,
                      symbolversion='%s%s' % (major_version, ab_patch),
                      is_nightly=is_nightly,
-                     is_release_or_beta=is_release_or_beta)
+                     is_release_or_beta=is_release_or_beta,
+                     app_version=app_version,
+                     app_version_display=app_version_display)
 
 
 set_config('GRE_MILESTONE', milestone.version)
 set_config('NIGHTLY_BUILD', milestone.is_nightly)
 set_define('NIGHTLY_BUILD', milestone.is_nightly)
-add_old_configure_assignment('NIGHTLY_BUILD', milestone.is_nightly)
 set_config('RELEASE_OR_BETA', milestone.is_release_or_beta)
 set_define('RELEASE_OR_BETA', milestone.is_release_or_beta)
 add_old_configure_assignment('RELEASE_OR_BETA',
@@ -1041,6 +1160,10 @@ set_config('MOZILLA_SYMBOLVERSION', milestone.symbolversion)
 # JS configure still wants to look at these.
 add_old_configure_assignment('MOZILLA_VERSION', milestone.version)
 add_old_configure_assignment('MOZILLA_SYMBOLVERSION', milestone.symbolversion)
+
+set_config('MOZ_APP_VERSION', milestone.app_version)
+set_config('MOZ_APP_VERSION_DISPLAY', milestone.app_version_display)
+add_old_configure_assignment('MOZ_APP_VERSION', milestone.app_version)
 
 # The app update channel is 'default' when not supplied. The value is used in
 # the application's confvars.sh (and is made available to a project specific
@@ -1097,59 +1220,6 @@ def project_flag(env=None, set_for_old_configure=False,
 # milestone.is_nightly corresponds to cases NIGHTLY_BUILD is set.
 
 
-@depends(milestone, '--help')
-def enabled_in_nightly(milestone, _):
+@depends(milestone)
+def enabled_in_nightly(milestone):
     return milestone.is_nightly
-
-# Set the MOZ_CONFIGURE_OPTIONS variable with all the options that
-# were passed somehow (environment, command line, mozconfig)
-
-
-@dependable
-@imports(_from='mozbuild.shellutil', _import='quote')
-@imports('__sandbox__')
-def all_configure_options():
-    result = []
-    previous = None
-    for option in __sandbox__._options.itervalues():
-        # __sandbox__._options contains items for both option.name and
-        # option.env. But it's also an OrderedDict, meaning both are
-        # consecutive.
-        # Also ignore OLD_CONFIGURE and MOZCONFIG because they're not
-        # interesting.
-        if option == previous or option.env in ('OLD_CONFIGURE', 'MOZCONFIG'):
-            continue
-        previous = option
-        value = __sandbox__._value_for(option)
-        # We only want options that were explicitly given on the command
-        # line, the environment, or mozconfig, and that differ from the
-        # defaults.
-        if (value is not None and value.origin not in ('default', 'implied') and
-                value != option.default):
-            result.append(__sandbox__._raw_options[option])
-        # We however always include options that are sent to old configure
-        # because we don't know their actual defaults. (Keep the conditions
-        # separate for ease of understanding and ease of removal)
-        elif (option.help == 'Help missing for old configure options' and
-                option in __sandbox__._raw_options):
-            result.append(__sandbox__._raw_options[option])
-
-    return quote(*result)
-
-
-set_config('MOZ_CONFIGURE_OPTIONS', all_configure_options)
-
-
-# This is temporary until js/src/configure and configure are merged.
-# Use instead of option() in js/moz.configure and more generally, for
-# options that are shared between configure and js/src/configure.
-@template
-def js_option(*args, **kwargs):
-    opt = option(*args, **kwargs)
-
-    @depends(opt.option, build_project, when=kwargs.get('when'))
-    def js_option(value, build_project):
-        if build_project != 'js':
-            return value.format(opt.option)
-
-    add_old_configure_arg(js_option)

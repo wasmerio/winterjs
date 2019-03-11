@@ -64,21 +64,17 @@ class U_COMMON_API FilteredBreakIteratorBuilder : public UObject {
    * @deprecated ICU 60 use createEmptyInstance instead
    * @see createEmptyInstance()
    */
-  static inline FilteredBreakIteratorBuilder *createInstance(UErrorCode &status) {
-    return createEmptyInstance(status);
-  }
+  static FilteredBreakIteratorBuilder *createInstance(UErrorCode &status);
 #endif  /* U_HIDE_DEPRECATED_API */
 
-#ifndef U_HIDE_DRAFT_API
   /**
    * Construct an empty FilteredBreakIteratorBuilder.
    * In this state, it will not suppress any segment boundaries.
    * @param status The error code.
    * @return the new builder
-   * @draft ICU 60
+   * @stable ICU 60
    */
   static FilteredBreakIteratorBuilder *createEmptyInstance(UErrorCode &status);
-#endif  /* U_HIDE_DRAFT_API */
 
   /**
    * Suppress a certain string from being the end of a segment.
@@ -97,7 +93,7 @@ class U_COMMON_API FilteredBreakIteratorBuilder : public UObject {
    * This function does not create any new segment boundaries, but only serves to un-do
    * the effect of earlier calls to suppressBreakAfter, or to un-do the effect of
    * locale data which may be suppressing certain strings.
-   * @param exception the exception to remove
+   * @param string the exception to remove
    * @param status error code
    * @return returns TRUE if the string was present and now removed,
    * FALSE if the call was a no-op because the string was not being suppressed.
@@ -105,7 +101,6 @@ class U_COMMON_API FilteredBreakIteratorBuilder : public UObject {
    */
   virtual UBool unsuppressBreakAfter(const UnicodeString& string, UErrorCode& status) = 0;
 
-#ifndef U_HIDE_DEPRECATED_API
   /**
    * This function has been deprecated in favor of wrapIteratorWithFilter()
    * The behavior is identical.
@@ -116,9 +111,7 @@ class U_COMMON_API FilteredBreakIteratorBuilder : public UObject {
    * @see wrapBreakIteratorWithFilter()
    */
   virtual BreakIterator *build(BreakIterator* adoptBreakIterator, UErrorCode& status) = 0;
-#endif  /* U_HIDE_DEPRECATED_API */
 
-#ifndef U_HIDE_DRAFT_API
   /**
    * Wrap (adopt) an existing break iterator in a new filtered instance.
    * The resulting BreakIterator is owned by the caller.
@@ -130,12 +123,11 @@ class U_COMMON_API FilteredBreakIteratorBuilder : public UObject {
    * @param adoptBreakIterator the break iterator to adopt
    * @param status error code
    * @return the new BreakIterator, owned by the caller.
-   * @draft ICU 60
+   * @stable ICU 60
    */
   inline BreakIterator *wrapIteratorWithFilter(BreakIterator* adoptBreakIterator, UErrorCode& status) {
     return build(adoptBreakIterator, status);
   }
-#endif  /* U_HIDE_DRAFT_API */
 
  protected:
   /**

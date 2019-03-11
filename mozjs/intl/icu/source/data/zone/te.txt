@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 te{
-    Version{"2.1.36.86"}
+    Version{"2.1.43.50"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"సమన్వయ సార్వజనీన సమయం"}
+        }
+        "Europe:Dublin"{
+            ld{"ఐరిష్ ప్రామాణిక సమయం"}
+        }
+        "Europe:London"{
+            ld{"బ్రిటీష్ వేసవి సమయం"}
+        }
         "meta:Acre"{
             ld{"ఏకర్ వేసవి సమయం"}
             lg{"ఏకర్ సమయం"}

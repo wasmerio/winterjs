@@ -11,16 +11,17 @@ info: |
     8. Let booleanTrapResult be ToBoolean(Call(trap, handler, «target»)).
     9. ReturnIfAbrupt(booleanTrapResult).
     ...
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
-    isExtensible: function(t) {
-        throw new Test262Error();
-    }
+  isExtensible: function(t) {
+    throw new Test262Error();
+  }
 });
 
 assert.throws(Test262Error, function() {
-    Object.isExtensible(p);
+  Object.isExtensible(p);
 });
 
 reportCompare(0, 0);

@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -22,7 +22,7 @@ features: [DataView, ArrayBuffer, Symbol, BigInt, arrow-function]
 var getBigInt64 = DataView.prototype.getBigInt64;
 
 assert.throws(TypeError, () => getBigInt64.call(undefined),
-              "undefined");
+  "undefined");
 
 assert.throws(TypeError, () => getBigInt64.call(null), "null");
 

@@ -12,14 +12,14 @@
 
 ##############################################################################
 # Keep the following in sync with the version - see common/unicode/uvernum.h
-U_ICUDATA_NAME=icudt60
+U_ICUDATA_NAME=icudt63
 ##############################################################################
 !IF "$(UWP)" == "UWP"
 # Optionally change the name of the data file for the UWP version.
-U_ICUDATA_NAME=icudt60
+U_ICUDATA_NAME=icudt63
 !ENDIF
 U_ICUDATA_ENDIAN_SUFFIX=l
-UNICODE_VERSION=10.0
+UNICODE_VERSION=11.0
 ICU_LIB_TARGET=$(DLL_OUTPUT)\$(U_ICUDATA_NAME).dll
 
 #  ICUMAKE
@@ -33,12 +33,20 @@ ICU_LIB_TARGET=$(DLL_OUTPUT)\$(U_ICUDATA_NAME).dll
 !ENDIF
 !MESSAGE ICU data make path is $(ICUMAKE)
 
+!IF [py -3]!=0
+!MESSAGE Information: Unable to find Python 3. ICU versions 64 and later will require Python 3 to build.
+!MESSAGE Information: See ICU-10923 for more information: https://unicode-org.atlassian.net/browse/ICU-10923
+!ELSE
+!MESSAGE Information: Found Python 3. You are all set for ICU 64, which will require Python 3 to build.
+!MESSAGE Information: For more info on Python 3 requirement, see: https://unicode-org.atlassian.net/browse/ICU-10923
+!ENDIF
+
 # Suffixes for data files
 .SUFFIXES : .nrm .icu .ucm .cnv .dll .dat .res .txt .c
 
 ICUOUT=$(ICUMAKE)\out
 
-#  the prefix "icudt21_" for use in filenames
+#  the prefix "icudt62_" for use in filenames
 ICUPKG=$(U_ICUDATA_NAME)$(U_ICUDATA_ENDIAN_SUFFIX)
 
 # need to nuke \\ for .NET...

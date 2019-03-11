@@ -73,6 +73,18 @@
    fun:FcConfigAppFontAddDir
    ...
 }
+{
+   Bug 1231701
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:FcDirScanConfig
+   obj:/usr/lib/x86_64-linux-gnu/libfontconfig.so.1.5.0
+   fun:FcDirCacheScan
+   fun:FcConfigAddDirList
+   fun:FcConfigAppFontAddDir
+   ...
+}
 # Leaks due to either Gtk+3 or cairo, but Gecko is not directly involved with
 # those cairo interactions.  One suspected cause is Gecko not closing the
 # display to work around a bug in old Gtk+3 versions.  See also bug 1228724.
@@ -164,7 +176,7 @@
    Bug 966673
    Memcheck:Leak
    fun:malloc
-   obj:/lib64/libresolv-2.12.so
+   obj:/lib/x86_64-linux-gnu/libresolv-2.13.so
    ...
    fun:gaih_inet
    fun:getaddrinfo
@@ -347,6 +359,199 @@
    fun:_ZN36_$LT$smallvec..SmallVec$LT$A$GT$$GT$4grow*
    fun:Servo_InvalidateStyleForDocStateChanges
    fun:_ZN7mozilla13ServoStyleSet38InvalidateStyleForDocumentStateChangesENS_11EventStatesE
+}
+
+
+##############################################################################
+## BEGIN suppressions for Stylo as compiled by rustc 1.25.0
+# Even more similar issues, resulting from transitioning to rustc 1.25.0.
+# See bug 1447137.
+
+
+# Suppressions rooted at *style*values*specified*color*Color*style*parser*Parse*parse*
+
+{
+   bug1447137-01
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*SimpleShadow*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+}
+
+{
+   bug1447137-02
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*UrlPaintServer*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+}
+
+{
+   bug1447137-03
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_fallback*
+   fun:*style*UrlPaintServer*
+   fun:*style*parse_value*
+}
+
+{
+   bug1447137-04
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_border*
+   fun:*style*parse_into*
+   fun:*style*parse_value*
+}
+
+{
+   bug1447137-05
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_quirky*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+}
+
+{
+   bug1447137-06
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+   fun:*style*parse_value*
+}
+
+{
+   bug1447137-07
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_border*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+}
+
+{
+   bug1447137-08
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_quirky*
+   fun:*style*parse_value*
+   fun:*style*substitute_variables*
+}
+
+{
+   bug1447137-09
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*Gradient*
+   fun:*style*Parse*
+   fun:*style*parse_value*
+}
+
+{
+   bug1447137-10
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*SimpleShadow*
+   fun:*style*parse*closure*
+   fun:*style*parse_value*
+}
+
+{
+   bug1447137-11
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_border*
+   fun:*style*substitute_variables*
+   fun:*style*substitute_variables*
+}
+
+{
+   bug1447137-12
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_border*
+   fun:*style*parse_value*
+   fun:*style*substitute_variables*
+}
+
+{
+   bug1447137-13
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_value*
+   fun:*style*substitute_variables*
+   fun:*style*substitute_variables*
+}
+
+
+{
+   bug1447137-14
+   Memcheck:Cond
+   fun:*style*values*specified*color*Color*style*parser*Parse*parse*
+   fun:*style*parse_value*
+   fun:*style*parse_into*
+   fun:*geckoservo*parse_property_into*
+}
+
+##########################################
+# Suppressions rooted at *selectors*parser*SelectorList*Impl*parse*
+
+{
+   bug1454511
+   Memcheck:Cond
+   fun:*selectors*parser*SelectorList*Impl*parse*
+}
+
+##########################################
+# Suppressions rooted at *style*properties*shorthands*
+
+{
+   bug1447137-17
+   Memcheck:Cond
+   fun:*style*properties*shorthands*
+   fun:*style*properties*PropertyDeclaration*parse_into*
+   fun:*style*parse_value*
+   fun:*cssparser*Iterator*next*
+}
+
+## END suppressions for Stylo as compiled by rustc 1.25.0
+##############################################################################
+
+
+# Another suppression for Stylo, August 2018.  See bug 1479055.
+#
+# Conditional jump or move depends on uninitialised value(s)
+#    at style::[..]::clip_path::cascade_property (gecko_properties.rs:17152)
+#    by style::properties::cascade_rules (properties.rs:83642)
+#    by [..]::cascade_style_and_visited (properties.rs:83129)
+#    by [..]::cascade_primary_style (style/style_resolver.rs:216)
+{
+   Bug 1479055: style::properties::longhands::clip_path::cascade_property
+   Memcheck:Cond
+   fun:_ZN5style10properties9longhands9clip_path16cascade_property*
+   fun:_ZN5style10properties13cascade_rules*
+   fun:_ZN109_$LT$style*style_resolver*cascade_style_and_visited*
+   fun:_ZN109_$LT$style*cascade_primary_style*
+}
+
+# Another suppression for Stylo, October 2018.  See bug 1496486.
+# Conditional jump or move depends on uninitialised value(s)
+#    at 0x108E2931: style::properties::longhands::font_language_override::cascade_property+81 (font.rs:2095)
+#    by 0x107E95B4: style::properties::cascade::Cascade::apply_properties+580 (cascade.rs:463)
+#    by 0x107E82D8: style::properties::cascade::cascade_rules+2440 (cascade.rs:303)
+#    by 0x107E7206: <style::style_resolver::StyleResolverForElement<'a, 'ctx, 'le, E>>::cascade_style_and_visited+310 (cascade.rs:93)
+#  Uninitialised value was created by a stack allocation
+#    at 0x10A42A40: style::properties::shorthands::font::parse_value (font.rs:376)
+{
+   Bug 1496486: style::properties::longhands::font_language_override::cascade_property
+   Memcheck:Cond
+   fun:_ZN5style10properties9longhands22font_language_override16cascade_property*
+   fun:_ZN5style10properties7cascade7Cascade16apply_properties*
+   fun:_ZN5style10properties7cascade13cascade_rules*
 }
 
 ###################################################

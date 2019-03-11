@@ -4,15 +4,15 @@
 /*---
 info: String.prototype.toString() returns this string value
 es5id: 15.5.4.2_A1_T4
-description: Create new String(function(){}()) and check it`s method toString()
+description: Create new String(function(){}()) and check its method toString()
 ---*/
 
-var __string__obj = new String(function(){}());
+var __string__obj = new String(function() {}());
 
 //////////////////////////////////////////////////////////////////////////////
 //CHECK#
 if (__string__obj.toString() !== "undefined") {
-  $ERROR('#1: __string__obj = new String(function(){}()); __string__obj.toString() === "undefined". Actual: __string__obj.toString() ==='+__string__obj.toString() ); 
+  $ERROR('#1: __string__obj = new String(function(){}()); __string__obj.toString() === "undefined". Actual: __string__obj.toString() ===' + __string__obj.toString());
 }
 //
 //////////////////////////////////////////////////////////////////////////////

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 is{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Samræmdur alþjóðlegur tími"}
+        }
+        "Europe:Dublin"{
+            ld{"Sumartími á Írlandi"}
+        }
+        "Europe:London"{
+            ld{"Sumartími í Bretlandi"}
+        }
         "meta:Afghanistan"{
             ls{"Afganistantími"}
         }

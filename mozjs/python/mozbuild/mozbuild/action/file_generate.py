@@ -33,6 +33,8 @@ def main(argv):
                         help='The file to generate')
     parser.add_argument('dep_file', metavar='dep-file', type=str,
                         help='File to write any additional make dependencies to')
+    parser.add_argument('dep_target', metavar='dep-target', type=str,
+                        help='Make target to use in the dependencies file')
     parser.add_argument('additional_arguments', metavar='arg',
                         nargs=argparse.REMAINDER,
                         help="Additional arguments to the script's main() method")
@@ -65,7 +67,13 @@ def main(argv):
     ret = 1
     try:
         with FileAvoidWrite(args.output_file, mode='rb') as output:
-            ret = module.__dict__[method](output, *args.additional_arguments, **kwargs)
+            try:
+                ret = module.__dict__[method](output, *args.additional_arguments, **kwargs)
+            except:
+                # Ensure that we don't overwrite the file if the script failed.
+                output.avoid_writing_to_file()
+                raise
+
             # The following values indicate a statement of success:
             #  - a set() (see below)
             #  - 0
@@ -95,18 +103,13 @@ def main(argv):
                 deps |= set(buildconfig.get_dependencies())
 
                 mk = Makefile()
-                mk.create_rule([args.output_file]).add_dependencies(deps)
+                mk.create_rule([args.dep_target]).add_dependencies(deps)
                 with FileAvoidWrite(args.dep_file) as dep_file:
                     mk.dump(dep_file)
-        # Even when our file's contents haven't changed, we want to update
-        # the file's mtime so make knows this target isn't still older than
-        # whatever prerequisite caused it to be built this time around.
-        try:
-            os.utime(args.output_file, None)
-        except:
-            print('Error processing file "{0}"'.format(args.output_file),
-                  file=sys.stderr)
-            traceback.print_exc()
+            else:
+                # Ensure that we don't overwrite the file if the script failed.
+                output.avoid_writing_to_file()
+
     except IOError as e:
         print('Error opening file "{0}"'.format(e.filename), file=sys.stderr)
         traceback.print_exc()

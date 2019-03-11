@@ -16,10 +16,7 @@ from mozpack.chrome.manifest import (
 from mozpack.errors import errors
 from urlparse import urlparse
 import mozpack.path as mozpath
-from mozpack.files import (
-    ManifestFile,
-    XPTFile,
-)
+from mozpack.files import ManifestFile
 from mozpack.copier import (
     FileRegistry,
     FileRegistrySubtree,
@@ -50,8 +47,8 @@ The base interface provides the following methods:
     - add(path, content)
         Add the given content (BaseFile instance) at the given virtual path
     - add_interfaces(path, content)
-        Add the given content (BaseFile instance) and link it to other
-        interfaces in the parent directory of the given virtual path.
+        Add the given content (BaseFile instance) as an interface. Equivalent
+        to add(path, content) with the right add_manifest().
     - add_manifest(entry)
         Add a ManifestEntry.
     - contains(path)
@@ -177,15 +174,9 @@ class FlatSubFormatter(object):
         self.copier[path].add(entry)
 
     def add_interfaces(self, path, content):
-        # Interfaces in the same directory are all linked together in an
-        # interfaces.xpt file.
-        interfaces_path = mozpath.join(mozpath.dirname(path),
-                                       'interfaces.xpt')
-        if not self.copier.contains(interfaces_path):
-            self.add_manifest(ManifestInterfaces(mozpath.dirname(path),
-                                                 'interfaces.xpt'))
-            self.copier.add(interfaces_path, XPTFile())
-        self.copier[interfaces_path].add(content)
+        self.copier.add(path, content)
+        self.add_manifest(ManifestInterfaces(mozpath.dirname(path),
+                                             mozpath.basename(path)))
 
     def contains(self, path):
         assert '*' not in path
@@ -329,13 +320,17 @@ class OmniJarSubFormatter(PiecemealFormatter):
             return path[-1].endswith(('.js', '.xpt'))
         if path[0] == 'res':
             return len(path) == 1 or \
-                (path[1] != 'cursors' and path[1] != 'MainMenu.nib')
+                (path[1] != 'cursors' and \
+                 path[1] != 'touchbar' and \
+                 path[1] != 'MainMenu.nib')
         if path[0] == 'defaults':
             return len(path) != 3 or \
                 not (path[2] == 'channel-prefs.js' and
                      path[1] in ['pref', 'preferences'])
         return path[0] in [
             'modules',
+            'actors',
+            'dictionaries',
             'greprefs.js',
             'hyphenation',
             'localization',

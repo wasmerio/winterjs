@@ -1,8 +1,14 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 lb{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Europe:Dublin"{
+            ld{"Iresch Summerzäit"}
+        }
+        "Europe:London"{
+            ld{"Britesch Summerzäit"}
+        }
         "meta:Acre"{
             ld{"Acre-Summerzäit"}
             lg{"Acre-Zäit"}

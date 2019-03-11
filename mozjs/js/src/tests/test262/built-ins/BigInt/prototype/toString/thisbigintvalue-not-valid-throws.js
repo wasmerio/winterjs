@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright 2017 Leo Balter. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -17,13 +17,17 @@ info: |
   2. If Type(value) is Object and value has a [[BigIntData]] internal slot, then
     ...
   3. Throw a TypeError exception.
-features: [BigInt, Symbol.toPrimitive]
+features: [BigInt, Symbol, Symbol.toPrimitive]
 ---*/
 
 var toString = BigInt.prototype.toString;
 
+assert.sameValue(typeof toString, 'function');
+
 assert.throws(TypeError, function() {
-  toString.call({x: 1n});
+  toString.call({
+    x: 1n
+  });
 }, '{x: 1n}');
 
 assert.throws(TypeError, function() {
@@ -31,9 +35,15 @@ assert.throws(TypeError, function() {
 }, '[1n]');
 
 var obj = {
-  valueOf: function() { throw new Test262Error('no [[BigIntData]]') },
-  toString: function() { throw new Test262Error('no [[BigIntData]]') },
-  [Symbol.toPrimitive]: function() { throw new Test262Error('no [[BigIntData]]') }
+  valueOf: function() {
+    throw new Test262Error('no [[BigIntData]]')
+  },
+  toString: function() {
+    throw new Test262Error('no [[BigIntData]]')
+  },
+  [Symbol.toPrimitive]: function() {
+    throw new Test262Error('no [[BigIntData]]')
+  }
 };
 assert.throws(TypeError, function() {
   toString.call(obj);

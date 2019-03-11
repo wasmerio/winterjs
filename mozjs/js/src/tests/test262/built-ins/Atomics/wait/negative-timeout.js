@@ -1,3 +1,4 @@
+// |reftest| skip-if(!xulRuntime.shell||!this.hasOwnProperty('Atomics')||!this.hasOwnProperty('SharedArrayBuffer')) -- browser cannot block main thread, Atomics,SharedArrayBuffer is not enabled unconditionally
 // Copyright (C) 2017 Mozilla Corporation.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -5,27 +6,18 @@
 esid: sec-atomics.wait
 description: >
   Test that Atomics.wait times out with a negative timeout
+features: [Atomics, SharedArrayBuffer, TypedArray]
+flags: [CanBlockIsTrue]
 ---*/
 
-$262.agent.start(
-`
-$262.agent.receiveBroadcast(function (sab, id) {
-  var ia = new Int32Array(sab);
-  $262.agent.report(Atomics.wait(ia, 0, 0, -5)); // -5 => 0
-  $262.agent.leaving();
-})
-`);
+const i32a = new Int32Array(
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4)
+);
 
-var ia = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-
-$262.agent.broadcast(ia.buffer);
-assert.sameValue(getReport(), "timed-out");
-
-function getReport() {
-    var r;
-    while ((r = $262.agent.getReport()) == null)
-        $262.agent.sleep(100);
-    return r;
-}
+assert.sameValue(
+  Atomics.wait(i32a, 0, 0, -1),
+  "timed-out",
+  'Atomics.wait(i32a, 0, 0, -1) returns "timed-out"'
+);
 
 reportCompare(0, 0);

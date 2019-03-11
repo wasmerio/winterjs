@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 bg{
-    Version{"2.1.37.59"}
+    Version{"2.1.43.94"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Координирано универсално време"}
+        }
+        "Europe:Dublin"{
+            ld{"Ирландско стандартно време"}
+        }
+        "Europe:London"{
+            ld{"Британско лятно часово време"}
+        }
         "meta:Afghanistan"{
             ls{"Афганистанско време"}
         }

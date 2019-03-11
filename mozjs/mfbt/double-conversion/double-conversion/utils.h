@@ -68,7 +68,7 @@ inline void abort_noreturn() { MOZ_CRASH(); }
 // disabled.)
 // On Linux,x86 89255e-22 != Div_double(89255.0/1e22)
 #if defined(_M_X64) || defined(__x86_64__) || \
-    defined(__ARMEL__) || defined(__avr32__) || \
+    defined(__ARMEL__) || defined(__avr32__) || defined(_M_ARM) || defined(_M_ARM64) || \
     defined(__hppa__) || defined(__ia64__) || \
     defined(__mips__) || \
     defined(__powerpc__) || defined(__ppc__) || defined(__ppc64__) || \
@@ -79,7 +79,8 @@ inline void abort_noreturn() { MOZ_CRASH(); }
     defined(__AARCH64EL__) || defined(__aarch64__) || \
     defined(__riscv)
 #define DOUBLE_CONVERSION_CORRECT_DOUBLE_OPERATIONS 1
-#elif defined(__mc68000__)
+#elif defined(__mc68000__) || \
+    defined(__pnacl__) || defined(__native_client__)
 #undef DOUBLE_CONVERSION_CORRECT_DOUBLE_OPERATIONS
 #elif defined(_M_IX86) || defined(__i386__) || defined(__i386)
 #if defined(_WIN32)
@@ -92,13 +93,23 @@ inline void abort_noreturn() { MOZ_CRASH(); }
 #error Target architecture was not detected as supported by Double-Conversion.
 #endif
 
-#if defined(__GNUC__)
-#define DOUBLE_CONVERSION_UNUSED __attribute__((unused))
+#if defined(_WIN32) && !defined(__MINGW32__)
+
+typedef signed char int8_t;
+typedef unsigned char uint8_t;
+typedef short int16_t;  // NOLINT
+typedef unsigned short uint16_t;  // NOLINT
+typedef int int32_t;
+typedef unsigned int uint32_t;
+typedef __int64 int64_t;
+typedef unsigned __int64 uint64_t;
+// intptr_t and friends are defined in crtdefs.h through stdio.h.
+
 #else
-#define DOUBLE_CONVERSION_UNUSED
-#endif
 
 #include <stdint.h>
+
+#endif
 
 typedef uint16_t uc16;
 
@@ -120,8 +131,8 @@ typedef uint16_t uc16;
 
 // A macro to disallow the evil copy constructor and operator= functions
 // This should be used in the private: declarations for a class
-#ifndef DISALLOW_COPY_AND_ASSIGN
-#define DISALLOW_COPY_AND_ASSIGN(TypeName)      \
+#ifndef DC_DISALLOW_COPY_AND_ASSIGN
+#define DC_DISALLOW_COPY_AND_ASSIGN(TypeName)      \
   TypeName(const TypeName&);                    \
   void operator=(const TypeName&)
 #endif
@@ -132,10 +143,10 @@ typedef uint16_t uc16;
 // This should be used in the private: declarations for a class
 // that wants to prevent anyone from instantiating it. This is
 // especially useful for classes containing only static methods.
-#ifndef DISALLOW_IMPLICIT_CONSTRUCTORS
-#define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
+#ifndef DC_DISALLOW_IMPLICIT_CONSTRUCTORS
+#define DC_DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
   TypeName();                                    \
-  DISALLOW_COPY_AND_ASSIGN(TypeName)
+  DC_DISALLOW_COPY_AND_ASSIGN(TypeName)
 #endif
 
 namespace double_conversion {
@@ -277,7 +288,7 @@ class StringBuilder {
 
   bool is_finalized() const { return position_ < 0; }
 
-  DISALLOW_IMPLICIT_CONSTRUCTORS(StringBuilder);
+  DC_DISALLOW_IMPLICIT_CONSTRUCTORS(StringBuilder);
 };
 
 // The type-based aliasing rule allows the compiler to assume that pointers of
@@ -308,8 +319,12 @@ template <class Dest, class Source>
 inline Dest BitCast(const Source& source) {
   // Compile time assertion: sizeof(Dest) == sizeof(Source)
   // A compile error here means your Dest and Source have different sizes.
-  DOUBLE_CONVERSION_UNUSED
-      typedef char VerifySizesAreEqual[sizeof(Dest) == sizeof(Source) ? 1 : -1];
+#if __cplusplus >= 201103L
+  static_assert(sizeof(Dest) == sizeof(Source),
+                "source and destination size mismatch");
+#else
+  typedef char VerifySizesAreEqual[sizeof(Dest) == sizeof(Source) ? 1 : -1];
+#endif
 
   Dest dest;
   memmove(&dest, &source, sizeof(dest));

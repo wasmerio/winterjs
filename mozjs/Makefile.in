@@ -31,13 +31,18 @@ DIST_GARBAGE = config.cache config.log config.status* config-defs.h \
    .mozconfig.mk
 
 ifndef MOZ_PROFILE_USE
-buildid.h source-repo.h: FORCE
+# Automation builds should always have a new buildid, but for the sake of not
+# re-linking libxul on every incremental build we do not enforce this for
+# developer builds.  Tests always need a new buildid as well.
+ifneq (,$(MOZ_AUTOMATION)$(MOZ_BUILD_DATE)$(TEST_MOZBUILD))
+$(MDDEPDIR)/buildid.h.stub $(MDDEPDIR)/source-repo.h.stub: FORCE
 endif
-
-ifdef JS_STANDALONE
-configure_dir = $(topsrcdir)/js/src
-else
-configure_dir = $(topsrcdir)
+# Additionally, provide a dummy target during tests, because
+# faster/rules.mk will expect these targets to exist.
+ifdef TEST_MOZBUILD
+source-repo.h: $(MDDEPDIR)/source-repo.h.stub
+buildid.h: $(MDDEPDIR)/buildid.h.stub
+endif
 endif
 
 BUILD_BACKEND_FILES := $(addprefix backend.,$(addsuffix Backend,$(BUILD_BACKENDS)))
@@ -46,12 +51,7 @@ ifndef TEST_MOZBUILD
 ifndef MOZ_PROFILE_USE
 # We need to explicitly put BUILD_BACKEND_FILES here otherwise the rule in
 # rules.mk doesn't run early enough.
-$(TIERS) binaries:: CLOBBER $(configure_dir)/configure config.status $(BUILD_BACKEND_FILES)
-ifdef MOZ_WIDGET_TOOLKIT
-ifdef COMPILE_ENVIRONMENT
-$(TIERS) binaries:: $(topsrcdir)/js/src/configure js/src/config.status
-endif
-endif
+$(TIERS) binaries:: CLOBBER $(BUILD_BACKEND_FILES)
 endif
 endif
 
@@ -64,24 +64,6 @@ CLOBBER: $(topsrcdir)/CLOBBER
 	@echo 'Please run the build through "mach build".'
 	@exit 1
 endif
-
-$(topsrcdir)/configure: $(topsrcdir)/configure.in $(topsrcdir)/old-configure.in
-$(topsrcdir)/js/src/configure: $(topsrcdir)/js/src/configure.in $(topsrcdir)/js/src/old-configure.in
-$(topsrcdir)/configure $(topsrcdir)/js/src/configure:
-	@echo 'STOP!  $? has changed, and your configure is out of date.'
-	@echo 'Please rerun autoconf and re-configure your build directory.'
-	@echo 'To ignore this message, touch "$@",'
-	@echo 'but your build might not succeed.'
-	@exit 1
-
-config.status: $(configure_dir)/configure $(configure_dir)/old-configure
-js/src/config.status: $(topsrcdir)/js/src/configure $(topsrcdir)/js/src/old-configure
-config.status js/src/config.status:
-	@echo 'STOP!  $? has changed and needs to be run again.'
-	@echo 'Please rerun it.'
-	@echo 'To ignore this message, touch "$(CURDIR)/$@",'
-	@echo 'but your build might not succeed.'
-	@exit 1
 
 # Regenerate the build backend if it is out of date. We only have this rule in
 # this main make file because having it in rules.mk and applied to partial tree
@@ -104,7 +86,7 @@ default:: $(BUILD_BACKEND_FILES)
 endif
 
 install_manifests := \
-  $(addprefix dist/,branding idl include public private xpi-stage) \
+  $(addprefix dist/,branding include public private xpi-stage) \
   _tests \
   $(NULL)
 # Skip the dist/bin install manifest when using the hybrid
@@ -116,48 +98,20 @@ install_manifests += dist/bin
 endif
 install_manifest_depends = \
   CLOBBER \
-  $(configure_dir)/configure \
-  config.status \
   $(BUILD_BACKEND_FILES) \
   $(NULL)
-
-ifdef MOZ_WIDGET_TOOLKIT
-ifdef COMPILE_ENVIRONMENT
-install_manifest_depends += \
-  $(topsrcdir)/js/src/configure \
-  js/src/config.status \
-  $(NULL)
-endif
-endif
 
 .PHONY: install-manifests
 install-manifests: $(addprefix install-,$(install_manifests))
 
 # If we're using the hybrid FasterMake/RecursiveMake backend, we want
 # to recurse in the faster/ directory in parallel of install manifests.
-# But dist/idl needs to happen before (cf. dependencies in
-# config/faster/rules.mk)
 ifneq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
 install-manifests: faster
 .PHONY: faster
-faster: install-dist/idl
+faster:
 	$(MAKE) -C faster FASTER_RECURSIVE_MAKE=1
 endif
-
-.PHONY: tup
-tup:
-	$(call BUILDSTATUS,TIERS $(if $(MOZ_ARTIFACT_BUILDS),artifact )make tup)
-ifdef MOZ_ARTIFACT_BUILDS
-	$(call BUILDSTATUS,TIER_START artifact)
-	$(MAKE) recurse_artifact
-	$(call BUILDSTATUS,TIER_FINISH artifact)
-endif
-	$(call BUILDSTATUS,TIER_START make)
-	$(MAKE) buildid.h source-repo.h
-	$(call BUILDSTATUS,TIER_FINISH make)
-	$(call BUILDSTATUS,TIER_START tup)
-	@$(TUP) $(if $(findstring s,$(filter-out --%,$(MAKEFLAGS))),,--verbose)
-	$(call BUILDSTATUS,TIER_FINISH tup)
 
 .PHONY: $(addprefix install-,$(install_manifests))
 $(addprefix install-,$(install_manifests)): install-%: $(install_manifest_depends)
@@ -226,25 +180,31 @@ default all::
 profiledbuild::
 	$(call BUILDSTATUS,TIERS pgo_profile_generate pgo_package pgo_profile pgo_clobber pgo_profile_use)
 	$(call BUILDSTATUS,TIER_START pgo_profile_generate)
-	$(MAKE) default MOZ_PROFILE_GENERATE=1 MOZ_PGO_INSTRUMENTED=1
+	$(MAKE) default MOZ_PROFILE_GENERATE=1
 	$(call BUILDSTATUS,TIER_FINISH pgo_profile_generate)
 	$(call BUILDSTATUS,TIER_START pgo_package)
-	$(MAKE) package MOZ_PGO_INSTRUMENTED=1 MOZ_INTERNAL_SIGNING_FORMAT= MOZ_EXTERNAL_SIGNING_FORMAT=
+	$(MAKE) package MOZ_INTERNAL_SIGNING_FORMAT= MOZ_EXTERNAL_SIGNING_FORMAT=
 	rm -f jarlog/en-US.log
 	$(call BUILDSTATUS,TIER_FINISH pgo_package)
 	$(call BUILDSTATUS,TIER_START pgo_profile)
-	MOZ_PGO_INSTRUMENTED=1 JARLOG_FILE=jarlog/en-US.log $(PYTHON) $(topsrcdir)/build/pgo/profileserver.py 10
+	JARLOG_FILE=jarlog/en-US.log $(PYTHON) $(topsrcdir)/build/pgo/profileserver.py
 	$(call BUILDSTATUS,TIER_FINISH pgo_profile)
 	$(call BUILDSTATUS,TIER_START pgo_clobber)
 	$(MAKE) maybe_clobber_profiledbuild
 	$(call BUILDSTATUS,TIER_FINISH pgo_clobber)
 	$(call BUILDSTATUS,TIER_START pgo_profile_use)
-	$(MAKE) default MOZ_PROFILE_USE=1
+	$(MAKE) default MOZ_PROFILE_USE=1 $(if $(CLANG_CL),MOZ_PROFILE_ORDER_FILE=$(topobjdir)/cygprofile.txt)
 	$(call BUILDSTATUS,TIER_FINISH pgo_profile_use)
 
 # Change default target to PGO build if PGO is enabled.
 ifdef MOZ_PGO
+ifdef COMPILE_ENVIRONMENT
+# If one of these is already set in addition to PGO we are doing a single phase
+# of PGO in isolation, so don't override the default target.
+ifeq (,$(MOZ_PROFILE_GENERATE)$(MOZ_PROFILE_USE))
 OVERRIDE_DEFAULT_GOAL := profiledbuild
+endif
+endif
 endif
 
 include $(topsrcdir)/config/rules.mk
@@ -255,11 +215,6 @@ default::
 	@echo "===SCCACHE STATS==="
 	-$(CCACHE) --show-stats
 	@echo "==================="
-ifndef MOZ_PROFILE_GENERATE
-# Ideally we'd do that in the same file as we set the sccache.log location for
-# sccache, but it's too late in the build.
-	-gzip -9 $(DIST)/sccache.log
-endif
 endif
 
 distclean::
@@ -284,19 +239,22 @@ symbolsfullarchive: prepsymbolsarchive
 	$(RM) '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip'
 	$(call py_action,symbols_archive,'$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip' \
                                      $(abspath $(DIST)/crashreporter-symbols) \
-                                     --exclude '*test*' \
-                                     --exclude '*Test*' \
-                                     --compress '**/*.sym')
+                                     --full-archive)
 
 .PHONY: symbolsarchive
 symbolsarchive: prepsymbolsarchive
 	$(RM) '$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip'
 	$(call py_action,symbols_archive,'$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' \
-                                     $(abspath $(DIST)/crashreporter-symbols) \
-                                     --include '**/*.sym')
+                                     $(abspath $(DIST)/crashreporter-symbols))
 
 ifdef MOZ_CRASHREPORTER
+# Set MOZ_DISABLE_FULL_SYMBOLS to disable generation and upload of the full
+# crashreporter symbols archives
+ifdef MOZ_DISABLE_FULL_SYMBOLS
+buildsymbols: symbolsarchive
+else
 buildsymbols: symbolsfullarchive symbolsarchive
+endif # MOZ_DISABLE_FULL_SYMBOLS
 else
 buildsymbols:
 endif
@@ -316,27 +274,23 @@ package-generated-sources:
 
 #XXX: this is a hack, since we don't want to clobber for MSVC
 # PGO support, but we can't do this test in client.mk
-ifneq ($(OS_ARCH)_$(GNU_CC), WINNT_)
 # No point in clobbering if PGO has been explicitly disabled.
-ifndef NO_PROFILE_GUIDED_OPTIMIZE
-maybe_clobber_profiledbuild: clean
-else
+ifdef NO_PROFILE_GUIDED_OPTIMIZE
 maybe_clobber_profiledbuild:
+else
+ifneq ($(CC_TYPE),msvc)
+maybe_clobber_profiledbuild: clean
+ifneq (,$(findstring clang,$(CC_TYPE)))
+	$(LLVM_PROFDATA) merge -o $(DEPTH)/merged.profdata $(DEPTH)/*.profraw
 endif
 else
 maybe_clobber_profiledbuild:
 	$(RM) $(DIST)/bin/*.pgc
 	find $(DIST)/$(MOZ_APP_NAME) -name '*.pgc' -exec mv {} $(DIST)/bin \;
-endif
+endif # msvc
+endif # NO_PROFILE_GUIDED_OPTIMIZE
 
 .PHONY: maybe_clobber_profiledbuild
-
-# Look for R_386_PC32 relocations in shared libs, these
-# break x86_64 builds and SELinux users.
-ifeq ($(OS_TARGET)_$(TARGET_XPCOM_ABI),Linux_x86-gcc3)
-check::
-	@relcount=`find $(DIST)/bin -name '*.so' | xargs objdump -R | grep R_386_PC32 | wc -l` && if test $$relcount -gt 0; then echo 'FAILED: R_386_PC32 relocations detected in a shared library.  Did you use a system header without adding it to config/system-headers?'; exit 1; else echo 'PASSED'; fi
-endif
 
 ifdef JS_STANDALONE
 # Delegate js-specific rules to js

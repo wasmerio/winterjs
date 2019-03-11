@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ta{
-    Version{"2.1.36.86"}
+    Version{"2.1.43.50"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"ஒருங்கிணைந்த சர்வதேச நேரம்"}
+        }
+        "Europe:Dublin"{
+            ld{"ஐரிஷ் நிலையான நேரம்"}
+        }
+        "Europe:London"{
+            ld{"பிரிட்டிஷ் கோடை நேரம்"}
+        }
         "meta:Acre"{
             ld{"அக்ரே கோடை நேரம்"}
             lg{"அக்ரே நேரம்"}

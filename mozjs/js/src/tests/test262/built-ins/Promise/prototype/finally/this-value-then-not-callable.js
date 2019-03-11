@@ -8,12 +8,15 @@ description: >
 esid: sec-promise.prototype.finally
 features: [Symbol, Promise.prototype.finally]
 ---*/
+assert.sameValue(typeof Promise.prototype.finally, 'function');
 
 var symbol = Symbol();
 
-var thrower = function () { throw new Test262Error('this should never happen'); };
+var thrower = function() {
+  throw new Test262Error('this should never happen');
+};
 
-var p = new Promise(function () {});
+var p = new Promise(function() {});
 
 p.then = undefined;
 assert.throws(TypeError, function() {

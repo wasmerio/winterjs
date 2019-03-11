@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 el{
-    Version{"2.1.37.5"}
+    Version{"2.1.43.65"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Συντονισμένη Παγκόσμια Ώρα"}
+        }
+        "Europe:Dublin"{
+            ld{"Χειμερινή ώρα Ιρλανδίας"}
+        }
+        "Europe:London"{
+            ld{"Θερινή ώρα Βρετανίας"}
+        }
         "meta:Afghanistan"{
             ls{"Ώρα Αφγανιστάν"}
         }

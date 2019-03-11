@@ -9,6 +9,8 @@ CONFIGURE_SUBST_FILES += [
     'js.pc',
 ]
 
+LIBRARY_DEFINES['EXPORT_JS_API'] = True
+
 if not CONFIG['JS_STANDALONE']:
     LIBRARY_DEFINES['MOZ_HAS_MOZGLUE'] = True
 
@@ -23,6 +25,17 @@ if not CONFIG['JS_STANDALONE']:
 if CONFIG['JS_SHARED_LIBRARY']:
     GeckoSharedLibrary('js', linkage=None)
     SHARED_LIBRARY_NAME = CONFIG['JS_LIBRARY_NAME']
+
+    # Ensure symbol versions of shared library on Linux do not conflict
+    # with those in libxul.
+    if CONFIG['OS_TARGET'] == 'Linux':
+        GENERATED_FILES += ['symverscript']
+        GENERATED_FILES['symverscript'].script = '/build/gen_symverscript.py'
+        GENERATED_FILES['symverscript'].inputs = ['symverscript.in']
+        GENERATED_FILES['symverscript'].flags = [
+            CONFIG['JS_LIBRARY_NAME'].replace('-', '_'),
+        ]
+        SYMBOLS_FILE = '!symverscript'
 else:
     Library('js')
 
@@ -30,17 +43,14 @@ FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = 'js_static'
 
 if CONFIG['ENABLE_INTL_API']:
-    if not CONFIG['MOZ_ICU_DATA_ARCHIVE']:
-        USE_LIBS += [
-            'icu',
-        ]
-    else:
-        # Linking 'icu' will pull in the stubdata library,
-        # which the shell doesn't want, so link the other bits.
-        USE_LIBS += [
-            'icui18n',
-            'icuuc',
-        ]
+    USE_LIBS += [
+        'icu',
+    ]
+
+if CONFIG['ENABLE_BIGINT']:
+    OS_LIBS += [
+        'gmp',
+    ]
 
 USE_LIBS += [
     'nspr',
@@ -70,13 +80,23 @@ if CONFIG['OS_ARCH'] == 'SunOS':
         'socket',
     ]
 
+if CONFIG['MOZ_NEEDS_LIBATOMIC']:
+    OS_LIBS += ['atomic']
+
 OS_LIBS += CONFIG['REALTIME_LIBS']
 
 NO_EXPAND_LIBS = True
 
 DIST_INSTALL = True
 
-# Ensure symbol versions of shared library on Linux do not conflict
-# with those in libxul.
-if CONFIG['OS_TARGET'] == 'Linux':
-    LDFLAGS += ['-Wl,-version-script,symverscript']
+# Run SpiderMonkey style checker after linking the static library. This avoids
+# running the script for no-op builds.
+GENERATED_FILES += ['spidermonkey_checks']
+run_checks = GENERATED_FILES['spidermonkey_checks']
+run_checks.script = '/config/run_spidermonkey_checks.py'
+run_checks.inputs += [
+    '!%sjs_static.%s' % (CONFIG['LIB_PREFIX'], CONFIG['LIB_SUFFIX']),
+    '/config/check_spidermonkey_style.py',
+    '/config/check_macroassembler_style.py',
+    '/config/check_js_opcode.py'
+]

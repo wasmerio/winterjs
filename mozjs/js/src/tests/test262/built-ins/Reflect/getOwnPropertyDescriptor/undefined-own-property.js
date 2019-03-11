@@ -15,9 +15,12 @@ info: |
   6.2.4.4 FromPropertyDescriptor ( Desc )
 
   1. If Desc is undefined, return undefined.
+features: [Reflect]
 ---*/
 
-var o = Object.create({p: 1});
+var o = Object.create({
+  p: 1
+});
 
 var result = Reflect.getOwnPropertyDescriptor(o, 'p');
 assert.sameValue(result, undefined);

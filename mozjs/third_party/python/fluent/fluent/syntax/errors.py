@@ -21,12 +21,12 @@ def get_error_message(code, args):
         msg = 'Expected message "{}" to have a value or attributes'
         return msg.format(args[0])
     if code == 'E0006':
-        msg = 'Expected term "{}" to have a value'
+        msg = 'Expected term "-{}" to have a value'
         return msg.format(args[0])
     if code == 'E0007':
         return 'Keyword cannot end with a whitespace'
     if code == 'E0008':
-        return 'The callee has to be a simple, upper-case identifier'
+        return 'The callee has to be an upper-case identifier or a term'
     if code == 'E0009':
         return 'The key has to be a simple identifier'
     if code == 'E0010':
@@ -44,11 +44,25 @@ def get_error_message(code, args):
     if code == 'E0016':
         return 'Message references cannot be used as selectors'
     if code == 'E0017':
-        return 'Variants cannot be used as selectors'
+        return 'Terms cannot be used as selectors'
     if code == 'E0018':
         return 'Attributes of messages cannot be used as selectors'
     if code == 'E0019':
         return 'Attributes of terms cannot be used as placeables'
     if code == 'E0020':
         return 'Unterminated string expression'
+    if code == 'E0021':
+        return 'Positional arguments must not follow named arguments'
+    if code == 'E0022':
+        return 'Named arguments must be unique'
+    if code == 'E0024':
+        return 'Cannot access variants of a message.'
+    if code == 'E0025':
+        return 'Unknown escape sequence: \\{}.'.format(args[0])
+    if code == 'E0026':
+        return 'Invalid Unicode escape sequence: {}'.format(args[0])
+    if code == 'E0027':
+        return 'Unbalanced closing brace in TextElement.'
+    if code == 'E0028':
+        return 'Expected an inline expression'
     return code

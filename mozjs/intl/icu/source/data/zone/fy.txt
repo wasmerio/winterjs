@@ -1,8 +1,14 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 fy{
-    Version{"2.1.37.1"}
+    Version{"2.1.41.34"}
     zoneStrings{
+        "Europe:Dublin"{
+            ld{"Ierse simmertiid"}
+        }
+        "Europe:London"{
+            ld{"Britse simmertiid"}
+        }
         "meta:Acre"{
             ld{"Acre-simmertiid"}
             lg{"Acre-tiid"}

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 kn{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"ಸಂಘಟಿತ ಸಾರ್ವತ್ರಿಕ ಸಮಯ"}
+        }
+        "Europe:Dublin"{
+            ld{"ಐರಿಷ್ ಪ್ರಮಾಣಿತ ಸಮಯ"}
+        }
+        "Europe:London"{
+            ld{"ಬ್ರಿಟಿಷ್ ಬೇಸಿಗೆ ಸಮಯ"}
+        }
         "meta:Afghanistan"{
             ls{"ಅಫಘಾನಿಸ್ತಾನ ಸಮಯ"}
         }

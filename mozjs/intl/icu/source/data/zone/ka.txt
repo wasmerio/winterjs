@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ka{
-    Version{"2.1.37.1"}
+    Version{"2.1.43.50"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"მსოფლიო კოორდინირებული დრო"}
+        }
+        "Europe:Dublin"{
+            ld{"ირლანდიის სტანდარტული დრო"}
+        }
+        "Europe:London"{
+            ld{"ბრიტანეთის ზაფხულის დრო"}
+        }
         "meta:Afghanistan"{
             ls{"ავღანეთის დრო"}
         }

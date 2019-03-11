@@ -12,16 +12,17 @@ info: |
     12. If SameValue(booleanTrapResult, targetResult) is false, throw a
     TypeError exception.
     ...
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
-    isExtensible: function(t) {
-        return false;
-    }
+  isExtensible: function(t) {
+    return false;
+  }
 });
 
 assert.throws(TypeError, function() {
-    Object.isExtensible(p);
+  Object.isExtensible(p);
 });
 
 reportCompare(0, 0);

@@ -16,25 +16,32 @@ from mozpack.chrome.manifest import (
     is_manifest,
     parse_manifest,
 )
+from mozpack.files import (
+    ExecutableFile,
+)
 import mozpack.path as mozpath
 from collections import deque
+import json
 
 
 class Component(object):
     '''
     Class that represents a component in a package manifest.
     '''
-    def __init__(self, name, destdir=''):
+    def __init__(self, name, destdir='', xz_compress=False):
         if name.find(' ') > 0:
             errors.fatal('Malformed manifest: space in component name "%s"'
                          % component)
         self._name = name
         self._destdir = destdir
+        self._xz_compress = xz_compress
 
     def __repr__(self):
         s = self.name
         if self.destdir:
             s += ' destdir="%s"' % self.destdir
+        if self.xz_compress:
+            s += ' xz_compress="1"'
         return s
 
     @property
@@ -44,6 +51,10 @@ class Component(object):
     @property
     def destdir(self):
         return self._destdir
+
+    @property
+    def xz_compress(self):
+        return self._xz_compress
 
     @staticmethod
     def _triples(lst):
@@ -116,10 +127,11 @@ class Component(object):
             errors.fatal('Malformed manifest: %s' % e)
             return
         destdir = options.pop('destdir', '')
+        xz_compress = options.pop('xz_compress', '0') != '0'
         if options:
             errors.fatal('Malformed manifest: options %s not recognized'
                          % options.keys())
-        return Component(name, destdir=destdir)
+        return Component(name, destdir=destdir, xz_compress=xz_compress)
 
 
 class PackageManifestParser(object):
@@ -269,7 +281,30 @@ class SimplePackager(object):
                 install_rdf = file.open().read()
                 if self.UNPACK_ADDON_RE.search(install_rdf):
                     addon = 'unpacked'
-                self._addons[mozpath.dirname(path)] = addon
+                self._add_addon(mozpath.dirname(path), addon)
+            elif mozpath.basename(path) == 'manifest.json':
+                manifest = file.open().read()
+                try:
+                    parsed = json.loads(manifest)
+                except ValueError:
+                    pass
+                if isinstance(parsed, dict) and parsed.has_key('manifest_version'):
+                    self._add_addon(mozpath.dirname(path), True)
+
+    def _add_addon(self, path, addon_type):
+        '''
+        Add the given BaseFile to the collection of addons if a parent
+        directory is not already in the collection.
+        '''
+        if mozpath.basedir(path, self._addons) != None:
+            return
+
+        for dir in self._addons:
+            if mozpath.basedir(dir, [path]) != None:
+                del self._addons[dir]
+                break
+
+        self._addons[path] = addon_type
 
     def _add_manifest_file(self, path, file):
         '''
@@ -381,6 +416,8 @@ class SimpleManifestSink(object):
             if is_manifest(p):
                 self._manifests.add(p)
             dest = mozpath.join(component.destdir, SimpleManifestSink.normalize_path(p))
+            if isinstance(f, ExecutableFile):
+                f.xz_compress = component.xz_compress
             self.packager.add(dest, f)
         if not added:
             errors.error('Missing file(s): %s' % pattern)

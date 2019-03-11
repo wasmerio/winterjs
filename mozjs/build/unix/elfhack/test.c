@@ -83,40 +83,38 @@ DEF(several)
 DEF(times)
 
 #else
-#pragma GCC visibility push(default)
-#include <stdlib.h>
-#include <stdio.h>
+#  pragma GCC visibility push(default)
+#  include <stdlib.h>
+#  include <stdio.h>
 
-#define DEF(w) static const char str_ ## w[] = #w;
-#include "test.c"
-#undef DEF
+#  define DEF(w) static const char str_##w[] = #  w;
+#  include "test.c"
+#  undef DEF
 
 const char *strings[] = {
-#define DEF(w) str_ ## w,
-#include "test.c"
-#include "test.c"
-#include "test.c"
+#  define DEF(w) str_##w,
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
 };
 
 /* Create a hole between two zones of relative relocations */
-const int hole[] = {
-    42, 42, 42, 42
-};
+const int hole[] = {42, 42, 42, 42};
 
 const char *strings2[] = {
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#undef DEF
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  undef DEF
 };
 
 static int ret = 1;
 
 int print_status() {
-    fprintf(stderr, "%s\n", ret ? "FAIL" : "PASS");
-    return ret;
+  fprintf(stderr, "%s\n", ret ? "FAIL" : "PASS");
+  return ret;
 }
 
 /* On ARM, this creates a .tbss section before .init_array, which
@@ -129,34 +127,42 @@ int print_status() {
 __thread int foo;
 __thread long long int bar[512];
 
+/* We need a .bss that can hold at least 2 pointers. The static in
+ * end_test() plus this variable should do. */
+size_t dummy;
+
 void end_test() {
-    static size_t count = 0;
-    /* Only exit when both constructors have been called */
-    if (++count == 2)
-        ret = 0;
+  static size_t count = 0;
+  /* Only exit when both constructors have been called */
+  if (++count == 2) {
+    ret = 0;
+    // Avoid the dummy variable being stripped out at link time because
+    // it's unused.
+    dummy = 1;
+  }
 }
 
 void test() {
-    int i = 0, j = 0;
-#define DEF_(a,i,w) \
-    if (a[i++] != str_ ## w) return;
-#define DEF(w) DEF_(strings,i,w)
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#undef DEF
-#define DEF(w) DEF_(strings2,j,w)
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#include "test.c"
-#undef DEF
-    if (i != sizeof(strings)/sizeof(strings[0]) &&
-        j != sizeof(strings2)/sizeof(strings2[0]))
-        fprintf(stderr, "WARNING: Test doesn't cover the whole array\n");
-    end_test();
+  int i = 0, j = 0;
+#  define DEF_(a, i, w) \
+    if (a[i++] != str_##w) return;
+#  define DEF(w) DEF_(strings, i, w)
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  undef DEF
+#  define DEF(w) DEF_(strings2, j, w)
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  include "test.c"
+#  undef DEF
+  if (i != sizeof(strings) / sizeof(strings[0]) &&
+      j != sizeof(strings2) / sizeof(strings2[0]))
+    fprintf(stderr, "WARNING: Test doesn't cover the whole array\n");
+  end_test();
 }
 
-#pragma GCC visibility pop
+#  pragma GCC visibility pop
 #endif

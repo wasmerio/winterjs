@@ -1,10 +1,9 @@
+// |jit-test| skip-if: helperThreadCount() === 0
+
 // Owning elements and attribute names are attached to scripts compiled
 // off-thread.
 
-if (helperThreadCount() === 0)
-  quit(0);
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger;
 var gDO = dbg.addDebuggee(g);
 

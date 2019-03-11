@@ -93,6 +93,10 @@ from its prototype:
 :   True if this instance refers to a `JSScript` for an async function, defined
     with an `async function` expression or statement. False otherwise.
 
+`isModule`
+:   True if this instance refers to a `JSScript` that was parsed and loaded
+    as an ECMAScript module. False otherwise.
+
 `displayName`
 :   **If the instance refers to a `JSScript`**, this is the script's display
     name, if it has one. If the script has no display name &mdash; for example,
@@ -173,6 +177,12 @@ from its prototype:
 :   **If the instance refers to a `JSScript`**, the length, in characters, of
     this script's code within the [`Debugger.Source`][source] instance given
     by `source`.
+
+    **If the instance refers to WebAssembly code**, throw a `TypeError`.
+
+`mainOffset`
+:   **If the instance refers to a `JSScript`**, the offset of the main
+    entry point of the script, excluding any prologue.
 
     **If the instance refers to WebAssembly code**, throw a `TypeError`.
 
@@ -286,6 +296,18 @@ methods of other kinds of objects.
 
     * isEntryPoint: true if the offset is a column entry point, as
       would be reported by getAllColumnOffsets(); otherwise false.
+
+<code>getSuccessorOffsets(<i>offset</i>)</code>
+:   **If the instance refers to a `JSScript`**, return an array
+    containing the offsets of all bytecodes in the script which are
+    immediate successors of <i>offset</i> via non-exceptional control
+    flow paths.
+
+<code>getPredecessorOffsets(<i>offset</i>)</code>
+:   **If the instance refers to a `JSScript`**, return an array
+    containing the offsets of all bytecodes in the script for which
+    <i>offset</i> is an immediate successor via non-exceptional
+    control flow paths.
 
 `getOffsetsCoverage()`:
 :   **If the instance refers to a `JSScript`**, return `null` or an array which

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 sw{
-    Version{"2.1.37.34"}
+    Version{"2.1.43.65"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Mfumo wa kuratibu saa ulimwenguni"}
+        }
+        "Europe:Dublin"{
+            ld{"Saa za Majira ya Joto za Ayalandi"}
+        }
+        "Europe:London"{
+            ld{"Saa za Majira ya Joto za Uingereza"}
+        }
         "meta:Afghanistan"{
             ls{"Saa za Afghanistan"}
         }

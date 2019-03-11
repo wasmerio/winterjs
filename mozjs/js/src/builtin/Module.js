@@ -53,7 +53,7 @@ function ModuleGetExportedNames(exportStarSet = [])
     for (let i = 0; i < starExportEntries.length; i++) {
         let e = starExportEntries[i];
         let requestedModule = CallModuleResolveHook(module, e.moduleRequest,
-                                                    MODULE_STATUS_INSTANTIATING);
+                                                    MODULE_STATUS_UNINSTANTIATED);
         let starNames = callFunction(requestedModule.getExportedNames, requestedModule,
                                      exportStarSet);
         for (let j = 0; j < starNames.length; j++) {
@@ -186,17 +186,16 @@ function IsResolvedBinding(resolution)
 function GetModuleNamespace(module)
 {
     // Step 1
-    assert(IsModule(module), "GetModuleNamespace called with non-module");
+    assert(IsObject(module) && IsModule(module), "GetModuleNamespace called with non-module");
 
-    // Steps 2-3
-    assert(module.status !== MODULE_STATUS_UNINSTANTIATED &&
-           module.status !== MODULE_STATUS_EVALUATED_ERROR,
+    // Step 2
+    assert(module.status !== MODULE_STATUS_UNINSTANTIATED,
            "Bad module state in GetModuleNamespace");
 
-    // Step 4
+    // Step 3
     let namespace = module.namespace;
 
-    // Step 3
+    // Step 4
     if (typeof namespace === "undefined") {
         let exportedNames = callFunction(module.getExportedNames, module);
         let unambiguousNames = [];
@@ -209,7 +208,7 @@ function GetModuleNamespace(module)
         namespace = ModuleNamespaceCreate(module, unambiguousNames);
     }
 
-    // Step 4
+    // Step 5
     return namespace;
 }
 
@@ -234,13 +233,13 @@ function ModuleNamespaceCreate(module, exports)
 
 function GetModuleEnvironment(module)
 {
-    assert(IsModule(module), "Non-module passed to GetModuleEnvironment");
+    assert(IsObject(module) && IsModule(module), "Non-module passed to GetModuleEnvironment");
 
     assert(module.status >= MODULE_STATUS_INSTANTIATING,
            "Attempt to access module environement before instantation");
 
     let env = UnsafeGetReservedSlot(module, MODULE_OBJECT_ENVIRONMENT_SLOT);
-    assert(IsModuleEnvironment(env),
+    assert(IsObject(env) && IsModuleEnvironment(env),
            "Module environment slot contains unexpected value");
 
     return env;
@@ -300,16 +299,17 @@ function ModuleInstantiate()
     } catch (error) {
         for (let i = 0; i < stack.length; i++) {
             let m = stack[i];
-            assert(m.status === MODULE_STATUS_INSTANTIATING,
-                   "Expected instantiating status during failed instantiation");
-            HandleModuleInstantiationFailure(m);
+            if (m.status === MODULE_STATUS_INSTANTIATING) {
+                HandleModuleInstantiationFailure(m);
+            }
         }
 
         // Handle OOM when appending to the stack or over-recursion errors.
-        if (stack.length === 0)
+        if (stack.length === 0 && module.status === MODULE_STATUS_INSTANTIATING) {
             HandleModuleInstantiationFailure(module);
+        }
 
-        assert(module.status === MODULE_STATUS_UNINSTANTIATED,
+        assert(module.status !== MODULE_STATUS_INSTANTIATING,
                "Expected uninstantiated status after failed instantiation");
 
         throw error;
@@ -346,8 +346,8 @@ function InnerModuleInstantiation(module, stack, index)
     }
 
     // Step 3
-    assert(module.status === MODULE_STATUS_UNINSTANTIATED,
-          "Bad module status in ModuleDeclarationInstantiation");
+    if (module.status !== MODULE_STATUS_UNINSTANTIATED)
+        ThrowInternalError(JSMSG_BAD_MODULE_STATUS);
 
     // Steps 4
     ModuleSetStatus(module, MODULE_STATUS_INSTANTIATING);

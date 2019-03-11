@@ -20,7 +20,7 @@
 #include "unicode/uspoof.h"
 #include "unicode/uscript.h"
 #include "unicode/udata.h"
-
+#include "udataswp.h"
 #include "utrie2.h"
 
 #if !UCONFIG_NO_NORMALIZATION
@@ -82,6 +82,9 @@ public:
     void getResolvedScriptSetWithout(const UnicodeString& input, UScriptCode script, ScriptSet& result, UErrorCode& status) const;
     void getNumerics(const UnicodeString& input, UnicodeSet& result, UErrorCode& status) const;
     URestrictionLevel getRestrictionLevel(const UnicodeString& input, UErrorCode& status) const;
+
+    int32_t findHiddenOverlay(const UnicodeString& input, UErrorCode& status) const;
+    bool isIllegalCombiningDotLeadCharacter(UChar32 cp) const;
 
     /** parse a hex number.  Untility used by the builders.   */
     static UChar32 ScanHex(const UChar *s, int32_t start, int32_t limit, UErrorCode &status);

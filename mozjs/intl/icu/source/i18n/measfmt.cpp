@@ -47,7 +47,7 @@ U_NAMESPACE_BEGIN
 
 static constexpr int32_t PER_UNIT_INDEX = StandardPlural::COUNT;
 static constexpr int32_t PATTERN_COUNT = PER_UNIT_INDEX + 1;
-static constexpr int32_t MEAS_UNIT_COUNT = 138;  // see assertion in MeasureFormatCacheData constructor
+static constexpr int32_t MEAS_UNIT_COUNT = 142;  // see assertion in MeasureFormatCacheData constructor
 static constexpr int32_t WIDTH_INDEX_COUNT = UMEASFMT_WIDTH_NARROW + 1;
 
 UOBJECT_DEFINE_RTTI_IMPLEMENTATION(MeasureFormat)
@@ -618,7 +618,7 @@ MeasureFormat::MeasureFormat(
         : cache(NULL),
           numberFormat(NULL),
           pluralRules(NULL),
-          width(w),
+          fWidth(w),
           listFormatter(NULL) {
     initMeasureFormat(locale, w, NULL, status);
 }
@@ -631,7 +631,7 @@ MeasureFormat::MeasureFormat(
         : cache(NULL),
           numberFormat(NULL),
           pluralRules(NULL),
-          width(w),
+          fWidth(w),
           listFormatter(NULL) {
     initMeasureFormat(locale, w, nfToAdopt, status);
 }
@@ -641,7 +641,7 @@ MeasureFormat::MeasureFormat(const MeasureFormat &other) :
         cache(other.cache),
         numberFormat(other.numberFormat),
         pluralRules(other.pluralRules),
-        width(other.width),
+        fWidth(other.fWidth),
         listFormatter(NULL) {
     cache->addRef();
     numberFormat->addRef();
@@ -659,7 +659,7 @@ MeasureFormat &MeasureFormat::operator=(const MeasureFormat &other) {
     SharedObject::copyPtr(other.cache, cache);
     SharedObject::copyPtr(other.numberFormat, numberFormat);
     SharedObject::copyPtr(other.pluralRules, pluralRules);
-    width = other.width;
+    fWidth = other.fWidth;
     delete listFormatter;
     if (other.listFormatter != NULL) {
         listFormatter = new ListFormatter(*other.listFormatter);
@@ -673,7 +673,7 @@ MeasureFormat::MeasureFormat() :
         cache(NULL),
         numberFormat(NULL),
         pluralRules(NULL),
-        width(UMEASFMT_WIDTH_SHORT),
+        fWidth(UMEASFMT_WIDTH_SHORT),
         listFormatter(NULL) {
 }
 
@@ -703,7 +703,7 @@ UBool MeasureFormat::operator==(const Format &other) const {
     // don't have to check it here.
 
     // differing widths aren't equivalent
-    if (width != rhs.width) {
+    if (fWidth != rhs.fWidth) {
         return FALSE;
     }
     // Width the same check locales.
@@ -764,10 +764,11 @@ UnicodeString &MeasureFormat::formatMeasurePerUnit(
     if (U_FAILURE(status)) {
         return appendTo;
     }
-    MeasureUnit *resolvedUnit =
-            MeasureUnit::resolveUnitPerUnit(measure.getUnit(), perUnit);
-    if (resolvedUnit != NULL) {
-        Measure newMeasure(measure.getNumber(), resolvedUnit, status);
+    bool isResolved = false;
+    MeasureUnit resolvedUnit =
+        MeasureUnit::resolveUnitPerUnit(measure.getUnit(), perUnit, &isResolved);
+    if (isResolved) {
+        Measure newMeasure(measure.getNumber(), new MeasureUnit(resolvedUnit), status);
         return formatMeasure(
                 newMeasure, **numberFormat, appendTo, pos, status);
     }
@@ -804,7 +805,7 @@ UnicodeString &MeasureFormat::formatMeasures(
     if (measureCount == 1) {
         return formatMeasure(measures[0], **numberFormat, appendTo, pos, status);
     }
-    if (width == UMEASFMT_WIDTH_NUMERIC) {
+    if (fWidth == UMEASFMT_WIDTH_NUMERIC) {
         Formattable hms[3];
         int32_t bitMap = toHMS(measures, measureCount, hms, status);
         if (bitMap > 0) {
@@ -838,7 +839,7 @@ UnicodeString &MeasureFormat::formatMeasures(
 }
 
 UnicodeString MeasureFormat::getUnitDisplayName(const MeasureUnit& unit, UErrorCode& /*status*/) const {
-    UMeasureFormatWidth width = getRegularWidth(this->width);
+    UMeasureFormatWidth width = getRegularWidth(fWidth);
     const UChar* const* styleToDnam = cache->dnams[unit.getIndex()];
     const UChar* dnam = styleToDnam[width];
     if (dnam == NULL) {
@@ -894,11 +895,11 @@ void MeasureFormat::initMeasureFormat(
             return;
         }
     }
-    width = w;
+    fWidth = w;
     delete listFormatter;
     listFormatter = ListFormatter::createInstance(
             locale,
-            listStyles[getRegularWidth(width)],
+            listStyles[getRegularWidth(fWidth)],
             status);
 }
 
@@ -921,7 +922,7 @@ UBool MeasureFormat::setMeasureFormatLocale(const Locale &locale, UErrorCode &st
     if (U_FAILURE(status) || locale == getLocale(status)) {
         return FALSE;
     }
-    initMeasureFormat(locale, width, NULL, status);
+    initMeasureFormat(locale, fWidth, NULL, status);
     return U_SUCCESS(status);
 } 
 
@@ -955,7 +956,7 @@ UnicodeString &MeasureFormat::formatMeasure(
     if (isCurrency(amtUnit)) {
         UChar isoCode[4];
         u_charsToUChars(amtUnit.getSubtype(), isoCode, 4);
-        return cache->getCurrencyFormat(width)->format(
+        return cache->getCurrencyFormat(fWidth)->format(
                 new CurrencyAmount(amtNumber, isoCode, status),
                 appendTo,
                 pos,
@@ -964,7 +965,7 @@ UnicodeString &MeasureFormat::formatMeasure(
     UnicodeString formattedNumber;
     StandardPlural::Form pluralForm = QuantityFormatter::selectPlural(
             amtNumber, nf, **pluralRules, formattedNumber, pos, status);
-    const SimpleFormatter *formatter = getPluralFormatter(amtUnit, width, pluralForm, status);
+    const SimpleFormatter *formatter = getPluralFormatter(amtUnit, fWidth, pluralForm, status);
     return QuantityFormatter::format(*formatter, formattedNumber, appendTo, pos, status);
 }
 
@@ -1015,7 +1016,6 @@ UnicodeString &MeasureFormat::formatNumeric(
         return appendTo;
         break;
     }
-    return appendTo;
 }
 
 static void appendRange(
@@ -1061,9 +1061,13 @@ UnicodeString &MeasureFormat::formatNumeric(
     }
 
     // Format time. draft becomes something like '5:30:45'
+    // #13606: DateFormat is not thread-safe, but MeasureFormat advertises itself as thread-safe.
     FieldPosition smallestFieldPosition(smallestField);
     UnicodeString draft;
+    static UMutex dateFmtMutex = U_MUTEX_INITIALIZER;
+    umtx_lock(&dateFmtMutex);
     dateFmt.format(date, draft, smallestFieldPosition, status);
+    umtx_unlock(&dateFmtMutex);
 
     // If we find field for smallest amount replace it with the formatted
     // smallest amount from above taking care to replace the integer part
@@ -1168,7 +1172,7 @@ int32_t MeasureFormat::withPerUnitAndAppend(
     if (U_FAILURE(status)) {
         return offset;
     }
-    const SimpleFormatter *perUnitFormatter = getFormatterOrNull(perUnit, width, PER_UNIT_INDEX);
+    const SimpleFormatter *perUnitFormatter = getFormatterOrNull(perUnit, fWidth, PER_UNIT_INDEX);
     if (perUnitFormatter != NULL) {
         const UnicodeString *params[] = {&formatted};
         perUnitFormatter->formatAndAppend(
@@ -1180,9 +1184,9 @@ int32_t MeasureFormat::withPerUnitAndAppend(
                 status);
         return offset;
     }
-    const SimpleFormatter *perFormatter = getPerFormatter(width, status);
+    const SimpleFormatter *perFormatter = getPerFormatter(fWidth, status);
     const SimpleFormatter *pattern =
-            getPluralFormatter(perUnit, width, StandardPlural::ONE, status);
+            getPluralFormatter(perUnit, fWidth, StandardPlural::ONE, status);
     if (U_FAILURE(status)) {
         return offset;
     }

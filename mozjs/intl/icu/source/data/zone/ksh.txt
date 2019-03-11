@@ -1,8 +1,14 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ksh{
-    Version{"2.1.37.1"}
+    Version{"2.1.41.34"}
     zoneStrings{
+        "Europe:Dublin"{
+            ld{"Irland sing Summerzick"}
+        }
+        "Europe:London"{
+            ld{"Jrußbretannije sing Summerzick"}
+        }
         "meta:Africa_Central"{
             ls{"Zentraal-Affrekaanesche Zigg"}
         }

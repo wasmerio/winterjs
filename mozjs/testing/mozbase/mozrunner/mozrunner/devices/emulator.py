@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 
+from mozdevice import ADBHost
 from mozprocess import ProcessHandler
 
 from .base import Device
@@ -141,8 +142,9 @@ class BaseEmulator(Device):
         self.connect()
 
     def _get_online_devices(self):
-        return [d[0] for d in self.dm.devices() if d[1] != 'offline' if
-                d[0].startswith('emulator')]
+        adbhost = ADBHost(adb=self.app_ctx.adb)
+        return [d['device_serial'] for d in adbhost.devices() if d['state'] != 'offline' if
+                d['device_serial'].startswith('emulator')]
 
     def connect(self):
         """
@@ -153,8 +155,7 @@ class BaseEmulator(Device):
             return
 
         super(BaseEmulator, self).connect()
-        serial = self.serial or self.dm._deviceSerial
-        self.port = int(serial[serial.rindex('-') + 1:])
+        self.port = int(self.serial[self.serial.rindex('-') + 1:])
 
     def cleanup(self):
         """
@@ -193,75 +194,6 @@ class BaseEmulator(Device):
         if self.telnet:
             self.telnet.write('exit\n')
             self.telnet.read_all()
-
-
-class Emulator(BaseEmulator):
-
-    def __init__(self, app_ctx, arch, resolution=None, sdcard=None, userdata=None,
-                 no_window=None, binary=None, **kwargs):
-        super(Emulator, self).__init__(app_ctx, arch=arch, binary=binary, **kwargs)
-
-        # emulator args
-        self.resolution = resolution or '320x480'
-        self._sdcard_size = sdcard
-        self._sdcard = None
-        self.userdata = tempfile.NamedTemporaryFile(prefix='userdata-qemu', dir=self.tmpdir)
-        self.initdata = userdata if userdata else os.path.join(self.arch.sysdir, 'userdata.img')
-        self.no_window = no_window
-
-    @property
-    def sdcard(self):
-        if self._sdcard_size and not self._sdcard:
-            self._sdcard = SDCard(self, self._sdcard_size).path
-        else:
-            return self._sdcard
-
-    @property
-    def args(self):
-        """
-        Arguments to pass into the emulator binary.
-        """
-        qemu_args = super(Emulator, self).args
-        qemu_args.extend([
-            '-kernel', self.arch.kernel,
-            '-sysdir', self.arch.sysdir,
-            '-data', self.userdata.name,
-            '-initdata', self.initdata,
-            '-wipe-data'])
-        if self.no_window:
-            qemu_args.append('-no-window')
-        if self.sdcard:
-            qemu_args.extend(['-sdcard', self.sdcard])
-        qemu_args.extend(['-memory', '512',
-                          '-partition-size', '512',
-                          '-verbose',
-                          '-skin', self.resolution,
-                          '-gpu', 'on',
-                          '-qemu'] + self.arch.extra_args)
-        return qemu_args
-
-    def connect(self):
-        """
-        Connects to a running device. If no serial was specified in the
-        constructor, defaults to the first entry in `adb devices`.
-        """
-        if self.connected:
-            return
-
-        super(Emulator, self).connect()
-        self.geo.set_default_location()
-        self.screen.initialize()
-
-        # setup DNS fix for networking
-        self.app_ctx.dm.shellCheckOutput(['setprop', 'net.dns1', '10.0.2.3'])
-
-    def cleanup(self):
-        """
-        Cleans up and kills the emulator, if it was started by mozrunner.
-        """
-        super(Emulator, self).cleanup()
-        # Remove temporary files
-        self.userdata.close()
 
 
 class EmulatorAVD(BaseEmulator):

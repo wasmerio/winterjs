@@ -19,7 +19,8 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
+
 import csv
 import io
 import re
@@ -27,8 +28,18 @@ import os
 import sys
 from contextlib import closing
 from functools import partial
-from itertools import chain, groupby, ifilter, imap, izip_longest, tee
+from itertools import chain, tee
 from operator import is_not, itemgetter
+from zipfile import ZipFile
+
+if sys.version_info.major == 2:
+    from itertools import ifilter as filter, imap as map, izip_longest as zip_longest
+    from urllib2 import urlopen
+    range = xrange
+else:
+    from itertools import zip_longest
+    from urllib.request import urlopen
+
 
 class codepoint_dict(dict):
     def name(self, code_point):
@@ -39,22 +50,23 @@ class codepoint_dict(dict):
         (_, _, name, alias) = self[code_point]
         return 'U+{:04X} {}{}'.format(code_point, name, (' (' + alias + ')' if alias else ''))
 
+
 # ECMAScript 2016
 # §11.2 White Space
 whitespace = [
     # python doesn't support using control character names :(
-    0x9, # CHARACTER TABULATION
-    0xb, # LINE TABULATION
-    0xc, # FORM FEED
+    0x9,  # CHARACTER TABULATION
+    0xb,  # LINE TABULATION
+    0xc,  # FORM FEED
     ord(u'\N{SPACE}'),
     ord(u'\N{NO-BREAK SPACE}'),
-    ord(u'\N{ZERO WIDTH NO-BREAK SPACE}'), # also BOM
+    ord(u'\N{ZERO WIDTH NO-BREAK SPACE}'),  # also BOM
 ]
 
 # §11.3 Line Terminators
 line_terminator = [
-    0xa, # LINE FEED
-    0xd, # CARRIAGE RETURN
+    0xa,  # LINE FEED
+    0xd,  # CARRIAGE RETURN
     ord(u'\N{LINE SEPARATOR}'),
     ord(u'\N{PARAGRAPH SEPARATOR}'),
 ]
@@ -94,6 +106,7 @@ unicode_version_message = """\
 /* Unicode version: {0} */
 """
 
+
 def read_unicode_data(unicode_data):
     """
         If you want to understand how this wonderful file format works checkout
@@ -101,15 +114,15 @@ def read_unicode_data(unicode_data):
           http://www.unicode.org/reports/tr44/
     """
 
-    reader = csv.reader(unicode_data, delimiter=';')
+    reader = csv.reader(unicode_data, delimiter=str(';'))
 
     while True:
-        row = reader.next()
+        row = next(reader)
         name = row[1]
 
         # We need to expand the UAX #44 4.2.3 Code Point Range
         if name.startswith('<') and name.endswith('First>'):
-            next_row = reader.next()
+            next_row = next(reader)
 
             for i in range(int(row[0], 16), int(next_row[0], 16) + 1):
                 row[0] = i
@@ -119,6 +132,7 @@ def read_unicode_data(unicode_data):
         else:
             row[0] = int(row[0], 16)
             yield row
+
 
 def read_case_folding(case_folding):
     for line in case_folding:
@@ -130,6 +144,7 @@ def read_case_folding(case_folding):
         row[0] = int(row[0], 16)
         row[2] = int(row[2], 16)
         yield row
+
 
 def read_derived_core_properties(derived_core_properties):
     for line in derived_core_properties:
@@ -144,6 +159,7 @@ def read_derived_core_properties(derived_core_properties):
             [start, end] = char_range.split('..')
             for char in range(int(start, 16), int(end, 16) + 1):
                 yield (char, char_property)
+
 
 def read_special_casing(special_casing):
     # Format:
@@ -169,24 +185,27 @@ def read_special_casing(special_casing):
             pass
         yield (code, lower, upper, languages, contexts)
 
+
 def int_ranges(ints):
     """ Yields consecutive ranges (inclusive) from integer values. """
     (a, b) = tee(sorted(ints))
     start = next(b)
-    for (curr, succ) in izip_longest(a, b):
+    for (curr, succ) in zip_longest(a, b):
         if curr + 1 != succ:
             yield (start, curr)
             start = succ
+
 
 def utf16_encode(code):
     NonBMPMin = 0x10000
     LeadSurrogateMin = 0xD800
     TrailSurrogateMin = 0xDC00
 
-    lead = (code - NonBMPMin) / 1024 + LeadSurrogateMin
+    lead = (code - NonBMPMin) // 1024 + LeadSurrogateMin
     trail = ((code - NonBMPMin) % 1024) + TrailSurrogateMin
 
     return lead, trail
+
 
 def make_non_bmp_convert_macro(out_file, name, convert_map, codepoint_table):
     # Find continuous range in convert_map.
@@ -198,7 +217,7 @@ def make_non_bmp_convert_macro(out_file, name, convert_map, codepoint_table):
         diff = converted - code
 
         if (entry and code == entry['code'] + entry['length'] and
-            diff == entry['diff'] and lead == entry['lead']):
+                diff == entry['diff'] and lead == entry['lead']):
             entry['length'] += 1
             continue
 
@@ -223,16 +242,17 @@ def make_non_bmp_convert_macro(out_file, name, convert_map, codepoint_table):
         from_trail = entry['trail']
         to_trail = entry['trail'] + entry['length'] - 1
 
-        lines.append('    macro(0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, {:d})'.format(
+        lines.append('    MACRO(0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, 0x{:x}, {:d})'.format(
             from_code, to_code, lead, from_trail, to_trail, diff))
         comment.append('// {} .. {}'.format(codepoint_table.full_name(from_code),
                                             codepoint_table.full_name(to_code)))
 
     out_file.write('\n'.join(comment))
     out_file.write('\n')
-    out_file.write('#define FOR_EACH_NON_BMP_{}(macro) \\\n'.format(name))
+    out_file.write('#define FOR_EACH_NON_BMP_{}(MACRO) \\\n'.format(name))
     out_file.write(' \\\n'.join(lines))
     out_file.write('\n')
+
 
 def process_derived_core_properties(derived_core_properties):
     id_start = set()
@@ -245,6 +265,7 @@ def process_derived_core_properties(derived_core_properties):
             id_continue.add(char)
 
     return (id_start, id_continue)
+
 
 def process_unicode_data(unicode_data, derived_core_properties):
     dummy = (0, 0, 0)
@@ -382,6 +403,7 @@ def process_unicode_data(unicode_data, derived_core_properties):
         codepoint_table, test_space_table,
     )
 
+
 def process_case_folding(case_folding):
     folding_map = {}
     rev_folding_map = {}
@@ -463,6 +485,7 @@ def process_case_folding(case_folding):
         folding_tests
     )
 
+
 def process_special_casing(special_casing, table, index):
     # Unconditional special casing.
     unconditional_tolower = {}
@@ -527,16 +550,16 @@ def process_special_casing(special_casing, table, index):
         return upper
 
     def ascii(char_dict):
-        return ifilter(lambda ch: ch <= 0x7f, char_dict.iterkeys())
+        return (ch for ch in char_dict.keys() if ch <= 0x7f)
 
     def latin1(char_dict):
-        return ifilter(lambda ch: ch <= 0xff, char_dict.iterkeys())
+        return (ch for ch in char_dict.keys() if ch <= 0xff)
 
     def is_empty(iterable):
         return not any(True for _ in iterable)
 
     def is_equals(iter1, iter2):
-        return all(x == y for (x, y) in izip_longest(iter1, iter2))
+        return all(x == y for (x, y) in zip_longest(iter1, iter2))
 
     # Ensure no ASCII characters have special case mappings.
     assert is_empty(ascii(unconditional_tolower))
@@ -567,57 +590,61 @@ def process_special_casing(special_casing, table, index):
     assert all(ch != lowerCase(ch) for ch in [0x0130, 0x03A3])
 
     # Ensure Azeri, Lithuanian, and Turkish are the only languages with conditional case mappings.
-    assert is_equals(["az", "lt", "tr"], sorted(lang_conditional_tolower.iterkeys()))
-    assert is_equals(["az", "lt", "tr"], sorted(lang_conditional_toupper.iterkeys()))
+    assert is_equals(["az", "lt", "tr"], sorted(lang_conditional_tolower.keys()))
+    assert is_equals(["az", "lt", "tr"], sorted(lang_conditional_toupper.keys()))
 
     # Maximum case mapping length is three characters.
-    itervals = lambda d: d.itervalues()
-    assert max(imap(len, chain(
-        itervals(unconditional_tolower),
-        itervals(unconditional_toupper),
-        imap(itemgetter(0), itervals(conditional_tolower)),
-        imap(itemgetter(0), itervals(conditional_toupper)),
-        imap(itemgetter(0), chain.from_iterable(imap(itervals, itervals(lang_conditional_tolower)))),
-        imap(itemgetter(0), chain.from_iterable(imap(itervals, itervals(lang_conditional_toupper)))),
+    assert max(map(len, chain(
+        unconditional_tolower.values(),
+        unconditional_toupper.values(),
+        map(itemgetter(0), conditional_tolower.values()),
+        map(itemgetter(0), conditional_toupper.values()),
+        map(itemgetter(0), chain.from_iterable(d.values()
+                                               for d in lang_conditional_tolower.values())),
+        map(itemgetter(0), chain.from_iterable(d.values()
+                                               for d in lang_conditional_toupper.values())),
     ))) <= 3
 
     # Ensure all case mapping contexts are known (see Unicode 9.0, §3.13 Default Case Algorithms).
     assert set([
         'After_I', 'After_Soft_Dotted', 'Final_Sigma', 'More_Above', 'Not_Before_Dot',
-    ]).issuperset(set(ifilter(partial(is_not, None), chain(
-        imap(itemgetter(1), itervals(conditional_tolower)),
-        imap(itemgetter(1), itervals(conditional_toupper)),
-        imap(itemgetter(1), chain.from_iterable(imap(itervals, itervals(lang_conditional_tolower)))),
-        imap(itemgetter(1), chain.from_iterable(imap(itervals, itervals(lang_conditional_toupper)))),
+    ]).issuperset(set(filter(partial(is_not, None), chain(
+        map(itemgetter(1), conditional_tolower.values()),
+        map(itemgetter(1), conditional_toupper.values()),
+        map(itemgetter(1), chain.from_iterable(d.values()
+                                               for d in lang_conditional_tolower.values())),
+        map(itemgetter(1), chain.from_iterable(d.values()
+                                               for d in lang_conditional_toupper.values())),
     ))))
 
     # Special casing for U+00DF (LATIN SMALL LETTER SHARP S).
-    assert upperCase(0x00DF) == 0x00DF and unconditional_toupper[0x00DF] == [0x0053, 0x0053];
+    assert upperCase(0x00DF) == 0x00DF and unconditional_toupper[0x00DF] == [0x0053, 0x0053]
 
     # Special casing for U+0130 (LATIN CAPITAL LETTER I WITH DOT ABOVE).
     assert unconditional_tolower[0x0130] == [0x0069, 0x0307]
 
     # Special casing for U+03A3 (GREEK CAPITAL LETTER SIGMA).
-    assert lowerCase(0x03A3) == 0x03C3 and conditional_tolower[0x03A3] == ([0x03C2], 'Final_Sigma');
+    assert lowerCase(0x03A3) == 0x03C3 and conditional_tolower[0x03A3] == ([0x03C2], 'Final_Sigma')
 
     return (unconditional_tolower, unconditional_toupper)
+
 
 def make_non_bmp_file(version,
                       non_bmp_lower_map, non_bmp_upper_map,
                       non_bmp_folding_map, non_bmp_rev_folding_map,
                       codepoint_table):
-    file_name = 'UnicodeNonBMP.h';
-    with io.open(file_name, mode='wb') as non_bmp_file:
+    file_name = 'UnicodeNonBMP.h'
+    with io.open(file_name, mode='w', encoding='utf-8') as non_bmp_file:
         non_bmp_file.write(mpl_license)
         non_bmp_file.write('\n')
         non_bmp_file.write(warning_message)
         non_bmp_file.write(unicode_version_message.format(version))
         non_bmp_file.write("""
-#ifndef vm_UnicodeNonBMP_h
-#define vm_UnicodeNonBMP_h
+#ifndef util_UnicodeNonBMP_h
+#define util_UnicodeNonBMP_h
 
-// |macro| receives the following arguments
-//   macro(FROM, TO, LEAD, TRAIL_FROM, TRAIL_TO, DIFF)
+// |MACRO| receives the following arguments
+//   MACRO(FROM, TO, LEAD, TRAIL_FROM, TRAIL_TO, DIFF)
 //     FROM:       code point where the range starts
 //     TO:         code point where the range ends
 //     LEAD:       common lead surrogate of FROM and TO
@@ -632,13 +659,16 @@ def make_non_bmp_file(version,
         non_bmp_file.write('\n')
         make_non_bmp_convert_macro(non_bmp_file, 'UPPERCASE', non_bmp_upper_map, codepoint_table)
         non_bmp_file.write('\n')
-        make_non_bmp_convert_macro(non_bmp_file, 'CASE_FOLDING', non_bmp_folding_map, codepoint_table)
+        make_non_bmp_convert_macro(non_bmp_file, 'CASE_FOLDING',
+                                   non_bmp_folding_map, codepoint_table)
         non_bmp_file.write('\n')
-        make_non_bmp_convert_macro(non_bmp_file, 'REV_CASE_FOLDING', non_bmp_rev_folding_map, codepoint_table)
+        make_non_bmp_convert_macro(non_bmp_file, 'REV_CASE_FOLDING',
+                                   non_bmp_rev_folding_map, codepoint_table)
 
         non_bmp_file.write("""
-#endif /* vm_UnicodeNonBMP_h */
+#endif /* util_UnicodeNonBMP_h */
 """)
+
 
 def write_special_casing_methods(unconditional_toupper, codepoint_table, println):
     def hexlit(n):
@@ -677,7 +707,7 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
                 lines[-1].append(expr)
             else:
                 lines.append([expr])
-        return ' ||\n{}'.format(spaces).join(imap(lambda t: ' || '.join(t), lines))
+        return ' ||\n{}'.format(spaces).join(' || '.join(t) for t in lines)
 
     def write_range_accept(parent_list, child_list, depth):
         """ Accepts the input character if it matches any code unit in |child_list|. """
@@ -695,8 +725,9 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
         if len(child_ranges) == 1:
             describe_range(child_ranges, depth)
             if has_successor:
-                println(indent, 'if (ch <= {})'.format(hexlit(max_child)))
+                println(indent, 'if (ch <= {}) {{'.format(hexlit(max_child)))
                 println(indent, '    return ch >= {};'.format(hexlit(min_child)))
+                println(indent, '}')
             else:
                 println(indent, 'return {};'.format(in_range(min_child, max_child)))
             return
@@ -709,8 +740,9 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
         range_test_expr = in_any_range(child_ranges, spaces)
 
         if min_child != min_parent:
-            println(indent, 'if (ch < {})'.format(hexlit(min_child)))
+            println(indent, 'if (ch < {}) {{'.format(hexlit(min_child)))
             println(indent, '    return false;')
+            println(indent, '}')
 
         # If there's no successor block, we can omit the |input <= max_child| check,
         # because it was already checked when we emitted the parent range test.
@@ -723,20 +755,21 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
             println(indent, '    return {};'.format(range_test_expr))
             println(indent, '}')
 
-    def write_CanUpperCaseSpecialCasing():
+    def write_ChangesWhenUpperCasedSpecialCasing():
         """ Checks if the input has a special upper case mapping. """
         println('bool')
-        println('js::unicode::CanUpperCaseSpecialCasing(char16_t ch)')
+        println('js::unicode::ChangesWhenUpperCasedSpecialCasing(char16_t ch)')
         println('{')
 
         assert unconditional_toupper, "|unconditional_toupper| is not empty"
 
         # Sorted list of code units with special upper case mappings.
-        code_list = sorted(unconditional_toupper.iterkeys())
+        code_list = sorted(unconditional_toupper.keys())
 
         # Fail-fast if the input character isn't a special casing character.
-        println('    if ({})'.format(out_range(code_list[0], code_list[-1])))
+        println('    if ({}) {{'.format(out_range(code_list[0], code_list[-1])))
         println('        return false;')
+        println('    }')
 
         for i in range(0, 16):
             # Check if the input characters is in the range:
@@ -763,8 +796,9 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
             if not is_last_block:
                 println('    if (ch <= {}) {{'.format(hexlit(matches[-1])))
             else:
-                println('    if (ch < {})'.format(hexlit(matches[0])))
+                println('    if (ch < {}) {{'.format(hexlit(matches[0])))
                 println('        return false;')
+                println('    }')
 
             for j in range(0, 16):
                 inner_start = start_point + (j << 8)
@@ -787,7 +821,7 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
         println('{')
 
         println('    switch(ch) {')
-        for (code, converted) in sorted(unconditional_toupper.iteritems(), key=itemgetter(0)):
+        for (code, converted) in sorted(unconditional_toupper.items(), key=itemgetter(0)):
             println('      case {}: return {}; // {}'.format(hexlit(code), len(converted),
                                                              codepoint_table.name(code)))
         println('    }')
@@ -800,15 +834,16 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
     def write_AppendUpperCaseSpecialCasing():
         """ Slow case: Special casing character was found, append its mapping characters. """
         println('void')
-        println('js::unicode::AppendUpperCaseSpecialCasing(char16_t ch, char16_t* elements, size_t* index)')
+        println('js::unicode::AppendUpperCaseSpecialCasing(char16_t ch, char16_t* elements, size_t* index)')  # NOQA: E501
         println('{')
 
         println('    switch(ch) {')
-        for (code, converted) in sorted(unconditional_toupper.iteritems(), key=itemgetter(0)):
+        for (code, converted) in sorted(unconditional_toupper.items(), key=itemgetter(0)):
             println('      case {}: // {}'.format(hexlit(code), codepoint_table.name(code)))
             for ch in converted:
-                println('        elements[(*index)++] = {}; // {}'.format(hexlit(ch),
-                                                                          codepoint_table.name(ch)))
+                println('        elements[(*index)++] = {}; // {}'
+                        .format(hexlit(ch),
+                                codepoint_table.name(ch)))
             println('        return;')
         println('    }')
         println('')
@@ -816,21 +851,25 @@ def write_special_casing_methods(unconditional_toupper, codepoint_table, println
 
         println('}')
 
-    write_CanUpperCaseSpecialCasing()
+    write_ChangesWhenUpperCasedSpecialCasing()
     println('')
     write_LengthUpperCaseSpecialCasing()
     println('')
     write_AppendUpperCaseSpecialCasing()
 
+
 def write_ascii_lookup_tables(table, index, write, println):
     def is_id_compat(code):
         return code == ord(u'\N{DOLLAR SIGN}') or code == ord(u'\N{LOW LINE}')
+
     def is_id_start(code):
         (upper, lower, flags) = table[index[code]]
         return (flags & FLAG_UNICODE_ID_START) or is_id_compat(code)
+
     def is_id_continue(code):
         (upper, lower, flags) = table[index[code]]
         return (flags & FLAG_UNICODE_ID_CONTINUE_ONLY) or is_id_start(code)
+
     def is_space(code):
         (upper, lower, flags) = table[index[code]]
         return flags & FLAG_SPACE
@@ -841,7 +880,7 @@ def write_ascii_lookup_tables(table, index, write, println):
         for i in range(0, 13):
             write('/* {0: >2} */'.format(i))
             for j in range(0, 10):
-                code = i * 10 + j;
+                code = i * 10 + j
                 if (code <= 0x7f):
                     write(' {},'.format('true' if predicate(code) else '____'))
             println('')
@@ -878,12 +917,13 @@ def write_ascii_lookup_tables(table, index, write, println):
     println('')
     println('#undef ____')
 
+
 def make_bmp_mapping_test(version, codepoint_table, unconditional_tolower, unconditional_toupper):
     def unicodeEsc(n):
-        return '\u{:04X}'.format(n)
+        return '\\u{:04X}'.format(n)
 
-    file_name = '../tests/ecma_5/String/string-upper-lower-mapping.js'
-    with io.open(file_name, mode='wb') as output:
+    file_name = '../tests/non262/String/string-upper-lower-mapping.js'
+    with io.open(file_name, mode='w', encoding='utf-8') as output:
         write = partial(print, file=output, sep='', end='')
         println = partial(print, file=output, sep='', end='\n')
 
@@ -898,8 +938,8 @@ def make_bmp_mapping_test(version, codepoint_table, unconditional_tolower, uncon
                 (upper, lower, _, _) = entry
                 upper = unconditional_toupper[code] if code in unconditional_toupper else [upper]
                 lower = unconditional_tolower[code] if code in unconditional_tolower else [lower]
-                println('  ["{}", "{}"], /* {} */'.format("".join(imap(unicodeEsc, upper)),
-                                                          "".join(imap(unicodeEsc, lower)),
+                println('  ["{}", "{}"], /* {} */'.format("".join(map(unicodeEsc, upper)),
+                                                          "".join(map(unicodeEsc, lower)),
                                                           codepoint_table.name(code)))
             else:
                 println('  ["{0}", "{0}"],'.format(unicodeEsc(code)))
@@ -918,9 +958,10 @@ if (typeof reportCompare === "function")
     reportCompare(true, true);
 """)
 
+
 def make_non_bmp_mapping_test(version, non_bmp_upper_map, non_bmp_lower_map, codepoint_table):
-    file_name = '../tests/ecma_6/String/string-code-point-upper-lower-mapping.js'
-    with io.open(file_name, mode='wb') as test_non_bmp_mapping:
+    file_name = '../tests/non262/String/string-code-point-upper-lower-mapping.js'
+    with io.open(file_name, mode='w', encoding='utf-8') as test_non_bmp_mapping:
         test_non_bmp_mapping.write(warning_message)
         test_non_bmp_mapping.write(unicode_version_message.format(version))
         test_non_bmp_mapping.write(public_domain)
@@ -929,25 +970,26 @@ def make_non_bmp_mapping_test(version, non_bmp_upper_map, non_bmp_lower_map, cod
             test_non_bmp_mapping.write("""\
 assertEq(String.fromCodePoint(0x{:04X}).toUpperCase().codePointAt(0), 0x{:04X}); // {}, {}
 """.format(code, non_bmp_upper_map[code],
-           codepoint_table.name(code), codepoint_table.name(non_bmp_upper_map[code])))
+                codepoint_table.name(code), codepoint_table.name(non_bmp_upper_map[code])))
 
         for code in sorted(non_bmp_lower_map.keys()):
             test_non_bmp_mapping.write("""\
 assertEq(String.fromCodePoint(0x{:04X}).toLowerCase().codePointAt(0), 0x{:04X}); // {}, {}
 """.format(code, non_bmp_lower_map[code],
-           codepoint_table.name(code), codepoint_table.name(non_bmp_lower_map[code])))
+                codepoint_table.name(code), codepoint_table.name(non_bmp_lower_map[code])))
 
         test_non_bmp_mapping.write("""
 if (typeof reportCompare === "function")
     reportCompare(true, true);
 """)
 
+
 def make_space_test(version, test_space_table, codepoint_table):
     def hex_and_name(c):
         return '    0x{:04X} /* {} */'.format(c, codepoint_table.name(c))
 
-    file_name = '../tests/ecma_5/String/string-space-trim.js'
-    with io.open(file_name, mode='wb') as test_space:
+    file_name = '../tests/non262/String/string-space-trim.js'
+    with io.open(file_name, mode='w', encoding='utf-8') as test_space:
         test_space.write(warning_message)
         test_space.write(unicode_version_message.format(version))
         test_space.write(public_domain)
@@ -964,12 +1006,13 @@ if (typeof reportCompare === "function")
     reportCompare(true, true);
 """)
 
+
 def make_regexp_space_test(version, test_space_table, codepoint_table):
     def hex_and_name(c):
         return '    0x{:04X} /* {} */'.format(c, codepoint_table.name(c))
 
-    file_name = '../tests/ecma_6/RegExp/character-class-escape-s.js'
-    with io.open(file_name, mode='wb') as test_space:
+    file_name = '../tests/non262/RegExp/character-class-escape-s.js'
+    with io.open(file_name, mode='w', encoding='utf-8') as test_space:
         test_space.write(warning_message)
         test_space.write(unicode_version_message.format(version))
         test_space.write(public_domain)
@@ -998,12 +1041,13 @@ if (typeof reportCompare === "function")
     reportCompare(true, true);
 """)
 
+
 def make_icase_test(version, folding_tests, codepoint_table):
     def char_hex(c):
         return '0x{:04X}'.format(c)
 
-    file_name = '../tests/ecma_6/RegExp/unicode-ignoreCase.js'
-    with io.open(file_name, mode='wb') as test_icase:
+    file_name = '../tests/non262/RegExp/unicode-ignoreCase.js'
+    with io.open(file_name, mode='w', encoding='utf-8') as test_icase:
         test_icase.write(warning_message)
         test_icase.write(unicode_version_message.format(version))
         test_icase.write(public_domain)
@@ -1023,11 +1067,13 @@ function test(code, ...equivs) {
 """)
         for args in folding_tests:
             test_icase.write('test({}); // {}\n'.format(', '.join(map(char_hex, args)),
-                                                        ', '.join(map(codepoint_table.name, args))))
+                                                        ', '.join(map(codepoint_table.name,
+                                                                      args))))
         test_icase.write("""
 if (typeof reportCompare === "function")
     reportCompare(true, true);
 """)
+
 
 def make_unicode_file(version,
                       table, index,
@@ -1044,7 +1090,8 @@ def make_unicode_file(version,
 
     same_upper_index1, same_upper_index2, same_upper_shift = splitbins(same_upper_index)
 
-    # Don't forget to update CodepointsWithSameUpperCaseInfo in Unicode.h if you need to change this
+    # Don't forget to update CodepointsWithSameUpperCaseInfo in Unicode.h if you need
+    # to change this
     assert same_upper_shift == 6
 
     folding_index1, folding_index2, folding_shift = splitbins(folding_index)
@@ -1125,6 +1172,7 @@ def make_unicode_file(version,
  *  stop if you found the best shift
  */
 """
+
     def dump(data, name, println):
         println('const uint8_t unicode::{}[] = {{'.format(name))
 
@@ -1162,24 +1210,26 @@ def make_unicode_file(version,
         println('js::unicode::{}(uint32_t codePoint)'.format(name))
         println('{')
         for (from_code, to_code) in int_ranges(group_set.keys()):
-            println('    if (codePoint >= 0x{:X} && codePoint <= 0x{:X}) // {} .. {}'.format(from_code,
-                                                                                             to_code,
-                                                                                             codepoint_table.name(from_code),
-                                                                                             codepoint_table.name(to_code)))
+            println('    if (codePoint >= 0x{:X} && codePoint <= 0x{:X}) {{ // {} .. {}'
+                    .format(from_code,
+                            to_code,
+                            codepoint_table.name(from_code),
+                            codepoint_table.name(to_code)))
             println('        return true;')
+            println('    }')
         println('    return false;')
         println('}')
         println('')
 
     file_name = 'Unicode.cpp'
-    with io.open(file_name, 'wb') as data_file:
+    with io.open(file_name, 'w', encoding='utf-8') as data_file:
         write = partial(print, file=data_file, sep='', end='')
         println = partial(print, file=data_file, sep='', end='\n')
 
         write(warning_message)
         write(unicode_version_message.format(version))
         write(public_domain)
-        println('#include "vm/Unicode.h"')
+        println('#include "util/Unicode.h"')
         println('')
         println('using namespace js;')
         println('using namespace js::unicode;')
@@ -1218,6 +1268,7 @@ def make_unicode_file(version,
 
         write_ascii_lookup_tables(table, index, write, println)
 
+
 def getsize(data):
     """ return smallest possible integer size for the given array """
     maxdata = max(data)
@@ -1229,6 +1280,7 @@ def getsize(data):
         return 2
     else:
         return 4
+
 
 def splitbins(t):
     """t -> (t1, t2, shift).  Split a table to save space.
@@ -1244,8 +1296,8 @@ def splitbins(t):
     def dump(t1, t2, shift, bytes):
         print("%d+%d bins at shift %d; %d bytes" % (
             len(t1), len(t2), shift, bytes), file=sys.stderr)
-        print("Size of original table:", len(t)*getsize(t), \
-            "bytes", file=sys.stderr)
+        print("Size of original table:", len(t)*getsize(t),
+              "bytes", file=sys.stderr)
     n = len(t)-1    # last valid index
     maxshift = 0    # the most we can shift n and still have something left
     if n > 0:
@@ -1286,6 +1338,7 @@ def splitbins(t):
     for i in range(len(t)):
         assert t[i] == t2[(t1[i >> shift] << shift) + (i & mask)]
     return best
+
 
 def make_irregexp_tables(version,
                          table, index,
@@ -1357,8 +1410,8 @@ def make_irregexp_tables(version,
             s_name = char_name(start)
             e_name = char_name(end)
             println('    {}, {} + 1, // {}'.format(hex4(start), hex4(end),
-                                                               '{}..{}'.format(s_name, e_name)
-                                                               if start != end else s_name))
+                                                   '{}..{}'.format(s_name, e_name)
+                                                   if start != end else s_name))
         println('    {} + 1'.format(hex4(MAX_BMP)))
         println('};')
         println('const int js::irregexp::k{}RangeCount = {};'.format(name,
@@ -1368,20 +1421,20 @@ def make_irregexp_tables(version,
         # Latin1 characters which, when case-mapped through
         # String.prototype.toUpperCase(), canonicalize to a non-Latin1 character.
         # ES2017, §21.2.2.8.2 Runtime Semantics: Canonicalize
-        casemapped_to_nonlatin1 = ifilter(casemaps_to_nonlatin1, xrange(0, MAX_LATIN1 + 1))
+        casemapped_to_nonlatin1 = filter(casemaps_to_nonlatin1, range(0, MAX_LATIN1 + 1))
 
         def casemap_closure(ch):
             upper = to_upper(ch)
-            return (ch, [c for c in xrange(MAX_LATIN1 + 1, MAX_BMP + 1) if upper == to_upper(c)])
+            return (ch, [c for c in range(MAX_LATIN1 + 1, MAX_BMP + 1) if upper == to_upper(c)])
 
         # Mapping from Latin1 characters to the list of case map equivalent
         # non-Latin1 characters.
-        casemap_for_latin1 = dict(chain(imap(casemap_closure, casemapped_to_nonlatin1)))
+        casemap_for_latin1 = dict(chain(map(casemap_closure, casemapped_to_nonlatin1)))
 
         # Non-latin1 characters which, when Unicode case-folded, canonicalize to
         # a Latin1 character.
         # ES2017, §21.2.2.8.2 Runtime Semantics: Canonicalize
-        casefolded_to_latin1 = ifilter(casefolds_to_latin1, xrange(MAX_LATIN1 + 1, MAX_BMP + 1))
+        casefolded_to_latin1 = filter(casefolds_to_latin1, range(MAX_LATIN1 + 1, MAX_BMP + 1))
 
         println('    if (unicode) {')
         for ch in casefolded_to_latin1:
@@ -1391,19 +1444,21 @@ def make_irregexp_tables(version,
                 continue
             println('        // "{}" case folds to "{}".'.format(char_name(ch),
                                                                  char_name(casefolded)))
-            println('        if ({})'.format(test(ch)))
+            println('        if ({}) {{'.format(test(ch)))
             println('            return {};'.format(consequent(casefolded)))
+            println('        }')
         println('    }')
         println('')
-        for (ch, casemapped_chars) in casemap_for_latin1.iteritems():
+        for (ch, casemapped_chars) in casemap_for_latin1.items():
             for casemapped in casemapped_chars:
                 println('    // "{}" case maps to "{}".'.format(char_name(casemapped),
                                                                 char_name(ch)))
-            println('    if ({})'.format(' || '.join(imap(test, casemapped_chars))))
+            println('    if ({}) {{'.format(' || '.join(map(test, casemapped_chars))))
             println('        return {};'.format(consequent(ch)))
+            println('    }')
         println('    return {};'.format(default))
 
-    with io.open('../irregexp/RegExpCharacters-inl.h', 'wb') as chars_file:
+    with io.open('../irregexp/RegExpCharacters-inl.h', 'w', encoding='utf-8') as chars_file:
         write = partial(print, file=chars_file, sep='', end='')
         println = partial(write, end='\n')
 
@@ -1430,28 +1485,29 @@ def make_irregexp_tables(version,
         println('')
         println('#endif // V8_JSREGEXPCHARACTERS_INL_H_')
 
-    with io.open('../irregexp/RegExpCharacters.cpp', 'wb') as chars_file:
+    with io.open('../irregexp/RegExpCharacters.cpp', 'w', encoding='utf-8') as chars_file:
         write = partial(print, file=chars_file, sep='', end='')
         println = partial(write, end='\n')
         character_range = partial(write_character_range, println)
 
         # Characters in \s, 21.2.2.12 CharacterClassEscape.
-        space_chars = filter(is_space, xrange(0, MAX_BMP + 1))
+        space_chars = [ch for ch in range(0, MAX_BMP + 1) if is_space(ch)]
 
         # Characters in \d, 21.2.2.12 CharacterClassEscape.
-        digit_chars = map(ord, string.digits)
+        digit_chars = [ord(ch) for ch in string.digits]
         assert all(ch <= MAX_ASCII for ch in digit_chars)
 
         # Characters in \w, 21.2.2.12 CharacterClassEscape.
-        word_chars = map(ord, string.digits + string.ascii_letters + '_')
+        word_chars = [ord(ch) for ch in string.digits + string.ascii_letters + '_']
         assert all(ch <= MAX_ASCII for ch in word_chars)
 
         # Characters which case-fold to characters in \w.
         ignorecase_word_chars = (word_chars +
-                                filter(casefolds_to_ascii, xrange(MAX_ASCII + 1, MAX_BMP + 1)))
+                                 [ch for ch in range(MAX_ASCII + 1, MAX_BMP + 1)
+                                  if casefolds_to_ascii(ch)])
 
         # Surrogate characters.
-        surrogate_chars = range(LEAD_SURROGATE_MIN, TRAIL_SURROGATE_MAX + 1)
+        surrogate_chars = [ch for ch in range(LEAD_SURROGATE_MIN, TRAIL_SURROGATE_MAX + 1)]
 
         write(warning_message)
         write(unicode_version_message.format(version))
@@ -1474,7 +1530,7 @@ def make_irregexp_tables(version,
         character_range('IgnoreCaseWord', ignorecase_word_chars)
         character_range('WordAndSurrogate', word_chars + surrogate_chars)
         character_range('NegatedIgnoreCaseWordAndSurrogate',
-                        set(xrange(0, MAX_BMP + 1)) - set(ignorecase_word_chars + surrogate_chars))
+                        set(range(0, MAX_BMP + 1)) - set(ignorecase_word_chars + surrogate_chars))
 
         character_range('Digit', digit_chars)
         character_range('DigitAndSurrogate', digit_chars + surrogate_chars)
@@ -1484,12 +1540,13 @@ def make_irregexp_tables(version,
         character_range('LineTerminator', line_terminator)
         character_range('LineTerminatorAndSurrogate', line_terminator + surrogate_chars)
 
+
 def update_unicode(args):
-    import urllib2
+    base_path = os.getcwd()
 
     version = args.version
     if version is not None:
-        baseurl = 'http://unicode.org/Public'
+        baseurl = 'https://unicode.org/Public'
         if version == 'UNIDATA':
             url = '%s/%s' % (baseurl, version)
         else:
@@ -1499,36 +1556,34 @@ def update_unicode(args):
     if version is not None:
         print('\tVersion: %s' % version)
         print('\tDownload url: %s' % url)
+
+        request_url = '{}/UCD.zip'.format(url)
+        with closing(urlopen(request_url)) as downloaded_file:
+            downloaded_data = io.BytesIO(downloaded_file.read())
+
+        with ZipFile(downloaded_data) as zip_file:
+            for fname in ['UnicodeData.txt',
+                          'CaseFolding.txt',
+                          'DerivedCoreProperties.txt',
+                          'SpecialCasing.txt']:
+                zip_file.extract(fname, path=base_path)
     else:
         print('\tUsing local files.')
         print('\tAlways make sure you have the newest Unicode files!')
     print('')
 
-    def download_or_open(fname):
-        tfile_path = os.path.join(os.getcwd(), fname)
-        if version is not None:
-            print('Downloading %s...' % fname)
-            unicode_data_url = '%s/%s' % (url, fname)
-            with closing(urllib2.urlopen(unicode_data_url)) as reader:
-                data = reader.read()
-            tfile = io.open(tfile_path, 'w+b')
-            tfile.write(data)
-            tfile.flush()
-            tfile.seek(0)
-        else:
-            if not os.path.isfile(tfile_path):
-                raise RuntimeError('File not found: %s' % tfile_path)
-            tfile = io.open(tfile_path, 'rb');
-        return tfile
-
     def version_from_file(f, fname):
         pat_version = re.compile(r"# %s-(?P<version>\d+\.\d+\.\d+).txt" % fname)
         return pat_version.match(f.readline()).group("version")
 
-    with download_or_open('UnicodeData.txt') as unicode_data, \
-         download_or_open('CaseFolding.txt') as case_folding, \
-         download_or_open('DerivedCoreProperties.txt') as derived_core_properties, \
-         download_or_open('SpecialCasing.txt') as special_casing:
+    with io.open(os.path.join(base_path, 'UnicodeData.txt'),
+                 'r', encoding='utf-8') as unicode_data, \
+            io.open(os.path.join(base_path, 'CaseFolding.txt'),
+                    'r', encoding='utf-8') as case_folding, \
+            io.open(os.path.join(base_path, 'DerivedCoreProperties.txt'),
+                    'r', encoding='utf-8') as derived_core_properties, \
+            io.open(os.path.join(base_path, 'SpecialCasing.txt'),
+                    'r', encoding='utf-8') as special_casing:
         unicode_version = version_from_file(derived_core_properties, 'DerivedCoreProperties')
 
         print('Processing...')
@@ -1569,23 +1624,25 @@ def update_unicode(args):
 
     make_bmp_mapping_test(unicode_version,
                           codepoint_table, unconditional_tolower, unconditional_toupper)
-    make_non_bmp_mapping_test(unicode_version, non_bmp_upper_map, non_bmp_lower_map, codepoint_table)
+    make_non_bmp_mapping_test(unicode_version, non_bmp_upper_map,
+                              non_bmp_lower_map, codepoint_table)
     make_space_test(unicode_version, test_space_table, codepoint_table)
     make_regexp_space_test(unicode_version, test_space_table, codepoint_table)
     make_icase_test(unicode_version, folding_tests, codepoint_table)
 
+
 if __name__ == '__main__':
     import argparse
 
-    # This script must be run from js/src/vm to work correctly.
-    if '/'.join(os.path.normpath(os.getcwd()).split(os.sep)[-3:]) != 'js/src/vm':
-        raise RuntimeError('%s must be run from js/src/vm' % sys.argv[0])
+    # This script must be run from js/src/util to work correctly.
+    if '/'.join(os.path.normpath(os.getcwd()).split(os.sep)[-3:]) != 'js/src/util':
+        raise RuntimeError('%s must be run from js/src/util' % sys.argv[0])
 
     parser = argparse.ArgumentParser(description='Update Unicode data.')
 
     parser.add_argument('--version',
                         help='Optional Unicode version number. If specified, downloads the\
-                              selected version from <http://unicode.org/Public>. If not specified\
+                              selected version from <https://unicode.org/Public>. If not specified\
                               uses the existing local files to generate the Unicode data. The\
                               number must match a published Unicode version, e.g. use\
                               "--version=8.0.0" to download Unicode 8 files. Alternatively use\

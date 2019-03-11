@@ -6,9 +6,12 @@
 
 GeckoProgram('fuzz-tests', linkage=None)
 
+include('../js-cxxflags.mozbuild')
+
 UNIFIED_SOURCES += [
     'testExample.cpp',
     'tests.cpp',
+    'testStructuredCloneReader.cpp',
 ]
 
 if CONFIG['JS_BUILD_BINAST']:
@@ -23,11 +26,6 @@ LOCAL_INCLUDES += [
     '..',
 ]
 
-if CONFIG['ENABLE_INTL_API'] and CONFIG['MOZ_ICU_DATA_ARCHIVE']:
-    # The ICU libraries linked into libmozjs will not include the ICU data,
-    # so link it directly.
-    USE_LIBS += ['icudata']
-
 if CONFIG['FUZZING']:
     USE_LIBS += [
         'static:fuzzer-registry',
@@ -38,20 +36,21 @@ if CONFIG['LIBFUZZER']:
         'static:fuzzer',
     ]
 
-    # Add trace-pc coverage for libfuzzer
-    CFLAGS += ['-fsanitize-coverage=trace-pc-guard']
-    CXXFLAGS += ['-fsanitize-coverage=trace-pc-guard']
+    # Add libFuzzer configuration directives
+    include('/tools/fuzzing/libfuzzer-config.mozbuild')
 
 USE_LIBS += [
     'static:js',
 ]
 
+if CONFIG['ENABLE_WASM_CRANELIFT']:
+    USE_LIBS += [
+        'jsrust'
+    ]
+
 if CONFIG['MOZ_NEEDS_LIBATOMIC']:
     OS_LIBS += ['atomic']
 
 OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
-
-if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
-    CXXFLAGS += ['-Wno-shadow', '-Werror=format', '-fno-strict-aliasing']
 
 DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR

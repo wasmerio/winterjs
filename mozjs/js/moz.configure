@@ -7,8 +7,8 @@
 # /!\ Use js_option() instead of option() in this file. /!\
 # =========================================================
 
-@depends(build_project, '--help')
-def building_js(build_project, help):
+@depends(build_project)
+def building_js(build_project):
     return build_project == 'js'
 
 # Exception to the rule above: JS_STANDALONE is a special option that doesn't
@@ -18,6 +18,11 @@ def building_js(build_project, help):
 option(env='JS_STANDALONE', default=building_js,
        help='Reserved for internal use')
 
+include('../build/moz.configure/bindgen.configure',
+        when='--enable-compile-environment')
+include('../build/moz.configure/rust.configure',
+        when='--enable-compile-environment')
+
 @depends('JS_STANDALONE')
 def js_standalone(value):
     if value:
@@ -26,7 +31,7 @@ set_config('JS_STANDALONE', js_standalone)
 set_define('JS_STANDALONE', js_standalone)
 add_old_configure_assignment('JS_STANDALONE', js_standalone)
 js_option('--disable-js-shell', default=building_js,
-          help='Do not build the JS shell')
+          help='{Build|Do not build} the JS shell')
 
 @depends('--disable-js-shell')
 def js_disable_shell(value):
@@ -44,10 +49,10 @@ set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
 # SpiderMonkey as a shared library, and how its symbols are exported
 # ==================================================================
 js_option('--disable-shared-js', default=building_js,
-          help='Do not create a shared library')
+          help='{Create|Do not create} a shared library')
 
 js_option('--disable-export-js', default=building_js,
-          help='Do not mark JS symbols as DLL exported/visible')
+          help='{Mark|Do not mark} JS symbols as DLL exported/visible')
 
 @depends('--disable-shared-js', '--disable-export-js')
 def shared_js(shared_js, export_js):
@@ -102,17 +107,33 @@ def disable_export_js(value):
     die('Setting %s is deprecated, use %s instead.',
         value.format('DISABLE_EXPORT_JS'), suggestion)
 
+# Experimental BigInt support
+# =======================================================
+js_option('--enable-bigint',
+          default=False,
+          help='Enable BigInt')
+
+@depends('--enable-bigint')
+def enable_bigint(value):
+    if value:
+        return True
+
+set_config('ENABLE_BIGINT', enable_bigint)
+set_define('ENABLE_BIGINT', enable_bigint)
 
 # JIT support
 # =======================================================
-@depends(target)
-def ion_default(target):
+@depends(target, '--enable-bigint')
+def ion_default(target, enable_bigint):
+    if enable_bigint:
+        return False
     if target.cpu in ('x86', 'x86_64', 'arm', 'aarch64', 'mips32', 'mips64'):
         return True
+    return False
 
 js_option('--enable-ion',
           default=ion_default,
-          help='Enable use of the IonMonkey JIT')
+          help='{Enable|Disable} use of the IonMonkey JIT')
 
 set_config('ENABLE_ION', depends_if('--enable-ion')(lambda x: True))
 
@@ -239,13 +260,13 @@ def callgrind(value):
 set_define('MOZ_CALLGRIND', callgrind)
 imply_option('--enable-profiling', callgrind)
 
-@depends(milestone, '--help')
-def enable_profiling(milestone, help):
+@depends(milestone)
+def enable_profiling(milestone):
     return milestone.is_nightly
 
 js_option('--enable-profiling', env='MOZ_PROFILING', default=enable_profiling,
-          help='Set compile flags necessary for using sampling profilers '
-               '(e.g. shark, perf)')
+          help='{Set|Do not set} compile flags necessary for using sampling '
+                'profilers (e.g. shark, perf)')
 
 @depends('--enable-profiling')
 def profiling(value):
@@ -292,7 +313,7 @@ set_define('JS_GC_TRACE', gc_trace)
 
 js_option('--enable-gczeal',
           default=depends(when=moz_debug)(lambda: True),
-          help='Enable zealous GCing')
+          help='{Enable|Disable} zealous GCing')
 
 set_define('JS_GC_ZEAL',
            depends_if('--enable-gczeal')(lambda _: True))
@@ -313,7 +334,7 @@ set_define('JS_GC_SMALL_CHUNK_SIZE',
 # =======================================================
 js_option('--enable-trace-logging',
           default=depends(when=moz_debug)(lambda: True),
-          help='Enable trace logging')
+          help='{Enable|Disable} trace logging')
 
 set_config('ENABLE_TRACE_LOGGING',
            depends_if('--enable-trace-logging')(lambda x: True))
@@ -343,12 +364,30 @@ set_define('JS_ION_PERF', ion_perf)
 
 js_option('--enable-jitspew',
           default=depends(when=moz_debug)(lambda: True),
-          help='Enable the Jit spew and IONFLAGS environment variable.')
+          help='{Enable|Disable} the Jit spew and IONFLAGS environment '
+               'variable')
 
 set_define('JS_JITSPEW',
            depends_if('--enable-jitspew')(lambda _: True))
 set_config('JS_JITSPEW',
            depends_if('--enable-jitspew')(lambda _: True))
+
+# Also enable the structured spewer
+set_define('JS_STRUCTURED_SPEW',
+           depends_if('--enable-jitspew')(lambda _: True))
+set_config('JS_STRUCTURED_SPEW',
+           depends_if('--enable-jitspew')(lambda _: True))
+# When enabled, masm will generate assumeUnreachable calls that act as
+# assertions in the generated code. This option is worth disabling when you
+# have to track mutated values through the generated code, to avoid constantly
+# dumping registers on and off the stack.
+js_option('--enable-masm-verbose',
+          default=depends(when=moz_debug)(lambda: True),
+          help='{Enable|Disable} MacroAssembler verbosity of generated code.')
+set_define('JS_MASM_VERBOSE',
+           depends_if('--enable-masm-verbose')(lambda _: True))
+set_config('JS_MASM_VERBOSE',
+           depends_if('--enable-masm-verbose')(lambda _: True))
 
 
 js_option('--enable-more-deterministic', env='JS_MORE_DETERMINISTIC',
@@ -364,18 +403,18 @@ set_define('JS_MORE_DETERMINISTIC', more_deterministic)
 
 # CTypes
 # =======================================================
-@depends(building_js, '--help')
-def ctypes_default(building_js, _):
+@depends(building_js)
+def ctypes_default(building_js):
     return not building_js
 
-js_option('--enable-ctypes', help='Enable js-ctypes',
-          default=ctypes_default)
+js_option('--enable-ctypes',
+          default=ctypes_default,
+          help='{Enable|Disable} js-ctypes')
 
 build_ctypes = depends_if('--enable-ctypes')(lambda _: True)
 
 set_config('BUILD_CTYPES', build_ctypes)
 set_define('BUILD_CTYPES', build_ctypes)
-add_old_configure_assignment('BUILD_CTYPES', build_ctypes)
 
 @depends(build_ctypes, building_js)
 def js_has_ctypes(ctypes, js):
@@ -384,10 +423,9 @@ def js_has_ctypes(ctypes, js):
 
 set_config('JS_HAS_CTYPES', js_has_ctypes)
 set_define('JS_HAS_CTYPES', js_has_ctypes)
-add_old_configure_assignment('JS_HAS_CTYPES', js_has_ctypes)
 
-@depends('--enable-ctypes', '--enable-compile-environment', '--help')
-def ctypes_and_compile_environment(ctypes, compile_environment, _):
+@depends('--enable-ctypes', '--enable-compile-environment')
+def ctypes_and_compile_environment(ctypes, compile_environment):
     return ctypes and compile_environment
 
 include('ffi.configure', when=ctypes_and_compile_environment)
@@ -412,9 +450,10 @@ with only_when('--enable-compile-environment'):
 
     @depends(enable_fuzzing,
              enable_aflfuzzer,
-             c_compiler)
-    def enable_libfuzzer(fuzzing, afl, c_compiler):
-        if fuzzing and not afl and c_compiler.type == 'clang':
+             c_compiler,
+             target)
+    def enable_libfuzzer(fuzzing, afl, c_compiler, target):
+        if fuzzing and not afl and c_compiler.type == 'clang' and target.os != 'Android':
             return True
 
     @depends(enable_fuzzing,
@@ -429,9 +468,11 @@ with only_when('--enable-compile-environment'):
 
     set_config('LIBFUZZER', enable_libfuzzer)
     set_define('LIBFUZZER', enable_libfuzzer)
+    add_old_configure_assignment('LIBFUZZER', enable_libfuzzer)
 
     set_config('FUZZING_INTERFACES', enable_fuzzing_interfaces)
     set_define('FUZZING_INTERFACES', enable_fuzzing_interfaces)
+    add_old_configure_assignment('FUZZING_INTERFACES', enable_fuzzing_interfaces)
 
 # Enable pipeline operator
 # ===================================================
@@ -459,3 +500,18 @@ def enable_build_binast(target, milestone):
 
 set_define('JS_BUILD_BINAST', enable_build_binast)
 set_config('JS_BUILD_BINAST', enable_build_binast)
+
+
+# Experimental support for wasm code generation with Cranelift
+# ==============================================================
+
+@depends(milestone.is_nightly)
+def default_cranelift(is_nightly):
+    return is_nightly
+
+js_option('--enable-cranelift',
+          default=default_cranelift,
+          help='{Enable|Disable} Cranelift code generator for wasm')
+
+set_config('ENABLE_WASM_CRANELIFT', depends_if('--enable-cranelift')(lambda x: True))
+set_define('ENABLE_WASM_CRANELIFT', depends_if('--enable-cranelift')(lambda x: True))

@@ -5,7 +5,7 @@
 
 /*---
 author: Caitlin Potter <caitp@igalia.com>
-esid: pending
+esid: sec-identifiers-static-semantics-early-errors
 description: >
   If the source code matching this production is strict code, it is a
   Syntax Error if BindingIdentifier is the IdentifierName arguments.
@@ -16,6 +16,6 @@ flags: [onlyStrict]
 features: [async-iteration]
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 (async function* arguments() { });

@@ -1,7 +1,4 @@
-// |jit-test| error: boom
-
-if (!('oomTest' in this))
-    throw new Error("boom");
+// |jit-test| skip-if: !('oomTest' in this)
 
 evaluate(`
 function ERROR(msg) {
@@ -12,6 +9,6 @@ for (var i = 0; i < 9; ++ i) {
   dbg.onNewGlobalObject = ERROR;
 }
 oomTest(function() {
-  newGlobal();
+  newGlobal({sameZoneAs: this});
 })
 `);

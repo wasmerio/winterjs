@@ -1,8 +1,22 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 en{
-    Version{"2.1.37.44"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Coordinated Universal Time"}
+        }
+        "Europe:Dublin"{
+            ld{"Irish Standard Time"}
+        }
+        "Europe:London"{
+            ld{"British Summer Time"}
+        }
+        "Pacific:Honolulu"{
+            sd{"HDT"}
+            sg{"HST"}
+            ss{"HST"}
+        }
         "meta:Acre"{
             ld{"Acre Summer Time"}
             lg{"Acre Time"}
@@ -556,7 +570,7 @@ en{
             ls{"Qyzylorda Standard Time"}
         }
         "meta:Reunion"{
-            ls{"Reunion Time"}
+            ls{"Réunion Time"}
         }
         "meta:Rothera"{
             ls{"Rothera Time"}

@@ -17,6 +17,13 @@ import mozinfo
 
 import mozunit
 
+PY3 = sys.version_info[0] == 3
+
+if PY3:
+    # reload() has been moved to importlib in Python 3
+    # see https://docs.python.org/3.5/library/importlib.html#importlib.reload
+    from importlib import reload
+
 
 class TestMozinfo(unittest.TestCase):
 
@@ -68,6 +75,12 @@ class TestMozinfo(unittest.TestCase):
         self.assertEqual(mozinfo.find_and_update_from_json(self.tempdir), j)
         self.assertEqual(mozinfo.info["foo"], "abcdefg")
 
+    def test_find_and_update_file_no_argument(self):
+        """Test that mozinfo.find_and_update_from_json no-ops on not being
+        given any arguments.
+        """
+        self.assertEqual(mozinfo.find_and_update_from_json(), None)
+
     def test_find_and_update_file_invalid_json(self):
         """Test that mozinfo.find_and_update_from_json can
         handle invalid JSON"""
@@ -75,6 +88,21 @@ class TestMozinfo(unittest.TestCase):
         with open(j, 'w') as f:
             f.write('invalid{"json":')
         self.assertRaises(ValueError, mozinfo.find_and_update_from_json, self.tempdir)
+
+    def test_find_and_update_file_raise_exception(self):
+        """Test that mozinfo.find_and_update_from_json raises
+        an IOError when exceptions are unsuppressed.
+        """
+        with self.assertRaises(IOError):
+            mozinfo.find_and_update_from_json(raise_exception=True)
+
+    def test_find_and_update_file_suppress_exception(self):
+        """Test that mozinfo.find_and_update_from_json suppresses
+        an IOError exception if a False boolean value is
+        provided as the only argument.
+        """
+        self.assertEqual(mozinfo.find_and_update_from_json(
+            raise_exception=False), None)
 
     def test_find_and_update_file_mozbuild(self):
         """Test that mozinfo.find_and_update_from_json can

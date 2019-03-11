@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 uz{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Koordinatali universal vaqt"}
+        }
+        "Europe:Dublin"{
+            ld{"Irlandiya yozgi vaqti"}
+        }
+        "Europe:London"{
+            ld{"Britaniya yozgi vaqti"}
+        }
         "meta:Afghanistan"{
             ls{"Afgʻoniston vaqti"}
         }

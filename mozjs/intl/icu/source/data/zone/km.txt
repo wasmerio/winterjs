@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 km{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"ម៉ោងសកលដែលមានការសម្រួល"}
+        }
+        "Europe:Dublin"{
+            ld{"ម៉ោង​រដូវ​ក្ដៅ​នៅ​អៀរឡង់​"}
+        }
+        "Europe:London"{
+            ld{"ម៉ោង​រដូវ​ក្ដៅ​​នៅ​ចក្រភព​អង់គ្លេស"}
+        }
         "meta:Afghanistan"{
             ls{"ម៉ោង​នៅ​អាហ្វហ្គានីស្ថាន"}
         }

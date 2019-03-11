@@ -11,12 +11,15 @@ info: |
     ...
     15. If extensibleTarget is true and targetNonconfigurableKeys is empty, then
         a. Return trapResult.
+features: [Proxy]
 ---*/
 
-var p = new Proxy({attr: 42}, {
-    ownKeys: function() {
-        return ["foo", "bar"];
-    }
+var p = new Proxy({
+  attr: 42
+}, {
+  ownKeys: function() {
+    return ["foo", "bar"];
+  }
 });
 
 var keys = Object.getOwnPropertyNames(p);

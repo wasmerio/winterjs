@@ -6,6 +6,7 @@ description: >
     [[Set]] ( P, V, Receiver)
 
     3. If handler is null, throw a TypeError exception.
+features: [Proxy]
 ---*/
 
 var p = Proxy.revocable({}, {});
@@ -13,11 +14,11 @@ var p = Proxy.revocable({}, {});
 p.revoke();
 
 assert.throws(TypeError, function() {
-    p.proxy.attr = 1;
+  p.proxy.attr = 1;
 });
 
 assert.throws(TypeError, function() {
-    p.proxy['attr'] = 1;
+  p.proxy['attr'] = 1;
 });
 
 reportCompare(0, 0);

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ml{
-    Version{"2.1.36.86"}
+    Version{"2.1.43.50"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"കോർഡിനേറ്റഡ് യൂണിവേഴ്‌സൽ ടൈം"}
+        }
+        "Europe:Dublin"{
+            ld{"ഐറിഷ് സ്റ്റാൻഡേർഡ് സമയം"}
+        }
+        "Europe:London"{
+            ld{"ബ്രിട്ടീഷ് ഗ്രീഷ്‌മകാല സമയം"}
+        }
         "meta:Acre"{
             ld{"എയ്ക്കർ വേനൽക്കാല സമയം"}
             lg{"എയ്ക്കർ സമയം"}

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: sw=4 ts=4 et :
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: sw=2 ts=4 et :
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -24,9 +24,9 @@
 #endif
 
 #if defined(__cplusplus)
-#include "mozilla/fallible.h"
-#include "mozilla/mozalloc_abort.h"
-#include "mozilla/TemplateLib.h"
+#  include "mozilla/fallible.h"
+#  include "mozilla/mozalloc_abort.h"
+#  include "mozilla/TemplateLib.h"
 #endif
 #include "mozilla/Attributes.h"
 #include "mozilla/Types.h"
@@ -40,12 +40,12 @@ MOZ_BEGIN_EXTERN_C
  * ours.
  */
 #ifndef free_impl
-#define free_impl free
-#define free_impl_
+#  define free_impl free
+#  define free_impl_
 #endif
 #ifndef malloc_impl
-#define malloc_impl malloc
-#define malloc_impl_
+#  define malloc_impl malloc
+#  define malloc_impl_
 #endif
 
 /*
@@ -60,38 +60,33 @@ MOZ_BEGIN_EXTERN_C
  * passing that pointer to |free()|.
  */
 
-MFBT_API void* moz_xmalloc(size_t size)
-    MOZ_ALLOCATOR;
+MFBT_API void* moz_xmalloc(size_t size) MOZ_ALLOCATOR;
 
-MFBT_API void* moz_xcalloc(size_t nmemb, size_t size)
-    MOZ_ALLOCATOR;
+MFBT_API void* moz_xcalloc(size_t nmemb, size_t size) MOZ_ALLOCATOR;
 
-MFBT_API void* moz_xrealloc(void* ptr, size_t size)
-    MOZ_ALLOCATOR;
+MFBT_API void* moz_xrealloc(void* ptr, size_t size) MOZ_ALLOCATOR;
 
-MFBT_API char* moz_xstrdup(const char* str)
-    MOZ_ALLOCATOR;
+MFBT_API char* moz_xstrdup(const char* str) MOZ_ALLOCATOR;
 
-MFBT_API size_t moz_malloc_usable_size(void *ptr);
+#if defined(HAVE_STRNDUP)
+MFBT_API char* moz_xstrndup(const char* str, size_t strsize) MOZ_ALLOCATOR;
+#endif /* if defined(HAVE_STRNDUP) */
 
-MFBT_API size_t moz_malloc_size_of(const void *ptr);
+MFBT_API void* moz_xmemdup(const void* ptr, size_t size) MOZ_ALLOCATOR;
+
+MFBT_API void* moz_xmemalign(size_t boundary, size_t size) MOZ_ALLOCATOR;
+
+MFBT_API size_t moz_malloc_usable_size(void* ptr);
+
+MFBT_API size_t moz_malloc_size_of(const void* ptr);
 
 /*
  * Like moz_malloc_size_of(), but works reliably with interior pointers, i.e.
  * pointers into the middle of a live allocation.
  */
-MFBT_API size_t moz_malloc_enclosing_size_of(const void *ptr);
-
-#if defined(HAVE_STRNDUP)
-MFBT_API char* moz_xstrndup(const char* str, size_t strsize)
-    MOZ_ALLOCATOR;
-#endif /* if defined(HAVE_STRNDUP) */
-
-MFBT_API void* moz_xmemalign(size_t boundary, size_t size)
-    MOZ_ALLOCATOR;
+MFBT_API size_t moz_malloc_enclosing_size_of(const void* ptr);
 
 MOZ_END_EXTERN_C
-
 
 #ifdef __cplusplus
 
@@ -106,11 +101,11 @@ MOZ_END_EXTERN_C
  *
  *   (1) the matching infallible operator delete immediately below
  *   (2) the matching system |operator delete(void*, std::nothrow)|
- *   (3) the matching system |operator delete(void*) throw(std::bad_alloc)|
+ *   (3) the matching system |operator delete(void*) noexcept(false)|
  *
- * NB: these are declared |throw(std::bad_alloc)|, though they will never
+ * NB: these are declared |noexcept(false)|, though they will never
  * throw that exception.  This declaration is consistent with the rule
- * that |::operator new() throw(std::bad_alloc)| will never return NULL.
+ * that |::operator new() noexcept(false)| will never return NULL.
  *
  * NB: mozilla::fallible can be used instead of std::nothrow.
  */
@@ -118,162 +113,135 @@ MOZ_END_EXTERN_C
 /* NB: This is defined just to silence vacuous warnings about symbol
  * visibility on OS X/gcc. These symbols are force-inline and not
  * exported. */
-#if defined(XP_MACOSX)
-#  define MOZALLOC_EXPORT_NEW MFBT_API
-#else
-#  define MOZALLOC_EXPORT_NEW
-#endif
-
-#if defined(_MSC_VER)
-/*
- * Suppress build warning spam (bug 578546).
- */
-#if _MSC_VER < 1912
-#define MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-#else
-#define MOZALLOC_THROW_IF_HAS_EXCEPTIONS throw()
-#endif
-#define MOZALLOC_THROW_BAD_ALLOC_IF_HAS_EXCEPTIONS
-#else
-/*
- * C++11 has deprecated exception-specifications in favour of |noexcept|.
- */
-#define MOZALLOC_THROW_IF_HAS_EXCEPTIONS noexcept(true)
-#define MOZALLOC_THROW_BAD_ALLOC_IF_HAS_EXCEPTIONS noexcept(false)
-#endif
-
-#define MOZALLOC_THROW_BAD_ALLOC MOZALLOC_THROW_BAD_ALLOC_IF_HAS_EXCEPTIONS
+#  if defined(XP_MACOSX)
+#    define MOZALLOC_EXPORT_NEW MFBT_API
+#  else
+#    define MOZALLOC_EXPORT_NEW
+#  endif
 
 MOZALLOC_EXPORT_NEW
-#if defined(__GNUC__) && !defined(__clang__) && defined(__SANITIZE_ADDRESS__)
+#  if defined(__GNUC__) && !defined(__clang__) && defined(__SANITIZE_ADDRESS__)
 /* gcc's asan somehow doesn't like always_inline on this function. */
 __attribute__((gnu_inline)) inline
-#else
+#  else
 MOZ_ALWAYS_INLINE_EVEN_DEBUG
-#endif
-void* operator new(size_t size) MOZALLOC_THROW_BAD_ALLOC
-{
-    return moz_xmalloc(size);
+#  endif
+    void*
+    operator new(size_t size) noexcept(false) {
+  return moz_xmalloc(size);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void* operator new(size_t size, const std::nothrow_t&) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return malloc_impl(size);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void* operator new(
+    size_t size, const std::nothrow_t&) noexcept(true) {
+  return malloc_impl(size);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void* operator new[](size_t size) MOZALLOC_THROW_BAD_ALLOC
-{
-    return moz_xmalloc(size);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void* operator new[](
+    size_t size) noexcept(false) {
+  return moz_xmalloc(size);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void* operator new[](size_t size, const std::nothrow_t&) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return malloc_impl(size);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void* operator new[](
+    size_t size, const std::nothrow_t&) noexcept(true) {
+  return malloc_impl(size);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void operator delete(void* ptr) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return free_impl(ptr);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete(
+    void* ptr) noexcept(true) {
+  return free_impl(ptr);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void operator delete(void* ptr, const std::nothrow_t&) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return free_impl(ptr);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete(
+    void* ptr, const std::nothrow_t&)noexcept(true) {
+  return free_impl(ptr);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void operator delete[](void* ptr) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return free_impl(ptr);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete[](
+    void* ptr) noexcept(true) {
+  return free_impl(ptr);
 }
 
-MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG
-void operator delete[](void* ptr, const std::nothrow_t&) MOZALLOC_THROW_IF_HAS_EXCEPTIONS
-{
-    return free_impl(ptr);
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete[](
+    void* ptr, const std::nothrow_t&) noexcept(true) {
+  return free_impl(ptr);
 }
 
+#  if defined(XP_WIN)
+// We provide the global sized delete overloads unconditionally because the
+// MSVC runtime headers do, despite compiling with /Zc:sizedDealloc-
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete(
+    void* ptr, size_t /*size*/) noexcept(true) {
+  return free_impl(ptr);
+}
+
+MOZALLOC_EXPORT_NEW MOZ_ALWAYS_INLINE_EVEN_DEBUG void operator delete[](
+    void* ptr, size_t /*size*/) noexcept(true) {
+  return free_impl(ptr);
+}
+#  endif
 
 /*
  * This policy is identical to MallocAllocPolicy, except it uses
  * moz_xmalloc/moz_xcalloc/moz_xrealloc instead of
  * malloc/calloc/realloc.
  */
-class InfallibleAllocPolicy
-{
-public:
-    template <typename T>
-    T* maybe_pod_malloc(size_t aNumElems)
-    {
-        return pod_malloc<T>(aNumElems);
-    }
+class InfallibleAllocPolicy {
+ public:
+  template <typename T>
+  T* maybe_pod_malloc(size_t aNumElems) {
+    return pod_malloc<T>(aNumElems);
+  }
 
-    template <typename T>
-    T* maybe_pod_calloc(size_t aNumElems)
-    {
-        return pod_calloc<T>(aNumElems);
-    }
+  template <typename T>
+  T* maybe_pod_calloc(size_t aNumElems) {
+    return pod_calloc<T>(aNumElems);
+  }
 
-    template <typename T>
-    T* maybe_pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize)
-    {
-        return pod_realloc<T>(aPtr, aOldSize, aNewSize);
-    }
+  template <typename T>
+  T* maybe_pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize) {
+    return pod_realloc<T>(aPtr, aOldSize, aNewSize);
+  }
 
-    template <typename T>
-    T* pod_malloc(size_t aNumElems)
-    {
-        if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
-            reportAllocOverflow();
-        }
-        return static_cast<T*>(moz_xmalloc(aNumElems * sizeof(T)));
+  template <typename T>
+  T* pod_malloc(size_t aNumElems) {
+    if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+      reportAllocOverflow();
     }
+    return static_cast<T*>(moz_xmalloc(aNumElems * sizeof(T)));
+  }
 
-    template <typename T>
-    T* pod_calloc(size_t aNumElems)
-    {
-        return static_cast<T*>(moz_xcalloc(aNumElems, sizeof(T)));
-    }
+  template <typename T>
+  T* pod_calloc(size_t aNumElems) {
+    return static_cast<T*>(moz_xcalloc(aNumElems, sizeof(T)));
+  }
 
-    template <typename T>
-    T* pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize)
-    {
-        if (aNewSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
-            reportAllocOverflow();
-        }
-        return static_cast<T*>(moz_xrealloc(aPtr, aNewSize * sizeof(T)));
+  template <typename T>
+  T* pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize) {
+    if (aNewSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+      reportAllocOverflow();
     }
+    return static_cast<T*>(moz_xrealloc(aPtr, aNewSize * sizeof(T)));
+  }
 
-    void free_(void* aPtr)
-    {
-        free_impl(aPtr);
-    }
+  template <typename T>
+  void free_(T* aPtr, size_t aNumElems = 0) {
+    free_impl(aPtr);
+  }
 
-    void reportAllocOverflow() const
-    {
-        mozalloc_abort("alloc overflow");
-    }
+  void reportAllocOverflow() const { mozalloc_abort("alloc overflow"); }
 
-    bool checkSimulatedOOM() const
-    {
-        return true;
-    }
+  bool checkSimulatedOOM() const { return true; }
 };
 
-#endif  /* ifdef __cplusplus */
+#endif /* ifdef __cplusplus */
 
 #ifdef malloc_impl_
-#undef malloc_impl_
-#undef malloc_impl
+#  undef malloc_impl_
+#  undef malloc_impl
 #endif
 #ifdef free_impl_
-#undef free_impl_
-#undef free_impl
+#  undef free_impl_
+#  undef free_impl
 #endif
 
 #endif /* ifndef mozilla_mozalloc_h */

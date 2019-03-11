@@ -7,13 +7,14 @@ description: >
 
     8. If trap is undefined, then return target.[[Get]](P, Receiver).
 
+features: [Proxy]
 ---*/
 
 var target = {
-    attr: 1
+  attr: 1
 };
 var p = new Proxy(target, {
-    get: undefined
+  get: undefined
 });
 
 assert.sameValue(p.attr, 1, 'return target.attr');

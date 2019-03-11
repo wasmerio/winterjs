@@ -27,7 +27,6 @@ from mozpack.files import (
     MinifiedJavaScript,
     MinifiedProperties,
     PreprocessedFile,
-    XPTFile,
 )
 
 # We don't have hglib installed everywhere.
@@ -63,7 +62,6 @@ import mozpack.path as mozpath
 from tempfile import mkdtemp
 from io import BytesIO
 from StringIO import StringIO
-from xpt import Typelib
 
 
 class TestWithTmpDir(unittest.TestCase):
@@ -658,6 +656,41 @@ class TestGeneratedFile(TestWithTmpDir):
         f = GeneratedFile('fooo')
         self.assertRaises(RuntimeError, f.copy, DestNoWrite(dest))
 
+    def test_generated_file_function(self):
+        '''
+        Test GeneratedFile behavior with functions.
+        '''
+        dest = self.tmppath('dest')
+        data = {
+            'num_calls': 0,
+        }
+
+        def content():
+            data['num_calls'] += 1
+            return 'content'
+
+        f = GeneratedFile(content)
+        self.assertEqual(data['num_calls'], 0)
+        f.copy(dest)
+        self.assertEqual(data['num_calls'], 1)
+        self.assertEqual('content', open(dest, 'rb').read())
+        self.assertEqual('content', f.open().read())
+        self.assertEqual('content', f.read())
+        self.assertEqual(len('content'), f.size())
+        self.assertEqual(data['num_calls'], 1)
+
+        f.content = 'modified'
+        f.copy(dest)
+        self.assertEqual(data['num_calls'], 1)
+        self.assertEqual('modified', open(dest, 'rb').read())
+        self.assertEqual('modified', f.open().read())
+        self.assertEqual('modified', f.read())
+        self.assertEqual(len('modified'), f.size())
+
+        f.content = content
+        self.assertEqual(data['num_calls'], 1)
+        self.assertEqual('content', f.read())
+        self.assertEqual(data['num_calls'], 2)
 
 class TestDeflatedFile(TestWithTmpDir):
     def test_deflated_file(self):
@@ -822,52 +855,6 @@ foo2_xpt = GeneratedFile(
     b'\x66\x6F\x6F\x00\x66\x6F\x6F\x00\x00\x00\x00\x01\x00\x00\x00\x00' +
     b'\x05\x00\x80\x06\x00\x00\x00'
 )
-
-
-def read_interfaces(file):
-    return dict((i.name, i) for i in Typelib.read(file).interfaces)
-
-
-class TestXPTFile(TestWithTmpDir):
-    def test_xpt_file(self):
-        x = XPTFile()
-        x.add(foo_xpt)
-        x.add(bar_xpt)
-        x.copy(self.tmppath('interfaces.xpt'))
-
-        foo = read_interfaces(foo_xpt.open())
-        foo2 = read_interfaces(foo2_xpt.open())
-        bar = read_interfaces(bar_xpt.open())
-        linked = read_interfaces(self.tmppath('interfaces.xpt'))
-        self.assertEqual(foo['foo'], linked['foo'])
-        self.assertEqual(bar['bar'], linked['bar'])
-
-        x.remove(foo_xpt)
-        x.copy(self.tmppath('interfaces2.xpt'))
-        linked = read_interfaces(self.tmppath('interfaces2.xpt'))
-        self.assertEqual(bar['foo'], linked['foo'])
-        self.assertEqual(bar['bar'], linked['bar'])
-
-        x.add(foo_xpt)
-        x.copy(DestNoWrite(self.tmppath('interfaces.xpt')))
-        linked = read_interfaces(self.tmppath('interfaces.xpt'))
-        self.assertEqual(foo['foo'], linked['foo'])
-        self.assertEqual(bar['bar'], linked['bar'])
-
-        x = XPTFile()
-        x.add(foo2_xpt)
-        x.add(bar_xpt)
-        x.copy(self.tmppath('interfaces.xpt'))
-        linked = read_interfaces(self.tmppath('interfaces.xpt'))
-        self.assertEqual(foo2['foo'], linked['foo'])
-        self.assertEqual(bar['bar'], linked['bar'])
-
-        x = XPTFile()
-        x.add(foo_xpt)
-        x.add(foo2_xpt)
-        x.add(bar_xpt)
-        from xpt import DataError
-        self.assertRaises(DataError, x.copy, self.tmppath('interfaces.xpt'))
 
 
 class TestMinifiedProperties(TestWithTmpDir):

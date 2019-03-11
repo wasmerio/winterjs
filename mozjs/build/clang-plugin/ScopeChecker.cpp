@@ -8,10 +8,12 @@
 void ScopeChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(varDecl().bind("node"), this);
   AstMatcher->addMatcher(cxxNewExpr().bind("node"), this);
-  AstMatcher->addMatcher(materializeTemporaryExpr().bind("node"), this);
+  AstMatcher->addMatcher(
+      materializeTemporaryExpr(
+          unless(hasDescendant(cxxConstructExpr(allowsTemporary())))
+      ).bind("node"), this);
   AstMatcher->addMatcher(
       callExpr(callee(functionDecl(heapAllocator()))).bind("node"), this);
-  AstMatcher->addMatcher(parmVarDecl().bind("parm_vardecl"), this);
 }
 
 // These enum variants determine whether an allocation has occured in the code.
@@ -37,7 +39,7 @@ void ScopeChecker::check(const MatchFinder::MatchResult &Result) {
   QualType T;
 
   if (const ParmVarDecl *D =
-          Result.Nodes.getNodeAs<ParmVarDecl>("parm_vardecl")) {
+          Result.Nodes.getNodeAs<ParmVarDecl>("node")) {
     if (D->hasUnparsedDefaultArg() || D->hasUninstantiatedDefaultArg()) {
       return;
     }
@@ -63,7 +65,7 @@ void ScopeChecker::check(const MatchFinder::MatchResult &Result) {
       Variety = AV_Automatic;
     }
     T = D->getType();
-    Loc = D->getLocStart();
+    Loc = D->getBeginLoc();
   } else if (const CXXNewExpr *E = Result.Nodes.getNodeAs<CXXNewExpr>("node")) {
     // New allocates things on the heap.
     // We don't consider placement new to do anything, as it doesn't actually
@@ -71,7 +73,7 @@ void ScopeChecker::check(const MatchFinder::MatchResult &Result) {
     if (!isPlacementNew(E)) {
       Variety = AV_Heap;
       T = E->getAllocatedType();
-      Loc = E->getLocStart();
+      Loc = E->getBeginLoc();
     }
   } else if (const MaterializeTemporaryExpr *E =
                  Result.Nodes.getNodeAs<MaterializeTemporaryExpr>("node")) {
@@ -106,14 +108,14 @@ void ScopeChecker::check(const MatchFinder::MatchResult &Result) {
       break;
     }
     T = E->getType().getUnqualifiedType();
-    Loc = E->getLocStart();
+    Loc = E->getBeginLoc();
   } else if (const CallExpr *E = Result.Nodes.getNodeAs<CallExpr>("node")) {
     T = E->getType()->getPointeeType();
     if (!T.isNull()) {
       // This will always allocate on the heap, as the heapAllocator() check
       // was made in the matcher
       Variety = AV_Heap;
-      Loc = E->getLocStart();
+      Loc = E->getBeginLoc();
     }
   }
 

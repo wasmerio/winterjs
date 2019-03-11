@@ -24,12 +24,22 @@ if CONFIG['MOZ_ASAN']:
         'AsanOptions.cpp',
     ]
 
+if CONFIG['MOZ_UBSAN']:
+    SOURCES += [
+        'UbsanOptions.cpp',
+    ]
+
 if CONFIG['OS_TARGET'] == 'WINNT':
-    DEFFILE = 'mozglue.def'
+    DEFFILE = '!mozglue.def'
     # We'll break the DLL blocklist if we immediately load user32.dll
     DELAYLOAD_DLLS += [
         'user32.dll',
     ]
+    RCINCLUDE = 'mozglue.rc'
+
+    if CONFIG['MOZ_PGO'] and CONFIG['CC_TYPE'] == 'clang-cl':
+        SOURCES += ['cygprofile.cpp']
+        SOURCES['cygprofile.cpp'].pgo_generate_only = True
 
     if CONFIG['CC_TYPE'] == "msvc":
         CFLAGS += ['-guard:cf']
@@ -57,6 +67,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT']:
             SOURCES += ['WindowsCFGStatus.cpp']
         SOURCES += [
             'Authenticode.cpp',
+            'UntrustedDllsHandler.cpp',
             'WindowsDllBlocklist.cpp',
         ]
 
@@ -72,6 +83,8 @@ if CONFIG['MOZ_WIDGET_TOOLKIT']:
         ]
         EXPORTS.mozilla += [
             'Authenticode.h',
+            'WindowsDllBlocklistCommon.h',
+            'WindowsDllBlocklistDefs.h',
         ]
         EXPORTS.mozilla.glue += [
             'WindowsDllServices.h',
@@ -112,8 +125,6 @@ USE_LIBS += [
 DEFINES['IMPL_MFBT'] = True
 LIBRARY_DEFINES['MOZ_HAS_MOZGLUE'] = True
 
-LDFLAGS += CONFIG['MOZ_GLUE_WRAP_LDFLAGS']
-
 if CONFIG['OS_TARGET'] == 'Darwin':
     # On OSX 10.10.3, a dead lock happens in some cases involving dynamic
     # symbol resolution for symbols that jemalloc itself uses. While it
@@ -124,7 +135,10 @@ if CONFIG['OS_TARGET'] == 'Darwin':
     # for TLS.
     LDFLAGS += ['-Wl,-bind_at_load']
 
-if CONFIG['MOZ_LINKER'] and CONFIG['TARGET_CPU'] == 'arm':
+if CONFIG['MOZ_LINKER'] and CONFIG['CPU_ARCH'] == 'arm':
     LDFLAGS += ['-Wl,-version-script,%s/arm-eabi-filter' % SRCDIR]
 
 DIST_INSTALL = True
+
+if CONFIG['CC_TYPE'] == 'clang-cl':
+    AllowCompilerWarnings()  # workaround for bug 1090497

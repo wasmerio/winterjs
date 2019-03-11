@@ -17,6 +17,7 @@ info: |
   List elements. If length is 0, the empty string is returned.
 
   Ref: 7.1.3 ToNumber ( argument )
+features: [String.fromCodePoint]
 ---*/
 
 assert.sameValue(String.fromCodePoint(null), '\x00');
@@ -25,7 +26,11 @@ assert.sameValue(String.fromCodePoint(true), '\x01');
 assert.sameValue(String.fromCodePoint('42'), '\x2A');
 assert.sameValue(String.fromCodePoint('042'), '\x2A');
 assert.sameValue(
-  String.fromCodePoint({ valueOf: function() { return 31; } }),
+  String.fromCodePoint({
+    valueOf: function() {
+      return 31;
+    }
+  }),
   '\x1F'
 );
 

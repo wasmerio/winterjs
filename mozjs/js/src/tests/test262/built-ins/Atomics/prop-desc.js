@@ -1,3 +1,4 @@
+// |reftest| skip-if(!this.hasOwnProperty('Atomics')) -- Atomics is not enabled unconditionally
 // Copyright (C) 2016 The V8 Project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -8,11 +9,12 @@ description: >
 info: |
   The Atomics Object
 
-  [...]
-  The Atomics object is not a function object. It does not have a [[Construct]]
-  internal method; it is not possible to use the Atomics object as a constructor
-  with the new operator. The Atomics object also does not have a [[Call]] internal
-  method; it is not possible to invoke the Atomics object as a function.
+  ...
+  The Atomics object does not have a [[Construct]] internal method;
+  it is not possible to use the Atomics object as a constructor with the new operator.
+
+  The Atomics object does not have a [[Call]] internal method;
+  it is not possible to invoke the Atomics object as a function.
 
   17 ECMAScript Standard Built-in Objects:
 
@@ -20,15 +22,23 @@ info: |
   has the attributes { [[Writable]]: true, [[Enumerable]]: false,
   [[Configurable]]: true } unless otherwise specified.
 includes: [propertyHelper.js]
+features: [Atomics]
 ---*/
 
-assert.sameValue(typeof Atomics, "object", "no [[Call]]");
+assert.sameValue(typeof Atomics, "object", 'The value of `typeof Atomics` is "object"');
+
+assert.throws(TypeError, function() {
+  Atomics();
+}, '`Atomics()` throws TypeError');
+
 assert.throws(TypeError, function() {
   new Atomics();
-}, "no [[Construct]]");
+}, '`new Atomics()` throws TypeError');
 
-verifyNotEnumerable(this, "Atomics");
-verifyWritable(this, "Atomics");
-verifyConfigurable(this, "Atomics");
+verifyProperty(this, "Atomics", {
+  enumerable: false,
+  writable: true,
+  configurable: true
+});
 
 reportCompare(0, 0);

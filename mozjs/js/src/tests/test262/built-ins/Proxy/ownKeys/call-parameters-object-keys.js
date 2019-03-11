@@ -6,19 +6,20 @@ description: >
     [[OwnPropertyKeys]] ( )
 
     8. Let trapResultArray be Call(trap, handler, «target»).
+features: [Proxy]
 ---*/
 
 var _target, _handler;
 var target = {
-    foo: 1,
-    bar: 2
+  foo: 1,
+  bar: 2
 };
 var handler = {
-    ownKeys: function(t) {
-        _handler = this;
-        _target = t;
-        return Object.keys(t);
-    }
+  ownKeys: function(t) {
+    _handler = this;
+    _target = t;
+    return Object.keys(t);
+  }
 };
 var p = new Proxy(target, handler);
 

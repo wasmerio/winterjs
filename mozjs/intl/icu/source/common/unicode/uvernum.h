@@ -34,9 +34,11 @@
   *  by running the UNIX makefile target 'update-windows-makefiles' in icu/source.
   *
   *
+  * source/common/common_uwp.vcxproj
   * source/common/common.vcxproj - update 'Output file name' on the link tab so
   *                   that it contains the new major/minor combination
   * source/i18n/i18n.vcxproj - same as for the common.vcxproj
+  * source/i18n/i18n_uwp.vcxproj - same as for the common_uwp.vcxproj
   * source/layoutex/layoutex.vcproj - same
   * source/stubdata/stubdata.vcproj - same as for the common.vcxproj
   * source/io/io.vcproj - same as for the common.vcxproj
@@ -58,13 +60,13 @@
  *  This value will change in the subsequent releases of ICU
  *  @stable ICU 2.4
  */
-#define U_ICU_VERSION_MAJOR_NUM 60
+#define U_ICU_VERSION_MAJOR_NUM 63
 
 /** The current ICU minor version as an integer.
  *  This value will change in the subsequent releases of ICU
  *  @stable ICU 2.6
  */
-#define U_ICU_VERSION_MINOR_NUM 2
+#define U_ICU_VERSION_MINOR_NUM 1
 
 /** The current ICU patchlevel version as an integer.
  *  This value will change in the subsequent releases of ICU
@@ -84,7 +86,7 @@
  *  This value will change in the subsequent releases of ICU
  *  @stable ICU 2.6
  */
-#define U_ICU_VERSION_SUFFIX _60
+#define U_ICU_VERSION_SUFFIX _63
 
 /**
  * \def U_DEF2_ICU_ENTRY_POINT_RENAME
@@ -119,19 +121,26 @@
  *  This value will change in the subsequent releases of ICU
  *  @stable ICU 2.4
  */
-#define U_ICU_VERSION "60.2"
+#define U_ICU_VERSION "63.1"
 
-/** The current ICU library major/minor version as a string without dots, for library name suffixes.
- *  This value will change in the subsequent releases of ICU
- *  @stable ICU 2.6
+/**
+ * The current ICU library major version number as a string, for library name suffixes.
+ * This value will change in subsequent releases of ICU.
+ *
+ * Until ICU 4.8, this was the combination of the single-digit major and minor ICU version numbers
+ * into one string without dots ("48").
+ * Since ICU 49, it is the double-digit major ICU version number.
+ * See http://userguide.icu-project.org/design#TOC-Version-Numbers-in-ICU
+ *
+ * @stable ICU 2.6
  */
-#define U_ICU_VERSION_SHORT "60"
+#define U_ICU_VERSION_SHORT "63"
 
 #ifndef U_HIDE_INTERNAL_API
 /** Data version in ICU4C.
  * @internal ICU 4.4 Internal Use Only
  **/
-#define U_ICU_DATA_VERSION "60.2"
+#define U_ICU_DATA_VERSION "63.1"
 #endif  /* U_HIDE_INTERNAL_API */
 
 /*===========================================================================

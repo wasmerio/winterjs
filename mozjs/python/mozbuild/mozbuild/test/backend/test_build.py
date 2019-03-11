@@ -26,6 +26,7 @@ from tempfile import mkdtemp
 
 BASE_SUBSTS = [
     ('PYTHON', mozpath.normsep(sys.executable)),
+    ('MOZ_UI_LOCALE', 'en-US'),
 ]
 
 
@@ -42,7 +43,9 @@ class TestBuild(unittest.TestCase):
 
     @contextmanager
     def do_test_backend(self, *backends, **kwargs):
-        topobjdir = mkdtemp()
+        # Create the objdir in the srcdir to ensure that they share
+        # the same drive on Windows.
+        topobjdir = mkdtemp(dir=buildconfig.topsrcdir)
         try:
             config = ConfigEnvironment(buildconfig.topsrcdir, topobjdir,
                                        **kwargs)

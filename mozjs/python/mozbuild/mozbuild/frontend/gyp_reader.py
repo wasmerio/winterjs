@@ -40,7 +40,7 @@ sys.modules['gyp.generator.mozbuild'] = sys.modules[__name__]
 # chrome_src for the default includes, so go backwards from the pylib
 # directory, which is the parent directory of gyp module.
 chrome_src = mozpath.abspath(mozpath.join(mozpath.dirname(gyp.__file__),
-    '../../../..'))
+    '../../../../..'))
 script_dir = mozpath.join(chrome_src, 'build')
 
 
@@ -243,12 +243,16 @@ def process_gyp_result(gyp_result, gyp_dir_attrs, path, config, output,
             context['UNIFIED_SOURCES'] = alphabetical_sorted(unified_sources)
 
             defines = target_conf.get('defines', [])
-            if bool(config.substs['_MSC_VER']) and no_chromium:
+            if config.substs['CC_TYPE'] in ('msvc', 'clang-cl') and no_chromium:
                 msvs_settings = gyp.msvs_emulation.MsvsSettings(spec, {})
                 defines.extend(msvs_settings.GetComputedDefines(c))
             for define in defines:
                 if '=' in define:
                     name, value = define.split('=', 1)
+                    # The NSS gyp file doesn't expose a way to override this
+                    # currently, so we do so here.
+                    if name == 'NSS_ALLOW_SSLKEYLOGFILE' and config.substs.get('RELEASE_OR_BETA', False):
+                        continue
                     context['DEFINES'][name] = value
                 else:
                     context['DEFINES'][define] = True
@@ -263,20 +267,24 @@ def process_gyp_result(gyp_result, gyp_dir_attrs, path, config, output,
                     # NSPR_INCLUDE_DIR gets passed into the NSS build this way.
                     include = '!/' + mozpath.relpath(include, config.topobjdir)
                 else:
-                  # moz.build expects all LOCAL_INCLUDES to exist, so ensure they do.
-                  #
-                  # NB: gyp files sometimes have actual absolute paths (e.g.
-                  # /usr/include32) and sometimes paths that moz.build considers
-                  # absolute, i.e. starting from topsrcdir. There's no good way
-                  # to tell them apart here, and the actual absolute paths are
-                  # likely bogus. In any event, actual absolute paths will be
-                  # filtered out by trying to find them in topsrcdir.
-                  if include.startswith('/'):
-                      resolved = mozpath.abspath(mozpath.join(config.topsrcdir, include[1:]))
-                  else:
-                      resolved = mozpath.abspath(mozpath.join(mozpath.dirname(build_file), include))
-                  if not os.path.exists(resolved):
-                      continue
+                    # moz.build expects all LOCAL_INCLUDES to exist, so ensure they do.
+                    #
+                    # NB: gyp files sometimes have actual absolute paths (e.g.
+                    # /usr/include32) and sometimes paths that moz.build considers
+                    # absolute, i.e. starting from topsrcdir. There's no good way
+                    # to tell them apart here, and the actual absolute paths are
+                    # likely bogus. In any event, actual absolute paths will be
+                    # filtered out by trying to find them in topsrcdir.
+                    #
+                    # We do allow !- and %-prefixed paths, assuming they come
+                    # from moz.build and will be handled the same way as if they
+                    # were given to LOCAL_INCLUDES in moz.build.
+                    if include.startswith('/'):
+                        resolved = mozpath.abspath(mozpath.join(config.topsrcdir, include[1:]))
+                    elif not include.startswith(('!', '%')):
+                        resolved = mozpath.abspath(mozpath.join(mozpath.dirname(build_file), include))
+                    if not include.startswith(('!', '%')) and not os.path.exists(resolved):
+                        continue
                 context['LOCAL_INCLUDES'] += [include]
 
             context['ASFLAGS'] = target_conf.get('asflags_mozilla', [])
@@ -326,7 +334,6 @@ def process_gyp_result(gyp_result, gyp_dir_attrs, path, config, output,
           if config.substs['OS_TARGET'] == 'WINNT':
               context['DEFINES']['UNICODE'] = True
               context['DEFINES']['_UNICODE'] = True
-        context['COMPILE_FLAGS']['STL'] = []
         context['COMPILE_FLAGS']['OS_INCLUDES'] = []
 
         for key, value in gyp_dir_attrs.sandbox_vars.items():
@@ -373,18 +380,12 @@ class GypProcessor(object):
         # gyp expects plain str instead of unicode. The frontend code gives us
         # unicode strings, so convert them.
         path = encode(path)
-        if bool(config.substs['_MSC_VER']):
+        if config.substs['CC_TYPE'] in ('msvc', 'clang-cl'):
             # This isn't actually used anywhere in this generator, but it's needed
             # to override the registry detection of VC++ in gyp.
             os.environ['GYP_MSVS_OVERRIDE_PATH'] = 'fake_path'
 
-            # TODO bug 1371485 upgrade vendored version of GYP to something that
-            # doesn't barf when MSVS_VERSION==2017.
-            msvs_version = config.substs['MSVS_VERSION']
-            if msvs_version == '2017':
-                warnings.warn('MSVS_VERSION being set to 2015 to appease GYP')
-                msvs_version = '2015'
-            os.environ['GYP_MSVS_VERSION'] = msvs_version
+            os.environ['GYP_MSVS_VERSION'] = config.substs['MSVS_VERSION']
 
         params = {
             b'parallel': False,
@@ -399,7 +400,8 @@ class GypProcessor(object):
         else:
             depth = chrome_src
             # Files that gyp_chromium always includes
-            includes = [encode(mozpath.join(script_dir, 'common.gypi'))]
+            includes = [encode(mozpath.join(script_dir, 'gyp_includes',
+                                            'common.gypi'))]
             finder = FileFinder(chrome_src)
             includes.extend(encode(mozpath.join(chrome_src, name))
                             for name, _ in finder.find('*/supplement.gypi'))

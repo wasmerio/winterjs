@@ -3,6 +3,10 @@
 es_US{
     %%Parent{"es_419"}
     Currencies{
+        AMD{
+            "AMD",
+            "dram",
+        }
         JPY{
             "¥",
             "yen",
@@ -10,6 +14,10 @@ es_US{
         MYR{
             "MYR",
             "ringit",
+        }
+        STN{
+            "STN",
+            "dobra santotomense",
         }
         THB{
             "THB",
@@ -37,20 +45,19 @@ es_US{
         RON{"lei"}
         SSP{"£"}
         SYP{"£"}
+        VEF{"Bs"}
     }
     CurrencyPlurals{
         KGS{
             one{"som"}
         }
-        MWK{
-            one{"kwacha malauí"}
-        }
         MYR{
             one{"ringit"}
             other{"ringits"}
         }
-        RON{
-            one{"leu rumano"}
+        STN{
+            one{"dobra santotomense"}
+            other{"dobra santotomense"}
         }
         THB{
             one{"bat"}
@@ -69,5 +76,5 @@ es_US{
             other{"francos CFA de África Occidental"}
         }
     }
-    Version{"2.1.37.22"}
+    Version{"2.1.43.65"}
 }

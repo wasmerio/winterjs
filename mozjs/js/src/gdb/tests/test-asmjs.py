@@ -3,6 +3,7 @@
 # Expected behavior is for the asm.js code in the following fragment to trigger
 # SIGSEGV. The code in js/src/gdb/mozilla/asmjs.py should prevent GDB from
 # handling that signal.
+# flake8: noqa: F821
 
 run_fragment('asmjs.segfault')
 
@@ -12,4 +13,4 @@ run_fragment('asmjs.segfault')
 # So if we get here, and the asm.js code actually ran, we win.
 
 assert_pretty('ok', 'true')
-assert_pretty('rval', '$jsval("ok")')
+assert_pretty('rval', '$JS::Value("ok")')

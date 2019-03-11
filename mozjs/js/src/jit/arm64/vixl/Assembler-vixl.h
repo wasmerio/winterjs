@@ -38,6 +38,12 @@
 #include "jit/shared/Disassembler-shared.h"
 #include "jit/shared/IonAssemblerBufferWithConstantPools.h"
 
+#if defined(_M_ARM64)
+#ifdef mvn
+#undef mvn
+#endif
+#endif
+
 namespace vixl {
 
 using js::jit::BufferOffset;
@@ -695,22 +701,6 @@ class Operand {
   // where <extend> is one of {UXTB, UXTH, UXTW, UXTX, SXTB, SXTH, SXTW, SXTX}.
   //       <shift_amount> is uint2_t.
   explicit Operand(Register reg, Extend extend, unsigned shift_amount = 0);
-
-  // FIXME: Temporary constructors for compilation.
-  // FIXME: These should be removed -- Operand should not leak into shared code.
-  // FIXME: Something like an LAllocationUnion for {gpreg, fpreg, Address} is wanted.
-  explicit Operand(js::jit::Register) {
-    MOZ_CRASH("Operand with Register");
-  }
-  explicit Operand(js::jit::FloatRegister) {
-    MOZ_CRASH("Operand with FloatRegister");
-  }
-  explicit Operand(js::jit::Register, int32_t) {
-    MOZ_CRASH("Operand with implicit Address");
-  }
-  explicit Operand(js::jit::RegisterOrSP, int32_t) {
-    MOZ_CRASH("Operand with implicit Address");
-  }
 
   bool IsImmediate() const;
   bool IsShiftedRegister() const;

@@ -11,9 +11,11 @@ info: |
   2. If newTarget is not present, let newTarget be target.
   ...
   6. Return Construct(target, args, newTarget).
+features: [Reflect, Reflect.construct]
 ---*/
 
 var o = {};
+
 function fn() {
   this.o = o;
 }

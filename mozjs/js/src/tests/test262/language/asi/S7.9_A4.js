@@ -11,12 +11,11 @@ negative:
   type: SyntaxError
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 //CHECK#1
 try {
-  throw 
+  throw
   1;
-} catch(e) {  
-}  
-$ERROR('#1: Check throw statement for automatic semicolon insertion');
+} catch(e) {
+}

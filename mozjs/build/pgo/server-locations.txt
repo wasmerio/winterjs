@@ -118,10 +118,6 @@ https://mismatch.untrusted.example.com:443	privileged,cert=untrusted
 https://untrusted-expired.example.com:443	privileged,cert=untrustedandexpired
 https://mismatch.untrusted-expired.example.com:443	privileged,cert=untrustedandexpired
 
-# This is here so that we don't load the default live bookmark over
-# the network in every test suite.
-http://fxfeeds.mozilla.com:80
-
 # Prevent safebrowsing tests from hitting the network for its-a-trap.html and
 # its-an-attack.html.
 http://www.itisatrap.org:80
@@ -173,7 +169,9 @@ http://unwanted.example.com:80
 http://tracking.example.com:80
 http://not-tracking.example.com:80
 http://tracking.example.org:80
+http://another-tracking.example.net:80
 http://itisatracker.org:80
+https://itisatracker.org:443
 http://trackertest.org:80
 
 https://malware.example.com:443
@@ -181,6 +179,7 @@ https://unwanted.example.com:443
 https://tracking.example.com:443
 https://not-tracking.example.com:443
 https://tracking.example.org:443
+https://another-tracking.example.net:443
 
 #
 # Used while testing flash blocking (Bug 1307604)
@@ -260,11 +259,6 @@ http://example.cn:80                privileged
 http://example.co.jp:80             privileged
 http://example.fi:80                privileged
 
-# Hosts for testing marketplace apps installations
-https://marketplace.firefox.com:443       privileged
-https://marketplace-dev.allizom.org:443   privileged
-https://marketplace.allizom.org:443       privileged
-
 # Host for HPKP
 https://include-subdomains.pinning-dynamic.example.com:443        privileged,cert=dynamicPinningGood
 https://bad.include-subdomains.pinning-dynamic.example.com:443    privileged,cert=dynamicPinningBad
@@ -291,3 +285,6 @@ https://mochitest.youtube.com:443
 
 # Host for U2F localhost tests
 https://localhost:443
+
+# Host for testing APIs whitelisted for mozilla.org
+https://www.mozilla.org:443

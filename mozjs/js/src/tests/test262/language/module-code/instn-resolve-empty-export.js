@@ -3,7 +3,7 @@
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
 description: >
-    An ExportClause without an ExportsList contributes to the list of requested
+    A NamedExport without an ExportsList contributes to the list of requested
     modules
 esid: sec-moduledeclarationinstantiation
 info: |
@@ -26,7 +26,7 @@ info: |
 
     Syntax
 
-      ExportClause:
+      NamedExport:
         { }
         { ExportsList }
         { ExportsList , }
@@ -36,6 +36,6 @@ negative:
 flags: [module]
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 export {} from './instn-resolve-empty-export_FIXTURE.js';

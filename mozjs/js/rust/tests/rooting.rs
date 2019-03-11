@@ -22,15 +22,15 @@ fn rooting() {
 
         let cx = runtime.cx();
         let h_option = JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
-        let c_option = JS::CompartmentOptions::default();
+        let c_option = JS::RealmOptions::default();
 
         rooted!(in(cx) let global = JS_NewGlobalObject(cx,
                                                        &SIMPLE_GLOBAL_CLASS,
                                                        ptr::null_mut(),
                                                        h_option,
                                                        &c_option));
-        let _ac = js::ac::AutoCompartment::with_obj(cx, global.get());
-        rooted!(in(cx) let prototype_proto = JS_GetObjectPrototype(cx, global.handle()));
+        let _ar = js::ar::AutoRealm::with_obj(cx, global.get());
+        rooted!(in(cx) let prototype_proto = JS::GetRealmObjectPrototype(cx));
         rooted!(in(cx) let proto = JS_NewObjectWithUniqueType(cx,
                                                               &CLASS as *const _,
                                                               prototype_proto.handle()));

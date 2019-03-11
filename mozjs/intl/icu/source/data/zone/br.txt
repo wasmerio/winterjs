@@ -1,8 +1,14 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 br{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Europe:Dublin"{
+            ld{"eur cʼhoañv Iwerzhon"}
+        }
+        "Europe:London"{
+            ld{"eur hañv Breizh-Veur"}
+        }
         "meta:Afghanistan"{
             ls{"eur Afghanistan"}
         }

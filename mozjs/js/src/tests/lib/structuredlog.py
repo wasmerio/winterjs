@@ -1,9 +1,11 @@
-# produce mozlog-compatible log messages, following the spec at https://mozbase.readthedocs.io/en/latest/mozlog.html
+# produce mozlog-compatible log messages, following the spec at
+# https://mozbase.readthedocs.io/en/latest/mozlog.html
 
 import json
 import os
 
 from time import time
+
 
 class TestLogger(object):
     def __init__(self, source, threadname='main'):
@@ -39,7 +41,7 @@ class TestLogger(object):
         self._log(action='test_end', test=testname, status=status)
 
     def test(self, testname, status, duration, **details):
-        record = self._record(action='test_start', test=testname)
+        record = self._record(action='test_start', test=testname, **details.get('extra', {}))
         end_time = record['time']
         record['time'] -= duration
         self._log_obj(record)

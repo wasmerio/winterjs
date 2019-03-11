@@ -6,6 +6,7 @@ from __future__ import absolute_import, unicode_literals
 
 import errno
 import getpass
+import glob
 import io
 import json
 import logging
@@ -30,6 +31,7 @@ except Exception:
     psutil = None
 
 from mach.mixin.logging import LoggingMixin
+import mozfile
 from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 from mozterm.widgets import Footer
 
@@ -39,7 +41,6 @@ from .clobber import (
     Clobberer,
 )
 from ..base import (
-    BuildEnvironmentNotFoundException,
     MozbuildObject,
 )
 from ..backend import (
@@ -94,10 +95,19 @@ and proceed with running tests. To do this run:
  $ touch {clobber_file}
 '''.splitlines()])
 
+CLOBBER_REQUESTED_MESSAGE = '''
+===================
+The CLOBBER file was updated prior to this build. A clobber build may be
+required to succeed, but we weren't expecting it to.
+
+Please consider filing a bug for this failure if you have reason to believe
+this is a clobber bug and not due to local changes.
+===================
+'''.strip()
 
 
 BuildOutputResult = namedtuple('BuildOutputResult',
-    ('warning', 'state_changed', 'for_display'))
+    ('warning', 'state_changed', 'message'))
 
 
 class TierStatus(object):
@@ -229,6 +239,7 @@ class BuildMonitor(MozbuildObject):
                                                      objdir=self.topobjdir)
 
         self.build_objects = []
+        self.build_dirs = set()
 
     def start(self):
         """Record the start of the build."""
@@ -255,10 +266,11 @@ class BuildMonitor(MozbuildObject):
         this line. If the build system changed state, the caller may want to
         query this instance for the current state in order to update UI, etc.
 
-        for_display is a boolean indicating whether the line is relevant to the
-        user. This is typically used to filter whether the line should be
-        presented to the user.
+        message is either None, or the content of a message to be
+        displayed to the user.
         """
+        message = None
+
         if line.startswith('BUILDSTATUS'):
             args = line.split()[1:]
 
@@ -277,19 +289,26 @@ class BuildMonitor(MozbuildObject):
             elif action == 'OBJECT_FILE':
                 self.build_objects.append(args[0])
                 update_needed = False
+            elif action == 'BUILD_VERBOSE':
+                build_dir = args[0]
+                if build_dir not in self.build_dirs:
+                    self.build_dirs.add(build_dir)
+                    message = build_dir
+                update_needed = False
             else:
                 raise Exception('Unknown build status: %s' % action)
 
-            return BuildOutputResult(None, update_needed, False)
+            return BuildOutputResult(None, update_needed, message)
 
         warning = None
 
         try:
             warning = self._warnings_collector.process_line(line)
+            message = line
         except:
             pass
 
-        return BuildOutputResult(warning, False, True)
+        return BuildOutputResult(warning, False, message)
 
     def stop_resource_recording(self):
         if self._resources_started:
@@ -666,10 +685,10 @@ class BuildOutputManager(OutputManager):
 
 
     def on_line(self, line):
-        warning, state_changed, relevant = self.monitor.on_line(line)
+        warning, state_changed, message = self.monitor.on_line(line)
 
-        if relevant:
-            self.log(logging.INFO, 'build_output', {'line': line}, '{line}')
+        if message:
+            self.log(logging.INFO, 'build_output', {'line': message}, '{line}')
         elif state_changed:
             have_handler = hasattr(self, 'handler')
             if have_handler:
@@ -748,6 +767,9 @@ class CCacheStats(object):
     STATS_KEYS = [
         # (key, description)
         # Refer to stats.c in ccache project for all the descriptions.
+        ('stats_zeroed', 'stats zero time'), # Old name prior to ccache 3.4
+        ('stats_zeroed', 'stats zeroed'),
+        ('stats_updated', 'stats updated'),
         ('cache_hit_direct', 'cache hit (direct)'),
         ('cache_hit_preprocessed', 'cache hit (preprocessed)'),
         ('cache_hit_rate', 'cache hit rate'),
@@ -829,6 +851,13 @@ class CCacheStats(object):
 
     @staticmethod
     def _parse_value(raw_value):
+        try:
+            # ccache calls strftime with '%c' (src/stats.c)
+            ts = time.strptime(raw_value, '%c')
+            return int(time.mktime(ts))
+        except ValueError:
+            pass
+
         value = raw_value.split()
         unit = ''
         if len(value) == 1:
@@ -961,15 +990,124 @@ class BuildDriver(MozbuildObject):
                 if directory.startswith('/'):
                     directory = directory[1:]
 
-            status = None
-            monitor.start_resource_recording()
-            if what:
-                top_make = os.path.join(self.topobjdir, 'Makefile')
-                if not os.path.exists(top_make):
-                    print('Your tree has not been configured yet. Please run '
-                        '|mach build| with no arguments.')
-                    return 1
+            def build_out_of_date(output, dep_file):
+                if not os.path.isfile(output):
+                    print(" Output reference file not found: %s" % output)
+                    return True
+                if not os.path.isfile(dep_file):
+                    print(" Configure dependency file not found: %s" % dep_file)
+                    return True
 
+                deps = []
+                with open(dep_file, 'r') as fh:
+                    deps = fh.read().splitlines()
+
+                mtime = os.path.getmtime(output)
+                for f in deps:
+                    try:
+                        dep_mtime = os.path.getmtime(f)
+                    except OSError as e:
+                        if e.errno == errno.ENOENT:
+                            print(" Configure input not found: %s" % f)
+                            return True
+                        raise
+                    if dep_mtime > mtime:
+                        print(" %s is out of date with respect to %s" % (output, f))
+                        return True
+                return False
+
+            def backend_out_of_date(backend_file):
+                if not os.path.isfile(backend_file):
+                    return True
+
+                # Check if any of our output files have been removed since
+                # we last built the backend, re-generate the backend if
+                # so.
+                outputs = []
+                with open(backend_file, 'r') as fh:
+                    outputs = fh.read().splitlines()
+                for output in outputs:
+                    if not os.path.isfile(mozpath.join(self.topobjdir, output)):
+                        return True
+
+                dep_file = '%s.in' % backend_file
+                return build_out_of_date(backend_file, dep_file)
+
+            monitor.start_resource_recording()
+
+            config = None
+            try:
+                config = self.config_environment
+            except Exception:
+                pass
+
+            # Record whether a clobber was requested so we can print
+            # a special message later if the build fails.
+            clobber_requested = False
+
+            # Write out any changes to the current mozconfig in case
+            # they should invalidate configure.
+            self._write_mozconfig_json()
+
+            previous_backend = None
+            if config is not None:
+                previous_backend = config.substs.get('BUILD_BACKENDS', [None])[0]
+
+            config_rc = None
+            # Even if we have a config object, it may be out of date
+            # if something that influences its result has changed.
+            if config is None or build_out_of_date(mozpath.join(self.topobjdir,
+                                                                'config.status'),
+                                                   mozpath.join(self.topobjdir,
+                                                                'config_status_deps.in')):
+                if previous_backend and 'Make' not in previous_backend:
+                    clobber_requested = self._clobber_configure()
+
+                if config is None:
+                    print(" Config object not found by mach.")
+
+                config_rc = self.configure(buildstatus_messages=True,
+                                           line_handler=output.on_line)
+
+                if config_rc != 0:
+                    return config_rc
+
+                config = self.reload_config_environment()
+
+            active_backend = config.substs.get('BUILD_BACKENDS', [None])[0]
+
+            status = None
+
+            if 'Make' not in active_backend:
+                if (not config_rc and
+                    backend_out_of_date(mozpath.join(self.topobjdir,
+                                                     'backend.%sBackend' %
+                                                     active_backend))):
+                    print('Build configuration changed. Regenerating backend.')
+                    args = [config.substs['PYTHON'],
+                            mozpath.join(self.topobjdir, 'config.status')]
+                    self.run_process(args, cwd=self.topobjdir, pass_thru=True)
+
+                # client.mk has its own handling of MOZ_PARALLEL_BUILD so the
+                # make backend can determine when to run in single-threaded mode
+                # or parallel mode. For other backends, we can pass in the value
+                # of MOZ_PARALLEL_BUILD if -jX was not specified on the
+                # commandline.
+                if jobs == 0 and 'make_extra' in self.mozconfig:
+                    for param in self.mozconfig['make_extra']:
+                        key, value = param.split('=')
+                        if key == 'MOZ_PARALLEL_BUILD':
+                            jobs = int(value)
+
+                backend_cls = get_backend_class(active_backend)(config)
+                status = backend_cls.build(self, output, jobs, verbose, what)
+
+                if status and clobber_requested:
+                    for line in CLOBBER_REQUESTED_MESSAGE.splitlines():
+                        self.log(logging.WARNING, 'clobber',
+                                 {'msg': line.rstrip()}, '{msg}')
+
+            if what and status is None:
                 # Collect target pairs.
                 target_pairs = []
                 for target in what:
@@ -1030,64 +1168,37 @@ class BuildDriver(MozbuildObject):
                     # tree builds because they aren't reliable there. This
                     # could potentially be fixed if the build monitor were more
                     # intelligent about encountering undefined state.
+                    no_build_status = b'1' if make_dir is not None else b''
                     status = self._run_make(directory=make_dir, target=make_target,
                         line_handler=output.on_line, log=False, print_directory=False,
                         ensure_exit_code=False, num_jobs=jobs, silent=not verbose,
-                        append_env={b'NO_BUILDSTATUS_MESSAGES': b'1'},
+                        append_env={b'NO_BUILDSTATUS_MESSAGES': no_build_status},
                         keep_going=keep_going)
 
                     if status != 0:
                         break
-            else:
-                # Try to call the default backend's build() method. This will
-                # run configure to determine BUILD_BACKENDS if it hasn't run
-                # yet.
-                config = None
-                try:
-                    config = self.config_environment
-                except Exception:
-                    config_rc = self.configure(buildstatus_messages=True,
-                                               line_handler=output.on_line)
-                    if config_rc != 0:
-                        return config_rc
 
-                    # Even if configure runs successfully, we may have trouble
-                    # getting the config_environment for some builds, such as
-                    # OSX Universal builds. These have to go through client.mk
-                    # regardless.
-                    try:
-                        config = self.config_environment
-                    except Exception:
-                        pass
-
-                if config:
-                    active_backend = config.substs.get('BUILD_BACKENDS', [None])[0]
-                    if active_backend:
-                        backend_cls = get_backend_class(active_backend)(config)
-                        status = backend_cls.build(self, output, jobs, verbose)
-
+            elif status is None:
                 # If the backend doesn't specify a build() method, then just
                 # call client.mk directly.
-                if status is None:
-                    status = self._run_client_mk(line_handler=output.on_line,
-                                                 jobs=jobs,
-                                                 verbose=verbose,
-                                                 keep_going=keep_going)
+                status = self._run_client_mk(line_handler=output.on_line,
+                                             jobs=jobs,
+                                             verbose=verbose,
+                                             keep_going=keep_going)
 
-                self.log(logging.WARNING, 'warning_summary',
-                    {'count': len(monitor.warnings_database)},
-                    '{count} compiler warnings present.')
+            self.log(logging.WARNING, 'warning_summary',
+                     {'count': len(monitor.warnings_database)},
+                     '{count} compiler warnings present.')
 
             # Try to run the active build backend's post-build step, if possible.
             try:
-                config = self.config_environment
                 active_backend = config.substs.get('BUILD_BACKENDS', [None])[0]
                 if active_backend:
                     backend_cls = get_backend_class(active_backend)(config)
                     new_status = backend_cls.post_build(self, output, jobs, verbose, status)
                     status = new_status
             except Exception as ex:
-                self.log(logging.DEBUG, 'post_build', {'ex': ex},
+                self.log(logging.DEBUG, 'post_build', {'ex': str(ex)},
                          "Unable to run active build backend's post-build step; " +
                          "failing the build due to exception: {ex}.")
                 if not status:
@@ -1181,49 +1292,20 @@ class BuildDriver(MozbuildObject):
         if status:
             return status
 
-        long_build = monitor.elapsed > 600
-
-        if long_build:
-            output.on_line('We know it took a while, but your build finally finished successfully!')
-        else:
-            output.on_line('Your build was successful!')
-
         if monitor.have_resource_usage:
             excessive, swap_in, swap_out = monitor.have_excessive_swapping()
             # if excessive:
             #    print(EXCESSIVE_SWAP_MESSAGE)
 
             print('To view resource usage of the build, run |mach '
-                'resource-usage|.')
+                  'resource-usage|.')
 
-            telemetry_handler = getattr(mach_context,
-                                        'telemetry_handler', None)
-            telemetry_data = monitor.get_resource_usage()
+        long_build = monitor.elapsed > 600
 
-            # Record build configuration data. For now, we cherry pick
-            # items we need rather than grabbing everything, in order
-            # to avoid accidentally disclosing PII.
-            telemetry_data['substs'] = {}
-            try:
-                for key in ['MOZ_ARTIFACT_BUILDS', 'MOZ_USING_CCACHE', 'MOZ_USING_SCCACHE']:
-                    value = self.substs.get(key, False)
-                    telemetry_data['substs'][key] = value
-            except BuildEnvironmentNotFoundException:
-                pass
-
-            # Grab ccache stats if available. We need to be careful not
-            # to capture information that can potentially identify the
-            # user (such as the cache location)
-            if ccache_diff:
-                telemetry_data['ccache'] = {}
-                for key in [key[0] for key in ccache_diff.STATS_KEYS]:
-                    try:
-                        telemetry_data['ccache'][key] = ccache_diff._values[key]
-                    except KeyError:
-                        pass
-
-            if telemetry_handler:
-                telemetry_handler(mach_context, telemetry_data)
+        if long_build:
+            output.on_line('We know it took a while, but your build finally finished successfully!')
+        else:
+            output.on_line('Your build was successful!')
 
         # Only for full builds because incremental builders likely don't
         # need to be burdened with this.
@@ -1249,6 +1331,7 @@ class BuildDriver(MozbuildObject):
         # Disable indexing in objdir because it is not necessary and can slow
         # down builds.
         mkdir(self.topobjdir, not_indexed=True)
+        self._write_mozconfig_json()
 
         def on_line(line):
             self.log(logging.INFO, 'build_output', {'line': line}, '{line}')
@@ -1280,14 +1363,61 @@ class BuildDriver(MozbuildObject):
                   clobber_file=os.path.join(self.topobjdir, 'CLOBBER')))
             sys.exit(1)
 
-        if not test_objs:
-            # If we don't actually have a list of tests to install we install
-            # test and support files wholesale.
-            self._run_make(target='install-test-files', pass_thru=True,
-                           print_directory=False)
-        else:
-            install_test_files(mozpath.normpath(self.topsrcdir), self.topobjdir,
-                               '_tests', test_objs)
+        install_test_files(mozpath.normpath(self.topsrcdir), self.topobjdir,
+                           '_tests', test_objs)
+
+    def _clobber_configure(self):
+        # This is an optimistic treatment of the CLOBBER file for when we have
+        # some trust in the build system: an update to the CLOBBER file is
+        # interpreted to mean that configure will fail during an incremental
+        # build, which is handled by removing intermediate configure artifacts
+        # and subsections of the objdir related to python and testing before
+        # proceeding.
+        clobberer = Clobberer(self.topsrcdir, self.topobjdir)
+        clobber_output = io.BytesIO()
+        res = clobberer.maybe_do_clobber(os.getcwd(), False,
+                                         clobber_output)
+        required, performed, message = res
+        assert not performed
+        if not required:
+            return False
+
+        def remove_objdir_path(path):
+            path = mozpath.join(self.topobjdir, path)
+            self.log(logging.WARNING,
+                     'clobber',
+                     {'path': path},
+                     'CLOBBER file has been updated, removing {path}.')
+            mozfile.remove(path)
+
+        # Remove files we think could cause "configure" clobber bugs.
+        for f in ('old-configure.vars', 'config.cache', 'configure.pkl'):
+            remove_objdir_path(f)
+            remove_objdir_path(mozpath.join('js', 'src', f))
+
+        rm_dirs = [
+            # Stale paths in our virtualenv may cause build-backend
+            # to fail.
+            '_virtualenvs',
+            # Some tests may accumulate state in the objdir that may
+            # become invalid after srcdir changes.
+            '_tests',
+        ]
+
+        for d in rm_dirs:
+            remove_objdir_path(d)
+
+        os.utime(mozpath.join(self.topobjdir, 'CLOBBER'), None)
+        return True
+
+    def _write_mozconfig_json(self):
+        mozconfig_json = os.path.join(self.topobjdir, '.mozconfig.json')
+        with FileAvoidWrite(mozconfig_json) as fh:
+            json.dump({
+                'topsrcdir': self.topsrcdir,
+                'topobjdir': self.topobjdir,
+                'mozconfig': self.mozconfig,
+            }, fh, sort_keys=True, indent=2)
 
     def _run_client_mk(self, target=None, line_handler=None, jobs=0,
                        verbose=None, keep_going=False, append_env=None):
@@ -1334,14 +1464,6 @@ class BuildDriver(MozbuildObject):
         mozconfig_mk = os.path.join(self.topobjdir, '.mozconfig.mk')
         with FileAvoidWrite(mozconfig_mk) as fh:
             fh.write(b'\n'.join(mozconfig_filtered_lines))
-
-        mozconfig_json = os.path.join(self.topobjdir, '.mozconfig.json')
-        with FileAvoidWrite(mozconfig_json) as fh:
-            json.dump({
-                'topsrcdir': self.topsrcdir,
-                'topobjdir': self.topobjdir,
-                'mozconfig': mozconfig,
-            }, fh, sort_keys=True, indent=2)
 
         # Copy the original mozconfig to the objdir.
         mozconfig_objdir = os.path.join(self.topobjdir, '.mozconfig')

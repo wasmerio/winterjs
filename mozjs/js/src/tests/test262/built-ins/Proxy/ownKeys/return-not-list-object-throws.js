@@ -17,18 +17,18 @@ info: |
 
     2. If Type(obj) is not Object, throw a TypeError exception.
 
-features: [Symbol]
+features: [Proxy, Symbol]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    ownKeys: function() {
-        return undefined;
-    }
+  ownKeys: function() {
+    return undefined;
+  }
 });
 
 assert.throws(TypeError, function() {
-    Object.keys(p);
+  Object.keys(p);
 });
 
 reportCompare(0, 0);

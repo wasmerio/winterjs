@@ -28,7 +28,7 @@
 
 /**
  * \file
- * \brief C++ API: Abstract base class for all number formats.
+ * \brief C++ API: Compatibility APIs for number formatting.
  */
 
 #if !UCONFIG_NO_FORMATTING
@@ -53,15 +53,14 @@ class StringEnumeration;
 #endif
 
 /**
+ * <p><strong>IMPORTANT:</strong> New users are strongly encouraged to see if
+ * numberformatter.h fits their use case.  Although not deprecated, this header
+ * is provided for backwards compatibility only.
  *
  * Abstract base class for all number formats.  Provides interface for
  * formatting and parsing a number.  Also provides methods for
  * determining which locales have number formats, and what their names
  * are.
- *
- * <p><strong>NOTE:</strong> Starting in ICU 60, there is a new set of APIs for localized number
- * formatting that are designed to be an improvement over DecimalFormat.  New users are discouraged
- * from using DecimalFormat.  For more information, see numberformatter.h.
  *
  * \headerfile unicode/numfmt.h "unicode/numfmt.h"
  * <P>
@@ -555,16 +554,18 @@ public:
                                   UnicodeString& appendTo,
                                   FieldPositionIterator* posIter,
                                   UErrorCode& status) const;
-public:
+
+// Can't use #ifndef U_HIDE_INTERNAL_API because these are virtual methods
+
     /**
      * Format a decimal number.
-     * The number is a DigitList wrapper onto a floating point decimal number.
+     * The number is a DecimalQuantity wrapper onto a floating point decimal number.
      * The default implementation in NumberFormat converts the decimal number
      * to a double and formats that.  Subclasses of NumberFormat that want
      * to specifically handle big decimal numbers must override this method.
      * class DecimalFormat does so.
      *
-     * @param number    The number, a DigitList format Decimal Floating Point.
+     * @param number    The number, a DecimalQuantity format Decimal Floating Point.
      * @param appendTo  Output parameter to receive result.
      *                  Result is appended to existing contents.
      * @param posIter   On return, can be used to iterate over positions
@@ -573,20 +574,20 @@ public:
      * @return          Reference to 'appendTo' parameter.
      * @internal
      */
-    virtual UnicodeString& format(const DigitList &number,
+    virtual UnicodeString& format(const number::impl::DecimalQuantity &number,
                                   UnicodeString& appendTo,
                                   FieldPositionIterator* posIter,
                                   UErrorCode& status) const;
 
     /**
      * Format a decimal number.
-     * The number is a DigitList wrapper onto a floating point decimal number.
+     * The number is a DecimalQuantity wrapper onto a floating point decimal number.
      * The default implementation in NumberFormat converts the decimal number
      * to a double and formats that.  Subclasses of NumberFormat that want
      * to specifically handle big decimal numbers must override this method.
      * class DecimalFormat does so.
      *
-     * @param number    The number, a DigitList format Decimal Floating Point.
+     * @param number    The number, a DecimalQuantity format Decimal Floating Point.
      * @param appendTo  Output parameter to receive result.
      *                  Result is appended to existing contents.
      * @param pos       On input: an alignment field, if desired.
@@ -595,12 +596,10 @@ public:
      * @return          Reference to 'appendTo' parameter.
      * @internal
      */
-    virtual UnicodeString& format(const DigitList &number,
+    virtual UnicodeString& format(const number::impl::DecimalQuantity &number,
                                   UnicodeString& appendTo,
                                   FieldPosition& pos,
                                   UErrorCode& status) const;
-
-public:
 
    /**
     * Return a long if possible (e.g. within range LONG_MAX,
@@ -708,6 +707,9 @@ public:
     /**
      * Create a default style NumberFormat for the current default locale.
      * The default formatting style is locale dependent.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @stable ICU 2.0
      */
     static NumberFormat* U_EXPORT2 createInstance(UErrorCode&);
@@ -716,6 +718,9 @@ public:
      * Create a default style NumberFormat for the specified locale.
      * The default formatting style is locale dependent.
      * @param inLocale    the given locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @stable ICU 2.0
      */
     static NumberFormat* U_EXPORT2 createInstance(const Locale& inLocale,
@@ -723,6 +728,9 @@ public:
 
     /**
      * Create a specific style NumberFormat for the specified locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @param desiredLocale    the given locale.
      * @param style            the given style.
      * @param errorCode        Output param filled with success/failure status.
@@ -759,12 +767,18 @@ public:
 
     /**
      * Returns a currency format for the current default locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @stable ICU 2.0
      */
     static NumberFormat* U_EXPORT2 createCurrencyInstance(UErrorCode&);
 
     /**
      * Returns a currency format for the specified locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @param inLocale    the given locale.
      * @stable ICU 2.0
      */
@@ -773,12 +787,18 @@ public:
 
     /**
      * Returns a percentage format for the current default locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @stable ICU 2.0
      */
     static NumberFormat* U_EXPORT2 createPercentInstance(UErrorCode&);
 
     /**
      * Returns a percentage format for the specified locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @param inLocale    the given locale.
      * @stable ICU 2.0
      */
@@ -787,12 +807,18 @@ public:
 
     /**
      * Returns a scientific format for the current default locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @stable ICU 2.0
      */
     static NumberFormat* U_EXPORT2 createScientificInstance(UErrorCode&);
 
     /**
      * Returns a scientific format for the specified locale.
+     * <p>
+     * <strong>NOTE:</strong> New users are strongly encouraged to use
+     * {@link icu::number::NumberFormatter} instead of NumberFormat.
      * @param inLocale    the given locale.
      * @stable ICU 2.0
      */
@@ -973,7 +999,7 @@ public:
      * @stable ICU 2.6
      */
     const char16_t* getCurrency() const;
-	
+
     /**
      * Set a particular UDisplayContext value in the formatter, such as
      * UDISPCTX_CAPITALIZATION_FOR_STANDALONE.
@@ -1001,14 +1027,14 @@ public:
      * Get the rounding mode. This will always return NumberFormat::ERoundingMode::kRoundUnnecessary
      * if the subclass does not support rounding. 
      * @return A rounding mode
-     * @draft ICU 60
+     * @stable ICU 60
      */
     virtual ERoundingMode getRoundingMode(void) const;
 
     /**
      * Set the rounding mode. If a subclass does not support rounding, this will do nothing.
      * @param roundingMode A rounding mode
-     * @draft ICU 60
+     * @stable ICU 60
      */
     virtual void setRoundingMode(ERoundingMode roundingMode);
 

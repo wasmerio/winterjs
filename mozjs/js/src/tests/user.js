@@ -1,5 +1,7 @@
-user_pref("app.update.enabled", false);
+user_pref("app.update.checkInstallTime", false);
+user_pref("app.update.disabledForTesting", true);
 user_pref("browser.dom.window.dump.enabled", true);
+user_pref("devtools.console.stdout.chrome", true);
 user_pref("browser.sessionstore.resume_from_crash", false);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.xul.error_pages.enabled", true);
@@ -7,7 +9,6 @@ user_pref("security.fileuri.strict_origin_policy", false);
 user_pref("dom.allow_scripts_to_close_windows", true);
 user_pref("dom.disable_open_during_load", false);
 user_pref("dom.max_script_run_time", 0);
-user_pref("hangmonitor.timeout", 0);
 user_pref("dom.max_chrome_script_run_time", 0);
 user_pref("javascript.allow.mailnews", true);
 user_pref("javascript.options.showInConsole", true);

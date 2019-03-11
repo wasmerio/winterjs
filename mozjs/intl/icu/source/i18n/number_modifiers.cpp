@@ -3,7 +3,7 @@
 
 #include "unicode/utypes.h"
 
-#if !UCONFIG_NO_FORMATTING && !UPRV_INCOMPLETE_CPP11_SUPPORT
+#if !UCONFIG_NO_FORMATTING
 
 #include "umutex.h"
 #include "ucln_cmn.h"
@@ -32,6 +32,7 @@ UBool U_CALLCONV cleanupDefaultCurrencySpacing() {
     UNISET_DIGIT = nullptr;
     delete UNISET_NOTS;
     UNISET_NOTS = nullptr;
+    gDefaultCurrencySpacingInitOnce.reset();
     return TRUE;
 }
 
@@ -50,6 +51,24 @@ void U_CALLCONV initDefaultCurrencySpacing(UErrorCode &status) {
 }  // namespace
 
 
+Modifier::~Modifier() = default;
+
+Modifier::Parameters::Parameters()
+        : obj(nullptr) {}
+
+Modifier::Parameters::Parameters(
+    const ModifierStore* _obj, int8_t _signum, StandardPlural::Form _plural)
+        : obj(_obj), signum(_signum), plural(_plural) {}
+
+ModifierStore::~ModifierStore() = default;
+
+AdoptingModifierStore::~AdoptingModifierStore()  {
+    for (const Modifier *mod : mods) {
+        delete mod;
+    }
+}
+
+
 int32_t ConstantAffixModifier::apply(NumberStringBuilder &output, int leftIndex, int rightIndex,
                                      UErrorCode &status) const {
     // Insert the suffix first since inserting the prefix will change the rightIndex
@@ -58,13 +77,11 @@ int32_t ConstantAffixModifier::apply(NumberStringBuilder &output, int leftIndex,
     return length;
 }
 
-int32_t ConstantAffixModifier::getPrefixLength(UErrorCode &status) const {
-    (void)status;
+int32_t ConstantAffixModifier::getPrefixLength() const {
     return fPrefix.length();
 }
 
-int32_t ConstantAffixModifier::getCodePointCount(UErrorCode &status) const {
-    (void)status;
+int32_t ConstantAffixModifier::getCodePointCount() const {
     return fPrefix.countChar32() + fSuffix.countChar32();
 }
 
@@ -72,21 +89,65 @@ bool ConstantAffixModifier::isStrong() const {
     return fStrong;
 }
 
-SimpleModifier::SimpleModifier(const SimpleFormatter &simpleFormatter, Field field, bool strong)
-        : fCompiledPattern(simpleFormatter.compiledPattern), fField(field), fStrong(strong) {
-    U_ASSERT(1 ==
-             SimpleFormatter::getArgumentLimit(fCompiledPattern.getBuffer(), fCompiledPattern.length()));
-    if (fCompiledPattern.charAt(1) != 0) {
-        fPrefixLength = fCompiledPattern.charAt(1) - ARG_NUM_LIMIT;
-        fSuffixOffset = 3 + fPrefixLength;
-    } else {
-        fPrefixLength = 0;
-        fSuffixOffset = 2;
+bool ConstantAffixModifier::containsField(UNumberFormatFields field) const {
+    (void)field;
+    // This method is not currently used.
+    U_ASSERT(false);
+    return false;
+}
+
+void ConstantAffixModifier::getParameters(Parameters& output) const {
+    (void)output;
+    // This method is not currently used.
+    U_ASSERT(false);
+}
+
+bool ConstantAffixModifier::semanticallyEquivalent(const Modifier& other) const {
+    auto* _other = dynamic_cast<const ConstantAffixModifier*>(&other);
+    if (_other == nullptr) {
+        return false;
     }
-    if (3 + fPrefixLength < fCompiledPattern.length()) {
-        fSuffixLength = fCompiledPattern.charAt(fSuffixOffset) - ARG_NUM_LIMIT;
-    } else {
+    return fPrefix == _other->fPrefix
+        && fSuffix == _other->fSuffix
+        && fField == _other->fField
+        && fStrong == _other->fStrong;
+}
+
+
+SimpleModifier::SimpleModifier(const SimpleFormatter &simpleFormatter, Field field, bool strong)
+        : SimpleModifier(simpleFormatter, field, strong, {}) {}
+
+SimpleModifier::SimpleModifier(const SimpleFormatter &simpleFormatter, Field field, bool strong,
+                               const Modifier::Parameters parameters)
+        : fCompiledPattern(simpleFormatter.compiledPattern), fField(field), fStrong(strong),
+          fParameters(parameters) {
+    int32_t argLimit = SimpleFormatter::getArgumentLimit(
+            fCompiledPattern.getBuffer(), fCompiledPattern.length());
+    if (argLimit == 0) {
+        // No arguments in compiled pattern
+        fPrefixLength = fCompiledPattern.charAt(1) - ARG_NUM_LIMIT;
+        U_ASSERT(2 + fPrefixLength == fCompiledPattern.length());
+        // Set suffixOffset = -1 to indicate no arguments in compiled pattern.
+        fSuffixOffset = -1;
         fSuffixLength = 0;
+    } else {
+        U_ASSERT(argLimit == 1);
+        if (fCompiledPattern.charAt(1) != 0) {
+            // Found prefix
+            fPrefixLength = fCompiledPattern.charAt(1) - ARG_NUM_LIMIT;
+            fSuffixOffset = 3 + fPrefixLength;
+        } else {
+            // No prefix
+            fPrefixLength = 0;
+            fSuffixOffset = 2;
+        }
+        if (3 + fPrefixLength < fCompiledPattern.length()) {
+            // Found suffix
+            fSuffixLength = fCompiledPattern.charAt(fSuffixOffset) - ARG_NUM_LIMIT;
+        } else {
+            // No suffix
+            fSuffixLength = 0;
+        }
     }
 }
 
@@ -99,13 +160,11 @@ int32_t SimpleModifier::apply(NumberStringBuilder &output, int leftIndex, int ri
     return formatAsPrefixSuffix(output, leftIndex, rightIndex, fField, status);
 }
 
-int32_t SimpleModifier::getPrefixLength(UErrorCode &status) const {
-    (void)status;
+int32_t SimpleModifier::getPrefixLength() const {
     return fPrefixLength;
 }
 
-int32_t SimpleModifier::getCodePointCount(UErrorCode &status) const {
-    (void)status;
+int32_t SimpleModifier::getCodePointCount() const {
     int32_t count = 0;
     if (fPrefixLength > 0) {
         count += fCompiledPattern.countChar32(2, fPrefixLength);
@@ -120,39 +179,132 @@ bool SimpleModifier::isStrong() const {
     return fStrong;
 }
 
+bool SimpleModifier::containsField(UNumberFormatFields field) const {
+    (void)field;
+    // This method is not currently used.
+    U_ASSERT(false);
+    return false;
+}
+
+void SimpleModifier::getParameters(Parameters& output) const {
+    output = fParameters;
+}
+
+bool SimpleModifier::semanticallyEquivalent(const Modifier& other) const {
+    auto* _other = dynamic_cast<const SimpleModifier*>(&other);
+    if (_other == nullptr) {
+        return false;
+    }
+    if (fParameters.obj != nullptr) {
+        return fParameters.obj == _other->fParameters.obj;
+    }
+    return fCompiledPattern == _other->fCompiledPattern
+        && fField == _other->fField
+        && fStrong == _other->fStrong;
+}
+
+
 int32_t
 SimpleModifier::formatAsPrefixSuffix(NumberStringBuilder &result, int32_t startIndex, int32_t endIndex,
                                      Field field, UErrorCode &status) const {
-    if (fPrefixLength > 0) {
-        result.insert(startIndex, fCompiledPattern, 2, 2 + fPrefixLength, field, status);
+    if (fSuffixOffset == -1 && fPrefixLength + fSuffixLength > 0) {
+        // There is no argument for the inner number; overwrite the entire segment with our string.
+        return result.splice(startIndex, endIndex, fCompiledPattern, 2, 2 + fPrefixLength, field, status);
+    } else {
+        if (fPrefixLength > 0) {
+            result.insert(startIndex, fCompiledPattern, 2, 2 + fPrefixLength, field, status);
+        }
+        if (fSuffixLength > 0) {
+            result.insert(
+                    endIndex + fPrefixLength,
+                    fCompiledPattern,
+                    1 + fSuffixOffset,
+                    1 + fSuffixOffset + fSuffixLength,
+                    field,
+                    status);
+        }
+        return fPrefixLength + fSuffixLength;
     }
-    if (fSuffixLength > 0) {
-        result.insert(
-                endIndex + fPrefixLength,
-                fCompiledPattern,
-                1 + fSuffixOffset,
-                1 + fSuffixOffset + fSuffixLength,
-                field,
-                status);
-    }
-    return fPrefixLength + fSuffixLength;
 }
 
-int32_t ConstantMultiFieldModifier::apply(NumberStringBuilder &output, int leftIndex, int rightIndex,
-                                          UErrorCode &status) const {
-    // Insert the suffix first since inserting the prefix will change the rightIndex
-    int32_t length = output.insert(rightIndex, fSuffix, status);
-    length += output.insert(leftIndex, fPrefix, status);
+
+int32_t
+SimpleModifier::formatTwoArgPattern(const SimpleFormatter& compiled, NumberStringBuilder& result,
+                                    int32_t index, int32_t* outPrefixLength, int32_t* outSuffixLength,
+                                    Field field, UErrorCode& status) {
+    const UnicodeString& compiledPattern = compiled.compiledPattern;
+    int32_t argLimit = SimpleFormatter::getArgumentLimit(
+            compiledPattern.getBuffer(), compiledPattern.length());
+    if (argLimit != 2) {
+        status = U_INTERNAL_PROGRAM_ERROR;
+        return 0;
+    }
+    int32_t offset = 1; // offset into compiledPattern
+    int32_t length = 0; // chars added to result
+
+    int32_t prefixLength = compiledPattern.charAt(offset);
+    offset++;
+    if (prefixLength < ARG_NUM_LIMIT) {
+        // No prefix
+        prefixLength = 0;
+    } else {
+        prefixLength -= ARG_NUM_LIMIT;
+        result.insert(index + length, compiledPattern, offset, offset + prefixLength, field, status);
+        offset += prefixLength;
+        length += prefixLength;
+        offset++;
+    }
+
+    int32_t infixLength = compiledPattern.charAt(offset);
+    offset++;
+    if (infixLength < ARG_NUM_LIMIT) {
+        // No infix
+        infixLength = 0;
+    } else {
+        infixLength -= ARG_NUM_LIMIT;
+        result.insert(index + length, compiledPattern, offset, offset + infixLength, field, status);
+        offset += infixLength;
+        length += infixLength;
+        offset++;
+    }
+
+    int32_t suffixLength;
+    if (offset == compiledPattern.length()) {
+        // No suffix
+        suffixLength = 0;
+    } else {
+        suffixLength = compiledPattern.charAt(offset) -  ARG_NUM_LIMIT;
+        offset++;
+        result.insert(index + length, compiledPattern, offset, offset + suffixLength, field, status);
+        length += suffixLength;
+    }
+
+    *outPrefixLength = prefixLength;
+    *outSuffixLength = suffixLength;
+
     return length;
 }
 
-int32_t ConstantMultiFieldModifier::getPrefixLength(UErrorCode &status) const {
-    (void)status;
+
+int32_t ConstantMultiFieldModifier::apply(NumberStringBuilder &output, int leftIndex, int rightIndex,
+                                          UErrorCode &status) const {
+    int32_t length = output.insert(leftIndex, fPrefix, status);
+    if (fOverwrite) {
+        length += output.splice(
+            leftIndex + length,
+            rightIndex + length,
+            UnicodeString(), 0, 0,
+            UNUM_FIELD_COUNT, status);
+    }
+    length += output.insert(rightIndex + length, fSuffix, status);
+    return length;
+}
+
+int32_t ConstantMultiFieldModifier::getPrefixLength() const {
     return fPrefix.length();
 }
 
-int32_t ConstantMultiFieldModifier::getCodePointCount(UErrorCode &status) const {
-    (void)status;
+int32_t ConstantMultiFieldModifier::getCodePointCount() const {
     return fPrefix.codePointCount() + fSuffix.codePointCount();
 }
 
@@ -160,12 +312,36 @@ bool ConstantMultiFieldModifier::isStrong() const {
     return fStrong;
 }
 
+bool ConstantMultiFieldModifier::containsField(UNumberFormatFields field) const {
+    return fPrefix.containsField(field) || fSuffix.containsField(field);
+}
+
+void ConstantMultiFieldModifier::getParameters(Parameters& output) const {
+    output = fParameters;
+}
+
+bool ConstantMultiFieldModifier::semanticallyEquivalent(const Modifier& other) const {
+    auto* _other = dynamic_cast<const ConstantMultiFieldModifier*>(&other);
+    if (_other == nullptr) {
+        return false;
+    }
+    if (fParameters.obj != nullptr) {
+        return fParameters.obj == _other->fParameters.obj;
+    }
+    return fPrefix.contentEquals(_other->fPrefix)
+        && fSuffix.contentEquals(_other->fSuffix)
+        && fOverwrite == _other->fOverwrite
+        && fStrong == _other->fStrong;
+}
+
+
 CurrencySpacingEnabledModifier::CurrencySpacingEnabledModifier(const NumberStringBuilder &prefix,
                                                                const NumberStringBuilder &suffix,
+                                                               bool overwrite,
                                                                bool strong,
                                                                const DecimalFormatSymbols &symbols,
                                                                UErrorCode &status)
-        : ConstantMultiFieldModifier(prefix, suffix, strong) {
+        : ConstantMultiFieldModifier(prefix, suffix, overwrite, strong) {
     // Check for currency spacing. Do not build the UnicodeSets unless there is
     // a currency code point at a boundary.
     if (prefix.length() > 0 && prefix.fieldAt(prefix.length() - 1) == UNUM_CURRENCY_FIELD) {

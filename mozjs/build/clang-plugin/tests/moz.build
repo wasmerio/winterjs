@@ -47,6 +47,11 @@ SOURCES += [
     'TestTrivialCtorDtor.cpp',
 ]
 
+if CONFIG['OS_ARCH'] == 'WINNT':
+    SOURCES += [
+        'TestLoadLibraryUsage.cpp',
+    ]
+
 DisableStlWrapping()
 NoVisibilityFlags()
 
@@ -61,3 +66,10 @@ COMPILE_FLAGS['OS_CFLAGS'] = (
     ['-fsyntax-only', '-Xclang', '-verify', '-ferror-limit=0', '-std=c11',
      '-Wno-invalid-noreturn']
 )
+
+# Don't reflect WARNINGS_CFLAGS into CFLAGS, as the warnings flags should be
+# as specified in OS_CFLAGS above.
+DisableCompilerWarnings()
+
+if CONFIG['ENABLE_CLANG_PLUGIN'] and CONFIG['CC_TYPE'] == 'clang-cl':
+    AllowCompilerWarnings()  # workaround for bug 1090497

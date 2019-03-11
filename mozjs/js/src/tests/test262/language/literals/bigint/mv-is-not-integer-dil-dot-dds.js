@@ -1,10 +1,10 @@
-// |reftest| skip error:SyntaxError -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) error:SyntaxError -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 The V8 Project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-numeric-literal-static-semantics-early-errors
-description: > 
+description: >
   It is a Syntax Error if the MV is not an integer. (decimalIntegerLiteral dot decimalDigits)
 info: |
   Static Semantics: BigInt Value
@@ -23,6 +23,6 @@ negative:
   type: SyntaxError
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 2017.8n;

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 sl{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"univerzalni koordinirani čas"}
+        }
+        "Europe:Dublin"{
+            ld{"irski standardni čas"}
+        }
+        "Europe:London"{
+            ld{"britanski poletni čas"}
+        }
         "meta:Afghanistan"{
             ls{"Afganistanski čas"}
         }

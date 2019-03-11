@@ -3,7 +3,7 @@
 
 #include "unicode/utypes.h"
 
-#if !UCONFIG_NO_FORMATTING && !UPRV_INCOMPLETE_CPP11_SUPPORT
+#if !UCONFIG_NO_FORMATTING
 #ifndef __NUMBER_STRINGBUILDER_H__
 #define __NUMBER_STRINGBUILDER_H__
 
@@ -14,6 +14,7 @@
 #include "cstring.h"
 #include "uassert.h"
 #include "number_types.h"
+#include "fphdlimp.h"
 
 U_NAMESPACE_BEGIN namespace number {
 namespace impl {
@@ -77,11 +78,23 @@ class U_I18N_API NumberStringBuilder : public UMemory {
     int32_t insert(int32_t index, const UnicodeString &unistr, int32_t start, int32_t end, Field field,
                    UErrorCode &status);
 
+    int32_t splice(int32_t startThis, int32_t endThis,  const UnicodeString &unistr,
+                   int32_t startOther, int32_t endOther, Field field, UErrorCode& status);
+
     int32_t append(const NumberStringBuilder &other, UErrorCode &status);
 
     int32_t insert(int32_t index, const NumberStringBuilder &other, UErrorCode &status);
 
+    /**
+     * Gets a "safe" UnicodeString that can be used even after the NumberStringBuilder is destructed.
+     * */
     UnicodeString toUnicodeString() const;
+
+    /**
+     * Gets an "unsafe" UnicodeString that is valid only as long as the NumberStringBuilder is alive and
+     * unchanged. Slightly faster than toUnicodeString().
+     */
+    const UnicodeString toTempUnicodeString() const;
 
     UnicodeString toDebugString() const;
 
@@ -89,9 +102,11 @@ class U_I18N_API NumberStringBuilder : public UMemory {
 
     bool contentEquals(const NumberStringBuilder &other) const;
 
-    void populateFieldPosition(FieldPosition &fp, int32_t offset, UErrorCode &status) const;
+    bool nextFieldPosition(FieldPosition& fp, UErrorCode& status) const;
 
-    void populateFieldPositionIterator(FieldPositionIterator &fpi, UErrorCode &status) const;
+    void getAllFieldPositions(FieldPositionIteratorHandler& fpih, UErrorCode& status) const;
+
+    bool containsField(Field field) const;
 
   private:
     bool fUsingHeap = false;
@@ -123,6 +138,8 @@ class U_I18N_API NumberStringBuilder : public UMemory {
     int32_t prepareForInsert(int32_t index, int32_t count, UErrorCode &status);
 
     int32_t prepareForInsertHelper(int32_t index, int32_t count, UErrorCode &status);
+
+    int32_t remove(int32_t index, int32_t count);
 };
 
 } // namespace impl

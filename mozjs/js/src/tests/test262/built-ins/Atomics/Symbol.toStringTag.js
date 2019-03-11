@@ -1,3 +1,4 @@
+// |reftest| skip-if(!this.hasOwnProperty('Atomics')) -- Atomics is not enabled unconditionally
 // Copyright (C) 2017 Mozilla Corporation.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -11,10 +12,14 @@ info: |
     This property has the attributes { [[Writable]]: false, [[Enumerable]]:
     false, [[Configurable]]: true }.
 includes: [propertyHelper.js]
-features: [Symbol.toStringTag]
+features: [Atomics, Symbol, Symbol.toStringTag]
 ---*/
 
-assert.sameValue(Atomics[Symbol.toStringTag], 'Atomics');
+assert.sameValue(
+  Atomics[Symbol.toStringTag],
+  'Atomics',
+  'The value of Atomics[Symbol.toStringTag] is "Atomics"'
+);
 
 verifyNotEnumerable(Atomics, Symbol.toStringTag);
 verifyNotWritable(Atomics, Symbol.toStringTag);

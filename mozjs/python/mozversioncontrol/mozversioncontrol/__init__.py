@@ -9,8 +9,9 @@ import errno
 import os
 import re
 import subprocess
-import which
+import sys
 
+from distutils.spawn import find_executable
 from distutils.version import LooseVersion
 
 
@@ -26,6 +27,15 @@ class MissingConfigureInfo(MissingVCSInfo):
     """Represents error finding VCS info from configure data."""
 
 
+class MissingVCSExtension(MissingVCSInfo):
+    """Represents error finding a required VCS extension."""
+
+    def __init__(self, ext):
+        self.ext = ext
+        msg = "Could not detect required extension '{}'".format(self.ext)
+        super(MissingVCSExtension, self).__init__(msg)
+
+
 class InvalidRepoPath(Exception):
     """Represents a failure to find a VCS repo at a specified path."""
 
@@ -39,22 +49,12 @@ def get_tool_path(tool):
     if os.path.isabs(tool) and os.path.exists(tool):
         return tool
 
-    # We use subprocess in places, which expects a Win32 executable or
-    # batch script. On some versions of MozillaBuild, we have "hg.exe",
-    # "hg.bat," and "hg" (a Python script). "which" will happily return the
-    # Python script, which will cause subprocess to choke. Explicitly favor
-    # the Windows version over the plain script.
-    try:
-        return which.which(tool + '.exe')
-    except which.WhichError:
-        try:
-            return which.which(tool)
-        except which.WhichError:
-            pass
-
-    raise MissingVCSTool('Unable to obtain %s path. Try running '
-                         '|mach bootstrap| to ensure your environment is up to '
-                         'date.' % tool)
+    path = find_executable(tool)
+    if not path:
+        raise MissingVCSTool('Unable to obtain %s path. Try running '
+                             '|mach bootstrap| to ensure your environment is up to '
+                             'date.' % tool)
+    return path
 
 
 class Repository(object):
@@ -72,9 +72,19 @@ class Repository(object):
     def __init__(self, path, tool):
         self.path = os.path.abspath(path)
         self._tool = get_tool_path(tool)
-        self._env = os.environ.copy()
         self._version = None
         self._valid_diff_filter = ('m', 'a', 'd')
+
+        if os.name == 'nt' and sys.version_info[0] == 2:
+            self._env = {}
+            for k, v in os.environ.iteritems():
+                if isinstance(k, unicode):
+                    k = k.encode('utf8')
+                if isinstance(v, unicode):
+                    v = v.encode('utf8')
+                self._env[k] = v
+        else:
+            self._env = os.environ.copy()
 
     def __enter__(self):
         return self
@@ -89,7 +99,8 @@ class Repository(object):
         try:
             return subprocess.check_output(cmd,
                                            cwd=self.path,
-                                           env=self._env)
+                                           env=self._env,
+                                           universal_newlines=True)
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
                 return ''
@@ -107,6 +118,11 @@ class Repository(object):
 
         self.version = LooseVersion(match.group(1))
         return self.version
+
+    @property
+    def has_git_cinnabar(self):
+        """True if the repository is using git cinnabar."""
+        return False
 
     @abc.abstractproperty
     def name(self):
@@ -188,6 +204,16 @@ class Repository(object):
         to factor these file classes into consideration.
         """
 
+    @abc.abstractmethod
+    def push_to_try(self, message):
+        """Create a temporary commit, push it to try and clean it up
+        afterwards.
+
+        With mercurial, MissingVCSExtension will be raised if the `push-to-try`
+        extension is not installed. On git, MissingVCSExtension will be raised
+        if git cinnabar is not present.
+        """
+
 
 class HgRepository(Repository):
     '''An implementation of `Repository` for Mercurial repositories.'''
@@ -236,11 +262,13 @@ class HgRepository(Repository):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._client.close()
 
-    def _run_in_client(self, args):
+    def _run(self, *args, **runargs):
         if not self._client.server:
-            raise Exception('active HgRepository context manager required')
+            return super(HgRepository, self)._run(*args, **runargs)
 
-        return self._client.rawcommand(args)
+        # hglib requires bytes on python 3
+        args = [a.encode('utf-8') if not isinstance(a, bytes) else a for a in args]
+        return self._client.rawcommand(args).decode('utf-8')
 
     def sparse_checkout_present(self):
         # We assume a sparse checkout is enabled if the .hg/sparse file
@@ -304,11 +332,10 @@ class HgRepository(Repository):
     def get_files_in_working_directory(self):
         # Can return backslashes on Windows. Normalize to forward slashes.
         return list(p.replace('\\', '/') for p in
-                    self._run_in_client([b'files', b'-0']).split(b'\0')
-                    if p)
+                    self._run(b'files', b'-0').split(b'\0') if p)
 
     def working_directory_clean(self, untracked=False, ignored=False):
-        args = [b'status', b'\0', b'--modified', b'--added', b'--removed',
+        args = [b'status', b'--modified', b'--added', b'--removed',
                 b'--deleted']
         if untracked:
             args.append(b'--unknown')
@@ -317,7 +344,19 @@ class HgRepository(Repository):
 
         # If output is empty, there are no entries of requested status, which
         # means we are clean.
-        return not len(self._run_in_client(args).strip())
+        return not len(self._run(*args).strip())
+
+    def push_to_try(self, message):
+        try:
+            subprocess.check_call((self._tool, 'push-to-try', '-m', message), cwd=self.path)
+        except subprocess.CalledProcessError:
+            try:
+                self._run('showconfig', 'extensions.push-to-try')
+            except subprocess.CalledProcessError:
+                raise MissingVCSExtension('push-to-try')
+            raise
+        finally:
+            self._run('revert', '-a')
 
 
 class GitRepository(Repository):
@@ -341,6 +380,14 @@ class GitRepository(Repository):
         if head in refs:
             refs.remove(head)
         return self._run('merge-base', 'HEAD', *refs).strip()
+
+    @property
+    def has_git_cinnabar(self):
+        try:
+            self._run('cinnabar', '--version')
+        except subprocess.CalledProcessError:
+            return False
+        return True
 
     def sparse_checkout_present(self):
         # Not yet implemented.
@@ -388,12 +435,30 @@ class GitRepository(Repository):
 
     def working_directory_clean(self, untracked=False, ignored=False):
         args = ['status', '--porcelain']
+
+        # Even in --porcelain mode, behavior is affected by the
+        # ``status.showUntrackedFiles`` option, which means we need to be
+        # explicit about how to treat untracked files.
         if untracked:
-            args.append('--untracked-files')
+            args.append('--untracked-files=all')
+        else:
+            args.append('--untracked-files=no')
+
         if ignored:
             args.append('--ignored')
 
         return not len(self._run(*args).strip())
+
+    def push_to_try(self, message):
+        if not self.has_git_cinnabar:
+            raise MissingVCSExtension('cinnabar')
+
+        self._run('commit', '--allow-empty', '-m', message)
+        try:
+            subprocess.check_call((self._tool, 'push', 'hg::ssh://hg.mozilla.org/try',
+                                   '+HEAD:refs/heads/branches/default/tip'), cwd=self.path)
+        finally:
+            self._run('reset', 'HEAD~')
 
 
 def get_repository_object(path, hg='hg', git='git'):

@@ -1,7 +1,4 @@
-// |jit-test| allow-oom
-
-if (typeof oomTest !== "function")
-  quit();
+// |jit-test| allow-oom; skip-if: !('oomTest' in this)
 
 // Adapted from randomly chosen test: js/src/jit-test/tests/debug/Debugger-onNewGlobalObject-01.js
 for (var i = 0; i < 9; ++i) {
@@ -10,5 +7,5 @@ for (var i = 0; i < 9; ++i) {
 }
 // jsfunfuzz-generated
 oomTest(function() {
-  newGlobal();
+  newGlobal({sameZoneAs: this});
 })

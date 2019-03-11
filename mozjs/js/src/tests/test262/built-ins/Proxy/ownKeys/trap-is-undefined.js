@@ -6,11 +6,12 @@ description: >
     [[OwnPropertyKeys]] ( )
 
     6. If trap is undefined, then Return target.[[OwnPropertyKeys]]()
+features: [Proxy]
 ---*/
 
 var target = {
-    foo: 1,
-    bar: 2
+  foo: 1,
+  bar: 2
 };
 var p = new Proxy(target, {});
 

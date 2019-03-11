@@ -7,10 +7,12 @@
 # jit_test.py -- Python harness for JavaScript trace tests.
 
 from __future__ import print_function
-import os, posixpath, sys, tempfile, traceback, time
-import subprocess
+import os
+import posixpath
+import sys
+import traceback
 from collections import namedtuple
-import StringIO
+from datetime import datetime
 
 if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
     from tasks_unix import run_all_tests
@@ -18,7 +20,7 @@ else:
     from tasks_win import run_all_tests
 
 from progressbar import ProgressBar, NullProgressBar
-from results import TestOutput
+from results import TestOutput, escape_cmdline
 from structuredlog import TestLogger
 
 TESTS_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +33,8 @@ JS_CACHE_DIR = os.path.join(JS_DIR, 'jit-test', '.js-cache')
 JS_TESTS_DIR = posixpath.join(JS_DIR, 'tests')
 
 # Backported from Python 3.1 posixpath.py
+
+
 def _relpath(path, start=None):
     """Return a relative version of a path"""
 
@@ -51,6 +55,7 @@ def _relpath(path, start=None):
         return os.curdir
     return os.path.join(*rel_list)
 
+
 # Mapping of Python chars to their javascript string representation.
 QUOTE_MAP = {
     '\\': '\\\\',
@@ -63,6 +68,8 @@ QUOTE_MAP = {
 }
 
 # Quote the string S, javascript style.
+
+
 def js_quote(quote, s):
     result = quote
     for c in s:
@@ -75,7 +82,9 @@ def js_quote(quote, s):
     result += quote
     return result
 
+
 os.path.relpath = _relpath
+
 
 class JitTest:
 
@@ -104,27 +113,45 @@ class JitTest:
         # Path relative to mozilla/js/src/jit-test/tests/.
         self.relpath_tests = os.path.relpath(path, TEST_DIR)
 
-        self.jitflags = []     # jit flags to enable
-        self.slow = False      # True means the test is slow-running
-        self.allow_oom = False # True means that OOM is not considered a failure
-        self.allow_unhandlable_oom = False # True means CrashAtUnhandlableOOM
-                                           # is not considered a failure
-        self.allow_overrecursed = False # True means that hitting recursion the
-                                        # limits is not considered a failure.
-        self.valgrind = False  # True means run under valgrind
-        self.tz_pacific = False # True means force Pacific time for the test
-        self.test_also_noasmjs = False # True means run with and without asm.js
-                                       # enabled.
-        self.test_also_wasm_baseline = False # True means run with and and without
-                                       # wasm baseline compiler enabled.
-        self.other_includes = [] # Additional files to include, in addition to prologue.js
-        self.test_also = [] # List of other configurations to test with.
-        self.test_join = [] # List of other configurations to test with all existing variants.
-        self.expect_error = '' # Errors to expect and consider passing
-        self.expect_status = 0 # Exit status to expect from shell
-        self.expect_crash = False # Exit status or error output.
+        # jit flags to enable
+        self.jitflags = []
+        # True means the test is slow-running
+        self.slow = False
+        # True means that OOM is not considered a failure
+        self.allow_oom = False
+        # True means CrashAtUnhandlableOOM is not considered a failure
+        self.allow_unhandlable_oom = False
+        # True means that hitting recursion the limits is not considered a failure.
+        self.allow_overrecursed = False
+        # True means run under valgrind
+        self.valgrind = False
+        # True means force Pacific time for the test
+        self.tz_pacific = False
+        # True means run with and without asm.js
+        self.test_also_noasmjs = False
+        # enabled.
+        # True means run with and and without wasm baseline compiler enabled.
+        self.test_also_wasm_baseline = False
+        # Additional files to include, in addition to prologue.js
+        self.other_includes = []
+        # List of other configurations to test with.
+        self.test_also = []
+        # List of other configurations to test with all existing variants.
+        self.test_join = []
+        # Errors to expect and consider passing
+        self.expect_error = ''
+        # Exit status to expect from shell
+        self.expect_status = 0
+        # Exit status or error output.
+        self.expect_crash = False
         self.is_module = False
-        self.test_reflect_stringify = None  # Reflect.stringify implementation to test
+        self.is_binast = False
+        # Reflect.stringify implementation to test
+        self.test_reflect_stringify = None
+
+        # Skip-if condition. We don't have a xulrunner, but we can ask the shell
+        # directly.
+        self.skip_if_cond = ''
 
         # Expected by the test runner. Always true for jit-tests.
         self.enable = True
@@ -149,6 +176,8 @@ class JitTest:
         t.test_reflect_stringify = self.test_reflect_stringify
         t.enable = True
         t.is_module = self.is_module
+        t.is_binast = self.is_binast
+        t.skip_if_cond = self.skip_if_cond
         return t
 
     def copy_and_extend_jitflags(self, variant):
@@ -164,13 +193,15 @@ class JitTest:
         # test_join.  This will multiply the number of variants by 2 for set of
         # options.
         for join_opts in self.test_join:
-            variants = variants + [ opts + join_opts for opts in variants ];
+            variants = variants + [opts + join_opts for opts in variants]
 
         # For each list of jit flags, make a copy of the test.
         return [self.copy_and_extend_jitflags(v) for v in variants]
 
-
     COOKIE = '|jit-test|'
+
+    # We would use 500019 (5k19), but quit() only accepts values up to 127, due to fuzzers
+    SKIPPED_EXIT_STATUS = 59
     CacheDir = JS_CACHE_DIR
     Directives = {}
 
@@ -203,7 +234,20 @@ class JitTest:
                 dir_meta = cls.find_directives(meta_file_name)
             cls.Directives[dir_name] = dir_meta
 
-        meta = cls.find_directives(path)
+        filename, file_extension = os.path.splitext(path)
+        if file_extension == '.binjs':
+            # BinAST does not have an inline comment format, so it's hard
+            # to parse file-by-file directives. Allow foo.binjs to use foo.dir
+            # as an adjacent file to specify.
+            meta_file_name = filename + '.dir'
+            if os.path.exists(meta_file_name):
+                meta = cls.find_directives(meta_file_name)
+            else:
+                meta = ''
+            test.is_binast = True
+        else:
+            meta = cls.find_directives(path)
+
         if meta != '' or dir_meta != '':
             meta = meta + dir_meta
             parts = meta.split(';')
@@ -218,7 +262,12 @@ class JitTest:
                         test.expect_error = value
                     elif name == 'exitstatus':
                         try:
-                            test.expect_status = int(value, 0)
+                            status = int(value, 0)
+                            if status == test.SKIPPED_EXIT_STATUS:
+                                print("warning: jit-tests uses {} as a sentinel"
+                                      " return value {}", test.SKIPPED_EXIT_STATUS, path)
+                            else:
+                                test.expect_status = status
                         except ValueError:
                             print("warning: couldn't parse exit status"
                                   " {}".format(value))
@@ -231,6 +280,11 @@ class JitTest:
                                   " {}".format(value))
                     elif name == 'include':
                         test.other_includes.append(value)
+                    elif name == 'skip-if':
+                        # Ensure that skip-ifs are composable
+                        if test.skip_if_cond:
+                            test.skip_if_cond += " || "
+                        test.skip_if_cond += "({})".format(value)
                     else:
                         print('{}: warning: unrecognized |jit-test| attribute'
                               ' {}'.format(path, part))
@@ -250,12 +304,12 @@ class JitTest:
                     elif name == 'test-also-noasmjs':
                         if options.asmjs_enabled:
                             test.test_also.append(['--no-asmjs'])
-                    elif name == 'test-also-no-wasm-baseline':
+                    elif name == 'test-also-wasm-compiler-ion':
                         if options.wasm_enabled:
-                            test.test_also.append(['--no-wasm-baseline'])
-                    elif name == 'test-also-no-wasm-ion':
+                            test.test_also.append(['--wasm-compiler=ion'])
+                    elif name == 'test-also-wasm-compiler-baseline':
                         if options.wasm_enabled:
-                            test.test_also.append(['--no-wasm-ion'])
+                            test.test_also.append(['--wasm-compiler=baseline'])
                     elif name == 'test-also-wasm-tiering':
                         if options.wasm_enabled:
                             test.test_also.append(['--test-wasm-await-tier2'])
@@ -305,7 +359,7 @@ class JitTest:
         # semicolons in the command line, bug 1351607.
         exprs = ["const platform={}".format(js_quote(quotechar, sys.platform)),
                  "const libdir={}".format(js_quote(quotechar, libdir)),
-                 "const scriptdir={}".format(js_quote(quotechar, scriptdir_var))];
+                 "const scriptdir={}".format(js_quote(quotechar, scriptdir_var))]
 
         # We may have specified '-a' or '-d' twice: once via --jitflags, once
         # via the "|jit-test|" line.  Remove dups because they are toggles.
@@ -315,9 +369,15 @@ class JitTest:
             cmd += ['-e', expr]
         for inc in self.other_includes:
             cmd += ['-f', libdir + inc]
+        if self.skip_if_cond:
+            cmd += ['-e', "if ({}) quit({})".format(self.skip_if_cond, self.SKIPPED_EXIT_STATUS)]
+        cmd += ['--module-load-path', moduledir]
         if self.is_module:
-            cmd += ['--module-load-path', moduledir]
             cmd += ['--module', path]
+        elif self.is_binast:
+            # In builds with BinAST, this will run the test file. In builds without,
+            # It's a no-op and the tests will silently pass.
+            cmd += ['-B', path]
         elif self.test_reflect_stringify is None:
             cmd += ['-f', path]
         else:
@@ -333,20 +393,28 @@ class JitTest:
 
     # The test runner expects this to be set to give to get_command.
     js_cmd_prefix = None
+
     def get_command(self, prefix):
         """Shim for the test runner."""
         return self.command(prefix, LIB_DIR, MODULE_DIR)
 
 
-def find_tests(substring=None):
+def find_tests(substring=None, run_binast=False):
     ans = []
     for dirpath, dirnames, filenames in os.walk(TEST_DIR):
         dirnames.sort()
         filenames.sort()
         if dirpath == '.':
             continue
+
+        if not run_binast:
+            if os.path.join('binast', 'lazy') in dirpath:
+                continue
+            if os.path.join('binast', 'nonlazy') in dirpath:
+                continue
+
         for filename in filenames:
-            if not filename.endswith('.js'):
+            if not (filename.endswith('.js') or filename.endswith('.binjs')):
                 continue
             if filename in ('shell.js', 'browser.js'):
                 continue
@@ -356,7 +424,10 @@ def find_tests(substring=None):
                 ans.append(test)
     return ans
 
+
 def run_test_remote(test, device, prefix, options):
+    from mozdevice import ADBDevice, ADBProcessError, ADBTimeoutError
+
     if options.test_reflect_stringify:
         raise ValueError("can't run Reflect.stringify tests remotely")
     cmd = test.command(prefix,
@@ -364,7 +435,7 @@ def run_test_remote(test, device, prefix, options):
                        posixpath.join(options.remote_test_root, 'modules/'),
                        posixpath.join(options.remote_test_root, 'tests'))
     if options.show_cmd:
-        print(subprocess.list2cmdline(cmd))
+        print(escape_cmdline(cmd))
 
     env = {}
     if test.tz_pacific:
@@ -372,16 +443,33 @@ def run_test_remote(test, device, prefix, options):
 
     env['LD_LIBRARY_PATH'] = options.remote_test_root
 
-    buf = StringIO.StringIO()
-    returncode = device.shell(cmd, buf, env=env, cwd=options.remote_test_root,
-                              timeout=int(options.timeout))
+    cmd = ADBDevice._escape_command_line(cmd)
+    start = datetime.now()
+    try:
+        out = device.shell_output(cmd, env=env,
+                                  cwd=options.remote_test_root,
+                                  timeout=int(options.timeout))
+        returncode = 0
+    except ADBTimeoutError:
+        raise
+    except ADBProcessError as e:
+        out = e.adb_process.stdout
+        print("exception output: %s" % str(out))
+        returncode = e.adb_process.exitcode
 
-    out = buf.getvalue()
+    elapsed = (datetime.now() - start).total_seconds()
+
     # We can't distinguish between stdout and stderr so we pass
     # the same buffer to both.
-    return TestOutput(test, cmd, out, out, returncode, None, False)
+    return TestOutput(test, cmd, out, out, returncode, elapsed, False)
+
 
 def check_output(out, err, rc, timed_out, test, options):
+    # Allow skipping to compose with other expected results
+    if test.skip_if_cond:
+        if rc == test.SKIPPED_EXIT_STATUS:
+            return True
+
     if timed_out:
         if os.path.normpath(test.relpath_tests).replace(os.sep, '/') \
                 in options.ignore_timeouts:
@@ -431,6 +519,11 @@ def check_output(out, err, rc, timed_out, test, options):
         if rc == 1 and ("Hit MOZ_CRASH" in err or "Assertion failure:" in err):
             return True
 
+        # When running jittests on Android, SEGV results in a return code
+        # of 128+11=139.
+        if rc == 139:
+            return True
+
     if rc != test.expect_status:
         # Tests which expect a timeout check for exit code 6.
         # Sometimes 0 is returned on Windows for unknown reasons.
@@ -465,6 +558,7 @@ def check_output(out, err, rc, timed_out, test, options):
 
     return True
 
+
 def print_automation_format(ok, res, slog):
     # Output test failures in a parsable format suitable for automation, eg:
     # TEST-RESULT | filename.js | Failure description (code N, args "--foobar")
@@ -491,6 +585,8 @@ def print_automation_format(ok, res, slog):
             'jitflags': jitflags,
         }
     }
+    if res.extra:
+        details['extra'].update(res.extra)
     slog.test(res.test.relpath_tests, 'PASS' if ok else 'FAIL', res.dt, **details)
 
     # For failed tests, print as much information as we have, to aid debugging.
@@ -502,6 +598,7 @@ def print_automation_format(ok, res, slog):
         print("INFO stdout          > " + line.strip())
     for line in res.err.splitlines():
         print("INFO stderr         2> " + line.strip())
+
 
 def print_test_summary(num_tests, failures, complete, doing, options):
     if failures:
@@ -529,7 +626,7 @@ def print_test_summary(num_tests, failures, complete, doing, options):
 
         def show_test(res):
             if options.show_failed:
-                print('    ' + subprocess.list2cmdline(res.cmd))
+                print('    ' + escape_cmdline(res.cmd))
             else:
                 print('    ' + ' '.join(res.test.jitflags + [res.test.relpath_tests]))
 
@@ -555,6 +652,7 @@ def print_test_summary(num_tests, failures, complete, doing, options):
 
     return not failures
 
+
 def create_progressbar(num_tests, options):
     if not options.hide_progress and not options.show_cmd \
        and ProgressBar.conservative_isatty():
@@ -566,6 +664,7 @@ def create_progressbar(num_tests, options):
         ]
         return ProgressBar(num_tests, fmt)
     return NullProgressBar()
+
 
 def process_test_results(results, num_tests, pb, options, slog):
     failures = []
@@ -633,6 +732,7 @@ def process_test_results(results, num_tests, pb, options, slog):
     pb.finish(True)
     return print_test_summary(num_tests, failures, complete, doing, options)
 
+
 def run_tests(tests, num_tests, prefix, options, remote=False):
     slog = None
     if options.format == 'automation':
@@ -648,6 +748,7 @@ def run_tests(tests, num_tests, prefix, options, remote=False):
         slog.suite_end()
 
     return ok
+
 
 def run_tests_local(tests, num_tests, prefix, options, slog):
     # The jstests tasks runner requires the following options. The names are
@@ -668,18 +769,18 @@ def run_tests_local(tests, num_tests, prefix, options, slog):
     ok = process_test_results(gen, num_tests, pb, options, slog)
     return ok
 
-def get_remote_results(tests, device, prefix, options):
-    from mozdevice import devicemanager
 
+def get_remote_results(tests, device, prefix, options):
     try:
         for i in xrange(0, options.repeat):
             for test in tests:
                 yield run_test_remote(test, device, prefix, options)
-    except devicemanager.DMError as e:
-        # After a devicemanager error, the device is typically in a
+    except Exception as e:
+        # After a device error, the device is typically in a
         # state where all further tests will fail so there is no point in
         # continuing here.
         sys.stderr.write("Error running remote tests: {}".format(e.message))
+
 
 def push_libs(options, device):
     # This saves considerable time in pushing unnecessary libraries
@@ -690,57 +791,61 @@ def push_libs(options, device):
     for file in os.listdir(options.local_lib):
         if file in required_libs:
             remote_file = posixpath.join(options.remote_test_root, file)
-            device.pushFile(os.path.join(options.local_lib, file), remote_file)
+            device.push(os.path.join(options.local_lib, file), remote_file)
+            device.chmod(remote_file, root=True)
+
 
 def push_progs(options, device, progs):
     for local_file in progs:
         remote_file = posixpath.join(options.remote_test_root,
                                      os.path.basename(local_file))
-        device.pushFile(local_file, remote_file)
+        device.push(local_file, remote_file)
+        device.chmod(remote_file, root=True)
+
+
+def init_remote_dir(device, path, root=True):
+    device.rm(path, recursive=True, force=True, root=root)
+    device.mkdir(path, parents=True, root=root)
+    device.chmod(path, recursive=True, root=root)
+
 
 def run_tests_remote(tests, num_tests, prefix, options, slog):
     # Setup device with everything needed to run our tests.
-    from mozdevice import devicemanagerADB
+    from mozdevice import ADBDevice
+    device = ADBDevice(device=options.device_serial,
+                       test_root=options.remote_test_root)
 
-    if options.device_ip:
-        dm = devicemanagerADB.DeviceManagerADB(
-            options.device_ip, options.device_port,
-            deviceSerial=options.device_serial,
-            packageName=None,
-            deviceRoot=options.remote_test_root)
-    else:
-        dm = devicemanagerADB.DeviceManagerADB(
-            deviceSerial=options.device_serial,
-            packageName=None,
-            deviceRoot=options.remote_test_root)
+    init_remote_dir(device, options.remote_test_root)
 
     # Update the test root to point to our test directory.
     jit_tests_dir = posixpath.join(options.remote_test_root, 'jit-tests')
     options.remote_test_root = posixpath.join(jit_tests_dir, 'jit-tests')
 
     # Push js shell and libraries.
-    if dm.dirExists(jit_tests_dir):
-        dm.removeDir(jit_tests_dir)
-    dm.mkDirs(options.remote_test_root)
-    push_libs(options, dm)
-    push_progs(options, dm, [prefix[0]])
-    dm.chmodDir(options.remote_test_root)
+    init_remote_dir(device, jit_tests_dir)
+    push_libs(options, device)
+    push_progs(options, device, [prefix[0]])
+    device.chmod(options.remote_test_root, recursive=True, root=True)
 
     JitTest.CacheDir = posixpath.join(options.remote_test_root, '.js-cache')
-    dm.mkDir(JitTest.CacheDir)
+    init_remote_dir(device, JitTest.CacheDir)
 
-    dm.pushDir(JS_TESTS_DIR, posixpath.join(jit_tests_dir, 'tests'),
-               timeout=600)
+    jtd_tests = posixpath.join(jit_tests_dir, 'tests')
+    init_remote_dir(device, jtd_tests)
+    device.push(JS_TESTS_DIR, jtd_tests, timeout=600)
+    device.chmod(jtd_tests, recursive=True, root=True)
 
-    dm.pushDir(os.path.dirname(TEST_DIR), options.remote_test_root,
-               timeout=600)
+    device.push(os.path.dirname(TEST_DIR), options.remote_test_root,
+                timeout=600)
+    device.chmod(options.remote_test_root, recursive=True, root=True)
     prefix[0] = os.path.join(options.remote_test_root, 'js')
 
     # Run all tests.
     pb = create_progressbar(num_tests, options)
-    gen = get_remote_results(tests, dm, prefix, options)
+    gen = get_remote_results(tests, device, prefix, options)
     ok = process_test_results(gen, num_tests, pb, options, slog)
     return ok
+
 
 def platform_might_be_android():
     try:
@@ -748,13 +853,15 @@ def platform_might_be_android():
         # If that module is present, we're likely in SL4A-python on
         # device.  False positives and negatives are possible,
         # however.
-        import android
+        import android  # NOQA: F401
         return True
     except ImportError:
         return False
 
+
 def stdio_might_be_broken():
     return platform_might_be_android()
+
 
 if __name__ == '__main__':
     print('Use ../jit-test/jit_test.py to run these tests.')

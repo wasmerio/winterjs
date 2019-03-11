@@ -1,0 +1,27 @@
+[package]
+name = "idna"
+version = "0.1.4"
+authors = ["The rust-url developers"]
+description = "IDNA (Internationalizing Domain Names in Applications) and Punycode."
+repository = "https://github.com/servo/rust-url/"
+license = "MIT/Apache-2.0"
+
+[lib]
+doctest = false
+test = false
+
+[[test]]
+name = "tests"
+harness = false
+
+[[test]]
+name = "unit"
+
+[dev-dependencies]
+rustc-test = "0.2"
+rustc-serialize = "0.3"
+
+[dependencies]
+unicode-bidi = "0.3"
+unicode-normalization = "0.1.5"
+matches = "0.1"

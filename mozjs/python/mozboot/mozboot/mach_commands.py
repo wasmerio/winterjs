@@ -16,6 +16,8 @@ from mach.decorators import (
 @CommandProvider
 class Bootstrap(object):
     """Bootstrap system and mach for optimal development experience."""
+    def __init__(self, context):
+        self._context = context
 
     @Command('bootstrap', category='devenv',
              description='Install required system packages for building.')
@@ -25,10 +27,19 @@ class Bootstrap(object):
                      'instead of using the default interactive prompt.')
     @CommandArgument('--no-interactive', dest='no_interactive', action='store_true',
                      help='Answer yes to any (Y/n) interactive prompts.')
-    def bootstrap(self, application_choice=None, no_interactive=False):
+    @CommandArgument('--no-system-changes', dest='no_system_changes',
+                     action='store_true',
+                     help='Only execute actions that leave the system '
+                          'configuration alone.')
+    def bootstrap(self, application_choice=None, no_interactive=False, no_system_changes=False):
         from mozboot.bootstrap import Bootstrapper
 
-        bootstrapper = Bootstrapper(choice=application_choice, no_interactive=no_interactive)
+        bootstrapper = Bootstrapper(
+            choice=application_choice,
+            no_interactive=no_interactive,
+            no_system_changes=no_system_changes,
+            mach_context=self._context,
+        )
         bootstrapper.bootstrap()
 
 
@@ -37,37 +48,50 @@ class VersionControlCommands(object):
     def __init__(self, context):
         self._context = context
 
-    @Command('mercurial-setup', category='devenv',
-             description='Help configure Mercurial for optimal development.')
+    @Command('vcs-setup', category='devenv',
+             description='Help configure a VCS for optimal development.')
     @CommandArgument('-u', '--update-only', action='store_true',
                      help='Only update recommended extensions, don\'t run the wizard.')
-    def mercurial_setup(self, update_only=False):
-        """Ensure Mercurial is optimally configured.
+    def vcs_setup(self, update_only=False):
+        """Ensure a Version Control System (Mercurial or Git) is optimally
+        configured.
 
-        This command will inspect your Mercurial configuration and
-        guide you through an interactive wizard helping you configure
-        Mercurial for optimal use on Mozilla projects.
+        This command will inspect your VCS configuration and
+        guide you through an interactive wizard helping you configure the
+        VCS for optimal use on Mozilla projects.
 
         User choice is respected: no changes are made without explicit
         confirmation from you.
 
         If "--update-only" is used, the interactive wizard is disabled
         and this command only ensures that remote repositories providing
-        Mercurial extensions are up to date.
+        VCS extensions are up to date.
         """
         import which
         import mozboot.bootstrap as bootstrap
+        import mozversioncontrol
+
+        repo = mozversioncontrol.get_repository_object(self._context.topdir)
+        vcs = 'hg'
+        if repo.name == 'git':
+            vcs = 'git'
 
         # "hg" is an executable script with a shebang, which will be found
-        # be which.which. We need to pass a win32 executable to the function
+        # by which.which. We need to pass a win32 executable to the function
         # because we spawn a process
         # from it.
         if sys.platform in ('win32', 'msys'):
-            hg = which.which('hg.exe')
+            vcs = which.which(vcs + '.exe')
         else:
-            hg = which.which('hg')
+            vcs = which.which(vcs)
 
         if update_only:
-            bootstrap.update_vct(hg, self._context.state_dir)
+            if repo.name == 'git':
+                bootstrap.update_git_tools(vcs, self._context.state_dir, self._context.topdir)
+            else:
+                bootstrap.update_vct(vcs, self._context.state_dir)
         else:
-            bootstrap.configure_mercurial(hg, self._context.state_dir)
+            if repo.name == 'git':
+                bootstrap.configure_git(vcs, self._context.state_dir, self._context.topdir)
+            else:
+                bootstrap.configure_mercurial(vcs, self._context.state_dir)

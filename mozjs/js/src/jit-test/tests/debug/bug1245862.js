@@ -1,9 +1,6 @@
-// |jit-test| allow-oom
+// |jit-test| allow-oom; skip-if: !('oomAfterAllocations' in this)
 
-if (!('oomAfterAllocations' in this))
-  quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger;
 g.h = function h(d) {
   if (d) {

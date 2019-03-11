@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -18,6 +18,6 @@ sample = new DataView(buffer, 0);
 $DETACHBUFFER(buffer);
 
 assert.throws(TypeError, () => sample.getBigUint64(13),
-              "detached DataView access should throw");
+  "detached DataView access should throw");
 
 reportCompare(0, 0);

@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99: */
+ * vim: set ts=8 sts=2 et sw=2 tw=80: */
 
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
@@ -31,18 +31,22 @@
 #include "irregexp/RegExpParser.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/Casting.h"
 #include "mozilla/Move.h"
+#include "mozilla/Range.h"
 
 #include "frontend/TokenStream.h"
 #include "gc/GC.h"
 #include "irregexp/RegExpCharacters.h"
 #include "util/StringBuffer.h"
+#include "util/Text.h"
+#include "util/Unicode.h"
 #include "vm/ErrorReporting.h"
 
 using namespace js;
 using namespace js::irregexp;
 
-using mozilla::Move;
+using mozilla::AssertedCast;
 using mozilla::PointerRangeSize;
 
 // ----------------------------------------------------------------------------
@@ -258,13 +262,37 @@ RegExpParser<CharT>::RegExpParser(frontend::TokenStreamAnyChars& ts, LifoAlloc* 
     Advance();
 }
 
+static size_t ComputeColumn(const Latin1Char* begin, const Latin1Char* end) {
+  return PointerRangeSize(begin, end);
+}
+
+static size_t ComputeColumn(const char16_t* begin, const char16_t* end) {
+#if JS_COLUMN_DIMENSION_IS_CODE_POINTS
+  return unicode::CountCodePoints(begin, end);
+#else
+  return PointerRangeSize(begin, end);
+#endif
+}
+
 template <typename CharT>
 void
 RegExpParser<CharT>::SyntaxError(unsigned errorNumber, ...)
 {
     ErrorMetadata err;
 
-    ts.fillExcludingContext(&err, ts.currentToken().pos.begin);
+    // Ordinarily this indicates whether line-of-context information can be
+    // added, but we entirely ignore that here because we create a
+    // a line of context based on the expression source.
+    uint32_t location = ts.currentToken().pos.begin;
+    if (ts.fillExceptingContext(&err, location)) {
+      // Line breaks are not significant in pattern text in the same way as
+      // in source text, so act as though pattern text is a single line, then
+      // compute a column based on "code point" count (treating a lone
+      // surrogate as a "code point" in UTF-16).  Gak.
+      err.lineNumber = 1;
+      err.columnNumber =
+          AssertedCast<uint32_t>(ComputeColumn(start_, next_pos_ - 1));
+    }
 
     // For most error reporting, the line of context derives from the token
     // stream.  So when location information doesn't come from the token
@@ -306,7 +334,7 @@ RegExpParser<CharT>::SyntaxError(unsigned errorNumber, ...)
     va_list args;
     va_start(args, errorNumber);
 
-    ReportCompileError(ts.context(), Move(err), nullptr, JSREPORT_ERROR, errorNumber, args);
+    ReportCompileError(ts.context(), std::move(err), nullptr, JSREPORT_ERROR, errorNumber, &args);
 
     va_end(args);
 }
@@ -1822,7 +1850,7 @@ RegExpParser<CharT>::ParseDisjunction()
             break;
           case '{': {
             if (unicode_)
-                return ReportError(JSMSG_RAW_BRACE_IN_REGEP);
+                return ReportError(JSMSG_RAW_BRACE_IN_REGEXP);
             int dummy;
             if (ParseIntervalQuantifier(&dummy, &dummy))
                 return ReportError(JSMSG_NOTHING_TO_REPEAT);
@@ -1840,9 +1868,9 @@ RegExpParser<CharT>::ParseDisjunction()
                     else if (unicode::IsTrailSurrogate(c))
                         builder->AddAtom(TrailSurrogateAtom(alloc, c));
                     else if (c == ']')
-                        return ReportError(JSMSG_RAW_BRACKET_IN_REGEP);
+                        return ReportError(JSMSG_RAW_BRACKET_IN_REGEXP);
                     else if (c == '}')
-                        return ReportError(JSMSG_RAW_BRACE_IN_REGEP);
+                        return ReportError(JSMSG_RAW_BRACE_IN_REGEXP);
                     else
                         builder->AddCharacter(c);
                     Advance();
@@ -1959,8 +1987,6 @@ static bool
 ParsePatternSyntax(frontend::TokenStreamAnyChars& ts, LifoAlloc& alloc,
                    const CharT* chars, size_t length, bool unicode)
 {
-    LifoAllocScope scope(&alloc);
-
     RegExpParser<CharT> parser(ts, &alloc, chars, chars + length, false, unicode, false);
     return parser.ParsePattern() != nullptr;
 }

@@ -8,7 +8,7 @@ esid: sec-putvalue
 info: |
   PutValue ( V, W )
     ...
-    5. Else if IsPropertyReference(V), then
+    6. Else if IsPropertyReference(V), then
       ...
       b. If IsPrivateReference(V), then
         i. Let env be the running execution context's PrivateNameEnvironment.
@@ -41,7 +41,7 @@ class Outer {
     // private field `#x` is resolvable.
     return class {
       f() {
-	this.#x = 1;
+        this.#x = 1;
       }
     }
   }

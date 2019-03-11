@@ -6,13 +6,12 @@ from __future__ import absolute_import, unicode_literals
 
 import json
 import os
-from collections import defaultdict
 
 import mozunit
 import mozpack.path as mozpath
 import pytest
 
-from mozlint import ResultContainer
+from mozlint.result import Issue, ResultSummary
 from mozlint import formatters
 
 NORMALISED_PATHS = {
@@ -26,7 +25,7 @@ EXPECTED = {
         'kwargs': {},
         'format': """
 a/b/c.txt: line 1, Error - oh no foo (foo)
-a/b/c.txt: line 4, Error - oh no baz (baz)
+a/b/c.txt: line 4, col 10, Error - oh no baz (baz)
 d/e/f.txt: line 4, col 2, Warning - oh no bar (bar-not-allowed)
 
 3 problems
@@ -38,8 +37,8 @@ d/e/f.txt: line 4, col 2, Warning - oh no bar (bar-not-allowed)
         },
         'format': """
 a/b/c.txt
-  1  error  oh no foo  (foo)
-  4  error  oh no baz  (baz)
+  1     error  oh no foo  (foo)
+  4:10  error  oh no baz  (baz)
 
 d/e/f.txt
   4:2  warning  oh no bar  bar-not-allowed (bar)
@@ -51,7 +50,7 @@ d/e/f.txt
         'kwargs': {},
         'format': """
 TEST-UNEXPECTED-ERROR | a/b/c.txt:1 | oh no foo (foo)
-TEST-UNEXPECTED-ERROR | a/b/c.txt:4 | oh no baz (baz)
+TEST-UNEXPECTED-ERROR | a/b/c.txt:4:10 | oh no baz (baz)
 TEST-UNEXPECTED-WARNING | d/e/f.txt:4:2 | oh no bar (bar-not-allowed)
 """.strip(),
     },
@@ -59,67 +58,69 @@ TEST-UNEXPECTED-WARNING | d/e/f.txt:4:2 | oh no bar (bar-not-allowed)
         'kwargs': {},
         'format': """
 {abc}:1: foo error: oh no foo
-{abc}:4: baz error: oh no baz
+{abc}:4:10: baz error: oh no baz
 {def}:4:2: bar-not-allowed warning: oh no bar
 """.format(**NORMALISED_PATHS).strip(),
     },
     'summary': {
         'kwargs': {},
         'format': """
-{cwd}/a: 2
-{cwd}/d: 1
+{cwd}/a: 2 errors
+{cwd}/d: 0 errors, 1 warning
 """.format(**NORMALISED_PATHS).strip(),
     },
 }
 
 
 @pytest.fixture
-def results(scope='module'):
+def result(scope='module'):
     containers = (
-        ResultContainer(
+        Issue(
             linter='foo',
             path='a/b/c.txt',
             message="oh no foo",
             lineno=1,
         ),
-        ResultContainer(
+        Issue(
             linter='bar',
             path='d/e/f.txt',
             message="oh no bar",
             hint="try baz instead",
             level='warning',
-            lineno=4,
-            column=2,
+            lineno="4",
+            column="2",
             rule="bar-not-allowed",
         ),
-        ResultContainer(
+        Issue(
             linter='baz',
             path='a/b/c.txt',
             message="oh no baz",
             lineno=4,
+            column=10,
             source="if baz:",
         ),
     )
-    results = defaultdict(list)
+    result = ResultSummary()
     for c in containers:
-        results[c.path].append(c)
-    return results
+        result.issues[c.path].append(c)
+    return result
 
 
 @pytest.mark.parametrize("name", EXPECTED.keys())
-def test_formatters(results, name):
+def test_formatters(result, name):
     opts = EXPECTED[name]
     fmt = formatters.get(name, **opts['kwargs'])
-    assert fmt(results) == opts['format']
+    # encoding to str bypasses a UnicodeEncodeError in pytest
+    assert fmt(result).encode('utf-8') == opts['format'].encode('utf-8')
 
 
-def test_json_formatter(results):
+def test_json_formatter(result):
     fmt = formatters.get('json')
-    formatted = json.loads(fmt(results))
+    formatted = json.loads(fmt(result))
 
-    assert set(formatted.keys()) == set(results.keys())
+    assert set(formatted.keys()) == set(result.issues.keys())
 
-    slots = ResultContainer.__slots__
+    slots = Issue.__slots__
     for errors in formatted.values():
         for err in errors:
             assert all(s in err for s in slots)

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 lt{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"pasaulio suderintasis laikas"}
+        }
+        "Europe:Dublin"{
+            ld{"Airijos vasaros laikas"}
+        }
+        "Europe:London"{
+            ld{"Britanijos vasaros laikas"}
+        }
         "meta:Acre"{
             ld{"Ako vasaros laikas"}
             lg{"Ako laikas"}

@@ -10,20 +10,21 @@ info: |
 
     ...
     18. If extensibleTarget is true, return trapResult.
+features: [Proxy]
 ---*/
 
 var target = {};
 
 Object.defineProperty(target, "foo", {
-    configurable: false,
-    enumerable: true,
-    value: true
+  configurable: false,
+  enumerable: true,
+  value: true
 });
 
 var p = new Proxy(target, {
-    ownKeys: function() {
-        return ["foo", "bar"];
-    }
+  ownKeys: function() {
+    return ["foo", "bar"];
+  }
 });
 
 var keys = Object.getOwnPropertyNames(p);

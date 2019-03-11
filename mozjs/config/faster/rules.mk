@@ -66,6 +66,13 @@ ACDEFINES += -DBUILD_FASTER
 # fallback
 $(TOPOBJDIR)/faster/%: ;
 
+ifeq ($(MOZ_BUILD_APP),mobile/android)
+# The generic rule doesn't handle relative directories, which are used
+# extensively in mobile/android/base.
+$(TOPOBJDIR)/mobile/android/base/% : $(TOPOBJDIR)/buildid.h FORCE
+	$(MAKE) -C $(TOPOBJDIR)/mobile/android/base $*
+endif
+
 # Generic rule to fall back to the recursive make backend.
 # This needs to stay after other $(TOPOBJDIR)/* rules because GNU Make
 # <3.82 apply pattern rules in definition order, not stem length like
@@ -84,12 +91,10 @@ $(addprefix install-,$(INSTALL_MANIFESTS)): install-%: $(addprefix $(TOPOBJDIR)/
 	@# The overhead is not that big, and this avoids waiting for proper
 	@# support for defines tracking in process_install_manifest.
 	@touch install_$(subst /,_,$*)
-	@# BOOKMARKS_INCLUDE_DIR is for bookmarks.html only.
 	$(PYTHON) -m mozbuild.action.process_install_manifest \
 		--track install_$(subst /,_,$*).track \
 		$(TOPOBJDIR)/$* \
 		-DAB_CD=en-US \
-		-DBOOKMARKS_INCLUDE_DIR=$(TOPSRCDIR)/browser/locales/en-US/profile \
 		$(ACDEFINES) \
 		install_$(subst /,_,$*)
 
@@ -97,21 +102,4 @@ $(addprefix install-,$(INSTALL_MANIFESTS)): install-%: $(addprefix $(TOPOBJDIR)/
 # Below is a set of additional dependencies and variables used to build things
 # that are not supported by data in moz.build.
 
-# The xpidl target in config/makefiles/xpidl requires the install manifest for
-# dist/idl to have been processed. When using the hybrid
-# FasterMake/RecursiveMake backend, this dependency is handled in the top-level
-# Makefile.
-ifndef FASTER_RECURSIVE_MAKE
-$(TOPOBJDIR)/config/makefiles/xpidl/xpidl: $(TOPOBJDIR)/install-dist_idl
-endif
-# It also requires all the install manifests for dist/bin to have been processed
-# because it adds interfaces.manifest references with buildlist.py.
-$(TOPOBJDIR)/config/makefiles/xpidl/xpidl: $(addprefix install-,$(filter dist/bin%,$(INSTALL_MANIFESTS)))
-
 $(TOPOBJDIR)/build/application.ini: $(TOPOBJDIR)/buildid.h $(TOPOBJDIR)/source-repo.h
-
-# The manifest of allowed system add-ons should be re-built when using
-# "build faster".
-ifeq ($(MOZ_BUILD_APP),browser/app)
-default: $(TOPOBJDIR)/browser/app/features
-endif

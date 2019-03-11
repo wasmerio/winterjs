@@ -11,16 +11,17 @@ info: |
     9. Let trapResultObj be Call(trap, handler, «target, P»).
     10. ReturnIfAbrupt(trapResultObj).
     ...
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
-    getOwnPropertyDescriptor: function(t, prop) {
-        throw new Test262Error();
-    }
+  getOwnPropertyDescriptor: function(t, prop) {
+    throw new Test262Error();
+  }
 });
 
 assert.throws(Test262Error, function() {
-    Object.getOwnPropertyDescriptor(p, "attr");
+  Object.getOwnPropertyDescriptor(p, "attr");
 });
 
 reportCompare(0, 0);

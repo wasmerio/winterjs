@@ -11,6 +11,7 @@
 #include "unicode/utf8.h"
 #include "unicode/utf16.h"
 #include "bytesinkutil.h"
+#include "charstr.h"
 #include "cmemory.h"
 #include "uassert.h"
 
@@ -92,20 +93,16 @@ ByteSinkUtil::appendTwoBytes(UChar32 c, ByteSink &sink) {
     sink.Append(s8, 2);
 }
 
-UBool
-ByteSinkUtil::appendUnchanged(const uint8_t *s, int32_t length,
-                              ByteSink &sink, uint32_t options, Edits *edits,
-                              UErrorCode &errorCode) {
-    if (U_FAILURE(errorCode)) { return FALSE; }
-    if (length > 0) {
-        if (edits != nullptr) {
-            edits->addUnchanged(length);
-        }
-        if ((options & U_OMIT_UNCHANGED_TEXT) == 0) {
-            sink.Append(reinterpret_cast<const char *>(s), length);
-        }
+void
+ByteSinkUtil::appendNonEmptyUnchanged(const uint8_t *s, int32_t length,
+                                      ByteSink &sink, uint32_t options, Edits *edits) {
+    U_ASSERT(length > 0);
+    if (edits != nullptr) {
+        edits->addUnchanged(length);
     }
-    return TRUE;
+    if ((options & U_OMIT_UNCHANGED_TEXT) == 0) {
+        sink.Append(reinterpret_cast<const char *>(s), length);
+    }
 }
 
 UBool
@@ -117,7 +114,48 @@ ByteSinkUtil::appendUnchanged(const uint8_t *s, const uint8_t *limit,
         errorCode = U_INDEX_OUTOFBOUNDS_ERROR;
         return FALSE;
     }
-    return appendUnchanged(s, (int32_t)(limit - s), sink, options, edits, errorCode);
+    int32_t length = (int32_t)(limit - s);
+    if (length > 0) {
+        appendNonEmptyUnchanged(s, length, sink, options, edits);
+    }
+    return TRUE;
+}
+
+CharStringByteSink::CharStringByteSink(CharString* dest) : dest_(*dest) {
+}
+
+CharStringByteSink::~CharStringByteSink() = default;
+
+void
+CharStringByteSink::Append(const char* bytes, int32_t n) {
+    UErrorCode status = U_ZERO_ERROR;
+    dest_.append(bytes, n, status);
+    // Any errors are silently ignored.
+}
+
+char*
+CharStringByteSink::GetAppendBuffer(int32_t min_capacity,
+                                    int32_t desired_capacity_hint,
+                                    char* scratch,
+                                    int32_t scratch_capacity,
+                                    int32_t* result_capacity) {
+    if (min_capacity < 1 || scratch_capacity < min_capacity) {
+        *result_capacity = 0;
+        return nullptr;
+    }
+
+    UErrorCode status = U_ZERO_ERROR;
+    char* result = dest_.getAppendBuffer(
+            min_capacity,
+            desired_capacity_hint,
+            *result_capacity,
+            status);
+    if (U_SUCCESS(status)) {
+        return result;
+    }
+
+    *result_capacity = scratch_capacity;
+    return scratch;
 }
 
 U_NAMESPACE_END

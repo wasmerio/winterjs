@@ -11,10 +11,9 @@ negative:
   type: SyntaxError
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 //CHECK#1
 var x = 1;
 x
 --;
-$ERROR('#1: Check Postfix Decrement Operator for automatic semicolon insertion');

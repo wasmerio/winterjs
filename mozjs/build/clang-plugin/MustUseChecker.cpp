@@ -7,7 +7,7 @@
 #include "CustomTypeAnnotation.h"
 
 CustomTypeAnnotation MustUse =
-    CustomTypeAnnotation("moz_must_use_type", "must-use");
+    CustomTypeAnnotation(moz_must_use_type, "must-use");
 
 void MustUseChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(switchCase().bind("switchcase"), this);
@@ -55,10 +55,10 @@ void MustUseChecker::handleUnusedExprResult(const Stmt *Statement) {
     E = E->IgnoreImplicit(); // Ignore ExprWithCleanup etc. implicit wrappers
     QualType T = E->getType();
     if (MustUse.hasEffectiveAnnotation(T) && !isIgnoredExprForMustUse(E)) {
-      diag(E->getLocStart(), "Unused value of must-use type %0",
+      diag(E->getBeginLoc(), "Unused value of must-use type %0",
            DiagnosticIDs::Error)
           << T;
-      MustUse.dumpAnnotationReason(*this, T, E->getLocStart());
+      MustUse.dumpAnnotationReason(*this, T, E->getBeginLoc());
     }
   }
 }

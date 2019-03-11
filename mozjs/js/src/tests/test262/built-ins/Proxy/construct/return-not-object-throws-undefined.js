@@ -8,19 +8,20 @@ info: |
     [[Construct]] ( argumentsList, newTarget)
 
     11. If Type(newObj) is not Object, throw a TypeError exception.
+features: [Proxy]
 ---*/
 
 function Target() {
-    this.attr = "done";
+  this.attr = "done";
 };
 var P = new Proxy(Target, {
-    construct: function() {
-        return undefined;
-    }
+  construct: function() {
+    return undefined;
+  }
 });
 
 assert.throws(TypeError, function() {
-    new P();
+  new P();
 });
 
 reportCompare(0, 0);

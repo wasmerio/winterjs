@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 id{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.20"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Waktu Universal Terkoordinasi"}
+        }
+        "Europe:Dublin"{
+            ld{"Waktu Standar Irlandia"}
+        }
+        "Europe:London"{
+            ld{"Waktu Musim Panas Inggris"}
+        }
         "meta:Acre"{
             ld{"Waktu Musim Panas Acre"}
             lg{"Waktu Acre"}

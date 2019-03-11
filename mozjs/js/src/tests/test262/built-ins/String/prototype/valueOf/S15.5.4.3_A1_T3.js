@@ -4,7 +4,7 @@
 /*---
 info: String.prototype.valueOf() returns this string value
 es5id: 15.5.4.3_A1_T3
-description: Create String object as new String(string) and check it`s valueOf()
+description: Create String object as new String(string) and check its valueOf()
 ---*/
 
 var __string__obj = new String("metal");
@@ -12,7 +12,7 @@ var __string__obj = new String("metal");
 //////////////////////////////////////////////////////////////////////////////
 //CHECK#
 if (__string__obj.valueOf() !== "metal") {
-  $ERROR('#1: __string__obj = new String("metal"); __string__obj.valueOf() === "metal". Actual: __string__obj.valueOf() ==='+__string__obj.valueOf() ); 
+  $ERROR('#1: __string__obj = new String("metal"); __string__obj.valueOf() === "metal". Actual: __string__obj.valueOf() ===' + __string__obj.valueOf());
 }
 //
 //////////////////////////////////////////////////////////////////////////////

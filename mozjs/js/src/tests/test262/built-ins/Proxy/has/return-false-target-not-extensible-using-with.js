@@ -19,27 +19,28 @@ info: |
             iv. If extensibleTarget is false, throw a TypeError exception.
     ...
 flags: [noStrict]
+features: [Proxy]
 ---*/
 
 var target = {};
 var handler = {
-    has: function(t, prop) {
-        return 0;
-    }
+  has: function(t, prop) {
+    return 0;
+  }
 };
 var p = new Proxy(target, handler);
 
 Object.defineProperty(target, 'attr', {
-    configurable: true,
-    value: 1
+  configurable: true,
+  value: 1
 });
 
 Object.preventExtensions(target);
 
 assert.throws(TypeError, function() {
-    with (p) {
-        (attr);
-    }
+  with(p) {
+    (attr);
+  }
 });
 
 reportCompare(0, 0);

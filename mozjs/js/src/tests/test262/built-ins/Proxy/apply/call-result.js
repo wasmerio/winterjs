@@ -8,14 +8,17 @@ info: |
     [[Call]] (thisArgument, argumentsList)
 
     9. Return Call(trap, handler, «target, thisArgument, argArray»).
+features: [Proxy]
 ---*/
 
-var target = function(a, b) { return a + b; };
+var target = function(a, b) {
+  return a + b;
+};
 var result = {};
 var handler = {
-    apply: function(t, c, args) {
-        return result;
-    }
+  apply: function(t, c, args) {
+    return result;
+  }
 };
 var p = new Proxy(target, handler);
 

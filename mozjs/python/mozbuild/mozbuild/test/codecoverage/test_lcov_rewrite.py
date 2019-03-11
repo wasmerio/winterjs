@@ -275,7 +275,7 @@ class TestUrlFinder(unittest.TestCase):
         dummy_chrome_info = [
             {
                 'resource://activity-stream/': [
-                    'dist/bin/browser/features/activity-stream@mozilla.org/chrome/content',
+                    'dist/bin/browser/chrome/browser/res/activity-stream',
                 ],
                 'chrome://browser/content/': [
                     'dist/bin/browser/chrome/browser/content/browser',
@@ -289,7 +289,7 @@ class TestUrlFinder(unittest.TestCase):
                     'path1',
                     None
                 ],
-                'dist/bin/browser/components/nsSessionStartup.js': [
+                'dist/bin/browser/components/nsBrowserGlue.js': [
                     'path2',
                     None
                 ],
@@ -297,16 +297,12 @@ class TestUrlFinder(unittest.TestCase):
                     'path4',
                     None
                 ],
-                'dist/xpi-stage/workerbootstrap/bootstrap.js': [
-                    'path5',
-                    None
-                ],
                 'dist/bin/modules/osfile/osfile_async_worker.js': [
                     'toolkit/components/osfile/modules/osfile_async_worker.js',
                     None
                 ],
-                'dist/bin/browser/features/activity-stream@mozilla.org/chrome/content/lib/': [
-                    'browser/extensions/activity-stream/lib/*',
+                'dist/bin/browser/chrome/browser/res/activity-stream/lib/': [
+                    'browser/components/newtab/lib/*',
                     None
                 ],
                 'dist/bin/browser/chrome/browser/content/browser/aboutNetError.xhtml': [
@@ -338,9 +334,8 @@ class TestUrlFinder(unittest.TestCase):
 
         paths = [
             ('jar:file:///home/worker/workspace/build/application/' + app_name + '/' + omnijar_name + '!/components/MainProcessSingleton.js', 'path1'),
-            ('jar:file:///home/worker/workspace/build/application/' + app_name + '/browser/' + omnijar_name + '!/components/nsSessionStartup.js', 'path2'),
+            ('jar:file:///home/worker/workspace/build/application/' + app_name + '/browser/' + omnijar_name + '!/components/nsBrowserGlue.js', 'path2'),
             ('jar:file:///home/worker/workspace/build/application/' + app_name + '/browser/features/firefox@getpocket.com.xpi!/bootstrap.js', 'path4'),
-            ('jar:file:///tmp/tmpMdo5gV.mozrunner/extensions/workerbootstrap-test@mozilla.org.xpi!/bootstrap.js', 'path5'),
         ]
 
         url_finder = lcov_rewriter.UrlFinder(self._chrome_map_file, '', '', [])
@@ -368,7 +363,7 @@ class TestUrlFinder(unittest.TestCase):
             # Path with default url prefix
             ('resource://gre/modules/osfile/osfile_async_worker.js', ('toolkit/components/osfile/modules/osfile_async_worker.js', None)),
             # Path with url prefix that is in chrome map
-            ('resource://activity-stream/lib/PrefsFeed.jsm', ('browser/extensions/activity-stream/lib/PrefsFeed.jsm', None)),
+            ('resource://activity-stream/lib/PrefsFeed.jsm', ('browser/components/newtab/lib/PrefsFeed.jsm', None)),
             # Path which is in url overrides
             ('chrome://global/content/netError.xhtml', ('browser/base/content/aboutNetError.xhtml', None)),
             # Path which ends with > eval
@@ -385,7 +380,7 @@ class TestUrlFinder(unittest.TestCase):
                 ],
             })),
             # Path with query
-            ('resource://activity-stream/lib/PrefsFeed.jsm?q=0.9098419174803978', ('browser/extensions/activity-stream/lib/PrefsFeed.jsm', None)),
+            ('resource://activity-stream/lib/PrefsFeed.jsm?q=0.9098419174803978', ('browser/components/newtab/lib/PrefsFeed.jsm', None)),
         ]
 
         url_finder = lcov_rewriter.UrlFinder(self._chrome_map_file, '', 'dist/bin/', [])

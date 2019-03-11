@@ -23,10 +23,10 @@ endif
 
 # TARGET_OS/TARGET_CPU may be unintuitive, so we hardcode some special formats
 ifeq ($(OS_ARCH),WINNT)
-ifeq ($(TARGET_CPU),x86_64)
-MOZ_PKG_PLATFORM := win64
-else
+ifeq ($(CPU_ARCH),x86)
 MOZ_PKG_PLATFORM := win32
+else
+MOZ_PKG_PLATFORM := win64
 endif
 endif
 ifeq ($(OS_ARCH),Darwin)
@@ -62,8 +62,6 @@ CHECKSUMS_FILE_BASENAME = $(PKG_BASENAME)
 MOZ_INFO_BASENAME = $(PKG_BASENAME)
 PKG_UPDATE_PATH = update/
 COMPLETE_MAR = $(PKG_UPDATE_PATH)$(PKG_UPDATE_BASENAME).complete.mar
-# PARTIAL_MAR needs to be processed by $(wildcard) before you use it.
-PARTIAL_MAR = $(PKG_UPDATE_PATH)$(PKG_UPDATE_BASENAME).partial.*.mar
 ifdef MOZ_SIMPLE_PACKAGE_NAME
 PKG_LANGPACK_BASENAME = $(MOZ_SIMPLE_PACKAGE_NAME).langpack
 PKG_LANGPACK_PATH =
@@ -89,20 +87,21 @@ CODE_COVERAGE_ARCHIVE_BASENAME = $(PKG_BASENAME).code-coverage-gcno
 # Mozsearch package naming
 MOZSEARCH_ARCHIVE_BASENAME = $(PKG_BASENAME).mozsearch-index
 MOZSEARCH_RUST_ANALYSIS_BASENAME = $(PKG_BASENAME).mozsearch-rust
+MOZSEARCH_INCLUDEMAP_BASENAME = $(PKG_BASENAME).mozsearch-distinclude
 
 # Mozharness naming
 MOZHARNESS_PACKAGE = mozharness.zip
 
 # Test package naming
-TEST_PACKAGE = $(PKG_BASENAME).common.tests.zip
-CPP_TEST_PACKAGE = $(PKG_BASENAME).cppunittest.tests.zip
-XPC_TEST_PACKAGE = $(PKG_BASENAME).xpcshell.tests.zip
-MOCHITEST_PACKAGE = $(PKG_BASENAME).mochitest.tests.zip
-REFTEST_PACKAGE = $(PKG_BASENAME).reftest.tests.zip
+TEST_PACKAGE = $(PKG_BASENAME).common.tests.tar.gz
+CPP_TEST_PACKAGE = $(PKG_BASENAME).cppunittest.tests.tar.gz
+XPC_TEST_PACKAGE = $(PKG_BASENAME).xpcshell.tests.tar.gz
+MOCHITEST_PACKAGE = $(PKG_BASENAME).mochitest.tests.tar.gz
+REFTEST_PACKAGE = $(PKG_BASENAME).reftest.tests.tar.gz
 WP_TEST_PACKAGE = $(PKG_BASENAME).web-platform.tests.tar.gz
-TALOS_PACKAGE = $(PKG_BASENAME).talos.tests.zip
-AWSY_PACKAGE = $(PKG_BASENAME).awsy.tests.zip
-GTEST_PACKAGE = $(PKG_BASENAME).gtest.tests.zip
+TALOS_PACKAGE = $(PKG_BASENAME).talos.tests.tar.gz
+AWSY_PACKAGE = $(PKG_BASENAME).awsy.tests.tar.gz
+GTEST_PACKAGE = $(PKG_BASENAME).gtest.tests.tar.gz
 
 ifneq (,$(wildcard $(DIST)/bin/application.ini))
 BUILDID = $(shell $(PYTHON) $(MOZILLA_DIR)/config/printconfigsetting.py $(DIST)/bin/application.ini App BuildID)
@@ -112,6 +111,7 @@ endif
 
 MOZ_SOURCESTAMP_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).txt
 MOZ_BUILDINFO_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).json
+MOZ_BUILDHUB_JSON = $(DIST)/$(PKG_PATH)/buildhub.json
 MOZ_BUILDID_INFO_TXT_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME)_info.txt
 MOZ_MOZINFO_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).mozinfo.json
 MOZ_TEST_PACKAGES_FILE = $(DIST)/$(PKG_PATH)/$(PKG_BASENAME).test_packages.json
@@ -123,8 +123,5 @@ else
 JSSHELL_NAME = jsshell-$(MOZ_PKG_PLATFORM).zip
 endif
 PKG_JSSHELL = $(DIST)/$(JSSHELL_NAME)
-
-# Stylo binding files
-STYLO_BINDINGS_PACKAGE = $(PKG_BASENAME).stylo-bindings.zip
 
 endif # PACKAGE_NAME_MK_INCLUDED

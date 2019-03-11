@@ -4,15 +4,16 @@
 es6id: 9.5.14
 description: >
     Throws if trap is not callable.
+features: [Proxy]
 ---*/
 
 function Target() {}
 var p = new Proxy(Target, {
-    construct: {}
+  construct: {}
 });
 
 assert.throws(TypeError, function() {
-    new p();
+  new p();
 });
 
 reportCompare(0, 0);

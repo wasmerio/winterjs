@@ -34,53 +34,45 @@
 
 #ifndef XP_WIN
 
-#include <sys/types.h>
-#include <sys/mman.h>
+#  include <sys/types.h>
+#  include <sys/mman.h>
 
-#include "mozilla/Types.h"
+#  include "mozilla/Types.h"
 
-#ifdef ANDROID
+#  ifdef ANDROID
 
-#ifdef __cplusplus
+#    ifdef __cplusplus
 extern "C" {
-#endif
+#    endif
 
-MFBT_API void
-MozTagAnonymousMemory(const void* aPtr, size_t aLength, const char* aTag);
+MFBT_API void MozTagAnonymousMemory(const void* aPtr, size_t aLength,
+                                    const char* aTag);
 
-MFBT_API void*
-MozTaggedAnonymousMmap(void* aAddr, size_t aLength, int aProt, int aFlags,
-                         int aFd, off_t aOffset, const char* aTag);
+MFBT_API void* MozTaggedAnonymousMmap(void* aAddr, size_t aLength, int aProt,
+                                      int aFlags, int aFd, off_t aOffset,
+                                      const char* aTag);
 
-MFBT_API int
-MozTaggedMemoryIsSupported(void);
+MFBT_API int MozTaggedMemoryIsSupported(void);
 
-#ifdef __cplusplus
-} // extern "C"
-#endif
+#    ifdef __cplusplus
+}  // extern "C"
+#    endif
 
-#else // ANDROID
+#  else  // ANDROID
 
-static inline void
-MozTagAnonymousMemory(const void* aPtr, size_t aLength, const char* aTag)
-{
-}
+static inline void MozTagAnonymousMemory(const void* aPtr, size_t aLength,
+                                         const char* aTag) {}
 
-static inline void*
-MozTaggedAnonymousMmap(void* aAddr, size_t aLength, int aProt, int aFlags,
-                       int aFd, off_t aOffset, const char* aTag)
-{
+static inline void* MozTaggedAnonymousMmap(void* aAddr, size_t aLength,
+                                           int aProt, int aFlags, int aFd,
+                                           off_t aOffset, const char* aTag) {
   return mmap(aAddr, aLength, aProt, aFlags, aFd, aOffset);
 }
 
-static inline int
-MozTaggedMemoryIsSupported(void)
-{
-  return 0;
-}
+static inline int MozTaggedMemoryIsSupported(void) { return 0; }
 
-#endif // ANDROID
+#  endif  // ANDROID
 
-#endif // !XP_WIN
+#endif  // !XP_WIN
 
-#endif // mozilla_TaggedAnonymousMemory_h
+#endif  // mozilla_TaggedAnonymousMemory_h
