@@ -1,0 +1,19 @@
+commit a2565ba38e1384ad804d7457804bcc7a86f3b38d
+Author: Josh Matthews <josh@joshmatthews.net>
+Date:   Tue Apr 2 14:13:03 2019 -0400
+
+    Work around rust-bindgen#380 for debugmozjs builds.
+
+diff --git a/mozjs/mfbt/GuardObjects.h b/mozjs/mfbt/GuardObjects.h
+index 48015f53c5..7592364e33 100644
+--- a/mozjs/mfbt/GuardObjects.h
++++ b/mozjs/mfbt/GuardObjects.h
+@@ -96,7 +96,7 @@ class GuardObjectNotifier {
+   }
+ };
+ 
+-class GuardObjectNotificationReceiver {
++class alignas(8) GuardObjectNotificationReceiver {
+  private:
+   bool mStatementDone;
+ 
