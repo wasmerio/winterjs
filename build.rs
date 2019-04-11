@@ -9,12 +9,40 @@ use std::env;
 use std::path::PathBuf;
 use std::ffi::{OsStr, OsString};
 use std::process::{Command, Stdio};
+use std::str;
 
 fn main() {
     let target = env::var("TARGET").unwrap();
+    let host = env::var("HOST").unwrap();
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() && target.contains("windows") {
         // https://github.com/rust-lang/rust/issues/39016
         panic!("Rustc doesn't support MSVC debug runtime.");
+    }
+
+    if target.contains("windows") && host != target {
+        assert_eq!(host, "x86_64-pc-windows-msvc",
+                   "Only cross-compiling from x64 is supported");
+        assert_eq!(target, "i686-pc-windows-msvc",
+                   "Only cross-compiling to x86 is supported");
+        assert!(env::var("VSINSTALLDIR").is_err());
+        // When cross-compiling on Windows, we need to ensure that the PATH is
+        // set up appropriately for the target before invoking make.
+        if env::var("VCVARSALL_PATH").is_err() {
+            panic!("Need to provide VCVARSALL_PATH value with path to \
+                    vcvarsall.bat from Visual Studio installation");
+        }
+
+        let vcvars = Command::new("vcvars.bat").output().unwrap();
+        assert!(vcvars.status.success());
+        let output = str::from_utf8(&vcvars.stdout).unwrap();
+        for line in output.lines() {
+	    let mut parts = line.splitn(2, '=');
+	    if let Some(name) = parts.next() {
+	        if let Some(value) = parts.next() {
+		    env::set_var(name, value);
+	        }
+	    }
+        }
     }
 
     build_jsapi();
@@ -319,6 +347,7 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::Maybe.*",
     "mozilla::UniquePtr.*",
     "mozilla::Variant",
+    "RefPtr_Proxy.*",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within

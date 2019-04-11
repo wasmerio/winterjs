@@ -1,6 +1,9 @@
 version: 1.0.{build}
 image: Visual Studio 2017
 
+matrix:
+  fast_finish: true
+
 environment:
   # The appveyor image we use has a pretty huge set of things installed... we make the
   # initial PATH something sane so we know what to expect
@@ -27,6 +30,13 @@ environment:
     C:\\Program Files\\Git\\usr\\bin;\
     C:\\Program Files\\AppVeyor\\BuildAgent;"
 
+  VCVARSALL_PATH: C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build
+
+  matrix:
+    - TARGET: i686-pc-windows-msvc
+      CROSS_COMPILE: 1
+    - TARGET: x86_64-pc-windows-msvc
+
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
 #  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
@@ -36,13 +46,12 @@ environment:
 # called after cloning, before building
 install:
   - set BUILD_ENV=msvc
-  - set TARGET=nightly-x86_64-pc-windows-msvc
   - ps: Start-FileDownload "http://servo-rust.s3.amazonaws.com/build/MozillaBuildSetup-2.2.0.exe"
   - ps: .\MozillaBuildSetup-2.2.0.exe /S | Out-Null
-  - ps: Start-FileDownload "https://static.rust-lang.org/dist/rust-${env:TARGET}.exe" -FileName "rust-install.exe"
-  - ps: .\rust-install.exe /VERYSILENT /NORESTART /DIR="C:\rust" | Out-Null
-  - ps: $env:PATH="$env:PATH;C:\rust\bin"
-  - call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
+  - appveyor-retry appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
+  - rustup-init.exe -y --default-host=x86_64-pc-windows-msvc
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - if "%CROSS_COMPILE%" == "1" rustup target add %TARGET%
   - set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
   - set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
   - set AUTOCONF=C:/mozilla-build/msys/local/bin/autoconf-2.13
@@ -51,6 +60,7 @@ install:
 
 build_script:
   - echo PATH %PATH%
-  - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose && cargo test --lib
+  - cd %APPVEYOR_BUILD_FOLDER%
+  - if "%CROSS_COMPILE%" == "" call "%VCVARSALL_PATH%\vcvars64.bat"
+  - cargo test --verbose --verbose --target %TARGET% --lib
