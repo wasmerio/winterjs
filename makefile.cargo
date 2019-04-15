@@ -10,6 +10,12 @@ CONFIGURE_FLAGS := \
 	--disable-shared-js \
 	--build-backends=RecursiveMake
 
+ifeq (windows,$(findstring windows,$(TARGET)))
+	WINDOWS := 1
+else
+	WINDOWS :=
+endif
+
 ifneq ($(HOST),$(TARGET))
 
 	ifeq (armv7-linux-androideabi,$(TARGET))
@@ -55,16 +61,17 @@ ifneq ($(HOST),$(TARGET))
 		endif
 	endif
 
-CC ?= $(TARGET)-gcc
-CPP ?= $(TARGET)-gcc -E
-CXX ?= $(TARGET)-g++
-AR ?= $(TARGET)-ar
-
-CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
+ifeq ($(WINDOWS),)
+	CC ?= $(TARGET)-gcc
+	CPP ?= $(TARGET)-gcc -E
+	CXX ?= $(TARGET)-g++
+	AR ?= $(TARGET)-ar
+	CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
+endif
 
 else
 
-ifeq (,$(VCINSTALLDIR))
+ifeq (,$(WINDOWS))
 	ifeq (freebsd,$(findstring freebsd,$(TARGET)))
 		# Does not symlink clang as "gcc" like macOS does
 		CC ?= clang
@@ -100,7 +107,7 @@ ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifneq ($(VCINSTALLDIR),)
+ifneq ($(WINDOWS),)
 	# Visual Studio build
 	NEED_WIN_PYTHON := 1
 
@@ -111,6 +118,9 @@ ifneq ($(VCINSTALLDIR),)
 ifeq ($(findstring x86_64,$(TARGET)),x86_64)
 	# This is the correct target for MSVC builds
 	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+else ifeq ($(findstring i686,$(TARGET)),i686)
+	# This is the correct target for MSVC builds
+	CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=i686-pc-mingw32
 endif
 	CONFIGURE_FLAGS += --without-pthreads
 	MOZ_TOOLS=/

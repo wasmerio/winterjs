@@ -545,28 +545,28 @@ fn assert_agreement(val1: JSVal, val2: JSVal) {
 
     assert_eq!(val1.asBits(), val2.asBits());
 
-    assert_eq!(unsafe { JS_ValueIsBoolean(val1) }, val2.is_boolean());
+    assert_eq!(unsafe { JS_ValueIsBoolean(&val1) }, val2.is_boolean());
     if val2.is_boolean() {
-        assert_eq!(unsafe { JS_ValueToBoolean(val1) }, val2.to_boolean());
+        assert_eq!(unsafe { JS_ValueToBoolean(&val1) }, val2.to_boolean());
     }
 
-    assert_eq!(unsafe { JS_ValueIsDouble(val1) }, val2.is_double());
+    assert_eq!(unsafe { JS_ValueIsDouble(&val1) }, val2.is_double());
     if val2.is_double() {
-        assert_eq!(unsafe { JS_ValueToDouble(val1) }, val2.to_double());
+        assert_eq!(unsafe { JS_ValueToDouble(&val1) }, val2.to_double());
     }
 
-    assert_eq!(unsafe { JS_ValueIsInt32(val1) }, val2.is_int32());
+    assert_eq!(unsafe { JS_ValueIsInt32(&val1) }, val2.is_int32());
     if val2.is_int32() {
-        assert_eq!(unsafe { JS_ValueToInt32(val1) }, val2.to_int32());
+        assert_eq!(unsafe { JS_ValueToInt32(&val1) }, val2.to_int32());
     }
 
-    assert_eq!(unsafe { JS_ValueIsNumber(val1) }, val2.is_number());
+    assert_eq!(unsafe { JS_ValueIsNumber(&val1) }, val2.is_number());
     if val2.is_number() {
-        assert_eq!(unsafe { JS_ValueToNumber(val1) }, val2.to_number());
+        assert_eq!(unsafe { JS_ValueToNumber(&val1) }, val2.to_number());
     }
 
-    assert_eq!(unsafe { JS_ValueIsNull(val1) }, val2.is_null());
+    assert_eq!(unsafe { JS_ValueIsNull(&val1) }, val2.is_null());
 
-    assert_eq!(unsafe { JS_ValueIsUndefined(val1) }, val2.is_undefined());
+    assert_eq!(unsafe { JS_ValueIsUndefined(&val1) }, val2.is_undefined());
 
 }

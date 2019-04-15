@@ -34,24 +34,24 @@ JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone);
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp);
 
 void JS_ValueSetBoolean(JS::Value* value, bool x);
-bool JS_ValueIsBoolean(JS::Value value);
-bool JS_ValueToBoolean(JS::Value value);
+bool JS_ValueIsBoolean(const JS::Value* value);
+bool JS_ValueToBoolean(const JS::Value* value);
 
 void JS_ValueSetDouble(JS::Value* value, double x);
-bool JS_ValueIsDouble(JS::Value value);
-double JS_ValueToDouble(JS::Value value);
+bool JS_ValueIsDouble(const JS::Value* value);
+double JS_ValueToDouble(const JS::Value* value);
 
 void JS_ValueSetInt32(JS::Value* value, int32_t x);
-bool JS_ValueIsInt32(JS::Value value);
-int32_t JS_ValueToInt32(JS::Value value);
+bool JS_ValueIsInt32(const JS::Value* value);
+int32_t JS_ValueToInt32(const JS::Value* value);
 
-bool JS_ValueIsNumber(JS::Value value);
-double JS_ValueToNumber(JS::Value value);
+bool JS_ValueIsNumber(const JS::Value* value);
+double JS_ValueToNumber(const JS::Value* value);
 
 void JS_ValueSetNull(JS::Value* value);
-bool JS_ValueIsNull(JS::Value value);
+bool JS_ValueIsNull(const JS::Value* value);
 
-bool JS_ValueIsUndefined(JS::Value value);
+bool JS_ValueIsUndefined(const JS::Value* value);
 
 }
 
