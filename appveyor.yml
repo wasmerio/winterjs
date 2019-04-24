@@ -32,6 +32,9 @@ environment:
 
   VCVARSALL_PATH: C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build
 
+  CC: "clang-cl.exe"
+  CXX: "clang-cl.exe"
+
   matrix:
     - TARGET: i686-pc-windows-msvc
       CROSS_COMPILE: 1
