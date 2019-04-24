@@ -237,7 +237,9 @@ def valid_ucrt_sdk_dir(windows_sdk_dir, windows_sdk_dir_env, c_compiler):
                               % (version, minimum_ucrt_version))
 
     broken_ucrt_version = Version('10.0.16299.0')
-    if c_compiler.type == 'clang-cl' and version >= broken_ucrt_version:
+    working_ucrt_version = Version('10.0.17134.0')
+    if c_compiler.type == 'clang-cl' and version >= broken_ucrt_version and \
+       version < working_ucrt_version:
         raise FatalCheckError('Found SDK version %s but clang-cl builds'
                               ' currently don\'t work with SDK version %s'
                               ' and later. You should use an older SDK,'
