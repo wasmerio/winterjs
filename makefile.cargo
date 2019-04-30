@@ -120,7 +120,7 @@ ifeq ($(findstring x86_64,$(TARGET)),x86_64)
 	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
 else ifeq ($(findstring i686,$(TARGET)),i686)
 	# This is the correct target for MSVC builds
-	CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=i686-pc-mingw32
+	CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
 endif
 	MOZ_TOOLS=/
 
