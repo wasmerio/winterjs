@@ -1136,7 +1136,7 @@ class TreeMetadataEmitter(LoggingMixin):
             generated_files.add(str(sub.relpath))
             yield sub
 
-        for defines_var, cls, backend_flags in (('DEFINES', Defines, (computed_flags, computed_as_flags)),
+        for defines_var, cls, backend_flags in (('DEFINES', Defines, (computed_flags,)),
                                                 ('HOST_DEFINES', HostDefines, (computed_host_flags,))):
             defines = context.get(defines_var)
             if defines:
