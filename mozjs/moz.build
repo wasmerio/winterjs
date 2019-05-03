@@ -137,6 +137,6 @@ if CONFIG['MOZ_BUILD_APP']:
 else:
     include('/toolkit/toolkit.mozbuild')
 
-CONFIGURE_SUBST_FILES += ['.cargo/config']
+#CONFIGURE_SUBST_FILES += ['.cargo/config']
 
 include('build/templates.mozbuild')
