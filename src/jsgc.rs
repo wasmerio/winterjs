@@ -6,11 +6,11 @@ use jsapi::JS;
 use jsapi::jsid;
 use jsapi::JSFlatString;
 use jsapi::JSFunction;
-use jsapi::JSID_VOID;
 use jsapi::JSObject;
 use jsapi::JSScript;
 use jsapi::JSString;
 use jsapi::JSTracer;
+use jsid::JSID_VOID;
 
 use std::cell::UnsafeCell;
 use std::mem;

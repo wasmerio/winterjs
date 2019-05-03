@@ -11,6 +11,7 @@ mod jsimpls;
 
 // Modules with public definitions
 pub mod jsgc;
+pub mod jsid;
 pub mod jsjit;
 pub mod jsval;
 

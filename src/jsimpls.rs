@@ -7,7 +7,6 @@ use jsapi::JSAutoRealm;
 use jsapi::JSContext;
 use jsapi::JSErrNum;
 use jsapi::JSFunctionSpec;
-use jsapi::JSID_VOID;
 use jsapi::JSJitGetterCallArgs;
 use jsapi::JSJitMethodCallArgs;
 use jsapi::JSJitSetterCallArgs;
@@ -19,6 +18,7 @@ use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
 use jsapi::jsid;
 use jsgc::RootKind;
+use jsid::JSID_VOID;
 use jsval::UndefinedValue;
 
 #[cfg(feature = "debugmozjs")]
@@ -52,7 +52,7 @@ impl<T> DerefMut for JS::MutableHandle<T> {
 }
 
 impl Default for jsid {
-    fn default() -> Self { unsafe { JSID_VOID } }
+    fn default() -> Self { JSID_VOID }
 }
 
 impl Default for JS::RealmOptions {
