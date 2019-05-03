@@ -17,6 +17,7 @@ addons:
       - llvm-toolchain-xenial-5.0
     packages:
       - autoconf2.13
+      - gcc-6
       - g++-6
       - clang-5.0
 
