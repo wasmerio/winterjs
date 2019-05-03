@@ -1,0 +1,21 @@
+diff --git a/mozjs/build/moz.configure/toolchain.configure b/mozjs/build/moz.configure/toolchain.configure
+index a1e443019..613ce94aa 100755
+--- a/mozjs/build/moz.configure/toolchain.configure
++++ b/mozjs/build/moz.configure/toolchain.configure
+@@ -1199,8 +1199,14 @@ set_config('COLOR_CFLAGS', color_cflags)
+ # hidden visibility.
+ 
+ 
+-@depends(c_compiler, target)
+-def libcxx_override_visibility(c_compiler, target):
++option(env='_LIBCPP_INLINE_VISIBILITY',
++       nargs=1,
++       help='Visibility of libc++ inlines')
++
++@depends('_LIBCPP_INLINE_VISIBILITY', c_compiler, target)
++def libcxx_override_visibility(value, c_compiler, target):
++    if len(value):
++        return value[0]
+     if c_compiler.type == 'clang' and target.os == 'Android':
+         return ''
+ 
