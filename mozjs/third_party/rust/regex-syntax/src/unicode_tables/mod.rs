@@ -1,9 +1,0 @@
-pub mod age;
-pub mod case_folding_simple;
-pub mod general_category;
-pub mod perl_word;
-pub mod property_bool;
-pub mod property_names;
-pub mod property_values;
-pub mod script_extension;
-pub mod script;
