@@ -91,6 +91,7 @@ fn cc_flags() -> Vec<&'static str> {
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
+            "-Wno-unused-private-field",
         ]);
     }
 
