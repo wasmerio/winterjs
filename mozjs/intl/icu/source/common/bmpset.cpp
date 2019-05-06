@@ -100,9 +100,9 @@ static void set32x64Bits(uint32_t table[64], int32_t start, int32_t limit) {
             ++lead;
         }
         if(lead<limitLead) {
-            bits=~((1<<lead)-1);
+            bits=~(((unsigned)1<<lead)-1);
             if(limitLead<0x20) {
-                bits&=(1<<limitLead)-1;
+                bits&=((unsigned)1<<limitLead)-1;
             }
             for(trail=0; trail<64; ++trail) {
                 table[trail]|=bits;
@@ -241,13 +241,13 @@ void BMPSet::overrideIllegal() {
             bmpBlockBits[i]|=bits;
         }
 
-        mask=~(0x10001<<0xd);   // Lead byte 0xED.
+        mask= static_cast<uint32_t>(~(0x10001<<0xd));   // Lead byte 0xED.
         bits=1<<0xd;
         for(i=32; i<64; ++i) {  // Second half of 4k block.
             bmpBlockBits[i]=(bmpBlockBits[i]&mask)|bits;
         }
     } else {
-        mask=~(0x10001<<0xd);   // Lead byte 0xED.
+        mask= static_cast<uint32_t>(~(0x10001<<0xd));   // Lead byte 0xED.
         for(i=32; i<64; ++i) {  // Second half of 4k block.
             bmpBlockBits[i]&=mask;
         }

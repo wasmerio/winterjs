@@ -3127,7 +3127,7 @@ int Disassembler::SubstituteImmediateField(const Instruction* instr,
             uint64_t imm8 = instr->ImmNEONabcdefgh();
             uint64_t imm = 0;
             for (int i = 0; i < 8; ++i) {
-              if (imm8 & (1 << i)) {
+              if (imm8 & (1ULL << i)) {
                 imm |= (UINT64_C(0xff) << (8 * i));
               }
             }
@@ -3501,6 +3501,13 @@ void DisassembleInstruction(char* buffer, size_t bufsize, const Instruction* ins
     decoder.AppendVisitor(&disasm);
     decoder.Decode(instr);
     buffer[bufsize-1] = 0;      // Just to be safe
+}
+
+char* GdbDisassembleInstruction(const Instruction* instr)
+{
+    static char buffer[1024];
+    DisassembleInstruction(buffer, sizeof(buffer), instr);
+    return buffer;
 }
 
 }  // namespace vixl

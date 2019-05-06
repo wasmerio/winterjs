@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
 #include "jsapi-tests/tests.h"
 
-BEGIN_TEST(test_GetPropertyDescriptor)
-{
+BEGIN_TEST(test_GetPropertyDescriptor) {
   JS::RootedValue v(cx);
   EVAL("({ somename : 123 })", &v);
   CHECK(v.isObject());
@@ -39,7 +39,7 @@ BEGIN_TEST(test_GetPropertyDescriptor)
   CHECK_EQUAL(desc.object(), nullptr);
 
   CHECK(JS_GetPropertyDescriptor(cx, obj, "toString", &desc));
-  JS::RootedObject objectProto(cx, JS_GetObjectPrototype(cx, obj));
+  JS::RootedObject objectProto(cx, JS::GetRealmObjectPrototype(cx));
   CHECK(objectProto);
   CHECK_EQUAL(desc.object(), objectProto);
   CHECK(desc.value().isObject());

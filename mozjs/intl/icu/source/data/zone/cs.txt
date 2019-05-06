@@ -1,8 +1,23 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 cs{
-    Version{"2.1.37.11"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Koordinovaný světový čas"}
+            ss{"UTC"}
+        }
+        "Europe:Dublin"{
+            ld{"Irský letní čas"}
+        }
+        "Europe:London"{
+            ld{"Britský letní čas"}
+        }
+        "Pacific:Honolulu"{
+            sd{"HDT"}
+            sg{"HST"}
+            ss{"HST"}
+        }
         "meta:Acre"{
             ld{"Acrejský letní čas"}
             lg{"Acrejský čas"}

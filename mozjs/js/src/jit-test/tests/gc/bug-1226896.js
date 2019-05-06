@@ -1,9 +1,6 @@
-// |jit-test| --ion-pgo=on
-
-if (!('oomTest' in this))
-   quit();
+// |jit-test| --ion-pgo=on; skip-if: !('oomTest' in this)
 
 oomTest(() => {
-    var g = newGlobal();
+    var g = newGlobal({sameZoneAs: this});
     g.eval("(function() {})()");
 });

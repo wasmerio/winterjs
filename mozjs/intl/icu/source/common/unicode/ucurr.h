@@ -60,6 +60,7 @@ enum UCurrencyUsage {
     UCURR_USAGE_COUNT=2
 #endif  // U_HIDE_DEPRECATED_API
 };
+/** Currency Usage used for Decimal Format */
 typedef enum UCurrencyUsage UCurrencyUsage; 
 
 /**
@@ -103,6 +104,19 @@ typedef enum UCurrNameStyle {
      * @stable ICU 2.6
      */
     UCURR_LONG_NAME
+
+#ifndef U_HIDE_DRAFT_API
+    ,
+    /**
+     * Selector for getName() indicating the narrow currency symbol.
+     * The narrow currency symbol is similar to the regular currency
+     * symbol, but it always takes the shortest form: for example,
+     * "$" instead of "US$" for USD in en-CA.
+     *
+     * @draft ICU 61
+     */
+    UCURR_NARROW_SYMBOL_NAME
+#endif  // U_HIDE_DRAFT_API
 } UCurrNameStyle;
 
 #if !UCONFIG_NO_SERVICE

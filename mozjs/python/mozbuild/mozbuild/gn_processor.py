@@ -138,7 +138,7 @@ def find_deps(all_targets, target):
     return all_deps
 
 
-def filter_gn_config(gn_result, config, sandbox_vars, input_vars):
+def filter_gn_config(gn_result, config, sandbox_vars, input_vars, gn_target):
     # Translates the raw output of gn into just what we'll need to generate a
     # mozbuild configuration.
     gn_out = {
@@ -156,7 +156,7 @@ def filter_gn_config(gn_result, config, sandbox_vars, input_vars):
 
     mozbuild_args = {k: config.substs.get(k) for k in gn_mozbuild_vars}
     gn_out['mozbuild_args'] = mozbuild_args
-    all_deps = find_deps(gn_result['targets'], "//:default")
+    all_deps = find_deps(gn_result['targets'], gn_target)
 
     for target_fullname in all_deps:
         raw_spec = gn_result['targets'][target_fullname]
@@ -323,7 +323,6 @@ def process_gn_config(gn_config, srcdir, config, output, non_unified_sources,
             context_attrs['DEFINES']['_UNICODE'] = True
 
         context_attrs['COMPILE_FLAGS'] = {
-            'STL': [],
             'OS_INCLUDES': [],
         }
 
@@ -360,8 +359,8 @@ def find_common_attrs(config_attributes):
             common_value = reference.get(k)
             if common_value:
                 if isinstance(input_value, list):
-                    input_value = set(input_value)
-                    reference[k] = [i for i in common_value if i in input_value]
+                    reference[k] = [i for i in common_value
+                                    if input_value.count(i) == common_value.count(i)]
                 elif isinstance(input_value, dict):
                     reference[k] = {key: value for key, value in common_value.items()
                                     if key in input_value and value == input_value[key]}
@@ -382,8 +381,8 @@ def find_common_attrs(config_attributes):
             common_value = reference.get(k)
             if common_value:
                 if isinstance(input_value, list):
-                    common_value = set(common_value)
-                    input_attrs[k] = [i for i in input_value if i not in common_value]
+                    input_attrs[k] = [i for i in input_value
+                                      if common_value.count(i) != input_value.count(i)]
                 elif isinstance(input_value, dict):
                     input_attrs[k] = {key: value for key, value in input_value.items()
                                       if key not in common_value}
@@ -440,7 +439,10 @@ def write_mozbuild(config, srcdir, output, non_unified_sources, gn_config_files,
             # for every configuration, then factor by other potentially useful
             # combinations.
             for attrs in ((),
-                          ('MOZ_DEBUG',), ('OS_TARGET',), ('MOZ_DEBUG', 'OS_TARGET',),
+                          ('MOZ_DEBUG',), ('OS_TARGET',), ('CPU_ARCH',),
+                          ('MOZ_DEBUG', 'OS_TARGET',),
+                          ('OS_TARGET', 'CPU_ARCH'),
+                          ('OS_TARGET', 'CPU_ARCH', 'MOZ_DEBUG'),
                           ('MOZ_DEBUG', 'OS_TARGET', 'CPU_ARCH', 'HOST_CPU_ARCH')):
                 conditions = set()
                 for args in all_args:
@@ -477,7 +479,7 @@ def write_mozbuild(config, srcdir, output, non_unified_sources, gn_config_files,
                 cond = tuple(((k, dict(args).get(k)) for k in attrs))
                 conditions.add(cond)
 
-            for cond in conditions:
+            for cond in sorted(conditions):
                 common_dirs = None
                 for args, dir_set in dirs_by_config.items():
                     if all(dict(args).get(k) == v for k, v in cond):
@@ -500,7 +502,7 @@ def write_mozbuild(config, srcdir, output, non_unified_sources, gn_config_files,
 
 
 def generate_gn_config(config, srcdir, output, non_unified_sources, gn_binary,
-                       input_variables, sandbox_variables):
+                       input_variables, sandbox_variables, gn_target):
 
     def str_for_arg(v):
         if v in (True, False):
@@ -517,13 +519,12 @@ def generate_gn_config(config, srcdir, output, non_unified_sources, gn_binary,
     print("Running \"%s\"" % ' '.join(gen_args), file=sys.stderr)
     subprocess.check_call(gen_args, cwd=srcdir, stderr=subprocess.STDOUT)
 
-
     gn_config_file = mozpath.join(out_dir, 'project.json')
 
     with open(gn_config_file, 'r') as fh:
         gn_out = json.load(fh)
         gn_out = filter_gn_config(gn_out, config, sandbox_variables,
-                                  input_variables)
+                                  input_variables, gn_target)
 
     os.remove(gn_config_file)
 
@@ -544,7 +545,8 @@ class GnConfigGenBackend(BuildBackend):
             generate_gn_config(obj.config, mozpath.join(obj.srcdir, obj.target_dir),
                                mozpath.join(obj.objdir, obj.target_dir),
                                obj.non_unified_sources, gn_binary,
-                               obj.gn_input_variables, obj.gn_sandbox_variables)
+                               obj.gn_input_variables, obj.gn_sandbox_variables,
+                               obj.gn_target)
         return True
 
     def consume_finished(self):

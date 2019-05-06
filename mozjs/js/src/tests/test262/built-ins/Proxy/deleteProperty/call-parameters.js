@@ -10,19 +10,20 @@ info: |
     6.1.7.2 Object Internal Methods and Internal Slots
 
     (...) Receiver is used as the this value when evaluating the code
+features: [Proxy]
 ---*/
 
 var _handler, _target, _prop;
 var target = {
-    attr: 1
+  attr: 1
 };
 var handler = {
-    deleteProperty: function(t, prop) {
-        _handler = this;
-        _target = t;
-        _prop = prop;
-        return delete t[prop];
-    }
+  deleteProperty: function(t, prop) {
+    _handler = this;
+    _target = t;
+    _prop = prop;
+    return delete t[prop];
+  }
 };
 var p = new Proxy(target, handler);
 

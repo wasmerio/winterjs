@@ -10,22 +10,23 @@ info: |
 
     ...
     20. If uncheckedResultKeys is not empty, throw a TypeError exception.
+features: [Proxy]
 ---*/
 
 var target = {
-    foo: 1
+  foo: 1
 };
 
 var p = new Proxy(target, {
-    ownKeys: function() {
-        return ["foo", "bar"];
-    }
+  ownKeys: function() {
+    return ["foo", "bar"];
+  }
 });
 
 Object.preventExtensions(target);
 
 assert.throws(TypeError, function() {
-    Object.keys(p);
+  Object.keys(p);
 });
 
 reportCompare(0, 0);

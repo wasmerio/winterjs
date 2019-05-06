@@ -44,7 +44,6 @@ from ..testing import (
     all_test_flavors,
     read_manifestparser_manifest,
     read_reftest_manifest,
-    read_wpt_manifest,
 )
 
 import mozpack.path as mozpath
@@ -367,12 +366,22 @@ class AsmFlags(BaseCompileFlags):
         debug_flags = []
         if (self._context.config.substs.get('MOZ_DEBUG') or
             self._context.config.substs.get('MOZ_DEBUG_SYMBOLS')):
-            if self._context.get('USE_YASM'):
+            if self._context.get('USE_NASM'):
+                if (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
+                    not self._context.config.substs.get('GNU_CC')):
+                    debug_flags += ['-F', 'cv8']
+                elif self._context.config.substs.get('OS_ARCH') != 'Darwin':
+                    debug_flags += ['-F', 'dwarf']
+            elif self._context.get('USE_YASM'):
                 if (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
                     not self._context.config.substs.get('GNU_CC')):
                     debug_flags += ['-g', 'cv8']
                 elif self._context.config.substs.get('OS_ARCH') != 'Darwin':
                     debug_flags += ['-g', 'dwarf2']
+            elif (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
+                  self._context.config.substs.get('CPU_ARCH') == 'aarch64'):
+                # armasm64 accepts a paucity of options compared to ml/ml64.
+                pass
             else:
                 debug_flags += self._context.config.substs.get('MOZ_DEBUG_FLAGS', '').split()
         return debug_flags
@@ -384,8 +393,6 @@ class LinkFlags(BaseCompileFlags):
 
         self.flag_variables = (
             ('OS', self._os_ldflags(), ('LDFLAGS',)),
-            ('LINKER', context.config.substs.get('LINKER_LDFLAGS'),
-             ('LDFLAGS',)),
             ('DEFFILE', None, ('LDFLAGS',)),
             ('MOZBUILD', None, ('LDFLAGS',)),
             ('FIX_LINK_PATHS', context.config.substs.get('MOZ_FIX_LINK_PATHS'),
@@ -408,19 +415,6 @@ class LinkFlags(BaseCompileFlags):
         if all([self._context.config.substs.get('OS_ARCH') == 'WINNT',
                 not self._context.config.substs.get('GNU_CC'),
                 not self._context.config.substs.get('MOZ_DEBUG')]):
-
-            # MOZ_DEBUG_SYMBOLS generates debug symbols in separate PDB files.
-            # Used for generating an optimized build with debugging symbols.
-            # Used in the Windows nightlies to generate symbols for crash reporting.
-            if self._context.config.substs.get('MOZ_DEBUG_SYMBOLS'):
-                flags.append('-DEBUG')
-
-
-            if self._context.config.substs.get('MOZ_DMD'):
-                # On Windows Opt DMD builds we actually override everything
-                # from OS_LDFLAGS. Bug 1413728 is on file to figure out whether
-                # this is necessary.
-                flags = ['-DEBUG']
 
             if self._context.config.substs.get('MOZ_OPTIMIZE'):
                 flags.append('-OPT:REF,ICF')
@@ -453,6 +447,7 @@ class CompileFlags(BaseCompileFlags):
             ('DSO_PIC', context.config.substs.get('DSO_PIC_CFLAGS'),
              ('CXXFLAGS', 'CFLAGS')),
             ('RTL', None, ('CXXFLAGS', 'CFLAGS')),
+            ('PROFILE_GEN_DYN_CFLAGS', None, ('PROFILE_GEN_DYN_CFLAGS',)),
             ('OS_COMPILE_CFLAGS', context.config.substs.get('OS_COMPILE_CFLAGS'),
              ('CFLAGS',)),
             ('OS_COMPILE_CXXFLAGS', context.config.substs.get('OS_COMPILE_CXXFLAGS'),
@@ -473,6 +468,8 @@ class CompileFlags(BaseCompileFlags):
              ('CFLAGS', 'CXXFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
             ('WARNINGS_AS_ERRORS', self._warnings_as_errors(),
              ('CXXFLAGS', 'CFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
+            ('WARNINGS_CFLAGS', context.config.substs.get('WARNINGS_CFLAGS'),
+             ('CFLAGS', 'C_LDFLAGS')),
             ('MOZBUILD_CFLAGS', None, ('CFLAGS',)),
             ('MOZBUILD_CXXFLAGS', None, ('CXXFLAGS',)),
         )
@@ -488,15 +485,10 @@ class CompileFlags(BaseCompileFlags):
     def _warnings_as_errors(self):
         warnings_as_errors = self._context.config.substs.get('WARNINGS_AS_ERRORS')
         if self._context.config.substs.get('MOZ_PGO'):
-            # Don't use warnings-as-errors in Windows PGO builds because it is suspected of
+            # Don't use warnings-as-errors in MSVC PGO builds because it is suspected of
             # causing problems in that situation. (See bug 437002.)
-            if self._context.config.substs['OS_ARCH'] == 'WINNT':
+            if self._context.config.substs.get('CC_TYPE') == 'msvc':
                 warnings_as_errors = None
-
-        if self._context.config.substs.get('CC_TYPE') == 'clang-cl':
-            # Don't use warnings-as-errors in clang-cl because it warns about many more
-            # things than MSVC does.
-            warnings_as_errors = None
 
         if warnings_as_errors:
             return [warnings_as_errors]
@@ -908,12 +900,8 @@ def TypedListWithAction(typ, action):
             super(_TypedListWithAction, self).__init__(action=_action, *args)
     return _TypedListWithAction
 
-WebPlatformTestManifest = TypedNamedTuple("WebPlatformTestManifest",
-                                          [("manifest_path", unicode),
-                                           ("test_root", unicode)])
 ManifestparserManifestList = OrderedPathListWithAction(read_manifestparser_manifest)
 ReftestManifestList = OrderedPathListWithAction(read_reftest_manifest)
-WptManifestList = TypedListWithAction(WebPlatformTestManifest, read_wpt_manifest)
 
 OrderedSourceList = ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList)
 OrderedTestFlavorList = TypedList(Enum(*all_test_flavors()),
@@ -931,6 +919,7 @@ SchedulingComponents = ContextDerivedTypedRecord(
 GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
     'script': unicode,
     'inputs': list,
+    'force': bool,
     'flags': list, })
 
 
@@ -985,7 +974,7 @@ class Files(SubContext):
             """The bug component that tracks changes to these files.
 
             Values are a 2-tuple of unicode describing the Bugzilla product and
-            component. e.g. ``('Core', 'Build Config')``.
+            component. e.g. ``('Firefox Build System', 'General')``.
             """),
 
         'FINAL': (bool, bool,
@@ -1081,9 +1070,9 @@ class Files(SubContext):
             """),
     }
 
-    def __init__(self, parent, pattern=None):
+    def __init__(self, parent, *patterns):
         super(Files, self).__init__(parent)
-        self.pattern = pattern
+        self.patterns = patterns
         self.finalized = set()
         self.test_files = set()
         self.test_tags = set()
@@ -1206,7 +1195,7 @@ SUBCONTEXTS = {cls.__name__: cls for cls in SUBCONTEXTS}
 #   (storage_type, input_types, docs)
 
 VARIABLES = {
-    'SOURCES': (ContextDerivedTypedListWithItems(Path, StrictOrderingOnAppendListWithFlagsFactory({'no_pgo': bool, 'flags': List})), list,
+    'SOURCES': (ContextDerivedTypedListWithItems(Path, StrictOrderingOnAppendListWithFlagsFactory({'no_pgo': bool, 'flags': List, 'pgo_generate_only': bool})), list,
         """Source code files.
 
         This variable contains a list of source code files to compile.
@@ -1248,18 +1237,12 @@ VARIABLES = {
         HostRustLibrary template instead.
         """),
 
-    'RUST_TEST': (unicode, unicode,
-        """Name of a Rust test to build and run via `cargo test`.
-
-        This variable should not be used directly; you should be using the
-        RustTest template instead.
+    'RUST_TESTS': (TypedList(unicode), list,
+        """Names of Rust tests to build and run via `cargo test`.
         """),
 
-    'RUST_TEST_FEATURES': (List, list,
-        """Cargo features to activate for RUST_TEST.
-
-        This variable should not be used directly; you should be using the
-        RustTest template instead.
+    'RUST_TEST_FEATURES': (TypedList(unicode), list,
+        """Cargo features to activate for RUST_TESTS.
         """),
 
     'UNIFIED_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
@@ -1276,8 +1259,8 @@ VARIABLES = {
 
         This variable contains a list of files for the build system to
         generate at export time. The generation method may be declared
-        with optional ``script``, ``inputs`` and ``flags`` attributes on
-        individual entries.
+        with optional ``script``, ``inputs``, ``flags``, and ``force``
+        attributes on individual entries.
         If the optional ``script`` attribute is not present on an entry, it
         is assumed that rules for generating the file are present in
         the associated Makefile.in.
@@ -1315,6 +1298,11 @@ VARIABLES = {
 
         When the ``flags`` attribute is present, the given list of flags is
         passed as extra arguments following the inputs.
+
+        When the ``force`` attribute is present, the file is generated every
+        build, regardless of whether it is stale.  This is special to the
+        RecursiveMake backend and intended for special situations only (e.g.,
+        localization).  Please consult a build peer before using ``force``.
         """),
 
     'DEFINES': (InitializedDefines, dict,
@@ -1461,7 +1449,7 @@ VARIABLES = {
            which provides the locale in use, i.e. ``en-US``.
         2. The ``inputs`` list may contain paths to files that will be taken from the locale
            source directory (see ``LOCALIZED_FILES`` for a discussion of the specifics). Paths
-           in ``inputs`` starting with ``en-US/`` or containing ``/locales/en-US/`` are considered
+           in ``inputs`` starting with ``en-US/`` or containing ``locales/en-US/`` are considered
            localized files.
 
         To place the generated output file in a specific location, list its objdir path in
@@ -1521,7 +1509,7 @@ VARIABLES = {
         This variable only has an effect when building with MSVC.
         """),
 
-    'HOST_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
+    'HOST_SOURCES': (ContextDerivedTypedList(Path, StrictOrderingOnAppendList), list,
         """Source code files to compile with the host compiler.
 
         This variable contains a list of source code files to compile.
@@ -1530,13 +1518,6 @@ VARIABLES = {
 
     'HOST_LIBRARY_NAME': (unicode, unicode,
         """Name of target library generated when cross compiling.
-        """),
-
-    'JAVA_JAR_TARGETS': (dict, dict,
-        """Defines Java JAR targets to be built.
-
-        This variable should not be populated directly. Instead, it should
-        populated by calling add_java_jar().
         """),
 
     'LIBRARY_DEFINES': (OrderedDict, dict,
@@ -1563,6 +1544,18 @@ VARIABLES = {
         differ from the library code name.
 
         Implies FORCE_SHARED_LIB.
+        """),
+
+    'SHARED_LIBRARY_OUTPUT_CATEGORY': (unicode, unicode,
+        """The output category for this context's shared library. If set this will
+        correspond to the build command that will build this shared library, and
+        the library will not be built as part of the default build.
+        """),
+
+    'RUST_LIBRARY_OUTPUT_CATEGORY': (unicode, unicode,
+        """The output category for this context's rust library. If set this will
+        correspond to the build command that will build this rust library, and
+        the library will not be built as part of the default build.
         """),
 
     'IS_FRAMEWORK': (bool, bool,
@@ -1622,7 +1615,7 @@ VARIABLES = {
         This variable can only be used on Windows.
         """),
 
-    'DEFFILE': (unicode, unicode,
+    'DEFFILE': (Path, unicode,
         """The program .def (module definition) file.
 
         This variable can only be used on Windows.
@@ -1757,7 +1750,7 @@ VARIABLES = {
         """),
 
     # IDL Generation.
-    'XPIDL_SOURCES': (StrictOrderingOnAppendList, list,
+    'XPIDL_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
         """XPCOM Interface Definition Files (xpidl).
 
         This is a list of files that define XPCOM interface definitions.
@@ -1771,14 +1764,6 @@ VARIABLES = {
         This is the name of the ``.xpt`` file that is created by linking
         ``XPIDL_SOURCES`` together. If unspecified, it defaults to be the same
         as ``MODULE``.
-        """),
-
-    'XPIDL_NO_MANIFEST': (bool, bool,
-        """Indicate that the XPIDL module should not be added to a manifest.
-
-        This flag exists primarily to prevent test-only XPIDL modules from being
-        added to the application's chrome manifest. Most XPIDL modules should
-        not use this flag.
         """),
 
     'PREPROCESSED_IPDL_SOURCES': (StrictOrderingOnAppendList, list,
@@ -1870,12 +1855,12 @@ VARIABLES = {
         """List of manifest files defining marionette-layout tests.
         """),
 
-    'MARIONETTE_UNIT_MANIFESTS': (ManifestparserManifestList, list,
-        """List of manifest files defining marionette-unit tests.
+    'MARIONETTE_GPU_MANIFESTS': (ManifestparserManifestList, list,
+        """List of manifest files defining marionette-gpu tests.
         """),
 
-    'MARIONETTE_WEBAPI_MANIFESTS': (ManifestparserManifestList, list,
-        """List of manifest files defining marionette-webapi tests.
+    'MARIONETTE_UNIT_MANIFESTS': (ManifestparserManifestList, list,
+        """List of manifest files defining marionette-unit tests.
         """),
 
     'METRO_CHROME_MANIFESTS': (ManifestparserManifestList, list,
@@ -1900,10 +1885,6 @@ VARIABLES = {
         """List of manifest files defining crashtests.
 
         These are commonly named crashtests.list.
-        """),
-
-    'WEB_PLATFORM_TESTS_MANIFESTS': (WptManifestList, list,
-        """List of (manifest_path, test_path) defining web-platform-tests.
         """),
 
     'WEBRTC_SIGNALLING_TEST_MANIFESTS': (ManifestparserManifestList, list,
@@ -1957,17 +1938,6 @@ VARIABLES = {
         chrome.manifest.
         """),
 
-    'NO_JS_MANIFEST': (bool, bool,
-        """Explicitly disclaims responsibility for manifest listing in EXTRA_COMPONENTS.
-
-        Normally, if you have .js files listed in ``EXTRA_COMPONENTS`` or
-        ``EXTRA_PP_COMPONENTS``, you are expected to have a corresponding
-        .manifest file to go with those .js files.  Setting ``NO_JS_MANIFEST``
-        indicates that the relevant .manifest file and entries for those .js
-        files are elsehwere (jar.mn, for instance) and this state of affairs
-        is OK.
-        """),
-
     'GYP_DIRS': (StrictOrderingOnAppendListWithFlagsFactory({
             'variables': dict,
             'input': unicode,
@@ -2015,6 +1985,7 @@ VARIABLES = {
             'sandbox_vars': dict,
             'non_unified_sources': StrictOrderingOnAppendList,
             'mozilla_flags': list,
+            'gn_target': unicode,
         }), list,
         """List of dirs containing gn files describing targets to build. Attributes:
             - variables, a dictionary containing variables and values to pass
@@ -2026,6 +1997,7 @@ VARIABLES = {
               unification.
             - mozilla_flags, a set of flags that if present in the gn config
               will be mirrored to the resulting mozbuild configuration.
+            - gn_target, the name of the target to build.
         """),
 
     'SPHINX_TREES': (dict, dict,
@@ -2181,6 +2153,17 @@ VARIABLES = {
         corresponding XPCOMBinaryComponent.
         """),
 
+    'USE_NASM': (bool, bool,
+        """Use the nasm assembler to assemble assembly files from SOURCES.
+
+        By default, the build will use the toolchain assembler, $(AS), to
+        assemble source files in assembly language (.s or .asm files). Setting
+        this value to ``True`` will cause it to use nasm instead.
+
+        If nasm is not available on this system, or does not support the
+        current target architecture, an error will be raised.
+        """),
+
     'USE_YASM': (bool, bool,
         """Use the yasm assembler to assemble assembly files from SOURCES.
 
@@ -2257,19 +2240,6 @@ FUNCTIONS = {
         Include ``foo.build`` from a path within the top source directory::
 
            include('/elsewhere/foo.build')
-        """),
-
-    'add_java_jar': (lambda self: self._add_java_jar, (str,),
-        """Declare a Java JAR target to be built.
-
-        This is the supported way to populate the JAVA_JAR_TARGETS
-        variable.
-
-        The parameters are:
-        * dest - target name, without the trailing .jar. (required)
-
-        This returns a rich Java JAR type, described at
-        :py:class:`mozbuild.frontend.data.JavaJarData`.
         """),
 
     'export': (lambda self: self._export, (str,),
@@ -2437,7 +2407,7 @@ SPECIAL_VARIABLES = {
         """),
 
     'JS_PREFERENCE_FILES': (lambda context: context['FINAL_TARGET_FILES'].defaults.pref._strings, list,
-        """Exported javascript files.
+        """Exported JavaScript files.
 
         A list of files copied into the dist directory for packaging and installation.
         Path will be defined for gre or application prefs dir based on what is building.

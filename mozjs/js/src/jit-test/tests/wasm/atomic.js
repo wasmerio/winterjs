@@ -1,5 +1,4 @@
-if (!wasmThreadsSupported())
-    quit(0);
+// |jit-test| skip-if: !wasmThreadsSupported()
 
 const oob = /index out of bounds/;
 const unaligned = /unaligned memory access/;
@@ -56,9 +55,10 @@ for (let type of ['i32', 'i64']) {
     assertEq(valText(text(UNSHARED)), false);
 }
 
-{
+// 'wake' remains a backwards-compatible alias for 'notify'
+for ( let notify of ['wake', 'notify']) {
     let text = (shared) => `(module (memory 1 1 ${shared})
-			     (func (result i32) (atomic.wake (i32.const 0) (i32.const 1)))
+			     (func (result i32) (atomic.${notify} (i32.const 0) (i32.const 1)))
 			     (export "" 0))`;
     assertEq(valText(text(SHARED)), true);
     assertEq(valText(text(UNSHARED)), false);
@@ -75,86 +75,17 @@ for (let [type,align,good] of [['i32',1,false],['i32',2,false],['i32',4,true],['
     assertEq(valText(text), good);
 }
 
-// Required explicit alignment for WAKE is 4
+// Required explicit alignment for NOTIFY is 4
 
 for (let align of [1, 2, 4, 8]) {
     let text = `(module (memory 1 1 shared)
-		 (func (result i32) (atomic.wake align=${align} (i32.const 0) (i32.const 1)))
+		 (func (result i32) (atomic.notify align=${align} (i32.const 0) (i32.const 1)))
 		 (export "" 0))`;
     assertEq(valText(text), align == 4);
 }
 
-// Check that the text output is sane.
-
-for (let [type,view] of [['i32','8_u'],['i32','16_u'],['i32',''],['i64','8_u'],['i64','16_u'],['i64','32_u'],['i64','']]) {
-    let addr = "i32.const 48";
-    let value = `${type}.const 1`;
-    let value2 = `${type}.const 2`;
-    for (let op of ["add", "and", "or", "xor", "xchg"]) {
-	let operator = `${type}.atomic.rmw${view}.${op}`;
-	let text = `(module (memory 1 1 shared)
-		     (func (result ${type}) (${operator} (${addr}) (${value})))
-		     (export "" 0))`;
-	checkRoundTrip(text, [addr, value, operator]);
-    }
-    {
-	let operator = `${type}.atomic.rmw${view}.cmpxchg`;
-	let text = `(module (memory 1 1 shared)
-		     (func (result ${type}) (${operator} (${addr}) (${value}) (${value2})))
-		     (export "" 0))`;
-	checkRoundTrip(text, [addr, value, value2, operator]);
-    }
-    {
-	let operator = `${type}.atomic.load${view}`;
-	let text = `(module (memory 1 1 shared)
-		     (func (result ${type}) (${operator} (${addr})))
-		     (export "" 0))`;
-	checkRoundTrip(text, [addr, operator]);
-    }
-    {
-	let operator = `${type}.atomic.store${view}`;
-	let text = `(module (memory 1 1 shared)
-		     (func (${operator} (${addr}) (${value})))
-		     (export "" 0))`;
-	checkRoundTrip(text, [addr, value, operator]);
-    }
-}
-
-for (let type of ['i32', 'i64']) {
-    let addr = "i32.const 48";
-    let operator = `${type}.atomic.wait`
-    let value = `${type}.const 1`;
-    let timeout = "i64.const 314159";
-    let text = `(module (memory 1 1 shared)
-		 (func (result i32) (${operator} (${addr}) (${value}) (${timeout})))
-		 (export "" 0))`;
-    checkRoundTrip(text, [addr, value, timeout, operator]);
-}
-
-{
-    let addr = "i32.const 48";
-    let operator = "atomic.wake"
-    let count = "i32.const 1";
-    let text = `(module (memory 1 1 shared)
-		 (func (result i32) (${operator} (${addr}) (${count})))
-		 (export "" 0))`;
-    checkRoundTrip(text, [addr, count, operator]);
-}
-
 function valText(text) {
     return WebAssembly.validate(wasmTextToBinary(text));
-}
-
-function checkRoundTrip(text, ss) {
-    let input = wasmTextToBinary(text);
-    let output = wasmBinaryToText(input).split("\n").map(String.trim);
-    for (let s of output) {
-	if (ss.length == 0)
-	    break;
-	if (s.match(ss[0]))
-	    ss.shift();
-    }
-    assertEq(ss.length, 0);
 }
 
 // Test that atomic operations work.
@@ -502,6 +433,8 @@ var BoundsAndAlignment =
 		// Aligned but out-of-bounds
 		let addrs = [[65536, 0, oob], [65536*2, 0, oob], [65532, 4, oob],
 			     [65533, 3, oob], [65534, 2, oob], [65535, 1, oob]];
+                if (type == "i64")
+                    addrs.push([65536-8, 8, oob]);
 
 		// In-bounds but unaligned
 		for ( let i=1 ; i < size ; i++ )
@@ -512,6 +445,9 @@ var BoundsAndAlignment =
 		// both "traps").  In Firefox, the unaligned check comes first.
 		for ( let i=1 ; i < size ; i++ )
 		    addrs.push([65536, i, unaligned]);
+
+		// GC to prevent TSan builds from running out of memory.
+		gc();
 
 		for ( let [ base, offset, re ] of addrs )
 		{
@@ -531,7 +467,7 @@ var BoundsAndAlignment =
 
 BoundsAndAlignment.run();
 
-// Bounds and alignment checks on wait and wake
+// Bounds and alignment checks on wait and notify
 
 assertErrorMessage(() => wasmEvalText(`(module (memory 1 1 shared)
 					(func (param i32) (result i32)
@@ -559,15 +495,15 @@ assertErrorMessage(() => wasmEvalText(`(module (memory 1 1 shared)
 
 assertErrorMessage(() => wasmEvalText(`(module (memory 1 1 shared)
 					(func (param i32) (result i32)
-					 (atomic.wake (get_local 0) (i32.const 1)))
+					 (atomic.notify (get_local 0) (i32.const 1)))
 					(export "" 0))`).exports[""](65536),
 		   RuntimeError, oob);
 
-// Minimum run-time alignment for WAKE is 4
+// Minimum run-time alignment for NOTIFY is 4
 for (let addr of [1,2,3,5,6,7]) {
     assertErrorMessage(() => wasmEvalText(`(module (memory 1 1 shared)
 					    (func (export "f") (param i32) (result i32)
-					     (atomic.wake (get_local 0) (i32.const 1))))`).exports.f(addr),
+					     (atomic.notify (get_local 0) (i32.const 1))))`).exports.f(addr),
 		       RuntimeError, unaligned);
 }
 

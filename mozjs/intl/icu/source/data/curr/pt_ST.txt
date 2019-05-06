@@ -3,10 +3,10 @@
 pt_ST{
     %%Parent{"pt_PT"}
     Currencies{
-        STD{
+        STN{
             "Db",
-            "Dobra de São Tomé e Príncipe",
+            "dobra de São Tomé e Príncipe",
         }
     }
-    Version{"2.1.31.33"}
+    Version{"2.1.39.11"}
 }

@@ -169,14 +169,14 @@ class BuildBackend(LoggingMixin):
                 pass
 
         # Write out the list of backend files generated, if it changed.
-        if self._deleted_count or self._created_count or \
-                not os.path.exists(list_file):
+        if backend_output_list != self._backend_output_files:
             with self._write_file(list_file) as fh:
                 fh.write('\n'.join(sorted(self._backend_output_files)))
         else:
-            # Always update its mtime.
-            with open(list_file, 'a'):
-                os.utime(list_file, None)
+            # Always update its mtime if we're not in dry-run mode.
+            if not self.dry_run:
+                with open(list_file, 'a'):
+                    os.utime(list_file, None)
 
         # Write out the list of input files for the backend
         with self._write_file('%s.in' % list_file) as fh:
@@ -194,7 +194,7 @@ class BuildBackend(LoggingMixin):
     def consume_finished(self):
         """Called when consume() has completed handling all objects."""
 
-    def build(self, config, output, jobs, verbose):
+    def build(self, config, output, jobs, verbose, what=None):
         """Called when 'mach build' is executed.
 
         This should return the status value of a subprocess, where 0 denotes
@@ -317,6 +317,7 @@ class BuildBackend(LoggingMixin):
             top_srcdir=obj.topsrcdir,
             topobjdir=obj.topobjdir,
             srcdir=srcdir,
+            srcdir_rel=mozpath.relpath(srcdir, mozpath.dirname(obj.output_path)),
             relativesrcdir=mozpath.relpath(srcdir, obj.topsrcdir) or '.',
             DEPTH=mozpath.relpath(obj.topobjdir, mozpath.dirname(obj.output_path)) or '.',
         )

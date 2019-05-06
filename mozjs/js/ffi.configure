@@ -23,7 +23,6 @@ system_ffi = pkg_check_modules('MOZ_FFI', 'libffi > 3.0.9',
 building_ffi = depends(system_ffi)(lambda v: v is None)
 
 set_config('MOZ_SYSTEM_FFI', depends_if(system_ffi)(lambda _: True))
-add_old_configure_assignment('MOZ_SYSTEM_FFI', depends_if(system_ffi)(lambda _: True))
 
 # Target selection, based on ffi/configure.ac.
 @depends(target, when=building_ffi)
@@ -33,11 +32,11 @@ def ffi_target(target):
             'Use --with-system-ffi instead.')
 
     if target.os == 'WINNT':
-        target_dir = 'x86'
-        if target.cpu == 'x86_64':
-            target_name = 'X86_WIN64'
-        else:
-            target_name = 'X86_WIN32'
+        target_dir, target_name = {
+            'x86_64': ('x86', 'X86_WIN64'),
+            'x86': ('x86', 'X86_WIN32'),
+            'aarch64': ('aarch64', 'ARM64_WIN64'),
+        }[target.cpu]
     elif target.os == 'OSX':
         target_dir = 'x86'
         target_name = 'X86_DARWIN'

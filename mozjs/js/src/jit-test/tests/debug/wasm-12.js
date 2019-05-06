@@ -1,10 +1,8 @@
-// |jit-test| test-also-no-wasm-baseline
+// |jit-test| test-also-wasm-compiler-ion; skip-if: !wasmDebuggingIsSupported()
+
 // Tests that wasm module scripts have special URLs.
 
-if (!wasmDebuggingIsSupported())
-  quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger(g);
 g.eval(`
 function initWasm(s) { return new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary(s))); }

@@ -3,11 +3,10 @@
 
 #include "unicode/utypes.h"
 
-#if !UCONFIG_NO_FORMATTING && !UPRV_INCOMPLETE_CPP11_SUPPORT
+#if !UCONFIG_NO_FORMATTING
 
 #include "number_stringbuilder.h"
 #include "unicode/utf16.h"
-#include "uvectr32.h"
 
 using namespace icu;
 using namespace icu::number;
@@ -191,6 +190,30 @@ NumberStringBuilder::insert(int32_t index, const UnicodeString &unistr, int32_t 
     return count;
 }
 
+int32_t
+NumberStringBuilder::splice(int32_t startThis, int32_t endThis,  const UnicodeString &unistr,
+                            int32_t startOther, int32_t endOther, Field field, UErrorCode& status) {
+    int32_t thisLength = endThis - startThis;
+    int32_t otherLength = endOther - startOther;
+    int32_t count = otherLength - thisLength;
+    int32_t position;
+    if (count > 0) {
+        // Overall, chars need to be added.
+        position = prepareForInsert(startThis, count, status);
+    } else {
+        // Overall, chars need to be removed or kept the same.
+        position = remove(startThis, -count);
+    }
+    if (U_FAILURE(status)) {
+        return count;
+    }
+    for (int32_t i = 0; i < otherLength; i++) {
+        getCharPtr()[position + i] = unistr.charAt(startOther + i);
+        getFieldPtr()[position + i] = field;
+    }
+    return count;
+}
+
 int32_t NumberStringBuilder::append(const NumberStringBuilder &other, UErrorCode &status) {
     return insert(fLength, other, status);
 }
@@ -218,6 +241,9 @@ NumberStringBuilder::insert(int32_t index, const NumberStringBuilder &other, UEr
 }
 
 int32_t NumberStringBuilder::prepareForInsert(int32_t index, int32_t count, UErrorCode &status) {
+    U_ASSERT(index >= 0);
+    U_ASSERT(index <= fLength);
+    U_ASSERT(count >= 0);
     if (index == 0 && fZero - count >= 0) {
         // Append to start
         fZero -= count;
@@ -296,8 +322,26 @@ int32_t NumberStringBuilder::prepareForInsertHelper(int32_t index, int32_t count
     return fZero + index;
 }
 
+int32_t NumberStringBuilder::remove(int32_t index, int32_t count) {
+    // TODO: Reset the heap here?  (If the string after removal can fit on stack?)
+    int32_t position = index + fZero;
+    uprv_memmove2(getCharPtr() + position,
+            getCharPtr() + position + count,
+            sizeof(char16_t) * (fLength - index - count));
+    uprv_memmove2(getFieldPtr() + position,
+            getFieldPtr() + position + count,
+            sizeof(Field) * (fLength - index - count));
+    fLength -= count;
+    return position;
+}
+
 UnicodeString NumberStringBuilder::toUnicodeString() const {
     return UnicodeString(getCharPtr() + fZero, fLength);
+}
+
+const UnicodeString NumberStringBuilder::toTempUnicodeString() const {
+    // Readonly-alias constructor:
+    return UnicodeString(FALSE, getCharPtr() + fZero, fLength);
 }
 
 UnicodeString NumberStringBuilder::toDebugString() const {
@@ -371,23 +415,24 @@ bool NumberStringBuilder::contentEquals(const NumberStringBuilder &other) const 
     return true;
 }
 
-void NumberStringBuilder::populateFieldPosition(FieldPosition &fp, int32_t offset, UErrorCode &status) const {
+bool NumberStringBuilder::nextFieldPosition(FieldPosition& fp, UErrorCode& status) const {
     int32_t rawField = fp.getField();
 
     if (rawField == FieldPosition::DONT_CARE) {
-        return;
+        return FALSE;
     }
 
     if (rawField < 0 || rawField >= UNUM_FIELD_COUNT) {
         status = U_ILLEGAL_ARGUMENT_ERROR;
-        return;
+        return FALSE;
     }
 
     auto field = static_cast<Field>(rawField);
 
     bool seenStart = false;
     int32_t fractionStart = -1;
-    for (int i = fZero; i <= fZero + fLength; i++) {
+    int32_t startIndex = fp.getEndIndex();
+    for (int i = fZero + startIndex; i <= fZero + fLength; i++) {
         Field _field = UNUM_FIELD_COUNT;
         if (i < fZero + fLength) {
             _field = getFieldPtr()[i];
@@ -397,10 +442,10 @@ void NumberStringBuilder::populateFieldPosition(FieldPosition &fp, int32_t offse
             if (field == UNUM_INTEGER_FIELD && _field == UNUM_GROUPING_SEPARATOR_FIELD) {
                 continue;
             }
-            fp.setEndIndex(i - fZero + offset);
+            fp.setEndIndex(i - fZero);
             break;
         } else if (!seenStart && field == _field) {
-            fp.setBeginIndex(i - fZero + offset);
+            fp.setBeginIndex(i - fZero);
             seenStart = true;
         }
         if (_field == UNUM_INTEGER_FIELD || _field == UNUM_DECIMAL_SEPARATOR_FIELD) {
@@ -408,36 +453,28 @@ void NumberStringBuilder::populateFieldPosition(FieldPosition &fp, int32_t offse
         }
     }
 
-    // Backwards compatibility: FRACTION needs to start after INTEGER if empty
-    if (field == UNUM_FRACTION_FIELD && !seenStart) {
-        fp.setBeginIndex(fractionStart + offset);
-        fp.setEndIndex(fractionStart + offset);
+    // Backwards compatibility: FRACTION needs to start after INTEGER if empty.
+    // Do not return that a field was found, though, since there is not actually a fraction part.
+    if (field == UNUM_FRACTION_FIELD && !seenStart && fractionStart != -1) {
+        fp.setBeginIndex(fractionStart);
+        fp.setEndIndex(fractionStart);
     }
+
+    return seenStart;
 }
 
-void NumberStringBuilder::populateFieldPositionIterator(FieldPositionIterator &fpi, UErrorCode &status) const {
-    // TODO: Set an initial capacity on uvec?
-    LocalPointer <UVector32> uvec(new UVector32(status));
-    if (U_FAILURE(status)) {
-        return;
-    }
-
+void NumberStringBuilder::getAllFieldPositions(FieldPositionIteratorHandler& fpih,
+                                               UErrorCode& status) const {
     Field current = UNUM_FIELD_COUNT;
     int32_t currentStart = -1;
     for (int32_t i = 0; i < fLength; i++) {
         Field field = fieldAt(i);
         if (current == UNUM_INTEGER_FIELD && field == UNUM_GROUPING_SEPARATOR_FIELD) {
             // Special case: GROUPING_SEPARATOR counts as an INTEGER.
-            // Add the field, followed by the start index, followed by the end index to uvec.
-            uvec->addElement(UNUM_GROUPING_SEPARATOR_FIELD, status);
-            uvec->addElement(i, status);
-            uvec->addElement(i + 1, status);
+            fpih.addAttribute(UNUM_GROUPING_SEPARATOR_FIELD, i, i + 1);
         } else if (current != field) {
             if (current != UNUM_FIELD_COUNT) {
-                // Add the field, followed by the start index, followed by the end index to uvec.
-                uvec->addElement(current, status);
-                uvec->addElement(currentStart, status);
-                uvec->addElement(i, status);
+                fpih.addAttribute(current, currentStart, i);
             }
             current = field;
             currentStart = i;
@@ -447,14 +484,17 @@ void NumberStringBuilder::populateFieldPositionIterator(FieldPositionIterator &f
         }
     }
     if (current != UNUM_FIELD_COUNT) {
-        // Add the field, followed by the start index, followed by the end index to uvec.
-        uvec->addElement(current, status);
-        uvec->addElement(currentStart, status);
-        uvec->addElement(fLength, status);
+        fpih.addAttribute(current, currentStart, fLength);
     }
+}
 
-    // Give uvec to the FieldPositionIterator, which adopts it.
-    fpi.setData(uvec.orphan(), status);
+bool NumberStringBuilder::containsField(Field field) const {
+    for (int32_t i = 0; i < fLength; i++) {
+        if (field == fieldAt(i)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 #endif /* #if !UCONFIG_NO_FORMATTING */

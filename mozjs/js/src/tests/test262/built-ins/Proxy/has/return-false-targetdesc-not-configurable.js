@@ -15,23 +15,24 @@ info: |
             i. If targetDesc.[[Configurable]] is false, throw a TypeError
             exception.
     ...
+features: [Proxy]
 ---*/
 
 var target = {};
 var handler = {
-    has: function(t, prop) {
-        return 0;
-    }
+  has: function(t, prop) {
+    return 0;
+  }
 };
 var p = new Proxy(target, handler);
 
 Object.defineProperty(target, "attr", {
-    configurable: false,
-    value: 1
+  configurable: false,
+  value: 1
 });
 
 assert.throws(TypeError, function() {
-    "attr" in p;
+  "attr" in p;
 });
 
 reportCompare(0, 0);

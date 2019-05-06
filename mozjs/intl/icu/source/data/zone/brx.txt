@@ -1,8 +1,14 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 brx{
-    Version{"2.1.37.1"}
+    Version{"2.1.41.34"}
     zoneStrings{
+        "Europe:Dublin"{
+            ld{"आईरीश समर टाईम"}
+        }
+        "Europe:London"{
+            ld{"ब्रीटीश समर टाईम"}
+        }
         "meta:Acre"{
             ld{"आकर समर टाईम"}
             lg{"आकर टाईम"}

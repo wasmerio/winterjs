@@ -5,7 +5,7 @@
 /*---
 description: RestParameter does not support an initializer (async function named expression)
 esid: sec-async-function-definitions
-features: [default-parameters]
+features: [default-parameters, async-functions]
 flags: [generated]
 negative:
   phase: parse
@@ -35,7 +35,7 @@ info: |
       ...BindingPattern[?Yield]
 
 ---*/
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 
 (async function f(...x = []) {

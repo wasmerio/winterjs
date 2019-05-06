@@ -6,19 +6,20 @@ description: >
     [[Get]] (P, Receiver)
 
     14. Return trapResult.
+features: [Proxy]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    get: function() {
-        return 2;
-    }
+  get: function() {
+    return 2;
+  }
 });
 
 Object.defineProperty(target, 'attr', {
-    configurable: false,
-    writable: true,
-    value: 1
+  configurable: false,
+  writable: true,
+  value: 1
 });
 
 assert.sameValue(p.attr, 2);

@@ -12,7 +12,8 @@ function jitTogglesMatch(opts) {
 
   // ARM64 does not yet have an Ion code generator, so return false if
   // ion.enable is requested.
-  if (getBuildConfiguration()['arm64-simulator'] && opts['ion.enable'])
+  var conf = getBuildConfiguration();
+  if (conf['arm64'] && opts['ion.enable'])
     return false;
 
   return true;
@@ -38,6 +39,7 @@ function withJitOptions(opts, fn) {
 var Opts_BaselineEager =
     {
       'ion.enable': 1,
+      'ion.warmup.trigger': 100,
       'baseline.enable': 1,
       'baseline.warmup.trigger': 0,
       'offthread-compilation.enable': 1

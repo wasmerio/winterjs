@@ -1,8 +1,23 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 nl{
-    Version{"2.1.37.1"}
+    Version{"2.1.45.14"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Gecoördineerde wereldtijd"}
+            ss{"UTC"}
+        }
+        "Europe:Dublin"{
+            ld{"Ierse standaardtijd"}
+        }
+        "Europe:London"{
+            ld{"Britse zomertijd"}
+        }
+        "Pacific:Honolulu"{
+            sd{"HDT"}
+            sg{"HST"}
+            ss{"HST"}
+        }
         "meta:Acre"{
             ld{"Acre-zomertijd"}
             lg{"Acre-tijd"}

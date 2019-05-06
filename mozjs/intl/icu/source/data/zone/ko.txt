@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ko{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"협정 세계시"}
+        }
+        "Europe:Dublin"{
+            ld{"아일랜드 표준시"}
+        }
+        "Europe:London"{
+            ld{"영국 하계 표준시"}
+        }
         "meta:Acre"{
             ld{"아크레 하계 표준시"}
             lg{"아크레 시간"}
@@ -101,7 +110,7 @@ ko{
             ls{"아르메니아 표준시"}
         }
         "meta:Atlantic"{
-            ld{"미 대서양 하계 표준시"}
+            ld{"대서양 하계 표준시"}
             lg{"대서양 시간"}
             ls{"대서양 표준시"}
         }

@@ -1,8 +1,22 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ast{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Hora coordinada universal"}
+        }
+        "Europe:Dublin"{
+            ld{"Hora estándar irlandesa"}
+        }
+        "Europe:London"{
+            ld{"Hora braniega británica"}
+        }
+        "Pacific:Honolulu"{
+            sd{"HDT"}
+            sg{"HST"}
+            ss{"HST"}
+        }
         "meta:Acre"{
             ld{"hora braniega d’Acre"}
             lg{"hora d’Acre"}

@@ -1,17 +1,23 @@
-import fcntl, os, select, time
+# flake8: noqa: F821
+
+import fcntl
+import os
+import select
+import time
 from subprocess import Popen, PIPE
 
-# Run a series of subprocesses. Try to keep up to a certain number going in
-# parallel at any given time. Enforce time limits.
-#
-# This is implemented using non-blocking I/O, and so is Unix-specific.
-#
-# We assume that, if a task closes its standard error, then it's safe to
-# wait for it to terminate. So an ill-behaved task that closes its standard
-# output and then hangs will hang us, as well. However, as it takes special
-# effort to close one's standard output, this seems unlikely to be a
-# problem in practice.
+
 class TaskPool(object):
+    # Run a series of subprocesses. Try to keep up to a certain number going in
+    # parallel at any given time. Enforce time limits.
+    #
+    # This is implemented using non-blocking I/O, and so is Unix-specific.
+    #
+    # We assume that, if a task closes its standard error, then it's safe to
+    # wait for it to terminate. So an ill-behaved task that closes its standard
+    # output and then hangs will hang us, as well. However, as it takes special
+    # effort to close one's standard output, this seems unlikely to be a
+    # problem in practice.
 
     # A task we should run in a subprocess. Users should subclass this and
     # fill in the methods as given.
@@ -63,14 +69,7 @@ class TaskPool(object):
         self.cwd = cwd
         self.job_limit = job_limit
         self.timeout = timeout
-        self.next_pending = self.get_next_pending()
-
-    # Set self.next_pending to the next task that has not yet been executed.
-    def get_next_pending(self):
-        try:
-            return self.pending.next()
-        except StopIteration:
-            return None
+        self.next_pending = next(self.pending, None)
 
     def run_all(self):
         # The currently running tasks: a set of Task instances.
@@ -78,8 +77,8 @@ class TaskPool(object):
         with open(os.devnull, 'r') as devnull:
             while True:
                 while len(running) < self.job_limit and self.next_pending:
-                    t = self.next_pending
-                    p = Popen(t.cmd(), bufsize=16384,
+                    task = self.next_pending
+                    p = Popen(task.cmd(), bufsize=16384,
                               stdin=devnull, stdout=PIPE, stderr=PIPE,
                               cwd=self.cwd)
 
@@ -90,9 +89,9 @@ class TaskPool(object):
                     flags = fcntl.fcntl(p.stderr, fcntl.F_GETFL)
                     fcntl.fcntl(p.stderr, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-                    t.start(p, time.time() + self.timeout)
-                    running.add(t)
-                    self.next_pending = self.get_next_pending()
+                    task.start(p, time.time() + self.timeout)
+                    running.add(task)
+                    self.next_pending = next(self.pending, None)
 
                 # If we have no tasks running, and the above wasn't able to
                 # start any new ones, then we must be done!
@@ -105,8 +104,9 @@ class TaskPool(object):
 
                 # Wait for output or a timeout.
                 stdouts_and_stderrs = ([t.pipe.stdout for t in running]
-                                     + [t.pipe.stderr for t in running])
-                (readable,w,x) = select.select(stdouts_and_stderrs, [], [], secs_to_next_deadline)
+                                       + [t.pipe.stderr for t in running])
+                (readable, w, x) = select.select(stdouts_and_stderrs, [], [],
+                                                 secs_to_next_deadline)
                 finished = set()
                 terminate = set()
                 for t in running:
@@ -118,16 +118,16 @@ class TaskPool(object):
                     # something available.
                     if t.pipe.stdout in readable:
                         output = t.pipe.stdout.read(16384)
-                        if output != "":
+                        if len(output):
                             try:
-                                t.onStdout(output)
+                                t.onStdout(output.decode('utf-8'))
                             except TerminateTask:
                                 terminate.add(t)
                     if t.pipe.stderr in readable:
                         output = t.pipe.stderr.read(16384)
-                        if output != "":
+                        if len(output):
                             try:
-                                t.onStderr(output)
+                                t.onStderr(output.decode('utf-8'))
                             except TerminateTask:
                                 terminate.add(t)
                         else:
@@ -160,6 +160,7 @@ class TaskPool(object):
                 running -= finished
         return None
 
+
 def get_cpu_count():
     """
     Guess at a reasonable parallelism count to set as the default for the
@@ -169,7 +170,7 @@ def get_cpu_count():
     try:
         import multiprocessing
         return multiprocessing.cpu_count()
-    except (ImportError,NotImplementedError):
+    except (ImportError, NotImplementedError):
         pass
 
     # POSIX
@@ -177,7 +178,7 @@ def get_cpu_count():
         res = int(os.sysconf('SC_NPROCESSORS_ONLN'))
         if res > 0:
             return res
-    except (AttributeError,ValueError):
+    except (AttributeError, ValueError):
         pass
 
     # Windows
@@ -190,30 +191,38 @@ def get_cpu_count():
 
     return 1
 
+
 if __name__ == '__main__':
     # Test TaskPool by using it to implement the unique 'sleep sort' algorithm.
     def sleep_sort(ns, timeout):
-        sorted=[]
+        sorted = []
+
         class SortableTask(TaskPool.Task):
             def __init__(self, n):
                 super(SortableTask, self).__init__()
                 self.n = n
+
             def start(self, pipe, deadline):
                 super(SortableTask, self).start(pipe, deadline)
+
             def cmd(self):
                 return ['sh', '-c', 'echo out; sleep %d; echo err>&2' % (self.n,)]
+
             def onStdout(self, text):
-                print '%d stdout: %r' % (self.n, text)
+                print('%d stdout: %r' % (self.n, text))
+
             def onStderr(self, text):
-                print '%d stderr: %r' % (self.n, text)
+                print('%d stderr: %r' % (self.n, text))
+
             def onFinished(self, returncode):
-                print '%d (rc=%d)' % (self.n, returncode)
+                print('%d (rc=%d)' % (self.n, returncode))
                 sorted.append(self.n)
+
             def onTimeout(self):
-                print '%d timed out' % (self.n,)
+                print('%d timed out' % (self.n,))
 
         p = TaskPool([SortableTask(_) for _ in ns], job_limit=len(ns), timeout=timeout)
         p.run_all()
         return sorted
 
-    print repr(sleep_sort([1,1,2,3,5,8,13,21,34], 15))
+    print(repr(sleep_sort([1, 1, 2, 3, 5, 8, 13, 21, 34], 15)))

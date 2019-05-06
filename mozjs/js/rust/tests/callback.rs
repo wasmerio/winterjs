@@ -6,12 +6,12 @@
 extern crate js;
 extern crate libc;
 
-use js::ac::AutoCompartment;
+use js::ar::AutoRealm;
+use js::glue::JSEncodeStringToUTF8;
 use js::jsapi::root::JS::CallArgs;
-use js::jsapi::root::JS::CompartmentOptions;
+use js::jsapi::root::JS::RealmOptions;
 use js::jsapi::root::JSContext;
 use js::jsapi::root::JS_DefineFunction;
-use js::jsapi::root::JS_EncodeStringToUTF8;
 use js::jsapi::root::JS_NewGlobalObject;
 use js::jsapi::root::JS_ReportErrorASCII;
 use js::jsapi::root::JS::OnNewGlobalHookOption;
@@ -28,13 +28,13 @@ fn callback() {
     let runtime = Runtime::new(false).unwrap();
     let context = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
-    let c_option = CompartmentOptions::default();
+    let c_option = RealmOptions::default();
 
     unsafe {
         let global = JS_NewGlobalObject(context, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(), h_option, &c_option);
         rooted!(in(context) let global_root = global);
         let global = global_root.handle();
-        let _ac = AutoCompartment::with_obj(context, global.get());
+        let _ar = AutoRealm::with_obj(context, global.get());
         let function = JS_DefineFunction(context, global, b"puts\0".as_ptr() as *const libc::c_char,
                                          Some(puts), 1, 0);
         assert!(!function.is_null());
@@ -55,7 +55,7 @@ unsafe extern "C" fn puts(context: *mut JSContext, argc: u32, vp: *mut Value) ->
     let arg = args.get(0);
     let js = js::rust::ToString(context, arg);
     rooted!(in(context) let message_root = js);
-    let message = JS_EncodeStringToUTF8(context, message_root.handle());
+    let message = JSEncodeStringToUTF8(context, message_root.handle());
     let message = CStr::from_ptr(message);
     println!("{}", str::from_utf8(message.to_bytes()).unwrap());
 

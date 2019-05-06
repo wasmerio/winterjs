@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: set ts=8 sts=2 et sw=2 tw=80:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -25,65 +25,92 @@
 typedef uint8_t jsbytecode;
 
 class JSAtom;
-struct JSCompartment;
 struct JSContext;
 class JSFunction;
 class JSObject;
 struct JSRuntime;
 class JSScript;
 class JSString;
-class JSAddonId;
 struct JSFreeOp;
 
-struct jsid;
-
 namespace JS {
+
+struct PropertyKey;
 
 typedef unsigned char Latin1Char;
 
 class Symbol;
-class Value;
+#ifdef ENABLE_BIGINT
+class BigInt;
+#endif
+union Value;
+
+class Compartment;
 class Realm;
 struct Runtime;
-struct Zone;
+class Zone;
 
-template <typename T> class Handle;
-template <typename T> class MutableHandle;
-template <typename T> class Rooted;
-template <typename T> class PersistentRooted;
+template <typename T>
+class Handle;
+template <typename T>
+class MutableHandle;
+template <typename T>
+class Rooted;
+template <typename T>
+class PersistentRooted;
 
 typedef Handle<JSFunction*> HandleFunction;
-typedef Handle<jsid>        HandleId;
-typedef Handle<JSObject*>   HandleObject;
-typedef Handle<JSScript*>   HandleScript;
-typedef Handle<JSString*>   HandleString;
+typedef Handle<PropertyKey> HandleId;
+typedef Handle<JSObject*> HandleObject;
+typedef Handle<JSScript*> HandleScript;
+typedef Handle<JSString*> HandleString;
 typedef Handle<JS::Symbol*> HandleSymbol;
-typedef Handle<Value>       HandleValue;
+#ifdef ENABLE_BIGINT
+typedef Handle<JS::BigInt*> HandleBigInt;
+#endif
+typedef Handle<Value> HandleValue;
 
 typedef MutableHandle<JSFunction*> MutableHandleFunction;
-typedef MutableHandle<jsid>        MutableHandleId;
-typedef MutableHandle<JSObject*>   MutableHandleObject;
-typedef MutableHandle<JSScript*>   MutableHandleScript;
-typedef MutableHandle<JSString*>   MutableHandleString;
+typedef MutableHandle<PropertyKey> MutableHandleId;
+typedef MutableHandle<JSObject*> MutableHandleObject;
+typedef MutableHandle<JSScript*> MutableHandleScript;
+typedef MutableHandle<JSString*> MutableHandleString;
 typedef MutableHandle<JS::Symbol*> MutableHandleSymbol;
-typedef MutableHandle<Value>       MutableHandleValue;
+#ifdef ENABLE_BIGINT
+typedef MutableHandle<JS::BigInt*> MutableHandleBigInt;
+#endif
+typedef MutableHandle<Value> MutableHandleValue;
 
-typedef Rooted<JSObject*>       RootedObject;
-typedef Rooted<JSFunction*>     RootedFunction;
-typedef Rooted<JSScript*>       RootedScript;
-typedef Rooted<JSString*>       RootedString;
-typedef Rooted<JS::Symbol*>     RootedSymbol;
-typedef Rooted<jsid>            RootedId;
-typedef Rooted<JS::Value>       RootedValue;
+typedef Rooted<JSObject*> RootedObject;
+typedef Rooted<JSFunction*> RootedFunction;
+typedef Rooted<JSScript*> RootedScript;
+typedef Rooted<JSString*> RootedString;
+typedef Rooted<JS::Symbol*> RootedSymbol;
+#ifdef ENABLE_BIGINT
+typedef Rooted<JS::BigInt*> RootedBigInt;
+#endif
+typedef Rooted<PropertyKey> RootedId;
+typedef Rooted<JS::Value> RootedValue;
 
 typedef PersistentRooted<JSFunction*> PersistentRootedFunction;
-typedef PersistentRooted<jsid>        PersistentRootedId;
-typedef PersistentRooted<JSObject*>   PersistentRootedObject;
-typedef PersistentRooted<JSScript*>   PersistentRootedScript;
-typedef PersistentRooted<JSString*>   PersistentRootedString;
+typedef PersistentRooted<PropertyKey> PersistentRootedId;
+typedef PersistentRooted<JSObject*> PersistentRootedObject;
+typedef PersistentRooted<JSScript*> PersistentRootedScript;
+typedef PersistentRooted<JSString*> PersistentRootedString;
 typedef PersistentRooted<JS::Symbol*> PersistentRootedSymbol;
-typedef PersistentRooted<Value>       PersistentRootedValue;
+#ifdef ENABLE_BIGINT
+typedef PersistentRooted<JS::BigInt*> PersistentRootedBigInt;
+#endif
+typedef PersistentRooted<Value> PersistentRootedValue;
 
-} // namespace JS
+}  // namespace JS
+
+using jsid = JS::PropertyKey;
+
+#ifdef ENABLE_BIGINT
+#  define IF_BIGINT(x, y) x
+#else
+#  define IF_BIGINT(x, y) y
+#endif
 
 #endif /* js_TypeDecls_h */

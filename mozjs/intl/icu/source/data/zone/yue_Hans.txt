@@ -2,8 +2,17 @@
 // License & terms of use: http://www.unicode.org/copyright.html#License
 yue_Hans{
     %%Parent{"root"}
-    Version{"2.1.37.8"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"协调世界时间"}
+        }
+        "Europe:Dublin"{
+            ld{"爱尔兰标准时间"}
+        }
+        "Europe:London"{
+            ld{"英国夏令时间"}
+        }
         "meta:Acre"{
             ld{"艾克夏令时间"}
             lg{"艾克时间"}

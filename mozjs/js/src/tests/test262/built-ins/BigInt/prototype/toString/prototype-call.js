@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright 2017 Robin Templeton. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -16,6 +16,7 @@ info: |
   [[BigIntData]] internal slot.
 features: [BigInt]
 ---*/
+assert.sameValue(typeof BigInt, 'function');
 
 assert.throws(TypeError, function() {
   BigInt.prototype.toString(1);

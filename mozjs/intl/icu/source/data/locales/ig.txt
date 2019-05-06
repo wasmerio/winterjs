@@ -90,7 +90,7 @@ ig{
         }
         minimumGroupingDigits{"1"}
     }
-    Version{"2.1.37.1"}
+    Version{"2.1.44.88"}
     calendar{
         generic{
             DateTimePatterns{

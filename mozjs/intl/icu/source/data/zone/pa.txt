@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 pa{
-    Version{"2.1.37.22"}
+    Version{"2.1.43.65"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"ਕੋਔਰਡੀਨੇਟੇਡ ਵਿਆਪਕ ਵੇਲਾ"}
+        }
+        "Europe:Dublin"{
+            ld{"ਆਇਰਿਸ਼ ਮਿਆਰੀ ਵੇਲਾ"}
+        }
+        "Europe:London"{
+            ld{"ਬ੍ਰਿਟਿਸ਼ ਗਰਮੀਆਂ ਦਾ ਵੇਲਾ"}
+        }
         "meta:Afghanistan"{
             ls{"ਅਫ਼ਗਾਨਿਸਤਾਨ ਵੇਲਾ"}
         }

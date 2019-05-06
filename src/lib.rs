@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 extern crate libc;
+#[allow(unused_extern_crates)]
 extern crate libz_sys;
 
 // The jsimpls module just implements traits so can be private
@@ -10,6 +11,7 @@ mod jsimpls;
 
 // Modules with public definitions
 pub mod jsgc;
+pub mod jsid;
 pub mod jsjit;
 pub mod jsval;
 

@@ -37,10 +37,6 @@ its prototype:
     Debugger API (e.g, [`Debugger.Source`][source]) for purposes other than
     step debugging a target JavaScript program.
 
-`allowWasmBinarySource`
-:   A boolean value indicating whether WebAssembly sources will be available
-    in binary form. The WebAssembly text generation will be disabled.
-
 `collectCoverageInfo`
 :   A boolean value indicating whether code coverage should be enabled inside
     each debuggee of this `Debugger` instance. Changing this flag value will
@@ -116,6 +112,14 @@ compartment.
 <code>onNewScript(<i>script</i>, <i>global</i>)</code>
 :   New code, represented by the [`Debugger.Script`][script] instance
     <i>script</i>, has been loaded in the scope of the debuggees.
+
+    Since each function has its own [`Debugger.Script`][script], separate from
+    the top-level code or function that encloses it, loading JavaScript code
+    typically introduces not just a single script, but a tree of scripts
+    representing the top-level code and any functions it includes. The
+    `onNewScript` hook reports only the root script of such a tree. If
+    necessary, the handler function can use the scripts' `getChildScripts`
+    method to walk the tree and obtain all the newly introduced scripts.
 
     This method's return value is ignored.
 
@@ -238,6 +242,12 @@ compartment.
     thereby escaping the capability-based limits. For this reason,
     `onNewGlobalObject` is only available to privileged code.
 
+    Note that, even though the presence of a `Debugger`'s `onNewGlobalObject`
+    hook can have arbitrary side effects, the garbage collector does not
+    consider the presence of the hook sufficient reason to keep the `Debugger`
+    alive. Thus, the behavior of code that uses `onNewGlobalObject` on unrooted,
+    enabled `Debugger`s may be affected by the garbage collector's activity, and
+    is not entirely deterministic.
 
 
 ## Function Properties of the Debugger Prototype Object
@@ -343,25 +353,9 @@ other kinds of objects.
     [visible frame][vf] currently on the calling thread's stack, or `null`
     if there are no visible frames on the stack.
 
-<code>findSources([<i>query</i>]) <i>(not yet implemented)</i></code>
-:   Return an array of all [`Debugger.Source`][source] instances matching
-    <i>query</i>. Each source appears only once in the array. <i>Query</i>
-    is an object whose properties restrict which sources are returned; a
-    source must meet all the criteria given by <i>query</i> to be returned.
-    If <i>query</i> is omitted, we return all sources of all debuggee
+<code>findSources()</code>
+:   Return an array of all [`Debugger.Source`][source] instances of all debuggee
     scripts.
-
-    <i>Query</i> may have the following properties:
-
-    `url`
-    :   The source's `url` property must be equal to this value.
-
-    `global`
-    :   The source must have been evaluated in the scope of the given global
-        object. If this property's value is a [`Debugger.Object`][object] instance
-        belonging to this `Debugger` instance, then its referent is used. If the
-        object is not a global object, then the global in whose scope it was
-        allocated is used.
 
     Note that the result may include sources that can no longer ever be
     used by the debuggee: say, eval code that has finished running, or
@@ -498,3 +492,9 @@ The functions described below are not called with a `this` value.
     more lines. Otherwise return true. The intent is to support interactive
     compilation - accumulate lines in a buffer until isCompilableUnit is true,
     then pass it to the compiler.
+
+<code id="recordReplayProcessKind">recordReplayProcessKind()</code>
+:   Return the kind of record/replay firefox process that is currently
+    running: the string "RecordingReplaying" if this is a recording or
+    replaying process, the string "Middleman" if this is a middleman
+    process, or undefined for normal firefox content or UI processes.

@@ -196,8 +196,7 @@ enum {
 /*
  * Properties in vector word 2
  * Bits
- * 31..27   http://www.unicode.org/reports/tr51/#Emoji_Properties
- *     26   reserved
+ * 31..26   http://www.unicode.org/reports/tr51/#Emoji_Properties
  * 25..20   Line Break
  * 19..15   Sentence Break
  * 14..10   Word Break
@@ -205,7 +204,8 @@ enum {
  *  4.. 0   Decomposition Type
  */
 enum {
-    UPROPS_2_EMOJI_COMPONENT=27,
+    UPROPS_2_EXTENDED_PICTOGRAPHIC=26,
+    UPROPS_2_EMOJI_COMPONENT,
     UPROPS_2_EMOJI,
     UPROPS_2_EMOJI_PRESENTATION,
     UPROPS_2_EMOJI_MODIFIER,
@@ -397,6 +397,10 @@ enum UPropertySource {
     UPROPS_SRC_NFKC_CF,
     /** From normalizer2impl.cpp/nfc.nrm canonical iterator data */
     UPROPS_SRC_NFC_CANON_ITER,
+    // Text layout properties.
+    UPROPS_SRC_INPC,
+    UPROPS_SRC_INSC,
+    UPROPS_SRC_VO,
     /** One more than the highest UPropertySource (UPROPS_SRC_) constant. */
     UPROPS_SRC_COUNT
 };
@@ -425,6 +429,9 @@ uchar_addPropertyStarts(const USetAdder *sa, UErrorCode *pErrorCode);
 U_CFUNC void U_EXPORT2
 upropsvec_addPropertyStarts(const USetAdder *sa, UErrorCode *pErrorCode);
 
+U_CFUNC void U_EXPORT2
+uprops_addPropertyStarts(UPropertySource src, const USetAdder *sa, UErrorCode *pErrorCode);
+
 /**
  * Return a set of characters for property enumeration.
  * For each two consecutive characters (start, limit) in the set,
@@ -451,6 +458,12 @@ uchar_swapNames(const UDataSwapper *ds,
 U_NAMESPACE_BEGIN
 
 class UnicodeSet;
+
+class CharacterProperties {
+public:
+    CharacterProperties() = delete;
+    static const UnicodeSet *getInclusionsForProperty(UProperty prop, UErrorCode &errorCode);
+};
 
 // implemented in uniset_props.cpp
 U_CFUNC UnicodeSet *

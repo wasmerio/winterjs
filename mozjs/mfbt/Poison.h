@@ -25,10 +25,7 @@ extern MFBT_DATA uintptr_t gMozillaPoisonValue;
 /**
  * @return the poison value.
  */
-inline uintptr_t mozPoisonValue()
-{
-  return gMozillaPoisonValue;
-}
+inline uintptr_t mozPoisonValue() { return gMozillaPoisonValue; }
 
 /**
  * Overwrite the memory block of aSize bytes at aPtr with the poison value.
@@ -36,8 +33,7 @@ inline uintptr_t mozPoisonValue()
  * Only an even number of sizeof(uintptr_t) bytes are overwritten, the last
  * few bytes (if any) is not overwritten.
  */
-inline void mozWritePoison(void* aPtr, size_t aSize)
-{
+inline void mozWritePoison(void* aPtr, size_t aSize) {
   const uintptr_t POISON = mozPoisonValue();
   char* p = (char*)aPtr;
   char* limit = p + (aSize & ~(sizeof(uintptr_t) - 1));
@@ -64,6 +60,30 @@ MOZ_END_EXTERN_C
 namespace mozilla {
 
 /**
+ * A version of CorruptionCanary that is suitable as a member of objects that
+ * are statically allocated.
+ */
+class CorruptionCanaryForStatics {
+ public:
+  constexpr CorruptionCanaryForStatics() : mValue(kCanarySet) {}
+
+  // This is required to avoid static constructor bloat.
+  ~CorruptionCanaryForStatics() = default;
+
+  void Check() const {
+    if (mValue != kCanarySet) {
+      MOZ_CRASH("Canary check failed, check lifetime");
+    }
+  }
+
+ protected:
+  uintptr_t mValue;
+
+ private:
+  static const uintptr_t kCanarySet = 0x0f0b0f0b;
+};
+
+/**
  * This class is designed to cause crashes when various kinds of memory
  * corruption are observed. For instance, let's say we have a class C where we
  * suspect out-of-bounds writes to some members.  We can insert a member of type
@@ -79,29 +99,17 @@ namespace mozilla {
  * consolidated at the point of a Check(), rather than scattered about at
  * various uses of the corrupted memory.
  */
-class CorruptionCanary {
-public:
-  CorruptionCanary() {
-    mValue = kCanarySet;
-  }
+class CorruptionCanary : public CorruptionCanaryForStatics {
+ public:
+  constexpr CorruptionCanary() = default;
 
   ~CorruptionCanary() {
     Check();
     mValue = mozPoisonValue();
   }
-
-  void Check() const {
-    if (mValue != kCanarySet) {
-      MOZ_CRASH("Canary check failed, check lifetime");
-    }
-  }
-
-private:
-  static const uintptr_t kCanarySet = 0x0f0b0f0b;
-  uintptr_t mValue;
 };
 
-} // mozilla
+}  // namespace mozilla
 
 #endif
 

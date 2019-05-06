@@ -5,17 +5,15 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-@imports(_from='os.path', _import='expanduser')
-def add_rustup_path(what):
-    # rustup installs rustc/cargo into ~/.cargo/bin by default,
-    # so look there if the binaries aren't in $PATH.
-    return [what, os.path.join(expanduser('~/.cargo/bin'), what)]
-
-
 # Rust is required by `rust_compiler` below. We allow_missing here
 # to propagate failures to the better error message there.
-rustc = check_prog('RUSTC', add_rustup_path('rustc'), allow_missing=True)
-cargo = check_prog('CARGO', add_rustup_path('cargo'), allow_missing=True)
+js_option(env='RUSTC', nargs=1, help='Path to the rust compiler')
+js_option(env='CARGO', nargs=1, help='Path to the Cargo package manager')
+
+rustc = check_prog('RUSTC', ['rustc'], paths=toolchain_search_path,
+                   input='RUSTC', allow_missing=True)
+cargo = check_prog('CARGO', ['cargo'], paths=toolchain_search_path,
+                   input='CARGO', allow_missing=True)
 
 
 @depends_if(rustc)
@@ -29,6 +27,7 @@ def rustc_info(rustc):
         host=info['host'],
     )
 
+set_config('RUSTC_VERSION', depends(rustc_info)(lambda info: str(info.version)))
 
 @depends_if(cargo)
 @checking('cargo version', lambda info: info.version)
@@ -67,8 +66,8 @@ def rust_compiler(rustc_info, cargo_info):
         You can install rust by running './mach bootstrap'
         or by directly running the installer from https://rustup.rs/
         '''))
-    rustc_min_version = Version('1.24.0')
-    cargo_min_version = Version('0.{}'.format(rustc_min_version.minor + 1))
+    rustc_min_version = Version('1.31.0')
+    cargo_min_version = rustc_min_version
 
     version = rustc_info.version
     if version < rustc_min_version:
@@ -147,9 +146,9 @@ def rust_triple_alias(host_or_target):
     `host_or_target` is either `host` or `target` (the @depends functions
     from init.configure).
     """
-    assert host_or_target in (host, target)
+    assert host_or_target in {host, target}
 
-    @depends(rustc, host_or_target, building_with_gcc, rust_supported_targets,
+    @depends(rustc, host_or_target, c_compiler, rust_supported_targets,
              when=rust_compiler)
     @imports('os')
     @imports('subprocess')
@@ -157,7 +156,7 @@ def rust_triple_alias(host_or_target):
     @imports(_from='mozbuild.shellutil', _import='quote')
     @imports(_from='tempfile', _import='mkstemp')
     @imports(_from='textwrap', _import='dedent')
-    def rust_target(rustc, host_or_target, building_with_gcc,
+    def rust_target(rustc, host_or_target, compiler_info,
                     rust_supported_targets):
         # Rust's --target options are similar to, but not exactly the same
         # as, the autoconf-derived targets we use.  An example would be that
@@ -169,7 +168,7 @@ def rust_triple_alias(host_or_target):
         # We correlate the autoconf-derived targets with the list of targets
         # rustc gives us with --print target-list.
         if host_or_target.kernel == 'WINNT':
-            if building_with_gcc:
+            if compiler_info.type in ('gcc', 'clang'):
                 host_or_target_os = 'windows-gnu'
             else:
                 host_or_target_os = 'windows-msvc'
@@ -254,19 +253,29 @@ set_config('RUST_TARGET_ENV_NAME', rust_target_env_name)
 # This is used for putting source info into symbol files.
 set_config('RUSTC_COMMIT', depends(rustc_info)(lambda i: i.commit))
 
-# Until we remove all the other Rust checks in old-configure.
-add_old_configure_assignment('RUSTC', rustc)
-add_old_configure_assignment('RUST_TARGET', rust_target_triple)
+# Rustdoc is required by Rust tests below.
+js_option(env='RUSTDOC', nargs=1, help='Path to the rustdoc program')
+
+rustdoc = check_prog('RUSTDOC', ['rustdoc'], paths=toolchain_search_path,
+                     input='RUSTDOC', allow_missing=True)
 
 # This option is separate from --enable-tests because Rust tests are particularly
 # expensive in terms of compile time (especially for code in libxul).
 option('--enable-rust-tests',
-       help='Enable building of Rust tests, and build-time execution of them')
+       help='Enable building and running of Rust tests during `make check`')
 
-set_config('MOZ_RUST_TESTS', depends('--enable-rust-tests')(lambda v: bool(v)))
 
-option(env='WIN64_LINK', nargs=1, help='Path to link.exe that targets win64')
-option(env='WIN64_LIB', nargs=1, help='Paths to libraries for the win64 linker')
+@depends('--enable-rust-tests', rustdoc)
+def rust_tests(enable_rust_tests, rustdoc):
+    if enable_rust_tests and not rustdoc:
+        die('--enable-rust-tests requires rustdoc')
+    return bool(enable_rust_tests)
+
+
+set_config('MOZ_RUST_TESTS', rust_tests)
+
+js_option(env='WIN64_LINK', nargs=1, help='Path to link.exe that targets win64')
+js_option(env='WIN64_LIB', nargs=1, help='Paths to libraries for the win64 linker')
 
 set_config('WIN64_LINK', depends('WIN64_LINK')(lambda x: x))
 set_config('WIN64_LIB', depends('WIN64_LIB')(lambda x: x))
@@ -278,7 +287,8 @@ def win64_cargo_linker(target, rustc_info, compiler_info, link, lib):
     # need to configure the linker it will use for host binaries (build scripts)
     # specially because the compiler configuration we use for the build is for
     # MSVC targeting 32-bit binaries.
-    if target.kernel == 'WINNT' and target.cpu == 'x86' and \
+    if target.kernel == 'WINNT' and \
+       target.cpu in ('x86', 'aarch64') and \
        compiler_info.type in ('msvc', 'clang-cl') and \
        rustc_info.host == 'x86_64-pc-windows-msvc' and link and lib:
         return True
@@ -300,3 +310,19 @@ def win64_cargo_linker_config(linker, env):
 
 
 set_config('WIN64_CARGO_LINKER_CONFIG', win64_cargo_linker_config)
+
+
+@depends(target, c_compiler, rustc)
+@imports('os')
+def rustc_natvis_ldflags(target, compiler_info, rustc):
+    if target.kernel == 'WINNT' and compiler_info.type in ('msvc', 'clang-cl'):
+        sysroot = check_cmd_output(rustc, '--print', 'sysroot').strip()
+        etc = os.path.join(sysroot, 'lib/rustlib/etc')
+        ldflags = []
+        for f in os.listdir(etc):
+            if f.endswith('.natvis'):
+                ldflags.append('-NATVIS:' + normsep(os.path.join(etc, f)))
+        return ldflags
+
+
+set_config('RUSTC_NATVIS_LDFLAGS', rustc_natvis_ldflags)

@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository = "https://github.com/servo/mozjs/"
-version = "0.61.13"
+version = "0.66.0"
 authors = ["Mozilla"]
 links = "mozjs"
 build = "build.rs"
@@ -21,6 +21,9 @@ profilemozjs = []
 
 [lib]
 name = "mozjs_sys"
+# The generated jsapi.rs contains #[doc] strings which look like
+# doctests but are definitely not.
+doctest = false
 
 [dependencies]
 libc = "0.2"

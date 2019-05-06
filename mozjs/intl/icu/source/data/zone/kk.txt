@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 kk{
-    Version{"2.1.37.5"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Дүниежүзілік үйлестірілген уақыт"}
+        }
+        "Europe:Dublin"{
+            ld{"Ирландия жазғы уақыты"}
+        }
+        "Europe:London"{
+            ld{"Ұлыбритания жазғы уақыты"}
+        }
         "meta:Afghanistan"{
             ls{"Ауғанстан уақыты"}
         }

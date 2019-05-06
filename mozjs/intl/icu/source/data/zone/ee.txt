@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ee{
-    Version{"2.1.37.1"}
+    Version{"2.1.44.88"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Xexeme gaƒoƒoɖoanyi me"}
+        }
+        "Europe:Dublin"{
+            ld{"Ireland nutome gaƒoƒo me"}
+        }
+        "Europe:London"{
+            ld{"British dzomeŋɔli gaƒoƒo me"}
+        }
         "meta:Afghanistan"{
             ls{"Afghanistan gaƒoƒo me"}
         }

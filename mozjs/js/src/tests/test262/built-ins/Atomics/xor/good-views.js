@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('SharedArrayBuffer')||!this.hasOwnProperty('Atomics')) -- SharedArrayBuffer,Atomics is not enabled unconditionally
+// |reftest| skip-if(!this.hasOwnProperty('Atomics')||!this.hasOwnProperty('SharedArrayBuffer')) -- Atomics,SharedArrayBuffer is not enabled unconditionally
 // Copyright (C) 2017 Mozilla Corporation.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -6,60 +6,80 @@
 esid: sec-atomics.xor
 description: Test Atomics.xor on arrays that allow atomic operations
 includes: [testAtomics.js, testTypedArray.js]
-features: [SharedArrayBuffer, ArrayBuffer, DataView, Atomics, arrow-function, let, TypedArray, for-of]
+features: [ArrayBuffer, Atomics, DataView, SharedArrayBuffer, Symbol, TypedArray]
 ---*/
 
 var sab = new SharedArrayBuffer(1024);
 var ab = new ArrayBuffer(16);
-var int_views = [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array];
+var views = intArrayConstructors.slice();
 
-testWithTypedArrayConstructors(function(View) {
-    // Make it interesting - use non-zero byteOffsets and non-zero indexes.
+testWithTypedArrayConstructors(function(TA) {
+  // Make it interesting - use non-zero byteOffsets and non-zero indexes.
 
-    var view = new View(sab, 32, 20);
-    var control = new View(ab, 0, 2);
+  var view = new TA(sab, 32, 20);
+  var control = new TA(ab, 0, 2);
 
-    view[8] = 0x33333333;
-    control[0] = 0x33333333;
-    assert.sameValue(Atomics.xor(view, 8, 0x55555555), control[0],
-                     "Result is subject to chopping");
+  view[8] = 0x33333333;
+  control[0] = 0x33333333;
+  assert.sameValue(Atomics.xor(view, 8, 0x55555555), control[0],
+    'Atomics.xor(view, 8, 0x55555555) returns the value of `control[0]` (0x33333333)');
 
-    control[0] = 0x66666666;
-    assert.sameValue(view[8], control[0]);
-    assert.sameValue(Atomics.xor(view, 8, 0xF0F0F0F0), control[0],
-                     "Result is subject to chopping");
+  control[0] = 0x66666666;
+  assert.sameValue(
+    view[8],
+    control[0],
+    'The value of view[8] equals the value of `control[0]` (0x66666666)'
+  );
+  assert.sameValue(Atomics.xor(view, 8, 0xF0F0F0F0), control[0],
+    'Atomics.xor(view, 8, 0xF0F0F0F0) returns the value of `control[0]` (0x66666666)');
 
-    control[0] = 0x96969696;
-    assert.sameValue(view[8], control[0]);
+  control[0] = 0x96969696;
+  assert.sameValue(
+    view[8],
+    control[0],
+    'The value of view[8] equals the value of `control[0]` (0x96969696)'
+  );
 
-    view[3] = -5;
-    control[0] = -5;
-    assert.sameValue(Atomics.xor(view, 3, 0), control[0],
-                     "Result is negative and subject to coercion");
-    assert.sameValue(view[3], control[0]);
+  view[3] = -5;
+  control[0] = -5;
+  assert.sameValue(Atomics.xor(view, 3, 0), control[0],
+    'Atomics.xor(view, 3, 0) returns the value of `control[0]` (-5)');
+  assert.sameValue(
+    view[3],
+    control[0],
+    'The value of view[3] equals the value of `control[0]` (-5)'
+  );
 
-    control[0] = 12345;
-    view[3] = 12345;
-    assert.sameValue(Atomics.xor(view, 3, 0), control[0],
-                     "Result is subject to chopping");
-    assert.sameValue(view[3], control[0]);
+  control[0] = 12345;
+  view[3] = 12345;
+  assert.sameValue(Atomics.xor(view, 3, 0), control[0],
+    'Atomics.xor(view, 3, 0) returns the value of `control[0]` (12345)');
+  assert.sameValue(
+    view[3],
+    control[0],
+    'The value of view[3] equals the value of `control[0]` (12345)'
+  );
 
-    // And again
-    control[0] = 123456789;
-    view[3] = 123456789;
-    assert.sameValue(Atomics.xor(view, 3, 0), control[0],
-                     "Result is subject to chopping");
-    assert.sameValue(view[3], control[0]);
+  // And again
+  control[0] = 123456789;
+  view[3] = 123456789;
+  assert.sameValue(Atomics.xor(view, 3, 0), control[0],
+    'Atomics.xor(view, 3, 0) returns the value of `control[0]` (123456789)');
+  assert.sameValue(
+    view[3],
+    control[0],
+    'The value of view[3] equals the value of `control[0]` (123456789)'
+  );
 
-    // In-bounds boundary cases for indexing
-    testWithAtomicsInBoundsIndices(function(IdxGen) {
-        let Idx = IdxGen(view);
-        view.fill(0);
-        // Atomics.store() computes an index from Idx in the same way as other
-        // Atomics operations, not quite like view[Idx].
-        Atomics.store(view, Idx, 37);
-        assert.sameValue(Atomics.xor(view, Idx, 0), 37);
-    });
-}, int_views);
+  // In-bounds boundary cases for indexing
+  testWithAtomicsInBoundsIndices(function(IdxGen) {
+    let Idx = IdxGen(view);
+    view.fill(0);
+    // Atomics.store() computes an index from Idx in the same way as other
+    // Atomics operations, not quite like view[Idx].
+    Atomics.store(view, Idx, 37);
+    assert.sameValue(Atomics.xor(view, Idx, 0), 37, 'Atomics.xor(view, Idx, 0) returns 37');
+  });
+}, views);
 
 reportCompare(0, 0);

@@ -1,9 +1,19 @@
-commit fe9b384793c4e79bd32133dc9053f27b75a5eeae
-Merge: 2a257b7 1d5a688
-Author: Florian Loitsch <floitsch@google.com>
-Date:   Fri Sep 15 11:32:00 2017 +0200
+commit 4e8b3b553c58d6afa78cc212a80c830812431132
+Author: thomaslmiller <41446875+thomaslmiller@users.noreply.github.com>
+Date:   Thu Aug 2 01:32:25 2018 -0700
 
-    Merge pull request #52 from uburuntu/master
-    
-    Some refactorings: remove unused static, replace deprecated headers, init member in constructor
+    Add support for Windows on ARM and ARM64 (#76)
 
+diff --git a/double-conversion/utils.h b/double-conversion/utils.h
+index 28bb694..98a2a11 100644
+--- a/double-conversion/utils.h
++++ b/double-conversion/utils.h
+@@ -68,7 +68,7 @@ inline void abort_noreturn() { abort(); }
+ // disabled.)
+ // On Linux,x86 89255e-22 != Div_double(89255.0/1e22)
+ #if defined(_M_X64) || defined(__x86_64__) || \
+-    defined(__ARMEL__) || defined(__avr32__) || \
++    defined(__ARMEL__) || defined(__avr32__) || defined(_M_ARM) || defined(_M_ARM64) || \
+     defined(__hppa__) || defined(__ia64__) || \
+     defined(__mips__) || \
+     defined(__powerpc__) || defined(__ppc__) || defined(__ppc64__) || \

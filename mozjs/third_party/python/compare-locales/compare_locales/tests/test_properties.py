@@ -3,8 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from __future__ import absolute_import
+from __future__ import unicode_literals
 import unittest
 
+from six.moves import zip
 from compare_locales.tests import ParserTestMixin
 from compare_locales.parser import (
     Comment,
@@ -45,6 +48,7 @@ and still has another line coming
                'and here is the 2nd part']
         i = iter(self.parser)
         for r, e in zip(ref, i):
+            self.assertTrue(e.localized)
             self.assertEqual(e.val, r)
 
     def test_bug121341(self):
@@ -79,7 +83,7 @@ foo=value
             (Whitespace, '\n')))
 
     def test_escapes(self):
-        self.parser.readContents(r'''
+        self.parser.readContents(br'''
 # unicode escapes
 zero = some \unicode
 one = \u0
@@ -152,6 +156,18 @@ foo = bar
             (Comment, 'LOCALIZATION NOTE'),
             (Whitespace, '\n\n\n')))
 
+    def test_standalone_license(self):
+        self._test('''\
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+foo = value
+''', (
+            (Comment, 'MPL'),
+            (Whitespace, '\n'),
+            ('foo', 'value'),
+            (Whitespace, '\n')))
+
     def test_empty_file(self):
         self._test('', tuple())
         self._test('\n', ((Whitespace, '\n'),))
@@ -159,7 +175,7 @@ foo = bar
         self._test(' \n\n', ((Whitespace, '\n\n'),))
 
     def test_positions(self):
-        self.parser.readContents('''\
+        self.parser.readContents(b'''\
 one = value
 two = other \\
 escaped value
@@ -174,11 +190,53 @@ escaped value
 
     # Bug 1399059 comment 18
     def test_z(self):
-        self.parser.readContents('''\
+        self.parser.readContents(b'''\
 one = XYZ ABC
 ''')
         one, = list(self.parser)
         self.assertEqual(one.val, 'XYZ ABC')
+
+    def test_white_space_stripping(self):
+        self._test('''\
+one = one
+two = two \n\
+three = three\xa0''', (
+            ('one', 'one'),
+            (Whitespace, '\n'),
+            ('two', 'two'),
+            (Whitespace, '\n'),
+            ('three', 'three\xa0'),
+        ))
+
+    def test_white_space_keys(self):
+        self._test('''\
+o\ e = one
+t\fo = two \n\
+t\xa0e = three\xa0''', (
+            ('o\\ e', 'one'),
+            (Whitespace, '\n'),
+            ('t\fo', 'two'),
+            (Whitespace, '\n'),
+            ('t\xa0e', 'three\xa0'),
+        ))
+
+    def test_pre_comment(self):
+        self._test('''\
+# comment
+one = string
+
+# standalone
+
+# glued
+second = string
+''', (
+            ('one', 'string', 'comment'),
+            (Whitespace, '\n\n'),
+            (Comment, 'standalone'),
+            (Whitespace, '\n\n'),
+            ('second', 'string', 'glued'),
+            (Whitespace, '\n'),
+        ))
 
 
 if __name__ == '__main__':

@@ -196,8 +196,8 @@ class U_I18N_API MeasureUnit: public UObject {
      * ICU use only.
      * @internal
      */
-    static MeasureUnit *resolveUnitPerUnit(
-            const MeasureUnit &unit, const MeasureUnit &perUnit);
+    static MeasureUnit resolveUnitPerUnit(
+            const MeasureUnit &unit, const MeasureUnit &perUnit, bool* isResolved);
 #endif /* U_HIDE_INTERNAL_API */
 
 // All code between the "Start generated createXXX methods" comment and
@@ -368,6 +368,26 @@ class U_I18N_API MeasureUnit: public UObject {
      */
     static MeasureUnit *createPartPerMillion(UErrorCode &status);
 
+#ifndef U_HIDE_DRAFT_API
+    /**
+     * Returns unit of concentr: percent.
+     * Caller owns returned value and must free it.
+     * @param status ICU error code.
+     * @draft ICU 63
+     */
+    static MeasureUnit *createPercent(UErrorCode &status);
+#endif /* U_HIDE_DRAFT_API */
+
+#ifndef U_HIDE_DRAFT_API
+    /**
+     * Returns unit of concentr: permille.
+     * Caller owns returned value and must free it.
+     * @param status ICU error code.
+     * @draft ICU 63
+     */
+    static MeasureUnit *createPermille(UErrorCode &status);
+#endif /* U_HIDE_DRAFT_API */
+
     /**
      * Returns unit of consumption: liter-per-100kilometers.
      * Caller owns returned value and must free it.
@@ -399,14 +419,6 @@ class U_I18N_API MeasureUnit: public UObject {
      * @stable ICU 57
      */
     static MeasureUnit *createMilePerGallonImperial(UErrorCode &status);
-
-    /*
-     * The following were draft ICU 58, but have been withdrawn:
-     * static MeasureUnit *createEast(UErrorCode &status);
-     * static MeasureUnit *createNorth(UErrorCode &status);
-     * static MeasureUnit *createSouth(UErrorCode &status);
-     * static MeasureUnit *createWest(UErrorCode &status);
-     */
 
     /**
      * Returns unit of digital: bit.
@@ -471,6 +483,16 @@ class U_I18N_API MeasureUnit: public UObject {
      * @stable ICU 54
      */
     static MeasureUnit *createMegabyte(UErrorCode &status);
+
+#ifndef U_HIDE_DRAFT_API
+    /**
+     * Returns unit of digital: petabyte.
+     * Caller owns returned value and must free it.
+     * @param status ICU error code.
+     * @draft ICU 63
+     */
+    static MeasureUnit *createPetabyte(UErrorCode &status);
+#endif /* U_HIDE_DRAFT_API */
 
     /**
      * Returns unit of digital: terabit.
@@ -832,15 +854,13 @@ class U_I18N_API MeasureUnit: public UObject {
      */
     static MeasureUnit *createPicometer(UErrorCode &status);
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * Returns unit of length: point.
      * Caller owns returned value and must free it.
      * @param status ICU error code.
-     * @draft ICU 59
+     * @stable ICU 59
      */
     static MeasureUnit *createPoint(UErrorCode &status);
-#endif  /* U_HIDE_DRAFT_API */
 
     /**
      * Returns unit of length: yard.
@@ -993,6 +1013,16 @@ class U_I18N_API MeasureUnit: public UObject {
      * @stable ICU 53
      */
     static MeasureUnit *createWatt(UErrorCode &status);
+
+#ifndef U_HIDE_DRAFT_API
+    /**
+     * Returns unit of pressure: atmosphere.
+     * Caller owns returned value and must free it.
+     * @param status ICU error code.
+     * @draft ICU 63
+     */
+    static MeasureUnit *createAtmosphere(UErrorCode &status);
+#endif /* U_HIDE_DRAFT_API */
 
     /**
      * Returns unit of pressure: hectopascal.

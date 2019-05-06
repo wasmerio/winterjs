@@ -6,6 +6,7 @@ from __future__ import print_function, unicode_literals
 
 import codecs
 import itertools
+import logging
 import os
 import sys
 import textwrap
@@ -14,13 +15,13 @@ import textwrap
 base_dir = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(base_dir, 'python', 'mozbuild'))
 from mozbuild.configure import ConfigureSandbox
-from mozbuild.makeutil import Makefile
 from mozbuild.pythonutil import iter_modules_in_path
 from mozbuild.backend.configenvironment import PartialConfigEnvironment
 from mozbuild.util import (
     indented_repr,
     encode,
 )
+import mozpack.path as mozpath
 
 
 def main(argv):
@@ -50,7 +51,7 @@ def config_status(config):
     sanitized_config['substs'] = {
         k: sanitized_bools(v) for k, v in config.iteritems()
         if k not in ('DEFINES', 'non_global_defines', 'TOPSRCDIR', 'TOPOBJDIR',
-                     'ALL_CONFIGURE_PATHS')
+                     'CONFIG_STATUS_DEPS')
     }
     sanitized_config['defines'] = {
         k: sanitized_bools(v) for k, v in config['DEFINES'].iteritems()
@@ -63,7 +64,7 @@ def config_status(config):
     # Create config.status. Eventually, we'll want to just do the work it does
     # here, when we're able to skip configure tests/use cached results/not rely
     # on autoconf.
-    print("Creating config.status", file=sys.stderr)
+    logging.getLogger('moz.configure').info('Creating config.status')
     encoding = 'mbcs' if sys.platform == 'win32' else 'utf-8'
     with codecs.open('config.status', 'w', encoding) as fh:
         fh.write(textwrap.dedent('''\
@@ -93,22 +94,18 @@ def config_status(config):
     partial_config = PartialConfigEnvironment(config['TOPOBJDIR'])
     partial_config.write_vars(sanitized_config)
 
-    # Write out a depfile so Make knows to re-run configure when relevant Python
-    # changes.
-    mk = Makefile()
-    rule = mk.create_rule()
-    rule.add_targets(["%s/config.status" % config['TOPOBJDIR']])
-    rule.add_dependencies(itertools.chain(config['ALL_CONFIGURE_PATHS'],
-                                          iter_modules_in_path(config['TOPOBJDIR'],
-                                                               config['TOPSRCDIR'])))
-    with open('configure.d', 'w') as fh:
-        mk.dump(fh)
+    # Write out a file so the build backend knows to re-run configure when
+    # relevant Python changes.
+    with open('config_status_deps.in', 'w') as fh:
+        for f in itertools.chain(config['CONFIG_STATUS_DEPS'],
+                                 iter_modules_in_path(config['TOPOBJDIR'],
+                                                      config['TOPSRCDIR'])):
+            fh.write('%s\n' % mozpath.normpath(f))
 
     # Other things than us are going to run this file, so we need to give it
     # executable permissions.
     os.chmod('config.status', 0o755)
     if config.get('MOZ_BUILD_APP') != 'js' or config.get('JS_STANDALONE'):
-        os.environ[b'WRITE_MOZINFO'] = b'1'
         from mozbuild.config_status import config_status
 
         # Some values in sanitized_config also have more complex types, such as

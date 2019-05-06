@@ -9,16 +9,19 @@ info: |
 
     9. Let booleanTrapResult be ToBoolean(Call(trap, handler, «target, V»)).
     10. ReturnIfAbrupt(booleanTrapResult).
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
-    setPrototypeOf: function() {
-        throw new Test262Error();
-    }
+  setPrototypeOf: function() {
+    throw new Test262Error();
+  }
 });
 
 assert.throws(Test262Error, function() {
-    Object.setPrototypeOf(p, {value: 1});
+  Object.setPrototypeOf(p, {
+    value: 1
+  });
 });
 
 reportCompare(0, 0);

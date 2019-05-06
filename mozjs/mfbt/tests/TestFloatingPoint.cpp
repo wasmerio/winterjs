@@ -15,6 +15,7 @@ using mozilla::FloatingPoint;
 using mozilla::FuzzyEqualsAdditive;
 using mozilla::FuzzyEqualsMultiplicative;
 using mozilla::IsFinite;
+using mozilla::IsFloat32Representable;
 using mozilla::IsInfinite;
 using mozilla::IsNaN;
 using mozilla::IsNegative;
@@ -30,25 +31,19 @@ using mozilla::UnspecifiedNaN;
 
 #define A(a) MOZ_RELEASE_ASSERT(a)
 
-template<typename T>
-static void
-ShouldBeIdentical(T aD1, T aD2)
-{
+template <typename T>
+static void ShouldBeIdentical(T aD1, T aD2) {
   A(NumbersAreIdentical(aD1, aD2));
   A(NumbersAreIdentical(aD2, aD1));
 }
 
-template<typename T>
-static void
-ShouldNotBeIdentical(T aD1, T aD2)
-{
+template <typename T>
+static void ShouldNotBeIdentical(T aD1, T aD2) {
   A(!NumbersAreIdentical(aD1, aD2));
   A(!NumbersAreIdentical(aD2, aD1));
 }
 
-static void
-TestDoublesAreIdentical()
-{
+static void TestDoublesAreIdentical() {
   ShouldBeIdentical(+0.0, +0.0);
   ShouldBeIdentical(-0.0, -0.0);
   ShouldNotBeIdentical(+0.0, -0.0);
@@ -132,9 +127,7 @@ TestDoublesAreIdentical()
   ShouldNotBeIdentical(UnspecifiedNaN<double>(), NegativeInfinity<double>());
 }
 
-static void
-TestFloatsAreIdentical()
-{
+static void TestFloatsAreIdentical() {
   ShouldBeIdentical(+0.0f, +0.0f);
   ShouldBeIdentical(-0.0f, -0.0f);
   ShouldNotBeIdentical(+0.0f, -0.0f);
@@ -204,16 +197,12 @@ TestFloatsAreIdentical()
   ShouldNotBeIdentical(UnspecifiedNaN<float>(), NegativeInfinity<float>());
 }
 
-static void
-TestAreIdentical()
-{
+static void TestAreIdentical() {
   TestDoublesAreIdentical();
   TestFloatsAreIdentical();
 }
 
-static void
-TestDoubleExponentComponent()
-{
+static void TestDoubleExponentComponent() {
   A(ExponentComponent(0.0) ==
     -int_fast16_t(FloatingPoint<double>::kExponentBias));
   A(ExponentComponent(-0.0) ==
@@ -232,9 +221,7 @@ TestDoubleExponentComponent()
     FloatingPoint<double>::kExponentBias + 1);
 }
 
-static void
-TestFloatExponentComponent()
-{
+static void TestFloatExponentComponent() {
   A(ExponentComponent(0.0f) ==
     -int_fast16_t(FloatingPoint<float>::kExponentBias));
   A(ExponentComponent(-0.0f) ==
@@ -253,18 +240,15 @@ TestFloatExponentComponent()
     FloatingPoint<float>::kExponentBias + 1);
 }
 
-static void
-TestExponentComponent()
-{
+static void TestExponentComponent() {
   TestDoubleExponentComponent();
   TestFloatExponentComponent();
 }
 
-static void
-TestDoublesPredicates()
-{
+static void TestDoublesPredicates() {
   A(IsNaN(UnspecifiedNaN<double>()));
-  A(IsNaN(SpecificNaN<double>(1, 17)));;
+  A(IsNaN(SpecificNaN<double>(1, 17)));
+  ;
   A(IsNaN(SpecificNaN<double>(0, 0xfffffffffff0fULL)));
   A(!IsNaN(0.0));
   A(!IsNaN(-0.0));
@@ -295,9 +279,11 @@ TestDoublesPredicates()
 
   A(!IsNegativeZero(PositiveInfinity<double>()));
   A(!IsNegativeZero(NegativeInfinity<double>()));
-  A(!IsNegativeZero(SpecificNaN<double>(1, 17)));;
+  A(!IsNegativeZero(SpecificNaN<double>(1, 17)));
+  ;
   A(!IsNegativeZero(SpecificNaN<double>(1, 0xfffffffffff0fULL)));
-  A(!IsNegativeZero(SpecificNaN<double>(0, 17)));;
+  A(!IsNegativeZero(SpecificNaN<double>(0, 17)));
+  ;
   A(!IsNegativeZero(SpecificNaN<double>(0, 0xfffffffffff0fULL)));
   A(!IsNegativeZero(UnspecifiedNaN<double>()));
   A(IsNegativeZero(-0.0));
@@ -328,7 +314,7 @@ TestDoublesPredicates()
   // point calculations; bug 1440184 has been filed as a followup to fix this,
   // so that only the first half of this condition is necessary.
   A(pow(2.0, -1075.0) == 0.0 ||
-        (MOZ_IS_MSVC && pow(2.0, -1075.0) == pow(2.0, -1074.0)));
+    (MOZ_IS_MSVC && pow(2.0, -1075.0) == pow(2.0, -1074.0)));
 
   A(pow(2.0, -1074.0) != 0.0);
   A(!NumberIsInt32(pow(2.0, -1074.0), &i));
@@ -364,11 +350,10 @@ TestDoublesPredicates()
   A(!NumberEqualsInt32(UnspecifiedNaN<double>(), &i));
 }
 
-static void
-TestFloatsPredicates()
-{
+static void TestFloatsPredicates() {
   A(IsNaN(UnspecifiedNaN<float>()));
-  A(IsNaN(SpecificNaN<float>(1, 17)));;
+  A(IsNaN(SpecificNaN<float>(1, 17)));
+  ;
   A(IsNaN(SpecificNaN<float>(0, 0x7fff0fUL)));
   A(!IsNaN(0.0f));
   A(!IsNaN(-0.0f));
@@ -399,9 +384,11 @@ TestFloatsPredicates()
 
   A(!IsNegativeZero(PositiveInfinity<float>()));
   A(!IsNegativeZero(NegativeInfinity<float>()));
-  A(!IsNegativeZero(SpecificNaN<float>(1, 17)));;
+  A(!IsNegativeZero(SpecificNaN<float>(1, 17)));
+  ;
   A(!IsNegativeZero(SpecificNaN<float>(1, 0x7fff0fUL)));
-  A(!IsNegativeZero(SpecificNaN<float>(0, 17)));;
+  A(!IsNegativeZero(SpecificNaN<float>(0, 17)));
+  ;
   A(!IsNegativeZero(SpecificNaN<float>(0, 0x7fff0fUL)));
   A(!IsNegativeZero(UnspecifiedNaN<float>()));
   A(IsNegativeZero(-0.0f));
@@ -411,9 +398,11 @@ TestFloatsPredicates()
 
   A(!IsPositiveZero(PositiveInfinity<float>()));
   A(!IsPositiveZero(NegativeInfinity<float>()));
-  A(!IsPositiveZero(SpecificNaN<float>(1, 17)));;
+  A(!IsPositiveZero(SpecificNaN<float>(1, 17)));
+  ;
   A(!IsPositiveZero(SpecificNaN<float>(1, 0x7fff0fUL)));
-  A(!IsPositiveZero(SpecificNaN<float>(0, 17)));;
+  A(!IsPositiveZero(SpecificNaN<float>(0, 17)));
+  ;
   A(!IsPositiveZero(SpecificNaN<float>(0, 0x7fff0fUL)));
   A(!IsPositiveZero(UnspecifiedNaN<float>()));
   A(IsPositiveZero(0.0f));
@@ -432,7 +421,8 @@ TestFloatsPredicates()
   A(i == 0);
   A(NumberIsInt32(float(INT32_MIN), &i));
   A(i == INT32_MIN);
-  A(NumberIsInt32(float(2147483648 - 128), &i)); // max int32_t fitting in float
+  A(NumberIsInt32(float(2147483648 - 128),
+                  &i));  // max int32_t fitting in float
   A(i == 2147483648 - 128);
   A(NumberIsInt32(float(BIG), &i));
   A(i == BIG);
@@ -470,16 +460,12 @@ TestFloatsPredicates()
   A(!NumberEqualsInt32(UnspecifiedNaN<float>(), &i));
 }
 
-static void
-TestPredicates()
-{
+static void TestPredicates() {
   TestFloatsPredicates();
   TestDoublesPredicates();
 }
 
-static void
-TestFloatsAreApproximatelyEqual()
-{
+static void TestFloatsAreApproximatelyEqual() {
   float epsilon = mozilla::detail::FuzzyEqualsEpsilon<float>::value();
   float lessThanEpsilon = epsilon / 2.0f;
   float moreThanEpsilon = epsilon * 2.0f;
@@ -550,9 +536,7 @@ TestFloatsAreApproximatelyEqual()
                                SpecificNaN<float>(0, 200)));
 }
 
-static void
-TestDoublesAreApproximatelyEqual()
-{
+static void TestDoublesAreApproximatelyEqual() {
   double epsilon = mozilla::detail::FuzzyEqualsEpsilon<double>::value();
   double lessThanEpsilon = epsilon / 2.0;
   double moreThanEpsilon = epsilon * 2.0;
@@ -613,31 +597,97 @@ TestDoublesAreApproximatelyEqual()
   A(FuzzyEqualsAdditive(10.0, 3.0 * oneThird));
   A(FuzzyEqualsMultiplicative(10.0, 3.0 * oneThird));
   // NaN check
-  A(!FuzzyEqualsAdditive(SpecificNaN<double>(1, 1),
-                         SpecificNaN<double>(1, 1)));
-  A(!FuzzyEqualsAdditive(SpecificNaN<double>(1, 2),
-                         SpecificNaN<double>(0, 8)));
+  A(!FuzzyEqualsAdditive(SpecificNaN<double>(1, 1), SpecificNaN<double>(1, 1)));
+  A(!FuzzyEqualsAdditive(SpecificNaN<double>(1, 2), SpecificNaN<double>(0, 8)));
   A(!FuzzyEqualsMultiplicative(SpecificNaN<double>(1, 1),
                                SpecificNaN<double>(1, 1)));
   A(!FuzzyEqualsMultiplicative(SpecificNaN<double>(1, 2),
                                SpecificNaN<double>(0, 200)));
 }
 
-static void
-TestAreApproximatelyEqual()
-{
+static void TestAreApproximatelyEqual() {
   TestFloatsAreApproximatelyEqual();
   TestDoublesAreApproximatelyEqual();
 }
 
+static void TestIsFloat32Representable() {
+  // Zeroes are representable.
+  A(IsFloat32Representable(+0.0));
+  A(IsFloat32Representable(-0.0));
+
+  // NaN and infinities are representable.
+  A(IsFloat32Representable(UnspecifiedNaN<double>()));
+  A(IsFloat32Representable(SpecificNaN<double>(0, 1)));
+  A(IsFloat32Representable(SpecificNaN<double>(0, 71389)));
+  A(IsFloat32Representable(SpecificNaN<double>(0, (uint64_t(1) << 52) - 2)));
+  A(IsFloat32Representable(SpecificNaN<double>(1, 1)));
+  A(IsFloat32Representable(SpecificNaN<double>(1, 71389)));
+  A(IsFloat32Representable(SpecificNaN<double>(1, (uint64_t(1) << 52) - 2)));
+  A(IsFloat32Representable(PositiveInfinity<double>()));
+  A(IsFloat32Representable(NegativeInfinity<double>()));
+
+  // MSVC seems to compile 2**-1075, which should be half of the smallest
+  // IEEE-754 double precision value, to equal 2**-1074 right now.  This might
+  // be the result of a missing compiler flag to force more-accurate floating
+  // point calculations; bug 1440184 has been filed as a followup to fix this,
+  // so that only the first half of this condition is necessary.
+  A(pow(2.0, -1075.0) == 0.0 ||
+    (MOZ_IS_MSVC && pow(2.0, -1075.0) == pow(2.0, -1074.0)));
+
+  A(powf(2.0f, -150.0f) == 0.0);
+  A(powf(2.0f, -149.0f) != 0.0);
+
+  for (double littleExp = -1074.0; littleExp < -149.0; littleExp++) {
+    // Powers of two below the available range aren't representable.
+    A(!IsFloat32Representable(pow(2.0, littleExp)));
+  }
+
+  // Exact powers of two within the available range are representable.
+  for (double exponent = -149.0; exponent < 128.0; exponent++) {
+    A(IsFloat32Representable(pow(2.0, exponent)));
+  }
+
+  // Powers of two above the available range aren't representable.
+  for (double bigExp = 128.0; bigExp < 1024.0; bigExp++) {
+    A(!IsFloat32Representable(pow(2.0, bigExp)));
+  }
+
+  // Various denormal (i.e. super-small) doubles with MSB and LSB as far apart
+  // as possible are representable (but taken one bit further apart are not
+  // representable).
+  //
+  // Note that the final iteration tests non-denormal with exponent field
+  // containing (biased) 1, as |oneTooSmall| and |widestPossible| happen still
+  // to be correct for that exponent due to the extra bit of precision in the
+  // implicit-one bit.
+  double oneTooSmall = pow(2.0, -150.0);
+  for (double denormExp = -149.0;
+       denormExp < 1 - double(FloatingPoint<double>::kExponentBias) + 1;
+       denormExp++) {
+    double baseDenorm = pow(2.0, denormExp);
+    double tooWide = baseDenorm + oneTooSmall;
+    A(!IsFloat32Representable(tooWide));
+
+    double widestPossible = baseDenorm;
+    if (oneTooSmall * 2.0 != baseDenorm) {
+      widestPossible += oneTooSmall * 2.0;
+    }
+
+    A(IsFloat32Representable(widestPossible));
+  }
+
+  // Finally, check certain interesting/special values for basic sanity.
+  A(!IsFloat32Representable(2147483647.0));
+  A(!IsFloat32Representable(-2147483647.0));
+}
+
 #undef A
 
-int
-main()
-{
+int main() {
   TestAreIdentical();
   TestExponentComponent();
   TestPredicates();
   TestAreApproximatelyEqual();
+  TestIsFloat32Representable();
   return 0;
 }

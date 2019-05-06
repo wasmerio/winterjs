@@ -30,8 +30,10 @@ from mozbuild.configure.util import (
     LineIO,
 )
 from mozbuild.util import (
+    encode,
     exec_,
     memoize,
+    memoized_property,
     ReadOnlyDict,
     ReadOnlyNamespace,
 )
@@ -65,6 +67,31 @@ class SandboxDependsFunction(object):
             raise ConfigureError('Can only do binary arithmetic operations '
                                  'with another @depends function.')
         return self._and(other).sandboxed
+
+    def __cmp__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __eq__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __ne__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __lt__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __le__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __gt__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __ge__(self, other):
+        raise ConfigureError('Cannot compare @depends functions.')
+
+    def __nonzero__(self):
+        raise ConfigureError('Cannot use @depends functions in '
+                             'e.g. conditionals.')
 
     def __getattr__(self, key):
         return self._getattr(key).sandboxed
@@ -113,12 +140,11 @@ class DependsFunction(object):
         ]
 
     @memoize
-    def result(self, need_help_dependency=False):
-        if self.when and not self.sandbox._value_for(self.when,
-                                                     need_help_dependency):
+    def result(self):
+        if self.when and not self.sandbox._value_for(self.when):
             return None
 
-        resolved_args = [self.sandbox._value_for(d, need_help_dependency)
+        resolved_args = [self.sandbox._value_for(d)
                          for d in self.dependencies]
         return self._func(*resolved_args)
 
@@ -193,8 +219,8 @@ class CombinedDependsFunction(DependsFunction):
             sandbox, func, flatten_deps)
 
     @memoize
-    def result(self, need_help_dependency=False):
-        resolved_args = (self.sandbox._value_for(d, need_help_dependency)
+    def result(self):
+        resolved_args = (self.sandbox._value_for(d)
                          for d in self.dependencies)
         return self._func(resolved_args)
 
@@ -270,6 +296,8 @@ class ConfigureSandbox(dict):
                  stdout=sys.stdout, stderr=sys.stderr, logger=None):
         dict.__setitem__(self, '__builtins__', self.BUILTINS)
 
+        self._environ = dict(environ)
+
         self._paths = []
         self._all_paths = set()
         self._templates = set()
@@ -320,6 +348,8 @@ class ConfigureSandbox(dict):
             @contextmanager
             def queue_debug():
                 yield
+
+        self._logger = logger
 
         # Some callers will manage to log a bytestring with characters in it
         # that can't be converted to ascii. Make our log methods robust to this
@@ -410,8 +440,7 @@ class ConfigureSandbox(dict):
 
         # All implied options should exist.
         for implied_option in self._implied_options:
-            value = self._resolve(implied_option.value,
-                                  need_help_dependency=False)
+            value = self._resolve(implied_option.value)
             if value is not None:
                 raise ConfigureError(
                     '`%s`, emitted from `%s` line %d, is unknown.'
@@ -421,7 +450,11 @@ class ConfigureSandbox(dict):
         # All options should have been removed (handled) by now.
         for arg in self._helper:
             without_value = arg.split('=', 1)[0]
-            raise InvalidOptionError('Unknown option: %s' % without_value)
+            msg = 'Unknown option: %s' % without_value
+            if self._help:
+                self._logger.warning(msg)
+            else:
+                raise InvalidOptionError(msg)
 
         # Run the execution queue
         for func, args in self._execution_queue:
@@ -458,20 +491,18 @@ class ConfigureSandbox(dict):
 
         return super(ConfigureSandbox, self).__setitem__(key, value)
 
-    def _resolve(self, arg, need_help_dependency=True):
+    def _resolve(self, arg):
         if isinstance(arg, SandboxDependsFunction):
-            return self._value_for_depends(self._depends[arg],
-                                           need_help_dependency)
+            return self._value_for_depends(self._depends[arg])
         return arg
 
-    def _value_for(self, obj, need_help_dependency=False):
+    def _value_for(self, obj):
         if isinstance(obj, SandboxDependsFunction):
             assert obj in self._depends
-            return self._value_for_depends(self._depends[obj],
-                                           need_help_dependency)
+            return self._value_for_depends(self._depends[obj])
 
         elif isinstance(obj, DependsFunction):
-            return self._value_for_depends(obj, need_help_dependency)
+            return self._value_for_depends(obj)
 
         elif isinstance(obj, Option):
             return self._value_for_option(obj)
@@ -479,8 +510,8 @@ class ConfigureSandbox(dict):
         assert False
 
     @memoize
-    def _value_for_depends(self, obj, need_help_dependency=False):
-        return obj.result(need_help_dependency)
+    def _value_for_depends(self, obj):
+        return obj.result()
 
     @memoize
     def _value_for_option(self, option):
@@ -494,8 +525,7 @@ class ConfigureSandbox(dict):
                 not self._value_for(implied_option.when)):
                 continue
 
-            value = self._resolve(implied_option.value,
-                                  need_help_dependency=False)
+            value = self._resolve(implied_option.value)
 
             if value is not None:
                 if isinstance(value, OptionValue):
@@ -531,15 +561,18 @@ class ConfigureSandbox(dict):
             self._raw_options[option] = option_string
 
         when = self._conditions.get(option)
-        if (when and not self._value_for(when, need_help_dependency=True) and
-            value is not None and value.origin != 'default'):
-            if value.origin == 'environment':
-                # The value we return doesn't really matter, because of the
-                # requirement for @depends to have the same when.
-                return None
-            raise InvalidOptionError(
-                '%s is not available in this configuration'
-                % option_string.split('=', 1)[0])
+        # If `when` resolves to a false-ish value, we always return None.
+        # This makes option(..., when='--foo') equivalent to
+        # option(..., when=depends('--foo')(lambda x: x)).
+        if when and not self._value_for(when) and value is not None:
+            # If the option was passed explicitly, we throw an error that
+            # the option is not available. Except when the option was passed
+            # from the environment, because that would be too cumbersome.
+            if value.origin not in ('default', 'environment'):
+                raise InvalidOptionError(
+                    '%s is not available in this configuration'
+                    % option_string.split('=', 1)[0])
+            return None
 
         return value
 
@@ -622,8 +655,7 @@ class ConfigureSandbox(dict):
         if option.env:
             self._options[option.env] = option
 
-        if self._help and (when is None or
-                           self._value_for(when, need_help_dependency=True)):
+        if self._help and (when is None or self._value_for(when)):
             self._help.add(option)
 
         return option
@@ -791,13 +823,37 @@ class ConfigureSandbox(dict):
         return decorator
 
     def _apply_imports(self, func, glob):
-        for _from, _import, _as in self._imports.get(func, ()):
+        for _from, _import, _as in self._imports.pop(func, ()):
             _from = '%s.' % _from if _from else ''
             if _as:
                 glob[_as] = self._get_one_import('%s%s' % (_from, _import))
             else:
                 what = _import.split('.')[0]
                 glob[what] = self._get_one_import('%s%s' % (_from, what))
+
+    @memoized_property
+    def _wrapped_os(self):
+        wrapped_os = {}
+        exec_('from os import *', {}, wrapped_os)
+        wrapped_os['environ'] = self._environ
+        return ReadOnlyNamespace(**wrapped_os)
+
+    @memoized_property
+    def _wrapped_subprocess(self):
+        wrapped_subprocess = {}
+        exec_('from subprocess import *', {}, wrapped_subprocess)
+
+        def wrap(function):
+            def wrapper(*args, **kwargs):
+                if 'env' not in kwargs:
+                    kwargs['env'] = encode(self._environ)
+                return function(*args, **kwargs)
+            return wrapper
+
+        for f in ('call', 'check_call', 'check_output', 'Popen'):
+            wrapped_subprocess[f] = wrap(wrapped_subprocess[f])
+
+        return ReadOnlyNamespace(**wrapped_subprocess)
 
     def _get_one_import(self, what):
         # The special `__sandbox__` module gives access to the sandbox
@@ -809,6 +865,18 @@ class ConfigureSandbox(dict):
         # restricted mode"
         if what == '__builtin__.open':
             return lambda *args, **kwargs: open(*args, **kwargs)
+        # Special case os and os.environ so that os.environ is our copy of
+        # the environment.
+        if what == 'os.environ':
+            return self._environ
+        if what == 'os':
+            return self._wrapped_os
+        # And subprocess, so that its functions use our os.environ
+        if what == 'subprocess':
+            return self._wrapped_subprocess
+        if what in ('subprocess.call', 'subprocess.check_call',
+                    'subprocess.check_output', 'subprocess.Popen'):
+            return getattr(self._wrapped_subprocess, what[len('subprocess.'):])
         # Until this proves to be a performance problem, just construct an
         # import statement and execute it.
         import_line = ''
@@ -826,7 +894,7 @@ class ConfigureSandbox(dict):
             return
         if when and not self._value_for(when):
             return
-        name = self._resolve(name, need_help_dependency=False)
+        name = self._resolve(name)
         if name is None:
             return
         if not isinstance(name, types.StringTypes):
@@ -835,7 +903,7 @@ class ConfigureSandbox(dict):
             raise ConfigureError(
                 "Cannot add '%s' to configuration: Key already "
                 "exists" % name)
-        value = self._resolve(value, need_help_dependency=False)
+        value = self._resolve(value)
         if value is not None:
             data[name] = value
 
@@ -999,7 +1067,6 @@ class ConfigureSandbox(dict):
         def wrapped(*args, **kwargs):
             if func in self._imports:
                 self._apply_imports(func, glob)
-                del self._imports[func]
             return new_func(*args, **kwargs)
 
         self._prepared_functions.add(wrapped)

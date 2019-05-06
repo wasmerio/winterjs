@@ -168,7 +168,7 @@ sw{
         }
         DZD{
             "DZD",
-            "Dinar ya Algeria",
+            "Dinar ya Aljeria",
         }
         EGP{
             "EGP",
@@ -388,6 +388,10 @@ sw{
         }
         MRO{
             "MRO",
+            "Ouguiya ya Mauritania (1973–2017)",
+        }
+        MRU{
+            "MRU",
             "Ouguiya ya Mauritania",
         }
         MUR{
@@ -544,6 +548,10 @@ sw{
         }
         STD{
             "STD",
+            "Dobra ya Sao Tome na Principe (1977–2017)",
+        }
+        STN{
+            "STN",
             "Dobra ya Sao Tome na Principe",
         }
         SYP{
@@ -612,6 +620,10 @@ sw{
         }
         VEF{
             "VEF",
+            "Bolivar ya Venezuela (2008–2018)",
+        }
+        VES{
+            "VES",
             "Bolivar ya Venezuela",
         }
         VND{
@@ -643,7 +655,7 @@ sw{
             "Faranga ya CFP",
         }
         XXX{
-            "XXX",
+            "¤",
             "Sarafu isiyojulikana",
         }
         YER{
@@ -747,7 +759,7 @@ sw{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -933,8 +945,8 @@ sw{
             other{"peso za Dominica"}
         }
         DZD{
-            one{"dinar ya Algeria"}
-            other{"dinar za Algeria"}
+            one{"dinar ya Aljeria"}
+            other{"dinar za Aljeria"}
         }
         EGP{
             one{"pauni ya Misri"}
@@ -1141,6 +1153,10 @@ sw{
             other{"pataca za Macau"}
         }
         MRO{
+            one{"ouguiya ya Mauritania (1973–2017)"}
+            other{"ouguiya za Mauritania (1973–2017)"}
+        }
+        MRU{
             one{"ouguiya ya Mauritania"}
             other{"ouguiya za Mauritania"}
         }
@@ -1297,6 +1313,10 @@ sw{
             other{"pauni za Sudan Kusini"}
         }
         STD{
+            one{"dobra ya Sao Tome na Principe (1977–2017)"}
+            other{"dobra za Sao Tome na Principe (1977–2017)"}
+        }
+        STN{
             one{"dobra ya Sao Tome na Principe"}
             other{"dobra za Sao Tome na Principe"}
         }
@@ -1365,6 +1385,10 @@ sw{
             other{"som za Uzbekistan"}
         }
         VEF{
+            one{"Bolivar ya Venezuela (2008–2018)"}
+            other{"Bolivar za Venezuela (2008–2018)"}
+        }
+        VES{
             one{"Bolivar ya Venezuela"}
             other{"Bolivar za Venezuela"}
         }
@@ -1417,5 +1441,5 @@ sw{
         one{"{1} {0}"}
         other{"{1} {0}"}
     }
-    Version{"2.1.37.34"}
+    Version{"2.1.43.65"}
 }

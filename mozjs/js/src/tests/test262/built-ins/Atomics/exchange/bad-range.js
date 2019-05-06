@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('SharedArrayBuffer')||!this.hasOwnProperty('Atomics')) -- SharedArrayBuffer,Atomics is not enabled unconditionally
+// |reftest| skip-if(!this.hasOwnProperty('Atomics')||!this.hasOwnProperty('SharedArrayBuffer')) -- Atomics,SharedArrayBuffer is not enabled unconditionally
 // Copyright (C) 2017 Mozilla Corporation.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -7,23 +7,19 @@ esid: sec-atomics.exchange
 description: >
   Test range checking of Atomics.exchange on arrays that allow atomic operations
 includes: [testAtomics.js, testTypedArray.js]
-features: [SharedArrayBuffer, ArrayBuffer, DataView, Atomics, arrow-function, let, TypedArray, for-of]
+features: [ArrayBuffer, Atomics, DataView, SharedArrayBuffer, Symbol, TypedArray]
 ---*/
 
-var sab = new SharedArrayBuffer(8);
-var views = [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array];
+const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+const views = intArrayConstructors.slice();
 
-if (typeof BigInt !== "undefined") {
-  views.push(BigInt64Array);
-  views.push(BigUint64Array);
-}
-
-testWithTypedArrayConstructors(function(View) {
-    let view = new View(sab);
-    testWithAtomicsOutOfBoundsIndices(function(IdxGen) {
-        let Idx = IdxGen(view);
-        assert.throws(RangeError, () => Atomics.exchange(view, Idx, 10, 0));
-    });
+testWithTypedArrayConstructors(function(TA) {
+  const view = new TA(buffer);
+  testWithAtomicsOutOfBoundsIndices(function(IdxGen) {
+    assert.throws(RangeError, function() {
+      Atomics.exchange(view, IdxGen(view), 10, 0);
+    }, '`Atomics.exchange(view, IdxGen(view), 10, 0)` throws RangeError');
+  });
 }, views);
 
 reportCompare(0, 0);

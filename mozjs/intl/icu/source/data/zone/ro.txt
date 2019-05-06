@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 ro{
-    Version{"2.1.37.5"}
+    Version{"2.1.43.94"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Timpul universal coordonat"}
+        }
+        "Europe:Dublin"{
+            ld{"Ora de vară a Irlandei"}
+        }
+        "Europe:London"{
+            ld{"Ora de vară britanică"}
+        }
         "meta:Acre"{
             ld{"Ora de vară Acre"}
             lg{"Ora Acre"}

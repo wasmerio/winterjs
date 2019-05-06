@@ -1,9 +1,6 @@
-// |jit-test| allow-oom
+// |jit-test| allow-oom; skip-if: !('oomAfterAllocations' in this)
 
-if (!('oomAfterAllocations' in this))
-    quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 x = Debugger(g);
 selectforgc(g);
 oomAfterAllocations(1);

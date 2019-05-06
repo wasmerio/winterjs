@@ -5,15 +5,19 @@
 
 # run-tests.py -- Python harness for GDB SpiderMonkey support
 
-import os, re, subprocess, sys, traceback
-from threading import Thread
+import os
+import re
+import subprocess
+import sys
 
 # From this directory:
 import progressbar
 from taskpool import TaskPool, get_cpu_count
 
-# Backported from Python 3.1 posixpath.py
+
 def _relpath(path, start=None):
+    # Backported from Python 3.1 posixpath.py
+
     """Return a relative version of a path"""
 
     if not path:
@@ -33,12 +37,15 @@ def _relpath(path, start=None):
         return os.curdir
     return os.path.join(*rel_list)
 
+
 os.path.relpath = _relpath
 
 # Characters that need to be escaped when used in shell words.
 shell_need_escapes = re.compile('[^\w\d%+,-./:=@\'"]', re.DOTALL)
 # Characters that need to be escaped within double-quoted strings.
 shell_dquote_escapes = re.compile('[^\w\d%+,-./:=@"]', re.DOTALL)
+
+
 def make_shell_cmd(l):
     def quote(s):
         if shell_need_escapes.search(s):
@@ -49,6 +56,7 @@ def make_shell_cmd(l):
 
     return ' '.join([quote(_) for _ in l])
 
+
 # An instance of this class collects the lists of passing, failing, and
 # timing-out tests, runs the progress bar, and prints a summary at the end.
 class Summary(object):
@@ -56,9 +64,11 @@ class Summary(object):
     class SummaryBar(progressbar.ProgressBar):
         def __init__(self, limit):
             super(Summary.SummaryBar, self).__init__('', limit, 24)
+
         def start(self):
             self.label = '[starting           ]'
             self.update(0)
+
         def counts(self, run, failures, timeouts):
             self.label = '[%4d|%4d|%4d|%4d]' % (run - failures, failures, timeouts, run)
             self.update(run)
@@ -74,10 +84,12 @@ class Summary(object):
     def start(self):
         if not OPTIONS.hide_progress:
             self.bar.start()
+
     def update(self):
         if not OPTIONS.hide_progress:
             self.bar.counts(self.run, len(self.failures), len(self.timeouts))
     # Call 'thunk' to show some output, while getting the progress bar out of the way.
+
     def interleave_output(self, thunk):
         if not OPTIONS.hide_progress:
             self.bar.clear()
@@ -104,7 +116,7 @@ class Summary(object):
 
         if self.failures:
 
-            print "tests failed:"
+            print("tests failed:")
             for test in self.failures:
                 test.show(sys.stdout)
 
@@ -120,7 +132,7 @@ class Summary(object):
 
             if OPTIONS.write_failures:
                 try:
-                    with open(OPTIONS.write_failures) as out:
+                    with open(OPTIONS.write_failures, "w") as out:
                         for test in self.failures:
                             test.show(out)
                 except IOError as err:
@@ -129,12 +141,13 @@ class Summary(object):
                     sys.exit(1)
 
         if self.timeouts:
-            print "tests timed out:"
+            print("tests timed out:")
             for test in self.timeouts:
                 test.show(sys.stdout)
 
         if self.failures or self.timeouts:
             sys.exit(2)
+
 
 class Test(TaskPool.Task):
     def __init__(self, path, summary):
@@ -156,12 +169,13 @@ class Test(TaskPool.Task):
         return [OPTIONS.gdb_executable,
                 '-nw',          # Don't create a window (unnecessary?)
                 '-nx',          # Don't read .gdbinit.
-                '--ex', 'add-auto-load-safe-path %s' % (OPTIONS.builddir,),
-                '--ex', 'set env LD_LIBRARY_PATH %s' % os.path.join(OPTIONS.objdir, 'js', 'src'),
-                '--ex', 'file %s' % (os.path.join(OPTIONS.builddir, 'gdb-tests'),),
+                '--ex', 'add-auto-load-safe-path %s' % (OPTIONS.bindir,),
+                '--ex', 'set env LD_LIBRARY_PATH %s' % (OPTIONS.bindir,),
+                '--ex', 'file %s' % (os.path.join(OPTIONS.bindir, 'gdb-tests'),),
                 '--eval-command', 'python testlibdir=%r' % (testlibdir,),
                 '--eval-command', 'python testscript=%r' % (self.test_path,),
-                '--eval-command', 'python exec(open(%r).read())' % os.path.join(testlibdir, 'catcher.py')]
+                '--eval-command', 'python exec(open(%r).read())' % os.path.join(testlibdir,
+                                                                                'catcher.py')]
 
     def start(self, pipe, deadline):
         super(Test, self).start(pipe, deadline)
@@ -187,7 +201,7 @@ class Test(TaskPool.Task):
         self.summary.timeout(self)
 
     def show_cmd(self, out):
-        print "Command: ", make_shell_cmd(self.cmd())
+        out.write("Command: %s\n" % (make_shell_cmd(self.cmd()),))
 
     def show_output(self, out):
         if self.stdout:
@@ -200,13 +214,14 @@ class Test(TaskPool.Task):
     def show(self, out):
         out.write(self.name + '\n')
         if OPTIONS.write_failure_output:
-            out.write('Command: %s\n' % (make_shell_cmd(self.cmd()),))
+            self.show_cmd(out)
             self.show_output(out)
             out.write('GDB exit code: %r\n' % (self.returncode,))
 
-def find_tests(dir, substring = None):
+
+def find_tests(dir, substring=None):
     ans = []
-    for dirpath, dirnames, filenames in os.walk(dir):
+    for dirpath, _, filenames in os.walk(dir):
         if dirpath == '.':
             continue
         for filename in filenames:
@@ -217,14 +232,19 @@ def find_tests(dir, substring = None):
                 ans.append(test)
     return ans
 
+
 def build_test_exec(builddir):
-    p = subprocess.check_call(['make', 'gdb-tests'], cwd=builddir)
+    subprocess.check_call(['make'], cwd=builddir)
+
 
 def run_tests(tests, summary):
     pool = TaskPool(tests, job_limit=OPTIONS.workercount, timeout=OPTIONS.timeout)
     pool.run_all()
 
+
 OPTIONS = None
+
+
 def main(argv):
     global OPTIONS
     script_path = os.path.abspath(__file__)
@@ -257,7 +277,8 @@ def main(argv):
     op.add_option('-w', '--write-failures', dest='write_failures', metavar='FILE',
                   help='Write failing tests to [FILE]')
     op.add_option('--write-failure-output', dest='write_failure_output', action='store_true',
-                  help='With --write-failures=FILE, additionally write the output of failed tests to [FILE]')
+                  help='With --write-failures=FILE, additionally write the output of failed '
+                  'tests to [FILE]')
     op.add_option('--gdb', dest='gdb_executable', metavar='EXECUTABLE', default='gdb',
                   help='Run tests with [EXECUTABLE], rather than plain \'gdb\'.')
     op.add_option('--srcdir', dest='srcdir',
@@ -266,7 +287,9 @@ def main(argv):
     op.add_option('--testdir', dest='testdir', default=os.path.join(script_dir, 'tests'),
                   help='Find tests in [TESTDIR].')
     op.add_option('--builddir', dest='builddir',
-                  help='Build test executable in [BUILDDIR].')
+                  help='Build test executable from [BUILDDIR].')
+    op.add_option('--bindir', dest='bindir',
+                  help='Run test executable from [BINDIR].')
     (OPTIONS, args) = op.parse_args(argv)
     if len(args) < 1:
         op.error('missing OBJDIR argument')
@@ -277,9 +300,12 @@ def main(argv):
     if not OPTIONS.workercount:
         OPTIONS.workercount = get_cpu_count()
 
-    # Compute default for OPTIONS.builddir now, since we've computed OPTIONS.objdir.
+    # Compute defaults for OPTIONS.builddir and OPTIONS.bindir now, since we've
+    # computed OPTIONS.objdir.
     if not OPTIONS.builddir:
         OPTIONS.builddir = os.path.join(OPTIONS.objdir, 'js', 'src', 'gdb')
+    if not OPTIONS.bindir:
+        OPTIONS.bindir = os.path.join(OPTIONS.objdir, 'dist', 'bin')
 
     test_set = set()
 
@@ -291,7 +317,7 @@ def main(argv):
         try:
             with open(OPTIONS.worklist) as f:
                 for line in f:
-                    test_set.update(os.path.join(test_dir, line.strip('\n')))
+                    test_set.update(os.path.join(OPTIONS.testdir, line.strip('\n')))
         except IOError:
             # With worklist, a missing file means to start the process with
             # the complete list of tests.
@@ -302,7 +328,7 @@ def main(argv):
         try:
             with open(OPTIONS.read_tests) as f:
                 for line in f:
-                    test_set.update(os.path.join(test_dir, line.strip('\n')))
+                    test_set.update(os.path.join(OPTIONS.testdir, line.strip('\n')))
         except IOError as err:
             sys.stderr.write("Error trying to read test file '%s': %s\n"
                              % (OPTIONS.read_tests, err))
@@ -316,7 +342,7 @@ def main(argv):
     if OPTIONS.exclude:
         exclude_set = set()
         for exclude in OPTIONS.exclude:
-            exclude_set.update(find_tests(test_dir, exclude))
+            exclude_set.update(find_tests(OPTIONS.testdir, exclude))
         test_set -= exclude_set
 
     if not test_set:
@@ -324,7 +350,7 @@ def main(argv):
         sys.exit(1)
 
     summary = Summary(len(test_set))
-    test_list = [ Test(_, summary) for _ in sorted(test_set) ]
+    test_list = [Test(_, summary) for _ in sorted(test_set)]
 
     # Build the test executable from all the .cpp files found in the test
     # directory tree.
@@ -344,6 +370,7 @@ def main(argv):
         sys.exit(1)
 
     sys.exit(0)
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 zu{
-    Version{"2.1.37.1"}
+    Version{"2.1.43.65"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"isikhathi somhlaba esididiyelwe"}
+        }
+        "Europe:Dublin"{
+            ld{"isikhathi sase-Irish esivamile"}
+        }
+        "Europe:London"{
+            ld{"isikhathi sase-British sasehlobo"}
+        }
         "meta:Afghanistan"{
             ls{"Isikhathi sase-Afghanistan"}
         }

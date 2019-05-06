@@ -1,4 +1,4 @@
-// |jit-test| test-also-no-wasm-baseline; error: TestComplete
+// |jit-test| test-also-wasm-compiler-ion; error: TestComplete
 
 load(libdir + "asserts.js");
 
@@ -12,7 +12,7 @@ if (!getBuildConfiguration()["arm-simulator"])
 enableGeckoProfiling();
 enableSingleStepProfiling();
 
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 g.parent = this;
 g.eval("Debugger(parent).onExceptionUnwind = function () {};");
 

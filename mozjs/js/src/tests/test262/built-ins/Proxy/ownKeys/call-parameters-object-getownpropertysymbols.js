@@ -7,7 +7,7 @@ description: >
 
     7. Let trapResultArray be ? Call(trap, handler, « target »).
 
-features: [Symbol]
+features: [Proxy, Symbol]
 ---*/
 
 var _target, _handler;
@@ -19,11 +19,11 @@ target[a] = 1;
 target[b] = 2;
 
 var handler = {
-    ownKeys: function(t) {
-        _handler = this;
-        _target = t;
-        return Object.getOwnPropertySymbols(t);
-    }
+  ownKeys: function(t) {
+    _handler = this;
+    _target = t;
+    return Object.getOwnPropertySymbols(t);
+  }
 }
 var p = new Proxy(target, handler);
 

@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 cy{
-    Version{"2.1.37.17"}
+    Version{"2.1.44.91"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Amser Cyffredniol Cydlynol"}
+        }
+        "Europe:Dublin"{
+            ld{"Amser Safonol Iwerddon"}
+        }
+        "Europe:London"{
+            ld{"Amser Haf Prydain"}
+        }
         "meta:Afghanistan"{
             ls{"Amser Afghanistan"}
         }

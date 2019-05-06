@@ -335,6 +335,7 @@ keyTypeData:table(nofallback){
             mnt{""}
             mop{""}
             mro{""}
+            mru{""}
             mtl{""}
             mtp{""}
             mur{""}
@@ -421,9 +422,11 @@ keyTypeData:table(nofallback){
             uyi{""}
             uyp{""}
             uyu{""}
+            uyw{""}
             uzs{""}
             veb{""}
             vef{""}
+            ves{""}
             vnd{""}
             vnn{""}
             vuv{""}
@@ -487,6 +490,7 @@ keyTypeData:table(nofallback){
             remove{""}
             title{""}
             upper{""}
+            zawgyi{""}
         }
         em{
             default{""}
@@ -610,6 +614,7 @@ keyTypeData:table(nofallback){
             finance{""}
             fullwide{""}
             geor{""}
+            gong{""}
             gonm{""}
             grek{""}
             greklow{""}
@@ -654,6 +659,7 @@ keyTypeData:table(nofallback){
             olck{""}
             orya{""}
             osma{""}
+            rohg{""}
             roman{""}
             romanlow{""}
             saur{""}

@@ -193,9 +193,14 @@ ee{
                 superscriptingExponent{"×"}
             }
         }
+        minimalPairs{
+            ordinal{
+                other{"{0}lia"}
+            }
+        }
         minimumGroupingDigits{"3"}
     }
-    Version{"2.1.37.1"}
+    Version{"2.1.44.88"}
     calendar{
         generic{
             DateTimePatterns{

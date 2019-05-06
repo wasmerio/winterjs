@@ -1,11 +1,9 @@
-// |jit-test| exitstatus: 6;
+// |jit-test| exitstatus: 6; skip-if: !wasmDebuggingIsSupported()
 
 // Don't include wasm.js in timeout tests: when wasm isn't supported, it will
 // quit(0) which will cause the test to fail.
-if (!wasmDebuggingIsSupported())
-    quit(6);
 
-newGlobal().Debugger().addDebuggee(this);
+newGlobal({newCompartment: true}).Debugger().addDebuggee(this);
 
 var t = new WebAssembly.Table({
     initial: 1,

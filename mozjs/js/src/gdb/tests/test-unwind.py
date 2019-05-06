@@ -1,6 +1,7 @@
 # Test the unwinder and the frame filter.
-
+# flake8:  NOQA: F821
 import platform
+
 
 def do_unwinder_test():
     # The unwinder is disabled by default for the moment. Turn it on to check
@@ -25,9 +26,9 @@ def do_unwinder_test():
         if first:
             assert_eq(frame.function().startswith("Something"), True)
             first = False
-        elif frame.function() == "<<JitFrame_Exit>>":
+        elif frame.function() == "<<FrameType::Exit>>":
             found_exit = True
-        elif frame.function() == "<<JitFrame_CppToJSJit>>":
+        elif frame.function() == "<<FrameType::CppToJSJit>>":
             found_entry = True
         elif frame.function() == "main":
             found_main = True
@@ -47,12 +48,12 @@ def do_unwinder_test():
     assert_eq(found_inner, True)
     assert_eq(found_outer, True)
 
+
 # Only on the right platforms.
 if platform.machine() == 'x86_64' and platform.system() == 'Linux':
     # Only test when gdb has the unwinder feature.
     try:
-        import gdb.unwinder
-        import gdb.frames
+        import gdb.unwinder  # NOQA: F401
         do_unwinder_test()
-    except:
+    except Exception:
         pass

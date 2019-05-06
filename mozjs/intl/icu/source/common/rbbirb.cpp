@@ -47,7 +47,7 @@ U_NAMESPACE_BEGIN
 RBBIRuleBuilder::RBBIRuleBuilder(const UnicodeString   &rules,
                                        UParseError     *parseErr,
                                        UErrorCode      &status)
- : fRules(rules)
+ : fRules(rules), fStrippedRules(rules)
 {
     fStatus = &status; // status is checked below
     fParseError = parseErr;
@@ -62,10 +62,7 @@ RBBIRuleBuilder::RBBIRuleBuilder(const UnicodeString   &rules,
     fSafeFwdTree        = NULL;
     fSafeRevTree        = NULL;
     fDefaultTree        = &fForwardTree;
-    fForwardTables      = NULL;
-    fReverseTables      = NULL;
-    fSafeFwdTables      = NULL;
-    fSafeRevTables      = NULL;
+    fForwardTable       = NULL;
     fRuleStatusVals     = NULL;
     fChainRules         = FALSE;
     fLBCMNoChain        = FALSE;
@@ -114,11 +111,7 @@ RBBIRuleBuilder::~RBBIRuleBuilder() {
 
     delete fUSetNodes;
     delete fSetBuilder;
-    delete fForwardTables;
-    delete fReverseTables;
-    delete fSafeFwdTables;
-    delete fSafeRevTables;
-
+    delete fForwardTable;
     delete fForwardTree;
     delete fReverseTree;
     delete fSafeFwdTree;
@@ -147,8 +140,9 @@ RBBIDataHeader *RBBIRuleBuilder::flattenData() {
         return NULL;
     }
 
-    // Remove comments and whitespace from the rules to make it smaller.
-    UnicodeString strippedRules((const UnicodeString&)RBBIRuleScanner::stripRules(fRules));
+    // Remove whitespace from the rules to make it smaller.
+    // The rule parser has already removed comments.
+    fStrippedRules = fScanner->stripRules(fStrippedRules);
 
     // Calculate the size of each section in the data.
     //   Sizes here are padded up to a multiple of 8 for better memory alignment.
@@ -156,21 +150,15 @@ RBBIDataHeader *RBBIRuleBuilder::flattenData() {
     //     without the padding.
     //
     int32_t headerSize        = align8(sizeof(RBBIDataHeader));
-    int32_t forwardTableSize  = align8(fForwardTables->getTableSize());
-    int32_t reverseTableSize  = align8(fReverseTables->getTableSize());
-    int32_t safeFwdTableSize  = align8(fSafeFwdTables->getTableSize());
-    int32_t safeRevTableSize  = align8(fSafeRevTables->getTableSize());
+    int32_t forwardTableSize  = align8(fForwardTable->getTableSize());
+    int32_t reverseTableSize  = align8(fForwardTable->getSafeTableSize());
     int32_t trieSize          = align8(fSetBuilder->getTrieSize());
     int32_t statusTableSize   = align8(fRuleStatusVals->size() * sizeof(int32_t));
-    int32_t rulesSize         = align8((strippedRules.length()+1) * sizeof(UChar));
-
-    (void)safeFwdTableSize;
+    int32_t rulesSize         = align8((fStrippedRules.length()+1) * sizeof(UChar));
 
     int32_t         totalSize = headerSize
-                                + forwardTableSize 
-                                + /* reverseTableSize */ 0
-                                + /* safeFwdTableSize */ 0
-                                + (safeRevTableSize ? safeRevTableSize : reverseTableSize)
+                                + forwardTableSize
+                                + reverseTableSize
                                 + statusTableSize + trieSize + rulesSize;
 
     RBBIDataHeader  *data     = (RBBIDataHeader *)uprv_malloc(totalSize);
@@ -189,55 +177,23 @@ RBBIDataHeader *RBBIRuleBuilder::flattenData() {
     data->fLength           = totalSize;
     data->fCatCount         = fSetBuilder->getNumCharCategories();
 
-    // Only save the forward table and the safe reverse table,
-    // because these are the only ones used at run-time.
-    //
-    // For the moment, we still build the other tables if they are present in the rule source files,
-    // for backwards compatibility. Old rule files need to work, and this is the simplest approach.
-    //
-    // Additional backwards compatibility consideration: if no safe rules are provided, consider the
-    // reverse rules to actually be the safe reverse rules.
-
     data->fFTable        = headerSize;
     data->fFTableLen     = forwardTableSize;
 
-    // Do not save Reverse Table.
-    data->fRTable        = data->fFTable  + forwardTableSize;
-    data->fRTableLen     = 0;
+    data->fRTable        = data->fFTable  + data->fFTableLen;
+    data->fRTableLen     = reverseTableSize;
 
-    // Do not save the Safe Forward table.
-    data->fSFTable       = data->fRTable + 0;
-    data->fSFTableLen    = 0;
-
-    data->fSRTable       = data->fSFTable + 0;
-    if (safeRevTableSize > 0) {
-        data->fSRTableLen    = safeRevTableSize;
-    } else if (reverseTableSize > 0) {
-        data->fSRTableLen    = reverseTableSize;
-    } else {
-        U_ASSERT(FALSE);    // Rule build should have failed for lack of a reverse table
-                            // before reaching this point.
-    }
-        
-
-    data->fTrie          = data->fSRTable + data->fSRTableLen;
+    data->fTrie          = data->fRTable + data->fRTableLen;
     data->fTrieLen       = fSetBuilder->getTrieSize();
     data->fStatusTable   = data->fTrie    + trieSize;
     data->fStatusTableLen= statusTableSize;
     data->fRuleSource    = data->fStatusTable + statusTableSize;
-    data->fRuleSourceLen = strippedRules.length() * sizeof(UChar);
+    data->fRuleSourceLen = fStrippedRules.length() * sizeof(UChar);
 
     uprv_memset(data->fReserved, 0, sizeof(data->fReserved));
 
-    fForwardTables->exportTable((uint8_t *)data + data->fFTable);
-    // fReverseTables->exportTable((uint8_t *)data + data->fRTable);
-    // fSafeFwdTables->exportTable((uint8_t *)data + data->fSFTable);
-    if (safeRevTableSize > 0) {
-        fSafeRevTables->exportTable((uint8_t *)data + data->fSRTable);
-    } else {
-        fReverseTables->exportTable((uint8_t *)data + data->fSRTable);
-    }
-
+    fForwardTable->exportTable((uint8_t *)data + data->fFTable);
+    fForwardTable->exportSafeTable((uint8_t *)data + data->fRTable);
     fSetBuilder->serializeTrie ((uint8_t *)data + data->fTrie);
 
     int32_t *ruleStatusTable = (int32_t *)((uint8_t *)data + data->fStatusTable);
@@ -245,14 +201,10 @@ RBBIDataHeader *RBBIRuleBuilder::flattenData() {
         ruleStatusTable[i] = fRuleStatusVals->elementAti(i);
     }
 
-    strippedRules.extract((UChar *)((uint8_t *)data+data->fRuleSource), rulesSize/2+1, *fStatus);
+    fStrippedRules.extract((UChar *)((uint8_t *)data+data->fRuleSource), rulesSize/2+1, *fStatus);
 
     return data;
 }
-
-
-
-
 
 
 //----------------------------------------------------------------------------------------
@@ -266,8 +218,6 @@ RBBIRuleBuilder::createRuleBasedBreakIterator( const UnicodeString    &rules,
                                     UParseError      *parseError,
                                     UErrorCode       &status)
 {
-    // status checked below
-
     //
     // Read the input rules, generate a parse tree, symbol table,
     // and list of all Unicode Sets referenced by the rules.
@@ -276,60 +226,12 @@ RBBIRuleBuilder::createRuleBasedBreakIterator( const UnicodeString    &rules,
     if (U_FAILURE(status)) { // status checked here bcos build below doesn't
         return NULL;
     }
-    builder.fScanner->parse();
 
-    //
-    // UnicodeSet processing.
-    //    Munge the Unicode Sets to create a set of character categories.
-    //    Generate the mapping tables (TRIE) from input 32-bit characters to
-    //    the character categories.
-    //
-    builder.fSetBuilder->build();
+    RBBIDataHeader *data = builder.build(status);
 
-
-    //
-    //   Generate the DFA state transition table.
-    //
-    builder.fForwardTables = new RBBITableBuilder(&builder, &builder.fForwardTree);
-    builder.fReverseTables = new RBBITableBuilder(&builder, &builder.fReverseTree);
-    builder.fSafeFwdTables = new RBBITableBuilder(&builder, &builder.fSafeFwdTree);
-    builder.fSafeRevTables = new RBBITableBuilder(&builder, &builder.fSafeRevTree);
-    if (builder.fForwardTables == NULL || builder.fReverseTables == NULL ||
-        builder.fSafeFwdTables == NULL || builder.fSafeRevTables == NULL)
-    {
-        status = U_MEMORY_ALLOCATION_ERROR;
-        delete builder.fForwardTables; builder.fForwardTables = NULL;
-        delete builder.fReverseTables; builder.fReverseTables = NULL;
-        delete builder.fSafeFwdTables; builder.fSafeFwdTables = NULL;
-        delete builder.fSafeRevTables; builder.fSafeRevTables = NULL;
-        return NULL;
+    if (U_FAILURE(status)) {
+        return nullptr;
     }
-
-    builder.fForwardTables->build();
-    builder.fReverseTables->build();
-    builder.fSafeFwdTables->build();
-    builder.fSafeRevTables->build();
-
-#ifdef RBBI_DEBUG
-    if (builder.fDebugEnv && uprv_strstr(builder.fDebugEnv, "states")) {
-        builder.fForwardTables->printRuleStatusTable();
-    }
-#endif
-
-    //
-    //   Package up the compiled data into a memory image
-    //      in the run-time format.
-    //
-    RBBIDataHeader *data = builder.flattenData(); // returns NULL if error
-    if (U_FAILURE(*builder.fStatus)) {
-        return NULL;
-    }
-
-
-    //
-    //  Clean up the compiler related stuff
-    //
-
 
     //
     //  Create a break iterator from the compiled rules.
@@ -345,6 +247,80 @@ RBBIRuleBuilder::createRuleBasedBreakIterator( const UnicodeString    &rules,
         status = U_MEMORY_ALLOCATION_ERROR;
     }
     return This;
+}
+
+RBBIDataHeader *RBBIRuleBuilder::build(UErrorCode &status) {
+    if (U_FAILURE(status)) {
+        return nullptr;
+    }
+
+    fScanner->parse();
+    if (U_FAILURE(status)) {
+        return nullptr;
+    }
+
+    //
+    // UnicodeSet processing.
+    //    Munge the Unicode Sets to create a set of character categories.
+    //    Generate the mapping tables (TRIE) from input code points to
+    //    the character categories.
+    //
+    fSetBuilder->buildRanges();
+
+    //
+    //   Generate the DFA state transition table.
+    //
+    fForwardTable = new RBBITableBuilder(this, &fForwardTree, status);
+    if (fForwardTable == nullptr) {
+        status = U_MEMORY_ALLOCATION_ERROR;
+        return nullptr;
+    }
+
+    fForwardTable->buildForwardTable();
+    optimizeTables();
+    fForwardTable->buildSafeReverseTable(status);
+
+
+#ifdef RBBI_DEBUG
+    if (fDebugEnv && uprv_strstr(fDebugEnv, "states")) {
+        fForwardTable->printStates();
+        fForwardTable->printRuleStatusTable();
+        fForwardTable->printReverseTable();
+    }
+#endif
+
+    fSetBuilder->buildTrie();
+
+    //
+    //   Package up the compiled data into a memory image
+    //      in the run-time format.
+    //
+    RBBIDataHeader *data = flattenData(); // returns NULL if error
+    if (U_FAILURE(status)) {
+        return nullptr;
+    }
+    return data;
+}
+
+void RBBIRuleBuilder::optimizeTables() {
+    bool didSomething;
+    do {
+        didSomething = false;
+
+        // Begin looking for duplicates with char class 3.
+        // Classes 0, 1 and 2 are special; they are unused, {bof} and {eof} respectively,
+        // and should not have other categories merged into them.
+        IntPair duplPair = {3, 0};
+        while (fForwardTable->findDuplCharClassFrom(&duplPair)) {
+            fSetBuilder->mergeCategories(duplPair);
+            fForwardTable->removeColumn(duplPair.second);
+            didSomething = true;
+        }
+
+        while (fForwardTable->removeDuplicateStates() > 0) {
+            didSomething = true;
+        }
+    } while (didSomething);
 }
 
 U_NAMESPACE_END

@@ -1,8 +1,5 @@
 // Test drainAllocationsLog() and [[Class]] names.
-if (!('Promise' in this))
-    quit(0);
-
-const root = newGlobal();
+const root = newGlobal({newCompartment: true});
 const dbg = new Debugger();
 const wrappedRoot = dbg.addDebuggee(root)
 

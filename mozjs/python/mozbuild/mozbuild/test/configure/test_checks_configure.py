@@ -20,6 +20,7 @@ from mozbuild.configure import (
     ConfigureSandbox,
 )
 from mozbuild.util import exec_
+from mozbuild.shellutil import quote as shell_quote
 from mozpack import path as mozpath
 
 from buildconfig import topsrcdir
@@ -184,8 +185,8 @@ class TestChecksConfigure(unittest.TestCase):
             'check_prog("FOO", ("unknown", "unknown-2", "known c"))')
         self.assertEqual(status, 0)
         self.assertEqual(config, {'FOO': fake_short_path(self.KNOWN_C)})
-        self.assertEqual(out, "checking for foo... '%s'\n"
-                              % fake_short_path(self.KNOWN_C))
+        self.assertEqual(out, "checking for foo... %s\n"
+                              % shell_quote(fake_short_path(self.KNOWN_C)))
 
         config, out, status = self.get_result(
             'check_prog("FOO", ("unknown",))')
@@ -265,8 +266,8 @@ class TestChecksConfigure(unittest.TestCase):
             ['FOO=known c'])
         self.assertEqual(status, 0)
         self.assertEqual(config, {'FOO': fake_short_path(self.KNOWN_C)})
-        self.assertEqual(out, "checking for foo... '%s'\n"
-                              % fake_short_path(self.KNOWN_C))
+        self.assertEqual(out, "checking for foo... %s\n"
+                              % shell_quote(fake_short_path(self.KNOWN_C)))
 
         config, out, status = self.get_result(
             'check_prog("FOO", ("unknown", "unknown-2", "unknown 3"), '
@@ -481,24 +482,13 @@ class TestChecksConfigure(unittest.TestCase):
     def test_java_tool_checks(self):
         includes = ('util.configure', 'checks.configure', 'java.configure')
 
-        def mock_valid_javac(_, args):
-            if len(args) == 1 and args[0] == '-version':
-                return 0, '1.8', ''
-            self.fail("Unexpected arguments to mock_valid_javac: %s" % args)
-
         # A valid set of tools in a standard location.
         java = mozpath.abspath('/usr/bin/java')
-        javah = mozpath.abspath('/usr/bin/javah')
-        javac = mozpath.abspath('/usr/bin/javac')
-        jar = mozpath.abspath('/usr/bin/jar')
         jarsigner = mozpath.abspath('/usr/bin/jarsigner')
         keytool = mozpath.abspath('/usr/bin/keytool')
 
         paths = {
             java: None,
-            javah: None,
-            javac: mock_valid_javac,
-            jar: None,
             jarsigner: None,
             keytool: None,
         }
@@ -507,36 +497,24 @@ class TestChecksConfigure(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(config, {
             'JAVA': java,
-            'JAVAH': javah,
-            'JAVAC': javac,
-            'JAR': jar,
             'JARSIGNER': jarsigner,
             'KEYTOOL': keytool,
+            'MOZ_JAVA_CODE_COVERAGE': False,
         })
         self.assertEqual(out, textwrap.dedent('''\
              checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
              checking for jarsigner... %s
              checking for keytool... %s
-             checking for javac... %s
-             checking for javac version... 1.8
-        ''' % (java, javah, jar, jarsigner, keytool, javac)))
+        ''' % (java, jarsigner, keytool)))
 
         # An alternative valid set of tools referred to by JAVA_HOME.
         alt_java = mozpath.abspath('/usr/local/bin/java')
-        alt_javah = mozpath.abspath('/usr/local/bin/javah')
-        alt_javac = mozpath.abspath('/usr/local/bin/javac')
-        alt_jar = mozpath.abspath('/usr/local/bin/jar')
         alt_jarsigner = mozpath.abspath('/usr/local/bin/jarsigner')
         alt_keytool = mozpath.abspath('/usr/local/bin/keytool')
         alt_java_home = mozpath.dirname(mozpath.dirname(alt_java))
 
         paths.update({
             alt_java: None,
-            alt_javah: None,
-            alt_javac: mock_valid_javac,
-            alt_jar: None,
             alt_jarsigner: None,
             alt_keytool: None,
         })
@@ -550,22 +528,15 @@ class TestChecksConfigure(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(config, {
             'JAVA': alt_java,
-            'JAVAH': alt_javah,
-            'JAVAC': alt_javac,
-            'JAR': alt_jar,
             'JARSIGNER': alt_jarsigner,
             'KEYTOOL': alt_keytool,
+            'MOZ_JAVA_CODE_COVERAGE': False,
         })
         self.assertEqual(out, textwrap.dedent('''\
              checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
              checking for jarsigner... %s
              checking for keytool... %s
-             checking for javac... %s
-             checking for javac version... 1.8
-        ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
-               alt_keytool, alt_javac)))
+        ''' % (alt_java, alt_jarsigner, alt_keytool)))
 
         # We can use --with-java-bin-path instead of JAVA_HOME to similar
         # effect.
@@ -579,22 +550,15 @@ class TestChecksConfigure(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(config, {
             'JAVA': alt_java,
-            'JAVAH': alt_javah,
-            'JAVAC': alt_javac,
-            'JAR': alt_jar,
             'JARSIGNER': alt_jarsigner,
             'KEYTOOL': alt_keytool,
+            'MOZ_JAVA_CODE_COVERAGE': False,
         })
         self.assertEqual(out, textwrap.dedent('''\
              checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
              checking for jarsigner... %s
              checking for keytool... %s
-             checking for javac... %s
-             checking for javac version... 1.8
-        ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
-               alt_keytool, alt_javac)))
+        ''' % (alt_java, alt_jarsigner, alt_keytool)))
 
         # If --with-java-bin-path and JAVA_HOME are both set,
         # --with-java-bin-path takes precedence.
@@ -609,54 +573,32 @@ class TestChecksConfigure(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(config, {
             'JAVA': alt_java,
-            'JAVAH': alt_javah,
-            'JAVAC': alt_javac,
-            'JAR': alt_jar,
             'JARSIGNER': alt_jarsigner,
             'KEYTOOL': alt_keytool,
+            'MOZ_JAVA_CODE_COVERAGE': False,
         })
         self.assertEqual(out, textwrap.dedent('''\
              checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
              checking for jarsigner... %s
              checking for keytool... %s
-             checking for javac... %s
-             checking for javac version... 1.8
-        ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
-               alt_keytool, alt_javac)))
+        ''' % (alt_java, alt_jarsigner, alt_keytool)))
 
-        def mock_old_javac(_, args):
-            if len(args) == 1 and args[0] == '-version':
-                return 0, '1.6.9', ''
-            self.fail("Unexpected arguments to mock_old_javac: %s" % args)
-
-        # An old javac is fatal.
-        paths[javac] = mock_old_javac
-        config, out, status = self.get_result(includes=includes,
-                                              extra_paths=paths,
-                                              environ={
-                                                  'PATH': mozpath.dirname(java)
-                                              })
-        self.assertEqual(status, 1)
+        # --enable-java-coverage should set MOZ_JAVA_CODE_COVERAGE.
+        config, out, status = self.get_result(
+            args=['--enable-java-coverage'],
+            includes=includes,
+            extra_paths=paths,
+            environ={
+                'PATH': mozpath.dirname(java),
+                'JAVA_HOME': mozpath.dirname(mozpath.dirname(java)),
+            })
+        self.assertEqual(status, 0)
         self.assertEqual(config, {
             'JAVA': java,
-            'JAVAH': javah,
-            'JAVAC': javac,
-            'JAR': jar,
             'JARSIGNER': jarsigner,
             'KEYTOOL': keytool,
+            'MOZ_JAVA_CODE_COVERAGE': True,
         })
-        self.assertEqual(out, textwrap.dedent('''\
-             checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
-             checking for jarsigner... %s
-             checking for keytool... %s
-             checking for javac... %s
-             checking for javac version... 
-             ERROR: javac 1.8 or higher is required (found 1.6.9). Check the JAVA_HOME environment variable.
-        ''' % (java, javah, jar, jarsigner, keytool, javac)))
 
         # Any missing tool is fatal when these checks run.
         del paths[jarsigner]
@@ -668,17 +610,13 @@ class TestChecksConfigure(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(config, {
             'JAVA': java,
-            'JAVAH': javah,
-            'JAR': jar,
             'JARSIGNER': ':',
         })
         self.assertEqual(out, textwrap.dedent('''\
              checking for java... %s
-             checking for javah... %s
-             checking for jar... %s
              checking for jarsigner... not found
              ERROR: The program jarsigner was not found.  Set $JAVA_HOME to your Java SDK directory or use '--with-java-bin-path={java-bin-dir}'
-        ''' % (java, javah, jar)))
+        ''' % (java)))
 
     def test_pkg_check_modules(self):
         mock_pkg_config_version = '0.10.0'
@@ -710,6 +648,8 @@ class TestChecksConfigure(unittest.TestCase):
         def get_result(cmd, args=[], extra_paths=None):
             return self.get_result(textwrap.dedent('''\
                 option('--disable-compile-environment', help='compile env')
+                compile_environment = depends(when='--enable-compile-environment')(lambda: True)
+                toolchain_prefix = depends(when=True)(lambda: None)
                 include('%(topsrcdir)s/build/moz.configure/util.configure')
                 include('%(topsrcdir)s/build/moz.configure/checks.configure')
                 include('%(topsrcdir)s/build/moz.configure/pkg.configure')

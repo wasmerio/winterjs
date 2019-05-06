@@ -29,6 +29,7 @@ include root.mk
 # Main rules (export, compile, libs and tools) call recurse_* rules.
 # This wrapping is only really useful for build status.
 $(TIERS)::
+	$(if $(filter $@,$(MAKECMDGOALS)),$(call BUILDSTATUS,TIERS $@),)
 	$(call BUILDSTATUS,TIER_START $@)
 	+$(MAKE) recurse_$@
 	$(call BUILDSTATUS,TIER_FINISH $@)
@@ -40,7 +41,7 @@ binaries::
 # Carefully avoid $(eval) type of rule generation, which makes pymake slower
 # than necessary.
 # Get current tier and corresponding subtiers from the data in root.mk.
-CURRENT_TIER := $(filter $(foreach tier,$(TIERS),recurse_$(tier) $(tier)-deps),$(MAKECMDGOALS))
+CURRENT_TIER := $(filter $(foreach tier,$(TIERS) $(non_default_tiers),recurse_$(tier) $(tier)-deps),$(MAKECMDGOALS))
 ifneq (,$(filter-out 0 1,$(words $(CURRENT_TIER))))
 $(error $(CURRENT_TIER) not supported on the same make command line)
 endif
@@ -76,7 +77,7 @@ $(syms_targets): %/syms: %/target
 
 # Only hook symbols targets into the main compile graph in automation.
 ifdef MOZ_AUTOMATION
-ifdef MOZ_CRASHREPORTER
+ifeq (1,$(MOZ_AUTOMATION_BUILD_SYMBOLS))
 recurse_compile: $(syms_targets)
 endif
 endif
@@ -165,15 +166,24 @@ ifeq (.,$(DEPTH))
 js/xpconnect/src/export: dom/bindings/export xpcom/xpidl/export
 accessible/xpcom/export: xpcom/xpidl/export
 
-# The widget binding generator code is part of the annotationProcessors.
-widget/android/bindings/export: build/annotationProcessors/export
+# The Android SDK bindings needs to build the Java generator code
+# source code in order to write the SDK bindings.
+widget/android/bindings/export: mobile/android/base/export
+
+# The widget JNI wrapper generator code needs to build the GeckoView
+# and Fennec source code in order to find JNI wrapper annotations.
+widget/android/fennec/export: mobile/android/base/export
+widget/android/export: mobile/android/base/export
 
 # .xpt generation needs the xpidl lex/yacc files
 xpcom/xpidl/export: xpcom/idl-parser/xpidl/export
 
+# CSS2Properties.webidl needs ServoCSSPropList.py from layout/style
+dom/bindings/export: layout/style/export
+
 ifdef ENABLE_CLANG_PLUGIN
-$(filter-out config/host build/unix/stdc++compat/% build/clang-plugin/%,$(compile_targets)): build/clang-plugin/target build/clang-plugin/tests/target
-build/clang-plugin/tests/target: build/clang-plugin/target
+$(filter-out config/host build/unix/stdc++compat/% build/clang-plugin/%,$(compile_targets)): build/clang-plugin/host build/clang-plugin/tests/target
+build/clang-plugin/tests/target: build/clang-plugin/host
 endif
 
 # Interdependencies that moz.build world don't know about yet for compilation.
@@ -188,4 +198,4 @@ endif
 endif
 # Most things are built during compile (target/host), but some things happen during export
 # Those need to depend on config/export for system wrappers.
-$(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/target: config/export
+$(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export

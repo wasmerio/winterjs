@@ -10,16 +10,19 @@ info: |
 
     7. If trap is undefined, then
         a. Return ? target.[[Set]](P, V, Receiver).
+features: [Proxy]
 ---*/
 
 var context;
 var target = {
-    set attr(val) {
-        context = this;
-    }
+  set attr(val) {
+    context = this;
+  }
 };
 
-var p = new Proxy(target, { set: null });
+var p = new Proxy(target, {
+  set: null
+});
 p.attr = 1;
 assert.sameValue(context, p);
 

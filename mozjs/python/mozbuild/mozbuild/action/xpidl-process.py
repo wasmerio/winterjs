@@ -15,46 +15,47 @@ import sys
 
 from io import BytesIO
 
+from xpidl import jsonxpt
 from buildconfig import topsrcdir
 from xpidl.header import print_header
 from xpidl.rust import print_rust_bindings
 from xpidl.rust_macros import print_rust_macros_bindings
-from xpidl.typelib import write_typelib
 from xpidl.xpidl import IDLParser
-from xpt import xpt_link
 
 from mozbuild.makeutil import Makefile
 from mozbuild.pythonutil import iter_modules_in_path
 from mozbuild.util import FileAvoidWrite
 
 
-def process(input_dir, inc_paths, cache_dir, header_dir, xpcrs_dir,
-            xpt_dir, deps_dir, module, stems):
+def process(input_dirs, inc_paths, bindings_conf, cache_dir, header_dir,
+            xpcrs_dir, xpt_dir, deps_dir, module, idl_files):
     p = IDLParser(outputdir=cache_dir)
 
-    xpts = {}
+    xpts = []
     mk = Makefile()
     rule = mk.create_rule()
+
+    glbl = {}
+    execfile(bindings_conf, glbl)
+    webidlconfig = glbl['DOMInterfaces']
 
     # Write out dependencies for Python modules we import. If this list isn't
     # up to date, we will not re-process XPIDL files if the processor changes.
     rule.add_dependencies(iter_modules_in_path(topsrcdir))
 
-    for stem in stems:
-        path = os.path.join(input_dir, '%s.idl' % stem)
+    for path in idl_files:
+        basename = os.path.basename(path)
+        stem, _ = os.path.splitext(basename)
         idl_data = open(path).read()
 
         idl = p.parse(idl_data, filename=path)
-        idl.resolve([input_dir] + inc_paths, p)
+        idl.resolve(inc_paths, p, webidlconfig)
 
         header_path = os.path.join(header_dir, '%s.h' % stem)
         rs_rt_path = os.path.join(xpcrs_dir, 'rt', '%s.rs' % stem)
         rs_bt_path = os.path.join(xpcrs_dir, 'bt', '%s.rs' % stem)
 
-        xpt = BytesIO()
-        write_typelib(idl, xpt, path)
-        xpt.seek(0)
-        xpts[stem] = xpt
+        xpts.append(jsonxpt.build_typelib(idl))
 
         rule.add_dependencies(idl.deps)
 
@@ -67,9 +68,14 @@ def process(input_dir, inc_paths, cache_dir, header_dir, xpcrs_dir,
         with FileAvoidWrite(rs_bt_path) as fh:
             print_rust_macros_bindings(idl, fh, path)
 
-    # TODO use FileAvoidWrite once it supports binary mode.
+    # NOTE: We don't use FileAvoidWrite here as we may re-run this code due to a
+    # number of different changes in the code, which may not cause the .xpt
+    # files to be changed in any way. This means that make will re-run us every
+    # time a build is run whether or not anything changed. To fix this we
+    # unconditionally write out the file.
     xpt_path = os.path.join(xpt_dir, '%s.xpt' % module)
-    xpt_link(xpts.values()).write(xpt_path)
+    with open(xpt_path, 'w') as fh:
+        jsonxpt.write(jsonxpt.link(xpts), fh)
 
     rule.add_targets([xpt_path])
     if deps_dir:
@@ -84,8 +90,11 @@ def main(argv):
         help='Directory in which to find or write cached lexer data.')
     parser.add_argument('--depsdir',
         help='Directory in which to write dependency files.')
-    parser.add_argument('inputdir',
-        help='Directory in which to find source .idl files.')
+    parser.add_argument('--bindings-conf',
+        help='Path to the WebIDL binding configuration file.')
+    parser.add_argument('--input-dir', dest='input_dirs',
+                        action='append', default=[],
+                        help='Directory(ies) in which to find source .idl files.')
     parser.add_argument('headerdir',
         help='Directory in which to write header files.')
     parser.add_argument('xpcrsdir',
@@ -95,13 +104,15 @@ def main(argv):
     parser.add_argument('module',
         help='Final module name to use for linked output xpt file.')
     parser.add_argument('idls', nargs='+',
-        help='Source .idl file(s). Specified as stems only.')
+        help='Source .idl file(s).')
     parser.add_argument('-I', dest='incpath', action='append', default=[],
         help='Extra directories where to look for included .idl files.')
 
     args = parser.parse_args(argv)
-    process(args.inputdir, args.incpath, args.cache_dir, args.headerdir,
-        args.xpcrsdir, args.xptdir, args.depsdir, args.module, args.idls)
+    incpath = [os.path.join(topsrcdir, p) for p in args.incpath]
+    process(args.input_dirs, incpath, args.bindings_conf, args.cache_dir,
+        args.headerdir, args.xpcrsdir, args.xptdir, args.depsdir, args.module,
+        args.idls)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

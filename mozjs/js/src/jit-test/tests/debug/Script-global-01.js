@@ -1,6 +1,6 @@
 // Debugger.Script.prototype.script returns the global the script runs in.
 
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger;
 var gw = dbg.addDebuggee(g);
 
@@ -16,5 +16,3 @@ assertEq(log, 'd');
 g.eval('function f() { debugger; }');
 g.f();
 assertEq(log, 'dd');
-
-assertEq(gw.getOwnPropertyDescriptor('f').value.global, gw);

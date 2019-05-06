@@ -12,6 +12,7 @@ info: |
   5. ReturnIfAbrupt(desc).
   6. Return FromPropertyDescriptor(desc).
 includes: [compareArray.js]
+features: [Reflect]
 ---*/
 
 var o1 = {
@@ -22,8 +23,7 @@ var result = Reflect.getOwnPropertyDescriptor(o1, 'p');
 
 assert(
   compareArray(
-    Object.keys(result),
-    ['value', 'writable', 'enumerable', 'configurable']
+    Object.keys(result), ['value', 'writable', 'enumerable', 'configurable']
   )
 );
 assert.sameValue(result.value, 'foo');

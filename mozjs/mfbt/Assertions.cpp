@@ -18,30 +18,22 @@ MOZ_BEGIN_EXTERN_C
  */
 MFBT_DATA const char* gMozCrashReason = nullptr;
 
-#ifndef DEBUG
-MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE void
-MOZ_CrashOOL(int aLine, const char* aReason)
-#else
-MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE void
-MOZ_CrashOOL(const char* aFilename, int aLine, const char* aReason)
-#endif
-{
-#ifdef DEBUG
-  MOZ_ReportCrash(aReason, aFilename, aLine);
-#endif
-  gMozCrashReason = aReason;
-  MOZ_REALLY_CRASH(aLine);
-}
-
 static char sPrintfCrashReason[sPrintfCrashReasonSize] = {};
-static mozilla::Atomic<bool> sCrashing(false);
+
+// Accesses to this atomic are not included in web replay recordings, so that
+// if we crash in an area where recorded events are not allowed the true reason
+// for the crash is not obscured by a record/replay error.
+static mozilla::Atomic<bool, mozilla::SequentiallyConsistent,
+                       mozilla::recordreplay::Behavior::DontPreserve>
+    sCrashing(false);
 
 #ifndef DEBUG
-MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE MOZ_FORMAT_PRINTF(2, 3) void
-MOZ_CrashPrintf(int aLine, const char* aFormat, ...)
+MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE MOZ_FORMAT_PRINTF(
+    2, 3) void MOZ_CrashPrintf(int aLine, const char* aFormat, ...)
 #else
-MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE MOZ_FORMAT_PRINTF(3, 4) void
-MOZ_CrashPrintf(const char* aFilename, int aLine, const char* aFormat, ...)
+MFBT_API MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE
+MOZ_FORMAT_PRINTF(3, 4) void MOZ_CrashPrintf(const char* aFilename, int aLine,
+                                             const char* aFormat, ...)
 #endif
 {
   if (!sCrashing.compareExchange(false, true)) {
@@ -51,16 +43,17 @@ MOZ_CrashPrintf(const char* aFilename, int aLine, const char* aFormat, ...)
   }
   va_list aArgs;
   va_start(aArgs, aFormat);
-  int ret = vsnprintf(sPrintfCrashReason, sPrintfCrashReasonSize,
-                      aFormat, aArgs);
+  int ret =
+      vsnprintf(sPrintfCrashReason, sPrintfCrashReasonSize, aFormat, aArgs);
   va_end(aArgs);
-  MOZ_RELEASE_ASSERT(ret >= 0 && size_t(ret) < sPrintfCrashReasonSize,
-    "Could not write the explanation string to the supplied buffer!");
+  MOZ_RELEASE_ASSERT(
+      ret >= 0 && size_t(ret) < sPrintfCrashReasonSize,
+      "Could not write the explanation string to the supplied buffer!");
 #ifdef DEBUG
-  MOZ_ReportCrash(sPrintfCrashReason, aFilename, aLine);
+  MOZ_CrashOOL(aFilename, aLine, sPrintfCrashReason);
+#else
+  MOZ_CrashOOL(nullptr, aLine, sPrintfCrashReason);
 #endif
-  gMozCrashReason = sPrintfCrashReason;
-  MOZ_REALLY_CRASH(aLine);
 }
 
 MOZ_END_EXTERN_C

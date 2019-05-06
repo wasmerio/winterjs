@@ -1,13 +1,10 @@
-// |jit-test| allow-oom
+// |jit-test| allow-oom; skip-if: !('oomTest' in this)
 
 // We need allow-oom here because the debugger reports an uncaught exception if
 // it hits OOM calling the exception unwind hook. This causes the shell to exit
 // with the OOM reason.
 
-if (!('oomTest' in this))
-    quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 g.parent = this;
 g.eval("new Debugger(parent).onExceptionUnwind = function() {}");
 let finished = false;

@@ -29,12 +29,10 @@
 #include "jit/arm64/vixl/Debugger-vixl.h"
 #include "jit/arm64/vixl/Simulator-vixl.h"
 #include "jit/IonTypes.h"
+#include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "threading/LockGuard.h"
 #include "vm/Runtime.h"
-#include "wasm/WasmInstance.h"
-#include "wasm/WasmProcess.h"
-#include "wasm/WasmSignalHandlers.h"
 
 js::jit::SimulatorProcess* js::jit::SimulatorProcess::singleton_ = nullptr;
 
@@ -45,9 +43,8 @@ using js::jit::ABIFunctionType;
 using js::jit::JitActivation;
 using js::jit::SimulatorProcess;
 
-Simulator::Simulator(JSContext* cx, Decoder* decoder, FILE* stream)
-  : cx_(cx)
-  , stream_(nullptr)
+Simulator::Simulator(Decoder* decoder, FILE* stream)
+  : stream_(nullptr)
   , print_disasm_(nullptr)
   , instrumentation_(nullptr)
   , stack_(nullptr)
@@ -86,7 +83,6 @@ void Simulator::ResetState() {
   // Reset registers to 0.
   pc_ = nullptr;
   pc_modified_ = false;
-  wasm_interrupt_ = false;
   for (unsigned i = 0; i < kNumberOfRegisters; i++) {
     set_xreg(i, 0xbadbeef);
   }
@@ -125,7 +121,7 @@ void Simulator::init(Decoder* decoder, FILE* stream) {
   ResetState();
 
   // Allocate and set up the simulator stack.
-  stack_ = (byte*)js_malloc(stack_size_);
+  stack_ = js_pod_malloc<byte>(stack_size_);
   if (!stack_) {
     oom_ = true;
     return;
@@ -141,10 +137,12 @@ void Simulator::init(Decoder* decoder, FILE* stream) {
   set_sp(tos);
 
   // Set the sample period to 10, as the VIXL examples and tests are short.
-  instrumentation_ = js_new<Instrument>("vixl_stats.csv", 10);
-  if (!instrumentation_) {
-    oom_ = true;
-    return;
+  if (getenv("VIXL_STATS")) {
+    instrumentation_ = js_new<Instrument>("vixl_stats.csv", 10);
+    if (!instrumentation_) {
+      oom_ = true;
+      return;
+    }
   }
 
   // Print a warning about exclusive-access instructions, but only the first
@@ -161,7 +159,7 @@ Simulator* Simulator::Current() {
 }
 
 
-Simulator* Simulator::Create(JSContext* cx) {
+Simulator* Simulator::Create() {
   Decoder *decoder = js_new<vixl::Decoder>();
   if (!decoder)
     return nullptr;
@@ -169,19 +167,17 @@ Simulator* Simulator::Create(JSContext* cx) {
   // FIXME: This just leaks the Decoder object for now, which is probably OK.
   // FIXME: We should free it at some point.
   // FIXME: Note that it can't be stored in the SimulatorRuntime due to lifetime conflicts.
-  Simulator *sim;
+  js::UniquePtr<Simulator> sim;
   if (getenv("USE_DEBUGGER") != nullptr)
-    sim = js_new<Debugger>(cx, decoder, stdout);
+    sim.reset(js_new<Debugger>(decoder, stdout));
   else
-    sim = js_new<Simulator>(cx, decoder, stdout);
+    sim.reset(js_new<Simulator>(decoder, stdout));
 
   // Check if Simulator:init ran out of memory.
-  if (sim && sim->oom()) {
-    js_delete(sim);
+  if (sim && sim->oom())
     return nullptr;
-  }
 
-  return sim;
+  return sim.release();
 }
 
 
@@ -195,15 +191,6 @@ void Simulator::ExecuteInstruction() {
   VIXL_ASSERT(IsWordAligned(pc_));
   decoder_->Decode(pc_);
   increment_pc();
-
-  if (MOZ_UNLIKELY(wasm_interrupt_)) {
-    handle_wasm_interrupt();
-    // Just calling set_pc turns the pc_modified_ flag on, which means it doesn't
-    // auto-step after executing the next instruction.  Force that to off so it
-    // will auto-step after executing the first instruction of the handler.
-    pc_modified_ = false;
-    wasm_interrupt_ = false;
-  }
 }
 
 
@@ -230,22 +217,6 @@ bool Simulator::overRecursedWithExtra(uint32_t extra) const {
 }
 
 
-void Simulator::trigger_wasm_interrupt() {
-  MOZ_ASSERT(!wasm_interrupt_);
-  wasm_interrupt_ = true;
-}
-
-
-static inline JitActivation*
-GetJitActivation(JSContext* cx)
-{
-    if (!js::wasm::CodeExists)
-        return nullptr;
-    if (!cx->activation() || !cx->activation()->isJit())
-        return nullptr;
-    return cx->activation()->asJit();
-}
-
 JS::ProfilingFrameIterator::RegisterState
 Simulator::registerState()
 {
@@ -255,71 +226,6 @@ Simulator::registerState()
   state.lr = (uint8_t*) get_lr();
   state.sp = (uint8_t*) get_sp();
   return state;
-}
-
-// The signal handler only redirects the PC to the interrupt stub when the PC is
-// in function code. However, this guard is racy for the ARM simulator since the
-// signal handler samples PC in the middle of simulating an instruction and thus
-// the current PC may have advanced once since the signal handler's guard. So we
-// re-check here.
-void Simulator::handle_wasm_interrupt()
-{
-  if (!js::wasm::CodeExists)
-    return;
-
-  uint8_t* pc = (uint8_t*)get_pc();
-
-  const js::wasm::ModuleSegment* ms = nullptr;
-  if (!js::wasm::InInterruptibleCode(cx_, pc, &ms))
-      return;
-
-  JitActivation* act = GetJitActivation(cx_);
-  if (!act)
-      return;
-
-  if (!act->startWasmInterrupt(registerState()))
-      return;
-
-  set_pc((Instruction*)ms->interruptCode());
-}
-
-bool
-Simulator::handle_wasm_seg_fault(uintptr_t addr, unsigned numBytes)
-{
-    JitActivation* act = GetJitActivation(cx_);
-    if (!act)
-        return false;
-
-    uint8_t* pc = (uint8_t*)get_pc();
-    uint8_t* fp = (uint8_t*)get_fp();
-
-    const js::wasm::CodeSegment* segment = js::wasm::LookupCodeSegment(pc);
-    if (!segment)
-        return false;
-    const js::wasm::ModuleSegment* moduleSegment = segment->asModule();
-
-    js::wasm::Instance* instance = js::wasm::LookupFaultingInstance(*moduleSegment, pc, fp);
-    if (!instance)
-	return false;
-
-    MOZ_RELEASE_ASSERT(&instance->code() == &moduleSegment->code());
-
-    if (!instance->memoryAccessInGuardRegion((uint8_t*)addr, numBytes))
-        return false;
-
-    const js::wasm::MemoryAccess* memoryAccess = instance->code().lookupMemoryAccess(pc);
-    if (!memoryAccess) {
-        if (!act->startWasmInterrupt(registerState()))
-	    MOZ_CRASH("Cannot start interrupt");
-        if (!instance->code().containsCodePC(pc))
-            MOZ_CRASH("Cannot map PC to trap handler");
-        set_pc((Instruction*)moduleSegment->outOfBoundsCode());
-        return true;
-    }
-
-    MOZ_ASSERT(memoryAccess->hasTrapOutOfLineCode());
-    set_pc((Instruction*)memoryAccess->trapOutOfLineCode(moduleSegment->base()));
-    return true;
 }
 
 int64_t Simulator::call(uint8_t* entry, int argument_count, ...) {
@@ -435,8 +341,9 @@ class Redirection
       }
     }
 
+    // Note: we can't use js_new here because the constructor is private.
     js::AutoEnterOOMUnsafeRegion oomUnsafe;
-    Redirection* redir = (Redirection*)js_malloc(sizeof(Redirection));
+    Redirection* redir = js_pod_malloc<Redirection>(1);
     if (!redir)
         oomUnsafe.crash("Simulator redirection");
     new(redir) Redirection(nativeFunction, type);
@@ -464,30 +371,6 @@ void* Simulator::RedirectNativeFunction(void* nativeFunction, ABIFunctionType ty
   return redirection->addressOfSvcInstruction();
 }
 
-bool
-Simulator::handle_wasm_ill_fault()
-{
-    JitActivation* act = GetJitActivation(cx_);
-    if (!act)
-        return false;
-
-    uint8_t* pc = (uint8_t*)get_pc();
-
-    const js::wasm::CodeSegment* segment = js::wasm::LookupCodeSegment(pc);
-    if (!segment || !segment->isModule())
-        return false;
-    const js::wasm::ModuleSegment* moduleSegment = segment->asModule();
-
-    js::wasm::Trap trap;
-    js::wasm::BytecodeOffset bytecode;
-    if (!moduleSegment->code().lookupTrap(pc, &trap, &bytecode))
-        return false;
-
-    act->startWasmTrap(trap, bytecode.offset, registerState());
-    set_pc((Instruction*)moduleSegment->trapCode());
-    return true;
-}
-
 void Simulator::VisitException(const Instruction* instr) {
   switch (instr->Mask(ExceptionMask)) {
     case BRK: {
@@ -498,10 +381,15 @@ void Simulator::VisitException(const Instruction* instr) {
     }
     case HLT:
       switch (instr->ImmException()) {
-        case kUnreachableOpcode:
-          if (!handle_wasm_ill_fault())
-              DoUnreachable(instr);
+        case kUnreachableOpcode: {
+          uint8_t* newPC;
+          if (js::wasm::HandleIllegalInstruction(registerState(), &newPC)) {
+            set_pc((Instruction*)newPC);
+            return;
+          }
+          DoUnreachable(instr);
           return;
+        }
         case kTraceOpcode:
           DoTrace(instr);
           return;
@@ -577,13 +465,13 @@ typedef int64_t (*Prototype_General7)(int64_t arg0, int64_t arg1, int64_t arg2, 
                                       int64_t arg4, int64_t arg5, int64_t arg6);
 typedef int64_t (*Prototype_General8)(int64_t arg0, int64_t arg1, int64_t arg2, int64_t arg3,
                                       int64_t arg4, int64_t arg5, int64_t arg6, int64_t arg7);
-typedef int64_t (*Prototype_GeneralGeneralGeneralInt64)(int64_t arg0, int32_t arg1, int32_t arg2,
+typedef int64_t (*Prototype_GeneralGeneralGeneralInt64)(int64_t arg0, int64_t arg1, int64_t arg2,
                                                         int64_t arg3);
-typedef int64_t (*Prototype_GeneralGeneralInt64Int64)(int64_t arg0, int32_t arg1, int64_t arg2,
+typedef int64_t (*Prototype_GeneralGeneralInt64Int64)(int64_t arg0, int64_t arg1, int64_t arg2,
                                                       int64_t arg3);
 
 typedef int64_t (*Prototype_Int_Double)(double arg0);
-typedef int64_t (*Prototype_Int_IntDouble)(int32_t arg0, double arg1);
+typedef int64_t (*Prototype_Int_IntDouble)(int64_t arg0, double arg1);
 typedef int64_t (*Prototype_Int_DoubleIntInt)(double arg0, uint64_t arg1, uint64_t arg2);
 typedef int64_t (*Prototype_Int_IntDoubleIntInt)(uint64_t arg0, double arg1,
                                                  uint64_t arg2, uint64_t arg3);
@@ -593,7 +481,7 @@ typedef float (*Prototype_Float32_Float32Float32)(float arg0, float arg1);
 
 typedef double (*Prototype_Double_None)();
 typedef double (*Prototype_Double_Double)(double arg0);
-typedef double (*Prototype_Double_Int)(int32_t arg0);
+typedef double (*Prototype_Double_Int)(int64_t arg0);
 typedef double (*Prototype_Double_DoubleInt)(double arg0, int64_t arg1);
 typedef double (*Prototype_Double_IntDouble)(int64_t arg0, double arg1);
 typedef double (*Prototype_Double_DoubleDouble)(double arg0, double arg1);

@@ -12,11 +12,14 @@ info: |
   3. ReturnIfAbrupt(keys).
   4. Return CreateArrayFromList(keys).
 includes: [compareArray.js]
+features: [Reflect]
 ---*/
 
 assert(compareArray(Reflect.ownKeys({}), []));
 
-var o = {d: 42};
+var o = {
+  d: 42
+};
 delete o.d;
 assert(compareArray(Reflect.ownKeys(o), []));
 

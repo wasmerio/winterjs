@@ -10,9 +10,11 @@ info: |
   ...
   4. Perform PrepareForTailCall().
   5. Return Call(target, thisArgument, args).
+features: [Reflect]
 ---*/
 
 var o = {};
+
 function fn() {
   return o;
 }

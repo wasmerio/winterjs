@@ -57,7 +57,9 @@ var thisVal = {
   },
   get valueOf() {
     valueOfAccessed += 1;
-    return function() { return ' 42'; };
+    return function() {
+      return ' 42';
+    };
   },
 };
 
@@ -74,7 +76,7 @@ assert.sameValue(
 assert.sameValue(
   result,
   '42',
-  'thisVal.valueOf expected to have been called.',
+  'thisVal.valueOf expected to have been called.'
 );
 
 // Test that thisVal[toPrimitive] and thisVal.toString has been accessed.

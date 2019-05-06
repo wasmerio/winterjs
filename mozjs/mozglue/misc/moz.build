@@ -33,8 +33,26 @@ OS_LIBS += CONFIG['REALTIME_LIBS']
 DEFINES['IMPL_MFBT'] = True
 
 if CONFIG['OS_ARCH'] == 'WINNT':
+    EXPORTS += [
+        'nsWindowsDllInterceptor.h',
+    ]
+    EXPORTS.mozilla += [
+        'DynamicallyLinkedFunctionPtr.h',
+        'NativeNt.h',
+        'WindowsMapRemoteView.h',
+    ]
+    EXPORTS.mozilla.interceptor += [
+        'interceptor/MMPolicies.h',
+        'interceptor/PatcherBase.h',
+        'interceptor/PatcherDetour.h',
+        'interceptor/PatcherNopSpace.h',
+        'interceptor/TargetFunction.h',
+        'interceptor/Trampoline.h',
+        'interceptor/VMSharingPolicies.h',
+    ]
     SOURCES += [
         'TimeStamp_windows.cpp',
+        'WindowsMapRemoteView.cpp',
     ]
     OS_LIBS += ['dbghelp']
 elif CONFIG['HAVE_CLOCK_MONOTONIC']:

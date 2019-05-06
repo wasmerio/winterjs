@@ -23,7 +23,7 @@ ar{
             patterns{
                 currencyFormat{"#,##0.00 ¤"}
                 decimalFormat{"#,##0.###"}
-                percentFormat{"#,##0 %"}
+                percentFormat{"#,##0%"}
                 scientificFormat{"#E0"}
             }
             symbols{
@@ -42,9 +42,12 @@ ar{
             }
         }
         default{"arab"}
+        default_latn{"latn"}
         latn{
             miscPatterns{
+                approximately{"~{0}"}
                 atLeast{"+{0}"}
+                atMost{"≤{0}"}
                 range{"{0}–{1}"}
             }
             patterns{
@@ -383,7 +386,7 @@ ar{
         minimumGroupingDigits{"1"}
         native{"arab"}
     }
-    Version{"2.1.36.86"}
+    Version{"2.1.43.50"}
     calendar{
         buddhist{
             eras{
@@ -1634,6 +1637,7 @@ ar{
                     "تيشو",
                     "شووا",
                     "هيسي",
+                    "Qqqq",
                 }
             }
         }
@@ -2964,8 +2968,13 @@ ar{
         general{
             lenient{
                 "[.․。︒﹒．｡]",
+                "['ʼ՚᾽᾿’＇]",
+                "[%٪﹪％]",
+                "[؉‰]",
                 "[\$﹩＄$]",
                 "[£₤]",
+                "[¥￥]",
+                "[₩￦]",
                 "[₨₹{Rp}{Rs}]",
             }
         }

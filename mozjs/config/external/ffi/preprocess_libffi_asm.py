@@ -11,7 +11,8 @@ import re
 import shlex
 import subprocess
 
-def main(output, input_asm, defines, includes):
+
+def main(output, input_asm, ffi_h, ffi_config_h, defines, includes):
     defines = shlex.split(defines)
     includes = shlex.split(includes)
     # CPP uses -E which generates #line directives. -EP suppresses them.

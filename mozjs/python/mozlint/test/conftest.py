@@ -6,6 +6,7 @@ from __future__ import absolute_import
 
 import os
 import sys
+from argparse import Namespace
 
 import pytest
 
@@ -18,7 +19,19 @@ here = os.path.abspath(os.path.dirname(__file__))
 @pytest.fixture
 def lint(request):
     lintargs = getattr(request.module, 'lintargs', {})
-    return LintRoller(root=here, **lintargs)
+    lint = LintRoller(root=here, **lintargs)
+
+    # Add a few super powers to our lint instance
+    def mock_vcs(files):
+        def _fake_vcs_files(*args, **kwargs):
+            return files
+
+        setattr(lint.vcs, 'get_changed_files', _fake_vcs_files)
+        setattr(lint.vcs, 'get_outgoing_files', _fake_vcs_files)
+
+    setattr(lint, 'vcs', Namespace())
+    setattr(lint, 'mock_vcs', mock_vcs)
+    return lint
 
 
 @pytest.fixture(scope='session')
@@ -41,7 +54,11 @@ def lintdir():
 
 
 @pytest.fixture(scope='module')
-def linters(lintdir, request):
-    suffix_filter = getattr(request.module, 'linters', ['.yml'])
-    return [os.path.join(lintdir, p) for p in os.listdir(lintdir)
-            if any(p.endswith(suffix) for suffix in suffix_filter)]
+def linters(lintdir):
+
+    def inner(*names):
+        return [os.path.join(lintdir, p) for p in os.listdir(lintdir)
+                if any(os.path.splitext(p)[0] == name for name in names)
+                if os.path.splitext(p)[1] == '.yml']
+
+    return inner

@@ -7,18 +7,9 @@ dnl disabling frame pointers in this architecture based on the configure
 dnl options
 
 AC_DEFUN([MOZ_SET_FRAMEPTR_FLAGS], [
-  case "$target" in
-  *android*)
-    unwind_tables="-funwind-tables"
-    ;;
-  esac
   if test "$GNU_CC"; then
-    MOZ_ENABLE_FRAME_PTR="-fno-omit-frame-pointer $unwind_tables"
-    MOZ_DISABLE_FRAME_PTR="-fomit-frame-pointer"
-    if test "$CPU_ARCH" = arm; then
-      # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=54398
-      MOZ_ENABLE_FRAME_PTR="$unwind_tables"
-    fi
+    MOZ_ENABLE_FRAME_PTR="-fno-omit-frame-pointer -funwind-tables"
+    MOZ_DISABLE_FRAME_PTR="-fomit-frame-pointer -funwind-tables"
   else
     case "$target" in
     dnl Oy (Frame-Pointer Omission) is only support on x86 compilers
@@ -30,13 +21,16 @@ AC_DEFUN([MOZ_SET_FRAMEPTR_FLAGS], [
   fi
 
   # If we are debugging, profiling, using sanitizers, or on win32 we want a
-  # frame pointer.
+  # frame pointer.  It is not required to enable frame pointers on AArch64
+  # Windows, but we enable it for compatibility with ETW.
   if test -z "$MOZ_OPTIMIZE" -o \
           -n "$MOZ_PROFILING" -o \
           -n "$MOZ_DEBUG" -o \
           -n "$MOZ_MSAN" -o \
           -n "$MOZ_ASAN" -o \
-          "$OS_ARCH:$CPU_ARCH" = "WINNT:x86"; then
+          -n "$MOZ_UBSAN" -o \
+          "$OS_ARCH:$CPU_ARCH" = "WINNT:x86" -o \
+	  "$OS_ARCH:$CPU_ARCH" = "WINNT:aarch64"; then
     MOZ_FRAMEPTR_FLAGS="$MOZ_ENABLE_FRAME_PTR"
   else
     MOZ_FRAMEPTR_FLAGS="$MOZ_DISABLE_FRAME_PTR"

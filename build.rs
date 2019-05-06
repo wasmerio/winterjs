@@ -19,32 +19,6 @@ fn main() {
         panic!("Rustc doesn't support MSVC debug runtime.");
     }
 
-    if target.contains("windows") && host != target {
-        assert_eq!(host, "x86_64-pc-windows-msvc",
-                   "Only cross-compiling from x64 is supported");
-        assert_eq!(target, "i686-pc-windows-msvc",
-                   "Only cross-compiling to x86 is supported");
-        assert!(env::var("VSINSTALLDIR").is_err());
-        // When cross-compiling on Windows, we need to ensure that the PATH is
-        // set up appropriately for the target before invoking make.
-        if env::var("VCVARSALL_PATH").is_err() {
-            panic!("Need to provide VCVARSALL_PATH value with path to \
-                    vcvarsall.bat from Visual Studio installation");
-        }
-
-        let vcvars = Command::new("vcvars.bat").output().unwrap();
-        assert!(vcvars.status.success());
-        let output = str::from_utf8(&vcvars.stdout).unwrap();
-        for line in output.lines() {
-	    let mut parts = line.splitn(2, '=');
-	    if let Some(name) = parts.next() {
-	        if let Some(value) = parts.next() {
-		    env::set_var(name, value);
-	        }
-	    }
-        }
-    }
-
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();
@@ -91,6 +65,7 @@ fn cc_flags() -> Vec<&'static str> {
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
+            "-Wno-unused-private-field",
         ]);
     }
 
@@ -142,8 +117,6 @@ fn build_jsapi() {
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
-    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
-    println!("cargo:rustc-link-lib=static=mozglue");
     if target.contains("windows") {
         println!("cargo:rustc-link-search=native={}/dist/bin", out_dir);
         println!("cargo:rustc-link-lib=winmm");
@@ -161,6 +134,7 @@ fn build_jsapi() {
         println!("cargo:rustc-link-lib=stdc++");
     }
     println!("cargo:outdir={}", out_dir);
+    println!("cargo:rerun-if-changed=makefile.cargo");
 }
 
 
@@ -312,7 +286,6 @@ const WHITELIST_VARS: &'static [&'static str] = &[
     "JSCLASS_.*",
     "JSFUN_.*",
     "JSITER_.*",
-    "JSID_VOID",
     "JSPROP_.*",
     "JS_.*",
 ];
@@ -340,13 +313,13 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "JS::ReadOnlyCompileOptions",
     "JS::Rooted<JS::Auto.*Vector.*>",
     "JS::detail::CallArgsBase.*",
-    "js::HashMap.*",
     "js::detail::UniqueSelector.*",
-    "js::detail::HashTable.*",
     "mozilla::BufferList",
     "mozilla::Maybe.*",
     "mozilla::UniquePtr.*",
     "mozilla::Variant",
+    "mozilla::Hash.*",
+    "mozilla::detail::Hash.*",
     "RefPtr_Proxy.*",
 ];
 
@@ -372,5 +345,4 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type JSJitInfo = ::jsjit::JSJitInfo;"),
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
-    ("root::JS", "pub type AutoGCRooterTag = AutoGCRooter__bindgen_ty_1;"),
 ];

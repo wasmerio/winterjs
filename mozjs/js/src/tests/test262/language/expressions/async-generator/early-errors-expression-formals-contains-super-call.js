@@ -4,7 +4,7 @@
 
 /*---
 author: Caitlin Potter <caitp@igalia.com>
-esid: pending
+esid: sec-async-generator-function-definitions-static-semantics-early-errors
 description: >
   It is a syntax error if FormalParameters contains SuperCall is true.
 negative:
@@ -13,6 +13,6 @@ negative:
 features: [async-iteration]
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 (async function*(a = super()) { });

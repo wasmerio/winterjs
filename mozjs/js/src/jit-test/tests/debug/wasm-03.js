@@ -1,11 +1,10 @@
+// |jit-test| skip-if: !wasmDebuggingIsSupported()
+
 // Tests that wasm module scripts have synthesized sources.
 
 load(libdir + "asserts.js");
 
-if (!wasmDebuggingIsSupported())
-  quit();
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg = new Debugger(g);
 
 var s;

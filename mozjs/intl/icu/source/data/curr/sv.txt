@@ -684,6 +684,10 @@ sv{
         }
         MRO{
             "MRO",
+            "mauretansk ouguiya (1973–2017)",
+        }
+        MRU{
+            "MRU",
             "mauretansk ouguiya",
         }
         MTL{
@@ -916,6 +920,10 @@ sv{
         }
         STD{
             "STD",
+            "saotomeansk dobra (1977–2017)",
+        }
+        STN{
+            "STN",
             "saotomeansk dobra",
         }
         SUR{
@@ -1036,6 +1044,10 @@ sv{
         }
         VEF{
             "VEF",
+            "venezuelansk bolívar (2008–2018)",
+        }
+        VES{
+            "VES",
             "venezuelansk bolívar",
         }
         VND{
@@ -1135,7 +1147,7 @@ sv{
             "afrikansk kontoenhet",
         }
         XXX{
-            "XXX",
+            "¤",
             "okänd valuta",
         }
         YDD{
@@ -1280,7 +1292,7 @@ sv{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -1982,6 +1994,10 @@ sv{
             other{"makanesiska pataca"}
         }
         MRO{
+            one{"mauretansk ouguiya (1973–2017)"}
+            other{"mauretanska ouguiya (1973–2017)"}
+        }
+        MRU{
             one{"mauretansk ouguiya"}
             other{"mauretanska ouguiya"}
         }
@@ -2214,6 +2230,10 @@ sv{
             other{"sydsudanesiska pund"}
         }
         STD{
+            one{"saotomeansk dobra (1977–2017)"}
+            other{"saotomeanska dobra (1977–2017)"}
+        }
+        STN{
             one{"saotomeansk dobra"}
             other{"saotomeanska dobra"}
         }
@@ -2334,6 +2354,10 @@ sv{
             other{"venezuelanska bolivar (1871–2008)"}
         }
         VEF{
+            one{"venezuelansk bolívar (2008–2018)"}
+            other{"venezuelanska bolívar (2008–2018)"}
+        }
+        VES{
             one{"venezuelansk bolívar"}
             other{"venezuelanska bolívar"}
         }
@@ -2502,5 +2526,5 @@ sv{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.37.5"}
+    Version{"2.1.43.94"}
 }

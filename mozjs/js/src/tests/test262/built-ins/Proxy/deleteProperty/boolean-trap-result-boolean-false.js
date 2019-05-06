@@ -6,25 +6,25 @@ description: >
     [[Delete]] (P)
 
     The result is a Boolean value.
-features: [Reflect]
+features: [Proxy, Reflect]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    deleteProperty: function() {
-        return 0;
-    }
+  deleteProperty: function() {
+    return 0;
+  }
 });
 
 Object.defineProperties(target, {
-    isConfigurable: {
-        value: 1,
-        configurable: true
-    },
-    notConfigurable: {
-        value: 1,
-        configurable: false
-    }
+  isConfigurable: {
+    value: 1,
+    configurable: true
+  },
+  notConfigurable: {
+    value: 1,
+    configurable: false
+  }
 });
 
 assert.sameValue(Reflect.deleteProperty(p, "attr"), false);

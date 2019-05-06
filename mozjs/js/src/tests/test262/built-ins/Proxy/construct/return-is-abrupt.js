@@ -9,17 +9,18 @@ info: |
 
     9. Let newObj be Call(trap, handler, «target, argArray, newTarget »).
     10. ReturnIfAbrupt(newObj).
+features: [Proxy]
 ---*/
 
 function Target() {}
 var P = new Proxy(Target, {
-    construct: function() {
-        throw new Test262Error();
-    }
+  construct: function() {
+    throw new Test262Error();
+  }
 });
 
 assert.throws(Test262Error, function() {
-    new P();
+  new P();
 });
 
 reportCompare(0, 0);

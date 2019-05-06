@@ -38,6 +38,7 @@
 #include "uresimp.h"
 #include "ureslocs.h"
 #include "charstr.h"
+#include "uassert.h"
 
 // *****************************************************************************
 // class DecimalFormatSymbols
@@ -65,7 +66,7 @@ static const UChar INTL_CURRENCY_SYMBOL_STR[] = {0xa4, 0xa4, 0};
 static const char *gNumberElementKeys[DecimalFormatSymbols::kFormatSymbolCount] = {
     "decimal",
     "group",
-    "list",
+    NULL, /* #11897: the <list> symbol is NOT the pattern separator symbol */
     "percentSign",
     NULL, /* Native zero digit is deprecated from CLDR - get it from the numbering system */
     NULL, /* Pattern digit character is deprecated from CLDR - use # by default always */
@@ -97,7 +98,7 @@ static const char *gNumberElementKeys[DecimalFormatSymbols::kFormatSymbolCount] 
 // Initializes this with the decimal format symbols in the default locale.
 
 DecimalFormatSymbols::DecimalFormatSymbols(UErrorCode& status)
-        : UObject(), locale() {
+        : UObject(), locale(), currPattern(NULL) {
     initialize(locale, status, TRUE);
 }
 
@@ -105,12 +106,12 @@ DecimalFormatSymbols::DecimalFormatSymbols(UErrorCode& status)
 // Initializes this with the decimal format symbols in the desired locale.
 
 DecimalFormatSymbols::DecimalFormatSymbols(const Locale& loc, UErrorCode& status)
-        : UObject(), locale(loc) {
+        : UObject(), locale(loc), currPattern(NULL) {
     initialize(locale, status);
 }
 
 DecimalFormatSymbols::DecimalFormatSymbols(const Locale& loc, const NumberingSystem& ns, UErrorCode& status)
-        : UObject(), locale(loc) {
+        : UObject(), locale(loc), currPattern(NULL) {
     initialize(locale, status, FALSE, &ns);
 }
 
@@ -165,6 +166,7 @@ DecimalFormatSymbols::operator=(const DecimalFormatSymbols& rhs)
         uprv_strcpy(actualLocale, rhs.actualLocale);
         fIsCustomCurrencySymbol = rhs.fIsCustomCurrencySymbol; 
         fIsCustomIntlCurrencySymbol = rhs.fIsCustomIntlCurrencySymbol; 
+        fCodePointZero = rhs.fCodePointZero;
     }
     return *this;
 }
@@ -196,6 +198,7 @@ DecimalFormatSymbols::operator==(const DecimalFormatSymbols& that) const
             return FALSE;
         }
     }
+    // No need to check fCodePointZero since it is based on fSymbols
     return locale == that.locale &&
         uprv_strcmp(validLocale, that.validLocale) == 0 &&
         uprv_strcmp(actualLocale, that.actualLocale) == 0;
@@ -346,7 +349,6 @@ DecimalFormatSymbols::initialize(const Locale& loc, UErrorCode& status,
 {
     if (U_FAILURE(status)) { return; }
     *validLocale = *actualLocale = 0;
-    currPattern = NULL;
 
     // First initialize all the symbols to the fallbacks for anything we can't find
     initialize();
@@ -433,6 +435,24 @@ DecimalFormatSymbols::initialize(const Locale& loc, UErrorCode& status,
     // Let the monetary number separators equal the default number separators if necessary.
     sink.resolveMissingMonetarySeparators(fSymbols);
 
+    // Resolve codePointZero
+    UChar32 tempCodePointZero = -1;
+    for (int32_t i=0; i<=9; i++) {
+        const UnicodeString& stringDigit = getConstDigitSymbol(i);
+        if (stringDigit.countChar32() != 1) {
+            tempCodePointZero = -1;
+            break;
+        }
+        UChar32 cp = stringDigit.char32At(0);
+        if (i == 0) {
+            tempCodePointZero = cp;
+        } else if (cp != tempCodePointZero + i) {
+            tempCodePointZero = -1;
+            break;
+        }
+    }
+    fCodePointZero = tempCodePointZero;
+
     // Obtain currency data from the currency API.  This is strictly
     // for backward compatibility; we don't use DecimalFormatSymbols
     // for currency data anymore.
@@ -456,6 +476,7 @@ DecimalFormatSymbols::initialize(const Locale& loc, UErrorCode& status,
     UErrorCode localStatus = U_ZERO_ERROR;
     uccLen = ucurr_forLocale(locName, ucc, uccLen, &localStatus);
 
+    // TODO: Currency pattern data loading is duplicated in number_formatimpl.cpp
     if(U_SUCCESS(localStatus) && uccLen > 0) {
         char cc[4]={0};
         u_UCharsToChars(ucc, cc, uccLen);
@@ -530,6 +551,8 @@ DecimalFormatSymbols::initialize() {
     fSymbols[kExponentMultiplicationSymbol] = (UChar)0xd7; // 'x' multiplication symbol for exponents
     fIsCustomCurrencySymbol = FALSE; 
     fIsCustomIntlCurrencySymbol = FALSE;
+    fCodePointZero = 0x30;
+    U_ASSERT(fCodePointZero == fSymbols[kZeroDigitSymbol].char32At(0));
 
 }
 

@@ -24,26 +24,27 @@ info: |
         a. If targetDesc is undefined or targetDesc.[[Configurable]] is true, then
             i. Throw a TypeError exception.
 
+features: [Proxy]
 ---*/
 
 var target = {};
 
 var p = new Proxy(target, {
-    getOwnPropertyDescriptor: function(t, prop) {
-        var foo = {};
+  getOwnPropertyDescriptor: function(t, prop) {
+    var foo = {};
 
-        Object.defineProperty(foo, "bar", {
-            configurable: false,
-            enumerable: true,
-            value: 1
-        });
+    Object.defineProperty(foo, "bar", {
+      configurable: false,
+      enumerable: true,
+      value: 1
+    });
 
-        return Object.getOwnPropertyDescriptor(foo, prop);
-    }
+    return Object.getOwnPropertyDescriptor(foo, prop);
+  }
 });
 
 assert.throws(TypeError, function() {
-    Object.getOwnPropertyDescriptor(p, "bar");
+  Object.getOwnPropertyDescriptor(p, "bar");
 });
 
 reportCompare(0, 0);

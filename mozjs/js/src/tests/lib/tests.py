@@ -3,55 +3,53 @@
 # This contains classes that represent an individual test, including
 # metadata, and know how to run the tests and determine failures.
 
-import datetime, os, sys, time
+import os
+import sys
 from contextlib import contextmanager
-from subprocess import Popen, PIPE
-from threading import Thread
-
-from results import TestOutput
 
 # When run on tbpl, we run each test multiple times with the following
 # arguments.
 JITFLAGS = {
     'all': [
-        [], # no flags, normal baseline and ion
-        ['--ion-eager', '--ion-offthread-compile=off'], # implies --baseline-eager
-        ['--ion-eager', '--ion-offthread-compile=off', '--non-writable-jitcode',
+        [],  # no flags, normal baseline and ion
+        ['--ion-eager', '--ion-offthread-compile=off',  # implies --baseline-eager
+         '--more-compartments'],
+        ['--ion-eager', '--ion-offthread-compile=off',
          '--ion-check-range-analysis', '--ion-extra-checks', '--no-sse3', '--no-threads'],
         ['--baseline-eager'],
-        ['--no-baseline', '--no-ion'],
+        ['--no-baseline', '--no-ion', '--more-compartments'],
     ],
     # used by jit_test.py
     'ion': [
         ['--baseline-eager'],
-        ['--ion-eager', '--ion-offthread-compile=off']
+        ['--ion-eager', '--ion-offthread-compile=off', '--more-compartments']
     ],
     # Run reduced variants on debug builds, since they take longer time.
     'debug': [
-        [], # no flags, normal baseline and ion
-        ['--ion-eager', '--ion-offthread-compile=off'], # implies --baseline-eager
+        [],  # no flags, normal baseline and ion
+        ['--ion-eager', '--ion-offthread-compile=off',  # implies --baseline-eager
+         '--more-compartments'],
         ['--baseline-eager'],
     ],
-    # Cover cases useful for tsan. Note that tsan on try messes up the signal
-    # handler (bug 1362239), so must avoid wasm/asmjs.
+    # Cover cases useful for tsan. Note that we test --ion-eager without
+    # --ion-offthread-compile=off here, because it helps catch races.
     'tsan': [
-        ['--no-asmjs', '--no-wasm'],
-        ['--no-asmjs', '--no-wasm',
-         '--ion-eager', '--ion-offthread-compile=off', '--non-writable-jitcode',
-         '--ion-check-range-analysis', '--ion-extra-checks', '--no-sse3', '--no-threads'],
-        ['--no-asmjs', '--no-wasm', '--no-baseline', '--no-ion'],
+        [],
+        ['--ion-eager', '--ion-check-range-analysis', '--ion-extra-checks', '--no-sse3'],
+        ['--no-baseline', '--no-ion'],
     ],
     'baseline': [
         ['--no-ion'],
     ],
     # Interpreter-only, for tools that cannot handle binary code generation.
     'interp': [
-        ['--no-baseline', '--no-asmjs', '--no-wasm', '--no-native-regexp']
+        ['--no-baseline', '--no-asmjs', '--wasm-compiler=none', '--no-native-regexp']
     ],
     'none': [
-        [] # no flags, normal baseline and ion
+        []  # no flags, normal baseline and ion
     ]
 }
+
 
 def get_jitflags(variant, **kwargs):
     if variant not in JITFLAGS:
@@ -61,8 +59,10 @@ def get_jitflags(variant, **kwargs):
         return kwargs['none']
     return JITFLAGS[variant]
 
+
 def valid_jitflags():
     return JITFLAGS.keys()
+
 
 def get_environment_overlay(js_shell):
     """
@@ -73,7 +73,7 @@ def get_environment_overlay(js_shell):
         # Force Pacific time zone to avoid failures in Date tests.
         'TZ': 'PST8PDT',
         # Force date strings to English.
-        'LC_TIME': 'en_US.UTF-8',
+        'LC_ALL': 'en_US.UTF-8',
         # Tell the shell to disable crash dialogs on windows.
         'XRE_NO_WINDOWS_CRASH_DIALOG': '1',
     }
@@ -144,49 +144,33 @@ def get_cpu_count():
     return 1
 
 
-class RefTest(object):
-    """A runnable test."""
-    def __init__(self, path):
-        self.path = path     # str:  path of JS file relative to tests root dir
-        self.options = []    # [str]: Extra options to pass to the shell
-        self.jitflags = []   # [str]: JIT flags to pass to the shell
-        self.test_reflect_stringify = None  # str or None: path to
-                                            # reflect-stringify.js file to test
-                                            # instead of actually running tests
-        self.is_module = False # bool: True => test is module code
-
-    @staticmethod
-    def prefix_command(path):
-        """Return the '-f shell.js' options needed to run a test with the given
-        path."""
-        if path == '':
-            return ['-f', 'shell.js']
-        head, base = os.path.split(path)
-        return RefTest.prefix_command(head) \
-            + ['-f', os.path.join(path, 'shell.js')]
-
-    def get_command(self, prefix):
-        dirname, filename = os.path.split(self.path)
-        cmd = prefix + self.jitflags + self.options \
-              + RefTest.prefix_command(dirname)
-        if self.test_reflect_stringify is not None:
-            cmd += [self.test_reflect_stringify, "--check", self.path]
-        elif self.is_module:
-            cmd += ["--module", self.path]
-        else:
-            cmd += ["-f", self.path]
-        return cmd
-
-
-class RefTestCase(RefTest):
+class RefTestCase(object):
     """A test case consisting of a test and an expected result."""
-    def __init__(self, path):
-        RefTest.__init__(self, path)
-        self.enable = True   # bool: True => run test, False => don't run
-        self.error = None    # str?: Optional error type
-        self.expect = True   # bool: expected result, True => pass
-        self.random = False  # bool: True => ignore output as 'random'
-        self.slow = False    # bool: True => test may run slowly
+
+    def __init__(self, root, path, extra_helper_paths=None, wpt=None):
+        # str:  path of the tests root dir
+        self.root = root
+        # str:  path of JS file relative to tests root dir
+        self.path = path
+        # [str]: Extra options to pass to the shell
+        self.options = []
+        # [str]: JIT flags to pass to the shell
+        self.jitflags = []
+        # str or None: path to reflect-stringify.js file to test
+        # instead of actually running tests
+        self.test_reflect_stringify = None
+        # bool: True => test is module code
+        self.is_module = False
+        # bool: True => run test, False => don't run
+        self.enable = True
+        # str?: Optional error type
+        self.error = None
+        # bool: expected result, True => pass
+        self.expect = True
+        # bool: True => ignore output as 'random'
+        self.random = False
+        # bool: True => test may run slowly
+        self.slow = False
 
         # The terms parsed to produce the above properties.
         self.terms = None
@@ -196,6 +180,41 @@ class RefTestCase(RefTest):
 
         # Anything occuring after -- in the test header.
         self.comment = None
+
+        self.extra_helper_paths = extra_helper_paths or []
+        self.wpt = wpt
+
+    def prefix_command(self):
+        """Return the '-f' options needed to run a test with the given path."""
+        path = self.path
+        prefix = []
+        while path != '':
+            assert path != '/'
+            path = os.path.dirname(path)
+            shell_path = os.path.join(self.root, path, 'shell.js')
+            if os.path.exists(shell_path):
+                prefix.append(shell_path)
+                prefix.append('-f')
+        prefix.reverse()
+
+        for extra_path in self.extra_helper_paths:
+            prefix.append('-f')
+            prefix.append(extra_path)
+
+        return prefix
+
+    def abs_path(self):
+        return os.path.join(self.root, self.path)
+
+    def get_command(self, prefix):
+        cmd = prefix + self.jitflags + self.options + self.prefix_command()
+        if self.test_reflect_stringify is not None:
+            cmd += [self.test_reflect_stringify, "--check", self.abs_path()]
+        elif self.is_module:
+            cmd += ["--module", self.abs_path()]
+        else:
+            cmd += ["-f", self.abs_path()]
+        return cmd
 
     def __str__(self):
         ans = self.path
@@ -232,3 +251,6 @@ class RefTestCase(RefTest):
 
     def __hash__(self):
         return self.path.__hash__()
+
+    def __repr__(self):
+        return "<lib.tests.RefTestCase %s>" % (self.path,)

@@ -13,14 +13,15 @@ info: |
     7.3.9 GetMethod (O, P)
 
     5. If IsCallable(func) is false, throw a TypeError exception.
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
-    deleteProperty: {}
+  deleteProperty: {}
 });
 
 assert.throws(TypeError, function() {
-    delete p.attr;
+  delete p.attr;
 });
 
 reportCompare(0, 0);

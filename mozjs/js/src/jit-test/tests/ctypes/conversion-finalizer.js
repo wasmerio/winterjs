@@ -1,3 +1,5 @@
+// |jit-test| skip-if: getBuildConfiguration()['arm'] || getBuildConfiguration()['arm64']
+// skip on arm, arm64 due to bug 1511615
 load(libdir + 'asserts.js');
 
 function test() {

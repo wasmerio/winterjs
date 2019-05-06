@@ -7,10 +7,11 @@ description: >
     ...
     1. If Type(target) is not Object, throw a TypeError exception.
     ...
+features: [Proxy]
 ---*/
 
 assert.throws(TypeError, function() {
-    new Proxy(false, {});
+  new Proxy(false, {});
 });
 
 reportCompare(0, 0);

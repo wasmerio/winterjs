@@ -13,27 +13,28 @@ info: |
         false and targetDesc.[[Writable]] is false, then
             i. If SameValue(trapResult, targetDesc.[[Value]]) is false, throw a
             TypeError exception.
+features: [Proxy]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    get: function() {
-        return 2;
-    }
+  get: function() {
+    return 2;
+  }
 });
 
 Object.defineProperty(target, 'attr', {
-    configurable: false,
-    writable: false,
-    value: 1
+  configurable: false,
+  writable: false,
+  value: 1
 });
 
 assert.throws(TypeError, function() {
-    p.attr;
+  p.attr;
 });
 
 assert.throws(TypeError, function() {
-    p['attr'];
+  p['attr'];
 });
 
 reportCompare(0, 0);

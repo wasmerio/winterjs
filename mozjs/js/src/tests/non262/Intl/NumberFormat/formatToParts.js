@@ -53,6 +53,14 @@ function assertParts(nf, x, expected)
 
 //-----------------------------------------------------------------------------
 
+// Test -0's partitioning now that it's not treated like +0.
+// https://github.com/tc39/ecma402/pull/232
+
+var deadSimpleFormatter = new Intl.NumberFormat("en-US");
+
+assertParts(deadSimpleFormatter, -0,
+            [MinusSign("-"), Integer("0")]);
+
 // Test behavior of a currency with code formatting.
 var usdCodeOptions =
   {
@@ -65,7 +73,7 @@ var usdCodeOptions =
 var usDollarsCode = new Intl.NumberFormat("en-US", usdCodeOptions);
 
 assertParts(usDollarsCode, 25,
-            [Currency("USD"), Integer("25")]);
+            [Currency("USD"), Literal("\xA0"), Integer("25")]);
 
 // ISO 4217 currency codes are formed from an ISO 3166-1 alpha-2 country code
 // followed by a third letter.  ISO 3166 guarantees that no country code
@@ -84,7 +92,7 @@ var xqqCodeOptions =
 var xqqMoneyCode = new Intl.NumberFormat("en-US", xqqCodeOptions);
 
 assertParts(xqqMoneyCode, 25,
-            [Currency("XQQ"), Integer("25")]);
+            [Currency("XQQ"), Literal("\xA0"), Integer("25")]);
 
 // Test currencyDisplay: "name".
 var usdNameOptions =
@@ -148,8 +156,8 @@ var usdNameFractionOptions =
 var usdNameFractionFormatter =
   new Intl.NumberFormat("en-US", usdNameFractionOptions);
 
-// The US national surplus (i.e. debt) as of October 18, 2016.
-// (Replicating data from a comment in Intl.cpp.)
+// The US national surplus (i.e. debt) as of October 18, 2016.  (Replicating
+// data from a comment in builtin/Intl/NumberFormat.cpp.)
 var usNationalSurplus = -19766580028249.41;
 
 assertParts(usdNameFractionFormatter, usNationalSurplus,
@@ -192,13 +200,44 @@ assertParts(usPercentFormatter, -1284.375,
              PercentSign("%")]);
 
 assertParts(usPercentFormatter, NaN,
-            [Nan("NaN")]);
+            [Nan("NaN"), PercentSign("%")]);
 
 assertParts(usPercentFormatter, Infinity,
             [Inf("∞"), PercentSign("%")]);
 
 assertParts(usPercentFormatter, -Infinity,
             [MinusSign("-"), Inf("∞"), PercentSign("%")]);
+
+var dePercentOptions =
+  {
+    style: "percent",
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  };
+var dePercentFormatter =
+  new Intl.NumberFormat("de", dePercentOptions);
+
+assertParts(dePercentFormatter, 0.375,
+            [Integer("37"), Decimal(","), Fraction("5"), Literal("\xA0"), PercentSign("%")]);
+
+assertParts(dePercentFormatter, -1284.375,
+            [MinusSign("-"),
+             Integer("128"),
+             Group("."),
+             Integer("437"),
+             Decimal(","),
+             Fraction("5"),
+             Literal("\xA0"),
+             PercentSign("%")]);
+
+assertParts(dePercentFormatter, NaN,
+            [Nan("NaN"), Literal("\xA0"), PercentSign("%")]);
+
+assertParts(dePercentFormatter, Infinity,
+            [Inf("∞"), Literal("\xA0"), PercentSign("%")]);
+
+assertParts(dePercentFormatter, -Infinity,
+            [MinusSign("-"), Inf("∞"), Literal("\xA0"), PercentSign("%")]);
 
 var arPercentOptions =
   {
@@ -215,7 +254,6 @@ assertParts(arPercentFormatter, -135.32,
              Integer("٥٣٢"),
              Decimal("٫"),
              Fraction("٠٠"),
-             Literal("\xA0"),
              PercentSign("٪\u{061C}")]);
 
 // Decimals.

@@ -4,10 +4,12 @@
 /*---
 es5id: 15.12.3-11-2
 description: >
-    A JSON.stringify replacer function works is applied to a top level
+    A JSON.stringify replacer function is applied to a top level
     undefined value.
 ---*/
 
-assert.sameValue(JSON.stringify(undefined, function(k, v) { return "replacement" }), '"replacement"', 'JSON.stringify(undefined, function(k, v) { return "replacement" })');
+assert.sameValue(JSON.stringify(undefined, function(k, v) {
+  return "replacement"
+}), '"replacement"', 'JSON.stringify(undefined, function(k, v) { return "replacement" })');
 
 reportCompare(0, 0);

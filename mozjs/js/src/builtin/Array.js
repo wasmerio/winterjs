@@ -708,13 +708,14 @@ function CreateArrayIterator(obj, kind) {
 // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-%arrayiteratorprototype%.next
 function ArrayIteratorNext() {
     // Step 1-3.
-    if (!IsObject(this) || !IsArrayIterator(this)) {
+    var obj;
+    if (!IsObject(this) || (obj = GuardToArrayIterator(this)) === null) {
         return callFunction(CallArrayIteratorMethodIfWrapped, this,
                             "ArrayIteratorNext");
     }
 
     // Step 4.
-    var a = UnsafeGetReservedSlot(this, ITERATOR_SLOT_TARGET);
+    var a = UnsafeGetReservedSlot(obj, ITERATOR_SLOT_TARGET);
     var result = { value: undefined, done: false };
 
     // Step 5.
@@ -725,10 +726,10 @@ function ArrayIteratorNext() {
 
     // Step 6.
     // The index might not be an integer, so we have to do a generic get here.
-    var index = UnsafeGetReservedSlot(this, ITERATOR_SLOT_NEXT_INDEX);
+    var index = UnsafeGetReservedSlot(obj, ITERATOR_SLOT_NEXT_INDEX);
 
     // Step 7.
-    var itemKind = UnsafeGetInt32FromReservedSlot(this, ITERATOR_SLOT_ITEM_KIND);
+    var itemKind = UnsafeGetInt32FromReservedSlot(obj, ITERATOR_SLOT_ITEM_KIND);
 
     // Step 8-9.
     var len;
@@ -746,13 +747,13 @@ function ArrayIteratorNext() {
 
     // Step 10.
     if (index >= len) {
-        UnsafeSetReservedSlot(this, ITERATOR_SLOT_TARGET, null);
+        UnsafeSetReservedSlot(obj, ITERATOR_SLOT_TARGET, null);
         result.done = true;
         return result;
     }
 
     // Step 11.
-    UnsafeSetReservedSlot(this, ITERATOR_SLOT_NEXT_INDEX, index + 1);
+    UnsafeSetReservedSlot(obj, ITERATOR_SLOT_NEXT_INDEX, index + 1);
 
     // Step 16.
     if (itemKind === ITEM_KIND_VALUE) {
@@ -883,7 +884,7 @@ function MakeIteratorWrapper(items, method) {
         // we don't create an inferred name for this function at runtime.
         [std_iterator]: function IteratorMethod() {
             return callContentFunction(method, items);
-        }
+        },
     };
 }
 
@@ -970,6 +971,7 @@ function ArraySpeciesCreate(originalArray, length) {
     assert(length >= 0, "length should be a non-negative number");
 
     // Step 2.
+    // eslint-disable-next-line no-compare-neg-zero
     if (length === -0)
         length = 0;
 
@@ -981,7 +983,7 @@ function ArraySpeciesCreate(originalArray, length) {
     var C = originalArray.constructor;
 
     // Step 5.b.
-    if (IsConstructor(C) && IsWrappedArrayConstructor(C))
+    if (IsConstructor(C) && IsCrossRealmArrayConstructor(C))
         return std_Array(length);
 
     // Step 5.c.
@@ -1132,8 +1134,8 @@ function ArrayFlatMap(mapperFunction/*, thisArg*/) {
 }
 
 // https://tc39.github.io/proposal-flatMap/
-// January 16, 2018
-function ArrayFlatten(/* depth */) {
+// May 23, 2018
+function ArrayFlat(/* depth */) {
      // Step 1.
     var O = ToObject(this);
 
@@ -1157,6 +1159,8 @@ function ArrayFlatten(/* depth */) {
     return A;
 }
 
+// https://tc39.github.io/proposal-flatMap/
+// May 23, 2018
 function FlattenIntoArray(target, source, sourceLen, start, depth, mapperFunction, thisArg) {
     // Step 1.
     var targetIndex = start;
@@ -1177,24 +1181,30 @@ function FlattenIntoArray(target, source, sourceLen, start, depth, mapperFunctio
             }
 
             // Step 3.c.iii.
-            var flattenable = IsArray(element);
+            var shouldFlatten = false;
 
             // Step 3.c.iv.
-            if (flattenable && depth > 0) {
+            if (depth > 0) {
                 // Step 3.c.iv.1.
+                shouldFlatten = IsArray(element);
+            }
+
+            // Step 3.c.v.
+            if (shouldFlatten) {
+                // Step 3.c.v.1.
                 var elementLen = ToLength(element.length);
 
-                // Step 3.c.iv.2.
+                // Step 3.c.v.2.
                 targetIndex = FlattenIntoArray(target, element, elementLen, targetIndex, depth - 1);
             } else {
-                // Step 3.c.v.1.
+                // Step 3.c.vi.1.
                 if (targetIndex >= MAX_NUMERIC_INDEX)
                     ThrowTypeError(JSMSG_TOO_LONG_ARRAY);
 
-                // Step 3.c.v.2.
+                // Step 3.c.vi.2.
                 _DefineDataProperty(target, targetIndex, element);
 
-                // Step 3.c.v.3.
+                // Step 3.c.vi.3.
                 targetIndex++;
             }
         }

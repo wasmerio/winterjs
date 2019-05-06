@@ -2,9 +2,9 @@
 // - src/function-forms/dflt-params-arg-val-undefined.case
 // - src/function-forms/default/cls-decl-async-meth.template
 /*---
-description: Use of intializer when argument value is `undefined` (class declaration async method)
+description: Use of initializer when argument value is `undefined` (class declaration async method)
 esid: sec-class-definitions-runtime-semantics-evaluation
-features: [default-parameters]
+features: [default-parameters, async-functions]
 flags: [generated, async]
 info: |
     ClassDeclaration : class BindingIdentifier ClassTail

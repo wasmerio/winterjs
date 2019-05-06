@@ -17,6 +17,7 @@ try:
     import mozcrash
 except ImportError:
     mozcrash = None
+from six import reraise
 
 from ..application import DefaultContext
 from ..errors import RunnerNotStartedError
@@ -97,6 +98,8 @@ class BaseRunner(object):
         :param timeout: see process_handler.run()
         :param outputTimeout: see process_handler.run()
         :returns: the process id
+
+        :raises: RunnerNotStartedError
         """
         self.timeout = timeout
         self.output_timeout = outputTimeout
@@ -111,22 +114,29 @@ class BaseRunner(object):
 
         if self.logger:
             self.logger.info('Application command: %s' % ' '.join(cmd))
-        if interactive:
-            filtered_env = {}
-            for k in self.env:
-                v = self.env[k]
-                if isinstance(v, unicode_type):
-                    v = v.encode('utf-8')
-                if isinstance(k, unicode_type):
-                    k = k.encode('utf-8')
-                filtered_env[k] = v
 
-            self.process_handler = subprocess.Popen(cmd, env=filtered_env)
+        encoded_env = {}
+        for k in self.env:
+            v = self.env[k]
+            if isinstance(v, unicode_type):
+                v = v.encode('utf-8')
+            if isinstance(k, unicode_type):
+                k = k.encode('utf-8')
+            encoded_env[k] = v
+
+        if interactive:
+            self.process_handler = subprocess.Popen(cmd, env=encoded_env)
             # TODO: other arguments
         else:
             # this run uses the managed processhandler
-            self.process_handler = self.process_class(cmd, env=self.env, **self.process_args)
-            self.process_handler.run(self.timeout, self.output_timeout)
+            try:
+                process = self.process_class(cmd, env=encoded_env, **self.process_args)
+                process.run(self.timeout, self.output_timeout)
+
+                self.process_handler = process
+            except Exception:
+                _, value, tb = sys.exc_info()
+                reraise(RunnerNotStartedError, "Failed to start the process: %s" % value, tb)
 
         self.crashed = 0
         return self.process_handler.pid

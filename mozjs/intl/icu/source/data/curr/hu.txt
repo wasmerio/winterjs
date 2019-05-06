@@ -356,7 +356,7 @@ hu{
         }
         GBP{
             "GBP",
-            "brit font",
+            "angol font",
         }
         GEK{
             "GEK",
@@ -616,6 +616,10 @@ hu{
         }
         MRO{
             "MRO",
+            "mauritániai ouguiya (1973–2017)",
+        }
+        MRU{
+            "MRU",
             "mauritániai ouguiya",
         }
         MTL{
@@ -844,6 +848,10 @@ hu{
         }
         STD{
             "STD",
+            "São Tomé és Príncipe-i dobra (1977–2017)",
+        }
+        STN{
+            "STN",
             "São Tomé és Príncipe-i dobra",
         }
         SUR{
@@ -964,6 +972,10 @@ hu{
         }
         VEF{
             "VEF",
+            "venezuelai bolivar (2008–2018)",
+        }
+        VES{
+            "VES",
             "venezuelai bolivar",
         }
         VND{
@@ -1051,7 +1063,7 @@ hu{
             "Tesztelési pénznemkód",
         }
         XXX{
-            "XXX",
+            "¤",
             "ismeretlen pénznem",
         }
         YDD{
@@ -1191,7 +1203,7 @@ hu{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -1489,8 +1501,8 @@ hu{
             other{"falkland-szigeteki font"}
         }
         GBP{
-            one{"brit font"}
-            other{"brit font"}
+            one{"angol font"}
+            other{"angol font"}
         }
         GEL{
             one{"grúz lari"}
@@ -1673,6 +1685,10 @@ hu{
             other{"makaói pataca"}
         }
         MRO{
+            one{"mauritániai ouguiya (1973–2017)"}
+            other{"mauritániai ouguiya (1973–2017)"}
+        }
+        MRU{
             one{"mauritániai ouguiya"}
             other{"mauritániai ouguiya"}
         }
@@ -1841,6 +1857,10 @@ hu{
             other{"dél-szudáni font"}
         }
         STD{
+            one{"São Tomé és Príncipe-i dobra (1977–2017)"}
+            other{"São Tomé és Príncipe-i dobra (1977–2017)"}
+        }
+        STN{
             one{"São Tomé és Príncipe-i dobra"}
             other{"São Tomé és Príncipe-i dobra"}
         }
@@ -1933,6 +1953,10 @@ hu{
             other{"Venezuelai bolivar (1871–2008)"}
         }
         VEF{
+            one{"venezuelai bolivar (2008–2018)"}
+            other{"venezuelai bolivar (2008–2018)"}
+        }
+        VES{
             one{"venezuelai bolivar"}
             other{"venezuelai bolivar"}
         }
@@ -2021,5 +2045,5 @@ hu{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.37.5"}
+    Version{"2.1.43.65"}
 }

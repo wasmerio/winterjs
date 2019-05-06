@@ -1,0 +1,12 @@
+diff --git a/mozjs/moz.build b/mozjs/moz.build
+index 23bca4911e..793cddaab6 100644
+--- a/mozjs/moz.build
++++ b/mozjs/moz.build
+@@ -137,6 +137,6 @@ if CONFIG['MOZ_BUILD_APP']:
+ else:
+     include('/toolkit/toolkit.mozbuild')
+ 
+-CONFIGURE_SUBST_FILES += ['.cargo/config']
++#CONFIGURE_SUBST_FILES += ['.cargo/config']
+ 
+ include('build/templates.mozbuild')

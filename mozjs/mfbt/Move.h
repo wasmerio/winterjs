@@ -11,6 +11,8 @@
 
 #include "mozilla/TypeTraits.h"
 
+#include <utility>
+
 namespace mozilla {
 
 /*
@@ -60,9 +62,9 @@ namespace mozilla {
  *
  * If a constructor's argument is an rvalue, as in 'C(f(x))' or 'C(x + y)', as
  * opposed to an lvalue, as in 'C(x)', then overload resolution will prefer the
- * move constructor, if there is one. The 'mozilla::Move' function, defined in
- * this file, is an identity function you can use in a constructor invocation to
- * make any argument into an rvalue, like this: C(Move(x)). That's 2). (You
+ * move constructor, if there is one. The 'std::move' function, defined in
+ * <utility>, is an identity function you can use in a constructor invocation to
+ * make any argument into an rvalue, like this: C(std::move(x)). That's 2). (You
  * could use any function that works, but 'Move' indicates your intention
  * clearly.)
  *
@@ -80,7 +82,7 @@ namespace mozilla {
  *
  * we would perform a move like this:
  *
- *   C c2(Move(c1));
+ *   C c2(std::move(c1));
  *
  * Note that 'T&&' implicitly converts to 'T&'. So you can pass a 'T&&' to an
  * ordinary copy constructor for a type that doesn't support a special move
@@ -97,13 +99,13 @@ namespace mozilla {
  *   C& operator=(C&& rhs) {
  *     MOZ_ASSERT(&rhs != this, "self-moves are prohibited");
  *     this->~C();
- *     new(this) C(Move(rhs));
+ *     new(this) C(std::move(rhs));
  *     return *this;
  *   }
  *
  * With that in place, one can write move assignments like this:
  *
- *   c2 = Move(c1);
+ *   c2 = std::move(c1);
  *
  * This destroys c2, moves c1's value to c2, and leaves c1 in an undefined but
  * destructible state.
@@ -126,16 +128,17 @@ namespace mozilla {
  * seems silly to write out all four combinations:
  *
  *   C::C(X&  x, Y&  y) : x(x),       y(y)       { }
- *   C::C(X&  x, Y&& y) : x(x),       y(Move(y)) { }
- *   C::C(X&& x, Y&  y) : x(Move(x)), y(y)       { }
- *   C::C(X&& x, Y&& y) : x(Move(x)), y(Move(y)) { }
+ *   C::C(X&  x, Y&& y) : x(x),       y(std::move(y)) { }
+ *   C::C(X&& x, Y&  y) : x(std::move(x)), y(y)       { }
+ *   C::C(X&& x, Y&& y) : x(std::move(x)), y(std::move(y)) { }
  *
  * To avoid this, C++11 has tweaks to make it possible to write what you mean.
  * The four constructor overloads above can be written as one constructor
  * template like so[0]:
  *
  *   template <typename XArg, typename YArg>
- *   C::C(XArg&& x, YArg&& y) : x(Forward<XArg>(x)), y(Forward<YArg>(y)) { }
+ *   C::C(XArg&& x, YArg&& y) : x(std::forward<XArg>(x)),
+ *                              y(std::forward<YArg>(y)) { }
  *
  * ("'Don't Repeat Yourself'? What's that?")
  *
@@ -163,8 +166,8 @@ namespace mozilla {
  *   collapses to 'Y&'. Because the arguments are declared as rvalue references
  *   to template arguments, the lvalue-ness "shines through" where present.
  *
- * Then, the 'Forward<T>' function --- you must invoke 'Forward' with its type
- * argument --- returns an lvalue reference or an rvalue reference to its
+ * Then, the 'std::forward<T>' function --- you must invoke 'Forward' with its
+ * type argument --- returns an lvalue reference or an rvalue reference to its
  * argument, depending on what T is. In our unified constructor definition, that
  * means that we'll invoke either the copy or move constructors for x and y,
  * depending on what we gave C's constructor. In our call, we'll move 'foo()'
@@ -192,47 +195,14 @@ namespace mozilla {
  *      C(tmp, 0); // OK: tmp not a bit-field
  */
 
-/**
- * Identical to std::Move(); this is necessary until our stlport supports
- * std::move().
- */
-template<typename T>
-inline typename RemoveReference<T>::Type&&
-Move(T&& aX)
-{
-  return static_cast<typename RemoveReference<T>::Type&&>(aX);
-}
-
-/**
- * These two overloads are identical to std::forward(); they are necessary until
- * our stlport supports std::forward().
- */
-template<typename T>
-inline T&&
-Forward(typename RemoveReference<T>::Type& aX)
-{
-  return static_cast<T&&>(aX);
-}
-
-template<typename T>
-inline T&&
-Forward(typename RemoveReference<T>::Type&& aX)
-{
-  static_assert(!IsLvalueReference<T>::value,
-                "misuse of Forward detected!  try the other overload");
-  return static_cast<T&&>(aX);
-}
-
 /** Swap |aX| and |aY| using move-construction if possible. */
-template<typename T>
-inline void
-Swap(T& aX, T& aY)
-{
-  T tmp(Move(aX));
-  aX = Move(aY);
-  aY = Move(tmp);
+template <typename T>
+inline void Swap(T& aX, T& aY) {
+  T tmp(std::move(aX));
+  aX = std::move(aY);
+  aY = std::move(tmp);
 }
 
-} // namespace mozilla
+}  // namespace mozilla
 
 #endif /* mozilla_Move_h */

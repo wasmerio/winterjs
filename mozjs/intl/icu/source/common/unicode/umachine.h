@@ -125,6 +125,9 @@
  * May result in an error if it applied to something not an override.
  * @internal
  */
+#ifndef U_OVERRIDE
+#define U_OVERRIDE override
+#endif
 
 /**
  * \def U_FINAL
@@ -133,24 +136,10 @@
  * May result in an error if subclasses attempt to override.
  * @internal
  */
-
-#if U_CPLUSPLUS_VERSION >= 11
-/* C++11 */
-#ifndef U_OVERRIDE
-#define U_OVERRIDE override
-#endif
-#ifndef U_FINAL
+#if !defined(U_FINAL) || defined(U_IN_DOXYGEN)
 #define U_FINAL final
 #endif
-#else
-/* not C++11 - define to nothing */
-#ifndef U_OVERRIDE
-#define U_OVERRIDE
-#endif
-#ifndef U_FINAL
-#define U_FINAL
-#endif
-#endif
+
 
 /*==========================================================================*/
 /* limits for int32_t etc., like in POSIX inttypes.h                        */
@@ -299,6 +288,10 @@ typedef int8_t UBool;
 // for AIX, uchar.h needs to be included
 # include <uchar.h>
 # define U_CHAR16_IS_TYPEDEF 1
+#elif defined(_MSC_VER) && (_MSC_VER < 1900)
+// Versions of Visual Studio/MSVC below 2015 do not support char16_t as a real type,
+// and instead use a typedef.  https://msdn.microsoft.com/library/bb531344.aspx
+# define U_CHAR16_IS_TYPEDEF 1
 #else
 # define U_CHAR16_IS_TYPEDEF 0
 #endif
@@ -314,7 +307,7 @@ typedef int8_t UBool;
  * UChar is configurable by defining the macro UCHAR_TYPE
  * on the preprocessor or compiler command line:
  * -DUCHAR_TYPE=uint16_t or -DUCHAR_TYPE=wchar_t (if U_SIZEOF_WCHAR_T==2) etc.
- * (The UCHAR_TYPE can also be #defined earlier in this file, for outside the ICU library code.)
+ * (The UCHAR_TYPE can also be \#defined earlier in this file, for outside the ICU library code.)
  * This is for transitional use from application code that uses uint16_t or wchar_t for UTF-16.
  *
  * The default is UChar=char16_t.
@@ -366,7 +359,7 @@ typedef int8_t UBool;
  * Exception: ICU 58 UChar was defined to UCHAR_TYPE if that macro was defined.
  * The current UChar responds to UCHAR_TYPE but OldUChar does not.
  *
- * @draft ICU 59
+ * @stable ICU 59
  */
 #if U_SIZEOF_WCHAR_T==2
     typedef wchar_t OldUChar;

@@ -134,7 +134,6 @@ class WebIDLCodegenManager(LoggingMixin):
         'RegisterWorkerBindings.h',
         'RegisterWorkerDebuggerBindings.h',
         'RegisterWorkletBindings.h',
-        'ResolveSystemBinding.h',
         'UnionConversions.h',
         'UnionTypes.h',
     }
@@ -145,7 +144,6 @@ class WebIDLCodegenManager(LoggingMixin):
         'RegisterWorkerBindings.cpp',
         'RegisterWorkerDebuggerBindings.cpp',
         'RegisterWorkletBindings.cpp',
-        'ResolveSystemBinding.cpp',
         'UnionTypes.cpp',
         'PrototypeList.cpp',
     }
@@ -590,7 +588,7 @@ def create_build_system_manager(topsrcdir, topobjdir, dist_dir):
         cache_dir=cache_dir,
         # The make rules include a codegen.pp file containing dependencies.
         make_deps_path=os.path.join(obj_dir, 'codegen.pp'),
-        make_deps_target='codegen.pp',
+        make_deps_target='webidl.stub',
     )
 
 

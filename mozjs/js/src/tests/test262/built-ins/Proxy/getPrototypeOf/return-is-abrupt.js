@@ -7,6 +7,7 @@ description: >
 info: |
     8. Let handlerProto be Call(trap, handler, «target»).
     9. ReturnIfAbrupt(handlerProto).
+features: [Proxy]
 ---*/
 
 var p = new Proxy({}, {
@@ -16,7 +17,7 @@ var p = new Proxy({}, {
 });
 
 assert.throws(Test262Error, function() {
-    Object.getPrototypeOf(p);
+  Object.getPrototypeOf(p);
 });
 
 reportCompare(0, 0);

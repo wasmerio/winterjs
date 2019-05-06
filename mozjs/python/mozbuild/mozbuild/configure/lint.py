@@ -5,6 +5,8 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import inspect
+import re
+import types
 from functools import wraps
 from StringIO import StringIO
 from . import (
@@ -14,7 +16,9 @@ from . import (
     DependsFunction,
     SandboxedGlobal,
     TrivialDependsFunction,
+    SandboxDependsFunction,
 )
+from .help import HelpFormatter
 from .lint_util import disassemble_as_iter
 from mozbuild.util import memoize
 
@@ -27,6 +31,10 @@ class LintSandbox(ConfigureSandbox):
         environ = environ or {}
         argv = argv or []
         self._wrapped = {}
+        self._has_imports = set()
+        self._bool_options = []
+        self._bool_func_options = []
+        self.LOG = ""
         super(LintSandbox, self).__init__({}, environ=environ, argv=argv,
                                           stdout=stdout, stderr=stderr)
 
@@ -64,7 +72,7 @@ class LintSandbox(ConfigureSandbox):
         for num, arg in enumerate(all_args):
             if arg not in used_args:
                 dep = obj.dependencies[num]
-                if dep != self._help_option:
+                if dep != self._help_option or not self._need_help_dependency(obj):
                     if isinstance(dep, DependsFunction):
                         dep = dep.name
                     else:
@@ -74,19 +82,18 @@ class LintSandbox(ConfigureSandbox):
                         % (loc, dep)
                     )
 
-    def _missing_help_dependency(self, obj):
+    def _need_help_dependency(self, obj):
         if isinstance(obj, (CombinedDependsFunction, TrivialDependsFunction)):
             return False
         if isinstance(obj, DependsFunction):
-            if (self._help_option in obj.dependencies or
-                obj in (self._always, self._never)):
+            if obj in (self._always, self._never):
                 return False
             func, glob = self.unwrap(obj._func)
             # We allow missing --help dependencies for functions that:
             # - don't use @imports
             # - don't have a closure
             # - don't use global variables
-            if func in self._imports or func.func_closure:
+            if func in self._has_imports or func.func_closure:
                 return True
             for op, arg in disassemble_as_iter(func):
                 if op in ('LOAD_GLOBAL', 'STORE_GLOBAL'):
@@ -100,8 +107,14 @@ class LintSandbox(ConfigureSandbox):
                     return True
         return False
 
+    def _missing_help_dependency(self, obj):
+        if (isinstance(obj, DependsFunction) and
+                self._help_option in obj.dependencies):
+            return False
+        return self._need_help_dependency(obj)
+
     @memoize
-    def _value_for_depends(self, obj, need_help_dependency=False):
+    def _value_for_depends(self, obj):
         with_help = self._help_option in obj.dependencies
         if with_help:
             for arg in obj.dependencies:
@@ -110,19 +123,81 @@ class LintSandbox(ConfigureSandbox):
                         "`%s` depends on '--help' and `%s`. "
                         "`%s` must depend on '--help'"
                         % (obj.name, arg.name, arg.name))
-        elif ((self._help or need_help_dependency) and
-              self._missing_help_dependency(obj)):
+        elif self._missing_help_dependency(obj):
             raise ConfigureError("Missing @depends for `%s`: '--help'" %
                                  obj.name)
-        return super(LintSandbox, self)._value_for_depends(
-            obj, need_help_dependency)
+        return super(LintSandbox, self)._value_for_depends(obj)
 
     def option_impl(self, *args, **kwargs):
         result = super(LintSandbox, self).option_impl(*args, **kwargs)
         when = self._conditions.get(result)
         if when:
-            self._value_for(when, need_help_dependency=True)
+            self._value_for(when)
+
+        self._check_option(result, *args, **kwargs)
+
         return result
+
+    def _check_option(self, option, *args, **kwargs):
+        if 'default' not in kwargs:
+            return
+        if len(args) == 0:
+            return
+
+        self._check_prefix_for_bool_option(*args, **kwargs)
+        self._check_help_for_option_with_func_default(option, *args, **kwargs)
+
+    def _check_prefix_for_bool_option(self, *args, **kwargs):
+        name = args[0]
+        default = kwargs['default']
+
+        if type(default) != bool:
+            return
+
+        table = {
+            True: {
+                'enable': 'disable',
+                'with': 'without',
+            },
+            False: {
+                'disable': 'enable',
+                'without': 'with',
+            }
+        }
+        for prefix, replacement in table[default].iteritems():
+            if name.startswith('--{}-'.format(prefix)):
+                raise ConfigureError(('{} should be used instead of '
+                                      '{} with default={}').format(
+                                          name.replace('--{}-'.format(prefix),
+                                                       '--{}-'.format(replacement)),
+                                          name, default))
+
+    def _check_help_for_option_with_func_default(self, option, *args, **kwargs):
+        name = args[0]
+        default = kwargs['default']
+
+        if not isinstance(default, SandboxDependsFunction):
+            return
+
+        if not option.prefix:
+            return
+
+        default = self._resolve(default)
+        if type(default) in (str, unicode):
+            return
+
+        help = kwargs['help']
+        match = re.search(HelpFormatter.RE_FORMAT, help)
+        if match:
+            return
+
+        if option.prefix in ('enable', 'disable'):
+            rule = '{Enable|Disable}'
+        else:
+            rule = '{With|Without}'
+
+        raise ConfigureError(('{} has a non-constant default. '
+                              'Its help should contain "{}"').format(name, rule))
 
     def unwrap(self, func):
         glob = func.func_globals
@@ -137,3 +212,10 @@ class LintSandbox(ConfigureSandbox):
             self._wrapped[wrapper] = func
             return wraps(func)(wrapper)
         return do_wraps
+
+    def imports_impl(self, _import, _from=None, _as=None):
+        wrapper = super(LintSandbox, self).imports_impl(_import, _from=_from, _as=_as)
+        def decorator(func):
+            self._has_imports.add(func)
+            return wrapper(func)
+        return decorator

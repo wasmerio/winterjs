@@ -20,7 +20,9 @@ sr_Latn{
         default{"latn"}
         latn{
             miscPatterns{
-                atLeast{"⩾{0}"}
+                approximately{"~{0}"}
+                atLeast{"≥{0}"}
+                atMost{"≤{0}"}
                 range{"{0}–{1}"}
             }
             patterns{
@@ -235,10 +237,20 @@ sr_Latn{
                 timeSeparator{":"}
             }
         }
+        minimalPairs{
+            ordinal{
+                other{"Skrenite u {0}. desno."}
+            }
+            plural{
+                few{"{0} sata"}
+                one{"{0} sat"}
+                other{"{0} sati"}
+            }
+        }
         minimumGroupingDigits{"1"}
         native{"latn"}
     }
-    Version{"2.1.37.8"}
+    Version{"2.1.44.50"}
     calendar{
         buddhist{
             eras{
@@ -1247,6 +1259,7 @@ sr_Latn{
                     "Taišo",
                     "Šova",
                     "Haisei",
+                    "Qqqq",
                 }
             }
         }
@@ -1398,6 +1411,13 @@ sr_Latn{
         }
         day-narrow{
             dn{"d."}
+            relative{
+                "-1"{"juče"}
+                "-2"{"prekjuče"}
+                "0"{"danas"}
+                "1"{"sutra"}
+                "2"{"prekosutra"}
+            }
             relativeTime{
                 future{
                     few{"za {0} d."}
@@ -1413,6 +1433,13 @@ sr_Latn{
         }
         day-short{
             dn{"d."}
+            relative{
+                "-1"{"juče"}
+                "-2"{"prekjuče"}
+                "0"{"danas"}
+                "1"{"sutra"}
+                "2"{"prekosutra"}
+            }
             relativeTime{
                 future{
                     few{"za {0} d."}
@@ -2329,8 +2356,13 @@ sr_Latn{
         general{
             lenient{
                 "[.․。︒﹒．｡]",
+                "['ʼ՚᾽᾿’＇]",
+                "[%٪﹪％]",
+                "[؉‰]",
                 "[\$﹩＄$]",
                 "[£₤]",
+                "[¥￥]",
+                "[₩￦]",
                 "[₨₹{Rp}{Rs}]",
             }
         }

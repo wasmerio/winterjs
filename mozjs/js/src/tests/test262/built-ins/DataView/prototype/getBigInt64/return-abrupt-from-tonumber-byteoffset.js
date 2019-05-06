@@ -1,4 +1,4 @@
-// |reftest| skip -- BigInt is not supported
+// |reftest| skip-if(!this.hasOwnProperty('BigInt')) -- BigInt is not enabled unconditionally
 // Copyright (C) 2017 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -24,8 +24,16 @@ features: [DataView, ArrayBuffer, BigInt, arrow-function]
 var buffer = new ArrayBuffer(1);
 var sample = new DataView(buffer, 0);
 
-var bo1 = { valueOf() { throw new Test262Error(); } };
-var bo2 = { toString() { throw new Test262Error(); } };
+var bo1 = {
+  valueOf() {
+    throw new Test262Error();
+  }
+};
+var bo2 = {
+  toString() {
+    throw new Test262Error();
+  }
+};
 
 assert.throws(Test262Error, () => sample.getBigInt64(bo1), "valueOf");
 

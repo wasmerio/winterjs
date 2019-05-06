@@ -1,8 +1,5 @@
 // onPromiseSettled handlers on different Debugger instances are independent.
-if (!('Promise' in this))
-    quit(0);
-
-var g = newGlobal();
+var g = newGlobal({newCompartment: true});
 var dbg1 = new Debugger(g);
 var log1;
 function h1(promise) {

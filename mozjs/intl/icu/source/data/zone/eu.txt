@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 eu{
-    Version{"2.1.37.5"}
+    Version{"2.1.43.65"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Ordu Unibertsal Koordinatua"}
+        }
+        "Europe:Dublin"{
+            ld{"Irlandako ordu estandarra"}
+        }
+        "Europe:London"{
+            ld{"Londresko udako ordua"}
+        }
         "meta:Afghanistan"{
             ls{"Afganistango ordua"}
         }

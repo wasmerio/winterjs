@@ -11,20 +11,21 @@ info: |
     ...
     12. Return booleanTrapResult.
 flags: [noStrict]
+features: [Proxy]
 ---*/
 
 var target = {
-    attr: 1
+  attr: 1
 };
 var p = new Proxy(target, {
-    has: function(t, prop) {
-        return false;
-    }
+  has: function(t, prop) {
+    return false;
+  }
 });
 
 var attr = 0;
-with (p) {
-    assert.sameValue(attr, 0);
+with(p) {
+  assert.sameValue(attr, 0);
 }
 
 reportCompare(0, 0);

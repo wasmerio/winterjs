@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sts=4 et sw=4 tw=99:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: set ts=8 sts=2 et sw=2 tw=80:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,118 +11,91 @@
 
 namespace js {
 
-inline bool
-ObjectGroup::needsSweep()
-{
-    // Note: this can be called off thread during compacting GCs, in which case
-    // nothing will be running on the active thread.
-    MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
-    return generation() != zoneFromAnyThread()->types.generation;
+inline bool ObjectGroup::needsSweep() {
+  // Note: this can be called off thread during compacting GCs, in which case
+  // nothing will be running on the main thread.
+  MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
+  return generation() != zoneFromAnyThread()->types.generation;
 }
 
-inline void
-ObjectGroup::maybeSweep(AutoClearTypeInferenceStateOnOOM* oom)
-{
-    if (needsSweep())
-        sweep(oom);
+inline ObjectGroupFlags ObjectGroup::flags(const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT(sweep.group() == this);
+  return flagsDontCheckGeneration();
 }
 
-inline ObjectGroupFlags
-ObjectGroup::flags()
-{
-    maybeSweep(nullptr);
-    return flagsDontCheckGeneration();
+inline void ObjectGroup::addFlags(const AutoSweepObjectGroup& sweep,
+                                  ObjectGroupFlags flags) {
+  MOZ_ASSERT(sweep.group() == this);
+  flags_ |= flags;
 }
 
-inline void
-ObjectGroup::addFlags(ObjectGroupFlags flags)
-{
-    maybeSweep(nullptr);
-    flags_ |= flags;
+inline void ObjectGroup::clearFlags(const AutoSweepObjectGroup& sweep,
+                                    ObjectGroupFlags flags) {
+  MOZ_ASSERT(sweep.group() == this);
+  flags_ &= ~flags;
 }
 
-inline void
-ObjectGroup::clearFlags(ObjectGroupFlags flags)
-{
-    maybeSweep(nullptr);
-    flags_ &= ~flags;
+inline bool ObjectGroup::hasAnyFlags(const AutoSweepObjectGroup& sweep,
+                                     ObjectGroupFlags flags) {
+  MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
+  return !!(this->flags(sweep) & flags);
 }
 
-inline bool
-ObjectGroup::hasAnyFlags(ObjectGroupFlags flags)
-{
-    MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
-    return !!(this->flags() & flags);
+inline bool ObjectGroup::hasAllFlags(const AutoSweepObjectGroup& sweep,
+                                     ObjectGroupFlags flags) {
+  MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
+  return (this->flags(sweep) & flags) == flags;
 }
 
-inline bool
-ObjectGroup::hasAllFlags(ObjectGroupFlags flags)
-{
-    MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
-    return (this->flags() & flags) == flags;
+inline bool ObjectGroup::unknownProperties(const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT_IF(flags(sweep) & OBJECT_FLAG_UNKNOWN_PROPERTIES,
+                hasAllFlags(sweep, OBJECT_FLAG_DYNAMIC_MASK));
+  return !!(flags(sweep) & OBJECT_FLAG_UNKNOWN_PROPERTIES);
 }
 
-inline bool
-ObjectGroup::unknownProperties()
-{
-    MOZ_ASSERT_IF(flags() & OBJECT_FLAG_UNKNOWN_PROPERTIES,
-                  hasAllFlags(OBJECT_FLAG_DYNAMIC_MASK));
-    return !!(flags() & OBJECT_FLAG_UNKNOWN_PROPERTIES);
+inline bool ObjectGroup::shouldPreTenure(const AutoSweepObjectGroup& sweep) {
+  return hasAnyFlags(sweep, OBJECT_FLAG_PRE_TENURE) &&
+         !unknownProperties(sweep);
 }
 
-inline bool
-ObjectGroup::shouldPreTenure()
-{
-    return hasAnyFlags(OBJECT_FLAG_PRE_TENURE) && !unknownProperties();
+inline bool ObjectGroup::canPreTenure(const AutoSweepObjectGroup& sweep) {
+  return !unknownProperties(sweep);
 }
 
-inline bool
-ObjectGroup::canPreTenure()
-{
-    return !unknownProperties();
+inline bool ObjectGroup::fromAllocationSite(const AutoSweepObjectGroup& sweep) {
+  return flags(sweep) & OBJECT_FLAG_FROM_ALLOCATION_SITE;
 }
 
-inline bool
-ObjectGroup::fromAllocationSite()
-{
-    return flags() & OBJECT_FLAG_FROM_ALLOCATION_SITE;
+inline void ObjectGroup::setShouldPreTenure(const AutoSweepObjectGroup& sweep,
+                                            JSContext* cx) {
+  MOZ_ASSERT(canPreTenure(sweep));
+  setFlags(sweep, cx, OBJECT_FLAG_PRE_TENURE);
 }
 
-inline void
-ObjectGroup::setShouldPreTenure(JSContext* cx)
-{
-    MOZ_ASSERT(canPreTenure());
-    setFlags(cx, OBJECT_FLAG_PRE_TENURE);
+inline TypeNewScript* ObjectGroup::newScript(
+    const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT(sweep.group() == this);
+  return newScriptDontCheckGeneration();
 }
 
-inline TypeNewScript*
-ObjectGroup::newScript()
-{
-    maybeSweep(nullptr);
-    return newScriptDontCheckGeneration();
+inline PreliminaryObjectArrayWithTemplate* ObjectGroup::maybePreliminaryObjects(
+    const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT(sweep.group() == this);
+  return maybePreliminaryObjectsDontCheckGeneration();
 }
 
-inline PreliminaryObjectArrayWithTemplate*
-ObjectGroup::maybePreliminaryObjects()
-{
-    maybeSweep(nullptr);
-    return maybePreliminaryObjectsDontCheckGeneration();
+inline UnboxedLayout* ObjectGroup::maybeUnboxedLayout(
+    const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT(sweep.group() == this);
+  return maybeUnboxedLayoutDontCheckGeneration();
 }
 
-inline UnboxedLayout*
-ObjectGroup::maybeUnboxedLayout()
-{
-    maybeSweep(nullptr);
-    return maybeUnboxedLayoutDontCheckGeneration();
+inline UnboxedLayout& ObjectGroup::unboxedLayout(
+    const AutoSweepObjectGroup& sweep) {
+  MOZ_ASSERT(sweep.group() == this);
+  return unboxedLayoutDontCheckGeneration();
 }
 
-inline UnboxedLayout&
-ObjectGroup::unboxedLayout()
-{
-    maybeSweep(nullptr);
-    return unboxedLayoutDontCheckGeneration();
-}
-
-} // namespace js
+}  // namespace js
 
 #endif /* vm_ObjectGroup_inl_h */

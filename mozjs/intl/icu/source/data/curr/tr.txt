@@ -684,7 +684,11 @@ tr{
         }
         MRO{
             "MRO",
-            "Moritanya Ouguiyası",
+            "Moritanya Ugiyası (1973–2017)",
+        }
+        MRU{
+            "MRU",
+            "Moritanya Ugiyası",
         }
         MTL{
             "MTL",
@@ -916,6 +920,10 @@ tr{
         }
         STD{
             "STD",
+            "São Tomé ve Príncipe Dobrası (1977–2017)",
+        }
+        STN{
+            "STN",
             "São Tomé ve Príncipe Dobrası",
         }
         SUR{
@@ -1041,6 +1049,10 @@ tr{
         }
         VEF{
             "VEF",
+            "Venezuela Bolivarı (2008–2018)",
+        }
+        VES{
+            "VES",
             "Venezuela Bolivarı",
         }
         VND{
@@ -1140,7 +1152,7 @@ tr{
             "ADB Hesap Birimi",
         }
         XXX{
-            "XXX",
+            "¤",
             "Bilinmeyen Para Birimi",
         }
         YDD{
@@ -1286,7 +1298,7 @@ tr{
         SHP{"£"}
         SRD{"$"}
         SSP{"£"}
-        STD{"Db"}
+        STN{"Db"}
         SYP{"£"}
         THB{"฿"}
         TOP{"T$"}
@@ -1940,8 +1952,12 @@ tr{
             other{"Makao patakası"}
         }
         MRO{
-            one{"Moritanya ouguiyası"}
-            other{"Moritanya ouguiyası"}
+            one{"Moritanya ugiyası (1973–2017)"}
+            other{"Moritanya ugiyası (1973–2017)"}
+        }
+        MRU{
+            one{"Moritanya ugiyası"}
+            other{"Moritanya ugiyası"}
         }
         MTL{
             one{"Malta Lirası"}
@@ -2152,6 +2168,10 @@ tr{
             other{"Güney Sudan lirası"}
         }
         STD{
+            one{"São Tomé ve Príncipe dobrası (1977–2017)"}
+            other{"São Tomé ve Príncipe dobrası (1977–2017)"}
+        }
+        STN{
             one{"São Tomé ve Príncipe dobrası"}
             other{"São Tomé ve Príncipe dobrası"}
         }
@@ -2268,6 +2288,10 @@ tr{
             other{"Venezuela Bolivarı (1871–2008)"}
         }
         VEF{
+            one{"Venezuela bolivarı (2008–2018)"}
+            other{"Venezuela bolivarı (2008–2018)"}
+        }
+        VES{
             one{"Venezuela bolivarı"}
             other{"Venezuela bolivarı"}
         }
@@ -2376,5 +2400,5 @@ tr{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"2.1.37.5"}
+    Version{"2.1.44.91"}
 }

@@ -21,10 +21,10 @@ fn typedarray() {
         rooted!(in(cx) let global =
             JS_NewGlobalObject(cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                                JS::OnNewGlobalHookOption::FireOnNewGlobalHook,
-                               &JS::CompartmentOptions::default())
+                               &JS::RealmOptions::default())
         );
 
-        let _ac = js::ac::AutoCompartment::with_obj(cx, global.get());
+        let _ar = js::ar::AutoRealm::with_obj(cx, global.get());
 
         rooted!(in(cx) let mut rval = UndefinedValue());
         assert!(rt.evaluate_script(global.handle(), "new Uint8Array([0, 2, 4])",
@@ -79,10 +79,10 @@ fn typedarray_update_panic() {
         rooted!(in(cx) let global =
             JS_NewGlobalObject(cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                                JS::OnNewGlobalHookOption::FireOnNewGlobalHook,
-                               &JS::CompartmentOptions::default())
+                               &JS::RealmOptions::default())
         );
 
-        let _ac = js::ac::AutoCompartment::with_obj(cx, global.get());
+        let _ar = js::ar::AutoRealm::with_obj(cx, global.get());
         rooted!(in(cx) let mut rval = ptr::null_mut());
         let _ = Uint32Array::create(cx, CreateWith::Slice(&[1, 2, 3, 4, 5]), rval.handle_mut());
         typedarray!(in(cx) let mut array: Uint32Array = rval.get());

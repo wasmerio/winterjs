@@ -7,7 +7,7 @@ const RuntimeError = WebAssembly.RuntimeError;
 
 var callee = i => `(func $f${i} (result i32) (i32.const ${i}))`;
 
-wasmFailValidateText(`(module (elem (i32.const 0) $f0) ${callee(0)})`, /table index out of range/);
+wasmFailValidateText(`(module (elem (i32.const 0) $f0) ${callee(0)})`, /elem segment requires a table section/);
 wasmFailValidateText(`(module (table 10 anyfunc) (elem (i32.const 0) 0))`, /table element out of range/);
 wasmFailValidateText(`(module (table 10 anyfunc) (func) (elem (i32.const 0) 0 1))`, /table element out of range/);
 wasmFailValidateText(`(module (table 10 anyfunc) (func) (elem (f32.const 0) 0) ${callee(0)})`, /type mismatch/);
@@ -201,3 +201,70 @@ var tbl = wasmEvalText(`(module (table (export "tbl") anyfunc (elem $f)) (func $
 tbl.get(0).foo = 42;
 gc();
 assertEq(tbl.get(0).foo, 42);
+
+(function testCrossRealmCall() {
+    var g = newGlobal({sameCompartmentAs: this});
+
+    // The current_memory builtin asserts cx->realm matches instance->realm so
+    // we call it here.
+    var src = `
+        (module
+            (import "a" "t" (table 3 anyfunc))
+            (import "a" "m" (memory 1))
+            (func $f (result i32) (i32.add (i32.const 3) (current_memory)))
+            (elem (i32.const 0) $f))
+    `;
+    g.mem = new Memory({initial:4});
+    g.tbl = new Table({initial:3, element:"anyfunc"});
+    var i1 = g.evaluate("new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary(`" + src + "`)), {a:{t:tbl,m:mem}})");
+
+    var call = new Instance(new Module(wasmTextToBinary(`
+        (module
+            (import "a" "t" (table 3 anyfunc))
+            (import "a" "m" (memory 1))
+            (type $v2i (func (result i32)))
+            (func $call (param $i i32) (result i32) (i32.add (call_indirect $v2i (get_local $i)) (current_memory)))
+            (export "call" $call))
+    `)), {a:{t:g.tbl,m:g.mem}}).exports.call;
+
+    for (var i = 0; i < 10; i++)
+        assertEq(call(0), 11);
+})();
+
+
+// Test active segments with a table index.
+
+{
+    function makeIt(flag, tblindex) {
+        return new Uint8Array([0x00, 0x61, 0x73, 0x6d,
+                               0x01, 0x00, 0x00, 0x00,
+                               0x04,                   // Table section
+                               0x04,                   // Section size
+                               0x01,                   // One table
+                               0x70,                   // Type: Anyfunc
+                               0x00,                   // Limits: Min only
+                               0x01,                   // Limits: Min
+                               0x09,                   // Elements section
+                               0x07,                   // Section size
+                               0x01,                   // One element segment
+                               flag,                   // Flag should be 2, or > 2 if invalid
+                               tblindex,               // Table index must be 0, or > 0 if invalid
+                               0x41,                   // Init expr: i32.const
+                               0x00,                   // Init expr: zero (payload)
+                               0x0b,                   // Init expr: end
+                               0x00]);                 // Zero functions
+    }
+
+    // Should succeed because this is what an active segment with index looks like
+    new WebAssembly.Module(makeIt(0x02, 0x00));
+
+    // Should fail because the kind is unknown
+    assertErrorMessage(() => new WebAssembly.Module(makeIt(0x03, 0x00)),
+                       WebAssembly.CompileError,
+                       /invalid elem initializer-kind/);
+
+    // Should fail because the table index is invalid
+    assertErrorMessage(() => new WebAssembly.Module(makeIt(0x02, 0x01)),
+                       WebAssembly.CompileError,
+                       /table index out of range/);
+}

@@ -4,17 +4,20 @@
 es6id: 9.5.13
 description: >
     Return is an abrupt completion
+features: [Proxy]
 ---*/
 
-var target = function(a, b) { return a + b; };
+var target = function(a, b) {
+  return a + b;
+};
 var p = new Proxy(target, {
-    apply: function(t, c, args) {
-        throw new Test262Error();
-    }
+  apply: function(t, c, args) {
+    throw new Test262Error();
+  }
 });
 
 assert.throws(Test262Error, function() {
-    p.call();
+  p.call();
 });
 
 reportCompare(0, 0);

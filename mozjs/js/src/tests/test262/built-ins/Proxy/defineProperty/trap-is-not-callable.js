@@ -15,17 +15,18 @@ info: |
         2. Let func be GetV(O, P).
         5. If IsCallable(func) is false, throw a TypeError exception.
         ...
+features: [Proxy]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    defineProperty: {}
+  defineProperty: {}
 });
 
 assert.throws(TypeError, function() {
-    Object.defineProperty(p, "foo", {
-        value: 1
-    });
+  Object.defineProperty(p, "foo", {
+    value: 1
+  });
 });
 
 reportCompare(0, 0);

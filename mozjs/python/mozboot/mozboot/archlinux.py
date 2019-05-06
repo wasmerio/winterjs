@@ -11,21 +11,20 @@ import subprocess
 import glob
 
 from mozboot.base import BaseBootstrapper
-from mozboot.linux_common import StyloInstall
+from mozboot.linux_common import NodeInstall, StyloInstall, ClangStaticAnalysisInstall
 
 
-class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
+class ArchlinuxBootstrapper(NodeInstall, StyloInstall,
+                            ClangStaticAnalysisInstall, BaseBootstrapper):
     '''Archlinux experimental bootstrapper.'''
 
     SYSTEM_PACKAGES = [
         'autoconf2.13',
         'base-devel',
-        'ccache',
-        'mercurial',
         'nodejs',
-        'npm',
         'python2',
         'python2-setuptools',
+        'python',  # This is Python 3 on Arch.
         'unzip',
         'zip',
     ]
@@ -45,6 +44,7 @@ class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
         'libxt',
         'mime-types',
         'mozilla-common',
+        'nasm',
         'nss',
         'sqlite',
         'startup-notification',
@@ -57,7 +57,6 @@ class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
         'yasm',
         'gst-libav',
         'gst-plugins-good',
-        'networkmanager',
     ]
 
     BROWSER_AUR_PACKAGES = [
@@ -121,6 +120,7 @@ class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
             raise e
 
         # 2. Android pieces.
+        self.ensure_java()
         from mozboot import android
         android.ensure_android('linux', artifact_mode=artifact_mode,
                                no_interactive=self.no_interactive)

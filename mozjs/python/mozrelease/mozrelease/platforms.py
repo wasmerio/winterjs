@@ -5,11 +5,9 @@ update_platform_map = {
     "android": ["Android_arm-eabi-gcc3"],
     "android-api-11": ["Android_arm-eabi-gcc3"],
     "android-api-15": ["Android_arm-eabi-gcc3"],
-    "android-api-15-old-id": ["Android_arm-eabi-gcc3"],
     "android-api-16": ["Android_arm-eabi-gcc3"],
-    "android-api-16-old-id": ["Android_arm-eabi-gcc3"],
     "android-x86": ["Android_x86-gcc3"],
-    "android-x86-old-id": ["Android_x86-gcc3"],
+    "android-x86_64": ["Android_x86-64-gcc3"],
     "android-aarch64": ["Android_aarch64-gcc3"],
     "linux-i686": ["Linux_x86-gcc3"],
     "linux-x86_64": ["Linux_x86_64-gcc3"],
@@ -41,11 +39,14 @@ info_file_platform_map = {
     "win64": "win64",
 }
 
+
 def ftp2updatePlatforms(platform):
     return update_platform_map.get(platform, platform)
 
+
 def ftp2shippedLocales(platform):
     return sl_platform_map.get(platform, platform)
+
 
 def shippedLocales2ftp(platform):
     matches = []
@@ -55,6 +56,7 @@ def shippedLocales2ftp(platform):
         return matches
     except IndexError:
         return [platform]
+
 
 def ftp2infoFile(platform):
     return info_file_platform_map.get(platform, platform)

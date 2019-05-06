@@ -9,37 +9,32 @@
 #include <stdlib.h>
 
 #ifndef HAVE_MEMALIGN
-MOZ_MEMORY_API void*
-memalign(size_t aAlignment, size_t aSize)
-{
-#ifdef XP_WIN
+MOZ_MEMORY_API void* memalign(size_t aAlignment, size_t aSize) {
+#  ifdef XP_WIN
   return _aligned_malloc(aSize, aAlignment);
-#else
+#  else
   void* ret;
   if (posix_memalign(&ret, aAlignment, aSize) != 0) {
     return nullptr;
   }
   return ret;
-#endif
+#  endif
 }
 #endif
 
-struct SystemMalloc
-{
-#define MALLOC_DECL(name, return_type, ...)                                    \
-  static inline return_type name(ARGS_HELPER(TYPED_ARGS, ##__VA_ARGS__))       \
-  {                                                                            \
-    return ::name(ARGS_HELPER(ARGS, ##__VA_ARGS__));                           \
+struct SystemMalloc {
+#define MALLOC_DECL(name, return_type, ...)                                \
+  static inline return_type name(ARGS_HELPER(TYPED_ARGS, ##__VA_ARGS__)) { \
+    return ::name(ARGS_HELPER(ARGS, ##__VA_ARGS__));                       \
   }
 #define MALLOC_FUNCS MALLOC_FUNCS_MALLOC_BASE
 #include "malloc_decls.h"
 };
 
-#define MALLOC_DECL(name, return_type, ...)                                    \
-  MOZ_JEMALLOC_API return_type name(ARGS_HELPER(TYPED_ARGS, ##__VA_ARGS__))    \
-  {                                                                            \
-    return DummyArenaAllocator<SystemMalloc>::name(                            \
-      ARGS_HELPER(ARGS, ##__VA_ARGS__));                                       \
+#define MALLOC_DECL(name, return_type, ...)                                   \
+  MOZ_JEMALLOC_API return_type name(ARGS_HELPER(TYPED_ARGS, ##__VA_ARGS__)) { \
+    return DummyArenaAllocator<SystemMalloc>::name(                           \
+        ARGS_HELPER(ARGS, ##__VA_ARGS__));                                    \
   }
 #define MALLOC_FUNCS MALLOC_FUNCS_ARENA
 #include "malloc_decls.h"

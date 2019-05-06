@@ -47,8 +47,8 @@ if test "$OS_TARGET" = "Android"; then
     x86)
         ANDROID_CPU_ARCH=x86
         ;;
-    mips32) # When target_cpu is mipsel, CPU_ARCH is mips32
-        ANDROID_CPU_ARCH=mips
+    x86_64)
+        ANDROID_CPU_ARCH=x86_64
         ;;
     aarch64)
         ANDROID_CPU_ARCH=arm64-v8a
@@ -94,8 +94,6 @@ dnl Configure an Android SDK.
 dnl Arg 1: compile SDK version, like 23.
 dnl Arg 2: target SDK version, like 23.
 dnl Arg 3: list of build-tools versions, like "23.0.3 23.0.1".
-dnl Arg 4: list of target lint versions, like "25.3.2 25.3.1" (note: we fall back to
-dnl        unversioned lint if this version is not found).
 AC_DEFUN([MOZ_ANDROID_SDK],
 [
 
@@ -120,28 +118,16 @@ case "$target" in
     fi
 
     android_target_sdk=$2
-    AC_MSG_CHECKING([for Android SDK platform version $android_target_sdk])
-    android_sdk=$android_sdk_root/platforms/android-$android_target_sdk
-    if ! test -e "$android_sdk/source.properties" ; then
-        AC_MSG_ERROR([You must download Android SDK platform version $android_target_sdk.  Try |mach bootstrap|.  (Looked for $android_sdk)])
-    fi
-    AC_MSG_RESULT([$android_sdk])
 
     AC_MSG_CHECKING([for Android build-tools])
     android_build_tools_base="$android_sdk_root"/build-tools
-    android_build_tools_version=""
     for version in $3; do
         android_build_tools="$android_build_tools_base"/$version
-        if test -d "$android_build_tools" -a -f "$android_build_tools/aapt"; then
-            android_build_tools_version=$version
+        if test -d "$android_build_tools" -a -f "$android_build_tools/zipalign"; then
             AC_MSG_RESULT([$android_build_tools])
             break
         fi
     done
-    if test "$android_build_tools_version" = ""; then
-        version=$(echo $3 | cut -d" " -f1)
-        AC_MSG_ERROR([You must install the Android build-tools version $version.  Try |mach bootstrap|.  (Looked for "$android_build_tools_base"/$version)])
-    fi
 
     MOZ_PATH_PROG(ZIPALIGN, zipalign, :, [$android_build_tools])
     if test -z "$ZIPALIGN" -o "$ZIPALIGN" = ":"; then
@@ -177,49 +163,14 @@ case "$target" in
         AC_MSG_ERROR([The program emulator was not found.  Try |mach bootstrap|.])
     fi
 
-    # `compileSdkVersion ANDROID_COMPILE_SDK_VERSION` is Gradle-only,
-    # so there's no associated configure check.
-    ANDROID_COMPILE_SDK_VERSION=$1
     ANDROID_TARGET_SDK="${android_target_sdk}"
-    ANDROID_SDK="${android_sdk}"
     ANDROID_SDK_ROOT="${android_sdk_root}"
     ANDROID_TOOLS="${android_tools}"
-    ANDROID_BUILD_TOOLS_VERSION="$android_build_tools_version"
-    AC_SUBST(ANDROID_COMPILE_SDK_VERSION)
     AC_SUBST(ANDROID_TARGET_SDK)
     AC_SUBST(ANDROID_SDK_ROOT)
-    AC_SUBST(ANDROID_SDK)
     AC_SUBST(ANDROID_TOOLS)
-    AC_SUBST(ANDROID_BUILD_TOOLS_VERSION)
     ;;
 esac
-
-AC_MSG_CHECKING([for Android lint classpath])
-ANDROID_LINT_CLASSPATH=""
-for version in $4; do
-    android_lint_versioned_jar="$ANDROID_SDK_ROOT/tools/lib/lint-$version.jar"
-    if test -e "$android_lint_versioned_jar" ; then
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $android_lint_versioned_jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-checks-$version.jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/sdklib-$version.jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/repository-$version.jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/common-$version.jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-api-$version.jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/manifest-merger-$version.jar"
-        break
-    fi
-done
-if test -z "$ANDROID_LINT_CLASSPATH" ; then
-    android_lint_unversioned_jar="$ANDROID_SDK_ROOT/tools/lib/lint.jar"
-    if test -e "$android_lint_unversioned_jar" ; then
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $android_lint_unversioned_jar"
-        ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-checks.jar"
-    else
-        AC_MSG_ERROR([Unable to find android sdk's lint jar. This probably means that you need to update android.m4 to find the latest version of lint-*.jar and all its dependencies. (looked for $android_lint_versioned_jar and $android_lint_unversioned_jar)])
-    fi
-fi
-AC_MSG_RESULT([$ANDROID_LINT_CLASSPATH])
-AC_SUBST(ANDROID_LINT_CLASSPATH)
 
 MOZ_ARG_WITH_STRING(android-min-sdk,
 [  --with-android-min-sdk=[VER]     Impose a minimum Firefox for Android SDK version],

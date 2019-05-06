@@ -13,25 +13,26 @@ info: |
         b. If settingConfigFalse is true and targetDesc.[[Configurable]] is
         true, throw a TypeError exception.
     ...
+features: [Proxy]
 ---*/
 
 var target = {};
 var p = new Proxy(target, {
-    defineProperty: function(t, prop, desc) {
-        return true;
-    }
+  defineProperty: function(t, prop, desc) {
+    return true;
+  }
 });
 
 Object.defineProperty(target, "foo", {
-    value: 1,
-    configurable: true
+  value: 1,
+  configurable: true
 });
 
 assert.throws(TypeError, function() {
-    Object.defineProperty(p, "foo", {
-        value: 1,
-        configurable: false
-    });
+  Object.defineProperty(p, "foo", {
+    value: 1,
+    configurable: false
+  });
 });
 
 reportCompare(0, 0);

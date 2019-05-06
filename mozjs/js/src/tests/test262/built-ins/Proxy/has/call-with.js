@@ -11,23 +11,24 @@ info: |
     9. Let booleanTrapResult be ToBoolean(Call(trap, handler, «target, P»)).
     ...
 flags: [noStrict]
+features: [Proxy]
 ---*/
 
 var _handler, _target, _prop;
 var target = {};
 var handler = {
-    has: function(t, prop) {
-        _handler = this;
-        _target = t;
-        _prop = prop;
+  has: function(t, prop) {
+    _handler = this;
+    _target = t;
+    _prop = prop;
 
-        return true;
-    }
+    return true;
+  }
 };
 var p = new Proxy(target, handler);
 
-with (p) {
-    (attr);
+with(p) {
+  (attr);
 }
 
 assert.sameValue(_handler, handler);

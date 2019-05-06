@@ -9,9 +9,25 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "js/BuildId.h"
+#include "js/CompilationAndEvaluation.h"
+#include "js/ContextOptions.h"
 #include "js/Conversions.h"
+#include "js/Date.h"
+#include "js/Equality.h"
+#include "js/Id.h"
 #include "js/Initialization.h"
+#include "js/JSON.h"
 #include "js/MemoryMetrics.h"
+#include "js/Promise.h"
+#include "js/PropertySpec.h"
+#include "js/Realm.h"
+#include "js/SavedFrameAPI.h"
+#include "js/SourceText.h"
+#include "js/Stream.h"
+#include "js/StructuredClone.h"
+#include "js/Symbol.h"
+#include "js/Utility.h"
 
 // Reexport some functions that are marked inline.
 
@@ -19,7 +35,7 @@ namespace glue {
 
 bool JS_Init();
 
-JS::CompartmentOptions JS_NewCompartmentOptions();
+JS::RealmOptions JS_NewRealmOptions();
 JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
 
 JS::StackCapture JS_StackCapture_AllFrames();

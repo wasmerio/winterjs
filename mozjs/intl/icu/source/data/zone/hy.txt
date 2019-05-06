@@ -1,8 +1,17 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html#License
 hy{
-    Version{"2.1.37.1"}
+    Version{"2.1.43.50"}
     zoneStrings{
+        "Etc:UTC"{
+            ls{"Համաշխարհային կոորդինացված ժամանակ"}
+        }
+        "Europe:Dublin"{
+            ld{"Իռլանդական ստանդարտ ժամանակ"}
+        }
+        "Europe:London"{
+            ld{"Բրիտանական ամառային ժամանակ"}
+        }
         "meta:Afghanistan"{
             ls{"Աֆղանստանի ժամանակ"}
         }

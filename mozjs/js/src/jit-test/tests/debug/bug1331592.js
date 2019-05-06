@@ -1,4 +1,4 @@
-// |jit-test| test-also-no-wasm-baseline; error: TestComplete
+// |jit-test| test-also-wasm-compiler-ion; error: TestComplete
 
 if (!wasmDebuggingIsSupported())
      throw "TestComplete";
@@ -14,7 +14,7 @@ var module = new WebAssembly.Module(wasmTextToBinary(`
 
 var dbg;
 (function (global) {
-    var dbgGlobal = newGlobal();
+    var dbgGlobal = newGlobal({newCompartment: true});
     dbg = new dbgGlobal.Debugger();
     dbg.addDebuggee(global);
 })(this);

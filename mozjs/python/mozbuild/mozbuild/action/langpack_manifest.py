@@ -26,6 +26,7 @@ from mozpack.chrome.manifest import (
 )
 from mozbuild.configure.util import Version
 from mozbuild.preprocessor import Preprocessor
+import buildconfig
 
 
 def write_file(path, content):
@@ -52,13 +53,13 @@ pushlog_api_url = "{0}/json-rev/{1}"
 ###
 def get_dt_from_hg(path):
     with mozversioncontrol.get_repository_object(path=path) as repo:
-        phase = repo._run_in_client(["log", "-r", ".", "-T" "{phase}"])
+        phase = repo._run("log", "-r", ".", "-T" "{phase}")
         if phase.strip() != "public":
             return datetime.datetime.utcnow()
-        repo_url = repo._run_in_client(["paths", "default"])
+        repo_url = repo._run("paths", "default")
         repo_url = repo_url.strip().replace("ssh://", "https://")
         repo_url = repo_url.replace("hg://", "https://")
-        cs = repo._run_in_client(["log", "-r", ".", "-T" "{node}"])
+        cs = repo._run("log", "-r", ".", "-T" "{node}")
 
     url = pushlog_api_url.format(repo_url, cs)
     session = requests.Session()
@@ -379,7 +380,7 @@ def get_version_maybe_buildid(min_version):
 #    }
 ###
 def create_webmanifest(locstr, min_app_ver, max_app_ver, app_name,
-                       l10n_basedir, defines, chrome_entries):
+                       l10n_basedir, langpack_eid, defines, chrome_entries):
     locales = map(lambda loc: loc.strip(), locstr.split(','))
     main_locale = locales[0]
 
@@ -393,7 +394,7 @@ def create_webmanifest(locstr, min_app_ver, max_app_ver, app_name,
         'manifest_version': 2,
         'applications': {
             'gecko': {
-                'id': 'langpack-{0}@firefox.mozilla.org'.format(main_locale),
+                'id': langpack_eid,
                 'strict_min_version': min_app_ver,
                 'strict_max_version': max_app_ver,
             }
@@ -446,6 +447,8 @@ def main(args):
                         help='Name of the application the langpack is for')
     parser.add_argument('--l10n-basedir',
                         help='Base directory for locales used in the language pack')
+    parser.add_argument('--langpack-eid',
+                        help='Language pack id to use for this locale')
     parser.add_argument('--defines', default=[], nargs='+',
                         help='List of defines files to load data from')
     parser.add_argument('--input',
@@ -476,6 +479,7 @@ def main(args):
         args.max_app_ver,
         args.app_name,
         args.l10n_basedir,
+        args.langpack_eid,
         defines,
         chrome_entries
     )

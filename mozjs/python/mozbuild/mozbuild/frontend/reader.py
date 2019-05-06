@@ -33,6 +33,7 @@ from collections import (
     OrderedDict,
 )
 from io import StringIO
+from itertools import chain
 from multiprocessing import cpu_count
 
 from mozbuild.util import (
@@ -52,10 +53,6 @@ from mozbuild.backend.configenvironment import ConfigEnvironment
 
 from mozpack.files import FileFinder
 import mozpack.path as mozpath
-
-from .data import (
-    JavaJarData,
-)
 
 from .sandbox import (
     default_finder,
@@ -248,22 +245,6 @@ class MozbuildSandbox(Sandbox):
 
         Sandbox.exec_file(self, path)
 
-    def _add_java_jar(self, name):
-        """Add a Java JAR build target."""
-        if not name:
-            raise Exception('Java JAR cannot be registered without a name')
-
-        if '/' in name or '\\' in name or '.jar' in name:
-            raise Exception('Java JAR names must not include slashes or'
-                ' .jar: %s' % name)
-
-        if name in self['JAVA_JAR_TARGETS']:
-            raise Exception('Java JAR has already been registered: %s' % name)
-
-        jar = JavaJarData(name)
-        self['JAVA_JAR_TARGETS'][name] = jar
-        return jar
-
     def _export(self, varname):
         """Export the variable to all subdirectories of the current path."""
 
@@ -413,6 +394,11 @@ class TemplateFunction(object):
         code = func.func_code
         firstlineno = code.co_firstlineno
         lines = sandbox._current_source.splitlines(True)
+        if lines:
+            # Older versions of python 2.7 had a buggy inspect.getblock() that
+            # would ignore the last line if it didn't terminate with a newline.
+            if not lines[-1].endswith('\n'):
+                lines[-1] += '\n'
         lines = inspect.getblock(lines[firstlineno - 1:])
 
         # The code lines we get out of inspect.getsourcelines look like
@@ -922,7 +908,7 @@ class BuildReader(object):
         for path, f in self._relevant_mozbuild_finder.find('**/moz.build'):
             yield path
 
-    def find_sphinx_variables(self):
+    def find_sphinx_variables(self, path=None):
         """This function finds all assignments of Sphinx documentation variables.
 
         This is a generator of tuples of (moz.build path, var, key, value). For
@@ -1017,7 +1003,12 @@ class BuildReader(object):
             def visit_AugAssign(self, node):
                 self.helper(node)
 
-        for p in self.all_mozbuild_paths():
+        if path:
+            mozbuild_paths = chain(*self._find_relevant_mozbuilds([path]).values())
+        else:
+            mozbuild_paths = self.all_mozbuild_paths()
+
+        for p in mozbuild_paths:
             assignments[:] = []
             full = os.path.join(self.config.topsrcdir, p)
 
@@ -1356,6 +1347,15 @@ class BuildReader(object):
 
         r = {}
 
+        # Only do wildcard matching if the '*' character is present.
+        # Otherwise, mozpath.match will match directories, which we've
+        # arbitrarily chosen to not allow.
+        def path_matches_pattern(relpath, pattern):
+            if pattern == relpath:
+                return True
+
+            return '*' in pattern and mozpath.match(relpath, pattern)
+
         for path, ctxs in paths.items():
             # Should be normalized by read_relevant_mozbuilds.
             assert '\\' not in path
@@ -1378,13 +1378,7 @@ class BuildReader(object):
                 else:
                     relpath = path
 
-                pattern = ctx.pattern
-
-                # Only do wildcard matching if the '*' character is present.
-                # Otherwise, mozpath.match will match directories, which we've
-                # arbitrarily chosen to not allow.
-                if pattern == relpath or \
-                        ('*' in pattern and mozpath.match(relpath, pattern)):
+                if any(path_matches_pattern(relpath, p) for p in ctx.patterns):
                     flags += ctx
 
             if not any([flags.test_tags, flags.test_files, flags.test_flavors]):

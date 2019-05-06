@@ -27,9 +27,6 @@ import os
 import re
 import sys
 
-from mozversioncontrol import get_repository_from_env
-
-
 architecture_independent = set(['generic'])
 all_unsupported_architectures_names = set(['mips32', 'mips64', 'mips_shared'])
 all_architecture_names = set(['x86', 'x64', 'arm', 'arm64'])
@@ -40,7 +37,8 @@ reArgType = "(?P<type>[\w\s:*&]+)"
 reArgName = "(?P<name>\s\w+)"
 reArgDefault = "(?P<default>(?:\s=[^,)]+)?)"
 reAfterArg = "(?=[,)])"
-reMatchArg = re.compile(reBeforeArg + reArgType + reArgName + reArgDefault + reAfterArg)
+reMatchArg = re.compile(reBeforeArg + reArgType +
+                        reArgName + reArgDefault + reAfterArg)
 
 
 def get_normalized_signatures(signature, fileAnnot=None):
@@ -50,6 +48,8 @@ def get_normalized_signatures(signature, fileAnnot=None):
     signature = signature.replace(';', ' ')
     # Normalize spaces.
     signature = re.sub(r'\s+', ' ', signature).strip()
+    # Remove new-line induced spaces after opening braces.
+    signature = re.sub(r'\(\s+', '(', signature).strip()
     # Match arguments, and keep only the type.
     signature = reMatchArg.sub('\g<type>', signature)
     # Remove class name
@@ -61,7 +61,8 @@ def get_normalized_signatures(signature, fileAnnot=None):
         archs = [fileAnnot['arch']]
 
     if 'DEFINED_ON(' in signature:
-        archs = re.sub(r'.*DEFINED_ON\((?P<archs>[^()]*)\).*', '\g<archs>', signature).split(',')
+        archs = re.sub(
+            r'.*DEFINED_ON\((?P<archs>[^()]*)\).*', '\g<archs>', signature).split(',')
         archs = [a.strip() for a in archs]
         signature = re.sub(r'\s+DEFINED_ON\([^()]*\)', '', signature)
 
@@ -145,44 +146,62 @@ def get_macroassembler_definitions(filename):
         return []
 
     style_section = False
-    code_section = False
     lines = ''
     signatures = []
     with open(filename) as f:
         for line in f:
             if '//{{{ check_macroassembler_style' in line:
+                if style_section:
+                    raise 'check_macroassembler_style section already opened.'
                 style_section = True
+                braces_depth = 0
             elif '//}}} check_macroassembler_style' in line:
                 style_section = False
             if not style_section:
                 continue
 
+            # Remove comments from the processed line.
             line = re.sub(r'//.*', '', line)
-            if line.startswith('{') or line.strip() == "{}":
+
+            # Locate and count curly braces.
+            open_curly_brace = line.find('{')
+            was_braces_depth = braces_depth
+            braces_depth = braces_depth + line.count('{') - line.count('}')
+
+            # Raise an error if the check_macroassembler_style macro is used
+            # across namespaces / classes scopes.
+            if braces_depth < 0:
+                raise 'check_macroassembler_style annotations are not well scoped.'
+
+            # If the current line contains an opening curly brace, check if
+            # this line combines with the previous one can be identified as a
+            # MacroAssembler function signature.
+            if open_curly_brace != -1 and was_braces_depth == 0:
+                lines = lines + line[:open_curly_brace]
                 if 'MacroAssembler::' in lines:
-                    signatures.extend(get_normalized_signatures(lines, fileAnnot))
-                if line.strip() != "{}":  # Empty declaration, no need to declare
-                    # a new code section
-                    code_section = True
-                continue
-            if line.startswith('}'):
-                code_section = False
+                    signatures.extend(
+                        get_normalized_signatures(lines, fileAnnot))
                 lines = ''
-                continue
-            if code_section:
                 continue
 
-            if len(line.strip()) == 0:
-                lines = ''
+            # We do not aggregate any lines if we are scanning lines which are
+            # in-between a set of curly braces.
+            if braces_depth > 0:
                 continue
+            if was_braces_depth != 0:
+                line = line[line.rfind('}') + 1:]
+
+            # This logic is used to remove template instantiation, static
+            # variable definitions and function declaration from the next
+            # function definition.
+            last_semi_colon = line.rfind(';')
+            if last_semi_colon != -1:
+                lines = ''
+                line = line[last_semi_colon + 1:]
+
+            # Aggregate lines of non-braced text, which corresponds to the space
+            # where we are expecting to find function definitions.
             lines = lines + line
-            # Continue until we have a complete declaration
-            if '{' not in lines:
-                continue
-            # Skip variable declarations
-            if ')' not in lines:
-                lines = ''
-                continue
 
     return signatures
 
@@ -201,14 +220,17 @@ def get_macroassembler_declaration(filename):
                 continue
 
             line = re.sub(r'//.*', '', line)
-            if len(line.strip()) == 0:
+            if len(line.strip()) == 0 or 'public:' in line or 'private:' in line:
                 lines = ''
                 continue
             lines = lines + line
+
             # Continue until we have a complete declaration
             if ';' not in lines:
                 continue
-            # Skip variable declarations
+
+            # Skip member declarations: which are lines ending with a
+            # semi-colon without any list of arguments.
             if ')' not in lines:
                 lines = ''
                 continue
@@ -247,7 +269,8 @@ def generate_file_content(signatures):
             elif len(archs.symmetric_difference(all_shared_architecture_names)) == 0:
                 output.append(s + ' PER_SHARED_ARCH;\n')
             else:
-                output.append(s + ' DEFINED_ON(' + ', '.join(sorted(archs)) + ');\n')
+                output.append(
+                    s + ' DEFINED_ON(' + ', '.join(sorted(archs)) + ');\n')
             for a in sorted(archs):
                 a = a.replace('_', '-')
                 masm = '%s/MacroAssembler-%s' % (a, a)
@@ -265,19 +288,22 @@ def check_style():
     # We infer from each file the signature of each MacroAssembler function.
     defs = dict()       # type: dict(signature => ['x86', 'x64'])
 
-    with get_repository_from_env() as repo:
-        # Select the appropriate files.
-        for filename in repo.get_files_in_working_directory():
-            if not filename.startswith('js/src/jit/'):
-                continue
+    root_dir = os.path.join('js', 'src', 'jit')
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        for filename in filenames:
             if 'MacroAssembler' not in filename:
                 continue
 
-            filename = os.path.join(repo.path, filename)
+            filepath = os.path.join(dirpath, filename).replace('\\', '/')
 
-            if filename.endswith('MacroAssembler.h'):
-                decls = append_signatures(decls, get_macroassembler_declaration(filename))
-            defs = append_signatures(defs, get_macroassembler_definitions(filename))
+            if filepath.endswith('MacroAssembler.h'):
+                decls = append_signatures(
+                    decls, get_macroassembler_declaration(filepath))
+            defs = append_signatures(
+                defs, get_macroassembler_definitions(filepath))
+
+    if not decls or not defs:
+        raise Exception("Did not find any definitions or declarations")
 
     # Compare declarations and definitions output.
     difflines = difflib.unified_diff(generate_file_content(decls),

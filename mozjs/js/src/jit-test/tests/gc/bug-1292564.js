@@ -1,10 +1,7 @@
-// |jit-test| allow-oom
-
-if (!('oomTest' in this))
-    quit();
+// |jit-test| allow-oom; skip-if: !('oomTest' in this)
 
 oomTest(() => {
-    let global = newGlobal();
+    let global = newGlobal({sameZoneAs: this});
     Debugger(global).onDebuggerStatement = function (frame) {
         frame.eval("f")
     }

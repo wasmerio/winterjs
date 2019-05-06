@@ -39,23 +39,23 @@ static const int32_t gOffsets[] = {
     2,
     7,
     16,
-    20,
-    24,
-    285,
-    295,
-    306,
-    310,
-    316,
-    320,
-    340,
-    341,
-    352,
-    355,
+    22,
+    26,
+    325,
+    336,
+    347,
+    351,
+    357,
     361,
-    366,
-    370,
-    374,
-    399
+    381,
+    382,
+    393,
+    396,
+    402,
+    408,
+    412,
+    416,
+    441
 };
 
 static const int32_t gIndexes[] = {
@@ -63,23 +63,23 @@ static const int32_t gIndexes[] = {
     2,
     7,
     16,
-    20,
-    24,
-    24,
-    34,
-    45,
-    49,
-    55,
-    59,
-    79,
-    80,
-    91,
+    22,
+    26,
+    26,
+    37,
+    48,
+    52,
+    58,
+    62,
+    82,
+    83,
     94,
-    100,
-    105,
+    97,
+    103,
     109,
     113,
-    138
+    117,
+    142
 };
 
 // Must be sorted alphabetically.
@@ -128,6 +128,8 @@ static const char * const gSubTypes[] = {
     "milligram-per-deciliter",
     "millimole-per-liter",
     "part-per-million",
+    "percent",
+    "permille",
     "liter-per-100kilometers",
     "liter-per-kilometer",
     "mile-per-gallon",
@@ -136,15 +138,18 @@ static const char * const gSubTypes[] = {
     "AED",
     "AFA",
     "AFN",
+    "ALK",
     "ALL",
     "AMD",
     "ANG",
     "AOA",
+    "AOK",
     "AON",
     "AOR",
     "ARA",
     "ARP",
     "ARS",
+    "ARY",
     "ATS",
     "AUD",
     "AWG",
@@ -158,6 +163,8 @@ static const char * const gSubTypes[] = {
     "BEC",
     "BEF",
     "BEL",
+    "BGJ",
+    "BGK",
     "BGL",
     "BGN",
     "BHD",
@@ -165,7 +172,9 @@ static const char * const gSubTypes[] = {
     "BMD",
     "BND",
     "BOB",
+    "BOP",
     "BOV",
+    "BRB",
     "BRC",
     "BRE",
     "BRL",
@@ -173,6 +182,7 @@ static const char * const gSubTypes[] = {
     "BRR",
     "BSD",
     "BTN",
+    "BUK",
     "BWP",
     "BYB",
     "BYN",
@@ -191,6 +201,7 @@ static const char * const gSubTypes[] = {
     "COU",
     "CRC",
     "CSD",
+    "CSJ",
     "CSK",
     "CUC",
     "CUP",
@@ -225,10 +236,13 @@ static const char * const gSubTypes[] = {
     "GHS",
     "GIP",
     "GMD",
+    "GNE",
     "GNF",
+    "GNS",
     "GQE",
     "GRD",
     "GTQ",
+    "GWE",
     "GWP",
     "GYD",
     "HKD",
@@ -239,10 +253,13 @@ static const char * const gSubTypes[] = {
     "HUF",
     "IDR",
     "IEP",
+    "ILP",
+    "ILR",
     "ILS",
     "INR",
     "IQD",
     "IRR",
+    "ISJ",
     "ISK",
     "ITL",
     "JMD",
@@ -257,11 +274,13 @@ static const char * const gSubTypes[] = {
     "KWD",
     "KYD",
     "KZT",
+    "LAJ",
     "LAK",
     "LBP",
     "LKR",
     "LRD",
     "LSL",
+    "LSM",
     "LTL",
     "LTT",
     "LUC",
@@ -280,17 +299,23 @@ static const char * const gSubTypes[] = {
     "MNT",
     "MOP",
     "MRO",
+    "MRU",
     "MTL",
+    "MTP",
     "MUR",
+    "MVQ",
     "MVR",
     "MWK",
     "MXN",
+    "MXP",
     "MXV",
     "MYR",
+    "MZE",
     "MZM",
     "MZN",
     "NAD",
     "NGN",
+    "NIC",
     "NIO",
     "NLG",
     "NOK",
@@ -298,6 +323,7 @@ static const char * const gSubTypes[] = {
     "NZD",
     "OMR",
     "PAB",
+    "PEH",
     "PEI",
     "PEN",
     "PES",
@@ -309,6 +335,8 @@ static const char * const gSubTypes[] = {
     "PTE",
     "PYG",
     "QAR",
+    "RHD",
+    "ROK",
     "ROL",
     "RON",
     "RSD",
@@ -320,6 +348,7 @@ static const char * const gSubTypes[] = {
     "SCR",
     "SDD",
     "SDG",
+    "SDP",
     "SEK",
     "SGD",
     "SHP",
@@ -331,6 +360,8 @@ static const char * const gSubTypes[] = {
     "SRG",
     "SSP",
     "STD",
+    "STN",
+    "SUR",
     "SVC",
     "SYP",
     "SZL",
@@ -349,15 +380,22 @@ static const char * const gSubTypes[] = {
     "TZS",
     "UAH",
     "UAK",
+    "UGS",
+    "UGW",
     "UGX",
     "USD",
     "USN",
     "USS",
     "UYI",
+    "UYN",
+    "UYP",
     "UYU",
+    "UYW",
     "UZS",
     "VEB",
     "VEF",
+    "VES",
+    "VNC",
     "VND",
     "VUV",
     "WST",
@@ -381,6 +419,7 @@ static const char * const gSubTypes[] = {
     "XXX",
     "YDD",
     "YER",
+    "YUD",
     "YUM",
     "YUN",
     "ZAL",
@@ -389,6 +428,7 @@ static const char * const gSubTypes[] = {
     "ZMW",
     "ZRN",
     "ZRZ",
+    "ZWC",
     "ZWD",
     "ZWL",
     "ZWN",
@@ -401,6 +441,7 @@ static const char * const gSubTypes[] = {
     "kilobyte",
     "megabit",
     "megabyte",
+    "petabyte",
     "terabit",
     "terabyte",
     "century",
@@ -469,6 +510,7 @@ static const char * const gSubTypes[] = {
     "megawatt",
     "milliwatt",
     "watt",
+    "atmosphere",
     "hectopascal",
     "inch-hg",
     "millibar",
@@ -511,15 +553,19 @@ static const char * const gSubTypes[] = {
 
 // Must be sorted by first value and then second value.
 static int32_t unitPerUnitToSingleUnit[][4] = {
-        {327, 297, 17, 0},
-        {329, 303, 17, 2},
-        {331, 297, 17, 3},
-        {331, 388, 4, 2},
-        {331, 389, 4, 3},
-        {346, 386, 3, 1},
-        {349, 11, 16, 4},
-        {391, 327, 4, 1}
+        {368, 338, 17, 0},
+        {370, 344, 17, 2},
+        {372, 338, 17, 3},
+        {372, 430, 4, 2},
+        {372, 431, 4, 3},
+        {387, 428, 3, 1},
+        {390, 11, 16, 5},
+        {433, 368, 4, 1}
 };
+
+// Shortcuts to the base unit in order to make the default constructor fast
+static const int32_t kBaseTypeIdx = 14;
+static const int32_t kBaseSubTypeIdx = 0;
 
 MeasureUnit *MeasureUnit::createGForce(UErrorCode &status) {
     return MeasureUnit::create(0, 0, status);
@@ -601,6 +647,14 @@ MeasureUnit *MeasureUnit::createPartPerMillion(UErrorCode &status) {
     return MeasureUnit::create(3, 3, status);
 }
 
+MeasureUnit *MeasureUnit::createPercent(UErrorCode &status) {
+    return MeasureUnit::create(3, 4, status);
+}
+
+MeasureUnit *MeasureUnit::createPermille(UErrorCode &status) {
+    return MeasureUnit::create(3, 5, status);
+}
+
 MeasureUnit *MeasureUnit::createLiterPer100Kilometers(UErrorCode &status) {
     return MeasureUnit::create(4, 0, status);
 }
@@ -649,12 +703,16 @@ MeasureUnit *MeasureUnit::createMegabyte(UErrorCode &status) {
     return MeasureUnit::create(6, 7, status);
 }
 
-MeasureUnit *MeasureUnit::createTerabit(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createPetabyte(UErrorCode &status) {
     return MeasureUnit::create(6, 8, status);
 }
 
-MeasureUnit *MeasureUnit::createTerabyte(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createTerabit(UErrorCode &status) {
     return MeasureUnit::create(6, 9, status);
+}
+
+MeasureUnit *MeasureUnit::createTerabyte(UErrorCode &status) {
+    return MeasureUnit::create(6, 10, status);
 }
 
 MeasureUnit *MeasureUnit::createCentury(UErrorCode &status) {
@@ -909,24 +967,28 @@ MeasureUnit *MeasureUnit::createWatt(UErrorCode &status) {
     return MeasureUnit::create(15, 5, status);
 }
 
-MeasureUnit *MeasureUnit::createHectopascal(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createAtmosphere(UErrorCode &status) {
     return MeasureUnit::create(16, 0, status);
 }
 
-MeasureUnit *MeasureUnit::createInchHg(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createHectopascal(UErrorCode &status) {
     return MeasureUnit::create(16, 1, status);
 }
 
-MeasureUnit *MeasureUnit::createMillibar(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createInchHg(UErrorCode &status) {
     return MeasureUnit::create(16, 2, status);
 }
 
-MeasureUnit *MeasureUnit::createMillimeterOfMercury(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createMillibar(UErrorCode &status) {
     return MeasureUnit::create(16, 3, status);
 }
 
-MeasureUnit *MeasureUnit::createPoundPerSquareInch(UErrorCode &status) {
+MeasureUnit *MeasureUnit::createMillimeterOfMercury(UErrorCode &status) {
     return MeasureUnit::create(16, 4, status);
+}
+
+MeasureUnit *MeasureUnit::createPoundPerSquareInch(UErrorCode &status) {
+    return MeasureUnit::create(16, 5, status);
 }
 
 MeasureUnit *MeasureUnit::createKilometerPerHour(UErrorCode &status) {
@@ -1082,7 +1144,8 @@ static int32_t binarySearch(
 
 MeasureUnit::MeasureUnit() {
     fCurrency[0] = 0;
-    initNoUnit("base");
+    fTypeId = kBaseTypeIdx;
+    fSubTypeId = kBaseSubTypeIdx;
 }
 
 MeasureUnit::MeasureUnit(const MeasureUnit &other)
@@ -1211,8 +1274,8 @@ int32_t MeasureUnit::internalGetIndexForTypeAndSubtype(const char *type, const c
     return gIndexes[t] + st - gOffsets[t];
 }
 
-MeasureUnit *MeasureUnit::resolveUnitPerUnit(
-        const MeasureUnit &unit, const MeasureUnit &perUnit) {
+MeasureUnit MeasureUnit::resolveUnitPerUnit(
+        const MeasureUnit &unit, const MeasureUnit &perUnit, bool* isResolved) {
     int32_t unitOffset = unit.getOffset();
     int32_t perUnitOffset = perUnit.getOffset();
 
@@ -1233,10 +1296,13 @@ MeasureUnit *MeasureUnit::resolveUnitPerUnit(
         } else {
             // We found a resolution for our unit / per-unit combo
             // return it.
-            return new MeasureUnit(midRow[2], midRow[3]);
+            *isResolved = true;
+            return MeasureUnit(midRow[2], midRow[3]);
         }
     }
-    return NULL;
+
+    *isResolved = false;
+    return MeasureUnit();
 }
 
 MeasureUnit *MeasureUnit::create(int typeId, int subTypeId, UErrorCode &status) {

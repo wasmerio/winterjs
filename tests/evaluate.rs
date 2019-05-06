@@ -13,17 +13,13 @@ use mozjs_sys::jsapi::JSClass;
 use mozjs_sys::jsapi::JSClassOps;
 use mozjs_sys::jsapi::JSContext;
 use mozjs_sys::jsapi::JSProtoKey;
-use mozjs_sys::jsapi::JS_BeginRequest;
 use mozjs_sys::jsapi::JS_DestroyContext;
-use mozjs_sys::jsapi::JS_EndRequest;
-use mozjs_sys::jsapi::JS_EnterCompartment;
 use mozjs_sys::jsapi::JS_GlobalObjectTraceHook;
-use mozjs_sys::jsapi::JS_LeaveCompartment;
 use mozjs_sys::jsapi::JS_NewGlobalObject;
 use mozjs_sys::jsapi::JS_NewContext;
 use mozjs_sys::jsapi::JS_ShutDown;
 use mozjs_sys::jsapi::glue::JS_Init;
-use mozjs_sys::jsapi::glue::JS_NewCompartmentOptions;
+use mozjs_sys::jsapi::glue::JS_NewRealmOptions;
 use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
 
 use std::mem;
@@ -69,11 +65,10 @@ fn main() {
         let cx: *mut JSContext = JS_NewContext(heap_size, nursery_size, ptr::null_mut());
         assert!(!cx.is_null());
         assert!(JS::InitSelfHostedCode(cx));
-        JS_BeginRequest(cx);
 
         // Create the global object and a new compartment.
         // THIS IS DANGEROUS since the global isn't rooted.
-        let options = JS_NewCompartmentOptions();
+        let options = JS_NewRealmOptions();
         let global = JS_NewGlobalObject(
             cx,
             &GLOBAL_CLASS,
@@ -81,21 +76,20 @@ fn main() {
             FireOnNewGlobalHook,
             &options
         );
-        let compartment = JS_EnterCompartment(cx, global);
+        let realm = JS::EnterRealm(cx, global);
 
-        // Evaluate 1+1.
-        let script: Vec<u16> = "1+1".encode_utf16().collect();
         let options = JS_NewOwningCompileOptions(cx);
         let mut rval: JS::Value = mem::zeroed();
         let mut rval_handle: JS::MutableHandleValue = mem::zeroed();
         rval_handle.ptr = &mut rval;
 
-        assert!(JS::Evaluate2(cx, &options._base, &script[0], script.len(), rval_handle));
+        // Evaluate 1+1.
+        let script = "1+1".as_bytes();
+        assert!(JS::EvaluateUtf8(cx, &options._base, &script[0] as *const _ as *const _, script.len(), rval_handle));
         assert!(rval.to_int32() == 2);
 
         // Shut everything down.
-        JS_LeaveCompartment(cx, compartment);
-        JS_EndRequest(cx);
+        JS::LeaveRealm(cx, realm);
         JS_DestroyContext(cx);
         JS_ShutDown();
     }

@@ -137,6 +137,8 @@ class ConfigEnvironment(object):
             self.rust_lib_suffix = '.%s' % self.substs['RUST_LIB_SUFFIX']
         self.dll_prefix = self.substs.get('DLL_PREFIX', '')
         self.dll_suffix = self.substs.get('DLL_SUFFIX', '')
+        self.host_dll_prefix = self.substs.get('HOST_DLL_PREFIX', '')
+        self.host_dll_suffix = self.substs.get('HOST_DLL_SUFFIX', '')
         if self.substs.get('IMPORT_LIB_SUFFIX'):
             self.import_prefix = self.lib_prefix
             self.import_suffix = '.%s' % self.substs['IMPORT_LIB_SUFFIX']
@@ -239,9 +241,10 @@ class PartialConfigDict(object):
         return existing_files
 
     def _write_file(self, key, value):
+        encoding = 'mbcs' if sys.platform == 'win32' else 'utf-8'
         filename = mozpath.join(self._datadir, key)
         with FileAvoidWrite(filename) as fh:
-            json.dump(value, fh, indent=4)
+            json.dump(value, fh, indent=4, encoding=encoding)
         return filename
 
     def _fill_group(self, values):

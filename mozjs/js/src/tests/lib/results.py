@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import json
 import pipes
 import re
 
@@ -7,19 +8,23 @@ from progressbar import NullProgressBar, ProgressBar
 from structuredlog import TestLogger
 
 # subprocess.list2cmdline does not properly escape for sh-like shells
+
+
 def escape_cmdline(args):
     return ' '.join([pipes.quote(a) for a in args])
 
+
 class TestOutput:
     """Output from a test run."""
-    def __init__(self, test, cmd, out, err, rc, dt, timed_out):
+    def __init__(self, test, cmd, out, err, rc, dt, timed_out, extra=None):
         self.test = test   # Test
         self.cmd = cmd     # str:   command line of test
         self.out = out     # str:   stdout
         self.err = err     # str:   stderr
         self.rc = rc       # int:   return code
         self.dt = dt       # float: run time
-        self.timed_out = timed_out # bool: did the test time out
+        self.timed_out = timed_out  # bool: did the test time out
+        self.extra = extra  # includes the pid on some platforms
 
     def describe_failure(self):
         if self.timed_out:
@@ -31,8 +36,10 @@ class TestOutput:
                 return line
         return "Unknown"
 
+
 class NullTestOutput:
     """Variant of TestOutput that indicates a test was not run."""
+
     def __init__(self, test):
         self.test = test
         self.cmd = ''
@@ -42,22 +49,103 @@ class NullTestOutput:
         self.dt = 0.0
         self.timed_out = False
 
+
 class TestResult:
     PASS = 'PASS'
     FAIL = 'FAIL'
     CRASH = 'CRASH'
 
     """Classified result from a test run."""
-    def __init__(self, test, result, results):
+
+    def __init__(self, test, result, results, wpt_results=None):
         self.test = test
         self.result = result
         self.results = results
+        self.wpt_results = wpt_results  # Only used for wpt tests.
+
+    @classmethod
+    def from_wpt_output(cls, output):
+        """Parse the output from a web-platform test that uses testharness.js.
+        (The output is written to stdout in js/src/tests/testharnessreport.js.)
+        """
+        from wptrunner.executors.base import testharness_result_converter
+
+        rc = output.rc
+        stdout = output.out.split("\n")
+        if rc != 0:
+            if rc == 3:
+                harness_status = "ERROR"
+                harness_message = "Exit code reported exception"
+            else:
+                harness_status = "CRASH"
+                harness_message = "Exit code reported crash"
+            tests = []
+        else:
+            for (idx, line) in enumerate(stdout):
+                if line.startswith("WPT OUTPUT: "):
+                    msg = line[len("WPT OUTPUT: "):]
+                    data = [output.test.wpt.url] + json.loads(msg)
+                    harness_status_obj, tests = testharness_result_converter(output.test.wpt, data)
+                    harness_status = harness_status_obj.status
+                    harness_message = "Reported by harness: %s" % (harness_status_obj.message,)
+                    del stdout[idx]
+                    break
+            else:
+                harness_status = "ERROR"
+                harness_message = "No harness output found"
+                tests = []
+        stdout.append("Harness status: %s (%s)" % (harness_status, harness_message))
+
+        result = cls.PASS
+        results = []
+        subtests = []
+        expected_harness_status = output.test.wpt.expected()
+        if harness_status != expected_harness_status:
+            if harness_status == "CRASH":
+                result = cls.CRASH
+            else:
+                result = cls.FAIL
+        else:
+            for test in tests:
+                test_output = "Subtest \"%s\": " % (test.name,)
+                expected = output.test.wpt.expected(test.name)
+                if test.status == expected:
+                    test_result = (cls.PASS, "")
+                    test_output += "as expected: %s" % (test.status,)
+                else:
+                    test_result = (cls.FAIL, test.message)
+                    result = cls.FAIL
+                    test_output += "expected %s, found %s" % (expected, test.status)
+                    if test.message:
+                        test_output += " (with message: \"%s\")" % (test.message,)
+                subtests.append({
+                    "test": output.test.wpt.id,
+                    "subtest": test.name,
+                    "status": test.status,
+                    "expected": expected,
+                })
+                results.append(test_result)
+                stdout.append(test_output)
+
+        output.out = "\n".join(stdout) + "\n"
+
+        wpt_results = {
+            "name": output.test.wpt.id,
+            "status": harness_status,
+            "expected": expected_harness_status,
+            "subtests": subtests,
+        }
+
+        return cls(output.test, result, results, wpt_results)
 
     @classmethod
     def from_output(cls, output):
         test = output.test
         result = None          # str:      overall result, see class-level variables
         results = []           # (str,str) list: subtest results (pass/fail, message)
+
+        if test.wpt:
+            return cls.from_wpt_output(output)
 
         out, err, rc = output.out, output.err, output.rc
 
@@ -89,7 +177,7 @@ class TestResult:
                 failures += 1
                 results.append((cls.FAIL, "Expected uncaught error: {}".format(test.error)))
 
-        if rc and not rc in expected_rcs:
+        if rc and rc not in expected_rcs:
             if rc == 3:
                 result = cls.FAIL
             else:
@@ -102,10 +190,12 @@ class TestResult:
 
         return cls(test, result, results)
 
+
 class TestDuration:
     def __init__(self, test, duration):
         self.test = test
         self.duration = duration
+
 
 class ResultsSink:
     def __init__(self, testsuite, options, testcount):
@@ -114,6 +204,15 @@ class ResultsSink:
         if self.options.format == 'automation':
             self.slog = TestLogger(testsuite)
             self.slog.suite_start()
+
+        self.wptreport = None
+        if self.options.wptreport:
+            try:
+                from .wptreport import WptreportHandler
+                self.wptreport = WptreportHandler(self.options.wptreport)
+                self.wptreport.suite_start()
+            except ImportError:
+                pass
 
         self.groups = {}
         self.output_dict = {}
@@ -146,6 +245,10 @@ class ResultsSink:
             self.n += 1
         else:
             result = TestResult.from_output(output)
+
+            if self.wptreport is not None and result.wpt_results:
+                self.wptreport.test(result.wpt_results, output.dt)
+
             tup = (result.result, result.test.expect, result.test.random)
             dev_label = self.LABELS[tup][1]
 
@@ -165,18 +268,18 @@ class ResultsSink:
 
             if dev_label == 'REGRESSIONS':
                 show_output = self.options.show_output \
-                              or not self.options.no_show_failed
+                    or not self.options.no_show_failed
             elif dev_label == 'TIMEOUTS':
                 show_output = self.options.show_output
             else:
                 show_output = self.options.show_output \
-                              and not self.options.failed_only
+                    and not self.options.failed_only
 
             if dev_label in ('REGRESSIONS', 'TIMEOUTS'):
                 show_cmd = self.options.show_cmd
             else:
                 show_cmd = self.options.show_cmd \
-                           and not self.options.failed_only
+                    and not self.options.failed_only
 
             if show_output or show_cmd:
                 self.pb.beginline()
@@ -212,7 +315,10 @@ class ResultsSink:
                             label, result.test, time=output.dt,
                             message=msg)
                 tup = (result.result, result.test.expect, result.test.random)
-                self.print_automation_result(self.LABELS[tup][0], result.test, time=output.dt)
+                self.print_automation_result(self.LABELS[tup][0],
+                                             result.test,
+                                             time=output.dt,
+                                             extra=getattr(output, 'extra', None))
                 return
 
             if dev_label:
@@ -229,6 +335,9 @@ class ResultsSink:
             self.slog.suite_end()
         else:
             self.list(completed)
+
+        if self.wptreport is not None:
+            self.wptreport.suite_end()
 
     # Conceptually, this maps (test result x test expection) to text labels.
     #      key   is (result, expect, random)
@@ -248,7 +357,7 @@ class ResultsSink:
         (TestResult.PASS,  False, True):  ('TEST-PASS (EXPECTED RANDOM)',        ''),
         (TestResult.PASS,  True,  False): ('TEST-PASS',                          ''),
         (TestResult.PASS,  True,  True):  ('TEST-PASS (EXPECTED RANDOM)',        ''),
-        }
+    }
 
     def list(self, completed):
         for label, results in sorted(self.groups.items()):
@@ -292,7 +401,7 @@ class ResultsSink:
         return 'REGRESSIONS' not in self.groups and 'TIMEOUTS' not in self.groups
 
     def print_automation_result(self, label, test, message=None, skip=False,
-                                time=None):
+                                time=None, extra=None):
         result = label
         result += " | " + test.path
         args = []
@@ -309,7 +418,7 @@ class ResultsSink:
         result += ' [{:.1f} s]'.format(time)
         print(result)
 
-        details = { 'extra': {} }
+        details = {'extra': extra.copy() if extra else {}}
         if self.options.shell_args:
             details['extra']['shell_args'] = self.options.shell_args
         details['extra']['jitflags'] = test.jitflags

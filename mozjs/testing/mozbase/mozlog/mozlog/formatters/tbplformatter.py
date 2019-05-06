@@ -10,6 +10,8 @@ from collections import deque
 from .base import BaseFormatter
 from .process import strstatus
 from ..handlers import SummaryHandler
+import six
+from functools import reduce
 
 
 def output_subtests(func):
@@ -129,7 +131,7 @@ class TbplFormatter(BaseFormatter):
 
     def suite_start(self, data):
         self.suite_start_time = data["time"]
-        num_tests = reduce(lambda x, y: x + len(y), data['tests'].itervalues(), 0)
+        num_tests = reduce(lambda x, y: x + len(y), six.itervalues(data['tests']), 0)
         return "SUITE-START | Running %i tests\n" % num_tests
 
     def test_start(self, data):
@@ -211,6 +213,19 @@ class TbplFormatter(BaseFormatter):
             time = data["time"] - start_time
             duration_msg = "took %ims" % time
 
+        screenshot_msg = ""
+        extra = data.get("extra", {})
+        if "reftest_screenshots" in extra:
+            screenshots = extra["reftest_screenshots"]
+            if len(screenshots) == 3:
+                screenshot_msg = ("\nREFTEST   IMAGE 1 (TEST): data:image/png;base64,%s\n"
+                                  "REFTEST   IMAGE 2 (REFERENCE): data:image/png;base64,%s") % (
+                                      screenshots[0]["screenshot"],
+                                      screenshots[2]["screenshot"])
+            elif len(screenshots) == 1:
+                screenshot_msg = ("\nREFTEST   IMAGE: data:image/png;base64,%s" %
+                                  screenshots[0]["screenshot"])
+
         if "expected" in data:
             message = data.get("message", "")
             if not message:
@@ -220,17 +235,7 @@ class TbplFormatter(BaseFormatter):
             if message and message[-1] == "\n":
                 message = message[:-1]
 
-            extra = data.get("extra", {})
-            if "reftest_screenshots" in extra:
-                screenshots = extra["reftest_screenshots"]
-                if len(screenshots) == 3:
-                    message += ("\nREFTEST   IMAGE 1 (TEST): data:image/png;base64,%s\n"
-                                "REFTEST   IMAGE 2 (REFERENCE): data:image/png;base64,%s") % (
-                                    screenshots[0]["screenshot"],
-                                    screenshots[2]["screenshot"])
-                elif len(screenshots) == 1:
-                    message += "\nREFTEST   IMAGE: data:image/png;base64,%s" \
-                               % screenshots[0]["screenshot"]
+            message += screenshot_msg
 
             failure_line = "TEST-UNEXPECTED-%s | %s | %s\n" % (
                 data["status"], test_id, message)
@@ -247,6 +252,8 @@ class TbplFormatter(BaseFormatter):
         if duration_msg:
             sections.append(duration_msg)
         rv.append(' | '.join(sections) + '\n')
+        if screenshot_msg:
+            rv.append(screenshot_msg[1:] + "\n")
         return "".join(rv)
 
     def suite_end(self, data):
@@ -256,7 +263,7 @@ class TbplFormatter(BaseFormatter):
         return "SUITE-END | took %is\n" % time
 
     def test_id(self, test_id):
-        if isinstance(test_id, (str, unicode)):
+        if isinstance(test_id, (str, six.text_type)):
             return test_id
         else:
             return tuple(test_id)
@@ -274,6 +281,62 @@ class TbplFormatter(BaseFormatter):
         data["column"] = ":%s" % data["column"] if data["column"] else ""
         data['rule'] = data['rule'] or data['linter'] or ""
         return fmt.append(fmt.format(**data))
+
+    def lsan_leak(self, data):
+        frames = data.get("frames")
+        allowed_match = data.get("allowed_match")
+        frame_list = ", ".join(frames)
+        prefix = "TEST-UNEXPECTED-FAIL" if not allowed_match else "TEST-FAIL"
+        suffix = ("" if not allowed_match
+                  else "INFO | LeakSanitizer | Frame %s matched a expected leak\n" % allowed_match)
+        return "%s | LeakSanitizer | leak at %s\n%s" % (prefix, frame_list, suffix)
+
+    def lsan_summary(self, data):
+        level = "INFO" if data.get("allowed", False) else "ERROR"
+        return ("%s | LeakSanitizer | "
+                "SUMMARY: AddressSanitizer: %d byte(s) leaked in %d allocation(s)." %
+                (level, data["bytes"], data["allocations"]))
+
+    def mozleak_object(self, data):
+        return ("TEST-INFO | leakcheck | %s leaked %d %s\n" %
+                (data["process"], data["bytes"], data["name"]))
+
+    def mozleak_total(self, data):
+        if data["bytes"] is None:
+            # We didn't see a line with name 'TOTAL'
+            if data.get("induced_crash", False):
+                return ("TEST-INFO | leakcheck | %s deliberate crash and thus no leak log\n"
+                        % data["process"])
+            if data.get("ignore_missing", False):
+                return ("TEST-INFO | leakcheck | "
+                        "%s ignoring missing output line for total leaks\n" %
+                        data["process"])
+
+            return ("TEST-UNEXPECTED-FAIL | leakcheck | "
+                    "%s missing output line for total leaks!\n" %
+                    data["process"])
+
+        if data["bytes"] == 0:
+            return ("TEST-PASS | leakcheck | %s no leaks detected!\n" %
+                    data["process"])
+
+        # Create a comma delimited string of the first N leaked objects found,
+        # to aid with bug summary matching in TBPL. Note: The order of the objects
+        # had no significance (they're sorted alphabetically).
+        max_objects = 5
+        object_summary = ', '.join(data["objects"][:max_objects])
+        if len(data["objects"]) > max_objects:
+            object_summary += ', ...'
+
+        message = "leakcheck | %s %d bytes leaked (%s)\n" % (
+            data["process"], data["bytes"], object_summary)
+
+        # data["bytes"] will include any expected leaks, so it can be off
+        # by a few thousand bytes.
+        if data["bytes"] > data["threshold"]:
+            return "TEST-UNEXPECTED-FAIL | %s\n" % message
+        else:
+            return "WARNING | %s\n" % message
 
     def _format_suite_summary(self, suite, summary):
         counts = summary['counts']

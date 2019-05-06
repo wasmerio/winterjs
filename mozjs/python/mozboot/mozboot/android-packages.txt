@@ -1,6 +1,4 @@
 platform-tools
-build-tools;26.0.2
-platforms;android-23
-extras;android;m2repository
-extras;google;m2repository
+build-tools;27.0.3
+platforms;android-26
 emulator

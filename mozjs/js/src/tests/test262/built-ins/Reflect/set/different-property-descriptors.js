@@ -32,6 +32,7 @@ info: |
     e. If existingDescriptor is not undefined, then
       i. If IsAccessorDescriptor(existingDescriptor) is true, return false.
   ...
+features: [Reflect, Reflect.set]
 ---*/
 
 var receiver = {};
@@ -52,7 +53,9 @@ assert.sameValue(
 );
 assert.sameValue(o1.hasOwnProperty('p'), false, 'target.p is not set');
 
-var o2 = {p: 43};
+var o2 = {
+  p: 43
+};
 result = Reflect.set(o2, 'p', 42, receiver);
 assert.sameValue(
   result, false,

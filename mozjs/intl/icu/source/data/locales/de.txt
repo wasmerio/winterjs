@@ -25,7 +25,9 @@ de{
         default{"latn"}
         latn{
             miscPatterns{
+                approximately{"≈{0}"}
                 atLeast{"{0}+"}
+                atMost{"≤{0}"}
                 range{"{0}–{1}"}
             }
             patterns{
@@ -90,16 +92,16 @@ de{
             patternsShort{
                 currencyFormat{
                     1000{
-                        one{"0 Tsd'.' ¤"}
-                        other{"0 Tsd'.' ¤"}
+                        one{"0"}
+                        other{"0"}
                     }
                     10000{
-                        one{"00 Tsd'.' ¤"}
-                        other{"00 Tsd'.' ¤"}
+                        one{"0"}
+                        other{"0"}
                     }
                     100000{
-                        one{"000 Tsd'.' ¤"}
-                        other{"000 Tsd'.' ¤"}
+                        one{"0"}
+                        other{"0"}
                     }
                     1000000{
                         one{"0 Mio'.' ¤"}
@@ -140,16 +142,16 @@ de{
                 }
                 decimalFormat{
                     1000{
-                        one{"0 Tsd'.'"}
-                        other{"0 Tsd'.'"}
+                        one{"0"}
+                        other{"0"}
                     }
                     10000{
-                        one{"00 Tsd'.'"}
-                        other{"00 Tsd'.'"}
+                        one{"0"}
+                        other{"0"}
                     }
                     100000{
-                        one{"000 Tsd'.'"}
-                        other{"000 Tsd'.'"}
+                        one{"0"}
+                        other{"0"}
                     }
                     1000000{
                         one{"0 Mio'.'"}
@@ -216,7 +218,7 @@ de{
         minimumGroupingDigits{"1"}
         native{"latn"}
     }
-    Version{"2.1.37.96"}
+    Version{"2.1.44.91"}
     calendar{
         buddhist{
             eras{
@@ -625,16 +627,16 @@ de{
         }
         gregorian{
             AmPmMarkers{
-                "vorm.",
-                "nachm.",
+                "AM",
+                "PM",
             }
             AmPmMarkersAbbr{
-                "vorm.",
-                "nachm.",
+                "AM",
+                "PM",
             }
             AmPmMarkersNarrow{
-                "vm.",
-                "nm.",
+                "a",
+                "p",
             }
             DateTimePatterns{
                 "HH:mm:ss zzzz",
@@ -825,35 +827,35 @@ de{
                     abbreviated{
                         afternoon1{"Mittag"}
                         afternoon2{"Nachmittag"}
-                        am{"vorm."}
+                        am{"AM"}
                         evening1{"Abend"}
                         midnight{"Mitternacht"}
                         morning1{"Morgen"}
                         morning2{"Vormittag"}
                         night1{"Nacht"}
-                        pm{"nachm."}
+                        pm{"PM"}
                     }
                     narrow{
                         afternoon1{"Mittag"}
                         afternoon2{"Nachmittag"}
-                        am{"vorm."}
+                        am{"a"}
                         evening1{"Abend"}
                         midnight{"Mitternacht"}
                         morning1{"Morgen"}
                         morning2{"Vormittag"}
                         night1{"Nacht"}
-                        pm{"nachm."}
+                        pm{"p"}
                     }
                     wide{
                         afternoon1{"Mittag"}
                         afternoon2{"Nachmittag"}
-                        am{"vorm."}
+                        am{"AM"}
                         evening1{"Abend"}
                         midnight{"Mitternacht"}
                         morning1{"Morgen"}
                         morning2{"Vormittag"}
                         night1{"Nacht"}
-                        pm{"nachm."}
+                        pm{"PM"}
                     }
                 }
             }
@@ -903,7 +905,7 @@ de{
                 }
                 MEd{
                     M{"E, dd.MM. – E, dd.MM."}
-                    d{"E, dd.MM. – E, dd.MM."}
+                    d{"E, dd. – E, dd.MM."}
                 }
                 MMM{
                     M{"MMM–MMM"}
@@ -921,7 +923,7 @@ de{
                 }
                 Md{
                     M{"dd.MM. – dd.MM."}
-                    d{"dd.MM. – dd.MM."}
+                    d{"dd.–dd.MM."}
                 }
                 d{
                     d{"d.–d."}
@@ -953,8 +955,8 @@ de{
                     y{"MM.y – MM.y"}
                 }
                 yMEd{
-                    M{"E, dd.MM.y – E, dd.MM.y"}
-                    d{"E, dd.MM.y – E, dd.MM.y"}
+                    M{"E, dd.MM. – E, dd.MM.y"}
+                    d{"E, dd. – E, dd.MM.y"}
                     y{"E, dd.MM.y – E, dd.MM.y"}
                 }
                 yMMM{
@@ -976,8 +978,8 @@ de{
                     y{"d. MMM y – d. MMM y"}
                 }
                 yMd{
-                    M{"dd.MM.y – dd.MM.y"}
-                    d{"dd.MM.y – dd.MM.y"}
+                    M{"dd.MM. – dd.MM.y"}
+                    d{"dd.–dd.MM.y"}
                     y{"dd.MM.y – dd.MM.y"}
                 }
             }
@@ -992,7 +994,7 @@ de{
                         "Juni",
                         "Juli",
                         "Aug.",
-                        "Sep.",
+                        "Sept.",
                         "Okt.",
                         "Nov.",
                         "Dez.",
@@ -1601,6 +1603,7 @@ de{
                     "Taishō",
                     "Shōwa",
                     "Heisei",
+                    "Qqqq",
                 }
             }
         }
@@ -1713,7 +1716,7 @@ de{
         dash_connector{"Gedankenstrich/Bindestrich"}
         digits{"Stellen"}
         dingbats{"Zierrat"}
-        divination_symbols{"Teilungszeichen"}
+        divination_symbols{"Wahrsagezeichen"}
         downwards_arrows{"Abwärtspfeile"}
         downwards_upwards_arrows{"Aufwärts-Abwärtspfeile"}
         east_asian_scripts{"Ostasiatische Schriften"}
@@ -1783,6 +1786,12 @@ de{
         weather{"Wetter"}
         western_asian_scripts{"Westasiatische Schriften"}
         whitespace{"Leerzeichen"}
+    }
+    contextTransforms{
+        typographicNames:intvector{
+            1,
+            1,
+        }
     }
     delimiters{
         alternateQuotationEnd{"‘"}
@@ -2660,8 +2669,13 @@ de{
         general{
             lenient{
                 "[.․。︒﹒．｡]",
+                "['ʼ՚᾽᾿’＇]",
+                "[%٪﹪％]",
+                "[؉‰]",
                 "[\$﹩＄$]",
                 "[£₤]",
+                "[¥￥]",
+                "[₩￦]",
                 "[₨₹{Rp}{Rs}]",
             }
         }

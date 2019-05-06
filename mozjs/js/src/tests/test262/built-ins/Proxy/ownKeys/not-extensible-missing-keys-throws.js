@@ -12,23 +12,24 @@ info: |
     19. For each key that is an element of targetConfigurableKeys, do
         a. If key is not an element of uncheckedResultKeys, throw a TypeError
         exception.
+features: [Proxy]
 ---*/
 
 var target = {
-    foo: 1,
-    bar: 2
+  foo: 1,
+  bar: 2
 };
 
 var p = new Proxy(target, {
-    ownKeys: function() {
-        return ["foo"];
-    }
+  ownKeys: function() {
+    return ["foo"];
+  }
 });
 
 Object.preventExtensions(target);
 
 assert.throws(TypeError, function() {
-    Object.keys(p);
+  Object.keys(p);
 });
 
 reportCompare(0, 0);

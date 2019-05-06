@@ -1,5 +1,5 @@
 diff --git a/mozjs/config/system-headers.mozbuild b/mozjs/config/system-headers.mozbuild
-index 0872969..f3b7362 100644
+index 0c5519849d..898827d4a2 100644
 --- a/mozjs/config/system-headers.mozbuild
 +++ b/mozjs/config/system-headers.mozbuild
 @@ -1048,7 +1048,7 @@ system_headers = [

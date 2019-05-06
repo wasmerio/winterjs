@@ -10,6 +10,8 @@ import stat
 import tarfile
 import tempfile
 import unittest
+import mock
+import taskcluster_urls as liburls
 
 from taskgraph.util import docker
 from mozunit import main, MockedOpen
@@ -18,12 +20,11 @@ from mozunit import main, MockedOpen
 MODE_STANDARD = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
 
 
+@mock.patch.dict('os.environ', {'TASKCLUSTER_ROOT_URL': liburls.test_root_url()})
 class TestDocker(unittest.TestCase):
 
     def test_generate_context_hash(self):
         tmpdir = tempfile.mkdtemp()
-        old_GECKO = docker.GECKO
-        docker.GECKO = tmpdir
         try:
             os.makedirs(os.path.join(tmpdir, 'docker', 'my-image'))
             p = os.path.join(tmpdir, 'docker', 'my-image', 'Dockerfile')
@@ -35,13 +36,12 @@ class TestDocker(unittest.TestCase):
                 f.write("data\n")
             os.chmod(p, MODE_STANDARD)
             self.assertEqual(
-                docker.generate_context_hash(docker.GECKO,
-                                             os.path.join(docker.GECKO, 'docker/my-image'),
+                docker.generate_context_hash(tmpdir,
+                                             os.path.join(tmpdir, 'docker/my-image'),
                                              'my-image'),
                 'e61e675ce05e8c11424437db3f1004079374c1a5fe6ad6800346cebe137b0797'
             )
         finally:
-            docker.GECKO = old_GECKO
             shutil.rmtree(tmpdir)
 
     def test_docker_image_explicit_registry(self):

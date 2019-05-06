@@ -40,16 +40,12 @@ def get_id(name):
 def visual_studio_product_to_solution_version(version):
     if version == '2017':
         return '12.00', '15'
-    elif version == '2015':
-        return '12.00', '14'
     else:
         raise Exception('Unknown version seen: %s' % version)
 
 def visual_studio_product_to_platform_toolset_version(version):
     if version == '2017':
         return 'v141'
-    elif version == '2015':
-        return 'v140'
     else:
         raise Exception('Unknown version seen: %s' % version)
 
@@ -70,7 +66,7 @@ class VisualStudioBackend(CommonBackend):
         self._out_dir = os.path.join(self.environment.topobjdir, 'msvc')
         self._projsubdir = 'projects'
 
-        self._version = self.environment.substs.get('MSVS_VERSION', '2015')
+        self._version = self.environment.substs.get('MSVS_VERSION', '2017')
 
         self._paths_to_sources = {}
         self._paths_to_includes = {}
@@ -230,7 +226,10 @@ class VisualStudioBackend(CommonBackend):
             debugger=None
             if prefix == 'binary':
                 if item.startswith(self.environment.substs['MOZ_APP_NAME']):
-                    debugger = ('$(TopObjDir)\\dist\\bin\\%s' % item, '-no-remote')
+                    app_args = '-no-remote -profile $(TopObjDir)\\tmp\\profile-default'
+                    if self.environment.substs.get('MOZ_LAUNCHER_PROCESS', False):
+                        app_args += ' -wait-for-browser'
+                    debugger = ('$(TopObjDir)\\dist\\bin\\%s' % item, app_args)
                 else:
                     debugger = ('$(TopObjDir)\\dist\\bin\\%s' % item, '')
 

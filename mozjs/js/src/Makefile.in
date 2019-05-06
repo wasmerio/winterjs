@@ -20,16 +20,6 @@ USE_HOST_CXX = 1
 
 include $(topsrcdir)/config/rules.mk
 
-# Help ensure that the number of OOM errors in SpiderMonkey doesn't increase.
-# If the number of OOM errors changes, update the number below. We intend this
-# number to go down over time, by fixing OOMs.
-check-ooms:
-	$(wildcard $(RUN_TEST_PROGRAM)) $(PYTHON) -u $(topsrcdir)/config/find_OOM_errors.py --regression 125
-
-ifeq ($(MOZ_DEBUG),1)
-#check:: check-ooms
-endif
-
 ifdef MOZ_VALGRIND
 ifndef MOZ_ASAN
 JITTEST_VALGRIND_FLAG = --valgrind
@@ -42,24 +32,15 @@ ifdef MOZ_ASAN
 JITTEST_SANITIZER_ENV=ASAN_SYMBOLIZER_PATH='$(LLVM_SYMBOLIZER)'
 endif
 ifdef MOZ_TSAN
-JITTEST_SANITIZER_ENV=TSAN_OPTIONS="external_symbolizer_path=$(LLVM_SYMBOLIZER) $$TSAN_OPTIONS"
+JITTEST_SANITIZER_ENV=TSAN_OPTIONS="external_symbolizer_path=$(LLVM_SYMBOLIZER) handle_segv=0 $$TSAN_OPTIONS"
 endif
 ifdef MOZ_MSAN
 JITTEST_SANITIZER_ENV=MSAN_SYMBOLIZER_PATH='$(LLVM_SYMBOLIZER)'
 endif
 endif
 
-check-style::
-	(cd $(srcdir) && $(PYTHON) $(topsrcdir)/config/check_spidermonkey_style.py);
-
-check-masm::
-	(cd $(srcdir) && $(PYTHON) $(topsrcdir)/config/check_macroassembler_style.py);
-
 check-js-msg::
 	(cd $(topsrcdir) && $(PYTHON) $(topsrcdir)/config/check_js_msg_encoding.py);
-
-check-opcode::
-	(cd $(topsrcdir) && $(PYTHON) $(topsrcdir)/config/check_js_opcode.py);
 
 check-jit-test::
 	$(JITTEST_SANITIZER_ENV) $(wildcard $(RUN_TEST_PROGRAM)) $(PYTHON) -u $(srcdir)/jit-test/jit_test.py \
@@ -68,7 +49,7 @@ check-jit-test::
 			$(JITTEST_EXTRA_ARGS) \
 	        $(DIST)/bin/$(JS_SHELL_NAME)$(BIN_SUFFIX) $(JITTEST_TEST_ARGS)
 
-check:: check-style check-masm check-js-msg check-opcode
+check:: check-js-msg
 
 check-jstests:
 	$(wildcard $(RUN_TEST_PROGRAM)) $(PYTHON) -u $(srcdir)/tests/jstests.py \

@@ -13,8 +13,6 @@ negative:
 features: [let]
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
-
-$ERROR('This code should not be executed.');
+$DONOTEVALUATE();
 
 try { } catch (x) { let x; }

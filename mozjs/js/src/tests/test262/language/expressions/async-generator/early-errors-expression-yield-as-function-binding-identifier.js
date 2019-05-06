@@ -4,7 +4,7 @@
 
 /*---
 author: Caitlin Potter <caitp@igalia.com>
-esid: pending
+esid: sec-async-generator-function-definitions-static-semantics-early-errors
 description: >
   `yield` is not a valid BindingIdentifier for AsyncGeneratorExpressions.
 negative:
@@ -13,6 +13,6 @@ negative:
 features: [async-iteration]
 ---*/
 
-throw "Test262: This statement should not be evaluated.";
+$DONOTEVALUATE();
 
 (async function* yield() { });
