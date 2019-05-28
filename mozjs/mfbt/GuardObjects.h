@@ -96,7 +96,7 @@ class GuardObjectNotifier {
   }
 };
 
-class GuardObjectNotificationReceiver {
+class alignas(8) GuardObjectNotificationReceiver {
  private:
   bool mStatementDone;
 
