@@ -42,7 +42,7 @@ def remove_cargo_tomls():
         os.path.join("mozjs", "testing"),
     ]
     exclude = [
-        os.path.join("mozjs", "js", "src", "frontend", "binsource"),
+        os.path.join("mozjs", "js", "src", "frontend", "binast"),
     ]
     for dir in problem_dirs:
         for root, dirs, files in os.walk(dir):
