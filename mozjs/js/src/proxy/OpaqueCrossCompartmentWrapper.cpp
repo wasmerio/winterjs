@@ -35,9 +35,9 @@ bool OpaqueCrossCompartmentWrapper::delete_(JSContext* cx, HandleObject wrapper,
   return result.succeed();
 }
 
-JSObject* OpaqueCrossCompartmentWrapper::enumerate(JSContext* cx,
-                                                   HandleObject wrapper) const {
-  return BaseProxyHandler::enumerate(cx, wrapper);
+bool OpaqueCrossCompartmentWrapper::enumerate(JSContext* cx, HandleObject proxy,
+                                              AutoIdVector& props) const {
+  return BaseProxyHandler::enumerate(cx, proxy, props);
 }
 
 bool OpaqueCrossCompartmentWrapper::getPrototype(
@@ -109,12 +109,6 @@ bool OpaqueCrossCompartmentWrapper::construct(JSContext* cx,
   RootedValue v(cx, ObjectValue(*wrapper));
   ReportIsNotFunction(cx, v);
   return false;
-}
-
-bool OpaqueCrossCompartmentWrapper::getPropertyDescriptor(
-    JSContext* cx, HandleObject wrapper, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
-  return BaseProxyHandler::getPropertyDescriptor(cx, wrapper, id, desc);
 }
 
 bool OpaqueCrossCompartmentWrapper::hasOwn(JSContext* cx, HandleObject wrapper,

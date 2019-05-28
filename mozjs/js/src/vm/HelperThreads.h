@@ -426,7 +426,7 @@ struct HelperThread {
  private:
   struct AutoProfilerLabel {
     AutoProfilerLabel(HelperThread* helperThread, const char* label,
-                      ProfilingStackFrame::Category category);
+                      JS::ProfilingCategoryPair categoryPair);
     ~AutoProfilerLabel();
 
    private:
@@ -661,6 +661,12 @@ bool EnqueueOffThreadCompression(JSContext* cx,
 // Cancel all scheduled, in progress, or finished compression tasks for
 // runtime.
 void CancelOffThreadCompressions(JSRuntime* runtime);
+
+void AttachFinishedCompressions(JSRuntime* runtime,
+                                AutoLockHelperThreadState& lock);
+
+// Run all pending source compression tasks synchronously, for testing purposes
+void RunPendingSourceCompressions(JSRuntime* runtime);
 
 class MOZ_RAII AutoLockHelperThreadState : public LockGuard<Mutex> {
   using Base = LockGuard<Mutex>;

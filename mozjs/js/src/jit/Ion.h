@@ -160,8 +160,7 @@ void LinkIonScript(JSContext* cx, HandleScript calleescript);
 uint8_t* LazyLinkTopActivation(JSContext* cx, LazyLinkExitFrameLayout* frame);
 
 static inline bool IsIonEnabled(JSContext* cx) {
-  // The ARM64 Ion engine is not yet implemented.
-#if defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_NONE)
   return false;
 #else
   return cx->options().ion() && cx->options().baseline() &&
@@ -169,12 +168,17 @@ static inline bool IsIonEnabled(JSContext* cx) {
 #endif
 }
 
+inline bool IsIonInlinableGetterOrSetterPC(jsbytecode* pc) {
+  // GETPROP, CALLPROP, LENGTH, GETELEM, and JSOP_CALLELEM. (Inlined Getters)
+  // SETPROP, SETNAME, SETGNAME (Inlined Setters)
+  return IsGetPropPC(pc) || IsGetElemPC(pc) || IsSetPropPC(pc);
+}
+
 inline bool IsIonInlinablePC(jsbytecode* pc) {
   // CALL, FUNCALL, FUNAPPLY, EVAL, NEW (Normal Callsites)
-  // GETPROP, CALLPROP, and LENGTH. (Inlined Getters)
-  // SETPROP, SETNAME, SETGNAME (Inlined Setters)
-  return (IsCallPC(pc) && !IsSpreadCallPC(pc)) || IsGetPropPC(pc) ||
-         IsSetPropPC(pc);
+  // or an inlinable getter or setter.
+  return (IsCallPC(pc) && !IsSpreadCallPC(pc)) ||
+         IsIonInlinableGetterOrSetterPC(pc);
 }
 
 inline bool TooManyActualArguments(unsigned nargs) {

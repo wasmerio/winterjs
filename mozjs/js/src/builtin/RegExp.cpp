@@ -19,6 +19,7 @@
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
 
+#include "vm/EnvironmentObject-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/ObjectOperations-inl.h"
@@ -782,9 +783,7 @@ const JSFunctionSpec js::regexp_methods[] = {
     JS_SELF_HOSTED_FN("exec", "RegExp_prototype_Exec", 1, 0),
     JS_SELF_HOSTED_FN("test", "RegExpTest", 1, 0),
     JS_SELF_HOSTED_SYM_FN(match, "RegExpMatch", 1, 0),
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_SYM_FN(matchAll, "RegExpMatchAll", 1, 0),
-#endif
     JS_SELF_HOSTED_SYM_FN(replace, "RegExpReplace", 2, 0),
     JS_SELF_HOSTED_SYM_FN(search, "RegExpSearch", 1, 0),
     JS_SELF_HOSTED_SYM_FN(split, "RegExpSplit", 2, 0),

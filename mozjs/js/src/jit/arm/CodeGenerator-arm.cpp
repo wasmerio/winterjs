@@ -1782,7 +1782,7 @@ void CodeGenerator::visitWasmSelect(LWasmSelect* ins) {
   Register cond = ToRegister(ins->condExpr());
   masm.as_cmp(cond, Imm8(0));
 
-  if (mirType == MIRType::Int32) {
+  if (mirType == MIRType::Int32 || mirType == MIRType::RefOrNull) {
     Register falseExpr = ToRegister(ins->falseExpr());
     Register out = ToRegister(ins->output());
     MOZ_ASSERT(ToRegister(ins->trueExpr()) == out,
@@ -2443,9 +2443,9 @@ void CodeGenerator::visitWasmTruncateToInt64(LWasmTruncateToInt64* lir) {
     addOutOfLineCode(ool, mir);
   }
 
-  ScratchDoubleScope scratchScope(masm);
+  ScratchDoubleScope fpscratch(masm);
   if (fromType == MIRType::Float32) {
-    inputDouble = ScratchDoubleReg;
+    inputDouble = fpscratch;
     masm.convertFloat32ToDouble(input, inputDouble);
   }
 

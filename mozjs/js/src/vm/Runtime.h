@@ -14,7 +14,6 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Scoped.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Vector.h"
@@ -25,7 +24,7 @@
 #include "builtin/AtomicsObject.h"
 #include "builtin/intl/SharedIntlData.h"
 #include "builtin/Promise.h"
-#include "frontend/BinSourceRuntimeSupport.h"
+#include "frontend/BinASTRuntimeSupport.h"
 #include "frontend/NameCollections.h"
 #include "gc/GCRuntime.h"
 #include "gc/Tracer.h"
@@ -398,10 +397,6 @@ struct JSRuntime : public js::MallocProvider<JSRuntime> {
   void finishPersistentRoots();
 
   void finishRoots();
-
- public:
-  /* AsmJSCache callbacks are runtime-wide. */
-  js::UnprotectedData<JS::AsmJSCacheOps> asmJSCacheOps;
 
  private:
   js::UnprotectedData<const JSPrincipals*> trustedPrincipals_;

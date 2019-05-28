@@ -11,7 +11,7 @@
 // See mozmemory_wrap.h for more details. This file is part of libmozglue, so
 // it needs to use _impl suffixes.
 #  define MALLOC_DECL(name, return_type, ...) \
-    extern "C" MOZ_MEMORY_API return_type name##_impl(__VA_ARGS__);
+    MOZ_MEMORY_API return_type name##_impl(__VA_ARGS__);
 #  include "malloc_decls.h"
 #  include "mozilla/mozalloc.h"
 #endif
@@ -172,8 +172,8 @@ bool SignedBinary::QueryObject(const wchar_t* aFilePath) {
  *                   |dwUnionChoice|, and appropriate union field. This function
  *                   will then populate the remaining fields as appropriate.
  */
-/* static */ bool SignedBinary::VerifySignatureInternal(
-    WINTRUST_DATA& aTrustData) {
+/* static */
+bool SignedBinary::VerifySignatureInternal(WINTRUST_DATA& aTrustData) {
   aTrustData.dwUIChoice = WTD_UI_NONE;
   aTrustData.fdwRevocationChecks = WTD_REVOKE_NONE;
   aTrustData.dwStateAction = WTD_STATEACTION_VERIFY;

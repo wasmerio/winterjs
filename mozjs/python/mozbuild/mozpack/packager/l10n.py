@@ -175,7 +175,7 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
                 continue
             if key(e) not in l10n_paths[base]:
                 errors.fatal("Locale doesn't have a manifest entry for '%s'" %
-                    e.name)
+                             e.name)
                 # Allow errors to accumulate
                 continue
             paths[e.path] = l10n_paths[base][key(e)]
@@ -298,11 +298,9 @@ def repack(source, l10n, extra_l10n={}, non_resources=[], non_chrome=set()):
         formatter = FlatFormatter(copier)
     elif app_finder.kind == 'jar':
         formatter = JarFormatter(copier,
-                                 optimize=app_finder.optimizedjars,
                                  compress=compress)
     elif app_finder.kind == 'omni':
         formatter = OmniJarFormatter(copier, app_finder.omnijar,
-                                     optimize=app_finder.optimizedjars,
                                      compress=compress,
                                      non_resources=non_resources)
 

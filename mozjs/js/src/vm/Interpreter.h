@@ -425,21 +425,18 @@ bool HandleClosingGeneratorReturn(JSContext* cx, AbstractFramePtr frame,
 
 /************************************************************************/
 
-bool Throw(JSContext* cx, HandleValue v);
+bool ThrowOperation(JSContext* cx, HandleValue v);
 
 bool GetProperty(JSContext* cx, HandleValue value, HandlePropertyName name,
                  MutableHandleValue vp);
+
+bool GetValueProperty(JSContext* cx, HandleValue value, HandlePropertyName name,
+                      MutableHandleValue vp);
 
 JSObject* Lambda(JSContext* cx, HandleFunction fun, HandleObject parent);
 
 JSObject* LambdaArrow(JSContext* cx, HandleFunction fun, HandleObject parent,
                       HandleValue newTargetv);
-
-bool GetElement(JSContext* cx, MutableHandleValue lref, HandleValue rref,
-                MutableHandleValue res);
-
-bool CallElement(JSContext* cx, MutableHandleValue lref, HandleValue rref,
-                 MutableHandleValue res);
 
 bool SetObjectElement(JSContext* cx, HandleObject obj, HandleValue index,
                       HandleValue value, bool strict);
@@ -447,8 +444,9 @@ bool SetObjectElement(JSContext* cx, HandleObject obj, HandleValue index,
                       HandleValue value, bool strict, HandleScript script,
                       jsbytecode* pc);
 
-bool SetObjectElement(JSContext* cx, HandleObject obj, HandleValue index,
-                      HandleValue value, HandleValue receiver, bool strict);
+bool SetObjectElementWithReceiver(JSContext* cx, HandleObject obj,
+                                  HandleValue index, HandleValue value,
+                                  HandleValue receiver, bool strict);
 bool SetObjectElement(JSContext* cx, HandleObject obj, HandleValue index,
                       HandleValue value, HandleValue receiver, bool strict,
                       HandleScript script, jsbytecode* pc);
@@ -498,6 +496,13 @@ bool DefLexicalOperation(JSContext* cx, HandleObject envChain,
 bool DefFunOperation(JSContext* cx, HandleScript script, HandleObject envChain,
                      HandleFunction funArg);
 
+JSObject* SingletonObjectLiteralOperation(JSContext* cx, HandleScript script,
+                                          jsbytecode* pc);
+
+JSObject* ImportMetaOperation(JSContext* cx, HandleScript script);
+
+JSObject* BuiltinProtoOperation(JSContext* cx, jsbytecode* pc);
+
 bool ThrowMsgOperation(JSContext* cx, const unsigned errorNum);
 
 bool GetAndClearException(JSContext* cx, MutableHandleValue res);
@@ -508,19 +513,18 @@ bool DeleteNameOperation(JSContext* cx, HandlePropertyName name,
 bool ImplicitThisOperation(JSContext* cx, HandleObject scopeObj,
                            HandlePropertyName name, MutableHandleValue res);
 
-bool InitGetterSetterOperation(JSContext* cx, jsbytecode* pc, HandleObject obj,
-                               HandleId id, HandleObject val);
-
-bool InitGetterSetterOperation(JSContext* cx, jsbytecode* pc, HandleObject obj,
-                               HandlePropertyName name, HandleObject val);
+bool InitPropGetterSetterOperation(JSContext* cx, jsbytecode* pc,
+                                   HandleObject obj, HandlePropertyName name,
+                                   HandleObject val);
 
 unsigned GetInitDataPropAttrs(JSOp op);
 
 bool EnterWithOperation(JSContext* cx, AbstractFramePtr frame, HandleValue val,
                         Handle<WithScope*> scope);
 
-bool InitGetterSetterOperation(JSContext* cx, jsbytecode* pc, HandleObject obj,
-                               HandleValue idval, HandleObject val);
+bool InitElemGetterSetterOperation(JSContext* cx, jsbytecode* pc,
+                                   HandleObject obj, HandleValue idval,
+                                   HandleObject val);
 
 bool SpreadCallOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
                          HandleValue thisv, HandleValue callee, HandleValue arr,
@@ -533,6 +537,7 @@ JSObject* NewObjectOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
 
 JSObject* NewObjectOperationWithTemplate(JSContext* cx,
                                          HandleObject templateObject);
+JSObject* CreateThisWithTemplate(JSContext* cx, HandleObject templateObject);
 
 JSObject* NewArrayOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
                             uint32_t length,
@@ -540,6 +545,13 @@ JSObject* NewArrayOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
 
 JSObject* NewArrayOperationWithTemplate(JSContext* cx,
                                         HandleObject templateObject);
+
+ArrayObject* NewArrayCopyOnWriteOperation(JSContext* cx, HandleScript script,
+                                          jsbytecode* pc);
+
+MOZ_MUST_USE bool GetImportOperation(JSContext* cx, HandleObject envChain,
+                                     HandleScript script, jsbytecode* pc,
+                                     MutableHandleValue vp);
 
 void ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,
                                HandleId id);

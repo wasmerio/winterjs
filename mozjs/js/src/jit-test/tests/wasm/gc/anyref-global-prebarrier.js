@@ -10,7 +10,6 @@ if (opts['ion.enable'] || opts['baseline.enable'])
 const { startProfiling, endProfiling, assertEqPreciseStacks, isSingleStepProfilingEnabled } = WasmHelpers;
 
 let e = wasmEvalText(`(module
-    (gc_feature_opt_in 2)
     (global $g (mut anyref) (ref.null))
     (func (export "set") (param anyref) get_local 0 set_global $g)
 )`).exports;
@@ -34,7 +33,20 @@ startProfiling();
 gczeal(4, 1);
 e.set(obj);
 gczeal(0);
-assertEqPreciseStacks(endProfiling(), [['', '!>', '0,!>', '!>', '']]);
+assertEqPreciseStacks(
+    endProfiling(),
+    [
+        // Expected output for (simulator+via-Ion).
+        ['', '!>', '0,!>', '<,0,!>', 'filtering GC postbarrier,0,!>',
+         '<,0,!>', '0,!>', '!>', ''],
+
+        // Expected output for (simulator+baseline).
+        ['', '!>', '0,!>', '<,0,!>', 'GC postbarrier,0,!>',
+         '<,0,!>', '0,!>', '!>', ''],
+
+        // Expected output for other configurations.
+        ['', '!>', '0,!>', '!>', ''],
+    ]);
 
 startProfiling();
 gczeal(4, 1);
@@ -42,4 +54,14 @@ e.set(null);
 gczeal(0);
 
 // We're losing stack info in the prebarrier code.
-assertEqPreciseStacks(endProfiling(), [['', '!>', '0,!>', '', '0,!>', '!>', '']]);
+assertEqPreciseStacks(
+    endProfiling(),
+    [
+        // Expected output for (simulator+via-Ion).
+        ['', '!>', '0,!>', '', '0,!>', '<,0,!>', 'filtering GC postbarrier,0,!>',
+         '<,0,!>', '0,!>', '!>', ''],
+
+        // Expected output for other configurations.
+        ['', '!>', '0,!>', '', '0,!>', '!>', ''],
+    ]);
+

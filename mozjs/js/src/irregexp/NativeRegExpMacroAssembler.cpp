@@ -132,7 +132,7 @@ NativeRegExpMacroAssembler::GenerateCode(JSContext* cx, bool match_only)
     masm.Str(PseudoStackPointer64, vixl::MemOperand(sp, -16, vixl::PreIndex));
 
     // Initialize the PSP from the SP.
-    masm.initStackPtr();
+    masm.initPseudoStackPtr();
 #endif
 
     // Push non-volatile registers which might be modified by jitcode.
@@ -505,8 +505,7 @@ NativeRegExpMacroAssembler::GenerateCode(JSContext* cx, bool match_only)
         masm.jump(&return_temp0);
     }
 
-    Linker linker(masm);
-    AutoFlushICache afc("RegExp");
+    Linker linker(masm, "RegExp");
     JitCode* code = linker.newCode(cx, CodeKind::RegExp);
     if (!code)
         return RegExpCode();

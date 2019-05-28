@@ -78,6 +78,11 @@ class BigInt final : public js::gc::TenuredCell {
   bool isZero() const { return digitLength() == 0; }
   bool isNegative() const { return lengthSignAndReservedBits_ & SignBit; }
 
+  // Offset for direct access from JIT code.
+  static constexpr size_t offsetOfLengthSignAndReservedBits() {
+    return offsetof(BigInt, lengthSignAndReservedBits_);
+  }
+
   void initializeDigitsToZero();
 
   void traceChildren(JSTracer* trc);
@@ -90,9 +95,11 @@ class BigInt final : public js::gc::TenuredCell {
   static BigInt* createFromDouble(JSContext* cx, double d);
   static BigInt* createFromUint64(JSContext* cx, uint64_t n);
   static BigInt* createFromInt64(JSContext* cx, int64_t n);
+  static BigInt* createFromDigit(JSContext* cx, Digit d, bool isNegative);
   // FIXME: Cache these values.
   static BigInt* zero(JSContext* cx);
   static BigInt* one(JSContext* cx);
+  static BigInt* negativeOne(JSContext* cx);
 
   static BigInt* copy(JSContext* cx, Handle<BigInt*> x);
   static BigInt* add(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
@@ -102,6 +109,8 @@ class BigInt final : public js::gc::TenuredCell {
   static BigInt* mod(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* pow(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* neg(JSContext* cx, Handle<BigInt*> x);
+  static BigInt* inc(JSContext* cx, Handle<BigInt*> x);
+  static BigInt* dec(JSContext* cx, Handle<BigInt*> x);
   static BigInt* lsh(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* rsh(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* bitAnd(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
@@ -133,6 +142,10 @@ class BigInt final : public js::gc::TenuredCell {
                   MutableHandle<Value> res);
   static bool neg(JSContext* cx, Handle<Value> operand,
                   MutableHandle<Value> res);
+  static bool inc(JSContext* cx, Handle<Value> operand,
+                  MutableHandle<Value> res);
+  static bool dec(JSContext* cx, Handle<Value> operand,
+                  MutableHandle<Value> res);
   static bool lsh(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
                   MutableHandle<Value> res);
   static bool rsh(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
@@ -148,6 +161,7 @@ class BigInt final : public js::gc::TenuredCell {
 
   static double numberValue(BigInt* x);
 
+  template <js::AllowGC allowGC>
   static JSLinearString* toString(JSContext* cx, Handle<BigInt*> x,
                                   uint8_t radix);
   template <typename CharT>
@@ -176,6 +190,11 @@ class BigInt final : public js::gc::TenuredCell {
                        mozilla::Maybe<bool>& res);
   static bool lessThan(JSContext* cx, HandleValue lhs, HandleValue rhs,
                        mozilla::Maybe<bool>& res);
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();  // Debugger-friendly stderr dump.
+  void dump(js::GenericPrinter& out);
+#endif
 
  private:
   static constexpr size_t DigitBits = sizeof(Digit) * CHAR_BIT;
@@ -276,7 +295,7 @@ class BigInt final : public js::gc::TenuredCell {
   // Return `(|x| - 1) * (resultNegative ? -1 : +1)`, with the precondition that
   // |x| != 0.
   static BigInt* absoluteSubOne(JSContext* cx, Handle<BigInt*> x,
-                                unsigned resultLength);
+                                bool resultNegative = false);
 
   // Return `a + b`, incrementing `*carry` if the addition overflows.
   static inline Digit digitAdd(Digit a, Digit b, Digit* carry) {
@@ -317,8 +336,12 @@ class BigInt final : public js::gc::TenuredCell {
 
   static bool equal(BigInt* lhs, double rhs);
 
+  template <js::AllowGC allowGC>
   static JSLinearString* toStringBasePowerOfTwo(JSContext* cx, Handle<BigInt*>,
                                                 unsigned radix);
+  template <js::AllowGC allowGC>
+  static JSLinearString* toStringSingleDigitBaseTen(JSContext* cx, Digit digit,
+                                                    bool isNegative);
   static JSLinearString* toStringGeneric(JSContext* cx, Handle<BigInt*>,
                                          unsigned radix);
 
@@ -326,8 +349,8 @@ class BigInt final : public js::gc::TenuredCell {
   static BigInt* destructivelyTrimHighZeroDigits(JSContext* cx,
                                                  Handle<BigInt*> x);
 
-  friend struct JSStructuredCloneReader;
-  friend struct JSStructuredCloneWriter;
+  friend struct ::JSStructuredCloneReader;
+  friend struct ::JSStructuredCloneWriter;
   template <js::XDRMode mode>
   friend js::XDRResult js::XDRBigInt(js::XDRState<mode>* xdr,
                                      MutableHandle<BigInt*> bi);
@@ -349,6 +372,7 @@ static_assert(
 
 namespace js {
 
+template <AllowGC allowGC>
 extern JSAtom* BigIntToAtom(JSContext* cx, JS::HandleBigInt bi);
 
 extern JS::BigInt* NumberToBigInt(JSContext* cx, double d);

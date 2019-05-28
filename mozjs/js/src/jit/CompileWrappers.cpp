@@ -19,7 +19,8 @@ JSRuntime* CompileRuntime::runtime() {
   return reinterpret_cast<JSRuntime*>(this);
 }
 
-/* static */ CompileRuntime* CompileRuntime::get(JSRuntime* rt) {
+/* static */
+CompileRuntime* CompileRuntime::get(JSRuntime* rt) {
   return reinterpret_cast<CompileRuntime*>(rt);
 }
 
@@ -99,7 +100,8 @@ bool CompileRuntime::runtimeMatches(JSRuntime* rt) { return rt == runtime(); }
 
 Zone* CompileZone::zone() { return reinterpret_cast<Zone*>(this); }
 
-/* static */ CompileZone* CompileZone::get(Zone* zone) {
+/* static */
+CompileZone* CompileZone::get(Zone* zone) {
   return reinterpret_cast<CompileZone*>(zone);
 }
 
@@ -168,7 +170,8 @@ void CompileZone::setMinorGCShouldCancelIonCompilations() {
 
 JS::Realm* CompileRealm::realm() { return reinterpret_cast<JS::Realm*>(this); }
 
-/* static */ CompileRealm* CompileRealm::get(JS::Realm* realm) {
+/* static */
+CompileRealm* CompileRealm::get(JS::Realm* realm) {
   return reinterpret_cast<CompileRealm*>(realm);
 }
 
@@ -214,13 +217,7 @@ void CompileRealm::setSingletonsAsValues() {
 JitCompileOptions::JitCompileOptions()
     : cloneSingletons_(false),
       profilerSlowAssertionsEnabled_(false),
-      offThreadCompilationAvailable_(false)
-#ifdef ENABLE_WASM_REFTYPES
-      ,
-      wasmGcEnabled_(false)
-#endif
-{
-}
+      offThreadCompilationAvailable_(false) {}
 
 JitCompileOptions::JitCompileOptions(JSContext* cx) {
   cloneSingletons_ = cx->realm()->creationOptions().cloneSingletons();
@@ -228,7 +225,4 @@ JitCompileOptions::JitCompileOptions(JSContext* cx) {
       cx->runtime()->geckoProfiler().enabled() &&
       cx->runtime()->geckoProfiler().slowAssertionsEnabled();
   offThreadCompilationAvailable_ = OffThreadCompilationAvailable(cx);
-#ifdef ENABLE_WASM_REFTYPES
-  wasmGcEnabled_ = wasm::HasReftypesSupport(cx);
-#endif
 }

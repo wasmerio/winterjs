@@ -194,9 +194,6 @@ typedef void (*JSSetUseCounterCallback)(JSObject* obj, JSUseCounter counter);
 extern JS_FRIEND_API void JS_SetSetUseCounterCallback(
     JSContext* cx, JSSetUseCounterCallback callback);
 
-extern JS_FRIEND_API JSPrincipals* JS_DeprecatedGetCompartmentPrincipals(
-    JS::Compartment* compartment);
-
 extern JS_FRIEND_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script);
 
 namespace js {
@@ -555,6 +552,14 @@ extern JS_FRIEND_API JS::Realm* GetAnyRealmInZone(JS::Zone* zone);
 extern JS_FRIEND_API JSObject* GetFirstGlobalInCompartment(
     JS::Compartment* comp);
 
+// Returns true if the compartment contains a global object and this global is
+// not being collected.
+extern JS_FRIEND_API bool CompartmentHasLiveGlobal(JS::Compartment* comp);
+
+// Returns true if this compartment can be shared across multiple Realms.  Used
+// when we're looking for an existing compartment to place a new Realm in.
+extern JS_FRIEND_API bool IsSharableCompartment(JS::Compartment* comp);
+
 /*
  * Shadow declarations of JS internal structures, for access by inline access
  * functions below. Do not use these structures in any other way. When adding
@@ -595,7 +600,7 @@ struct Object {
   JS::Value* slots;
   void* _1;
 
-  static const size_t MAX_FIXED_SLOTS = 16;
+  static constexpr size_t MAX_FIXED_SLOTS = 16;
 
   size_t numFixedSlots() const {
     return (shape->immutableFlags & Shape::FIXED_SLOTS_MASK) >>
@@ -1571,21 +1576,6 @@ extern JS_FRIEND_API JSObject* JS_NewFloat64ArrayWithBuffer(
     int32_t length);
 
 /**
- * Create a new SharedArrayBuffer with the given byte length.  This
- * may only be called if
- * JS::RealmCreationOptionsRef(cx).getSharedMemoryAndAtomicsEnabled() is
- * true.
- */
-extern JS_FRIEND_API JSObject* JS_NewSharedArrayBuffer(JSContext* cx,
-                                                       uint32_t nbytes);
-
-/**
- * Create a new ArrayBuffer with the given byte length.
- */
-extern JS_FRIEND_API JSObject* JS_NewArrayBuffer(JSContext* cx,
-                                                 uint32_t nbytes);
-
-/**
  * Check whether obj supports JS_GetTypedArray* APIs. Note that this may return
  * false if a security wrapper is encountered that denies the unwrapping. If
  * this test or one of the JS_Is*Array tests succeeds, then it is safe to call
@@ -1643,11 +1633,7 @@ extern JS_FRIEND_API JSObject* UnwrapUint32Array(JSObject* obj);
 extern JS_FRIEND_API JSObject* UnwrapFloat32Array(JSObject* obj);
 extern JS_FRIEND_API JSObject* UnwrapFloat64Array(JSObject* obj);
 
-extern JS_FRIEND_API JSObject* UnwrapArrayBuffer(JSObject* obj);
-
 extern JS_FRIEND_API JSObject* UnwrapArrayBufferView(JSObject* obj);
-
-extern JS_FRIEND_API JSObject* UnwrapSharedArrayBuffer(JSObject* obj);
 
 extern JS_FRIEND_API JSObject* UnwrapReadableStream(JSObject* obj);
 
@@ -1697,28 +1683,7 @@ extern JS_FRIEND_API void GetArrayBufferViewLengthAndData(JSObject* obj,
                                                           bool* isSharedMemory,
                                                           uint8_t** data);
 
-// This one isn't inlined because there are a bunch of different ArrayBuffer
-// classes that would have to be individually handled here.
-//
-// There is an isShared out argument for API consistency (eases use from DOM).
-// It will always be set to false.
-extern JS_FRIEND_API void GetArrayBufferLengthAndData(JSObject* obj,
-                                                      uint32_t* length,
-                                                      bool* isSharedMemory,
-                                                      uint8_t** data);
-
-// Ditto for SharedArrayBuffer.
-//
-// There is an isShared out argument for API consistency (eases use from DOM).
-// It will always be set to true.
-extern JS_FRIEND_API void GetSharedArrayBufferLengthAndData(
-    JSObject* obj, uint32_t* length, bool* isSharedMemory, uint8_t** data);
-
 }  // namespace js
-
-JS_FRIEND_API uint8_t* JS_GetSharedArrayBufferData(JSObject* obj,
-                                                   bool* isSharedMemory,
-                                                   const JS::AutoRequireNoGC&);
 
 /*
  * Unwrap Typed arrays all at once. Return nullptr without throwing if the
@@ -1763,13 +1728,6 @@ extern JS_FRIEND_API JSObject* JS_GetObjectAsArrayBufferView(
     JSObject* obj, uint32_t* length, bool* isSharedMemory, uint8_t** data);
 
 /*
- * Unwrap an ArrayBuffer, return nullptr if it's a different type.
- */
-extern JS_FRIEND_API JSObject* JS_GetObjectAsArrayBuffer(JSObject* obj,
-                                                         uint32_t* length,
-                                                         uint8_t** data);
-
-/*
  * Get the type of elements in a typed array, or MaxTypedArrayViewType if a
  * DataView.
  *
@@ -1782,62 +1740,6 @@ extern JS_FRIEND_API js::Scalar::Type JS_GetArrayBufferViewType(JSObject* obj);
 extern JS_FRIEND_API js::Scalar::Type JS_GetSharedArrayBufferViewType(
     JSObject* obj);
 
-/*
- * Check whether obj supports the JS_GetArrayBuffer* APIs. Note that this may
- * return false if a security wrapper is encountered that denies the
- * unwrapping. If this test succeeds, then it is safe to call the various
- * accessor JSAPI calls defined below.
- */
-extern JS_FRIEND_API bool JS_IsArrayBufferObject(JSObject* obj);
-
-extern JS_FRIEND_API bool JS_IsSharedArrayBufferObject(JSObject* obj);
-
-/**
- * Return the available byte length of an array buffer.
- *
- * |obj| must have passed a JS_IsArrayBufferObject test, or somehow be known
- * that it would pass such a test: it is an ArrayBuffer or a wrapper of an
- * ArrayBuffer, and the unwrapping will succeed.
- */
-extern JS_FRIEND_API uint32_t JS_GetArrayBufferByteLength(JSObject* obj);
-
-extern JS_FRIEND_API uint32_t JS_GetSharedArrayBufferByteLength(JSObject* obj);
-
-/**
- * Return true if the arrayBuffer contains any data. This will return false for
- * ArrayBuffer.prototype and detached ArrayBuffers.
- *
- * |obj| must have passed a JS_IsArrayBufferObject test, or somehow be known
- * that it would pass such a test: it is an ArrayBuffer or a wrapper of an
- * ArrayBuffer, and the unwrapping will succeed.
- */
-extern JS_FRIEND_API bool JS_ArrayBufferHasData(JSObject* obj);
-
-/**
- * Return a pointer to the start of the data referenced by a typed array. The
- * data is still owned by the typed array, and should not be modified on
- * another thread. Furthermore, the pointer can become invalid on GC (if the
- * data is small and fits inside the array's GC header), so callers must take
- * care not to hold on across anything that could GC.
- *
- * |obj| must have passed a JS_IsArrayBufferObject test, or somehow be known
- * that it would pass such a test: it is an ArrayBuffer or a wrapper of an
- * ArrayBuffer, and the unwrapping will succeed.
- *
- * |*isSharedMemory| will be set to false, the argument is present to simplify
- * its use from code that also interacts with SharedArrayBuffer.
- */
-extern JS_FRIEND_API uint8_t* JS_GetArrayBufferData(JSObject* obj,
-                                                    bool* isSharedMemory,
-                                                    const JS::AutoRequireNoGC&);
-
-/**
- * Check whether the obj is ArrayBufferObject and memory mapped. Note that this
- * may return false if a security wrapper is encountered that denies the
- * unwrapping.
- */
-extern JS_FRIEND_API bool JS_IsMappedArrayBufferObject(JSObject* obj);
-
 /**
  * Return the number of elements in a typed array.
  *
@@ -1848,7 +1750,7 @@ extern JS_FRIEND_API bool JS_IsMappedArrayBufferObject(JSObject* obj);
 extern JS_FRIEND_API uint32_t JS_GetTypedArrayLength(JSObject* obj);
 
 /**
- * Return the byte offset from the start of an array buffer to the start of a
+ * Return the byte offset from the start of an ArrayBuffer to the start of a
  * typed array view.
  *
  * |obj| must have passed a JS_IsTypedArrayObject/JS_Is*Array test, or somehow
@@ -1939,22 +1841,6 @@ extern JS_FRIEND_API JSObject* JS_GetArrayBufferViewBuffer(
     JSContext* cx, JS::HandleObject obj, bool* isSharedMemory);
 
 /**
- * Detach an ArrayBuffer, causing all associated views to no longer refer to
- * the ArrayBuffer's original attached memory.
- *
- * The |changeData| argument is obsolete and ignored.
- */
-extern JS_FRIEND_API bool JS_DetachArrayBuffer(JSContext* cx,
-                                               JS::HandleObject obj);
-
-/**
- * Check whether the obj is a detached ArrayBufferObject. Note that this may
- * return false if a security wrapper is encountered that denies the
- * unwrapping.
- */
-extern JS_FRIEND_API bool JS_IsDetachedArrayBufferObject(JSObject* obj);
-
-/**
  * Create a new DataView using the given buffer for storage. The given buffer
  * must be an ArrayBuffer or SharedArrayBuffer (or a cross-compartment wrapper
  * of either type), and the offset and length must fit within the bounds of the
@@ -1963,40 +1849,6 @@ extern JS_FRIEND_API bool JS_IsDetachedArrayBufferObject(JSObject* obj);
  */
 JS_FRIEND_API JSObject* JS_NewDataView(JSContext* cx, JS::HandleObject buffer,
                                        uint32_t byteOffset, int32_t byteLength);
-
-/**
- * Return the byte offset of a data view into its array buffer. |obj| must be a
- * DataView.
- *
- * |obj| must have passed a JS_IsDataViewObject test, or somehow be known that
- * it would pass such a test: it is a data view or a wrapper of a data view,
- * and the unwrapping will succeed.
- */
-JS_FRIEND_API uint32_t JS_GetDataViewByteOffset(JSObject* obj);
-
-/**
- * Return the byte length of a data view.
- *
- * |obj| must have passed a JS_IsDataViewObject test, or somehow be known that
- * it would pass such a test: it is a data view or a wrapper of a data view,
- * and the unwrapping will succeed. If cx is nullptr, then DEBUG builds may be
- * unable to assert when unwrapping should be disallowed.
- */
-JS_FRIEND_API uint32_t JS_GetDataViewByteLength(JSObject* obj);
-
-/**
- * Return a pointer to the beginning of the data referenced by a DataView.
- *
- * |obj| must have passed a JS_IsDataViewObject test, or somehow be known that
- * it would pass such a test: it is a data view or a wrapper of a data view,
- * and the unwrapping will succeed. If cx is nullptr, then DEBUG builds may be
- * unable to assert when unwrapping should be disallowed.
- *
- * |*isSharedMemory| will be set to true if the DataView maps a
- * SharedArrayBuffer, otherwise to false.
- */
-JS_FRIEND_API void* JS_GetDataViewData(JSObject* obj, bool* isSharedMemory,
-                                       const JS::AutoRequireNoGC&);
 
 namespace js {
 namespace jit {

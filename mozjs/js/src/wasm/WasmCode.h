@@ -19,9 +19,11 @@
 #ifndef wasm_code_h
 #define wasm_code_h
 
+#include "jit/shared/Assembler-shared.h"
 #include "js/HashTable.h"
 #include "threading/ExclusiveData.h"
 #include "vm/MutexIDs.h"
+#include "wasm/WasmGC.h"
 #include "wasm/WasmTypes.h"
 
 namespace js {
@@ -292,11 +294,6 @@ class FuncImport {
 
 typedef Vector<FuncImport, 0, SystemAllocPolicy> FuncImportVector;
 
-// A wasm module can either use no memory, a unshared memory (ArrayBuffer) or
-// shared memory (SharedArrayBuffer).
-
-enum class MemoryUsage { None = false, Unshared = 1, Shared = 2 };
-
 // Metadata holds all the data that is needed to describe compiled wasm code
 // at runtime (as opposed to data that is only used to statically link or
 // instantiate a module).
@@ -392,7 +389,7 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
     return getFuncName(NameContext::BeforeLocation, funcIndex, name);
   }
 
-  WASM_DECLARE_SERIALIZABLE_VIRTUAL(Metadata);
+  WASM_DECLARE_SERIALIZABLE(Metadata);
 };
 
 typedef RefPtr<Metadata> MutableMetadata;
@@ -723,6 +720,8 @@ class Code : public ShareableBase<Code> {
                                     const LinkData& linkData,
                                     Metadata& metadata, SharedCode* code);
 };
+
+void PatchDebugSymbolicAccesses(uint8_t* codeBase, jit::MacroAssembler& masm);
 
 }  // namespace wasm
 }  // namespace js

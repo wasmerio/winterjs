@@ -70,7 +70,6 @@ class ArchlinuxBootstrapper(NodeInstall, StyloInstall,
         # For downloading the Android SDK and NDK.
         'wget',
         # See comment about 32 bit binaries and multilib below.
-        'multilib/lib32-libstdc++5',
         'multilib/lib32-ncurses',
         'multilib/lib32-readline',
         'multilib/lib32-zlib',
@@ -99,6 +98,10 @@ class ArchlinuxBootstrapper(NodeInstall, StyloInstall,
         # TODO: Figure out what not to install for artifact mode
         self.aur_install(*self.BROWSER_AUR_PACKAGES)
         self.pacman_install(*self.BROWSER_PACKAGES)
+
+    def ensure_nasm_packages(self, state_dir, checkout_root):
+        # installed via ensure_browser_packages
+        pass
 
     def ensure_mobile_android_packages(self, artifact_mode=False):
         # Multi-part process:

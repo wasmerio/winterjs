@@ -67,7 +67,8 @@ struct CompileArgs : ShareableBase<CompileArgs> {
   // You should use the first one in general, unless you have a very good
   // reason (i.e. no JSContext around and you know which flags have been used).
 
-  static SharedCompileArgs build(JSContext* cx, ScriptedCaller&& scriptedCaller);
+  static SharedCompileArgs build(JSContext* cx,
+                                 ScriptedCaller&& scriptedCaller);
 
   explicit CompileArgs(ScriptedCaller&& scriptedCaller)
       : scriptedCaller(std::move(scriptedCaller)),
@@ -94,7 +95,7 @@ double EstimateCompiledCodeSize(Tier tier, size_t bytecodeSize);
 SharedModule CompileBuffer(const CompileArgs& args,
                            const ShareableBytes& bytecode, UniqueChars* error,
                            UniqueCharsVector* warnings,
-                           UniqueLinkData* maybeLinkData = nullptr);
+                           JS::OptimizedEncodingListener* listener = nullptr);
 
 // Attempt to compile the second tier of the given wasm::Module.
 

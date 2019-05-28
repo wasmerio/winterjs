@@ -506,6 +506,8 @@ class NativeObject : public ShapedObject {
 
   bool hasShapeTable() const { return lastProperty()->hasTable(); }
 
+  bool hasShapeIC() const { return lastProperty()->hasIC(); }
+
   HeapSlotArray getDenseElements() {
     return HeapSlotArray(elements_, !getElementsHeader()->isCopyOnWrite());
   }
@@ -878,7 +880,7 @@ class NativeObject : public ShapedObject {
 
   static MOZ_ALWAYS_INLINE bool maybeConvertToOrGrowDictionaryForAdd(
       JSContext* cx, HandleNativeObject obj, HandleId id, ShapeTable** table,
-      ShapeTable::Entry** entry, const AutoKeepShapeTables& keep);
+      ShapeTable::Entry** entry, const AutoKeepShapeCaches& keep);
 
   static bool maybeToDictionaryModeForPut(JSContext* cx, HandleNativeObject obj,
                                           MutableHandleShape shape);
@@ -933,12 +935,12 @@ class NativeObject : public ShapedObject {
                                         HandleId id, uint32_t slot,
                                         unsigned attrs, ShapeTable* table,
                                         ShapeTable::Entry* entry,
-                                        const AutoKeepShapeTables& keep);
+                                        const AutoKeepShapeCaches& keep);
 
   static Shape* addAccessorPropertyInternal(
       JSContext* cx, HandleNativeObject obj, HandleId id, JSGetterOp getter,
       JSSetterOp setter, unsigned attrs, ShapeTable* table,
-      ShapeTable::Entry* entry, const AutoKeepShapeTables& keep);
+      ShapeTable::Entry* entry, const AutoKeepShapeCaches& keep);
 
   static MOZ_MUST_USE bool fillInAfterSwap(JSContext* cx,
                                            HandleNativeObject obj,
@@ -1031,7 +1033,7 @@ class NativeObject : public ShapedObject {
 
   // MAX_FIXED_SLOTS is the biggest number of fixed slots our GC
   // size classes will give an object.
-  static const uint32_t MAX_FIXED_SLOTS = shadow::Object::MAX_FIXED_SLOTS;
+  static constexpr uint32_t MAX_FIXED_SLOTS = shadow::Object::MAX_FIXED_SLOTS;
 
  protected:
   MOZ_ALWAYS_INLINE bool updateSlotsForSpan(JSContext* cx, size_t oldSpan,

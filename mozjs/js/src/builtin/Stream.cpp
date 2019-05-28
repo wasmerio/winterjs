@@ -9,6 +9,7 @@
 #include "js/Stream.h"
 
 #include "gc/Heap.h"
+#include "js/ArrayBuffer.h"  // JS::NewArrayBuffer
 #include "js/PropertySpec.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -76,7 +77,7 @@ static MOZ_MUST_USE ReadableStreamReader* UnwrapReaderFromStreamNoThrow(
       return nullptr;
     }
 
-    readerObj = CheckedUnwrap(readerObj);
+    readerObj = readerObj->maybeUnwrapAs<ReadableStreamReader>();
     if (!readerObj) {
       return nullptr;
     }
@@ -91,7 +92,7 @@ inline static MOZ_MUST_USE JSFunction* NewHandler(JSContext* cx, Native handler,
                                                   HandleObject target) {
   cx->check(target);
 
-  RootedAtom funName(cx, cx->names().empty);
+  HandlePropertyName funName = cx->names().empty;
   RootedFunction handlerFun(
       cx, NewNativeFunction(cx, handler, 0, funName,
                             gc::AllocKind::FUNCTION_EXTENDED, GenericObject));
@@ -880,8 +881,9 @@ MOZ_MUST_USE ReadableStream* CreateReadableStream(
 /**
  * Streams spec, 3.3.5. InitializeReadableStream ( stream )
  */
-MOZ_MUST_USE /* static */ ReadableStream* ReadableStream::create(
-    JSContext* cx, HandleObject proto /* = nullptr */) {
+MOZ_MUST_USE /* static */
+    ReadableStream*
+    ReadableStream::create(JSContext* cx, HandleObject proto /* = nullptr */) {
   // In the spec, InitializeReadableStream is always passed a newly created
   // ReadableStream object. We instead create it here and return it below.
   Rooted<ReadableStream*> stream(
@@ -1433,9 +1435,10 @@ static MOZ_MUST_USE JSObject* ReadableStreamCancel(
 
   // Step 6: Return the result of transforming sourceCancelPromise with a
   //         fulfillment handler that returns undefined.
-  RootedAtom funName(cx, cx->names().empty);
+  HandlePropertyName funName = cx->names().empty;
   RootedFunction returnUndefined(
-      cx, NewNativeFunction(cx, ReturnUndefined, 0, funName));
+      cx, NewNativeFunction(cx, ReturnUndefined, 0, funName,
+                            gc::AllocKind::FUNCTION, GenericObject));
   if (!returnUndefined) {
     return nullptr;
   }
@@ -3730,7 +3733,7 @@ static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
 
     // Step 5.a: Let buffer be
     //           Construct(%ArrayBuffer%, « autoAllocateChunkSize »).
-    JSObject* bufferObj = JS_NewArrayBuffer(cx, autoAllocateChunkSize);
+    JSObject* bufferObj = JS::NewArrayBuffer(cx, autoAllocateChunkSize);
 
     // Step 5.b: If buffer is an abrupt completion,
     //           return a promise rejected with buffer.[[Value]].
@@ -4422,10 +4425,7 @@ static MOZ_MUST_USE bool MakeSizeAlgorithmFromSizeFunction(JSContext* cx,
 /*** API entry points *******************************************************/
 
 JS_FRIEND_API JSObject* js::UnwrapReadableStream(JSObject* obj) {
-  if (JSObject* unwrapped = CheckedUnwrap(obj)) {
-    return unwrapped->is<ReadableStream>() ? unwrapped : nullptr;
-  }
-  return nullptr;
+  return obj->maybeUnwrapIf<ReadableStream>();
 }
 
 JS_PUBLIC_API JSObject* JS::NewReadableDefaultStreamObject(

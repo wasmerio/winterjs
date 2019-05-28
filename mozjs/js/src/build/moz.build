@@ -38,7 +38,6 @@ if CONFIG['JS_SHARED_LIBRARY']:
         SYMBOLS_FILE = '!symverscript'
 else:
     Library('js')
-    USE_LIBS += ['mozglue']
 
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = 'js_static'
@@ -46,11 +45,6 @@ STATIC_LIBRARY_NAME = 'js_static'
 if CONFIG['ENABLE_INTL_API']:
     USE_LIBS += [
         'icu',
-    ]
-
-if CONFIG['ENABLE_BIGINT']:
-    OS_LIBS += [
-        'gmp',
     ]
 
 USE_LIBS += [

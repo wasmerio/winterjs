@@ -11,6 +11,7 @@
 #include "js/CharacterEncoding.h"
 #include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
 #include "vm/EqualityOperations.h"  // js::SameValue
+#include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 
 #include "vm/JSObject-inl.h"
@@ -165,8 +166,8 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
 }
 
 // Get the [[ProxyHandler]] of a scripted proxy.
-/* static */ JSObject* ScriptedProxyHandler::handlerObject(
-    const JSObject* proxy) {
+/* static */
+JSObject* ScriptedProxyHandler::handlerObject(const JSObject* proxy) {
   MOZ_ASSERT(proxy->as<ProxyObject>().handler() ==
              &ScriptedProxyHandler::singleton);
   return proxy->as<ProxyObject>()
@@ -1433,7 +1434,7 @@ const char ScriptedProxyHandler::family = 0;
 const ScriptedProxyHandler ScriptedProxyHandler::singleton;
 
 bool IsRevokedScriptedProxy(JSObject* obj) {
-  obj = CheckedUnwrap(obj);
+  obj = CheckedUnwrapStatic(obj);
   return obj && IsScriptedProxy(obj) && !obj->as<ProxyObject>().target();
 }
 
@@ -1539,15 +1540,15 @@ bool js::proxy_revocable(JSContext* cx, unsigned argc, Value* vp) {
   RootedValue proxyVal(cx, args.rval());
   MOZ_ASSERT(proxyVal.toObject().is<ProxyObject>());
 
-  RootedObject revoker(
-      cx, NewFunctionByIdWithReserved(cx, RevokeProxy, 0, 0,
-                                      NameToId(cx->names().revoke)));
+  HandlePropertyName funName = cx->names().revoke;
+  RootedFunction revoker(
+      cx, NewNativeFunction(cx, RevokeProxy, 0, funName,
+                            gc::AllocKind::FUNCTION_EXTENDED, GenericObject));
   if (!revoker) {
     return false;
   }
 
-  revoker->as<JSFunction>().initExtendedSlot(ScriptedProxyHandler::REVOKE_SLOT,
-                                             proxyVal);
+  revoker->initExtendedSlot(ScriptedProxyHandler::REVOKE_SLOT, proxyVal);
 
   RootedPlainObject result(cx, NewBuiltinClassInstance<PlainObject>(cx));
   if (!result) {

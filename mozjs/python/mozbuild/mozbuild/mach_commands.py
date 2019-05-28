@@ -34,6 +34,7 @@ from mach.decorators import (
 
 from mach.main import Mach
 
+from mozbuild.artifact_builds import JOB_CHOICES
 from mozbuild.base import (
     BuildEnvironmentNotFoundException,
     MachCommandBase,
@@ -72,6 +73,15 @@ and tell us about your machine and build configuration so we can adjust the
 warning heuristic.
 ===================
 '''
+
+
+# Function used to run clang-format on a batch of files. It is a helper function
+# in order to integrate into the futures ecosystem clang-format.
+def run_one_clang_format_batch(args):
+    try:
+        subprocess.check_output(args)
+    except subprocess.CalledProcessError as e:
+        return e
 
 
 class StoreDebugParamsAndWarnAction(argparse.Action):
@@ -938,6 +948,7 @@ class RunProgram(MachCommandBase):
                 all(p not in params for p in ['-profile', '--profile', '-P'])
             if no_profile_option_given and not noprofile:
                 prefs = {
+                   'browser.aboutConfig.showWarning': False,
                    'browser.shell.checkDefaultBrowser': False,
                    'general.warnOnAboutConfig': False,
                 }
@@ -1183,22 +1194,14 @@ class MachDebug(MachCommandBase):
                 return json.JSONEncoder.default(self, obj)
         json.dump(self, cls=EnvironmentEncoder, sort_keys=True, fp=out)
 
+
 class ArtifactSubCommand(SubCommand):
     def __call__(self, func):
         after = SubCommand.__call__(self, func)
-        jobchoices = {
-            'android-api-16',
-            'android-x86',
-            'linux',
-            'linux64',
-            'macosx64',
-            'win32',
-            'win64'
-        }
         args = [
             CommandArgument('--tree', metavar='TREE', type=str,
                 help='Firefox tree.'),
-            CommandArgument('--job', metavar='JOB', choices=jobchoices,
+            CommandArgument('--job', metavar='JOB', choices=JOB_CHOICES,
                 help='Build job.'),
             CommandArgument('--verbose', '-v', action='store_true',
                 help='Print verbose output.'),
@@ -1206,6 +1209,14 @@ class ArtifactSubCommand(SubCommand):
         for arg in args:
             after = arg(after)
         return after
+
+
+class SymbolsAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        # If this function is called, it means the --symbols option was given,
+        # so we want to store the value `True` if no explicit value was given
+        # to the option.
+        setattr(namespace, self.dest, values or True)
 
 
 @CommandProvider
@@ -1228,7 +1239,9 @@ class PackageFrontend(MachCommandBase):
         '''
         pass
 
-    def _make_artifacts(self, tree=None, job=None, skip_cache=False):
+    def _make_artifacts(self, tree=None, job=None, skip_cache=False,
+                        download_tests=True, download_symbols=False,
+                        download_host_bins=False):
         state_dir = self._mach_context.state_dir
         cache_dir = os.path.join(state_dir, 'package-frontend')
 
@@ -1244,7 +1257,10 @@ class PackageFrontend(MachCommandBase):
         artifacts = Artifacts(tree, self.substs, self.defines, job,
                               log=self.log, cache_dir=cache_dir,
                               skip_cache=skip_cache, hg=hg, git=git,
-                              topsrcdir=self.topsrcdir)
+                              topsrcdir=self.topsrcdir,
+                              download_tests=download_tests,
+                              download_symbols=download_symbols,
+                              download_host_bins=download_host_bins)
         return artifacts
 
     @ArtifactSubCommand('artifact', 'install',
@@ -1257,11 +1273,19 @@ class PackageFrontend(MachCommandBase):
     @CommandArgument('--skip-cache', action='store_true',
         help='Skip all local caches to force re-fetching remote artifacts.',
         default=False)
-    def artifact_install(self, source=None, skip_cache=False, tree=None, job=None, verbose=False):
+    @CommandArgument('--no-tests', action='store_true', help="Don't install tests.")
+    @CommandArgument('--symbols', nargs='?', action=SymbolsAction, help='Download symbols.')
+    @CommandArgument('--host-bins', action='store_true', help='Download host binaries.')
+    @CommandArgument('--distdir', help='Where to install artifacts to.')
+    def artifact_install(self, source=None, skip_cache=False, tree=None, job=None, verbose=False,
+                         no_tests=False, symbols=False, host_bins=False, distdir=None):
         self._set_log_level(verbose)
-        artifacts = self._make_artifacts(tree=tree, job=job, skip_cache=skip_cache)
+        artifacts = self._make_artifacts(tree=tree, job=job, skip_cache=skip_cache,
+                                         download_tests=not no_tests,
+                                         download_symbols=symbols,
+                                         download_host_bins=host_bins)
 
-        return artifacts.install_from(source, self.distdir)
+        return artifacts.install_from(source, distdir or self.distdir)
 
     @ArtifactSubCommand('artifact', 'clear-cache',
         'Delete local artifacts and reset local artifact cache.')
@@ -1373,7 +1397,7 @@ class PackageFrontend(MachCommandBase):
             def __init__(self, task_id, artifact_name):
                 for _ in redo.retrier(attempts=retry+1, sleeptime=60):
                     cot = cache._download_manager.session.get(
-                        get_artifact_url(task_id, 'public/chainOfTrust.json.asc'))
+                        get_artifact_url(task_id, 'public/chain-of-trust.json'))
                     if cot.status_code >= 500:
                         continue
                     cot.raise_for_status()
@@ -1382,22 +1406,7 @@ class PackageFrontend(MachCommandBase):
                     cot.raise_for_status()
 
                 digest = algorithm = None
-                data = {}
-                # The file is GPG-signed, but we don't care about validating that.
-                # The data looks like:
-                #     -----BEGIN PGP SIGNED MESSAGE-----
-                #     Hash: SHA256
-                #
-                #     {
-                #       ...
-                #     }
-                #     -----BEGIN PGP SIGNATURE-----
-                #     <signature data>
-                #     -----END PGP SIGNATURE-----
-                # The following code extracts the json from there.
-                data = json.loads(
-                    cot.content.partition("-----BEGIN PGP SIGNATURE-----")[0]
-                               .partition("Hash: SHA256")[2])
+                data = json.loads(cot.content)
                 for algorithm, digest in (data.get('artifacts', {})
                                               .get(artifact_name, {}).items()):
                     pass
@@ -1608,7 +1617,6 @@ class StaticAnalysisMonitor(object):
         self._warnings_database = WarningsDatabase()
 
         def on_warning(warning):
-            filename = warning['filename']
             self._warnings_database.insert(warning)
 
         self._warnings_collector = WarningsCollector(on_warning, objdir=objdir)
@@ -2339,7 +2347,11 @@ class StaticAnalysis(MachCommandBase):
                           'location')
     @CommandArgument('--path', '-p', nargs='+', default=None,
                      help='Specify the path(s) to reformat')
-    def clang_format(self, show, assume_filename, path, verbose=False):
+    @CommandArgument('--commit', '-c', default=None,
+                     help='Specify a commit to reformat from.'
+                          'For git you can also pass a range of commits (foo..bar)'
+                          'to format all of them at the same time.')
+    def clang_format(self, show, assume_filename, path, commit, verbose=False):
         # Run clang-format or clang-format-diff on the local changes
         # or files/directories
         if path is not None:
@@ -2370,7 +2382,7 @@ class StaticAnalysis(MachCommandBase):
 
         if path is None:
             return self._run_clang_format_diff(self._clang_format_diff,
-                                               self._clang_format_path, show)
+                                               self._clang_format_path, show, commit)
 
         if assume_filename:
             return self._run_clang_format_in_console(self._clang_format_path, path, assume_filename)
@@ -2453,7 +2465,6 @@ class StaticAnalysis(MachCommandBase):
         regex_header = re.compile(
             r'(.+):(\d+):(\d+): (warning|error): ([^\[\]\n]+)(?: \[([\.\w-]+)\])?$', re.MULTILINE)
 
-        something = regex_header.finditer(clang_output)
         headers = sorted(
             regex_header.finditer(clang_output),
             key=lambda h: h.start()
@@ -2678,14 +2689,21 @@ class StaticAnalysis(MachCommandBase):
         assert os.path.exists(self._run_clang_tidy_path)
         return 0
 
-    def _get_clang_format_diff_command(self):
+    def _get_clang_format_diff_command(self, commit):
         if self.repository.name == 'hg':
-            args = ["hg", "diff", "-U0", "-r" ".^"]
+            args = ["hg", "diff", "-U0"]
+            if commit:
+                args += ["-c", commit]
+            else:
+                args += ["-r", ".^"]
             for dot_extension in self._format_include_extensions:
                 args += ['--include', 'glob:**{0}'.format(dot_extension)]
             args += ['--exclude', 'listfile:{0}'.format(self._format_ignore_file)]
         else:
-            args = ["git", "diff", "--no-color", "-U0", "HEAD", "--"]
+            commit_range = "HEAD" # All uncommitted changes.
+            if commit:
+                commit_range = commit if ".." in commit else "{}~..{}".format(commit, commit)
+            args = ["git", "diff", "--no-color", "-U0", commit_range, "--"]
             for dot_extension in self._format_include_extensions:
                 args += ['*{0}'.format(dot_extension)]
             # git-diff doesn't support an 'exclude-from-files' param, but
@@ -2746,12 +2764,12 @@ class StaticAnalysis(MachCommandBase):
         os.chdir(currentWorkingDir)
         return rc
 
-    def _run_clang_format_diff(self, clang_format_diff, clang_format, show):
+    def _run_clang_format_diff(self, clang_format_diff, clang_format, show, commit):
         # Run clang-format on the diff
         # Note that this will potentially miss a lot things
         from subprocess import Popen, PIPE, check_output, CalledProcessError
 
-        diff_process = Popen(self._get_clang_format_diff_command(), stdout=PIPE)
+        diff_process = Popen(self._get_clang_format_diff_command(commit), stdout=PIPE)
         args = [sys.executable, clang_format_diff, "-p1", "-binary=%s" % clang_format]
 
         if not show:
@@ -2809,7 +2827,8 @@ class StaticAnalysis(MachCommandBase):
                             # Supported extension and accepted path
                             path_list.append(f_in_dir)
             else:
-                if f.endswith(extensions):
+                # Make sure that the file exists and it has a supported extension
+                if os.path.isfile(f) and f.endswith(extensions):
                     path_list.append(f)
 
         return path_list
@@ -2852,13 +2871,10 @@ class StaticAnalysis(MachCommandBase):
 
         print("Processing %d file(s)..." % len(path_list))
 
-        batchsize = 200
         if show:
-            batchsize = 1
+            for i in range(0, len(path_list)):
+                l = path_list[i: (i + 1)]
 
-        for i in range(0, len(path_list), batchsize):
-            l = path_list[i: (i + batchsize)]
-            if show:
                 # Copy the files into a temp directory
                 # and run clang-format on the temp directory
                 # and show the diff
@@ -2871,15 +2887,14 @@ class StaticAnalysis(MachCommandBase):
                 shutil.copy(l[0], faketmpdir)
                 l[0] = target_file
 
-            # Run clang-format on the list
-            try:
-                check_output(args + l)
-            except CalledProcessError as e:
-                # Something wrong happend
-                print("clang-format: An error occured while running clang-format.")
-                return e.returncode
+                # Run clang-format on the list
+                try:
+                    check_output(args + l)
+                except CalledProcessError as e:
+                    # Something wrong happend
+                    print("clang-format: An error occured while running clang-format.")
+                    return e.returncode
 
-            if show:
                 # show the diff
                 diff_command = ["diff", "-u", original_path, target_file]
                 try:
@@ -2890,8 +2905,49 @@ class StaticAnalysis(MachCommandBase):
                     # there is a diff to show
                     if e.output:
                         print(e.output)
-        if show:
+
             shutil.rmtree(tmpdir)
+            return 0
+
+        # Run clang-format in parallel trying to saturate all of the available cores.
+        import concurrent.futures
+        import multiprocessing
+        import math
+
+        max_workers = multiprocessing.cpu_count()
+
+        # To maximize CPU usage when there are few items to handle,
+        # underestimate the number of items per batch, then dispatch
+        # outstanding items across workers. Per definition, each worker will
+        # handle at most one outstanding item.
+        batch_size = int(math.floor(float(len(path_list)) / max_workers))
+        outstanding_items = len(path_list) - batch_size * max_workers
+
+        batches = []
+
+        i = 0
+        while i < len(path_list):
+            num_items = batch_size + (1 if outstanding_items > 0 else 0)
+            batches.append(args + path_list[i: (i + num_items)])
+
+            outstanding_items -= 1
+            i += num_items
+
+        error_code = None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for batch in batches:
+                futures.append(executor.submit(run_one_clang_format_batch, batch))
+
+            for future in concurrent.futures.as_completed(futures):
+                # Wait for every task to finish
+                ret_val = future.result()
+                if ret_val is not None:
+                    error_code = ret_val
+
+            if error_code is not None:
+                return error_code
         return 0
 
 @CommandProvider

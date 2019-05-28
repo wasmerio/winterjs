@@ -16,7 +16,7 @@ wasmFullPass(`(module
     (func $test (result i32)
         (i32.store (i32.const 0) (i32.const 1))
         (i32.store (i32.const 65532) (i32.const 10))
-        (drop (grow_memory (i32.const 99)))
+        (drop (memory.grow (i32.const 99)))
         (i32.store (i32.const 6553596) (i32.const 100))
         (i32.add
             (i32.load (i32.const 0))
@@ -30,7 +30,7 @@ wasmFullPass(`(module
 var exports = wasmEvalText(`(module
     (import $imp "" "imp")
     (memory 1)
-    (func $grow (drop (grow_memory (i32.const 99))))
+    (func $grow (drop (memory.grow (i32.const 99))))
     (export "grow" $grow)
     (func $test (result i32)
         (i32.store (i32.const 0) (i32.const 1))
@@ -52,17 +52,17 @@ for (var i = 0; i < 10; i++)
 
 // Grow during call_indirect:
 var mem = new Memory({initial:1});
-var tbl = new Table({initial:1, element:"anyfunc"});
+var tbl = new Table({initial:1, element:"funcref"});
 var exports1 = wasmEvalText(`(module
     (import "" "mem" (memory 1))
     (func $grow
         (i32.store (i32.const 65532) (i32.const 10))
-        (drop (grow_memory (i32.const 99)))
+        (drop (memory.grow (i32.const 99)))
         (i32.store (i32.const 6553596) (i32.const 100)))
     (export "grow" $grow)
 )`, {"":{mem}}).exports;
 var exports2 = wasmEvalText(`(module
-    (import "" "tbl" (table 1 anyfunc))
+    (import "" "tbl" (table 1 funcref))
     (import "" "mem" (memory 1))
     (type $v2v (func))
     (func $test (result i32)
@@ -84,9 +84,9 @@ var mem = new Memory({initial:1});
 new Int32Array(mem.buffer)[0] = 42;
 var mod = new Module(wasmTextToBinary(`(module
     (import "" "mem" (memory 1))
-    (func $gm (param i32) (result i32) (grow_memory (get_local 0)))
+    (func $gm (param i32) (result i32) (memory.grow (get_local 0)))
     (export "grow_memory" $gm)
-    (func $cm (result i32) (current_memory))
+    (func $cm (result i32) (memory.size))
     (export "current_memory" $cm)
     (func $ld (param i32) (result i32) (i32.load (get_local 0)))
     (export "load" $ld)
@@ -135,7 +135,7 @@ assertEq(mem.buffer.byteLength, 2 * 64*1024);
 var exports = wasmEvalText(`(module
     (type $v2i (func (result i32)))
     (import $grow "" "grow")
-    (table (export "tbl") 1 anyfunc)
+    (table (export "tbl") 1 funcref)
     (func $test (result i32)
         (i32.add
             (call_indirect $v2i (i32.const 0))
@@ -166,7 +166,7 @@ var exports2 = wasmEvalText(`(module
     (type $v2i (func (result i32)))
     (import $imp "" "imp")
     (elem (i32.const 0) $imp)
-    (table 2 anyfunc)
+    (table 2 funcref)
     (func $test (result i32)
         (i32.add
             (call_indirect $v2i (i32.const 1))
@@ -192,12 +192,12 @@ var src = wasmEvalText(`(module
     (func $three (result i32) (i32.const 3))
     (export "three" $three)
 )`).exports;
-var tbl = new Table({element:"anyfunc", initial:1});
+var tbl = new Table({element:"funcref", initial:1});
 tbl.set(0, src.one);
 
 var mod = new Module(wasmTextToBinary(`(module
     (type $v2i (func (result i32)))
-    (table (import "" "tbl") 1 anyfunc)
+    (table (import "" "tbl") 1 funcref)
     (func $ci (param i32) (result i32) (call_indirect $v2i (get_local 0)))
     (export "call_indirect" $ci)
 )`));
@@ -223,7 +223,7 @@ assertErrorMessage(() => exp2.call_indirect(3), Error, /indirect call to null/);
 
 // Fail at maximum
 
-var tbl = new Table({initial:1, maximum:2, element:"anyfunc"});
+var tbl = new Table({initial:1, maximum:2, element:"funcref"});
 assertEq(tbl.length, 1);
 assertEq(tbl.grow(1), 1);
 assertEq(tbl.length, 2);

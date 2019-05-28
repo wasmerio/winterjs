@@ -1,0 +1,364 @@
+//! All the runtime support necessary for the wasm to cranelift translation is formalized by the
+//! traits `FunctionEnvironment` and `ModuleEnvironment`.
+//!
+//! There are skeleton implementations of these traits in the `dummy` module, and complete
+//! implementations in [Wasmtime].
+//!
+//! [Wasmtime]: https://github.com/CraneStation/wasmtime
+
+use crate::translation_utils::{
+    FuncIndex, Global, GlobalIndex, Memory, MemoryIndex, SignatureIndex, Table, TableIndex,
+};
+use core::convert::From;
+use cranelift_codegen::cursor::FuncCursor;
+use cranelift_codegen::ir::immediates::Offset32;
+use cranelift_codegen::ir::{self, InstBuilder};
+use cranelift_codegen::isa::TargetFrontendConfig;
+use failure_derive::Fail;
+use std::boxed::Box;
+use wasmparser::BinaryReaderError;
+
+/// The value of a WebAssembly global variable.
+#[derive(Clone, Copy)]
+pub enum GlobalVariable {
+    /// This is a constant global with a value known at compile time.
+    Const(ir::Value),
+
+    /// This is a variable in memory that should be referenced through a `GlobalValue`.
+    Memory {
+        /// The address of the global variable storage.
+        gv: ir::GlobalValue,
+        /// An offset to add to the address.
+        offset: Offset32,
+        /// The global variable's type.
+        ty: ir::Type,
+    },
+}
+
+/// A WebAssembly translation error.
+///
+/// When a WebAssembly function can't be translated, one of these error codes will be returned
+/// to describe the failure.
+#[derive(Fail, Debug, PartialEq, Eq)]
+pub enum WasmError {
+    /// The input WebAssembly code is invalid.
+    ///
+    /// This error code is used by a WebAssembly translator when it encounters invalid WebAssembly
+    /// code. This should never happen for validated WebAssembly code.
+    #[fail(display = "Invalid input WebAssembly code at offset {}: {}", _1, _0)]
+    InvalidWebAssembly {
+        /// A string describing the validation error.
+        message: &'static str,
+        /// The bytecode offset where the error occurred.
+        offset: usize,
+    },
+
+    /// A feature used by the WebAssembly code is not supported by the embedding environment.
+    ///
+    /// Embedding environments may have their own limitations and feature restrictions.
+    #[fail(display = "Unsupported feature: {}", _0)]
+    Unsupported(&'static str),
+
+    /// An implementation limit was exceeded.
+    ///
+    /// Cranelift can compile very large and complicated functions, but the [implementation has
+    /// limits][limits] that cause compilation to fail when they are exceeded.
+    ///
+    /// [limits]: https://cranelift.readthedocs.io/en/latest/ir.html#implementation-limits
+    #[fail(display = "Implementation limit exceeded")]
+    ImplLimitExceeded,
+}
+
+impl From<BinaryReaderError> for WasmError {
+    /// Convert from a `BinaryReaderError` to a `WasmError`.
+    fn from(e: BinaryReaderError) -> Self {
+        let BinaryReaderError { message, offset } = e;
+        WasmError::InvalidWebAssembly { message, offset }
+    }
+}
+
+/// A convenient alias for a `Result` that uses `WasmError` as the error type.
+pub type WasmResult<T> = Result<T, WasmError>;
+
+/// How to return from functions.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ReturnMode {
+    /// Use normal return instructions as needed.
+    NormalReturns,
+    /// Use a single fallthrough return at the end of the function.
+    FallthroughReturn,
+}
+
+/// Environment affecting the translation of a single WebAssembly function.
+///
+/// A `FuncEnvironment` trait object is required to translate a WebAssembly function to Cranelift
+/// IR. The function environment provides information about the WebAssembly module as well as the
+/// runtime environment.
+pub trait FuncEnvironment {
+    /// Get the information needed to produce Cranelift IR for the given target.
+    fn target_config(&self) -> TargetFrontendConfig;
+
+    /// Get the Cranelift integer type to use for native pointers.
+    ///
+    /// This returns `I64` for 64-bit architectures and `I32` for 32-bit architectures.
+    fn pointer_type(&self) -> ir::Type {
+        ir::Type::int(u16::from(self.target_config().pointer_bits())).unwrap()
+    }
+
+    /// Get the size of a native pointer, in bytes.
+    fn pointer_bytes(&self) -> u8 {
+        self.target_config().pointer_bytes()
+    }
+
+    /// Set up the necessary preamble definitions in `func` to access the global variable
+    /// identified by `index`.
+    ///
+    /// The index space covers both imported globals and globals defined by the module.
+    ///
+    /// Return the global variable reference that should be used to access the global and the
+    /// WebAssembly type of the global.
+    fn make_global(&mut self, func: &mut ir::Function, index: GlobalIndex) -> GlobalVariable;
+
+    /// Set up the necessary preamble definitions in `func` to access the linear memory identified
+    /// by `index`.
+    ///
+    /// The index space covers both imported and locally declared memories.
+    fn make_heap(&mut self, func: &mut ir::Function, index: MemoryIndex) -> ir::Heap;
+
+    /// Set up the necessary preamble definitions in `func` to access the table identified
+    /// by `index`.
+    ///
+    /// The index space covers both imported and locally declared tables.
+    fn make_table(&mut self, func: &mut ir::Function, index: TableIndex) -> ir::Table;
+
+    /// Set up a signature definition in the preamble of `func` that can be used for an indirect
+    /// call with signature `index`.
+    ///
+    /// The signature may contain additional arguments needed for an indirect call, but the
+    /// arguments marked as `ArgumentPurpose::Normal` must correspond to the WebAssembly signature
+    /// arguments.
+    ///
+    /// The signature will only be used for indirect calls, even if the module has direct function
+    /// calls with the same WebAssembly type.
+    fn make_indirect_sig(&mut self, func: &mut ir::Function, index: SignatureIndex) -> ir::SigRef;
+
+    /// Set up an external function definition in the preamble of `func` that can be used to
+    /// directly call the function `index`.
+    ///
+    /// The index space covers both imported functions and functions defined in the current module.
+    ///
+    /// The function's signature may contain additional arguments needed for a direct call, but the
+    /// arguments marked as `ArgumentPurpose::Normal` must correspond to the WebAssembly signature
+    /// arguments.
+    ///
+    /// The function's signature will only be used for direct calls, even if the module has
+    /// indirect calls with the same WebAssembly type.
+    fn make_direct_func(&mut self, func: &mut ir::Function, index: FuncIndex) -> ir::FuncRef;
+
+    /// Translate a `call_indirect` WebAssembly instruction at `pos`.
+    ///
+    /// Insert instructions at `pos` for an indirect call to the function `callee` in the table
+    /// `table_index` with WebAssembly signature `sig_index`. The `callee` value will have type
+    /// `i32`.
+    ///
+    /// The signature `sig_ref` was previously created by `make_indirect_sig()`.
+    ///
+    /// Return the call instruction whose results are the WebAssembly return values.
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::too_many_arguments))]
+    fn translate_call_indirect(
+        &mut self,
+        pos: FuncCursor,
+        table_index: TableIndex,
+        table: ir::Table,
+        sig_index: SignatureIndex,
+        sig_ref: ir::SigRef,
+        callee: ir::Value,
+        call_args: &[ir::Value],
+    ) -> WasmResult<ir::Inst>;
+
+    /// Translate a `call` WebAssembly instruction at `pos`.
+    ///
+    /// Insert instructions at `pos` for a direct call to the function `callee_index`.
+    ///
+    /// The function reference `callee` was previously created by `make_direct_func()`.
+    ///
+    /// Return the call instruction whose results are the WebAssembly return values.
+    fn translate_call(
+        &mut self,
+        mut pos: FuncCursor,
+        _callee_index: FuncIndex,
+        callee: ir::FuncRef,
+        call_args: &[ir::Value],
+    ) -> WasmResult<ir::Inst> {
+        Ok(pos.ins().call(callee, call_args))
+    }
+
+    /// Translate a `memory.grow` WebAssembly instruction.
+    ///
+    /// The `index` provided identifies the linear memory to grow, and `heap` is the heap reference
+    /// returned by `make_heap` for the same index.
+    ///
+    /// The `val` value is the requested memory size in pages.
+    ///
+    /// Returns the old size (in pages) of the memory.
+    fn translate_memory_grow(
+        &mut self,
+        pos: FuncCursor,
+        index: MemoryIndex,
+        heap: ir::Heap,
+        val: ir::Value,
+    ) -> WasmResult<ir::Value>;
+
+    /// Translates a `memory.size` WebAssembly instruction.
+    ///
+    /// The `index` provided identifies the linear memory to query, and `heap` is the heap reference
+    /// returned by `make_heap` for the same index.
+    ///
+    /// Returns the size in pages of the memory.
+    fn translate_memory_size(
+        &mut self,
+        pos: FuncCursor,
+        index: MemoryIndex,
+        heap: ir::Heap,
+    ) -> WasmResult<ir::Value>;
+
+    /// Emit code at the beginning of every wasm loop.
+    ///
+    /// This can be used to insert explicit interrupt or safepoint checking at
+    /// the beginnings of loops.
+    fn translate_loop_header(&mut self, _pos: FuncCursor) {
+        // By default, don't emit anything.
+    }
+
+    /// Should the code be structured to use a single `fallthrough_return` instruction at the end
+    /// of the function body, rather than `return` instructions as needed? This is used by VMs
+    /// to append custom epilogues.
+    fn return_mode(&self) -> ReturnMode {
+        ReturnMode::NormalReturns
+    }
+}
+
+/// An object satisfying the `ModuleEnvironment` trait can be passed as argument to the
+/// [`translate_module`](fn.translate_module.html) function. These methods should not be called
+/// by the user, they are only for `cranelift-wasm` internal use.
+pub trait ModuleEnvironment<'data> {
+    /// Get the information needed to produce Cranelift IR for the current target.
+    fn target_config(&self) -> TargetFrontendConfig;
+
+    /// Provides the number of signatures up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_signatures(&mut self, _num: u32) {}
+
+    /// Declares a function signature to the environment.
+    fn declare_signature(&mut self, sig: ir::Signature);
+
+    /// Provides the number of imports up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_imports(&mut self, _num: u32) {}
+
+    /// Declares a function import to the environment.
+    fn declare_func_import(
+        &mut self,
+        sig_index: SignatureIndex,
+        module: &'data str,
+        field: &'data str,
+    );
+
+    /// Declares a table import to the environment.
+    fn declare_table_import(&mut self, table: Table, module: &'data str, field: &'data str);
+
+    /// Declares a memory import to the environment.
+    fn declare_memory_import(&mut self, memory: Memory, module: &'data str, field: &'data str);
+
+    /// Declares a global import to the environment.
+    fn declare_global_import(&mut self, global: Global, module: &'data str, field: &'data str);
+
+    /// Notifies the implementation that all imports have been declared.
+    fn finish_imports(&mut self) {}
+
+    /// Provides the number of defined functions up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_func_types(&mut self, _num: u32) {}
+
+    /// Declares the type (signature) of a local function in the module.
+    fn declare_func_type(&mut self, sig_index: SignatureIndex);
+
+    /// Provides the number of defined tables up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_tables(&mut self, _num: u32) {}
+
+    /// Declares a table to the environment.
+    fn declare_table(&mut self, table: Table);
+
+    /// Provides the number of defined memories up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_memories(&mut self, _num: u32) {}
+
+    /// Declares a memory to the environment
+    fn declare_memory(&mut self, memory: Memory);
+
+    /// Provides the number of defined globals up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_globals(&mut self, _num: u32) {}
+
+    /// Declares a global to the environment.
+    fn declare_global(&mut self, global: Global);
+
+    /// Provides the number of exports up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_exports(&mut self, _num: u32) {}
+
+    /// Declares a function export to the environment.
+    fn declare_func_export(&mut self, func_index: FuncIndex, name: &'data str);
+
+    /// Declares a table export to the environment.
+    fn declare_table_export(&mut self, table_index: TableIndex, name: &'data str);
+
+    /// Declares a memory export to the environment.
+    fn declare_memory_export(&mut self, memory_index: MemoryIndex, name: &'data str);
+
+    /// Declares a global export to the environment.
+    fn declare_global_export(&mut self, global_index: GlobalIndex, name: &'data str);
+
+    /// Notifies the implementation that all exports have been declared.
+    fn finish_exports(&mut self) {}
+
+    /// Declares the optional start function.
+    fn declare_start_func(&mut self, index: FuncIndex);
+
+    /// Provides the number of element initializers up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_table_elements(&mut self, _num: u32) {}
+
+    /// Fills a declared table with references to functions in the module.
+    fn declare_table_elements(
+        &mut self,
+        table_index: TableIndex,
+        base: Option<GlobalIndex>,
+        offset: usize,
+        elements: Box<[FuncIndex]>,
+    );
+
+    /// Provides the contents of a function body.
+    ///
+    /// Note there's no `reserve_function_bodies` function because the number of
+    /// functions is already provided by `reserve_func_types`.
+    fn define_function_body(
+        &mut self,
+        body_bytes: &'data [u8],
+        body_offset: usize,
+    ) -> WasmResult<()>;
+
+    /// Provides the number of data initializers up front. By default this does nothing, but
+    /// implementations can use this to preallocate memory if desired.
+    fn reserve_data_initializers(&mut self, _num: u32) {}
+
+    /// Fills a declared memory with bytes at module instantiation.
+    fn declare_data_initialization(
+        &mut self,
+        memory_index: MemoryIndex,
+        base: Option<GlobalIndex>,
+        offset: usize,
+        data: &'data [u8],
+    );
+}

@@ -17,7 +17,6 @@
 
 #include <windows.h>
 #include <winternl.h>
-#include <io.h>
 
 #pragma warning(push)
 #pragma warning(disable : 4275 4530)  // See msvc-stl-wrapper.template.h
@@ -31,8 +30,8 @@
 #include "nsAutoPtr.h"
 #include "nsWindowsDllInterceptor.h"
 #include "mozilla/CmdLineAndEnvUtils.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Sprintf.h"
 #include "mozilla/StackWalk_windows.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -41,6 +40,7 @@
 #include "nsWindowsHelpers.h"
 #include "WindowsDllBlocklist.h"
 #include "mozilla/AutoProfilerLabel.h"
+#include "mozilla/glue/Debug.h"
 #include "mozilla/glue/WindowsDllServices.h"
 
 using namespace mozilla;
@@ -62,28 +62,6 @@ static uint32_t sInitFlags;
 static bool sBlocklistInitAttempted;
 static bool sBlocklistInitFailed;
 static bool sUser32BeforeBlocklist;
-
-// Duplicated from xpcom glue. Ideally this should be shared.
-void printf_stderr(const char* fmt, ...) {
-  if (IsDebuggerPresent()) {
-    char buf[2048];
-    va_list args;
-    va_start(args, fmt);
-    VsprintfLiteral(buf, fmt, args);
-    va_end(args);
-    OutputDebugStringA(buf);
-  }
-
-  FILE* fp = _fdopen(_dup(2), "a");
-  if (!fp) return;
-
-  va_list args;
-  va_start(args, fmt);
-  vfprintf(fp, fmt, args);
-  va_end(args);
-
-  fclose(fp);
-}
 
 // This feature is enabled only on NIGHTLY, only for the main process.
 inline static bool IsUntrustedDllsHandlerEnabled() {
@@ -994,7 +972,7 @@ namespace mozilla {
 Authenticode* GetAuthenticode();
 }  // namespace mozilla
 
-MFBT_API void DllBlocklist_SetDllServices(
+MFBT_API void DllBlocklist_SetFullDllServices(
     mozilla::glue::detail::DllServicesBase* aSvc) {
   glue::AutoExclusiveLock lock(gDllServicesLock);
   if (aSvc) {
@@ -1008,9 +986,9 @@ MFBT_API void DllBlocklist_SetDllServices(
 
       MOZ_DIAGNOSTIC_ASSERT(pLdrRegisterDllNotification);
 
-      NTSTATUS ntStatus = pLdrRegisterDllNotification(
+      mozilla::DebugOnly<NTSTATUS> ntStatus = pLdrRegisterDllNotification(
           0, &DllLoadNotification, nullptr, &gNotificationCookie);
-      MOZ_DIAGNOSTIC_ASSERT(NT_SUCCESS(ntStatus));
+      MOZ_ASSERT(NT_SUCCESS(ntStatus));
     }
   }
 
@@ -1022,4 +1000,13 @@ MFBT_API void DllBlocklist_SetDllServices(
       gDllServices->NotifyUntrustedModuleLoads(events);
     }
   }
+}
+
+MFBT_API void DllBlocklist_SetBasicDllServices(
+    mozilla::glue::detail::DllServicesBase* aSvc) {
+  if (!aSvc) {
+    return;
+  }
+
+  aSvc->SetAuthenticodeImpl(GetAuthenticode());
 }

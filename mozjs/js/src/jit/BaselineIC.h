@@ -996,10 +996,17 @@ class ICStubCompiler {
   void pushStubPayload(MacroAssembler& masm, Register scratch);
 
   // Emits a tail call to a VMFunction wrapper.
-  MOZ_MUST_USE bool tailCallVM(const VMFunction& fun, MacroAssembler& masm);
+  MOZ_MUST_USE bool tailCallVMInternal(MacroAssembler& masm,
+                                       TailCallVMFunctionId id);
+
+  template <typename Fn, Fn fn>
+  MOZ_MUST_USE bool tailCallVM(MacroAssembler& masm);
 
   // Emits a normal (non-tail) call to a VMFunction wrapper.
-  MOZ_MUST_USE bool callVM(const VMFunction& fun, MacroAssembler& masm);
+  MOZ_MUST_USE bool callVMInternal(MacroAssembler& masm, VMFunctionId id);
+
+  template <typename Fn, Fn fn>
+  MOZ_MUST_USE bool callVM(MacroAssembler& masm);
 
   // A stub frame is used when a stub wants to call into the VM without
   // performing a tail call. This is required for the return address
@@ -1135,13 +1142,14 @@ class TypeCheckPrimitiveSetStub : public ICStub {
   friend class ICStubSpace;
 
  protected:
-  inline static uint16_t TypeToFlag(JSValueType type) {
+  inline static uint16_t TypeToFlag(ValueType type) {
     return 1u << static_cast<unsigned>(type);
   }
 
   inline static uint16_t ValidFlags() {
-    return ((TypeToFlag(JSVAL_TYPE_OBJECT) << 1) - 1) &
-           ~TypeToFlag(JSVAL_TYPE_MAGIC);
+    return ((TypeToFlag(ValueType::Object) << 1) - 1) &
+           ~(TypeToFlag(ValueType::Magic) |
+             TypeToFlag(ValueType::PrivateGCThing));
   }
 
   TypeCheckPrimitiveSetStub(Kind kind, JitCode* stubCode, uint16_t flags)
@@ -1165,9 +1173,8 @@ class TypeCheckPrimitiveSetStub : public ICStub {
  public:
   uint16_t typeFlags() const { return extra_; }
 
-  bool containsType(JSValueType type) const {
-    MOZ_ASSERT(type <= JSVAL_TYPE_OBJECT);
-    MOZ_ASSERT(type != JSVAL_TYPE_MAGIC);
+  bool containsType(ValueType type) const {
+    MOZ_ASSERT(type != ValueType::Magic && type != ValueType::PrivateGCThing);
     return extra_ & TypeToFlag(type);
   }
 
@@ -1190,7 +1197,7 @@ class TypeCheckPrimitiveSetStub : public ICStub {
 
    public:
     Compiler(JSContext* cx, Kind kind, TypeCheckPrimitiveSetStub* existingStub,
-             JSValueType type)
+             ValueType type)
         : ICStubCompiler(cx, kind),
           existingStub_(existingStub),
           flags_((existingStub ? existingStub->typeFlags() : 0) |
@@ -1382,7 +1389,7 @@ class ICTypeMonitor_PrimitiveSet : public TypeCheckPrimitiveSetStub {
 
    public:
     Compiler(JSContext* cx, ICTypeMonitor_PrimitiveSet* existingStub,
-             JSValueType type)
+             ValueType type)
         : TypeCheckPrimitiveSetStub::Compiler(cx, TypeMonitor_PrimitiveSet,
                                               existingStub, type) {}
 
@@ -1483,8 +1490,6 @@ class ICTypeMonitor_AnyValue : public ICStub {
 
 // TypeUpdate
 
-extern const VMFunction DoTypeUpdateFallbackInfo;
-
 // The TypeUpdate fallback is not a regular fallback, since it just
 // forwards to a different entry point in the main fallback stub.
 class ICTypeUpdate_Fallback : public ICStub {
@@ -1522,7 +1527,7 @@ class ICTypeUpdate_PrimitiveSet : public TypeCheckPrimitiveSetStub {
 
    public:
     Compiler(JSContext* cx, ICTypeUpdate_PrimitiveSet* existingStub,
-             JSValueType type)
+             ValueType type)
         : TypeCheckPrimitiveSetStub::Compiler(cx, TypeUpdate_PrimitiveSet,
                                               existingStub, type) {}
 
@@ -1650,31 +1655,6 @@ class ICToBool_Fallback : public ICFallbackStub {
   };
 };
 
-// ToNumber
-//     JSOP_POS
-
-class ICToNumber_Fallback : public ICFallbackStub {
-  friend class ICStubSpace;
-
-  explicit ICToNumber_Fallback(JitCode* stubCode)
-      : ICFallbackStub(ICStub::ToNumber_Fallback, stubCode) {}
-
- public:
-  // Compiler for this stub kind.
-  class Compiler : public ICStubCompiler {
-   protected:
-    MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
-
-   public:
-    explicit Compiler(JSContext* cx)
-        : ICStubCompiler(cx, ICStub::ToNumber_Fallback) {}
-
-    ICStub* getStub(ICStubSpace* space) override {
-      return newStub<ICToNumber_Fallback>(space, getStubCode());
-    }
-  };
-};
-
 // GetElem
 //      JSOP_GETELEM
 //      JSOP_GETELEM_SUPER
@@ -1686,16 +1666,23 @@ class ICGetElem_Fallback : public ICMonitoredFallbackStub {
       : ICMonitoredFallbackStub(ICStub::GetElem_Fallback, stubCode) {}
 
   static const uint16_t EXTRA_NEGATIVE_INDEX = 0x1;
+  static const uint16_t SAW_NON_INTEGER_INDEX_BIT = 0x2;
 
  public:
   void noteNegativeIndex() { extra_ |= EXTRA_NEGATIVE_INDEX; }
   bool hasNegativeIndex() const { return extra_ & EXTRA_NEGATIVE_INDEX; }
 
+  void setSawNonIntegerIndex() { extra_ |= SAW_NON_INTEGER_INDEX_BIT; }
+  bool sawNonIntegerIndex() const { return extra_ & SAW_NON_INTEGER_INDEX_BIT; }
+
   // Compiler for this stub kind.
   class Compiler : public ICStubCompiler {
    protected:
+    CodeOffset bailoutReturnOffset_;
     bool hasReceiver_;
     MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
+    void postGenerateStubCode(MacroAssembler& masm,
+                              Handle<JitCode*> code) override;
 
     virtual int32_t getKey() const override {
       return static_cast<int32_t>(kind) |
@@ -2453,78 +2440,6 @@ class ICGetIterator_Fallback : public ICFallbackStub {
   };
 };
 
-// IC for testing if there are more values in an iterator.
-class ICIteratorMore_Fallback : public ICFallbackStub {
-  friend class ICStubSpace;
-
-  explicit ICIteratorMore_Fallback(JitCode* stubCode)
-      : ICFallbackStub(ICStub::IteratorMore_Fallback, stubCode) {}
-
- public:
-  void setHasNonStringResult() { extra_ = 1; }
-  bool hasNonStringResult() const {
-    MOZ_ASSERT(extra_ <= 1);
-    return extra_;
-  }
-
-  class Compiler : public ICStubCompiler {
-   protected:
-    MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
-
-   public:
-    explicit Compiler(JSContext* cx)
-        : ICStubCompiler(cx, ICStub::IteratorMore_Fallback) {}
-
-    ICStub* getStub(ICStubSpace* space) override {
-      return newStub<ICIteratorMore_Fallback>(space, getStubCode());
-    }
-  };
-};
-
-// IC for testing if there are more values in a native iterator.
-class ICIteratorMore_Native : public ICStub {
-  friend class ICStubSpace;
-
-  explicit ICIteratorMore_Native(JitCode* stubCode)
-      : ICStub(ICStub::IteratorMore_Native, stubCode) {}
-
- public:
-  class Compiler : public ICStubCompiler {
-   protected:
-    MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
-
-   public:
-    explicit Compiler(JSContext* cx)
-        : ICStubCompiler(cx, ICStub::IteratorMore_Native) {}
-
-    ICStub* getStub(ICStubSpace* space) override {
-      return newStub<ICIteratorMore_Native>(space, getStubCode());
-    }
-  };
-};
-
-// IC for closing an iterator.
-class ICIteratorClose_Fallback : public ICFallbackStub {
-  friend class ICStubSpace;
-
-  explicit ICIteratorClose_Fallback(JitCode* stubCode)
-      : ICFallbackStub(ICStub::IteratorClose_Fallback, stubCode) {}
-
- public:
-  class Compiler : public ICStubCompiler {
-   protected:
-    MOZ_MUST_USE bool generateStubCode(MacroAssembler& masm) override;
-
-   public:
-    explicit Compiler(JSContext* cx)
-        : ICStubCompiler(cx, ICStub::IteratorClose_Fallback) {}
-
-    ICStub* getStub(ICStubSpace* space) override {
-      return newStub<ICIteratorClose_Fallback>(space, getStubCode());
-    }
-  };
-};
-
 // InstanceOf
 //      JSOP_INSTANCEOF
 class ICInstanceOf_Fallback : public ICFallbackStub {
@@ -2808,6 +2723,112 @@ template <typename T>
 void StoreToTypedArray(JSContext* cx, MacroAssembler& masm, Scalar::Type type,
                        const ValueOperand& value, const T& dest,
                        Register scratch, Label* failure);
+
+extern bool DoTypeUpdateFallback(JSContext* cx, BaselineFrame* frame,
+                                 ICUpdatedStub* stub, HandleValue objval,
+                                 HandleValue value);
+
+extern bool DoWarmUpCounterFallbackOSR(JSContext* cx, BaselineFrame* frame,
+                                       ICWarmUpCounter_Fallback* stub,
+                                       IonOsrTempData** infoPtr);
+
+extern bool DoCallFallback(JSContext* cx, BaselineFrame* frame,
+                           ICCall_Fallback* stub, uint32_t argc, Value* vp,
+                           MutableHandleValue res);
+
+extern bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
+                                 ICCall_Fallback* stub, Value* vp,
+                                 MutableHandleValue res);
+
+extern bool DoTypeMonitorFallback(JSContext* cx, BaselineFrame* frame,
+                                  ICTypeMonitor_Fallback* stub,
+                                  HandleValue value, MutableHandleValue res);
+
+extern bool DoToBoolFallback(JSContext* cx, BaselineFrame* frame,
+                             ICToBool_Fallback* stub, HandleValue arg,
+                             MutableHandleValue ret);
+
+extern bool DoGetElemSuperFallback(JSContext* cx, BaselineFrame* frame,
+                                   ICGetElem_Fallback* stub, HandleValue lhs,
+                                   HandleValue rhs, HandleValue receiver,
+                                   MutableHandleValue res);
+
+extern bool DoGetElemFallback(JSContext* cx, BaselineFrame* frame,
+                              ICGetElem_Fallback* stub, HandleValue lhs,
+                              HandleValue rhs, MutableHandleValue res);
+
+extern bool DoSetElemFallback(JSContext* cx, BaselineFrame* frame,
+                              ICSetElem_Fallback* stub, Value* stack,
+                              HandleValue objv, HandleValue index,
+                              HandleValue rhs);
+
+extern bool DoInFallback(JSContext* cx, BaselineFrame* frame,
+                         ICIn_Fallback* stub, HandleValue key,
+                         HandleValue objValue, MutableHandleValue res);
+
+extern bool DoHasOwnFallback(JSContext* cx, BaselineFrame* frame,
+                             ICHasOwn_Fallback* stub, HandleValue keyValue,
+                             HandleValue objValue, MutableHandleValue res);
+
+extern bool DoGetNameFallback(JSContext* cx, BaselineFrame* frame,
+                              ICGetName_Fallback* stub, HandleObject envChain,
+                              MutableHandleValue res);
+
+extern bool DoBindNameFallback(JSContext* cx, BaselineFrame* frame,
+                               ICBindName_Fallback* stub, HandleObject envChain,
+                               MutableHandleValue res);
+
+extern bool DoGetIntrinsicFallback(JSContext* cx, BaselineFrame* frame,
+                                   ICGetIntrinsic_Fallback* stub,
+                                   MutableHandleValue res);
+
+extern bool DoGetPropFallback(JSContext* cx, BaselineFrame* frame,
+                              ICGetProp_Fallback* stub, MutableHandleValue val,
+                              MutableHandleValue res);
+
+extern bool DoGetPropSuperFallback(JSContext* cx, BaselineFrame* frame,
+                                   ICGetProp_Fallback* stub,
+                                   HandleValue receiver, MutableHandleValue val,
+                                   MutableHandleValue res);
+
+extern bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
+                              ICSetProp_Fallback* stub, Value* stack,
+                              HandleValue lhs, HandleValue rhs);
+
+extern bool DoGetIteratorFallback(JSContext* cx, BaselineFrame* frame,
+                                  ICGetIterator_Fallback* stub,
+                                  HandleValue value, MutableHandleValue res);
+
+extern bool DoInstanceOfFallback(JSContext* cx, BaselineFrame* frame,
+                                 ICInstanceOf_Fallback* stub, HandleValue lhs,
+                                 HandleValue rhs, MutableHandleValue res);
+
+extern bool DoTypeOfFallback(JSContext* cx, BaselineFrame* frame,
+                             ICTypeOf_Fallback* stub, HandleValue val,
+                             MutableHandleValue res);
+
+extern bool DoRestFallback(JSContext* cx, BaselineFrame* frame,
+                           ICRest_Fallback* stub, MutableHandleValue res);
+
+extern bool DoUnaryArithFallback(JSContext* cx, BaselineFrame* frame,
+                                 ICUnaryArith_Fallback* stub, HandleValue val,
+                                 MutableHandleValue res);
+
+extern bool DoBinaryArithFallback(JSContext* cx, BaselineFrame* frame,
+                                  ICBinaryArith_Fallback* stub, HandleValue lhs,
+                                  HandleValue rhs, MutableHandleValue ret);
+
+extern bool DoNewArrayFallback(JSContext* cx, BaselineFrame* frame,
+                               ICNewArray_Fallback* stub, uint32_t length,
+                               MutableHandleValue res);
+
+extern bool DoNewObjectFallback(JSContext* cx, BaselineFrame* frame,
+                                ICNewObject_Fallback* stub,
+                                MutableHandleValue res);
+
+extern bool DoCompareFallback(JSContext* cx, BaselineFrame* frame,
+                              ICCompare_Fallback* stub, HandleValue lhs,
+                              HandleValue rhs, MutableHandleValue ret);
 
 }  // namespace jit
 }  // namespace js

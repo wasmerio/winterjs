@@ -32,9 +32,14 @@
   MACRO(AsyncFromSyncIterator, AsyncFromSyncIterator,                          \
         "Async-from-Sync Iterator")                                            \
   MACRO(AsyncFunction, AsyncFunction, "AsyncFunction")                         \
+  MACRO(AsyncFunctionNext, AsyncFunctionNext, "AsyncFunctionNext")             \
+  MACRO(AsyncFunctionThrow, AsyncFunctionThrow, "AsyncFunctionThrow")          \
   MACRO(AsyncGenerator, AsyncGenerator, "AsyncGenerator")                      \
   MACRO(AsyncGeneratorFunction, AsyncGeneratorFunction,                        \
         "AsyncGeneratorFunction")                                              \
+  MACRO(AsyncGeneratorNext, AsyncGeneratorNext, "AsyncGeneratorNext")          \
+  MACRO(AsyncGeneratorReturn, AsyncGeneratorReturn, "AsyncGeneratorReturn")    \
+  MACRO(AsyncGeneratorThrow, AsyncGeneratorThrow, "AsyncGeneratorThrow")       \
   MACRO(AsyncWrapped, AsyncWrapped, "AsyncWrapped")                            \
   MACRO(async, async, "async")                                                 \
   MACRO(autoAllocateChunkSize, autoAllocateChunkSize, "autoAllocateChunkSize") \
@@ -60,6 +65,8 @@
   MACRO(callee, callee, "callee")                                              \
   MACRO(caller, caller, "caller")                                              \
   MACRO(callFunction, callFunction, "callFunction")                            \
+  MACRO(CallRegExpMethodIfWrapped, CallRegExpMethodIfWrapped,                  \
+        "CallRegExpMethodIfWrapped")                                           \
   MACRO(cancel, cancel, "cancel")                                              \
   MACRO(case, case_, "case")                                                   \
   MACRO(caseFirst, caseFirst, "caseFirst")                                     \
@@ -111,6 +118,7 @@
   MACRO(done, done, "done")                                                    \
   MACRO(dotGenerator, dotGenerator, ".generator")                              \
   MACRO(dotThis, dotThis, ".this")                                             \
+  MACRO(dotInitializers, dotInitializers, ".initializers")                     \
   MACRO(each, each, "each")                                                    \
   MACRO(elementType, elementType, "elementType")                               \
   MACRO(else, else_, "else")                                                   \
@@ -142,6 +150,8 @@
   MACRO(firstDayOfWeek, firstDayOfWeek, "firstDayOfWeek")                      \
   MACRO(fix, fix, "fix")                                                       \
   MACRO(flags, flags, "flags")                                                 \
+  MACRO(flat, flat, "flat")                                                    \
+  MACRO(flatMap, flatMap, "flatMap")                                           \
   MACRO(float32, float32, "float32")                                           \
   MACRO(Float32x4, Float32x4, "Float32x4")                                     \
   MACRO(float64, float64, "float64")                                           \
@@ -171,7 +181,6 @@
         "getOwnPropertyDescriptor")                                            \
   MACRO(getOwnPropertyNames, getOwnPropertyNames, "getOwnPropertyNames")       \
   MACRO(getPrefix, getPrefix, "get ")                                          \
-  MACRO(getPropertyDescriptor, getPropertyDescriptor, "getPropertyDescriptor") \
   MACRO(getPropertySuper, getPropertySuper, "getPropertySuper")                \
   MACRO(getPrototypeOf, getPrototypeOf, "getPrototypeOf")                      \
   MACRO(GetTypeError, GetTypeError, "GetTypeError")                            \
@@ -218,11 +227,13 @@
   MACRO(InterpretGeneratorResume, InterpretGeneratorResume,                    \
         "InterpretGeneratorResume")                                            \
   MACRO(InvalidDate, InvalidDate, "Invalid Date")                              \
+  MACRO(isBreakpoint, isBreakpoint, "isBreakpoint")                            \
   MACRO(isEntryPoint, isEntryPoint, "isEntryPoint")                            \
   MACRO(isExtensible, isExtensible, "isExtensible")                            \
   MACRO(isFinite, isFinite, "isFinite")                                        \
   MACRO(isNaN, isNaN, "isNaN")                                                 \
   MACRO(isPrototypeOf, isPrototypeOf, "isPrototypeOf")                         \
+  MACRO(isStepStart, isStepStart, "isStepStart")                               \
   MACRO(IterableToList, IterableToList, "IterableToList")                      \
   MACRO(iterate, iterate, "iterate")                                           \
   MACRO(join, join, "join")                                                    \
@@ -242,16 +253,22 @@
   MACRO(ltr, ltr, "ltr")                                                       \
   MACRO(MapConstructorInit, MapConstructorInit, "MapConstructorInit")          \
   MACRO(MapIterator, MapIterator, "Map Iterator")                              \
+  MACRO(maxColumn, maxColumn, "maxColumn")                                     \
   MACRO(maximumFractionDigits, maximumFractionDigits, "maximumFractionDigits") \
   MACRO(maximumSignificantDigits, maximumSignificantDigits,                    \
         "maximumSignificantDigits")                                            \
+  MACRO(maxLine, maxLine, "maxLine")                                           \
+  MACRO(maxOffset, maxOffset, "maxOffset")                                     \
   MACRO(message, message, "message")                                           \
   MACRO(meta, meta, "meta")                                                    \
+  MACRO(minColumn, minColumn, "minColumn")                                     \
   MACRO(minDays, minDays, "minDays")                                           \
   MACRO(minimumFractionDigits, minimumFractionDigits, "minimumFractionDigits") \
   MACRO(minimumIntegerDigits, minimumIntegerDigits, "minimumIntegerDigits")    \
   MACRO(minimumSignificantDigits, minimumSignificantDigits,                    \
         "minimumSignificantDigits")                                            \
+  MACRO(minLine, minLine, "minLine")                                           \
+  MACRO(minOffset, minOffset, "minOffset")                                     \
   MACRO(minusSign, minusSign, "minusSign")                                     \
   MACRO(minute, minute, "minute")                                              \
   MACRO(missingArguments, missingArguments, "missingArguments")                \

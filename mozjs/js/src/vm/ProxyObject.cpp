@@ -45,10 +45,10 @@ static gc::AllocKind GetProxyGCObjectKind(const Class* clasp,
   return kind;
 }
 
-/* static */ ProxyObject* ProxyObject::New(JSContext* cx,
-                                           const BaseProxyHandler* handler,
-                                           HandleValue priv, TaggedProto proto_,
-                                           const ProxyOptions& options) {
+/* static */
+ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
+                              HandleValue priv, TaggedProto proto_,
+                              const ProxyOptions& options) {
   Rooted<TaggedProto> proto(cx, proto_);
 
   const Class* clasp = options.clasp();
@@ -107,14 +107,22 @@ static gc::AllocKind GetProxyGCObjectKind(const Class* clasp,
 
   proxy->data.handler = handler;
   if (IsCrossCompartmentWrapper(proxy)) {
-    MOZ_ASSERT(cx->realm() == cx->compartment()->realmForNewCCW());
+    MOZ_ASSERT(cx->global() == &cx->compartment()->globalForNewCCW());
     proxy->setCrossCompartmentPrivate(priv);
   } else {
     proxy->setSameCompartmentPrivate(priv);
   }
 
+  if (newKind == SingletonObject) {
+    Rooted<ProxyObject*> rootedProxy(cx, proxy);
+    if (!JSObject::setSingleton(cx, rootedProxy)) {
+      return nullptr;
+    }
+    return rootedProxy;
+  }
+
   /* Don't track types of properties of non-DOM and non-singleton proxies. */
-  if (newKind != SingletonObject && !clasp->isDOMClass()) {
+  if (!clasp->isDOMClass()) {
     MarkObjectGroupUnknownProperties(cx, proxy->group());
   }
 
@@ -187,8 +195,8 @@ void ProxyObject::nuke() {
   gc::InitialHeap heap = GetInitialHeap(newKind, clasp);
   debugCheckNewObject(group, shape, allocKind, heap);
 
-  JSObject* obj = js::Allocate<JSObject>(cx, allocKind, /* nDynamicSlots = */ 0,
-                                         heap, clasp);
+  JSObject* obj =
+      js::AllocateObject(cx, allocKind, /* nDynamicSlots = */ 0, heap, clasp);
   if (!obj) {
     return cx->alreadyReportedOOM();
   }
@@ -201,14 +209,6 @@ void ProxyObject::nuke() {
   cx->realm()->setObjectPendingMetadata(cx, pobj);
 
   js::gc::gcTracer.traceCreateObject(pobj);
-
-  if (newKind == SingletonObject) {
-    Rooted<ProxyObject*> pobjRoot(cx, pobj);
-    if (!JSObject::setSingleton(cx, pobjRoot)) {
-      return cx->alreadyReportedOOM();
-    }
-    pobj = pobjRoot;
-  }
 
   return pobj;
 }

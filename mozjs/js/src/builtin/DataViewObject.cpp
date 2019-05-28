@@ -9,8 +9,10 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/Casting.h"
 #include "mozilla/EndianUtils.h"
+#include "mozilla/WrappingOperations.h"
 
 #include <string.h>
+#include <type_traits>
 
 #include "jsapi.h"
 #include "jsnum.h"
@@ -39,6 +41,7 @@ using namespace js;
 using JS::CanonicalizeNaN;
 using JS::ToInt32;
 using mozilla::AssertedCast;
+using mozilla::WrapToSigned;
 
 DataViewObject* DataViewObject::create(
     JSContext* cx, uint32_t byteOffset, uint32_t byteLength,
@@ -170,7 +173,7 @@ bool DataViewObject::constructWrapped(JSContext* cx, HandleObject bufobj,
   MOZ_ASSERT(args.isConstructing());
   MOZ_ASSERT(bufobj->is<WrapperObject>());
 
-  RootedObject unwrapped(cx, CheckedUnwrap(bufobj));
+  RootedObject unwrapped(cx, CheckedUnwrapStatic(bufobj));
   if (!unwrapped) {
     ReportAccessDenied(cx);
     return false;
@@ -244,9 +247,11 @@ bool DataViewObject::construct(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 template <typename NativeType>
-/* static */ SharedMem<uint8_t*> DataViewObject::getDataPointer(
-    JSContext* cx, Handle<DataViewObject*> obj, uint64_t offset,
-    bool* isSharedMemory) {
+/* static */
+SharedMem<uint8_t*> DataViewObject::getDataPointer(JSContext* cx,
+                                                   Handle<DataViewObject*> obj,
+                                                   uint64_t offset,
+                                                   bool* isSharedMemory) {
   const size_t TypeSize = sizeof(NativeType);
   if (offset > UINT32_MAX - TypeSize || offset + TypeSize > obj->byteLength()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
@@ -313,6 +318,14 @@ struct DataToRepType<uint32_t> {
   typedef uint32_t result;
 };
 template <>
+struct DataToRepType<int64_t> {
+  typedef uint64_t result;
+};
+template <>
+struct DataToRepType<uint64_t> {
+  typedef uint64_t result;
+};
+template <>
 struct DataToRepType<float> {
   typedef uint32_t result;
 };
@@ -363,9 +376,9 @@ struct DataViewIO {
 };
 
 template <typename NativeType>
-/* static */ bool DataViewObject::read(JSContext* cx,
-                                       Handle<DataViewObject*> obj,
-                                       const CallArgs& args, NativeType* val) {
+/* static */
+bool DataViewObject::read(JSContext* cx, Handle<DataViewObject*> obj,
+                          const CallArgs& args, NativeType* val) {
   // Steps 1-2. done by the caller
   // Step 3. unnecessary assert
 
@@ -404,17 +417,46 @@ template <typename NativeType>
   return true;
 }
 
+template <typename T>
+static inline T WrappingConvert(int32_t value) {
+  if (std::is_unsigned<T>::value) {
+    return static_cast<T>(value);
+  }
+
+  return WrapToSigned(static_cast<typename std::make_unsigned<T>::type>(value));
+}
+
 template <typename NativeType>
 static inline bool WebIDLCast(JSContext* cx, HandleValue value,
                               NativeType* out) {
-  int32_t temp;
-  if (!ToInt32(cx, value, &temp)) {
+  int32_t i;
+  if (!ToInt32(cx, value, &i)) {
     return false;
   }
-  // Technically, the behavior of assigning an out of range value to a signed
-  // variable is undefined. In practice, compilers seem to do what we want
-  // without issuing any warnings.
-  *out = static_cast<NativeType>(temp);
+
+  *out = WrappingConvert<NativeType>(i);
+  return true;
+}
+
+template <>
+inline bool WebIDLCast<int64_t>(JSContext* cx, HandleValue value,
+                                int64_t* out) {
+  RootedBigInt bi(cx, ToBigInt(cx, value));
+  if (!bi) {
+    return false;
+  }
+  *out = BigInt::toInt64(bi);
+  return true;
+}
+
+template <>
+inline bool WebIDLCast<uint64_t>(JSContext* cx, HandleValue value,
+                                 uint64_t* out) {
+  RootedBigInt bi(cx, ToBigInt(cx, value));
+  if (!bi) {
+    return false;
+  }
+  *out = BigInt::toUint64(bi);
   return true;
 }
 
@@ -433,10 +475,12 @@ inline bool WebIDLCast<double>(JSContext* cx, HandleValue value, double* out) {
   return ToNumber(cx, value, out);
 }
 
+// https://tc39.github.io/ecma262/#sec-setviewvalue
+// SetViewValue ( view, requestIndex, isLittleEndian, type, value )
 template <typename NativeType>
-/* static */ bool DataViewObject::write(JSContext* cx,
-                                        Handle<DataViewObject*> obj,
-                                        const CallArgs& args) {
+/* static */
+bool DataViewObject::write(JSContext* cx, Handle<DataViewObject*> obj,
+                           const CallArgs& args) {
   // Steps 1-2. done by the caller
   // Step 3. unnecessary assert
 
@@ -446,7 +490,7 @@ template <typename NativeType>
     return false;
   }
 
-  // Step 5. Should just call ToNumber (unobservable)
+  // Step 5. Extended by the BigInt proposal to call either ToBigInt or ToNumber
   NativeType value;
   if (!WebIDLCast(cx, args.get(1), &value)) {
     return false;
@@ -602,6 +646,58 @@ bool DataViewObject::fun_getUint32(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<is, getUint32Impl>(cx, args);
 }
 
+// BigInt proposal 7.26
+// DataView.prototype.getBigInt64 ( byteOffset [ , littleEndian ] )
+bool DataViewObject::getBigInt64Impl(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(is(args.thisv()));
+
+  Rooted<DataViewObject*> thisView(
+      cx, &args.thisv().toObject().as<DataViewObject>());
+
+  int64_t val;
+  if (!read(cx, thisView, args, &val)) {
+    return false;
+  }
+
+  BigInt* bi = BigInt::createFromInt64(cx, val);
+  if (!bi) {
+    return false;
+  }
+  args.rval().setBigInt(bi);
+  return true;
+}
+
+bool DataViewObject::fun_getBigInt64(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<is, getBigInt64Impl>(cx, args);
+}
+
+// BigInt proposal 7.27
+// DataView.prototype.getBigUint64 ( byteOffset [ , littleEndian ] )
+bool DataViewObject::getBigUint64Impl(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(is(args.thisv()));
+
+  Rooted<DataViewObject*> thisView(
+      cx, &args.thisv().toObject().as<DataViewObject>());
+
+  int64_t val;
+  if (!read(cx, thisView, args, &val)) {
+    return false;
+  }
+
+  BigInt* bi = BigInt::createFromUint64(cx, val);
+  if (!bi) {
+    return false;
+  }
+  args.rval().setBigInt(bi);
+  return true;
+}
+
+bool DataViewObject::fun_getBigUint64(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<is, getBigUint64Impl>(cx, args);
+}
+
 bool DataViewObject::getFloat32Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(is(args.thisv()));
 
@@ -750,6 +846,46 @@ bool DataViewObject::fun_setUint32(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<is, setUint32Impl>(cx, args);
 }
 
+// BigInt proposal 7.28
+// DataView.prototype.setBigInt64 ( byteOffset, value [ , littleEndian ] )
+bool DataViewObject::setBigInt64Impl(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(is(args.thisv()));
+
+  Rooted<DataViewObject*> thisView(
+      cx, &args.thisv().toObject().as<DataViewObject>());
+
+  if (!write<int64_t>(cx, thisView, args)) {
+    return false;
+  }
+  args.rval().setUndefined();
+  return true;
+}
+
+bool DataViewObject::fun_setBigInt64(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<is, setBigInt64Impl>(cx, args);
+}
+
+// BigInt proposal 7.29
+// DataView.prototype.setBigUint64 ( byteOffset, value [ , littleEndian ] )
+bool DataViewObject::setBigUint64Impl(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(is(args.thisv()));
+
+  Rooted<DataViewObject*> thisView(
+      cx, &args.thisv().toObject().as<DataViewObject>());
+
+  if (!write<uint64_t>(cx, thisView, args)) {
+    return false;
+  }
+  args.rval().setUndefined();
+  return true;
+}
+
+bool DataViewObject::fun_setBigUint64(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<is, setBigUint64Impl>(cx, args);
+}
+
 bool DataViewObject::setFloat32Impl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(is(args.thisv()));
 
@@ -845,6 +981,15 @@ JSObject* DataViewObject::CreatePrototype(JSContext* cx, JSProtoKey key) {
                                             &DataViewObject::protoClass_);
 }
 
+// Add extra methods for BigInt if its run-time option is enabled.
+bool DataViewObject::finishInit(JSContext* cx, JS::HandleObject ctor,
+                                JS::HandleObject proto) {
+  if (cx->realm()->creationOptions().getBigIntEnabled()) {
+    return JS_DefineFunctions(cx, proto, bigIntMethods);
+  }
+  return true;
+}
+
 static const ClassOps DataViewObjectClassOps = {nullptr, /* addProperty */
                                                 nullptr, /* delProperty */
                                                 nullptr, /* enumerate */
@@ -865,7 +1010,7 @@ const ClassSpec DataViewObject::classSpec_ = {
     nullptr,
     DataViewObject::methods,
     DataViewObject::properties,
-};
+    DataViewObject::finishInit};
 
 const Class DataViewObject::class_ = {
     "DataView",
@@ -897,38 +1042,17 @@ const JSFunctionSpec DataViewObject::methods[] = {
     JS_FN("setFloat64", DataViewObject::fun_setFloat64, 2, 0),
     JS_FS_END};
 
+const JSFunctionSpec DataViewObject::bigIntMethods[] = {
+    JS_FN("getBigInt64", DataViewObject::fun_getBigInt64, 1, 0),
+    JS_FN("getBigUint64", DataViewObject::fun_getBigUint64, 1, 0),
+    JS_FN("setBigInt64", DataViewObject::fun_setBigInt64, 2, 0),
+    JS_FN("setBigUint64", DataViewObject::fun_setBigUint64, 2, 0), JS_FS_END};
+
 const JSPropertySpec DataViewObject::properties[] = {
     JS_PSG("buffer", DataViewObject::bufferGetter, 0),
     JS_PSG("byteLength", DataViewObject::byteLengthGetter, 0),
     JS_PSG("byteOffset", DataViewObject::byteOffsetGetter, 0),
     JS_STRING_SYM_PS(toStringTag, "DataView", JSPROP_READONLY), JS_PS_END};
-
-JS_FRIEND_API uint32_t JS_GetDataViewByteOffset(JSObject* obj) {
-  obj = CheckedUnwrap(obj);
-  if (!obj) {
-    return 0;
-  }
-  return obj->as<DataViewObject>().byteOffset();
-}
-
-JS_FRIEND_API void* JS_GetDataViewData(JSObject* obj, bool* isSharedMemory,
-                                       const JS::AutoRequireNoGC&) {
-  obj = CheckedUnwrap(obj);
-  if (!obj) {
-    return nullptr;
-  }
-  DataViewObject& dv = obj->as<DataViewObject>();
-  *isSharedMemory = dv.isSharedMemory();
-  return dv.dataPointerEither().unwrap(/*safe - caller sees isSharedMemory*/);
-}
-
-JS_FRIEND_API uint32_t JS_GetDataViewByteLength(JSObject* obj) {
-  obj = CheckedUnwrap(obj);
-  if (!obj) {
-    return 0;
-  }
-  return obj->as<DataViewObject>().byteLength();
-}
 
 JS_FRIEND_API JSObject* JS_NewDataView(JSContext* cx, HandleObject buffer,
                                        uint32_t byteOffset,

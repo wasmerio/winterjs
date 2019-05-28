@@ -570,16 +570,36 @@ extern JS_PUBLIC_API void IterateRealmsInCompartment(
 
 }  // namespace JS
 
-typedef void (*JSIterateCompartmentCallback)(JSContext* cx, void* data,
-                                             JS::Compartment* compartment);
+/**
+ * An enum that JSIterateCompartmentCallback can return to indicate
+ * whether to keep iterating.
+ */
+namespace JS {
+enum class CompartmentIterResult { KeepGoing, Stop };
+}  // namespace JS
+
+typedef JS::CompartmentIterResult (*JSIterateCompartmentCallback)(
+    JSContext* cx, void* data, JS::Compartment* compartment);
 
 /**
- * This function calls |compartmentCallback| on every compartment. Beware that
- * there is no guarantee that the compartment will survive after the callback
- * returns. Also, barriers are disabled via the TraceSession.
+ * This function calls |compartmentCallback| on every compartment until either
+ * all compartments have been iterated or CompartmentIterResult::Stop is
+ * returned. Beware that there is no guarantee that the compartment will survive
+ * after the callback returns. Also, barriers are disabled via the TraceSession.
  */
 extern JS_PUBLIC_API void JS_IterateCompartments(
     JSContext* cx, void* data,
+    JSIterateCompartmentCallback compartmentCallback);
+
+/**
+ * This function calls |compartmentCallback| on every compartment in the given
+ * zone until either all compartments have been iterated or
+ * CompartmentIterResult::Stop is returned. Beware that there is no guarantee
+ * that the compartment will survive after the callback returns. Also, barriers
+ * are disabled via the TraceSession.
+ */
+extern JS_PUBLIC_API void JS_IterateCompartmentsInZone(
+    JSContext* cx, JS::Zone* zone, void* data,
     JSIterateCompartmentCallback compartmentCallback);
 
 /**
@@ -943,12 +963,10 @@ class JS_PUBLIC_API RealmCreationOptions {
         cloneSingletons_(false),
         sharedMemoryAndAtomics_(false),
         streams_(false),
-#ifdef ENABLE_BIGINT
         bigint_(false),
-#endif
+        fields_(false),
         secureContext_(false),
-        clampAndJitterTime_(true) {
-  }
+        clampAndJitterTime_(true) {}
 
   JSTraceOp getTrace() const { return traceGlobal_; }
   RealmCreationOptions& setTrace(JSTraceOp op) {
@@ -972,6 +990,7 @@ class JS_PUBLIC_API RealmCreationOptions {
   RealmCreationOptions& setNewCompartmentInExistingZone(JSObject* obj);
   RealmCreationOptions& setNewCompartmentAndZone();
   RealmCreationOptions& setExistingCompartment(JSObject* obj);
+  RealmCreationOptions& setExistingCompartment(JS::Compartment* compartment);
 
   // Certain compartments are implementation details of the embedding, and
   // references to them should never leak out to script. This flag causes this
@@ -1021,13 +1040,17 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
-#ifdef ENABLE_BIGINT
   bool getBigIntEnabled() const { return bigint_; }
   RealmCreationOptions& setBigIntEnabled(bool flag) {
     bigint_ = flag;
     return *this;
   }
-#endif
+
+  bool getFieldsEnabled() const { return fields_; }
+  RealmCreationOptions& setFieldsEnabled(bool flag) {
+    fields_ = flag;
+    return *this;
+  }
 
   // This flag doesn't affect JS engine behavior.  It is used by Gecko to
   // mark whether content windows and workers are "Secure Context"s. See
@@ -1058,9 +1081,8 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool cloneSingletons_;
   bool sharedMemoryAndAtomics_;
   bool streams_;
-#ifdef ENABLE_BIGINT
   bool bigint_;
-#endif
+  bool fields_;
   bool secureContext_;
   bool clampAndJitterTime_;
 };
@@ -1756,6 +1778,15 @@ extern JS_PUBLIC_API bool JS_DeleteElement(JSContext* cx, JS::HandleObject obj,
 extern JS_PUBLIC_API bool JS_Enumerate(JSContext* cx, JS::HandleObject obj,
                                        JS::MutableHandle<JS::IdVector> props);
 
+/**
+ * Equivalent to `Object.assign(target, src)`: Copies the properties from the
+ * `src` object (which must not be null) to `target` (which also must not be
+ * null).
+ */
+extern JS_PUBLIC_API bool JS_AssignObject(JSContext* cx,
+                                          JS::HandleObject target,
+                                          JS::HandleObject src);
+
 /*
  * API for determining callability and constructability. [[Call]] and
  * [[Construct]] are internal methods that aren't present on all objects, so it
@@ -1997,116 +2028,6 @@ extern JS_PUBLIC_API bool IsSetObject(JSContext* cx, JS::HandleObject obj,
 JS_PUBLIC_API void JS_SetAllNonReservedSlotsToUndefined(JSContext* cx,
                                                         JSObject* objArg);
 
-/**
- * Create a new array buffer with the given contents. It must be legal to pass
- * these contents to free(). On success, the ownership is transferred to the
- * new array buffer.
- */
-extern JS_PUBLIC_API JSObject* JS_NewArrayBufferWithContents(JSContext* cx,
-                                                             size_t nbytes,
-                                                             void* contents);
-
-namespace JS {
-
-using BufferContentsFreeFunc = void (*)(void* contents, void* userData);
-
-} /* namespace JS */
-
-/**
- * Create a new array buffer with the given contents. The contents must not be
- * modified by any other code, internal or external.
- *
- * When the array buffer is ready to be disposed of, `freeFunc(contents,
- * freeUserData)` will be called to release the array buffer's reference on the
- * contents.
- *
- * `freeFunc()` must not call any JSAPI functions that could cause a garbage
- * collection.
- *
- * The caller must keep the buffer alive until `freeFunc()` is called, or, if
- * `freeFunc` is null, until the JSRuntime is destroyed.
- *
- * The caller must not access the buffer on other threads. The JS engine will
- * not allow the buffer to be transferred to other threads. If you try to
- * transfer an external ArrayBuffer to another thread, the data is copied to a
- * new malloc buffer. `freeFunc()` must be threadsafe, and may be called from
- * any thread.
- *
- * This allows array buffers to be used with embedder objects that use reference
- * counting, for example. In that case the caller is responsible
- * for incrementing the reference count before passing the contents to this
- * function. This also allows using non-reference-counted contents that must be
- * freed with some function other than free().
- */
-extern JS_PUBLIC_API JSObject* JS_NewExternalArrayBuffer(
-    JSContext* cx, size_t nbytes, void* contents,
-    JS::BufferContentsFreeFunc freeFunc, void* freeUserData = nullptr);
-
-/**
- * Create a new array buffer with the given contents.  The array buffer does not
- * take ownership of contents, and JS_DetachArrayBuffer must be called before
- * the contents are disposed of.
- */
-extern JS_PUBLIC_API JSObject* JS_NewArrayBufferWithExternalContents(
-    JSContext* cx, size_t nbytes, void* contents);
-
-/**
- * Steal the contents of the given array buffer. The array buffer has its
- * length set to 0 and its contents array cleared. The caller takes ownership
- * of the return value and must free it or transfer ownership via
- * JS_NewArrayBufferWithContents when done using it.
- */
-extern JS_PUBLIC_API void* JS_StealArrayBufferContents(JSContext* cx,
-                                                       JS::HandleObject obj);
-
-/**
- * Returns a pointer to the ArrayBuffer |obj|'s data.  |obj| and its views will
- * store and expose the data in the returned pointer: assigning into the
- * returned pointer will affect values exposed by views of |obj| and vice versa.
- *
- * The caller must ultimately deallocate the returned pointer to avoid leaking.
- * The memory is *not* garbage-collected with |obj|.  These steps must be
- * followed to deallocate:
- *
- * 1. The ArrayBuffer |obj| must be detached using JS_DetachArrayBuffer.
- * 2. The returned pointer must be freed using JS_free.
- *
- * To perform step 1, callers *must* hold a reference to |obj| until they finish
- * using the returned pointer.  They *must not* attempt to let |obj| be GC'd,
- * then JS_free the pointer.
- *
- * If |obj| isn't an ArrayBuffer, this function returns null and reports an
- * error.
- */
-extern JS_PUBLIC_API void* JS_ExternalizeArrayBufferContents(
-    JSContext* cx, JS::HandleObject obj);
-
-/**
- * Create a new mapped array buffer with the given memory mapped contents. It
- * must be legal to free the contents pointer by unmapping it. On success,
- * ownership is transferred to the new mapped array buffer.
- */
-extern JS_PUBLIC_API JSObject* JS_NewMappedArrayBufferWithContents(
-    JSContext* cx, size_t nbytes, void* contents);
-
-/**
- * Create memory mapped array buffer contents.
- * Caller must take care of closing fd after calling this function.
- */
-extern JS_PUBLIC_API void* JS_CreateMappedArrayBufferContents(int fd,
-                                                              size_t offset,
-                                                              size_t length);
-
-/**
- * Release the allocated resource of mapped array buffer contents before the
- * object is created.
- * If a new object has been created by JS_NewMappedArrayBufferWithContents()
- * with this content, then JS_DetachArrayBuffer() should be used instead to
- * release the resource used by the object.
- */
-extern JS_PUBLIC_API void JS_ReleaseMappedArrayBufferContents(void* contents,
-                                                              size_t length);
-
 extern JS_PUBLIC_API JS::Value JS_GetReservedSlot(JSObject* obj,
                                                   uint32_t index);
 
@@ -2188,7 +2109,7 @@ JS_PUBLIC_API bool JS_GetFunctionLength(JSContext* cx, JS::HandleFunction fun,
  * overwritten the "Function" identifier with a different constructor and then
  * created instances using that constructor that might be passed in as obj).
  */
-extern JS_PUBLIC_API bool JS_ObjectIsFunction(JSContext* cx, JSObject* obj);
+extern JS_PUBLIC_API bool JS_ObjectIsFunction(JSObject* obj);
 
 extern JS_PUBLIC_API bool JS_IsNativeFunction(JSObject* funobj, JSNative call);
 
@@ -2691,16 +2612,16 @@ extern JS_PUBLIC_API JSString* JS_AtomizeAndPinStringN(JSContext* cx,
 extern JS_PUBLIC_API JSString* JS_AtomizeAndPinString(JSContext* cx,
                                                       const char* s);
 
-extern JS_PUBLIC_API JSString* JS_NewLatin1String(JSContext* cx,
-                                                  JS::Latin1Char* chars,
-                                                  size_t length);
+extern JS_PUBLIC_API JSString* JS_NewLatin1String(
+    JSContext* cx, js::UniquePtr<JS::Latin1Char[], JS::FreePolicy> chars,
+    size_t length);
 
-extern JS_PUBLIC_API JSString* JS_NewUCString(JSContext* cx, char16_t* chars,
+extern JS_PUBLIC_API JSString* JS_NewUCString(JSContext* cx,
+                                              JS::UniqueTwoByteChars chars,
                                               size_t length);
 
-extern JS_PUBLIC_API JSString* JS_NewUCStringDontDeflate(JSContext* cx,
-                                                         char16_t* chars,
-                                                         size_t length);
+extern JS_PUBLIC_API JSString* JS_NewUCStringDontDeflate(
+    JSContext* cx, JS::UniqueTwoByteChars chars, size_t length);
 
 extern JS_PUBLIC_API JSString* JS_NewUCStringCopyN(JSContext* cx,
                                                    const char16_t* s, size_t n);
@@ -3373,7 +3294,8 @@ extern JS_PUBLIC_API void JS_SetOffthreadIonCompilationEnabled(JSContext* cx,
 // clang-format off
 #define JIT_COMPILER_OPTIONS(Register) \
   Register(BASELINE_WARMUP_TRIGGER, "baseline.warmup.trigger") \
-  Register(ION_WARMUP_TRIGGER, "ion.warmup.trigger") \
+  Register(ION_NORMAL_WARMUP_TRIGGER, "ion.warmup.trigger") \
+  Register(ION_FULL_WARMUP_TRIGGER, "ion.full.warmup.trigger") \
   Register(ION_GVN_ENABLE, "ion.gvn.enable") \
   Register(ION_FORCE_IC, "ion.forceinlineCaches") \
   Register(ION_ENABLE, "ion.enable") \
@@ -3532,63 +3454,6 @@ extern JS_PUBLIC_API StackFormat GetStackFormat(JSContext* cx);
 }  // namespace js
 
 namespace JS {
-
-/*
- * This callback represents a request by the JS engine to open for reading the
- * existing cache entry for the given global and char range that may contain a
- * module. If a cache entry exists, the callback shall return 'true' and return
- * the size, base address and an opaque file handle as outparams. If the
- * callback returns 'true', the JS engine guarantees a call to
- * CloseAsmJSCacheEntryForReadOp, passing the same base address, size and
- * handle.
- */
-using OpenAsmJSCacheEntryForReadOp =
-    bool (*)(HandleObject global, const char16_t* begin, const char16_t* limit,
-             size_t* size, const uint8_t** memory, intptr_t* handle);
-using CloseAsmJSCacheEntryForReadOp = void (*)(size_t size,
-                                               const uint8_t* memory,
-                                               intptr_t handle);
-
-/** The list of reasons why an asm.js module may not be stored in the cache. */
-enum AsmJSCacheResult {
-  AsmJSCache_Success,
-  AsmJSCache_MIN = AsmJSCache_Success,
-  AsmJSCache_ModuleTooSmall,
-  AsmJSCache_SynchronousScript,
-  AsmJSCache_QuotaExceeded,
-  AsmJSCache_StorageInitFailure,
-  AsmJSCache_Disabled_Internal,
-  AsmJSCache_Disabled_ShellFlags,
-  AsmJSCache_Disabled_JitInspector,
-  AsmJSCache_InternalError,
-  AsmJSCache_Disabled_PrivateBrowsing,
-  AsmJSCache_LIMIT
-};
-
-/*
- * This callback represents a request by the JS engine to open for writing a
- * cache entry of the given size for the given global and char range containing
- * the just-compiled module. If cache entry space is available, the callback
- * shall return 'true' and return the base address and an opaque file handle as
- * outparams. If the callback returns 'true', the JS engine guarantees a call
- * to CloseAsmJSCacheEntryForWriteOp passing the same base address, size and
- * handle.
- */
-using OpenAsmJSCacheEntryForWriteOp = AsmJSCacheResult (*)(
-    HandleObject global, const char16_t* begin, const char16_t* end,
-    size_t size, uint8_t** memory, intptr_t* handle);
-using CloseAsmJSCacheEntryForWriteOp = void (*)(size_t size, uint8_t* memory,
-                                                intptr_t handle);
-
-struct AsmJSCacheOps {
-  OpenAsmJSCacheEntryForReadOp openEntryForRead = nullptr;
-  CloseAsmJSCacheEntryForReadOp closeEntryForRead = nullptr;
-  OpenAsmJSCacheEntryForWriteOp openEntryForWrite = nullptr;
-  CloseAsmJSCacheEntryForWriteOp closeEntryForWrite = nullptr;
-};
-
-extern JS_PUBLIC_API void SetAsmJSCacheOps(JSContext* cx,
-                                           const AsmJSCacheOps* callbacks);
 
 /**
  * The WasmModule interface allows the embedding to hold a reference to the

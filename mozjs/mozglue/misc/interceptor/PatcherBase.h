@@ -24,13 +24,14 @@ class WindowsDllPatcherBase {
   ReadOnlyTargetFunction<MMPolicyT> ResolveRedirectedAddress(
       FARPROC aOriginalFunction) {
     ReadOnlyTargetFunction<MMPolicyT> origFn(mVMPolicy, aOriginalFunction);
+#if defined(_M_IX86) || defined(_M_X64)
     // If function entry is jmp rel8 stub to the internal implementation, we
     // resolve redirected address from the jump target.
     if (origFn[0] == 0xeb) {
       int8_t offset = (int8_t)(origFn[1]);
       uintptr_t abstarget = origFn.GetAddress() + 2 + offset;
 
-#if defined(_M_X64)
+#  if defined(_M_X64)
       // We redirect to the target of a short jump backwards if the target
       // is another jump (only 32-bit displacement is currently supported).
       // This case is used by GetFileAttributesW in Win7.
@@ -40,32 +41,32 @@ class WindowsDllPatcherBase {
           return redirectFn;
         }
       }
-#endif
+#  endif
 
       if (offset <= 0) {
         // Bail out for negative offset: probably already patched by some
         // third-party code.
-        return std::move(origFn);
+        return origFn;
       }
 
       for (int8_t i = 0; i < offset; i++) {
         if (origFn[2 + i] != 0x90) {
           // Bail out on insufficient nop space.
-          return std::move(origFn);
+          return origFn;
         }
       }
 
       return EnsureTargetIsAccessible(std::move(origFn), abstarget);
     }
 
-#if defined(_M_IX86)
+#  if defined(_M_IX86)
     // If function entry is jmp [disp32] such as used by kernel32,
     // we resolve redirected address from import table.
     if (origFn[0] == 0xff && origFn[1] == 0x25) {
       uintptr_t abstarget = (origFn + 2).template ChasePointer<uintptr_t*>();
       return EnsureTargetIsAccessible(std::move(origFn), abstarget);
     }
-#elif defined(_M_X64)
+#  elif defined(_M_X64)
     // If function entry is jmp [disp32] such as used by kernel32,
     // we resolve redirected address from import table.
     if (origFn[0] == 0x48 && origFn[1] == 0xff && origFn[2] == 0x25) {
@@ -78,16 +79,17 @@ class WindowsDllPatcherBase {
       uintptr_t abstarget = (origFn + 1).ReadDisp32AsAbsolute();
       return EnsureTargetIsAccessible(std::move(origFn), abstarget);
     }
-#endif
+#  endif
+#endif  // defined(_M_IX86) || defined(_M_X64)
 
-    return std::move(origFn);
+    return origFn;
   }
 
  private:
   ReadOnlyTargetFunction<MMPolicyT> EnsureTargetIsAccessible(
       ReadOnlyTargetFunction<MMPolicyT> aOrigFn, uintptr_t aRedirAddress) {
     if (!mVMPolicy.IsPageAccessible(reinterpret_cast<void*>(aRedirAddress))) {
-      return std::move(aOrigFn);
+      return aOrigFn;
     }
 
     return ReadOnlyTargetFunction<MMPolicyT>(mVMPolicy, aRedirAddress);

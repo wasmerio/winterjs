@@ -91,75 +91,6 @@ def yasm_asflags(yasm, target):
 set_config('YASM_ASFLAGS', yasm_asflags)
 
 
-# nasm detection
-# ==============================================================
-nasm = check_prog('NASM', ['nasm'], allow_missing=True)
-
-
-@depends_if(nasm)
-@checking('nasm version')
-def nasm_version(nasm):
-    (retcode, stdout, _) = get_cmd_output(nasm, '-v')
-    if retcode:
-        # mac stub binary
-        return None
-
-    version = stdout.splitlines()[0].split()[2]
-    return Version(version)
-
-
-@depends_if(nasm_version)
-def nasm_major_version(nasm_version):
-    return str(nasm_version.major)
-
-
-@depends_if(nasm_version)
-def nasm_minor_version(nasm_version):
-    return str(nasm_version.minor)
-
-
-set_config('NASM_MAJOR_VERSION', nasm_major_version)
-set_config('NASM_MINOR_VERSION', nasm_minor_version)
-
-
-@depends(nasm, target)
-def nasm_asflags(nasm, target):
-    if nasm:
-        asflags = {
-            ('OSX', 'x86'): ['-f', 'macho32'],
-            ('OSX', 'x86_64'): ['-f', 'macho64'],
-            ('WINNT', 'x86'): ['-f', 'win32'],
-            ('WINNT', 'x86_64'): ['-f', 'win64'],
-        }.get((target.os, target.cpu), None)
-        if asflags is None:
-            # We're assuming every x86 platform we support that's
-            # not Windows or Mac is ELF.
-            if target.cpu == 'x86':
-                asflags = ['-f', 'elf32']
-            elif target.cpu == 'x86_64':
-                asflags = ['-f', 'elf64']
-        return asflags
-
-
-set_config('NASM_ASFLAGS', nasm_asflags)
-
-@depends(nasm_asflags)
-def have_nasm(value):
-    if value:
-        return True
-
-
-@depends(yasm_asflags)
-def have_yasm(yasm_asflags):
-    if yasm_asflags:
-        return True
-
-set_config('HAVE_NASM', have_nasm)
-
-set_config('HAVE_YASM', have_yasm)
-# Until the YASM variable is not necessary in old-configure.
-add_old_configure_assignment('YASM', have_yasm)
-
 # Android NDK
 # ==============================================================
 
@@ -322,6 +253,12 @@ def ccache(value):
 
 ccache = check_prog('CCACHE', progs=(), input=ccache)
 
+js_option(env='CCACHE_PREFIX',
+          nargs=1,
+          help='Compiler prefix to use when using ccache')
+
+set_config('CCACHE_PREFIX', depends_if('CCACHE_PREFIX')(lambda prefix: prefix[0]))
+
 # Distinguish ccache from sccache.
 
 
@@ -442,19 +379,17 @@ def try_preprocess(compiler, language, source):
 @imports(_from='mozbuild.configure.constants',
          _import='OS_preprocessor_checks')
 @imports(_from='textwrap', _import='dedent')
+@imports(_from='__builtin__', _import='Exception')
 def get_compiler_info(compiler, language):
     '''Returns information about the given `compiler` (command line in the
     form of a list or tuple), in the given `language`.
 
     The returned information includes:
-    - the compiler type (msvc, clang-cl, clang or gcc)
+    - the compiler type (clang-cl, clang or gcc)
     - the compiler version
     - the compiler supported language
     - the compiler supported language version
     '''
-    # Note: MSVC doesn't expose __STDC_VERSION__. It does expose __STDC__,
-    # but only when given the -Za option, which disables compiler
-    # extensions.
     # Note: We'd normally do a version check for clang, but versions of clang
     # in Xcode have a completely different versioning scheme despite exposing
     # the version with the same defines.
@@ -468,9 +403,6 @@ def get_compiler_info(compiler, language):
         #if defined(__clang__)
         %COMPILER "clang-cl"
         %VERSION __clang_major__.__clang_minor__.__clang_patchlevel__
-        #else
-        %COMPILER "msvc"
-        %VERSION _MSC_FULL_VER
         #endif
         #elif defined(__clang__)
         %COMPILER "clang"
@@ -486,8 +418,6 @@ def get_compiler_info(compiler, language):
         %cplusplus __cplusplus
         #elif __STDC_VERSION__
         %STDC_VERSION __STDC_VERSION__
-        #elif __STDC__
-        %STDC_VERSION 198900L
         #endif
     ''')
 
@@ -513,9 +443,9 @@ def get_compiler_info(compiler, language):
 
     # Also check for endianness. The advantage of living in modern times is
     # that all the modern compilers we support now have __BYTE_ORDER__ defined
-    # by the preprocessor, except MSVC, which only supports little endian.
+    # by the preprocessor.
     check += dedent('''\
-        #if _MSC_VER || __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
         %ENDIANNESS "little"
         #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
         %ENDIANNESS "big"
@@ -548,14 +478,6 @@ def get_compiler_info(compiler, language):
     stdc_version = int(data.get('STDC_VERSION', '0L').rstrip('L'))
 
     version = data.get('VERSION')
-    if version and type == 'msvc':
-        msc_ver = version
-        version = msc_ver[0:2]
-        if len(msc_ver) > 2:
-            version += '.' + msc_ver[2:4]
-        if len(msc_ver) > 4:
-            version += '.' + msc_ver[4:]
-
     if version:
         version = Version(version)
 
@@ -587,12 +509,6 @@ def check_compiler(compiler, language, target):
 
     flags = []
 
-    def append_flag(flag):
-        if flag not in flags:
-            if info.type == 'clang-cl':
-                flags.append('-Xclang')
-            flags.append(flag)
-
     # Check language standards
     # --------------------------------------------------------------------
     if language != info.language:
@@ -605,56 +521,50 @@ def check_compiler(compiler, language, target):
     # example)
     if info.language == 'C' and info.language_version != 199901:
         if info.type in ('clang-cl', 'clang', 'gcc'):
-            append_flag('-std=gnu99')
+            if info.type == 'clang-cl':
+                flags.append('-Xclang')
+            flags.append('-std=gnu99')
 
-    # Note: MSVC, while supporting C++14, still reports 199711L for __cplusplus.
     # Note: this is a strict version check because we used to always add
     # -std=gnu++14.
     cxx14_version = 201402
     if info.language == 'C++':
         if info.type == 'clang' and info.language_version != cxx14_version:
-            append_flag('-std=gnu++14')
+            flags.append('-std=gnu++14')
         # MSVC headers include C++14 features, but don't guard them
         # with appropriate checks.
         elif info.type == 'clang-cl' and info.language_version != cxx14_version:
-            append_flag('-std=c++14')
+            flags.append('-Xclang')
+            flags.append('-std=c++14')
 
     # Check compiler target
     # --------------------------------------------------------------------
-    if not info.cpu or info.cpu != target.cpu:
-        if info.type == 'clang':
-            append_flag('--target=%s' % target.toolchain)
-        elif info.type == 'clang-cl':
-            # Ideally this would share the 'clang' branch above, but on Windows
-            # the --target needs additional data like ms-compatibility-version.
-            if (info.cpu, target.cpu) == ('x86_64', 'x86'):
-                # -m32 does not use -Xclang, so add it directly.
-                flags.append('-m32')
-            elif target.toolchain == 'aarch64-mingw32':
-                # clang-cl uses a different name for this target
-                flags.append('--target=aarch64-windows-msvc')
-        elif info.type == 'gcc':
-            same_arch = same_arch_different_bits()
-            if (target.cpu, info.cpu) in same_arch:
-                append_flag('-m32')
-            elif (info.cpu, target.cpu) in same_arch:
-                append_flag('-m64')
+    has_target = False
+    if info.type == 'clang':
+        if not info.kernel or info.kernel != target.kernel or \
+                not info.endianness or info.endianness != target.endianness:
+            flags.append('--target=%s' % target.toolchain)
+            has_target = True
 
-    if not info.kernel or info.kernel != target.kernel:
-        if info.type == 'clang':
-            append_flag('--target=%s' % target.toolchain)
+        # Add target flag when there is an OS mismatch (e.g. building for Android on
+        # Linux). However, only do this if the target OS is in our whitelist, to
+        # keep things the same on other platforms.
+        elif target.os in OS_preprocessor_checks and (
+                not info.os or info.os != target.os):
+            flags.append('--target=%s' % target.toolchain)
+            has_target = True
 
-    if not info.endianness or info.endianness != target.endianness:
-        if info.type == 'clang':
-            append_flag('--target=%s' % target.toolchain)
-
-    # Add target flag when there is an OS mismatch (e.g. building for Android on
-    # Linux). However, only do this if the target OS is in our whitelist, to
-    # keep things the same on other platforms.
-    if target.os in OS_preprocessor_checks and (
-            not info.os or info.os != target.os):
-        if info.type == 'clang':
-            append_flag('--target=%s' % target.toolchain)
+    if not has_target and (not info.cpu or info.cpu != target.cpu):
+        same_arch = same_arch_different_bits()
+        if (target.cpu, info.cpu) in same_arch:
+            flags.append('-m32')
+        elif (info.cpu, target.cpu) in same_arch:
+            flags.append('-m64')
+        elif info.type == 'clang-cl' and target.cpu == 'aarch64':
+            # clang-cl uses a different name for this target
+            flags.append('--target=aarch64-windows-msvc')
+        elif info.type == 'clang':
+            flags.append('--target=%s' % target.toolchain)
 
     return namespace(
         type=info.type,
@@ -669,78 +579,105 @@ def check_compiler(compiler, language, target):
 
 @imports(_from='__builtin__', _import='open')
 @imports('json')
+@imports('os')
 @imports('subprocess')
 @imports('sys')
 def get_vc_paths(topsrcdir):
     def vswhere(args):
         encoding = 'mbcs' if sys.platform == 'win32' else 'utf-8'
+        program_files = (os.environ.get('PROGRAMFILES(X86)') or
+                         os.environ.get('PROGRAMFILES'))
+        if not program_files:
+            return []
+        vswhere = os.path.join(program_files, 'Microsoft Visual Studio',
+                               'Installer', 'vswhere.exe')
+        if not os.path.exists(vswhere):
+            return []
         return json.loads(
-            subprocess.check_output([
-                os.path.join(topsrcdir, 'build/win32/vswhere.exe'),
-                '-format',
-                'json'
-            ] + args).decode(encoding, 'replace'))
+            subprocess.check_output([vswhere, '-format', 'json'] + args)
+            .decode(encoding, 'replace'))
 
     for install in vswhere(['-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64']):
         path = install['installationPath']
         tools_version = open(os.path.join(
             path, r'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt'), 'rb').read().strip()
         tools_path = os.path.join(
-            path, r'VC\Tools\MSVC', tools_version, r'bin\HostX64')
-        yield (Version(install['installationVersion']), {
-            'x64': [os.path.join(tools_path, 'x64')],
-            # The cross toolchains require DLLs from the native x64 toolchain.
-            'x86': [os.path.join(tools_path, 'x86'), os.path.join(tools_path, 'x64')],
-            'arm64': [os.path.join(tools_path, 'arm64'), os.path.join(tools_path, 'x64')],
-        })
+            path, r'VC\Tools\MSVC', tools_version)
+        yield (Version(install['installationVersion']), tools_path)
+
+
+@depends(host)
+def host_is_windows(host):
+    if host.kernel == 'WINNT':
+        return True
 
 
 js_option('--with-visual-studio-version', nargs=1,
-          choices=('2017',),
+          choices=('2017',), when=host_is_windows,
           help='Select a specific Visual Studio version to use')
 
 
-@depends('--with-visual-studio-version')
+@depends('--with-visual-studio-version', when=host_is_windows)
 def vs_major_version(value):
     if value:
         return {'2017': 15}[value[0]]
 
 
+js_option(env='VC_PATH', nargs=1, when=host_is_windows,
+          help='Path to the Microsoft Visual C/C++ compiler')
+
+
+@depends(host, vs_major_version, check_build_environment, 'VC_PATH',
+         '--with-visual-studio-version', when=host_is_windows)
+@imports(_from='__builtin__', _import='sorted')
+@imports(_from='operator', _import='itemgetter')
+def vc_compiler_paths_for_version(host, vs_major_version, env, vc_path, vs_release_name):
+    if vc_path and vs_release_name:
+        die('VC_PATH and --with-visual-studio-version cannot be used together.')
+    if vc_path:
+        # Use an arbitrary version, it doesn't matter.
+        all_versions = [(Version('15'), vc_path[0])]
+    else:
+        all_versions = sorted(get_vc_paths(env.topsrcdir), key=itemgetter(0))
+    if not all_versions:
+        return
+    if vs_major_version:
+        versions = [d for (v, d) in all_versions if v.major ==
+                    vs_major_version]
+        if not versions:
+            die('Visual Studio %s could not be found!' % vs_release_name)
+        path = versions[0]
+    else:
+        # Choose the newest version.
+        path = all_versions[-1][1]
+    host_dir = {
+        'x86_64': 'HostX64',
+        'x86': 'HostX86',
+    }.get(host.cpu)
+    if host_dir:
+        path = os.path.join(path, 'bin', host_dir)
+        return {
+            'x64': [os.path.join(path, 'x64')],
+            # The cross toolchains require DLLs from the native x64 toolchain.
+            'x86': [os.path.join(path, 'x86'), os.path.join(path, 'x64')],
+            'arm64': [os.path.join(path, 'arm64'), os.path.join(path, 'x64')],
+        }
+
+
 @template
 def vc_compiler_path_for(host_or_target):
-    @depends(host, host_or_target, vs_major_version, check_build_environment,
-             '--with-visual-studio-version')
-    @imports(_from='__builtin__', _import='sorted')
-    @imports(_from='operator', _import='itemgetter')
-    @imports('platform')
-    def vc_compiler_path(host, target, vs_major_version, env, vs_release_name):
-        if host.kernel != 'WINNT':
-            return
+    @depends(host_or_target, vc_compiler_paths_for_version,
+             when=host_is_windows)
+    def vc_compiler_path(target, paths):
         vc_target = {
             'x86': 'x86',
             'x86_64': 'x64',
             'arm': 'arm',
             'aarch64': 'arm64'
         }.get(target.cpu)
-        if vc_target is None:
-            return
-
-        all_versions = sorted(get_vc_paths(env.topsrcdir), key=itemgetter(0))
-        if not all_versions:
-            return
-        if vs_major_version:
-            versions = [d for (v, d) in all_versions if v.major ==
-                        vs_major_version]
-            if not versions:
-                die('Visual Studio %s could not be found!' % vs_release_name)
-            data = versions[0]
-        else:
-            # Choose the newest version.
-            data = all_versions[-1][1]
-        paths = data.get(vc_target)
         if not paths:
             return
-        return paths
+        return paths.get(vc_target)
     return vc_compiler_path
 
 
@@ -786,6 +723,9 @@ def toolchain_search_path_for(host_or_target):
 
         bootstrap_cbindgen_path = os.path.join(mozbuild_state_dir, 'cbindgen')
         result.append(bootstrap_cbindgen_path)
+
+        bootstrap_nasm_path = os.path.join(mozbuild_state_dir, 'nasm')
+        result.append(bootstrap_nasm_path)
 
         # Also add the rustup install directory for cargo/rustc.
         rustup_path = os.path.expanduser(os.path.join('~', '.cargo', 'bin'))
@@ -836,7 +776,7 @@ def default_c_compilers(host_or_target, other_c_compiler=None):
     def default_c_compilers(host_or_target, target, toolchain_prefix,
                             android_clang_compiler, *other_c_compiler):
         if host_or_target.kernel == 'WINNT':
-            supported = types = ('clang-cl', 'msvc', 'gcc', 'clang')
+            supported = types = ('clang-cl', 'gcc', 'clang')
         elif host_or_target.kernel == 'Darwin':
             types = ('clang',)
             supported = ('clang', 'gcc')
@@ -861,10 +801,6 @@ def default_c_compilers(host_or_target, other_c_compiler=None):
                 # Android NDK clangs do not function as host compiler, so
                 # prioritize a raw 'clang' instead.
                 prioritized = info.type
-            elif info.type == 'msvc' and target.cpu != host_or_target.cpu:
-                # MSVC compilers only support one architecture, so we'll
-                # want a cl in another (detected) path.
-                prioritized = 'cl'
 
             types = [prioritized] + [t for t in types if t != info.type]
 
@@ -881,8 +817,6 @@ def default_c_compilers(host_or_target, other_c_compiler=None):
                 result.append(android_clang_compiler)
             elif type == 'gcc':
                 result.extend(gcc)
-            elif type == 'msvc':
-                result.append('cl')
             else:
                 result.append(type)
 
@@ -1102,16 +1036,6 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
             raise FatalCheckError(
                 'Only clang/llvm 3.9 or newer is supported.')
 
-        if info.type == 'msvc':
-            if info.version < '19.15.26726':
-                raise FatalCheckError(
-                    'This version (%s) of the MSVC compiler is not '
-                    'supported.\n'
-                    'You must install Visual C++ 2017 Update 8 or '
-                    'later in order to build.\n'
-                    'See https://developer.mozilla.org/en/'
-                    'Windows_Build_Prerequisites' % info.version)
-
         if info.flags:
             raise FatalCheckError(
                 'Unknown compiler or compiler not supported.')
@@ -1153,6 +1077,22 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
     add_old_configure_assignment(var, depends_if(valid_compiler)(
         lambda x: list(x.wrapper) + [x.compiler] + list(x.flags)))
 
+    if host_or_target is target:
+        add_old_configure_assignment('ac_cv_prog_%s' % var, depends_if(valid_compiler)(
+            lambda x: list(x.wrapper) + [x.compiler] + list(x.flags)))
+        # We check that it works in python configure already.
+        add_old_configure_assignment('ac_cv_prog_%s_works' % var.lower(), 'yes')
+        add_old_configure_assignment(
+            'ac_cv_prog_%s_cross' % var.lower(),
+            depends(cross_compiling)(lambda x: 'yes' if x else 'no'))
+        gcc_like = depends(valid_compiler.type)(lambda x: 'yes' if x in ('gcc', 'clang') else 'no')
+        add_old_configure_assignment('ac_cv_prog_%s_g' % var.lower(), gcc_like)
+        if language == 'C':
+            add_old_configure_assignment('ac_cv_prog_gcc', gcc_like)
+        if language == 'C++':
+            add_old_configure_assignment('ac_cv_prog_gxx', gcc_like)
+
+
     # Set CC_TYPE/CC_VERSION/HOST_CC_TYPE/HOST_CC_VERSION to allow
     # old-configure to do some of its still existing checks.
     if language == 'C':
@@ -1171,6 +1111,8 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
 
     valid_compiler.try_compile(check_msg='%s works' % what,
                                onerror=compiler_error)
+
+    set_config('%s_BASE_FLAGS' % var, valid_compiler.flags)
 
     # Set CPP/CXXCPP for both the build system and old-configure. We don't
     # need to check this works for preprocessing, because we already relied
@@ -1199,18 +1141,11 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
             if value:
                 return value[0]
 
-        @depends(valid_compiler, linker)
-        def unused_linker(compiler, linker):
-            if linker and compiler.type != 'msvc':
+        @depends(linker)
+        def unused_linker(linker):
+            if linker:
                 log.warning('The value of %s is not used by this build system.'
                             % linker_var)
-
-        if host_or_target is target:
-            @depends(valid_compiler)
-            def is_msvc(compiler):
-                return compiler.type == 'msvc'
-
-            imply_option('LINKER', linker, reason='LD', when=is_msvc)
 
     return valid_compiler
 
@@ -1223,15 +1158,23 @@ host_cxx_compiler = compiler('C++', host, c_compiler=host_c_compiler,
                              other_c_compiler=c_compiler)
 
 # Generic compiler-based conditions.
-non_msvc_compiler = depends(c_compiler)(lambda info: info.type != 'msvc')
 building_with_gcc = depends(c_compiler)(lambda info: info.type == 'gcc')
+
+
+@depends(cxx_compiler)
+@imports('os')
+def cxx_is_icecream(info):
+    if (os.path.islink(info.compiler) and os.path.basename(
+            os.readlink(info.compiler)) == 'icecc'):
+        return True
+set_config('CXX_IS_ICECREAM', cxx_is_icecream)
 
 
 @depends(c_compiler)
 def msvs_version(info):
     # clang-cl emulates the same version scheme as cl. And MSVS_VERSION needs to
     # be set for GYP on Windows.
-    if info.type in ('clang-cl', 'msvc'):
+    if info.type == 'clang-cl':
         return '2017'
 
     return ''
@@ -1254,8 +1197,8 @@ def check_have_64_bit(have_64_bit, compiler_have_64_bit):
 @depends(c_compiler, target)
 def default_debug_flags(compiler_info, target):
     # Debug info is ON by default.
-    if compiler_info.type in ('msvc', 'clang-cl'):
-        return '-Zi'
+    if compiler_info.type == 'clang-cl':
+        return '-Z7'
     elif target.kernel == 'WINNT' and compiler_info.type == 'clang':
         return '-g -gcodeview'
     return '-g'
@@ -1355,14 +1298,8 @@ set_config('COLOR_CFLAGS', color_cflags)
 # hidden visibility.
 
 
-option(env='_LIBCPP_INLINE_VISIBILITY',
-       nargs=1,
-       help='Visibility of libc++ inlines')
-
-@depends('_LIBCPP_INLINE_VISIBILITY', c_compiler, target)
-def libcxx_override_visibility(value, c_compiler, target):
-    if len(value):
-        return value[0]
+@depends(c_compiler, target)
+def libcxx_override_visibility(c_compiler, target):
     if c_compiler.type == 'clang' and target.os == 'Android':
         return ''
 
@@ -1398,11 +1335,11 @@ set_config('WRAP_SYSTEM_INCLUDES', wrap_system_includes)
 set_config('VISIBILITY_FLAGS', visibility_flags)
 
 
-@depends(c_compiler, using_sccache)
-def depend_cflags(info, using_sccache):
-    if info.type not in ('clang-cl', 'msvc'):
+@depends(c_compiler)
+def depend_cflags(info):
+    if info.type != 'clang-cl':
         return ['-MD', '-MP', '-MF $(MDDEPDIR)/$(@F).pp']
-    elif info.type == 'clang-cl':
+    else:
         # clang-cl doesn't accept the normal -MD -MP -MF options that clang
         # does, but the underlying cc1 binary understands how to generate
         # dependency files.  These options are based on analyzing what the
@@ -1415,10 +1352,6 @@ def depend_cflags(info, using_sccache):
             '-Xclang', '-MT',
             '-Xclang', '$@'
         ]
-    elif using_sccache:
-        # sccache supports a special flag to create depfiles
-        # by parsing MSVC's -showIncludes output.
-        return ['-deps$(MDDEPDIR)/$(@F).pp']
 
 
 set_config('_DEPEND_CFLAGS', depend_cflags)
@@ -1462,29 +1395,6 @@ def pgo_flags(compiler, build_env, target):
                             '-Wno-error=profile-instr-unprofiled'],
                 use_ldflags=[],
             )
-
-    if compiler.type == 'msvc':
-        num_cores = min(8, multiprocessing.cpu_count())
-        cgthreads = '-CGTHREADS:%s' % num_cores
-
-        return namespace(
-            gen_cflags=['-GL'],
-            gen_ldflags=['-LTCG:PGINSTRUMENT', '-PogoSafeMode', cgthreads],
-            # XXX: PGO builds can fail with warnings treated as errors,
-            # specifically "no profile data available" appears to be
-            # treated as an error sometimes. This might be a consequence
-            # of using WARNINGS_AS_ERRORS in some modules, combined
-            # with the linker doing most of the work in the whole-program
-            # optimization/PGO case. I think it's probably a compiler bug,
-            # but we work around it here.
-            use_cflags=['-GL', '-wd4624', '-wd4952'],
-            # XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
-            # Probably also a compiler bug, but what can you do?
-            # /d2:-cgsummary prints a summary of what is happening during
-            # code generation. How long individual functions are optimized,
-            # which functions are optimized, etc.
-            use_ldflags=['-LTCG:PGUPDATE', cgthreads, '-d2:-cgsummary'],
-        )
 
 
 set_config('PROFILE_GEN_CFLAGS', pgo_flags.gen_cflags)
@@ -1569,6 +1479,7 @@ set_config('PGO_JARLOG_PATH', depends_if('--with-pgo-jarlog')(lambda p: p))
 # ==============================================================
 
 js_option('--enable-lto',
+          env='MOZ_LTO',
           nargs='?',
           choices=('full', 'thin'),
           help='Enable LTO')
@@ -1599,8 +1510,6 @@ def lto(value, pgo, c_compiler):
                 cflags.append("-flto")
             else:
                 cflags.append("-flto=thin")
-                # Workaround for https://bugs.llvm.org/show_bug.cgi?id=40414
-                cflags.append("-fsplit-lto-unit")
             # With clang-cl, -flto can only be used with -c or -fuse-ld=lld.
             # AC_TRY_LINKs during configure don't have -c, so pass -fuse-ld=lld.
             cflags.append("-fuse-ld=lld");
@@ -1708,6 +1617,9 @@ def security_hardening_cflags(hardening_flag, asan, optimize, c_compiler, target
             # mingw-clang cross-compile toolchain has bugs with stack protector
             if target.os != 'WINNT' or c_compiler == 'gcc':
                 flags.append("-fstack-protector-strong")
+                ldflags.append("-fstack-protector-strong")
+                js_flags.append("-fstack-protector-strong")
+                js_ldflags.append("-fstack-protector-strong")
 
         # ASLR ------------------------------------------------
         # ASLR (dynamicbase) is enabled by default in clang-cl; but the
@@ -1754,6 +1666,75 @@ add_old_configure_assignment('MOZ_HARDENING_LDFLAGS', security_hardening_cflags.
 add_old_configure_assignment('MOZ_HARDENING_CFLAGS_JS', security_hardening_cflags.js_flags)
 add_old_configure_assignment('MOZ_HARDENING_LDFLAGS_JS', security_hardening_cflags.js_ldflags)
 
+# nasm detection
+# ==============================================================
+nasm = check_prog('NASM', ['nasm'], allow_missing=True, paths=toolchain_search_path)
+
+
+@depends_if(nasm)
+@checking('nasm version')
+def nasm_version(nasm):
+    (retcode, stdout, _) = get_cmd_output(nasm, '-v')
+    if retcode:
+        # mac stub binary
+        return None
+
+    version = stdout.splitlines()[0].split()[2]
+    return Version(version)
+
+
+@depends_if(nasm_version)
+def nasm_major_version(nasm_version):
+    return str(nasm_version.major)
+
+
+@depends_if(nasm_version)
+def nasm_minor_version(nasm_version):
+    return str(nasm_version.minor)
+
+
+set_config('NASM_MAJOR_VERSION', nasm_major_version)
+set_config('NASM_MINOR_VERSION', nasm_minor_version)
+
+
+@depends(nasm, target)
+def nasm_asflags(nasm, target):
+    if nasm:
+        asflags = {
+            ('OSX', 'x86'): ['-f', 'macho32'],
+            ('OSX', 'x86_64'): ['-f', 'macho64'],
+            ('WINNT', 'x86'): ['-f', 'win32'],
+            ('WINNT', 'x86_64'): ['-f', 'win64'],
+        }.get((target.os, target.cpu), None)
+        if asflags is None:
+            # We're assuming every x86 platform we support that's
+            # not Windows or Mac is ELF.
+            if target.cpu == 'x86':
+                asflags = ['-f', 'elf32']
+            elif target.cpu == 'x86_64':
+                asflags = ['-f', 'elf64']
+        return asflags
+
+
+set_config('NASM_ASFLAGS', nasm_asflags)
+
+@depends(nasm_asflags)
+def have_nasm(value):
+    if value:
+        return True
+
+
+@depends(yasm_asflags)
+def have_yasm(yasm_asflags):
+    if yasm_asflags:
+        return True
+
+set_config('HAVE_NASM', have_nasm)
+
+set_config('HAVE_YASM', have_yasm)
+# Until the YASM variable is not necessary in old-configure.
+add_old_configure_assignment('YASM', have_yasm)
+
 # Code Coverage
 # ==============================================================
 
@@ -1769,6 +1750,42 @@ def code_coverage(value):
 
 set_config('MOZ_CODE_COVERAGE', code_coverage)
 set_define('MOZ_CODE_COVERAGE', code_coverage)
+
+@depends(target, c_compiler, vc_path, check_build_environment, when=code_coverage)
+@imports('re')
+@imports('mozpack.path')
+@imports(_from='__builtin__', _import='open')
+def coverage_cflags(target, c_compiler, vc_path, build_env):
+    cflags = ['--coverage']
+
+    if c_compiler.type in ('clang', 'clang-cl'):
+        cflags += [
+            '-Xclang', '-coverage-no-function-names-in-data',
+        ]
+
+    if target.os == 'WINNT' and c_compiler.type == 'clang-cl':
+        # The Visual Studio directory is the parent of the Visual C++ directory.
+        vs_path = os.path.dirname(vc_path)
+
+        # We need to get the real path of Visual Studio, which can be in a
+        # symlinked directory (for example, on automation).
+        vs_path = mozpack.path.readlink(vs_path)
+        # Since the -fprofile-exclude-files option in LLVM is a regex, we need to
+        # have the same path separators.
+        vs_path = vs_path.replace('/', '\\')
+
+        cflags += [
+            '-fprofile-exclude-files=^{}.*$'.format(re.escape(vs_path)),
+        ]
+
+    response_file_path = os.path.join(build_env.topobjdir, 'code_coverage_cflags')
+
+    with open(response_file_path, 'w') as f:
+        f.write(' '.join(cflags))
+
+    return ['@{}'.format(response_file_path)]
+
+set_config('COVERAGE_CFLAGS', coverage_cflags)
 
 # ==============================================================
 
@@ -2042,7 +2059,7 @@ js_option(env='AS', nargs=1, help='Path to the assembler')
 
 @depends(target, c_compiler)
 def as_info(target, c_compiler):
-    if c_compiler.type in ('msvc', 'clang-cl'):
+    if c_compiler.type == 'clang-cl':
         ml = {
             'x86': 'ml',
             'x86_64': 'ml64',
@@ -2052,7 +2069,7 @@ def as_info(target, c_compiler):
             type='masm',
             names=(ml, )
         )
-    # When building with anything but MSVC, we just use the C compiler as the assembler.
+    # When building with anything but clang-cl, we just use the C compiler as the assembler.
     return namespace(
         type='gcc',
         names=(c_compiler.compiler, )
@@ -2086,6 +2103,7 @@ def as_with_flags(as_info, assembler, provided_assembler, c_compiler):
 
 
 add_old_configure_assignment('AS', as_with_flags)
+add_old_configure_assignment('ac_cv_prog_AS', as_with_flags)
 
 
 @depends(assembler, c_compiler, extra_toolchain_flags)
@@ -2159,29 +2177,35 @@ js_option('--enable-stdcxx-compat', env='MOZ_STDCXX_COMPAT',
 
 
 @template
-def libstdcxx_version(var, compiler, host_or_target):
-    @depends(compiler, host_or_target, when='--enable-stdcxx-compat')
+def libstdcxx_version(var, compiler):
+    @depends(compiler, when='--enable-stdcxx-compat')
+    @checking(var, lambda v: v and "GLIBCXX_%s" % v.dotted)
     @imports(_from='mozbuild.configure.libstdcxx', _import='find_version')
-    def version(compiler, host_or_target):
-        if host_or_target.os == 'Android':
-            return None
-        result = find_version(
-            compiler.wrapper + [compiler.compiler] + compiler.flags)
+    @imports(_from='__builtin__', _import='Exception')
+    def version(compiler):
+        try:
+            result = find_version(
+                compiler.wrapper + [compiler.compiler] + compiler.flags)
+        except Exception:
+            die("Couldn't determine libstdc++ version")
         if result:
-            return str(result)
+            return namespace(
+                dotted=result[0],
+                encoded=str(result[1]),
+            )
 
-    set_config(var, version)
+    set_config(var, version.encoded)
     return version
 
 
 add_gcc_flag(
     '-D_GLIBCXX_USE_CXX11_ABI=0', cxx_compiler,
     when=libstdcxx_version(
-        'MOZ_LIBSTDCXX_TARGET_VERSION', cxx_compiler, target))
+        'MOZ_LIBSTDCXX_TARGET_VERSION', cxx_compiler))
 add_gcc_flag(
     '-D_GLIBCXX_USE_CXX11_ABI=0', host_cxx_compiler,
     when=libstdcxx_version(
-        'MOZ_LIBSTDCXX_HOST_VERSION', host_cxx_compiler, host))
+        'MOZ_LIBSTDCXX_HOST_VERSION', host_cxx_compiler))
 
 
 @depends(c_compiler.try_compile(flags=['-fsanitize=fuzzer-no-link'],

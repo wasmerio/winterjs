@@ -97,7 +97,7 @@ class ModuleSharedContext;
  */
 class SharedContext {
  public:
-  JSContext* const context;
+  JSContext* const cx_;
 
  protected:
   enum class Kind : uint8_t { FunctionBox, Global, Eval, Module };
@@ -155,7 +155,7 @@ class SharedContext {
  public:
   SharedContext(JSContext* cx, Kind kind, Directives directives,
                 bool extraWarnings)
-      : context(cx),
+      : cx_(cx),
         kind_(kind),
         thisBinding_(ThisBinding::Global),
         strictScript(directives.strict()),
@@ -183,6 +183,19 @@ class SharedContext {
   inline GlobalSharedContext* asGlobalContext();
   bool isEvalContext() const { return kind_ == Kind::Eval; }
   inline EvalSharedContext* asEvalContext();
+
+  bool isTopLevelContext() const {
+    switch (kind_) {
+      case Kind::Module:
+      case Kind::Global:
+      case Kind::Eval:
+        return true;
+      case Kind::FunctionBox:
+        break;
+    }
+    MOZ_ASSERT(kind_ == Kind::FunctionBox);
+    return false;
+  }
 
   ThisBinding thisBinding() const { return thisBinding_; }
 
@@ -290,7 +303,9 @@ class FunctionBox : public ObjectBox, public SharedContext {
   void initWithEnclosingScope(Scope* enclosingScope);
 
  public:
-  CodeNode* functionNode; /* back pointer used by asm.js for error messages */
+  // Back pointer used by asm.js for error messages.
+  FunctionNode* functionNode;
+
   uint32_t bufStart;
   uint32_t bufEnd;
   uint32_t startLine;
@@ -475,6 +490,7 @@ class FunctionBox : public ObjectBox, public SharedContext {
   bool needsFinalYield() const { return isGenerator() || isAsync(); }
   bool needsDotGeneratorName() const { return isGenerator() || isAsync(); }
   bool needsIteratorResult() const { return isGenerator(); }
+  bool needsPromiseResult() const { return isAsync() && !isGenerator(); }
 
   bool isArrow() const { return function()->isArrow(); }
 

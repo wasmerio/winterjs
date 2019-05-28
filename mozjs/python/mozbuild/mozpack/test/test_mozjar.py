@@ -17,7 +17,6 @@ from mozpack.test.test_files import MockDest
 import unittest
 import mozunit
 from cStringIO import StringIO
-from urllib import pathname2url
 import mozpack.path as mozpath
 import os
 
@@ -139,11 +138,9 @@ class TestDeflaterMemoryView(TestDeflater):
 
 
 class TestJar(unittest.TestCase):
-    optimize = False
-
     def test_jar(self):
         s = MockDest()
-        with JarWriter(fileobj=s, optimize=self.optimize) as jar:
+        with JarWriter(fileobj=s) as jar:
             jar.add('foo', 'foo')
             self.assertRaises(JarWriterError, jar.add, 'foo', 'bar')
             jar.add('bar', 'aaaaaaaaaaaaanopqrstuvwxyz')
@@ -166,14 +163,13 @@ class TestJar(unittest.TestCase):
 
         if os.sep == '\\':
             self.assertEqual(files[3].filename, 'baz/backslash',
-                'backslashes in filenames on Windows should get normalized')
+                             'backslashes in filenames on Windows should get normalized')
         else:
             self.assertEqual(files[3].filename, 'baz\\backslash',
-                'backslashes in filenames on POSIX platform are untouched')
+                             'backslashes in filenames on POSIX platform are untouched')
 
         s = MockDest()
-        with JarWriter(fileobj=s, compress=False,
-                       optimize=self.optimize) as jar:
+        with JarWriter(fileobj=s, compress=False) as jar:
             jar.add('bar', 'aaaaaaaaaaaaanopqrstuvwxyz')
             jar.add('foo', 'foo')
             jar.add('baz/qux', 'aaaaaaaaaaaaanopqrstuvwxyz', True)
@@ -225,13 +221,13 @@ class TestJar(unittest.TestCase):
 
     def test_rejar(self):
         s = MockDest()
-        with JarWriter(fileobj=s, optimize=self.optimize) as jar:
+        with JarWriter(fileobj=s) as jar:
             jar.add('foo', 'foo')
             jar.add('bar', 'aaaaaaaaaaaaanopqrstuvwxyz')
             jar.add('baz/qux', 'aaaaaaaaaaaaanopqrstuvwxyz', False)
 
         new = MockDest()
-        with JarWriter(fileobj=new, optimize=self.optimize) as jar:
+        with JarWriter(fileobj=new) as jar:
             for j in JarReader(fileobj=s):
                 jar.add(j.filename, j)
 
@@ -252,7 +248,7 @@ class TestJar(unittest.TestCase):
 
     def test_add_from_finder(self):
         s = MockDest()
-        with JarWriter(fileobj=s, optimize=self.optimize) as jar:
+        with JarWriter(fileobj=s) as jar:
             finder = FileFinder(test_data_path)
             for p, f in finder.find('test_data'):
                 jar.add('test_data', f)
@@ -263,10 +259,6 @@ class TestJar(unittest.TestCase):
         self.assertEqual(files[0].filename, 'test_data')
         self.assertFalse(files[0].compressed)
         self.assertEqual(files[0].read(), 'test_data')
-
-
-class TestOptimizeJar(TestJar):
-    optimize = True
 
 
 class TestPreload(unittest.TestCase):
@@ -297,53 +289,32 @@ class TestPreload(unittest.TestCase):
 
 class TestJarLog(unittest.TestCase):
     def test_jarlog(self):
-        base = 'file:' + pathname2url(os.path.abspath(os.curdir))
         s = StringIO('\n'.join([
-            base + '/bar/baz.jar first',
-            base + '/bar/baz.jar second',
-            base + '/bar/baz.jar third',
-            base + '/bar/baz.jar second',
-            base + '/bar/baz.jar second',
-            'jar:' + base + '/qux.zip!/omni.ja stuff',
-            base + '/bar/baz.jar first',
-            'jar:' + base + '/qux.zip!/omni.ja other/stuff',
-            'jar:' + base + '/qux.zip!/omni.ja stuff',
-            base + '/bar/baz.jar third',
-            'jar:jar:' + base + '/qux.zip!/baz/baz.jar!/omni.ja nested/stuff',
-            'jar:jar:jar:' + base + '/qux.zip!/baz/baz.jar!/foo.zip!/omni.ja' +
-            ' deeply/nested/stuff',
+            'bar/baz.jar first',
+            'bar/baz.jar second',
+            'bar/baz.jar third',
+            'bar/baz.jar second',
+            'bar/baz.jar second',
+            'omni.ja stuff',
+            'bar/baz.jar first',
+            'omni.ja other/stuff',
+            'omni.ja stuff',
+            'bar/baz.jar third',
         ]))
         log = JarLog(fileobj=s)
-        canonicalize = lambda p: \
-            mozpath.normsep(os.path.normcase(os.path.realpath(p)))
-        baz_jar = canonicalize('bar/baz.jar')
-        qux_zip = canonicalize('qux.zip')
         self.assertEqual(set(log.keys()), set([
-            baz_jar,
-            (qux_zip, 'omni.ja'),
-            (qux_zip, 'baz/baz.jar', 'omni.ja'),
-            (qux_zip, 'baz/baz.jar', 'foo.zip', 'omni.ja'),
+            'bar/baz.jar',
+            'omni.ja',
         ]))
-        self.assertEqual(log[baz_jar], [
+        self.assertEqual(log['bar/baz.jar'], [
             'first',
             'second',
             'third',
         ])
-        self.assertEqual(log[(qux_zip, 'omni.ja')], [
+        self.assertEqual(log['omni.ja'], [
             'stuff',
             'other/stuff',
         ])
-        self.assertEqual(log[(qux_zip, 'baz/baz.jar', 'omni.ja')],
-                         ['nested/stuff'])
-        self.assertEqual(log[(qux_zip, 'baz/baz.jar', 'foo.zip',
-                              'omni.ja')], ['deeply/nested/stuff'])
-
-        # The above tests also indirectly check the value returned by
-        # JarLog.canonicalize for various jar: and file: urls, but
-        # JarLog.canonicalize also supports plain paths.
-        self.assertEqual(JarLog.canonicalize(os.path.abspath('bar/baz.jar')),
-                         baz_jar)
-        self.assertEqual(JarLog.canonicalize('bar/baz.jar'), baz_jar)
 
 
 if __name__ == '__main__':

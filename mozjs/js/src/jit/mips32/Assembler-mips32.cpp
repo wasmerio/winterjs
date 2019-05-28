@@ -24,6 +24,7 @@ ABIArg ABIArgGenerator::next(MIRType type) {
   switch (type) {
     case MIRType::Int32:
     case MIRType::Pointer:
+    case MIRType::RefOrNull:
       if (GetIntArgReg(usedArgSlots_, &destReg)) {
         current_ = ABIArg(destReg);
       } else {
@@ -160,8 +161,9 @@ static void TraceOneDataRelocation(JSTracer* trc, Instruction* inst) {
   }
 }
 
-/* static */ void Assembler::TraceDataRelocations(JSTracer* trc, JitCode* code,
-                                                  CompactBufferReader& reader) {
+/* static */
+void Assembler::TraceDataRelocations(JSTracer* trc, JitCode* code,
+                                     CompactBufferReader& reader) {
   while (reader.more()) {
     size_t offset = reader.readUnsigned();
     Instruction* inst = (Instruction*)(code->raw() + offset);

@@ -17,6 +17,10 @@ component_wasm   = ('Core', 'Javascript: Web Assembly')
 
 FILES_PER_UNIFIED_FILE = 6
 
+# Prevent redefining FILES_PER_UNIFIED_FILE in each sub-directory of js. This
+# will not escape this directory.
+export('FILES_PER_UNIFIED_FILE')
+
 with Files('*'):
     BUG_COMPONENT = component_engine
 
@@ -113,6 +117,7 @@ EXPORTS += [
 
 EXPORTS.js += [
     '../public/AllocPolicy.h',
+    '../public/ArrayBuffer.h',
     '../public/BuildId.h',
     '../public/CallArgs.h',
     '../public/CallNonGenericMethod.h',
@@ -143,6 +148,7 @@ EXPORTS.js += [
     '../public/OffThreadScriptCompilation.h',
     '../public/Principals.h',
     '../public/Printf.h',
+    '../public/ProfilingCategory.h',
     '../public/ProfilingFrameIterator.h',
     '../public/ProfilingStack.h',
     '../public/Promise.h',
@@ -156,6 +162,7 @@ EXPORTS.js += [
     '../public/Result.h',
     '../public/RootingAPI.h',
     '../public/SavedFrameAPI.h',
+    '../public/SharedArrayBuffer.h',
     '../public/SliceBudget.h',
     '../public/SourceText.h',
     '../public/StableStringChars.h',
@@ -187,6 +194,7 @@ EXPORTS.js += [
 UNIFIED_SOURCES += [
     'builtin/Array.cpp',
     'builtin/AtomicsObject.cpp',
+    'builtin/BigInt.cpp',
     'builtin/Boolean.cpp',
     'builtin/DataViewObject.cpp',
     'builtin/Eval.cpp',
@@ -213,7 +221,6 @@ UNIFIED_SOURCES += [
     'builtin/TypedObject.cpp',
     'builtin/WeakMapObject.cpp',
     'builtin/WeakSetObject.cpp',
-    'devtools/sharkctl.cpp',
     'ds/Bitmap.cpp',
     'ds/LifoAlloc.cpp',
     'ds/MemoryProtectionExceptionHandler.cpp',
@@ -254,6 +261,7 @@ UNIFIED_SOURCES += [
     'vm/ArrayBufferViewObject.cpp',
     'vm/AsyncFunction.cpp',
     'vm/AsyncIteration.cpp',
+    'vm/BigIntType.cpp',
     'vm/BuildId.cpp',
     'vm/BytecodeUtil.cpp',
     'vm/Caches.cpp',
@@ -342,12 +350,6 @@ SOURCES += [
     'vm/ProfilingStack.cpp',
 ]
 
-if CONFIG['ENABLE_BIGINT']:
-    SOURCES += [
-        'builtin/BigInt.cpp',
-        'vm/BigIntType.cpp',
-    ]
-
 if CONFIG['JS_POSIX_NSPR']:
     UNIFIED_SOURCES += [
         'vm/PosixNSPR.cpp',
@@ -393,8 +395,7 @@ if CONFIG['MOZ_VTUNE']:
         'vtune/jitprofiling.c',
         'vtune/VTuneWrapper.cpp',
     ]
-    if CONFIG['CC_TYPE'] != 'msvc':
-        SOURCES['vtune/ittnotify_static.c'].flags += ['-Wno-varargs', '-Wno-unknown-pragmas']
+    SOURCES['vtune/ittnotify_static.c'].flags += ['-Wno-varargs', '-Wno-unknown-pragmas']
 
 if CONFIG['HAVE_LINUX_PERF_EVENT_H']:
     SOURCES += [
@@ -410,19 +411,12 @@ else:
 DIRS += [
     'build',
     'frontend',
-    'frontend/binsource',
     'gc',
     'jit',
     'wasm',
 ]
 
 FINAL_LIBRARY = 'js'
-
-if CONFIG['ENABLE_WASM_CRANELIFT']:
-    DIRS += ['rust']
-    UNIFIED_SOURCES += [
-        'wasm/WasmCraneliftCompile.cpp',
-    ]
 
 # Prepare self-hosted JS code for embedding
 GENERATED_FILES += [('selfhosted.out.h', 'selfhosted.js')]
@@ -434,6 +428,7 @@ selfhosted.inputs = [
     'builtin/SelfHostingDefines.h',
     'builtin/Utilities.js',
     'builtin/Array.js',
+    'builtin/AsyncFunction.js',
     'builtin/AsyncIteration.js',
     'builtin/Classes.js',
     'builtin/Date.js',

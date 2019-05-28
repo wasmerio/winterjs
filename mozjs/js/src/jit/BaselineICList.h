@@ -28,11 +28,8 @@ namespace jit {
                                       \
   _(NewArray_Fallback)                \
   _(NewObject_Fallback)               \
-  _(NewObject_WithTemplate)           \
                                       \
   _(ToBool_Fallback)                  \
-                                      \
-  _(ToNumber_Fallback)                \
                                       \
   _(UnaryArith_Fallback)              \
                                       \
@@ -61,9 +58,6 @@ namespace jit {
   _(SetProp_Fallback)                 \
                                       \
   _(GetIterator_Fallback)             \
-  _(IteratorMore_Fallback)            \
-  _(IteratorMore_Native)              \
-  _(IteratorClose_Fallback)           \
                                       \
   _(InstanceOf_Fallback)              \
   _(InstanceOf_Function)              \

@@ -80,7 +80,10 @@ ValueOperand CacheRegisterAllocator::useValueRegister(MacroAssembler& masm,
 
     case OperandLocation::DoubleReg: {
       ValueOperand reg = allocateValueRegister(masm);
-      masm.boxDouble(loc.doubleReg(), reg, ScratchDoubleReg);
+      {
+        ScratchDoubleScope fpscratch(masm);
+        masm.boxDouble(loc.doubleReg(), reg, fpscratch);
+      }
       loc.setValueReg(reg);
       return reg;
     }
@@ -171,9 +174,11 @@ ValueOperand CacheRegisterAllocator::useFixedValueRegister(MacroAssembler& masm,
       popPayload(masm, &loc, reg.scratchReg());
       masm.tagValue(loc.payloadType(), reg.scratchReg(), reg);
       break;
-    case OperandLocation::DoubleReg:
-      masm.boxDouble(loc.doubleReg(), reg, ScratchDoubleReg);
+    case OperandLocation::DoubleReg: {
+      ScratchDoubleScope fpscratch(masm);
+      masm.boxDouble(loc.doubleReg(), reg, fpscratch);
       break;
+    }
     case OperandLocation::Uninitialized:
       MOZ_CRASH();
   }
@@ -1472,6 +1477,22 @@ bool CacheIRCompiler::emitGuardIsSymbol() {
   return true;
 }
 
+bool CacheIRCompiler::emitGuardIsBigInt() {
+  JitSpew(JitSpew_Codegen, __FUNCTION__);
+  ValOperandId inputId = reader.valOperandId();
+  if (allocator.knownType(inputId) == JSVAL_TYPE_BIGINT) {
+    return true;
+  }
+
+  ValueOperand input = allocator.useValueRegister(masm, inputId);
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+  masm.branchTestBigInt(Assembler::NotEqual, input, failure->label());
+  return true;
+}
+
 bool CacheIRCompiler::emitGuardIsInt32() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   ValOperandId inputId = reader.valOperandId();
@@ -1548,9 +1569,9 @@ bool CacheIRCompiler::emitGuardIsInt32Index() {
 bool CacheIRCompiler::emitGuardType() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   ValOperandId inputId = reader.valOperandId();
-  JSValueType type = reader.valueType();
+  ValueType type = reader.valueType();
 
-  if (allocator.knownType(inputId) == type) {
+  if (allocator.knownType(inputId) == JSValueType(type)) {
     return true;
   }
 
@@ -1562,29 +1583,34 @@ bool CacheIRCompiler::emitGuardType() {
   }
 
   switch (type) {
-    case JSVAL_TYPE_STRING:
+    case ValueType::String:
       masm.branchTestString(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_SYMBOL:
+    case ValueType::Symbol:
       masm.branchTestSymbol(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_INT32:
+    case ValueType::BigInt:
+      masm.branchTestBigInt(Assembler::NotEqual, input, failure->label());
+      break;
+    case ValueType::Int32:
       masm.branchTestInt32(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_DOUBLE:
+    case ValueType::Double:
       masm.branchTestDouble(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_BOOLEAN:
+    case ValueType::Boolean:
       masm.branchTestBoolean(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_UNDEFINED:
+    case ValueType::Undefined:
       masm.branchTestUndefined(Assembler::NotEqual, input, failure->label());
       break;
-    case JSVAL_TYPE_NULL:
+    case ValueType::Null:
       masm.branchTestNull(Assembler::NotEqual, input, failure->label());
       break;
-    default:
-      MOZ_CRASH("Unexpected type");
+    case ValueType::Magic:
+    case ValueType::PrivateGCThing:
+    case ValueType::Object:
+      MOZ_CRASH("unexpected type");
   }
 
   return true;
@@ -2182,6 +2208,8 @@ bool CacheIRCompiler::emitDoubleModResult() {
 bool CacheIRCompiler::emitInt32AddResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
 
@@ -2190,14 +2218,16 @@ bool CacheIRCompiler::emitInt32AddResult() {
     return false;
   }
 
-  masm.branchAdd32(Assembler::Overflow, lhs, rhs, failure->label());
-  EmitStoreResult(masm, rhs, JSVAL_TYPE_INT32, output);
+  masm.mov(rhs, scratch);
+  masm.branchAdd32(Assembler::Overflow, lhs, scratch, failure->label());
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
 bool CacheIRCompiler::emitInt32SubResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
 
@@ -2206,8 +2236,9 @@ bool CacheIRCompiler::emitInt32SubResult() {
     return false;
   }
 
-  masm.branchSub32(Assembler::Overflow, rhs, lhs, failure->label());
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  masm.mov(lhs, scratch);
+  masm.branchSub32(Assembler::Overflow, rhs, scratch, failure->label());
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
@@ -2217,7 +2248,8 @@ bool CacheIRCompiler::emitInt32MulResult() {
   AutoOutputRegister output(*this);
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
-  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+  AutoScratchRegister scratch(allocator, masm);
+  AutoScratchRegisterMaybeOutput scratch2(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -2226,17 +2258,18 @@ bool CacheIRCompiler::emitInt32MulResult() {
 
   Label maybeNegZero, done;
   masm.mov(lhs, scratch);
-  masm.branchMul32(Assembler::Overflow, rhs, lhs, failure->label());
-  masm.branchTest32(Assembler::Zero, lhs, lhs, &maybeNegZero);
+  masm.branchMul32(Assembler::Overflow, rhs, scratch, failure->label());
+  masm.branchTest32(Assembler::Zero, scratch, scratch, &maybeNegZero);
   masm.jump(&done);
 
   masm.bind(&maybeNegZero);
+  masm.mov(lhs, scratch2);
   // Result is -0 if exactly one of lhs or rhs is negative.
-  masm.or32(rhs, scratch);
-  masm.branchTest32(Assembler::Signed, scratch, scratch, failure->label());
+  masm.or32(rhs, scratch2);
+  masm.branchTest32(Assembler::Signed, scratch2, scratch2, failure->label());
 
   masm.bind(&done);
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   return true;
 }
 
@@ -2246,6 +2279,7 @@ bool CacheIRCompiler::emitInt32DivResult() {
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
   AutoScratchRegister rem(allocator, masm);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -2263,13 +2297,14 @@ bool CacheIRCompiler::emitInt32DivResult() {
   masm.branchTest32(Assembler::Signed, rhs, rhs, failure->label());
   masm.bind(&notZero);
 
+  masm.mov(lhs, scratch);
   LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
                                liveVolatileFloatRegs());
-  masm.flexibleDivMod32(rhs, lhs, rem, false, volatileRegs);
+  masm.flexibleDivMod32(rhs, scratch, rem, false, volatileRegs);
 
   // A remainder implies a double result.
   masm.branchTest32(Assembler::NonZero, rem, rem, failure->label());
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   return true;
 }
 
@@ -2278,6 +2313,7 @@ bool CacheIRCompiler::emitInt32ModResult() {
   AutoOutputRegister output(*this);
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -2296,11 +2332,12 @@ bool CacheIRCompiler::emitInt32ModResult() {
 
   // Prevent negative 0 and -2147483648 / -1.
   masm.branch32(Assembler::Equal, lhs, Imm32(INT32_MIN), failure->label());
+  masm.mov(lhs, scratch);
   LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(),
                                liveVolatileFloatRegs());
-  masm.flexibleRemainder32(rhs, lhs, false, volatileRegs);
+  masm.flexibleRemainder32(rhs, scratch, false, volatileRegs);
 
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
@@ -2308,36 +2345,42 @@ bool CacheIRCompiler::emitInt32ModResult() {
 bool CacheIRCompiler::emitInt32BitOrResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
 
-  masm.or32(lhs, rhs);
-  EmitStoreResult(masm, rhs, JSVAL_TYPE_INT32, output);
+  masm.mov(rhs, scratch);
+  masm.or32(lhs, scratch);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
 bool CacheIRCompiler::emitInt32BitXorResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
 
-  masm.xor32(lhs, rhs);
-  EmitStoreResult(masm, rhs, JSVAL_TYPE_INT32, output);
+  masm.mov(rhs, scratch);
+  masm.xor32(lhs, scratch);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
 bool CacheIRCompiler::emitInt32BitAndResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
 
-  masm.and32(lhs, rhs);
-  EmitStoreResult(masm, rhs, JSVAL_TYPE_INT32, output);
+  masm.mov(rhs, scratch);
+  masm.and32(lhs, scratch);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
@@ -2346,11 +2389,13 @@ bool CacheIRCompiler::emitInt32LeftShiftResult() {
   AutoOutputRegister output(*this);
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
+  masm.mov(lhs, scratch);
   // Mask shift amount as specified by 12.9.3.1 Step 7
   masm.and32(Imm32(0x1F), rhs);
-  masm.flexibleLshift32(rhs, lhs);
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  masm.flexibleLshift32(rhs, scratch);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
@@ -2360,11 +2405,13 @@ bool CacheIRCompiler::emitInt32RightShiftResult() {
   AutoOutputRegister output(*this);
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
+  masm.mov(lhs, scratch);
   // Mask shift amount as specified by 12.9.4.1 Step 7
   masm.and32(Imm32(0x1F), rhs);
-  masm.flexibleRshift32Arithmetic(rhs, lhs);
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  masm.flexibleRshift32Arithmetic(rhs, scratch);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
 
   return true;
 }
@@ -2376,30 +2423,33 @@ bool CacheIRCompiler::emitInt32URightShiftResult() {
   Register lhs = allocator.useRegister(masm, reader.int32OperandId());
   Register rhs = allocator.useRegister(masm, reader.int32OperandId());
   bool allowDouble = reader.readBool();
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
     return false;
   }
 
+  masm.mov(lhs, scratch);
   // Mask shift amount as specified by 12.9.4.1 Step 7
   masm.and32(Imm32(0x1F), rhs);
-  masm.flexibleRshift32(rhs, lhs);
+  masm.flexibleRshift32(rhs, scratch);
   Label intDone, floatDone;
   if (allowDouble) {
     Label toUint;
-    masm.branchTest32(Assembler::Signed, lhs, lhs, &toUint);
+    masm.branchTest32(Assembler::Signed, scratch, scratch, &toUint);
     masm.jump(&intDone);
 
     masm.bind(&toUint);
-    masm.convertUInt32ToDouble(lhs, ScratchDoubleReg);
-    masm.boxDouble(ScratchDoubleReg, output.valueReg(), ScratchDoubleReg);
+    ScratchDoubleScope fpscratch(masm);
+    masm.convertUInt32ToDouble(scratch, fpscratch);
+    masm.boxDouble(fpscratch, output.valueReg(), fpscratch);
     masm.jump(&floatDone);
   } else {
-    masm.branchTest32(Assembler::Signed, lhs, lhs, failure->label());
+    masm.branchTest32(Assembler::Signed, scratch, scratch, failure->label());
   }
   masm.bind(&intDone);
-  EmitStoreResult(masm, lhs, JSVAL_TYPE_INT32, output);
+  EmitStoreResult(masm, scratch, JSVAL_TYPE_INT32, output);
   masm.bind(&floatDone);
   return true;
 }
@@ -2408,6 +2458,7 @@ bool CacheIRCompiler::emitInt32NegationResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
   Register val = allocator.useRegister(masm, reader.int32OperandId());
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -2417,8 +2468,9 @@ bool CacheIRCompiler::emitInt32NegationResult() {
   // Guard against 0 and MIN_INT by checking if low 31-bits are all zero.
   // Both of these result in a double.
   masm.branchTest32(Assembler::Zero, val, Imm32(0x7fffffff), failure->label());
-  masm.neg32(val);
-  masm.tagValue(JSVAL_TYPE_INT32, val, output.valueReg());
+  masm.mov(val, scratch);
+  masm.neg32(scratch);
+  masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
   return true;
 }
 
@@ -2460,8 +2512,11 @@ bool CacheIRCompiler::emitInt32NotResult() {
   JitSpew(JitSpew_Codegen, __FUNCTION__);
   AutoOutputRegister output(*this);
   Register val = allocator.useRegister(masm, reader.int32OperandId());
-  masm.not32(val);
-  masm.tagValue(JSVAL_TYPE_INT32, val, output.valueReg());
+  AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+  masm.mov(val, scratch);
+  masm.not32(scratch);
+  masm.tagValue(JSVAL_TYPE_INT32, scratch, output.valueReg());
   return true;
 }
 
@@ -2518,11 +2573,14 @@ bool CacheIRCompiler::emitDoubleIncDecResult(bool isInc) {
   masm.ensureDouble(
       val, FloatReg0,
       (mode_ != Mode::Baseline) ? &failurePopReg : failure->label());
-  masm.loadConstantDouble(1.0, ScratchDoubleReg);
-  if (isInc) {
-    masm.addDouble(ScratchDoubleReg, FloatReg0);
-  } else {
-    masm.subDouble(ScratchDoubleReg, FloatReg0);
+  {
+    ScratchDoubleScope fpscratch(masm);
+    masm.loadConstantDouble(1.0, fpscratch);
+    if (isInc) {
+      masm.addDouble(fpscratch, FloatReg0);
+    } else {
+      masm.subDouble(fpscratch, FloatReg0);
+    }
   }
   masm.boxDouble(FloatReg0, output.valueReg(), FloatReg0);
 
@@ -4247,11 +4305,12 @@ bool CacheIRCompiler::emitCallIsSuspendedGeneratorResult() {
 
   // If the resumeIndex slot holds an int32 value < RESUME_INDEX_CLOSING,
   // the generator is suspended.
-  Address addr(scratch, GeneratorObject::offsetOfResumeIndexSlot());
+  Address addr(scratch, AbstractGeneratorObject::offsetOfResumeIndexSlot());
   masm.branchTestInt32(Assembler::NotEqual, addr, &returnFalse);
   masm.unboxInt32(addr, scratch);
   masm.branch32(Assembler::AboveOrEqual, scratch,
-                Imm32(GeneratorObject::RESUME_INDEX_CLOSING), &returnFalse);
+                Imm32(AbstractGeneratorObject::RESUME_INDEX_CLOSING),
+                &returnFalse);
 
   masm.moveValue(BooleanValue(true), output.valueReg());
   masm.jump(&done);

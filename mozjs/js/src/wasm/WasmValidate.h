@@ -21,7 +21,6 @@
 
 #include "mozilla/TypeTraits.h"
 
-#include "wasm/WasmCode.h"
 #include "wasm/WasmTypes.h"
 
 namespace js {
@@ -134,14 +133,13 @@ struct ModuleEnvironment {
 
   // Module fields decoded from the module environment (or initialized while
   // validating an asm.js module) and immutable during compilation:
-#ifdef ENABLE_WASM_REFTYPES
+#ifdef ENABLE_WASM_GC
   // `gcFeatureOptIn` reflects the presence in a module of a GcFeatureOptIn
   // section.  This variable will be removed eventually, allowing it to be
   // replaced everywhere by the value true.
   //
   // The flag is used in the value of gcTypesEnabled(), which controls whether
-  // ref types and struct types and associated instructions are accepted
-  // during validation.
+  // struct types and associated instructions are accepted during validation.
   bool gcFeatureOptIn;
 #endif
   Maybe<uint32_t> dataCount;
@@ -175,7 +173,7 @@ struct ModuleEnvironment {
       : kind(kind),
         sharedMemoryEnabled(sharedMemoryEnabled),
         compilerEnv(compilerEnv),
-#ifdef ENABLE_WASM_REFTYPES
+#ifdef ENABLE_WASM_GC
         gcFeatureOptIn(false),
 #endif
         memoryUsage(MemoryUsage::None),
@@ -209,9 +207,17 @@ struct ModuleEnvironment {
   bool isRefSubtypeOf(ValType one, ValType two) const {
     MOZ_ASSERT(one.isReference());
     MOZ_ASSERT(two.isReference());
-    MOZ_ASSERT(gcTypesEnabled());
+#if defined(ENABLE_WASM_REFTYPES)
+#  if defined(ENABLE_WASM_GC)
     return one == two || two == ValType::AnyRef || one == ValType::NullRef ||
-           (one.isRef() && two.isRef() && isStructPrefixOf(two, one));
+           (one.isRef() && two.isRef() && gcTypesEnabled() &&
+            isStructPrefixOf(two, one));
+#  else
+    return one == two || two == ValType::AnyRef || one == ValType::NullRef;
+#  endif
+#else
+    return one == two;
+#endif
   }
 
  private:
@@ -347,19 +353,16 @@ class Encoder {
     return writeFixedU8(uint8_t(op));
   }
   MOZ_MUST_USE bool writeOp(MiscOp op) {
-    static_assert(size_t(MiscOp::Limit) <= 256, "fits");
     MOZ_ASSERT(size_t(op) < size_t(MiscOp::Limit));
-    return writeFixedU8(uint8_t(Op::MiscPrefix)) && writeFixedU8(uint8_t(op));
+    return writeFixedU8(uint8_t(Op::MiscPrefix)) && writeVarU32(uint32_t(op));
   }
   MOZ_MUST_USE bool writeOp(ThreadOp op) {
-    static_assert(size_t(ThreadOp::Limit) <= 256, "fits");
     MOZ_ASSERT(size_t(op) < size_t(ThreadOp::Limit));
-    return writeFixedU8(uint8_t(Op::ThreadPrefix)) && writeFixedU8(uint8_t(op));
+    return writeFixedU8(uint8_t(Op::ThreadPrefix)) && writeVarU32(uint32_t(op));
   }
   MOZ_MUST_USE bool writeOp(MozOp op) {
-    static_assert(size_t(MozOp::Limit) <= 256, "fits");
     MOZ_ASSERT(size_t(op) < size_t(MozOp::Limit));
-    return writeFixedU8(uint8_t(Op::MozPrefix)) && writeFixedU8(uint8_t(op));
+    return writeFixedU8(uint8_t(Op::MozPrefix)) && writeVarU32(uint32_t(op));
   }
 
   // Fixed-length encodings that allow back-patching.
@@ -583,20 +586,62 @@ class Decoder {
     return readVarU<uint64_t>(out);
   }
   MOZ_MUST_USE bool readVarS64(int64_t* out) { return readVarS<int64_t>(out); }
-  MOZ_MUST_USE bool readValType(uint8_t* code, uint32_t* refTypeIndex) {
+
+  MOZ_MUST_USE ValType uncheckedReadValType() {
+    uint8_t code = uncheckedReadFixedU8();
+    switch (code) {
+      case uint8_t(ValType::Ref):
+        return ValType(ValType::Code(code), uncheckedReadVarU32());
+      default:
+        return ValType::Code(code);
+    }
+  }
+  MOZ_MUST_USE bool readValType(uint32_t numTypes, bool gcTypesEnabled,
+                                ValType* type) {
     static_assert(uint8_t(TypeCode::Limit) <= UINT8_MAX, "fits");
-    if (!readFixedU8(code)) {
+    uint8_t code;
+    if (!readFixedU8(&code)) {
       return false;
     }
-    if (*code == uint8_t(TypeCode::Ref)) {
-      if (!readVarU32(refTypeIndex)) {
-        return false;
+    switch (code) {
+      case uint8_t(ValType::I32):
+      case uint8_t(ValType::F32):
+      case uint8_t(ValType::F64):
+      case uint8_t(ValType::I64):
+        *type = ValType::Code(code);
+        return true;
+#ifdef ENABLE_WASM_REFTYPES
+      case uint8_t(ValType::AnyRef):
+        *type = ValType::Code(code);
+        return true;
+#  ifdef ENABLE_WASM_GC
+      case uint8_t(ValType::Ref): {
+        if (!gcTypesEnabled) {
+          return fail("(ref T) types not enabled");
+        }
+        uint32_t typeIndex;
+        if (!readVarU32(&typeIndex)) {
+          return false;
+        }
+        if (typeIndex >= numTypes) {
+          return fail("ref index out of range");
+        }
+        *type = ValType(ValType::Code(code), typeIndex);
+        return true;
       }
-      if (*refTypeIndex > MaxTypes) {
-        return false;
-      }
-    } else {
-      *refTypeIndex = NoRefTypeIndex;
+#  endif
+#endif
+      default:
+        return fail("bad type");
+    }
+  }
+  MOZ_MUST_USE bool readValType(const TypeDefVector& types, bool gcTypesEnabled,
+                                ValType* type) {
+    if (!readValType(types.length(), gcTypesEnabled, type)) {
+      return false;
+    }
+    if (type->isRef() && !types[type->refTypeIndex()].isStructType()) {
+      return fail("ref does not reference a struct type");
     }
     return true;
   }
@@ -743,8 +788,7 @@ MOZ_MUST_USE bool DecodeValidatedLocalEntries(Decoder& d,
 
 // This validates the entries.
 
-MOZ_MUST_USE bool DecodeLocalEntries(Decoder& d, ModuleKind kind,
-                                     const TypeDefVector& types,
+MOZ_MUST_USE bool DecodeLocalEntries(Decoder& d, const TypeDefVector& types,
                                      bool gcTypesEnabled,
                                      ValTypeVector* locals);
 

@@ -26,8 +26,9 @@
 
 using namespace js;
 
-/* static */ Shape* js::ErrorObject::assignInitialShape(
-    JSContext* cx, Handle<ErrorObject*> obj) {
+/* static */
+Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
+                                           Handle<ErrorObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
   if (!NativeObject::addDataProperty(cx, obj, cx->names().fileName,
@@ -42,13 +43,12 @@ using namespace js;
                                        COLUMNNUMBER_SLOT, 0);
 }
 
-/* static */ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
-                                        JSExnType type,
-                                        UniquePtr<JSErrorReport> errorReport,
-                                        HandleString fileName,
-                                        HandleObject stack, uint32_t lineNumber,
-                                        uint32_t columnNumber,
-                                        HandleString message) {
+/* static */
+bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
+                           JSExnType type, UniquePtr<JSErrorReport> errorReport,
+                           HandleString fileName, HandleObject stack,
+                           uint32_t sourceId, uint32_t lineNumber,
+                           uint32_t columnNumber, HandleString message) {
   AssertObjectIsSavedFrameOrWrapper(cx, stack);
   cx->check(obj, stack);
 
@@ -95,6 +95,7 @@ using namespace js;
   if (message) {
     obj->setSlotWithType(cx, messageShape, StringValue(message));
   }
+  obj->initReservedSlot(SOURCEID_SLOT, Int32Value(sourceId));
 
   // When recording/replaying and running on the main thread, get a counter
   // which the devtools can use to warp to this point in the future.
@@ -112,11 +113,14 @@ using namespace js;
   return true;
 }
 
-/* static */ ErrorObject* js::ErrorObject::create(
-    JSContext* cx, JSExnType errorType, HandleObject stack,
-    HandleString fileName, uint32_t lineNumber, uint32_t columnNumber,
-    UniquePtr<JSErrorReport> report, HandleString message,
-    HandleObject protoArg /* = nullptr */) {
+/* static */
+ErrorObject* js::ErrorObject::create(JSContext* cx, JSExnType errorType,
+                                     HandleObject stack, HandleString fileName,
+                                     uint32_t sourceId, uint32_t lineNumber,
+                                     uint32_t columnNumber,
+                                     UniquePtr<JSErrorReport> report,
+                                     HandleString message,
+                                     HandleObject protoArg /* = nullptr */) {
   AssertObjectIsSavedFrameOrWrapper(cx, stack);
 
   RootedObject proto(cx, protoArg);
@@ -139,7 +143,7 @@ using namespace js;
   }
 
   if (!ErrorObject::init(cx, errObject, errorType, std::move(report), fileName,
-                         stack, lineNumber, columnNumber, message)) {
+                         stack, sourceId, lineNumber, columnNumber, message)) {
     return nullptr;
   }
 
@@ -167,6 +171,7 @@ JSErrorReport* js::ErrorObject::getOrCreateErrorReport(JSContext* cx) {
   report.filename = filenameStr.get();
 
   // Coordinates.
+  report.sourceId = sourceId();
   report.lineno = lineNumber();
   report.column = columnNumber();
 
@@ -206,7 +211,7 @@ static bool FindErrorInstanceOrPrototype(JSContext* cx, HandleObject obj,
   //   (new NYI).stack
   // to continue returning stacks that are useless, but at least don't throw.
 
-  RootedObject target(cx, CheckedUnwrap(obj));
+  RootedObject target(cx, CheckedUnwrapStatic(obj));
   if (!target) {
     ReportAccessDenied(cx);
     return false;
@@ -227,7 +232,7 @@ static bool FindErrorInstanceOrPrototype(JSContext* cx, HandleObject obj,
       return false;
     }
 
-    target = CheckedUnwrap(proto);
+    target = CheckedUnwrapStatic(proto);
     if (!target) {
       ReportAccessDenied(cx);
       return false;
@@ -240,15 +245,15 @@ static bool FindErrorInstanceOrPrototype(JSContext* cx, HandleObject obj,
 
 static MOZ_ALWAYS_INLINE bool IsObject(HandleValue v) { return v.isObject(); }
 
-/* static */ bool js::ErrorObject::getStack(JSContext* cx, unsigned argc,
-                                            Value* vp) {
+/* static */
+bool js::ErrorObject::getStack(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   // We accept any object here, because of poor-man's subclassing of Error.
   return CallNonGenericMethod<IsObject, getStack_impl>(cx, args);
 }
 
-/* static */ bool js::ErrorObject::getStack_impl(JSContext* cx,
-                                                 const CallArgs& args) {
+/* static */
+bool js::ErrorObject::getStack_impl(JSContext* cx, const CallArgs& args) {
   RootedObject thisObj(cx, &args.thisv().toObject());
 
   RootedObject obj(cx);
@@ -294,15 +299,15 @@ static MOZ_ALWAYS_INLINE bool IsObject(HandleValue v) { return v.isObject(); }
   return true;
 }
 
-/* static */ bool js::ErrorObject::setStack(JSContext* cx, unsigned argc,
-                                            Value* vp) {
+/* static */
+bool js::ErrorObject::setStack(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   // We accept any object here, because of poor-man's subclassing of Error.
   return CallNonGenericMethod<IsObject, setStack_impl>(cx, args);
 }
 
-/* static */ bool js::ErrorObject::setStack_impl(JSContext* cx,
-                                                 const CallArgs& args) {
+/* static */
+bool js::ErrorObject::setStack_impl(JSContext* cx, const CallArgs& args) {
   RootedObject thisObj(cx, &args.thisv().toObject());
 
   if (!args.requireAtLeast(cx, "(set stack)", 1)) {

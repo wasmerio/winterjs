@@ -1,4 +1,3 @@
-// |reftest| skip-if(!Symbol.hasOwnProperty('matchAll')||!String.prototype.hasOwnProperty('matchAll')) -- Symbol.matchAll,String.prototype.matchAll is not enabled unconditionally
 // Copyright (C) 2018 Peter Wong. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -18,6 +17,8 @@ info: |
 features: [Symbol.matchAll, String.prototype.matchAll]
 includes: [compareArray.js, compareIterator.js, regExpUtils.js]
 ---*/
+
+assert.sameValue(typeof String.prototype.matchAll, "function");
 
 delete RegExp.prototype[Symbol.matchAll];
 var str = '/a/g*/b/g';

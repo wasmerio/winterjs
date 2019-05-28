@@ -164,31 +164,32 @@ inline TypeSet::Type TypeSet::GetMaybeUntrackedValueType(const Value& val) {
   return IsUntrackedValue(val) ? UnknownType() : GetValueType(val);
 }
 
-inline TypeFlags PrimitiveTypeFlag(JSValueType type) {
+inline TypeFlags PrimitiveTypeFlag(ValueType type) {
   switch (type) {
-    case JSVAL_TYPE_UNDEFINED:
+    case ValueType::Undefined:
       return TYPE_FLAG_UNDEFINED;
-    case JSVAL_TYPE_NULL:
+    case ValueType::Null:
       return TYPE_FLAG_NULL;
-    case JSVAL_TYPE_BOOLEAN:
+    case ValueType::Boolean:
       return TYPE_FLAG_BOOLEAN;
-    case JSVAL_TYPE_INT32:
+    case ValueType::Int32:
       return TYPE_FLAG_INT32;
-    case JSVAL_TYPE_DOUBLE:
+    case ValueType::Double:
       return TYPE_FLAG_DOUBLE;
-    case JSVAL_TYPE_STRING:
+    case ValueType::String:
       return TYPE_FLAG_STRING;
-    case JSVAL_TYPE_SYMBOL:
+    case ValueType::Symbol:
       return TYPE_FLAG_SYMBOL;
-#ifdef ENABLE_BIGINT
-    case JSVAL_TYPE_BIGINT:
+    case ValueType::BigInt:
       return TYPE_FLAG_BIGINT;
-#endif
-    case JSVAL_TYPE_MAGIC:
+    case ValueType::Magic:
       return TYPE_FLAG_LAZYARGS;
-    default:
-      MOZ_CRASH("Bad JSValueType");
+    case ValueType::PrivateGCThing:
+    case ValueType::Object:
+      break;
   }
+
+  MOZ_CRASH("Bad ValueType");
 }
 
 inline JSValueType TypeFlagPrimitive(TypeFlags flags) {
@@ -207,10 +208,8 @@ inline JSValueType TypeFlagPrimitive(TypeFlags flags) {
       return JSVAL_TYPE_STRING;
     case TYPE_FLAG_SYMBOL:
       return JSVAL_TYPE_SYMBOL;
-#ifdef ENABLE_BIGINT
     case TYPE_FLAG_BIGINT:
       return JSVAL_TYPE_BIGINT;
-#endif
     case TYPE_FLAG_LAZYARGS:
       return JSVAL_TYPE_MAGIC;
     default:
@@ -469,11 +468,8 @@ inline void TypeMonitorCall(JSContext* cx, const js::CallArgs& args,
                             bool constructing) {
   if (args.callee().is<JSFunction>()) {
     JSFunction* fun = &args.callee().as<JSFunction>();
-    if (fun->isInterpreted()) {
-      AutoSweepTypeScript sweep(fun->nonLazyScript());
-      if (fun->nonLazyScript()->types(sweep)) {
-        TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
-      }
+    if (fun->isInterpreted() && fun->nonLazyScript()->types()) {
+      TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
     }
   }
 }
@@ -628,9 +624,9 @@ extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
 /////////////////////////////////////////////////////////////////////
 
 /* static */ inline StackTypeSet* TypeScript::ThisTypes(JSScript* script) {
-  AutoSweepTypeScript sweep(script);
-  if (TypeScript* types = script->types(sweep)) {
-    return types->typeArray() + script->numBytecodeTypeSets();
+  if (TypeScript* types = script->types()) {
+    AutoSweepTypeScript sweep(script);
+    return types->typeArray(sweep) + script->numBytecodeTypeSets();
   }
   return nullptr;
 }
@@ -644,9 +640,9 @@ extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
 /* static */ inline StackTypeSet* TypeScript::ArgTypes(JSScript* script,
                                                        unsigned i) {
   MOZ_ASSERT(i < script->functionNonDelazifying()->nargs());
-  AutoSweepTypeScript sweep(script);
-  if (TypeScript* types = script->types(sweep)) {
-    return types->typeArray() + script->numBytecodeTypeSets() + 1 + i;
+  if (TypeScript* types = script->types()) {
+    AutoSweepTypeScript sweep(script);
+    return types->typeArray(sweep) + script->numBytecodeTypeSets() + 1 + i;
   }
   return nullptr;
 }
@@ -692,14 +688,14 @@ template <typename TYPESET>
 /* static */ inline StackTypeSet* TypeScript::BytecodeTypes(JSScript* script,
                                                             jsbytecode* pc) {
   MOZ_ASSERT(CurrentThreadCanAccessZone(script->zone()));
-  AutoSweepTypeScript sweep(script);
-  TypeScript* types = script->types(sweep);
+  TypeScript* types = script->types();
   if (!types) {
     return nullptr;
   }
+  AutoSweepTypeScript sweep(script);
   uint32_t* hint = types->bytecodeTypeMapHint();
   return BytecodeTypes(script, pc, types->bytecodeTypeMap(), hint,
-                       types->typeArray());
+                       types->typeArray(sweep));
 }
 
 /* static */ inline void TypeScript::Monitor(JSContext* cx, JSScript* script,
@@ -1017,10 +1013,21 @@ struct TypeHashSet {
       return;
     }
 
+    // Simple functions to read and mutate the mark bit of pointers.
+    auto markBit = [](U* elem) -> bool {
+      return bool(reinterpret_cast<uintptr_t>(elem) & U::TypeHashSetMarkBit);
+    };
+    auto toggleMarkBit = [](U* elem) -> U* {
+      return reinterpret_cast<U*>(
+          reinterpret_cast<uintptr_t>(elem) ^ U::TypeHashSetMarkBit);
+    };
+
     // When we have a single element it is stored in-place of the function
     // array pointer.
     if (count == 1) {
-      values = reinterpret_cast<U**>(f(reinterpret_cast<U*>(values)));
+      U* elem = f(reinterpret_cast<U*>(values));
+      MOZ_ASSERT(!markBit(elem));
+      values = reinterpret_cast<U**>(elem);
       return;
     }
 
@@ -1028,25 +1035,19 @@ struct TypeHashSet {
     // unorderred array.
     if (count <= SET_ARRAY_SIZE) {
       for (unsigned i = 0; i < count; i++) {
-        values[i] = f(values[i]);
+        U* elem = f(values[i]);
+        MOZ_ASSERT(!markBit(elem));
+        values[i] = elem;
       }
       return;
     }
-
-    // Simple functions to read and mutate the lowest bit of pointers.
-    auto lowBit = [](U* elem) -> bool {
-      return bool(reinterpret_cast<uintptr_t>(elem) & 1);
-    };
-    auto toggleLowBit = [](U* elem) -> U* {
-      return reinterpret_cast<U*>(reinterpret_cast<uintptr_t>(elem) ^ 1);
-    };
 
     // This code applies the function f and relocates the values based on
     // the new pointers.
     //
     // To avoid allocations, we reuse the same structure but distinguish the
     // elements to be rellocated from the rellocated elements with the
-    // lowest bit.
+    // mark bit.
     unsigned capacity = Capacity(count);
     MOZ_RELEASE_ASSERT(uintptr_t(values[-1]) == capacity);
     unsigned found = 0;
@@ -1057,31 +1058,31 @@ struct TypeHashSet {
       MOZ_ASSERT(found <= count);
       U* elem = f(values[i]);
       values[i] = nullptr;
-      MOZ_ASSERT(!lowBit(elem));
-      values[found++] = toggleLowBit(elem);
+      MOZ_ASSERT(!markBit(elem));
+      values[found++] = toggleMarkBit(elem);
     }
     MOZ_ASSERT(found == count);
 
-    // Follow the same rule as InsertTry, except that for each cell we
-    // identify empty cell content with:
+    // Follow the same rule as InsertTry, except that for each cell we identify
+    // empty cell content with either a nullptr or the value of the mark bit:
     //
     //   nullptr    empty cell.
-    //   0b....0    inserted element.
-    //   0b....1    empty cell - element to be inserted.
+    //   0b...0.    inserted element.
+    //   0b...1.    empty cell - element to be inserted.
     unsigned mask = capacity - 1;
     for (unsigned i = 0; i < count; i++) {
       U* elem = values[i];
-      if (!lowBit(elem)) {
+      if (!markBit(elem)) {
         // If this is a newly inserted element, this implies that one of
         // the previous objects was moved to this position.
         continue;
       }
       values[i] = nullptr;
       while (elem) {
-        MOZ_ASSERT(lowBit(elem));
-        elem = toggleLowBit(elem);
+        MOZ_ASSERT(markBit(elem));
+        elem = toggleMarkBit(elem);
         unsigned pos = HashKey<T, Key>(Key::getKey(elem)) & mask;
-        while (values[pos] != nullptr && !lowBit(values[pos])) {
+        while (values[pos] != nullptr && !markBit(values[pos])) {
           pos = (pos + 1) & mask;
         }
         // The replaced element is either a nullptr, which stops this
@@ -1421,36 +1422,34 @@ inline AutoSweepObjectGroup::~AutoSweepObjectGroup() {
 
 inline AutoSweepTypeScript::AutoSweepTypeScript(JSScript* script)
 #ifdef DEBUG
-    : script_(script)
+    : zone_(script->zone()),
+      typeScript_(script->types())
 #endif
 {
-  if (script->typesNeedsSweep()) {
-    script->sweepTypes(*this);
+  if (TypeScript* types = script->types()) {
+    Zone* zone = script->zone();
+    if (types->typesNeedsSweep(zone)) {
+      types->sweepTypes(*this, zone);
+    }
   }
 }
 
 #ifdef DEBUG
 inline AutoSweepTypeScript::~AutoSweepTypeScript() {
   // This should still hold.
-  MOZ_ASSERT(!script_->typesNeedsSweep());
+  MOZ_ASSERT_IF(typeScript_, !typeScript_->typesNeedsSweep(zone_));
 }
 #endif
 
+inline bool TypeScript::typesNeedsSweep(Zone* zone) const {
+  MOZ_ASSERT(!js::TlsContext.get()->inUnsafeCallWithABI);
+  return typesGeneration() != zone->types.generation;
+}
+
 }  // namespace js
 
-inline js::TypeScript* JSScript::types(const js::AutoSweepTypeScript& sweep) {
-  MOZ_ASSERT(sweep.script() == this);
-  return types_;
-}
-
-inline bool JSScript::typesNeedsSweep() const {
-  MOZ_ASSERT(!js::TlsContext.get()->inUnsafeCallWithABI);
-  return types_ && typesGeneration() != zone()->types.generation;
-}
-
 inline bool JSScript::ensureHasTypes(JSContext* cx, js::AutoKeepTypeScripts&) {
-  js::AutoSweepTypeScript sweep(this);
-  return types(sweep) || makeTypes(cx);
+  return types() || makeTypes(cx);
 }
 
 #endif /* vm_TypeInference_inl_h */

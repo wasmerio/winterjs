@@ -10,7 +10,6 @@ import os
 import platform
 import posixpath
 import shlex
-import shutil
 import subprocess
 import sys
 import traceback
@@ -29,8 +28,6 @@ add_libdir_to_path()
 import jittests
 from tests import get_jitflags, valid_jitflags, get_cpu_count, get_environment_overlay, \
     change_env
-
-# Python 3.3 added shutil.which, but we can't use that yet.
 
 
 def which(name):
@@ -215,20 +212,6 @@ def main(argv):
     test_list = []
     read_all = True
 
-    # No point in adding in noasmjs and wasm-baseline variants if the
-    # jitflags forbid asmjs in the first place. (This is to avoid getting a
-    # wasm-baseline run when requesting --jitflags=interp, but the test
-    # contains test-also-noasmjs.)
-    test_flags = get_jitflags(options.jitflags)
-    options.asmjs_enabled = True
-    options.wasm_enabled = True
-    if all(['--no-asmjs' in flags for flags in test_flags]):
-        options.asmjs_enabled = False
-        options.wasm_enabled = False
-    if all(['--wasm-compiler=none' in flags for flags in test_flags]):
-        options.asmjs_enabled = False
-        options.wasm_enabled = False
-
     if options.run_binast:
         code = 'print(getBuildConfiguration().binast)'
         is_binast_enabled = subprocess.check_output([js_shell, '-e', code])
@@ -329,6 +312,8 @@ def main(argv):
         sys.exit(0)
 
     # The full test list is ready. Now create copies for each JIT configuration.
+    test_flags = get_jitflags(options.jitflags)
+
     test_list = [_ for test in test_list for _ in test.copy_variants(test_flags)]
 
     job_list = (test for test in test_list)
@@ -364,10 +349,6 @@ def main(argv):
                                   'jit-tests', 'jit-tests', 'lib', 'prologue.js')
 
     prefix += ['-f', prologue]
-
-    # Clean up any remnants from previous crashes etc
-    shutil.rmtree(jittests.JS_CACHE_DIR, ignore_errors=True)
-    os.mkdir(jittests.JS_CACHE_DIR)
 
     if options.debugger:
         if job_count > 1:

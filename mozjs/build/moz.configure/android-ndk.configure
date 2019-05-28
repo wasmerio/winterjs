@@ -8,15 +8,6 @@
 js_option('--with-android-ndk', nargs=1,
           help='location where the Android NDK can be found')
 
-js_option('--with-android-ndk-version', nargs=1,
-          help='android NDK version')
-
-js_option('--with-android-platform', nargs=1,
-          help='location of the Android platform')
-
-js_option('--with-android-clang', nargs=1,
-          help='location of the Android clang compiler')
-
 js_option('--with-android-toolchain', nargs=1,
           help='location of the Android toolchain')
 
@@ -72,17 +63,13 @@ set_config('ANDROID_NDK', ndk)
 add_old_configure_assignment('android_ndk', ndk)
 
 
-@depends('--with-android-ndk-version', ndk)
+@depends(ndk)
 @checking('for android ndk version')
 @imports(_from='__builtin__', _import='open')
-def ndk_version(value, ndk):
+def ndk_version(ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
-
-    if value:
-        return value[0]
-
     with open(os.path.join(ndk, 'source.properties'), 'r') as f:
         for line in f:
             if not line.startswith('Pkg.Revision'):
@@ -122,15 +109,12 @@ def ndk_minor_version(ndk_version):
 set_config('ANDROID_NDK_MINOR_VERSION', ndk_minor_version)
 
 
-@depends('--with-android-platform', target, android_version, ndk)
+@depends(target, android_version, ndk)
 @checking('for android platform directory')
 @imports(_from='os.path', _import='isdir')
-def android_platform(value, target, android_version, ndk):
+def android_platform(target, android_version, ndk):
     if target.os != 'Android':
         return
-
-    if value:
-        return value[0]
 
     if 'aarch64' == target.cpu:
         target_dir_name = 'arm64'
@@ -238,7 +222,7 @@ def android_toolchain(target, host, ndk, toolchain):
                                         host.kernel.lower(), host.cpu)
         log.debug('Trying %s' % quote(toolchain))
         if not isdir(toolchain) and host.cpu == 'x86_64':
-            toolchain = toolchain_format % (ndk, target_base, version,
+            toolchain = toolchain_format % (ndk, target_base,
                                             host.kernel.lower(), 'x86')
             log.debug('Trying %s' % quote(toolchain))
         if isdir(toolchain):
@@ -268,7 +252,7 @@ js_option(env='STLPORT_CPPFLAGS',
 @imports(_from='os.path', _import='isdir')
 def stlport_cppflags(value, ndk):
     if value and len(value):
-        return value[0].split()
+        return value.split()
     if not ndk:
         return
 
@@ -312,8 +296,6 @@ def extra_toolchain_flags(android_system, android_sysroot, toolchain_dir,
              android_system,
              '-isystem',
              os.path.join(android_sysroot, 'usr', 'include'),
-             '--sysroot',
-             android_sysroot,
              '-gcc-toolchain',
              toolchain_dir,
              '-D__ANDROID_API__=%d' % android_version]
@@ -350,21 +332,17 @@ def bindgen_cflags_android(toolchain_flags, toolchain, toolchain_prefix):
     ]
 
 
-@depends('--with-android-clang', host, ndk)
+@depends(host, ndk)
 @imports(_from='os.path', _import='exists')
 @imports(_from='os.path', _import='isdir')
-def android_clang_compiler(value, host, ndk):
+def android_clang_compiler(host, ndk):
     if not ndk:
         return
 
-    if value:
-        return value[0]
-
-    llvm_path = '%s/toolchains/llvm/prebuilt/%s-%s/bin' % (ndk,
-                                                           host.kernel.lower(),
-                                                           host.cpu)
+    llvm_format = '%s/toolchains/llvm/prebuilt/%s-%s/bin'
+    llvm_path = llvm_format % (ndk, host.kernel.lower(), host.cpu)
     if not isdir(llvm_path) and host.cpu == 'x86_64':
-        llvm_path = toolchain_format % (ndk, host.kernel.lower(), 'x86')
+        llvm_path = llvm_format % (ndk, host.kernel.lower(), 'x86')
 
     if not isdir(llvm_path):
         die("Couldn't find path to LLVM toolchain at %s" % llvm_path)
