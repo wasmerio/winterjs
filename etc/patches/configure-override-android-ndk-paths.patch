@@ -82,6 +82,6 @@ index 66cf3e16ad..8f0b0582b3 100644
 +    if value:
 +        return value[0]
 +
-     llvm_path = '%s/toolchains/llvm/prebuilt/%s-%s/bin' % (ndk,
-                                                            host.kernel.lower(),
-                                                            host.cpu)
+     llvm_format = '%s/toolchains/llvm/prebuilt/%s-%s/bin'
+     llvm_path = llvm_format % (ndk, host.kernel.lower(), host.cpu)
+     if not isdir(llvm_path) and host.cpu == 'x86_64':
