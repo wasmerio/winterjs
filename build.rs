@@ -123,8 +123,6 @@ fn build_jsapi() {
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
         println!("cargo:rustc-link-lib=Dbghelp");
-        println!("cargo:rustc-link-search=native={}/config/external/nspr/pr", out_dir);
-        println!("cargo:rustc-link-lib=nspr4");
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
