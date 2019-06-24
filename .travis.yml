@@ -21,9 +21,14 @@ addons:
       - g++-6
       - clang-5.0
   homebrew:
+    update: true
     packages:
       - python
       - python@2
+      - autoconf@2.13
+      - ccache
+      - llvm
+      - yasm
 
 env:
   - FEATURES=""
@@ -31,7 +36,7 @@ env:
 
 before_script:
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC=gcc-6; export CXX=g++-6; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install autoconf@2.13 ccache llvm yasm; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export PYTHON3="/usr/local/opt/python/bin/python3"; fi
 
 script:
   - ccache -z
