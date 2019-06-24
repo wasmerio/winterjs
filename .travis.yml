@@ -21,6 +21,7 @@ addons:
       - g++-6
       - clang-5.0
   homebrew:
+    update: true
     packages:
       - python
       - python@2
