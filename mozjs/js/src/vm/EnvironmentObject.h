@@ -278,10 +278,18 @@ class EnvironmentObject : public NativeObject {
     initReservedSlot(ENCLOSING_ENV_SLOT, ObjectOrNullValue(enclosing));
   }
 
-  // Get or set a name contained in this environment.
-  const Value& aliasedBinding(EnvironmentCoordinate ec) {
-    return getSlot(ec.slot());
+  static bool nonExtensibleIsFixedSlot(EnvironmentCoordinate ec) {
+    // For non-extensible environment objects isFixedSlot(slot) is equivalent to
+    // slot < MAX_FIXED_SLOTS.
+    return ec.slot() < MAX_FIXED_SLOTS;
   }
+  static size_t nonExtensibleDynamicSlotIndex(EnvironmentCoordinate ec) {
+    MOZ_ASSERT(!nonExtensibleIsFixedSlot(ec));
+    return ec.slot() - MAX_FIXED_SLOTS;
+  }
+
+  // Get or set a name contained in this environment.
+  inline const Value& aliasedBinding(EnvironmentCoordinate ec);
 
   const Value& aliasedBinding(const BindingIter& bi) {
     MOZ_ASSERT(bi.location().kind() == BindingLocation::Kind::Environment);
@@ -519,9 +527,9 @@ class LexicalEnvironmentObject : public EnvironmentObject {
                                           Handle<LexicalScope*> scope,
                                           HandleObject enclosing,
                                           gc::InitialHeap heap);
-  static LexicalEnvironmentObject* create(JSContext* cx,
-                                          Handle<LexicalScope*> scope,
-                                          AbstractFramePtr frame);
+  static LexicalEnvironmentObject* createForFrame(JSContext* cx,
+                                                  Handle<LexicalScope*> scope,
+                                                  AbstractFramePtr frame);
   static LexicalEnvironmentObject* createGlobal(JSContext* cx,
                                                 Handle<GlobalObject*> global);
   static LexicalEnvironmentObject* createNonSyntactic(JSContext* cx,
@@ -568,6 +576,10 @@ class LexicalEnvironmentObject : public EnvironmentObject {
   // For extensible lexical environments, the 'this' value for its
   // scope. Otherwise asserts.
   Value thisValue() const;
+
+  static constexpr size_t offsetOfThisValueOrScopeSlot() {
+    return getFixedSlotOffset(THIS_VALUE_OR_SCOPE_SLOT);
+  }
 };
 
 class NamedLambdaObject : public LexicalEnvironmentObject {
@@ -582,8 +594,6 @@ class NamedLambdaObject : public LexicalEnvironmentObject {
                                                  gc::InitialHeap heap);
 
   static NamedLambdaObject* create(JSContext* cx, AbstractFramePtr frame);
-  static NamedLambdaObject* create(JSContext* cx, AbstractFramePtr frame,
-                                   HandleFunction replacement);
 
   // For JITs.
   static size_t lambdaSlot();

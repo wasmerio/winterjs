@@ -9,6 +9,7 @@
 from __future__ import print_function
 import os
 import posixpath
+import re
 import sys
 import traceback
 from collections import namedtuple
@@ -29,7 +30,6 @@ TOP_SRC_DIR = os.path.dirname(os.path.dirname(JS_DIR))
 TEST_DIR = os.path.join(JS_DIR, 'jit-test', 'tests')
 LIB_DIR = os.path.join(JS_DIR, 'jit-test', 'lib') + os.path.sep
 MODULE_DIR = os.path.join(JS_DIR, 'jit-test', 'modules') + os.path.sep
-JS_CACHE_DIR = os.path.join(JS_DIR, 'jit-test', '.js-cache')
 JS_TESTS_DIR = posixpath.join(JS_DIR, 'tests')
 
 # Backported from Python 3.1 posixpath.py
@@ -127,11 +127,6 @@ class JitTest:
         self.valgrind = False
         # True means force Pacific time for the test
         self.tz_pacific = False
-        # True means run with and without asm.js
-        self.test_also_noasmjs = False
-        # enabled.
-        # True means run with and and without wasm baseline compiler enabled.
-        self.test_also_wasm_baseline = False
         # Additional files to include, in addition to prologue.js
         self.other_includes = []
         # List of other configurations to test with.
@@ -165,8 +160,6 @@ class JitTest:
         t.allow_overrecursed = self.allow_overrecursed
         t.valgrind = self.valgrind
         t.tz_pacific = self.tz_pacific
-        t.test_also_noasmjs = self.test_also_noasmjs
-        t.test_also_wasm_baseline = self.test_also_wasm_baseline
         t.other_includes = self.other_includes[:]
         t.test_also = self.test_also
         t.test_join = self.test_join
@@ -202,7 +195,6 @@ class JitTest:
 
     # We would use 500019 (5k19), but quit() only accepts values up to 127, due to fuzzers
     SKIPPED_EXIT_STATUS = 59
-    CacheDir = JS_CACHE_DIR
     Directives = {}
 
     @classmethod
@@ -301,22 +293,10 @@ class JitTest:
                         test.valgrind = options.valgrind
                     elif name == 'tz-pacific':
                         test.tz_pacific = True
-                    elif name == 'test-also-noasmjs':
-                        if options.asmjs_enabled:
-                            test.test_also.append(['--no-asmjs'])
-                    elif name == 'test-also-wasm-compiler-ion':
-                        if options.wasm_enabled:
-                            test.test_also.append(['--wasm-compiler=ion'])
-                    elif name == 'test-also-wasm-compiler-baseline':
-                        if options.wasm_enabled:
-                            test.test_also.append(['--wasm-compiler=baseline'])
-                    elif name == 'test-also-wasm-tiering':
-                        if options.wasm_enabled:
-                            test.test_also.append(['--test-wasm-await-tier2'])
                     elif name.startswith('test-also='):
-                        test.test_also.append([name[len('test-also='):]])
+                        test.test_also.append(re.split(r'\s+', name[len('test-also='):]))
                     elif name.startswith('test-join='):
-                        test.test_join.append([name[len('test-join='):]])
+                        test.test_join.append(re.split(r'\s+', name[len('test-join='):]))
                     elif name == 'module':
                         test.is_module = True
                     elif name == 'crash':
@@ -363,7 +343,7 @@ class JitTest:
 
         # We may have specified '-a' or '-d' twice: once via --jitflags, once
         # via the "|jit-test|" line.  Remove dups because they are toggles.
-        cmd = prefix + ['--js-cache', JitTest.CacheDir]
+        cmd = prefix + []
         cmd += list(set(self.jitflags))
         for expr in exprs:
             cmd += ['-e', expr]
@@ -412,6 +392,8 @@ def find_tests(substring=None, run_binast=False):
                 continue
             if os.path.join('binast', 'nonlazy') in dirpath:
                 continue
+            if os.path.join('binast', 'invalid') in dirpath:
+                continue
 
         for filename in filenames:
             if not (filename.endswith('.js') or filename.endswith('.binjs')):
@@ -426,7 +408,7 @@ def find_tests(substring=None, run_binast=False):
 
 
 def run_test_remote(test, device, prefix, options):
-    from mozdevice import ADBDevice, ADBProcessError, ADBTimeoutError
+    from mozdevice import ADBDevice, ADBProcessError
 
     if options.test_reflect_stringify:
         raise ValueError("can't run Reflect.stringify tests remotely")
@@ -446,16 +428,23 @@ def run_test_remote(test, device, prefix, options):
     cmd = ADBDevice._escape_command_line(cmd)
     start = datetime.now()
     try:
+        # Allow ADBError or ADBTimeoutError to terminate the test run,
+        # but handle ADBProcessError in order to support the use of
+        # non-zero exit codes in the JavaScript shell tests.
         out = device.shell_output(cmd, env=env,
                                   cwd=options.remote_test_root,
                                   timeout=int(options.timeout))
         returncode = 0
-    except ADBTimeoutError:
-        raise
     except ADBProcessError as e:
-        out = e.adb_process.stdout
-        print("exception output: %s" % str(out))
+        # Treat ignorable intermittent adb communication errors as
+        # skipped tests.
+        out = str(e.adb_process.stdout)
         returncode = e.adb_process.exitcode
+        re_ignore = re.compile(r'error: (closed|device .* not found)')
+        if returncode == 1 and re_ignore.search(out):
+            print("Skipping {} due to ignorable adb error {}".format(test.path, out))
+            test.skip_if_cond = "true"
+            returncode = test.SKIPPED_EXIT_STATUS
 
     elapsed = (datetime.now() - start).total_seconds()
 
@@ -811,39 +800,46 @@ def init_remote_dir(device, path, root=True):
 
 def run_tests_remote(tests, num_tests, prefix, options, slog):
     # Setup device with everything needed to run our tests.
-    from mozdevice import ADBDevice
-    device = ADBDevice(device=options.device_serial,
-                       test_root=options.remote_test_root)
+    from mozdevice import ADBDevice, ADBError, ADBTimeoutError
+    try:
+        device = ADBDevice(device=options.device_serial,
+                           test_root=options.remote_test_root)
 
-    init_remote_dir(device, options.remote_test_root)
+        init_remote_dir(device, options.remote_test_root)
 
-    # Update the test root to point to our test directory.
-    jit_tests_dir = posixpath.join(options.remote_test_root, 'jit-tests')
-    options.remote_test_root = posixpath.join(jit_tests_dir, 'jit-tests')
+        # Update the test root to point to our test directory.
+        jit_tests_dir = posixpath.join(options.remote_test_root, 'jit-tests')
+        options.remote_test_root = posixpath.join(jit_tests_dir, 'jit-tests')
 
-    # Push js shell and libraries.
-    init_remote_dir(device, jit_tests_dir)
-    push_libs(options, device)
-    push_progs(options, device, [prefix[0]])
-    device.chmod(options.remote_test_root, recursive=True, root=True)
+        # Push js shell and libraries.
+        init_remote_dir(device, jit_tests_dir)
+        push_libs(options, device)
+        push_progs(options, device, [prefix[0]])
+        device.chmod(options.remote_test_root, recursive=True, root=True)
 
-    JitTest.CacheDir = posixpath.join(options.remote_test_root, '.js-cache')
-    init_remote_dir(device, JitTest.CacheDir)
+        jtd_tests = posixpath.join(jit_tests_dir, 'tests')
+        init_remote_dir(device, jtd_tests)
+        device.push(JS_TESTS_DIR, jtd_tests, timeout=600)
+        device.chmod(jtd_tests, recursive=True, root=True)
 
-    jtd_tests = posixpath.join(jit_tests_dir, 'tests')
-    init_remote_dir(device, jtd_tests)
-    device.push(JS_TESTS_DIR, jtd_tests, timeout=600)
-    device.chmod(jtd_tests, recursive=True, root=True)
-
-    device.push(os.path.dirname(TEST_DIR), options.remote_test_root,
-                timeout=600)
-    device.chmod(options.remote_test_root, recursive=True, root=True)
-    prefix[0] = os.path.join(options.remote_test_root, 'js')
+        device.push(os.path.dirname(TEST_DIR), options.remote_test_root,
+                    timeout=600)
+        device.chmod(options.remote_test_root, recursive=True, root=True)
+        prefix[0] = os.path.join(options.remote_test_root, 'js')
+    except (ADBError, ADBTimeoutError):
+        print("TEST-UNEXPECTED-FAIL | jit_test.py" +
+              " : Device initialization failed")
+        raise
 
     # Run all tests.
     pb = create_progressbar(num_tests, options)
-    gen = get_remote_results(tests, device, prefix, options)
-    ok = process_test_results(gen, num_tests, pb, options, slog)
+    try:
+        gen = get_remote_results(tests, device, prefix, options)
+        ok = process_test_results(gen, num_tests, pb, options, slog)
+    except (ADBError, ADBTimeoutError):
+        print("TEST-UNEXPECTED-FAIL | jit_test.py" +
+              " : Device error during test")
+        raise
     return ok
 
 

@@ -380,13 +380,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void Push(FloatRegister reg) PER_SHARED_ARCH;
   void PushFlags() DEFINED_ON(x86_shared);
   void Push(jsid id, Register scratchReg);
+  void Push(const Address& addr);
   void Push(TypedOrValueRegister v);
   void Push(const ConstantOrRegister& v);
   void Push(const ValueOperand& val);
   void Push(const Value& val);
   void Push(JSValueType type, Register reg);
   void PushValue(const Address& addr);
-  void PushEmptyRooted(VMFunction::RootType rootType);
+  void PushEmptyRooted(VMFunctionData::RootType rootType);
   inline CodeOffset PushWithPatch(ImmWord word);
   inline CodeOffset PushWithPatch(ImmPtr imm);
 
@@ -396,7 +397,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void Pop(const ValueOperand& val) PER_SHARED_ARCH;
   void PopFlags() DEFINED_ON(x86_shared);
   void PopStackPtr() DEFINED_ON(arm, mips_shared, x86_shared);
-  void popRooted(VMFunction::RootType rootType, Register cellReg,
+  void popRooted(VMFunctionData::RootType rootType, Register cellReg,
                  const ValueOperand& valueReg);
 
   // Move the stack pointer based on the requested amount.
@@ -592,6 +593,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   CodeOffset callWithABI(wasm::BytecodeOffset offset, wasm::SymbolicAddress fun,
                          MoveOp::Type result = MoveOp::GENERAL);
+  void callDebugWithABI(wasm::SymbolicAddress fun,
+                        MoveOp::Type result = MoveOp::GENERAL);
 
  private:
   // Reinitialize the variables which have to be cleared before making a call
@@ -711,9 +714,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   //
   // See JitFrames.h, and MarkJitExitFrame in JitFrames.cpp.
 
-  // Push stub code and the VMFunction pointer.
+  // Push stub code and the VMFunctionData pointer.
   inline void enterExitFrame(Register cxreg, Register scratch,
-                             const VMFunction* f);
+                             const VMFunctionData* f);
 
   // Push an exit frame token to identify which fake exit frame this footer
   // corresponds to.
@@ -768,6 +771,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
                  const ValueOperand& dest) PER_ARCH;
   void moveValue(const ValueOperand& src, const ValueOperand& dest) PER_ARCH;
   void moveValue(const Value& src, const ValueOperand& dest) PER_ARCH;
+
+  // ===============================================================
+  // Load instructions
+
+  inline void load32SignExtendToPtr(const Address& src, Register dest) PER_ARCH;
 
  public:
   // ===============================================================
@@ -953,6 +961,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   inline void neg32(Register reg) PER_SHARED_ARCH;
   inline void neg64(Register64 reg) DEFINED_ON(x86, x64, arm, mips32, mips64);
+  inline void negPtr(Register reg) PER_ARCH;
 
   inline void negateFloat(FloatRegister reg) PER_SHARED_ARCH;
 
@@ -1425,6 +1434,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                Label* label) PER_SHARED_ARCH;
   inline void branchTestSymbol(Condition cond, Register tag,
                                Label* label) PER_SHARED_ARCH;
+  inline void branchTestBigInt(Condition cond, Register tag,
+                               Label* label) PER_SHARED_ARCH;
   inline void branchTestNull(Condition cond, Register tag,
                              Label* label) PER_SHARED_ARCH;
   inline void branchTestObject(Condition cond, Register tag,
@@ -1488,6 +1499,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
+  inline void branchTestBigInt(Condition cond, const BaseIndex& address,
+                               Label* label) PER_SHARED_ARCH;
+  inline void branchTestBigInt(Condition cond, const ValueOperand& value,
+                               Label* label)
+      DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
+
   inline void branchTestNull(Condition cond, const Address& address,
                              Label* label) PER_SHARED_ARCH;
   inline void branchTestNull(Condition cond, const BaseIndex& address,
@@ -1544,6 +1561,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void branchTestStringTruthy(bool truthy, const ValueOperand& value,
                                      Label* label)
       DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
+  inline void branchTestBigIntTruthy(bool truthy, const ValueOperand& value,
+                                     Label* label)
+      DEFINED_ON(arm, arm64, mips32, mips64, x86_shared);
 
   // Create an unconditional branch to the address given as argument.
   inline void branchToComputedAddress(const BaseIndex& address) PER_ARCH;
@@ -1580,6 +1600,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
       DEFINED_ON(arm, arm64, x86_shared);
   template <typename T>
   inline void branchTestSymbolImpl(Condition cond, const T& t, Label* label)
+      DEFINED_ON(arm, arm64, x86_shared);
+  template <typename T>
+  inline void branchTestBigIntImpl(Condition cond, const T& t, Label* label)
       DEFINED_ON(arm, arm64, x86_shared);
   template <typename T>
   inline void branchTestNullImpl(Condition cond, const T& t, Label* label)
@@ -1736,8 +1759,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void wasmTrap(wasm::Trap trap, wasm::BytecodeOffset bytecodeOffset);
   void wasmInterruptCheck(Register tls, wasm::BytecodeOffset bytecodeOffset);
-  void wasmReserveStackChecked(uint32_t amount,
-                               wasm::BytecodeOffset trapOffset);
+
+  // Returns a pair: the offset of the undefined (trapping) instruction, and
+  // the number of extra bytes of stack allocated prior to the trap
+  // instruction proper.
+  std::pair<CodeOffset, uint32_t> wasmReserveStackChecked(
+      uint32_t amount, wasm::BytecodeOffset trapOffset);
 
   // Emit a bounds check against the wasm heap limit, jumping to 'label' if
   // 'cond' holds. If JitOptions.spectreMaskIndex is true, in speculative
@@ -2529,10 +2556,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
     } else if (IsFloatingPointType(src.type())) {
       FloatRegister reg = src.typedReg().fpu();
       if (src.type() == MIRType::Float32) {
-        convertFloat32ToDouble(reg, ScratchDoubleReg);
-        reg = ScratchDoubleReg;
+        ScratchDoubleScope fpscratch(*this);
+        convertFloat32ToDouble(reg, fpscratch);
+        storeDouble(fpscratch, dest);
+      } else {
+        storeDouble(reg, dest);
       }
-      storeDouble(reg, dest);
     } else {
       storeValue(ValueTypeFromMIRType(src.type()), src.typedReg().gpr(), dest);
     }
@@ -2697,6 +2726,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void debugAssertObjHasFixedSlots(Register obj, Register scratch);
 
   void branchIfNativeIteratorNotReusable(Register ni, Label* notReusable);
+
+  void iteratorMore(Register obj, ValueOperand output, Register temp);
+  void iteratorClose(Register obj, Register temp1, Register temp2,
+                     Register temp3);
 
   using MacroAssemblerSpecific::extractTag;
   MOZ_MUST_USE Register extractTag(const TypedOrValueRegister& reg,

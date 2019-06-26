@@ -181,7 +181,8 @@ void Module::testingBlockOnTier2Complete() const {
   }
 }
 
-/* virtual */ size_t Module::serializedSize(const LinkData& linkData) const {
+/* virtual */
+size_t Module::serializedSize(const LinkData& linkData) const {
   JS::BuildIdCharVector buildId;
   {
     AutoEnterOOMUnsafeRegion oom;
@@ -197,8 +198,9 @@ void Module::testingBlockOnTier2Complete() const {
          SerializedVectorSize(customSections_) + code_->serializedSize();
 }
 
-/* virtual */ void Module::serialize(const LinkData& linkData, uint8_t* begin,
-                                     size_t size) const {
+/* virtual */
+void Module::serialize(const LinkData& linkData, uint8_t* begin,
+                       size_t size) const {
   MOZ_RELEASE_ASSERT(!metadata().debugEnabled);
   MOZ_RELEASE_ASSERT(code_->hasTier(Tier::Serialized));
 
@@ -222,9 +224,9 @@ void Module::testingBlockOnTier2Complete() const {
   MOZ_RELEASE_ASSERT(cursor == begin + size);
 }
 
-/* static */ MutableModule Module::deserialize(const uint8_t* begin,
-                                               size_t size,
-                                               Metadata* maybeMetadata) {
+/* static */
+MutableModule Module::deserialize(const uint8_t* begin, size_t size,
+                                  Metadata* maybeMetadata) {
   MutableMetadata metadata(maybeMetadata);
   if (!metadata) {
     metadata = js_new<Metadata>();
@@ -318,7 +320,8 @@ void Module::serialize(const LinkData& linkData,
   listener.storeOptimizedEncoding(bytes.begin(), bytes.length());
 }
 
-/* virtual */ JSObject* Module::createObject(JSContext* cx) {
+/* virtual */
+JSObject* Module::createObject(JSContext* cx) {
   if (!GlobalObject::ensureConstructor(cx, cx->global(), JSProto_WebAssembly)) {
     return nullptr;
   }
@@ -387,7 +390,8 @@ RefPtr<JS::WasmModule> wasm::DeserializeModule(PRFileDesc* bytecodeFile,
                                                UniqueChars filename,
                                                unsigned line) {
   // We have to compile new code here so if we're fundamentally unable to
-  // compile, we have to fail.
+  // compile, we have to fail. If you change this code, update the
+  // MutableCompileArgs setting below.
   if (!BaselineCanCompile() && !IonCanCompile()) {
     return nullptr;
   }
@@ -424,9 +428,11 @@ RefPtr<JS::WasmModule> wasm::DeserializeModule(PRFileDesc* bytecodeFile,
   // (We would prefer to store this value with the Assumptions when
   // serializing, and for the caller of the deserialization machinery to
   // provide the value from the originating context.)
+  //
+  // Note this is guarded at the top of this function.
 
-  args->ionEnabled = true;
-  args->baselineEnabled = true;
+  args->ionEnabled = IonCanCompile();
+  args->baselineEnabled = BaselineCanCompile();
   args->sharedMemoryEnabled = true;
 
   UniqueChars error;
@@ -440,11 +446,12 @@ RefPtr<JS::WasmModule> wasm::DeserializeModule(PRFileDesc* bytecodeFile,
   return RefPtr<JS::WasmModule>(const_cast<Module*>(module.get()));
 }
 
-/* virtual */ void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
-                                         Metadata::SeenSet* seenMetadata,
-                                         ShareableBytes::SeenSet* seenBytes,
-                                         Code::SeenSet* seenCode, size_t* code,
-                                         size_t* data) const {
+/* virtual */
+void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
+                           Metadata::SeenSet* seenMetadata,
+                           ShareableBytes::SeenSet* seenBytes,
+                           Code::SeenSet* seenCode, size_t* code,
+                           size_t* data) const {
   code_->addSizeOfMiscIfNotSeen(mallocSizeOf, seenMetadata, seenCode, code,
                                 data);
   *data += mallocSizeOf(this) +
@@ -569,8 +576,13 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
                           Handle<FunctionVector> funcImports,
                           HandleWasmMemoryObject memoryObj,
                           HandleValVector globalImportValues) const {
+  MOZ_ASSERT_IF(!memoryObj, dataSegments_.empty());
+
   Instance& instance = instanceObj->instance();
   const SharedTableVector& tables = instance.tables();
+
+#ifndef ENABLE_WASM_BULKMEM_OPS
+  // Bulk memory changes the error checking behavior: we may write partial data.
 
   // Perform all error checks up front so that this function does not perform
   // partial initialization if an error is reported.
@@ -606,21 +618,44 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         return false;
       }
     }
-  } else {
-    MOZ_ASSERT(dataSegments_.empty());
   }
 
   // Now that initialization can't fail partway through, write data/elem
   // segments into memories/tables.
+#endif
 
   for (const ElemSegment* seg : elemSegments_) {
     if (seg->active()) {
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
-      instance.initElems(seg->tableIndex, *seg, offset, 0, seg->length());
+      uint32_t count = seg->length();
+#ifdef ENABLE_WASM_BULKMEM_OPS
+      uint32_t tableLength = tables[seg->tableIndex]->length();
+      bool fail = false;
+      if (offset > tableLength) {
+        fail = true;
+        count = 0;
+      } else if (tableLength - offset < count) {
+        fail = true;
+        count = tableLength - offset;
+      }
+#endif
+      if (count) {
+        instance.initElems(seg->tableIndex, *seg, offset, 0, count);
+      }
+#ifdef ENABLE_WASM_BULKMEM_OPS
+      if (fail) {
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                 JSMSG_WASM_BAD_FIT, "elem", "table");
+        return false;
+      }
+#endif
     }
   }
 
   if (memoryObj) {
+#ifdef ENABLE_WASM_BULKMEM_OPS
+    uint32_t memoryLength = memoryObj->volatileMemoryLength();
+#endif
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -629,12 +664,29 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         continue;
       }
 
-      // But apply active segments right now.
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
-      memcpy(memoryBase + offset, seg->bytes.begin(), seg->bytes.length());
+      uint32_t count = seg->bytes.length();
+#ifdef ENABLE_WASM_BULKMEM_OPS
+      bool fail = false;
+      if (offset > memoryLength) {
+        fail = true;
+        count = 0;
+      } else if (memoryLength - offset < count) {
+        fail = true;
+        count = memoryLength - offset;
+      }
+#endif
+      if (count) {
+        memcpy(memoryBase + offset, seg->bytes.begin(), count);
+      }
+#ifdef ENABLE_WASM_BULKMEM_OPS
+      if (fail) {
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                 JSMSG_WASM_BAD_FIT, "data", "memory");
+        return false;
+      }
+#endif
     }
-  } else {
-    MOZ_ASSERT(dataSegments_.empty());
   }
 
   return true;
@@ -1127,10 +1179,12 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
                             Vector<StructFieldProps>* fieldProps) {
   char buf[20];
   sprintf(buf, format, fieldNo);
-  RootedString str(cx, JS_AtomizeAndPinString(cx, buf));
-  if (!str) {
+
+  JSAtom* atom = Atomize(cx, buf, strlen(buf));
+  if (!atom) {
     return false;
   }
+  RootedId id(cx, AtomToId(atom));
 
   StructFieldProps props;
   props.isMutable = isMutable;
@@ -1170,7 +1224,7 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
   }
   MOZ_ASSERT(t != nullptr);
 
-  if (!ids->append(INTERNED_STRING_TO_JSID(cx, str))) {
+  if (!ids->append(id)) {
     return false;
   }
 
@@ -1198,7 +1252,7 @@ bool Module::makeStructTypeDescrs(
   MOZ_CRASH("Should not have seen any struct types");
 #else
 
-#  ifndef ENABLE_BINARYDATA
+#  ifndef ENABLE_TYPED_OBJECTS
 #    error "GC types require TypedObject"
 #  endif
 

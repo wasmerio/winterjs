@@ -10,6 +10,7 @@
 #include "mozilla/Maybe.h"
 
 #include "builtin/TypedObjectConstants.h"
+#include "js/ArrayBuffer.h"
 #include "js/GCHashTable.h"
 #include "vm/JSObject.h"
 #include "vm/Runtime.h"
@@ -165,8 +166,11 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   // The length of an ArrayBuffer or SharedArrayBuffer can be at most
   // INT32_MAX, and much code must change if this changes.
+  static constexpr size_t MaxBufferByteLength = INT32_MAX;
 
-  static const size_t MaxBufferByteLength = INT32_MAX;
+  /** The largest number of bytes that can be stored inline. */
+  static constexpr size_t MaxInlineBytes =
+      (NativeObject::MAX_FIXED_SLOTS - RESERVED_SLOTS) * sizeof(JS::Value);
 
  public:
   enum OwnsState {
@@ -175,12 +179,36 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   };
 
   enum BufferKind {
-    PLAIN = 0,  // malloced or inline data
-    WASM = 1,
-    MAPPED = 2,
-    EXTERNAL = 3,
+    /** Inline data kept in the repurposed slots of this ArrayBufferObject. */
+    INLINE_DATA = 0b000,
 
-    KIND_MASK = 0x3
+    /* Data allocated using the SpiderMonkey allocator. */
+    MALLOCED = 0b001,
+
+    /**
+     * No bytes are associated with this buffer.  (This could be because the
+     * buffer is detached, because it's an internal, newborn buffer not yet
+     * overwritten with user-exposable semantics, or some other reason.  The
+     * point is, don't read precise language semantics into this kind.)
+     */
+    NO_DATA = 0b010,
+
+    /**
+     * User-owned memory.  The associated buffer must be manually detached
+     * before the user invalidates (deallocates, reuses the storage of, &c.)
+     * the user-owned memory.
+     */
+    USER_OWNED = 0b011,
+
+    WASM = 0b100,
+    MAPPED = 0b101,
+    EXTERNAL = 0b110,
+
+    // These kind-values are currently invalid.  We intend to expand valid
+    // BufferKinds in the future to either partly or fully use these values.
+    BAD1 = 0b111,
+
+    KIND_MASK = 0b111
   };
 
  protected:
@@ -188,31 +216,17 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
     // The flags also store the BufferKind
     BUFFER_KIND_MASK = BufferKind::KIND_MASK,
 
-    DETACHED = 0x4,
-
-    // The dataPointer() is owned by this buffer and should be released
-    // when no longer in use. Releasing the pointer may be done by freeing,
-    // invoking a free callback function, or unmapping, as determined by the
-    // buffer's other flags.
-    //
-    // Array buffers which do not own their data include buffers that
-    // allocate their data inline, and buffers that are created lazily for
-    // typed objects with inline storage, in which case the buffer points
-    // directly to the typed object's storage.
-    OWNS_DATA = 0x8,
-
-    // This array buffer was created lazily for a typed object with inline
-    // data. This implies both that the typed object owns the buffer's data
-    // and that the list of views sharing this buffer's data might be
-    // incomplete. Any missing views will be typed objects.
-    FOR_INLINE_TYPED_OBJECT = 0x10,
+    DETACHED = 0b1000,
 
     // Views of this buffer might include typed objects.
-    TYPED_OBJECT_VIEWS = 0x20,
+    TYPED_OBJECT_VIEWS = 0b1'0000,
 
-    // This PLAIN or WASM buffer has been prepared for asm.js and cannot
-    // henceforth be transferred/detached.
-    FOR_ASMJS = 0x40
+    // This MALLOCED, MAPPED, or EXTERNAL buffer has been prepared for asm.js
+    // and cannot henceforth be transferred/detached.  (WASM, USER_OWNED, and
+    // INLINE_DATA buffers can't be prepared for asm.js -- although if an
+    // INLINE_DATA buffer is used with asm.js, it's silently rewritten into a
+    // MALLOCED buffer which *can* be prepared.)
+    FOR_ASMJS = 0b10'0000,
   };
 
   static_assert(JS_ARRAYBUFFER_DETACHED_FLAG == DETACHED,
@@ -243,13 +257,28 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
     }
 
    public:
-    template <BufferKind Kind>
-    static BufferContents create(void* data) {
-      return BufferContents(static_cast<uint8_t*>(data), Kind);
+    static BufferContents createInlineData(void* data) {
+      return BufferContents(static_cast<uint8_t*>(data), INLINE_DATA);
     }
 
-    static BufferContents createPlain(void* data) {
-      return BufferContents(static_cast<uint8_t*>(data), PLAIN);
+    static BufferContents createMalloced(void* data) {
+      return BufferContents(static_cast<uint8_t*>(data), MALLOCED);
+    }
+
+    static BufferContents createNoData() {
+      return BufferContents(nullptr, NO_DATA);
+    }
+
+    static BufferContents createUserOwned(void* data) {
+      return BufferContents(static_cast<uint8_t*>(data), USER_OWNED);
+    }
+
+    static BufferContents createWasm(void* data) {
+      return BufferContents(static_cast<uint8_t*>(data), WASM);
+    }
+
+    static BufferContents createMapped(void* data) {
+      return BufferContents(static_cast<uint8_t*>(data), MAPPED);
     }
 
     static BufferContents createExternal(void* data,
@@ -257,6 +286,13 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
                                          void* freeUserData = nullptr) {
       return BufferContents(static_cast<uint8_t*>(data), EXTERNAL, freeFunc,
                             freeUserData);
+    }
+
+    static BufferContents createFailed() {
+      // There's no harm in tagging this as MALLOCED, even tho obviously it
+      // isn't.  And adding an extra tag purely for this case is a complication
+      // that presently appears avoidable.
+      return BufferContents(nullptr, MALLOCED);
     }
 
     uint8_t* data() const { return data_; }
@@ -281,13 +317,11 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static bool class_constructor(JSContext* cx, unsigned argc, Value* vp);
 
-  static ArrayBufferObject* create(JSContext* cx, uint32_t nbytes,
-                                   BufferContents contents,
-                                   OwnsState ownsState = OwnsData,
-                                   HandleObject proto = nullptr,
-                                   NewObjectKind newKind = GenericObject);
-  static ArrayBufferObject* create(JSContext* cx, uint32_t nbytes,
-                                   HandleObject proto = nullptr);
+  static ArrayBufferObject* createForContents(JSContext* cx, uint32_t nbytes,
+                                              BufferContents contents);
+
+  static ArrayBufferObject* createZeroed(JSContext* cx, uint32_t nbytes,
+                                         HandleObject proto = nullptr);
 
   // Create an ArrayBufferObject that is safely finalizable and can later be
   // initialize()d to become a real, content-visible ArrayBufferObject.
@@ -304,20 +338,13 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
                        Handle<ArrayBufferObject*> fromBuffer,
                        uint32_t fromIndex, uint32_t count);
 
-  static void trace(JSTracer* trc, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
-  static BufferContents externalizeContents(JSContext* cx,
-                                            Handle<ArrayBufferObject*> buffer,
-                                            bool hasStealableContents);
-  static BufferContents stealContents(JSContext* cx,
-                                      Handle<ArrayBufferObject*> buffer,
-                                      bool hasStealableContents);
+  static uint8_t* stealMallocedContents(JSContext* cx,
+                                        Handle<ArrayBufferObject*> buffer);
 
-  bool hasStealableContents() const {
-    // Inline elements strictly adhere to the corresponding buffer.
-    return ownsData() && !isPreparedForAsmJS() && !isWasm();
-  }
+  static BufferContents extractStructuredCloneContents(
+      JSContext* cx, Handle<ArrayBufferObject*> buffer);
 
   static void addSizeOfExcludingThis(JSObject* obj,
                                      mozilla::MallocSizeOf mallocSizeOf,
@@ -332,18 +359,11 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   bool addView(JSContext* cx, JSObject* view);
 
-  void setNewData(FreeOp* fop, BufferContents newContents, OwnsState ownsState);
-  void changeContents(JSContext* cx, BufferContents newContents,
-                      OwnsState ownsState);
-
   // Detach this buffer from its original memory.  (This necessarily makes
   // views of this buffer unusable for modifying that original memory.)
-  static void detach(JSContext* cx, Handle<ArrayBufferObject*> buffer,
-                     BufferContents newContents);
+  static void detach(JSContext* cx, Handle<ArrayBufferObject*> buffer);
 
  private:
-  void changeViewContents(JSContext* cx, ArrayBufferViewObject* view,
-                          uint8_t* oldDataPointer, BufferContents newContents);
   void setFirstView(JSObject* view);
 
   uint8_t* inlineDataPointer() const;
@@ -370,25 +390,30 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   void releaseData(FreeOp* fop);
 
-  /*
-   * Check if the arrayBuffer contains any data. This will return false for
-   * ArrayBuffer.prototype and detached ArrayBuffers.
-   */
-  bool hasData() const { return getClass() == &class_; }
-
   BufferKind bufferKind() const {
     return BufferKind(flags() & BUFFER_KIND_MASK);
   }
-  bool isPlain() const { return bufferKind() == PLAIN; }
+
+  bool isInlineData() const { return bufferKind() == INLINE_DATA; }
+  bool isMalloced() const { return bufferKind() == MALLOCED; }
+  bool isNoData() const { return bufferKind() == NO_DATA; }
+  bool hasUserOwnedData() const { return bufferKind() == USER_OWNED; }
+
   bool isWasm() const { return bufferKind() == WASM; }
   bool isMapped() const { return bufferKind() == MAPPED; }
   bool isExternal() const { return bufferKind() == EXTERNAL; }
+
   bool isDetached() const { return flags() & DETACHED; }
   bool isPreparedForAsmJS() const { return flags() & FOR_ASMJS; }
 
   // WebAssembly support:
-  static MOZ_MUST_USE bool prepareForAsmJS(JSContext* cx,
-                                           Handle<ArrayBufferObject*> buffer);
+
+  /**
+   * Prepare this ArrayBuffer for use with asm.js.  Returns true on success,
+   * false on failure.  This function reports no errors.
+   */
+  MOZ_MUST_USE bool prepareForAsmJS();
+
   size_t wasmMappedSize() const;
   mozilla::Maybe<uint32_t> wasmMaxSize() const;
   static MOZ_MUST_USE bool wasmGrowToSizeInPlace(
@@ -406,41 +431,39 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static BufferContents createMappedContents(int fd, size_t offset,
                                              size_t length);
 
-  static size_t offsetOfFlagsSlot() { return getFixedSlotOffset(FLAGS_SLOT); }
   static size_t offsetOfDataSlot() { return getFixedSlotOffset(DATA_SLOT); }
 
-  void setForInlineTypedObject() {
-    setFlags(flags() | FOR_INLINE_TYPED_OBJECT);
-  }
   void setHasTypedObjectViews() { setFlags(flags() | TYPED_OBJECT_VIEWS); }
 
-  bool forInlineTypedObject() const {
-    return flags() & FOR_INLINE_TYPED_OBJECT;
-  }
-
  protected:
-  void setDataPointer(BufferContents contents, OwnsState ownsState);
+  void setDataPointer(BufferContents contents);
   void setByteLength(uint32_t length);
 
   uint32_t flags() const;
   void setFlags(uint32_t flags);
 
-  bool ownsData() const { return flags() & OWNS_DATA; }
-  void setOwnsData(OwnsState owns) {
-    setFlags(owns ? (flags() | OWNS_DATA) : (flags() & ~OWNS_DATA));
-  }
-
   bool hasTypedObjectViews() const { return flags() & TYPED_OBJECT_VIEWS; }
 
   void setIsDetached() { setFlags(flags() | DETACHED); }
-  void setIsPreparedForAsmJS() { setFlags(flags() | FOR_ASMJS); }
+  void setIsPreparedForAsmJS() {
+    MOZ_ASSERT(!isWasm());
+    MOZ_ASSERT(!hasUserOwnedData());
+    MOZ_ASSERT(!isInlineData());
+    MOZ_ASSERT(isMalloced() || isMapped() || isExternal());
+    setFlags(flags() | FOR_ASMJS);
+  }
 
-  void initialize(size_t byteLength, BufferContents contents,
-                  OwnsState ownsState) {
+  void initialize(size_t byteLength, BufferContents contents) {
     setByteLength(byteLength);
     setFlags(0);
     setFirstView(nullptr);
-    setDataPointer(contents, ownsState);
+    setDataPointer(contents);
+  }
+
+  void* initializeToInlineData(size_t byteLength) {
+    void* data = inlineDataPointer();
+    initialize(byteLength, BufferContents::createInlineData(data));
+    return data;
   }
 };
 

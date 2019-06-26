@@ -207,9 +207,7 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-#ifdef ENABLE_BIGINT
   BigIntLiteralType newBigInt() { return NodeGeneric; }
-#endif
 
   BooleanLiteralType newBooleanLiteral(bool cond, const TokenPos& pos) {
     return NodeGeneric;
@@ -339,18 +337,18 @@ class SyntaxParseHandler {
     return true;
   }
   MOZ_MUST_USE bool addObjectMethodDefinition(ListNodeType literal, Node key,
-                                              CodeNodeType funNode,
+                                              FunctionNodeType funNode,
                                               AccessorType atype) {
     return true;
   }
   MOZ_MUST_USE bool addClassMethodDefinition(ListNodeType memberList, Node key,
-                                             CodeNodeType funNode,
+                                             FunctionNodeType funNode,
                                              AccessorType atype,
                                              bool isStatic) {
     return true;
   }
   MOZ_MUST_USE bool addClassFieldDefinition(ListNodeType memberList, Node name,
-                                            Node initializer) {
+                                            FunctionNodeType initializer) {
     return true;
   }
   UnaryNodeType newYieldExpression(uint32_t begin, Node value) {
@@ -478,31 +476,31 @@ class SyntaxParseHandler {
     return true;
   }
 
-  MOZ_MUST_USE bool setLastFunctionFormalParameterDefault(CodeNodeType funNode,
-                                                          Node defaultValue) {
+  MOZ_MUST_USE bool setLastFunctionFormalParameterDefault(
+      FunctionNodeType funNode, Node defaultValue) {
     return true;
   }
 
-  CodeNodeType newFunctionStatement(const TokenPos& pos) {
-    return NodeFunctionStatement;
+  FunctionNodeType newFunction(FunctionSyntaxKind syntaxKind,
+                               const TokenPos& pos) {
+    switch (syntaxKind) {
+      case FunctionSyntaxKind::Statement:
+        return NodeFunctionStatement;
+      case FunctionSyntaxKind::Arrow:
+        return NodeFunctionArrow;
+      default:
+        // All non-arrow function expressions are initially presumed to have
+        // block body.  This will be overridden later *if* the function
+        // expression permissibly has an AssignmentExpression body.
+        return NodeFunctionExpression;
+    }
   }
 
-  CodeNodeType newFunctionExpression(const TokenPos& pos) {
-    // All non-arrow function expressions are initially presumed to have
-    // block body.  This will be overridden later *if* the function
-    // expression permissibly has an AssignmentExpression body.
-    return NodeFunctionExpression;
-  }
-
-  CodeNodeType newArrowFunction(const TokenPos& pos) {
-    return NodeFunctionArrow;
-  }
-
-  void setFunctionFormalParametersAndBody(CodeNodeType funNode,
+  void setFunctionFormalParametersAndBody(FunctionNodeType funNode,
                                           ListNodeType paramsBody) {}
-  void setFunctionBody(CodeNodeType funNode, LexicalScopeNodeType body) {}
-  void setFunctionBox(CodeNodeType funNode, FunctionBox* funbox) {}
-  void addFunctionFormalParameter(CodeNodeType funNode, Node argpn) {}
+  void setFunctionBody(FunctionNodeType funNode, LexicalScopeNodeType body) {}
+  void setFunctionBox(FunctionNodeType funNode, FunctionBox* funbox) {}
+  void addFunctionFormalParameter(FunctionNodeType funNode, Node argpn) {}
 
   ForNodeType newForStatement(uint32_t begin, TernaryNodeType forHead,
                               Node body, unsigned iflags) {
@@ -519,9 +517,9 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
 
-  MOZ_MUST_USE bool finishInitializerAssignment(NameNodeType nameNode,
-                                                Node init) {
-    return true;
+  AssignmentNodeType finishInitializerAssignment(NameNodeType nameNode,
+                                                 Node init) {
+    return NodeUnparenthesizedAssignment;
   }
 
   void setBeginPosition(Node pn, Node oth) {}

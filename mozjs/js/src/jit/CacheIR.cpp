@@ -34,6 +34,45 @@ const char* const js::jit::CacheKindNames[] = {
 #undef DEFINE_KIND
 };
 
+// We need to enter the namespace here so that the definition of
+// CacheIROpFormat::OpLengths can see CacheIROpFormat::ArgType
+// (without defining None/Id/Field/etc everywhere else in this file.)
+namespace js {
+namespace jit {
+namespace CacheIROpFormat {
+
+static constexpr uint32_t CacheIROpLength(ArgType arg) {
+  switch (arg) {
+    case None:
+      return 0;
+    case Id:
+      return sizeof(uint8_t);
+    case Field:
+      return sizeof(uint8_t);
+    case Byte:
+      return sizeof(uint8_t);
+    case Int32:
+    case UInt32:
+      return sizeof(uint32_t);
+    case Word:
+      return sizeof(uintptr_t);
+  }
+}
+template <typename... Args>
+static constexpr uint32_t CacheIROpLength(ArgType arg, Args... args) {
+  return CacheIROpLength(arg) + CacheIROpLength(args...);
+}
+
+const uint32_t OpLengths[] = {
+#define OPLENGTH(op, ...) 1 + CacheIROpLength(__VA_ARGS__),
+    CACHE_IR_OPS(OPLENGTH)
+#undef OPLENGTH
+};
+
+}  // namespace CacheIROpFormat
+}  // namespace jit
+}  // namespace js
+
 void CacheIRWriter::assertSameCompartment(JSObject* obj) {
   cx_->debugOnlyCheck(obj);
 }
@@ -1240,7 +1279,7 @@ bool GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj,
   }
 
   RootedObject unwrapped(cx_, Wrapper::wrappedObject(obj));
-  MOZ_ASSERT(unwrapped == UnwrapOneChecked(obj));
+  MOZ_ASSERT(unwrapped == UnwrapOneCheckedStatic(obj));
   MOZ_ASSERT(!IsCrossCompartmentWrapper(unwrapped),
              "CCWs must not wrap other CCWs");
 
@@ -1574,7 +1613,7 @@ static void CheckDOMProxyExpandoDoesNotShadow(CacheIRWriter& writer,
 
   if (expandoVal.isUndefined()) {
     // Guard there's no expando object.
-    writer.guardType(expandoId, JSVAL_TYPE_UNDEFINED);
+    writer.guardType(expandoId, ValueType::Undefined);
   } else if (expandoVal.isObject()) {
     // Guard the proxy either has no expando object or, if it has one, that
     // the shape matches the current expando object.
@@ -1939,29 +1978,38 @@ bool GetPropIRGenerator::tryAttachModuleNamespace(HandleObject obj,
 }
 
 bool GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId, HandleId id) {
-  JSValueType primitiveType;
-  RootedNativeObject proto(cx_);
-  if (val_.isString()) {
-    if (JSID_IS_ATOM(id, cx_->names().length)) {
-      // String length is special-cased, see js::GetProperty.
+  JSProtoKey protoKey;
+  switch (val_.type()) {
+    case ValueType::String:
+      if (JSID_IS_ATOM(id, cx_->names().length)) {
+        // String length is special-cased, see js::GetProperty.
+        return false;
+      }
+      protoKey = JSProto_String;
+      break;
+    case ValueType::Int32:
+    case ValueType::Double:
+      protoKey = JSProto_Number;
+      break;
+    case ValueType::Boolean:
+      protoKey = JSProto_Boolean;
+      break;
+    case ValueType::Symbol:
+      protoKey = JSProto_Symbol;
+      break;
+    case ValueType::BigInt:
+      protoKey = JSProto_BigInt;
+      break;
+    case ValueType::Null:
+    case ValueType::Undefined:
+    case ValueType::Magic:
       return false;
-    }
-    primitiveType = JSVAL_TYPE_STRING;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_String));
-  } else if (val_.isNumber()) {
-    primitiveType = JSVAL_TYPE_DOUBLE;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Number));
-  } else if (val_.isBoolean()) {
-    primitiveType = JSVAL_TYPE_BOOLEAN;
-    proto =
-        MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Boolean));
-  } else if (val_.isSymbol()) {
-    primitiveType = JSVAL_TYPE_SYMBOL;
-    proto = MaybeNativeObject(cx_->global()->maybeGetPrototype(JSProto_Symbol));
-  } else {
-    MOZ_ASSERT(val_.isNullOrUndefined() || val_.isMagic());
-    return false;
+    case ValueType::Object:
+    case ValueType::PrivateGCThing:
+      MOZ_CRASH("unexpected type");
   }
+
+  RootedObject proto(cx_, cx_->global()->maybeGetPrototype(protoKey));
   if (!proto) {
     return false;
   }
@@ -1982,7 +2030,11 @@ bool GetPropIRGenerator::tryAttachPrimitive(ValOperandId valId, HandleId id) {
     }
   }
 
-  writer.guardType(valId, primitiveType);
+  if (val_.isNumber()) {
+    writer.guardIsNumber(valId);
+  } else {
+    writer.guardType(valId, val_.type());
+  }
   maybeEmitIdGuard(id);
 
   ObjOperandId protoId = writer.loadObject(proto);
@@ -3602,7 +3654,8 @@ static void EmitGuardUnboxedPropertyType(CacheIRWriter& writer,
     // Unboxed objects store NullValue as nullptr object.
     writer.guardIsObjectOrNull(valId);
   } else {
-    writer.guardType(valId, propType);
+    MOZ_ASSERT(propType <= JSVAL_TYPE_OBJECT);
+    writer.guardType(valId, ValueType(propType));
   }
 }
 
@@ -3702,7 +3755,7 @@ bool SetPropIRGenerator::tryAttachTypedObjectProperty(HandleObject obj,
       writer.guardIsObjectOrNull(rhsId);
       break;
     case ReferenceType::TYPE_STRING:
-      writer.guardType(rhsId, JSVAL_TYPE_STRING);
+      writer.guardType(rhsId, ValueType::String);
       break;
     case ReferenceType::TYPE_WASM_ANYREF:
       MOZ_CRASH();
@@ -4821,7 +4874,7 @@ bool TypeOfIRGenerator::tryAttachPrimitive(ValOperandId valId) {
   if (val_.isNumber()) {
     writer.guardIsNumber(valId);
   } else {
-    writer.guardType(valId, val_.extractNonDoubleType());
+    writer.guardType(valId, val_.type());
   }
 
   writer.loadStringResult(TypeName(js::TypeOfValue(val_), cx_->names()));
@@ -5461,7 +5514,8 @@ bool CompareIRGenerator::tryAttachPrimitiveUndefined(ValOperandId lhsId,
   // The set of primitive cases we want to handle here (excluding null,
   // undefined)
   auto isPrimitive = [](HandleValue& x) {
-    return x.isString() || x.isSymbol() || x.isBoolean() || x.isNumber();
+    return x.isString() || x.isSymbol() || x.isBoolean() || x.isNumber() ||
+           x.isBigInt();
   };
 
   if (!(lhsVal_.isNullOrUndefined() && isPrimitive(rhsVal_)) &&
@@ -5480,6 +5534,9 @@ bool CompareIRGenerator::tryAttachPrimitiveUndefined(ValOperandId lhsId,
         return;
       case JSVAL_TYPE_SYMBOL:
         writer.guardIsSymbol(id);
+        return;
+      case JSVAL_TYPE_BIGINT:
+        writer.guardIsBigInt(id);
         return;
       case JSVAL_TYPE_STRING:
         writer.guardIsString(id);
@@ -5699,7 +5756,7 @@ bool ToBoolIRGenerator::tryAttachInt32() {
   }
 
   ValOperandId valId(writer.setInputOperandId(0));
-  writer.guardType(valId, JSVAL_TYPE_INT32);
+  writer.guardType(valId, ValueType::Int32);
   writer.loadInt32TruthyResult(valId);
   writer.returnFromIC();
   trackAttached("ToBoolInt32");
@@ -5712,7 +5769,7 @@ bool ToBoolIRGenerator::tryAttachDouble() {
   }
 
   ValOperandId valId(writer.setInputOperandId(0));
-  writer.guardType(valId, JSVAL_TYPE_DOUBLE);
+  writer.guardType(valId, ValueType::Double);
   writer.loadDoubleTruthyResult(valId);
   writer.returnFromIC();
   trackAttached("ToBoolDouble");
@@ -5725,7 +5782,7 @@ bool ToBoolIRGenerator::tryAttachSymbol() {
   }
 
   ValOperandId valId(writer.setInputOperandId(0));
-  writer.guardType(valId, JSVAL_TYPE_SYMBOL);
+  writer.guardType(valId, ValueType::Symbol);
   writer.loadBooleanResult(true);
   writer.returnFromIC();
   trackAttached("ToBoolSymbol");
@@ -5851,7 +5908,7 @@ bool UnaryArithIRGenerator::tryAttachInt32() {
       trackAttached("UnaryArith.Int32Dec");
       break;
     default:
-      MOZ_CRASH("Unexected OP");
+      MOZ_CRASH("unexpected OP");
   }
 
   writer.returnFromIC();
@@ -5975,7 +6032,7 @@ bool BinaryArithIRGenerator::tryAttachBitwise() {
       return writer.guardIsBoolean(id);
     }
     MOZ_ASSERT(val.isDouble());
-    writer.guardType(id, JSVAL_TYPE_DOUBLE);
+    writer.guardType(id, ValueType::Double);
     return writer.truncateDoubleToUInt32(id);
   };
 

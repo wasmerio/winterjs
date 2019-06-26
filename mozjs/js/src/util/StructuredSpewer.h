@@ -35,7 +35,8 @@
 //      the dominant output mechanism.
 //   2. Provide a simple powerful mechanism for getting information out of the
 //      compiler and into tools. I'm inspired by tools like CacheIR analyzer,
-//      IR Hydra, and the upcoming tracelogger integration into perf.html.
+//      IR Hydra, and the upcoming tracelogger integration into
+//      profiler.firefox.com.
 //
 // The spewer has four main control knobs, all currently set as
 // environment variables. All but the first are optional.
@@ -145,6 +146,7 @@ class StructuredSpewer {
   // just before any attempte to write. This will ensure the file open is
   // attemped in the right place.
   bool outputInitializationAttempted_;
+
   Fprinter output_;
   mozilla::Maybe<JSONPrinter> json_;
 
@@ -164,8 +166,10 @@ class StructuredSpewer {
 
   // Call just before writes to the output are expected.
   //
-  // Avoids opening files that will remain empty.
-  void ensureInitializationAttempted();
+  // Avoids opening files that will remain empty
+  //
+  // Returns true iff we are able to write now.
+  bool ensureInitializationAttempted();
 
   void tryToInitializeOutput(const char* path);
 

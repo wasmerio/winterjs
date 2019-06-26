@@ -10,6 +10,7 @@
 #include "gc/FreeOp.h"
 #include "js/PropertySpec.h"
 #include "js/Utility.h"
+#include "vm/BigIntType.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
@@ -59,7 +60,7 @@ bool HashableValue::setValue(JSContext* cx, HandleValue v) {
 
   MOZ_ASSERT(value.isUndefined() || value.isNull() || value.isBoolean() ||
              value.isNumber() || value.isString() || value.isSymbol() ||
-             value.isObject() || IF_BIGINT(value.isBigInt(), false));
+             value.isObject() || value.isBigInt());
   return true;
 }
 
@@ -80,11 +81,9 @@ static HashNumber HashValue(const Value& v,
   if (v.isSymbol()) {
     return v.toSymbol()->hash();
   }
-#ifdef ENABLE_BIGINT
   if (v.isBigInt()) {
-    return v.toBigInt()->hash();
+    return MaybeForwarded(v.toBigInt())->hash();
   }
-#endif
   if (v.isObject()) {
     return hcs.scramble(v.asRawBits());
   }
@@ -101,17 +100,11 @@ bool HashableValue::operator==(const HashableValue& other) const {
   // Two HashableValues are equal if they have equal bits.
   bool b = (value.asRawBits() == other.value.asRawBits());
 
-#ifdef ENABLE_BIGINT
   // BigInt values are considered equal if they represent the same
-  // integer. This test should use a comparison function that doesn't
-  // require a JSContext once one is defined in the BigInt class.
+  // mathematical value.
   if (!b && (value.isBigInt() && other.value.isBigInt())) {
-    JSContext* cx = TlsContext.get();
-    RootedValue valueRoot(cx, value);
-    RootedValue otherRoot(cx, other.value);
-    SameValue(cx, valueRoot, otherRoot, &b);
+    b = BigInt::equal(value.toBigInt(), other.value.toBigInt());
   }
-#endif
 
 #ifdef DEBUG
   bool same;
@@ -172,8 +165,9 @@ inline MapObject::IteratorKind MapIteratorObject::kind() const {
   return MapObject::IteratorKind(i);
 }
 
-/* static */ bool GlobalObject::initMapIteratorProto(
-    JSContext* cx, Handle<GlobalObject*> global) {
+/* static */
+bool GlobalObject::initMapIteratorProto(JSContext* cx,
+                                        Handle<GlobalObject*> global) {
   Rooted<JSObject*> base(
       cx, GlobalObject::getOrCreateIteratorPrototype(cx, global));
   if (!base) {
@@ -349,7 +343,8 @@ bool MapIteratorObject::next(Handle<MapIteratorObject*> mapIterator,
   return false;
 }
 
-/* static */ JSObject* MapIteratorObject::createResultPair(JSContext* cx) {
+/* static */
+JSObject* MapIteratorObject::createResultPair(JSContext* cx) {
   RootedArrayObject resultPairObj(
       cx, NewDenseFullyAllocatedArray(cx, 2, nullptr, TenuredObject));
   if (!resultPairObj) {
@@ -430,8 +425,9 @@ static void TraceKey(Range& r, const HashableValue& key, JSTracer* trc) {
   HashableValue newKey = key.trace(trc);
 
   if (newKey.get() != key.get()) {
-    // The hash function only uses the bits of the Value, so it is safe to
-    // rekey even when the object or string has been modified by the GC.
+    // The hash function must take account of the fact that the thing being
+    // hashed may have been moved by GC. This is only an issue for BigInt as for
+    // other types the hash function only uses the bits of the Value.
     r.rekeyFront(newKey);
   }
 }
@@ -632,7 +628,8 @@ void MapObject::finalize(FreeOp* fop, JSObject* obj) {
   }
 }
 
-/* static */ void MapObject::sweepAfterMinorGC(FreeOp* fop, MapObject* mapobj) {
+/* static */
+void MapObject::sweepAfterMinorGC(FreeOp* fop, MapObject* mapobj) {
   if (IsInsideNursery(mapobj) && !IsForwarded(mapobj)) {
     finalize(fop, mapobj);
     return;
@@ -941,8 +938,9 @@ inline SetObject::IteratorKind SetIteratorObject::kind() const {
   return SetObject::IteratorKind(i);
 }
 
-/* static */ bool GlobalObject::initSetIteratorProto(
-    JSContext* cx, Handle<GlobalObject*> global) {
+/* static */
+bool GlobalObject::initSetIteratorProto(JSContext* cx,
+                                        Handle<GlobalObject*> global) {
   Rooted<JSObject*> base(
       cx, GlobalObject::getOrCreateIteratorPrototype(cx, global));
   if (!base) {
@@ -1088,7 +1086,8 @@ bool SetIteratorObject::next(Handle<SetIteratorObject*> setIterator,
   return false;
 }
 
-/* static */ JSObject* SetIteratorObject::createResult(JSContext* cx) {
+/* static */
+JSObject* SetIteratorObject::createResult(JSContext* cx) {
   RootedArrayObject resultObj(
       cx, NewDenseFullyAllocatedArray(cx, 1, nullptr, TenuredObject));
   if (!resultObj) {
@@ -1247,7 +1246,8 @@ void SetObject::finalize(FreeOp* fop, JSObject* obj) {
   }
 }
 
-/* static */ void SetObject::sweepAfterMinorGC(FreeOp* fop, SetObject* setobj) {
+/* static */
+void SetObject::sweepAfterMinorGC(FreeOp* fop, SetObject* setobj) {
   if (IsInsideNursery(setobj) && !IsForwarded(setobj)) {
     finalize(fop, setobj);
     return;

@@ -9,6 +9,9 @@ include('checks.configure')
 
 # Make `toolkit` available when toolkit/moz.configure is not included.
 toolkit = dependable(None)
+# Likewise with `bindgen_config_paths` when
+# build/moz.configure/bindgen.configure is not included.
+bindgen_config_paths = dependable(None)
 
 option(env='DIST', nargs=1, help='DIST directory')
 
@@ -157,7 +160,7 @@ add_old_configure_assignment('EXTERNAL_SOURCE_DIR', external_source_dir)
 @imports(_from='mozbuild.mozconfig', _import='MozconfigLoader')
 def mozconfig(mozconfig, old_configure, build_env,
               external_source_dir, help):
-    if not old_configure:
+    if not old_configure and not help:
         die('The OLD_CONFIGURE environment variable must be set')
 
     # Don't read the mozconfig for the js configure (yay backwards
@@ -176,7 +179,7 @@ def mozconfig(mozconfig, old_configure, build_env,
     # OLD_CONFIGURE path, which points to js/src/old-configure.
     # I expect we'll have figured things out for mozconfigs well before
     # old-configure dies.
-    if os.path.dirname(os.path.abspath(old_configure[0])).endswith('/js/src'):
+    if old_configure and os.path.dirname(os.path.abspath(old_configure[0])).endswith('/js/src'):
         return {'path': None}
 
     topsrcdir = build_env.topsrcdir
@@ -443,12 +446,12 @@ set_config('PYTHON3_VERSION', depends_if(python3)(lambda p: p.str_version))
 @depends(check_build_environment, 'MOZ_AUTOMATION', '--help')
 @checking('for vcs source checkout')
 @imports('os')
-def vcs_checkout_type(build_env, automation, _):
+def vcs_checkout_type(build_env, automation, help):
     if os.path.exists(os.path.join(build_env.topsrcdir, '.hg')):
         return 'hg'
     elif os.path.exists(os.path.join(build_env.topsrcdir, '.git')):
         return 'git'
-    elif automation:
+    elif automation and not help:
         raise FatalCheckError('unable to resolve VCS type; must run '
                               'from a source checkout when MOZ_AUTOMATION '
                               'is set')
@@ -583,6 +586,32 @@ def vcs_sparse_checkout(repo):
 
 set_config('VCS_SPARSE_CHECKOUT', vcs_sparse_checkout)
 
+# The application/project to build
+# ==============================================================
+option('--enable-application', nargs=1, env='MOZ_BUILD_APP',
+       help='Application to build. Same as --enable-project.')
+
+
+@depends('--enable-application')
+def application(app):
+    if app:
+        return app
+
+
+imply_option('--enable-project', application)
+
+
+@depends(check_build_environment)
+def default_project(build_env):
+    if build_env.topobjdir.endswith('/js/src'):
+        return 'js'
+    return 'browser'
+
+
+option('--enable-project', nargs=1, default=default_project,
+       help='Project to build')
+
+
 # Host and target systems
 # ==============================================================
 option('--host', nargs=1, help='Define the system type performing the build')
@@ -614,7 +643,7 @@ def split_triplet(triplet, allow_unknown=False):
     elif len(parts) == 2:
         cpu, os = parts
     else:
-        die("Unexpected triplet string: %s" % triplet)
+        raise ValueError("Unexpected triplet string: %s" % triplet)
 
     # Autoconf uses config.sub to validate and canonicalize those triplets,
     # but the granularity of its results has never been satisfying to our
@@ -658,7 +687,7 @@ def split_triplet(triplet, allow_unknown=False):
     elif allow_unknown:
         canonical_os = canonical_kernel = os
     else:
-        die('Unknown OS: %s' % os)
+        raise ValueError('Unknown OS: %s' % os)
 
     # The CPU granularity is probably not enough. Moving more things from
     # old-configure will tell us if we need more
@@ -708,7 +737,7 @@ def split_triplet(triplet, allow_unknown=False):
         canonical_cpu = cpu
         endianness = 'unknown'
     else:
-        die('Unknown CPU type: %s' % cpu)
+        raise ValueError('Unknown CPU type: %s' % cpu)
 
     def sanitize(cls, value):
         try:
@@ -764,36 +793,83 @@ def config_sub(shell, triplet):
 
 @depends('--host', shell)
 @checking('for host system type', lambda h: h.alias)
+@imports('os')
 @imports('subprocess')
-def host(value, shell):
+@imports('sys')
+@imports(_from='__builtin__', _import='ValueError')
+def real_host(value, shell):
+    if not value and sys.platform == 'win32':
+        arch = (os.environ.get('PROCESSOR_ARCHITEW6432') or
+                os.environ.get('PROCESSOR_ARCHITECTURE'))
+        if arch == 'AMD64':
+            return split_triplet('x86_64-pc-mingw32')
+        elif arch == 'x86':
+            return split_triplet('i686-pc-mingw32')
+
     if not value:
         config_guess = os.path.join(os.path.dirname(__file__), '..',
                                     'autoconf', 'config.guess')
         host = subprocess.check_output([shell, config_guess]).strip()
+        try:
+            return split_triplet(host)
+        except ValueError:
+            pass
     else:
         host = value[0]
 
-    return split_triplet(config_sub(shell, host))
+    host = config_sub(shell, host)
+
+    try:
+        return split_triplet(host)
+    except ValueError as e:
+        die(e.message)
 
 
-host = help_host_target | host
+host = help_host_target | real_host
 
 
-@depends('--target', host, shell)
+@depends('--target', real_host, shell, '--enable-project', '--enable-application')
 @checking('for target system type', lambda t: t.alias)
-def target(value, host, shell):
+@imports(_from='__builtin__', _import='ValueError')
+def real_target(value, host, shell, project, application):
+    # Because --enable-project is implied by --enable-application, and
+    # implied options are not currently handled during --help, which is
+    # used get the build target in mozbuild.base, we manually check
+    # whether --enable-application was given, and fall back to
+    # --enable-project if not. Both can't be given contradictory values
+    # under normal circumstances, so it's fine.
+    if application:
+        project = application[0]
+    elif project:
+        project = project[0]
     if not value:
+        if project == 'mobile/android':
+            return split_triplet('arm-unknown-linux-androideabi')
         return host
     # If --target was only given a cpu arch, expand it with the
-    # non-cpu part of the host.
+    # non-cpu part of the host. For mobile/android, expand it with
+    # unknown-linux-android.
     target = value[0]
     if '-' not in target:
-        cpu, rest = host.alias.split('-', 1)
+        if project == 'mobile/android':
+            rest = 'unknown-linux-android'
+            if target.startswith('arm'):
+                rest += 'eabi'
+        else:
+            cpu, rest = host.alias.split('-', 1)
         target = '-'.join((target, rest))
-    return split_triplet(config_sub(shell, target))
+        try:
+            return split_triplet(target)
+        except ValueError:
+            pass
+
+    try:
+        return split_triplet(config_sub(shell, target))
+    except ValueError as e:
+        die(e.message)
 
 
-target = help_host_target | target
+target = help_host_target | real_target
 
 
 @depends(host, target)
@@ -992,31 +1068,6 @@ def target_is_solaris(target):
 
 
 set_define('XP_SOLARIS', target_is_solaris)
-
-# The application/project to build
-# ==============================================================
-option('--enable-application', nargs=1, env='MOZ_BUILD_APP',
-       help='Application to build. Same as --enable-project.')
-
-
-@depends('--enable-application')
-def application(app):
-    if app:
-        return app
-
-
-imply_option('--enable-project', application)
-
-
-@depends(check_build_environment)
-def default_project(build_env):
-    if build_env.topobjdir.endswith('/js/src'):
-        return 'js'
-    return 'browser'
-
-
-option('--enable-project', nargs=1, default=default_project,
-       help='Project to build')
 
 
 @depends('--enable-project', '--with-external-source-dir',

@@ -24,11 +24,11 @@ let tab_expmod_t =
 
 // .. and this one imports those 5 functions.  It adds 5 of its own, creates a
 // 30 element table using both active and passive initialisers, with a mixture
-// of the imported and local functions.  |testfn| is exported.  It uses the
-// supplied |insn| to modify the table somehow, and then will indirect-call
-// the table entry number specified as a parameter.  That will either return a
-// value 0 to 9 indicating the function called, or will throw an exception if
-// the table entry is empty.
+// of the imported and local functions.  |setup| and |check| are exported.
+// |setup| uses the supplied |insn| to modify the table somehow.  |check| will
+// indirect-call the table entry number specified as a parameter.  That will
+// either return a value 0 to 9 indicating the function called, or will throw an
+// exception if the table entry is empty.
 function gen_tab_impmod_t(insn)
 {
   let t =
@@ -36,7 +36,7 @@ function gen_tab_impmod_t(insn)
      ;; -------- Types --------
      (type (func (result i32)))  ;; type #0
      ;; -------- Tables --------
-     (table 30 30 anyfunc)
+     (table 30 30 funcref)
      ;; -------- Table initialisers --------
      (elem (i32.const 2) 3 1 4 1)
      (elem passive 2 7 1 8)
@@ -55,8 +55,9 @@ function gen_tab_impmod_t(insn)
      (func (result i32) (i32.const 8))
      (func (result i32) (i32.const 9))  ;; index 9
 
-     (func (export "testfn") (param i32) (result i32)
-       ${insn}
+     (func (export "setup")
+       ${insn})
+     (func (export "check") (param i32) (result i32)
        ;; call the selected table entry, which will either return a value,
        ;; or will cause an exception.
        get_local 0      ;; callIx
@@ -79,18 +80,20 @@ function tab_test(instruction, expected_result_vector)
     let tab_impmod_t = gen_tab_impmod_t(instruction);
     let tab_impmod_b = wasmTextToBinary(tab_impmod_t);
 
+    let inst = new Instance(new Module(tab_impmod_b),
+                            {a:{if0:tab_expmod_i.exports.ef0,
+                                if1:tab_expmod_i.exports.ef1,
+                                if2:tab_expmod_i.exports.ef2,
+                                if3:tab_expmod_i.exports.ef3,
+                                if4:tab_expmod_i.exports.ef4
+                               }});
+    inst.exports.setup();
+
     for (let i = 0; i < expected_result_vector.length; i++) {
-        let inst = new Instance(new Module(tab_impmod_b),
-                                {a:{if0:tab_expmod_i.exports.ef0,
-                                    if1:tab_expmod_i.exports.ef1,
-                                    if2:tab_expmod_i.exports.ef2,
-                                    if3:tab_expmod_i.exports.ef3,
-                                    if4:tab_expmod_i.exports.ef4
-                                   }});
         let expected = expected_result_vector[i];
         let actual = undefined;
         try {
-            actual = inst.exports.testfn(i);
+            actual = inst.exports.check(i);
             assertEq(actual !== null, true);
         } catch (e) {
             if (!(e instanceof Error &&
@@ -160,7 +163,6 @@ tab_test("(table.init 1 (i32.const 7) (i32.const 0) (i32.const 4)) \n" +
          "(table.copy (i32.const 13) (i32.const 11) (i32.const 4)) \n" +
          "(table.copy (i32.const 19) (i32.const 20) (i32.const 5))",
          [e,e,3,1,4, 1,e,2,7,1, 8,e,7,e,7, 5,2,7,e,9, e,7,e,8,8, e,e,e,e,e]);
-
 
 // And now a simplified version of the above, for memory.{init,drop,copy}.
 
@@ -298,6 +300,77 @@ checkNoDataCount([I32ConstCode, 0,
 checkNoDataCount([MiscPrefix, DataDropCode, 0],
                  /data.drop requires a DataCount section/);
 
+// Verification that we can handle encoding errors for passive element segments
+// properly.
+
+function checkPassiveElemSegment(mangle, err) {
+    let bin = moduleWithSections(
+        [v2vSigSection, declSection([0]), // One function
+         tableSection(1),                 // One table
+         { name: elemId,                  // One passive segment
+           body: (function () {
+               let body = [];
+               body.push(1);           // 1 element segment
+               body.push(1);           // Flag: Passive
+               body.push(AnyFuncCode + (mangle == "type" ? 1 : 0)); // always anyfunc
+               body.push(1);           // Element count
+               body.push(RefFuncCode + (mangle == "ref.func" ? 1 : 0)); // always ref.func
+               body.push(0);           // func index
+               body.push(EndCode + (mangle == "end" ? 1 : 0));
+               return body;
+           })() },
+         bodySection(                   // Empty function
+             [funcBody(
+                 {locals:[],
+                  body:[]})])
+        ]);
+    if (err) {
+        assertErrorMessage(() => new WebAssembly.Module(bin),
+                           WebAssembly.CompileError,
+                           err);
+    } else {
+        new WebAssembly.Module(bin);
+    }
+}
+
+checkPassiveElemSegment("");
+checkPassiveElemSegment("type", /passive segments can only contain function references/);
+checkPassiveElemSegment("ref.func", /failed to read initializer operation/);
+checkPassiveElemSegment("end", /failed to read end of initializer expression/);
+
+// Passive element segments can contain literal null values.
+
+{
+    let txt =
+        `(module
+           (table (export "t") 10 funcref)
+           (elem (i32.const 1) $m)
+           (elem (i32.const 3) $m)
+           (elem (i32.const 6) $m)
+           (elem (i32.const 8) $m)
+           (elem passive $f ref.null $g ref.null $h)
+           (func $m)
+           (func $f)
+           (func $g)
+           (func $h)
+           (func (export "doit") (param $idx i32)
+             (table.init 4 (get_local $idx) (i32.const 0) (i32.const 5))))`;
+    let ins = wasmEvalText(txt);
+    ins.exports.doit(0);
+    ins.exports.doit(5);
+    assertEq(typeof ins.exports.t.get(0), "function");
+    assertEq(ins.exports.t.get(1), null);
+    assertEq(typeof ins.exports.t.get(2), "function");
+    assertEq(ins.exports.t.get(0) == ins.exports.t.get(2), false);
+    assertEq(ins.exports.t.get(3), null);
+    assertEq(typeof ins.exports.t.get(4), "function");
+    assertEq(typeof ins.exports.t.get(5), "function");
+    assertEq(ins.exports.t.get(6), null);
+    assertEq(typeof ins.exports.t.get(7), "function");
+    assertEq(ins.exports.t.get(8), null);
+    assertEq(typeof ins.exports.t.get(9), "function");
+}
+
 //---------------------------------------------------------------------//
 //---------------------------------------------------------------------//
 // Some further tests for memory.copy and memory.fill.  First, validation
@@ -328,7 +401,6 @@ function checkMiscPrefixed(opcode, expect_failure) {
 
 checkMiscPrefixed([MemoryCopyCode, 0x00, 0x00], false); // memory.copy src=0 dest=0
 checkMiscPrefixed([MemoryFillCode, 0x00], false); // memory.fill mem=0
-checkMiscPrefixed([MemoryFillCode, 0x80, 0x00], false); // memory.fill, mem=0 (long encoding)
 checkMiscPrefixed([0x13], true);        // table.size+1, which is currently unassigned
 
 //-----------------------------------------------------------
@@ -478,13 +550,26 @@ function checkRange(arr, minIx, maxIxPlusOne, expectedValue)
     checkRange(b, 0x00000, 0x10000, 0x00);
 }
 
-// Zero len with offset out-of-bounds gets an exception
+// Zero len with offset out-of-bounds is OK if it's at the edge of the
+// memory, but not if it is one past that.
 {
     let inst = wasmEvalText(
     `(module
        (memory (export "memory") 1 1)
        (func (export "testfn")
          (memory.fill (i32.const 0x10000) (i32.const 0x55) (i32.const 0))
+       )
+     )`
+    );
+    inst.exports.testfn();
+}
+
+{
+    let inst = wasmEvalText(
+    `(module
+       (memory (export "memory") 1 1)
+       (func (export "testfn")
+         (memory.fill (i32.const 0x10001) (i32.const 0x55) (i32.const 0))
        )
      )`
     );
@@ -646,7 +731,7 @@ function checkRange(arr, minIx, maxIxPlusOne, expectedValue)
     checkRange(b, 0x08000, 0x10000, 0xAA);
 }
 
-// Zero len with dest offset out-of-bounds is an exception
+// Zero len with dest offset out-of-bounds but at the edge of memory is OK
 {
     let inst = wasmEvalText(
     `(module
@@ -656,17 +741,43 @@ function checkRange(arr, minIx, maxIxPlusOne, expectedValue)
        )
      )`
     );
+    inst.exports.testfn();
+}
+
+// Ditto, but one further out is not OK.
+{
+    let inst = wasmEvalText(
+    `(module
+       (memory (export "memory") 1 1)
+       (func (export "testfn")
+         (memory.copy (i32.const 0x10001) (i32.const 0x7000) (i32.const 0))
+       )
+     )`
+    );
     assertErrorMessage(() => inst.exports.testfn(),
                        WebAssembly.RuntimeError, /index out of bounds/);
 }
 
-// Zero len with src offset out-of-bounds is an exception
+// Zero len with src offset out-of-bounds but at the edge of memory is OK
 {
     let inst = wasmEvalText(
     `(module
        (memory (export "memory") 1 1)
        (func (export "testfn")
          (memory.copy (i32.const 0x9000) (i32.const 0x10000) (i32.const 0))
+       )
+     )`
+    );
+    inst.exports.testfn();
+}
+
+// Ditto, but one element further out is not OK.
+{
+    let inst = wasmEvalText(
+    `(module
+       (memory (export "memory") 1 1)
+       (func (export "testfn")
+         (memory.copy (i32.const 0x9000) (i32.const 0x10001) (i32.const 0))
        )
      )`
     );

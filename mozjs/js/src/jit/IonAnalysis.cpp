@@ -104,9 +104,10 @@ static bool DepthFirstSearchUse(MIRGenerator* mir,
       }
 
       if (cphi->isInWorklist() || cphi == producer) {
-        // We are already iterating over the uses of this Phi
-        // instruction. Skip it.
-        continue;
+        // We are already iterating over the uses of this Phi instruction which
+        // are part of a loop, instead of trying to handle loops, conservatively
+        // mark them as used.
+        return push(producer, use);
       }
 
       if (cphi->getUsageAnalysis() == PhiUsage::Unused) {
@@ -1284,12 +1285,37 @@ bool jit::EliminateDeadResumePointOperands(MIRGenerator* mir, MIRGraph& graph) {
 
 // Test whether |def| would be needed if it had no uses.
 bool js::jit::DeadIfUnused(const MDefinition* def) {
-  return !def->isEffectful() &&
-         (!def->isGuard() ||
-          (def->block() == def->block()->graph().osrBlock() &&
-           !def->isImplicitlyUsed())) &&
-         !def->isGuardRangeBailouts() && !def->isControlInstruction() &&
-         (!def->isInstruction() || !def->toInstruction()->resumePoint());
+  // Effectful instructions of course cannot be removed.
+  if (def->isEffectful()) {
+    return false;
+  }
+
+  // Guard instructions by definition are live if they have no uses, however,
+  // in the OSR block we are able to eliminate these guards, as some are
+  // artificially created and superceeded by failible unboxes.
+  if (def->isGuard() && (def->block() != def->block()->graph().osrBlock() ||
+                         def->isImplicitlyUsed())) {
+    return false;
+  }
+
+  // Required to be preserved, as the type guard related to this instruction
+  // is part of the semantics of a transformation.
+  if (def->isGuardRangeBailouts()) {
+    return false;
+  }
+
+  // Control instructions have no uses, but also shouldn't be optimized out
+  if (def->isControlInstruction()) {
+    return false;
+  }
+
+  // Used when lowering to generate the corresponding snapshots and aggregate
+  // the list of recover instructions to be repeated.
+  if (def->isInstruction() && def->toInstruction()->resumePoint()) {
+    return false;
+  }
+
+  return true;
 }
 
 // Test whether |def| may be safely discarded, due to being dead or due to being
@@ -2301,7 +2327,8 @@ static bool IsRegExpHoistableCall(CompileRuntime* runtime, MCall* call,
     return IsExclusiveFirstArg(call, def);
   }
 
-  if (name == runtime->names().RegExp_prototype_Exec) {
+  if (name == runtime->names().RegExp_prototype_Exec ||
+      name == runtime->names().CallRegExpMethodIfWrapped) {
     return IsExclusiveThisArg(call, def);
   }
 
@@ -2345,7 +2372,8 @@ static bool CanCompareRegExp(MCompare* compare, MDefinition* def) {
       value->mightBeType(MIRType::Int32) ||
       value->mightBeType(MIRType::Double) ||
       value->mightBeType(MIRType::Float32) ||
-      value->mightBeType(MIRType::Symbol)) {
+      value->mightBeType(MIRType::Symbol) ||
+      value->mightBeType(MIRType::BigInt)) {
     return false;
   }
 
@@ -3177,6 +3205,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Float32:
     case MIRType::String:
     case MIRType::Symbol:
+    case MIRType::BigInt:
     case MIRType::Object:
     case MIRType::MagicOptimizedArguments:
     case MIRType::MagicOptimizedOut:
@@ -3203,6 +3232,7 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Doublex2:  // NYI, see also RSimdBox::recover
     case MIRType::SinCosDouble:
     case MIRType::Int64:
+    case MIRType::RefOrNull:
       return false;
   }
   MOZ_CRASH("Unknown MIRType.");
@@ -4546,7 +4576,7 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
                    script->needsArgsObj(), inlineScriptTree);
 
   const OptimizationInfo* optimizationInfo =
-      IonOptimizations.get(OptimizationLevel::Normal);
+      IonOptimizations.get(OptimizationLevel::Full);
 
   CompilerConstraintList* constraints = NewCompilerConstraintList(temp);
   if (!constraints) {
@@ -4875,8 +4905,12 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
   // formals which may be stored as part of a call object, don't use lazy
   // arguments. The compiler can then assume that accesses through
   // arguments[i] will be on unaliased variables.
-  if (script->funHasAnyAliasedFormal() && argumentsContentsObserved) {
-    return true;
+  if (argumentsContentsObserved) {
+    for (PositionalFormalParameterIter fi(script); fi; fi++) {
+      if (fi.closedOver()) {
+        return true;
+      }
+    }
   }
 
   script->setNeedsArgsObj(false);

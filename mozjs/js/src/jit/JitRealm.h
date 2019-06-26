@@ -28,6 +28,10 @@ namespace js {
 namespace jit {
 
 class FrameSizeClass;
+struct VMFunctionData;
+
+enum class TailCallVMFunctionId;
+enum class VMFunctionId;
 
 struct EnterJitData {
   explicit EnterJitData(JSContext* cx)
@@ -143,6 +147,14 @@ class JitRuntime {
   using VMWrapperMap = HashMap<const VMFunction*, uint32_t, VMFunction>;
   WriteOnceData<VMWrapperMap*> functionWrappers_;
 
+  // Maps VMFunctionId to the offset of the wrapper code in trampolineCode_.
+  using VMWrapperOffsets = Vector<uint32_t, 0, SystemAllocPolicy>;
+  VMWrapperOffsets functionWrapperOffsets_;
+
+  // Maps TailCallVMFunctionId to the offset of the wrapper code in
+  // trampolineCode_.
+  VMWrapperOffsets tailCallFunctionWrapperOffsets_;
+
   // Global table of jitcode native address => bytecode address mappings.
   UnprotectedData<JitcodeGlobalTable*> jitcodeGlobalTable_;
 
@@ -190,15 +202,23 @@ class JitRuntime {
   JitCode* generateDebugTrapHandler(JSContext* cx);
   JitCode* generateBaselineDebugModeOSRHandler(
       JSContext* cx, uint32_t* noFrameRegPopOffsetOut);
+
   bool generateVMWrapper(JSContext* cx, MacroAssembler& masm,
-                         const VMFunction& f);
+                         const VMFunctionData& f, void* nativeFun,
+                         uint32_t* wrapperOffset);
 
-  bool generateTLEventVM(MacroAssembler& masm, const VMFunction& f, bool enter);
+  template <typename IdT>
+  bool generateVMWrappers(JSContext* cx, MacroAssembler& masm,
+                          VMWrapperOffsets& offsets);
+  bool generateVMWrappers(JSContext* cx, MacroAssembler& masm);
 
-  inline bool generateTLEnterVM(MacroAssembler& masm, const VMFunction& f) {
+  bool generateTLEventVM(MacroAssembler& masm, const VMFunctionData& f,
+                         bool enter);
+
+  inline bool generateTLEnterVM(MacroAssembler& masm, const VMFunctionData& f) {
     return generateTLEventVM(masm, f, /* enter = */ true);
   }
-  inline bool generateTLExitVM(MacroAssembler& masm, const VMFunction& f) {
+  inline bool generateTLExitVM(MacroAssembler& masm, const VMFunctionData& f) {
     return generateTLEventVM(masm, f, /* enter = */ false);
   }
 
@@ -227,6 +247,16 @@ class JitRuntime {
   }
 
   TrampolinePtr getVMWrapper(const VMFunction& f) const;
+
+  TrampolinePtr getVMWrapper(VMFunctionId funId) const {
+    MOZ_ASSERT(trampolineCode_);
+    return trampolineCode(functionWrapperOffsets_[size_t(funId)]);
+  }
+  TrampolinePtr getVMWrapper(TailCallVMFunctionId funId) const {
+    MOZ_ASSERT(trampolineCode_);
+    return trampolineCode(tailCallFunctionWrapperOffsets_[size_t(funId)]);
+  }
+
   JitCode* debugTrapHandler(JSContext* cx);
   JitCode* getBaselineDebugModeOSRHandler(JSContext* cx);
   void* getBaselineDebugModeOSRHandlerAddress(JSContext* cx, bool popFrameReg);
@@ -445,6 +475,8 @@ enum class BailoutReturnStub {
   GetProp,
   GetPropSuper,
   SetProp,
+  GetElem,
+  GetElemSuper,
   Call,
   New,
   Count
@@ -473,9 +505,10 @@ class JitRealm {
                            BailoutReturnStubInfo>
       bailoutReturnStubInfo_;
 
-  // The JitRealm stores stubs to concatenate strings inline and perform
-  // RegExp calls inline.  These bake in zone and realm specific pointers
-  // and can't be stored in JitRuntime.
+  // The JitRealm stores stubs to concatenate strings inline and perform RegExp
+  // calls inline. These bake in zone and realm specific pointers and can't be
+  // stored in JitRuntime. They also are dependent on the value of
+  // 'stringsCanBeInNursery' and must be flushed when its value changes.
   //
   // These are weak pointers, but they can by accessed during off-thread Ion
   // compilation and therefore can't use the usual read barrier. Instead, we
@@ -492,6 +525,8 @@ class JitRealm {
 
   mozilla::EnumeratedArray<StubIndex, StubIndex::Count, ReadBarrieredJitCode>
       stubs_;
+
+  bool stringsCanBeInNursery;
 
   JitCode* generateStringConcatStub(JSContext* cx);
   JitCode* generateRegExpMatcherStub(JSContext* cx);
@@ -534,7 +569,7 @@ class JitRealm {
   JitRealm();
   ~JitRealm();
 
-  MOZ_MUST_USE bool initialize(JSContext* cx);
+  MOZ_MUST_USE bool initialize(JSContext* cx, bool zoneHasNurseryStrings);
 
   // Initialize code stubs only used by Ion, not Baseline.
   MOZ_MUST_USE bool ensureIonStubsExist(JSContext* cx) {
@@ -551,6 +586,20 @@ class JitRealm {
     for (ReadBarrieredJitCode& stubRef : stubs_) {
       stubRef = nullptr;
     }
+  }
+
+  bool hasStubs() const {
+    for (const ReadBarrieredJitCode& stubRef : stubs_) {
+      if (stubRef) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void setStringsCanBeInNursery(bool allow) {
+    MOZ_ASSERT(!hasStubs());
+    stringsCanBeInNursery = allow;
   }
 
   JitCode* stringConcatStubNoBarrier(uint32_t* requiredBarriersOut) const {
@@ -602,8 +651,6 @@ class JitRealm {
   void performStubReadBarriers(uint32_t stubsToBarrier) const;
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
-
-  bool stringsCanBeInNursery;
 };
 
 // Called from Zone::discardJitCode().

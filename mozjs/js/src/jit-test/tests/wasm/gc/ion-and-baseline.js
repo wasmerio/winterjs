@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmReftypesEnabled()
+// |jit-test| skip-if: !wasmGcEnabled()
 
 // Attempt to test intercalls from ion to baseline and back.
 //
@@ -12,18 +12,14 @@
 // Some logging with printf confirms that refmod is baseline-compiled and
 // nonrefmod is ion-compiled at present, with --wasm-gc enabled.
 
-// Ion can't talk about references yet *but* we can call indirect from Ion to a
-// baseline module that has exported a function that accepts or returns anyref,
-// without the caller knowing this or having to declare it.  All such calls
-// should fail in an orderly manner with a type mismatch, at the point of the
-// call.
-
 var refmod = new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (gc_feature_opt_in 2)
-
-      (import $tbl "" "tbl" (table 4 anyfunc))
+      (gc_feature_opt_in 3)
+      (import $tbl "" "tbl" (table 4 funcref))
       (import $print "" "print" (func (param i32)))
+
+      ;; Just a dummy
+      (type $s (struct (field i32)))
 
       (type $htype (func (param anyref)))
       (type $itype (func (result anyref)))
@@ -47,7 +43,7 @@ var refmod = new WebAssembly.Module(wasmTextToBinary(
 
 var nonrefmod = new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (import $tbl "" "tbl" (table 4 anyfunc))
+      (import $tbl "" "tbl" (table 4 funcref))
       (import $print "" "print" (func (param i32)))
 
       (type $ftype (func (param i32)))
@@ -71,7 +67,7 @@ var nonrefmod = new WebAssembly.Module(wasmTextToBinary(
        (i32.const 37))
      )`));
 
-var tbl = new WebAssembly.Table({initial:4, element:"anyfunc"});
+var tbl = new WebAssembly.Table({initial:4, element:"funcref"});
 var refins = new WebAssembly.Instance(refmod, {"":{print, tbl}}).exports;
 var nonrefins = new WebAssembly.Instance(nonrefmod, {"":{print, tbl}}).exports;
 

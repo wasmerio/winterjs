@@ -83,29 +83,25 @@ enum : uint32_t {
   TYPE_FLAG_DOUBLE = 0x10,
   TYPE_FLAG_STRING = 0x20,
   TYPE_FLAG_SYMBOL = 0x40,
-#ifdef ENABLE_BIGINT
   TYPE_FLAG_BIGINT = 0x80,
   TYPE_FLAG_LAZYARGS = 0x100,
   TYPE_FLAG_ANYOBJECT = 0x200,
-#else
-  TYPE_FLAG_LAZYARGS = 0x80,
-  TYPE_FLAG_ANYOBJECT = 0x100,
-#endif
+
+  /* Mask containing all "immediate" primitives (not heap-allocated) */
+  TYPE_FLAG_PRIMITIVE_IMMEDIATE = TYPE_FLAG_UNDEFINED | TYPE_FLAG_NULL |
+                                  TYPE_FLAG_BOOLEAN | TYPE_FLAG_INT32 |
+                                  TYPE_FLAG_DOUBLE,
+  /* Mask containing all GCThing primitives (heap-allocated) */
+  TYPE_FLAG_PRIMITIVE_GCTHING =
+      TYPE_FLAG_STRING | TYPE_FLAG_SYMBOL | TYPE_FLAG_BIGINT,
 
   /* Mask containing all primitives */
-  TYPE_FLAG_PRIMITIVE = TYPE_FLAG_UNDEFINED | TYPE_FLAG_NULL |
-                        TYPE_FLAG_BOOLEAN | TYPE_FLAG_INT32 | TYPE_FLAG_DOUBLE |
-                        TYPE_FLAG_STRING | TYPE_FLAG_SYMBOL |
-                        IF_BIGINT(TYPE_FLAG_BIGINT, 0),
+  TYPE_FLAG_PRIMITIVE =
+      TYPE_FLAG_PRIMITIVE_IMMEDIATE | TYPE_FLAG_PRIMITIVE_GCTHING,
 
-/* Mask/shift for the number of objects in objectSet */
-#ifdef ENABLE_BIGINT
+  /* Mask/shift for the number of objects in objectSet */
   TYPE_FLAG_OBJECT_COUNT_MASK = 0x3c00,
   TYPE_FLAG_OBJECT_COUNT_SHIFT = 10,
-#else
-  TYPE_FLAG_OBJECT_COUNT_MASK = 0x3e00,
-  TYPE_FLAG_OBJECT_COUNT_SHIFT = 9,
-#endif
   TYPE_FLAG_OBJECT_COUNT_LIMIT = 7,
   TYPE_FLAG_DOMOBJECT_COUNT_LIMIT =
       TYPE_FLAG_OBJECT_COUNT_MASK >> TYPE_FLAG_OBJECT_COUNT_SHIFT,
@@ -293,6 +289,7 @@ class TypeSet {
 
     bool isGroup() { return (uintptr_t(this) & 1) == 0; }
     bool isSingleton() { return (uintptr_t(this) & 1) != 0; }
+    static constexpr uintptr_t TypeHashSetMarkBit = 1 << 1;
 
     inline ObjectGroup* group();
     inline JSObject* singleton();
@@ -332,17 +329,17 @@ class TypeSet {
 
     bool isPrimitive() const { return data < JSVAL_TYPE_OBJECT; }
 
-    bool isPrimitive(JSValueType type) const {
-      MOZ_ASSERT(type < JSVAL_TYPE_OBJECT);
-      return (uintptr_t)type == data;
+    bool isPrimitive(ValueType type) const {
+      MOZ_ASSERT(type != ValueType::Object);
+      return uintptr_t(type) == data;
     }
 
-    JSValueType primitive() const {
+    ValueType primitive() const {
       MOZ_ASSERT(isPrimitive());
-      return (JSValueType)data;
+      return ValueType(data);
     }
 
-    bool isMagicArguments() const { return primitive() == JSVAL_TYPE_MAGIC; }
+    bool isMagicArguments() const { return primitive() == ValueType::Magic; }
 
     bool isSomeObject() const {
       return data == JSVAL_TYPE_OBJECT || data > JSVAL_TYPE_UNKNOWN;
@@ -396,9 +393,7 @@ class TypeSet {
   static inline Type DoubleType() { return Type(JSVAL_TYPE_DOUBLE); }
   static inline Type StringType() { return Type(JSVAL_TYPE_STRING); }
   static inline Type SymbolType() { return Type(JSVAL_TYPE_SYMBOL); }
-#ifdef ENABLE_BIGINT
   static inline Type BigIntType() { return Type(JSVAL_TYPE_BIGINT); }
-#endif
   static inline Type MagicArgType() { return Type(JSVAL_TYPE_MAGIC); }
   static inline Type AnyObjectType() { return Type(JSVAL_TYPE_OBJECT); }
   static inline Type UnknownType() { return Type(JSVAL_TYPE_UNKNOWN); }

@@ -57,9 +57,9 @@ GlobalHelperThreadState* gHelperThreadState = nullptr;
 #define PROFILER_RAII_PASTE(id, line) id##line
 #define PROFILER_RAII_EXPAND(id, line) PROFILER_RAII_PASTE(id, line)
 #define PROFILER_RAII PROFILER_RAII_EXPAND(raiiObject, __LINE__)
-#define AUTO_PROFILER_LABEL(label, category)     \
+#define AUTO_PROFILER_LABEL(label, categoryPair) \
   HelperThread::AutoProfilerLabel PROFILER_RAII( \
-      this, label, js::ProfilingStackFrame::Category::category)
+      this, label, JS::ProfilingCategoryPair::categoryPair)
 
 bool js::CreateHelperThreadsState() {
   MOZ_ASSERT(!gHelperThreadState);
@@ -744,6 +744,14 @@ static bool EnsureParserCreatedClasses(JSContext* cx, ParseTaskKind kind) {
 
   if (!GlobalObject::initGenerators(cx, global)) {
     return false;  // needed by function*() {}
+  }
+
+  if (!GlobalObject::initAsyncFunction(cx, global)) {
+    return false;  // needed by async function() {}
+  }
+
+  if (!GlobalObject::initAsyncGenerators(cx, global)) {
+    return false;  // needed by async function*() {}
   }
 
   if (kind == ParseTaskKind::Module &&
@@ -2264,6 +2272,35 @@ void js::CancelOffThreadCompressions(JSRuntime* runtime) {
                            runtime);
 }
 
+void js::AttachFinishedCompressions(JSRuntime* runtime,
+                                    AutoLockHelperThreadState& lock) {
+  auto& finished = HelperThreadState().compressionFinishedList(lock);
+  for (size_t i = 0; i < finished.length(); i++) {
+    if (finished[i]->runtimeMatches(runtime)) {
+      UniquePtr<SourceCompressionTask> compressionTask(std::move(finished[i]));
+      HelperThreadState().remove(finished, &i);
+      compressionTask->complete();
+    }
+  }
+}
+
+void js::RunPendingSourceCompressions(JSRuntime* runtime) {
+  AutoLockHelperThreadState lock;
+
+  if (!HelperThreadState().threads) {
+    return;
+  }
+
+  HelperThreadState().startHandlingCompressionTasks(lock);
+
+  // Wait for all in-process compression tasks to complete.
+  while (!HelperThreadState().compressionWorklist(lock).empty()) {
+    HelperThreadState().wait(lock, GlobalHelperThreadState::CONSUMER);
+  }
+
+  AttachFinishedCompressions(runtime, lock);
+}
+
 void PromiseHelperTask::executeAndResolveAndDestroy(JSContext* cx) {
   execute();
   run(cx, JS::Dispatchable::NotShuttingDown);
@@ -2381,10 +2418,10 @@ const HelperThread::TaskSpec HelperThread::taskSpecs[] = {
 
 HelperThread::AutoProfilerLabel::AutoProfilerLabel(
     HelperThread* helperThread, const char* label,
-    ProfilingStackFrame::Category category)
+    JS::ProfilingCategoryPair categoryPair)
     : profilingStack(helperThread->profilingStack) {
   if (profilingStack) {
-    profilingStack->pushLabelFrame(label, nullptr, this, category);
+    profilingStack->pushLabelFrame(label, nullptr, this, categoryPair);
   }
 }
 

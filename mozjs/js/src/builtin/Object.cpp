@@ -8,9 +8,7 @@
 
 #include "mozilla/MaybeOneOf.h"
 
-#ifdef ENABLE_BIGINT
-#  include "builtin/BigInt.h"
-#endif
+#include "builtin/BigInt.h"
 #include "builtin/Eval.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/String.h"
@@ -370,7 +368,7 @@ JSString* js::ObjectToSource(JSContext* cx, HandleObject obj) {
           return false;
         }
       } else if (kind == PropertyKind::Method && fun) {
-        if (IsWrappedAsyncFunction(fun)) {
+        if (fun->isAsync()) {
           if (!buf.append("async ")) {
             return false;
           }
@@ -414,7 +412,6 @@ JSString* js::ObjectToSource(JSContext* cx, HandleObject obj) {
   RootedId id(cx);
   Rooted<PropertyDescriptor> desc(cx);
   RootedValue val(cx);
-  RootedFunction fun(cx);
   for (size_t i = 0; i < idv.length(); ++i) {
     id = idv[i];
     if (!GetOwnPropertyDescriptor(cx, obj, id, &desc)) {
@@ -442,17 +439,13 @@ JSString* js::ObjectToSource(JSContext* cx, HandleObject obj) {
     }
 
     val.set(desc.value());
-    if (IsFunctionObject(val, fun.address())) {
-      if (IsWrappedAsyncFunction(fun)) {
-        fun = GetUnwrappedAsyncFunction(fun);
-      }
 
-      if (fun->isMethod()) {
-        if (!AddProperty(id, val, PropertyKind::Method)) {
-          return nullptr;
-        }
-        continue;
+    JSFunction* fun;
+    if (IsFunctionObject(val, &fun) && fun->isMethod()) {
+      if (!AddProperty(id, val, PropertyKind::Method)) {
+        return nullptr;
       }
+      continue;
     }
 
     if (!AddProperty(id, val, PropertyKind::Normal)) {
@@ -515,7 +508,7 @@ static bool GetBuiltinTagSlow(JSContext* cx, HandleObject obj,
     default:
       if (obj->isCallable()) {
         // Non-standard: Prevent <object> from showing up as Function.
-        RootedObject unwrapped(cx, CheckedUnwrap(obj));
+        RootedObject unwrapped(cx, CheckedUnwrapDynamic(obj, cx));
         if (!unwrapped || !unwrapped->getClass()->isDOMClass()) {
           builtinTag.set(cx->names().objectFunction);
           return true;
@@ -940,6 +933,26 @@ static bool AssignSlow(JSContext* cx, HandleObject to, HandleObject from) {
   return true;
 }
 
+JS_PUBLIC_API bool JS_AssignObject(JSContext* cx, JS::HandleObject target,
+                                   JS::HandleObject src) {
+  bool optimized;
+  if (!TryAssignNative(cx, target, src, &optimized)) {
+    return false;
+  }
+  if (optimized) {
+    return true;
+  }
+
+  if (!TryAssignFromUnboxed(cx, target, src, &optimized)) {
+    return false;
+  }
+  if (optimized) {
+    return true;
+  }
+
+  return AssignSlow(cx, target, src);
+}
+
 // ES2018 draft rev 48ad2688d8f964da3ea8c11163ef20eb126fb8a4
 // 19.1.2.1 Object.assign(target, ...sources)
 static bool obj_assign(JSContext* cx, unsigned argc, Value* vp) {
@@ -969,22 +982,7 @@ static bool obj_assign(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     // Steps 4.b.ii, 4.c.
-    bool optimized;
-    if (!TryAssignNative(cx, to, from, &optimized)) {
-      return false;
-    }
-    if (optimized) {
-      continue;
-    }
-
-    if (!TryAssignFromUnboxed(cx, to, from, &optimized)) {
-      return false;
-    }
-    if (optimized) {
-      continue;
-    }
-
-    if (!AssignSlow(cx, to, from)) {
+    if (!JS_AssignObject(cx, to, from)) {
       return false;
     }
   }
@@ -1056,7 +1054,8 @@ PlainObject* js::ObjectCreateWithTemplate(JSContext* cx,
 
 // ES 2017 draft 19.1.2.3.1
 static bool ObjectDefineProperties(JSContext* cx, HandleObject obj,
-                                   HandleValue properties) {
+                                   HandleValue properties,
+                                   bool* failedOnWindowProxy) {
   // Step 1. implicit
   // Step 2.
   RootedObject props(cx, ToObject(cx, properties));
@@ -1100,9 +1099,19 @@ static bool ObjectDefineProperties(JSContext* cx, HandleObject obj,
   }
 
   // Step 6.
+  *failedOnWindowProxy = false;
   for (size_t i = 0, len = descriptors.length(); i < len; i++) {
-    if (!DefineProperty(cx, obj, descriptorKeys[i], descriptors[i])) {
+    ObjectOpResult result;
+    if (!DefineProperty(cx, obj, descriptorKeys[i], descriptors[i], result)) {
       return false;
+    }
+
+    if (!result.ok()) {
+      if (result.failureCode() == JSMSG_CANT_DEFINE_WINDOW_NC) {
+        *failedOnWindowProxy = true;
+      } else if (!result.checkStrict(cx, obj, descriptorKeys[i])) {
+        return false;
+      }
     }
   }
 
@@ -1140,9 +1149,13 @@ bool js::obj_create(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 3.
   if (args.hasDefined(1)) {
-    if (!ObjectDefineProperties(cx, obj, args[1])) {
+    // we can't ever end up with failures to define on a WindowProxy
+    // here, because "obj" is never a WindowProxy.
+    bool failedOnWindowProxy = false;
+    if (!ObjectDefineProperties(cx, obj, args[1], &failedOnWindowProxy)) {
       return false;
     }
+    MOZ_ASSERT(!failedOnWindowProxy, "How did we get a WindowProxy here?");
   }
 
   // Step 4.
@@ -1885,12 +1898,11 @@ static bool obj_getOwnPropertySymbols(JSContext* cx, unsigned argc, Value* vp) {
 static bool obj_defineProperties(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  /* Steps 1 and 7. */
+  /* Step 1. */
   RootedObject obj(cx);
   if (!GetFirstArgumentAsObject(cx, args, "Object.defineProperties", &obj)) {
     return false;
   }
-  args.rval().setObject(*obj);
 
   /* Step 2. */
   if (!args.requireAtLeast(cx, "Object.defineProperties", 2)) {
@@ -1898,7 +1910,18 @@ static bool obj_defineProperties(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   /* Steps 3-6. */
-  return ObjectDefineProperties(cx, obj, args[1]);
+  bool failedOnWindowProxy = false;
+  if (!ObjectDefineProperties(cx, obj, args[1], &failedOnWindowProxy)) {
+    return false;
+  }
+
+  /* Step 7, but modified to deal with WindowProxy mess */
+  if (failedOnWindowProxy) {
+    args.rval().setNull();
+  } else {
+    args.rval().setObject(*obj);
+  }
+  return true;
 }
 
 // ES6 20141014 draft 19.1.2.15 Object.preventExtensions(O)

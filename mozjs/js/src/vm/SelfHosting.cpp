@@ -43,6 +43,8 @@
 #include "js/Wrapper.h"
 #include "util/StringBuffer.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/AsyncFunction.h"
+#include "vm/AsyncIteration.h"
 #include "vm/Compression.h"
 #include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
@@ -50,6 +52,7 @@
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
+#include "vm/PIC.h"
 #include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/RegExpObject.h"
@@ -67,6 +70,7 @@
 #include "vm/NativeObject-inl.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/StringObject-inl.h"
+#include "vm/TypedArrayObject-inl.h"
 
 using namespace js;
 using namespace js::selfhosted;
@@ -222,7 +226,7 @@ static bool intrinsic_IsWrappedInstanceOfBuiltin(JSContext* cx, unsigned argc,
     return true;
   }
 
-  JSObject* unwrapped = CheckedUnwrap(obj);
+  JSObject* unwrapped = CheckedUnwrapDynamic(obj, cx);
   if (!unwrapped) {
     ReportAccessDenied(cx);
     return false;
@@ -240,7 +244,7 @@ static bool intrinsic_IsPossiblyWrappedInstanceOfBuiltin(JSContext* cx,
   MOZ_ASSERT(args.length() == 1);
   MOZ_ASSERT(args[0].isObject());
 
-  JSObject* obj = CheckedUnwrap(&args[0].toObject());
+  JSObject* obj = CheckedUnwrapDynamic(&args[0].toObject(), cx);
   if (!obj) {
     ReportAccessDenied(cx);
     return false;
@@ -796,6 +800,25 @@ bool js::intrinsic_NewArrayIterator(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool intrinsic_ArrayIteratorPrototypeOptimizable(JSContext* cx,
+                                                        unsigned argc,
+                                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 0);
+
+  ForOfPIC::Chain* stubChain = ForOfPIC::getOrCreate(cx);
+  if (!stubChain) {
+    return false;
+  }
+
+  bool optimized;
+  if (!stubChain->tryOptimizeArrayIteratorNext(cx, &optimized)) {
+    return false;
+  }
+  args.rval().setBoolean(optimized);
+  return true;
+}
+
 static bool intrinsic_GetNextMapEntryForIterator(JSContext* cx, unsigned argc,
                                                  Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -969,13 +992,13 @@ static bool intrinsic_PossiblyWrappedArrayBufferByteLength(JSContext* cx,
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
 
-  JSObject* obj = CheckedUnwrap(&args[0].toObject());
+  T* obj = args[0].toObject().maybeUnwrapAs<T>();
   if (!obj) {
     ReportAccessDenied(cx);
     return false;
   }
 
-  uint32_t length = obj->as<T>().byteLength();
+  uint32_t length = obj->byteLength();
   args.rval().setInt32(mozilla::AssertedCast<int32_t>(length));
   return true;
 }
@@ -996,12 +1019,11 @@ static bool intrinsic_ArrayBufferCopyData(JSContext* cx, unsigned argc,
   } else {
     JSObject* wrapped = &args[0].toObject();
     MOZ_ASSERT(wrapped->is<WrapperObject>());
-    RootedObject toBufferObj(cx, CheckedUnwrap(wrapped));
-    if (!toBufferObj) {
+    toBuffer = wrapped->maybeUnwrapAs<T>();
+    if (!toBuffer) {
       ReportAccessDenied(cx);
       return false;
     }
-    toBuffer = toBufferObj.as<T>();
   }
   uint32_t toIndex = uint32_t(args[1].toInt32());
   Rooted<T*> fromBuffer(cx, &args[2].toObject().as<T>());
@@ -1020,19 +1042,18 @@ static bool intrinsic_SharedArrayBuffersMemorySame(JSContext* cx, unsigned argc,
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
 
-  JSObject* lhs = CheckedUnwrap(&args[0].toObject());
+  auto* lhs = args[0].toObject().maybeUnwrapAs<SharedArrayBufferObject>();
   if (!lhs) {
     ReportAccessDenied(cx);
     return false;
   }
-  JSObject* rhs = CheckedUnwrap(&args[1].toObject());
+  auto* rhs = args[1].toObject().maybeUnwrapAs<SharedArrayBufferObject>();
   if (!rhs) {
     ReportAccessDenied(cx);
     return false;
   }
 
-  args.rval().setBoolean(lhs->as<SharedArrayBufferObject>().rawBufferObject() ==
-                         rhs->as<SharedArrayBufferObject>().rawBufferObject());
+  args.rval().setBoolean(lhs->rawBufferObject() == rhs->rawBufferObject());
   return true;
 }
 
@@ -1065,6 +1086,16 @@ static bool intrinsic_GetTypedArrayKind(JSContext* cx, unsigned argc,
   Scalar::Type type = JS_GetArrayBufferViewType(obj);
 
   args.rval().setInt32(static_cast<int32_t>(type));
+  return true;
+}
+
+static bool intrinsic_IsTypedArrayConstructor(JSContext* cx, unsigned argc,
+                                              Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+  MOZ_ASSERT(args[0].isObject());
+
+  args.rval().setBoolean(js::IsTypedArrayConstructor(&args[0].toObject()));
   return true;
 }
 
@@ -1114,10 +1145,10 @@ static bool intrinsic_TypedArrayLength(JSContext* cx, unsigned argc,
                                        Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
+  MOZ_ASSERT(TypedArrayObject::is(args[0]));
 
-  JSObject* obj = &args[0].toObject();
-  MOZ_ASSERT(obj->is<TypedArrayObject>());
-  args.rval().setInt32(obj->as<TypedArrayObject>().length());
+  args.rval().set(TypedArrayObject::lengthValue(
+      &args[0].toObject().as<TypedArrayObject>()));
   return true;
 }
 
@@ -1128,14 +1159,13 @@ static bool intrinsic_PossiblyWrappedTypedArrayLength(JSContext* cx,
   MOZ_ASSERT(args.length() == 1);
   MOZ_ASSERT(args[0].isObject());
 
-  JSObject* obj = CheckedUnwrap(&args[0].toObject());
+  TypedArrayObject* obj = args[0].toObject().maybeUnwrapAs<TypedArrayObject>();
   if (!obj) {
     ReportAccessDenied(cx);
     return false;
   }
 
-  MOZ_ASSERT(obj->is<TypedArrayObject>());
-  uint32_t typedArrayLength = obj->as<TypedArrayObject>().length();
+  uint32_t typedArrayLength = obj->length();
   args.rval().setInt32(mozilla::AssertedCast<int32_t>(typedArrayLength));
   return true;
 }
@@ -1147,14 +1177,13 @@ static bool intrinsic_PossiblyWrappedTypedArrayHasDetachedBuffer(JSContext* cx,
   MOZ_ASSERT(args.length() == 1);
   MOZ_ASSERT(args[0].isObject());
 
-  JSObject* obj = CheckedUnwrap(&args[0].toObject());
+  TypedArrayObject* obj = args[0].toObject().maybeUnwrapAs<TypedArrayObject>();
   if (!obj) {
     ReportAccessDenied(cx);
     return false;
   }
 
-  MOZ_ASSERT(obj->is<TypedArrayObject>());
-  bool detached = obj->as<TypedArrayObject>().hasDetachedBuffer();
+  bool detached = obj->hasDetachedBuffer();
   args.rval().setBoolean(detached);
   return true;
 }
@@ -1208,8 +1237,13 @@ static bool intrinsic_MoveTypedArrayElements(JSContext* cx, unsigned argc,
 #endif
 
   SharedMem<uint8_t*> data = tarray->dataPointerEither().cast<uint8_t*>();
-  jit::AtomicOperations::memmoveSafeWhenRacy(data + byteDest, data + byteSrc,
-                                             byteSize);
+  if (tarray->isSharedMemory()) {
+    jit::AtomicOperations::memmoveSafeWhenRacy(data + byteDest, data + byteSrc,
+                                               byteSize);
+  } else {
+    memmove(data.unwrapUnshared() + byteDest, data.unwrapUnshared() + byteSrc,
+            byteSize);
+  }
 
   args.rval().setUndefined();
   return true;
@@ -1230,31 +1264,16 @@ static TypedArrayObject* DangerouslyUnwrapTypedArray(JSContext* cx,
                                                      JSObject* obj) {
   // An unwrapped pointer to an object potentially on the other side of a
   // compartment boundary!  Isn't this such fun?
-  JSObject* unwrapped = CheckedUnwrap(obj);
+  TypedArrayObject* unwrapped = obj->maybeUnwrapAs<TypedArrayObject>();
   if (!unwrapped) {
     ReportAccessDenied(cx);
-    return nullptr;
-  }
-
-  if (!unwrapped->is<TypedArrayObject>()) {
-    // By *appearances* this can't happen, as self-hosted code
-    // checked this.  But.  Who's to say a GC couldn't happen between
-    // the check that this value was a typed array, and this extraction
-    // occurring?  A GC might turn a cross-compartment wrapper |obj| into
-    // |unwrapped == obj|, a dead object no longer connected its typed
-    // array.
-    //
-    // Yeah, yeah, it's pretty unlikely.  Are you willing to stake a
-    // sec-critical bug on that assessment, now and forever, against
-    // all changes those pesky GC and JIT people might make?
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_DEAD_OBJECT);
     return nullptr;
   }
 
   // Be super-duper careful using this, as we've just punched through
   // the compartment boundary, and things like buffer() on this aren't
   // same-compartment with anything else in the calling method.
-  return &unwrapped->as<TypedArrayObject>();
+  return unwrapped;
 }
 
 // ES6 draft 20150403 22.2.3.22.2, steps 12-24, 29.
@@ -1689,8 +1708,14 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   // crafted typed array. It won't happen in normal code and hence doesn't
   // need to be optimized.
   if (!TypedArrayObject::sameBuffer(source, unsafeTypedArrayCrossCompartment)) {
-    jit::AtomicOperations::memcpySafeWhenRacy(unsafeTargetDataCrossCompartment,
-                                              sourceData, byteLength);
+    if (source->isSharedMemory() ||
+        unsafeTypedArrayCrossCompartment->isSharedMemory()) {
+      jit::AtomicOperations::memcpySafeWhenRacy(
+          unsafeTargetDataCrossCompartment, sourceData, byteLength);
+    } else {
+      memcpy(unsafeTargetDataCrossCompartment.unwrapUnshared(),
+             sourceData.unwrapUnshared(), byteLength);
+    }
   } else {
     using namespace jit;
 
@@ -1702,6 +1727,43 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   }
 
   args.rval().setBoolean(true);
+  return true;
+}
+
+static bool intrinsic_TypedArrayInitFromPackedArray(JSContext* cx,
+                                                    unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(args[1].isObject());
+
+  Rooted<TypedArrayObject*> target(cx,
+                                   &args[0].toObject().as<TypedArrayObject>());
+  MOZ_ASSERT(!target->hasDetachedBuffer());
+  MOZ_ASSERT(!target->isSharedMemory());
+
+  RootedArrayObject source(cx, &args[1].toObject().as<ArrayObject>());
+  MOZ_ASSERT(IsPackedArray(source));
+  MOZ_ASSERT(source->length() == target->length());
+
+  switch (target->type()) {
+#define INIT_TYPED_ARRAY(T, N)                                         \
+  case Scalar::N: {                                                    \
+    if (!ElementSpecific<T, UnsharedOps>::initFromIterablePackedArray( \
+            cx, target, source)) {                                     \
+      return false;                                                    \
+    }                                                                  \
+    break;                                                             \
+  }
+    JS_FOR_EACH_TYPED_ARRAY(INIT_TYPED_ARRAY)
+#undef INIT_TYPED_ARRAY
+
+    default:
+      MOZ_CRASH(
+          "TypedArrayInitFromPackedArray with a typed array with bogus type");
+  }
+
+  args.rval().setUndefined();
   return true;
 }
 
@@ -1773,7 +1835,7 @@ bool js::intrinsic_StringSplitString(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  JSObject* aobj = str_split_string(cx, group, string, sep, INT32_MAX);
+  JSObject* aobj = StringSplitString(cx, group, string, sep, INT32_MAX);
   if (!aobj) {
     return false;
   }
@@ -1801,7 +1863,7 @@ static bool intrinsic_StringSplitStringLimit(JSContext* cx, unsigned argc,
     return false;
   }
 
-  JSObject* aobj = str_split_string(cx, group, string, sep, limit);
+  JSObject* aobj = StringSplitString(cx, group, string, sep, limit);
   if (!aobj) {
     return false;
   }
@@ -2121,24 +2183,6 @@ static bool intrinsic_ConstructorForTypedArray(JSContext* cx, unsigned argc,
   return true;
 }
 
-static bool intrinsic_NameForTypedArray(JSContext* cx, unsigned argc,
-                                        Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 1);
-  MOZ_ASSERT(args[0].isObject());
-
-  auto* object = UnwrapAndDowncastValue<TypedArrayObject>(cx, args[0]);
-  if (!object) {
-    return false;
-  }
-
-  JSProtoKey protoKey = StandardProtoKeyOrNull(object);
-  MOZ_ASSERT(protoKey);
-
-  args.rval().setString(ClassName(protoKey, cx));
-  return true;
-}
-
 static bool intrinsic_HostResolveImportedModule(JSContext* cx, unsigned argc,
                                                 Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2428,7 +2472,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("MakeDefaultConstructor", intrinsic_MakeDefaultConstructor, 2, 0),
     JS_FN("_ConstructorForTypedArray", intrinsic_ConstructorForTypedArray, 1,
           0),
-    JS_FN("_NameForTypedArray", intrinsic_NameForTypedArray, 1, 0),
     JS_FN("DecompileArg", intrinsic_DecompileArg, 2, 0),
     JS_INLINABLE_FN("_FinishBoundFunctionInit",
                     intrinsic_FinishBoundFunctionInit, 3, 0,
@@ -2469,6 +2512,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_INLINABLE_FN("NewArrayIterator", intrinsic_NewArrayIterator, 0, 0,
                     IntrinsicNewArrayIterator),
+    JS_INLINABLE_FN("ArrayIteratorPrototypeOptimizable",
+                    intrinsic_ArrayIteratorPrototypeOptimizable, 0, 0,
+                    IntrinsicArrayIteratorPrototypeOptimizable),
 
     JS_FN("CallArrayIteratorMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<ArrayIteratorObject>>, 2, 0),
@@ -2526,6 +2572,11 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("GeneratorIsRunning", intrinsic_GeneratorIsRunning, 1, 0),
     JS_FN("GeneratorSetClosed", intrinsic_GeneratorSetClosed, 1, 0),
 
+    JS_FN("IsAsyncFunctionGeneratorObject",
+          intrinsic_IsInstanceOfBuiltin<AsyncFunctionGeneratorObject>, 1, 0),
+    JS_FN("IsAsyncGeneratorObject",
+          intrinsic_IsInstanceOfBuiltin<AsyncGeneratorObject>, 1, 0),
+
     JS_INLINABLE_FN("GuardToArrayBuffer",
                     intrinsic_GuardToBuiltin<ArrayBufferObject>, 1, 0,
                     IntrinsicGuardToArrayBuffer),
@@ -2566,10 +2617,15 @@ static const JSFunctionSpec intrinsic_functions[] = {
         "IsPossiblyWrappedTypedArray",
         intrinsic_IsPossiblyWrappedInstanceOfBuiltin<TypedArrayObject>, 1, 0,
         IntrinsicIsPossiblyWrappedTypedArray),
+    JS_INLINABLE_FN("IsTypedArrayConstructor",
+                    intrinsic_IsTypedArrayConstructor, 1, 0,
+                    IntrinsicIsTypedArrayConstructor),
 
     JS_FN("TypedArrayBuffer", intrinsic_TypedArrayBuffer, 1, 0),
-    JS_FN("TypedArrayByteOffset", intrinsic_TypedArrayByteOffset, 1, 0),
-    JS_FN("TypedArrayElementShift", intrinsic_TypedArrayElementShift, 1, 0),
+    JS_INLINABLE_FN("TypedArrayByteOffset", intrinsic_TypedArrayByteOffset, 1,
+                    0, IntrinsicTypedArrayByteOffset),
+    JS_INLINABLE_FN("TypedArrayElementShift", intrinsic_TypedArrayElementShift,
+                    1, 0, IntrinsicTypedArrayElementShift),
 
     JS_INLINABLE_FN("TypedArrayLength", intrinsic_TypedArrayLength, 1, 0,
                     IntrinsicTypedArrayLength),
@@ -2590,6 +2646,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
                     IntrinsicSetDisjointTypedElements),
 
     JS_FN("TypedArrayBitwiseSlice", intrinsic_TypedArrayBitwiseSlice, 4, 0),
+
+    JS_FN("TypedArrayInitFromPackedArray",
+          intrinsic_TypedArrayInitFromPackedArray, 2, 0),
 
     JS_FN("CallArrayBufferMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<ArrayBufferObject>>, 2, 0),
@@ -2614,7 +2673,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     // See builtin/TypedObject.h for descriptors of the typedobj functions.
     JS_FN("NewOpaqueTypedObject", js::NewOpaqueTypedObject, 1, 0),
     JS_FN("NewDerivedTypedObject", js::NewDerivedTypedObject, 3, 0),
-    JS_FN("TypedObjectBuffer", TypedObject::GetBuffer, 1, 0),
     JS_FN("TypedObjectByteOffset", TypedObject::GetByteOffset, 1, 0),
     JS_FN("AttachTypedObject", js::AttachTypedObject, 3, 0),
     JS_FN("TypedObjectIsAttached", js::TypedObjectIsAttached, 1, 0),

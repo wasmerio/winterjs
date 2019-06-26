@@ -7,6 +7,7 @@
 #ifndef vm_GeneratorObject_h
 #define vm_GeneratorObject_h
 
+#include "js/Class.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
 #include "vm/JSContext.h"
@@ -15,7 +16,7 @@
 
 namespace js {
 
-class GeneratorObject : public NativeObject {
+class AbstractGeneratorObject : public NativeObject {
  public:
   // Magic values stored in the resumeIndex slot when the generator is
   // running or closing. See the resumeIndex comment below.
@@ -33,8 +34,6 @@ class GeneratorObject : public NativeObject {
 
   enum ResumeKind { NEXT, THROW, RETURN };
 
-  static const Class class_;
-
  private:
   static bool suspend(JSContext* cx, HandleObject obj, AbstractFramePtr frame,
                       jsbytecode* pc, Value* vp, unsigned nvalues);
@@ -42,7 +41,7 @@ class GeneratorObject : public NativeObject {
  public:
   static inline ResumeKind getResumeKind(jsbytecode* pc) {
     MOZ_ASSERT(*pc == JSOP_RESUME);
-    unsigned arg = GET_UINT16(pc);
+    unsigned arg = GET_UINT8(pc);
     MOZ_ASSERT(arg <= RETURN);
     return static_cast<ResumeKind>(arg);
   }
@@ -61,7 +60,7 @@ class GeneratorObject : public NativeObject {
   static JSObject* create(JSContext* cx, AbstractFramePtr frame);
 
   static bool resume(JSContext* cx, InterpreterActivation& activation,
-                     Handle<GeneratorObject*> genObj, HandleValue arg);
+                     Handle<AbstractGeneratorObject*> genObj, HandleValue arg);
 
   static bool initialSuspend(JSContext* cx, HandleObject obj,
                              AbstractFramePtr frame, jsbytecode* pc) {
@@ -165,6 +164,9 @@ class GeneratorObject : public NativeObject {
     setFixedSlot(RESUME_INDEX_SLOT, Int32Value(resumeIndex));
     MOZ_ASSERT(isSuspended());
   }
+  void setResumeIndex(int32_t resumeIndex) {
+    setFixedSlot(RESUME_INDEX_SLOT, Int32Value(resumeIndex));
+  }
   uint32_t resumeIndex() const {
     MOZ_ASSERT(isSuspended());
     return getFixedSlot(RESUME_INDEX_SLOT).toInt32();
@@ -200,20 +202,32 @@ class GeneratorObject : public NativeObject {
   }
 };
 
+class GeneratorObject : public AbstractGeneratorObject {
+ public:
+  enum { RESERVED_SLOTS = AbstractGeneratorObject::RESERVED_SLOTS };
+
+  static const Class class_;
+
+  static GeneratorObject* create(JSContext* cx, HandleFunction fun);
+};
+
 bool GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
-                            Handle<GeneratorObject*> obj, HandleValue val,
-                            uint32_t resumeKind);
+                            Handle<AbstractGeneratorObject*> obj,
+                            HandleValue val, uint32_t resumeKind);
 
 /**
  * Return the generator object associated with the given frame. The frame must
  * be a call frame for a generator. If the generator object hasn't been created
  * yet, or hasn't been stored in the stack slot yet, this returns null.
  */
-GeneratorObject* GetGeneratorObjectForFrame(JSContext* cx,
-                                            AbstractFramePtr frame);
+AbstractGeneratorObject* GetGeneratorObjectForFrame(JSContext* cx,
+                                                    AbstractFramePtr frame);
 
 void SetGeneratorClosed(JSContext* cx, AbstractFramePtr frame);
 
 }  // namespace js
+
+template <>
+bool JSObject::is<js::AbstractGeneratorObject>() const;
 
 #endif /* vm_GeneratorObject_h */

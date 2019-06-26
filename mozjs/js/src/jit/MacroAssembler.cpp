@@ -49,32 +49,36 @@ static void EmitTypeCheck(MacroAssembler& masm, Assembler::Condition cond,
     return;
   }
   switch (type.primitive()) {
-    case JSVAL_TYPE_DOUBLE:
+    case ValueType::Double:
       // TI double type includes int32.
       masm.branchTestNumber(cond, src, label);
       break;
-    case JSVAL_TYPE_INT32:
+    case ValueType::Int32:
       masm.branchTestInt32(cond, src, label);
       break;
-    case JSVAL_TYPE_BOOLEAN:
+    case ValueType::Boolean:
       masm.branchTestBoolean(cond, src, label);
       break;
-    case JSVAL_TYPE_STRING:
+    case ValueType::String:
       masm.branchTestString(cond, src, label);
       break;
-    case JSVAL_TYPE_SYMBOL:
+    case ValueType::Symbol:
       masm.branchTestSymbol(cond, src, label);
       break;
-    case JSVAL_TYPE_NULL:
+    case ValueType::BigInt:
+      masm.branchTestBigInt(cond, src, label);
+      break;
+    case ValueType::Null:
       masm.branchTestNull(cond, src, label);
       break;
-    case JSVAL_TYPE_UNDEFINED:
+    case ValueType::Undefined:
       masm.branchTestUndefined(cond, src, label);
       break;
-    case JSVAL_TYPE_MAGIC:
+    case ValueType::Magic:
       masm.branchTestMagic(cond, src, label);
       break;
-    default:
+    case ValueType::PrivateGCThing:
+    case ValueType::Object:
       MOZ_CRASH("Unexpected type");
   }
 }
@@ -97,10 +101,11 @@ void MacroAssembler::guardTypeSet(const Source& address, const TypeSet* types,
   MOZ_ASSERT(!types->unknown());
 
   Label matched;
-  TypeSet::Type tests[8] = {TypeSet::Int32Type(),    TypeSet::UndefinedType(),
-                            TypeSet::BooleanType(),  TypeSet::StringType(),
-                            TypeSet::SymbolType(),   TypeSet::NullType(),
-                            TypeSet::MagicArgType(), TypeSet::AnyObjectType()};
+  TypeSet::Type tests[] = {TypeSet::Int32Type(),    TypeSet::UndefinedType(),
+                           TypeSet::BooleanType(),  TypeSet::StringType(),
+                           TypeSet::SymbolType(),   TypeSet::BigIntType(),
+                           TypeSet::NullType(),     TypeSet::MagicArgType(),
+                           TypeSet::AnyObjectType()};
 
   // The double type also implies Int32.
   // So replace the int32 test with the double one.
@@ -457,8 +462,9 @@ void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T& src,
         }
         bind(&isDouble);
         {
-          convertUInt32ToDouble(temp, ScratchDoubleReg);
-          boxDouble(ScratchDoubleReg, dest, ScratchDoubleReg);
+          ScratchDoubleScope fpscratch(*this);
+          convertUInt32ToDouble(temp, fpscratch);
+          boxDouble(fpscratch, dest, fpscratch);
         }
         bind(&done);
       } else {
@@ -467,17 +473,22 @@ void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T& src,
         tagValue(JSVAL_TYPE_INT32, temp, dest);
       }
       break;
-    case Scalar::Float32:
-      loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloat32Reg),
+    case Scalar::Float32: {
+      ScratchDoubleScope dscratch(*this);
+      FloatRegister fscratch = dscratch.asSingle();
+      loadFromTypedArray(arrayType, src, AnyRegister(fscratch),
                          dest.scratchReg(), nullptr);
-      convertFloat32ToDouble(ScratchFloat32Reg, ScratchDoubleReg);
-      boxDouble(ScratchDoubleReg, dest, ScratchDoubleReg);
+      convertFloat32ToDouble(fscratch, dscratch);
+      boxDouble(dscratch, dest, dscratch);
       break;
-    case Scalar::Float64:
-      loadFromTypedArray(arrayType, src, AnyRegister(ScratchDoubleReg),
+    }
+    case Scalar::Float64: {
+      ScratchDoubleScope fpscratch(*this);
+      loadFromTypedArray(arrayType, src, AnyRegister(fpscratch),
                          dest.scratchReg(), nullptr);
-      boxDouble(ScratchDoubleReg, dest, ScratchDoubleReg);
+      boxDouble(fpscratch, dest, fpscratch);
       break;
+    }
     default:
       MOZ_CRASH("Invalid typed array type");
   }
@@ -656,15 +667,17 @@ void MacroAssembler::storeUnboxedProperty(T address, JSValueType type,
     case JSVAL_TYPE_DOUBLE:
       if (value.constant()) {
         if (value.value().isNumber()) {
-          loadConstantDouble(value.value().toNumber(), ScratchDoubleReg);
-          storeDouble(ScratchDoubleReg, address);
+          ScratchDoubleScope fpscratch(*this);
+          loadConstantDouble(value.value().toNumber(), fpscratch);
+          storeDouble(fpscratch, address);
         } else {
           StoreUnboxedFailure(*this, failure);
         }
       } else if (value.reg().hasTyped()) {
         if (value.reg().type() == MIRType::Int32) {
-          convertInt32ToDouble(value.reg().typedReg().gpr(), ScratchDoubleReg);
-          storeDouble(ScratchDoubleReg, address);
+          ScratchDoubleScope fpscratch(*this);
+          convertInt32ToDouble(value.reg().typedReg().gpr(), fpscratch);
+          storeDouble(fpscratch, address);
         } else if (value.reg().type() == MIRType::Double) {
           storeDouble(value.reg().typedReg().fpu(), address);
         } else {
@@ -674,8 +687,11 @@ void MacroAssembler::storeUnboxedProperty(T address, JSValueType type,
         ValueOperand reg = value.reg().valueReg();
         Label notInt32, end;
         branchTestInt32(Assembler::NotEqual, reg, &notInt32);
-        int32ValueToDouble(reg, ScratchDoubleReg);
-        storeDouble(ScratchDoubleReg, address);
+        {
+          ScratchDoubleScope fpscratch(*this);
+          int32ValueToDouble(reg, fpscratch);
+          storeDouble(fpscratch, address);
+        }
         jump(&end);
         bind(&notInt32);
         if (failure) {
@@ -2220,16 +2236,18 @@ void MacroAssembler::convertInt32ValueToDouble(const Address& address,
                                                Register scratch, Label* done) {
   branchTestInt32(Assembler::NotEqual, address, done);
   unboxInt32(address, scratch);
-  convertInt32ToDouble(scratch, ScratchDoubleReg);
-  storeDouble(ScratchDoubleReg, address);
+  ScratchDoubleScope fpscratch(*this);
+  convertInt32ToDouble(scratch, fpscratch);
+  storeDouble(fpscratch, address);
 }
 
 void MacroAssembler::convertInt32ValueToDouble(ValueOperand val) {
   Label done;
   branchTestInt32(Assembler::NotEqual, val, &done);
   unboxInt32(val, val.scratchReg());
-  convertInt32ToDouble(val.scratchReg(), ScratchDoubleReg);
-  boxDouble(ScratchDoubleReg, val, ScratchDoubleReg);
+  ScratchDoubleScope fpscratch(*this);
+  convertInt32ToDouble(val.scratchReg(), fpscratch);
+  boxDouble(fpscratch, val, fpscratch);
   bind(&done);
 }
 
@@ -2267,15 +2285,19 @@ void MacroAssembler::convertValueToFloatingPoint(ValueOperand value,
   int32ValueToFloatingPoint(value, output, outputType);
   jump(&done);
 
+  // On some non-multiAlias platforms, unboxDouble may use the scratch register,
+  // so do not merge code paths here.
   bind(&isDouble);
-  FloatRegister tmp = output.asDouble();
   if (outputType == MIRType::Float32 && hasMultiAlias()) {
-    tmp = ScratchDoubleReg;
-  }
-
-  unboxDouble(value, tmp);
-  if (outputType == MIRType::Float32) {
+    ScratchDoubleScope tmp(*this);
+    unboxDouble(value, tmp);
     convertDoubleToFloat32(tmp, output);
+  } else {
+    FloatRegister tmp = output.asDouble();
+    unboxDouble(value, tmp);
+    if (outputType == MIRType::Float32) {
+      convertDoubleToFloat32(tmp, output);
+    }
   }
 
   bind(&done);
@@ -2391,9 +2413,10 @@ void MacroAssembler::outOfLineTruncateSlow(FloatRegister src, Register dest,
                                            wasm::BytecodeOffset callOffset) {
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
     defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+  ScratchDoubleScope fpscratch(*this);
   if (widenFloatToDouble) {
-    convertFloat32ToDouble(src, ScratchDoubleReg);
-    src = ScratchDoubleReg;
+    convertFloat32ToDouble(src, fpscratch);
+    src = fpscratch;
   }
 #elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
   FloatRegister srcSingle;
@@ -2928,10 +2951,12 @@ void MacroAssembler::Push(TypedOrValueRegister v) {
   } else if (IsFloatingPointType(v.type())) {
     FloatRegister reg = v.typedReg().fpu();
     if (v.type() == MIRType::Float32) {
-      convertFloat32ToDouble(reg, ScratchDoubleReg);
-      reg = ScratchDoubleReg;
+      ScratchDoubleScope fpscratch(*this);
+      convertFloat32ToDouble(reg, fpscratch);
+      Push(fpscratch);
+    } else {
+      Push(reg);
     }
-    Push(reg);
   } else {
     Push(ValueTypeFromMIRType(v.type()), v.typedReg().gpr());
   }
@@ -2943,6 +2968,11 @@ void MacroAssembler::Push(const ConstantOrRegister& v) {
   } else {
     Push(v.reg());
   }
+}
+
+void MacroAssembler::Push(const Address& addr) {
+  push(addr);
+  framePushed_ += sizeof(uintptr_t);
 }
 
 void MacroAssembler::Push(const ValueOperand& val) {
@@ -2966,38 +2996,38 @@ void MacroAssembler::PushValue(const Address& addr) {
   framePushed_ += sizeof(Value);
 }
 
-void MacroAssembler::PushEmptyRooted(VMFunction::RootType rootType) {
+void MacroAssembler::PushEmptyRooted(VMFunctionData::RootType rootType) {
   switch (rootType) {
-    case VMFunction::RootNone:
+    case VMFunctionData::RootNone:
       MOZ_CRASH("Handle must have root type");
-    case VMFunction::RootObject:
-    case VMFunction::RootString:
-    case VMFunction::RootFunction:
-    case VMFunction::RootCell:
+    case VMFunctionData::RootObject:
+    case VMFunctionData::RootString:
+    case VMFunctionData::RootFunction:
+    case VMFunctionData::RootCell:
       Push(ImmPtr(nullptr));
       break;
-    case VMFunction::RootValue:
+    case VMFunctionData::RootValue:
       Push(UndefinedValue());
       break;
-    case VMFunction::RootId:
+    case VMFunctionData::RootId:
       Push(ImmWord(JSID_BITS(JSID_VOID)));
       break;
   }
 }
 
-void MacroAssembler::popRooted(VMFunction::RootType rootType, Register cellReg,
-                               const ValueOperand& valueReg) {
+void MacroAssembler::popRooted(VMFunctionData::RootType rootType,
+                               Register cellReg, const ValueOperand& valueReg) {
   switch (rootType) {
-    case VMFunction::RootNone:
+    case VMFunctionData::RootNone:
       MOZ_CRASH("Handle must have root type");
-    case VMFunction::RootObject:
-    case VMFunction::RootString:
-    case VMFunction::RootFunction:
-    case VMFunction::RootCell:
-    case VMFunction::RootId:
+    case VMFunctionData::RootObject:
+    case VMFunctionData::RootString:
+    case VMFunctionData::RootFunction:
+    case VMFunctionData::RootCell:
+    case VMFunctionData::RootId:
       Pop(cellReg);
       break;
-    case VMFunction::RootValue:
+    case VMFunctionData::RootValue:
       Pop(valueReg);
       break;
   }
@@ -3173,6 +3203,15 @@ CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
   Pop(WasmTlsReg);
 
   return raOffset;
+}
+
+void MacroAssembler::callDebugWithABI(wasm::SymbolicAddress imm,
+                                      MoveOp::Type result) {
+  MOZ_ASSERT(!wasm::NeedsBuiltinThunk(imm));
+  uint32_t stackAdjust;
+  callWithABIPre(&stackAdjust, /* callFromWasm = */ false);
+  call(imm);
+  callWithABIPost(stackAdjust, result, /* callFromWasm = */ false);
 }
 
 // ===============================================================
@@ -3359,6 +3398,9 @@ void MacroAssembler::maybeBranchTestType(MIRType type, MDefinition* maybeDef,
       case MIRType::Symbol:
         branchTestSymbol(Equal, tag, label);
         break;
+      case MIRType::BigInt:
+        branchTestBigInt(Equal, tag, label);
+        break;
       case MIRType::Object:
         branchTestObject(Equal, tag, label);
         break;
@@ -3386,35 +3428,32 @@ void MacroAssembler::wasmInterruptCheck(Register tls,
   bind(&ok);
 }
 
-void MacroAssembler::wasmReserveStackChecked(uint32_t amount,
-                                             wasm::BytecodeOffset trapOffset) {
-  if (!amount) {
-    return;
-  }
-
-  // If the frame is large, don't bump sp until after the stack limit check so
-  // that the trap handler isn't called with a wild sp.
-
+std::pair<CodeOffset, uint32_t> MacroAssembler::wasmReserveStackChecked(
+    uint32_t amount, wasm::BytecodeOffset trapOffset) {
   if (amount > MAX_UNCHECKED_LEAF_FRAME_SIZE) {
+    // The frame is large.  Don't bump sp until after the stack limit check so
+    // that the trap handler isn't called with a wild sp.
     Label ok;
     Register scratch = ABINonArgReg0;
     moveStackPtrTo(scratch);
     subPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, stackLimit)), scratch);
     branchPtr(Assembler::GreaterThan, scratch, Imm32(amount), &ok);
     wasmTrap(wasm::Trap::StackOverflow, trapOffset);
+    CodeOffset trapInsnOffset = CodeOffset(currentOffset());
     bind(&ok);
+    reserveStack(amount);
+    return std::pair<CodeOffset, uint32_t>(trapInsnOffset, 0);
   }
 
   reserveStack(amount);
-
-  if (amount <= MAX_UNCHECKED_LEAF_FRAME_SIZE) {
-    Label ok;
-    branchStackPtrRhs(Assembler::Below,
-                      Address(WasmTlsReg, offsetof(wasm::TlsData, stackLimit)),
-                      &ok);
-    wasmTrap(wasm::Trap::StackOverflow, trapOffset);
-    bind(&ok);
-  }
+  Label ok;
+  branchStackPtrRhs(Assembler::Below,
+                    Address(WasmTlsReg, offsetof(wasm::TlsData, stackLimit)),
+                    &ok);
+  wasmTrap(wasm::Trap::StackOverflow, trapOffset);
+  CodeOffset trapInsnOffset = CodeOffset(currentOffset());
+  bind(&ok);
+  return std::pair<CodeOffset, uint32_t>(trapInsnOffset, amount);
 }
 
 CodeOffset MacroAssembler::wasmCallImport(const wasm::CallSiteDesc& desc,
@@ -3754,6 +3793,77 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
 
   branchTest32(Assembler::NonZero, flagsAddr,
                Imm32(NativeIterator::Flags::NotReusable), notReusable);
+}
+
+static void LoadNativeIterator(MacroAssembler& masm, Register obj,
+                               Register dest) {
+  MOZ_ASSERT(obj != dest);
+
+#ifdef DEBUG
+  // Assert we have a PropertyIteratorObject.
+  Label ok;
+  masm.branchTestObjClass(Assembler::Equal, obj,
+                          &PropertyIteratorObject::class_, dest, obj, &ok);
+  masm.assumeUnreachable("Expected PropertyIteratorObject!");
+  masm.bind(&ok);
+#endif
+
+  // Load NativeIterator object.
+  masm.loadObjPrivate(obj, PropertyIteratorObject::NUM_FIXED_SLOTS, dest);
+}
+
+void MacroAssembler::iteratorMore(Register obj, ValueOperand output,
+                                  Register temp) {
+  Label done;
+  Register outputScratch = output.scratchReg();
+  LoadNativeIterator(*this, obj, outputScratch);
+
+  // If propertyCursor_ < propertiesEnd_, load the next string and advance
+  // the cursor.  Otherwise return MagicValue(JS_NO_ITER_VALUE).
+  Label iterDone;
+  Address cursorAddr(outputScratch, NativeIterator::offsetOfPropertyCursor());
+  Address cursorEndAddr(outputScratch, NativeIterator::offsetOfPropertiesEnd());
+  loadPtr(cursorAddr, temp);
+  branchPtr(Assembler::BelowOrEqual, cursorEndAddr, temp, &iterDone);
+
+  // Get next string.
+  loadPtr(Address(temp, 0), temp);
+
+  // Increase the cursor.
+  addPtr(Imm32(sizeof(GCPtrFlatString)), cursorAddr);
+
+  tagValue(JSVAL_TYPE_STRING, temp, output);
+  jump(&done);
+
+  bind(&iterDone);
+  moveValue(MagicValue(JS_NO_ITER_VALUE), output);
+
+  bind(&done);
+}
+
+void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
+                                   Register temp3) {
+  LoadNativeIterator(*this, obj, temp1);
+
+  // Clear active bit.
+  and32(Imm32(~NativeIterator::Flags::Active),
+        Address(temp1, NativeIterator::offsetOfFlags()));
+
+  // Reset property cursor.
+  loadPtr(Address(temp1, NativeIterator::offsetOfGuardsEnd()), temp2);
+  storePtr(temp2, Address(temp1, NativeIterator::offsetOfPropertyCursor()));
+
+  // Unlink from the iterator list.
+  const Register next = temp2;
+  const Register prev = temp3;
+  loadPtr(Address(temp1, NativeIterator::offsetOfNext()), next);
+  loadPtr(Address(temp1, NativeIterator::offsetOfPrev()), prev);
+  storePtr(prev, Address(next, NativeIterator::offsetOfPrev()));
+  storePtr(next, Address(prev, NativeIterator::offsetOfNext()));
+#ifdef DEBUG
+  storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfNext()));
+  storePtr(ImmPtr(nullptr), Address(temp1, NativeIterator::offsetOfPrev()));
+#endif
 }
 
 template <typename T, size_t N, typename P>

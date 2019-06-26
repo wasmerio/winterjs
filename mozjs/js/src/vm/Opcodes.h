@@ -350,7 +350,7 @@
      *   Operands:
      *   Stack: val => (+val)
      */ \
-    MACRO(JSOP_POS, 35, "pos", "+ ", 1, 1, 1, JOF_BYTE|JOF_IC) \
+    MACRO(JSOP_POS, 35, "pos", "+ ", 1, 1, 1, JOF_BYTE) \
     /*
      * Looks up name on the environment chain and deletes it, pushes 'true'
      * onto the stack if succeeded (if the property was present and deleted or
@@ -753,7 +753,7 @@
      *   Operands:
      *   Stack: iter => iter, val
      */ \
-    MACRO(JSOP_MOREITER, 76, "moreiter", NULL, 1, 1, 2, JOF_BYTE|JOF_IC) \
+    MACRO(JSOP_MOREITER, 76, "moreiter", NULL, 1, 1, 2, JOF_BYTE) \
     /*
      * Pushes a boolean indicating whether the value on top of the stack is
      * MagicValue(JS_NO_ITER_VALUE).
@@ -773,7 +773,7 @@
      *   Operands:
      *   Stack: iter =>
      */ \
-    MACRO(JSOP_ENDITER, 78, "enditer", NULL, 1, 1, 0, JOF_BYTE|JOF_IC) \
+    MACRO(JSOP_ENDITER, 78, "enditer", NULL, 1, 1, 0, JOF_BYTE) \
     /*
      * Invokes 'callee' with 'this' and 'args', pushes return value onto the
      * stack.
@@ -1086,7 +1086,7 @@
      *   Operands: int32_t offset
      *   Stack: =>
      */ \
-    MACRO(JSOP_LABEL, 106, "label", NULL, 5, 0, 0, JOF_JUMP) \
+    MACRO(JSOP_LABEL, 106, "label", NULL, 5, 0, 0, JOF_CODE_OFFSET) \
     /*
      * Pops the top three values on the stack as 'val', 'obj' and 'receiver',
      * and performs 'obj.prop = val', pushing 'val' back onto the stack.
@@ -1119,13 +1119,14 @@
      * Another no-op.
      *
      * This opcode is the target of the backwards jump for some loop.
+     * See JSOP_JUMPTARGET for the icIndex operand.
      *
      *   Category: Statements
      *   Type: Jumps
-     *   Operands:
+     *   Operands: uint32_t icIndex
      *   Stack: =>
      */ \
-    MACRO(JSOP_LOOPHEAD, 109, "loophead", NULL, 1, 0, 0, JOF_BYTE) \
+    MACRO(JSOP_LOOPHEAD, 109, "loophead", NULL, 5, 0, 0, JOF_ICINDEX) \
     /*
      * Looks up name on the environment chain and pushes the environment which
      * contains the name onto the stack. If not found, pushes global lexical
@@ -1603,15 +1604,8 @@
      */ \
     MACRO(JSOP_NEWTARGET, 148, "newtarget", NULL, 1, 0, 1, JOF_BYTE) \
     /*
-     * Pops the top of stack value as 'unwrapped', converts it to async
-     * function 'wrapped', and pushes 'wrapped' back on the stack.
-     *
-     *   Category: Statements
-     *   Type: Function
-     *   Operands:
-     *   Stack: unwrapped => wrapped
      */ \
-    MACRO(JSOP_TOASYNC, 149, "toasync", NULL, 1, 1, 1, JOF_BYTE) \
+    MACRO(JSOP_UNUSED149, 149, "unused149", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Pops the top two values 'lval' and 'rval' from the stack, then pushes
      * the result of 'Math.pow(lval, rval)'.
@@ -1623,8 +1617,17 @@
      */ \
     MACRO(JSOP_POW, 150, "pow", "**", 1, 2, 1, JOF_BYTE|JOF_IC) \
     /*
+     * Pops the top two values 'value' and 'gen' from the stack, then starts
+     * "awaiting" for 'value' to be resolved, which will then resume the
+     * execution of 'gen'. Pushes the async function promise on the stack, so
+     * that it'll be returned to the caller on the very first "await".
+     *
+     *   Category: Statements
+     *   Type: Generator
+     *   Operands:
+     *   Stack: value, gen => promise
      */ \
-    MACRO(JSOP_UNUSED151, 151, "unused151", NULL, 1, 0, 0, JOF_BYTE) \
+    MACRO(JSOP_ASYNCAWAIT, 151, "async-await", NULL, 1, 2, 1, JOF_BYTE) \
     /*
      * Pops the top of stack value as 'rval', sets the return value in stack
      * frame as 'rval'.
@@ -1976,6 +1979,7 @@
     MACRO(JSOP_SETFUNNAME, 182, "setfunname", NULL, 2, 2, 1, JOF_UINT8) \
     /*
      * Moves the top of the stack value under the nth element of the stack.
+     * Note: n must NOT be 0.
      *
      *   Category: Operators
      *   Type: Stack Operations
@@ -2066,15 +2070,17 @@
      */ \
     MACRO(JSOP_CHECKTHISREINIT, 191, "checkthisreinit", NULL, 1, 1, 1, JOF_BYTE) \
     /*
-     * Pops the top of stack value as 'unwrapped', converts it to async
-     * generator 'wrapped', and pushes 'wrapped' back on the stack.
+     * Pops the top two values 'valueOrReason' and 'gen' from the stack, then
+     * pushes the promise resolved with 'valueOrReason'. `gen` must be the
+     * internal generator object created in async functions. The pushed promise
+     * is the async function's result promise, which is stored in `gen`.
      *
      *   Category: Statements
      *   Type: Generator
-     *   Operands:
-     *   Stack: unwrapped => wrapped
+     *   Operands: uint8_t fulfillOrReject
+     *   Stack: valueOrReason, gen => promise
      */ \
-    MACRO(JSOP_TOASYNCGEN, 192, "toasyncgen", NULL, 1, 1, 1, JOF_BYTE) \
+    MACRO(JSOP_ASYNCRESOLVE, 192, "async-resolve", NULL, 2, 2, 1, JOF_UINT8) \
     /*
      * Pops the top two values on the stack as 'propval' and 'obj', pushes
      * 'propval' property of 'obj' onto the stack.
@@ -2212,10 +2218,10 @@
      *
      *   Category: Statements
      *   Type: Generator
-     *   Operands: resume kind (GeneratorObject::ResumeKind)
+     *   Operands: resume kind (AbstractGeneratorObject::ResumeKind)
      *   Stack: gen, val => rval
      */ \
-    MACRO(JSOP_RESUME, 205, "resume", NULL, 3, 2, 1, JOF_UINT16|JOF_INVOKE) \
+    MACRO(JSOP_RESUME, 205, "resume", NULL, 2, 2, 1, JOF_UINT8|JOF_INVOKE) \
     /*
      * Load the callee stored in a CallObject on the environment chain. The
      * numHops operand is the number of environment objects to skip on the
@@ -2438,14 +2444,14 @@
      * loop depth. This value starts at 1 and is just a hint: deeply nested
      * loops all have the same value. The upper bit is set if Ion should be
      * able to OSR at this point, which is true unless there is non-loop state
-     * on the stack.
+     * on the stack. See JSOP_JUMPTARGET for the icIndex argument.
      *
      *   Category: Statements
      *   Type: Jumps
-     *   Operands: uint8_t BITFIELD
+     *   Operands: uint32_t icIndex, uint8_t BITFIELD
      *   Stack: =>
      */ \
-    MACRO(JSOP_LOOPENTRY, 227, "loopentry", NULL, 2, 0, 0, JOF_UINT8|JOF_IC) \
+    MACRO(JSOP_LOOPENTRY, 227, "loopentry", NULL, 6, 0, 0, JOF_LOOPENTRY|JOF_IC) \
     /*
      * Converts the value on the top of the stack to a String.
      *
@@ -2465,15 +2471,14 @@
     MACRO(JSOP_NOP_DESTRUCTURING, 229, "nop-destructuring", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * This opcode is a no-op and it indicates the location of a jump
-     * instruction target. Some other opcodes act as jump targets, such as
-     * LOOPENTRY, as well as all which are matched by BytecodeIsJumpTarget
-     * function.
+     * instruction target. Some other opcodes act as jump targets as well, see
+     * BytecodeIsJumpTarget. The IC index is used by the Baseline interpreter.
      *
      *   Category: Other
-     *   Operands:
+     *   Operands: uint32_t icIndex
      *   Stack: =>
      */ \
-    MACRO(JSOP_JUMPTARGET, 230, "jumptarget", NULL, 1, 0, 0, JOF_BYTE)\
+    MACRO(JSOP_JUMPTARGET, 230, "jumptarget", NULL, 5, 0, 0, JOF_ICINDEX) \
     /*
      * Like JSOP_CALL, but tells the function that the return value is ignored.
      * stack.
@@ -2523,13 +2528,21 @@
      */ \
     MACRO(JSOP_DEC, 235, "dec", NULL, 1, 1, 1, JOF_BYTE|JOF_IC) \
     /*
+     * Pop 'val' from the stack, then push the result of 'ToNumeric(val)'.
+     *   Category: Operators
+     *   Type: Arithmetic Operators
+     *   Operands:
+     *   Stack: val => ToNumeric(val)
+     */ \
+    MACRO(JSOP_TONUMERIC, 236, "tonumeric", NULL, 1, 1, 1, JOF_BYTE) \
+    /*
      * Pushes a BigInt constant onto the stack.
      *   Category: Literals
      *   Type: Constants
      *   Operands: uint32_t constIndex
      *   Stack: => val
      */ \
-    IF_BIGINT(MACRO(JSOP_BIGINT, 236, "bigint", NULL, 5, 0, 1, JOF_BIGINT),)
+    MACRO(JSOP_BIGINT, 237, "bigint", NULL, 5, 0, 1, JOF_BIGINT)
 // clang-format on
 
 /*
@@ -2537,8 +2550,6 @@
  * a power of two.  Use this macro to do so.
  */
 #define FOR_EACH_TRAILING_UNUSED_OPCODE(MACRO) \
-  IF_BIGINT(, MACRO(236))                      \
-  MACRO(237)                                   \
   MACRO(238)                                   \
   MACRO(239)                                   \
   MACRO(240)                                   \

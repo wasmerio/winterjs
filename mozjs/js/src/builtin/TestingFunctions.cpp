@@ -41,6 +41,7 @@
 #include "jit/BaselineJIT.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitRealm.h"
+#include "js/ArrayBuffer.h"  // JS::{DetachArrayBuffer,GetArrayBufferLengthAndData,NewArrayBufferWithContents}
 #include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
@@ -57,6 +58,7 @@
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "js/Wrapper.h"
+#include "threading/CpuCount.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/AsyncFunction.h"
@@ -330,12 +332,12 @@ static bool GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-#ifdef ENABLE_BINARYDATA
+#ifdef ENABLE_TYPED_OBJECTS
   value = BooleanValue(true);
 #else
   value = BooleanValue(false);
 #endif
-  if (!JS_SetProperty(cx, info, "binary-data", value)) {
+  if (!JS_SetProperty(cx, info, "typed-objects", value)) {
     return false;
   }
 
@@ -652,6 +654,17 @@ static bool WasmCachingIsSupported(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool WasmUsesCranelift(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef ENABLE_WASM_CRANELIFT
+  bool usesCranelift = cx->options().wasmCranelift();
+#else
+  bool usesCranelift = false;
+#endif
+  args.rval().setBoolean(usesCranelift);
+  return true;
+}
+
 static bool WasmThreadsSupported(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   bool isSupported = wasm::HasSupport(cx);
@@ -688,30 +701,14 @@ static bool WasmReftypesEnabled(JSContext* cx, unsigned argc, Value* vp) {
 
 static bool WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef ENABLE_WASM_GC
-  args.rval().setBoolean(wasm::HasReftypesSupport(cx));
-#else
-  args.rval().setBoolean(false);
-#endif
+  args.rval().setBoolean(wasm::HasGcSupport(cx));
   return true;
 }
 
 static bool WasmDebugSupport(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(cx->options().wasmBaseline() && wasm::BaselineCanCompile());
-  return true;
-}
-
-static bool WasmGeneralizedTables(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef ENABLE_WASM_GENERALIZED_TABLES
-  // Generalized tables depend on anyref, though not currently on (ref T)
-  // types nor on structures or other GC-proposal features.
-  bool isSupported = wasm::HasReftypesSupport(cx);
-#else
-  bool isSupported = false;
-#endif
-  args.rval().setBoolean(isSupported);
+  args.rval().setBoolean(cx->options().wasmBaseline() &&
+                         wasm::BaselineCanCompile());
   return true;
 }
 
@@ -846,13 +843,12 @@ static bool WasmExtractCode(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  JSObject* unwrapped = CheckedUnwrap(&args.get(0).toObject());
-  if (!unwrapped || !unwrapped->is<WasmModuleObject>()) {
+  Rooted<WasmModuleObject*> module(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!module) {
     JS_ReportErrorASCII(cx, "argument is not a WebAssembly.Module");
     return false;
   }
-
-  Rooted<WasmModuleObject*> module(cx, &unwrapped->as<WasmModuleObject>());
 
   bool stableTier = false;
   bool bestTier = false;
@@ -907,13 +903,13 @@ static bool WasmHasTier2CompilationCompleted(JSContext* cx, unsigned argc,
     return false;
   }
 
-  JSObject* unwrapped = CheckedUnwrap(&args.get(0).toObject());
-  if (!unwrapped || !unwrapped->is<WasmModuleObject>()) {
+  Rooted<WasmModuleObject*> module(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!module) {
     JS_ReportErrorASCII(cx, "argument is not a WebAssembly.Module");
     return false;
   }
 
-  Rooted<WasmModuleObject*> module(cx, &unwrapped->as<WasmModuleObject>());
   args.rval().set(BooleanValue(!module->module().testingTier2Active()));
   return true;
 }
@@ -1221,6 +1217,24 @@ static bool StartGC(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool FinishGC(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() > 0) {
+    RootedObject callee(cx, &args.callee());
+    ReportUsageErrorASCII(cx, callee, "Wrong number of arguments");
+    return false;
+  }
+
+  JSRuntime* rt = cx->runtime();
+  if (rt->gc.isIncrementalGCInProgress()) {
+    rt->gc.finishGC(JS::GCReason::DEBUG_GC);
+  }
+
+  args.rval().setUndefined();
+  return true;
+}
+
 static bool GCSlice(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1447,7 +1461,7 @@ static bool CaptureFirstSubsumedFrame(JSContext* cx, unsigned argc,
   }
 
   RootedObject obj(cx, &args[0].toObject());
-  obj = CheckedUnwrap(obj);
+  obj = CheckedUnwrapStatic(obj);
   if (!obj) {
     JS_ReportErrorASCII(cx, "Denied permission to object.");
     return false;
@@ -1639,17 +1653,16 @@ static bool NewRope(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  JSString* left = args[0].toString();
-  JSString* right = args[1].toString();
+  RootedString left(cx, args[0].toString());
+  RootedString right(cx, args[1].toString());
   size_t length = JS_GetStringLength(left) + JS_GetStringLength(right);
   if (length > JSString::MAX_LENGTH) {
     JS_ReportErrorASCII(cx, "rope length exceeds maximum string length");
     return false;
   }
 
-  Rooted<JSRope*> str(cx, JSRope::new_<NoGC>(cx, left, right, length, heap));
+  Rooted<JSRope*> str(cx, JSRope::new_<CanGC>(cx, left, right, length, heap));
   if (!str) {
-    JS_ReportOutOfMemory(cx);
     return false;
   }
 
@@ -2160,6 +2173,11 @@ static bool SettlePromiseNow(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  if (promise->state() != JS::PromiseState::Pending) {
+    JS_ReportErrorASCII(cx, "cannot settle an already-resolved promise");
+    return false;
+  }
+
   int32_t flags = promise->flags();
   promise->setFixedSlot(
       PromiseSlot_Flags,
@@ -2299,8 +2317,7 @@ static const JSClassOps FinalizeCounterClassOps = {nullptr, /* addProperty */
                                                    finalize_counter_finalize};
 
 static const JSClass FinalizeCounterClass = {
-    "FinalizeCounter", JSCLASS_IS_ANONYMOUS | JSCLASS_FOREGROUND_FINALIZE,
-    &FinalizeCounterClassOps};
+    "FinalizeCounter", JSCLASS_FOREGROUND_FINALIZE, &FinalizeCounterClassOps};
 
 static bool MakeFinalizeObserver(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2331,59 +2348,39 @@ static bool ResetFinalizeCount(JSContext* cx, unsigned argc, Value* vp) {
 static bool DumpHeap(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  DumpHeapNurseryBehaviour nurseryBehaviour = js::IgnoreNurseryObjects;
-  FILE* dumpFile = nullptr;
+  FILE* dumpFile = stdout;
 
-  unsigned i = 0;
-  if (args.length() > i) {
-    Value v = args[i];
-    if (v.isString()) {
-      JSString* str = v.toString();
-      bool same = false;
-      if (!JS_StringEqualsAscii(cx, str, "collectNurseryBeforeDump", &same)) {
-        return false;
-      }
-      if (same) {
-        nurseryBehaviour = js::CollectNurseryBeforeDump;
-        ++i;
-      }
-    }
-  }
-
-  if (args.length() > i) {
-    Value v = args[i];
-    if (v.isString()) {
-      if (!fuzzingSafe) {
-        RootedString str(cx, v.toString());
-        UniqueChars fileNameBytes = JS_EncodeStringToLatin1(cx, str);
-        if (!fileNameBytes) {
-          return false;
-        }
-        dumpFile = fopen(fileNameBytes.get(), "w");
-        if (!dumpFile) {
-          fileNameBytes = JS_EncodeStringToUTF8(cx, str);
-          if (!fileNameBytes) {
-            return false;
-          }
-          JS_ReportErrorUTF8(cx, "can't open %s", fileNameBytes.get());
-          return false;
-        }
-      }
-      ++i;
-    }
-  }
-
-  if (i != args.length()) {
-    JS_ReportErrorASCII(cx, "bad arguments passed to dumpHeap");
-    if (dumpFile) {
-      fclose(dumpFile);
-    }
+  if (args.length() > 1) {
+    RootedObject callee(cx, &args.callee());
+    ReportUsageErrorASCII(cx, callee, "Too many arguments");
     return false;
   }
 
-  js::DumpHeap(cx, dumpFile ? dumpFile : stdout, nurseryBehaviour);
+  if (!args.get(0).isUndefined()) {
+    RootedString str(cx, ToString(cx, args[0]));
+    if (!str) {
+      return false;
+    }
+    if (!fuzzingSafe) {
+      UniqueChars fileNameBytes = JS_EncodeStringToLatin1(cx, str);
+      if (!fileNameBytes) {
+        return false;
+      }
+      dumpFile = fopen(fileNameBytes.get(), "w");
+      if (!dumpFile) {
+        fileNameBytes = JS_EncodeStringToLatin1(cx, str);
+        if (!fileNameBytes) {
+          return false;
+        }
+        JS_ReportErrorLatin1(cx, "can't open %s", fileNameBytes.get());
+        return false;
+      }
+    }
+  }
 
-  if (dumpFile) {
+  js::DumpHeap(cx, dumpFile, js::IgnoreNurseryObjects);
+
+  if (dumpFile != stdout) {
     fclose(dumpFile);
   }
 
@@ -2670,12 +2667,23 @@ static bool testingFunc_inJit(JSContext* cx, unsigned argc, Value* vp) {
     return ReturnStringCopy(cx, args, "Baseline is disabled.");
   }
 
-  JSScript* script = cx->currentScript();
-  if (script && script->getWarmUpResetCount() >= 20) {
-    return ReturnStringCopy(
-        cx, args, "Compilation is being repeatedly prevented. Giving up.");
+  // Use frame iterator to inspect caller.
+  FrameIter iter(cx);
+  MOZ_ASSERT(!iter.done());
+
+  if (iter.hasScript()) {
+    // Detect repeated attempts to compile, resetting the counter if inJit
+    // succeeds. Note: This script may have be inlined into its caller.
+    if (iter.isJSJit()) {
+      iter.script()->resetWarmUpResetCounter();
+    } else if (iter.script()->getWarmUpResetCount() >= 20) {
+      return ReturnStringCopy(
+          cx, args, "Compilation is being repeatedly prevented. Giving up.");
+    }
   }
 
+  // Returns true for any JIT (including WASM).
+  MOZ_ASSERT_IF(iter.isJSJit(), cx->currentlyRunningInJit());
   args.rval().setBoolean(cx->currentlyRunningInJit());
   return true;
 }
@@ -2687,29 +2695,22 @@ static bool testingFunc_inIon(JSContext* cx, unsigned argc, Value* vp) {
     return ReturnStringCopy(cx, args, "Ion is disabled.");
   }
 
-  if (cx->activation()->hasWasmExitFP()) {
-    // Exited through wasm. Note this is false when the fast wasm->jit exit
-    // was taken, in which case we actually have jit frames on the stack.
-    args.rval().setBoolean(false);
-    return true;
-  }
+  // Use frame iterator to inspect caller.
+  FrameIter iter(cx);
+  MOZ_ASSERT(!iter.done());
 
-  ScriptFrameIter iter(cx);
-  if (!iter.done() && iter.isIon()) {
-    // Reset the counter of the IonScript's script.
-    jit::JSJitFrameIter jitIter(cx->activation()->asJit());
-    ++jitIter;
-    jitIter.script()->resetWarmUpResetCounter();
-  } else {
-    // Check if we missed multiple attempts at compiling the innermost script.
-    JSScript* script = cx->currentScript();
-    if (script && script->getWarmUpResetCount() >= 20) {
+  if (iter.hasScript()) {
+    // Detect repeated attempts to compile, resetting the counter if inIon
+    // succeeds. Note: This script may have be inlined into its caller.
+    if (iter.isIon()) {
+      iter.script()->resetWarmUpResetCounter();
+    } else if (iter.script()->getWarmUpResetCount() >= 20) {
       return ReturnStringCopy(
           cx, args, "Compilation is being repeatedly prevented. Giving up.");
     }
   }
 
-  args.rval().setBoolean(!iter.done() && iter.isIon());
+  args.rval().setBoolean(iter.isIon());
   return true;
 }
 
@@ -2857,7 +2858,7 @@ class CloneBufferObject : public NativeObject {
       ArrayBufferObject* buffer = &args[0].toObject().as<ArrayBufferObject>();
       bool isSharedMemory;
       uint8_t* dataBytes = nullptr;
-      js::GetArrayBufferLengthAndData(buffer, &nbytes, &isSharedMemory,
+      JS::GetArrayBufferLengthAndData(buffer, &nbytes, &isSharedMemory,
                                       &dataBytes);
       MOZ_ASSERT(!isSharedMemory);
       data = reinterpret_cast<char*>(dataBytes);
@@ -2977,7 +2978,7 @@ class CloneBufferObject : public NativeObject {
     data->ReadBytes(iter, buffer.get(), size);
 
     auto* rawBuffer = buffer.release();
-    JSObject* arrayBuffer = JS_NewArrayBufferWithContents(cx, size, rawBuffer);
+    JSObject* arrayBuffer = JS::NewArrayBufferWithContents(cx, size, rawBuffer);
     if (!arrayBuffer) {
       js_free(rawBuffer);
       return false;
@@ -3039,7 +3040,7 @@ static mozilla::Maybe<JS::StructuredCloneScope> ParseCloneScope(
   return scope;
 }
 
-static bool Serialize(JSContext* cx, unsigned argc, Value* vp) {
+bool js::testingFunc_serialize(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   mozilla::Maybe<JSAutoStructuredCloneBuffer> clonebuf;
@@ -3201,7 +3202,7 @@ static bool DetachArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   RootedObject obj(cx, &args[0].toObject());
-  if (!JS_DetachArrayBuffer(cx, obj)) {
+  if (!JS::DetachArrayBuffer(cx, obj)) {
     return false;
   }
 
@@ -3342,7 +3343,7 @@ static bool SharedAddress(JSContext* cx, unsigned argc, Value* vp) {
 #  ifdef JS_MORE_DETERMINISTIC
   args.rval().setString(cx->staticStrings().getUint(0));
 #  else
-  RootedObject obj(cx, CheckedUnwrap(&args[0].toObject()));
+  RootedObject obj(cx, CheckedUnwrapStatic(&args[0].toObject()));
   if (!obj) {
     ReportAccessDenied(cx);
     return false;
@@ -3903,7 +3904,7 @@ static bool EvalReturningScope(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   if (global) {
-    global = CheckedUnwrap(global);
+    global = CheckedUnwrapDynamic(global, cx);
     if (!global) {
       JS_ReportErrorASCII(cx, "Permission denied to access global");
       return false;
@@ -4006,7 +4007,7 @@ static bool ShellCloneAndExecuteScript(JSContext* cx, unsigned argc,
     return false;
   }
 
-  global = CheckedUnwrap(global);
+  global = CheckedUnwrapDynamic(global, cx);
   if (!global) {
     JS_ReportErrorASCII(cx, "Permission denied to access global");
     return false;
@@ -4024,12 +4025,6 @@ static bool ShellCloneAndExecuteScript(JSContext* cx, unsigned argc,
   }
 
   args.rval().setUndefined();
-  return true;
-}
-
-static bool IsSimdAvailable(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().set(BooleanValue(cx->jitSupportsSimd()));
   return true;
 }
 
@@ -4379,7 +4374,7 @@ static bool GetLcovInfo(JSContext* cx, unsigned argc, Value* vp) {
       JS_ReportErrorASCII(cx, "Permission denied to access global");
       return false;
     }
-    global = CheckedUnwrap(global);
+    global = CheckedUnwrapDynamic(global, cx);
     if (!global) {
       ReportAccessDenied(cx);
       return false;
@@ -5068,6 +5063,19 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool GetCoreCount(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (args.length() != 0) {
+    ReportUsageErrorASCII(cx, callee, "Wrong number of arguments");
+    return false;
+  }
+
+  args.rval().setInt32(GetCPUCount());
+  return true;
+}
+
 static bool GetDefaultLocale(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   RootedObject callee(cx, &args.callee());
@@ -5318,6 +5326,42 @@ static bool ObjectGlobal(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool IsSameCompartment(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (!args.get(0).isObject() || !args.get(1).isObject()) {
+    ReportUsageErrorASCII(cx, callee, "Both arguments must be objects");
+    return false;
+  }
+
+  RootedObject obj1(cx, UncheckedUnwrap(&args[0].toObject()));
+  RootedObject obj2(cx, UncheckedUnwrap(&args[1].toObject()));
+
+  args.rval().setBoolean(obj1->compartment() == obj2->compartment());
+  return true;
+}
+
+static bool FirstGlobalInCompartment(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedObject callee(cx, &args.callee());
+
+  if (!args.get(0).isObject()) {
+    ReportUsageErrorASCII(cx, callee, "Argument must be an object");
+    return false;
+  }
+
+  RootedObject obj(cx, UncheckedUnwrap(&args[0].toObject()));
+  obj = ToWindowProxyIfWindow(GetFirstGlobalInCompartment(obj->compartment()));
+
+  if (!cx->compartment()->wrap(cx, &obj)) {
+    return false;
+  }
+
+  args.rval().setObject(*obj);
+  return true;
+}
+
 static bool AssertCorrectRealm(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_RELEASE_ASSERT(cx->realm() == args.callee().as<JSFunction>().realm());
@@ -5400,14 +5444,6 @@ JSScript* js::TestingFunctionArgumentToScript(
     } else {
       break;
     }
-  }
-
-  // Get unwrapped async function.
-  if (IsWrappedAsyncFunction(fun)) {
-    fun = GetUnwrappedAsyncFunction(fun);
-  }
-  if (IsWrappedAsyncGenerator(fun)) {
-    fun = GetUnwrappedAsyncGenerator(fun);
   }
 
   if (!fun->isInterpreted()) {
@@ -5863,6 +5899,10 @@ gc::ZealModeHelpText),
 "  If 'shrinking' is passesd as the optional second argument, perform a\n"
 "  shrinking GC rather than a normal GC."),
 
+    JS_FN_HELP("finishgc", FinishGC, 0, 0,
+"finishgc()",
+"   Finish an in-progress incremental GC, if none is running then do nothing."),
+
     JS_FN_HELP("gcslice", GCSlice, 1, 0,
 "gcslice([n])",
 "  Start or continue an an incremental GC, running a slice that processes about n objects."),
@@ -5889,10 +5929,10 @@ gc::ZealModeHelpText),
 "  If true, obj is a proxy of some sort"),
 
     JS_FN_HELP("dumpHeap", DumpHeap, 1, 0,
-"dumpHeap(['collectNurseryBeforeDump'], [filename])",
-"  Dump reachable and unreachable objects to the named file, or to stdout.  If\n"
-"  'collectNurseryBeforeDump' is specified, a minor GC is performed first,\n"
-"  otherwise objects in the nursery are ignored."),
+"dumpHeap([filename])",
+"  Dump reachable and unreachable objects to the named file, or to stdout. Objects\n"
+"  in the nursery are ignored, so if you wish to include them, consider calling\n"
+"  minorgc() first."),
 
     JS_FN_HELP("terminate", Terminate, 0, 0,
 "terminate()",
@@ -5918,10 +5958,6 @@ gc::ZealModeHelpText),
 "isAsmJSCompilationAvailable",
 "  Returns whether asm.js compilation is currently available or whether it is disabled\n"
 "  (e.g., by the debugger)."),
-
-    JS_FN_HELP("isSimdAvailable", IsSimdAvailable, 0, 0,
-"isSimdAvailable",
-"  Returns true if SIMD extensions are supported on this platform."),
 
     JS_FN_HELP("getJitCompilerOptions", GetJitCompilerOptions, 0, 0,
 "getJitCompilerOptions()",
@@ -5958,6 +5994,12 @@ gc::ZealModeHelpText),
 "wasmCachingIsSupported()",
 "  Returns a boolean indicating whether WebAssembly caching is supported by the runtime."),
 
+    JS_FN_HELP("wasmUsesCranelift", WasmUsesCranelift, 0, 0,
+"wasmUsesCranelift()",
+"  Returns a boolean indicating whether Cranelift is currently enabled for backend\n"
+"  compilation. This doesn't necessarily mean a module will be compiled with \n"
+"  Cranelift (e.g. when baseline is also enabled)."),
+
     JS_FN_HELP("wasmThreadsSupported", WasmThreadsSupported, 0, 0,
 "wasmThreadsSupported()",
 "  Returns a boolean indicating whether the WebAssembly threads proposal is\n"
@@ -5990,22 +6032,16 @@ gc::ZealModeHelpText),
 "This will return true early if compilation isn't two-tiered. "),
 
     JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
-"wasmReftypesEnabled(bool)",
+"wasmReftypesEnabled()",
 "  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
 
     JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
-"wasmGcEnabled(bool)",
+"wasmGcEnabled()",
 "  Returns a boolean indicating whether the WebAssembly GC types proposal is enabled."),
 
     JS_FN_HELP("wasmDebugSupport", WasmDebugSupport, 1, 0,
-"wasmDebugSupport(bool)",
+"wasmDebugSupport()",
 "  Returns a boolean indicating whether the WebAssembly compilers support debugging."),
-
-    JS_FN_HELP("wasmGeneralizedTables", WasmGeneralizedTables, 1, 0,
-"wasmGeneralizedTables(bool)",
-"  Returns a boolean indicating whether generalized tables are available.\n"
-"  This feature set includes 'anyref' as a table type, and new instructions\n"
-"  including table.get, table.set, table.grow, and table.size."),
 
     JS_FN_HELP("isLazyFunction", IsLazyFunction, 1, 0,
 "isLazyFunction(fun)",
@@ -6057,7 +6093,7 @@ gc::ZealModeHelpText),
 "  are valuable and should be generally enabled, however they can be very expensive for large\n"
 "  (wasm) programs."),
 
-    JS_FN_HELP("serialize", Serialize, 1, 0,
+    JS_FN_HELP("serialize", testingFunc_serialize, 1, 0,
 "serialize(data, [transferables, [policy]])",
 "  Serialize 'data' using JS_WriteStructuredClone. Returns a structured\n"
 "  clone buffer object. 'policy' may be an options hash. Valid keys:\n"
@@ -6288,6 +6324,11 @@ gc::ZealModeHelpText),
 "getDefaultLocale()",
 "  Get the current default locale.\n"),
 
+    JS_FN_HELP("getCoreCount", GetCoreCount, 0, 0,
+"getCoreCount()",
+"  Get the number of CPU cores from the platform layer.  Typically this\n"
+"  means the number of hyperthreads on systems where that makes sense.\n"),
+
     JS_FN_HELP("setTimeResolution", SetTimeResolution, 2, 0,
 "setTimeResolution(resolution, jitter)",
 "  Enables time clamping and jittering. Specify a time resolution in\n"
@@ -6300,6 +6341,15 @@ gc::ZealModeHelpText),
     JS_FN_HELP("objectGlobal", ObjectGlobal, 1, 0,
 "objectGlobal(obj)",
 "  Returns the object's global object or null if the object is a wrapper.\n"),
+
+    JS_FN_HELP("isSameCompartment", IsSameCompartment, 2, 0,
+"isSameCompartment(obj1, obj2)",
+"  Unwraps obj1 and obj2 and returns whether the unwrapped objects are\n"
+"  same-compartment.\n"),
+
+    JS_FN_HELP("firstGlobalInCompartment", FirstGlobalInCompartment, 1, 0,
+"firstGlobalInCompartment(obj)",
+"  Returns the first global in obj's compartment.\n"),
 
     JS_FN_HELP("assertCorrectRealm", AssertCorrectRealm, 0, 0,
 "assertCorrectRealm()",

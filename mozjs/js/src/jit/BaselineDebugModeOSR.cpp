@@ -1007,8 +1007,7 @@ JitCode* JitRuntime::generateBaselineDebugModeOSRHandler(
                                       /* returnFromCallVM = */ true);
   masm.bind(&end);
 
-  Linker linker(masm);
-  AutoFlushICache afc("BaselineDebugModeOSRHandler");
+  Linker linker(masm, "BaselineDebugModeOSRHandler");
   JitCode* code = linker.newCode(cx, CodeKind::Other);
   if (!code) {
     return nullptr;
@@ -1023,8 +1022,10 @@ JitCode* JitRuntime::generateBaselineDebugModeOSRHandler(
   return code;
 }
 
-/* static */ void DebugModeOSRVolatileJitFrameIter::forwardLiveIterators(
-    JSContext* cx, uint8_t* oldAddr, uint8_t* newAddr) {
+/* static */
+void DebugModeOSRVolatileJitFrameIter::forwardLiveIterators(JSContext* cx,
+                                                            uint8_t* oldAddr,
+                                                            uint8_t* newAddr) {
   DebugModeOSRVolatileJitFrameIter* iter;
   for (iter = cx->liveVolatileJitFrameIter_; iter; iter = iter->prev) {
     if (iter->isWasm()) {

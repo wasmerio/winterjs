@@ -58,6 +58,10 @@ namespace JS {
   _(BinaryArith_SharedCache)                \
   _(BinaryArith_Call)                       \
                                             \
+  _(UnaryArith_SpecializedTypes)            \
+  _(UnaryArith_SpecializedOnBaselineTypes)  \
+  _(UnaryArith_InlineCache)                 \
+                                            \
   _(InlineCache_OptimizedStub)              \
                                             \
   _(NewArray_TemplateObject)                \
@@ -110,6 +114,7 @@ namespace JS {
   _(ArrayDoubleConversion)                        \
   _(ArrayRange)                                   \
   _(ArraySeenNegativeIndex)                       \
+  _(ArraySeenNonIntegerIndex)                     \
   _(TypedObjectHasDetachedBuffer)                 \
   _(TypedObjectArrayRange)                        \
   _(AccessNotDense)                               \
@@ -199,6 +204,7 @@ namespace JS {
   _(CantInlineBigCaller)                          \
   _(CantInlineBigCallee)                          \
   _(CantInlineBigCalleeInlinedBytecodeLength)     \
+  _(CantInlineCrossRealm)                         \
   _(CantInlineNotHot)                             \
   _(CantInlineNotInDispatch)                      \
   _(CantInlineUnreachable)                        \

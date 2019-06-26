@@ -13,6 +13,7 @@
 #include "builtin/String.h"
 #include "builtin/TypedObject.h"
 #include "gc/Heap.h"
+#include "jit/Ion.h"
 #include "jit/JitSpewer.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/MIR.h"
@@ -87,8 +88,8 @@ bool MResumePoint::writeRecoverData(CompactBufferWriter& writer) const {
         // include the this. When inlining that is not included.  So the
         // exprStackSlots will be one less.
         MOZ_ASSERT(stackDepth - exprStack <= 1);
-      } else if (JSOp(*bailPC) != JSOP_FUNAPPLY && !IsGetPropPC(bailPC) &&
-                 !IsSetPropPC(bailPC)) {
+      } else if (JSOp(*bailPC) != JSOP_FUNAPPLY &&
+                 !IsIonInlinableGetterOrSetterPC(bailPC)) {
         // For fun.apply({}, arguments) the reconstructStackDepth will
         // have stackdepth 4, but it could be that we inlined the
         // funapply. In that case exprStackSlots, will have the real
@@ -974,7 +975,7 @@ bool RStringSplit::recover(JSContext* cx, SnapshotIterator& iter) const {
   }
   RootedValue result(cx);
 
-  JSObject* res = str_split_string(cx, group, str, sep, INT32_MAX);
+  JSObject* res = StringSplitString(cx, group, str, sep, INT32_MAX);
   if (!res) {
     return false;
   }
@@ -1213,7 +1214,7 @@ bool RNewTypedArray::recover(JSContext* cx, SnapshotIterator& iter) const {
 
   uint32_t length = templateObject.as<TypedArrayObject>()->length();
   JSObject* resultObject =
-      TypedArrayCreateWithTemplate(cx, templateObject, length);
+      NewTypedArrayWithTemplateAndLength(cx, templateObject, length);
   if (!resultObject) {
     return false;
   }
@@ -1354,7 +1355,7 @@ bool RCreateThisWithTemplate::recover(JSContext* cx,
   RootedObject templateObject(cx, &iter.read().toObject());
 
   // See CodeGenerator::visitCreateThisWithTemplate
-  JSObject* resultObject = NewObjectOperationWithTemplate(cx, templateObject);
+  JSObject* resultObject = CreateThisWithTemplate(cx, templateObject);
   if (!resultObject) {
     return false;
   }
@@ -1611,7 +1612,7 @@ bool RStringReplace::recover(JSContext* cx, SnapshotIterator& iter) const {
 
   JSString* result =
       isFlatReplacement_
-          ? js::str_flat_replace_string(cx, string, pattern, replace)
+          ? js::StringFlatReplaceString(cx, string, pattern, replace)
           : js::str_replace_string_raw(cx, string, pattern, replace);
 
   if (!result) {

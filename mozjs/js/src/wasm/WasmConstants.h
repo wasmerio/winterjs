@@ -132,8 +132,6 @@ enum class MemoryTableFlags {
   Default = 0x0,
   HasMaximum = 0x1,
   IsShared = 0x2,
-  HasTableIndex =
-      0x4,  // UNOFFICIAL.  There will be a separate flag for memory.
 };
 
 enum class MemoryMasks { AllowUnshared = 0x1, AllowShared = 0x3 };
@@ -172,6 +170,8 @@ enum class Op {
   TeeLocal = 0x22,
   GetGlobal = 0x23,
   SetGlobal = 0x24,
+  TableGet = 0x25,  // Reftypes,
+  TableSet = 0x26,  //   per proposal as of February 2019
 
   // Memory-related operators
   I32Load = 0x28,
@@ -197,8 +197,8 @@ enum class Op {
   I64Store8 = 0x3c,
   I64Store16 = 0x3d,
   I64Store32 = 0x3e,
-  CurrentMemory = 0x3f,
-  GrowMemory = 0x40,
+  MemorySize = 0x3f,
+  MemoryGrow = 0x40,
 
   // Constants
   I32Const = 0x41,
@@ -347,7 +347,9 @@ enum class Op {
   // GC ops
   RefNull = 0xd0,
   RefIsNull = 0xd1,
-  RefEq = 0xd2,  // Unofficial
+  RefFunc = 0xd2,
+
+  RefEq = 0xf0,  // Unofficial + experimental
 
   FirstPrefix = 0xfc,
   MiscPrefix = 0xfc,
@@ -371,8 +373,7 @@ enum class MiscOp {
   I64TruncSSatF64 = 0x06,
   I64TruncUSatF64 = 0x07,
 
-  // Bulk memory operations.  Note, these are unofficial, but in accordance
-  // with the proposal as of June 2018.
+  // Bulk memory operations, per proposal as of February 2019.
   MemInit = 0x08,
   DataDrop = 0x09,
   MemCopy = 0x0a,
@@ -381,11 +382,10 @@ enum class MiscOp {
   ElemDrop = 0x0d,
   TableCopy = 0x0e,
 
-  // Generalized tables (reftypes proposal).  Note, these are unofficial.
+  // Reftypes, per proposal as of February 2019.
   TableGrow = 0x0f,
-  TableGet = 0x10,
-  TableSet = 0x11,
-  TableSize = 0x12,
+  TableSize = 0x10,
+  // TableFill = 0x11, // reserved
 
   // Structure operations.  Note, these are unofficial.
   StructNew = 0x50,
@@ -480,16 +480,6 @@ enum class ThreadOp {
   Limit
 };
 
-// Opcodes from Bulk Memory Operations proposal as at 2 Feb 2018.  Note,
-// the opcodes are not actually assigned in that proposal.  This is just
-// an interim assignment.
-enum class CopyOrFillOp {
-  Copy = 0x01,
-  Fill = 0x02,
-
-  Limit
-};
-
 enum class MozOp {
   // ------------------------------------------------------------------------
   // These operators are emitted internally when compiling asm.js and are
@@ -534,10 +524,11 @@ enum class MozOp {
 };
 
 struct OpBytes {
-  // The bytes of the opcode have 16-bit representations to allow for a full
+  // b0 is a byte value but has a 16-bit representation to allow for a full
   // 256-value range plus a sentinel Limit value.
   uint16_t b0;
-  uint16_t b1;
+  // b1 is a LEB128 value but 32 bits is enough for now.
+  uint32_t b1;
 
   explicit OpBytes(Op x) {
     b0 = uint16_t(x);
@@ -564,7 +555,7 @@ static const unsigned MaxExports = 100000;
 static const unsigned MaxGlobals = 1000000;
 static const unsigned MaxDataSegments = 100000;
 static const unsigned MaxElemSegments = 10000000;
-static const unsigned MaxTableMaximumLength = 10000000;
+static const unsigned MaxTableLength = 10000000;
 static const unsigned MaxLocals = 50000;
 static const unsigned MaxParams = 1000;
 static const unsigned MaxStructFields = 1000;

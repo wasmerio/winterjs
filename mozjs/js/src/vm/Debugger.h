@@ -14,16 +14,16 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Vector.h"
 
-#include "builtin/Promise.h"
 #include "ds/TraceableFifo.h"
 #include "gc/Barrier.h"
 #include "gc/WeakMap.h"
 #include "js/Debug.h"
 #include "js/GCVariant.h"
 #include "js/HashTable.h"
+#include "js/Promise.h"
 #include "js/Utility.h"
 #include "js/Wrapper.h"
-#include "vm/GeneratorObject.h"
+#include "proxy/DeadObjectProxy.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
@@ -79,8 +79,10 @@ enum class ResumeMode {
   Return,
 };
 
+class AbstractGeneratorObject;
 class Breakpoint;
 class DebuggerMemory;
+class PromiseObject;
 class ScriptedOnStepHandler;
 class ScriptedOnPopHandler;
 class WasmInstanceObject;
@@ -147,12 +149,12 @@ class DebuggerWeakMap
   // Expose those parts of HashMap public interface that are used by Debugger
   // methods.
 
-  typedef typename Base::Entry Entry;
-  typedef typename Base::Ptr Ptr;
-  typedef typename Base::AddPtr AddPtr;
-  typedef typename Base::Range Range;
-  typedef typename Base::Enum Enum;
-  typedef typename Base::Lookup Lookup;
+  using Entry = typename Base::Entry;
+  using Ptr = typename Base::Ptr;
+  using AddPtr = typename Base::AddPtr;
+  using Range = typename Base::Range;
+  using Enum = typename Base::Enum;
+  using Lookup = typename Base::Lookup;
 
   // Expose WeakMap public interface.
 
@@ -418,8 +420,9 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
           ctorName(ctorName),
           size(size),
           inNursery(inNursery) {
-      MOZ_ASSERT_IF(frame, UncheckedUnwrap(frame)->is<SavedFrame>());
-    };
+      MOZ_ASSERT_IF(frame, UncheckedUnwrap(frame)->is<SavedFrame>() ||
+                               IsDeadProxyObject(frame));
+    }
 
     HeapPtr<JSObject*> frame;
     mozilla::TimeStamp when;
@@ -784,6 +787,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   static bool drainTraceLogger(JSContext* cx, unsigned argc, Value* vp);
 #endif
   static bool adoptDebuggeeValue(JSContext* cx, unsigned argc, Value* vp);
+  static bool adoptSource(JSContext* cx, unsigned argc, Value* vp);
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
@@ -858,7 +862,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
                                                 AbstractFramePtr frame,
                                                 jsbytecode* pc, bool ok);
   static MOZ_MUST_USE bool slowPathOnNewGenerator(
-      JSContext* cx, AbstractFramePtr frame, Handle<GeneratorObject*> genObj);
+      JSContext* cx, AbstractFramePtr frame,
+      Handle<AbstractGeneratorObject*> genObj);
   static ResumeMode slowPathOnDebuggerStatement(JSContext* cx,
                                                 AbstractFramePtr frame);
   static ResumeMode slowPathOnExceptionUnwind(JSContext* cx,
@@ -986,7 +991,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   static void traceAllForMovingGC(JSTracer* trc);
   static void sweepAll(FreeOp* fop);
   static void detachAllDebuggersFromGlobal(FreeOp* fop, GlobalObject* global);
-  static void findZoneEdges(JS::Zone* v, gc::ZoneComponentFinder& finder);
+  static MOZ_MUST_USE bool findSweepGroupEdges(JS::Zone* zone);
 #ifdef DEBUG
   static bool isDebuggerCrossCompartmentEdge(JSObject* obj,
                                              const js::gc::Cell* cell);
@@ -1064,7 +1069,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * This does not fire user hooks, but it's needed for debugger bookkeeping.
    */
   static inline MOZ_MUST_USE bool onNewGenerator(
-      JSContext* cx, AbstractFramePtr frame, Handle<GeneratorObject*> genObj);
+      JSContext* cx, AbstractFramePtr frame,
+      Handle<AbstractGeneratorObject*> genObj);
 
   static inline void onNewScript(JSContext* cx, HandleScript script);
   static inline void onNewWasmInstance(
@@ -1281,7 +1287,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * or may not actually be on the stack right now.
    */
   MOZ_MUST_USE bool addGeneratorFrame(JSContext* cx,
-                                      Handle<GeneratorObject*> genObj,
+                                      Handle<AbstractGeneratorObject*> genObj,
                                       HandleDebuggerFrame frameObj);
 
  private:

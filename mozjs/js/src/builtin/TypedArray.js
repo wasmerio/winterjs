@@ -37,6 +37,10 @@ function TypedArrayLengthMethod() {
     return TypedArrayLength(this);
 }
 
+function TypedArrayByteOffsetMethod() {
+    return TypedArrayByteOffset(this);
+}
+
 function GetAttachedArrayBuffer(tarray) {
     var buffer = ViewedArrayBufferIfReified(tarray);
     if (IsDetachedBuffer(buffer))
@@ -1184,7 +1188,7 @@ function TypedArrayCompareInt(x, y) {
     return 0;
 }
 
-// ES2018 draft rev 3bbc87cd1b9d3bf64c3e68ca2fe9c5a3f2c304c0
+// ES2019 draft rev 8a16cb8d18660a1106faae693f0f39b9f1a30748
 // 22.2.3.26 %TypedArray%.prototype.sort ( comparefn )
 function TypedArraySort(comparefn) {
     // This function is not generic.
@@ -1279,13 +1283,15 @@ function TypedArraySort(comparefn) {
             ThrowTypeError(JSMSG_TYPED_ARRAY_DETACHED);
         }
 
-        // Step c. is redundant, see:
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=1121937#c36
+        // Step c.
+        if (v !== v)
+            return 0;
+
         // Step d.
         return v;
     };
 
-    return QuickSort(obj, len, wrappedCompareFn);
+    return MergeSortTypedArray(obj, len, wrappedCompareFn);
 }
 
 // ES2017 draft rev f8a9be8ea4bd97237d176907a1e3080dce20c68f
@@ -1373,7 +1379,10 @@ function TypedArraySubarray(begin, end) {
     }
 
     // Steps 4-6.
-    var buffer = TypedArrayBuffer(obj);
+    var buffer = ViewedArrayBufferIfReified(obj);
+    if (buffer === null) {
+        buffer = TypedArrayBuffer(obj);
+    }
     var srcLength = TypedArrayLength(obj);
 
     // Step 14 (Reordered because otherwise it'd be observable that we reset
@@ -1506,6 +1515,26 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
         if (!IsCallable(usingIterator))
             ThrowTypeError(JSMSG_NOT_ITERABLE, DecompileArg(0, source));
 
+        // Try to take a fast path when there's no mapper function and the
+        // constructor is a built-in TypedArray constructor.
+        if (!mapping && IsTypedArrayConstructor(C) && IsObject(source)) {
+            // TODO: Add fast path for TypedArray inputs (bug 1491813).
+
+            // The source is a packed array using the default iterator.
+            if (usingIterator === ArrayValues && IsPackedArray(source) &&
+                ArrayIteratorPrototypeOptimizable())
+            {
+                // Steps 7.b-c.
+                var targetObj = new C(source.length);
+
+                // Steps 7.a, 7.d-f.
+                TypedArrayInitFromPackedArray(targetObj, source);
+
+                // Step 7.g.
+                return targetObj;
+            }
+        }
+
         // Step 7.a.
         var values = IterableToList(source, usingIterator);
 
@@ -1597,21 +1626,6 @@ function TypedArraySpecies() {
     return this;
 }
 _SetCanonicalName(TypedArraySpecies, "get [Symbol.species]");
-
-// ES 2017 draft June 2, 2016 22.2.3.32
-function TypedArrayToStringTag() {
-    // Step 1.
-    var O = this;
-
-    // Steps 2-3.
-    if (!IsObject(O) || !IsPossiblyWrappedTypedArray(O))
-        return undefined;
-
-    // Steps 4-6.
-    // Modified to retrieve the [[TypedArrayName]] from the constructor.
-    return _NameForTypedArray(O);
-}
-_SetCanonicalName(TypedArrayToStringTag, "get [Symbol.toStringTag]");
 
 // ES2018 draft rev 0525bb33861c7f4e9850f8a222c89642947c4b9c
 // 22.2.2.1.1 Runtime Semantics: IterableToList( items, method )

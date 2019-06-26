@@ -134,6 +134,12 @@ class GlobalObject : public NativeObject {
   LexicalEnvironmentObject& lexicalEnvironment() const;
   GlobalScope& emptyGlobalScope() const;
 
+  static constexpr size_t offsetOfLexicalEnvironmentSlot() {
+    static_assert(LEXICAL_ENVIRONMENT >= MAX_FIXED_SLOTS,
+                  "Code assumes lexical environment is stored in dynamic slot");
+    return (LEXICAL_ENVIRONMENT - MAX_FIXED_SLOTS) * sizeof(Value);
+  }
+
   void setOriginalEval(JSObject* evalobj) {
     MOZ_ASSERT(getSlotRef(EVAL).isUndefined());
     setSlot(EVAL, ObjectValue(*evalobj));
@@ -360,6 +366,14 @@ class GlobalObject : public NativeObject {
       return nullptr;
     }
     return &global->getPrototype(JSProto_Symbol).toObject().as<NativeObject>();
+  }
+
+  static NativeObject* getOrCreateBigIntPrototype(
+      JSContext* cx, Handle<GlobalObject*> global) {
+    if (!ensureConstructor(cx, global, JSProto_BigInt)) {
+      return nullptr;
+    }
+    return &global->getPrototype(JSProto_BigInt).toObject().as<NativeObject>();
   }
 
   static NativeObject* getOrCreatePromisePrototype(
@@ -596,6 +610,14 @@ class GlobalObject : public NativeObject {
       JSContext* cx, Handle<GlobalObject*> global) {
     return MaybeNativeObject(getOrCreateObject(cx, global, ARRAY_ITERATOR_PROTO,
                                                initArrayIteratorProto));
+  }
+
+  NativeObject* maybeGetArrayIteratorPrototype() {
+    Value v = getSlotRef(ARRAY_ITERATOR_PROTO);
+    if (v.isObject()) {
+      return &v.toObject().as<NativeObject>();
+    }
+    return nullptr;
   }
 
   static NativeObject* getOrCreateStringIteratorPrototype(

@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmGcEnabled()
+// |jit-test| skip-if: !wasmGcEnabled() || wasmCompileMode() != 'baseline'
 
 // Moving a JS value through a wasm anyref is a pair of boxing/unboxing
 // conversions that leaves the value unchanged.  There are many cases,
@@ -43,7 +43,7 @@ for (let v of VALUES)
 {
     let ins = wasmEvalText(
         `(module
-           (gc_feature_opt_in 2)
+           (gc_feature_opt_in 3)
            (type $S (struct (field $S.x (mut anyref))))
            (func (export "make") (param $v anyref) (result anyref)
              (struct.new $S (get_local $v))))`);
@@ -57,7 +57,7 @@ for (let v of VALUES)
 {
     let ins = wasmEvalText(
         `(module
-           (gc_feature_opt_in 2)
+           (gc_feature_opt_in 3)
            (type $S (struct (field $S.x (mut anyref))))
            (func (export "make") (result anyref)
              (struct.new $S (ref.null)))
@@ -74,7 +74,7 @@ for (let v of VALUES)
 {
     let ins = wasmEvalText(
         `(module
-           (gc_feature_opt_in 2)
+           (gc_feature_opt_in 3)
            (type $S (struct (field $S.x (mut anyref))))
            (func (export "make") (result anyref)
              (struct.new $S (ref.null)))
@@ -108,7 +108,7 @@ for (let v of VALUES) {
 {
     let ins = wasmEvalText(
         `(module
-           (gc_feature_opt_in 2)
+           (gc_feature_opt_in 3)
            (type $S (struct (field $S.x (mut anyref))))
            (func (export "make") (result anyref)
              (struct.new $S (ref.null))))`);
@@ -123,7 +123,7 @@ for (let v of VALUES) {
 {
     let ins = wasmEvalText(
         `(module
-           (gc_feature_opt_in 2)
+           (gc_feature_opt_in 3)
            (type $S (struct (field $S.x (mut anyref))))
            (func (export "make") (result anyref)
              (struct.new $S (ref.null))))`);
@@ -149,7 +149,7 @@ for (let v of VALUES) {
     let params = iota(10).map((i) => `(param $${i} anyref)`).join(' ');
     let args = iota(10).map((i) => `(get_local $${i})`).join(' ');
     let txt = `(module
-                 (gc_feature_opt_in 2)
+                 (gc_feature_opt_in 3)
                  (type $S (struct ${fields}))
                  (func (export "make") ${params} (result anyref)
                    (struct.new $S ${args})))`;

@@ -6,7 +6,6 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import os
 import json
-import yaml
 import shutil
 import unittest
 import tempfile
@@ -14,6 +13,7 @@ import tempfile
 from mock import patch
 from mozunit import main, MockedOpen
 from taskgraph import decision
+from taskgraph.util.yaml import load_yaml
 
 
 FAKE_GRAPH_CONFIG = {'product-dir': 'browser'}
@@ -40,8 +40,7 @@ class TestDecision(unittest.TestCase):
         try:
             decision.ARTIFACTS_DIR = os.path.join(tmpdir, "artifacts")
             decision.write_artifact("artifact.yml", data)
-            with open(os.path.join(decision.ARTIFACTS_DIR, "artifact.yml")) as f:
-                self.assertEqual(yaml.safe_load(f), data)
+            self.assertEqual(load_yaml(decision.ARTIFACTS_DIR, "artifact.yml"), data)
         finally:
             if os.path.exists(tmpdir):
                 shutil.rmtree(tmpdir)
@@ -63,6 +62,7 @@ class TestGetDecisionParameters(unittest.TestCase):
             'pushlog_id': 143,
             'pushdate': 1503691511,
             'owner': 'nobody@mozilla.com',
+            'tasks_for': 'hg-push',
             'level': 3,
         }
 
@@ -99,7 +99,9 @@ class TestGetDecisionParameters(unittest.TestCase):
         self.assertEqual(params['try_task_config'], None)
 
     @patch('taskgraph.decision.get_hg_revision_branch')
-    def test_try_task_config(self, _):
+    @patch('taskgraph.decision.get_hg_commit_message')
+    def test_try_task_config(self, mock_get_hg_commit_message, _):
+        mock_get_hg_commit_message.return_value = 'Fuzzy query=foo'
         ttc = {'tasks': ['a', 'b'], 'templates': {}}
         self.options['project'] = 'try'
         with MockedOpen({self.ttc_file: json.dumps(ttc)}):
@@ -107,6 +109,25 @@ class TestGetDecisionParameters(unittest.TestCase):
             self.assertEqual(params['try_mode'], 'try_task_config')
             self.assertEqual(params['try_options'], None)
             self.assertEqual(params['try_task_config'], ttc)
+
+    def test_try_syntax_from_message_empty(self):
+        self.assertEqual(decision.try_syntax_from_message(''), '')
+
+    def test_try_syntax_from_message_no_try_syntax(self):
+        self.assertEqual(decision.try_syntax_from_message('abc | def'), '')
+
+    def test_try_syntax_from_message_initial_try_syntax(self):
+        self.assertEqual(decision.try_syntax_from_message('try: -f -o -o'), 'try: -f -o -o')
+
+    def test_try_syntax_from_message_initial_try_syntax_multiline(self):
+        self.assertEqual(
+            decision.try_syntax_from_message('try: -f -o -o\nabc\ndef'),
+            'try: -f -o -o')
+
+    def test_try_syntax_from_message_embedded_try_syntax_multiline(self):
+        self.assertEqual(
+            decision.try_syntax_from_message('some stuff\ntry: -f -o -o\nabc\ndef'),
+            'try: -f -o -o')
 
 
 if __name__ == '__main__':

@@ -66,13 +66,17 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         # TODO: Figure out what not to install for artifact mode
         self.pkg_install(*self.browser_packages)
 
-    def ensure_clang_static_analysis_package(self, checkout_root):
+    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
         # TODO: we don't ship clang base static analysis for this platform
         pass
 
     def ensure_stylo_packages(self, state_dir, checkout_root):
         # Clang / llvm already installed as browser package
         self.pkg_install('rust-cbindgen')
+
+    def ensure_nasm_packages(self, state_dir, checkout_root):
+        # installed via ensure_browser_packages
+        pass
 
     def ensure_node_packages(self, state_dir, checkout_root):
         self.pkg_install('npm')

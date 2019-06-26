@@ -1,0 +1,14 @@
+diff --git a/mozjs/build/moz.configure/bindgen.configure b/mozjs/build/moz.configure/bindgen.configure
+index 1658c8f93e..f7082ea6d4 100644
+--- a/mozjs/build/moz.configure/bindgen.configure
++++ b/mozjs/build/moz.configure/bindgen.configure
+@@ -246,6 +246,9 @@ set_config('MOZ_CLANG_PATH', bindgen_config_paths.clang_path)
+ @depends(target, target_is_unix, cxx_compiler, bindgen_cflags_android,
+          bindgen_config_paths.clang_path)
+ def basic_bindgen_cflags(target, is_unix, compiler_info, android_cflags, clang_path):
++    if not clang_path:
++        return []
++
+     args = [
+         '-x', 'c++', '-fno-sized-deallocation',
+         '-DTRACING=1', '-DIMPL_LIBXUL', '-DMOZILLA_INTERNAL_API',

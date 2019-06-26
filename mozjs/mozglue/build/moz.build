@@ -41,11 +41,6 @@ if CONFIG['OS_TARGET'] == 'WINNT':
         SOURCES += ['cygprofile.cpp']
         SOURCES['cygprofile.cpp'].pgo_generate_only = True
 
-    if CONFIG['CC_TYPE'] == "msvc":
-        CFLAGS += ['-guard:cf']
-        CXXFLAGS += ['-guard:cf']
-        LDFLAGS += ['-guard:cf']
-
 if CONFIG['MOZ_WIDGET_TOOLKIT']:
 
     if CONFIG['MOZ_MEMORY'] and FORCE_SHARED_LIB:
@@ -63,8 +58,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT']:
             '/memory/build',
         ]
 
-        if CONFIG['CC_TYPE'] == "msvc":
-            SOURCES += ['WindowsCFGStatus.cpp']
         SOURCES += [
             'Authenticode.cpp',
             'UntrustedDllsHandler.cpp',
@@ -89,12 +82,18 @@ if CONFIG['MOZ_WIDGET_TOOLKIT']:
         EXPORTS.mozilla.glue += [
             'WindowsDllServices.h',
         ]
+        USE_LIBS += [
+            'mscom-mozglue',
+        ]
+        if CONFIG['CPU_ARCH'] == 'aarch64':
+            USE_LIBS += [
+                'interceptor',
+            ]
 
     EXPORTS.mozilla += [
         'arm.h',
         'mips.h',
         'SSE.h',
-        'WindowsCFGStatus.h',
         'WindowsDllBlocklist.h',
     ]
 
@@ -139,6 +138,3 @@ if CONFIG['MOZ_LINKER'] and CONFIG['CPU_ARCH'] == 'arm':
     LDFLAGS += ['-Wl,-version-script,%s/arm-eabi-filter' % SRCDIR]
 
 DIST_INSTALL = True
-
-if CONFIG['CC_TYPE'] == 'clang-cl':
-    AllowCompilerWarnings()  # workaround for bug 1090497

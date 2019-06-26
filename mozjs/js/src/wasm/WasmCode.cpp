@@ -108,8 +108,8 @@ static uint32_t RoundupCodeLength(uint32_t codeLength) {
   return JS_ROUNDUP(codeLength, ExecutableCodePageSize);
 }
 
-/* static */ UniqueCodeBytes CodeSegment::AllocateCodeBytes(
-    uint32_t codeLength) {
+/* static */
+UniqueCodeBytes CodeSegment::AllocateCodeBytes(uint32_t codeLength) {
   if (codeLength > MaxCodeBytesPerProcess) {
     return nullptr;
   }
@@ -337,8 +337,9 @@ ModuleSegment::ModuleSegment(Tier tier, UniqueCodeBytes codeBytes,
       tier_(tier),
       trapCode_(base() + linkData.trapOffset) {}
 
-/* static */ UniqueModuleSegment ModuleSegment::create(
-    Tier tier, MacroAssembler& masm, const LinkData& linkData) {
+/* static */
+UniqueModuleSegment ModuleSegment::create(Tier tier, MacroAssembler& masm,
+                                          const LinkData& linkData) {
   uint32_t codeLength = masm.bytesNeeded();
 
   UniqueCodeBytes codeBytes = AllocateCodeBytes(codeLength);
@@ -353,8 +354,9 @@ ModuleSegment::ModuleSegment(Tier tier, UniqueCodeBytes codeBytes,
                                        linkData);
 }
 
-/* static */ UniqueModuleSegment ModuleSegment::create(
-    Tier tier, const Bytes& unlinkedBytes, const LinkData& linkData) {
+/* static */
+UniqueModuleSegment ModuleSegment::create(Tier tier, const Bytes& unlinkedBytes,
+                                          const LinkData& linkData) {
   uint32_t codeLength = unlinkedBytes.length();
 
   UniqueCodeBytes codeBytes = AllocateCodeBytes(codeLength);
@@ -686,7 +688,6 @@ bool LazyStubTier::createMany(const Uint32Vector& funcExportIndices,
   MOZ_ASSERT(masm.callFarJumps().empty());
   MOZ_ASSERT(masm.trapSites().empty());
   MOZ_ASSERT(masm.callFarJumps().empty());
-  MOZ_ASSERT(masm.symbolicAccesses().empty());
 
   if (masm.oom()) {
     return false;
@@ -718,6 +719,7 @@ bool LazyStubTier::createMany(const Uint32Vector& funcExportIndices,
     return false;
 
   masm.executableCopy(codePtr, /* flushICache = */ false);
+  PatchDebugSymbolicAccesses(codePtr, masm);
   memset(codePtr + masm.bytesNeeded(), 0, codeLength - masm.bytesNeeded());
 
   for (const CodeLabel& label : masm.codeLabels()) {
@@ -1447,4 +1449,29 @@ uint8_t* Code::serialize(uint8_t* cursor, const LinkData& linkData) const {
 
   *out = code;
   return cursor;
+}
+
+void wasm::PatchDebugSymbolicAccesses(uint8_t* codeBase, MacroAssembler& masm) {
+#ifdef WASM_CODEGEN_DEBUG
+  for (auto& access : masm.symbolicAccesses()) {
+    switch (access.target) {
+      case SymbolicAddress::PrintI32:
+      case SymbolicAddress::PrintPtr:
+      case SymbolicAddress::PrintF32:
+      case SymbolicAddress::PrintF64:
+      case SymbolicAddress::PrintText:
+        break;
+      default:
+        MOZ_CRASH("unexpected symbol in PatchDebugSymbolicAccesses");
+    }
+    ABIFunctionType abiType;
+    void* target = AddressOf(access.target, &abiType);
+    uint8_t* patchAt = codeBase + access.patchAt.offset();
+    Assembler::PatchDataWithValueCheck(CodeLocationLabel(patchAt),
+                                       PatchedImmPtr(target),
+                                       PatchedImmPtr((void*)-1));
+  }
+#else
+  MOZ_ASSERT(masm.symbolicAccesses().empty());
+#endif
 }

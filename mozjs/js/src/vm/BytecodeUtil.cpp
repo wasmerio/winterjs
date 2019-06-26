@@ -179,12 +179,8 @@ static MOZ_MUST_USE bool DumpPCCounts(JSContext* cx, HandleScript script,
 
 bool js::DumpRealmPCCounts(JSContext* cx) {
   Rooted<GCVector<JSScript*>> scripts(cx, GCVector<JSScript*>(cx));
-  for (auto iter = cx->zone()->cellIter<JSScript>(); !iter.done();
-       iter.next()) {
-    JSScript* script = iter;
-    if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
-      continue;
-    }
+  for (auto script = cx->zone()->cellIter<JSScript>(); !script.done();
+       script.next()) {
     if (script->realm() != cx->realm()) {
       continue;
     }
@@ -1432,6 +1428,14 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
+    case JOF_CODE_OFFSET: {
+      ptrdiff_t off = GET_CODE_OFFSET(pc);
+      if (!sp->jsprintf(" %u (%+d)", unsigned(loc + int(off)), int(off))) {
+        return 0;
+      }
+      break;
+    }
+
     case JOF_SCOPE: {
       RootedScope scope(cx, script->getScope(GET_UINT32_INDEX(pc)));
       UniqueChars bytes;
@@ -1470,10 +1474,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-#  ifdef ENABLE_BIGINT
     case JOF_BIGINT:
-      // Fallthrough.
-#  endif
     case JOF_DOUBLE: {
       RootedValue v(cx, script->getConst(GET_UINT32_INDEX(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
@@ -1565,6 +1566,19 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
 
     case JOF_UINT32:
       if (!sp->jsprintf(" %u", GET_UINT32(pc))) {
+        return 0;
+      }
+      break;
+
+    case JOF_ICINDEX:
+      if (!sp->jsprintf(" (ic: %u)", GET_ICINDEX(pc))) {
+        return 0;
+      }
+      break;
+
+    case JOF_LOOPENTRY:
+      if (!sp->jsprintf(" (ic: %u, data: %u,%u)", GET_ICINDEX(pc),
+                        LoopEntryCanIonOsr(pc), LoopEntryDepthHint(pc))) {
         return 0;
       }
       break;
@@ -1947,6 +1961,25 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
 #endif
       break;
 
+    case JSOP_TONUMERIC:
+      return write("(tonumeric ") && decompilePCForStackOperand(pc, -1) &&
+             write(")");
+
+    case JSOP_INC:
+      return write("(inc ") && decompilePCForStackOperand(pc, -1) && write(")");
+
+    case JSOP_DEC:
+      return write("(dec ") && decompilePCForStackOperand(pc, -1) && write(")");
+
+    case JSOP_BIGINT:
+#if defined(DEBUG) || defined(JS_JITSPEW)
+      // BigInt::dump() only available in this configuration.
+      script->getConst(GET_UINT32_INDEX(pc)).toBigInt()->dump(sprinter);
+      return !sprinter.hadOutOfMemory();
+#else
+      return write("[bigint]");
+#endif
+
     default:
       break;
   }
@@ -2030,8 +2063,6 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
 
       case JSOP_LAMBDA:
       case JSOP_LAMBDA_ARROW:
-      case JSOP_TOASYNC:
-      case JSOP_TOASYNCGEN:
         return write("FUN");
 
       case JSOP_TOASYNCITER:
@@ -2080,6 +2111,10 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
         // match to the syntax, since the stack operand for "yield 10" is
         // the result object, not 10.
         return write("RVAL");
+
+      case JSOP_ASYNCAWAIT:
+      case JSOP_ASYNCRESOLVE:
+        return write("PROMISE");
 
       default:
         break;
@@ -2532,13 +2567,9 @@ JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
   }
 
   for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-    for (auto iter = zone->cellIter<JSScript>(); !iter.done(); iter.next()) {
-      JSScript* script = iter;
-      if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
-        continue;
-      }
-      AutoSweepTypeScript sweep(script);
-      if (script->hasScriptCounts() && script->types(sweep)) {
+    for (auto script = zone->cellIter<JSScript>(); !script.done();
+         script.next()) {
+      if (script->hasScriptCounts() && script->types()) {
         if (!vec->append(script)) {
           return;
         }
@@ -2826,6 +2857,8 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
                              GenericPrinter& out) {
   JSRuntime* rt = cx->runtime();
 
+  AutoRealmUnchecked ar(cx, realm);
+
   // Collect the list of scripts which are part of the current realm.
   { js::gc::AutoPrepareForTracing apft(cx); }
 
@@ -2836,11 +2869,8 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
 
   Rooted<ScriptVector> queue(cx, ScriptVector(cx));
   for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-    for (auto iter = zone->cellIter<JSScript>(); !iter.done(); iter.next()) {
-      JSScript* script = iter;
-      if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
-        continue;
-      }
+    for (auto script = zone->cellIter<JSScript>(); !script.done();
+         script.next()) {
       if (script->realm() != realm || !script->filename()) {
         continue;
       }

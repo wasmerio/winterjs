@@ -25,12 +25,14 @@ Important Concepts
    preprocessor
    jar-manifests
    defining-binaries
+   defining-xpcom-components
    toolchains
    locales
    rust
    sparse
    Support for projects building with GN <gn>
    telemetry
+   test_certificates
 
 integrated development environment (IDE)
 ========================================

@@ -1,7 +1,5 @@
-commit 8e3c6d048449a2e47c7748eafa350f49c0b8b7bc
-Author: Leo Balter <leonardo.balter@gmail.com>
-Date:   Mon Dec 10 10:59:09 2018 -0500
+commit c822f4c92914333d197191b2b3dec4e923acb4a3
+Author: André Bargull <andre.bargull@gmail.com>
+Date:   Wed Mar 6 09:24:44 2019 -0800
 
-    Merge pull request #1987 from test262-automation/v8-test262-automation-export-07b313100e
-    
-    Import test changes from V8
+    Fix existing linting errors, update error phase, and add a new flags linter (#2086)

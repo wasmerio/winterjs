@@ -26,6 +26,7 @@ namespace jit {
   _(GuardIsBoolean)                       \
   _(GuardIsString)                        \
   _(GuardIsSymbol)                        \
+  _(GuardIsBigInt)                        \
   _(GuardIsNumber)                        \
   _(GuardIsInt32)                         \
   _(GuardIsInt32Index)                    \
@@ -149,6 +150,9 @@ namespace jit {
 // During the emission of a CacheIR op, code can ask the CacheRegisterAllocator
 // for access to a particular OperandId, and the register allocator will
 // generate the required code to fill that request.
+//
+// Input OperandIds should be considered as immutable, and should not be mutated
+// during the execution of a stub.
 //
 // There are also a number of RAII classes that interact with the register
 // allocator, in order to provide access to more registers than just those
@@ -726,6 +730,23 @@ class MOZ_RAII CacheIRCompiler {
 
   StubFieldPolicy stubFieldPolicy_;
 
+#ifdef DEBUG
+  const uint8_t* currentVerificationPosition_;
+
+  // Verify that the number of bytes consumed by the compiler matches
+  // up with the opcode signature in CACHE_IR_OPS.
+  void assertAllArgumentsConsumed() {
+    CacheOp prevOp = CacheOp(*currentVerificationPosition_);
+    uint32_t expectedLength = CacheIROpFormat::OpLengths[uint8_t(prevOp)];
+
+    const uint8_t* newPosition = reader.currentPosition();
+    MOZ_ASSERT(newPosition > currentVerificationPosition_);
+    uint32_t actualLength = newPosition - currentVerificationPosition_;
+    MOZ_ASSERT(actualLength == expectedLength);
+    currentVerificationPosition_ = newPosition;
+  };
+#endif
+
   CacheIRCompiler(JSContext* cx, const CacheIRWriter& writer,
                   uint32_t stubDataOffset, Mode mode, StubFieldPolicy policy)
       : cx_(cx),
@@ -737,6 +758,9 @@ class MOZ_RAII CacheIRCompiler {
         stubDataOffset_(stubDataOffset),
         stubFieldPolicy_(policy) {
     MOZ_ASSERT(!writer.failed());
+#ifdef DEBUG
+    currentVerificationPosition_ = reader.currentPosition();
+#endif
   }
 
   MOZ_MUST_USE bool addFailurePath(FailurePath** failure);

@@ -38,6 +38,7 @@ namespace jit {
   _(JSOP_OR)                    \
   _(JSOP_NOT)                   \
   _(JSOP_POS)                   \
+  _(JSOP_TONUMERIC)             \
   _(JSOP_LOOPHEAD)              \
   _(JSOP_LOOPENTRY)             \
   _(JSOP_VOID)                  \
@@ -54,7 +55,7 @@ namespace jit {
   _(JSOP_UINT24)                \
   _(JSOP_RESUMEINDEX)           \
   _(JSOP_DOUBLE)                \
-  IF_BIGINT(_(JSOP_BIGINT), )   \
+  _(JSOP_BIGINT)                \
   _(JSOP_STRING)                \
   _(JSOP_SYMBOL)                \
   _(JSOP_OBJECT)                \
@@ -190,8 +191,6 @@ namespace jit {
   _(JSOP_DEBUGGER)              \
   _(JSOP_ARGUMENTS)             \
   _(JSOP_REST)                  \
-  _(JSOP_TOASYNC)               \
-  _(JSOP_TOASYNCGEN)            \
   _(JSOP_TOASYNCITER)           \
   _(JSOP_TOID)                  \
   _(JSOP_TOSTRING)              \
@@ -209,6 +208,8 @@ namespace jit {
   _(JSOP_DEBUGAFTERYIELD)       \
   _(JSOP_FINALYIELDRVAL)        \
   _(JSOP_RESUME)                \
+  _(JSOP_ASYNCAWAIT)            \
+  _(JSOP_ASYNCRESOLVE)          \
   _(JSOP_CALLEE)                \
   _(JSOP_ENVCALLEE)             \
   _(JSOP_SUPERBASE)             \
@@ -310,7 +311,7 @@ class BaselineCodeGen {
 
   // Pushes a name/object/scope associated with the current bytecode op (and
   // stored in the script) as argument for a VM function.
-  enum class ScriptObjectType { RegExp, Function, ObjectLiteral };
+  enum class ScriptObjectType { RegExp, Function };
   void pushScriptObjectArg(ScriptObjectType type);
   void pushScriptNameArg();
   void pushScriptScopeArg();
@@ -320,6 +321,8 @@ class BaselineCodeGen {
   void pushUint16BytecodeOperandArg();
 
   void loadResumeIndexBytecodeOperand(Register dest);
+  void loadInt32LengthBytecodeOperand(Register dest);
+  void loadInt32IndexBytecodeOperand(ValueOperand dest);
 
   // Loads the current JSScript* in dest.
   void loadScript(Register dest);
@@ -341,14 +344,18 @@ class BaselineCodeGen {
   void prepareVMCall();
 
   void storeFrameSizeAndPushDescriptor(uint32_t frameBaseSize, uint32_t argSize,
-                                       const Address& frameSizeAddr);
-  void computeFullFrameSize(uint32_t frameBaseSize, Register dest);
+                                       const Address& frameSizeAddr,
+                                       Register scratch1, Register scratch2);
 
   enum CallVMPhase { POST_INITIALIZE, CHECK_OVER_RECURSED };
-  bool callVM(const VMFunction& fun, CallVMPhase phase = POST_INITIALIZE);
+  bool callVMInternal(VMFunctionId id, CallVMPhase phase);
 
-  bool callVMNonOp(const VMFunction& fun, CallVMPhase phase = POST_INITIALIZE) {
-    if (!callVM(fun, phase)) {
+  template <typename Fn, Fn fn>
+  bool callVM(CallVMPhase phase = POST_INITIALIZE);
+
+  template <typename Fn, Fn fn>
+  bool callVMNonOp(CallVMPhase phase = POST_INITIALIZE) {
+    if (!callVM<Fn, fn>(phase)) {
       return false;
     }
     handler.markLastRetAddrEntryKind(RetAddrEntry::Kind::NonOpCallVM);
@@ -378,6 +385,9 @@ class BaselineCodeGen {
   MOZ_MUST_USE bool emitTestScriptFlag(JSScript::ImmutableFlags flag,
                                        bool value, const F& emit,
                                        Register scratch);
+  template <typename F>
+  MOZ_MUST_USE bool emitTestScriptFlag(JSScript::MutableFlags flag, bool value,
+                                       const F& emit, Register scratch);
 
   MOZ_MUST_USE bool emitCheckThis(ValueOperand val, bool reinit = false);
   void emitLoadReturnValue(ValueOperand val);
@@ -553,6 +563,8 @@ class BaselineCompilerHandler {
     static const unsigned EARLY_STACK_CHECK_SLOT_COUNT = 128;
     return script()->nslots() > EARLY_STACK_CHECK_SLOT_COUNT;
   }
+
+  JSObject* maybeNoCloneSingletonObject();
 };
 
 using BaselineCompilerCodeGen = BaselineCodeGen<BaselineCompilerHandler>;
@@ -617,6 +629,7 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
 // Interface used by BaselineCodeGen for BaselineInterpreterGenerator.
 class BaselineInterpreterHandler {
   InterpreterFrameInfo frame_;
+  Label interpretOp_;
 
  public:
   using FrameInfoT = InterpreterFrameInfo;
@@ -624,6 +637,8 @@ class BaselineInterpreterHandler {
   explicit BaselineInterpreterHandler(JSContext* cx, MacroAssembler& masm);
 
   InterpreterFrameInfo& frame() { return frame_; }
+
+  Label* interpretOpLabel() { return &interpretOp_; }
 
   // Interpreter doesn't know the script and pc statically.
   jsbytecode* maybePC() const { return nullptr; }
@@ -644,6 +659,8 @@ class BaselineInterpreterHandler {
   // The interpreter always does the early stack check because we don't know the
   // frame size statically.
   bool needsEarlyStackCheck() const { return true; }
+
+  JSObject* maybeNoCloneSingletonObject() { return nullptr; }
 };
 
 using BaselineInterpreterCodeGen = BaselineCodeGen<BaselineInterpreterHandler>;
@@ -652,9 +669,6 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
  public:
   explicit BaselineInterpreterGenerator(JSContext* cx);
 };
-
-extern const VMFunction NewArrayCopyOnWriteInfo;
-extern const VMFunction ImplicitThisInfo;
 
 }  // namespace jit
 }  // namespace js

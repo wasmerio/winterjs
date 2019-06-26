@@ -169,7 +169,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
     return false;
   }
 
-  if (!jitRealm->initialize(cx)) {
+  if (!jitRealm->initialize(cx, zone()->allocNurseryStrings)) {
     return false;
   }
 
@@ -182,15 +182,6 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
 void js::DtoaCache::checkCacheAfterMovingGC() {
   MOZ_ASSERT(!s || !IsForwarded(s));
 }
-
-namespace {
-struct CheckGCThingAfterMovingGCFunctor {
-  template <class T>
-  void operator()(T* t) {
-    CheckGCThingAfterMovingGC(*t);
-  }
-};
-}  // namespace
 
 #endif  // JSGC_HASH_TABLE_CHECKS
 
@@ -312,8 +303,8 @@ void ObjectRealm::trace(JSTracer* trc) {
 void Realm::traceRoots(JSTracer* trc,
                        js::gc::GCRuntime::TraceOrMarkRuntime traceOrMark) {
   if (objectMetadataState_.is<PendingMetadata>()) {
-    TraceRoot(trc, &objectMetadataState_.as<PendingMetadata>(),
-              "on-stack object pending metadata");
+    GCPolicy<NewObjectMetadataState>::trace(trc, &objectMetadataState_,
+                                            "on-stack object pending metadata");
   }
 
   if (!JS::RuntimeHeapIsMinorCollecting()) {
@@ -463,24 +454,6 @@ void ObjectRealm::sweepNativeIterators() {
 void Realm::sweepObjectRealm() { objects_.sweepNativeIterators(); }
 
 void Realm::sweepVarNames() { varNames_.sweep(); }
-
-namespace {
-struct TraceRootFunctor {
-  JSTracer* trc;
-  const char* name;
-  TraceRootFunctor(JSTracer* trc, const char* name) : trc(trc), name(name) {}
-  template <class T>
-  void operator()(T* t) {
-    return TraceRoot(trc, t, name);
-  }
-};
-struct NeedsSweepUnbarrieredFunctor {
-  template <class T>
-  bool operator()(T* t) const {
-    return IsAboutToBeFinalizedUnbarriered(t);
-  }
-};
-}  // namespace
 
 void Realm::sweepTemplateObjects() {
   if (mappedArgumentsTemplate_ &&
@@ -718,11 +691,7 @@ static bool AddLazyFunctionsForRealm(JSContext* cx,
   for (auto i = cx->zone()->cellIter<JSObject>(kind); !i.done(); i.next()) {
     JSFunction* fun = &i->as<JSFunction>();
 
-    // Sweeping is incremental; take care to not delazify functions that
-    // are about to be finalized. GC things referenced by objects that are
-    // about to be finalized (e.g., in slots) may already be freed.
-    if (gc::IsAboutToBeFinalizedUnbarriered(&fun) ||
-        fun->realm() != cx->realm()) {
+    if (fun->realm() != cx->realm()) {
       continue;
     }
 
@@ -885,11 +854,8 @@ void Realm::clearScriptNames() { scriptNameMap.reset(); }
 
 void Realm::clearBreakpointsIn(FreeOp* fop, js::Debugger* dbg,
                                HandleObject handler) {
-  for (auto iter = zone()->cellIter<JSScript>(); !iter.done(); iter.next()) {
-    JSScript* script = iter;
-    if (gc::IsAboutToBeFinalizedUnbarriered(&script)) {
-      continue;
-    }
+  for (auto script = zone()->cellIter<JSScript>(); !script.done();
+       script.next()) {
     if (script->realm() == this && script->hasAnyBreakpointsOrStepMode()) {
       script->clearBreakpointsIn(fop, dbg, handler);
     }
@@ -958,9 +924,8 @@ mozilla::HashCodeScrambler Realm::randomHashCodeScrambler() {
 
 AutoSetNewObjectMetadata::AutoSetNewObjectMetadata(
     JSContext* cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-    : CustomAutoRooter(cx),
-      cx_(cx->helperThread() ? nullptr : cx),
-      prevState_(cx->realm()->objectMetadataState_) {
+    : cx_(cx->helperThread() ? nullptr : cx),
+      prevState_(cx, cx->realm()->objectMetadataState_) {
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
   if (cx_) {
     cx_->realm()->objectMetadataState_ =
@@ -1015,19 +980,6 @@ JS_PUBLIC_API void gc::TraceRealm(JSTracer* trc, JS::Realm* realm,
 
 JS_PUBLIC_API bool gc::RealmNeedsSweep(JS::Realm* realm) {
   return realm->globalIsAboutToBeFinalized();
-}
-
-JS_PUBLIC_API bool gc::AllRealmsNeedSweep(JS::Compartment* comp) {
-  MOZ_ASSERT(comp);
-  if (!comp->zone()->isGCSweeping()) {
-    return false;
-  }
-  for (Realm* r : comp->realms()) {
-    if (!gc::RealmNeedsSweep(r)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 JS_PUBLIC_API JS::Realm* JS::GetCurrentRealmOrNull(JSContext* cx) {

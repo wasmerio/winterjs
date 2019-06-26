@@ -44,6 +44,9 @@ inline bool CanReuseFunctionForClone(JSContext* cx, HandleFunction fun) {
       return false;
     }
     script->setHasBeenCloned();
+    if (LazyScript* lazy = script->maybeLazyScript()) {
+      lazy->setHasBeenCloned();
+    }
   }
   return true;
 }
@@ -110,8 +113,7 @@ inline JSFunction* CloneFunctionObjectIfNotSingleton(
   MOZ_ASSERT(dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(),
                                clasp) == NumDynamicSlots);
 
-  JSObject* obj =
-      js::Allocate<JSObject>(cx, kind, NumDynamicSlots, heap, clasp);
+  JSObject* obj = js::AllocateObject(cx, kind, NumDynamicSlots, heap, clasp);
   if (!obj) {
     return cx->alreadyReportedOOM();
   }

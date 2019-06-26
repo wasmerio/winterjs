@@ -255,6 +255,11 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     cmp32(tag, ImmTag(JSVAL_TAG_SYMBOL));
     return cond;
   }
+  Condition testBigInt(Condition cond, Register tag) {
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    cmp32(tag, ImmTag(JSVAL_TAG_BIGINT));
+    return cond;
+  }
   Condition testObject(Condition cond, Register tag) {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
     cmp32(tag, ImmTag(JSVAL_TAG_OBJECT));
@@ -330,6 +335,11 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     splitTag(src, scratch);
     return testSymbol(cond, scratch);
   }
+  Condition testBigInt(Condition cond, const ValueOperand& src) {
+    ScratchRegisterScope scratch(asMasm());
+    splitTag(src, scratch);
+    return testBigInt(cond, scratch);
+  }
   Condition testObject(Condition cond, const ValueOperand& src) {
     ScratchRegisterScope scratch(asMasm());
     splitTag(src, scratch);
@@ -383,6 +393,11 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     splitTag(src, scratch);
     return testSymbol(cond, scratch);
   }
+  Condition testBigInt(Condition cond, const Address& src) {
+    ScratchRegisterScope scratch(asMasm());
+    splitTag(src, scratch);
+    return testBigInt(cond, scratch);
+  }
   Condition testObject(Condition cond, const Address& src) {
     ScratchRegisterScope scratch(asMasm());
     splitTag(src, scratch);
@@ -428,6 +443,11 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     ScratchRegisterScope scratch(asMasm());
     splitTag(src, scratch);
     return testSymbol(cond, scratch);
+  }
+  Condition testBigInt(Condition cond, const BaseIndex& src) {
+    ScratchRegisterScope scratch(asMasm());
+    splitTag(src, scratch);
+    return testBigInt(cond, scratch);
   }
   Condition testInt32(Condition cond, const BaseIndex& src) {
     ScratchRegisterScope scratch(asMasm());
@@ -800,6 +820,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     unboxNonDouble(src, dest, JSVAL_TYPE_SYMBOL);
   }
 
+  void unboxBigInt(const ValueOperand& src, Register dest) {
+    unboxNonDouble(src, dest, JSVAL_TYPE_BIGINT);
+  }
+  void unboxBigInt(const Operand& src, Register dest) {
+    unboxNonDouble(src, dest, JSVAL_TYPE_BIGINT);
+  }
+
   void unboxObject(const ValueOperand& src, Register dest) {
     unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
   }
@@ -918,6 +945,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     ScratchRegisterScope scratch(asMasm());
     unboxString(value, scratch);
     cmp32(Operand(scratch, JSString::offsetOfLength()), Imm32(0));
+    return truthy ? Assembler::NotEqual : Assembler::Equal;
+  }
+  Condition testBigIntTruthy(bool truthy, const ValueOperand& value) {
+    ScratchRegisterScope scratch(asMasm());
+    unboxBigInt(value, scratch);
+    cmpPtr(Operand(scratch, BigInt::offsetOfLengthSignAndReservedBits()),
+           ImmWord(0));
     return truthy ? Assembler::NotEqual : Assembler::Equal;
   }
 

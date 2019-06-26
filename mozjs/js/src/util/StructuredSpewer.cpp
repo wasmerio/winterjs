@@ -36,7 +36,7 @@ const StructuredSpewer::NameArray StructuredSpewer::names_ = {
 #    endif
 #  endif
 
-void StructuredSpewer::ensureInitializationAttempted() {
+bool StructuredSpewer::ensureInitializationAttempted() {
   if (!outputInitializationAttempted_) {
     // We cannot call getenv during record replay, so disable
     // the spewer.
@@ -57,6 +57,8 @@ void StructuredSpewer::ensureInitializationAttempted() {
     // we track the attempt separately.
     outputInitializationAttempted_ = true;
   }
+
+  return json_.isSome();
 }
 
 void StructuredSpewer::tryToInitializeOutput(const char* path) {
@@ -100,7 +102,8 @@ static bool MatchJSScript(JSScript* script, const char* pattern) {
   return result != nullptr;
 }
 
-/* static */ bool StructuredSpewer::enabled(JSScript* script) {
+/* static */
+bool StructuredSpewer::enabled(JSScript* script) {
   // We cannot call getenv under record/replay.
   if (mozilla::recordreplay::IsRecordingOrReplaying()) {
     return false;
@@ -137,15 +140,18 @@ void StructuredSpewer::startObject(JSContext* cx, const JSScript* script,
   json.endObject();
 }
 
-/* static */ void StructuredSpewer::spew(JSContext* cx, SpewChannel channel,
-                                         const char* fmt, ...) {
+/* static */
+void StructuredSpewer::spew(JSContext* cx, SpewChannel channel, const char* fmt,
+                            ...) {
   // Because we don't have a script here, use the singleton's
   // filter to determine if the channel is active.
   if (!cx->spewer().filter().enabled(channel)) {
     return;
   }
 
-  cx->spewer().ensureInitializationAttempted();
+  if (!cx->spewer().ensureInitializationAttempted()) {
+    return;
+  }
 
   va_list ap;
   va_start(ap, fmt);
@@ -220,7 +226,9 @@ AutoStructuredSpewer::AutoStructuredSpewer(JSContext* cx, SpewChannel channel,
     return;
   }
 
-  cx->spewer().ensureInitializationAttempted();
+  if (!cx->spewer().ensureInitializationAttempted()) {
+    return;
+  }
 
   cx->spewer().startObject(cx, script, channel);
   printer_.emplace(&cx->spewer().json_.ref());

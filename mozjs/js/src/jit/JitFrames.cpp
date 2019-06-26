@@ -1022,7 +1022,8 @@ uint8_t* alignDoubleSpillWithOffset(uint8_t* pointer, int32_t offset) {
   return reinterpret_cast<uint8_t*>(address);
 }
 
-static void TraceJitExitFrameCopiedArguments(JSTracer* trc, const VMFunction* f,
+static void TraceJitExitFrameCopiedArguments(JSTracer* trc,
+                                             const VMFunctionData* f,
                                              ExitFooterFrame* footer) {
   uint8_t* doubleArgs = reinterpret_cast<uint8_t*>(footer);
   doubleArgs = alignDoubleSpillWithOffset(doubleArgs, sizeof(intptr_t));
@@ -1032,19 +1033,20 @@ static void TraceJitExitFrameCopiedArguments(JSTracer* trc, const VMFunction* f,
   doubleArgs -= f->doubleByRefArgs() * sizeof(double);
 
   for (uint32_t explicitArg = 0; explicitArg < f->explicitArgs; explicitArg++) {
-    if (f->argProperties(explicitArg) == VMFunction::DoubleByRef) {
+    if (f->argProperties(explicitArg) == VMFunctionData::DoubleByRef) {
       // Arguments with double size can only have RootValue type.
-      if (f->argRootType(explicitArg) == VMFunction::RootValue) {
+      if (f->argRootType(explicitArg) == VMFunctionData::RootValue) {
         TraceRoot(trc, reinterpret_cast<Value*>(doubleArgs), "ion-vm-args");
       } else {
-        MOZ_ASSERT(f->argRootType(explicitArg) == VMFunction::RootNone);
+        MOZ_ASSERT(f->argRootType(explicitArg) == VMFunctionData::RootNone);
       }
       doubleArgs += sizeof(double);
     }
   }
 }
 #else
-static void TraceJitExitFrameCopiedArguments(JSTracer* trc, const VMFunction* f,
+static void TraceJitExitFrameCopiedArguments(JSTracer* trc,
+                                             const VMFunctionData* f,
                                              ExitFooterFrame* footer) {
   // This is NO-OP on other platforms.
 }
@@ -1127,16 +1129,16 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
 
   MOZ_ASSERT(frame.exitFrame()->isWrapperExit());
 
-  const VMFunction* f = footer->function();
+  const VMFunctionData* f = footer->function();
   MOZ_ASSERT(f);
 
   // Trace arguments of the VM wrapper.
   uint8_t* argBase = frame.exitFrame()->argBase();
   for (uint32_t explicitArg = 0; explicitArg < f->explicitArgs; explicitArg++) {
     switch (f->argRootType(explicitArg)) {
-      case VMFunction::RootNone:
+      case VMFunctionData::RootNone:
         break;
-      case VMFunction::RootObject: {
+      case VMFunctionData::RootObject: {
         // Sometimes we can bake in HandleObjects to nullptr.
         JSObject** pobj = reinterpret_cast<JSObject**>(argBase);
         if (*pobj) {
@@ -1144,31 +1146,31 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
         }
         break;
       }
-      case VMFunction::RootString:
+      case VMFunctionData::RootString:
         TraceRoot(trc, reinterpret_cast<JSString**>(argBase), "ion-vm-args");
         break;
-      case VMFunction::RootFunction:
+      case VMFunctionData::RootFunction:
         TraceRoot(trc, reinterpret_cast<JSFunction**>(argBase), "ion-vm-args");
         break;
-      case VMFunction::RootValue:
+      case VMFunctionData::RootValue:
         TraceRoot(trc, reinterpret_cast<Value*>(argBase), "ion-vm-args");
         break;
-      case VMFunction::RootId:
+      case VMFunctionData::RootId:
         TraceRoot(trc, reinterpret_cast<jsid*>(argBase), "ion-vm-args");
         break;
-      case VMFunction::RootCell:
+      case VMFunctionData::RootCell:
         TraceGenericPointerRoot(trc, reinterpret_cast<gc::Cell**>(argBase),
                                 "ion-vm-args");
         break;
     }
 
     switch (f->argProperties(explicitArg)) {
-      case VMFunction::WordByValue:
-      case VMFunction::WordByRef:
+      case VMFunctionData::WordByValue:
+      case VMFunctionData::WordByRef:
         argBase += sizeof(void*);
         break;
-      case VMFunction::DoubleByValue:
-      case VMFunction::DoubleByRef:
+      case VMFunctionData::DoubleByValue:
+      case VMFunctionData::DoubleByRef:
         argBase += 2 * sizeof(void*);
         break;
     }
@@ -1176,24 +1178,24 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
 
   if (f->outParam == Type_Handle) {
     switch (f->outParamRootType) {
-      case VMFunction::RootNone:
+      case VMFunctionData::RootNone:
         MOZ_CRASH("Handle outparam must have root type");
-      case VMFunction::RootObject:
+      case VMFunctionData::RootObject:
         TraceRoot(trc, footer->outParam<JSObject*>(), "ion-vm-out");
         break;
-      case VMFunction::RootString:
+      case VMFunctionData::RootString:
         TraceRoot(trc, footer->outParam<JSString*>(), "ion-vm-out");
         break;
-      case VMFunction::RootFunction:
+      case VMFunctionData::RootFunction:
         TraceRoot(trc, footer->outParam<JSFunction*>(), "ion-vm-out");
         break;
-      case VMFunction::RootValue:
+      case VMFunctionData::RootValue:
         TraceRoot(trc, footer->outParam<Value>(), "ion-vm-outvp");
         break;
-      case VMFunction::RootId:
+      case VMFunctionData::RootId:
         TraceRoot(trc, footer->outParam<jsid>(), "ion-vm-outvp");
         break;
-      case VMFunction::RootCell:
+      case VMFunctionData::RootCell:
         TraceGenericPointerRoot(trc, footer->outParam<gc::Cell*>(),
                                 "ion-vm-out");
         break;
@@ -1500,6 +1502,10 @@ static Value FromSymbolPayload(uintptr_t payload) {
   return SymbolValue(reinterpret_cast<JS::Symbol*>(payload));
 }
 
+static Value FromBigIntPayload(uintptr_t payload) {
+  return BigIntValue(reinterpret_cast<JS::BigInt*>(payload));
+}
+
 static Value FromTypedPayload(JSValueType type, uintptr_t payload) {
   switch (type) {
     case JSVAL_TYPE_INT32:
@@ -1510,6 +1516,8 @@ static Value FromTypedPayload(JSValueType type, uintptr_t payload) {
       return FromStringPayload(payload);
     case JSVAL_TYPE_SYMBOL:
       return FromSymbolPayload(payload);
+    case JSVAL_TYPE_BIGINT:
+      return FromBigIntPayload(payload);
     case JSVAL_TYPE_OBJECT:
       return FromObjectPayload(payload);
     default:
@@ -1606,6 +1614,8 @@ Value SnapshotIterator::allocationValue(const RValueAllocation& alloc,
           return FromStringPayload(fromStack(alloc.stackOffset2()));
         case JSVAL_TYPE_SYMBOL:
           return FromSymbolPayload(fromStack(alloc.stackOffset2()));
+        case JSVAL_TYPE_BIGINT:
+          return FromBigIntPayload(fromStack(alloc.stackOffset2()));
         case JSVAL_TYPE_OBJECT:
           return FromObjectPayload(fromStack(alloc.stackOffset2()));
         default:
@@ -1727,6 +1737,7 @@ void SnapshotIterator::writeAllocationValuePayload(
           break;
         case JSVAL_TYPE_STRING:
         case JSVAL_TYPE_SYMBOL:
+        case JSVAL_TYPE_BIGINT:
         case JSVAL_TYPE_OBJECT:
           WriteFrameSlot(fp_, alloc.stackOffset2(), uintptr_t(v.toGCThing()));
           break;
@@ -2033,7 +2044,7 @@ void InlineFrameIterator::findNextFrame() {
     if (JSOp(*pc_) == JSOP_FUNCALL) {
       MOZ_ASSERT(GET_ARGC(pc_) > 0);
       numActualArgs_ = GET_ARGC(pc_) - 1;
-    } else if (IsGetPropPC(pc_)) {
+    } else if (IsGetPropPC(pc_) || IsGetElemPC(pc_)) {
       numActualArgs_ = 0;
     } else if (IsSetPropPC(pc_)) {
       numActualArgs_ = 1;
@@ -2207,7 +2218,7 @@ bool InlineFrameIterator::isConstructing() const {
     ++parent;
 
     // Inlined Getters and Setters are never constructing.
-    if (IsGetPropPC(parent.pc()) || IsSetPropPC(parent.pc())) {
+    if (IsIonInlinableGetterOrSetterPC(parent.pc())) {
       return false;
     }
 

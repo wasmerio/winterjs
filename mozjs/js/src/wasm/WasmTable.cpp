@@ -51,8 +51,9 @@ Table::Table(JSContext* cx, const TableDesc& desc,
   MOZ_ASSERT(kind_ == TableKind::AnyRef);
 }
 
-/* static */ SharedTable Table::create(JSContext* cx, const TableDesc& desc,
-                                       HandleWasmTableObject maybeObject) {
+/* static */
+SharedTable Table::create(JSContext* cx, const TableDesc& desc,
+                          HandleWasmTableObject maybeObject) {
   switch (desc.kind) {
     case TableKind::AnyFunction:
     case TableKind::TypedFunction: {
@@ -248,7 +249,7 @@ uint32_t Table::grow(uint32_t delta, JSContext* cx) {
 
   CheckedInt<uint32_t> newLength = oldLength;
   newLength += delta;
-  if (!newLength.isValid()) {
+  if (!newLength.isValid() || newLength.value() > MaxTableLength) {
     return -1;
   }
 

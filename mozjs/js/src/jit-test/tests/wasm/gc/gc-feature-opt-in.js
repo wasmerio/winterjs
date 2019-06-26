@@ -4,9 +4,9 @@
 
 // Version numbers
 
-let CURRENT_VERSION = 2;
-let OLDER_INCOMPATIBLE_VERSION = 1; // v1 incompatible with v2
-let FUTURE_VERSION = 3;
+let CURRENT_VERSION = 3;
+let SOME_OLDER_INCOMPATIBLE_VERSION = CURRENT_VERSION - 1;  // v1 incompatible with v2, v2 with v3
+let SOME_FUTURE_VERSION = CURRENT_VERSION + 1;              // ok for now
 
 // Encoding.  If the section is present it must be first.
 
@@ -36,28 +36,26 @@ new WebAssembly.Module(wasmTextToBinary(
 
 assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (gc_feature_opt_in ${OLDER_INCOMPATIBLE_VERSION}))`)),
+      (gc_feature_opt_in ${SOME_OLDER_INCOMPATIBLE_VERSION}))`)),
                    WebAssembly.CompileError,
-                   /GC feature version \d+ is no longer supported by this engine/);
+                   /GC feature version.*no longer supported by this engine/);
 
 assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (gc_feature_opt_in ${FUTURE_VERSION}))`)),
+      (gc_feature_opt_in ${SOME_FUTURE_VERSION}))`)),
                    WebAssembly.CompileError,
                    /GC feature version is unknown/);
 
-// Parameters of ref type are only available if we opt in.
+// Parameters of anyref type are available regardless of whether we opt in.
 
 new WebAssembly.Module(wasmTextToBinary(
     `(module
       (gc_feature_opt_in ${CURRENT_VERSION})
       (type (func (param anyref))))`));
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (type (func (param anyref))))`)),
-                   WebAssembly.CompileError,
-                   /reference types not enabled/);
+      (type (func (param anyref))))`));
 
 // Ditto returns
 
@@ -66,11 +64,9 @@ new WebAssembly.Module(wasmTextToBinary(
       (gc_feature_opt_in ${CURRENT_VERSION})
       (type (func (result anyref))))`));
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (type (func (result anyref))))`)),
-                   WebAssembly.CompileError,
-                   /reference types not enabled/);
+      (type (func (result anyref))))`));
 
 // Ditto locals
 
@@ -81,13 +77,11 @@ new WebAssembly.Module(wasmTextToBinary(
        (local anyref)
        (i32.const 0)))`));
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
       (func (result i32)
        (local anyref)
-       (i32.const 0)))`)),
-                   WebAssembly.CompileError,
-                   /reference types not enabled/);
+       (i32.const 0)))`));
 
 // Ditto globals
 
@@ -96,29 +90,24 @@ new WebAssembly.Module(wasmTextToBinary(
       (gc_feature_opt_in ${CURRENT_VERSION})
       (global (mut anyref) (ref.null)))`));
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (global (mut anyref) (ref.null)))`)),
-                   WebAssembly.CompileError,
-                   /reference types not enabled/);
+      (global (mut anyref) (ref.null)))`));
 
-// Ref instructions are only available if we opt in.
+// ref.null and ref.is_null are available whetehr we opt in or not, but ref.eq
+// only if we opt in
 //
 // When testing these we need to avoid struct types or parameters, locals,
 // returns, or globals of ref type, or guards on those will preempt the guards
 // on the instructions.
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (func ref.null))`)),
-                   WebAssembly.CompileError,
-                   /unrecognized opcode/);
+      (func (result anyref) ref.null))`));
 
-assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
+new WebAssembly.Module(wasmTextToBinary(
     `(module
-      (func ref.is_null))`)),
-                   WebAssembly.CompileError,
-                   /unrecognized opcode/);
+      (func (param anyref) (result i32) (ref.is_null (local.get 0))))`));
 
 assertErrorMessage(() => new WebAssembly.Module(wasmTextToBinary(
     `(module

@@ -6,6 +6,9 @@ assertEq(objectGlobal(Math), this);
 assertEq(objectGlobal(g1.print), g1);
 assertEq(objectGlobal(g2.x), g1);
 
+assertEq(isSameCompartment(g1, g2), true);
+assertEq(isSameCompartment(g1, Math), true);
+
 // Different-compartment realms have wrappers.
 assertEq(objectGlobal(newGlobal({newCompartment: true}).Math), null);
 
@@ -101,3 +104,11 @@ function testEvalcx() {
     assertEq(lazysb.__proto__, Math);
 }
 testEvalcx();
+
+function testSetProto() {
+    var o = {};
+    o.__proto__ = newGlobal();
+    o.__proto__ = newGlobal();
+    assertEq(objectGlobal(o), this);
+}
+testSetProto();

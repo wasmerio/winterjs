@@ -23,6 +23,7 @@
 #ifdef JS_CODEGEN_ARM64
 #  include "jit/arm64/vixl/Cpu-vixl.h"
 #endif
+#include "jit/AtomicOperations.h"
 #include "threading/LockGuard.h"
 #include "threading/Mutex.h"
 #include "util/Windows.h"
@@ -172,9 +173,10 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
   // Use a fake unwind code to make the Windows unwinder do _something_. If the
   // PC and SP both stay unchanged, we'll fail the unwinder's sanity checks and
   // it won't call our exception handler.
-  r->unwindInfo.codeWords = 1; // one 32-bit word gives us up to 4 codes
-  r->unwindInfo.unwindCodes[0] = 0b00000001; // alloc_s small stack of size 1*16
-  r->unwindInfo.unwindCodes[1] = 0b11100100; // end
+  r->unwindInfo.codeWords = 1;  // one 32-bit word gives us up to 4 codes
+  r->unwindInfo.unwindCodes[0] =
+      0b00000001;  // alloc_s small stack of size 1*16
+  r->unwindInfo.unwindCodes[1] = 0b11100100;  // end
 
   uint32_t* thunk = (uint32_t*)r->thunk;
   uint16_t* addr = (uint16_t*)&handler;
@@ -723,6 +725,19 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
   MOZ_ASSERT((uintptr_t(pageStart) % pageSize) == 0);
 
   execMemory.assertValidAddress(pageStart, size);
+
+  // On weak memory systems, make sure new code is visible on all cores before
+  // addresses of the code are made public.  Now is the latest moment in time
+  // when we can do that, and we're assuming that every other thread that has
+  // written into the memory that is being reprotected here has synchronized
+  // with this thread in such a way that the memory writes have become visible
+  // and we therefore only need to execute the fence once here.  See bug 1529933
+  // for a longer discussion of why this is both necessary and sufficient.
+  //
+  // We use the C++ fence here -- and not AtomicOperations::fenceSeqCst() --
+  // primarily because ReprotectRegion will be called while we construct our own
+  // jitted atomics.  But the C++ fence is sufficient and correct, too.
+  std::atomic_thread_fence(std::memory_order_seq_cst);
 
 #ifdef XP_WIN
   DWORD oldProtect;

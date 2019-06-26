@@ -775,7 +775,8 @@ bool ToDoublePolicy::staticAdjustInputs(TempAllocator& alloc,
     case MIRType::Object:
     case MIRType::String:
     case MIRType::Symbol:
-      // Objects might be effectful. Symbols give TypeError.
+    case MIRType::BigInt:
+      // Objects might be effectful. Symbols and BigInts give TypeError.
       break;
     default:
       break;
@@ -827,7 +828,8 @@ bool ToInt32Policy::staticAdjustInputs(TempAllocator& alloc,
     case MIRType::Object:
     case MIRType::String:
     case MIRType::Symbol:
-      // Objects might be effectful. Symbols give TypeError.
+    case MIRType::BigInt:
+      // Objects might be effectful. Symbols and BigInts give TypeError.
       break;
     default:
       break;
@@ -843,7 +845,8 @@ bool ToStringPolicy::staticAdjustInputs(TempAllocator& alloc,
   MOZ_ASSERT(ins->isToString());
 
   MIRType type = ins->getOperand(0)->type();
-  if (type == MIRType::Object || type == MIRType::Symbol) {
+  if (type == MIRType::Object || type == MIRType::Symbol ||
+      type == MIRType::BigInt) {
     ins->replaceOperand(0, BoxAt(alloc, ins, ins->getOperand(0)));
     return true;
   }
@@ -962,6 +965,7 @@ bool StoreUnboxedScalarPolicy::adjustValueInput(TempAllocator& alloc,
     case MIRType::Object:
     case MIRType::String:
     case MIRType::Symbol:
+    case MIRType::BigInt:
       value = BoxAt(alloc, ins, value);
       break;
     default:
@@ -1214,6 +1218,7 @@ bool FilterTypeSetPolicy::adjustInputs(TempAllocator& alloc,
 
 // Lists of all TypePolicy specializations which are used by MIR Instructions.
 #define TYPE_POLICY_LIST(_)         \
+  _(AllDoublePolicy)                \
   _(ArithPolicy)                    \
   _(BitwisePolicy)                  \
   _(BoxInputsPolicy)                \
@@ -1231,7 +1236,6 @@ bool FilterTypeSetPolicy::adjustInputs(TempAllocator& alloc,
   _(StoreUnboxedObjectOrNullPolicy) \
   _(StoreUnboxedStringPolicy)       \
   _(TestPolicy)                     \
-  _(AllDoublePolicy)                \
   _(ToDoublePolicy)                 \
   _(ToInt32Policy)                  \
   _(ToStringPolicy)                 \

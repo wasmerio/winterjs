@@ -186,16 +186,20 @@ BigInt* BigInt::zero(JSContext* cx) {
   return createUninitialized(cx, 0, false);
 }
 
-BigInt* BigInt::one(JSContext* cx) {
-  BigInt* ret = createUninitialized(cx, 1, false);
-
-  if (!ret) {
+BigInt* BigInt::createFromDigit(JSContext* cx, Digit d, bool isNegative) {
+  MOZ_ASSERT(d != 0);
+  BigInt* res = createUninitialized(cx, 1, isNegative);
+  if (!res) {
     return nullptr;
   }
+  res->setDigit(0, d);
+  return res;
+}
 
-  ret->setDigit(0, 1);
+BigInt* BigInt::one(JSContext* cx) { return createFromDigit(cx, 1, false); }
 
-  return ret;
+BigInt* BigInt::negativeOne(JSContext* cx) {
+  return createFromDigit(cx, 1, true);
 }
 
 BigInt* BigInt::neg(JSContext* cx, HandleBigInt x) {
@@ -212,10 +216,10 @@ BigInt* BigInt::neg(JSContext* cx, HandleBigInt x) {
 }
 
 #if !defined(JS_64BIT)
-#define HAVE_TWO_DIGIT 1
+#  define HAVE_TWO_DIGIT 1
 using TwoDigit = uint64_t;
 #elif defined(HAVE_INT128_SUPPORT)
-#define HAVE_TWO_DIGIT 1
+#  define HAVE_TWO_DIGIT 1
 using TwoDigit = __uint128_t;
 #endif
 
@@ -563,11 +567,10 @@ BigInt* BigInt::absoluteSub(JSContext* cx, HandleBigInt x, HandleBigInt y,
 //
 // This function returns false if `quotient` is an empty handle, but allocating
 // the quotient failed.  Otherwise it returns true, indicating success.
-bool BigInt::absoluteDivWithDigitDivisor(JSContext* cx, HandleBigInt x,
-                                         Digit divisor,
-                                         const Maybe<MutableHandleBigInt>& quotient,
-                                         Digit* remainder,
-                                         bool quotientNegative) {
+bool BigInt::absoluteDivWithDigitDivisor(
+    JSContext* cx, HandleBigInt x, Digit divisor,
+    const Maybe<MutableHandleBigInt>& quotient, Digit* remainder,
+    bool quotientNegative) {
   MOZ_ASSERT(divisor);
 
   MOZ_ASSERT(!x->isZero());
@@ -734,11 +737,10 @@ BigInt* BigInt::absoluteLeftShiftAlwaysCopy(JSContext* cx, HandleBigInt x,
 // interested in one of them.  See Knuth, Volume 2, section 4.3.1, Algorithm D.
 // Also see the overview of the algorithm by Jan Marthedal Rasmussen over at
 // https://janmr.com/blog/2014/04/basic-multiple-precision-long-division/.
-bool BigInt::absoluteDivWithBigIntDivisor(JSContext* cx, HandleBigInt dividend,
-                                          HandleBigInt divisor,
-                                          const Maybe<MutableHandleBigInt>& quotient,
-                                          const Maybe<MutableHandleBigInt>& remainder,
-                                          bool isNegative) {
+bool BigInt::absoluteDivWithBigIntDivisor(
+    JSContext* cx, HandleBigInt dividend, HandleBigInt divisor,
+    const Maybe<MutableHandleBigInt>& quotient,
+    const Maybe<MutableHandleBigInt>& remainder, bool isNegative) {
   MOZ_ASSERT(divisor->digitLength() >= 2);
   MOZ_ASSERT(dividend->digitLength() >= divisor->digitLength());
 
@@ -978,21 +980,26 @@ BigInt* BigInt::absoluteAddOne(JSContext* cx, HandleBigInt x,
   return destructivelyTrimHighZeroDigits(cx, result);
 }
 
-// Like the above, but you can specify that the allocated result should have
-// length `resultLength`, which must be at least as large as `x->digitLength()`.
-// The result will be unsigned.
 BigInt* BigInt::absoluteSubOne(JSContext* cx, HandleBigInt x,
-                               unsigned resultLength) {
+                               bool resultNegative) {
   MOZ_ASSERT(!x->isZero());
-  MOZ_ASSERT(resultLength >= x->digitLength());
-  bool resultNegative = false;
-  RootedBigInt result(cx,
-                      createUninitialized(cx, resultLength, resultNegative));
+
+  unsigned length = x->digitLength();
+
+  if (length == 1) {
+    Digit d = x->digit(0);
+    if (d == 1) {
+      // Ignore resultNegative.
+      return zero(cx);
+    }
+    return createFromDigit(cx, d - 1, resultNegative);
+  }
+
+  RootedBigInt result(cx, createUninitialized(cx, length, resultNegative));
   if (!result) {
     return nullptr;
   }
 
-  unsigned length = x->digitLength();
   Digit borrow = 1;
   for (unsigned i = 0; i < length; i++) {
     Digit newBorrow = 0;
@@ -1000,11 +1007,34 @@ BigInt* BigInt::absoluteSubOne(JSContext* cx, HandleBigInt x,
     borrow = newBorrow;
   }
   MOZ_ASSERT(!borrow);
-  for (unsigned i = length; i < resultLength; i++) {
-    result->setDigit(i, 0);
-  }
 
   return destructivelyTrimHighZeroDigits(cx, result);
+}
+
+BigInt* BigInt::inc(JSContext* cx, HandleBigInt x) {
+  if (x->isZero()) {
+    return one(cx);
+  }
+
+  bool isNegative = x->isNegative();
+  if (isNegative) {
+    return absoluteSubOne(cx, x, isNegative);
+  }
+
+  return absoluteAddOne(cx, x, isNegative);
+}
+
+BigInt* BigInt::dec(JSContext* cx, HandleBigInt x) {
+  if (x->isZero()) {
+    return negativeOne(cx);
+  }
+
+  bool isNegative = x->isNegative();
+  if (isNegative) {
+    return absoluteAddOne(cx, x, isNegative);
+  }
+
+  return absoluteSubOne(cx, x, isNegative);
 }
 
 // Lookup table for the maximum number of bits required per character of a
@@ -1075,6 +1105,7 @@ size_t BigInt::calculateMaximumCharactersRequired(HandleBigInt x,
   return AssertedCast<size_t>(maximumCharactersRequired);
 }
 
+template <AllowGC allowGC>
 JSLinearString* BigInt::toStringBasePowerOfTwo(JSContext* cx, HandleBigInt x,
                                                unsigned radix) {
   MOZ_ASSERT(mozilla::IsPowerOfTwo(radix));
@@ -1151,7 +1182,42 @@ JSLinearString* BigInt::toStringBasePowerOfTwo(JSContext* cx, HandleBigInt x,
   }
 
   MOZ_ASSERT(pos == 0);
-  return NewStringCopyN<CanGC>(cx, resultChars.get(), charsRequired);
+  return NewStringCopyN<allowGC>(cx, resultChars.get(), charsRequired);
+}
+
+template <AllowGC allowGC>
+JSLinearString* BigInt::toStringSingleDigitBaseTen(JSContext* cx, Digit digit,
+                                                   bool isNegative) {
+  if (digit <= Digit(INT32_MAX)) {
+    int32_t val = AssertedCast<int32_t>(digit);
+    return Int32ToString<allowGC>(cx, isNegative ? -val : val);
+  }
+
+  MOZ_ASSERT(digit != 0, "zero case should have been handled in toString");
+
+  constexpr size_t maxLength = 1 + (std::numeric_limits<Digit>::digits10 + 1);
+  static_assert(maxLength == 11 || maxLength == 21,
+                "unexpected decimal string length");
+
+  char resultChars[maxLength];
+  size_t writePos = maxLength;
+
+  while (digit != 0) {
+    MOZ_ASSERT(writePos > 0);
+    resultChars[--writePos] = radixDigits[digit % 10];
+    digit /= 10;
+  }
+  MOZ_ASSERT(writePos < maxLength);
+  MOZ_ASSERT(resultChars[writePos] != '0');
+
+  if (isNegative) {
+    MOZ_ASSERT(writePos > 0);
+    resultChars[--writePos] = '-';
+  }
+
+  MOZ_ASSERT(writePos < maxLength);
+  return NewStringCopyN<allowGC>(cx, resultChars + writePos,
+                                 maxLength - writePos);
 }
 
 static constexpr BigInt::Digit MaxPowerInDigit(uint8_t radix) {
@@ -1352,7 +1418,7 @@ bool BigInt::calculateMaximumDigitsRequired(JSContext* cx, uint8_t radix,
   uint64_t n =
       CeilDiv(charcount * bitsPerChar, DigitBits * bitsPerCharTableMultiplier);
   if (n > MaxDigitLength) {
-    ReportAllocationOverflow(cx);
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -1516,6 +1582,7 @@ BigInt* BigInt::createFromDouble(JSContext* cx, double d) {
     digit = mantissa << (msdTopBit - mantissaTopBit);
     mantissa = 0;
   }
+  MOZ_ASSERT(digit != 0, "most significant digit should not be zero");
   result->setDigit(--length, digit);
 
   // Fill in digits containing mantissa contributions.
@@ -1566,13 +1633,7 @@ BigInt* BigInt::createFromUint64(JSContext* cx, uint64_t n) {
     return res;
   }
 
-  BigInt* res = createUninitialized(cx, 1, isNegative);
-  if (!res) {
-    return nullptr;
-  }
-
-  res->setDigit(0, n);
-  return res;
+  return createFromDigit(cx, n, isNegative);
 }
 
 BigInt* BigInt::createFromInt64(JSContext* cx, int64_t n) {
@@ -1761,12 +1822,7 @@ BigInt* BigInt::mod(JSContext* cx, HandleBigInt x, HandleBigInt y) {
       return zero(cx);
     }
 
-    BigInt* remainder = createUninitialized(cx, 1, x->isNegative());
-    if (!remainder) {
-      return nullptr;
-    }
-    remainder->setDigit(0, remainderDigit);
-    return remainder;
+    return createFromDigit(cx, remainderDigit, x->isNegative());
   } else {
     RootedBigInt remainder(cx);
     if (!absoluteDivWithBigIntDivisor(cx, x, y, Nothing(), Some(&remainder),
@@ -1774,7 +1830,7 @@ BigInt* BigInt::mod(JSContext* cx, HandleBigInt x, HandleBigInt y) {
       return nullptr;
     }
     MOZ_ASSERT(remainder);
-    return remainder;
+    return destructivelyTrimHighZeroDigits(cx, remainder);
   }
 }
 
@@ -1913,15 +1969,7 @@ BigInt* BigInt::lshByAbsolute(JSContext* cx, HandleBigInt x, HandleBigInt y) {
 }
 
 BigInt* BigInt::rshByMaximum(JSContext* cx, bool isNegative) {
-  if (isNegative) {
-    RootedBigInt negativeOne(cx, createUninitialized(cx, 1, isNegative));
-    if (!negativeOne) {
-      return nullptr;
-    }
-    negativeOne->setDigit(0, 1);
-    return negativeOne;
-  }
-  return zero(cx);
+  return isNegative ? negativeOne(cx) : zero(cx);
 }
 
 BigInt* BigInt::rshByAbsolute(JSContext* cx, HandleBigInt x, HandleBigInt y) {
@@ -2030,14 +2078,13 @@ BigInt* BigInt::bitAnd(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   }
 
   if (x->isNegative() && y->isNegative()) {
-    int resultLength = std::max(x->digitLength(), y->digitLength()) + 1;
     // (-x) & (-y) == ~(x-1) & ~(y-1) == ~((x-1) | (y-1))
     // == -(((x-1) | (y-1)) + 1)
-    RootedBigInt x1(cx, absoluteSubOne(cx, x, resultLength));
+    RootedBigInt x1(cx, absoluteSubOne(cx, x));
     if (!x1) {
       return nullptr;
     }
-    RootedBigInt y1(cx, absoluteSubOne(cx, y, y->digitLength()));
+    RootedBigInt y1(cx, absoluteSubOne(cx, y));
     if (!y1) {
       return nullptr;
     }
@@ -2053,7 +2100,7 @@ BigInt* BigInt::bitAnd(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   HandleBigInt& pos = x->isNegative() ? y : x;
   HandleBigInt& neg = x->isNegative() ? x : y;
 
-  RootedBigInt neg1(cx, absoluteSubOne(cx, neg, neg->digitLength()));
+  RootedBigInt neg1(cx, absoluteSubOne(cx, neg));
   if (!neg1) {
     return nullptr;
   }
@@ -2077,27 +2124,24 @@ BigInt* BigInt::bitXor(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   }
 
   if (x->isNegative() && y->isNegative()) {
-    int resultLength = std::max(x->digitLength(), y->digitLength());
-
     // (-x) ^ (-y) == ~(x-1) ^ ~(y-1) == (x-1) ^ (y-1)
-    RootedBigInt x1(cx, absoluteSubOne(cx, x, resultLength));
+    RootedBigInt x1(cx, absoluteSubOne(cx, x));
     if (!x1) {
       return nullptr;
     }
-    RootedBigInt y1(cx, absoluteSubOne(cx, y, y->digitLength()));
+    RootedBigInt y1(cx, absoluteSubOne(cx, y));
     if (!y1) {
       return nullptr;
     }
     return absoluteXor(cx, x1, y1);
   }
   MOZ_ASSERT(x->isNegative() != y->isNegative());
-  int resultLength = std::max(x->digitLength(), y->digitLength()) + 1;
 
   HandleBigInt& pos = x->isNegative() ? y : x;
   HandleBigInt& neg = x->isNegative() ? x : y;
 
   // x ^ (-y) == x ^ ~(y-1) == ~(x ^ (y-1)) == -((x ^ (y-1)) + 1)
-  RootedBigInt result(cx, absoluteSubOne(cx, neg, resultLength));
+  RootedBigInt result(cx, absoluteSubOne(cx, neg));
   if (!result) {
     return nullptr;
   }
@@ -2119,7 +2163,6 @@ BigInt* BigInt::bitOr(JSContext* cx, HandleBigInt x, HandleBigInt y) {
     return x;
   }
 
-  unsigned resultLength = std::max(x->digitLength(), y->digitLength());
   bool resultNegative = x->isNegative() || y->isNegative();
 
   if (!resultNegative) {
@@ -2129,11 +2172,11 @@ BigInt* BigInt::bitOr(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   if (x->isNegative() && y->isNegative()) {
     // (-x) | (-y) == ~(x-1) | ~(y-1) == ~((x-1) & (y-1))
     // == -(((x-1) & (y-1)) + 1)
-    RootedBigInt result(cx, absoluteSubOne(cx, x, resultLength));
+    RootedBigInt result(cx, absoluteSubOne(cx, x));
     if (!result) {
       return nullptr;
     }
-    RootedBigInt y1(cx, absoluteSubOne(cx, y, y->digitLength()));
+    RootedBigInt y1(cx, absoluteSubOne(cx, y));
     if (!y1) {
       return nullptr;
     }
@@ -2149,7 +2192,7 @@ BigInt* BigInt::bitOr(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   HandleBigInt& neg = x->isNegative() ? x : y;
 
   // x | (-y) == x | ~(y-1) == ~((y-1) &~ x) == -(((y-1) &~ x) + 1)
-  RootedBigInt result(cx, absoluteSubOne(cx, neg, resultLength));
+  RootedBigInt result(cx, absoluteSubOne(cx, neg));
   if (!result) {
     return nullptr;
   }
@@ -2164,7 +2207,7 @@ BigInt* BigInt::bitOr(JSContext* cx, HandleBigInt x, HandleBigInt y) {
 BigInt* BigInt::bitNot(JSContext* cx, HandleBigInt x) {
   if (x->isNegative()) {
     // ~(-x) == ~(~(x-1)) == x-1
-    return absoluteSubOne(cx, x, x->digitLength());
+    return absoluteSubOne(cx, x);
   } else {
     // ~x == -x-1 == -(x+1)
     bool resultNegative = true;
@@ -2181,7 +2224,7 @@ uint64_t BigInt::toUint64(BigInt* x) {
 
   uint64_t digit = x->digit(0);
 
-  if (DigitBits == 32 && x->digitLength() >= 1) {
+  if (DigitBits == 32 && x->digitLength() > 1) {
     digit |= static_cast<uint64_t>(x->digit(1)) << 32;
   }
 
@@ -2248,7 +2291,7 @@ BigInt* BigInt::truncateAndSubFromPowerOfTwo(JSContext* cx, HandleBigInt x,
   }
   result->setDigit(resultLength - 1, resultMSD);
 
-  return trimHighZeroDigits(cx, result);
+  return destructivelyTrimHighZeroDigits(cx, result);
 }
 
 BigInt* BigInt::asUintN(JSContext* cx, HandleBigInt x, uint64_t bits) {
@@ -2285,21 +2328,33 @@ BigInt* BigInt::asUintN(JSContext* cx, HandleBigInt x, uint64_t bits) {
   }
 
   size_t length = CeilDiv(bits, DigitBits);
-  bool isNegative = false;
-
-  BigInt* res = createUninitialized(cx, length, isNegative);
-  if (!res) {
-    return nullptr;
-  }
-
   MOZ_ASSERT(length >= 2, "single-digit cases should be handled above");
   MOZ_ASSERT(length <= x->digitLength());
-  for (size_t i = 0; i < length - 1; i++) {
-    res->setDigit(i, x->digit(i));
+
+  // Eagerly trim high zero digits.
+  const size_t highDigitBits = ((bits - 1) % DigitBits) + 1;
+  const Digit highDigitMask = Digit(-1) >> (DigitBits - highDigitBits);
+  Digit mask = highDigitMask;
+  while (length > 0) {
+    if (x->digit(length - 1) & mask) {
+      break;
+    }
+
+    mask = Digit(-1);
+    length--;
   }
 
-  Digit mask = Digit(-1) >> (DigitBits - (bits % DigitBits));
-  res->setDigit(length - 1, x->digit(length - 1) & mask);
+  const bool isNegative = false;
+  BigInt* res = createUninitialized(cx, length, isNegative);
+  if (res == nullptr) {
+    return nullptr;
+  }
+  
+  while (length-- > 0) {
+    res->setDigit(length, x->digit(length) & mask);
+    mask = Digit(-1);
+  }
+  MOZ_ASSERT_IF(length == 0, res->isZero());
 
   return res;
 }
@@ -2475,6 +2530,30 @@ bool BigInt::neg(JSContext* cx, HandleValue operand, MutableHandleValue res) {
 
   RootedBigInt operandBigInt(cx, operand.toBigInt());
   BigInt* resBigInt = BigInt::neg(cx, operandBigInt);
+  if (!resBigInt) {
+    return false;
+  }
+  res.setBigInt(resBigInt);
+  return true;
+}
+
+bool BigInt::inc(JSContext* cx, HandleValue operand, MutableHandleValue res) {
+  MOZ_ASSERT(operand.isBigInt());
+
+  RootedBigInt operandBigInt(cx, operand.toBigInt());
+  BigInt* resBigInt = BigInt::inc(cx, operandBigInt);
+  if (!resBigInt) {
+    return false;
+  }
+  res.setBigInt(resBigInt);
+  return true;
+}
+
+bool BigInt::dec(JSContext* cx, HandleValue operand, MutableHandleValue res) {
+  MOZ_ASSERT(operand.isBigInt());
+
+  RootedBigInt operandBigInt(cx, operand.toBigInt());
+  BigInt* resBigInt = BigInt::dec(cx, operandBigInt);
   if (!resBigInt) {
     return false;
   }
@@ -3018,6 +3097,7 @@ bool BigInt::lessThan(JSContext* cx, HandleValue lhs, HandleValue rhs,
   return true;
 }
 
+template <js::AllowGC allowGC>
 JSLinearString* BigInt::toString(JSContext* cx, HandleBigInt x, uint8_t radix) {
   MOZ_ASSERT(2 <= radix && radix <= 36);
 
@@ -3026,11 +3106,28 @@ JSLinearString* BigInt::toString(JSContext* cx, HandleBigInt x, uint8_t radix) {
   }
 
   if (mozilla::IsPowerOfTwo(radix)) {
-    return toStringBasePowerOfTwo(cx, x, radix);
+    return toStringBasePowerOfTwo<allowGC>(cx, x, radix);
+  }
+
+  if (radix == 10 && x->digitLength() == 1) {
+    return toStringSingleDigitBaseTen<allowGC>(cx, x->digit(0),
+                                               x->isNegative());
+  }
+
+  // Punt on doing generic toString without GC.
+  if (!allowGC) {
+    return nullptr;
   }
 
   return toStringGeneric(cx, x, radix);
 }
+
+template JSLinearString* BigInt::toString<js::CanGC>(JSContext* cx,
+                                                     HandleBigInt x,
+                                                     uint8_t radix);
+template JSLinearString* BigInt::toString<js::NoGC>(JSContext* cx,
+                                                    HandleBigInt x,
+                                                    uint8_t radix);
 
 template <typename CharT>
 static inline BigInt* ParseStringBigIntLiteral(JSContext* cx,
@@ -3113,13 +3210,49 @@ BigInt* js::ParseBigIntLiteral(JSContext* cx,
   return res;
 }
 
+template <js::AllowGC allowGC>
 JSAtom* js::BigIntToAtom(JSContext* cx, HandleBigInt bi) {
-  JSString* str = BigInt::toString(cx, bi, 10);
+  JSString* str = BigInt::toString<allowGC>(cx, bi, 10);
   if (!str) {
     return nullptr;
   }
   return AtomizeString(cx, str);
 }
+
+template JSAtom* js::BigIntToAtom<js::CanGC>(JSContext* cx, HandleBigInt bi);
+template JSAtom* js::BigIntToAtom<js::NoGC>(JSContext* cx, HandleBigInt bi);
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+void BigInt::dump() {
+  js::Fprinter out(stderr);
+  dump(out);
+}
+
+void BigInt::dump(js::GenericPrinter& out) {
+  if (isNegative()) {
+    out.putChar('-');
+  }
+
+  if (digitLength() == 0) {
+    out.put("0");
+  } else if (digitLength() == 1) {
+    uint64_t d = digit(0);
+    out.printf("%" PRIu64, d);
+  } else {
+    out.put("0x");
+    for (size_t i = 0; i < digitLength(); i++) {
+      uint64_t d = digit(digitLength() - i - 1);
+      if (sizeof(Digit) == 4) {
+        out.printf("%.8" PRIX32, uint32_t(d));
+      } else {
+        out.printf("%.16" PRIX64, d);
+      }
+    }
+  }
+
+  out.putChar('n');
+}
+#endif
 
 JS::ubi::Node::Size JS::ubi::Concrete<BigInt>::size(
     mozilla::MallocSizeOf mallocSizeOf) const {
@@ -3171,7 +3304,7 @@ XDRResult js::XDRBigInt(XDRState<mode>* xdr, MutableHandleBigInt bi) {
     if (!res) {
       return xdr->fail(JS::TranscodeResult_Throw);
     }
-    std::uninitialized_copy_n(buf.get(), digitLength, bi->digits().Elements());
+    std::uninitialized_copy_n(buf.get(), digitLength, res->digits().Elements());
     bi.set(res);
   }
 

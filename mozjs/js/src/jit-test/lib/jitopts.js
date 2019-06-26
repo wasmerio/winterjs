@@ -9,13 +9,6 @@ function jitTogglesMatch(opts) {
     if (k.indexOf(".enable") > 0 && opts[k] != currentOpts[k])
       return false;
   }
-
-  // ARM64 does not yet have an Ion code generator, so return false if
-  // ion.enable is requested.
-  var conf = getBuildConfiguration();
-  if (conf['arm64'] && opts['ion.enable'])
-    return false;
-
   return true;
 }
 
@@ -40,6 +33,7 @@ var Opts_BaselineEager =
     {
       'ion.enable': 1,
       'ion.warmup.trigger': 100,
+      'ion.full.warmup.trigger': 100,
       'baseline.enable': 1,
       'baseline.warmup.trigger': 0,
       'offthread-compilation.enable': 1
@@ -53,6 +47,7 @@ var Opts_IonEagerNoOffthreadCompilation =
     {
       'ion.enable': 1,
       'ion.warmup.trigger': 0,
+      'ion.full.warmup.trigger': 0,
       'baseline.enable': 1,
       'baseline.warmup.trigger': 0,
       'offthread-compilation.enable': 0,
@@ -62,6 +57,7 @@ var Opts_Ion2NoOffthreadCompilation =
     {
       'ion.enable': 1,
       'ion.warmup.trigger': 2,
+      'ion.full.warmup.trigger': 2,
       'baseline.enable': 1,
       'baseline.warmup.trigger': 1,
       'offthread-compilation.enable': 0

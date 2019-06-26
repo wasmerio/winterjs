@@ -106,14 +106,6 @@ VERSION_NUMBER		= 50
 CONFIG_TOOLS	= $(MOZ_BUILD_ROOT)/config
 AUTOCONF_TOOLS	= $(MOZILLA_DIR)/build/autoconf
 
-ifeq (msvc,$(CC_TYPE))
-# clang-cl is smart enough to generate dependencies directly.
-ifeq (,$(MOZ_USING_SCCACHE))
-CC_WRAPPER ?= $(call py_action,cl)
-CXX_WRAPPER ?= $(call py_action,cl)
-endif # MOZ_USING_SCCACHE
-endif # CC_TYPE
-
 CC := $(CC_WRAPPER) $(CC)
 CXX := $(CXX_WRAPPER) $(CXX)
 MKDIR ?= mkdir
@@ -183,7 +175,7 @@ INCLUDES = \
 
 include $(MOZILLA_DIR)/config/static-checking-config.mk
 
-ifdef MOZ_PROFILE_GENERATE
+ifndef MOZ_LTO
 MOZ_LTO_CFLAGS :=
 MOZ_LTO_LDFLAGS :=
 endif
@@ -201,13 +193,6 @@ HOST_CFLAGS = $(COMPUTED_HOST_CFLAGS) $(_DEPEND_CFLAGS)
 HOST_CXXFLAGS = $(COMPUTED_HOST_CXXFLAGS) $(_DEPEND_CFLAGS)
 HOST_C_LDFLAGS = $(COMPUTED_HOST_C_LDFLAGS)
 HOST_CXX_LDFLAGS = $(COMPUTED_HOST_CXX_LDFLAGS)
-# Win32 Cross-builds on win64 need to override LIB when invoking the linker,
-# which we do for rust through cargo-linker.bat, so we abuse it here.
-# Ideally, we'd empty LIB and pass -LIBPATH options to the linker somehow but
-# we don't have this in place for rust, so...
-ifdef WIN64_CARGO_LINKER
-HOST_LINKER = $(topobjdir)/build/win64/cargo-linker.bat
-endif
 
 ifdef MOZ_LTO
 ifeq (Darwin,$(OS_TARGET))
@@ -286,6 +271,10 @@ export CCACHE_CPP2=1
 endif
 endif
 
+ifdef CCACHE_PREFIX
+export CCACHE_PREFIX
+endif
+
 # Set link flags according to whether we want a console.
 ifeq ($(OS_ARCH),WINNT)
 ifdef MOZ_WINCONSOLE
@@ -301,7 +290,7 @@ endif
 endif # WINNT
 
 ifneq (,$(filter msvc clang-cl,$(CC_TYPE)))
-ifeq ($(CPU_ARCH),x86_64)
+ifneq ($(CPU_ARCH),x86)
 # Normal operation on 64-bit Windows needs 2 MB of stack. (Bug 582910)
 # ASAN requires 6 MB of stack.
 # Setting the stack to 8 MB to match the capability of other systems
@@ -448,9 +437,3 @@ endif
 endif
 
 PLY_INCLUDE = -I$(MOZILLA_DIR)/other-licenses/ply
-
-export CL_INCLUDES_PREFIX
-# Make sure that the build system can handle non-ASCII characters
-# in environment variables to prevent it from breking silently on
-# non-English systems.
-export NONASCII

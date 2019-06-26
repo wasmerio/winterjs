@@ -64,32 +64,24 @@ struct GetParser {
 
 template <class Parser>
 struct GetTokenStream {
-  static auto get(Parser* parser) -> decltype(&parser->tokenStream) {
-    return &parser->tokenStream;
-  }
+  static auto get(Parser* parser) { return &parser->tokenStream; }
 };
 
 // Member function-computing templates.
 
 template <class Parser>
 struct ParserOptions {
-  static constexpr auto get() -> decltype(&Parser::options) {
-    return &Parser::options;
-  }
+  static constexpr auto get() { return &Parser::options; }
 };
 
 template <class Parser>
 struct ParserNewObjectBox {
-  static constexpr auto get() -> decltype(&Parser::newObjectBox) {
-    return &Parser::newObjectBox;
-  }
+  static constexpr auto get() { return &Parser::newObjectBox; }
 };
 
 template <class TokenStream>
 struct TokenStreamComputeLineAndColumn {
-  static constexpr auto get() -> decltype(&TokenStream::computeLineAndColumn) {
-    return &TokenStream::computeLineAndColumn;
-  }
+  static constexpr auto get() { return &TokenStream::computeLineAndColumn; }
 };
 
 // Generic matchers.
@@ -97,14 +89,14 @@ struct TokenStreamComputeLineAndColumn {
 struct ParseHandlerMatcher {
   template <class Parser>
   frontend::FullParseHandler& match(Parser* parser) {
-    return parser->handler;
+    return parser->handler_;
   }
 };
 
-struct ParserBaseMatcher {
+struct ParserSharedBaseMatcher {
   template <class Parser>
-  frontend::ParserBase& match(Parser* parser) {
-    return *static_cast<frontend::ParserBase*>(parser);
+  frontend::ParserSharedBase& match(Parser* parser) {
+    return *static_cast<frontend::ParserSharedBase*>(parser);
   }
 };
 

@@ -16,6 +16,7 @@
 
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SharedICHelpers-inl.h"
+#include "jit/VMFunctionList-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -108,7 +109,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // under demand inside the touchFrameValues call.
 
   // Give sp 16-byte alignment and sync stack pointers.
-  masm.andToStackPtr(Imm32(~0xff));
+  masm.andToStackPtr(Imm32(~0xf));
   // We needn't worry about the Gecko Profiler mark because touchFrameValues
   // touches in large increments.
   masm.touchFrameValues(reg_argc, r20, r21);
@@ -138,7 +139,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
              Operand(tmp_argc, vixl::SXTX, 3));
 
     // Give sp 16-byte alignment and sync stack pointers.
-    masm.andToStackPtr(Imm32(~0xff));
+    masm.andToStackPtr(Imm32(~0xf));
     masm.moveStackPtrTo(tmp_sp.asUnsized());
 
     masm.branchTestPtr(Assembler::Zero, reg_argc, reg_argc, &noArguments);
@@ -533,10 +534,9 @@ void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
 }
 
 bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
-                                   const VMFunction& f) {
-  MOZ_ASSERT(functionWrappers_);
-
-  uint32_t wrapperOffset = startTrampolineCode(masm);
+                                   const VMFunctionData& f, void* nativeFun,
+                                   uint32_t* wrapperOffset) {
+  *wrapperOffset = startTrampolineCode(masm);
 
   // Avoid conflicts with argument registers while discarding the result after
   // the function call.
@@ -628,22 +628,22 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   // Copy arguments.
   for (uint32_t explicitArg = 0; explicitArg < f.explicitArgs; explicitArg++) {
     switch (f.argProperties(explicitArg)) {
-      case VMFunction::WordByValue:
+      case VMFunctionData::WordByValue:
         masm.passABIArg(MoveOperand(argsBase, argDisp),
                         (f.argPassedInFloatReg(explicitArg) ? MoveOp::DOUBLE
                                                             : MoveOp::GENERAL));
         argDisp += sizeof(void*);
         break;
 
-      case VMFunction::WordByRef:
+      case VMFunctionData::WordByRef:
         masm.passABIArg(
             MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
             MoveOp::GENERAL);
         argDisp += sizeof(void*);
         break;
 
-      case VMFunction::DoubleByValue:
-      case VMFunction::DoubleByRef:
+      case VMFunctionData::DoubleByValue:
+      case VMFunctionData::DoubleByRef:
         MOZ_CRASH("NYI: AArch64 callVM should not be used with 128bit values.");
     }
   }
@@ -656,7 +656,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
     masm.passABIArg(outReg);
   }
 
-  masm.callWithABI(f.wrapped, MoveOp::GENERAL,
+  masm.callWithABI(nativeFun, MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
   if (!generateTLExitVM(masm, f)) {
@@ -664,9 +664,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   }
 
   // SP is used to transfer stack across call boundaries.
-  if (!masm.GetStackPointer64().Is(vixl::sp)) {
-    masm.Mov(masm.GetStackPointer64(), vixl::sp);
-  }
+  masm.initPseudoStackPtr();
 
   // Test for failure.
   switch (f.failType()) {
@@ -735,7 +733,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
                   f.explicitStackSlots() * sizeof(void*) +
                   f.extraValuesToPop * sizeof(Value)));
 
-  return functionWrappers_->putNew(&f, wrapperOffset);
+  return true;
 }
 
 uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
@@ -788,10 +786,6 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   return offset;
 }
 
-typedef bool (*HandleDebugTrapFn)(JSContext*, BaselineFrame*, uint8_t*, bool*);
-static const VMFunction HandleDebugTrapInfo =
-    FunctionInfo<HandleDebugTrapFn>(HandleDebugTrap, "HandleDebugTrap");
-
 JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx) {
   StackMacroAssembler masm(cx);
 #ifndef JS_USE_LINK_REGISTER
@@ -813,8 +807,10 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx) {
   masm.movePtr(ImmPtr(nullptr), ICStubReg);
   EmitBaselineEnterStubFrame(masm, scratch2);
 
-  TrampolinePtr code =
-      cx->runtime()->jitRuntime()->getVMWrapper(HandleDebugTrapInfo);
+  using Fn = bool (*)(JSContext*, BaselineFrame*, uint8_t*, bool*);
+  VMFunctionId id = VMFunctionToId<Fn, jit::HandleDebugTrap>::id;
+  TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
+
   masm.asVIXL().Push(vixl::lr, ARMRegister(scratch1, 64));
   EmitBaselineCallVM(code, masm);
 
@@ -837,8 +833,7 @@ JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx) {
   masm.syncStackPtr();
   masm.abiret();
 
-  Linker linker(masm);
-  AutoFlushICache afc("DebugTrapHandler");
+  Linker linker(masm, "DebugTrapHandler");
   JitCode* codeDbg = linker.newCode(cx, CodeKind::Other);
 
 #ifdef JS_ION_PERF
@@ -1137,7 +1132,7 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
     // scratch3 := RectFrame + Rect-Descriptor.Size +
     //             RectifierFrameLayout::Size()
     masm.addPtr(scratch2, scratch1, scratch3);
-    masm.add32(Imm32(RectifierFrameLayout::Size()), scratch3);
+    masm.addPtr(Imm32(RectifierFrameLayout::Size()), scratch3);
     masm.storePtr(scratch3, lastProfilingFrame);
     masm.ret();
 

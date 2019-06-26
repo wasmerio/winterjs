@@ -82,12 +82,6 @@ pub struct ProxyTraps {
                                                               proxy: JS::HandleObject,
                                                               args: *const JS::CallArgs)
                                                               -> bool>,
-    pub getPropertyDescriptor:
-        ::std::option::Option<unsafe extern "C" fn(cx: *mut JSContext,
-                                                   proxy: JS::HandleObject,
-                                                   id: JS::HandleId,
-                                                   desc: JS::MutableHandle<JS::PropertyDescriptor>)
-                                                   -> bool>,
     pub hasOwn: ::std::option::Option<unsafe extern "C" fn(cx: *mut JSContext,
                                                            proxy: JS::HandleObject,
                                                            id: JS::HandleId,
@@ -261,7 +255,7 @@ extern "C" {
     pub fn GetProxyHandler(obj: *mut JSObject) -> *const ::libc::c_void;
     pub fn ReportError(aCx: *mut JSContext, aError: *const i8);
     pub fn IsWrapper(obj: *mut JSObject) -> bool;
-    pub fn UnwrapObject(obj: *mut JSObject, stopAtOuter: u8) -> *mut JSObject;
+    pub fn UnwrapObjectStatic(obj: *mut JSObject) -> *mut JSObject;
     pub fn UncheckedUnwrapObject(obj: *mut JSObject, stopAtOuter: u8) -> *mut JSObject;
     pub fn CreateAutoIdVector(cx: *mut JSContext) -> *mut JS::AutoIdVector;
     pub fn AppendToAutoIdVector(v: *mut JS::AutoIdVector, id: jsid) -> bool;

@@ -40,10 +40,10 @@ bool wasm::CraneliftCanCompile() {
 
 static inline SymbolicAddress ToSymbolicAddress(BD_SymbolicAddress bd) {
   switch (bd) {
-    case BD_SymbolicAddress::GrowMemory:
-      return SymbolicAddress::GrowMemory;
-    case BD_SymbolicAddress::CurrentMemory:
-      return SymbolicAddress::CurrentMemory;
+    case BD_SymbolicAddress::MemoryGrow:
+      return SymbolicAddress::MemoryGrow;
+    case BD_SymbolicAddress::MemorySize:
+      return SymbolicAddress::MemorySize;
     case BD_SymbolicAddress::FloorF32:
       return SymbolicAddress::FloorF;
     case BD_SymbolicAddress::FloorF64:
@@ -70,6 +70,7 @@ static bool GenerateCraneliftCode(WasmMacroAssembler& masm,
                                   const CraneliftCompiledFunc& func,
                                   const FuncTypeIdDesc& funcTypeId,
                                   uint32_t lineOrBytecode,
+                                  uint32_t funcBytecodeSize,
                                   FuncOffsets* offsets) {
   wasm::GenerateFunctionPrologue(masm, funcTypeId, mozilla::Nothing(), offsets);
 
@@ -87,6 +88,13 @@ static bool GenerateCraneliftCode(WasmMacroAssembler& masm,
   if (!masm.appendRawCode(func.code, func.codeSize)) {
     return false;
   }
+
+  // Cranelift isn't aware of pinned registers in general, so we need to reload
+  // both TLS and pinned regs from the stack.
+  // TODO(bug 1507820): We should teach Cranelift to reload this register
+  // itself, so we don't have to do it manually.
+  masm.loadWasmTlsRegFromFrame();
+  masm.loadWasmPinnedRegsFromTls();
 
   wasm::GenerateFunctionEpilogue(masm, func.framePushed, offsets);
 
@@ -106,11 +114,20 @@ static bool GenerateCraneliftCode(WasmMacroAssembler& masm,
     }
 
 #ifdef DEBUG
-    CheckedInt<uint32_t> checkedBytecodeOffset = lineOrBytecode;
-    checkedBytecodeOffset += metadata.srcLoc;
-    MOZ_ASSERT(checkedBytecodeOffset.isValid());
+    // Check code offsets.
+    MOZ_ASSERT(offset.value() >= offsets->normalEntry);
+    MOZ_ASSERT(offset.value() < offsets->ret);
+
+    // Check bytecode offsets.
+    if (metadata.srcLoc > 0 && lineOrBytecode > 0) {
+      MOZ_ASSERT(metadata.srcLoc >= lineOrBytecode);
+      MOZ_ASSERT(metadata.srcLoc < lineOrBytecode + funcBytecodeSize);
+    }
 #endif
-    uint32_t bytecodeOffset = lineOrBytecode + metadata.srcLoc;
+    // TODO(bug 1532716): Cranelift gives null bytecode offsets for symbolic
+    // accesses.
+    uint32_t bytecodeOffset =
+        metadata.srcLoc ? metadata.srcLoc : lineOrBytecode;
 
     switch (metadata.which) {
       case CraneliftMetadataEntry::Which::DirectCall: {
@@ -176,7 +193,8 @@ CraneliftFuncCompileInput::CraneliftFuncCompileInput(
     const FuncCompileInput& func)
     : bytecode(func.begin),
       bytecodeSize(func.end - func.begin),
-      index(func.index) {}
+      index(func.index),
+      offset_in_module(func.lineOrBytecode) {}
 
 #ifndef WASM_HUGE_MEMORY
 static_assert(offsetof(TlsData, boundsCheckLimit) == sizeof(size_t),
@@ -240,48 +258,47 @@ static size_t globalToTlsOffset(size_t globalOffset) {
 
 CraneliftModuleEnvironment::CraneliftModuleEnvironment(
     const ModuleEnvironment& env)
-    : env(env), min_memory_length(env.minMemoryLength) {}
+    : env(&env), min_memory_length(env.minMemoryLength) {}
 
 TypeCode env_unpack(BD_ValType valType) {
   return TypeCode(UnpackTypeCodeType(PackedTypeCode(valType.packed)));
 }
 
 const FuncTypeWithId* env_function_signature(
-    const CraneliftModuleEnvironment* env, size_t funcIndex) {
-  return env->env.funcTypes[funcIndex];
+    const CraneliftModuleEnvironment* wrapper, size_t funcIndex) {
+  return wrapper->env->funcTypes[funcIndex];
 }
 
-size_t env_func_import_tls_offset(const CraneliftModuleEnvironment* env,
+size_t env_func_import_tls_offset(const CraneliftModuleEnvironment* wrapper,
                                   size_t funcIndex) {
-  return globalToTlsOffset(env->env.funcImportGlobalDataOffsets[funcIndex]);
+  return globalToTlsOffset(
+      wrapper->env->funcImportGlobalDataOffsets[funcIndex]);
 }
 
-bool env_func_is_import(const CraneliftModuleEnvironment* env,
+bool env_func_is_import(const CraneliftModuleEnvironment* wrapper,
                         size_t funcIndex) {
-  return env->env.funcIsImport(funcIndex);
+  return wrapper->env->funcIsImport(funcIndex);
 }
 
-const FuncTypeWithId* env_signature(const CraneliftModuleEnvironment* env,
+const FuncTypeWithId* env_signature(const CraneliftModuleEnvironment* wrapper,
                                     size_t funcTypeIndex) {
-  return &env->env.types[funcTypeIndex].funcType();
+  return &wrapper->env->types[funcTypeIndex].funcType();
 }
 
-const TableDesc* env_table(const CraneliftModuleEnvironment* env,
+const TableDesc* env_table(const CraneliftModuleEnvironment* wrapper,
                            size_t tableIndex) {
-  return &env->env.tables[tableIndex];
+  return &wrapper->env->tables[tableIndex];
 }
 
-const GlobalDesc* env_global(const CraneliftModuleEnvironment* env,
+const GlobalDesc* env_global(const CraneliftModuleEnvironment* wrapper,
                              size_t globalIndex) {
-  return &env->env.globals[globalIndex];
+  return &wrapper->env->globals[globalIndex];
 }
 
 bool wasm::CraneliftCompileFunctions(const ModuleEnvironment& env,
                                      LifoAlloc& lifo,
                                      const FuncCompileInputVector& inputs,
-                                     CompiledCode* code,
-                                     UniqueChars* error) {
-
+                                     CompiledCode* code, UniqueChars* error) {
   MOZ_RELEASE_ASSERT(CraneliftCanCompile());
 
   MOZ_ASSERT(env.tier() == Tier::Optimized);
@@ -306,7 +323,9 @@ bool wasm::CraneliftCompileFunctions(const ModuleEnvironment& env,
 
   for (const FuncCompileInput& func : inputs) {
     Decoder d(func.begin, func.end, func.lineOrBytecode, error);
-    if (!ValidateFunctionBody(env, func.index, func.end - func.begin, d)) {
+
+    size_t funcBytecodeSize = func.end - func.begin;
+    if (!ValidateFunctionBody(env, func.index, funcBytecodeSize, d)) {
       return false;
     }
 
@@ -323,12 +342,11 @@ bool wasm::CraneliftCompileFunctions(const ModuleEnvironment& env,
 
     FuncOffsets offsets;
     if (!GenerateCraneliftCode(masm, clifFunc, funcTypeId, lineOrBytecode,
-                               &offsets)) {
+                               funcBytecodeSize, &offsets)) {
       return false;
     }
 
-    if (!code->codeRanges.emplaceBack(func.index, func.lineOrBytecode,
-                                      offsets)) {
+    if (!code->codeRanges.emplaceBack(func.index, lineOrBytecode, offsets)) {
       return false;
     }
   }

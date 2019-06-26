@@ -318,7 +318,9 @@ void CodeGenerator::visitMulI(LMulI* ins) {
         masm.Mov(destreg32, wzr);
         return;  // Avoid overflow check.
       case 1:
-        // nop
+        if (destreg != lhsreg) {
+          masm.Mov(destreg32, lhsreg32);
+        }
         return;  // Avoid overflow check.
       case 2:
         masm.Adds(destreg32, lhsreg32, Operand(lhsreg32));
@@ -707,11 +709,8 @@ void CodeGenerator::visitShiftI(LShiftI* ins) {
         masm.Lsr(dest, lhs, rhsreg);
         if (ins->mir()->toUrsh()->fallible()) {
           /// x >>> 0 can overflow.
-          Label nonzero;
-          masm.Cbnz(rhsreg, &nonzero);
           masm.Cmp(dest, Operand(0));
           bailoutIf(Assembler::LessThan, ins->snapshot());
-          masm.bind(&nonzero);
         }
         break;
       default:
@@ -802,7 +801,7 @@ class js::jit::OutOfLineTableSwitch
   }
 
  public:
-  OutOfLineTableSwitch(MTableSwitch* mir) : mir_(mir) {}
+  explicit OutOfLineTableSwitch(MTableSwitch* mir) : mir_(mir) {}
 
   MTableSwitch* mir() const { return mir_; }
 
@@ -812,7 +811,8 @@ class js::jit::OutOfLineTableSwitch
 void CodeGeneratorARM64::visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool) {
   MTableSwitch* mir = ool->mir();
 
-  AutoForbidPools afp(&masm, (mir->numCases() + 1) * (sizeof(void*) / vixl::kInstructionSize));
+  AutoForbidPools afp(
+      &masm, (mir->numCases() + 1) * (sizeof(void*) / vixl::kInstructionSize));
   masm.haltingAlign(sizeof(void*));
   masm.bind(ool->jumpLabel());
   masm.addCodeLabel(*ool->jumpLabel());
@@ -949,8 +949,8 @@ void CodeGenerator::visitRound(LRound* lir) {
   const FloatRegister input = ToFloatRegister(lir->input());
   const ARMFPRegister input64(input, 64);
   const FloatRegister temp = ToFloatRegister(lir->temp());
-  const FloatRegister scratch = ScratchDoubleReg;
   const Register output = ToRegister(lir->output());
+  ScratchDoubleScope scratch(masm);
 
   Label negative, done;
 
@@ -1026,8 +1026,8 @@ void CodeGenerator::visitRoundF(LRoundF* lir) {
   const FloatRegister input = ToFloatRegister(lir->input());
   const ARMFPRegister input32(input, 32);
   const FloatRegister temp = ToFloatRegister(lir->temp());
-  const FloatRegister scratch = ScratchFloat32Reg;
   const Register output = ToRegister(lir->output());
+  ScratchFloat32Scope scratch(masm);
 
   Label negative, done;
 
@@ -1104,6 +1104,7 @@ void CodeGenerator::visitTrunc(LTrunc* lir) {
   const ARMFPRegister input64(input, 64);
   const Register output = ToRegister(lir->output());
   const ARMRegister output32(output, 32);
+  const ARMRegister output64(output, 64);
 
   Label done, zeroCase;
 
@@ -1133,6 +1134,11 @@ void CodeGenerator::visitTrunc(LTrunc* lir) {
     // The use of "lt" instead of "lo" also catches unordered NaN input.
     masm.Fcmp(input64, 0.0);
     bailoutIf(vixl::lt, lir->snapshot());
+
+    // Check explicitly for -0, bitwise.
+    masm.Fmov(output64, input64);
+    bailoutTestPtr(Assembler::Signed, output, output, lir->snapshot());
+    masm.movePtr(ImmPtr(0), output);
   }
 
   masm.bind(&done);
@@ -1172,6 +1178,11 @@ void CodeGenerator::visitTruncF(LTruncF* lir) {
     // The use of "lt" instead of "lo" also catches unordered NaN input.
     masm.Fcmp(input32, 0.0f);
     bailoutIf(vixl::lt, lir->snapshot());
+
+    // Check explicitly for -0, bitwise.
+    masm.Fmov(output32, input32);
+    bailoutTest32(Assembler::Signed, output, output, lir->snapshot());
+    masm.move32(Imm32(0), output);
   }
 
   masm.bind(&done);
@@ -1251,6 +1262,9 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
       case MIRType::Symbol:
         cond = masm.testSymbol(Assembler::NotEqual, value);
         break;
+      case MIRType::BigInt:
+        cond = masm.testBigInt(Assembler::NotEqual, value);
+        break;
       default:
         MOZ_CRASH("Given MIRType cannot be unboxed.");
     }
@@ -1287,6 +1301,9 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
       break;
     case MIRType::Symbol:
       masm.unboxSymbol(input, result);
+      break;
+    case MIRType::BigInt:
+      masm.unboxBigInt(input, result);
       break;
     default:
       MOZ_CRASH("Given MIRType cannot be unboxed.");
@@ -1574,7 +1591,52 @@ void CodeGenerator::visitWasmStackArg(LWasmStackArg* ins) {
   MOZ_CRASH("visitWasmStackArg");
 }
 
-void CodeGenerator::visitUDiv(LUDiv* ins) { MOZ_CRASH("visitUDiv"); }
+void CodeGenerator::visitUDiv(LUDiv* ins) {
+  MDiv* mir = ins->mir();
+  Register lhs = ToRegister(ins->lhs());
+  Register rhs = ToRegister(ins->rhs());
+  Register output = ToRegister(ins->output());
+  ARMRegister lhs32 = ARMRegister(lhs, 32);
+  ARMRegister rhs32 = ARMRegister(rhs, 32);
+  ARMRegister output32 = ARMRegister(output, 32);
+
+  // Prevent divide by zero.
+  if (mir->canBeDivideByZero()) {
+    if (mir->isTruncated()) {
+      if (mir->trapOnError()) {
+        Label nonZero;
+        masm.branchTest32(Assembler::NonZero, rhs, rhs, &nonZero);
+        masm.wasmTrap(wasm::Trap::IntegerDivideByZero, mir->bytecodeOffset());
+        masm.bind(&nonZero);
+      } else {
+        // ARM64 UDIV instruction will return 0 when divided by 0.
+        // No need for extra tests.
+      }
+    } else {
+      bailoutTest32(Assembler::Zero, rhs, rhs, ins->snapshot());
+    }
+  }
+
+  // Unsigned division.
+  masm.Udiv(output32, lhs32, rhs32);
+
+  // If the remainder is > 0, bailout since this must be a double.
+  if (!mir->canTruncateRemainder()) {
+    Register remainder = ToRegister(ins->remainder());
+    ARMRegister remainder32 = ARMRegister(remainder, 32);
+
+    // Compute the remainder: remainder = lhs - (output * rhs).
+    masm.Msub(remainder32, output32, rhs32, lhs32);
+
+    bailoutTest32(Assembler::NonZero, remainder, remainder, ins->snapshot());
+  }
+
+  // Unsigned div can return a value that's not a signed int32.
+  // If our users aren't expecting that, bail.
+  if (!mir->isTruncated()) {
+    bailoutTest32(Assembler::Signed, output, output, ins->snapshot());
+  }
+}
 
 void CodeGenerator::visitUMod(LUMod* ins) {
   MMod* mir = ins->mir();
@@ -1731,7 +1793,9 @@ void CodeGenerator::visitWasmLoadI64(LWasmLoadI64*) { MOZ_CRASH("NYI"); }
 
 void CodeGenerator::visitWasmStoreI64(LWasmStoreI64*) { MOZ_CRASH("NYI"); }
 
-void CodeGenerator::visitMemoryBarrier(LMemoryBarrier*) { MOZ_CRASH("NYI"); }
+void CodeGenerator::visitMemoryBarrier(LMemoryBarrier* ins) {
+  masm.memoryBarrier(ins->type());
+}
 
 void CodeGenerator::visitWasmAddOffset(LWasmAddOffset*) { MOZ_CRASH("NYI"); }
 
@@ -1782,8 +1846,31 @@ void CodeGenerator::visitWasmReinterpretFromI64(LWasmReinterpretFromI64*) {
 }
 
 void CodeGenerator::visitAtomicTypedArrayElementBinop(
-    LAtomicTypedArrayElementBinop*) {
-  MOZ_CRASH("NYI");
+    LAtomicTypedArrayElementBinop* lir) {
+  MOZ_ASSERT(lir->mir()->hasUses());
+
+  AnyRegister output = ToAnyRegister(lir->output());
+  Register elements = ToRegister(lir->elements());
+  Register flagTemp = ToRegister(lir->temp1());
+  Register outTemp =
+      lir->temp2()->isBogusTemp() ? InvalidReg : ToRegister(lir->temp2());
+  Register value = ToRegister(lir->value());
+
+  Scalar::Type arrayType = lir->mir()->arrayType();
+  size_t width = Scalar::byteSize(arrayType);
+
+  if (lir->index()->isConstant()) {
+    Address mem(elements, ToInt32(lir->index()) * width);
+    masm.atomicFetchOpJS(arrayType, Synchronization::Full(),
+                         lir->mir()->operation(), value, mem, flagTemp, outTemp,
+                         output);
+  } else {
+    BaseIndex mem(elements, ToRegister(lir->index()),
+                  ScaleFromElemWidth(width));
+    masm.atomicFetchOpJS(arrayType, Synchronization::Full(),
+                         lir->mir()->operation(), value, mem, flagTemp, outTemp,
+                         output);
+  }
 }
 
 void CodeGenerator::visitWasmAtomicBinopHeapForEffect(

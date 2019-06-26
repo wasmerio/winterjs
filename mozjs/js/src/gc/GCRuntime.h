@@ -405,9 +405,7 @@ class GCRuntime {
   }
 
   uint64_t majorGCCount() const { return majorGCNumber; }
-  void incMajorGcNumber() {
-    ++majorGCNumber;
-  }
+  void incMajorGcNumber() { ++majorGCNumber; }
 
   int64_t defaultSliceBudget() const { return defaultTimeBudget_; }
 
@@ -617,7 +615,7 @@ class GCRuntime {
 
   void beginSweepPhase(JS::GCReason reason, AutoGCSession& session);
   void groupZonesForSweeping(JS::GCReason reason);
-  MOZ_MUST_USE bool findInterZoneEdges();
+  MOZ_MUST_USE bool findSweepGroupEdges();
   void getNextSweepGroup();
   IncrementalProgress markGrayReferencesInCurrentGroup(FreeOp* fop,
                                                        SliceBudget& budget);

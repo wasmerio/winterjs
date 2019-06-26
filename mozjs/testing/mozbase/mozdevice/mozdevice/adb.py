@@ -46,8 +46,12 @@ class ADBProcess(object):
         return content
 
     def __str__(self):
+        # Remove -s <serialno> from the error message to allow bug suggestions
+        # to be independent of the individual failing device.
+        arg_string = ' '.join(self.args)
+        arg_string = re.sub(' -s \w+', '', arg_string)
         return ('args: %s, exitcode: %s, stdout: %s' % (
-            ' '.join(self.args), self.exitcode, self.stdout))
+            arg_string, self.exitcode, self.stdout))
 
 # ADBError, ADBRootError, and ADBTimeoutError are treated
 # differently in order that unhandled ADBRootErrors and
@@ -721,8 +725,20 @@ class ADBDevice(ADBCommand):
 
         self._selinux = None
         self.enforcing = 'Permissive'
-        self.version = int(self.shell_output("getprop ro.build.version.sdk",
-                                             timeout=timeout))
+
+        self.version = 0
+        while self.version < 1 and (time.time() - start_time) <= float(timeout):
+            try:
+                version = self.get_prop("ro.build.version.sdk",
+                                        timeout=timeout)
+                self.version = int(version)
+            except ValueError:
+                self._logger.info("unexpected ro.build.version.sdk: '%s'" % version)
+                time.sleep(2)
+        if self.version < 1:
+            # note slightly different meaning to the ADBTimeoutError here (and above):
+            # failed to get valid (numeric) version string in all attempts in allowed time
+            raise ADBTimeoutError("ADBDevice: unable to determine ro.build.version.sdk.")
 
         # Do we have pidof?
         if self.version >= version_codes.N:
@@ -731,6 +747,14 @@ class ADBDevice(ADBCommand):
             # unexpected pidof behavior observed on Android 6 in bug 1514363
             self._have_pidof = False
         self._logger.info("Native pidof support: {}".format(self._have_pidof))
+
+        # Bug 1529960 observed pidof intermittently returning no results for a
+        # running process on the 7.0 x86_64 emulator.
+        characteristics = self.get_prop("ro.build.characteristics", timeout=timeout)
+        abi = self.get_prop("ro.product.cpu.abi", timeout=timeout)
+        self._have_flaky_pidof = (self.version == version_codes.N and
+                                  abi == 'x86_64' and
+                                  'emulator' in characteristics)
 
         # Beginning in Android 8.1 /data/anr/traces.txt no longer contains
         # a single file traces.txt but instead will contain individual files
@@ -820,6 +844,10 @@ class ADBDevice(ADBCommand):
                 pid_output = self.shell_output('pidof %s' % appname, timeout=timeout)
                 re_pids = re.compile(r'[0-9]+')
                 pids = re_pids.findall(pid_output)
+                if self._have_flaky_pidof and not pids:
+                    time.sleep(0.1)
+                    pid_output = self.shell_output('pidof %s' % appname, timeout=timeout)
+                    pids = re_pids.findall(pid_output)
             except ADBError:
                 pids = []
         else:
@@ -941,8 +969,6 @@ class ADBDevice(ADBCommand):
 
         The default list of directories checked by test_root are:
 
-        - /storage/sdcard0/tests
-        - /storage/sdcard1/tests
         - /sdcard/tests
         - /mnt/sdcard/tests
         - /data/local/tests
@@ -961,9 +987,7 @@ class ADBDevice(ADBCommand):
         if self._initial_test_root:
             paths = [self._initial_test_root]
         else:
-            paths = ['/storage/sdcard0/tests',
-                     '/storage/sdcard1/tests',
-                     '/sdcard/tests',
+            paths = ['/sdcard/tests',
                      '/mnt/sdcard/tests',
                      '/data/local/tests']
 
@@ -1600,7 +1624,7 @@ class ADBDevice(ADBCommand):
         """
         if not interfaces:
             interfaces = ["wlan0", "eth0"]
-            wifi_interface = self.shell_output('getprop wifi.interface', timeout=timeout)
+            wifi_interface = self.get_prop('wifi.interface', timeout=timeout)
             self._logger.debug('get_ip_address: wifi_interface: %s' % wifi_interface)
             if wifi_interface and wifi_interface not in interfaces:
                 interfaces = interfaces.append(wifi_interface)
@@ -2034,9 +2058,9 @@ class ADBDevice(ADBCommand):
         else:
             recursive_flag = '-R'
             if path.startswith('/sdcard') and path.endswith('/'):
-                model = self.shell_output('getprop ro.product.model',
-                                          timeout=timeout,
-                                          root=root)
+                model = self.get_prop('ro.product.model',
+                                      timeout=timeout,
+                                      root=root)
                 if model == 'Nexus 4':
                     path += '*'
         lines = self.shell_output('%s %s %s' % (self._ls, recursive_flag, path),
@@ -2653,8 +2677,8 @@ class ADBDevice(ADBCommand):
         if 'id' in directives:
             info['id'] = self.command_output(['get-serialno'], timeout=timeout)
         if 'os' in directives:
-            info['os'] = self.shell_output('getprop ro.build.display.id',
-                                           timeout=timeout)
+            info['os'] = self.get_prop('ro.build.display.id',
+                                       timeout=timeout)
         if 'process' in directives:
             ps = self.shell_output('ps', timeout=timeout)
             info['process'] = ps.splitlines()
