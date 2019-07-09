@@ -12,13 +12,6 @@ use std::process::{Command, Stdio};
 use std::str;
 
 fn main() {
-    let target = env::var("TARGET").unwrap();
-    let host = env::var("HOST").unwrap();
-    if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() && target.contains("windows") {
-        // https://github.com/rust-lang/rust/issues/39016
-        panic!("Rustc doesn't support MSVC debug runtime.");
-    }
-
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();

@@ -32,15 +32,12 @@ environment:
     C:\\Program Files\\Git\\usr\\bin;\
     C:\\Program Files\\AppVeyor\\BuildAgent;"
 
-  VCVARSALL_PATH: C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build
-
   CC: "clang-cl.exe"
   CXX: "clang-cl.exe"
 
   matrix:
-    - TARGET: i686-pc-windows-msvc
-      CROSS_COMPILE: 1
-    - TARGET: x86_64-pc-windows-msvc
+    - DEBUGMOZJS: ''
+    - DEBUGMOZJS: --features debugmozjs
 
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
@@ -50,13 +47,11 @@ environment:
 
 # called after cloning, before building
 install:
-  - set BUILD_ENV=msvc
   - ps: Start-FileDownload "http://servo-rust.s3.amazonaws.com/build/MozillaBuildSetup-2.2.0.exe"
   - ps: .\MozillaBuildSetup-2.2.0.exe /S | Out-Null
   - appveyor-retry appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
   - rustup-init.exe -y --default-host=x86_64-pc-windows-msvc
   - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
-  - if "%CROSS_COMPILE%" == "1" rustup target add %TARGET%
   - set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
   - set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
   - set AUTOCONF=C:/mozilla-build/msys/local/bin/autoconf-2.13
@@ -67,5 +62,4 @@ build_script:
   - echo PATH %PATH%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
   - cd %APPVEYOR_BUILD_FOLDER%
-  - if "%CROSS_COMPILE%" == "" call "%VCVARSALL_PATH%\vcvars64.bat"
-  - cargo test --verbose --verbose --target %TARGET% --lib
+  - cargo test --verbose --verbose %DEBUGMOZJS% --lib
