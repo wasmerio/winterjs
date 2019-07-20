@@ -13,7 +13,6 @@ use jsapi::JSJitSetterCallArgs;
 use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
 use jsapi::JSPropertySpec;
-use jsapi::glue::JS_NewRealmOptions;
 use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
 use jsapi::jsid;
@@ -53,12 +52,6 @@ impl<T> DerefMut for JS::MutableHandle<T> {
 
 impl Default for jsid {
     fn default() -> Self { JSID_VOID }
-}
-
-impl Default for JS::RealmOptions {
-    fn default() -> Self {
-        unsafe { JS_NewRealmOptions() }
-    }
 }
 
 impl Default for JS::PropertyDescriptor {

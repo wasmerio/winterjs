@@ -36,7 +36,8 @@ namespace glue {
 
 bool JS_Init();
 
-JS::RealmOptions JS_NewRealmOptions();
+JS::RealmOptions* JS_NewRealmOptions();
+void DeleteRealmOptions(JS::RealmOptions* options);
 JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
 
 JS::StackCapture JS_StackCapture_AllFrames();
