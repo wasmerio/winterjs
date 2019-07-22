@@ -32,3 +32,4 @@ libz-sys = "1.0"
 [build-dependencies]
 bindgen = "0.49.0"
 cc = "1.0"
+walkdir = "2"
