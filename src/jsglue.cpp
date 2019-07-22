@@ -14,9 +14,13 @@ bool JS_Init() {
     return ::JS_Init();
 }
 
-JS::RealmOptions JS_NewRealmOptions() {
-    JS::RealmOptions result;
+JS::RealmOptions* JS_NewRealmOptions() {
+    JS::RealmOptions* result = new JS::RealmOptions;
     return result;
+}
+
+void DeleteRealmOptions(JS::RealmOptions* options) {
+	delete options;
 }
 
 JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx) {

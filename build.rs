@@ -4,6 +4,7 @@
 
 extern crate bindgen;
 extern crate cc;
+extern crate walkdir;
 
 use std::env;
 use std::path::PathBuf;
@@ -126,6 +127,10 @@ fn build_jsapi() {
     }
     println!("cargo:outdir={}", out_dir);
     println!("cargo:rerun-if-changed=makefile.cargo");
+    for entry in walkdir::WalkDir::new("mozjs") {
+        let entry = entry.unwrap();
+        println!("{}", format!("cargo:rerun-if-changed={}", entry.path().display()));
+    }
 }
 
 
