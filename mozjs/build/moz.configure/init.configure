@@ -639,9 +639,10 @@ def split_triplet(triplet, allow_unknown=False):
     #   CPU_TYPE-OPERATING_SYSTEM
     parts = triplet.split('-', 2)
     if len(parts) == 3:
-        cpu, _, os = parts
+        cpu, vendor, os = parts
     elif len(parts) == 2:
         cpu, os = parts
+        vendor = ''
     else:
         raise ValueError("Unexpected triplet string: %s" % triplet)
 
@@ -757,6 +758,7 @@ def split_triplet(triplet, allow_unknown=False):
         kernel=sanitize(Kernel, canonical_kernel),
         os=sanitize(OS, canonical_os),
         endianness=sanitize(Endianness, endianness),
+        vendor=vendor,
         raw_cpu=cpu,
         raw_os=os,
         # Toolchains, most notably for cross compilation may use cpu-os
