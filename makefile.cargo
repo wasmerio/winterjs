@@ -14,8 +14,9 @@ CONFIGURE_FLAGS := \
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
 	# Override any attempt to use the debug CRT when building with debug.
-	CFLAGS += "-MD"
-	CXXFLAGS += "-MD"
+	CFLAGS += -MD
+	CXXFLAGS += -MD
+	CONFIGURE_FLAGS += --with-visual-studio-version=2017
 else
 	WINDOWS :=
 endif
