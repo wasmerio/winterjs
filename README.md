@@ -14,9 +14,10 @@ Building
 
 Under Linux:
 
-Install Clang (at least version 3.9), for example in a Debian-based Linux:
+Install Clang (at least version 3.9) and autoconf v 2.13, for example in a Debian-based Linux:
 ```
-sudo apt-get install clang-6.0
+sudo apt-get install clang-6.0 autoconf2.13
+
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`
