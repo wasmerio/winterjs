@@ -17,6 +17,11 @@ ifeq (windows,$(findstring windows,$(TARGET)))
 	CFLAGS += -MD
 	CXXFLAGS += -MD
 	CONFIGURE_FLAGS += --with-visual-studio-version=2017
+	ifneq (,$(CARGO_FEATURE_UWP))
+		CONFIGURE_FLAGS += --enable-uwp --without-intl-api
+		CFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
+		CXXFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
+	endif
 else
 	WINDOWS :=
 endif

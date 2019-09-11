@@ -18,6 +18,7 @@ exclude = [
 [features]
 debugmozjs = []
 profilemozjs = []
+uwp = []
 
 [lib]
 name = "mozjs_sys"

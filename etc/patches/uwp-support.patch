@@ -1,0 +1,674 @@
+commit e622fd5d82cbcbd01a433a9faa526e3ec0213d00
+Author: Josh Matthews <josh@joshmatthews.net>
+Date:   Wed Sep 11 11:06:52 2019 -0400
+
+    Add cargo feature to build with UWP support.
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 36a0c40ff..a9484ea30 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -18,6 +18,7 @@ exclude = [
+ [features]
+ debugmozjs = []
+ profilemozjs = []
++uwp = []
+ 
+ [lib]
+ name = "mozjs_sys"
+diff --git a/build.rs b/build.rs
+index 4c69e3eb1..eb3feb1a3 100644
+--- a/build.rs
++++ b/build.rs
+@@ -120,6 +120,9 @@ fn build_jsapi() {
+         if target.contains("gnu") {
+             println!("cargo:rustc-link-lib=stdc++");
+         }
++        if cfg!(feature = "uwp") {
++            println!("cargo:rustc-link-lib=mincore");
++        }
+     } else if target.contains("apple") || target.contains("freebsd") {
+         println!("cargo:rustc-link-lib=c++");
+     } else {
+diff --git a/makefile.cargo b/makefile.cargo
+index a2477aa6c..3515feb98 100644
+--- a/makefile.cargo
++++ b/makefile.cargo
+@@ -17,6 +17,11 @@ ifeq (windows,$(findstring windows,$(TARGET)))
+ 	CFLAGS += -MD
+ 	CXXFLAGS += -MD
+ 	CONFIGURE_FLAGS += --with-visual-studio-version=2017
++	ifneq (,$(CARGO_FEATURE_UWP))
++		CONFIGURE_FLAGS += --enable-uwp --without-intl-api
++		CFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
++		CXXFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
++	endif
+ else
+ 	WINDOWS :=
+ endif
+diff --git a/mozjs/config/external/icu/common/moz.build b/mozjs/config/external/icu/common/moz.build
+index 61ff5dc72..9dfbf9cb7 100644
+--- a/mozjs/config/external/icu/common/moz.build
++++ b/mozjs/config/external/icu/common/moz.build
+@@ -8,6 +8,8 @@ Library('icuuc')
+ FINAL_LIBRARY = 'icu'
+ 
+ DEFINES['U_COMMON_IMPLEMENTATION'] = True
++if CONFIG['JS_ENABLE_UWP']:
++    DEFINES['U_PLATFORM_HAS_WINUWP_API'] = 1
+ 
+ LOCAL_INCLUDES += ['/intl/icu/source/i18n']
+ 
+diff --git a/mozjs/js/moz.configure b/mozjs/js/moz.configure
+index cebfbbeb8..5d99f7155 100644
+--- a/mozjs/js/moz.configure
++++ b/mozjs/js/moz.configure
+@@ -46,6 +46,18 @@ set_define('JS_PUNBOX64', depends(target)(lambda t: t.bitness == 64 or None))
+ set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
+ 
+ 
++js_option('--enable-uwp',
++          default=False,
++          help='{Enable|Disable} building for UWP environments')
++
++@depends('--enable-uwp')
++def js_enable_uwp(value):
++    if value:
++        return True
++
++set_config('JS_ENABLE_UWP', js_enable_uwp)
++set_define('JS_ENABLE_UWP', js_enable_uwp)
++
+ # SpiderMonkey as a shared library, and how its symbols are exported
+ # ==================================================================
+ js_option('--disable-shared-js', default=building_js,
+diff --git a/mozjs/js/src/builtin/TestingFunctions.cpp b/mozjs/js/src/builtin/TestingFunctions.cpp
+index 15739b848..a38133a12 100644
+--- a/mozjs/js/src/builtin/TestingFunctions.cpp
++++ b/mozjs/js/src/builtin/TestingFunctions.cpp
+@@ -4957,7 +4957,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+   auto getTimeZone = [](std::time_t* now) -> const char* {
+     std::tm local{};
+ #if defined(_WIN32)
++#ifndef JS_ENABLE_UWP
+     _tzset();
++#endif
+     if (localtime_s(&local, now) == 0) {
+       return _tzname[local.tm_isdst > 0];
+     }
+@@ -5052,7 +5054,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+   }
+ 
+ #if defined(_WIN32)
++#ifndef JS_ENABLE_UWP
+   _tzset();
++#endif
+ #else
+   tzset();
+ #endif /* _WIN32 */
+diff --git a/mozjs/js/src/ds/MemoryProtectionExceptionHandler.cpp b/mozjs/js/src/ds/MemoryProtectionExceptionHandler.cpp
+index d0b5f7dc5..89a4160e2 100644
+--- a/mozjs/js/src/ds/MemoryProtectionExceptionHandler.cpp
++++ b/mozjs/js/src/ds/MemoryProtectionExceptionHandler.cpp
+@@ -111,7 +111,7 @@ static bool sExceptionHandlerInstalled = false;
+ static ProtectedRegionTree sProtectedRegions;
+ 
+ bool MemoryProtectionExceptionHandler::isDisabled() {
+-#if defined(XP_WIN) && defined(MOZ_ASAN)
++#if defined(XP_WIN) && (defined(MOZ_ASAN) || defined(JS_ENABLE_UWP))
+   // Under Windows ASan, WasmFaultHandler registers itself at 'last' priority
+   // in order to let ASan's ShadowExceptionHandler stay at 'first' priority.
+   // Unfortunately that results in spurious wasm faults passing through the
+@@ -176,6 +176,7 @@ static mozilla::Atomic<bool> sHandlingException(false);
+ 
+ static long __stdcall VectoredExceptionHandler(
+     EXCEPTION_POINTERS* ExceptionInfo) {
++#ifndef JS_ENABLE_UWP
+   EXCEPTION_RECORD* ExceptionRecord = ExceptionInfo->ExceptionRecord;
+ 
+   // We only handle one kind of exception; ignore all others.
+@@ -200,6 +201,7 @@ static long __stdcall VectoredExceptionHandler(
+       }
+     }
+   }
++#endif
+ 
+   // Forward to the previous handler which may be a debugger,
+   // the crash reporter or something else entirely.
+@@ -213,11 +215,11 @@ bool MemoryProtectionExceptionHandler::install() {
+   if (MemoryProtectionExceptionHandler::isDisabled()) {
+     return true;
+   }
+-
++#ifndef JS_ENABLE_UWP
+   // Install our new exception handler.
+   sVectoredExceptionHandler = AddVectoredExceptionHandler(
+       /* FirstHandler = */ true, VectoredExceptionHandler);
+-
++#endif
+   sExceptionHandlerInstalled = sVectoredExceptionHandler != nullptr;
+   return sExceptionHandlerInstalled;
+ }
+@@ -225,9 +227,10 @@ bool MemoryProtectionExceptionHandler::install() {
+ void MemoryProtectionExceptionHandler::uninstall() {
+   if (sExceptionHandlerInstalled) {
+     MOZ_ASSERT(!sHandlingException);
+-
++#ifndef JS_ENABLE_UWP
+     // Restore the previous exception handler.
+     MOZ_ALWAYS_TRUE(RemoveVectoredExceptionHandler(sVectoredExceptionHandler));
++#endif
+ 
+     sExceptionHandlerInstalled = false;
+   }
+diff --git a/mozjs/js/src/gc/Memory.cpp b/mozjs/js/src/gc/Memory.cpp
+index c735f7df0..f93f2b5cd 100644
+--- a/mozjs/js/src/gc/Memory.cpp
++++ b/mozjs/js/src/gc/Memory.cpp
+@@ -852,9 +852,15 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
+     }
+     UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
+     // If the offset or length are out of bounds, this call will fail.
++#ifdef JS_ENABLE_UWP
++    map = static_cast<uint8_t*>(
++        MapViewOfFileFromApp(hMap, FILE_MAP_COPY, ((ULONG64)offsetH << 32) | offsetL,
++                             alignedLength));
++#else
+     map = static_cast<uint8_t*>(
+         MapViewOfFileEx(hMap, FILE_MAP_COPY, offsetH, offsetL, alignedLength,
+                         reinterpret_cast<void*>(region)));
++#endif
+ 
+     // Retry if another thread mapped the address we were trying to use.
+     if (map || GetLastError() != ERROR_INVALID_ADDRESS) {
+diff --git a/mozjs/js/src/jit/ProcessExecutableMemory.cpp b/mozjs/js/src/jit/ProcessExecutableMemory.cpp
+index d395ccf51..e92313157 100644
+--- a/mozjs/js/src/jit/ProcessExecutableMemory.cpp
++++ b/mozjs/js/src/jit/ProcessExecutableMemory.cpp
+@@ -137,6 +137,7 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
+ // For an explanation of the problem being solved here, see
+ // SetJitExceptionFilter in jsfriendapi.h.
+ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
++#ifndef JS_ENABLE_UWP
+   if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
+     MOZ_CRASH();
+   }
+@@ -224,6 +225,9 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
+   AutoSuppressStackWalking suppress;
+   return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
+                                          RuntimeFunctionCallback, NULL, NULL);
++#else
++  return false;
++#endif
+ }
+ 
+ static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
+@@ -243,7 +247,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
+   void* p = nullptr;
+   for (size_t i = 0; i < 10; i++) {
+     void* randomAddr = ComputeRandomAllocationAddress();
++#ifdef JS_ENABLE_UWP
++    p = VirtualAllocFromApp(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
++#else
+     p = VirtualAlloc(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
++#endif
+     if (p) {
+       break;
+     }
+@@ -251,7 +259,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
+ 
+   if (!p) {
+     // Try again without randomization.
++#ifdef JS_ENABLE_UWP
++    p = VirtualAllocFromApp(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
++#else
+     p = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
++#endif
+     if (!p) {
+       return nullptr;
+     }
+@@ -302,8 +314,17 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
+ 
+ static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
+                                      ProtectionSetting protection) {
++#ifdef JS_ENABLE_UWP
++  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
++  if (p) {
++    ULONG oldProt;
++    bool r = VirtualProtectFromApp(addr, bytes, ProtectionSettingToFlags(protection), &oldProt);
++    MOZ_RELEASE_ASSERT(r);
++  }
++#else
+   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
+                          ProtectionSettingToFlags(protection));
++#endif
+   if (!p) {
+     return false;
+   }
+@@ -742,7 +763,11 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
+ #ifdef XP_WIN
+   DWORD oldProtect;
+   DWORD flags = ProtectionSettingToFlags(protection);
+-  if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
++#ifdef JS_ENABLE_UWP
++  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
++#else
++  if (!VirtualProtect(pageSTart, size, flags, &oldProtect)) {
++#endif
+     return false;
+   }
+ #else
+diff --git a/mozjs/js/src/js-config.h.in b/mozjs/js/src/js-config.h.in
+index f2ce93e12..8c723ea2d 100644
+--- a/mozjs/js/src/js-config.h.in
++++ b/mozjs/js/src/js-config.h.in
+@@ -54,6 +54,9 @@
+ /* Define to 1 if SpiderMonkey is in PUNBOX64 mode. */
+ #undef JS_PUNBOX64
+ 
++/* Define to 1 if SpiderMonkey is built in a UWP environment. */
++#undef JS_ENABLE_UWP
++
+ /* MOZILLA JSAPI version number components */
+ #undef MOZJS_MAJOR_VERSION
+ #undef MOZJS_MINOR_VERSION
+diff --git a/mozjs/js/src/old-configure b/mozjs/js/src/old-configure
+index cdfb5447f..9530ae24b 100644
+--- a/mozjs/js/src/old-configure
++++ b/mozjs/js/src/old-configure
+@@ -2223,8 +2223,8 @@ fi
+ 
+ 
+ 
+-# Target the Windows 8.1 SDK by default
+-WINVER=601
++# Target the Windows 10 SDK by default
++WINVER=A00
+ 
+ case "$target" in
+ *-mingw*)
+diff --git a/mozjs/js/src/vm/CodeCoverage.cpp b/mozjs/js/src/vm/CodeCoverage.cpp
+index 15a9b66a6..d07c10ea6 100644
+--- a/mozjs/js/src/vm/CodeCoverage.cpp
++++ b/mozjs/js/src/vm/CodeCoverage.cpp
+@@ -13,8 +13,13 @@
+ #include <stdio.h>
+ #ifdef XP_WIN
+ #  include <process.h>
++#  include <windows.h>
++#ifndef JS_ENABLE_UWP
+ #  define getpid _getpid
+ #else
++#  define getpid GetCurrentProcessId
++#endif
++#else
+ #  include <unistd.h>
+ #endif
+ 
+diff --git a/mozjs/js/src/vm/DateTime.cpp b/mozjs/js/src/vm/DateTime.cpp
+index a66697de9..c4c2c1f86 100644
+--- a/mozjs/js/src/vm/DateTime.cpp
++++ b/mozjs/js/src/vm/DateTime.cpp
+@@ -740,6 +740,7 @@ void js::ResyncICUDefaultTimeZone() {
+   if (guard.get() == IcuTimeZoneStatus::NeedsUpdate) {
+     bool recreate = true;
+ 
++#ifndef JS_ENABLE_UWP
+     if (const char* tz = std::getenv("TZ")) {
+       icu::UnicodeString tzid;
+ 
+@@ -777,6 +778,7 @@ void js::ResyncICUDefaultTimeZone() {
+         }
+       }
+     }
++#endif /* JS_ENABLE_UWP */
+ 
+     if (recreate) {
+       icu::TimeZone::recreateDefault();
+diff --git a/mozjs/js/src/vm/Time.cpp b/mozjs/js/src/vm/Time.cpp
+index 19ee15009..0a70bd8c0 100644
+--- a/mozjs/js/src/vm/Time.cpp
++++ b/mozjs/js/src/vm/Time.cpp
+@@ -21,6 +21,9 @@
+ #include "jsutil.h"
+ 
+ #ifdef XP_WIN
++#ifdef JS_ENABLE_UWP
++#  include <windows.h>
++#endif
+ #  include <windef.h>
+ #  include <winbase.h>
+ #  include <crtdbg.h>   /* for _CrtSetReportMode */
+@@ -103,13 +106,17 @@ static void NowCalibrate() {
+ 
+   // By wrapping a timeBegin/EndPeriod pair of calls around this loop,
+   // the loop seems to take much less time (1 ms vs 15ms) on Vista.
++#ifndef JS_ENABLE_UWP
+   timeBeginPeriod(1);
++#endif
+   FILETIME ft, ftStart;
+   GetSystemTimeAsFileTime(&ftStart);
+   do {
+     GetSystemTimeAsFileTime(&ft);
+   } while (memcmp(&ftStart, &ft, sizeof(ft)) == 0);
++#ifndef JS_ENABLE_UWP
+   timeEndPeriod(1);
++#endif
+ 
+   LARGE_INTEGER now;
+   QueryPerformanceCounter(&now);
+@@ -139,11 +146,15 @@ void PRMJ_NowInit() {
+   InitializeCriticalSectionAndSpinCount(&calibration.data_lock,
+                                         DataLockSpinCount);
+ 
++#ifndef JS_ENABLE_UWP
+   // Windows 8 has a new API function we can use.
+   if (HMODULE h = GetModuleHandle("kernel32.dll")) {
+     pGetSystemTimePreciseAsFileTime = (void(WINAPI*)(LPFILETIME))GetProcAddress(
+         h, "GetSystemTimePreciseAsFileTime");
+   }
++#else
++    pGetSystemTimePreciseAsFileTime = &GetSystemTimeAsFileTime;
++#endif
+ }
+ 
+ void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }
+diff --git a/mozjs/js/src/wasm/WasmSignalHandlers.cpp b/mozjs/js/src/wasm/WasmSignalHandlers.cpp
+index 636537f84..3dec263d6 100644
+--- a/mozjs/js/src/wasm/WasmSignalHandlers.cpp
++++ b/mozjs/js/src/wasm/WasmSignalHandlers.cpp
+@@ -742,6 +742,7 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
+ // Compiled in all user binaries, so should be stable over time.
+ static const unsigned sThreadLocalArrayPointerIndex = 11;
+ 
++#ifndef JS_ENABLE_UWP
+ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
+   // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
+   if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
+@@ -765,6 +766,7 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
+ 
+   return EXCEPTION_CONTINUE_EXECUTION;
+ }
++#endif
+ 
+ #elif defined(XP_DARWIN)
+ // On OSX we are forced to use the lower-level Mach exception mechanism instead
+@@ -1024,11 +1026,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
+   // such as MemoryProtectionExceptionHandler that assume we are crashing.
+   const bool firstHandler = true;
+ #  endif
++#  ifndef JS_ENABLE_UWP
+   if (!AddVectoredExceptionHandler(firstHandler, WasmTrapHandler)) {
+     // Windows has all sorts of random security knobs for disabling things
+     // so make this a dynamic failure that disables wasm, not a MOZ_CRASH().
+     return;
+   }
++#  endif
+ 
+ #elif defined(XP_DARWIN)
+   // All the Mach setup in EnsureLazyProcessSignalHandlers.
+diff --git a/mozjs/mfbt/Poison.cpp b/mozjs/mfbt/Poison.cpp
+index f490856a3..900f33ca2 100644
+--- a/mozjs/mfbt/Poison.cpp
++++ b/mozjs/mfbt/Poison.cpp
+@@ -42,7 +42,11 @@ uintptr_t gMozillaPoisonSize;
+ 
+ #ifdef _WIN32
+ static void* ReserveRegion(uintptr_t aRegion, uintptr_t aSize) {
++#ifdef JS_ENABLE_UWP
++  return VirtualAllocFromApp((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
++#else
+   return VirtualAlloc((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
++#endif
+ }
+ 
+ static void ReleaseRegion(void* aRegion, uintptr_t aSize) {
+diff --git a/mozjs/mfbt/RandomNum.cpp b/mozjs/mfbt/RandomNum.cpp
+index 69f19e9d0..668c944a5 100644
+--- a/mozjs/mfbt/RandomNum.cpp
++++ b/mozjs/mfbt/RandomNum.cpp
+@@ -13,6 +13,7 @@
+ 
+ #if defined(XP_WIN)
+ 
++#ifndef JS_ENABLE_UWP
+ // Microsoft doesn't "officially" support using RtlGenRandom() directly
+ // anymore, and the Windows headers assume that __stdcall is
+ // the default calling convention (which is true when Microsoft uses this
+@@ -24,6 +25,10 @@
+ #  define RtlGenRandom SystemFunction036
+ extern "C" BOOLEAN NTAPI RtlGenRandom(PVOID RandomBuffer,
+                                       ULONG RandomBufferLength);
++#else
++#  include "bcrypt.h"
++#  include "ntstatus.h"
++#endif // JS_ENABLE_UWP
+ 
+ #endif
+ 
+@@ -98,9 +103,15 @@ MFBT_API Maybe<uint64_t> RandomUint64() {
+ #if defined(XP_WIN)
+ 
+   uint64_t result = 0;
++#ifdef JS_ENABLE_UWP
++  if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&result), sizeof(result), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != STATUS_SUCCESS) {
++    return Nothing();
++  }
++#else
+   if (!RtlGenRandom(&result, sizeof(result))) {
+     return Nothing();
+   }
++#endif
+ 
+   return Some(result);
+ 
+diff --git a/mozjs/mfbt/WindowsVersion.h b/mozjs/mfbt/WindowsVersion.h
+index 2058abc0f..5a2876429 100644
+--- a/mozjs/mfbt/WindowsVersion.h
++++ b/mozjs/mfbt/WindowsVersion.h
+@@ -7,6 +7,8 @@
+ #ifndef mozilla_WindowsVersion_h
+ #define mozilla_WindowsVersion_h
+ 
++#ifndef JS_ENABLE_UWP
++
+ #include "mozilla/Atomics.h"
+ #include "mozilla/Attributes.h"
+ #include <stdint.h>
+@@ -198,4 +200,6 @@ inline bool IsWin7AndPre2000Compatible() {
+ 
+ }  // namespace mozilla
+ 
++#endif
++
+ #endif /* mozilla_WindowsVersion_h */
+diff --git a/mozjs/mozglue/misc/DynamicallyLinkedFunctionPtr.h b/mozjs/mozglue/misc/DynamicallyLinkedFunctionPtr.h
+index 24ac56c38..89533a484 100644
+--- a/mozjs/mozglue/misc/DynamicallyLinkedFunctionPtr.h
++++ b/mozjs/mozglue/misc/DynamicallyLinkedFunctionPtr.h
+@@ -22,6 +22,7 @@ class DynamicallyLinkedFunctionPtr<R(__stdcall*)(Args...)> {
+  public:
+   DynamicallyLinkedFunctionPtr(const wchar_t* aLibName, const char* aFuncName)
+       : mModule(NULL), mFunction(nullptr) {
++#ifndef JS_ENABLE_UWP
+     mModule = ::LoadLibraryW(aLibName);
+     if (mModule) {
+       mFunction =
+@@ -34,6 +35,7 @@ class DynamicallyLinkedFunctionPtr<R(__stdcall*)(Args...)> {
+         mModule = NULL;
+       }
+     }
++#endif
+   }
+ 
+   DynamicallyLinkedFunctionPtr(const DynamicallyLinkedFunctionPtr&) = delete;
+diff --git a/mozjs/mozglue/misc/StackWalk.cpp b/mozjs/mozglue/misc/StackWalk.cpp
+index 3862e083c..8894a3ef2 100644
+--- a/mozjs/mozglue/misc/StackWalk.cpp
++++ b/mozjs/mozglue/misc/StackWalk.cpp
+@@ -72,9 +72,11 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
+ // We need a way to know if we are building for WXP (or later), as if we are, we
+ // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
+ // A value of 9 indicates we want to use the new APIs.
++#ifndef JS_ENABLE_UWP
+ #  if API_VERSION_NUMBER < 9
+ #    error Too old imagehlp.h
+ #  endif
++#endif
+ 
+ struct WalkStackData {
+   // Are we walking the stack of the calling thread? Note that we need to avoid
+@@ -174,6 +176,9 @@ static void InitializeDbgHelpCriticalSection() {
+ }
+ 
+ static void WalkStackMain64(struct WalkStackData* aData) {
++#ifdef JS_ENABLE_UWP
++  return;
++#else
+   // Get a context for the specified thread.
+   CONTEXT context_buf;
+   CONTEXT* context;
+@@ -359,6 +364,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
+     }
+ #  endif
+   }
++#endif
+ }
+ 
+ /**
+@@ -452,7 +458,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+                                         ULONG aModuleSize, PVOID aUserContext) {
+   BOOL retval = TRUE;
+   DWORD64 addr = *(DWORD64*)aUserContext;
+-
++#ifndef JS_ENABLE_UWP
+   /*
+    * You'll want to control this if we are running on an
+    *  architecture where the addresses go the other direction.
+@@ -472,7 +478,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+       PrintError("SymLoadModule64");
+     }
+   }
+-
++#endif
+   return retval;
+ }
+ 
+@@ -504,6 +510,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+ #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
+ #  endif
+ 
++#ifndef JS_ENABLE_UWP
+ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
+                                 PIMAGEHLP_MODULE64 aModuleInfo,
+                                 PIMAGEHLP_LINE64 aLineInfo) {
+@@ -560,22 +567,24 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
+ 
+   return retval;
+ }
++#endif
+ 
+ static bool EnsureSymInitialized() {
+   static bool gInitialized = false;
+-  bool retStat;
++  bool retStat = true;
+ 
+   if (gInitialized) {
+     return gInitialized;
+   }
+ 
+   InitializeDbgHelpCriticalSection();
+-
++#ifndef JS_ENABLE_UWP
+   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+   if (!retStat) {
+     PrintError("SymInitialize");
+   }
++#endif
+ 
+   gInitialized = retStat;
+   /* XXX At some point we need to arrange to call SymCleanup */
+@@ -583,6 +592,7 @@ static bool EnsureSymInitialized() {
+   return retStat;
+ }
+ 
++#ifndef JS_ENABLE_UWP
+ MFBT_API bool MozDescribeCodeAddress(void* aPC,
+                                      MozCodeAddressDetails* aDetails) {
+   aDetails->library[0] = '\0';
+@@ -646,6 +656,7 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
+   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
+   return true;
+ }
++#endif
+ 
+ // i386 or PPC Linux stackwalking code
+ #elif HAVE_DLADDR &&                                           \
+diff --git a/mozjs/mozglue/misc/TimeStamp_windows.cpp b/mozjs/mozglue/misc/TimeStamp_windows.cpp
+index 3e4552d7a..b3e6f3dd1 100644
+--- a/mozjs/mozglue/misc/TimeStamp_windows.cpp
++++ b/mozjs/mozglue/misc/TimeStamp_windows.cpp
+@@ -170,8 +170,10 @@ static inline ULONGLONG PerformanceCounter() {
+ static void InitThresholds() {
+   DWORD timeAdjustment = 0, timeIncrement = 0;
+   BOOL timeAdjustmentDisabled;
++#ifndef JS_ENABLE_UWP
+   GetSystemTimeAdjustment(&timeAdjustment, &timeIncrement,
+                           &timeAdjustmentDisabled);
++#endif
+ 
+   LOG(("TimeStamp: timeIncrement=%d [100ns]", timeIncrement));
+ 
+diff --git a/mozjs/mozglue/misc/WindowsMapRemoteView.cpp b/mozjs/mozglue/misc/WindowsMapRemoteView.cpp
+index 6c4b02455..1bf4f3bd7 100644
+--- a/mozjs/mozglue/misc/WindowsMapRemoteView.cpp
++++ b/mozjs/mozglue/misc/WindowsMapRemoteView.cpp
+@@ -29,6 +29,7 @@ WINBASEAPI BOOL WINAPI UnmapViewOfFile2(HANDLE aProcess, PVOID aBaseAddress,
+ 
+ enum SECTION_INHERIT { ViewShare = 1, ViewUnmap = 2 };
+ 
++#ifndef JS_ENABLE_UWP
+ NTSTATUS NTAPI NtMapViewOfSection(
+     HANDLE aSection, HANDLE aProcess, PVOID* aBaseAddress, ULONG_PTR aZeroBits,
+     SIZE_T aCommitSize, PLARGE_INTEGER aSectionOffset, PSIZE_T aViewSize,
+@@ -49,6 +50,7 @@ static DWORD GetWin32ErrorCode(NTSTATUS aNtStatus) {
+ 
+   return pRtlNtStatusToDosError(aNtStatus);
+ }
++#endif
+ 
+ namespace mozilla {
+ 
+@@ -56,6 +58,9 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
+                                    ULONG64 aOffset, PVOID aBaseAddress,
+                                    SIZE_T aViewSize, ULONG aAllocationType,
+                                    ULONG aProtectionFlags) {
++#ifdef JS_ENABLE_UWP
++  return false;
++#else
+   static const DynamicallyLinkedFunctionPtr<decltype(&MapViewOfFileNuma2)>
+       pMapViewOfFileNuma2(L"Api-ms-win-core-memory-l1-1-5.dll",
+                           "MapViewOfFileNuma2");
+@@ -97,9 +102,13 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
+ 
+   ::SetLastError(GetWin32ErrorCode(ntStatus));
+   return nullptr;
++#endif
+ }
+ 
+ MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
++#ifdef JS_ENABLE_UWP
++  return false;
++#else
+   static const DynamicallyLinkedFunctionPtr<decltype(&UnmapViewOfFile2)>
+       pUnmapViewOfFile2(L"kernel32.dll", "UnmapViewOfFile2");
+ 
+@@ -118,6 +127,7 @@ MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
+   NTSTATUS ntStatus = pNtUnmapViewOfSection(aProcess, aBaseAddress);
+   ::SetLastError(GetWin32ErrorCode(ntStatus));
+   return NT_SUCCESS(ntStatus);
++#endif
+ }
+ 
+ }  // namespace mozilla

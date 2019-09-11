@@ -740,6 +740,7 @@ void js::ResyncICUDefaultTimeZone() {
   if (guard.get() == IcuTimeZoneStatus::NeedsUpdate) {
     bool recreate = true;
 
+#ifndef JS_ENABLE_UWP
     if (const char* tz = std::getenv("TZ")) {
       icu::UnicodeString tzid;
 
@@ -777,6 +778,7 @@ void js::ResyncICUDefaultTimeZone() {
         }
       }
     }
+#endif /* JS_ENABLE_UWP */
 
     if (recreate) {
       icu::TimeZone::recreateDefault();

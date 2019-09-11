@@ -22,6 +22,7 @@ class DynamicallyLinkedFunctionPtr<R(__stdcall*)(Args...)> {
  public:
   DynamicallyLinkedFunctionPtr(const wchar_t* aLibName, const char* aFuncName)
       : mModule(NULL), mFunction(nullptr) {
+#ifndef JS_ENABLE_UWP
     mModule = ::LoadLibraryW(aLibName);
     if (mModule) {
       mFunction =
@@ -34,6 +35,7 @@ class DynamicallyLinkedFunctionPtr<R(__stdcall*)(Args...)> {
         mModule = NULL;
       }
     }
+#endif
   }
 
   DynamicallyLinkedFunctionPtr(const DynamicallyLinkedFunctionPtr&) = delete;
