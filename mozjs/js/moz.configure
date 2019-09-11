@@ -46,6 +46,18 @@ set_define('JS_PUNBOX64', depends(target)(lambda t: t.bitness == 64 or None))
 set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
 
 
+js_option('--enable-uwp',
+          default=False,
+          help='{Enable|Disable} building for UWP environments')
+
+@depends('--enable-uwp')
+def js_enable_uwp(value):
+    if value:
+        return True
+
+set_config('JS_ENABLE_UWP', js_enable_uwp)
+set_define('JS_ENABLE_UWP', js_enable_uwp)
+
 # SpiderMonkey as a shared library, and how its symbols are exported
 # ==================================================================
 js_option('--disable-shared-js', default=building_js,
