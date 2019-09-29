@@ -130,7 +130,7 @@ fn build_jsapi() {
     }
     println!("cargo:outdir={}", out_dir);
     println!("cargo:rerun-if-changed=makefile.cargo");
-    for entry in walkdir::WalkDir::new("mozjs") {
+    for entry in walkdir::WalkDir::new("mozjs").into_iter().filter_entry(|e| !e.path().ends_with("tmp")) {
         let entry = entry.unwrap();
         println!("{}", format!("cargo:rerun-if-changed={}", entry.path().display()));
     }
