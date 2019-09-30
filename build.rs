@@ -7,7 +7,7 @@ extern crate cc;
 extern crate walkdir;
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ffi::{OsStr, OsString};
 use std::process::{Command, Stdio};
 use std::str;
@@ -16,6 +16,23 @@ fn main() {
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();
+}
+
+/// Rerun this build script if files under mozjs/ changed, unless this returns true.
+/// Keep this in sync with .gitignore
+fn ignore(path: &Path) -> bool {
+    let ignored_extensions = ["pyc", "so", "dll", "dylib"];
+    let ignored_trailing_paths = [["psutil", "build"], ["psutil", "tmp"]];
+
+    path.extension().map_or(false, |extension| {
+        ignored_extensions.iter().any(|&ignored| extension == ignored)
+    }) ||
+    ignored_trailing_paths.iter().any(|trailing| {
+        let mut components = path.components().rev();
+        trailing.iter().rev().all(|&ignored| {
+            components.next().map_or(false, |component| component.as_os_str() == ignored)
+        })
+    })
 }
 
 fn find_make() -> OsString {
@@ -130,7 +147,7 @@ fn build_jsapi() {
     }
     println!("cargo:outdir={}", out_dir);
     println!("cargo:rerun-if-changed=makefile.cargo");
-    for entry in walkdir::WalkDir::new("mozjs").into_iter().filter_entry(|e| !e.path().ends_with("tmp")) {
+    for entry in walkdir::WalkDir::new("mozjs").into_iter().filter_entry(|e| !ignore(e.path())) {
         let entry = entry.unwrap();
         println!("{}", format!("cargo:rerun-if-changed={}", entry.path().display()));
     }
