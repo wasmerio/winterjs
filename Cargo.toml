@@ -31,6 +31,6 @@ libc = "0.2"
 libz-sys = "1.0"
 
 [build-dependencies]
-bindgen = "0.51.1"
+bindgen = { version = "0.51.1", default-features = false, features = ["which-rustfmt"] }
 cc = "1.0"
 walkdir = "2"
