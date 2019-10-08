@@ -13,6 +13,9 @@ use std::process::{Command, Stdio};
 use std::str;
 
 fn main() {
+    // https://github.com/servo/mozjs/issues/113
+    env::set_var("MOZCONFIG", "");
+
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();
