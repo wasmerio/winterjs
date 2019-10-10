@@ -9,33 +9,58 @@ extern crate walkdir;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::ffi::{OsStr, OsString};
-use std::process::{Command, Stdio};
+use std::fs;
+use std::process::Command;
 use std::str;
+use walkdir::WalkDir;
+
+const ENV_VARS: &'static [&'static str] = &[
+    "AR",
+    "AS",
+    "CC",
+    "CFLAGS",
+    "CLANGFLAGS",
+    "CPP",
+    "CPPFLAGS",
+    "CXX",
+    "CXXFLAGS",
+    "MAKE",
+    "MOZ_TOOLS",
+    "MOZTOOLS_PATH",
+    "PYTHON",
+    "STLPORT_LIBS",
+];
+
+const EXTRA_FILES: &'static [&'static str] = &[
+    "makefile.cargo",
+    "rustfmt.toml",
+    "src/jsglue.hpp",
+    "src/jsglue.cpp",
+];
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
 
-    build_jsapi();
-    build_jsglue();
-    build_jsapi_bindings();
-}
+    for var in ENV_VARS {
+        println!("cargo:rerun-if-env-changed={}", var);
+    }
 
-/// Rerun this build script if files under mozjs/ changed, unless this returns true.
-/// Keep this in sync with .gitignore
-fn ignore(path: &Path) -> bool {
-    let ignored_extensions = ["pyc", "so", "dll", "dylib"];
-    let ignored_trailing_paths = [["psutil", "build"], ["psutil", "tmp"]];
+    for file in EXTRA_FILES {
+        println!("cargo:rerun-if-changed={}", file);
+    }
 
-    path.extension().map_or(false, |extension| {
-        ignored_extensions.iter().any(|&ignored| extension == ignored)
-    }) ||
-    ignored_trailing_paths.iter().any(|trailing| {
-        let mut components = path.components().rev();
-        trailing.iter().rev().all(|&ignored| {
-            components.next().map_or(false, |component| component.as_os_str() == ignored)
-        })
-    })
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let src_dir = out_dir.join("mozjs");
+    let build_dir = out_dir.join("build");
+
+    copy_sources("mozjs".as_ref(), &src_dir);
+
+    fs::create_dir_all(&build_dir).expect("could not create build dir");
+
+    build_jsapi(&src_dir, &build_dir);
+    build_jsglue(&build_dir);
+    build_jsapi_bindings(&build_dir);
 }
 
 fn find_make() -> OsString {
@@ -94,10 +119,10 @@ fn cc_flags() -> Vec<&'static str> {
     result
 }
 
-fn build_jsapi() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+fn build_jsapi(src_dir: &Path, build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
+
     // Put MOZTOOLS_PATH at the beginning of PATH if specified
     println!("cargo:rerun-if-env-changed=MOZTOOLS_PATH");
     if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
@@ -124,17 +149,21 @@ fn build_jsapi() {
         cmd.env("CXXFLAGS", "-stdlib=libc++");
     }
 
-    let result = cmd.args(&["-R", "-f", "makefile.cargo"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+
+    let result = cmd
+        .args(&["-R", "-f"])
+        .arg(cargo_manifest_dir.join("makefile.cargo"))
+        .current_dir(&build_dir)
+        .env("SRC_DIR", &src_dir)
         .status()
         .expect("Failed to run `make`");
-
     assert!(result.success());
-    println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
+
+    println!("cargo:rustc-link-search=native={}/js/src/build", build_dir.display());
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
-        println!("cargo:rustc-link-search=native={}/dist/bin", out_dir);
+        println!("cargo:rustc-link-search=native={}/dist/bin", build_dir.display());
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
@@ -150,20 +179,10 @@ fn build_jsapi() {
     } else {
         println!("cargo:rustc-link-lib=stdc++");
     }
-    println!("cargo:outdir={}", out_dir);
-    println!("cargo:rerun-if-changed=makefile.cargo");
-    for entry in walkdir::WalkDir::new("mozjs").into_iter().filter_entry(|e| !ignore(e.path())) {
-        let entry = entry.unwrap();
-        if !entry.file_type().is_dir() {
-            println!("{}", format!("cargo:rerun-if-changed={}", entry.path().display()));
-        }
-    }
 }
 
 
-fn build_jsglue() {
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-
+fn build_jsglue(build_dir: &Path) {
     let mut build = cc::Build::new();
     build.cpp(true);
 
@@ -172,19 +191,19 @@ fn build_jsglue() {
     }
 
     let target = env::var("TARGET").unwrap();
-    let config = format!("{}/js/src/js-confdefs.h", out.display());
+    let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
     if target.contains("windows") {
         build.flag("-FI");
     } else {
         build.flag("-include");
     }
-    build.flag(&config);
-
-    build.file("src/jsglue.cpp");
-    build.include(out.join("dist/include"));
-    build.include(out.join("js/src"));
-
-    build.compile("jsglue");
+    build
+        .flag(&config)
+        .file("src/jsglue.cpp")
+        .include(build_dir.join("dist/include"))
+        .include(build_dir.join("js/src"))
+        .out_dir(build_dir.join("glue"))
+        .compile("jsglue");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -192,8 +211,7 @@ fn build_jsglue() {
 ///
 /// To add or remove which functions, types, and variables get bindings
 /// generated, see the `const` configuration variables below.
-fn build_jsapi_bindings() {
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+fn build_jsapi_bindings(build_dir: &Path) {
     let rustfmt_config = Some(PathBuf::from("rustfmt.toml"));
 
     // By default, constructors, destructors and methods declared in .h files are inlined,
@@ -215,8 +233,8 @@ fn build_jsapi_bindings() {
         .with_codegen_config(config)
         .rustfmt_bindings(true)
         .rustfmt_configuration_file(rustfmt_config)
-        .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
-        .clang_arg("-I").clang_arg(out.join("js/src").to_str().expect("UTF-8"))
+        .clang_arg("-I").clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
+        .clang_arg("-I").clang_arg(build_dir.join("js/src").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++");
 
     let target = env::var("TARGET").unwrap();
@@ -243,7 +261,7 @@ fn build_jsapi_bindings() {
     }
 
     builder = builder.clang_arg("-include");
-    builder = builder.clang_arg(out.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
+    builder = builder.clang_arg(build_dir.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
 
     println!("Generting bindings {:?} {}.", builder.command_line_flags(), bindgen::clang_version().full);
 
@@ -278,12 +296,8 @@ fn build_jsapi_bindings() {
     let bindings = builder.generate()
         .expect("Should generate JSAPI bindings OK");
 
-    bindings.write_to_file(out.join("jsapi.rs"))
+    bindings.write_to_file(build_dir.join("jsapi.rs"))
         .expect("Should write bindings to file OK");
-
-    println!("cargo:rerun-if-changed=rustfmt.toml");
-    println!("cargo:rerun-if-changed=src/jsglue.hpp");
-    println!("cargo:rerun-if-changed=src/jsglue.cpp");
 }
 
 /// JSAPI types for which we should implement `Sync`.
@@ -371,3 +385,47 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
 ];
+
+fn copy_sources(source: &Path, target: &Path) {
+    for entry in WalkDir::new(source) {
+        let entry = entry.expect("could not walk source tree");
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+        let relative_path = entry.path().strip_prefix(&source).unwrap();
+        let target_path = target.join(relative_path);
+
+        if entry.path().is_dir() {
+            if !target_path.exists() {
+                fs::create_dir(target_path).expect("could not create directory");
+            }
+        } else {
+            copy_file(entry.path(), &target_path)
+        }
+    }
+}
+
+fn copy_file(source: &Path, target: &Path) {
+    if !target_is_up_to_date(&source, &target) {
+        fs::copy(&source, &target).expect("could not copy file");
+    }
+}
+
+fn target_is_up_to_date(source: &Path, target: &Path) -> bool {
+    if !target.exists() {
+        return false;
+    }
+
+    let source_metadata = source.metadata().expect("could not read source metadata");
+    let target_metadata = target.metadata().expect("could not read target metadata");
+
+    let source_modified = match source_metadata.modified() {
+        Ok(modified) => modified,
+        Err(_) => return false,
+    };
+
+    let target_modified = match target_metadata.modified() {
+        Ok(modified) => modified,
+        Err(_) => return false,
+    };
+
+    source_modified < target_modified
+}
