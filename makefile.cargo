@@ -178,24 +178,21 @@ ifeq ($(NEED_WIN_PYTHON),1)
 	endif
 endif
 
-SRC_DIR = $(shell pwd)
-
 .PHONY : all maybe-configure
 
 all: maybe-configure
-	cd $(OUT_DIR) && $(MAKE) -f Makefile
+	$(MAKE) -f Makefile
 
 # Only touch and run configure if we need to, to avoid unnecessary rebuilds.
 # The second two time checks handle the case of configure.in and configure having
 # the same timestamp (e.g. after a git checkout)
-JSSRC := $(SRC_DIR)/mozjs/js/src
+JSSRC := '$(SRC_DIR)'/js/src
 maybe-configure:
 	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
 	[[ $(JSSRC)/old-configure -ot $(JSSRC)/old-configure.in ]] && touch $(JSSRC)/old-configure || true
 	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
 	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
-	if [[ $(JSSRC)/configure -nt $(OUT_DIR)/config.status ]] ; then \
-	  cd $(OUT_DIR) && \
+	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
 	  PYTHON="$(PYTHON)" MOZ_TOOLS="$(MOZ_TOOLS)" \
 	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
 	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
