@@ -54,6 +54,9 @@ fn main() {
     let src_dir = out_dir.join("mozjs");
     let build_dir = out_dir.join("build");
 
+    // Used by rust-mozjs downstream, don't remove.
+    println!("cargo:outdir={}", build_dir.display());
+
     copy_sources("mozjs".as_ref(), &src_dir);
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
