@@ -54,6 +54,9 @@ fn main() {
     let src_dir = out_dir.join("mozjs");
     let build_dir = out_dir.join("build");
 
+    // Used by rust-mozjs downstream, don't remove.
+    println!("cargo:outdir={}", build_dir.display());
+
     copy_sources("mozjs".as_ref(), &src_dir);
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
@@ -64,7 +67,6 @@ fn main() {
 }
 
 fn find_make() -> OsString {
-    println!("cargo:rerun-if-env-changed=MAKE");
     if let Some(make) = env::var_os("MAKE") {
         make
     } else {
@@ -124,7 +126,6 @@ fn build_jsapi(src_dir: &Path, build_dir: &Path) {
     let mut make = find_make();
 
     // Put MOZTOOLS_PATH at the beginning of PATH if specified
-    println!("cargo:rerun-if-env-changed=MOZTOOLS_PATH");
     if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
         let path = env::var_os("PATH").unwrap();
         let mut paths = Vec::new();
@@ -242,14 +243,12 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.clang_arg("-fms-compatibility");
     }
 
-    println!("cargo:rerun-if-env-changed=CXXFLAGS");
     if let Ok(flags) = env::var("CXXFLAGS") {
         for flag in flags.split_whitespace() {
             builder = builder.clang_arg(flag);
         }
     }
 
-    println!("cargo:rerun-if-env-changed=CLANGFLAGS");
     if let Ok(flags) = env::var("CLANGFLAGS") {
         for flag in flags.split_whitespace() {
             builder = builder.clang_arg(flag);
