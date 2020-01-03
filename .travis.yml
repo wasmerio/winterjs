@@ -35,6 +35,7 @@ env:
   - FEATURES="--features debugmozjs"
 
 before_script:
+  - rustup component add rustfmt-preview
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC=gcc-6; export CXX=g++-6; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export PYTHON3="/usr/local/opt/python/bin/python3"; fi
 
