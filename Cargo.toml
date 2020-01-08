@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository = "https://github.com/servo/mozjs/"
-version = "0.67.1"
+version = "0.68.0"
 authors = ["Mozilla"]
 links = "mozjs"
 build = "build.rs"
