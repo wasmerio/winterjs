@@ -18,12 +18,14 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/TypeTraits.h"
+#include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 #include "mozilla/Variant.h"
 
 #include "jsapi.h"
 
 #include "ds/Fifo.h"
 #include "jit/Ion.h"
+#include "js/BinASTFormat.h"  // JS::BinASTFormat
 #include "js/CompileOptions.h"
 #include "js/SourceText.h"
 #include "js/TypeDecls.h"
@@ -63,10 +65,9 @@ namespace wasm {
 struct CompileTask;
 typedef Fifo<CompileTask*, 0, SystemAllocPolicy> CompileTaskPtrFifo;
 
-struct Tier2GeneratorTask {
+struct Tier2GeneratorTask : public RunnableTask {
   virtual ~Tier2GeneratorTask() = default;
   virtual void cancel() = 0;
-  virtual void execute() = 0;
 };
 
 typedef UniquePtr<Tier2GeneratorTask> UniqueTier2GeneratorTask;
@@ -97,9 +98,10 @@ class GlobalHelperThreadState {
   typedef mozilla::LinkedList<ParseTask> ParseTaskList;
   typedef Vector<UniquePtr<SourceCompressionTask>, 0, SystemAllocPolicy>
       SourceCompressionTaskVector;
-  typedef Vector<GCParallelTask*, 0, SystemAllocPolicy> GCParallelTaskVector;
+  typedef mozilla::LinkedList<GCParallelTask> GCParallelTaskList;
   typedef Vector<PromiseHelperTask*, 0, SystemAllocPolicy>
       PromiseHelperTaskVector;
+  typedef Vector<JSContext*, 0, SystemAllocPolicy> ContextVector;
 
   // List of available threads, or null if the thread state has not been
   // initialized.
@@ -144,7 +146,10 @@ class GlobalHelperThreadState {
   SourceCompressionTaskVector compressionFinishedList_;
 
   // GC tasks needing to be done in parallel.
-  GCParallelTaskVector gcParallelWorklist_;
+  GCParallelTaskList gcParallelWorklist_;
+
+  // Global list of JSContext for GlobalHelperThreadState to use.
+  ContextVector helperContexts_;
 
   ParseTask* removeFinishedParseTask(ParseTaskKind kind,
                                      JS::OffThreadToken* token);
@@ -167,8 +172,10 @@ class GlobalHelperThreadState {
   void finish();
   void finishThreads();
 
-  void lock();
-  void unlock();
+  MOZ_MUST_USE bool ensureContextListForThreadCount();
+  JSContext* getFirstUnusedContext(AutoLockHelperThreadState& locked);
+  void destroyHelperContexts(AutoLockHelperThreadState& lock);
+
 #ifdef DEBUG
   bool isLockedByCurrentThread() const;
 #endif
@@ -268,7 +275,7 @@ class GlobalHelperThreadState {
     return compressionFinishedList_;
   }
 
-  GCParallelTaskVector& gcParallelWorklist(const AutoLockHelperThreadState&) {
+  GCParallelTaskList& gcParallelWorklist(const AutoLockHelperThreadState&) {
     return gcParallelWorklist_;
   }
 
@@ -377,12 +384,6 @@ struct HelperThread {
    */
   bool terminate;
 
-  /*
-   * Indicates that this thread should free its unused memory when it is next
-   * idle.
-   */
-  bool shouldFreeUnusedMemory;
-
   /* The current task being executed by this thread, if any. */
   mozilla::Maybe<HelperTaskUnion> currentTask;
 
@@ -465,8 +466,6 @@ struct HelperThread {
     return nullptr;
   }
 
-  void maybeFreeUnusedMemory(JSContext* cx);
-
   void handleWasmWorkload(AutoLockHelperThreadState& locked,
                           wasm::CompileMode mode);
 
@@ -494,7 +493,7 @@ bool EnsureHelperThreadsInitialized();
 
 // This allows the JS shell to override GetCPUCount() when passed the
 // --thread-count=N option.
-void SetFakeCPUCount(size_t count);
+bool SetFakeCPUCount(size_t count);
 
 // Get the current helper thread, or null.
 HelperThread* CurrentHelperThread();
@@ -550,10 +549,9 @@ bool StartOffThreadIonCompile(jit::IonBuilder* builder,
 bool StartOffThreadIonFree(jit::IonBuilder* builder,
                            const AutoLockHelperThreadState& lock);
 
-struct AllCompilations {};
 struct ZonesInState {
   JSRuntime* runtime;
-  JS::Zone::GCState state;
+  JS::shadow::Zone::GCState state;
 };
 struct CompilationsUsingNursery {
   JSRuntime* runtime;
@@ -561,39 +559,37 @@ struct CompilationsUsingNursery {
 
 using CompilationSelector =
     mozilla::Variant<JSScript*, JS::Realm*, Zone*, ZonesInState, JSRuntime*,
-                     CompilationsUsingNursery, AllCompilations>;
+                     CompilationsUsingNursery>;
 
 /*
  * Cancel scheduled or in progress Ion compilations.
  */
-void CancelOffThreadIonCompile(const CompilationSelector& selector,
-                               bool discardLazyLinkList);
+void CancelOffThreadIonCompile(const CompilationSelector& selector);
 
 inline void CancelOffThreadIonCompile(JSScript* script) {
-  CancelOffThreadIonCompile(CompilationSelector(script), true);
+  CancelOffThreadIonCompile(CompilationSelector(script));
 }
 
 inline void CancelOffThreadIonCompile(JS::Realm* realm) {
-  CancelOffThreadIonCompile(CompilationSelector(realm), true);
+  CancelOffThreadIonCompile(CompilationSelector(realm));
 }
 
 inline void CancelOffThreadIonCompile(Zone* zone) {
-  CancelOffThreadIonCompile(CompilationSelector(zone), true);
+  CancelOffThreadIonCompile(CompilationSelector(zone));
 }
 
 inline void CancelOffThreadIonCompile(JSRuntime* runtime,
-                                      JS::Zone::GCState state) {
-  CancelOffThreadIonCompile(CompilationSelector(ZonesInState{runtime, state}),
-                            true);
+                                      JS::shadow::Zone::GCState state) {
+  CancelOffThreadIonCompile(CompilationSelector(ZonesInState{runtime, state}));
 }
 
 inline void CancelOffThreadIonCompile(JSRuntime* runtime) {
-  CancelOffThreadIonCompile(CompilationSelector(runtime), true);
+  CancelOffThreadIonCompile(CompilationSelector(runtime));
 }
 
 inline void CancelOffThreadIonCompilesUsingNurseryPointers(JSRuntime* runtime) {
   CancelOffThreadIonCompile(
-      CompilationSelector(CompilationsUsingNursery{runtime}), true);
+      CompilationSelector(CompilationsUsingNursery{runtime}));
 }
 
 #ifdef DEBUG
@@ -612,10 +608,20 @@ bool StartOffThreadParseScript(JSContext* cx,
                                JS::SourceText<char16_t>& srcBuf,
                                JS::OffThreadCompileCallback callback,
                                void* callbackData);
+bool StartOffThreadParseScript(JSContext* cx,
+                               const JS::ReadOnlyCompileOptions& options,
+                               JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+                               JS::OffThreadCompileCallback callback,
+                               void* callbackData);
 
 bool StartOffThreadParseModule(JSContext* cx,
                                const JS::ReadOnlyCompileOptions& options,
                                JS::SourceText<char16_t>& srcBuf,
+                               JS::OffThreadCompileCallback callback,
+                               void* callbackData);
+bool StartOffThreadParseModule(JSContext* cx,
+                               const JS::ReadOnlyCompileOptions& options,
+                               JS::SourceText<mozilla::Utf8Unit>& srcBuf,
                                JS::OffThreadCompileCallback callback,
                                void* callbackData);
 
@@ -630,6 +636,7 @@ bool StartOffThreadDecodeScript(JSContext* cx,
 bool StartOffThreadDecodeBinAST(JSContext* cx,
                                 const JS::ReadOnlyCompileOptions& options,
                                 const uint8_t* buf, size_t length,
+                                JS::BinASTFormat format,
                                 JS::OffThreadCompileCallback callback,
                                 void* callbackData);
 
@@ -693,8 +700,24 @@ class MOZ_RAII AutoUnlockHelperThreadState : public UnlockGuard<Mutex> {
   }
 };
 
+struct MOZ_RAII AutoSetHelperThreadContext {
+  JSContext* cx;
+  explicit AutoSetHelperThreadContext();
+  ~AutoSetHelperThreadContext() {
+    AutoLockHelperThreadState lock;
+    cx->tempLifoAlloc().releaseAll();
+    if (cx->shouldFreeUnusedMemory()) {
+      cx->tempLifoAlloc().freeAll();
+      cx->setFreeUnusedMemory(false);
+    }
+    cx->clearHelperThread(lock);
+    cx = nullptr;
+  }
+};
+
 struct ParseTask : public mozilla::LinkedListElement<ParseTask>,
-                   public JS::OffThreadToken {
+                   public JS::OffThreadToken,
+                   public RunnableTask {
   ParseTaskKind kind;
   JS::OwningCompileOptions options;
 
@@ -739,22 +762,9 @@ struct ParseTask : public mozilla::LinkedListElement<ParseTask>,
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
     return mallocSizeOf(this) + sizeOfExcludingThis(mallocSizeOf);
   }
-};
 
-struct ScriptParseTask : public ParseTask {
-  JS::SourceText<char16_t> data;
-
-  ScriptParseTask(JSContext* cx, JS::SourceText<char16_t>& srcBuf,
-                  JS::OffThreadCompileCallback callback, void* callbackData);
-  void parse(JSContext* cx) override;
-};
-
-struct ModuleParseTask : public ParseTask {
-  JS::SourceText<char16_t> data;
-
-  ModuleParseTask(JSContext* cx, JS::SourceText<char16_t>& srcBuf,
-                  JS::OffThreadCompileCallback callback, void* callbackData);
-  void parse(JSContext* cx) override;
+  void runTask() override;
+  ThreadType threadType() override { return ThreadType::THREAD_TYPE_PARSE; }
 };
 
 struct ScriptDecodeTask : public ParseTask {
@@ -769,8 +779,10 @@ struct ScriptDecodeTask : public ParseTask {
 
 struct BinASTDecodeTask : public ParseTask {
   mozilla::Range<const uint8_t> data;
+  JS::BinASTFormat format;
 
   BinASTDecodeTask(JSContext* cx, const uint8_t* buf, size_t length,
+                   JS::BinASTFormat format,
                    JS::OffThreadCompileCallback callback, void* callbackData);
   void parse(JSContext* cx) override;
 };
@@ -801,7 +813,7 @@ extern bool OffThreadParsingMustWaitForGC(JSRuntime* rt);
 // GCs after being enqueued. Completed tasks are handled during the sweeping
 // phase by AttachCompressedSourcesTask, which runs in parallel with other GC
 // sweeping tasks.
-class SourceCompressionTask {
+class SourceCompressionTask : public RunnableTask {
   friend struct HelperThread;
   friend class ScriptSource;
 
@@ -827,6 +839,7 @@ class SourceCompressionTask {
       : runtime_(rt),
         majorGCNumber_(rt->gc.majorGCCount()),
         sourceHolder_(source) {}
+  virtual ~SourceCompressionTask() {}
 
   bool runtimeMatches(JSRuntime* runtime) const { return runtime == runtime_; }
   bool shouldStart() const {
@@ -841,8 +854,10 @@ class SourceCompressionTask {
     return sourceHolder_.get()->refs == 1;
   }
 
-  void work();
+  void runTask() override;
   void complete();
+
+  ThreadType threadType() override { return ThreadType::THREAD_TYPE_COMPRESS; }
 
  private:
   struct PerformTaskWork;
@@ -863,7 +878,7 @@ class SourceCompressionTask {
 // The helper thread will call execute() to do the main work. Then, the thread
 // of the JSContext used to create the PromiseHelperTask will call resolve() to
 // resolve promise according to those results.
-struct PromiseHelperTask : OffThreadPromiseTask {
+struct PromiseHelperTask : OffThreadPromiseTask, public RunnableTask {
   PromiseHelperTask(JSContext* cx, Handle<PromiseObject*> promise)
       : OffThreadPromiseTask(cx, promise) {}
 
@@ -876,6 +891,8 @@ struct PromiseHelperTask : OffThreadPromiseTask {
   // Warning: After this function returns, 'this' can be deleted at any time, so
   // the caller must immediately return from the stream callback.
   void executeAndResolveAndDestroy(JSContext* cx);
+  void runTask() override;
+  ThreadType threadType() override { return THREAD_TYPE_PROMISE_TASK; }
 };
 
 } /* namespace js */

@@ -6,6 +6,7 @@
 
 #include "builtin/ModuleObject.h"
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/ScopeExit.h"
 
@@ -16,10 +17,12 @@
 #include "gc/FreeOp.h"
 #include "gc/Policy.h"
 #include "gc/Tracer.h"
+#include "js/Modules.h"  // JS::GetModulePrivate, JS::ModuleDynamicImportHook
 #include "js/PropertySpec.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
+#include "vm/ModuleBuilder.h"       // js::ModuleBuilder
 #include "vm/SelfHosting.h"
 
 #include "vm/JSObject-inl.h"
@@ -79,7 +82,7 @@ static bool ModuleValueGetter(JSContext* cx, unsigned argc, Value* vp) {
 ///////////////////////////////////////////////////////////////////////////
 // ImportEntryObject
 
-/* static */ const Class ImportEntryObject::class_ = {
+/* static */ const JSClass ImportEntryObject::class_ = {
     "ImportEntry", JSCLASS_HAS_RESERVED_SLOTS(ImportEntryObject::SlotCount)};
 
 DEFINE_GETTER_FUNCTIONS(ImportEntryObject, moduleRequest, ModuleRequestSlot)
@@ -151,7 +154,7 @@ ImportEntryObject* ImportEntryObject::create(
 ///////////////////////////////////////////////////////////////////////////
 // ExportEntryObject
 
-/* static */ const Class ExportEntryObject::class_ = {
+/* static */ const JSClass ExportEntryObject::class_ = {
     "ExportEntry", JSCLASS_HAS_RESERVED_SLOTS(ExportEntryObject::SlotCount)};
 
 DEFINE_GETTER_FUNCTIONS(ExportEntryObject, exportName, ExportNameSlot)
@@ -236,7 +239,7 @@ ExportEntryObject* ExportEntryObject::create(
 ///////////////////////////////////////////////////////////////////////////
 // RequestedModuleObject
 
-/* static */ const Class RequestedModuleObject::class_ = {
+/* static */ const JSClass RequestedModuleObject::class_ = {
     "RequestedModule",
     JSCLASS_HAS_RESERVED_SLOTS(RequestedModuleObject::SlotCount)};
 
@@ -316,10 +319,9 @@ void IndirectBindingMap::trace(JSTracer* trc) {
     Binding& b = e.front().value();
     TraceEdge(trc, &b.environment, "module bindings environment");
     TraceEdge(trc, &b.shape, "module bindings shape");
-    jsid bindingName = e.front().key();
-    TraceManuallyBarrieredEdge(trc, &bindingName,
-                               "module bindings binding name");
-    MOZ_ASSERT(bindingName == e.front().key());
+    mozilla::DebugOnly<jsid> prev(e.front().key());
+    TraceEdge(trc, &e.front().mutableKey(), "module bindings binding name");
+    MOZ_ASSERT(e.front().key() == prev);
   }
 }
 
@@ -328,7 +330,7 @@ bool IndirectBindingMap::put(JSContext* cx, HandleId name,
                              HandleId localName) {
   // This object might have been allocated on the background parsing thread in
   // different zone to the final module. Lazily allocate the map so we don't
-  // have to switch its zone when merging compartments.
+  // have to switch its zone when merging realms.
   if (!map_) {
     MOZ_ASSERT(!cx->zone()->createdForHelperThread());
     map_.emplace(cx->zone());
@@ -393,6 +395,8 @@ ModuleNamespaceObject* ModuleNamespaceObject::create(
   SetProxyReservedSlot(object, ExportsSlot, ObjectValue(*exports));
   SetProxyReservedSlot(object, BindingsSlot,
                        PrivateValue(rootedBindings.release()));
+  AddCellMemory(object, sizeof(IndirectBindingMap),
+                MemoryUse::ModuleBindingMap);
 
   return &object->as<ModuleNamespaceObject>();
 }
@@ -410,6 +414,11 @@ IndirectBindingMap& ModuleNamespaceObject::bindings() {
   auto bindings = static_cast<IndirectBindingMap*>(value.toPrivate());
   MOZ_ASSERT(bindings);
   return *bindings;
+}
+
+bool ModuleNamespaceObject::hasBindings() const {
+  // Import bindings may not be present if we hit OOM in initialization.
+  return !GetProxyReservedSlot(this, BindingsSlot).isUndefined();
 }
 
 bool ModuleNamespaceObject::addBinding(JSContext* cx, HandleAtom exportedName,
@@ -638,7 +647,7 @@ bool ModuleNamespaceObject::ProxyHandler::delete_(
 }
 
 bool ModuleNamespaceObject::ProxyHandler::ownPropertyKeys(
-    JSContext* cx, HandleObject proxy, AutoIdVector& props) const {
+    JSContext* cx, HandleObject proxy, MutableHandleIdVector props) const {
   Rooted<ModuleNamespaceObject*> ns(cx, &proxy->as<ModuleNamespaceObject>());
   RootedObject exports(cx, &ns->exports());
   uint32_t count;
@@ -664,13 +673,19 @@ bool ModuleNamespaceObject::ProxyHandler::ownPropertyKeys(
 void ModuleNamespaceObject::ProxyHandler::trace(JSTracer* trc,
                                                 JSObject* proxy) const {
   auto& self = proxy->as<ModuleNamespaceObject>();
-  self.bindings().trace(trc);
+
+  if (self.hasBindings()) {
+    self.bindings().trace(trc);
+  }
 }
 
 void ModuleNamespaceObject::ProxyHandler::finalize(JSFreeOp* fop,
                                                    JSObject* proxy) const {
   auto& self = proxy->as<ModuleNamespaceObject>();
-  js_delete(&self.bindings());
+
+  if (self.hasBindings()) {
+    fop->delete_(proxy, &self.bindings(), MemoryUse::ModuleBindingMap);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -687,7 +702,7 @@ void FunctionDeclaration::trace(JSTracer* trc) {
 ///////////////////////////////////////////////////////////////////////////
 // ModuleObject
 
-/* static */ const ClassOps ModuleObject::classOps_ = {
+/* static */ const JSClassOps ModuleObject::classOps_ = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* enumerate   */
@@ -700,7 +715,7 @@ void FunctionDeclaration::trace(JSTracer* trc) {
     nullptr, /* construct   */
     ModuleObject::trace};
 
-/* static */ const Class ModuleObject::class_ = {
+/* static */ const JSClass ModuleObject::class_ = {
     "Module",
     JSCLASS_HAS_RESERVED_SLOTS(ModuleObject::SlotCount) |
         JSCLASS_BACKGROUND_FINALIZE,
@@ -743,10 +758,10 @@ ModuleObject* ModuleObject::create(JSContext* cx) {
     return nullptr;
   }
 
-  self->initReservedSlot(ImportBindingsSlot, PrivateValue(bindings));
+  InitReservedSlot(self, ImportBindingsSlot, bindings,
+                   MemoryUse::ModuleBindingMap);
 
-  FunctionDeclarationVector* funDecls =
-      cx->new_<FunctionDeclarationVector>(cx->zone());
+  FunctionDeclarationVector* funDecls = cx->new_<FunctionDeclarationVector>();
   if (!funDecls) {
     return nullptr;
   }
@@ -756,14 +771,15 @@ ModuleObject* ModuleObject::create(JSContext* cx) {
 }
 
 /* static */
-void ModuleObject::finalize(js::FreeOp* fop, JSObject* obj) {
+void ModuleObject::finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->maybeOnHelperThread());
   ModuleObject* self = &obj->as<ModuleObject>();
   if (self->hasImportBindings()) {
-    fop->delete_(&self->importBindings());
+    fop->delete_(obj, &self->importBindings(), MemoryUse::ModuleBindingMap);
   }
   if (FunctionDeclarationVector* funDecls = self->functionDeclarations()) {
-    fop->delete_(funDecls);
+    // Not tracked as these may move between zones on merge.
+    fop->deleteUntracked(funDecls);
   }
 }
 
@@ -905,9 +921,9 @@ inline static void AssertModuleScopesMatch(ModuleObject* module) {
       &module->initialEnvironment().enclosingEnvironment()));
 }
 
-void ModuleObject::fixEnvironmentsAfterCompartmentMerge() {
+void ModuleObject::fixEnvironmentsAfterRealmMerge() {
   AssertModuleScopesMatch(this);
-  initialEnvironment().fixEnclosingEnvironmentAfterCompartmentMerge(
+  initialEnvironment().fixEnclosingEnvironmentAfterRealmMerge(
       script()->global());
   AssertModuleScopesMatch(this);
 }
@@ -999,6 +1015,7 @@ bool ModuleObject::instantiateFunctionDeclarations(JSContext* cx,
   }
 #endif
 
+  // |self| initially manages this vector.
   FunctionDeclarationVector* funDecls = self->functionDeclarations();
   if (!funDecls) {
     JS_ReportErrorASCII(
@@ -1024,8 +1041,10 @@ bool ModuleObject::instantiateFunctionDeclarations(JSContext* cx,
     }
   }
 
-  js_delete(funDecls);
+  // Transfer ownership of the vector from |self|, then free the vector, once
+  // its contents are no longer needed.
   self->setReservedSlot(FunctionDeclarationsSlot, UndefinedValue());
+  js_delete(funDecls);
   return true;
 }
 
@@ -1042,8 +1061,10 @@ bool ModuleObject::execute(JSContext* cx, HandleModuleObject self,
   RootedScript script(cx, self->script());
 
   // The top-level script if a module is only ever executed once. Clear the
-  // reference to prevent us keeping this alive unnecessarily.
-  self->setReservedSlot(ScriptSlot, UndefinedValue());
+  // reference at exit to prevent us keeping this alive unnecessarily. This is
+  // kept while executing so it is available to the debugger.
+  auto guardA = mozilla::MakeScopeExit(
+      [&] { self->setReservedSlot(ScriptSlot, UndefinedValue()); });
 
   RootedModuleEnvironmentObject scope(cx, self->environment());
   if (!scope) {
@@ -1392,9 +1413,9 @@ bool ModuleBuilder::processExport(frontend::ParseNode* exportNode) {
     }
 
     case ParseNodeKind::Function: {
-      RootedFunction func(cx_, kid->as<FunctionNode>().funbox()->function());
-      MOZ_ASSERT(!func->isArrow());
-      RootedAtom localName(cx_, func->explicitName());
+      FunctionBox* box = kid->as<FunctionNode>().funbox();
+      MOZ_ASSERT(!box->isArrow());
+      RootedAtom localName(cx_, box->explicitName());
       RootedAtom exportName(
           cx_, isDefault ? cx_->names().default_ : localName.get());
       MOZ_ASSERT_IF(isDefault, localName);
@@ -1458,7 +1479,7 @@ bool ModuleBuilder::processExportObjectBinding(frontend::ListNode* obj) {
 
   for (ParseNode* node : obj->contents()) {
     MOZ_ASSERT(node->isKind(ParseNodeKind::MutateProto) ||
-               node->isKind(ParseNodeKind::Colon) ||
+               node->isKind(ParseNodeKind::PropertyDefinition) ||
                node->isKind(ParseNodeKind::Shorthand) ||
                node->isKind(ParseNodeKind::Spread));
 
@@ -1703,8 +1724,13 @@ JSObject* js::StartDynamicModuleImport(JSContext* cx, HandleScript script,
 
   JS::ModuleDynamicImportHook importHook =
       cx->runtime()->moduleDynamicImportHook;
+
   if (!importHook) {
-    JS_ReportErrorASCII(cx, "Dynamic module import is disabled");
+    // Dynamic import can be disabled by a pref and is not supported in all
+    // contexts (e.g. web workers).
+    JS_ReportErrorASCII(
+        cx,
+        "Dynamic module import is disabled or not supported in this context");
     if (!RejectPromiseWithPendingError(cx, promise)) {
       return nullptr;
     }

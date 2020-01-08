@@ -10,14 +10,19 @@
 #include "vm/JSContext.h"
 
 #include "builtin/Object.h"
+#include "gc/Zone.h"
 #include "jit/JitFrames.h"
 #include "proxy/Proxy.h"
+#include "util/DiagnosticAssertions.h"
 #include "vm/BigIntType.h"
+#include "vm/GlobalObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/Realm.h"
 #include "vm/SymbolType.h"
+
+#include "vm/Activation-inl.h"  // js::Activation::hasWasmExitFP
 
 namespace js {
 
@@ -29,7 +34,16 @@ class ContextChecks {
   JS::Zone* zone() const { return cx->zone(); }
 
  public:
-  explicit ContextChecks(JSContext* cx) : cx(cx) {}
+  explicit ContextChecks(JSContext* cx) : cx(cx) {
+#ifdef DEBUG
+    if (realm()) {
+      GlobalObject* global = realm()->unsafeUnbarrieredMaybeGlobal();
+      if (global) {
+        checkObject(global);
+      }
+    }
+#endif
+  }
 
   /*
    * Set a breakpoint here (break js::ContextChecks::fail) to debug
@@ -68,10 +82,14 @@ class ContextChecks {
 
   void check(JSObject* obj, int argIndex) {
     if (obj) {
-      JS::AssertObjectIsNotGray(obj);
-      MOZ_ASSERT(!js::gc::IsAboutToBeFinalizedUnbarriered(&obj));
+      checkObject(obj);
       check(obj->compartment(), argIndex);
     }
+  }
+
+  void checkObject(JSObject* obj) {
+    JS::AssertObjectIsNotGray(obj);
+    MOZ_ASSERT(!js::gc::IsAboutToBeFinalizedUnbarriered(&obj));
   }
 
   template <typename T>
@@ -302,44 +320,14 @@ inline void JSContext::minorGC(JS::GCReason reason) {
   runtime()->gc.minorGC(reason);
 }
 
-inline void JSContext::setPendingException(JS::HandleValue v) {
-#if defined(NIGHTLY_BUILD)
-  do {
-    // Do not intercept exceptions if we are already
-    // in the exception interceptor. That would lead
-    // to infinite recursion.
-    if (this->runtime()->errorInterception.isExecuting) {
-      break;
-    }
-
-    // Check whether we have an interceptor at all.
-    if (!this->runtime()->errorInterception.interceptor) {
-      break;
-    }
-
-    // Make sure that we do not call the interceptor from within
-    // the interceptor.
-    this->runtime()->errorInterception.isExecuting = true;
-
-    // The interceptor must be infallible.
-    const mozilla::DebugOnly<bool> wasExceptionPending =
-        this->isExceptionPending();
-    this->runtime()->errorInterception.interceptor->interceptError(this, v);
-    MOZ_ASSERT(wasExceptionPending == this->isExceptionPending());
-
-    this->runtime()->errorInterception.isExecuting = false;
-  } while (false);
-#endif  // defined(NIGHTLY_BUILD)
-
-  // overRecursed_ is set after the fact by ReportOverRecursed.
-  this->overRecursed_ = false;
-  this->throwing = true;
-  this->unwrappedException() = v;
-  check(v);
-}
-
 inline bool JSContext::runningWithTrustedPrincipals() {
-  return !realm() || realm()->principals() == runtime()->trustedPrincipals();
+  if (!realm()) {
+    return true;
+  }
+  if (!runtime()->trustedPrincipals()) {
+    return false;
+  }
+  return realm()->principals() == runtime()->trustedPrincipals();
 }
 
 inline void JSContext::enterRealm(JS::Realm* realm) {
@@ -369,7 +357,7 @@ inline void JSContext::setZone(js::Zone* zone,
     return;
   }
 
-  if (isAtomsZone == AtomsZone && helperThread()) {
+  if (isAtomsZone == AtomsZone && isHelperThreadContext()) {
     MOZ_ASSERT(!zone_->wasGCStarted());
     freeLists_ = atomsZoneFreeLists_;
   } else {

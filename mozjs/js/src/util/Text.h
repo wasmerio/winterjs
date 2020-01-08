@@ -10,16 +10,17 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Latin1.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/Utf8.h"
 
-#include <ctype.h>
+#include <algorithm>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
+#include <type_traits>
 
-#include "jsutil.h"
 #include "NamespaceImports.h"
 
 #include "js/Utility.h"
@@ -27,20 +28,6 @@
 #include "vm/Printer.h"
 
 class JSLinearString;
-
-/*
- * Shorthands for ASCII (7-bit) decimal and hex conversion.
- * Manually inline isdigit and isxdigit for performance; MSVC doesn't do this
- * for us.
- */
-#define JS7_ISA2F(c) \
-  ((((((unsigned)(c)) - 'a') <= 5) || (((unsigned)(c)) - 'A') <= 5))
-#define JS7_UNDEC(c) ((c) - '0')
-#define JS7_ISOCT(c) ((((unsigned)(c)) - '0') <= 7)
-#define JS7_UNOCT(c) (JS7_UNDEC(c))
-#define JS7_ISHEX(c) ((c) < 128 && (mozilla::IsAsciiDigit(c) || JS7_ISA2F(c)))
-#define JS7_UNHEX(c) \
-  (unsigned)(mozilla::IsAsciiDigit(c) ? (c) - '0' : 10 + tolower(c) - 'a')
 
 static MOZ_ALWAYS_INLINE size_t js_strlen(const char16_t* s) {
   return std::char_traits<char16_t>::length(s);
@@ -50,11 +37,35 @@ template <typename CharT>
 extern const CharT* js_strchr_limit(const CharT* s, char16_t c,
                                     const CharT* limit);
 
+template <typename CharT>
+static MOZ_ALWAYS_INLINE size_t js_strnlen(const CharT* s, size_t maxlen) {
+  for (size_t i = 0; i < maxlen; ++i) {
+    if (s[i] == '\0') {
+      return i;
+    }
+  }
+  return maxlen;
+}
+
 extern int32_t js_fputs(const char16_t* s, FILE* f);
 
 namespace js {
 
 class StringBuffer;
+
+template <typename CharT>
+constexpr uint8_t AsciiDigitToNumber(CharT c) {
+  using UnsignedCharT = std::make_unsigned_t<CharT>;
+  auto uc = static_cast<UnsignedCharT>(c);
+  return uc - '0';
+}
+
+template <typename CharT>
+static constexpr bool IsAsciiPrintable(CharT c) {
+  using UnsignedCharT = std::make_unsigned_t<CharT>;
+  auto uc = static_cast<UnsignedCharT>(c);
+  return ' ' <= uc && uc <= '~';
+}
 
 template <typename Char1, typename Char2>
 inline bool EqualChars(const Char1* s1, const Char2* s2, size_t len) {
@@ -66,7 +77,7 @@ inline bool EqualChars(const Char1* s1, const Char2* s2, size_t len) {
 template <typename Char1, typename Char2>
 inline int32_t CompareChars(const Char1* s1, size_t len1, const Char2* s2,
                             size_t len2) {
-  size_t n = Min(len1, len2);
+  size_t n = std::min(len1, len2);
   for (size_t i = 0; i < n; i++) {
     if (int32_t cmp = s1[i] - s2[i]) {
       return cmp;
@@ -88,9 +99,44 @@ static inline const CharT* SkipSpace(const CharT* s, const CharT* end) {
   return s;
 }
 
+extern UniqueChars DuplicateStringToArena(arena_id_t destArenaId, JSContext* cx,
+                                          const char* s);
+
+extern UniqueChars DuplicateStringToArena(arena_id_t destArenaId, JSContext* cx,
+                                          const char* s, size_t n);
+
+extern UniqueTwoByteChars DuplicateStringToArena(arena_id_t destArenaId,
+                                                 JSContext* cx,
+                                                 const char16_t* s);
+
+extern UniqueTwoByteChars DuplicateStringToArena(arena_id_t destArenaId,
+                                                 JSContext* cx,
+                                                 const char16_t* s, size_t n);
+
+/*
+ * These variants do not report OOMs, you must arrange for OOMs to be reported
+ * yourself.
+ */
+extern UniqueChars DuplicateStringToArena(arena_id_t destArenaId,
+                                          const char* s);
+
+extern UniqueChars DuplicateStringToArena(arena_id_t destArenaId, const char* s,
+                                          size_t n);
+
+extern UniqueTwoByteChars DuplicateStringToArena(arena_id_t destArenaId,
+                                                 const char16_t* s);
+
+extern UniqueTwoByteChars DuplicateStringToArena(arena_id_t destArenaId,
+                                                 const char16_t* s, size_t n);
+
 extern UniqueChars DuplicateString(JSContext* cx, const char* s);
 
+extern UniqueChars DuplicateString(JSContext* cx, const char* s, size_t n);
+
 extern UniqueTwoByteChars DuplicateString(JSContext* cx, const char16_t* s);
+
+extern UniqueTwoByteChars DuplicateString(JSContext* cx, const char16_t* s,
+                                          size_t n);
 
 /*
  * These variants do not report OOMs, you must arrange for OOMs to be reported
@@ -116,16 +162,15 @@ extern char16_t* InflateString(JSContext* cx, const char* bytes, size_t length);
  * enough for 'srclen' char16_t code units. The buffer is NOT null-terminated.
  */
 inline void CopyAndInflateChars(char16_t* dst, const char* src, size_t srclen) {
-  for (size_t i = 0; i < srclen; i++) {
-    dst[i] = (unsigned char)src[i];
-  }
+  mozilla::ConvertLatin1toUtf16(mozilla::MakeSpan(src, srclen),
+                                mozilla::MakeSpan(dst, srclen));
 }
 
 inline void CopyAndInflateChars(char16_t* dst, const JS::Latin1Char* src,
                                 size_t srclen) {
-  for (size_t i = 0; i < srclen; i++) {
-    dst[i] = src[i];
-  }
+  mozilla::ConvertLatin1toUtf16(
+      mozilla::AsChars(mozilla::MakeSpan(src, srclen)),
+      mozilla::MakeSpan(dst, srclen));
 }
 
 /*

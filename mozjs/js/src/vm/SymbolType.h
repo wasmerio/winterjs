@@ -34,7 +34,7 @@ namespace JS {
 class Symbol : public js::gc::TenuredCell {
  private:
   // User description of symbol. Also meets gc::Cell requirements.
-  JSAtom* description_;
+  js::GCPtrAtom description_;
 
   SymbolCode code_;
 
@@ -49,7 +49,7 @@ class Symbol : public js::gc::TenuredCell {
   void operator=(const Symbol&) = delete;
 
   static Symbol* newInternal(JSContext* cx, SymbolCode code,
-                             js::HashNumber hash, JSAtom* description);
+                             js::HashNumber hash, js::HandleAtom description);
 
   static void staticAsserts() {
     static_assert(uint32_t(SymbolCode::WellKnownAPILimit) ==
@@ -62,7 +62,8 @@ class Symbol : public js::gc::TenuredCell {
   }
 
  public:
-  static Symbol* new_(JSContext* cx, SymbolCode code, JSString* description);
+  static Symbol* new_(JSContext* cx, SymbolCode code,
+                      js::HandleString description);
   static Symbol* for_(JSContext* cx, js::HandleString description);
 
   JSAtom* description() const { return description_; }
@@ -84,11 +85,9 @@ class Symbol : public js::gc::TenuredCell {
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Symbol;
   inline void traceChildren(JSTracer* trc) {
-    if (description_) {
-      js::TraceManuallyBarrieredEdge(trc, &description_, "description");
-    }
+    TraceNullableEdge(trc, &description_, "symbol description");
   }
-  inline void finalize(js::FreeOp*) {}
+  inline void finalize(JSFreeOp*) {}
 
   static MOZ_ALWAYS_INLINE void writeBarrierPre(Symbol* thing) {
     if (thing && !thing->isWellKnownSymbol()) {
@@ -137,7 +136,7 @@ struct HashSymbolsByDescription {
  * enumerating the symbol registry, querying its size, etc.
  */
 class SymbolRegistry
-    : public GCHashSet<ReadBarrieredSymbol, HashSymbolsByDescription,
+    : public GCHashSet<WeakHeapPtrSymbol, HashSymbolsByDescription,
                        SystemAllocPolicy> {
  public:
   SymbolRegistry() {}

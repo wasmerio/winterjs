@@ -36,9 +36,7 @@ FunctionEmitter::FunctionEmitter(BytecodeEmitter* bce, FunctionBox* funbox,
       fun_(bce_->cx, funbox_->function()),
       name_(bce_->cx, fun_->explicitName()),
       syntaxKind_(syntaxKind),
-      isHoisted_(isHoisted) {
-  MOZ_ASSERT_IF(fun_->isInterpretedLazy(), fun_->lazyScript());
-}
+      isHoisted_(isHoisted) {}
 
 bool FunctionEmitter::interpretedCommon() {
   // Mark as singletons any function which will only be executed once, or
@@ -114,7 +112,9 @@ bool FunctionEmitter::emitLazy() {
 
   funbox_->setEnclosingScopeForInnerLazyFunction(bce_->innermostScope());
   if (bce_->emittingRunOnceLambda) {
-    fun_->lazyScript()->setTreatAsRunOnce();
+    // NOTE: The 'funbox' is only partially initialized so we defer checking
+    // the shouldSuppressRunOnce condition until delazification.
+    fun_->baseScript()->setTreatAsRunOnce();
   }
 
   if (!emitFunction()) {
@@ -220,7 +220,10 @@ bool FunctionEmitter::emitAsmJSModule() {
 
 bool FunctionEmitter::emitFunction() {
   // Make the function object a literal in the outer script's pool.
-  unsigned index = bce_->objectList.add(funbox_);
+  uint32_t index;
+  if (!bce_->perScriptData().gcThingList().append(funbox_, &index)) {
+    return false;
+  }
 
   //                [stack]
 
@@ -420,7 +423,9 @@ bool FunctionScriptEmitter::prepareForParameters() {
     // parameter exprs, any unobservable environment ops (like pushing the
     // call object, setting '.this', etc) need to go in the prologue, else it
     // messes up breakpoint tests.
-    bce_->switchToMain();
+    if (!bce_->switchToMain()) {
+      return false;
+    }
   }
 
   if (!functionEmitterScope_->enterFunction(bce_, funbox_)) {
@@ -433,7 +438,9 @@ bool FunctionScriptEmitter::prepareForParameters() {
   }
 
   if (!funbox_->hasParameterExprs) {
-    bce_->switchToMain();
+    if (!bce_->switchToMain()) {
+      return false;
+    }
   }
 
   // Parameters can't reuse the reject try-catch block from the function body,
@@ -475,11 +482,12 @@ bool FunctionScriptEmitter::prepareForBody() {
     }
   }
 
-  if (funbox_->function()->kind() ==
-      JSFunction::FunctionKind::ClassConstructor) {
-    if (!emitInitializeInstanceFields()) {
-      //            [stack]
-      return false;
+  if (funbox_->kind() == FunctionFlags::FunctionKind::ClassConstructor) {
+    if (!funbox_->isDerivedClassConstructor()) {
+      if (!bce_->emitInitializeInstanceFields()) {
+        //          [stack]
+        return false;
+      }
     }
   }
 
@@ -497,13 +505,10 @@ bool FunctionScriptEmitter::emitAsyncFunctionRejectPrologue() {
 
 bool FunctionScriptEmitter::emitAsyncFunctionRejectEpilogue() {
   if (!rejectTryCatch_->emitCatch()) {
-    return false;
-  }
-
-  if (!bce_->emit1(JSOP_EXCEPTION)) {
     //              [stack] EXC
     return false;
   }
+
   if (!bce_->emitGetDotGeneratorInInnermostScope()) {
     //              [stack] EXC GEN
     return false;
@@ -521,7 +526,7 @@ bool FunctionScriptEmitter::emitAsyncFunctionRejectEpilogue() {
     //              [stack] GEN
     return false;
   }
-  if (!bce_->emit1(JSOP_FINALYIELDRVAL)) {
+  if (!bce_->emitYieldOp(JSOP_FINALYIELDRVAL)) {
     //              [stack]
     return false;
   }
@@ -591,60 +596,6 @@ bool FunctionScriptEmitter::emitExtraBodyVarScope() {
 
     if (!bce_->emit1(JSOP_POP)) {
       //            [stack]
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool FunctionScriptEmitter::emitInitializeInstanceFields() {
-  MOZ_ASSERT(bce_->fieldInitializers_.valid);
-  size_t numFields = bce_->fieldInitializers_.numFieldInitializers;
-
-  if (numFields == 0) {
-    return true;
-  }
-
-  if (!bce_->emitGetName(bce_->cx->names().dotInitializers)) {
-    //              [stack] ARRAY
-    return false;
-  }
-
-  for (size_t fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
-    if (fieldIndex < numFields - 1) {
-      // We DUP to keep the array around (it is consumed in the bytecode below)
-      // for next iterations of this loop, except for the last iteration, which
-      // avoids an extra POP at the end of the loop.
-      if (!bce_->emit1(JSOP_DUP)) {
-        //          [stack] ARRAY ARRAY
-        return false;
-      }
-    }
-
-    if (!bce_->emitNumberOp(fieldIndex)) {
-      //            [stack] ARRAY? ARRAY INDEX
-      return false;
-    }
-
-    if (!bce_->emit1(JSOP_CALLELEM)) {
-      //            [stack] ARRAY? FUNC
-      return false;
-    }
-
-    // This is guaranteed to run after super(), so we don't need TDZ checks.
-    if (!bce_->emitGetName(bce_->cx->names().dotThis)) {
-      //            [stack] ARRAY? FUNC THIS
-      return false;
-    }
-
-    if (!bce_->emitCall(JSOP_CALL_IGNORES_RV, 0)) {
-      //            [stack] ARRAY? RVAL
-      return false;
-    }
-
-    if (!bce_->emit1(JSOP_POP)) {
-      //            [stack] ARRAY?
       return false;
     }
   }
@@ -771,7 +722,7 @@ bool FunctionScriptEmitter::emitEndBody() {
   // Always end the script with a JSOP_RETRVAL. Some other parts of the
   // codebase depend on this opcode,
   // e.g. InterpreterRegs::setToEndOfScript.
-  if (!bce_->emit1(JSOP_RETRVAL)) {
+  if (!bce_->emitReturnRval()) {
     //              [stack]
     return false;
   }

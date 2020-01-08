@@ -25,13 +25,6 @@
 #  define JS_USE_LINK_REGISTER
 #endif
 
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) || \
-    defined(JS_CODEGEN_ARM64)
-// JS_SMALL_BRANCH means the range on a branch instruction
-// is smaller than the whole address space
-#  define JS_SMALL_BRANCH
-#endif
-
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
     defined(JS_CODEGEN_ARM64)
 // JS_CODELABEL_LINKMODE gives labels additional metadata
@@ -382,39 +375,6 @@ enum class RelocationKind {
   JITCODE
 };
 
-class RepatchLabel {
-  static const int32_t INVALID_OFFSET = 0xC0000000;
-  int32_t offset_ : 31;
-  uint32_t bound_ : 1;
-
- public:
-  RepatchLabel() : offset_(INVALID_OFFSET), bound_(0) {}
-
-  void use(uint32_t newOffset) {
-    MOZ_ASSERT(offset_ == INVALID_OFFSET);
-    MOZ_ASSERT(newOffset != (uint32_t)INVALID_OFFSET);
-    offset_ = newOffset;
-  }
-  bool bound() const { return bound_; }
-  void bind(int32_t dest) {
-    MOZ_ASSERT(!bound_);
-    MOZ_ASSERT(dest != INVALID_OFFSET);
-    offset_ = dest;
-    bound_ = true;
-  }
-  int32_t target() {
-    MOZ_ASSERT(bound());
-    int32_t ret = offset_;
-    offset_ = INVALID_OFFSET;
-    return ret;
-  }
-  int32_t offset() {
-    MOZ_ASSERT(!bound());
-    return offset_;
-  }
-  bool used() const { return !bound() && offset_ != (INVALID_OFFSET); }
-};
-
 class CodeOffset {
   size_t offset_;
 
@@ -483,148 +443,25 @@ class CodeLabel {
 
 typedef Vector<CodeLabel, 0, SystemAllocPolicy> CodeLabelVector;
 
-// Location of a jump or label in a generated JitCode block, relative to the
-// start of the block.
-
-class CodeOffsetJump {
-  size_t offset_ = 0;
-
-#ifdef JS_SMALL_BRANCH
-  size_t jumpTableIndex_ = 0;
-#endif
-
- public:
-#ifdef JS_SMALL_BRANCH
-  CodeOffsetJump(size_t offset, size_t jumpTableIndex)
-      : offset_(offset), jumpTableIndex_(jumpTableIndex) {}
-  size_t jumpTableIndex() const { return jumpTableIndex_; }
-#else
-  explicit CodeOffsetJump(size_t offset) : offset_(offset) {}
-#endif
-
-  CodeOffsetJump() = default;
-
-  size_t offset() const { return offset_; }
-  void fixup(MacroAssembler* masm);
-};
-
-// Absolute location of a jump or a label in some generated JitCode block.
-// Can also encode a CodeOffset{Jump,Label}, such that the offset is initially
-// set and the absolute location later filled in after the final JitCode is
-// allocated.
-
-class CodeLocationJump {
-  uint8_t* raw_;
-#ifdef DEBUG
-  enum State { Uninitialized, Absolute, Relative };
-  State state_;
-  void setUninitialized() { state_ = Uninitialized; }
-  void setAbsolute() { state_ = Absolute; }
-  void setRelative() { state_ = Relative; }
-#else
-  void setUninitialized() const {}
-  void setAbsolute() const {}
-  void setRelative() const {}
-#endif
-
-#ifdef JS_SMALL_BRANCH
-  uint8_t* jumpTableEntry_;
-#endif
-
- public:
-  CodeLocationJump() {
-    raw_ = nullptr;
-    setUninitialized();
-#ifdef JS_SMALL_BRANCH
-    jumpTableEntry_ = (uint8_t*)uintptr_t(0xdeadab1e);
-#endif
-  }
-  CodeLocationJump(JitCode* code, CodeOffsetJump base) {
-    *this = base;
-    repoint(code);
-  }
-
-  void operator=(CodeOffsetJump base) {
-    raw_ = (uint8_t*)base.offset();
-    setRelative();
-#ifdef JS_SMALL_BRANCH
-    jumpTableEntry_ = (uint8_t*)base.jumpTableIndex();
-#endif
-  }
-
-  void repoint(JitCode* code, MacroAssembler* masm = nullptr);
-
-  uint8_t* raw() const {
-    MOZ_ASSERT(state_ == Absolute);
-    return raw_;
-  }
-  uint8_t* offset() const {
-    MOZ_ASSERT(state_ == Relative);
-    return raw_;
-  }
-
-#ifdef JS_SMALL_BRANCH
-  uint8_t* jumpTableEntry() const {
-    MOZ_ASSERT(state_ == Absolute);
-    return jumpTableEntry_;
-  }
-#endif
-};
-
 class CodeLocationLabel {
-  uint8_t* raw_;
-#ifdef DEBUG
-  enum State { Uninitialized, Absolute, Relative };
-  State state_;
-  void setUninitialized() { state_ = Uninitialized; }
-  void setAbsolute() { state_ = Absolute; }
-  void setRelative() { state_ = Relative; }
-#else
-  void setUninitialized() const {}
-  void setAbsolute() const {}
-  void setRelative() const {}
-#endif
+  uint8_t* raw_ = nullptr;
 
  public:
-  CodeLocationLabel() {
-    raw_ = nullptr;
-    setUninitialized();
-  }
   CodeLocationLabel(JitCode* code, CodeOffset base) {
-    *this = base;
-    repoint(code);
+    MOZ_ASSERT(base.offset() < code->instructionsSize());
+    raw_ = code->raw() + base.offset();
   }
-  explicit CodeLocationLabel(JitCode* code) {
-    raw_ = code->raw();
-    setAbsolute();
-  }
+  explicit CodeLocationLabel(JitCode* code) { raw_ = code->raw(); }
   explicit CodeLocationLabel(uint8_t* raw) {
+    MOZ_ASSERT(raw);
     raw_ = raw;
-    setAbsolute();
   }
 
-  void operator=(CodeOffset base) {
-    raw_ = (uint8_t*)base.offset();
-    setRelative();
-  }
   ptrdiff_t operator-(const CodeLocationLabel& other) {
     return raw_ - other.raw_;
   }
 
-  void repoint(JitCode* code);
-
-#ifdef DEBUG
-  bool isSet() const { return state_ != Uninitialized; }
-#endif
-
-  uint8_t* raw() const {
-    MOZ_ASSERT(state_ == Absolute);
-    return raw_;
-  }
-  uint8_t* offset() const {
-    MOZ_ASSERT(state_ == Relative);
-    return raw_;
-  }
+  uint8_t* raw() const { return raw_; }
 };
 
 }  // namespace jit
@@ -693,21 +530,6 @@ struct GlobalAccess {
 
 typedef Vector<GlobalAccess, 0, SystemAllocPolicy> GlobalAccessVector;
 
-// A CallFarJump records the offset of a jump that needs to be patched to a
-// call at the end of the module when all calls have been emitted.
-
-struct CallFarJump {
-  uint32_t funcIndex;
-  jit::CodeOffset jump;
-
-  CallFarJump(uint32_t funcIndex, jit::CodeOffset jump)
-      : funcIndex(funcIndex), jump(jump) {}
-
-  void offsetBy(size_t delta) { jump.offsetBy(delta); }
-};
-
-typedef Vector<CallFarJump, 0, SystemAllocPolicy> CallFarJumpVector;
-
 }  // namespace wasm
 
 namespace jit {
@@ -717,7 +539,6 @@ class AssemblerShared {
   wasm::CallSiteVector callSites_;
   wasm::CallSiteTargetVector callSiteTargets_;
   wasm::TrapSiteVectorArray trapSites_;
-  wasm::CallFarJumpVector callFarJumps_;
   wasm::SymbolicAccessVector symbolicAccesses_;
 
  protected:
@@ -756,9 +577,6 @@ class AssemblerShared {
   void append(wasm::Trap trap, wasm::TrapSite site) {
     enoughMemory_ &= trapSites_[trap].append(site);
   }
-  void append(wasm::CallFarJump jmp) {
-    enoughMemory_ &= callFarJumps_.append(jmp);
-  }
   void append(const wasm::MemoryAccessDesc& access, uint32_t pcOffset) {
     appendOutOfBoundsTrap(access.trapOffset(), pcOffset);
   }
@@ -773,7 +591,6 @@ class AssemblerShared {
   wasm::CallSiteVector& callSites() { return callSites_; }
   wasm::CallSiteTargetVector& callSiteTargets() { return callSiteTargets_; }
   wasm::TrapSiteVectorArray& trapSites() { return trapSites_; }
-  wasm::CallFarJumpVector& callFarJumps() { return callFarJumps_; }
   wasm::SymbolicAccessVector& symbolicAccesses() { return symbolicAccesses_; }
 };
 

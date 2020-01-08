@@ -315,12 +315,13 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
 
   void jump(JitCode* code) { branch(code); }
 
-  void jump(TrampolinePtr code) {
-    auto target = ImmPtr(code.value);
+  void jump(ImmPtr ptr) {
     BufferOffset bo = m_buffer.nextOffset();
-    addPendingJump(bo, target, RelocationKind::HARDCODED);
-    ma_jump(target);
+    addPendingJump(bo, ptr, RelocationKind::HARDCODED);
+    ma_jump(ptr);
   }
+
+  void jump(TrampolinePtr code) { jump(ImmPtr(code.value)); }
 
   void negl(Register reg) { ma_negu(reg, reg); }
 
@@ -346,7 +347,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
     unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
   }
   void unboxValue(const ValueOperand& src, AnyRegister dest, JSValueType);
-  void unboxPrivate(const ValueOperand& src, Register dest);
 
   void unboxGCThingForPreBarrierTrampoline(const Address& src, Register dest) {
     unboxObject(src, dest);
@@ -429,8 +429,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
 
  public:
   void moveValue(const Value& val, Register type, Register data);
-
-  CodeOffsetJump jumpWithPatch(RepatchLabel* label);
 
   void loadUnboxedValue(Address address, MIRType type, AnyRegister dest) {
     if (dest.isFloat()) {
@@ -518,6 +516,11 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
     loadValue(dest.toAddress(), val);
   }
   void loadValue(const BaseIndex& addr, ValueOperand val);
+
+  void loadUnalignedValue(const Address& src, ValueOperand dest) {
+    loadValue(src, dest);
+  }
+
   void tagValue(JSValueType type, Register payload, ValueOperand dest);
 
   void pushValue(ValueOperand val);
@@ -601,6 +604,10 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
     load32(LowWord(address), dest.low);
     load32(HighWord(address), dest.high);
   }
+  void load64(const BaseIndex& address, Register64 dest) {
+    load32(LowWord(address), dest.low);
+    load32(HighWord(address), dest.high);
+  }
 
   void loadPtr(const Address& address, Register dest);
   void loadPtr(const BaseIndex& src, Register dest);
@@ -643,8 +650,16 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
     store32(src.low, Address(address.base, address.offset + LOW_32_OFFSET));
     store32(src.high, Address(address.base, address.offset + HIGH_32_OFFSET));
   }
+  void store64(Register64 src, const BaseIndex& address) {
+    store32(src.low, Address(address.base, address.offset + LOW_32_OFFSET));
+    store32(src.high, Address(address.base, address.offset + HIGH_32_OFFSET));
+  }
 
   void store64(Imm64 imm, Address address) {
+    store32(imm.low(), Address(address.base, address.offset + LOW_32_OFFSET));
+    store32(imm.hi(), Address(address.base, address.offset + HIGH_32_OFFSET));
+  }
+  void store64(Imm64 imm, const BaseIndex& address) {
     store32(imm.low(), Address(address.base, address.offset + LOW_32_OFFSET));
     store32(imm.hi(), Address(address.base, address.offset + HIGH_32_OFFSET));
   }
@@ -705,8 +720,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
   Condition ma_cmp64(Condition cond, Register64 lhs, Imm64 val, Register dest);
 
  public:
-  CodeOffset labelForPatch() { return CodeOffset(nextOffset().getOffset()); }
-
   void lea(Operand addr, Register dest) {
     ma_addu(dest, addr.baseReg(), Imm32(addr.disp()));
   }

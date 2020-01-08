@@ -15,9 +15,6 @@ def extract_tarball(tarball):
     if not os.path.exists(tarball):
         raise Exception("Tarball not found at %s" % tarball)
 
-    if os.path.exists(TARGET):
-        shutil.rmtree(TARGET)
-
     with tempfile.TemporaryDirectory() as directory:
         subprocess.check_call(["tar", "-xjf", tarball, "-C", directory])
 
@@ -27,36 +24,19 @@ def extract_tarball(tarball):
                             ", ".join(contents))
         subdirectory = contents[0]
 
-        shutil.copytree(os.path.join(directory, subdirectory), TARGET)
+        subprocess.check_call([
+            "rsync",
+            "--delete-excluded",
+            "--filter=merge etc/filters.txt",
+            "--prune-empty-dirs",
+            "--quiet",
+            "--recursive",
+            os.path.join(directory, subdirectory, ""),
+            os.path.join(TARGET, ""),
+        ])
 
     subprocess.check_call(["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL)
     subprocess.check_call(["git", "commit", "-m", "Update SpiderMonkey"], stdout=subprocess.DEVNULL)
-
-def remove_cargo_tomls():
-    print("Removing all Cargo.toml files.")
-
-    problem_dirs = [
-        os.path.join("mozjs", "build"),
-        os.path.join("mozjs", "js"),
-        os.path.join("mozjs", "python"),
-        os.path.join("mozjs", "testing"),
-    ]
-    exclude = [
-        os.path.join("mozjs", "js", "src", "frontend", "binast"),
-    ]
-    for dir in problem_dirs:
-        for root, dirs, files in os.walk(dir):
-            if root in exclude:
-                continue
-            for file in files:
-                if file == "Cargo.toml":
-                    subprocess.check_call(["git", "rm", os.path.join(root, file)])
-
-def remove_third_party_rust():
-    print("Removing all third-party vendored Rust code.")
-    for root, dirs, _ in os.walk(os.path.join("mozjs", "third_party", "rust")):
-        for dir in dirs:
-            subprocess.check_call(["git", "rm", "-rf", os.path.join(root, dir)])
 
 def apply_patches():
     print("Applying patches.")
@@ -106,8 +86,6 @@ def main(args):
     if extract:
         extract_tarball(os.path.abspath(extract))
     if patch:
-        remove_cargo_tomls()
-        remove_third_party_rust()
         apply_patches()
     if configure:
         generate_configure()

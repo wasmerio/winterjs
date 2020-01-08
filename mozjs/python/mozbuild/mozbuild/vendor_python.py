@@ -31,7 +31,8 @@ class VendorPython(MozbuildObject):
         self._activate_virtualenv()
         pip_compile = os.path.join(self.virtualenv_manager.bin_path, 'pip-compile')
         if not os.path.exists(pip_compile):
-            path = os.path.normpath(os.path.join(self.topsrcdir, 'third_party', 'python', 'pip-tools'))
+            path = os.path.normpath(os.path.join(
+                self.topsrcdir, 'third_party', 'python', 'pip-tools'))
             self.virtualenv_manager.install_pip_package(path, vendored=True)
         spec = os.path.join(vendor_dir, 'requirements.in')
         requirements = os.path.join(vendor_dir, 'requirements.txt')
@@ -61,7 +62,7 @@ class VendorPython(MozbuildObject):
                 if with_windows_wheel:
                     # This is hardcoded to CPython 2.7 for win64, which is good
                     # enough for what we need currently. If we need psutil for Python 3
-                    # in the future that coudl be added here as well.
+                    # in the future that could be added here as well.
                     self.virtualenv_manager._run_pip([
                         'download',
                         '--dest', tmp,

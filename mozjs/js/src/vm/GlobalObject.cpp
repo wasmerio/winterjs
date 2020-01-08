@@ -1,3 +1,4 @@
+
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * vim: set ts=8 sts=2 et sw=2 tw=80:
  * This Source Code Form is subject to the terms of the Mozilla Public
@@ -14,6 +15,16 @@
 #include "builtin/BigInt.h"
 #include "builtin/DataViewObject.h"
 #include "builtin/Eval.h"
+#ifdef JS_HAS_INTL_API
+#  include "builtin/intl/Collator.h"
+#  include "builtin/intl/DateTimeFormat.h"
+#  include "builtin/intl/ListFormat.h"
+#  include "builtin/intl/Locale.h"
+#  include "builtin/intl/NumberFormat.h"
+#  include "builtin/intl/PluralRules.h"
+#  include "builtin/intl/RelativeTimeFormat.h"
+#endif
+#include "builtin/FinalizationGroupObject.h"
 #include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
 #include "builtin/Object.h"
@@ -21,20 +32,33 @@
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/Stream.h"
+#include "builtin/streams/QueueingStrategies.h"  // js::{ByteLength,Count}QueueingStrategy
+#include "builtin/streams/ReadableStream.h"  // js::ReadableStream
+#include "builtin/streams/ReadableStreamController.h"  // js::Readable{StreamDefault,ByteStream}Controller
+#include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStreamDefaultReader
+#include "builtin/streams/WritableStream.h"        // js::WritableStream
+#include "builtin/streams/WritableStreamDefaultController.h"  // js::WritableStreamDefaultController
+#include "builtin/streams/WritableStreamDefaultWriter.h"  // js::WritableStreamDefaultWriter
 #include "builtin/Symbol.h"
 #include "builtin/TypedObject.h"
 #include "builtin/WeakMapObject.h"
 #include "builtin/WeakSetObject.h"
+#include "debugger/DebugAPI.h"
 #include "gc/FreeOp.h"
 #include "js/ProtoKey.h"
-#include "vm/Debugger.h"
+#include "vm/AsyncFunction.h"
+#include "vm/AsyncIteration.h"
+#include "vm/DateObject.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/ErrorObject.h"
+#include "vm/GeneratorObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
 #include "vm/PIC.h"
 #include "vm/RegExpStatics.h"
 #include "vm/RegExpStaticsObject.h"
 
+#include "gc/FreeOp-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -42,40 +66,27 @@
 
 using namespace js;
 
-struct ProtoTableEntry {
-  const Class* clasp;
-  ClassInitializerOp init;
-};
-
 namespace js {
 
-extern const Class IntlClass;
-extern const Class JSONClass;
-extern const Class MathClass;
-extern const Class WebAssemblyClass;
-
-#define DECLARE_PROTOTYPE_CLASS_INIT(name, init, clasp) \
-  extern JSObject* init(JSContext* cx, Handle<GlobalObject*> global);
-JS_FOR_EACH_PROTOTYPE(DECLARE_PROTOTYPE_CLASS_INIT)
-#undef DECLARE_PROTOTYPE_CLASS_INIT
+extern const JSClass IntlClass;
+extern const JSClass JSONClass;
+extern const JSClass MathClass;
+extern const JSClass ReflectClass;
+extern const JSClass WebAssemblyClass;
 
 }  // namespace js
 
-JSObject* js::InitViaClassSpec(JSContext* cx, Handle<GlobalObject*> global) {
-  MOZ_CRASH("InitViaClassSpec() should not be called.");
-}
-
-static const ProtoTableEntry protoTable[JSProto_LIMIT] = {
-#define INIT_FUNC(name, init, clasp) {clasp, init},
-#define INIT_FUNC_DUMMY(name, init, clasp) {nullptr, nullptr},
+static const JSClass* const protoTable[JSProto_LIMIT] = {
+#define INIT_FUNC(name, clasp) clasp,
+#define INIT_FUNC_DUMMY(name, clasp) nullptr,
     JS_FOR_PROTOTYPES(INIT_FUNC, INIT_FUNC_DUMMY)
 #undef INIT_FUNC_DUMMY
 #undef INIT_FUNC
 };
 
-JS_FRIEND_API const js::Class* js::ProtoKeyToClass(JSProtoKey key) {
+JS_FRIEND_API const JSClass* js::ProtoKeyToClass(JSProtoKey key) {
   MOZ_ASSERT(key < JSProto_LIMIT);
-  return protoTable[key].clasp;
+  return protoTable[key];
 }
 
 // This method is not in the header file to avoid having to include
@@ -102,13 +113,27 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
     case JSProto_CountQueuingStrategy:
       return !cx->realm()->creationOptions().getStreamsEnabled();
 
-    case JSProto_BigInt:
-      return !cx->realm()->creationOptions().getBigIntEnabled();
+    case JSProto_WritableStream:
+    case JSProto_WritableStreamDefaultController:
+    case JSProto_WritableStreamDefaultWriter: {
+      const auto& realmOptions = cx->realm()->creationOptions();
+      return !realmOptions.getStreamsEnabled() ||
+             !realmOptions.getWritableStreamsEnabled();
+    }
 
     // Return true if the given constructor has been disabled at run-time.
     case JSProto_Atomics:
     case JSProto_SharedArrayBuffer:
       return !cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+
+    case JSProto_FinalizationGroup:
+      return !cx->realm()->creationOptions().getWeakRefsEnabled();
+
+#ifndef NIGHTLY_BUILD
+    case JSProto_AggregateError:
+      return true;
+#endif
+
     default:
       return false;
   }
@@ -130,7 +155,7 @@ bool GlobalObject::resolveConstructor(JSContext* cx,
     return resolveOffThreadConstructor(cx, global, key);
   }
 
-  MOZ_ASSERT(!cx->helperThread());
+  MOZ_ASSERT(!cx->isHelperThreadContext());
 
   // Prohibit collection of allocation metadata. Metadata builders shouldn't
   // need to observe lazily-constructed prototype objects coming into
@@ -143,19 +168,10 @@ bool GlobalObject::resolveConstructor(JSContext* cx,
   // all scripts to execute, even in debuggee compartments that are paused.
   AutoSuppressDebuggeeNoExecuteChecks suppressNX(cx);
 
-  // There are two different kinds of initialization hooks. One of them is
-  // the class js::InitFoo hook, defined in a JSProtoKey-keyed table at the
-  // top of this file. The other lives in the ClassSpec for classes that
-  // define it. Classes may use one or the other, but not both.
-  ClassInitializerOp init = protoTable[key].init;
-  if (init == InitViaClassSpec) {
-    init = nullptr;
-  }
-
   // Some classes can be disabled at compile time, others at run time;
-  // if a feature is compile-time disabled, init and clasp are both null.
-  const Class* clasp = ProtoKeyToClass(key);
-  if ((!init && !clasp) || skipDeselectedConstructor(cx, key)) {
+  // if a feature is compile-time disabled, clasp is null.
+  const JSClass* clasp = ProtoKeyToClass(key);
+  if (!clasp || skipDeselectedConstructor(cx, key)) {
     if (mode == IfClassIsDisabled::Throw) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_CONSTRUCTOR_DISABLED,
@@ -165,26 +181,10 @@ bool GlobalObject::resolveConstructor(JSContext* cx,
     return true;
   }
 
-  // Some classes have no init routine, which means that they're disabled at
-  // compile-time. We could try to enforce that callers never pass such keys
-  // to resolveConstructor, but that would cramp the style of consumers like
-  // GlobalObject::initStandardClasses that want to just carpet-bomb-call
-  // resolveConstructor with every JSProtoKey. So it's easier to just handle
-  // it here.
-  bool haveSpec = clasp && clasp->specDefined();
-  if (!init && !haveSpec) {
+  // Class spec must have a constructor defined.
+  if (!clasp->specDefined()) {
     return true;
   }
-
-  // See if there's an old-style initialization hook.
-  if (init) {
-    MOZ_ASSERT(!haveSpec);
-    return init(cx, global);
-  }
-
-  //
-  // Ok, we're doing it with a class spec.
-  //
 
   bool isObjectOrFunction = key == JSProto_Function || key == JSProto_Object;
 
@@ -342,7 +342,7 @@ JSObject* GlobalObject::createObject(JSContext* cx,
     return createOffThreadObject(cx, global, slot);
   }
 
-  MOZ_ASSERT(!cx->helperThread());
+  MOZ_ASSERT(!cx->isHelperThreadContext());
   if (!init(cx, global)) {
     return nullptr;
   }
@@ -350,7 +350,7 @@ JSObject* GlobalObject::createObject(JSContext* cx,
   return &global->getSlot(slot).toObject();
 }
 
-const Class GlobalObject::OffThreadPlaceholderObject::class_ = {
+const JSClass GlobalObject::OffThreadPlaceholderObject::class_ = {
     "off-thread-prototype-placeholder", JSCLASS_HAS_RESERVED_SLOTS(1)};
 
 /* static */ GlobalObject::OffThreadPlaceholderObject*
@@ -381,7 +381,9 @@ bool GlobalObject::resolveOffThreadConstructor(JSContext* cx,
 
   MOZ_ASSERT(global->zone()->createdForHelperThread());
   MOZ_ASSERT(key == JSProto_Object || key == JSProto_Function ||
-             key == JSProto_Array || key == JSProto_RegExp);
+             key == JSProto_Array || key == JSProto_RegExp ||
+             key == JSProto_AsyncFunction || key == JSProto_GeneratorFunction ||
+             key == JSProto_AsyncGeneratorFunction);
 
   Rooted<OffThreadPlaceholderObject*> placeholder(cx);
   placeholder = OffThreadPlaceholderObject::New(cx, prototypeSlot(key));
@@ -418,10 +420,8 @@ JSObject* GlobalObject::createOffThreadObject(JSContext* cx,
   // compartment.
 
   MOZ_ASSERT(global->zone()->createdForHelperThread());
-  MOZ_ASSERT(slot == GENERATOR_FUNCTION_PROTO || slot == ASYNC_FUNCTION_PROTO ||
-             slot == ASYNC_GENERATOR || slot == MODULE_PROTO ||
-             slot == IMPORT_ENTRY_PROTO || slot == EXPORT_ENTRY_PROTO ||
-             slot == REQUESTED_MODULE_PROTO);
+  MOZ_ASSERT(slot == MODULE_PROTO || slot == IMPORT_ENTRY_PROTO ||
+             slot == EXPORT_ENTRY_PROTO || slot == REQUESTED_MODULE_PROTO);
 
   auto placeholder = OffThreadPlaceholderObject::New(cx, slot);
   if (!placeholder) {
@@ -501,10 +501,8 @@ JSObject* GlobalObject::getOrCreateThrowTypeError(
   }
   MOZ_ASSERT(lengthResult);
 
-  // Non-standard: Also change "name" to non-configurable. ECMAScript defines
-  // %ThrowTypeError% as an anonymous function, i.e. it shouldn't actually
-  // get an own "name" property. To be consistent with other built-in,
-  // anonymous functions, we don't delete %ThrowTypeError%'s "name" property.
+  // The "name" property of %ThrowTypeError% is non-configurable, adjust
+  // the default property attributes accordingly.
   RootedId nameId(cx, NameToId(cx->names().name));
   ObjectOpResult nameResult;
   if (!NativeDefineProperty(cx, throwTypeError, nameId, nonConfigurableDesc,
@@ -517,7 +515,8 @@ JSObject* GlobalObject::getOrCreateThrowTypeError(
   return throwTypeError;
 }
 
-GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
+GlobalObject* GlobalObject::createInternal(JSContext* cx,
+                                           const JSClass* clasp) {
   MOZ_ASSERT(clasp->flags & JSCLASS_IS_GLOBAL);
   MOZ_ASSERT(clasp->isTrace(JS_GlobalObjectTraceHook));
 
@@ -540,7 +539,6 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
   if (!lexical) {
     return nullptr;
   }
-  global->setReservedSlot(LEXICAL_ENVIRONMENT, ObjectValue(*lexical));
 
   Rooted<GlobalScope*> emptyGlobalScope(
       cx, GlobalScope::createEmpty(cx, ScopeKind::Global));
@@ -550,7 +548,7 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
   global->setReservedSlot(EMPTY_GLOBAL_SCOPE,
                           PrivateGCThingValue(emptyGlobalScope));
 
-  cx->realm()->initGlobal(*global);
+  cx->realm()->initGlobal(*global, *lexical);
 
   if (!JSObject::setQualifiedVarObj(cx, global)) {
     return nullptr;
@@ -563,7 +561,7 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx, const Class* clasp) {
 }
 
 /* static */
-GlobalObject* GlobalObject::new_(JSContext* cx, const Class* clasp,
+GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
                                  JSPrincipals* principals,
                                  JS::OnNewGlobalHookOption hookOption,
                                  const JS::RealmOptions& options) {
@@ -603,9 +601,9 @@ GlobalObject* GlobalObject::new_(JSContext* cx, const Class* clasp,
 }
 
 LexicalEnvironmentObject& GlobalObject::lexicalEnvironment() const {
-  return getReservedSlot(LEXICAL_ENVIRONMENT)
-      .toObject()
-      .as<LexicalEnvironmentObject>();
+  // The lexical environment is marked when marking the global, so we don't need
+  // a read barrier here because we know the global is live.
+  return *realm()->unbarrieredLexicalEnvironment();
 }
 
 GlobalScope& GlobalObject::emptyGlobalScope() const {
@@ -667,7 +665,7 @@ bool GlobalObject::initStandardClasses(JSContext* cx,
 static bool InitBareBuiltinCtor(JSContext* cx, Handle<GlobalObject*> global,
                                 JSProtoKey protoKey) {
   MOZ_ASSERT(cx->runtime()->isSelfHostingGlobal(global));
-  const Class* clasp = ProtoKeyToClass(protoKey);
+  const JSClass* clasp = ProtoKeyToClass(protoKey);
   RootedObject proto(cx);
   proto = clasp->specCreatePrototypeHook()(cx, protoKey);
   if (!proto) {
@@ -728,7 +726,7 @@ bool GlobalObject::initSelfHostingBuiltins(JSContext* cx,
          InitBareBuiltinCtor(cx, global, JSProto_TypedArray) &&
          InitBareBuiltinCtor(cx, global, JSProto_Uint8Array) &&
          InitBareBuiltinCtor(cx, global, JSProto_Int32Array) &&
-         InitBareSymbolCtor(cx, global) &&
+         InitBareBuiltinCtor(cx, global, JSProto_Symbol) &&
          DefineFunctions(cx, global, builtins, AsIntrinsic);
 }
 
@@ -773,7 +771,7 @@ JSFunction* GlobalObject::createConstructor(JSContext* cx, Native ctor,
   return fun;
 }
 
-static NativeObject* CreateBlankProto(JSContext* cx, const Class* clasp,
+static NativeObject* CreateBlankProto(JSContext* cx, const JSClass* clasp,
                                       HandleObject proto) {
   MOZ_ASSERT(clasp != &JSFunction::class_);
 
@@ -789,7 +787,7 @@ static NativeObject* CreateBlankProto(JSContext* cx, const Class* clasp,
 /* static */
 NativeObject* GlobalObject::createBlankPrototype(JSContext* cx,
                                                  Handle<GlobalObject*> global,
-                                                 const Class* clasp) {
+                                                 const JSClass* clasp) {
   RootedObject objectProto(cx, getOrCreateObjectPrototype(cx, global));
   if (!objectProto) {
     return nullptr;
@@ -800,7 +798,7 @@ NativeObject* GlobalObject::createBlankPrototype(JSContext* cx,
 
 /* static */
 NativeObject* GlobalObject::createBlankPrototypeInheriting(JSContext* cx,
-                                                           const Class* clasp,
+                                                           const JSClass* clasp,
                                                            HandleObject proto) {
   return CreateBlankProto(cx, clasp, proto);
 }
@@ -836,55 +834,6 @@ bool js::DefineToStringTag(JSContext* cx, HandleObject obj, JSAtom* tag) {
                          SYMBOL_TO_JSID(cx->wellKnownSymbols().toStringTag));
   RootedValue tagString(cx, StringValue(tag));
   return DefineDataProperty(cx, obj, toStringTagId, tagString, JSPROP_READONLY);
-}
-
-static void GlobalDebuggees_finalize(FreeOp* fop, JSObject* obj) {
-  MOZ_ASSERT(fop->maybeOnHelperThread());
-  fop->delete_(
-      (GlobalObject::DebuggerVector*)obj->as<NativeObject>().getPrivate());
-}
-
-static const ClassOps GlobalDebuggees_classOps = {nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  nullptr,
-                                                  GlobalDebuggees_finalize};
-
-static const Class GlobalDebuggees_class = {
-    "GlobalDebuggee", JSCLASS_HAS_PRIVATE | JSCLASS_BACKGROUND_FINALIZE,
-    &GlobalDebuggees_classOps};
-
-GlobalObject::DebuggerVector* GlobalObject::getDebuggers() const {
-  Value debuggers = getReservedSlot(DEBUGGERS);
-  if (debuggers.isUndefined()) {
-    return nullptr;
-  }
-  MOZ_ASSERT(debuggers.toObject().getClass() == &GlobalDebuggees_class);
-  return (DebuggerVector*)debuggers.toObject().as<NativeObject>().getPrivate();
-}
-
-/* static */ GlobalObject::DebuggerVector* GlobalObject::getOrCreateDebuggers(
-    JSContext* cx, Handle<GlobalObject*> global) {
-  cx->check(global);
-  DebuggerVector* debuggers = global->getDebuggers();
-  if (debuggers) {
-    return debuggers;
-  }
-
-  NativeObject* obj =
-      NewNativeObjectWithGivenProto(cx, &GlobalDebuggees_class, nullptr);
-  if (!obj) {
-    return nullptr;
-  }
-  debuggers = cx->new_<DebuggerVector>();
-  if (!debuggers) {
-    return nullptr;
-  }
-  obj->setPrivate(debuggers);
-  global->setReservedSlot(DEBUGGERS, ObjectValue(*obj));
-  return debuggers;
 }
 
 /* static */

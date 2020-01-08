@@ -8,7 +8,7 @@ separators (always use forward slashes).
 Also contains a few additional utilities not found in :py:mod:`os.path`.
 '''
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, unicode_literals
 
 import ctypes
 import posixpath
@@ -23,13 +23,35 @@ def normsep(path):
     :py:const:`os.sep` is.
     '''
     if os.sep != '/':
-        path = path.replace(os.sep, '/')
+        # Python 2 is happy to do things like byte_string.replace(u'foo',
+        # u'bar'), but not Python 3.
+        if isinstance(path, bytes):
+            path = path.replace(os.sep.encode('ascii'), b'/')
+        else:
+            path = path.replace(os.sep, '/')
     if os.altsep and os.altsep != '/':
-        path = path.replace(os.altsep, '/')
+        if isinstance(path, bytes):
+            path = path.replace(os.altsep.encode('ascii'), b'/')
+        else:
+            path = path.replace(os.altsep, '/')
+    return path
+
+
+def cargo_workaround(path):
+    unc = '//?/'
+    if path.startswith(unc):
+        return path[len(unc):]
     return path
 
 
 def relpath(path, start):
+    path = normsep(path)
+    start = normsep(start)
+    if sys.platform == 'win32':
+        # os.path.relpath can't handle relative paths between UNC and non-UNC
+        # paths, so strip a //?/ prefix if present (bug 1581248)
+        path = cargo_workaround(path)
+        start = cargo_workaround(start)
     rel = normsep(os.path.relpath(path, start))
     return '' if rel == '.' else rel
 
@@ -93,6 +115,13 @@ def basedir(path, bases):
 
 
 re_cache = {}
+# Python versions < 3.7 return r'\/' for re.escape('/').
+if re.escape('/') == '/':
+    MATCH_STAR_STAR_RE = re.compile(r'(^|/)\\\*\\\*/')
+    MATCH_STAR_STAR_END_RE = re.compile(r'(^|/)\\\*\\\*$')
+else:
+    MATCH_STAR_STAR_RE = re.compile(r'(^|\\\/)\\\*\\\*\\\/')
+    MATCH_STAR_STAR_END_RE = re.compile(r'(^|\\\/)\\\*\\\*$')
 
 
 def match(path, pattern):
@@ -121,8 +150,8 @@ def match(path, pattern):
         return True
     if pattern not in re_cache:
         p = re.escape(pattern)
-        p = re.sub(r'(^|\\\/)\\\*\\\*\\\/', r'\1(?:.+/)?', p)
-        p = re.sub(r'(^|\\\/)\\\*\\\*$', r'(?:\1.+)?', p)
+        p = MATCH_STAR_STAR_RE.sub(r'\1(?:.+/)?', p)
+        p = MATCH_STAR_STAR_END_RE.sub(r'(?:\1.+)?', p)
         p = p.replace(r'\*', '[^/]*') + '(?:/.*)?$'
         re_cache[pattern] = re.compile(p)
     return re_cache[pattern].match(path) is not None

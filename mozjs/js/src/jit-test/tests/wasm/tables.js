@@ -5,37 +5,73 @@ const Memory = WebAssembly.Memory;
 const LinkError = WebAssembly.LinkError;
 const RuntimeError = WebAssembly.RuntimeError;
 
+const badFuncRefError = /can only pass WebAssembly exported functions to funcref/;
+
+function assertSegmentFitError(f) {
+    if (wasmBulkMemSupported()) {
+        assertErrorMessage(f, RuntimeError, /out of bounds/);
+    } else {
+        assertErrorMessage(f, LinkError, /segment does not fit/);
+    }
+}
+
 var callee = i => `(func $f${i} (result i32) (i32.const ${i}))`;
 
-wasmFailValidateText(`(module (elem (i32.const 0) $f0) ${callee(0)})`, /elem segment requires a table section/);
+wasmFailValidateText(`(module (elem (i32.const 0) $f0) ${callee(0)})`, /elem segment requires a table/);
 wasmFailValidateText(`(module (table 10 funcref) (elem (i32.const 0) 0))`, /table element out of range/);
 wasmFailValidateText(`(module (table 10 funcref) (func) (elem (i32.const 0) 0 1))`, /table element out of range/);
 wasmFailValidateText(`(module (table 10 funcref) (func) (elem (f32.const 0) 0) ${callee(0)})`, /type mismatch/);
 
-assertErrorMessage(() => wasmEvalText(`(module (table 10 funcref) (elem (i32.const 10) $f0) ${callee(0)})`), LinkError, /elem segment does not fit/);
-assertErrorMessage(() => wasmEvalText(`(module (table 10 funcref) (elem (i32.const 8) $f0 $f0 $f0) ${callee(0)})`), LinkError, /elem segment does not fit/);
-assertErrorMessage(() => wasmEvalText(`(module (table 0 funcref) (func) (elem (i32.const 0x10001)))`), LinkError, /elem segment does not fit/);
+assertSegmentFitError(() => wasmEvalText(`(module (table 10 funcref) (elem (i32.const 10) $f0) ${callee(0)})`));
+assertSegmentFitError(() => wasmEvalText(`(module (table 10 funcref) (elem (i32.const 8) $f0 $f0 $f0) ${callee(0)})`));
+assertSegmentFitError(() => wasmEvalText(`(module (table 0 funcref) (func) (elem (i32.const 0x10001)))`));
 
-assertErrorMessage(() => wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (get_global 0) $f0) ${callee(0)})`, {globals:{a:10}}), LinkError, /elem segment does not fit/);
-assertErrorMessage(() => wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (get_global 0) $f0 $f0 $f0) ${callee(0)})`, {globals:{a:8}}), LinkError, /elem segment does not fit/);
+assertSegmentFitError(() => wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (global.get 0) $f0) ${callee(0)})`, {globals:{a:10}}));
+assertSegmentFitError(() => wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (global.get 0) $f0 $f0 $f0) ${callee(0)})`, {globals:{a:8}}));
 
 assertEq(new Module(wasmTextToBinary(`(module (table 10 funcref) (elem (i32.const 1) $f0 $f0) (elem (i32.const 0) $f0) ${callee(0)})`)) instanceof Module, true);
 assertEq(new Module(wasmTextToBinary(`(module (table 10 funcref) (elem (i32.const 1) $f0 $f0) (elem (i32.const 2) $f0) ${callee(0)})`)) instanceof Module, true);
-wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (i32.const 1) $f0 $f0) (elem (get_global 0) $f0) ${callee(0)})`, {globals:{a:0}});
-wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (get_global 0) $f0 $f0) (elem (i32.const 2) $f0) ${callee(0)})`, {globals:{a:1}});
+wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (i32.const 1) $f0 $f0) (elem (global.get 0) $f0) ${callee(0)})`, {globals:{a:0}});
+wasmEvalText(`(module (table 10 funcref) (import "globals" "a" (global i32)) (elem (global.get 0) $f0 $f0) (elem (i32.const 2) $f0) ${callee(0)})`, {globals:{a:1}});
+
+// Explicit table index in a couple of ways, note this requires us to talk about the table type also.
+assertEq(new Module(wasmTextToBinary(`(module
+                                        (table 10 funcref)
+                                        (table 10 funcref)
+                                        (elem 1 (i32.const 1) func $f0 $f0)
+                                        ${callee(0)})`)) instanceof Module, true);
+assertEq(new Module(wasmTextToBinary(`(module
+                                        (table 10 funcref)
+                                        (table 10 funcref)
+                                        (elem (table 1) (i32.const 1) func $f0 $f0)
+                                        ${callee(0)})`)) instanceof Module, true);
+
+// With "funcref" rather than "func".
+assertEq(new Module(wasmTextToBinary(`(module
+                                        (table 10 funcref)
+                                        (table 10 funcref)
+                                        (elem (table 1) (i32.const 1) funcref (ref.func $f0) (ref.func $f0))
+                                        ${callee(0)})`)) instanceof Module, true);
+
+// Syntax for the offset, ditto.
+assertEq(new Module(wasmTextToBinary(`(module
+                                        (table 10 funcref)
+                                        (table 10 funcref)
+                                        (elem 1 (offset (i32.const 1)) func $f0 $f0)
+                                        ${callee(0)})`)) instanceof Module, true);
 
 var m = new Module(wasmTextToBinary(`
     (module
         (import "globals" "table" (table 10 funcref))
         (import "globals" "a" (global i32))
-        (elem (get_global 0) $f0 $f0)
+        (elem (global.get 0) $f0 $f0)
         ${callee(0)})
 `));
 var tbl = new Table({initial:50, element:"funcref"});
 assertEq(new Instance(m, {globals:{a:20, table:tbl}}) instanceof Instance, true);
-assertErrorMessage(() => new Instance(m, {globals:{a:50, table:tbl}}), LinkError, /elem segment does not fit/);
+assertSegmentFitError(() => new Instance(m, {globals:{a:50, table:tbl}}));
 
-var caller = `(type $v2i (func (result i32))) (func $call (param $i i32) (result i32) (call_indirect $v2i (get_local $i))) (export "call" $call)`
+var caller = `(type $v2i (func (result i32))) (func $call (param $i i32) (result i32) (call_indirect $v2i (local.get $i))) (export "call" $call)`
 var callee = i => `(func $f${i} (type $v2i) (i32.const ${i}))`;
 
 var call = wasmEvalText(`(module (table 10 funcref) ${callee(0)} ${caller})`).exports.call;
@@ -120,6 +156,11 @@ assertEq(e4.call(0), 42);
 assertErrorMessage(() => e4.call(1), RuntimeError, /indirect call signature mismatch/);
 assertEq(e4.call(2), 13);
 
+var asmjsFun = (function() { "use asm"; function f() {} return f })();
+assertEq(isAsmJSFunction(asmjsFun), isAsmJSCompilationAvailable());
+assertErrorMessage(() => tbl.set(0, asmjsFun), TypeError, badFuncRefError);
+assertErrorMessage(() => tbl.grow(1, asmjsFun), TypeError, badFuncRefError);
+
 var m = new Module(wasmTextToBinary(`(module
     (type $i2i (func (param i32) (result i32)))
     (import "a" "mem" (memory 1))
@@ -130,11 +171,11 @@ var m = new Module(wasmTextToBinary(`(module
             (call $imp)
             (i32.add
                 (i32.load (i32.const 0))
-                (if i32 (i32.eqz (get_local $i))
+                (if i32 (i32.eqz (local.get $i))
                     (then (i32.const 0))
                     (else
-                        (set_local $i (i32.sub (get_local $i) (i32.const 1)))
-                        (call_indirect $i2i (get_local $i) (get_local $i)))))))
+                        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+                        (call_indirect $i2i (local.get $i) (local.get $i)))))))
     (export "call" $call)
 )`));
 var failTime = false;
@@ -164,7 +205,7 @@ var call = wasmEvalText(`(module
     (func $a (type $v2i1) (i32.const 0))
     (func $b (type $v2i2) (i32.const 1))
     (func $c (type $i2v))
-    (func $call (param i32) (result i32) (call_indirect $v2i1 (get_local 0)))
+    (func $call (param i32) (result i32) (call_indirect $v2i1 (local.get 0)))
     (export "call" $call)
 )`).exports.call;
 assertEq(call(0), 0);
@@ -180,15 +221,15 @@ var call = wasmEvalText(`(module
     (type $F (func (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)))
     (type $G (func (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)))
     (table funcref (elem $a $b $c $d $e $f $g))
-    (func $a (type $A) (get_local 7))
-    (func $b (type $B) (get_local 8))
-    (func $c (type $C) (get_local 9))
-    (func $d (type $D) (get_local 10))
-    (func $e (type $E) (get_local 11))
-    (func $f (type $F) (get_local 12))
-    (func $g (type $G) (get_local 13))
+    (func $a (type $A) (local.get 7))
+    (func $b (type $B) (local.get 8))
+    (func $c (type $C) (local.get 9))
+    (func $d (type $D) (local.get 10))
+    (func $e (type $E) (local.get 11))
+    (func $f (type $F) (local.get 12))
+    (func $g (type $G) (local.get 13))
     (func $call (param i32) (result i32)
-        (call_indirect $A (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 42) (get_local 0)))
+        (call_indirect $A (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 42) (local.get 0)))
     (export "call" $call)
 )`).exports.call;
 assertEq(call(0), 42);
@@ -223,7 +264,7 @@ assertEq(tbl.get(0).foo, 42);
             (import "a" "t" (table 3 funcref))
             (import "a" "m" (memory 1))
             (type $v2i (func (result i32)))
-            (func $call (param $i i32) (result i32) (i32.add (call_indirect $v2i (get_local $i)) (memory.size)))
+            (func $call (param $i i32) (result i32) (i32.add (call_indirect $v2i (local.get $i)) (memory.size)))
             (export "call" $call))
     `)), {a:{t:g.tbl,m:g.mem}}).exports.call;
 
@@ -245,13 +286,14 @@ assertEq(tbl.get(0).foo, 42);
                                0x00,                   // Limits: Min only
                                0x01,                   // Limits: Min
                                0x09,                   // Elements section
-                               0x07,                   // Section size
+                               0x08,                   // Section size
                                0x01,                   // One element segment
                                flag,                   // Flag should be 2, or > 2 if invalid
                                tblindex,               // Table index must be 0, or > 0 if invalid
                                0x41,                   // Init expr: i32.const
                                0x00,                   // Init expr: zero (payload)
                                0x0b,                   // Init expr: end
+                               0x00,                   // Extern kind: Function
                                0x00]);                 // Zero functions
     }
 
@@ -259,9 +301,9 @@ assertEq(tbl.get(0).foo, 42);
     new WebAssembly.Module(makeIt(0x02, 0x00));
 
     // Should fail because the kind is unknown
-    assertErrorMessage(() => new WebAssembly.Module(makeIt(0x03, 0x00)),
+    assertErrorMessage(() => new WebAssembly.Module(makeIt(0x08, 0x00)),
                        WebAssembly.CompileError,
-                       /invalid elem initializer-kind/);
+                       /invalid elem segment flags field/);
 
     // Should fail because the table index is invalid
     assertErrorMessage(() => new WebAssembly.Module(makeIt(0x02, 0x01)),

@@ -11,6 +11,7 @@
 
 #include "jit/JitFrames.h"
 #include "jit/JSJitFrameIter.h"
+#include "js/UniquePtr.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/JSFunction.h"
 #include "vm/Stack.h"
@@ -18,10 +19,19 @@
 namespace js {
 namespace jit {
 
+// RematerializedFrame: An optimized frame that has been rematerialized with
+// values read out of Snapshots.
 //
-// An optimized frame that has been rematerialized with values read out of
-// Snapshots.
-//
+// If the Debugger API tries to inspect or modify an IonMonkey frame, much of
+// the information it expects to find in a frame is missing: function calls may
+// have been inlined, variables may have been optimized out, and so on. So when
+// this happens, SpiderMonkey builds one or more Rematerialized frames from the
+// IonMonkey frame, using the snapshot metadata built by Ion to reconstruct the
+// missing parts. The Rematerialized frames are now the authority on the state
+// of those frames, and the Ion frame is ignored: stack iterators ignore the Ion
+// frame, producing the Rematerialized frames in their stead; and when control
+// returns to the Ion frame, we pop it, rebuild Baseline frames from the
+// Rematerialized frames, and resume execution in Baseline.
 class RematerializedFrame {
   // See DebugScopes::updateLiveScopes.
   bool prevUpToDate_;
@@ -69,15 +79,15 @@ class RematerializedFrame {
                                   InlineFrameIterator& iter,
                                   MaybeReadFallback& fallback);
 
+  // RematerializedFrame are allocated on non-GC heap, so use GCVector and
+  // UniquePtr to ensure they are traced and cleaned up correctly.
+  using RematerializedFrameVector = GCVector<UniquePtr<RematerializedFrame>>;
+
   // Rematerialize all remaining frames pointed to by |iter| into |frames|
   // in older-to-younger order, e.g., frames[0] is the oldest frame.
   static MOZ_MUST_USE bool RematerializeInlineFrames(
       JSContext* cx, uint8_t* top, InlineFrameIterator& iter,
-      MaybeReadFallback& fallback, GCVector<RematerializedFrame*>& frames);
-
-  // Free a vector of RematerializedFrames; takes care to call the
-  // destructor. Also clears the vector.
-  static void FreeInVector(GCVector<RematerializedFrame*>& frames);
+      MaybeReadFallback& fallback, RematerializedFrameVector& frames);
 
   bool prevUpToDate() const { return prevUpToDate_; }
   void setPrevUpToDate() { prevUpToDate_ = true; }
@@ -85,10 +95,7 @@ class RematerializedFrame {
 
   bool isDebuggee() const { return isDebuggee_; }
   void setIsDebuggee() { isDebuggee_ = true; }
-  void unsetIsDebuggee() {
-    MOZ_ASSERT(!script()->isDebuggee());
-    isDebuggee_ = false;
-  }
+  inline void unsetIsDebuggee();
 
   uint8_t* top() const { return top_; }
   JSScript* outerScript() const {
@@ -129,9 +136,9 @@ class RematerializedFrame {
     return *argsObj_;
   }
 
-  bool isFunctionFrame() const { return !!script_->functionNonDelazifying(); }
+  bool isFunctionFrame() const { return script_->isFunction(); }
   bool isGlobalFrame() const { return script_->isGlobalCode(); }
-  bool isModuleFrame() const { return script_->module(); }
+  bool isModuleFrame() const { return script_->isModule(); }
 
   JSScript* script() const { return script_; }
   JSFunction* callee() const {
@@ -200,18 +207,5 @@ class RematerializedFrame {
 
 }  // namespace jit
 }  // namespace js
-
-namespace JS {
-
-template <>
-struct MapTypeToRootKind<js::jit::RematerializedFrame*> {
-  static const RootKind kind = RootKind::Traceable;
-};
-
-template <>
-struct GCPolicy<js::jit::RematerializedFrame*>
-    : public NonGCPointerPolicy<js::jit::RematerializedFrame*> {};
-
-}  // namespace JS
 
 #endif  // jit_RematerializedFrame_h

@@ -12,6 +12,7 @@ See the adjacent README.txt for more details.
 from __future__ import print_function
 
 import os
+import shlex
 import sys
 import tempfile
 import textwrap
@@ -118,6 +119,8 @@ def parse_args():
                           'considered slow (default %default).')
     harness_og.add_option('-a', '--args', dest='shell_args', default='',
                           help='Extra args to pass to the JS shell.')
+    harness_og.add_option('--feature-args', dest='feature_args', default='',
+                          help='Extra args to pass to the JS shell even when feature-testing.')
     harness_og.add_option('--jitflags', dest='jitflags', default='none',
                           type='string',
                           help='IonMonkey option combinations. One of all,'
@@ -252,7 +255,7 @@ def parse_args():
     if options.rr:
         debugger_prefix = ['rr', 'record']
 
-    js_cmd_args = options.shell_args.split()
+    js_cmd_args = shlex.split(options.shell_args) + shlex.split(options.feature_args)
     if options.jorendb:
         options.passthrough = True
         options.hide_progress = True
@@ -402,17 +405,29 @@ def load_wpt_tests(xul_tester, requested_paths, excluded_paths, update_manifest=
 
         return os.path.join(wpt, os.path.dirname(test_path), script)
 
-    return [
-        RefTestCase(
-            wpt,
-            test_path,
-            extra_helper_paths=extra_helper_paths + [resolve(test_path, s) for s in test.scripts],
-            wpt=test
-        )
-        for test_path, test in (
-            (os.path.relpath(test.path, wpt), test) for test in loader.tests["testharness"]
-        )
-    ]
+    tests = []
+    for test in loader.tests["testharness"]:
+        test_path = os.path.relpath(test.path, wpt)
+        scripts = [resolve(test_path, s) for s in test.scripts]
+        extra_helper_paths_for_test = extra_helper_paths + scripts
+
+        # We must create at least one test with the default options, along with
+        # one test for each option given in a test-also annotation.
+        options = [None]
+        for m in test.itermeta():
+            if m.has_key("test-also"):  # NOQA: W601
+                options += m.get("test-also").split()
+        for option in options:
+            test_case = RefTestCase(
+                wpt,
+                test_path,
+                extra_helper_paths=extra_helper_paths_for_test[:],
+                wpt=test
+            )
+            if option:
+                test_case.options.append(option)
+            tests.append(test_case)
+    return tests
 
 
 def load_tests(options, requested_paths, excluded_paths):
@@ -430,9 +445,10 @@ def load_tests(options, requested_paths, excluded_paths):
             xul_info = manifest.XULInfo.create(options.js_shell)
         else:
             xul_abi, xul_os, xul_debug = options.xul_info_src.split(r':')
-            xul_debug = xul_debug.lower() is 'true'
+            xul_debug = xul_debug.lower() == 'true'
             xul_info = manifest.XULInfo(xul_abi, xul_os, xul_debug)
-        xul_tester = manifest.XULInfoTester(xul_info, options.js_shell)
+        feature_args = shlex.split(options.feature_args)
+        xul_tester = manifest.XULInfoTester(xul_info, options.js_shell, feature_args)
 
     test_dir = dirname(abspath(__file__))
     path_options = PathOptions(test_dir, requested_paths, excluded_paths)

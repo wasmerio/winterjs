@@ -1,3 +1,0 @@
-CONFIGURE_SUBST_FILES = [
-    'file',
-]

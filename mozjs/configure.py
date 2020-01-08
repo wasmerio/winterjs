@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 import codecs
 import itertools
@@ -10,10 +10,12 @@ import logging
 import os
 import sys
 import textwrap
+from collections import Iterable
 
 
 base_dir = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(base_dir, 'python', 'mozbuild'))
+sys.path.insert(0, os.path.join(base_dir, 'third_party', 'python', 'six'))
 from mozbuild.configure import (
     ConfigureSandbox,
     TRACE,
@@ -22,15 +24,21 @@ from mozbuild.pythonutil import iter_modules_in_path
 from mozbuild.backend.configenvironment import PartialConfigEnvironment
 from mozbuild.util import (
     indented_repr,
-    encode,
 )
 import mozpack.path as mozpath
+import six
 
 
 def main(argv):
     config = {}
 
     sandbox = ConfigureSandbox(config, os.environ, argv)
+
+    clobber_file = 'CLOBBER'
+    if not os.path.exists(clobber_file):
+        # Simply touch the file.
+        with open(clobber_file, 'a'):
+            pass
 
     if os.environ.get('MOZ_CONFIGURE_TRACE'):
         sandbox._logger.setLevel(TRACE)
@@ -41,6 +49,27 @@ def main(argv):
         return 0
 
     return config_status(config)
+
+
+def check_unicode(obj):
+    '''Recursively check that all strings in the object are unicode strings.'''
+    if isinstance(obj, dict):
+        result = True
+        for k, v in six.iteritems(obj):
+            if not check_unicode(k):
+                print("%s key is not unicode." % k, file=sys.stderr)
+                result = False
+            elif not check_unicode(v):
+                print("%s value is not unicode." % k, file=sys.stderr)
+                result = False
+        return result
+    if isinstance(obj, bytes):
+        return False
+    if isinstance(obj, six.text_type):
+        return True
+    if isinstance(obj, Iterable):
+        return all(check_unicode(o) for o in obj)
+    return True
 
 
 def config_status(config):
@@ -57,35 +86,35 @@ def config_status(config):
 
     sanitized_config = {}
     sanitized_config['substs'] = {
-        k: sanitized_bools(v) for k, v in config.iteritems()
+        k: sanitized_bools(v) for k, v in six.iteritems(config)
         if k not in ('DEFINES', 'non_global_defines', 'TOPSRCDIR', 'TOPOBJDIR',
                      'CONFIG_STATUS_DEPS')
     }
     sanitized_config['defines'] = {
-        k: sanitized_bools(v) for k, v in config['DEFINES'].iteritems()
+        k: sanitized_bools(v) for k, v in six.iteritems(config['DEFINES'])
     }
     sanitized_config['non_global_defines'] = config['non_global_defines']
     sanitized_config['topsrcdir'] = config['TOPSRCDIR']
     sanitized_config['topobjdir'] = config['TOPOBJDIR']
     sanitized_config['mozconfig'] = config.get('MOZCONFIG')
 
+    if not check_unicode(sanitized_config):
+        print("Configuration should be all unicode.", file=sys.stderr)
+        print("Please file a bug for the above.", file=sys.stderr)
+        sys.exit(1)
+
     # Create config.status. Eventually, we'll want to just do the work it does
     # here, when we're able to skip configure tests/use cached results/not rely
     # on autoconf.
     logging.getLogger('moz.configure').info('Creating config.status')
-    encoding = 'mbcs' if sys.platform == 'win32' else 'utf-8'
-    with codecs.open('config.status', 'w', encoding) as fh:
+    with codecs.open('config.status', 'w', 'utf-8') as fh:
         fh.write(textwrap.dedent('''\
             #!%(python)s
-            # coding=%(encoding)s
+            # coding=utf-8
             from __future__ import unicode_literals
-            from mozbuild.util import encode
-            encoding = '%(encoding)s'
-        ''') % {'python': config['PYTHON'], 'encoding': encoding})
-        # A lot of the build backend code is currently expecting byte
-        # strings and breaks in subtle ways with unicode strings. (bug 1296508)
-        for k, v in sanitized_config.iteritems():
-            fh.write('%s = encode(%s, encoding)\n' % (k, indented_repr(v)))
+        ''') % {'python': config['PYTHON']})
+        for k, v in six.iteritems(sanitized_config):
+            fh.write('%s = %s\n' % (k, indented_repr(v)))
         fh.write("__all__ = ['topobjdir', 'topsrcdir', 'defines', "
                  "'non_global_defines', 'substs', 'mozconfig']")
 
@@ -119,12 +148,21 @@ def config_status(config):
         # Some values in sanitized_config also have more complex types, such as
         # EnumString, which using when calling config_status would currently
         # break the build, as well as making it inconsistent with re-running
-        # config.status. Fortunately, EnumString derives from unicode, so it's
-        # covered by converting unicode strings.
-
-        # A lot of the build backend code is currently expecting byte strings
-        # and breaks in subtle ways with unicode strings.
-        return config_status(args=[], **encode(sanitized_config, encoding))
+        # config.status, for which they are normalized to plain strings via
+        # indented_repr. Likewise for non-dict non-string iterables being
+        # converted to lists.
+        def normalize(obj):
+            if isinstance(obj, dict):
+                return {
+                    k: normalize(v)
+                    for k, v in six.iteritems(obj)
+                }
+            if isinstance(obj, six.text_type):
+                return six.text_type(obj)
+            if isinstance(obj, Iterable):
+                return [normalize(o) for o in obj]
+            return obj
+        return config_status(args=[], **normalize(sanitized_config))
     return 0
 
 

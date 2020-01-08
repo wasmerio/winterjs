@@ -5,7 +5,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "gc/Heap.h"
+#include "gc/Verifier.h"
 #include "gc/WeakMap.h"
 #include "gc/Zone.h"
 #include "js/Proxy.h"
@@ -56,8 +59,13 @@ BEGIN_TEST(testGCGrayMarking) {
 
   InitGrayRootTracer();
 
-  bool ok = TestMarking() && TestWeakMaps() && TestUnassociatedWeakMaps() &&
+  // Enable incremental GC.
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
+
+  bool ok = TestMarking() && TestJSWeakMaps() && TestInternalWeakMaps() &&
             TestCCWs() && TestGrayUnmarking();
+
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_GLOBAL);
 
   global1 = nullptr;
   global2 = nullptr;
@@ -149,278 +157,311 @@ bool TestMarking() {
   return true;
 }
 
-bool TestWeakMaps() {
-  JSObject* weakMap = JS::NewWeakMapObject(cx);
-  CHECK(weakMap);
+static constexpr CellColor DontMark = CellColor::White;
 
-  JSObject* key;
-  JSObject* value;
-  {
-    JS::RootedObject rootedMap(cx, weakMap);
+enum MarkKeyOrDelegate : bool { MarkKey = true, MarkDelegate = false };
 
-    key = AllocWeakmapKeyObject();
-    CHECK(key);
-
-    value = AllocPlainObject();
-    CHECK(value);
-
-    weakMap = rootedMap;
+bool TestJSWeakMaps() {
+  for (auto keyOrDelegateColor : MarkedCellColors) {
+    for (auto mapColor : MarkedCellColors) {
+      for (auto markKeyOrDelegate : {MarkKey, MarkDelegate}) {
+        CellColor expected = std::min(keyOrDelegateColor, mapColor);
+        CHECK(TestJSWeakMap(markKeyOrDelegate, keyOrDelegateColor, mapColor,
+                            expected));
+#ifdef JS_GC_ZEAL
+        CHECK(TestJSWeakMapWithGrayUnmarking(
+            markKeyOrDelegate, keyOrDelegateColor, mapColor, expected));
+#endif
+      }
+    }
   }
-
-  {
-    JS::RootedObject rootedMap(cx, weakMap);
-    JS::RootedObject rootedKey(cx, key);
-    JS::RootedValue rootedValue(cx, ObjectValue(*value));
-    CHECK(SetWeakMapEntry(cx, rootedMap, rootedKey, rootedValue));
-  }
-
-  // Test the value of a weakmap entry is marked gray by GC if both the
-  // weakmap and key are marked gray.
-
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = key;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  // Test the value of a weakmap entry is marked gray by GC if one of the
-  // weakmap and the key is marked gray and the other black.
-
-  JS::RootedObject blackRoot1(cx);
-  blackRoot1 = weakMap;
-  grayRoots.grayRoot1 = key;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  blackRoot1 = key;
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedGray(value));
-
-  // Test the value of a weakmap entry is marked black by GC if both the
-  // weakmap and the key are marked black.
-
-  JS::RootedObject blackRoot2(cx);
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-
-  blackRoot1 = weakMap;
-  blackRoot2 = key;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  blackRoot1 = key;
-  blackRoot2 = weakMap;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  // Test that a weakmap key is marked gray if it has a gray delegate and the
-  // map is either gray or black.
-
-  JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
-  blackRoot1 = weakMap;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = delegate;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(delegate));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedGray(value));
-
-  blackRoot1 = nullptr;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = delegate;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(delegate));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedGray(value));
-
-  // Test that a weakmap key is marked gray if it has a black delegate but
-  // the map is gray.
-
-  blackRoot1 = delegate;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedGray(value));
-
-  blackRoot1 = delegate;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = key;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedGray(value));
-
-  // Test that a weakmap key is marked black if it has a black delegate and
-  // the map is black.
-
-  blackRoot1 = delegate;
-  blackRoot2 = weakMap;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedBlack(value));
-
-  blackRoot1 = delegate;
-  blackRoot2 = weakMap;
-  grayRoots.grayRoot1 = key;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedBlack(value));
-
-  // Test what happens if there is a delegate but it is not marked for both
-  // black and gray cases.
-
-  delegate = nullptr;
-  blackRoot1 = key;
-  blackRoot2 = weakMap;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(weakMap));
-  CHECK(IsMarkedBlack(value));
-
-  blackRoot1 = nullptr;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = weakMap;
-  grayRoots.grayRoot2 = key;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(weakMap));
-  CHECK(IsMarkedGray(value));
-
-  blackRoot1 = nullptr;
-  blackRoot2 = nullptr;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
 
   return true;
 }
 
-bool TestUnassociatedWeakMaps() {
-  // Make a weakmap that's not associated with a JSObject.
+bool TestInternalWeakMaps() {
+  for (auto keyMarkColor : AllCellColors) {
+    for (auto delegateMarkColor : AllCellColors) {
+      if (keyMarkColor == CellColor::White &&
+          delegateMarkColor == CellColor::White) {
+        continue;
+      }
+
+      // The map is black. The delegate marks its key via wrapper preservation.
+      // The key maps its delegate and the value. Thus, all three end up the
+      // maximum of the key and delegate colors.
+      CellColor expected = std::max(keyMarkColor, delegateMarkColor);
+      CHECK(TestInternalWeakMap(keyMarkColor, delegateMarkColor, expected));
+
+#ifdef JS_GC_ZEAL
+      CHECK(TestInternalWeakMapWithGrayUnmarking(keyMarkColor,
+                                                 delegateMarkColor, expected));
+#endif
+    }
+  }
+
+  return true;
+}
+
+bool TestJSWeakMap(MarkKeyOrDelegate markKey, CellColor weakMapMarkColor,
+                   CellColor keyOrDelegateMarkColor,
+                   CellColor expectedValueColor) {
+  // Test marking a JS WeakMap object.
+  //
+  // This marks the map and one of the key or delegate. The key/delegate and the
+  // value can end up different colors depending on the color of the map.
+
+  JSObject* weakMap;
+  JSObject* key;
+  JSObject* value;
+
+  // If both map and key are marked the same color, test both possible
+  // orderings.
+  unsigned markOrderings = weakMapMarkColor == keyOrDelegateMarkColor ? 2 : 1;
+
+  for (unsigned markOrder = 0; markOrder < markOrderings; markOrder++) {
+    CHECK(CreateJSWeakMapObjects(&weakMap, &key, &value));
+
+    JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
+    JSObject* keyOrDelegate = markKey ? key : delegate;
+
+    RootedObject blackRoot1(cx);
+    RootedObject blackRoot2(cx);
+
+    RootObject(weakMap, weakMapMarkColor, blackRoot1, grayRoots.grayRoot1);
+    RootObject(keyOrDelegate, keyOrDelegateMarkColor, blackRoot2,
+               grayRoots.grayRoot2);
+
+    if (markOrder != 0) {
+      mozilla::Swap(blackRoot1.get(), blackRoot2.get());
+      mozilla::Swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
+    }
+
+    JS_GC(cx);
+
+    ClearGrayRoots();
+
+    CHECK(weakMap->color() == weakMapMarkColor);
+    CHECK(keyOrDelegate->color() == keyOrDelegateMarkColor);
+    CHECK(value->color() == expectedValueColor);
+  }
+
+  return true;
+}
+
+#ifdef JS_GC_ZEAL
+
+bool TestJSWeakMapWithGrayUnmarking(MarkKeyOrDelegate markKey,
+                                    CellColor weakMapMarkColor,
+                                    CellColor keyOrDelegateMarkColor,
+                                    CellColor expectedValueColor) {
+  // This is like the previous test, but things are marked black by gray
+  // unmarking during incremental GC.
+
+  JSObject* weakMap;
+  JSObject* key;
+  JSObject* value;
+
+  // If both map and key are marked the same color, test both possible
+  // orderings.
+  unsigned markOrderings = weakMapMarkColor == keyOrDelegateMarkColor ? 2 : 1;
+
+  JS_SetGCZeal(cx, uint8_t(ZealMode::YieldWhileGrayMarking), 0);
+
+  for (unsigned markOrder = 0; markOrder < markOrderings; markOrder++) {
+    CHECK(CreateJSWeakMapObjects(&weakMap, &key, &value));
+
+    JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
+    JSObject* keyOrDelegate = markKey ? key : delegate;
+
+    grayRoots.grayRoot1 = keyOrDelegate;
+    grayRoots.grayRoot2 = weakMap;
+
+    // Start an incremental GC and run until gray roots have been pushed onto
+    // the mark stack.
+    JS::PrepareForFullGC(cx);
+    JS::StartIncrementalGC(cx, GC_NORMAL, JS::GCReason::DEBUG_GC, 1000000);
+    MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
+    MOZ_ASSERT(cx->zone()->gcState() == Zone::MarkBlackAndGray);
+
+    // Unmark gray things as specified.
+    if (markOrder != 0) {
+      MaybeExposeObject(weakMap, weakMapMarkColor);
+      MaybeExposeObject(keyOrDelegate, keyOrDelegateMarkColor);
+    } else {
+      MaybeExposeObject(keyOrDelegate, keyOrDelegateMarkColor);
+      MaybeExposeObject(weakMap, weakMapMarkColor);
+    }
+
+    JS::FinishIncrementalGC(cx, JS::GCReason::API);
+
+    ClearGrayRoots();
+
+    CHECK(weakMap->color() == weakMapMarkColor);
+    CHECK(keyOrDelegate->color() == keyOrDelegateMarkColor);
+    CHECK(value->color() == expectedValueColor);
+  }
+
+  JS_UnsetGCZeal(cx, uint8_t(ZealMode::YieldWhileGrayMarking));
+
+  return true;
+}
+
+static void MaybeExposeObject(JSObject* object, CellColor color) {
+  if (color == CellColor::Black) {
+    JS::ExposeObjectToActiveJS(object);
+  }
+}
+
+#endif  // JS_GC_ZEAL
+
+bool CreateJSWeakMapObjects(JSObject** weakMapOut, JSObject** keyOut,
+                            JSObject** valueOut) {
+  RootedObject key(cx, AllocWeakmapKeyObject());
+  CHECK(key);
+
+  RootedObject value(cx, AllocPlainObject());
+  CHECK(value);
+
+  RootedObject weakMap(cx, JS::NewWeakMapObject(cx));
+  CHECK(weakMap);
+
+  JS::RootedValue valueValue(cx, ObjectValue(*value));
+  CHECK(SetWeakMapEntry(cx, weakMap, key, valueValue));
+
+  *weakMapOut = weakMap;
+  *keyOut = key;
+  *valueOut = value;
+  return true;
+}
+
+bool TestInternalWeakMap(CellColor keyMarkColor, CellColor delegateMarkColor,
+                         CellColor expectedColor) {
+  // Test marking for internal weakmaps (without an owning JSObject).
+  //
+  // All of the key, delegate and value are expected to end up the same color.
+
+  UniquePtr<GCManagedObjectWeakMap> weakMap;
+  JSObject* key;
+  JSObject* value;
+
+  // If both key and delegate are marked the same color, test both possible
+  // orderings.
+  unsigned markOrderings = keyMarkColor == delegateMarkColor ? 2 : 1;
+
+  for (unsigned markOrder = 0; markOrder < markOrderings; markOrder++) {
+    CHECK(CreateInternalWeakMapObjects(&weakMap, &key, &value));
+
+    JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
+
+    RootedObject blackRoot1(cx);
+    RootedObject blackRoot2(cx);
+
+    Rooted<GCManagedObjectWeakMap*> rootMap(cx, weakMap.get());
+    RootObject(key, keyMarkColor, blackRoot1, grayRoots.grayRoot1);
+    RootObject(delegate, delegateMarkColor, blackRoot2, grayRoots.grayRoot2);
+
+    if (markOrder != 0) {
+      mozilla::Swap(blackRoot1.get(), blackRoot2.get());
+      mozilla::Swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
+    }
+
+    JS_GC(cx);
+
+    ClearGrayRoots();
+
+    CHECK(key->color() == expectedColor);
+    CHECK(delegate->color() == expectedColor);
+    CHECK(value->color() == expectedColor);
+  }
+
+  return true;
+}
+
+#ifdef JS_GC_ZEAL
+
+bool TestInternalWeakMapWithGrayUnmarking(CellColor keyMarkColor,
+                                          CellColor delegateMarkColor,
+                                          CellColor expectedColor) {
+  UniquePtr<GCManagedObjectWeakMap> weakMap;
+  JSObject* key;
+  JSObject* value;
+
+  // If both key and delegate are marked the same color, test both possible
+  // orderings.
+  unsigned markOrderings = keyMarkColor == delegateMarkColor ? 2 : 1;
+
+  JS_SetGCZeal(cx, uint8_t(ZealMode::YieldWhileGrayMarking), 0);
+
+  for (unsigned markOrder = 0; markOrder < markOrderings; markOrder++) {
+    CHECK(CreateInternalWeakMapObjects(&weakMap, &key, &value));
+
+    JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
+
+    Rooted<GCManagedObjectWeakMap*> rootMap(cx, weakMap.get());
+    grayRoots.grayRoot1 = key;
+    grayRoots.grayRoot2 = delegate;
+
+    // Start an incremental GC and run until gray roots have been pushed onto
+    // the mark stack.
+    JS::PrepareForFullGC(cx);
+    JS::StartIncrementalGC(cx, GC_NORMAL, JS::GCReason::DEBUG_GC, 1000000);
+    MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
+    MOZ_ASSERT(cx->zone()->gcState() == Zone::MarkBlackAndGray);
+
+    // Unmark gray things as specified.
+    if (markOrder != 0) {
+      MaybeExposeObject(key, keyMarkColor);
+      MaybeExposeObject(delegate, delegateMarkColor);
+    } else {
+      MaybeExposeObject(key, keyMarkColor);
+      MaybeExposeObject(delegate, delegateMarkColor);
+    }
+
+    JS::FinishIncrementalGC(cx, JS::GCReason::API);
+
+    ClearGrayRoots();
+
+    CHECK(key->color() == expectedColor);
+    CHECK(delegate->color() == expectedColor);
+    CHECK(value->color() == expectedColor);
+  }
+
+  JS_UnsetGCZeal(cx, uint8_t(ZealMode::YieldWhileGrayMarking));
+
+  return true;
+}
+
+#endif  // JS_GC_ZEAL
+
+bool CreateInternalWeakMapObjects(UniquePtr<GCManagedObjectWeakMap>* weakMapOut,
+                                  JSObject** keyOut, JSObject** valueOut) {
+  RootedObject key(cx, AllocWeakmapKeyObject());
+  CHECK(key);
+
+  RootedObject value(cx, AllocPlainObject());
+  CHECK(value);
+
   auto weakMap = cx->make_unique<GCManagedObjectWeakMap>(cx);
   CHECK(weakMap);
 
-  // Make sure this gets traced during GC.
-  Rooted<GCManagedObjectWeakMap*> rootMap(cx, weakMap.get());
-
-  JSObject* key = AllocWeakmapKeyObject();
-  CHECK(key);
-
-  JSObject* value = AllocPlainObject();
-  CHECK(value);
-
   CHECK(weakMap->add(cx, key, value));
 
-  // Test the value of a weakmap entry is marked gray by GC if the
-  // key is marked gray.
-
-  grayRoots.grayRoot1 = key;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  // Test the value of a weakmap entry is marked gray by GC if the key is marked
-  // gray.
-
-  grayRoots.grayRoot1 = key;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  // Test the value of a weakmap entry is marked black by GC if the key is
-  // marked black.
-
-  JS::RootedObject blackRoot(cx);
-  blackRoot = key;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  // Test that a weakmap key is marked gray if it has a gray delegate.
-
-  JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
-  blackRoot = nullptr;
-  grayRoots.grayRoot1 = delegate;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(delegate));
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  // Test that a weakmap key is marked black if it has a black delegate.
-
-  blackRoot = delegate;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  blackRoot = delegate;
-  grayRoots.grayRoot1 = key;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(delegate));
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  // Test what happens if there is a delegate but it is not marked for both
-  // black and gray cases.
-
-  delegate = nullptr;
-  blackRoot = key;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedBlack(key));
-  CHECK(IsMarkedBlack(value));
-
-  blackRoot = nullptr;
-  grayRoots.grayRoot1 = key;
-  grayRoots.grayRoot2 = nullptr;
-  JS_GC(cx);
-  CHECK(IsMarkedGray(key));
-  CHECK(IsMarkedGray(value));
-
-  blackRoot = nullptr;
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
-
+  *weakMapOut = std::move(weakMap);
+  *keyOut = key;
+  *valueOut = value;
   return true;
+}
+
+void RootObject(JSObject* object, CellColor color, RootedObject& blackRoot,
+                JS::Heap<JSObject*>& grayRoot) {
+  if (color == CellColor::Black) {
+    blackRoot = object;
+  } else if (color == CellColor::Gray) {
+    grayRoot = object;
+  } else {
+    MOZ_RELEASE_ASSERT(color == CellColor::White);
+  }
 }
 
 bool TestCCWs() {
@@ -452,7 +493,7 @@ bool TestCCWs() {
   CHECK(IsMarkedGray(wrapper));
   CHECK(IsMarkedBlack(target));
 
-  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
   JS::PrepareForFullGC(cx);
   js::SliceBudget budget(js::WorkBudget(1));
   cx->runtime()->gc.startDebugGC(GC_NORMAL, budget);
@@ -478,7 +519,7 @@ bool TestCCWs() {
   CHECK(IsMarkedGray(target));
 
   // Incremental zone GC started: the source is now unmarked.
-  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
   JS::PrepareZoneForGC(wrapper->zone());
   budget = js::SliceBudget(js::WorkBudget(1));
   cx->runtime()->gc.startDebugGC(GC_NORMAL, budget);
@@ -594,15 +635,18 @@ bool InitGlobals() {
   return global2 != nullptr;
 }
 
-void InitGrayRootTracer() {
+void ClearGrayRoots() {
   grayRoots.grayRoot1 = nullptr;
   grayRoots.grayRoot2 = nullptr;
+}
+
+void InitGrayRootTracer() {
+  ClearGrayRoots();
   JS_SetGrayGCRootsTracer(cx, TraceGrayRoots, &grayRoots);
 }
 
 void RemoveGrayRootTracer() {
-  grayRoots.grayRoot1 = nullptr;
-  grayRoots.grayRoot2 = nullptr;
+  ClearGrayRoots();
   JS_SetGrayGCRootsTracer(cx, nullptr, nullptr);
 }
 

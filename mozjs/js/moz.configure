@@ -22,6 +22,8 @@ include('../build/moz.configure/rust.configure',
         when='--enable-compile-environment')
 include('../build/moz.configure/bindgen.configure',
         when='--enable-compile-environment')
+include('../build/moz.configure/lto-pgo.configure',
+        when='--enable-compile-environment')
 
 @depends('JS_STANDALONE')
 def js_standalone(value):
@@ -46,27 +48,15 @@ set_define('JS_PUNBOX64', depends(target)(lambda t: t.bitness == 64 or None))
 set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
 
 
-js_option('--enable-uwp',
-          default=False,
-          help='{Enable|Disable} building for UWP environments')
-
-@depends('--enable-uwp')
-def js_enable_uwp(value):
-    if value:
-        return True
-
-set_config('JS_ENABLE_UWP', js_enable_uwp)
-set_define('JS_ENABLE_UWP', js_enable_uwp)
-
 # SpiderMonkey as a shared library, and how its symbols are exported
 # ==================================================================
-js_option('--disable-shared-js', default=building_js,
+js_option('--disable-shared-js', when=js_standalone,
           help='{Create|Do not create} a shared library')
 
-js_option('--disable-export-js', default=building_js,
+js_option('--disable-export-js', when=js_standalone,
           help='{Mark|Do not mark} JS symbols as DLL exported/visible')
 
-@depends('--disable-shared-js', '--disable-export-js')
+@depends('--disable-shared-js', '--disable-export-js', when=js_standalone)
 def shared_js(shared_js, export_js):
     if shared_js:
         if not export_js:
@@ -76,48 +66,33 @@ def shared_js(shared_js, export_js):
 set_config('JS_SHARED_LIBRARY', shared_js)
 add_old_configure_assignment('JS_SHARED_LIBRARY', shared_js)
 
-@depends('--disable-shared-js', '--disable-export-js')
+@depends(shared_js, '--disable-export-js', when=js_standalone)
 def exportable_js_api(shared_js, export_js):
     if not shared_js and export_js:
         return True
 
 set_define('STATIC_EXPORTABLE_JS_API', exportable_js_api)
 
-@depends('--disable-shared-js', '--disable-export-js')
+@depends(shared_js, exportable_js_api)
 def static_js_api(shared_js, export_js):
     if not shared_js and not export_js:
         return True
 
 set_define('STATIC_JS_API', static_js_api)
 
-@depends('--disable-shared-js')
+@depends(shared_js)
 def static_js(value):
     if not value:
         return True
 
 set_define('MOZ_STATIC_JS', static_js)
 
-@deprecated_option(env='DISABLE_SHARED_JS', nargs='?')
-def disable_shared_js(value):
-    # DISABLE_SHARED_JS=1 gets us an empty PositiveOptionValue
-    if value and not len(value):
-        suggestion = '--disable-shared-js'
-    else:
-        suggestion = '--enable-shared-js'
 
-    die('Setting %s is deprecated, use %s instead.',
-        value.format('DISABLE_SHARED_JS'), suggestion)
+js_option(env='NO_RUST_PANIC_HOOK', when=js_standalone,
+          help='Disable rust panic hook')
 
-@deprecated_option(env='DISABLE_EXPORT_JS', nargs='?')
-def disable_export_js(value):
-    # DISABLE_EXPORT_JS=1 gets us an empty PositiveOptionValue
-    if value and not len(value):
-        suggestion = '--disable-export-js'
-    else:
-        suggestion = '--enable-export-js'
+set_define('NO_RUST_PANIC_HOOK', True, when='NO_RUST_PANIC_HOOK')
 
-    die('Setting %s is deprecated, use %s instead.',
-        value.format('DISABLE_EXPORT_JS'), suggestion)
 
 # JIT support
 # =======================================================
@@ -197,36 +172,6 @@ set_define('JS_CODEGEN_MIPS64', jit_codegen.mips64)
 set_define('JS_CODEGEN_X86', jit_codegen.x86)
 set_define('JS_CODEGEN_X64', jit_codegen.x64)
 
-@depends('--enable-ion', simulator, target, moz_debug)
-def jit_disasm_arm(ion_enabled, simulator, target, debug):
-    if not ion_enabled:
-        return
-
-    if simulator and debug:
-        if getattr(simulator, 'arm', None):
-            return True
-
-    if target.cpu == 'arm' and debug:
-        return True
-
-set_config('JS_DISASM_ARM', jit_disasm_arm)
-set_define('JS_DISASM_ARM', jit_disasm_arm)
-
-@depends('--enable-ion', simulator, target, moz_debug)
-def jit_disasm_arm64(ion_enabled, simulator, target, debug):
-    if not ion_enabled:
-        return
-
-    if simulator and debug:
-        if getattr(simulator, 'arm64', None):
-            return True
-
-    if target.cpu == 'aarch64' and debug:
-        return True
-
-set_config('JS_DISASM_ARM64', jit_disasm_arm64)
-set_define('JS_DISASM_ARM64', jit_disasm_arm64)
-
 # Profiling
 # =======================================================
 js_option('--enable-instruments', env='MOZ_INSTRUMENTS',
@@ -271,13 +216,17 @@ def profiling(value):
 
 add_old_configure_assignment('MOZ_PROFILING', profiling)
 
-@depends(profiling, target, js_enable_uwp)
-def imply_vtune(value, target, uwp):
+with only_when('--enable-compile-environment'):
+    imply_option('--enable-frame-pointers', True, when=profiling)
+
+
+@depends(profiling, target)
+def imply_vtune(value, target):
     ok_cpu    = target.cpu in ['x86', 'x86_64']
     ok_kernel = target.kernel == 'WINNT' or \
                 (target.kernel == 'Linux' and target.os == 'GNU')
 
-    if value and ok_cpu and ok_kernel and not uwp:
+    if value and ok_cpu and ok_kernel:
         return True
 
 set_config('MOZ_PROFILING', profiling)
@@ -328,8 +277,13 @@ set_define('JS_GC_SMALL_CHUNK_SIZE',
 
 # Trace logging.
 # =======================================================
+@depends(milestone)
+def default_trace_logging(milestone):
+    return milestone.is_nightly
+
+
 js_option('--enable-trace-logging',
-          default=depends(when=moz_debug)(lambda: True),
+          default=default_trace_logging,
           help='{Enable|Disable} trace logging')
 
 set_config('ENABLE_TRACE_LOGGING',
@@ -373,6 +327,37 @@ set_define('JS_STRUCTURED_SPEW',
            depends_if('--enable-jitspew')(lambda _: True))
 set_config('JS_STRUCTURED_SPEW',
            depends_if('--enable-jitspew')(lambda _: True))
+
+@depends('--enable-ion', '--enable-jitspew', simulator, target, moz_debug)
+def jit_disasm_arm(ion_enabled, spew, simulator, target, debug):
+    if not ion_enabled:
+        return
+
+    if simulator and (debug or spew):
+        if getattr(simulator, 'arm', None):
+            return True
+
+    if target.cpu == 'arm' and (debug or spew):
+        return True
+
+set_config('JS_DISASM_ARM', jit_disasm_arm)
+set_define('JS_DISASM_ARM', jit_disasm_arm)
+
+@depends('--enable-ion', '--enable-jitspew', simulator, target, moz_debug)
+def jit_disasm_arm64(ion_enabled, spew, simulator, target, debug):
+    if not ion_enabled:
+        return
+
+    if simulator and (debug or spew):
+        if getattr(simulator, 'arm64', None):
+            return True
+
+    if target.cpu == 'aarch64' and (debug or spew):
+        return True
+
+set_config('JS_DISASM_ARM64', jit_disasm_arm64)
+set_define('JS_DISASM_ARM64', jit_disasm_arm64)
+
 # When enabled, masm will generate assumeUnreachable calls that act as
 # assertions in the generated code. This option is worth disabling when you
 # have to track mutated values through the generated code, to avoid constantly
@@ -427,49 +412,6 @@ def ctypes_and_compile_environment(ctypes, compile_environment):
 include('ffi.configure', when=ctypes_and_compile_environment)
 
 
-# Support various fuzzing options
-# ==============================================================
-with only_when('--enable-compile-environment'):
-    js_option('--enable-fuzzing', help='Enable fuzzing support')
-
-    @depends('--enable-fuzzing')
-    def enable_fuzzing(value):
-        if value:
-            return True
-
-    @depends(try_compile(body='__AFL_COMPILER;',
-                         check_msg='for AFL compiler',
-                         when='--enable-fuzzing'))
-    def enable_aflfuzzer(afl):
-        if afl:
-            return True
-
-    @depends(enable_fuzzing,
-             enable_aflfuzzer,
-             c_compiler,
-             target)
-    def enable_libfuzzer(fuzzing, afl, c_compiler, target):
-        if fuzzing and not afl and c_compiler.type == 'clang' and target.os != 'Android':
-            return True
-
-    @depends(enable_fuzzing,
-             enable_aflfuzzer,
-             enable_libfuzzer)
-    def enable_fuzzing_interfaces(fuzzing, afl, libfuzzer):
-        if fuzzing and (afl or libfuzzer):
-            return True
-
-    set_config('FUZZING', enable_fuzzing)
-    set_define('FUZZING', enable_fuzzing)
-
-    set_config('LIBFUZZER', enable_libfuzzer)
-    set_define('LIBFUZZER', enable_libfuzzer)
-    add_old_configure_assignment('LIBFUZZER', enable_libfuzzer)
-
-    set_config('FUZZING_INTERFACES', enable_fuzzing_interfaces)
-    set_define('FUZZING_INTERFACES', enable_fuzzing_interfaces)
-    add_old_configure_assignment('FUZZING_INTERFACES', enable_fuzzing_interfaces)
-
 # Enable pipeline operator
 # ===================================================
 js_option('--enable-pipeline-operator', default=False, help='Enable pipeline operator')
@@ -499,15 +441,28 @@ set_config('JS_BUILD_BINAST', depends_if('--enable-binast')(lambda x: True))
 set_define('JS_BUILD_BINAST', depends_if('--enable-binast')(lambda x: True))
 
 
+# SIMD acceleration for encoding_rs
+# ==============================================================
+
+js_option('--enable-rust-simd', env='MOZ_RUST_SIMD',
+          help='Enable explicit SIMD in Rust code.')
+
+@depends('--enable-rust-simd', target)
+def rust_simd(value, target):
+    # As of 2019-09-17, the simd-accel feature of encoding_rs has not
+    # been properly set up outside aarch64, armv7, x86 and x86_64.
+    if target.cpu in ('aarch64', 'arm', 'x86', 'x86_64') and value:
+        return True
+
+set_config('MOZ_RUST_SIMD', rust_simd)
+set_define('MOZ_RUST_SIMD', rust_simd)
+
+
 # Experimental support for wasm code generation with Cranelift
 # ==============================================================
 
-@depends(milestone.is_nightly)
-def default_cranelift(is_nightly):
-    return is_nightly
-
 js_option('--enable-cranelift',
-          default=default_cranelift,
+          default=milestone.is_nightly,
           help='{Enable|Disable} Cranelift code generator for wasm')
 
 set_config('ENABLE_WASM_CRANELIFT', depends_if('--enable-cranelift')(lambda x: True))
@@ -536,8 +491,8 @@ js_option('--enable-typed-objects',
           default=default_typed_objects,
           help='{Enable|Disable} typed objects')
 
-set_config('ENABLE_TYPED_OBJECTS', depends_if('--enable-typed-objects')(lambda x: True))
-set_define('ENABLE_TYPED_OBJECTS', depends_if('--enable-typed-objects')(lambda x: True))
+set_config('JS_HAS_TYPED_OBJECTS', depends_if('--enable-typed-objects')(lambda x: True))
+set_define('JS_HAS_TYPED_OBJECTS', depends_if('--enable-typed-objects')(lambda x: True))
 
 
 # Support for WebAssembly bulk memory operations.
@@ -568,6 +523,21 @@ js_option('--enable-wasm-reftypes',
 
 set_config('ENABLE_WASM_REFTYPES', depends_if('--enable-wasm-reftypes')(lambda x: True))
 set_define('ENABLE_WASM_REFTYPES', depends_if('--enable-wasm-reftypes')(lambda x: True))
+
+
+# Support for WebAssembly I64/BigInt conversion
+# ===========================================================================
+
+@depends(milestone.is_nightly)
+def default_wasm_bigint(is_nightly):
+    return is_nightly
+
+js_option('--enable-wasm-bigint',
+          default=default_wasm_bigint,
+          help='{Enable|Disable} WebAssembly I64/BigInt conversion')
+
+set_config('ENABLE_WASM_BIGINT', depends_if('--enable-wasm-bigint')(lambda x: True))
+set_define('ENABLE_WASM_BIGINT', depends_if('--enable-wasm-bigint')(lambda x: True))
 
 
 # Support for WebAssembly GC.
@@ -602,3 +572,19 @@ js_option('--enable-wasm-private-reftypes',
 
 set_config('WASM_PRIVATE_REFTYPES', depends_if('--enable-wasm-private-reftypes')(lambda x: True))
 set_define('WASM_PRIVATE_REFTYPES', depends_if('--enable-wasm-private-reftypes')(lambda x: True))
+
+
+# Support for the WebAssembly multi-value proposal.
+# =====================================================
+
+@depends(milestone.is_nightly, building_js)
+def default_wasm_multi_value(is_nightly, building_js):
+    return is_nightly and building_js
+
+js_option('--enable-wasm-multi-value',
+          default=default_wasm_multi_value,
+          help='{Enable|Disable} support for the experimental WebAssembly '
+               'multi-value proposal')
+
+set_config('ENABLE_WASM_MULTI_VALUE', depends_if('--enable-wasm-multi-value')(lambda x: True))
+set_define('ENABLE_WASM_MULTI_VALUE', depends_if('--enable-wasm-multi-value')(lambda x: True))

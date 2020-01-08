@@ -173,12 +173,16 @@ void LIRGeneratorX86Shared::lowerDivI(MDiv* div) {
     if (rhs != 0 && uint32_t(1) << shift == Abs(rhs)) {
       LAllocation lhs = useRegisterAtStart(div->lhs());
       LDivPowTwoI* lir;
-      if (!div->canBeNegativeDividend()) {
+      // When truncated with maybe a non-zero remainder, we have to round the
+      // result toward 0. This requires an extra register to round up/down
+      // whether the left-hand-side is signed.
+      bool needRoundNeg = div->canBeNegativeDividend() && div->isTruncated();
+      if (!needRoundNeg) {
         // Numerator is unsigned, so does not need adjusting.
         lir = new (alloc()) LDivPowTwoI(lhs, lhs, shift, rhs < 0);
       } else {
-        // Numerator is signed, and needs adjusting, and an extra
-        // lhs copy register is needed.
+        // Numerator might be signed, and needs adjusting, and an extra lhs copy
+        // is needed to round the result of the integer division towards zero.
         lir = new (alloc())
             LDivPowTwoI(lhs, useRegister(div->lhs()), shift, rhs < 0);
       }
@@ -244,23 +248,6 @@ void LIRGeneratorX86Shared::lowerModI(MMod* mod) {
     assignSnapshot(lir, Bailout_DoubleOutput);
   }
   defineFixed(lir, mod, LAllocation(AnyRegister(edx)));
-}
-
-void LIRGenerator::visitWasmSelect(MWasmSelect* ins) {
-  if (ins->type() == MIRType::Int64) {
-    auto* lir = new (alloc()) LWasmSelectI64(
-        useInt64RegisterAtStart(ins->trueExpr()), useInt64(ins->falseExpr()),
-        useRegister(ins->condExpr()));
-
-    defineInt64ReuseInput(lir, ins, LWasmSelectI64::TrueExprIndex);
-    return;
-  }
-
-  auto* lir = new (alloc())
-      LWasmSelect(useRegisterAtStart(ins->trueExpr()), use(ins->falseExpr()),
-                  useRegister(ins->condExpr()));
-
-  defineReuseInput(lir, ins, LWasmSelect::TrueExprIndex);
 }
 
 void LIRGenerator::visitWasmNeg(MWasmNeg* ins) {
@@ -358,6 +345,8 @@ void LIRGenerator::visitAsmJSStoreHeap(MAsmJSStoreHeap* ins) {
     case Scalar::Int64:
       MOZ_CRASH("NYI");
     case Scalar::Uint8Clamped:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected array type");
   }

@@ -66,7 +66,7 @@ def choose_item(jobs, max_items, display):
 def main(argv):
     # The [TESTS] optional arguments are paths of test files relative
     # to the jit-test/tests directory.
-    from optparse import OptionParser
+    from optparse import OptionParser, SUPPRESS_HELP
     op = OptionParser(usage='%prog [options] JS_SHELL [TESTS]')
     op.add_option('-s', '--show-cmd', dest='show_cmd', action='store_true',
                   help='show js shell command run')
@@ -104,8 +104,12 @@ def main(argv):
                   choices=['automation', 'none'],
                   help='Output format. Either automation or none'
                   ' (default %default).')
-    op.add_option('--args', dest='shell_args', default='',
+    op.add_option('--args', dest='shell_args', metavar='ARGS', default='',
                   help='extra args to pass to the JS shell')
+    op.add_option('--feature-args', dest='feature_args', metavar='ARGS',
+                  default='',
+                  help='even more args to pass to the JS shell '
+                       '(for compatibility with jstests.py)')
     op.add_option('-w', '--write-failures', dest='write_failures',
                   metavar='FILE',
                   help='Write a list of failed tests to [FILE]')
@@ -180,6 +184,11 @@ def main(argv):
                   help="By default BinAST testcases encoded from JS "
                   "testcases are skipped. If specified, BinAST testcases "
                   "are also executed.")
+    # --enable-webrender is ignored as it is not relevant for JIT
+    # tests, but is required for harness compatibility.
+    op.add_option('--enable-webrender', action='store_true',
+                  dest="enable_webrender", default=False,
+                  help=SUPPRESS_HELP)
 
     options, args = op.parse_args(argv)
     if len(args) < 1:
@@ -342,7 +351,7 @@ def main(argv):
     else:
         options.ignore_timeouts = set()
 
-    prefix = [js_shell] + shlex.split(options.shell_args)
+    prefix = [js_shell] + shlex.split(options.shell_args) + shlex.split(options.feature_args)
     prologue = os.path.join(jittests.LIB_DIR, 'prologue.js')
     if options.remote:
         prologue = posixpath.join(options.remote_test_root,

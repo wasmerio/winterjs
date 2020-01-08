@@ -18,11 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef JS_OOM_DO_BACKTRACES
-#  include <execinfo.h>
-#  include <stdio.h>
-#endif
-
 #include "jstypes.h"
 
 #include "mozmemory.h"
@@ -68,13 +63,22 @@ enum ThreadType {
   THREAD_TYPE_ION,           // 3
   THREAD_TYPE_PARSE,         // 4
   THREAD_TYPE_COMPRESS,      // 5
-  THREAD_TYPE_GCHELPER,      // 6
-  THREAD_TYPE_GCPARALLEL,    // 7
-  THREAD_TYPE_PROMISE_TASK,  // 8
-  THREAD_TYPE_ION_FREE,      // 9
-  THREAD_TYPE_WASM_TIER2,    // 10
-  THREAD_TYPE_WORKER,        // 11
+  THREAD_TYPE_GCPARALLEL,    // 6
+  THREAD_TYPE_PROMISE_TASK,  // 7
+  THREAD_TYPE_ION_FREE,      // 8
+  THREAD_TYPE_WASM_TIER2,    // 9
+  THREAD_TYPE_WORKER,        // 10
   THREAD_TYPE_MAX            // Used to check shell function arguments
+};
+
+/*
+ * Threads need a universal way to dispatch from xpcom thread pools,
+ * so having objects inherit from this struct enables
+ * mozilla::HelperThreadPool's runnable handler to call runTask() on each type.
+ */
+struct RunnableTask {
+  virtual ThreadType threadType() = 0;
+  virtual void runTask() = 0;
 };
 
 namespace oom {
@@ -86,7 +90,7 @@ namespace oom {
  * off-thread script parsing without causing an OOM in the active thread first.
  *
  * Getter/Setter functions to encapsulate mozilla::ThreadLocal, implementation
- * is in jsutil.cpp.
+ * is in util/Utility.cpp.
  */
 #  if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
 
@@ -296,6 +300,30 @@ static inline bool ShouldFailWithOOM() { return false; }
 
 #  endif /* DEBUG || JS_OOM_BREAKPOINT */
 
+#  ifdef FUZZING
+namespace js {
+namespace oom {
+extern JS_PUBLIC_DATA size_t largeAllocLimit;
+extern void InitLargeAllocLimit();
+} /* namespace oom */
+} /* namespace js */
+
+#    define JS_CHECK_LARGE_ALLOC(x)                                     \
+      do {                                                              \
+        if (js::oom::largeAllocLimit && x > js::oom::largeAllocLimit) { \
+          if (getenv("MOZ_FUZZ_CRASH_ON_LARGE_ALLOC")) {                \
+            MOZ_CRASH("Large allocation");                              \
+          } else {                                                      \
+            return nullptr;                                             \
+          }                                                             \
+        }                                                               \
+      } while (0)
+#  else
+#    define JS_CHECK_LARGE_ALLOC(x) \
+      do {                          \
+      } while (0)
+#  endif
+
 namespace js {
 
 /* Disable OOM testing in sections which are not OOM safe. */
@@ -342,14 +370,19 @@ namespace js {
 
 extern JS_PUBLIC_DATA arena_id_t MallocArena;
 extern JS_PUBLIC_DATA arena_id_t ArrayBufferContentsArena;
+extern JS_PUBLIC_DATA arena_id_t StringBufferArena;
 
 extern void InitMallocAllocator();
 extern void ShutDownMallocAllocator();
+
+// This is a no-op if built without MOZ_MEMORY and MOZ_DEBUG.
+extern void AssertJSStringBufferInCorrectArena(const void* ptr);
 
 } /* namespace js */
 
 static inline void* js_arena_malloc(arena_id_t arena, size_t bytes) {
   JS_OOM_POSSIBLY_FAIL();
+  JS_CHECK_LARGE_ALLOC(bytes);
   return moz_arena_malloc(arena, bytes);
 }
 
@@ -359,12 +392,14 @@ static inline void* js_malloc(size_t bytes) {
 
 static inline void* js_arena_calloc(arena_id_t arena, size_t bytes) {
   JS_OOM_POSSIBLY_FAIL();
+  JS_CHECK_LARGE_ALLOC(bytes);
   return moz_arena_calloc(arena, bytes, 1);
 }
 
 static inline void* js_arena_calloc(arena_id_t arena, size_t nmemb,
                                     size_t size) {
   JS_OOM_POSSIBLY_FAIL();
+  JS_CHECK_LARGE_ALLOC(nmemb * size);
   return moz_arena_calloc(arena, nmemb, size);
 }
 
@@ -383,6 +418,7 @@ static inline void* js_arena_realloc(arena_id_t arena, void* p, size_t bytes) {
   MOZ_ASSERT(bytes != 0);
 
   JS_OOM_POSSIBLY_FAIL();
+  JS_CHECK_LARGE_ALLOC(bytes);
   return moz_arena_realloc(arena, p, bytes);
 }
 
@@ -446,9 +482,9 @@ static inline void js_free(void* p) {
  * - Ordinarily, use js_free/js_delete.
  *
  * - For deallocations during GC finalization, use one of the following
- *   operations on the FreeOp provided to the finalizer:
+ *   operations on the JSFreeOp provided to the finalizer:
  *
- *     FreeOp::{free_,delete_}
+ *     JSFreeOp::{free_,delete_}
  */
 
 /*

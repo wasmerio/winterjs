@@ -61,7 +61,8 @@ enum PromiseSlots {
 // The PromiseSlot_RejectFunction slot is not used.
 #define PROMISE_FLAG_DEFAULT_RESOLVING_FUNCTIONS 0x08
 
-// This promise is the return value of an async function invocation.
+// This promise is either the return value of an async function invocation or
+// an async generator's method.
 #define PROMISE_FLAG_ASYNC 0x10
 
 // This promise knows how to propagate information required to keep track of
@@ -86,8 +87,8 @@ class AutoSetNewObjectMetadata;
 class PromiseObject : public NativeObject {
  public:
   static const unsigned RESERVED_SLOTS = PromiseSlots;
-  static const Class class_;
-  static const Class protoClass_;
+  static const JSClass class_;
+  static const JSClass protoClass_;
   static PromiseObject* create(JSContext* cx, HandleObject executor,
                                HandleObject proto = nullptr,
                                bool needsWrapping = false);
@@ -175,7 +176,7 @@ class PromiseObject : public NativeObject {
 /**
  * Unforgeable version of the JS builtin Promise.all.
  *
- * Takes an AutoObjectVector of Promise objects and returns a promise that's
+ * Takes a HandleValueVector of Promise objects and returns a promise that's
  * resolved with an array of resolution values when all those promises have
  * been resolved, or rejected with the rejection value of the first rejected
  * promise.
@@ -183,8 +184,8 @@ class PromiseObject : public NativeObject {
  * Asserts that all objects in the `promises` vector are, maybe wrapped,
  * instances of `Promise` or a subclass of `Promise`.
  */
-MOZ_MUST_USE JSObject* GetWaitForAllPromise(
-    JSContext* cx, const JS::AutoObjectVector& promises);
+MOZ_MUST_USE JSObject* GetWaitForAllPromise(JSContext* cx,
+                                            JS::HandleObjectVector promises);
 
 // Whether to create a promise as the return value of Promise#{then,catch}.
 // If the return value is known to be unused, and if the operation is known
@@ -239,9 +240,9 @@ MOZ_MUST_USE PromiseObject* CreatePromiseObjectForAsync(JSContext* cx);
 
 /**
  * Returns true if the given object is a promise created by
- * CreatePromiseObjectForAsync function.
+ * either CreatePromiseObjectForAsync function or async generator's method.
  */
-MOZ_MUST_USE bool IsPromiseForAsync(JSObject* promise);
+MOZ_MUST_USE bool IsPromiseForAsyncFunctionOrGenerator(JSObject* promise);
 
 class AsyncFunctionGeneratorObject;
 
@@ -478,6 +479,15 @@ class OffThreadPromiseRuntimeState;
 // could provide the code collecting the incoming data with an
 // OffThreadPromiseTask for the promise, and let the embedding's network I/O
 // threads call dispatchResolveAndDestroy.
+//
+// OffThreadPromiseTask may also be used purely on the main thread, as a way to
+// "queue a task" in HTML terms. Note that a "task" is not the same as a
+// "microtask" and there are separate queues for tasks and microtasks that are
+// drained at separate times in the browser. The task queue is implemented by
+// the browser's main event loop. The microtask queue is implemented
+// by JS::JobQueue, used for promises and gets drained before returning to
+// the event loop. Thus OffThreadPromiseTask can only be used when the spec
+// says "queue a task", as the WebAssembly APIs do.
 //
 // An OffThreadPromiseTask has a JSContext, and must be constructed and have its
 // 'init' method called on that JSContext's thread. Once initialized, its

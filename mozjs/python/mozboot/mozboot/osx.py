@@ -22,6 +22,7 @@ HOMEBREW_BOOTSTRAP = 'https://raw.githubusercontent.com/Homebrew/install/master/
 XCODE_APP_STORE = 'macappstore://itunes.apple.com/app/id497799835?mt=12'
 XCODE_LEGACY = ('https://developer.apple.com/downloads/download.action?path=Developer_Tools/'
                 'xcode_3.2.6_and_ios_sdk_4.3__final/xcode_3.2.6_and_ios_sdk_4.3.dmg')
+JAVA_PATH = '/Library/Java/JavaVirtualMachines/adoptopenjdk-8.jdk/Contents/Home/bin'
 
 MACPORTS_URL = {
     '14': 'https://distfiles.macports.org/MacPorts/MacPorts-2.5.4-10.14-Mojave.pkg',
@@ -110,10 +111,9 @@ We will install a modern version of Clang through %s.
 
 PACKAGE_MANAGER_CHOICE = '''
 Please choose a package manager you'd like:
-1. Homebrew
-2. MacPorts (Does not yet support bootstrapping GeckoView/Firefox for Android.)
-Your choice:
-'''
+  1. Homebrew
+  2. MacPorts (Does not yet support bootstrapping GeckoView/Firefox for Android.)
+Your choice: '''
 
 NO_PACKAGE_MANAGER_WARNING = '''
 It seems you don't have any supported package manager installed.
@@ -166,12 +166,6 @@ Modify your shell's configuration (e.g. ~/.profile or
 
 Once this is done, start a new shell (likely Command+T) and run
 this bootstrap again.
-'''
-
-JAVA_LICENSE_NOTICE = '''
-We installed a recent Java toolchain for you. We agreed to the Oracle Java
-license for you by downloading the JDK. If this is unacceptable you should
-uninstall.
 '''
 
 
@@ -273,7 +267,8 @@ class OSXBootstrapper(BaseBootstrapper):
                 print(INSTALL_XCODE_COMMAND_LINE_TOOLS_STEPS)
                 sys.exit(1)
 
-            output = self.check_output(['/usr/bin/clang', '--version'])
+            output = self.check_output(['/usr/bin/clang', '--version'],
+                                       universal_newlines=True)
             match = RE_CLANG_VERSION.search(output)
             if match is None:
                 raise Exception('Could not determine Clang version.')
@@ -301,7 +296,8 @@ class OSXBootstrapper(BaseBootstrapper):
         self._ensure_homebrew_found()
         cmd = [self.brew] + extra_brew_args
 
-        installed = self.check_output(cmd + ['list']).split()
+        installed = self.check_output(cmd + ['list'],
+                                      universal_newlines=True).split()
 
         printed = False
 
@@ -320,9 +316,18 @@ class OSXBootstrapper(BaseBootstrapper):
     def _ensure_homebrew_casks(self, casks):
         self._ensure_homebrew_found()
 
-        # Ensure that we can access old versions of packages.  This is
-        # idempotent, so no need to avoid repeat invocation.
-        self.check_output([self.brew, 'tap', 'caskroom/versions'])
+        known_taps = self.check_output([self.brew, 'tap'])
+
+        # Ensure that we can access old versions of packages.
+        if b'homebrew/cask-versions' not in known_taps:
+            self.check_output([self.brew, 'tap', 'homebrew/cask-versions'])
+
+        # "caskroom/versions" has been renamed to "homebrew/cask-versions", so
+        # it is safe to remove the old tap. Removing the old tap is necessary
+        # to avoid the error "Cask [name of cask] exists in multiple taps".
+        # See https://bugzilla.mozilla.org/show_bug.cgi?id=1544981
+        if b'caskroom/versions' in known_taps:
+            self.check_output([self.brew, 'untap', 'caskroom/versions'])
 
         # Change |brew install cask| into |brew cask install cask|.
         return self._ensure_homebrew_packages(casks, extra_brew_args=['cask'])
@@ -336,7 +341,6 @@ class OSXBootstrapper(BaseBootstrapper):
             'autoconf@2.13',
             'git',
             'gnu-tar',
-            'llvm',
             'mercurial',
             'node',
             'python',
@@ -366,11 +370,9 @@ class OSXBootstrapper(BaseBootstrapper):
         self._ensure_homebrew_packages(packages)
 
         casks = [
-            'java8',
+            'adoptopenjdk8',
         ]
-        installed = self._ensure_homebrew_casks(casks)
-        if installed:
-            print(JAVA_LICENSE_NOTICE)  # We accepted a license agreement for the user.
+        self._ensure_homebrew_casks(casks)
 
         is_64bits = sys.maxsize > 2**32
         if not is_64bits:
@@ -380,7 +382,7 @@ class OSXBootstrapper(BaseBootstrapper):
         # 2. Android pieces.
         # Prefer homebrew's java binary by putting it on the path first.
         os.environ['PATH'] = \
-            '{}{}{}'.format('/Library/Java/Home/bin', os.pathsep, os.environ['PATH'])
+            '{}{}{}'.format(JAVA_PATH, os.pathsep, os.environ['PATH'])
         self.ensure_java()
         from mozboot import android
 
@@ -389,15 +391,16 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def suggest_homebrew_mobile_android_mozconfig(self, artifact_mode=False):
         from mozboot import android
-        # Path to java from the caskroom/versions/java8 cask.
-        android.suggest_mozconfig('macosx', artifact_mode=artifact_mode,
-                                  java_bin_path='/Library/Java/Home/bin')
+        android.suggest_mozconfig('macosx', artifact_mode=artifact_mode)
 
     def _ensure_macports_packages(self, packages):
         self.port = self.which('port')
         assert self.port is not None
 
-        installed = set(self.check_output([self.port, 'installed']).split())
+        installed = set(
+            self.check_output(
+                [self.port, 'installed'],
+                universal_newlines=True).split())
 
         missing = [package for package in packages if package not in installed]
         if missing:
@@ -418,7 +421,10 @@ class OSXBootstrapper(BaseBootstrapper):
 
         self._ensure_macports_packages(packages)
 
-        pythons = set(self.check_output([self.port, 'select', '--list', 'python']).split('\n'))
+        pythons = set(
+            self.check_output(
+                [self.port, 'select', '--list', 'python'],
+                universal_newlines=True).split('\n'))
         active = ''
         for python in pythons:
             if 'active' in python:
@@ -433,8 +439,6 @@ class OSXBootstrapper(BaseBootstrapper):
         packages = [
             'nasm',
             'yasm',
-            'llvm-7.0',
-            'clang-7.0',
         ]
 
         self._ensure_macports_packages(packages)
@@ -472,7 +476,7 @@ class OSXBootstrapper(BaseBootstrapper):
         one.
         '''
         installed = []
-        for name, cmd in PACKAGE_MANAGER.iteritems():
+        for name, cmd in PACKAGE_MANAGER.items():
             if self.which(cmd) is not None:
                 installed.append(name)
 
@@ -521,12 +525,20 @@ class OSXBootstrapper(BaseBootstrapper):
         self.install_toolchain_static_analysis(
             state_dir, checkout_root, static_analysis.MACOS_CLANG_TIDY)
 
+    def ensure_sccache_packages(self, state_dir, checkout_root):
+        from mozboot import sccache
+
+        self.install_toolchain_artifact(state_dir, checkout_root, sccache.MACOS_SCCACHE)
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        sccache.RUSTC_DIST_TOOLCHAIN,
+                                        no_unpack=True)
+        self.install_toolchain_artifact(state_dir, checkout_root,
+                                        sccache.CLANG_DIST_TOOLCHAIN,
+                                        no_unpack=True)
+
     def ensure_stylo_packages(self, state_dir, checkout_root):
         from mozboot import stylo
-        # We installed clang via homebrew earlier.  However, on Android, we're
-        # seeing many compiler errors so we use our own toolchain clang.
-        if 'mobile_android' in self.application:
-            self.install_toolchain_artifact(state_dir, checkout_root, stylo.MACOS_CLANG)
+        self.install_toolchain_artifact(state_dir, checkout_root, stylo.MACOS_CLANG)
         self.install_toolchain_artifact(state_dir, checkout_root, stylo.MACOS_CBINDGEN)
 
     def ensure_nasm_packages(self, state_dir, checkout_root):

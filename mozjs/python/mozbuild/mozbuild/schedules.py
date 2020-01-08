@@ -28,6 +28,7 @@ INCLUSIVE_COMPONENTS = [
     'test-coverage',
     'test-coverage-wpt',
     'jsreftest',
+    'android-hw-gfx',
 ]
 INCLUSIVE_COMPONENTS = sorted(INCLUSIVE_COMPONENTS)
 
@@ -43,6 +44,7 @@ EXCLUSIVE_COMPONENTS = [
     'windows',
     # test suites
     'awsy',
+    'condprofile',
     'cppunittest',
     'firefox-ui',
     'geckoview',

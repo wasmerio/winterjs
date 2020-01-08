@@ -9,15 +9,17 @@
 
 #include "mozilla/Array.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/EnumeratedArray.h"
 #include "mozilla/MemoryReporting.h"
 
 #include <utility>
 
 #include "builtin/TypedObject.h"
+#include "jit/BaselineICList.h"
+#include "jit/BaselineJIT.h"
 #include "jit/CompileInfo.h"
 #include "jit/ICStubSpace.h"
 #include "jit/IonCode.h"
-#include "jit/IonControlFlow.h"
 #include "jit/JitFrames.h"
 #include "jit/shared/Assembler-shared.h"
 #include "js/GCHashTable.h"
@@ -62,6 +64,62 @@ struct EnterJitData {
   bool constructing;
 };
 
+enum class BaselineICFallbackKind {
+#define DEF_ENUM_KIND(kind) kind,
+  IC_BASELINE_FALLBACK_CODE_KIND_LIST(DEF_ENUM_KIND)
+#undef DEF_ENUM_KIND
+      Count
+};
+
+enum class BailoutReturnKind {
+  GetProp,
+  GetPropSuper,
+  SetProp,
+  GetElem,
+  GetElemSuper,
+  Call,
+  New,
+  Count
+};
+
+// Class storing code and offsets for all Baseline IC fallback trampolines. This
+// is stored in JitRuntime and generated when creating the JitRuntime.
+class BaselineICFallbackCode {
+  JitCode* code_ = nullptr;
+  using OffsetArray =
+      mozilla::EnumeratedArray<BaselineICFallbackKind,
+                               BaselineICFallbackKind::Count, uint32_t>;
+  OffsetArray offsets_ = {};
+
+  // Keep track of offset into various baseline stubs' code at return
+  // point from called script.
+  using BailoutReturnArray =
+      mozilla::EnumeratedArray<BailoutReturnKind, BailoutReturnKind::Count,
+                               uint32_t>;
+  BailoutReturnArray bailoutReturnOffsets_ = {};
+
+ public:
+  BaselineICFallbackCode() = default;
+  BaselineICFallbackCode(const BaselineICFallbackCode&) = delete;
+  void operator=(const BaselineICFallbackCode&) = delete;
+
+  void initOffset(BaselineICFallbackKind kind, uint32_t offset) {
+    offsets_[kind] = offset;
+  }
+  void initCode(JitCode* code) { code_ = code; }
+  void initBailoutReturnOffset(BailoutReturnKind kind, uint32_t offset) {
+    bailoutReturnOffsets_[kind] = offset;
+  }
+  TrampolinePtr addr(BaselineICFallbackKind kind) const {
+    return TrampolinePtr(code_->raw() + offsets_[kind]);
+  }
+  uint8_t* bailoutReturnAddr(BailoutReturnKind kind) const {
+    return code_->raw() + bailoutReturnOffsets_[kind];
+  }
+};
+
+enum class DebugTrapHandlerKind { Interpreter, Compiler, Count };
+
 typedef void (*EnterJitCode)(void* code, unsigned argc, Value* argv,
                              InterpreterFrame* fp, CalleeToken calleeToken,
                              JSObject* envChain, size_t numStackValues,
@@ -73,10 +131,12 @@ class JitRuntime {
  private:
   friend class JitRealm;
 
-  // Executable allocator for all code except wasm code.
-  MainThreadData<ExecutableAllocator> execAlloc_;
-
   MainThreadData<uint64_t> nextCompilationId_;
+
+  // Buffer for OSR from baseline to Ion. To avoid holding on to this for too
+  // long it's also freed in EnterBaseline and EnterJit (after returning from
+  // JIT code).
+  MainThreadData<js::UniquePtr<uint8_t>> ionOsrTempData_;
 
   // Shared exception-handler tail.
   WriteOnceData<uint32_t> exceptionTailOffset_;
@@ -119,7 +179,6 @@ class JitRuntime {
   WriteOnceData<uint32_t> objectGroupPreBarrierOffset_;
 
   // Thunk to call malloc/free.
-  WriteOnceData<uint32_t> mallocStubOffset_;
   WriteOnceData<uint32_t> freeStubOffset_;
 
   // Thunk called to finish compilation of an IonScript.
@@ -133,11 +192,12 @@ class JitRuntime {
   WriteOnceData<uint32_t> doubleToInt32ValueStubOffset_;
 
   // Thunk used by the debugger for breakpoint and step mode.
-  WriteOnceData<JitCode*> debugTrapHandler_;
+  mozilla::EnumeratedArray<DebugTrapHandlerKind, DebugTrapHandlerKind::Count,
+                           WriteOnceData<JitCode*>>
+      debugTrapHandlers_;
 
-  // Thunk used to fix up on-stack recompile of baseline scripts.
-  WriteOnceData<JitCode*> baselineDebugModeOSRHandler_;
-  WriteOnceData<void*> baselineDebugModeOSRHandlerNoFrameRegPopAddr_;
+  // BaselineInterpreter state.
+  BaselineInterpreter baselineInterpreter_;
 
   // Code for trampolines and VMFunction wrappers.
   WriteOnceData<JitCode*> trampolineCode_;
@@ -154,6 +214,8 @@ class JitRuntime {
   // Maps TailCallVMFunctionId to the offset of the wrapper code in
   // trampolineCode_.
   VMWrapperOffsets tailCallFunctionWrapperOffsets_;
+
+  MainThreadData<BaselineICFallbackCode> baselineICFallbackCode_;
 
   // Global table of jitcode native address => bytecode address mappings.
   UnprotectedData<JitcodeGlobalTable*> jitcodeGlobalTable_;
@@ -181,6 +243,9 @@ class JitRuntime {
   MainThreadData<uint64_t> disambiguationId_;
 
  private:
+  bool generateTrampolines(JSContext* cx);
+  bool generateBaselineICFallbackCode(JSContext* cx);
+
   void generateLazyLinkStub(MacroAssembler& masm);
   void generateInterpreterStub(MacroAssembler& masm);
   void generateDoubleToInt32ValueStub(MacroAssembler& masm);
@@ -197,11 +262,8 @@ class JitRuntime {
   void generateInvalidator(MacroAssembler& masm, Label* bailoutTail);
   uint32_t generatePreBarrier(JSContext* cx, MacroAssembler& masm,
                               MIRType type);
-  void generateMallocStub(MacroAssembler& masm);
   void generateFreeStub(MacroAssembler& masm);
-  JitCode* generateDebugTrapHandler(JSContext* cx);
-  JitCode* generateBaselineDebugModeOSRHandler(
-      JSContext* cx, uint32_t* noFrameRegPopOffsetOut);
+  JitCode* generateDebugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
 
   bool generateVMWrapper(JSContext* cx, MacroAssembler& masm,
                          const VMFunctionData& f, void* nativeFun,
@@ -238,13 +300,18 @@ class JitRuntime {
   static void Trace(JSTracer* trc, const js::AutoAccessAtomsZone& access);
   static void TraceJitcodeGlobalTableForMinorGC(JSTracer* trc);
   static MOZ_MUST_USE bool MarkJitcodeGlobalTableIteratively(GCMarker* marker);
-  static void SweepJitcodeGlobalTable(JSRuntime* rt);
+  static void TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc);
 
-  ExecutableAllocator& execAlloc() { return execAlloc_.ref(); }
+  const BaselineICFallbackCode& baselineICFallbackCode() const {
+    return baselineICFallbackCode_.ref();
+  }
 
   IonCompilationId nextCompilationId() {
     return IonCompilationId(nextCompilationId_++);
   }
+
+  uint8_t* allocateIonOsrTempData(size_t size);
+  void freeIonOsrTempData();
 
   TrampolinePtr getVMWrapper(const VMFunction& f) const;
 
@@ -257,9 +324,9 @@ class JitRuntime {
     return trampolineCode(tailCallFunctionWrapperOffsets_[size_t(funId)]);
   }
 
-  JitCode* debugTrapHandler(JSContext* cx);
-  JitCode* getBaselineDebugModeOSRHandler(JSContext* cx);
-  void* getBaselineDebugModeOSRHandlerAddress(JSContext* cx, bool popFrameReg);
+  JitCode* debugTrapHandler(JSContext* cx, DebugTrapHandlerKind kind);
+
+  BaselineInterpreter& baselineInterpreter() { return baselineInterpreter_; }
 
   TrampolinePtr getGenericBailoutHandler() const {
     return trampolineCode(bailoutHandlerOffset_);
@@ -313,8 +380,6 @@ class JitRuntime {
         MOZ_CRASH();
     }
   }
-
-  TrampolinePtr mallocStub() const { return trampolineCode(mallocStubOffset_); }
 
   TrampolinePtr freeStub() const { return trampolineCode(freeStubOffset_); }
 
@@ -407,16 +472,14 @@ struct CacheIRStubKey : public DefaultHasher<CacheIRStubKey> {
 
 template <typename Key>
 struct IcStubCodeMapGCPolicy {
-  static bool needsSweep(Key*, ReadBarrieredJitCode* value) {
-    return IsAboutToBeFinalized(value);
+  static bool traceWeak(JSTracer* trc, Key*, WeakHeapPtrJitCode* value) {
+    return TraceWeakEdge(trc, value, "traceWeak");
   }
 };
 
 class JitZone {
   // Allocated space for optimized baseline stubs.
   OptimizedICStubSpace optimizedStubSpace_;
-  // Allocated space for cached cfg.
-  CFGSpace cfgSpace_;
 
   // Set of CacheIRStubInfo instances used by Ion stubs in this Zone.
   using IonCacheIRStubInfoSet =
@@ -425,19 +488,21 @@ class JitZone {
 
   // Map CacheIRStubKey to shared JitCode objects.
   using BaselineCacheIRStubCodeMap =
-      GCHashMap<CacheIRStubKey, ReadBarrieredJitCode, CacheIRStubKey,
+      GCHashMap<CacheIRStubKey, WeakHeapPtrJitCode, CacheIRStubKey,
                 SystemAllocPolicy, IcStubCodeMapGCPolicy<CacheIRStubKey>>;
   BaselineCacheIRStubCodeMap baselineCacheIRStubCodes_;
 
+  // Executable allocator for all code except wasm code.
+  MainThreadData<ExecutableAllocator> execAlloc_;
+
  public:
-  void sweep();
+  void traceWeak(JSTracer* trc);
 
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
-                              size_t* jitZone, size_t* baselineStubsOptimized,
-                              size_t* cachedCFG) const;
+                              JS::CodeSizes* code, size_t* jitZone,
+                              size_t* baselineStubsOptimized) const;
 
   OptimizedICStubSpace* optimizedStubSpace() { return &optimizedStubSpace_; }
-  CFGSpace* cfgSpace() { return &cfgSpace_; }
 
   JitCode* getBaselineCacheIRStubCode(const CacheIRStubKey::Lookup& key,
                                       CacheIRStubInfo** stubInfo) {
@@ -469,17 +534,9 @@ class JitZone {
     return ionCacheIRStubInfoSet_.add(p, std::move(key));
   }
   void purgeIonCacheIRStubInfo() { ionCacheIRStubInfoSet_.clearAndCompact(); }
-};
 
-enum class BailoutReturnStub {
-  GetProp,
-  GetPropSuper,
-  SetProp,
-  GetElem,
-  GetElemSuper,
-  Call,
-  New,
-  Count
+  ExecutableAllocator& execAlloc() { return execAlloc_.ref(); }
+  const ExecutableAllocator& execAlloc() const { return execAlloc_.ref(); }
 };
 
 class JitRealm {
@@ -487,23 +544,9 @@ class JitRealm {
 
   // Map ICStub keys to ICStub shared code objects.
   using ICStubCodeMap =
-      GCHashMap<uint32_t, ReadBarrieredJitCode, DefaultHasher<uint32_t>,
+      GCHashMap<uint32_t, WeakHeapPtrJitCode, DefaultHasher<uint32_t>,
                 ZoneAllocPolicy, IcStubCodeMapGCPolicy<uint32_t>>;
   ICStubCodeMap* stubCodes_;
-
-  // Keep track of offset into various baseline stubs' code at return
-  // point from called script.
-  struct BailoutReturnStubInfo {
-    void* addr;
-    uint32_t key;
-
-    BailoutReturnStubInfo() : addr(nullptr), key(0) {}
-    BailoutReturnStubInfo(void* addr_, uint32_t key_)
-        : addr(addr_), key(key_) {}
-  };
-  mozilla::EnumeratedArray<BailoutReturnStub, BailoutReturnStub::Count,
-                           BailoutReturnStubInfo>
-      bailoutReturnStubInfo_;
 
   // The JitRealm stores stubs to concatenate strings inline and perform RegExp
   // calls inline. These bake in zone and realm specific pointers and can't be
@@ -523,7 +566,7 @@ class JitRealm {
     Count
   };
 
-  mozilla::EnumeratedArray<StubIndex, StubIndex::Count, ReadBarrieredJitCode>
+  mozilla::EnumeratedArray<StubIndex, StubIndex::Count, WeakHeapPtrJitCode>
       stubs_;
 
   bool stringsCanBeInNursery;
@@ -557,14 +600,6 @@ class JitRealm {
     }
     return true;
   }
-  void initBailoutReturnAddr(void* addr, uint32_t key, BailoutReturnStub kind) {
-    MOZ_ASSERT(bailoutReturnStubInfo_[kind].addr == nullptr);
-    bailoutReturnStubInfo_[kind] = BailoutReturnStubInfo{addr, key};
-  }
-  void* bailoutReturnAddr(BailoutReturnStub kind) {
-    MOZ_ASSERT(bailoutReturnStubInfo_[kind].addr);
-    return bailoutReturnStubInfo_[kind].addr;
-  }
 
   JitRealm();
   ~JitRealm();
@@ -580,16 +615,16 @@ class JitRealm {
     return stubs_[StringConcat];
   }
 
-  void sweep(JS::Realm* realm);
+  void traceWeak(JSTracer* trc, JS::Realm* realm);
 
   void discardStubs() {
-    for (ReadBarrieredJitCode& stubRef : stubs_) {
+    for (WeakHeapPtrJitCode& stubRef : stubs_) {
       stubRef = nullptr;
     }
   }
 
   bool hasStubs() const {
-    for (const ReadBarrieredJitCode& stubRef : stubs_) {
+    for (const WeakHeapPtrJitCode& stubRef : stubs_) {
       if (stubRef) {
         return true;
       }
@@ -654,8 +689,8 @@ class JitRealm {
 };
 
 // Called from Zone::discardJitCode().
-void InvalidateAll(FreeOp* fop, JS::Zone* zone);
-void FinishInvalidation(FreeOp* fop, JSScript* script);
+void InvalidateAll(JSFreeOp* fop, JS::Zone* zone);
+void FinishInvalidation(JSFreeOp* fop, JSScript* script);
 
 // This class ensures JIT code is executable on its destruction. Creators
 // must call makeWritable(), and not attempt to write to the buffer if it fails.
@@ -686,7 +721,7 @@ class MOZ_RAII AutoWritableJitCodeFallible {
   }
 
   ~AutoWritableJitCodeFallible() {
-    if (!ExecutableAllocator::makeExecutable(addr_, size_)) {
+    if (!ExecutableAllocator::makeExecutableAndFlushICache(addr_, size_)) {
       MOZ_CRASH();
     }
     rt_->toggleAutoWritableJitCodeActive(false);
@@ -708,22 +743,6 @@ class MOZ_RAII AutoWritableJitCode : private AutoWritableJitCodeFallible {
   explicit AutoWritableJitCode(JitCode* code)
       : AutoWritableJitCode(code->runtimeFromMainThread(), code->raw(),
                             code->bufferSize()) {}
-};
-
-class MOZ_STACK_CLASS MaybeAutoWritableJitCode {
-  mozilla::Maybe<AutoWritableJitCode> awjc_;
-
- public:
-  MaybeAutoWritableJitCode(void* addr, size_t size, ReprotectCode reprotect) {
-    if (reprotect) {
-      awjc_.emplace(addr, size);
-    }
-  }
-  MaybeAutoWritableJitCode(JitCode* code, ReprotectCode reprotect) {
-    if (reprotect) {
-      awjc_.emplace(code);
-    }
-  }
 };
 
 }  // namespace jit

@@ -6,6 +6,7 @@
 
 #include "jit/IonAnalysis.h"
 
+#include <algorithm>
 #include <utility>  // for ::std::pair
 
 #include "jit/AliasAnalysis.h"
@@ -1240,7 +1241,7 @@ bool jit::EliminateDeadResumePointOperands(MIRGenerator* mir, MIRGraph& graph) {
           maxDefinition = UINT32_MAX;
           break;
         }
-        maxDefinition = Max(maxDefinition, def->id());
+        maxDefinition = std::max(maxDefinition, def->id());
       }
       if (maxDefinition == UINT32_MAX) {
         continue;
@@ -1637,7 +1638,10 @@ static MIRType GuessPhiType(MPhi* phi, bool* hasInputsWithEmptyTypes) {
       }
       continue;
     }
-    if (type != in->type()) {
+
+    if (type == in->type()) {
+      convertibleToFloat32 = convertibleToFloat32 && in->canProduceFloat32();
+    } else {
       if (convertibleToFloat32 && in->type() == MIRType::Float32) {
         // If we only saw definitions that can be converted into Float32 before
         // and encounter a Float32 value, promote previous values to Float32
@@ -1646,7 +1650,7 @@ static MIRType GuessPhiType(MPhi* phi, bool* hasInputsWithEmptyTypes) {
                  IsTypeRepresentableAsDouble(in->type())) {
         // Specialize phis with int32 and double operands as double.
         type = MIRType::Double;
-        convertibleToFloat32 &= in->canProduceFloat32();
+        convertibleToFloat32 = convertibleToFloat32 && in->canProduceFloat32();
       } else {
         return MIRType::Value;
       }
@@ -1824,6 +1828,9 @@ bool TypeAnalyzer::adjustPhiInputs(MPhi* phi) {
           // Convert int32 operands to double.
           replacement = MToDouble::New(alloc(), in);
         } else if (phiType == MIRType::Float32) {
+          MOZ_ASSERT(in->canProduceFloat32() ||
+                     (in->resultTypeSet() && in->resultTypeSet()->empty()));
+
           if (in->type() == MIRType::Int32 || in->type() == MIRType::Double) {
             replacement = MToFloat32::New(alloc(), in);
           } else {
@@ -2302,7 +2309,12 @@ static bool IsRegExpHoistableCall(CompileRuntime* runtime, MCall* call,
     if (!fun->isSelfHostedBuiltin()) {
       return false;
     }
-    name = GetSelfHostedFunctionName(fun->rawJSFunction());
+
+    // Avoid accessing `JSFunction.flags_` via `JSFunction::isExtended`.
+    if (!fun->isExtended()) {
+      return false;
+    }
+    name = GetClonedSelfHostedFunctionNameOffMainThread(fun->rawJSFunction());
   } else {
     MDefinition* funDef = call->getFunction();
     if (funDef->isDebugCheckSelfHosted()) {
@@ -2361,8 +2373,7 @@ static bool CanCompareRegExp(MCompare* compare, MDefinition* def) {
 
   if (op != JSOP_EQ && op != JSOP_NE) {
     // Relational comparison always invoke @@toPrimitive.
-    MOZ_ASSERT(op == JSOP_GT || op == JSOP_GE || op == JSOP_LT ||
-               op == JSOP_LE);
+    MOZ_ASSERT(IsRelationalOp(op));
     return false;
   }
 
@@ -3230,7 +3241,6 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Shape:
     case MIRType::ObjectGroup:
     case MIRType::Doublex2:  // NYI, see also RSimdBox::recover
-    case MIRType::SinCosDouble:
     case MIRType::Int64:
     case MIRType::RefOrNull:
       return false;
@@ -3656,8 +3666,8 @@ static bool TryEliminateBoundsCheck(BoundsCheckMap& checks, size_t blockIndex,
   // Update the dominating check to cover both ranges, denormalizing the
   // result per the constant offset in the index.
   int32_t newMinimum, newMaximum;
-  if (!SafeSub(Min(minimumA, minimumB), sumA.constant, &newMinimum) ||
-      !SafeSub(Max(maximumA, maximumB), sumA.constant, &newMaximum)) {
+  if (!SafeSub(std::min(minimumA, minimumB), sumA.constant, &newMinimum) ||
+      !SafeSub(std::max(maximumA, maximumB), sumA.constant, &newMaximum)) {
     return false;
   }
 
@@ -3871,13 +3881,6 @@ static inline MDefinition* PassthroughOperand(MDefinition* def) {
   }
   if (def->isMaybeCopyElementsForWrite()) {
     return def->toMaybeCopyElementsForWrite()->object();
-  }
-  if (!JitOptions.spectreObjectMitigationsMisc) {
-    // If Spectre mitigations are enabled, LConvertUnboxedObjectToNative
-    // needs to have its own def.
-    if (def->isConvertUnboxedObjectToNative()) {
-      return def->toConvertUnboxedObjectToNative()->object();
-    }
   }
   return nullptr;
 }
@@ -4376,9 +4379,9 @@ MCompare* jit::ConvertLinearInequality(TempAllocator& alloc, MBasicBlock* block,
   return compare;
 }
 
-static bool AnalyzePoppedThis(JSContext* cx, ObjectGroup* group,
-                              MDefinition* thisValue, MInstruction* ins,
-                              bool definitelyExecuted,
+static bool AnalyzePoppedThis(JSContext* cx, DPAConstraintInfo& constraintInfo,
+                              ObjectGroup* group, MDefinition* thisValue,
+                              MInstruction* ins, bool definitelyExecuted,
                               HandlePlainObject baseobj,
                               Vector<TypeNewScriptInitializer>* initializerList,
                               Vector<PropertyName*>* accessedProperties,
@@ -4419,7 +4422,12 @@ static bool AnalyzePoppedThis(JSContext* cx, ObjectGroup* group,
     }
 
     RootedId id(cx, NameToId(setprop->name()));
-    if (!AddClearDefiniteGetterSetterForPrototypeChain(cx, group, id)) {
+    bool added = false;
+    if (!AddClearDefiniteGetterSetterForPrototypeChain(cx, constraintInfo,
+                                                       group, id, &added)) {
+      return false;
+    }
+    if (!added) {
       // The prototype chain already contains a getter/setter for this
       // property, or type information is too imprecise.
       return true;
@@ -4485,7 +4493,12 @@ static bool AnalyzePoppedThis(JSContext* cx, ObjectGroup* group,
       return false;
     }
 
-    if (!AddClearDefiniteGetterSetterForPrototypeChain(cx, group, id)) {
+    bool added = false;
+    if (!AddClearDefiniteGetterSetterForPrototypeChain(cx, constraintInfo,
+                                                       group, id, &added)) {
+      return false;
+    }
+    if (!added) {
       // The |this| value can escape if any property reads it does go
       // through a getter.
       return true;
@@ -4509,8 +4522,8 @@ static int CmpInstructions(const void* a, const void* b) {
 }
 
 bool jit::AnalyzeNewScriptDefiniteProperties(
-    JSContext* cx, HandleFunction fun, ObjectGroup* group,
-    HandlePlainObject baseobj,
+    JSContext* cx, DPAConstraintInfo& constraintInfo, HandleFunction fun,
+    ObjectGroup* group, HandlePlainObject baseobj,
     Vector<TypeNewScriptInitializer>* initializerList) {
   MOZ_ASSERT(cx->zone()->types.activeAnalysis);
 
@@ -4523,8 +4536,8 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
     return false;
   }
 
-  if (!jit::IsIonEnabled(cx) || !jit::IsBaselineEnabled(cx) ||
-      !script->canBaselineCompile()) {
+  if (!jit::IsIonEnabled() || !jit::IsBaselineJitEnabled() ||
+      !CanBaselineInterpretScript(script)) {
     return true;
   }
 
@@ -4552,17 +4565,12 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
     return false;
   }
 
-  if (!script->hasBaselineScript()) {
-    MethodStatus status = BaselineCompile(cx, script);
-    if (status == Method_Error) {
-      return false;
-    }
-    if (status != Method_Compiled) {
-      return true;
-    }
+  AutoKeepJitScripts keepJitScript(cx);
+  if (!script->ensureHasJitScript(cx, keepJitScript)) {
+    return false;
   }
 
-  TypeScript::SetThis(cx, script, TypeSet::ObjectType(group));
+  JitScript::MonitorThisType(cx, script, TypeSet::ObjectType(group));
 
   MIRGraph graph(&temp);
   InlineScriptTree* inlineScriptTree =
@@ -4685,9 +4693,9 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
 
     bool handled = false;
     size_t slotSpan = baseobj->slotSpan();
-    if (!AnalyzePoppedThis(cx, group, thisValue, ins, definitelyExecuted,
-                           baseobj, initializerList, &accessedProperties,
-                           &handled)) {
+    if (!AnalyzePoppedThis(cx, constraintInfo, group, thisValue, ins,
+                           definitelyExecuted, baseobj, initializerList,
+                           &accessedProperties, &handled)) {
       return false;
     }
     if (!handled) {
@@ -4705,7 +4713,6 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
     // contingent on the correct frames being inlined. Add constraints to
     // invalidate the definite properties if additional functions could be
     // called at the inline frame sites.
-    Vector<MBasicBlock*> exitBlocks(cx);
     for (MBasicBlockIterator block(graph.begin()); block != graph.end();
          block++) {
       // Inlining decisions made after the last new property was added to
@@ -4716,9 +4723,9 @@ bool jit::AnalyzeNewScriptDefiniteProperties(
       if (MResumePoint* rp = block->callerResumePoint()) {
         if (block->numPredecessors() == 1 &&
             block->getPredecessor(0) == rp->block()) {
-          JSScript* script = rp->block()->info().script();
-          if (!AddClearDefiniteFunctionUsesInScript(cx, group, script,
-                                                    block->info().script())) {
+          JSScript* caller = rp->block()->info().script();
+          JSScript* callee = block->info().script();
+          if (!constraintInfo.addInliningConstraint(caller, callee)) {
             return false;
           }
         }
@@ -4789,7 +4796,7 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
     return true;
   }
 
-  if (!jit::IsIonEnabled(cx)) {
+  if (!jit::IsIonEnabled()) {
     return true;
   }
 
@@ -4808,8 +4815,8 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
     return false;
   }
 
-  AutoKeepTypeScripts keepTypes(cx);
-  if (!script->ensureHasTypes(cx, keepTypes)) {
+  AutoKeepJitScripts keepJitScript(cx);
+  if (!script->ensureHasJitScript(cx, keepJitScript)) {
     return false;
   }
 
@@ -4831,7 +4838,7 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
   }
 
   CompileInfo info(CompileRuntime::get(cx->runtime()), script,
-                   script->functionNonDelazifying(),
+                   script->function(),
                    /* osrPc = */ nullptr, Analysis_ArgumentsUsage,
                    /* needsArgsObj = */ true, inlineScriptTree);
 
@@ -4885,6 +4892,10 @@ bool jit::AnalyzeArgumentsUsage(JSContext* cx, JSScript* scriptArg) {
   MDefinition* argumentsValue = graph.entryBlock()->getSlot(info.argsObjSlot());
 
   bool argumentsContentsObserved = false;
+
+  if (argumentsValue->isImplicitlyUsed()) {
+    return true;
+  }
 
   for (MUseDefIterator uses(argumentsValue); uses; uses++) {
     MDefinition* use = uses.def();
@@ -5112,7 +5123,7 @@ bool jit::MakeLoopsContiguous(MIRGraph& graph) {
 }
 
 MRootList::MRootList(TempAllocator& alloc) {
-#define INIT_VECTOR(name, _0, _1) roots_[JS::RootKind::name].emplace(alloc);
+#define INIT_VECTOR(name, _0, _1, _2) roots_[JS::RootKind::name].emplace(alloc);
   JS_FOR_EACH_TRACEKIND(INIT_VECTOR)
 #undef INIT_VECTOR
 }
@@ -5128,7 +5139,7 @@ static void TraceVector(JSTracer* trc, const MRootList::RootVector& vector,
 }
 
 void MRootList::trace(JSTracer* trc) {
-#define TRACE_ROOTS(name, type, _) \
+#define TRACE_ROOTS(name, type, _, _1) \
   TraceVector<type*>(trc, *roots_[JS::RootKind::name], "mir-root-" #name);
   JS_FOR_EACH_TRACEKIND(TRACE_ROOTS)
 #undef TRACE_ROOTS

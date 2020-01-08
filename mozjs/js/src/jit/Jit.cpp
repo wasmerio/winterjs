@@ -20,9 +20,11 @@ using namespace js::jit;
 static EnterJitStatus JS_HAZ_JSNATIVE_CALLER EnterJit(JSContext* cx,
                                                       RunState& state,
                                                       uint8_t* code) {
-  MOZ_ASSERT(state.script()->hasBaselineScript());
+  // We don't want to call the interpreter stub here (because
+  // C++ -> interpreterStub -> C++ is slower than staying in C++).
   MOZ_ASSERT(code);
-  MOZ_ASSERT(IsBaselineEnabled(cx));
+  MOZ_ASSERT(code != cx->runtime()->jitRuntime()->interpreterStub().value);
+  MOZ_ASSERT(IsBaselineInterpreterEnabled());
 
   if (!CheckRecursionLimit(cx)) {
     return EnterJitStatus::Error;
@@ -55,7 +57,11 @@ static EnterJitStatus JS_HAZ_JSNATIVE_CALLER EnterJit(JSContext* cx,
       if (numActualArgs > BASELINE_MAX_ARGS_LENGTH) {
         return EnterJitStatus::NotEntered;
       }
-      code = script->baselineScript()->method()->raw();
+      if (script->hasBaselineScript()) {
+        code = script->baselineScript()->method()->raw();
+      } else {
+        code = cx->runtime()->jitRuntime()->baselineInterpreter().codeRaw();
+      }
     }
 
     constructing = state.asInvoke()->constructing();
@@ -64,7 +70,7 @@ static EnterJitStatus JS_HAZ_JSNATIVE_CALLER EnterJit(JSContext* cx,
     envChain = nullptr;
     calleeToken = CalleeToToken(&args.callee().as<JSFunction>(), constructing);
 
-    unsigned numFormals = script->functionNonDelazifying()->nargs();
+    unsigned numFormals = script->function()->nargs();
     if (numFormals > numActualArgs) {
       code = cx->runtime()->jitRuntime()->getArgumentsRectifier().value;
     }
@@ -108,7 +114,7 @@ static EnterJitStatus JS_HAZ_JSNATIVE_CALLER EnterJit(JSContext* cx,
   MOZ_ASSERT(!cx->hasIonReturnOverride());
 
   // Release temporary buffer used for OSR into Ion.
-  cx->freeOsrTempData();
+  cx->runtime()->jitRuntime()->freeIonOsrTempData();
 
   if (result.isMagic()) {
     MOZ_ASSERT(result.isMagic(JS_ION_ERROR));
@@ -127,19 +133,31 @@ static EnterJitStatus JS_HAZ_JSNATIVE_CALLER EnterJit(JSContext* cx,
 }
 
 EnterJitStatus js::jit::MaybeEnterJit(JSContext* cx, RunState& state) {
+  if (!IsBaselineInterpreterEnabled()) {
+    // All JITs are disabled.
+    return EnterJitStatus::NotEntered;
+  }
+
+  // JITs do not respect the debugger's OnNativeCall hook, so JIT execution is
+  // disabled if this hook might need to be called.
+  if (cx->insideDebuggerEvaluationWithOnNativeCallHook) {
+    return EnterJitStatus::NotEntered;
+  }
+
   JSScript* script = state.script();
 
   uint8_t* code = script->jitCodeRaw();
   do {
-    // Make sure we have a BaselineScript: we don't want to call the
-    // interpreter stub here. Note that Baseline code contains warm-up
-    // checks in the prologue to Ion-compile if needed.
-    if (script->hasBaselineScript()) {
+    // Make sure we can enter Baseline Interpreter code. Note that the prologue
+    // has warm-up checks to tier up if needed.
+    if (script->hasJitScript()) {
       break;
     }
 
+    script->incWarmUpCounter();
+
     // Try to Ion-compile.
-    if (jit::IsIonEnabled(cx)) {
+    if (jit::IsIonEnabled()) {
       jit::MethodStatus status = jit::CanEnterIon(cx, state);
       if (status == jit::Method_Error) {
         return EnterJitStatus::Error;
@@ -151,8 +169,22 @@ EnterJitStatus js::jit::MaybeEnterJit(JSContext* cx, RunState& state) {
     }
 
     // Try to Baseline-compile.
-    if (jit::IsBaselineEnabled(cx)) {
-      jit::MethodStatus status = jit::CanEnterBaselineMethod(cx, state);
+    if (jit::IsBaselineJitEnabled()) {
+      jit::MethodStatus status =
+          jit::CanEnterBaselineMethod<BaselineTier::Compiler>(cx, state);
+      if (status == jit::Method_Error) {
+        return EnterJitStatus::Error;
+      }
+      if (status == jit::Method_Compiled) {
+        code = script->jitCodeRaw();
+        break;
+      }
+    }
+
+    // Try to enter the Baseline Interpreter.
+    if (IsBaselineInterpreterEnabled()) {
+      jit::MethodStatus status =
+          jit::CanEnterBaselineMethod<BaselineTier::Interpreter>(cx, state);
       if (status == jit::Method_Error) {
         return EnterJitStatus::Error;
       }

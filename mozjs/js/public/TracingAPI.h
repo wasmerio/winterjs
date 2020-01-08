@@ -24,6 +24,9 @@ class TenuredHeap;
 /** Returns a static string equivalent of |kind|. */
 JS_FRIEND_API const char* GCTraceKindToAscii(JS::TraceKind kind);
 
+/** Returns the base size in bytes of the GC thing of kind |kind|. */
+JS_FRIEND_API size_t GCTraceKindSize(JS::TraceKind kind);
+
 }  // namespace JS
 
 enum WeakMapTraceKind {
@@ -66,12 +69,6 @@ class JS_PUBLIC_API JSTracer {
     // everything reachable by regular edges has been marked.
     Marking,
 
-    // Same as Marking, except we have now moved on to the "weak marking
-    // phase", in which every marked obj/script is immediately looked up to
-    // see if it is a weak map key (and therefore might require marking its
-    // weak map value).
-    WeakMarking,
-
     // A tracer that traverses the graph for the purposes of moving objects
     // from the nursery to the tenured area.
     Tenuring,
@@ -80,12 +77,7 @@ class JS_PUBLIC_API JSTracer {
     // Traversing children is the responsibility of the callback.
     Callback
   };
-  bool isMarkingTracer() const {
-    return tag_ == TracerKindTag::Marking || tag_ == TracerKindTag::WeakMarking;
-  }
-  bool isWeakMarkingTracer() const {
-    return tag_ == TracerKindTag::WeakMarking;
-  }
+  bool isMarkingTracer() const { return tag_ == TracerKindTag::Marking; }
   bool isTenuringTracer() const { return tag_ == TracerKindTag::Tenuring; }
   bool isCallbackTracer() const { return tag_ == TracerKindTag::Callback; }
   inline JS::CallbackTracer* asCallbackTracer();
@@ -127,7 +119,7 @@ class JS_PUBLIC_API JSTracer {
 #endif
 
  protected:
-  TracerKindTag tag_;
+  const TracerKindTag tag_;
   bool traceWeakEdges_;
   bool canSkipJsids_;
 };
@@ -154,40 +146,48 @@ class JS_PUBLIC_API CallbackTracer : public JSTracer {
   // dispatches to the fully-generic onChild implementation, so for cases that
   // do not care about boxing overhead and do not need the actual edges,
   // just override the generic onChild.
-  virtual void onObjectEdge(JSObject** objp) { onChild(JS::GCCellPtr(*objp)); }
-  virtual void onStringEdge(JSString** strp) { onChild(JS::GCCellPtr(*strp)); }
-  virtual void onSymbolEdge(JS::Symbol** symp) {
-    onChild(JS::GCCellPtr(*symp));
+  virtual bool onObjectEdge(JSObject** objp) {
+    return onChild(JS::GCCellPtr(*objp));
   }
-  virtual void onBigIntEdge(JS::BigInt** bip) { onChild(JS::GCCellPtr(*bip)); }
-  virtual void onScriptEdge(JSScript** scriptp) {
-    onChild(JS::GCCellPtr(*scriptp));
+  virtual bool onStringEdge(JSString** strp) {
+    return onChild(JS::GCCellPtr(*strp));
   }
-  virtual void onShapeEdge(js::Shape** shapep) {
-    onChild(JS::GCCellPtr(*shapep, JS::TraceKind::Shape));
+  virtual bool onSymbolEdge(JS::Symbol** symp) {
+    return onChild(JS::GCCellPtr(*symp));
   }
-  virtual void onObjectGroupEdge(js::ObjectGroup** groupp) {
-    onChild(JS::GCCellPtr(*groupp, JS::TraceKind::ObjectGroup));
+  virtual bool onBigIntEdge(JS::BigInt** bip) {
+    return onChild(JS::GCCellPtr(*bip));
   }
-  virtual void onBaseShapeEdge(js::BaseShape** basep) {
-    onChild(JS::GCCellPtr(*basep, JS::TraceKind::BaseShape));
+  virtual bool onScriptEdge(JSScript** scriptp) {
+    return onChild(JS::GCCellPtr(*scriptp));
   }
-  virtual void onJitCodeEdge(js::jit::JitCode** codep) {
-    onChild(JS::GCCellPtr(*codep, JS::TraceKind::JitCode));
+  virtual bool onShapeEdge(js::Shape** shapep) {
+    return onChild(JS::GCCellPtr(*shapep, JS::TraceKind::Shape));
   }
-  virtual void onLazyScriptEdge(js::LazyScript** lazyp) {
-    onChild(JS::GCCellPtr(*lazyp, JS::TraceKind::LazyScript));
+  virtual bool onObjectGroupEdge(js::ObjectGroup** groupp) {
+    return onChild(JS::GCCellPtr(*groupp, JS::TraceKind::ObjectGroup));
   }
-  virtual void onScopeEdge(js::Scope** scopep) {
-    onChild(JS::GCCellPtr(*scopep, JS::TraceKind::Scope));
+  virtual bool onBaseShapeEdge(js::BaseShape** basep) {
+    return onChild(JS::GCCellPtr(*basep, JS::TraceKind::BaseShape));
   }
-  virtual void onRegExpSharedEdge(js::RegExpShared** sharedp) {
-    onChild(JS::GCCellPtr(*sharedp, JS::TraceKind::RegExpShared));
+  virtual bool onJitCodeEdge(js::jit::JitCode** codep) {
+    return onChild(JS::GCCellPtr(*codep, JS::TraceKind::JitCode));
+  }
+  virtual bool onLazyScriptEdge(js::LazyScript** lazyp) {
+    return onChild(JS::GCCellPtr(*lazyp, JS::TraceKind::LazyScript));
+  }
+  virtual bool onScopeEdge(js::Scope** scopep) {
+    return onChild(JS::GCCellPtr(*scopep, JS::TraceKind::Scope));
+  }
+  virtual bool onRegExpSharedEdge(js::RegExpShared** sharedp) {
+    return onChild(JS::GCCellPtr(*sharedp, JS::TraceKind::RegExpShared));
   }
 
   // Override this method to receive notification when a node in the GC
   // heap graph is visited.
-  virtual void onChild(const JS::GCCellPtr& thing) = 0;
+  // This method should return whether the edge still exists, i.e. return false
+  // if 'thing' is cleared by the CallbackTracer, return true otherwise.
+  virtual bool onChild(const JS::GCCellPtr& thing) = 0;
 
   // Access to the tracing context:
   // When tracing with a JS::CallbackTracer, we invoke the callback with the
@@ -239,14 +239,15 @@ class JS_PUBLIC_API CallbackTracer : public JSTracer {
 
 #ifdef DEBUG
   enum class TracerKind {
-    DoNotCare,
+    Unspecified,
     Moving,
     GrayBuffering,
     VerifyTraceProtoAndIface,
     ClearEdges,
-    UnmarkGray
+    UnmarkGray,
+    Sweeping
   };
-  virtual TracerKind getTracerKind() const { return TracerKind::DoNotCare; }
+  virtual TracerKind getTracerKind() const { return TracerKind::Unspecified; }
 #endif
 
   // In C++, overriding a method hides all methods in the base class with
@@ -254,19 +255,27 @@ class JS_PUBLIC_API CallbackTracer : public JSTracer {
   // methods have to have distinct names to allow us to override them
   // individually, which is freqently useful if, for example, we only want to
   // process only one type of edge.
-  void dispatchToOnEdge(JSObject** objp) { onObjectEdge(objp); }
-  void dispatchToOnEdge(JSString** strp) { onStringEdge(strp); }
-  void dispatchToOnEdge(JS::Symbol** symp) { onSymbolEdge(symp); }
-  void dispatchToOnEdge(JS::BigInt** bip) { onBigIntEdge(bip); }
-  void dispatchToOnEdge(JSScript** scriptp) { onScriptEdge(scriptp); }
-  void dispatchToOnEdge(js::Shape** shapep) { onShapeEdge(shapep); }
-  void dispatchToOnEdge(js::ObjectGroup** groupp) { onObjectGroupEdge(groupp); }
-  void dispatchToOnEdge(js::BaseShape** basep) { onBaseShapeEdge(basep); }
-  void dispatchToOnEdge(js::jit::JitCode** codep) { onJitCodeEdge(codep); }
-  void dispatchToOnEdge(js::LazyScript** lazyp) { onLazyScriptEdge(lazyp); }
-  void dispatchToOnEdge(js::Scope** scopep) { onScopeEdge(scopep); }
-  void dispatchToOnEdge(js::RegExpShared** sharedp) {
-    onRegExpSharedEdge(sharedp);
+  bool dispatchToOnEdge(JSObject** objp) { return onObjectEdge(objp); }
+  bool dispatchToOnEdge(JSString** strp) { return onStringEdge(strp); }
+  bool dispatchToOnEdge(JS::Symbol** symp) { return onSymbolEdge(symp); }
+  bool dispatchToOnEdge(JS::BigInt** bip) { return onBigIntEdge(bip); }
+  bool dispatchToOnEdge(JSScript** scriptp) { return onScriptEdge(scriptp); }
+  bool dispatchToOnEdge(js::Shape** shapep) { return onShapeEdge(shapep); }
+  bool dispatchToOnEdge(js::ObjectGroup** groupp) {
+    return onObjectGroupEdge(groupp);
+  }
+  bool dispatchToOnEdge(js::BaseShape** basep) {
+    return onBaseShapeEdge(basep);
+  }
+  bool dispatchToOnEdge(js::jit::JitCode** codep) {
+    return onJitCodeEdge(codep);
+  }
+  bool dispatchToOnEdge(js::LazyScript** lazyp) {
+    return onLazyScriptEdge(lazyp);
+  }
+  bool dispatchToOnEdge(js::Scope** scopep) { return onScopeEdge(scopep); }
+  bool dispatchToOnEdge(js::RegExpShared** sharedp) {
+    return onRegExpSharedEdge(sharedp);
   }
 
  protected:
@@ -448,6 +457,19 @@ extern JS_PUBLIC_API void UnsafeTraceManuallyBarrieredEdge(JSTracer* trc,
                                                            T* edgep,
                                                            const char* name);
 
+// Not part of the public API, but declared here so we can use it in
+// GCPolicyAPI.h
+template <typename T>
+inline bool TraceManuallyBarrieredWeakEdge(JSTracer* trc, T* thingp,
+                                           const char* name);
+
+template <typename T>
+class BarrieredBase;
+
+template <typename T>
+inline bool TraceWeakEdge(JSTracer* trc, BarrieredBase<T>* thingp,
+                          const char* name);
+
 namespace gc {
 
 // Return true if the given edge is not live and is about to be swept.
@@ -460,6 +482,15 @@ template <typename T>
 bool IsAboutToBeFinalizedUnbarriered(T* thingp);
 
 }  // namespace gc
+
+#ifdef DEBUG
+/*
+ * Return whether the runtime is currently being destroyed, for use in
+ * assertions.
+ */
+extern JS_FRIEND_API bool RuntimeIsBeingDestroyed();
+#endif
+
 }  // namespace js
 
 #endif /* js_TracingAPI_h */

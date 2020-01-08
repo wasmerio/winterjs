@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/computed-names.case
 // - src/class-elements/productions/cls-expr-wrapped-in-sc.template

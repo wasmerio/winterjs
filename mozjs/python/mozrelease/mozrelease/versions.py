@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
 from __future__ import absolute_import
 
 from distutils.version import StrictVersion, LooseVersion
@@ -31,7 +35,7 @@ class MozillaVersionCompareMixin():
                 has_esr.issuperset(set(['other', 'self'])):
             #  If both had esr string or neither, then cmp() was accurate
             return val
-        elif val is not 0:
+        elif val != 0:
             # cmp is accurate here even if esr is present in only 1 compare, since
             # versions are not equal
             return val

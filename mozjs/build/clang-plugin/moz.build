@@ -40,6 +40,7 @@ HOST_SOURCES += [
     'ScopeChecker.cpp',
     'SprintfLiteralChecker.cpp',
     'TrivialCtorDtorChecker.cpp',
+    'TrivialDtorChecker.cpp',
     'VariableUsageHelpers.cpp',
 ]
 
@@ -56,12 +57,11 @@ if CONFIG['ENABLE_MOZSEARCH_PLUGIN']:
         'mozsearch-plugin/StringOperations.cpp',
     ]
 
-GENERATED_FILES += ['ThirdPartyPaths.cpp']
-third_party_paths = GENERATED_FILES['ThirdPartyPaths.cpp']
-third_party_paths.script = "ThirdPartyPaths.py:generate"
-third_party_paths.inputs = [
-    '/tools/rewriting/ThirdPartyPaths.txt',
-]
+GeneratedFile('ThirdPartyPaths.cpp', script="ThirdPartyPaths.py",
+              entry_point="generate", inputs=[
+                  '/tools/rewriting/ThirdPartyPaths.txt',
+                  '/tools/rewriting/Generated.txt',
+              ])
 
 HOST_COMPILE_FLAGS['STL'] = []
 HOST_COMPILE_FLAGS['VISIBILITY'] = []
@@ -69,6 +69,11 @@ HOST_COMPILE_FLAGS['VISIBILITY'] = []
 # libc++ is required to build plugins against clang on OS X.
 if CONFIG['HOST_OS_ARCH'] == 'Darwin':
     HOST_CXXFLAGS += ['-stdlib=libc++']
+
+# As of clang 8, llvm-config doesn't output the flags used to build clang
+# itself, so we don't end up with -fPIC as a side effect. llvm.org/PR8220
+if CONFIG['HOST_OS_ARCH'] != 'WINNT':
+    HOST_CXXFLAGS += ['-fPIC']
 
 DIRS += [
     'tests',

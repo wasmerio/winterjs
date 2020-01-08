@@ -106,12 +106,6 @@ else
     AC_PROG_RANLIB
     MOZ_PATH_PROGS(AS, $AS as, $CC)
     AC_CHECK_PROGS(STRIP, strip, :)
-    if test -z "$HOST_CC"; then
-        HOST_CC='$(CC)'
-    fi
-    if test -z "$HOST_CXX"; then
-        HOST_CXX='$(CXX)'
-    fi
 fi
 
 MOZ_TOOL_VARIABLES
@@ -302,8 +296,7 @@ dnl ==============================================================
 MOZ_ARCH_OPTS
 
 dnl ========================================================
-dnl Android libstdc++, placed here so it can use MOZ_ARCH
-dnl computed above.
+dnl Android libstdc++
 dnl ========================================================
 
 MOZ_ANDROID_CPU_ARCH
@@ -337,7 +330,6 @@ if test "$GNU_CC"; then
             DSO_LDOPTS="$DSO_LDOPTS -Wl,-z,defs"
         fi
     fi
-    WARNINGS_AS_ERRORS='-Werror'
     DSO_CFLAGS=''
 
     if test "$OS_ARCH" != "WINNT"; then
@@ -413,7 +405,7 @@ case "$host" in
     else
         HOST_CFLAGS="$HOST_CFLAGS -mwindows"
     fi
-    HOST_CFLAGS="$HOST_CFLAGS -DXP_WIN32 -DXP_WIN -DWIN32 -D_WIN32 -D_CRT_SECURE_NO_WARNINGS"
+    HOST_CFLAGS="$HOST_CFLAGS -DXP_WIN -DWIN32 -D_WIN32 -D_CRT_SECURE_NO_WARNINGS"
     HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O2}"
     HOST_BIN_SUFFIX=.exe
 
@@ -447,15 +439,6 @@ case "$host" in
     HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O2}"
     ;;
 esac
-
-dnl ========================================================
-dnl Add optional and non-optional hardening flags from toolchain.configure
-dnl ========================================================
-
-CFLAGS="$CFLAGS $MOZ_HARDENING_CFLAGS_JS"
-CPPFLAGS="$CPPFLAGS $MOZ_HARDENING_CFLAGS_JS"
-CXXFLAGS="$CXXFLAGS $MOZ_HARDENING_CFLAGS_JS"
-LDFLAGS="$LDFLAGS $MOZ_HARDENING_LDFLAGS_JS"
 
 dnl ========================================================
 dnl System overrides of the defaults for target
@@ -507,7 +490,6 @@ case "$target" in
     ;;
 
 *-android*|*-linuxandroid*)
-    AC_DEFINE(NO_PW_GECOS)
     MOZ_GFX_OPTIMIZE_MOBILE=1
     MOZ_OPTIMIZE_FLAGS="-O3"
     if test -z "$CLANG_CC"; then
@@ -536,11 +518,11 @@ case "$target" in
     DSO_CFLAGS=
     DSO_PIC_CFLAGS=
     if test -n "$GNU_CC" -o -n "$CLANG_CC"; then
-        CC="$CC -mwindows"
-        CXX="$CXX -mwindows"
-        CPP="$CPP -mwindows"
-        CFLAGS="$CFLAGS -mms-bitfields"
-        CXXFLAGS="$CXXFLAGS -mms-bitfields"
+        # $GNU_CC will match gcc and clang; while $CLANG_CC will match only clang
+        if test -z "$CLANG_CC"; then
+            AC_MSG_ERROR(Firefox cannot be built with mingw-gcc and requires a mingw-clang toolchain to work)
+        fi
+
         DSO_LDOPTS='-shared'
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
@@ -548,13 +530,8 @@ case "$target" in
         LIBS="$LIBS -lusp10 -lgdi32 -lwinmm -lwsock32"
         MOZ_FIX_LINK_PATHS=
 
-        if test -z "$CLANG_CC"; then
-            # Use static libgcc and libstdc++
-            LDFLAGS="$LDFLAGS -static"
-        else
-            # Silence problematic clang warnings
-            CXXFLAGS="$CXXFLAGS -Wno-incompatible-ms-struct"
-        fi
+        # Silence problematic clang warnings
+        CXXFLAGS="$CXXFLAGS -Wno-incompatible-ms-struct"
 
         MOZ_OPTIMIZE_FLAGS="-O2"
 
@@ -562,8 +539,6 @@ case "$target" in
         WIN32_GUI_EXE_LDFLAGS=-mwindows
     else
         TARGET_COMPILER_ABI=msvc
-        HOST_CC='$(CC)'
-        HOST_CXX='$(CXX)'
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
         PKG_SKIP_STRIP=1
@@ -656,6 +631,10 @@ case "$target" in
             # declare |delete| differently.  Therefore, suppress this
             # warning.
             CXXFLAGS="$CXXFLAGS -Wno-implicit-exception-spec-mismatch"
+            # Macros like STDMETHOD() and IFACEMETHOD() can declare
+            # __attribute__((nothrow)) on their respective method declarations,
+            # while the definitions are left without the matching attribute.
+            CXXFLAGS="$CXXFLAGS -Wno-microsoft-exception-spec"
             # At least one MSVC header and several headers in-tree have
             # unused typedefs, so turn this on.
             CXXFLAGS="$CXXFLAGS -Wno-unused-local-typedef"
@@ -671,7 +650,6 @@ case "$target" in
         fi
         LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib"
         MOZ_DEBUG_LDFLAGS='-DEBUG'
-        WARNINGS_AS_ERRORS='-WX'
         MOZ_OPTIMIZE_FLAGS="-O2"
         MOZ_FIX_LINK_PATHS=
         LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE"
@@ -692,11 +670,6 @@ case "$target" in
         AC_MSG_ERROR([Using a Cygwin build environment is unsupported. Configure cannot check for presence of necessary headers. Please upgrade to MozillaBuild; see https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         ;;
     esac
-
-    if test -n "$GNU_CC" -a -z "$CLANG_CC"; then
-        CFLAGS="$CFLAGS -fno-keep-inline-dllexport"
-        CXXFLAGS="$CXXFLAGS -fno-keep-inline-dllexport"
-    fi
 
     case "$target" in
     i*86-*)
@@ -999,8 +972,6 @@ fi
 dnl Checks for math functions.
 dnl ========================================================
 AC_CHECK_LIB(m, sin)
-AC_CHECK_LIB(m, sincos, AC_DEFINE(HAVE_SINCOS))
-AC_CHECK_LIB(m, __sincos, AC_DEFINE(HAVE___SINCOS))
 
 AC_CACHE_CHECK(
     [for res_ninit()],
@@ -1240,8 +1211,6 @@ if test -n "${MOZ_CONFIGURE_OPTIMIZE_FLAGS}"; then
     MOZ_OPTIMIZE_FLAGS=${MOZ_CONFIGURE_OPTIMIZE_FLAGS}
 fi
 
-MOZ_SET_FRAMEPTR_FLAGS
-
 if test "$COMPILE_ENVIRONMENT"; then
 if test -n "$MOZ_OPTIMIZE"; then
     AC_MSG_CHECKING([for valid optimization flags])
@@ -1270,17 +1239,9 @@ if test -n "$MOZ_OPTIMIZE"; then
 fi
 fi # COMPILE_ENVIRONMENT
 
-AC_SUBST_LIST(MOZ_FRAMEPTR_FLAGS)
 AC_SUBST_LIST(MOZ_OPTIMIZE_FLAGS)
 AC_SUBST_LIST(MOZ_OPTIMIZE_LDFLAGS)
 AC_SUBST_LIST(MOZ_PGO_OPTIMIZE_FLAGS)
-
-dnl ========================================================
-dnl = Disable treating compiler warnings as errors
-dnl ========================================================
-if test -z "$MOZ_ENABLE_WARNINGS_AS_ERRORS"; then
-   WARNINGS_AS_ERRORS=''
-fi
 
 dnl ========================================================
 dnl = Enable jemalloc
@@ -1447,7 +1408,6 @@ if test "$ac_cv_struct_tm_zone_tm_gmtoff" = "yes" ; then
 fi
 fi # ! SKIP_COMPILER_CHECKS
 
-AC_DEFINE(CPP_THROW_NEW, [throw()])
 AC_LANG_C
 
 MOZ_EXPAND_LIBS
@@ -1522,7 +1482,6 @@ AC_SUBST(WINDRES)
 AC_SUBST(IMPLIB)
 AC_SUBST(FILTER)
 AC_SUBST_LIST(MOZ_DEBUG_LDFLAGS)
-AC_SUBST(WARNINGS_AS_ERRORS)
 AC_SUBST_LIST(WARNINGS_CFLAGS)
 AC_SUBST(LIBICONV)
 
@@ -1644,8 +1603,6 @@ dnl JavaScript shell
 dnl ========================================================
 
 MOZ_CHECK_ALLOCATOR
-
-AC_CHECK_FUNCS(localeconv)
 
 AC_SUBST(ac_configure_args)
 

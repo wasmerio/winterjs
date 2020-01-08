@@ -3,16 +3,16 @@
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
 #include "js/RootingAPI.h"
+#include "js/SourceText.h"
 #include "js/Value.h"
+#include "mozilla/ArrayUtils.h"
+#include "mozilla/Utf8.h"
 
 #include <string.h>
 
 FRAGMENT(asmjs, segfault) {
-  using namespace JS;
-
-  int line0 = __LINE__;
-  const char* bytes =
-      "\n"
+  constexpr unsigned line0 = __LINE__;
+  static const char chars[] =
       "function f(glob, ffi, heap) {\n"
       "    \"use asm\";\n"
       "    var f32 = new glob.Float32Array(heap);\n"
@@ -27,12 +27,16 @@ FRAGMENT(asmjs, segfault) {
       "func(0x10000 << 2);\n"
       "'ok'\n";
 
-  CompileOptions opts(cx);
+  JS::CompileOptions opts(cx);
   opts.setFileAndLine(__FILE__, line0 + 1);
   opts.asmJSOption = JS::AsmJSOption::Enabled;
 
-  Rooted<Value> rval(cx);
-  bool ok = JS::EvaluateUtf8(cx, opts, bytes, strlen(bytes), &rval);
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  JS::Rooted<JS::Value> rval(cx);
+
+  bool ok = srcBuf.init(cx, chars, mozilla::ArrayLength(chars) - 1,
+                        JS::SourceOwnership::Borrowed) &&
+            JS::EvaluateDontInflate(cx, opts, srcBuf, &rval);
 
   breakpoint();
 

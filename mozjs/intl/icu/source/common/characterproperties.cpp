@@ -24,8 +24,10 @@
 #include "uprops.h"
 
 using icu::LocalPointer;
+#if !UCONFIG_NO_NORMALIZATION
 using icu::Normalizer2Factory;
 using icu::Normalizer2Impl;
+#endif
 using icu::UInitOnce;
 using icu::UnicodeSet;
 
@@ -36,8 +38,8 @@ UBool U_CALLCONV characterproperties_cleanup();
 constexpr int32_t NUM_INCLUSIONS = UPROPS_SRC_COUNT + UCHAR_INT_LIMIT - UCHAR_INT_START;
 
 struct Inclusion {
-    UnicodeSet  *fSet;
-    UInitOnce    fInitOnce;
+    UnicodeSet  *fSet = nullptr;
+    UInitOnce    fInitOnce = U_INITONCE_INITIALIZER;
 };
 Inclusion gInclusions[NUM_INCLUSIONS]; // cached getInclusions()
 
@@ -45,7 +47,7 @@ UnicodeSet *sets[UCHAR_BINARY_LIMIT] = {};
 
 UCPMap *maps[UCHAR_INT_LIMIT - UCHAR_INT_START] = {};
 
-UMutex cpMutex = U_MUTEX_INITIALIZER;
+icu::UMutex cpMutex;
 
 //----------------------------------------------------------------
 // Inclusions list

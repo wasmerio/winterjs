@@ -9,10 +9,11 @@
 #include "js/PropertySpec.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
+#include "vm/GlobalObject.h"
 #include "vm/JSObject.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "vm/ArrayObject-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/JSAtom-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -47,11 +48,15 @@ JSObject* AbstractGeneratorObject::create(JSContext* cx,
   }
   genObj->clearExpressionStack();
 
-  if (!Debugger::onNewGenerator(cx, frame, genObj)) {
+  if (!DebugAPI::onNewGenerator(cx, frame, genObj)) {
     return nullptr;
   }
 
   return genObj;
+}
+
+void AbstractGeneratorObject::trace(JSTracer* trc) {
+  DebugAPI::traceGeneratorFrame(trc, this);
 }
 
 bool AbstractGeneratorObject::suspend(JSContext* cx, HandleObject obj,
@@ -100,7 +105,7 @@ bool AbstractGeneratorObject::suspend(JSContext* cx, HandleObject obj,
 
 void AbstractGeneratorObject::finalSuspend(HandleObject obj) {
   auto* genObj = &obj->as<AbstractGeneratorObject>();
-  MOZ_ASSERT(genObj->isRunning() || genObj->isClosing());
+  MOZ_ASSERT(genObj->isRunning());
   genObj->setClosed();
 }
 
@@ -137,18 +142,19 @@ void js::SetGeneratorClosed(JSContext* cx, AbstractFramePtr frame) {
 
 bool js::GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
                                 Handle<AbstractGeneratorObject*> genObj,
-                                HandleValue arg, uint32_t resumeKind) {
-  if (resumeKind == AbstractGeneratorObject::THROW) {
-    cx->setPendingException(arg);
+                                HandleValue arg,
+                                GeneratorResumeKind resumeKind) {
+  MOZ_ASSERT(genObj->isRunning());
+  if (resumeKind == GeneratorResumeKind::Throw) {
+    cx->setPendingExceptionAndCaptureStack(arg);
   } else {
-    MOZ_ASSERT(resumeKind == AbstractGeneratorObject::RETURN);
+    MOZ_ASSERT(resumeKind == GeneratorResumeKind::Return);
 
-    MOZ_ASSERT(arg.isObject());
+    MOZ_ASSERT_IF(genObj->is<GeneratorObject>(), arg.isObject());
     frame.setReturnValue(arg);
 
     RootedValue closing(cx, MagicValue(JS_GENERATOR_CLOSING));
-    cx->setPendingException(closing);
-    genObj->setClosing();
+    cx->setPendingException(closing, nullptr);
   }
   return false;
 }
@@ -213,8 +219,25 @@ GeneratorObject* GeneratorObject::create(JSContext* cx, HandleFunction fun) {
   return NewObjectWithGivenProto<GeneratorObject>(cx, proto);
 }
 
-const Class GeneratorObject::class_ = {
-    "Generator", JSCLASS_HAS_RESERVED_SLOTS(GeneratorObject::RESERVED_SLOTS)};
+const JSClass GeneratorObject::class_ = {
+    "Generator",
+    JSCLASS_HAS_RESERVED_SLOTS(GeneratorObject::RESERVED_SLOTS),
+    &classOps_,
+};
+
+const JSClassOps GeneratorObject::classOps_ = {
+    nullptr,                                  /* addProperty */
+    nullptr,                                  /* delProperty */
+    nullptr,                                  /* enumerate */
+    nullptr,                                  /* newEnumerate */
+    nullptr,                                  /* resolve */
+    nullptr,                                  /* mayResolve */
+    nullptr,                                  /* finalize */
+    nullptr,                                  /* call */
+    nullptr,                                  /* hasInstance */
+    nullptr,                                  /* construct */
+    CallTraceMethod<AbstractGeneratorObject>, /* trace */
+};
 
 static const JSFunctionSpec generator_methods[] = {
     JS_SELF_HOSTED_FN("next", "GeneratorNext", 1, 0),
@@ -239,11 +262,44 @@ JSObject* js::NewSingletonObjectWithFunctionPrototype(
   return obj;
 }
 
-/* static */
-bool GlobalObject::initGenerators(JSContext* cx, Handle<GlobalObject*> global) {
-  if (global->getReservedSlot(GENERATOR_OBJECT_PROTO).isObject()) {
-    return true;
+static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
+  RootedObject proto(
+      cx, GlobalObject::getOrCreateFunctionConstructor(cx, cx->global()));
+  if (!proto) {
+    return nullptr;
   }
+
+  HandlePropertyName name = cx->names().GeneratorFunction;
+  return NewFunctionWithProto(cx, Generator, 1, FunctionFlags::NATIVE_CTOR,
+                              nullptr, name, proto, gc::AllocKind::FUNCTION,
+                              SingletonObject);
+}
+
+static JSObject* CreateGeneratorFunctionPrototype(JSContext* cx,
+                                                  JSProtoKey key) {
+  return NewSingletonObjectWithFunctionPrototype(cx, cx->global());
+}
+
+static bool GeneratorFunctionClassFinish(JSContext* cx,
+                                         HandleObject genFunction,
+                                         HandleObject genFunctionProto) {
+  Handle<GlobalObject*> global = cx->global();
+
+  // Change the "constructor" property to non-writable before adding any other
+  // properties, so it's still the last property and can be modified without a
+  // dictionary-mode transition.
+  MOZ_ASSERT(StringEqualsAscii(
+      JSID_TO_LINEAR_STRING(
+          genFunctionProto->as<NativeObject>().lastProperty()->propid()),
+      "constructor"));
+  MOZ_ASSERT(!genFunctionProto->as<NativeObject>().inDictionaryMode());
+
+  RootedValue genFunctionVal(cx, ObjectValue(*genFunction));
+  if (!DefineDataProperty(cx, genFunctionProto, cx->names().constructor,
+                          genFunctionVal, JSPROP_READONLY)) {
+    return false;
+  }
+  MOZ_ASSERT(!genFunctionProto->as<NativeObject>().inDictionaryMode());
 
   RootedObject iteratorProto(
       cx, GlobalObject::getOrCreateIteratorPrototype(cx, global));
@@ -262,42 +318,29 @@ bool GlobalObject::initGenerators(JSContext* cx, Handle<GlobalObject*> global) {
     return false;
   }
 
-  RootedObject genFunctionProto(
-      cx, NewSingletonObjectWithFunctionPrototype(cx, global));
-  if (!genFunctionProto) {
-    return false;
-  }
   if (!LinkConstructorAndPrototype(cx, genFunctionProto, genObjectProto,
                                    JSPROP_READONLY, JSPROP_READONLY) ||
       !DefineToStringTag(cx, genFunctionProto, cx->names().GeneratorFunction)) {
     return false;
   }
 
-  RootedValue function(cx, global->getConstructor(JSProto_Function));
-  if (!function.toObjectOrNull()) {
-    return false;
-  }
-  RootedObject proto(cx, &function.toObject());
-  RootedAtom name(cx, cx->names().GeneratorFunction);
-  RootedObject genFunction(
-      cx, NewFunctionWithProto(cx, Generator, 1, JSFunction::NATIVE_CTOR,
-                               nullptr, name, proto, gc::AllocKind::FUNCTION,
-                               SingletonObject));
-  if (!genFunction) {
-    return false;
-  }
-  if (!LinkConstructorAndPrototype(cx, genFunction, genFunctionProto,
-                                   JSPROP_PERMANENT | JSPROP_READONLY,
-                                   JSPROP_READONLY)) {
-    return false;
-  }
+  global->setGeneratorObjectPrototype(genObjectProto);
 
-  global->setReservedSlot(GENERATOR_OBJECT_PROTO, ObjectValue(*genObjectProto));
-  global->setReservedSlot(GENERATOR_FUNCTION, ObjectValue(*genFunction));
-  global->setReservedSlot(GENERATOR_FUNCTION_PROTO,
-                          ObjectValue(*genFunctionProto));
   return true;
 }
+
+static const ClassSpec GeneratorFunctionClassSpec = {
+    CreateGeneratorFunction,
+    CreateGeneratorFunctionPrototype,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    GeneratorFunctionClassFinish,
+    ClassSpec::DontDefineConstructor};
+
+const JSClass js::GeneratorFunctionClass = {
+    "GeneratorFunction", 0, JS_NULL_CLASS_OPS, &GeneratorFunctionClassSpec};
 
 bool AbstractGeneratorObject::isAfterYield() {
   return isAfterYieldOrAwait(JSOP_YIELD);
@@ -308,14 +351,14 @@ bool AbstractGeneratorObject::isAfterAwait() {
 }
 
 bool AbstractGeneratorObject::isAfterYieldOrAwait(JSOp op) {
-  if (isClosed() || isClosing() || isRunning()) {
+  if (isClosed() || isRunning()) {
     return false;
   }
 
   JSScript* script = callee().nonLazyScript();
   jsbytecode* code = script->code();
   uint32_t nextOffset = script->resumeOffsets()[resumeIndex()];
-  if (code[nextOffset] != JSOP_DEBUGAFTERYIELD) {
+  if (code[nextOffset] != JSOP_AFTERYIELD) {
     return false;
   }
 

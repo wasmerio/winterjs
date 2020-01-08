@@ -253,7 +253,7 @@ class GitFileInfo(VCSFileInfo):
 vcsFileInfoCache = {}
 
 if platform.system() == 'Windows':
-    def normpath(path):
+    def realpath(path):
         '''
         Normalize a path using `GetFinalPathNameByHandleW` to get the
         path with all components in the case they exist in on-disk, so
@@ -298,7 +298,7 @@ if platform.system() == 'Windows':
         return result
 else:
     # Just use the os.path version otherwise.
-    normpath = os.path.normpath
+    realpath = os.path.realpath
 
 def IsInDir(file, dir):
     # the lower() is to handle win32+vc8, where
@@ -381,9 +381,9 @@ def make_file_mapping(install_manifests):
         manifest.populate_registry(reg)
         for dst, src in reg:
             if hasattr(src, 'path'):
-                # Any paths that get compared to source file names need to go through normpath.
-                abs_dest = normpath(os.path.join(destination, dst))
-                file_mapping[abs_dest] = normpath(src.path)
+                # Any paths that get compared to source file names need to go through realpath.
+                abs_dest = realpath(os.path.join(destination, dst))
+                file_mapping[abs_dest] = realpath(src.path)
     return file_mapping
 
 @memoize
@@ -451,8 +451,8 @@ class Dumper:
             self.archs = ['']
         else:
             self.archs = ['-a %s' % a for a in archs.split()]
-        # Any paths that get compared to source file names need to go through normpath.
-        self.srcdirs = [normpath(s) for s in srcdirs]
+        # Any paths that get compared to source file names need to go through realpath.
+        self.srcdirs = [realpath(s) for s in srcdirs]
         self.copy_debug = copy_debug
         self.vcsinfo = vcsinfo
         self.srcsrv = srcsrv
@@ -551,7 +551,7 @@ class Dumper:
                         (x, index, filename) = line.rstrip().split(None, 2)
                         # We want original file paths for the source server.
                         sourcepath = filename
-                        filename = normpath(filename)
+                        filename = realpath(filename)
                         if filename in self.file_mapping:
                             filename = self.file_mapping[filename]
                         if self.vcsinfo:
@@ -840,19 +840,52 @@ class Dumper_Mac(Dumper):
             shutil.rmtree(dsymbundle)
         dsymutil = buildconfig.substs['DSYMUTIL']
         # dsymutil takes --arch=foo instead of -a foo like everything else
-        try:
-            cmd = ([dsymutil] +
-                   [a.replace('-a ', '--arch=') for a in self.archs if a] +
-                   [file])
-            print(' '.join(cmd), file=sys.stderr)
-            subprocess.check_call(cmd, stdout=open(os.devnull, 'w'))
-        except subprocess.CalledProcessError as e:
-            print('Error running dsymutil: %s' % str(e), file=sys.stderr)
-            raise
+        cmd = ([dsymutil] +
+               [a.replace('-a ', '--arch=') for a in self.archs if a] +
+               [file])
+        print(' '.join(cmd), file=sys.stderr)
 
+        dsymutil_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE)
+        dsymout, dsymerr = dsymutil_proc.communicate()
+        if dsymutil_proc.returncode != 0:
+            raise RuntimeError('Error running dsymutil: %s' % dsymerr)
+
+        # Regular dsymutil won't produce a .dSYM for files without symbols.
         if not os.path.exists(dsymbundle):
-            # dsymutil won't produce a .dSYM for files without symbols
             print("No symbols found in file: %s" % (file,), file=sys.stderr)
+            return False
+
+        # llvm-dsymutil will produce a .dSYM for files without symbols or
+        # debug information, but only sometimes will it warn you about this.
+        # We don't want to run dump_syms on such bundles, because asserts
+        # will fire in debug mode and who knows what will happen in release.
+        #
+        # So we check for the error message and bail if it appears.  If it
+        # doesn't, we carefully check the bundled DWARF to see if dump_syms
+        # will be OK with it.
+        if 'warning: no debug symbols in' in dsymerr:
+            print(dsymerr, file=sys.stderr)
+            return False
+
+        contents_dir = os.path.join(dsymbundle, 'Contents', 'Resources', 'DWARF')
+        if not os.path.exists(contents_dir):
+            print("No DWARF information in .dSYM bundle %s" % (dsymbundle,),
+                  file=sys.stderr)
+            return False
+
+        files = os.listdir(contents_dir)
+        if len(files) != 1:
+            print("Unexpected files in .dSYM bundle %s" % (files,),
+                  file=sys.stderr)
+            return False
+
+        otool_out = subprocess.check_output([buildconfig.substs['OTOOL'],
+                                             '-l',
+                                             os.path.join(contents_dir, files[0])])
+        if 'sectname __debug_info' not in otool_out:
+            print("No symbols in .dSYM bundle %s" % (dsymbundle,),
+                  file=sys.stderr)
             return False
 
         elapsed = time.time() - t_start
@@ -925,8 +958,8 @@ to canonical locations in the source repository. Specify
         parser.error(str(e))
         exit(1)
     file_mapping = make_file_mapping(manifests)
-    # Any paths that get compared to source file names need to go through normpath.
-    generated_files = {normpath(os.path.join(buildconfig.topobjdir, f)): f
+    # Any paths that get compared to source file names need to go through realpath.
+    generated_files = {realpath(os.path.join(buildconfig.topobjdir, f)): f
                        for (f, _) in get_generated_sources()}
     _, bucket = get_s3_region_and_bucket()
     dumper = GetPlatformSpecificDumper(dump_syms=args[0],

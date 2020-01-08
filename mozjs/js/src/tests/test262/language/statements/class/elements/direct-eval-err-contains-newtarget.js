@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/eval-err-contains-newtarget.case
 // - src/class-elements/initializer-eval-newtarget/cls-decl-fields-eval.template

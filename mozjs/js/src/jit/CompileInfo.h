@@ -9,6 +9,8 @@
 
 #include "mozilla/Maybe.h"
 
+#include <algorithm>
+
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitFrames.h"
 #include "jit/Registers.h"
@@ -192,7 +194,7 @@ class CompileInfo {
     // jit-code. Precisely because it can flow in from anywhere, it's not
     // guaranteed to be non-lazy. Hence, don't access its script!
     if (fun_) {
-      fun_ = fun_->nonLazyScript()->functionNonDelazifying();
+      fun_ = fun_->nonLazyScript()->function();
       MOZ_ASSERT(fun_->isTenured());
     }
 
@@ -205,9 +207,9 @@ class CompileInfo {
     // depth 1) is compiled as a SETPROP (stack depth 2) on the global lexical
     // scope.
     uint32_t extra = script->isGlobalCode() ? 1 : 0;
-    nstack_ =
-        Max<unsigned>(script->nslots() - script->nfixed(), MinJITStackSize) +
-        extra;
+    nstack_ = std::max<unsigned>(script->nslots() - script->nfixed(),
+                                 MinJITStackSize) +
+              extra;
     nslots_ = nimplicit_ + nargs_ + nlocals_ + nstack_;
 
     // For derived class constructors, find and cache the frame slot for
@@ -293,9 +295,7 @@ class CompileInfo {
 
   inline JSFunction* getFunction(jsbytecode* pc) const;
 
-  const Value& getConst(jsbytecode* pc) const {
-    return script_->getConst(GET_UINT32_INDEX(pc));
-  }
+  BigInt* getBigInt(jsbytecode* pc) const { return script_->getBigInt(pc); }
 
   jssrcnote* getNote(GSNCache& gsn, jsbytecode* pc) const {
     return GetSrcNote(gsn, script(), pc);

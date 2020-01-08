@@ -9,6 +9,7 @@
 
 #include "builtin/Eval.h"
 #include "builtin/RegExp.h"
+#include "builtin/String.h"
 #include "jit/BaselineIC.h"
 #include "jit/IonIC.h"
 #include "jit/JitRealm.h"
@@ -16,6 +17,7 @@
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/EqualityOperations.h"
+#include "vm/Instrumentation.h"
 #include "vm/Interpreter.h"
 #include "vm/TypedArrayObject.h"
 
@@ -40,10 +42,35 @@ namespace jit {
   _(ArraySliceDense, js::ArraySliceDense)                                      \
   _(AsyncFunctionAwait, js::AsyncFunctionAwait)                                \
   _(AsyncFunctionResolve, js::AsyncFunctionResolve)                            \
+  _(BaselineCompileFromBaselineInterpreter,                                    \
+    js::jit::BaselineCompileFromBaselineInterpreter)                           \
   _(BaselineDebugPrologue, js::jit::DebugPrologue)                             \
   _(BaselineGetFunctionThis, js::jit::BaselineGetFunctionThis)                 \
   _(BaselineThrowInitializedThis, js::jit::BaselineThrowInitializedThis)       \
   _(BaselineThrowUninitializedThis, js::jit::BaselineThrowUninitializedThis)   \
+  _(BigIntAdd, js::jit::BigIntAdd)                                             \
+  _(BigIntBitAnd, js::jit::BigIntBitAnd)                                       \
+  _(BigIntBitNot, js::jit::BigIntBitNot)                                       \
+  _(BigIntBitOr, js::jit::BigIntBitOr)                                         \
+  _(BigIntBitXor, js::jit::BigIntBitXor)                                       \
+  _(BigIntDec, js::jit::BigIntDec)                                             \
+  _(BigIntDiv, js::jit::BigIntDiv)                                             \
+  _(BigIntInc, js::jit::BigIntInc)                                             \
+  _(BigIntLeftShift, js::jit::BigIntLeftShift)                                 \
+  _(BigIntMod, js::jit::BigIntMod)                                             \
+  _(BigIntMul, js::jit::BigIntMul)                                             \
+  _(BigIntNeg, js::jit::BigIntNeg)                                             \
+  _(BigIntPow, js::jit::BigIntPow)                                             \
+  _(BigIntRightShift, js::jit::BigIntRightShift)                               \
+  _(BigIntStringEqual,                                                         \
+    js::jit::BigIntStringEqual<js::jit::EqualityKind::Equal>)                  \
+  _(BigIntStringGreaterThanOrEqual,                                            \
+    js::jit::BigIntStringCompare<js::jit::ComparisonKind::GreaterThanOrEqual>) \
+  _(BigIntStringLessThan,                                                      \
+    js::jit::BigIntStringCompare<js::jit::ComparisonKind::LessThan>)           \
+  _(BigIntStringNotEqual,                                                      \
+    js::jit::BigIntStringEqual<js::jit::EqualityKind::NotEqual>)               \
+  _(BigIntSub, js::jit::BigIntSub)                                             \
   _(BindVarOperation, js::BindVarOperation)                                    \
   _(BitAnd, js::BitAnd)                                                        \
   _(BitLsh, js::BitLsh)                                                        \
@@ -51,9 +78,11 @@ namespace jit {
   _(BitOr, js::BitOr)                                                          \
   _(BitRsh, js::BitRsh)                                                        \
   _(BitXor, js::BitXor)                                                        \
+  _(BoxBoxableValue, js::wasm::BoxBoxableValue)                                \
   _(BoxNonStrictThis, js::BoxNonStrictThis)                                    \
   _(BuiltinProtoOperation, js::BuiltinProtoOperation)                          \
   _(CallNativeGetter, js::jit::CallNativeGetter)                               \
+  _(CallNativeGetterByValue, js::jit::CallNativeGetterByValue)                 \
   _(CallNativeSetter, js::jit::CallNativeSetter)                               \
   _(CharCodeAt, js::jit::CharCodeAt)                                           \
   _(CheckClassHeritageOperation, js::CheckClassHeritageOperation)              \
@@ -67,7 +96,6 @@ namespace jit {
   _(ConvertElementsToDoubles, js::ObjectElements::ConvertElementsToDoubles)    \
   _(CopyElementsForWrite, js::NativeObject::CopyElementsForWrite)              \
   _(CopyLexicalEnvironmentObject, js::jit::CopyLexicalEnvironmentObject)       \
-  _(CopyStringSplitArray, js::jit::CopyStringSplitArray)                       \
   _(CreateAsyncFromSyncIterator, js::CreateAsyncFromSyncIterator)              \
   _(CreateDerivedTypedObj, js::jit::CreateDerivedTypedObj)                     \
   _(CreateGenerator, js::jit::CreateGenerator)                                 \
@@ -99,12 +127,12 @@ namespace jit {
   _(DoToNumber, js::jit::DoToNumber)                                           \
   _(DoToNumeric, js::jit::DoToNumeric)                                         \
   _(DoTypeUpdateFallback, js::jit::DoTypeUpdateFallback)                       \
-  _(DoWarmUpCounterFallbackOSR, js::jit::DoWarmUpCounterFallbackOSR)           \
   _(EnterWith, js::jit::EnterWith)                                             \
   _(FinalSuspend, js::jit::FinalSuspend)                                       \
   _(FinishBoundFunctionInit, JSFunction::finishBoundFunctionInit)              \
   _(FreshenLexicalEnv, js::jit::FreshenLexicalEnv)                             \
   _(FunWithProtoOperation, js::FunWithProtoOperation)                          \
+  _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn)                   \
   _(GetAndClearException, js::GetAndClearException)                            \
   _(GetElementOperation, js::GetElementOperation)                              \
   _(GetFirstDollarIndexRaw, js::GetFirstDollarIndexRaw)                        \
@@ -129,6 +157,9 @@ namespace jit {
   _(InitPropGetterSetterOperation, js::InitPropGetterSetterOperation)          \
   _(InitRestParameter, js::jit::InitRestParameter)                             \
   _(InlineTypedObjectCreateCopy, js::InlineTypedObject::createCopy)            \
+  _(InstrumentationActiveOperation, js::InstrumentationActiveOperation)        \
+  _(InstrumentationCallbackOperation, js::InstrumentationCallbackOperation)    \
+  _(InstrumentationScriptIdOperation, js::InstrumentationScriptIdOperation)    \
   _(Int32ToString, js::Int32ToString<CanGC>)                                   \
   _(InterpretResume, js::jit::InterpretResume)                                 \
   _(InterruptCheck, js::jit::InterruptCheck)                                   \
@@ -137,7 +168,9 @@ namespace jit {
   _(IonBinaryArithICUpdate, js::jit::IonBinaryArithIC::update)                 \
   _(IonBindNameICUpdate, js::jit::IonBindNameIC::update)                       \
   _(IonCompareICUpdate, js::jit::IonCompareIC::update)                         \
-  _(IonCompileScriptForBaseline, js::jit::IonCompileScriptForBaseline)         \
+  _(IonCompileScriptForBaselineAtEntry,                                        \
+    js::jit::IonCompileScriptForBaselineAtEntry)                               \
+  _(IonCompileScriptForBaselineOSR, js::jit::IonCompileScriptForBaselineOSR)   \
   _(IonForcedInvalidation, js::jit::IonForcedInvalidation)                     \
   _(IonForcedRecompile, js::jit::IonForcedRecompile)                           \
   _(IonGetIteratorICUpdate, js::jit::IonGetIteratorIC::update)                 \
@@ -159,8 +192,8 @@ namespace jit {
   _(LessThan, js::jit::LessThan)                                               \
   _(LessThanOrEqual, js::jit::LessThanOrEqual)                                 \
   _(LexicalEnvironmentObjectCreate, js::LexicalEnvironmentObject::create)      \
-  _(LooselyEqual, js::jit::LooselyEqual<true>)                                 \
-  _(LooselyNotEqual, js::jit::LooselyEqual<false>)                             \
+  _(LooselyEqual, js::jit::LooselyEqual<js::jit::EqualityKind::Equal>)         \
+  _(LooselyNotEqual, js::jit::LooselyEqual<js::jit::EqualityKind::NotEqual>)   \
   _(MakeDefaultConstructor, js::MakeDefaultConstructor)                        \
   _(ModValues, js::ModValues)                                                  \
   _(MulValues, js::MulValues)                                                  \
@@ -219,19 +252,25 @@ namespace jit {
   _(SetPropertySuper, js::SetPropertySuper)                                    \
   _(SingletonObjectLiteralOperation, js::SingletonObjectLiteralOperation)      \
   _(StartDynamicModuleImport, js::StartDynamicModuleImport)                    \
-  _(StrictlyEqual, js::jit::StrictlyEqual<true>)                               \
-  _(StrictlyNotEqual, js::jit::StrictlyEqual<false>)                           \
+  _(StrictlyEqual, js::jit::StrictlyEqual<js::jit::EqualityKind::Equal>)       \
+  _(StrictlyNotEqual, js::jit::StrictlyEqual<js::jit::EqualityKind::NotEqual>) \
+  _(StringBigIntGreaterThanOrEqual,                                            \
+    js::jit::StringBigIntCompare<js::jit::ComparisonKind::GreaterThanOrEqual>) \
+  _(StringBigIntLessThan,                                                      \
+    js::jit::StringBigIntCompare<js::jit::ComparisonKind::LessThan>)           \
   _(StringFlatReplaceString, js::StringFlatReplaceString)                      \
   _(StringFromCharCode, js::jit::StringFromCharCode)                           \
   _(StringFromCodePoint, js::jit::StringFromCodePoint)                         \
   _(StringReplace, js::jit::StringReplace)                                     \
-  _(StringSplitHelper, js::jit::StringSplitHelper)                             \
   _(StringSplitString, js::StringSplitString)                                  \
   _(StringToLowerCase, js::StringToLowerCase)                                  \
   _(StringToNumber, js::StringToNumber)                                        \
   _(StringToUpperCase, js::StringToUpperCase)                                  \
-  _(StringsEqual, js::jit::StringsEqual<true>)                                 \
-  _(StringsNotEqual, js::jit::StringsEqual<false>)                             \
+  _(StringsCompareGreaterThanOrEquals,                                         \
+    js::jit::StringsCompare<ComparisonKind::GreaterThanOrEqual>)               \
+  _(StringsCompareLessThan, js::jit::StringsCompare<ComparisonKind::LessThan>) \
+  _(StringsEqual, js::jit::StringsEqual<js::jit::EqualityKind::Equal>)         \
+  _(StringsNotEqual, js::jit::StringsEqual<js::jit::EqualityKind::NotEqual>)   \
   _(SubValues, js::SubValues)                                                  \
   _(SubstringKernel, js::SubstringKernel)                                      \
   _(SuperFunOperation, js::SuperFunOperation)                                  \
@@ -245,8 +284,6 @@ namespace jit {
   _(ToObjectSlow, js::ToObjectSlow)                                            \
   _(ToStringSlow, js::ToStringSlow<CanGC>)                                     \
   _(TrySkipAwait, js::jit::TrySkipAwait)                                       \
-  _(UnboxedPlainObjectConvertToNative,                                         \
-    js::UnboxedPlainObject::convertToNative)                                   \
   _(UrshValues, js::UrshValues)
 
 // The list below is for tail calls. The third argument specifies the number of
@@ -275,8 +312,7 @@ namespace jit {
   _(DoToBoolFallback, js::jit::DoToBoolFallback, 0)             \
   _(DoTypeMonitorFallback, js::jit::DoTypeMonitorFallback, 0)   \
   _(DoTypeOfFallback, js::jit::DoTypeOfFallback, 0)             \
-  _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)     \
-  _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn, 0)
+  _(DoUnaryArithFallback, js::jit::DoUnaryArithFallback, 1)
 
 #define DEF_ID(name, ...) name,
 enum class VMFunctionId { VMFUNCTION_LIST(DEF_ID) Count };

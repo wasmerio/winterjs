@@ -59,7 +59,7 @@ with Files('**/Makefile.in'):
     FINAL = True
 
 with Files("**/*.js"):
-    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu', 'docs']
+    SCHEDULES.inclusive += ['docs']
 
 with Files("**/*.jsm"):
     SCHEDULES.inclusive += ['docs']
@@ -70,13 +70,49 @@ with Files("**/*.rst"):
 with Files("**/*.md"):
     SCHEDULES.inclusive += ['docs']
 
-with Files("**/*.html"):
+with Files("**/reftest.list"):
     SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
 
-with Files("**/*.xhtml"):
+with Files("**/crashtest*.list"):
     SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
 
-with Files("**/*.xul"):
+with Files("**/mochitest.ini"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/browser.ini"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/chrome.ini"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/xpcshell.ini"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/reftest*/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/crashtest*/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/mochitest*/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/xpcshell/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/tests/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/test/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/unit/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/browser/tools/mozscreenshots/**"):
+    SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
+
+with Files("**/devtools/shared/test-helpers/**"):
     SCHEDULES.inclusive += ['test-verify', 'test-verify-gpu']
 
 CONFIGURE_SUBST_FILES += [
@@ -90,10 +126,12 @@ if CONFIG['ENABLE_CLANG_PLUGIN']:
 DIRS += [
     'config',
     'python',
-    'taskcluster',
     'testing/mozbase',
     'third_party/python',
 ]
+
+if not CONFIG['JS_STANDALONE']:
+    DIRS += ['taskcluster']
 
 if not CONFIG['JS_STANDALONE'] or not CONFIG['MOZ_BUILD_APP']:
     CONFIGURE_DEFINE_FILES += [
@@ -117,16 +155,6 @@ if not CONFIG['JS_STANDALONE'] or not CONFIG['MOZ_BUILD_APP']:
         'build',
     ]
 
-if CONFIG['PGO_PROFILE_PATH']:
-    profdata_gen = ('merged.profdata.stub', 'merged.profdata')
-    GENERATED_FILES += [
-        profdata_gen
-    ]
-    GENERATED_FILES[profdata_gen].script = 'build/merge_profdata.py'
-    GENERATED_FILES[profdata_gen].inputs = [
-        '/' + CONFIG['PGO_PROFILE_PATH'],
-    ]
-
 DIRS += [
     'mfbt',
 ]
@@ -137,6 +165,8 @@ if CONFIG['MOZ_BUILD_APP']:
 else:
     include('/toolkit/toolkit.mozbuild')
 
-#CONFIGURE_SUBST_FILES += ['.cargo/config']
+OBJDIR_PP_FILES['.cargo'] += ['.cargo/config.in']
+
+DEFINES['top_srcdir'] = TOPSRCDIR
 
 include('build/templates.mozbuild')

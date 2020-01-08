@@ -17,15 +17,17 @@
 
 #include "jsfriendapi.h"
 #include "jsmath.h"
-#include "jsutil.h"
 
 #include "gc/Memory.h"
 #ifdef JS_CODEGEN_ARM64
 #  include "jit/arm64/vixl/Cpu-vixl.h"
 #endif
 #include "jit/AtomicOperations.h"
+#include "jit/FlushICache.h"  // js::jit::FlushICache
 #include "threading/LockGuard.h"
 #include "threading/Mutex.h"
+#include "util/Memory.h"
+#include "util/Poison.h"
 #include "util/Windows.h"
 #include "vm/MutexIDs.h"
 
@@ -77,12 +79,18 @@ static void* ComputeRandomAllocationAddress() {
 
 #  ifdef NEED_JIT_UNWIND_HANDLING
 static js::JitExceptionHandler sJitExceptionHandler;
+#  endif
 
 JS_FRIEND_API void js::SetJitExceptionHandler(JitExceptionHandler handler) {
+#  ifdef NEED_JIT_UNWIND_HANDLING
   MOZ_ASSERT(!sJitExceptionHandler);
   sJitExceptionHandler = handler;
+#  else
+  // Just do nothing if unwind handling is disabled.
+#  endif
 }
 
+#  ifdef NEED_JIT_UNWIND_HANDLING
 #    if defined(_M_ARM64)
 // See the ".xdata records" section of
 // https://docs.microsoft.com/en-us/cpp/build/arm64-exception-handling
@@ -137,7 +145,6 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
 // For an explanation of the problem being solved here, see
 // SetJitExceptionFilter in jsfriendapi.h.
 static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
-#ifndef JS_ENABLE_UWP
   if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
     MOZ_CRASH();
   }
@@ -225,9 +232,6 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
   AutoSuppressStackWalking suppress;
   return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
                                          RuntimeFunctionCallback, NULL, NULL);
-#else
-  return false;
-#endif
 }
 
 static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
@@ -247,11 +251,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   void* p = nullptr;
   for (size_t i = 0; i < 10; i++) {
     void* randomAddr = ComputeRandomAllocationAddress();
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (p) {
       break;
     }
@@ -259,11 +259,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
 
   if (!p) {
     // Try again without randomization.
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (!p) {
       return nullptr;
     }
@@ -314,17 +310,8 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
 
 static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
                                      ProtectionSetting protection) {
-#ifdef JS_ENABLE_UWP
-  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
-  if (p) {
-    ULONG oldProt;
-    bool r = VirtualProtectFromApp(addr, bytes, ProtectionSettingToFlags(protection), &oldProt);
-    MOZ_RELEASE_ASSERT(r);
-  }
-#else
   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
                          ProtectionSettingToFlags(protection));
-#endif
   if (!p) {
     return false;
   }
@@ -338,26 +325,37 @@ static void DecommitPages(void* addr, size_t bytes) {
   }
 }
 #else  // !XP_WIN
+#  ifndef MAP_NORESERVE
+#    define MAP_NORESERVE 0
+#  endif
+
 static void* ComputeRandomAllocationAddress() {
+#  ifdef __OpenBSD__
+  // OpenBSD already has random mmap and the idea that all x64 cpus
+  // have 48-bit address space is not correct. Returning nullptr
+  // allows OpenBSD do to the right thing.
+  return nullptr;
+#  else
   uint64_t rand = js::GenerateRandomSeed();
 
-#  ifdef HAVE_64BIT_BUILD
+#    ifdef HAVE_64BIT_BUILD
   // x64 CPUs have a 48-bit address space and on some platforms the OS will
   // give us access to 47 bits, so to be safe we right shift by 18 to leave
   // 46 bits.
   rand >>= 18;
-#  else
+#    else
   // On 32-bit, right shift by 34 to leave 30 bits, range [0, 1GiB). Then add
   // 512MiB to get range [512MiB, 1.5GiB), or [0x20000000, 0x60000000). This
   // is based on V8 comments in platform-posix.cc saying this range is
   // relatively unpopulated across a variety of kernels.
   rand >>= 34;
   rand += 512 * 1024 * 1024;
-#  endif
+#    endif
 
   // Ensure page alignment.
   uintptr_t mask = ~uintptr_t(gc::SystemPageSize() - 1);
   return (void*)uintptr_t(rand & mask);
+#  endif
 }
 
 static void* ReserveProcessExecutableMemory(size_t bytes) {
@@ -365,8 +363,8 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   // mmap will pick a different address.
   void* randomAddr = ComputeRandomAllocationAddress();
   void* p = MozTaggedAnonymousMmap(randomAddr, bytes, PROT_NONE,
-                                   MAP_PRIVATE | MAP_ANON, -1, 0,
-                                   "js-executable-memory");
+                                   MAP_NORESERVE | MAP_PRIVATE | MAP_ANON, -1,
+                                   0, "js-executable-memory");
   if (p == MAP_FAILED) {
     return nullptr;
   }
@@ -730,7 +728,14 @@ bool js::jit::CanLikelyAllocateMoreExecutableMemory() {
 }
 
 bool js::jit::ReprotectRegion(void* start, size_t size,
-                              ProtectionSetting protection) {
+                              ProtectionSetting protection,
+                              MustFlushICache flushICache) {
+  // Flush ICache when making code executable, before we modify |size|.
+  if (flushICache == MustFlushICache::Yes) {
+    MOZ_ASSERT(protection == ProtectionSetting::Executable);
+    jit::FlushICache(start, size);
+  }
+
   // Calculate the start of the page containing this region,
   // and account for this extra memory within size.
   size_t pageSize = gc::SystemPageSize();
@@ -763,11 +768,7 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
 #ifdef XP_WIN
   DWORD oldProtect;
   DWORD flags = ProtectionSettingToFlags(protection);
-#ifdef JS_ENABLE_UWP
-  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
-#else
   if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
-#endif
     return false;
   }
 #else

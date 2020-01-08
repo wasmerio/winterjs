@@ -40,9 +40,8 @@ class StringBuffer;
 
 extern MOZ_MUST_USE bool InitRuntimeNumberState(JSRuntime* rt);
 
-#if !EXPOSE_INTL_API
+// This is a no-op if built with JS_HAS_INTL_API.
 extern void FinishRuntimeNumberState(JSRuntime* rt);
-#endif
 
 /* Initialize the Number class, returning its prototype object. */
 extern JSObject* InitNumberClass(JSContext* cx, Handle<GlobalObject*> global);
@@ -60,14 +59,16 @@ extern JSString* NumberToStringHelperPure(JSContext* cx, double d);
 extern JSAtom* NumberToAtom(JSContext* cx, double d);
 
 template <AllowGC allowGC>
-extern JSFlatString* Int32ToString(JSContext* cx, int32_t i);
+extern JSLinearString* Int32ToString(JSContext* cx, int32_t i);
 
-extern JSFlatString* Int32ToStringHelperPure(JSContext* cx, int32_t i);
+extern JSLinearString* Int32ToStringHelperPure(JSContext* cx, int32_t i);
 
 extern JSAtom* Int32ToAtom(JSContext* cx, int32_t si);
 
 // ES6 15.7.3.12
 extern bool IsInteger(const Value& val);
+
+extern bool IsInteger(double d);
 
 /*
  * Convert an integer or double (contained in the given value) to a string and
@@ -76,7 +77,7 @@ extern bool IsInteger(const Value& val);
 extern MOZ_MUST_USE bool JS_FASTCALL
 NumberValueToStringBuffer(JSContext* cx, const Value& v, StringBuffer& sb);
 
-extern JSFlatString* IndexToString(JSContext* cx, uint32_t index);
+extern JSLinearString* IndexToString(JSContext* cx, uint32_t index);
 
 /*
  * Usually a small amount of static storage is enough, but sometimes we need
@@ -110,7 +111,7 @@ extern char* NumberToCString(JSContext* cx, ToCStringBuf* cbuf, double d,
  * The largest positive integer such that all positive integers less than it
  * may be precisely represented using the IEEE-754 double-precision format.
  */
-const double DOUBLE_INTEGRAL_PRECISION_LIMIT = uint64_t(1) << 53;
+constexpr double DOUBLE_INTEGRAL_PRECISION_LIMIT = uint64_t(1) << 53;
 
 /*
  * Parse a decimal number encoded in |chars|.  The decimal number must be
@@ -121,6 +122,8 @@ const double DOUBLE_INTEGRAL_PRECISION_LIMIT = uint64_t(1) << 53;
 template <typename CharT>
 extern double ParseDecimalNumber(const mozilla::Range<const CharT> chars);
 
+enum class IntegerSeparatorHandling : bool { None, SkipUnderscore };
+
 /*
  * Compute the positive integer of the given base described immediately at the
  * start of the range [start, end) -- no whitespace-skipping, no magical
@@ -130,13 +133,18 @@ extern double ParseDecimalNumber(const mozilla::Range<const CharT> chars);
  * base is 10 or a power of two the returned integer is the closest possible
  * double; otherwise extremely large integers may be slightly inaccurate.
  *
+ * The |separatorHandling| controls whether or not numeric separators can be
+ * part of integer string. If the option is enabled, all '_' characters in the
+ * string are ignored. Underscore characters must not appear directly next to
+ * each other, e.g. '1__2' will lead to an assertion.
+ *
  * If [start, end) does not begin with a number with the specified base,
  * *dp == 0 and *endp == start upon return.
  */
 template <typename CharT>
-extern MOZ_MUST_USE bool GetPrefixInteger(JSContext* cx, const CharT* start,
-                                          const CharT* end, int base,
-                                          const CharT** endp, double* dp);
+extern MOZ_MUST_USE bool GetPrefixInteger(
+    JSContext* cx, const CharT* start, const CharT* end, int base,
+    IntegerSeparatorHandling separatorHandling, const CharT** endp, double* dp);
 
 inline const char16_t* ToRawChars(const char16_t* units) { return units; }
 
@@ -149,16 +157,16 @@ inline const unsigned char* ToRawChars(const mozilla::Utf8Unit* units) {
 }
 
 /**
- * Like the prior function, but [start, end) must all be digits in the given
+ * Like GetPrefixInteger, but [start, end) must all be digits in the given
  * base (and so this function doesn't take a useless outparam).
  */
 template <typename CharT>
-extern MOZ_MUST_USE bool GetFullInteger(JSContext* cx, const CharT* start,
-                                        const CharT* end, int base,
-                                        double* dp) {
+extern MOZ_MUST_USE bool GetFullInteger(
+    JSContext* cx, const CharT* start, const CharT* end, int base,
+    IntegerSeparatorHandling separatorHandling, double* dp) {
   decltype(ToRawChars(start)) realEnd;
-  if (GetPrefixInteger(cx, ToRawChars(start), ToRawChars(end), base, &realEnd,
-                       dp)) {
+  if (GetPrefixInteger(cx, ToRawChars(start), ToRawChars(end), base,
+                       separatorHandling, &realEnd, dp)) {
     MOZ_ASSERT(end == static_cast<const void*>(realEnd));
     return true;
   }
@@ -166,13 +174,23 @@ extern MOZ_MUST_USE bool GetFullInteger(JSContext* cx, const CharT* start,
 }
 
 /*
- * This is like GetPrefixInteger, but it only deals with base 10 and doesn't
- * have an |endp| outparam.  It should only be used when the characters are
- * known to only contain digits.
+ * This is like GetPrefixInteger, but only deals with base 10, always ignores
+ * '_', and doesn't have an |endp| outparam. It should only be used when the
+ * characters are known to match |DecimalIntegerLiteral|, cf. ES2020, 11.8.3
+ * Numeric Literals.
  */
 template <typename CharT>
 extern MOZ_MUST_USE bool GetDecimalInteger(JSContext* cx, const CharT* start,
                                            const CharT* end, double* dp);
+
+/*
+ * This is like GetDecimalInteger, but also allows non-integer numbers. It
+ * should only be used when the characters are known to match |DecimalLiteral|,
+ * cf. ES2020, 11.8.3 Numeric Literals.
+ */
+template <typename CharT>
+extern MOZ_MUST_USE bool GetDecimalNonInteger(JSContext* cx, const CharT* start,
+                                              const CharT* end, double* dp);
 
 extern MOZ_MUST_USE bool StringToNumber(JSContext* cx, JSString* str,
                                         double* result);
@@ -202,10 +220,7 @@ bool ToNumericSlow(JSContext* cx, JS::MutableHandleValue vp);
 // BigInt proposal section 3.1.6
 MOZ_ALWAYS_INLINE MOZ_MUST_USE bool ToNumeric(JSContext* cx,
                                               JS::MutableHandleValue vp) {
-  if (vp.isNumber()) {
-    return true;
-  }
-  if (vp.isBigInt()) {
+  if (vp.isNumeric()) {
     return true;
   }
   return ToNumericSlow(cx, vp);
@@ -243,18 +258,6 @@ extern MOZ_MUST_USE bool js_strtod(JSContext* cx, const CharT* begin,
                                    double* d);
 
 namespace js {
-
-/**
- * Like js_strtod, but for when you don't require a |dEnd| argument *and* it's
- * possible that the number in the string will not occupy the full [begin, end)
- * range.
- */
-template <typename CharT>
-extern MOZ_MUST_USE bool StringToDouble(JSContext* cx, const CharT* begin,
-                                        const CharT* end, double* d) {
-  decltype(ToRawChars(begin)) dummy;
-  return js_strtod(cx, ToRawChars(begin), ToRawChars(end), &dummy, d);
-}
 
 /**
  * Like js_strtod, but for when the number always constitutes the entire range

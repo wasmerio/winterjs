@@ -17,6 +17,8 @@
 #include "jit/mips32/Simulator-mips32.h"
 #include "jit/MoveEmitter.h"
 #include "jit/SharedICRegisters.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -1401,11 +1403,6 @@ void MacroAssemblerMIPSCompat::unboxValue(const ValueOperand& src,
   }
 }
 
-void MacroAssemblerMIPSCompat::unboxPrivate(const ValueOperand& src,
-                                            Register dest) {
-  ma_move(dest, src.payloadReg());
-}
-
 void MacroAssemblerMIPSCompat::boxDouble(FloatRegister src,
                                          const ValueOperand& dest,
                                          FloatRegister) {
@@ -1526,18 +1523,6 @@ void MacroAssemblerMIPSCompat::moveData(const Value& val, Register data) {
   } else {
     ma_li(data, Imm32(val.toNunboxPayload()));
   }
-}
-
-CodeOffsetJump MacroAssemblerMIPSCompat::jumpWithPatch(RepatchLabel* label) {
-  // Only one branch per label.
-  MOZ_ASSERT(!label->used());
-
-  BufferOffset bo = nextOffset();
-  label->use(bo.getOffset());
-  ma_liPatchable(ScratchRegister, Imm32(LabelBase::INVALID_OFFSET));
-  as_jr(ScratchRegister);
-  as_nop();
-  return CodeOffsetJump(bo.getOffset());
 }
 
 /////////////////////////////////////////////////////////////////
@@ -2463,7 +2448,7 @@ void MacroAssemblerMIPSCompat::wasmStoreI64Impl(
     const wasm::MemoryAccessDesc& access, Register64 value, Register memoryBase,
     Register ptr, Register ptrScratch, Register tmp) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   // Maybe add the offset.

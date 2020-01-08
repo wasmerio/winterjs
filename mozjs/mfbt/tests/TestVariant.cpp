@@ -281,6 +281,52 @@ static void testConstructionWithVariantIndex() {
   MOZ_RELEASE_ASSERT(v.extract<2>() == 2);
 }
 
+static void testEmplaceWithType() {
+  printf("testEmplaceWithType\n");
+  Variant<uint32_t, uint64_t, uint32_t> v1(mozilla::VariantIndex<0>{}, 0);
+  v1.emplace<uint64_t>(3);
+  MOZ_RELEASE_ASSERT(v1.is<uint64_t>());
+  MOZ_RELEASE_ASSERT(v1.as<uint64_t>() == 3);
+
+  Variant<UniquePtr<int>, char> v2('a');
+  v2.emplace<UniquePtr<int>>();
+  MOZ_RELEASE_ASSERT(v2.is<UniquePtr<int>>());
+  MOZ_RELEASE_ASSERT(!v2.as<UniquePtr<int>>().get());
+
+  Variant<UniquePtr<int>, char> v3('a');
+  v3.emplace<UniquePtr<int>>(MakeUnique<int>(4));
+  MOZ_RELEASE_ASSERT(v3.is<UniquePtr<int>>());
+  MOZ_RELEASE_ASSERT(*v3.as<UniquePtr<int>>().get() == 4);
+}
+
+static void testEmplaceWithIndex() {
+  printf("testEmplaceWithIndex\n");
+  Variant<uint32_t, uint64_t, uint32_t> v1(mozilla::VariantIndex<1>{}, 0);
+  v1.emplace<2>(2);
+  MOZ_RELEASE_ASSERT(!v1.is<uint64_t>());
+  MOZ_RELEASE_ASSERT(!v1.is<1>());
+  MOZ_RELEASE_ASSERT(!v1.is<0>());
+  MOZ_RELEASE_ASSERT(v1.is<2>());
+  MOZ_RELEASE_ASSERT(v1.as<2>() == 2);
+  MOZ_RELEASE_ASSERT(v1.extract<2>() == 2);
+
+  Variant<UniquePtr<int>, char> v2('a');
+  v2.emplace<0>();
+  MOZ_RELEASE_ASSERT(v2.is<UniquePtr<int>>());
+  MOZ_RELEASE_ASSERT(!v2.is<1>());
+  MOZ_RELEASE_ASSERT(v2.is<0>());
+  MOZ_RELEASE_ASSERT(!v2.as<0>().get());
+  MOZ_RELEASE_ASSERT(!v2.extract<0>().get());
+
+  Variant<UniquePtr<int>, char> v3('a');
+  v3.emplace<0>(MakeUnique<int>(4));
+  MOZ_RELEASE_ASSERT(v3.is<UniquePtr<int>>());
+  MOZ_RELEASE_ASSERT(!v3.is<1>());
+  MOZ_RELEASE_ASSERT(v3.is<0>());
+  MOZ_RELEASE_ASSERT(*v3.as<0>().get() == 4);
+  MOZ_RELEASE_ASSERT(*v3.extract<0>().get() == 4);
+}
+
 static void testCopy() {
   printf("testCopy\n");
   Variant<uint32_t, uint64_t> v1(uint64_t(1));
@@ -328,15 +374,26 @@ static void testDestructor() {
     Destroyer d;
 
     {
-      Variant<char, UniquePtr<char[]>, Destroyer> v(d);
+      Variant<char, UniquePtr<char[]>, Destroyer> v1(d);
       MOZ_RELEASE_ASSERT(Destroyer::destroyedCount == 0);  // None detroyed yet.
     }
 
     MOZ_RELEASE_ASSERT(Destroyer::destroyedCount ==
-                       1);  // v's copy of d is destroyed.
+                       1);  // v1's copy of d is destroyed.
+
+    {
+      Variant<char, UniquePtr<char[]>, Destroyer> v2(
+          mozilla::VariantIndex<2>{});
+      v2.emplace<Destroyer>(d);
+      MOZ_RELEASE_ASSERT(Destroyer::destroyedCount ==
+                         2);  // v2's initial value is destroyed.
+    }
+
+    MOZ_RELEASE_ASSERT(Destroyer::destroyedCount ==
+                       3);  // v2's second value is destroyed.
   }
 
-  MOZ_RELEASE_ASSERT(Destroyer::destroyedCount == 2);  // d is destroyed.
+  MOZ_RELEASE_ASSERT(Destroyer::destroyedCount == 4);  // d is destroyed.
 }
 
 static void testEquality() {
@@ -372,9 +429,9 @@ struct Describer {
   static const char* medium;
   static const char* big;
 
-  const char* match(const uint8_t&) { return little; }
-  const char* match(const uint32_t&) { return medium; }
-  const char* match(const uint64_t&) { return big; }
+  const char* operator()(const uint8_t&) { return little; }
+  const char* operator()(const uint32_t&) { return medium; }
+  const char* operator()(const uint64_t&) { return big; }
 };
 
 const char* Describer::little = "little";
@@ -404,11 +461,104 @@ static void testMatching() {
   MOZ_RELEASE_ASSERT(constRef3.match(desc) == Describer::big);
 }
 
+static void testMatchingLambda() {
+  printf("testMatchingLambda\n");
+  using V = Variant<uint8_t, uint32_t, uint64_t>;
+
+  auto desc = [](auto& a) {
+    switch (sizeof(a)) {
+      case 1:
+        return Describer::little;
+      case 4:
+        return Describer::medium;
+      case 8:
+        return Describer::big;
+      default:
+        MOZ_RELEASE_ASSERT(false);
+        return "";
+    }
+  };
+
+  V v1(uint8_t(1));
+  V v2(uint32_t(2));
+  V v3(uint64_t(3));
+
+  MOZ_RELEASE_ASSERT(v1.match(desc) == Describer::little);
+  MOZ_RELEASE_ASSERT(v2.match(desc) == Describer::medium);
+  MOZ_RELEASE_ASSERT(v3.match(desc) == Describer::big);
+
+  const V& constRef1 = v1;
+  const V& constRef2 = v2;
+  const V& constRef3 = v3;
+
+  MOZ_RELEASE_ASSERT(constRef1.match(desc) == Describer::little);
+  MOZ_RELEASE_ASSERT(constRef2.match(desc) == Describer::medium);
+  MOZ_RELEASE_ASSERT(constRef3.match(desc) == Describer::big);
+}
+
+static void testMatchingLambdas() {
+  printf("testMatchingLambdas\n");
+  using V = Variant<uint8_t, uint32_t, uint64_t>;
+
+  auto desc8 = [](const uint8_t& a) { return Describer::little; };
+  auto desc32 = [](const uint32_t& a) { return Describer::medium; };
+  auto desc64 = [](const uint64_t& a) { return Describer::big; };
+
+  V v1(uint8_t(1));
+  V v2(uint32_t(2));
+  V v3(uint64_t(3));
+
+  MOZ_RELEASE_ASSERT(v1.match(desc8, desc32, desc64) == Describer::little);
+  MOZ_RELEASE_ASSERT(v2.match(desc8, desc32, desc64) == Describer::medium);
+  MOZ_RELEASE_ASSERT(v3.match(desc8, desc32, desc64) == Describer::big);
+
+  const V& constRef1 = v1;
+  const V& constRef2 = v2;
+  const V& constRef3 = v3;
+
+  MOZ_RELEASE_ASSERT(constRef1.match(desc8, desc32, desc64) ==
+                     Describer::little);
+  MOZ_RELEASE_ASSERT(constRef2.match(desc8, desc32, desc64) ==
+                     Describer::medium);
+  MOZ_RELEASE_ASSERT(constRef3.match(desc8, desc32, desc64) == Describer::big);
+}
+
 static void testRvalueMatcher() {
   printf("testRvalueMatcher\n");
   using V = Variant<uint8_t, uint32_t, uint64_t>;
   V v(uint8_t(1));
   MOZ_RELEASE_ASSERT(v.match(Describer()) == Describer::little);
+}
+
+static void testAddTagToHash() {
+  printf("testAddToHash\n");
+  using V = Variant<uint8_t, uint16_t, uint32_t, uint64_t>;
+
+  // We don't know what our hash function is, and these are certainly not all
+  // true under all hash functions. But they are probably true under almost any
+  // decent hash function, and our aim is simply to establish that the tag
+  // *does* influence the hash value.
+  {
+    mozilla::HashNumber h8 = V(uint8_t(1)).addTagToHash(0);
+    mozilla::HashNumber h16 = V(uint16_t(1)).addTagToHash(0);
+    mozilla::HashNumber h32 = V(uint32_t(1)).addTagToHash(0);
+    mozilla::HashNumber h64 = V(uint64_t(1)).addTagToHash(0);
+
+    MOZ_RELEASE_ASSERT(h8 != h16 && h8 != h32 && h8 != h64);
+    MOZ_RELEASE_ASSERT(h16 != h32 && h16 != h64);
+    MOZ_RELEASE_ASSERT(h32 != h64);
+  }
+
+  {
+    mozilla::HashNumber h8 = V(uint8_t(1)).addTagToHash(0x124356);
+    mozilla::HashNumber h16 = V(uint16_t(1)).addTagToHash(0x124356);
+    mozilla::HashNumber h32 = V(uint32_t(1)).addTagToHash(0x124356);
+    mozilla::HashNumber h64 = V(uint64_t(1)).addTagToHash(0x124356);
+
+    MOZ_RELEASE_ASSERT(h8 != h16 && h8 != h32 && h8 != h64);
+    MOZ_RELEASE_ASSERT(h16 != h32 && h16 != h64);
+    MOZ_RELEASE_ASSERT(h32 != h64);
+  }
 }
 
 int main() {
@@ -417,12 +567,17 @@ int main() {
   testDuplicate();
   testConstructionWithVariantType();
   testConstructionWithVariantIndex();
+  testEmplaceWithType();
+  testEmplaceWithIndex();
   testCopy();
   testMove();
   testDestructor();
   testEquality();
   testMatching();
+  testMatchingLambda();
+  testMatchingLambdas();
   testRvalueMatcher();
+  testAddTagToHash();
 
   printf("TestVariant OK!\n");
   return 0;

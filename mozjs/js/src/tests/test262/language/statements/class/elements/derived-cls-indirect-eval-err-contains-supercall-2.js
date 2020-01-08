@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/eval-err-contains-supercall-2.case
 // - src/class-elements/initializer-eval-super-call/cls-decl-fields-indirect-eval.template

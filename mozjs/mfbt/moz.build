@@ -9,6 +9,10 @@ with Files("**"):
 
 Library('mfbt')
 
+EXPORTS += [
+    '../third_party/rust/encoding_c_mem/include/encoding_rs_mem.h',
+]
+
 EXPORTS.mozilla = [
     'Algorithm.h',
     'Alignment.h',
@@ -29,8 +33,8 @@ EXPORTS.mozilla = [
     'CheckedInt.h',
     'Compiler.h',
     'Compression.h',
+    'DbgMacro.h',
     'DebugOnly.h',
-    'decimal/Decimal.h',
     'DefineEnum.h',
     'DoublyLinkedList.h',
     'EndianUtils.h',
@@ -38,6 +42,7 @@ EXPORTS.mozilla = [
     'EnumeratedRange.h',
     'EnumSet.h',
     'EnumTypeTraits.h',
+    'fallible.h',
     'FastBernoulliTrial.h',
     'FloatingPoint.h',
     'FStream.h',
@@ -45,10 +50,13 @@ EXPORTS.mozilla = [
     'GuardObjects.h',
     'HashFunctions.h',
     'HashTable.h',
+    'HelperMacros.h',
     'IntegerPrintfMacros.h',
     'IntegerRange.h',
     'IntegerTypeTraits.h',
     'JSONWriter.h',
+    'JsRust.h',
+    'Latin1.h',
     'Likely.h',
     'LinkedList.h',
     'MacroArgs.h',
@@ -116,6 +124,8 @@ EXPORTS.mozilla = [
 
 EXPORTS["double-conversion"] = [
     'double-conversion/double-conversion/double-conversion.h',
+    'double-conversion/double-conversion/double-to-string.h',
+    'double-conversion/double-conversion/string-to-double.h',
     'double-conversion/double-conversion/utils.h',
 ]
 
@@ -138,10 +148,10 @@ UNIFIED_SOURCES += [
     'double-conversion/double-conversion/bignum-dtoa.cc',
     'double-conversion/double-conversion/bignum.cc',
     'double-conversion/double-conversion/cached-powers.cc',
-    'double-conversion/double-conversion/diy-fp.cc',
-    'double-conversion/double-conversion/double-conversion.cc',
+    'double-conversion/double-conversion/double-to-string.cc',
     'double-conversion/double-conversion/fast-dtoa.cc',
     'double-conversion/double-conversion/fixed-dtoa.cc',
+    'double-conversion/double-conversion/string-to-double.cc',
     'double-conversion/double-conversion/strtod.cc',
     'FloatingPoint.cpp',
     'HashFunctions.cpp',
@@ -150,11 +160,12 @@ UNIFIED_SOURCES += [
     'RandomNum.cpp',
     'SHA1.cpp',
     'TaggedAnonymousMemory.cpp',
+    'UniquePtrExtensions.cpp',
     'Unused.cpp',
     'Utf8.cpp',
 ]
 
-if CONFIG['MOZ_BUILD_APP'] != 'tools/crashreporter':
+if CONFIG['MOZ_BUILD_APP'] not in ('memory', 'tools/crashreporter', 'tools/update-packaging'):
     # RecordReplay.cpp uses files from js/
     UNIFIED_SOURCES += [
         'RecordReplay.cpp',
@@ -168,15 +179,13 @@ DEFINES['IMPL_MFBT'] = True
 
 SOURCES += [
     'Compression.cpp',
-    'decimal/Decimal.cpp',
-    'lz4.c',
+    'lz4/lz4.c',
+    'lz4/lz4frame.c',
+    'lz4/lz4hc.c',
+    'lz4/xxhash.c',
 ]
 
 DisableStlWrapping()
-
-if CONFIG['CC_TYPE'] == 'clang':
-    # Suppress warnings from third-party V8 Decimal code.
-    SOURCES['decimal/Decimal.cpp'].flags += ['-Wno-implicit-fallthrough']
 
 if CONFIG['MOZ_NEEDS_LIBATOMIC']:
     OS_LIBS += ['atomic']

@@ -163,9 +163,8 @@ extern PropertyName* EnvironmentCoordinateNameSlow(JSScript* script,
  *
  *    Each non-syntactic object used as a qualified variables object needs to
  *    enclose a non-syntactic LexicalEnvironmentObject to hold 'let' and
- *    'const' bindings. There is a bijection per compartment between the
- *    non-syntactic variables objects and their non-syntactic
- *    LexicalEnvironmentObjects.
+ *    'const' bindings. There is a bijection per realm between the non-syntactic
+ *    variables objects and their non-syntactic LexicalEnvironmentObjects.
  *
  *    Does not hold 'var' bindings.
  *
@@ -319,7 +318,7 @@ class CallObject : public EnvironmentObject {
 
  public:
   static const uint32_t RESERVED_SLOTS = 2;
-  static const Class class_;
+  static const JSClass class_;
 
   /* These functions are internal and are exposed only for JITs. */
 
@@ -378,7 +377,7 @@ class VarEnvironmentObject : public EnvironmentObject {
 
  public:
   static const uint32_t RESERVED_SLOTS = 2;
-  static const Class class_;
+  static const JSClass class_;
 
   static VarEnvironmentObject* create(JSContext* cx, HandleScope scope,
                                       AbstractFramePtr frame);
@@ -400,17 +399,17 @@ class ModuleEnvironmentObject : public EnvironmentObject {
   static const uint32_t MODULE_SLOT = 1;
 
   static const ObjectOps objectOps_;
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static const uint32_t RESERVED_SLOTS = 2;
 
   static ModuleEnvironmentObject* create(JSContext* cx,
                                          HandleModuleObject module);
-  ModuleObject& module();
-  IndirectBindingMap& importBindings();
+  ModuleObject& module() const;
+  IndirectBindingMap& importBindings() const;
 
   bool createImportBinding(JSContext* cx, HandleAtom importName,
                            HandleModuleObject module, HandleAtom exportName);
@@ -420,7 +419,7 @@ class ModuleEnvironmentObject : public EnvironmentObject {
   bool lookupImport(jsid name, ModuleEnvironmentObject** envOut,
                     Shape** shapeOut);
 
-  void fixEnclosingEnvironmentAfterCompartmentMerge(GlobalObject& global);
+  void fixEnclosingEnvironmentAfterRealmMerge(GlobalObject& global);
 
  private:
   static bool lookupProperty(JSContext* cx, HandleObject obj, HandleId id,
@@ -439,7 +438,8 @@ class ModuleEnvironmentObject : public EnvironmentObject {
   static bool deleteProperty(JSContext* cx, HandleObject obj, HandleId id,
                              ObjectOpResult& result);
   static bool newEnumerate(JSContext* cx, HandleObject obj,
-                           AutoIdVector& properties, bool enumerableOnly);
+                           MutableHandleIdVector properties,
+                           bool enumerableOnly);
 };
 
 typedef Rooted<ModuleEnvironmentObject*> RootedModuleEnvironmentObject;
@@ -455,7 +455,7 @@ class WasmInstanceEnvironmentObject : public EnvironmentObject {
   static const uint32_t SCOPE_SLOT = 1;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static const uint32_t RESERVED_SLOTS = 2;
 
@@ -476,7 +476,7 @@ class WasmFunctionCallObject : public EnvironmentObject {
   static const uint32_t SCOPE_SLOT = 1;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static const uint32_t RESERVED_SLOTS = 2;
 
@@ -499,7 +499,7 @@ class LexicalEnvironmentObject : public EnvironmentObject {
 
  public:
   static const unsigned RESERVED_SLOTS = 2;
-  static const Class class_;
+  static const JSClass class_;
 
  private:
   static LexicalEnvironmentObject* createTemplateObject(JSContext* cx,
@@ -611,13 +611,13 @@ class NamedLambdaObject : public LexicalEnvironmentObject {
 class NonSyntacticVariablesObject : public EnvironmentObject {
  public:
   static const unsigned RESERVED_SLOTS = 1;
-  static const Class class_;
+  static const JSClass class_;
 
   static NonSyntacticVariablesObject* create(JSContext* cx);
 };
 
 extern bool CreateNonSyntacticEnvironmentChain(JSContext* cx,
-                                               JS::AutoObjectVector& envChain,
+                                               JS::HandleObjectVector envChain,
                                                MutableHandleObject env,
                                                MutableHandleScope scope);
 
@@ -629,7 +629,7 @@ class WithEnvironmentObject : public EnvironmentObject {
 
  public:
   static const unsigned RESERVED_SLOTS = 4;
-  static const Class class_;
+  static const JSClass class_;
 
   static WithEnvironmentObject* create(JSContext* cx, HandleObject object,
                                        HandleObject enclosing,
@@ -684,7 +684,7 @@ class RuntimeLexicalErrorObject : public EnvironmentObject {
 
  public:
   static const unsigned RESERVED_SLOTS = 2;
-  static const Class class_;
+  static const JSClass class_;
 
   static RuntimeLexicalErrorObject* create(JSContext* cx,
                                            HandleObject enclosing,
@@ -890,6 +890,7 @@ extern JSObject* GetDebugEnvironmentForFrame(JSContext* cx,
                                              jsbytecode* pc);
 
 extern JSObject* GetDebugEnvironmentForGlobalLexicalEnvironment(JSContext* cx);
+extern Scope* GetEnvironmentScope(const JSObject& env);
 
 /* Provides debugger access to a environment. */
 class DebugEnvironmentProxy : public ProxyObject {
@@ -950,7 +951,7 @@ class DebugEnvironments {
    * The map from live frames which have optimized-away environments to the
    * corresponding debug environments.
    */
-  typedef HashMap<MissingEnvironmentKey, ReadBarrieredDebugEnvironmentProxy,
+  typedef HashMap<MissingEnvironmentKey, WeakHeapPtrDebugEnvironmentProxy,
                   MissingEnvironmentKey, ZoneAllocPolicy>
       MissingEnvironmentMap;
   MissingEnvironmentMap missingEnvs;
@@ -963,9 +964,8 @@ class DebugEnvironments {
    * debugger lazy updates of liveEnvs need only fill in the new
    * environments.
    */
-  typedef GCHashMap<ReadBarriered<JSObject*>, LiveEnvironmentVal,
-                    MovableCellHasher<ReadBarriered<JSObject*>>,
-                    ZoneAllocPolicy>
+  typedef GCHashMap<WeakHeapPtr<JSObject*>, LiveEnvironmentVal,
+                    MovableCellHasher<WeakHeapPtr<JSObject*>>, ZoneAllocPolicy>
       LiveEnvironmentMap;
   LiveEnvironmentMap liveEnvs;
 
@@ -1141,7 +1141,7 @@ inline bool IsFrameInitialEnvironment(AbstractFramePtr frame,
 }
 
 extern bool CreateObjectsForEnvironmentChain(JSContext* cx,
-                                             AutoObjectVector& chain,
+                                             HandleObjectVector chain,
                                              HandleObject terminatingEnv,
                                              MutableHandleObject envObj);
 

@@ -25,6 +25,9 @@
 #include "mozilla/Casting.h"
 #include "mozilla/Types.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 // jstypes.h is (or should be!) included by every file in SpiderMonkey.
 // js-config.h also should be included by every file. So include it here.
 // XXX: including it in js/RequiredDefines.h should be a better option, since
@@ -64,23 +67,6 @@
 #  define JS_NO_FASTCALL
 #endif
 
-// gcc is buggy and warns on our attempts to JS_PUBLIC_API our
-// forward-declarations or explicit template instantiations.  See
-// <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=50044>.  Add a way to detect
-// that so we can locally disable that warning.
-//
-// This version-check is written such that the version-number mentioned below
-// must be bumped every time a new gcc that *doesn't* fix this bug is released.
-// (The gcc release that *fixes* this bug will trigger no warning, and we'll
-// naturally stop bumping this number.)  If you ever trigger this warning with
-// the latest stable gcc, you have rs=jwalden to bump it to the next gcc minor
-// or major version as needed, e.g. (8, 2, 0) to (8, 3, 0).
-#if MOZ_IS_GCC
-#  if !MOZ_GCC_VERSION_AT_LEAST(8, 2, 0)
-#    define JS_BROKEN_GCC_ATTRIBUTE_WARNING
-#  endif
-#endif
-
 /***********************************************************************
 ** MACROS:      JS_BEGIN_MACRO
 **              JS_END_MACRO
@@ -94,28 +80,45 @@
   while (0)
 
 /***********************************************************************
-** MACROS:      JS_BIT
-**              JS_BITMASK
+** FUNCTIONS:   Bit
+**              BitMask
 ** DESCRIPTION:
-** Bit masking macros.  XXX n must be <= 31 to be portable
+** Bit masking functions.  XXX n must be <= 31 to be portable
 ***********************************************************************/
-#define JS_BIT(n) ((uint32_t)1 << (n))
-#define JS_BITMASK(n) (JS_BIT(n) - 1)
+namespace js {
+constexpr uint32_t Bit(uint32_t n) { return uint32_t(1) << n; }
+
+constexpr uint32_t BitMask(uint32_t n) { return Bit(n) - 1; }
+}  // namespace js
 
 /***********************************************************************
-** MACROS:      JS_HOWMANY
-**              JS_ROUNDUP
+** FUNCTIONS:   HowMany
+**              RoundUp
+**              RoundDown
+**              Round
 ** DESCRIPTION:
-**      Commonly used macros for operations on compatible types.
+**      Commonly used functions for operations on compatible types.
 ***********************************************************************/
-#define JS_HOWMANY(x, y) (((x) + (y)-1) / (y))
-#define JS_ROUNDUP(x, y) (JS_HOWMANY(x, y) * (y))
+namespace js {
+constexpr size_t HowMany(size_t x, size_t y) { return (x + y - 1) / y; }
 
-#if defined(JS_64BIT)
+constexpr size_t RoundUp(size_t x, size_t y) { return HowMany(x, y) * y; }
+
+constexpr size_t RoundDown(size_t x, size_t y) { return (x / y) * y; }
+
+constexpr size_t Round(size_t x, size_t y) { return ((x + y / 2) / y) * y; }
+}  // namespace js
+
+#if (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8) || \
+    (defined(UINTPTR_MAX) && UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu)
 #  define JS_BITS_PER_WORD 64
 #else
 #  define JS_BITS_PER_WORD 32
 #endif
+
+static_assert(sizeof(void*) == 8 ? JS_BITS_PER_WORD == 64
+                                 : JS_BITS_PER_WORD == 32,
+              "preprocessor and compiler must agree");
 
 /***********************************************************************
 ** MACROS:      JS_FUNC_TO_DATA_PTR

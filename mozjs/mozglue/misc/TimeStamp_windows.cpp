@@ -170,10 +170,8 @@ static inline ULONGLONG PerformanceCounter() {
 static void InitThresholds() {
   DWORD timeAdjustment = 0, timeIncrement = 0;
   BOOL timeAdjustmentDisabled;
-#ifndef JS_ENABLE_UWP
   GetSystemTimeAdjustment(&timeAdjustment, &timeIncrement,
                           &timeAdjustmentDisabled);
-#endif
 
   LOG(("TimeStamp: timeIncrement=%d [100ns]", timeIncrement));
 
@@ -384,9 +382,9 @@ MFBT_API double BaseTimeDurationPlatformUtils::ToSecondsSigDigits(
 MFBT_API int64_t
 BaseTimeDurationPlatformUtils::TicksFromMilliseconds(double aMilliseconds) {
   double result = ms2mt(aMilliseconds);
-  if (result > INT64_MAX) {
+  if (result > double(INT64_MAX)) {
     return INT64_MAX;
-  } else if (result < INT64_MIN) {
+  } else if (result < double(INT64_MIN)) {
     return INT64_MIN;
   }
 

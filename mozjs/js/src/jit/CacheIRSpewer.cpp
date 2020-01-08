@@ -18,6 +18,7 @@
 #  endif
 #  include <stdarg.h>
 
+#  include "util/Text.h"
 #  include "vm/JSFunction.h"
 #  include "vm/JSObject.h"
 #  include "vm/JSScript.h"
@@ -109,7 +110,7 @@ static void QuoteString(GenericPrinter& out, const CharT* s, size_t length) {
     if (c == '"' || c == '\\') {
       out.printf("\\");
       out.printf("%c", char(c));
-    } else if (c < ' ' || c >= 127 || !isprint(c)) {
+    } else if (!IsAsciiPrintable(c)) {
       out.printf("\\u%04x", c);
     } else {
       out.printf("%c", char(c));
@@ -151,7 +152,7 @@ void CacheIRSpewer::valueProperty(const char* name, const Value& v) {
     }
   } else if (v.isObject()) {
     JSObject& object = v.toObject();
-    j.formatProperty("value", "%p (shape: %p)", &object, object.maybeShape());
+    j.formatProperty("value", "%p (shape: %p)", &object, object.shape());
     if (NativeObject* nobj =
             object.isNative() ? &object.as<NativeObject>() : nullptr) {
       j.beginListProperty("flags");

@@ -40,7 +40,7 @@
 /* constants and macros for access to the data ------------------------------ */
 
 /* getting a uint32_t properties word from the data */
-#define GET_PROPS(c, result) ((result)=UTRIE2_GET16(&propsTrie, c));
+#define GET_PROPS(c, result) ((result)=UTRIE2_GET16(&propsTrie, c))
 
 /* API functions ------------------------------------------------------------ */
 
@@ -453,11 +453,17 @@ u_getNumericValue(UChar32 c) {
         }
 
         return numValue;
-    } else if(ntv<UPROPS_NTV_RESERVED_START) {
+    } else if(ntv<UPROPS_NTV_FRACTION32_START) {
         // fraction-20 e.g. 3/80
         int32_t frac20=ntv-UPROPS_NTV_FRACTION20_START;  // 0..0x17
         int32_t numerator=2*(frac20&3)+1;
         int32_t denominator=20<<(frac20>>2);
+        return (double)numerator/denominator;
+    } else if(ntv<UPROPS_NTV_RESERVED_START) {
+        // fraction-32 e.g. 3/64
+        int32_t frac32=ntv-UPROPS_NTV_FRACTION32_START;  // 0..15
+        int32_t numerator=2*(frac32&3)+1;
+        int32_t denominator=32<<(frac32>>2);
         return (double)numerator/denominator;
     } else {
         /* reserved */

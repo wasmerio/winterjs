@@ -7,20 +7,18 @@
 # Ensure Android SDK and build-tools versions depending on mobile target.
 
 
-@depends(host, '--help')
+@depends(host, mozbuild_state_path, '--help')
 @imports('os')
-def default_android_sdk_root(host, _):
-    mozbuild_state_dir = os.environ.get('MOZBUILD_STATE_PATH',
-                                        os.path.expanduser(os.path.join('~', '.mozbuild')))
+def default_android_sdk_root(host, mozbuild_state_path, _):
     sdk_basename = {
         'Darwin': 'android-sdk-macosx',
         'Linux': 'android-sdk-linux',
         'WINNT': 'android-sdk-windows',
     }.get(host.kernel)
-    if sdk_basename is None:
-        log.warning("%s is unsupported host" % host.kernel)
-        return None
-    return os.path.join(mozbuild_state_dir, sdk_basename)
+    if sdk_basename:
+        path = os.path.join(mozbuild_state_path, sdk_basename)
+        if os.path.isdir(path):
+            return path
 
 
 option('--with-android-sdk', nargs=1,
@@ -31,7 +29,10 @@ option('--with-android-sdk', nargs=1,
 @depends('--with-android-sdk')
 @imports(_from='os.path', _import='isdir')
 def android_sdk_root(value):
-    if value and isdir(value[0]):
+    if value:
+        if not isdir(value[0]):
+            die("The path you specified with --with-android-sdk (%s) is not "
+                "a directory" % value[0])
         return value[0]
 
     die("You must specify --with-android-sdk=/path/to/sdk when targeting Android, "
@@ -40,7 +41,7 @@ def android_sdk_root(value):
 
 @depends('--help')
 def android_sdk_version(_):
-    return namespace(build_tools_versions=['27.0.3'], target_sdk_version='28')
+    return namespace(build_tools_versions=['28.0.3'], target_sdk_version='28')
 
 
 @depends(android_sdk_root, android_sdk_version)

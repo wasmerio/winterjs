@@ -39,14 +39,6 @@ want to do then dive in!
    manifestparser
    gettinginfo
    setuprunning
-   mozhttpd
+   servingcontent
    loggingreporting
    devicemanagement
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-

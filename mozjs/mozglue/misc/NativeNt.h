@@ -16,7 +16,15 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/LauncherResult.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/Move.h"
+#include "mozilla/Span.h"
+#include "mozilla/WinHeaderOnlyUtils.h"
+
+#if defined(MOZILLA_INTERNAL_API)
+#  include "nsString.h"
+#endif  // defined(MOZILLA_INTERNAL_API)
 
 // The declarations within this #if block are intended to be used for initial
 // process initialization ONLY. You probably don't want to be using these in
@@ -32,6 +40,10 @@ extern "C" {
 #  if !defined(STATUS_DLL_NOT_FOUND)
 #    define STATUS_DLL_NOT_FOUND ((NTSTATUS)0xC0000135L)
 #  endif  // !defined(STATUS_DLL_NOT_FOUND)
+
+#  if !defined(STATUS_UNSUCCESSFUL)
+#    define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
+#  endif  // !defined(STATUS_UNSUCCESSFUL)
 
 enum SECTION_INHERIT { ViewShare = 1, ViewUnmap = 2 };
 
@@ -68,6 +80,29 @@ BOOLEAN NTAPI RtlEqualUnicodeString(PCUNICODE_STRING aStr1,
 
 NTSTATUS NTAPI RtlGetVersion(PRTL_OSVERSIONINFOW aOutVersionInformation);
 
+VOID NTAPI RtlAcquireSRWLockExclusive(PSRWLOCK aLock);
+VOID NTAPI RtlAcquireSRWLockShared(PSRWLOCK aLock);
+
+VOID NTAPI RtlReleaseSRWLockExclusive(PSRWLOCK aLock);
+VOID NTAPI RtlReleaseSRWLockShared(PSRWLOCK aLock);
+
+NTSTATUS NTAPI NtReadVirtualMemory(HANDLE aProcessHandle, PVOID aBaseAddress,
+                                   PVOID aBuffer, SIZE_T aNumBytesToRead,
+                                   PSIZE_T aNumBytesRead);
+
+NTSTATUS NTAPI LdrLoadDll(PWCHAR aDllPath, PULONG aFlags,
+                          PUNICODE_STRING aDllName, PHANDLE aOutHandle);
+
+typedef ULONG(NTAPI* PRTL_RUN_ONCE_INIT_FN)(PRTL_RUN_ONCE, PVOID, PVOID*);
+NTSTATUS NTAPI RtlRunOnceExecuteOnce(PRTL_RUN_ONCE aRunOnce,
+                                     PRTL_RUN_ONCE_INIT_FN aInitFn,
+                                     PVOID aContext, PVOID* aParameter);
+
+}  // extern "C"
+
+#endif  // !defined(MOZILLA_INTERNAL_API)
+
+extern "C" {
 PVOID NTAPI RtlAllocateHeap(PVOID aHeapHandle, ULONG aFlags, SIZE_T aSize);
 
 PVOID NTAPI RtlReAllocateHeap(PVOID aHeapHandle, ULONG aFlags, LPVOID aMem,
@@ -75,16 +110,127 @@ PVOID NTAPI RtlReAllocateHeap(PVOID aHeapHandle, ULONG aFlags, LPVOID aMem,
 
 BOOLEAN NTAPI RtlFreeHeap(PVOID aHeapHandle, ULONG aFlags, PVOID aHeapBase);
 
-VOID NTAPI RtlAcquireSRWLockExclusive(PSRWLOCK aLock);
+BOOLEAN NTAPI RtlQueryPerformanceCounter(LARGE_INTEGER* aPerfCount);
 
-VOID NTAPI RtlReleaseSRWLockExclusive(PSRWLOCK aLock);
+#define RTL_DUPLICATE_UNICODE_STRING_NULL_TERMINATE 1
+#define RTL_DUPLICATE_UNICODE_STRING_ALLOCATE_NULL_STRING 2
+NTSTATUS NTAPI RtlDuplicateUnicodeString(ULONG aFlags, PCUNICODE_STRING aSrc,
+                                         PUNICODE_STRING aDest);
 
+VOID NTAPI RtlFreeUnicodeString(PUNICODE_STRING aUnicodeString);
 }  // extern "C"
-
-#endif  // !defined(MOZILLA_INTERNAL_API)
 
 namespace mozilla {
 namespace nt {
+
+/**
+ * This class encapsulates a UNICODE_STRING that owns its own buffer. The
+ * buffer is always NULL terminated, thus allowing us to cast to a wide C-string
+ * without requiring any mutation.
+ *
+ * We only allow creation of this owned buffer from outside XUL.
+ */
+class AllocatedUnicodeString final {
+ public:
+  AllocatedUnicodeString() : mUnicodeString() {}
+
+#if defined(MOZILLA_INTERNAL_API)
+  AllocatedUnicodeString(const AllocatedUnicodeString& aOther) = delete;
+
+  AllocatedUnicodeString& operator=(const AllocatedUnicodeString& aOther) =
+      delete;
+#else
+  explicit AllocatedUnicodeString(PCUNICODE_STRING aSrc) {
+    if (!aSrc) {
+      mUnicodeString = {};
+      return;
+    }
+
+    Duplicate(aSrc);
+  }
+
+  AllocatedUnicodeString(const AllocatedUnicodeString& aOther) {
+    Duplicate(&aOther.mUnicodeString);
+  }
+
+  AllocatedUnicodeString& operator=(const AllocatedUnicodeString& aOther) {
+    Clear();
+    Duplicate(&aOther.mUnicodeString);
+    return *this;
+  }
+
+  AllocatedUnicodeString& operator=(PCUNICODE_STRING aSrc) {
+    Clear();
+    Duplicate(aSrc);
+    return *this;
+  }
+#endif  // defined(MOZILLA_INTERNAL_API)
+
+  AllocatedUnicodeString(AllocatedUnicodeString&& aOther)
+      : mUnicodeString(aOther.mUnicodeString) {
+    aOther.mUnicodeString = {};
+  }
+
+  AllocatedUnicodeString& operator=(AllocatedUnicodeString&& aOther) {
+    Clear();
+    mUnicodeString = aOther.mUnicodeString;
+    aOther.mUnicodeString = {};
+    return *this;
+  }
+
+  ~AllocatedUnicodeString() { Clear(); }
+
+  bool IsEmpty() const {
+    return !mUnicodeString.Buffer || !mUnicodeString.Length;
+  }
+
+  operator PCUNICODE_STRING() const { return &mUnicodeString; }
+
+  operator const WCHAR*() const { return mUnicodeString.Buffer; }
+
+  USHORT CharLen() const { return mUnicodeString.Length / sizeof(WCHAR); }
+
+#if defined(MOZILLA_INTERNAL_API)
+  nsDependentString AsString() const {
+    if (!mUnicodeString.Buffer) {
+      return nsDependentString();
+    }
+
+    // We can use nsDependentString here as we guaranteed null termination
+    // when we allocated the string.
+    return nsDependentString(mUnicodeString.Buffer, CharLen());
+  }
+#endif  // defined(MOZILLA_INTERNAL_API)
+
+ private:
+#if !defined(MOZILLA_INTERNAL_API)
+  void Duplicate(PCUNICODE_STRING aSrc) {
+    MOZ_ASSERT(aSrc);
+
+    // We duplicate with null termination so that this string may be used
+    // as a wide C-string without any further manipulation.
+    NTSTATUS ntStatus = ::RtlDuplicateUnicodeString(
+        RTL_DUPLICATE_UNICODE_STRING_NULL_TERMINATE, aSrc, &mUnicodeString);
+    MOZ_ASSERT(NT_SUCCESS(ntStatus));
+    if (!NT_SUCCESS(ntStatus)) {
+      // Make sure that mUnicodeString does not contain bogus data
+      // (since not all callers zero it out before invoking)
+      mUnicodeString = {};
+    }
+  }
+#endif  // !defined(MOZILLA_INTERNAL_API)
+
+  void Clear() {
+    if (!mUnicodeString.Buffer) {
+      return;
+    }
+
+    ::RtlFreeUnicodeString(&mUnicodeString);
+    mUnicodeString = {};
+  }
+
+  UNICODE_STRING mUnicodeString;
+};
 
 #if !defined(MOZILLA_INTERNAL_API)
 
@@ -95,7 +241,44 @@ struct MemorySectionNameBuf : public _MEMORY_SECTION_NAME {
     mSectionFileName.Buffer = mBuf;
   }
 
-  WCHAR mBuf[MAX_PATH];
+  MemorySectionNameBuf(const MemorySectionNameBuf& aOther) {
+    *this = aOther;
+  }
+
+  MemorySectionNameBuf(MemorySectionNameBuf&& aOther) {
+    *this = std::move(aOther);
+  }
+
+  // We cannot use default copy here because mSectionFileName.Buffer needs to
+  // be updated to point to |this->mBuf|, not |aOther.mBuf|.
+  MemorySectionNameBuf& operator=(const MemorySectionNameBuf& aOther) {
+    mSectionFileName.Length = aOther.mSectionFileName.Length;
+    mSectionFileName.MaximumLength = sizeof(mBuf);
+    MOZ_ASSERT(mSectionFileName.Length <= mSectionFileName.MaximumLength);
+    mSectionFileName.Buffer = mBuf;
+    memcpy(mBuf, aOther.mBuf, aOther.mSectionFileName.Length);
+    return *this;
+  }
+
+  MemorySectionNameBuf& operator=(MemorySectionNameBuf&& aOther) {
+    mSectionFileName.Length = aOther.mSectionFileName.Length;
+    aOther.mSectionFileName.Length = 0;
+    mSectionFileName.MaximumLength = sizeof(mBuf);
+    MOZ_ASSERT(mSectionFileName.Length <= mSectionFileName.MaximumLength);
+    aOther.mSectionFileName.MaximumLength = sizeof(aOther.mBuf);
+    mSectionFileName.Buffer = mBuf;
+    memmove(mBuf, aOther.mBuf, mSectionFileName.Length);
+    return *this;
+  }
+
+  // Native NT paths, so we can't assume MAX_PATH. Use a larger buffer.
+  WCHAR mBuf[2 * MAX_PATH];
+
+  bool IsEmpty() const {
+    return !mSectionFileName.Buffer || !mSectionFileName.Length;
+  }
+
+  operator PCUNICODE_STRING() const { return &mSectionFileName; }
 };
 
 inline bool FindCharInUnicodeString(const UNICODE_STRING& aStr, WCHAR aChar,
@@ -244,15 +427,47 @@ class MOZ_RAII PEHeaders final {
   };
 
  public:
-  explicit PEHeaders(void* aBaseAddress)
-      : PEHeaders(reinterpret_cast<PIMAGE_DOS_HEADER>(aBaseAddress)) {}
-
   // The lowest two bits of an HMODULE are used as flags. Stripping those bits
   // from the HMODULE yields the base address of the binary's memory mapping.
   // (See LoadLibraryEx docs on MSDN)
-  explicit PEHeaders(HMODULE aModule)
-      : PEHeaders(reinterpret_cast<PIMAGE_DOS_HEADER>(
-            reinterpret_cast<uintptr_t>(aModule) & ~uintptr_t(3))) {}
+  static PIMAGE_DOS_HEADER HModuleToBaseAddr(HMODULE aModule) {
+    return reinterpret_cast<PIMAGE_DOS_HEADER>(
+        reinterpret_cast<uintptr_t>(aModule) & ~uintptr_t(3));
+  }
+
+  explicit PEHeaders(void* aBaseAddress)
+      : PEHeaders(reinterpret_cast<PIMAGE_DOS_HEADER>(aBaseAddress)) {}
+
+  explicit PEHeaders(HMODULE aModule) : PEHeaders(HModuleToBaseAddr(aModule)) {}
+
+  explicit PEHeaders(PIMAGE_DOS_HEADER aMzHeader)
+      : mMzHeader(aMzHeader),
+        mPeHeader(nullptr),
+        mImageLimit(nullptr),
+        mIsImportDirectoryTampered(false) {
+    if (!mMzHeader || mMzHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+      return;
+    }
+
+    mPeHeader = RVAToPtrUnchecked<PIMAGE_NT_HEADERS>(mMzHeader->e_lfanew);
+    if (!mPeHeader || mPeHeader->Signature != IMAGE_NT_SIGNATURE) {
+      return;
+    }
+
+    if (mPeHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC) {
+      return;
+    }
+
+    DWORD imageSize = mPeHeader->OptionalHeader.SizeOfImage;
+    // This is a coarse-grained check to ensure that the image size is
+    // reasonable. It we aren't big enough to contain headers, we have a
+    // problem!
+    if (imageSize < sizeof(IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS)) {
+      return;
+    }
+
+    mImageLimit = RVAToPtrUnchecked<void*>(imageSize - 1UL);
+  }
 
   explicit operator bool() const { return !!mImageLimit; }
 
@@ -261,7 +476,7 @@ class MOZ_RAII PEHeaders final {
    * address of the binary.
    */
   template <typename T, typename R>
-  T RVAToPtr(R aRva) {
+  T RVAToPtr(R aRva) const {
     return RVAToPtr<T>(mMzHeader, aRva);
   }
 
@@ -271,7 +486,7 @@ class MOZ_RAII PEHeaders final {
    * mapping.
    */
   template <typename T, typename R>
-  T RVAToPtr(void* aBase, R aRva) {
+  T RVAToPtr(void* aBase, R aRva) const {
     if (!mImageLimit) {
       return nullptr;
     }
@@ -285,14 +500,55 @@ class MOZ_RAII PEHeaders final {
     return reinterpret_cast<T>(absAddress);
   }
 
+  Maybe<Span<const uint8_t>> GetBounds() const {
+    if (!mImageLimit) {
+      return Nothing();
+    }
+
+    auto base = reinterpret_cast<const uint8_t*>(mMzHeader);
+    DWORD imageSize = mPeHeader->OptionalHeader.SizeOfImage;
+    return Some(MakeSpan(base, imageSize));
+  }
+
   PIMAGE_IMPORT_DESCRIPTOR GetImportDirectory() {
-    return GetImageDirectoryEntry<PIMAGE_IMPORT_DESCRIPTOR>(
-        IMAGE_DIRECTORY_ENTRY_IMPORT);
+    // If the import directory is already tampered, we skip bounds check
+    // because it could be located outside the mapped image.
+    return mIsImportDirectoryTampered
+               ? GetImageDirectoryEntry<PIMAGE_IMPORT_DESCRIPTOR,
+                                        BoundsCheckPolicy::Skip>(
+                     IMAGE_DIRECTORY_ENTRY_IMPORT)
+               : GetImageDirectoryEntry<PIMAGE_IMPORT_DESCRIPTOR>(
+                     IMAGE_DIRECTORY_ENTRY_IMPORT);
   }
 
   PIMAGE_RESOURCE_DIRECTORY GetResourceTable() {
     return GetImageDirectoryEntry<PIMAGE_RESOURCE_DIRECTORY>(
         IMAGE_DIRECTORY_ENTRY_RESOURCE);
+  }
+
+  PIMAGE_DATA_DIRECTORY GetImageDirectoryEntryPtr(
+      const uint32_t aDirectoryIndex, uint32_t* aOutRva = nullptr) const {
+    if (aOutRva) {
+      *aOutRva = 0;
+    }
+
+    IMAGE_OPTIONAL_HEADER& optionalHeader = mPeHeader->OptionalHeader;
+
+    const uint32_t maxIndex = std::min(optionalHeader.NumberOfRvaAndSizes,
+                                       DWORD(IMAGE_NUMBEROF_DIRECTORY_ENTRIES));
+    if (aDirectoryIndex >= maxIndex) {
+      return nullptr;
+    }
+
+    PIMAGE_DATA_DIRECTORY dirEntry =
+        &optionalHeader.DataDirectory[aDirectoryIndex];
+    if (aOutRva) {
+      *aOutRva = reinterpret_cast<char*>(dirEntry) -
+                 reinterpret_cast<char*>(mMzHeader);
+      MOZ_ASSERT(*aOutRva);
+    }
+
+    return dirEntry;
   }
 
   bool GetVersionInfo(uint64_t& aOutVersion) {
@@ -326,7 +582,9 @@ class MOZ_RAII PEHeaders final {
   GetIATForModule(const char* aModuleNameASCII) {
     for (PIMAGE_IMPORT_DESCRIPTOR curImpDesc = GetImportDirectory();
          IsValid(curImpDesc); ++curImpDesc) {
-      auto curName = RVAToPtr<const char*>(curImpDesc->Name);
+      auto curName = mIsImportDirectoryTampered
+                         ? RVAToPtrUnchecked<const char*>(curImpDesc->Name)
+                         : RVAToPtr<const char*>(curImpDesc->Name);
       if (!curName) {
         return nullptr;
       }
@@ -340,6 +598,28 @@ class MOZ_RAII PEHeaders final {
     }
 
     return nullptr;
+  }
+
+  Maybe<Span<IMAGE_THUNK_DATA>> GetIATThunksForModule(
+      const char* aModuleNameASCII) {
+    PIMAGE_IMPORT_DESCRIPTOR impDesc = GetIATForModule(aModuleNameASCII);
+    if (!impDesc) {
+      return Nothing();
+    }
+
+    auto firstIatThunk =
+        this->template RVAToPtr<PIMAGE_THUNK_DATA>(impDesc->FirstThunk);
+    if (!firstIatThunk) {
+      return Nothing();
+    }
+
+    // Find the length by iterating through the table until we find a null entry
+    PIMAGE_THUNK_DATA curIatThunk = firstIatThunk;
+    while (IsValid(curIatThunk)) {
+      ++curIatThunk;
+    }
+
+    return Some(MakeSpan(firstIatThunk, curIatThunk));
   }
 
   /**
@@ -385,6 +665,53 @@ class MOZ_RAII PEHeaders final {
     return RVAToPtr<T>(dataEntry->OffsetToData);
   }
 
+  template <size_t N>
+  Maybe<Span<const uint8_t>> FindSection(const char (&aSecName)[N],
+                                         DWORD aCharacteristicsMask) const {
+    static_assert((N - 1) <= IMAGE_SIZEOF_SHORT_NAME,
+                  "Section names must be at most 8 characters excluding null "
+                  "terminator");
+
+    if (!(*this)) {
+      return Nothing();
+    }
+
+    Span<IMAGE_SECTION_HEADER> sectionTable = GetSectionTable();
+    for (auto&& sectionHeader : sectionTable) {
+      if (strncmp(reinterpret_cast<const char*>(sectionHeader.Name), aSecName,
+                  IMAGE_SIZEOF_SHORT_NAME)) {
+        continue;
+      }
+
+      if (!(sectionHeader.Characteristics & aCharacteristicsMask)) {
+        // We found the section but it does not have the expected
+        // characteristics
+        return Nothing();
+      }
+
+      DWORD rva = sectionHeader.VirtualAddress;
+      if (!rva) {
+        return Nothing();
+      }
+
+      DWORD size = sectionHeader.Misc.VirtualSize;
+      if (!size) {
+        return Nothing();
+      }
+
+      auto base = RVAToPtr<const uint8_t*>(rva);
+      return Some(MakeSpan(base, size));
+    }
+
+    return Nothing();
+  }
+
+  // There may be other code sections in the binary besides .text
+  Maybe<Span<const uint8_t>> GetTextSectionInfo() const {
+    return FindSection(".text", IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE |
+                                    IMAGE_SCN_MEM_READ);
+  }
+
   static bool IsValid(PIMAGE_IMPORT_DESCRIPTOR aImpDesc) {
     return aImpDesc && aImpDesc->OriginalFirstThunk != 0;
   }
@@ -393,53 +720,38 @@ class MOZ_RAII PEHeaders final {
     return aImgThunk && aImgThunk->u1.Ordinal != 0;
   }
 
+  void SetImportDirectoryTampered() { mIsImportDirectoryTampered = true; }
+
  private:
-  explicit PEHeaders(PIMAGE_DOS_HEADER aMzHeader)
-      : mMzHeader(aMzHeader), mPeHeader(nullptr), mImageLimit(nullptr) {
-    if (!mMzHeader || mMzHeader->e_magic != IMAGE_DOS_SIGNATURE) {
-      return;
-    }
+  enum class BoundsCheckPolicy { Default, Skip };
 
-    mPeHeader = RVAToPtrUnchecked<PIMAGE_NT_HEADERS>(mMzHeader->e_lfanew);
-    if (!mPeHeader || mPeHeader->Signature != IMAGE_NT_SIGNATURE) {
-      return;
-    }
-
-    if (mPeHeader->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC) {
-      return;
-    }
-
-    DWORD imageSize = mPeHeader->OptionalHeader.SizeOfImage;
-    // This is a coarse-grained check to ensure that the image size is
-    // reasonable. It we aren't big enough to contain headers, we have a
-    // problem!
-    if (imageSize < sizeof(IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS)) {
-      return;
-    }
-
-    mImageLimit = RVAToPtrUnchecked<void*>(imageSize - 1UL);
-  }
-
-  template <typename T>
+  template <typename T, BoundsCheckPolicy Policy = BoundsCheckPolicy::Default>
   T GetImageDirectoryEntry(const uint32_t aDirectoryIndex) {
-    IMAGE_OPTIONAL_HEADER& optionalHeader = mPeHeader->OptionalHeader;
-
-    const uint32_t maxIndex = std::min(optionalHeader.NumberOfRvaAndSizes,
-                                       DWORD(IMAGE_NUMBEROF_DIRECTORY_ENTRIES));
-    if (aDirectoryIndex >= maxIndex) {
+    PIMAGE_DATA_DIRECTORY dirEntry = GetImageDirectoryEntryPtr(aDirectoryIndex);
+    if (!dirEntry) {
       return nullptr;
     }
 
-    IMAGE_DATA_DIRECTORY& dirEntry =
-        optionalHeader.DataDirectory[aDirectoryIndex];
-    return RVAToPtr<T>(dirEntry.VirtualAddress);
+    return Policy == BoundsCheckPolicy::Skip
+               ? RVAToPtrUnchecked<T>(dirEntry->VirtualAddress)
+               : RVAToPtr<T>(dirEntry->VirtualAddress);
   }
 
-  // This private overload does not have bounds checks, because we need to be
+  // This private variant does not have bounds checks, because we need to be
   // able to resolve the bounds themselves.
   template <typename T, typename R>
-  T RVAToPtrUnchecked(R aRva) {
+  T RVAToPtrUnchecked(R aRva) const {
     return reinterpret_cast<T>(reinterpret_cast<char*>(mMzHeader) + aRva);
+  }
+
+  Span<IMAGE_SECTION_HEADER> GetSectionTable() const {
+    MOZ_ASSERT(*this);
+    auto base = RVAToPtr<PIMAGE_SECTION_HEADER>(
+        &mPeHeader->OptionalHeader, mPeHeader->FileHeader.SizeOfOptionalHeader);
+    // The Windows loader has an internal limit of 96 sections (per PE spec)
+    auto numSections =
+        std::min(mPeHeader->FileHeader.NumberOfSections, WORD(96));
+    return MakeSpan(base, numSections);
   }
 
   PIMAGE_RESOURCE_DIRECTORY_ENTRY
@@ -516,12 +828,20 @@ class MOZ_RAII PEHeaders final {
   PIMAGE_DOS_HEADER mMzHeader;
   PIMAGE_NT_HEADERS mPeHeader;
   void* mImageLimit;
+  bool mIsImportDirectoryTampered;
 };
 
 inline HANDLE RtlGetProcessHeap() {
   PTEB teb = ::NtCurrentTeb();
   PPEB peb = teb->ProcessEnvironmentBlock;
   return peb->Reserved4[1];
+}
+
+inline DWORD RtlGetCurrentThreadId() {
+  PTEB teb = ::NtCurrentTeb();
+  CLIENT_ID* cid = reinterpret_cast<CLIENT_ID*>(&teb->Reserved1[8]);
+  return static_cast<DWORD>(reinterpret_cast<uintptr_t>(cid->UniqueThread) &
+                            0xFFFFFFFFUL);
 }
 
 inline LauncherResult<DWORD> GetParentProcessId() {
@@ -546,6 +866,207 @@ inline LauncherResult<DWORD> GetParentProcessId() {
 
   return static_cast<DWORD>(pbi.InheritedFromUniqueProcessId & 0xFFFFFFFF);
 }
+
+struct DataDirectoryEntry : public _IMAGE_DATA_DIRECTORY {
+  DataDirectoryEntry() : _IMAGE_DATA_DIRECTORY() {}
+
+  MOZ_IMPLICIT DataDirectoryEntry(const _IMAGE_DATA_DIRECTORY& aOther)
+      : _IMAGE_DATA_DIRECTORY(aOther) {}
+
+  DataDirectoryEntry(const DataDirectoryEntry& aOther) = default;
+
+  bool operator==(const DataDirectoryEntry& aOther) const {
+    return VirtualAddress == aOther.VirtualAddress && Size == aOther.Size;
+  }
+
+  bool operator!=(const DataDirectoryEntry& aOther) const {
+    return !(*this == aOther);
+  }
+};
+
+inline LauncherResult<void*> GetProcessPebPtr(HANDLE aProcess) {
+  ULONG returnLength;
+  PROCESS_BASIC_INFORMATION pbi;
+  NTSTATUS status = ::NtQueryInformationProcess(
+      aProcess, ProcessBasicInformation, &pbi, sizeof(pbi), &returnLength);
+  if (!NT_SUCCESS(status)) {
+    return LAUNCHER_ERROR_FROM_NTSTATUS(status);
+  }
+
+  return pbi.PebBaseAddress;
+}
+
+/**
+ * This function relies on a specific offset into the mostly-undocumented PEB
+ * structure. The risk is reduced thanks to the fact that the Chromium sandbox
+ * relies on the location of this field. It is unlikely to change at this point.
+ * To further reduce the risk, we also check for the magic 'MZ' signature that
+ * should indicate the beginning of a PE image.
+ */
+inline LauncherResult<HMODULE> GetProcessExeModule(HANDLE aProcess) {
+  LauncherResult<void*> ppeb = GetProcessPebPtr(aProcess);
+  if (ppeb.isErr()) {
+    return LAUNCHER_ERROR_FROM_RESULT(ppeb);
+  }
+
+  PEB peb;
+  SIZE_T bytesRead;
+
+#if defined(MOZILLA_INTERNAL_API)
+  if (!::ReadProcessMemory(aProcess, ppeb.unwrap(), &peb, sizeof(peb),
+                           &bytesRead) ||
+      bytesRead != sizeof(peb)) {
+    return LAUNCHER_ERROR_FROM_LAST();
+  }
+#else
+  NTSTATUS ntStatus = ::NtReadVirtualMemory(aProcess, ppeb.unwrap(), &peb,
+                                            sizeof(peb), &bytesRead);
+  if (!NT_SUCCESS(ntStatus) || bytesRead != sizeof(peb)) {
+    return LAUNCHER_ERROR_FROM_NTSTATUS(ntStatus);
+  }
+#endif
+
+  // peb.ImageBaseAddress
+  void* baseAddress = peb.Reserved3[1];
+
+  char mzMagic[2];
+#if defined(MOZILLA_INTERNAL_API)
+  if (!::ReadProcessMemory(aProcess, baseAddress, mzMagic, sizeof(mzMagic),
+                           &bytesRead) ||
+      bytesRead != sizeof(mzMagic)) {
+    return LAUNCHER_ERROR_FROM_LAST();
+  }
+#else
+  ntStatus = ::NtReadVirtualMemory(aProcess, baseAddress, mzMagic,
+                                   sizeof(mzMagic), &bytesRead);
+  if (!NT_SUCCESS(ntStatus) || bytesRead != sizeof(mzMagic)) {
+    return LAUNCHER_ERROR_FROM_NTSTATUS(ntStatus);
+  }
+#endif
+
+  MOZ_ASSERT(mzMagic[0] == 'M' && mzMagic[1] == 'Z');
+  if (mzMagic[0] != 'M' || mzMagic[1] != 'Z') {
+    return LAUNCHER_ERROR_FROM_WIN32(ERROR_BAD_EXE_FORMAT);
+  }
+
+  return static_cast<HMODULE>(baseAddress);
+}
+
+#if !defined(MOZILLA_INTERNAL_API)
+
+class MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS SRWLock final {
+ public:
+  constexpr SRWLock() : mLock(SRWLOCK_INIT) {}
+
+  void LockShared() { ::RtlAcquireSRWLockShared(&mLock); }
+
+  void LockExclusive() { ::RtlAcquireSRWLockExclusive(&mLock); }
+
+  void UnlockShared() { ::RtlReleaseSRWLockShared(&mLock); }
+
+  void UnlockExclusive() { ::RtlReleaseSRWLockExclusive(&mLock); }
+
+  SRWLock(const SRWLock&) = delete;
+  SRWLock(SRWLock&&) = delete;
+  SRWLock& operator=(const SRWLock&) = delete;
+  SRWLock& operator=(SRWLock&&) = delete;
+
+  SRWLOCK* operator&() { return &mLock; }
+
+ private:
+  SRWLOCK mLock;
+};
+
+class MOZ_RAII AutoExclusiveLock final {
+ public:
+  explicit AutoExclusiveLock(SRWLock& aLock) : mLock(aLock) {
+    aLock.LockExclusive();
+  }
+
+  ~AutoExclusiveLock() { mLock.UnlockExclusive(); }
+
+  AutoExclusiveLock(const AutoExclusiveLock&) = delete;
+  AutoExclusiveLock(AutoExclusiveLock&&) = delete;
+  AutoExclusiveLock& operator=(const AutoExclusiveLock&) = delete;
+  AutoExclusiveLock& operator=(AutoExclusiveLock&&) = delete;
+
+ private:
+  SRWLock& mLock;
+};
+
+class MOZ_RAII AutoSharedLock final {
+ public:
+  explicit AutoSharedLock(SRWLock& aLock) : mLock(aLock) { aLock.LockShared(); }
+
+  ~AutoSharedLock() { mLock.UnlockShared(); }
+
+  AutoSharedLock(const AutoSharedLock&) = delete;
+  AutoSharedLock(AutoSharedLock&&) = delete;
+  AutoSharedLock& operator=(const AutoSharedLock&) = delete;
+  AutoSharedLock& operator=(AutoSharedLock&&) = delete;
+
+ private:
+  SRWLock& mLock;
+};
+
+#endif  // !defined(MOZILLA_INTERNAL_API)
+
+class RtlAllocPolicy {
+ public:
+  template <typename T>
+  T* maybe_pod_malloc(size_t aNumElems) {
+    if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+      return nullptr;
+    }
+
+    return static_cast<T*>(
+        ::RtlAllocateHeap(RtlGetProcessHeap(), 0, aNumElems * sizeof(T)));
+  }
+
+  template <typename T>
+  T* maybe_pod_calloc(size_t aNumElems) {
+    if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+      return nullptr;
+    }
+
+    return static_cast<T*>(::RtlAllocateHeap(
+        RtlGetProcessHeap(), HEAP_ZERO_MEMORY, aNumElems * sizeof(T)));
+  }
+
+  template <typename T>
+  T* maybe_pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize) {
+    if (aNewSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+      return nullptr;
+    }
+
+    return static_cast<T*>(::RtlReAllocateHeap(RtlGetProcessHeap(), 0, aPtr,
+                                               aNewSize * sizeof(T)));
+  }
+
+  template <typename T>
+  T* pod_malloc(size_t aNumElems) {
+    return maybe_pod_malloc<T>(aNumElems);
+  }
+
+  template <typename T>
+  T* pod_calloc(size_t aNumElems) {
+    return maybe_pod_calloc<T>(aNumElems);
+  }
+
+  template <typename T>
+  T* pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize) {
+    return maybe_pod_realloc<T>(aPtr, aOldSize, aNewSize);
+  }
+
+  template <typename T>
+  void free_(T* aPtr, size_t aNumElems = 0) {
+    ::RtlFreeHeap(RtlGetProcessHeap(), 0, aPtr);
+  }
+
+  void reportAllocOverflow() const {}
+
+  MOZ_MUST_USE bool checkSimulatedOOM() const { return true; }
+};
 
 }  // namespace nt
 }  // namespace mozilla

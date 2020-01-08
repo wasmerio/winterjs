@@ -35,6 +35,8 @@ struct Cell;
 
 namespace jit {
 
+struct IonOsrTempData;
+
 enum DataType : uint8_t {
   Type_Void,
   Type_Bool,
@@ -128,7 +130,7 @@ enum MaybeTailCall : bool { TailCall, NonTailCall };
 
 // Data for a VM function. All VMFunctionDatas are stored in a constexpr array.
 struct VMFunctionData {
-#if defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
+#if defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
   // Informative name of the wrapped function. The name should not be present
   // in release builds in order to save memory.
   const char* name_;
@@ -142,7 +144,8 @@ struct VMFunctionData {
     RootId,
     RootFunction,
     RootValue,
-    RootCell
+    RootCell,
+    RootBigInt
   };
 
   // Contains an combination of enumerated types used by the gc for marking
@@ -223,7 +226,7 @@ struct VMFunctionData {
     return ((argumentPassedInFloatRegs >> explicitArg) & 1) == 1;
   }
 
-#if defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
+#if defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
   const char* name() const { return name_; }
 #endif
 
@@ -298,7 +301,7 @@ struct VMFunctionData {
                            uint8_t extraValuesToPop = 0,
                            MaybeTailCall expectTailCall = NonTailCall)
       :
-#if defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
+#if defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_TRACE_LOGGING)
         name_(name),
 #endif
         argumentRootTypes(argRootTypes),
@@ -388,7 +391,12 @@ struct TypeToDataType<JSString*> {
   static const DataType result = Type_Object;
 };
 template <>
-struct TypeToDataType<JSFlatString*> {
+struct TypeToDataType<JSLinearString*> {
+  static const DataType result = Type_Object;
+};
+
+template <>
+struct TypeToDataType<BigInt*> {
   static const DataType result = Type_Object;
 };
 template <>
@@ -457,6 +465,10 @@ struct TypeToDataType<MutableHandleValue> {
 };
 template <>
 struct TypeToDataType<HandleId> {
+  static const DataType result = Type_Handle;
+};
+template <>
+struct TypeToDataType<HandleBigInt> {
   static const DataType result = Type_Handle;
 };
 
@@ -574,6 +586,11 @@ struct TypeToArgProperties<HandleObjectGroup> {
   static const uint32_t result =
       TypeToArgProperties<ObjectGroup*>::result | VMFunctionData::ByRef;
 };
+template <>
+struct TypeToArgProperties<HandleBigInt> {
+  static const uint32_t result =
+      TypeToArgProperties<BigInt*>::result | VMFunctionData::ByRef;
+};
 
 // Convert argument type to whether or not it should be passed in a float
 // register on platforms that have them, like x64.
@@ -671,6 +688,10 @@ template <>
 struct TypeToRootType<Handle<Scope*> > {
   static const uint32_t result = VMFunctionData::RootCell;
 };
+template <>
+struct TypeToRootType<HandleBigInt> {
+  static const uint32_t result = VMFunctionData::RootBigInt;
+};
 template <class T>
 struct TypeToRootType<Handle<T> > {
   // Fail for Handle types that aren't specialized above.
@@ -697,6 +718,10 @@ struct OutParamToDataType<uint8_t**> {
   static const DataType result = Type_Pointer;
 };
 template <>
+struct OutParamToDataType<IonOsrTempData**> {
+  static const DataType result = Type_Pointer;
+};
+template <>
 struct OutParamToDataType<bool*> {
   static const DataType result = Type_Bool;
 };
@@ -716,6 +741,10 @@ template <>
 struct OutParamToDataType<MutableHandleString> {
   static const DataType result = Type_Handle;
 };
+template <>
+struct OutParamToDataType<MutableHandleBigInt> {
+  static const DataType result = Type_Handle;
+};
 
 template <class>
 struct OutParamToRootType {
@@ -732,6 +761,10 @@ struct OutParamToRootType<MutableHandleObject> {
 template <>
 struct OutParamToRootType<MutableHandleString> {
   static const VMFunctionData::RootType result = VMFunctionData::RootString;
+};
+template <>
+struct OutParamToRootType<MutableHandleBigInt> {
+  static const VMFunctionData::RootType result = VMFunctionData::RootBigInt;
 };
 
 // Extract the last element of a list of types.
@@ -838,11 +871,13 @@ MOZ_MUST_USE bool InitProp(JSContext* cx, HandleObject obj,
                            HandlePropertyName name, HandleValue value,
                            jsbytecode* pc);
 
-template <bool Equal>
+enum class EqualityKind : bool { NotEqual, Equal };
+
+template <EqualityKind Kind>
 bool LooselyEqual(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
                   bool* res);
 
-template <bool Equal>
+template <EqualityKind Kind>
 bool StrictlyEqual(JSContext* cx, MutableHandleValue lhs,
                    MutableHandleValue rhs, bool* res);
 
@@ -855,13 +890,14 @@ bool GreaterThan(JSContext* cx, MutableHandleValue lhs, MutableHandleValue rhs,
 bool GreaterThanOrEqual(JSContext* cx, MutableHandleValue lhs,
                         MutableHandleValue rhs, bool* res);
 
-template <bool Equal>
-bool StringsEqual(JSContext* cx, HandleString left, HandleString right,
-                  bool* res);
+template <EqualityKind Kind>
+bool StringsEqual(JSContext* cx, HandleString lhs, HandleString rhs, bool* res);
 
-MOZ_MUST_USE bool StringSplitHelper(JSContext* cx, HandleString str,
-                                    HandleString sep, HandleObjectGroup group,
-                                    uint32_t limit, MutableHandleValue result);
+enum class ComparisonKind : bool { GreaterThanOrEqual, LessThan };
+
+template <ComparisonKind Kind>
+bool StringsCompare(JSContext* cx, HandleString lhs, HandleString rhs,
+                    bool* res);
 
 MOZ_MUST_USE bool ArrayPopDense(JSContext* cx, HandleObject obj,
                                 MutableHandleValue rval);
@@ -875,7 +911,7 @@ MOZ_MUST_USE bool SetArrayLength(JSContext* cx, HandleObject obj,
 
 MOZ_MUST_USE bool CharCodeAt(JSContext* cx, HandleString str, int32_t index,
                              uint32_t* code);
-JSFlatString* StringFromCharCode(JSContext* cx, int32_t code);
+JSLinearString* StringFromCharCode(JSContext* cx, int32_t code);
 JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint);
 
 MOZ_MUST_USE bool SetProperty(JSContext* cx, HandleObject obj,
@@ -884,7 +920,6 @@ MOZ_MUST_USE bool SetProperty(JSContext* cx, HandleObject obj,
 
 MOZ_MUST_USE bool InterruptCheck(JSContext* cx);
 
-void* MallocWrapper(JS::Zone* zone, size_t nbytes);
 JSObject* NewCallObject(JSContext* cx, HandleShape shape,
                         HandleObjectGroup group);
 JSObject* NewStringObject(JSContext* cx, HandleString str);
@@ -927,7 +962,8 @@ void FrameIsDebuggeeCheck(BaselineFrame* frame);
 JSObject* CreateGenerator(JSContext* cx, BaselineFrame* frame);
 
 MOZ_MUST_USE bool NormalSuspend(JSContext* cx, HandleObject obj,
-                                BaselineFrame* frame, jsbytecode* pc);
+                                BaselineFrame* frame, uint32_t frameSize,
+                                jsbytecode* pc);
 MOZ_MUST_USE bool FinalSuspend(JSContext* cx, HandleObject obj, jsbytecode* pc);
 MOZ_MUST_USE bool InterpretResume(JSContext* cx, HandleObject obj,
                                   HandleValue val, HandlePropertyName kind,
@@ -937,7 +973,7 @@ MOZ_MUST_USE bool DebugAfterYield(JSContext* cx, BaselineFrame* frame,
 MOZ_MUST_USE bool GeneratorThrowOrReturn(
     JSContext* cx, BaselineFrame* frame,
     Handle<AbstractGeneratorObject*> genObj, HandleValue arg,
-    uint32_t resumeKind);
+    uint32_t resumeKindArg);
 
 MOZ_MUST_USE bool GlobalNameConflictsCheckFromIon(JSContext* cx,
                                                   HandleScript script);
@@ -1053,6 +1089,10 @@ MOZ_MUST_USE bool BaselineGetFunctionThis(JSContext* cx, BaselineFrame* frame,
 MOZ_MUST_USE bool CallNativeGetter(JSContext* cx, HandleFunction callee,
                                    HandleObject obj, MutableHandleValue result);
 
+MOZ_MUST_USE bool CallNativeGetterByValue(JSContext* cx, HandleFunction callee,
+                                          HandleValue receiver,
+                                          MutableHandleValue result);
+
 MOZ_MUST_USE bool CallNativeSetter(JSContext* cx, HandleFunction callee,
                                    HandleObject obj, HandleValue rhs);
 
@@ -1060,6 +1100,9 @@ MOZ_MUST_USE bool EqualStringsHelperPure(JSString* str1, JSString* str2);
 
 MOZ_MUST_USE bool CheckIsCallable(JSContext* cx, HandleValue v,
                                   CheckIsCallableKind kind);
+
+void HandleCodeCoverageAtPC(BaselineFrame* frame, jsbytecode* pc);
+void HandleCodeCoverageAtPrologue(BaselineFrame* frame);
 
 template <bool HandleMissing>
 bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
@@ -1100,8 +1143,51 @@ bool IsPossiblyWrappedTypedArray(JSContext* cx, JSObject* obj, bool* result);
 bool DoToNumber(JSContext* cx, HandleValue arg, MutableHandleValue ret);
 bool DoToNumeric(JSContext* cx, HandleValue arg, MutableHandleValue ret);
 
-bool CopyStringSplitArray(JSContext* cx, HandleArrayObject arr,
-                          MutableHandleValue result);
+void* AllocateBigIntNoGC(JSContext* cx);
+
+BigInt* BigIntAdd(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntSub(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntMul(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntDiv(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntMod(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntPow(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntBitAnd(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntBitOr(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntBitXor(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntLeftShift(JSContext* cx, HandleBigInt x, HandleBigInt y);
+BigInt* BigIntRightShift(JSContext* cx, HandleBigInt x, HandleBigInt y);
+
+BigInt* BigIntBitNot(JSContext* cx, HandleBigInt x);
+BigInt* BigIntNeg(JSContext* cx, HandleBigInt x);
+BigInt* BigIntInc(JSContext* cx, HandleBigInt x);
+BigInt* BigIntDec(JSContext* cx, HandleBigInt x);
+
+template <EqualityKind Kind>
+bool BigIntEqual(BigInt* x, BigInt* y);
+
+template <ComparisonKind Kind>
+bool BigIntCompare(BigInt* x, BigInt* y);
+
+template <EqualityKind Kind>
+bool BigIntNumberEqual(BigInt* x, double y);
+
+template <ComparisonKind Kind>
+bool BigIntNumberCompare(BigInt* x, double y);
+
+template <ComparisonKind Kind>
+bool NumberBigIntCompare(double x, BigInt* y);
+
+template <EqualityKind Kind>
+bool BigIntStringEqual(JSContext* cx, HandleBigInt x, HandleString y,
+                       bool* res);
+
+template <ComparisonKind Kind>
+bool BigIntStringCompare(JSContext* cx, HandleBigInt x, HandleString y,
+                         bool* res);
+
+template <ComparisonKind Kind>
+bool StringBigIntCompare(JSContext* cx, HandleString x, HandleBigInt y,
+                         bool* res);
 
 enum class TailCallVMFunctionId;
 enum class VMFunctionId;

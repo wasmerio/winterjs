@@ -306,6 +306,7 @@ early_options = early_options()
 # This gives access to the sandbox. Don't copy this blindly.
 @imports('__sandbox__')
 @imports('os')
+@imports('six')
 def mozconfig_options(mozconfig, automation, help):
     if mozconfig['path']:
         if 'MOZ_AUTOMATION_MOZCONFIG' in mozconfig['env']['added']:
@@ -331,15 +332,15 @@ def mozconfig_options(mozconfig, automation, help):
                 log.info('  %s' % arg)
                 helper.add(arg, origin='mozconfig', args=helper._args)
 
-        for key, value in mozconfig['env']['added'].iteritems():
+        for key, value in six.iteritems(mozconfig['env']['added']):
             add(key, value)
             os.environ[key] = value
-        for key, (_, value) in mozconfig['env']['modified'].iteritems():
+        for key, (_, value) in six.iteritems(mozconfig['env']['modified']):
             add(key, value)
             os.environ[key] = value
-        for key, value in mozconfig['vars']['added'].iteritems():
+        for key, value in six.iteritems(mozconfig['vars']['added']):
             add(key, value)
-        for key, (_, value) in mozconfig['vars']['modified'].iteritems():
+        for key, (_, value) in six.iteritems(mozconfig['vars']['modified']):
             add(key, value)
 
 
@@ -505,17 +506,6 @@ def hg_config(build_env, hg, version):
     # `hg version` worked.
     out = check_cmd_output(hg, 'config', env=env, cwd=build_env.topsrcdir)
 
-    # out is bytes. However, unicode literals are in effect, so implicit
-    # type coercion can occur. The underlying Mercurial config file may be
-    # in a user-defined encoding. However, HGPLAIN both overrides the decoding
-    # inside Mercurial *and* ensures output is utf-8. Because moz.configure
-    # is using unicode literals, our returned config object uses unicode
-    # keys and values to limit potential for coercion.
-
-    # Mercurial should emit utf-8. But be paranoid and ignore invalid utf-8
-    # byte sequences.
-    out = out.decode('utf-8', 'replace')
-
     config = {}
 
     for line in out.strip().splitlines():
@@ -626,23 +616,22 @@ option('--target', nargs=1,
 @imports(_from='mozbuild.configure.constants', _import='Endianness')
 @imports(_from='mozbuild.configure.constants', _import='Kernel')
 @imports(_from='mozbuild.configure.constants', _import='OS')
-@imports(_from='__builtin__', _import='KeyError')
 @imports(_from='__builtin__', _import='ValueError')
-def split_triplet(triplet, allow_unknown=False):
+def split_triplet(triplet):
     # The standard triplet is defined as
-    #   CPU_TYPE-MANUFACTURER-OPERATING_SYSTEM
+    #   CPU_TYPE-VENDOR-OPERATING_SYSTEM
     # There is also a quartet form:
-    #   CPU_TYPE-MANUFACTURER-KERNEL-OPERATING_SYSTEM
+    #   CPU_TYPE-VENDOR-KERNEL-OPERATING_SYSTEM
     # But we can consider the "KERNEL-OPERATING_SYSTEM" as one.
-    # Additionally, some may omit "unknown" when the manufacturer
+    # Additionally, some may omit "unknown" when the vendor
     # is not specified and emit
     #   CPU_TYPE-OPERATING_SYSTEM
+    vendor = 'unknown'
     parts = triplet.split('-', 2)
     if len(parts) == 3:
         cpu, vendor, os = parts
     elif len(parts) == 2:
         cpu, os = parts
-        vendor = ''
     else:
         raise ValueError("Unexpected triplet string: %s" % triplet)
 
@@ -685,8 +674,6 @@ def split_triplet(triplet, allow_unknown=False):
         canonical_os = canonical_kernel = 'OpenBSD'
     elif os.startswith('solaris'):
         canonical_os = canonical_kernel = 'SunOS'
-    elif allow_unknown:
-        canonical_os = canonical_kernel = os
     else:
         raise ValueError('Unknown OS: %s' % os)
 
@@ -734,36 +721,31 @@ def split_triplet(triplet, allow_unknown=False):
     elif cpu == 'sh4':
         canonical_cpu = 'sh4'
         endianness = 'little'
-    elif allow_unknown:
-        canonical_cpu = cpu
-        endianness = 'unknown'
     else:
         raise ValueError('Unknown CPU type: %s' % cpu)
 
-    def sanitize(cls, value):
-        try:
-            return cls(value)
-        except (KeyError, ValueError):
-            if allow_unknown:
-                return value
-            raise
+    # Toolchains, most notably for cross compilation may use cpu-os
+    # prefixes. We need to be more specific about the LLVM target on Mac
+    # so cross-language LTO will work correctly.
 
-    def bitness(cpu):
-        return CPU_bitness[cpu]
+    if os.startswith('darwin'):
+        toolchain = '%s-apple-%s' % (cpu, os)
+    elif canonical_cpu == 'aarch64' and canonical_os == 'WINNT':
+        toolchain = 'aarch64-windows-msvc'
+    else:
+        toolchain = '%s-%s' % (cpu, os)
 
     return namespace(
         alias=triplet,
-        cpu=sanitize(CPU, canonical_cpu),
-        bitness=sanitize(bitness, canonical_cpu),
-        kernel=sanitize(Kernel, canonical_kernel),
-        os=sanitize(OS, canonical_os),
-        endianness=sanitize(Endianness, endianness),
-        vendor=vendor,
+        cpu=CPU(canonical_cpu),
+        bitness=CPU_bitness[canonical_cpu],
+        kernel=Kernel(canonical_kernel),
+        os=OS(canonical_os),
+        endianness=Endianness(endianness),
         raw_cpu=cpu,
         raw_os=os,
-        # Toolchains, most notably for cross compilation may use cpu-os
-        # prefixes.
-        toolchain='%s-%s' % (cpu, os),
+        toolchain=toolchain,
+        vendor=vendor,
     )
 
 
@@ -786,17 +768,15 @@ def help_host_target(help, host, target):
         )
 
 
-@imports('subprocess')
 def config_sub(shell, triplet):
     config_sub = os.path.join(os.path.dirname(__file__), '..',
                               'autoconf', 'config.sub')
-    return subprocess.check_output([shell, config_sub, triplet]).strip()
+    return check_cmd_output(shell, config_sub, triplet).strip()
 
 
 @depends('--host', shell)
 @checking('for host system type', lambda h: h.alias)
 @imports('os')
-@imports('subprocess')
 @imports('sys')
 @imports(_from='__builtin__', _import='ValueError')
 def real_host(value, shell):
@@ -811,7 +791,7 @@ def real_host(value, shell):
     if not value:
         config_guess = os.path.join(os.path.dirname(__file__), '..',
                                     'autoconf', 'config.guess')
-        host = subprocess.check_output([shell, config_guess]).strip()
+        host = check_cmd_output(shell, config_guess).strip()
         try:
             return split_triplet(host)
         except ValueError:
@@ -991,7 +971,6 @@ def target_is_windows(target):
 set_define('_WINDOWS', target_is_windows)
 set_define('WIN32', target_is_windows)
 set_define('XP_WIN', target_is_windows)
-set_define('XP_WIN32', target_is_windows)
 
 
 @depends(target)
@@ -1040,6 +1019,15 @@ set_define('XP_LINUX', target_is_linux)
 
 
 @depends(target)
+def target_is_android(target):
+    if target.os == 'Android':
+        return True
+
+
+set_define('ANDROID', target_is_android)
+
+
+@depends(target)
 def target_is_openbsd(target):
     if target.kernel == 'OpenBSD':
         return True
@@ -1070,6 +1058,14 @@ def target_is_solaris(target):
 
 
 set_define('XP_SOLARIS', target_is_solaris)
+
+
+@depends(target)
+def target_is_sparc(target):
+    if target.cpu == 'sparc64':
+        return True
+
+set_define('SPARC64', target_is_sparc)
 
 
 @depends('--enable-project', '--with-external-source-dir',
@@ -1131,16 +1127,26 @@ set_define('MOZILLA_OFFICIAL', mozilla_official)
 add_old_configure_assignment('MOZILLA_OFFICIAL', mozilla_official)
 
 
+# Allow specifying custom paths to the version files used by the milestone() function below.
+option('--with-version-file-path',
+       nargs=1,
+       help='Specify a custom path to app version files instead of auto-detecting',
+       default=None)
+
+@depends('--with-version-file-path')
+def version_path(path):
+    return path
+
 # set RELEASE_OR_BETA and NIGHTLY_BUILD variables depending on the cycle we're in
 # The logic works like this:
 # - if we have "a1" in GRE_MILESTONE, we're building Nightly (define NIGHTLY_BUILD)
 # - otherwise, if we have "a" in GRE_MILESTONE, we're building Nightly or Aurora
 # - otherwise, we're building Release/Beta (define RELEASE_OR_BETA)
-@depends(check_build_environment, build_project, '--help')
+@depends(check_build_environment, build_project, version_path, '--help')
 @imports(_from='__builtin__', _import='open')
 @imports('os')
 @imports('re')
-def milestone(build_env, build_project, _):
+def milestone(build_env, build_project, version_path, _):
     versions = []
     paths = ['config/milestone.txt']
     if build_project == 'js':
@@ -1150,8 +1156,12 @@ def milestone(build_env, build_project, _):
             'browser/config/version.txt',
             'browser/config/version_display.txt',
         ]
+    if version_path:
+        version_path = version_path[0]
+    else:
+        version_path = os.path.join(build_project, 'config')
     for f in ('version.txt', 'version_display.txt'):
-        f = os.path.join(build_project, 'config', f)
+        f = os.path.join(version_path, f)
         if not os.path.exists(os.path.join(build_env.topsrcdir, f)):
             break
         paths.append(f)
@@ -1218,6 +1228,14 @@ set_config('MOZ_APP_VERSION', milestone.app_version)
 set_config('MOZ_APP_VERSION_DISPLAY', milestone.app_version_display)
 add_old_configure_assignment('MOZ_APP_VERSION', milestone.app_version)
 
+
+# Dummy function for availability in toolkit/moz.configure. Overridden in
+# mobile/android/moz.configure.
+@depends(milestone.is_nightly)
+def fennec_nightly(is_nightly):
+    return is_nightly
+
+
 # The app update channel is 'default' when not supplied. The value is used in
 # the application's confvars.sh (and is made available to a project specific
 # moz.configure).
@@ -1237,6 +1255,19 @@ def update_channel(channel):
 set_config('MOZ_UPDATE_CHANNEL', update_channel)
 set_define('MOZ_UPDATE_CHANNEL', update_channel)
 add_old_configure_assignment('MOZ_UPDATE_CHANNEL', update_channel)
+
+
+js_option(env='MOZBUILD_STATE_PATH', nargs=1,
+          help='Path to a persistent state directory for the build system '
+               'and related tools')
+
+
+@depends('MOZBUILD_STATE_PATH', '--help')
+@imports('os')
+def mozbuild_state_path(path, _):
+    if path:
+        return path[0]
+    return os.path.expanduser(os.path.join('~', '.mozbuild'))
 
 
 # A template providing a shorthand for setting a variable. The created

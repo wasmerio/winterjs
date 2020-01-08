@@ -89,6 +89,10 @@ class MacroAssemblerX86Shared : public Assembler {
     return masm.appendRawCode(code, numBytes);
   }
 
+  void addToPCRel4(uint32_t offset, int32_t bias) {
+    return masm.addToPCRel4(offset, bias);
+  }
+
   // Evaluate srcDest = minmax<isMax>{Float32,Double}(srcDest, second).
   // Checks for NaN if canBeNaN is true.
   void minMaxDouble(FloatRegister srcDest, FloatRegister second, bool canBeNaN,
@@ -139,9 +143,7 @@ class MacroAssemblerX86Shared : public Assembler {
   void cmp32(const Operand& lhs, Imm32 rhs) { cmpl(rhs, lhs); }
   void cmp32(const Operand& lhs, Register rhs) { cmpl(rhs, lhs); }
   void cmp32(Register lhs, const Operand& rhs) { cmpl(rhs, lhs); }
-  CodeOffset cmp32WithPatch(Register lhs, Imm32 rhs) {
-    return cmplWithPatch(rhs, lhs);
-  }
+
   void atomic_inc32(const Operand& addr) { lock_incl(addr); }
   void atomic_dec32(const Operand& addr) { lock_decl(addr); }
 
@@ -166,7 +168,7 @@ class MacroAssemblerX86Shared : public Assembler {
   void jump(Label* label) { jmp(label); }
   void jump(JitCode* code) { jmp(code); }
   void jump(TrampolinePtr code) { jmp(ImmPtr(code.value)); }
-  void jump(RepatchLabel* label) { jmp(label); }
+  void jump(ImmPtr ptr) { jmp(ptr); }
   void jump(Register reg) { jmp(Operand(reg)); }
   void jump(const Address& addr) { jmp(Operand(addr)); }
 
@@ -999,8 +1001,6 @@ class MacroAssemblerX86Shared : public Assembler {
   void checkStackAlignment() {
     // Exists for ARM compatibility.
   }
-
-  CodeOffset labelForPatch() { return CodeOffset(size()); }
 
   void abiret() { ret(); }
 

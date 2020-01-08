@@ -16,8 +16,6 @@ if (!wasmIsSupported())
 let harnessdir = libdir + "../tests/wasm/spec/harness/";
 
 load(harnessdir + 'sync_index.js');
-load(harnessdir + 'wasm-constants.js');
-load(harnessdir + 'wasm-module-builder.js');
 
 function test(func, description) {
     let maybeErr;
@@ -53,8 +51,8 @@ ${err}`);
 }
 
 let assert_equals = assertEq;
-let assert_true = (x, errMsg) => { assertEq(x, true); }
-let assert_false = (x, errMsg) => { assertEq(x, false); }
+let assert_true = (x, errMsg) => { assertEq(x, true, errMsg || ''); }
+let assert_false = (x, errMsg) => { assertEq(x, false, errMsg || ''); }
 
 function assert_unreached(description) {
     throw new Error(`unreachable:\n${description}`);

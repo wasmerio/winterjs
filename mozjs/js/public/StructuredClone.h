@@ -208,9 +208,9 @@ class CloneDataPolicy {
   bool sharedArrayBuffer_;
 
  public:
-  // The default is to allow all policy-controlled aspects.
+  // The default is to deny all policy-controlled aspects.
 
-  CloneDataPolicy() : sharedArrayBuffer_(true) {}
+  CloneDataPolicy() : sharedArrayBuffer_(false) {}
 
   // In the JS engine, SharedArrayBuffers can only be cloned intra-process
   // because the shared memory areas are allocated in process-private memory.
@@ -220,10 +220,7 @@ class CloneDataPolicy {
   // Clients should also deny SharedArrayBuffers when cloning data that are to
   // be transmitted intra-process if policy needs dictate such denial.
 
-  CloneDataPolicy& denySharedArrayBuffer() {
-    sharedArrayBuffer_ = false;
-    return *this;
-  }
+  void allowSharedMemory() { sharedArrayBuffer_ = true; }
 
   bool isSharedArrayBufferAllowed() const { return sharedArrayBuffer_; }
 };
@@ -439,7 +436,7 @@ class MOZ_NON_MEMMOVABLE JS_PUBLIC_API JSStructuredCloneData {
     ownTransferables_ = policy;
   }
 
-  bool Init(size_t initialCapacity = 0) {
+  MOZ_MUST_USE bool Init(size_t initialCapacity = 0) {
     return bufList_.Init(0, initialCapacity);
   }
 
@@ -458,23 +455,24 @@ class MOZ_NON_MEMMOVABLE JS_PUBLIC_API JSStructuredCloneData {
 
   const Iterator Start() const { return bufList_.Iter(); }
 
-  bool Advance(Iterator& iter, size_t distance) const {
+  MOZ_MUST_USE bool Advance(Iterator& iter, size_t distance) const {
     return iter.AdvanceAcrossSegments(bufList_, distance);
   }
 
-  bool ReadBytes(Iterator& iter, char* buffer, size_t size) const {
+  MOZ_MUST_USE bool ReadBytes(Iterator& iter, char* buffer, size_t size) const {
     return bufList_.ReadBytes(iter, buffer, size);
   }
 
   // Append new data to the end of the buffer.
-  bool AppendBytes(const char* data, size_t size) {
+  MOZ_MUST_USE bool AppendBytes(const char* data, size_t size) {
     MOZ_ASSERT(scope_ != JS::StructuredCloneScope::Unassigned);
     return bufList_.WriteBytes(data, size);
   }
 
   // Update data stored within the existing buffer. There must be at least
   // 'size' bytes between the position of 'iter' and the end of the buffer.
-  bool UpdateBytes(Iterator& iter, const char* data, size_t size) const {
+  MOZ_MUST_USE bool UpdateBytes(Iterator& iter, const char* data,
+                                size_t size) const {
     MOZ_ASSERT(scope_ != JS::StructuredCloneScope::Unassigned);
     while (size > 0) {
       size_t remaining = iter.RemainingInSegment();
@@ -524,7 +522,7 @@ class MOZ_NON_MEMMOVABLE JS_PUBLIC_API JSStructuredCloneData {
   }
 
   // Append the entire contents of other's bufList_ to our own.
-  bool Append(const JSStructuredCloneData& other) {
+  MOZ_MUST_USE bool Append(const JSStructuredCloneData& other) {
     MOZ_ASSERT(scope_ == other.scope());
     return other.ForEachDataChunk(
         [&](const char* data, size_t size) { return AppendBytes(data, size); });
@@ -545,6 +543,7 @@ class MOZ_NON_MEMMOVABLE JS_PUBLIC_API JSStructuredCloneData {
 JS_PUBLIC_API bool JS_ReadStructuredClone(
     JSContext* cx, JSStructuredCloneData& data, uint32_t version,
     JS::StructuredCloneScope scope, JS::MutableHandleValue vp,
+    JS::CloneDataPolicy cloneDataPolicy,
     const JSStructuredCloneCallbacks* optionalCallbacks, void* closure);
 
 /**
@@ -634,6 +633,7 @@ class JS_PUBLIC_API JSAutoStructuredCloneBuffer {
   }
 
   bool read(JSContext* cx, JS::MutableHandleValue vp,
+            JS::CloneDataPolicy cloneDataPolicy = JS::CloneDataPolicy(),
             const JSStructuredCloneCallbacks* optionalCallbacks = nullptr,
             void* closure = nullptr);
 

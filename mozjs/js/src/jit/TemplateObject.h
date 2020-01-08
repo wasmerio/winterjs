@@ -9,7 +9,6 @@
 
 #include "vm/NativeObject.h"
 #include "vm/Shape.h"
-#include "vm/UnboxedObject.h"
 
 namespace js {
 namespace jit {
@@ -43,24 +42,18 @@ class TemplateObject {
   inline bool isTypedArrayObject() const;
   inline bool isRegExpObject() const;
   inline bool isInlineTypedObject() const;
-  inline bool isUnboxedPlainObject() const;
   inline bool isCallObject() const;
   inline bool isPlainObject() const;
 
   // The group and shape should not change. This is true for template objects
   // because they're never exposed to arbitrary script.
   inline gc::Cell* group() const;
-  inline gc::Cell* maybeShape() const;
+  inline gc::Cell* shape() const;
 
-  // Some TypedObject and UnboxedPlainObject methods that can be called
-  // off-thread.
+  // Some TypedObjec methods that can be called off-thread.
   inline uint32_t getInlineTypedObjectSize() const;
   inline uint8_t* getInlineTypedObjectMem(
       const JS::AutoRequireNoGC& nogc) const;
-  inline const UnboxedLayout& unboxedObjectLayout() const;
-#ifdef DEBUG
-  inline bool unboxedObjectHasExpando() const;
-#endif
 };
 
 class NativeTemplateObject : public TemplateObject {

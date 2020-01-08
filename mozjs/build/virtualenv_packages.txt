@@ -8,16 +8,20 @@ mozilla.pth:python/mozversioncontrol
 mozilla.pth:python/l10n
 mozilla.pth:third_party/python/atomicwrites
 mozilla.pth:third_party/python/attrs/src
+python2:mozilla.pth:third_party/python/backports
+mozilla.pth:third_party/python/biplist
 mozilla.pth:third_party/python/blessings
 mozilla.pth:third_party/python/Click
 mozilla.pth:third_party/python/compare-locales
 mozilla.pth:third_party/python/configobj
+mozilla.pth:third_party/python/cookies
 mozilla.pth:third_party/python/cram
+mozilla.pth:third_party/python/distro
 mozilla.pth:third_party/python/dlmanager
 mozilla.pth:third_party/python/enum34
 mozilla.pth:third_party/python/fluent
 mozilla.pth:third_party/python/funcsigs
-mozilla.pth:third_party/python/futures
+python2:mozilla.pth:third_party/python/futures
 mozilla.pth:third_party/python/mohawk
 mozilla.pth:third_party/python/more-itertools
 mozilla.pth:third_party/python/mozilla-version
@@ -36,7 +40,7 @@ python2:mozilla.pth:third_party/python/pyyaml/lib
 python3:mozilla.pth:third_party/python/pyyaml/lib3/
 mozilla.pth:third_party/python/requests
 mozilla.pth:third_party/python/requests-unixsocket
-mozilla.pth:third_party/python/scandir
+python2:mozilla.pth:third_party/python/scandir
 mozilla.pth:third_party/python/slugid
 mozilla.pth:third_party/python/taskcluster
 mozilla.pth:third_party/python/taskcluster-urls
@@ -44,6 +48,7 @@ mozilla.pth:third_party/python/py
 mozilla.pth:third_party/python/pytest/src
 mozilla.pth:third_party/python/pytoml
 mozilla.pth:third_party/python/redo
+mozilla.pth:third_party/python/responses
 mozilla.pth:third_party/python/six
 mozilla.pth:third_party/python/taskcluster-urls
 mozilla.pth:third_party/python/voluptuous
@@ -59,6 +64,7 @@ mozilla.pth:layout/tools/reftest
 mozilla.pth:other-licenses/ply/
 mozilla.pth:taskcluster
 mozilla.pth:testing
+mozilla.pth:testing/condprofile
 mozilla.pth:testing/firefox-ui/harness
 mozilla.pth:testing/marionette/client
 mozilla.pth:testing/marionette/harness

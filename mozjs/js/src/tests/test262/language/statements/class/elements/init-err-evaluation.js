@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/init-err-evaluation.case
 // - src/class-elements/default/cls-decl.template

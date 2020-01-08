@@ -6,11 +6,12 @@
 
 #include "jit/RematerializedFrame.h"
 
+#include <algorithm>
 #include <utility>
 
+#include "debugger/DebugAPI.h"
 #include "jit/JitFrames.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/Debugger.h"
 
 #include "jit/JitFrames-inl.h"
 #include "vm/EnvironmentObject-inl.h"
@@ -61,7 +62,7 @@ RematerializedFrame* RematerializedFrame::New(JSContext* cx, uint8_t* top,
                                               MaybeReadFallback& fallback) {
   unsigned numFormals =
       iter.isFunctionFrame() ? iter.calleeTemplate()->nargs() : 0;
-  unsigned argSlots = Max(numFormals, iter.numActualArgs());
+  unsigned argSlots = std::max(numFormals, iter.numActualArgs());
   unsigned extraSlots = argSlots + iter.script()->nfixed();
 
   // One Value slot is included in sizeof(RematerializedFrame), so we can
@@ -85,21 +86,22 @@ RematerializedFrame* RematerializedFrame::New(JSContext* cx, uint8_t* top,
 /* static */
 bool RematerializedFrame::RematerializeInlineFrames(
     JSContext* cx, uint8_t* top, InlineFrameIterator& iter,
-    MaybeReadFallback& fallback, GCVector<RematerializedFrame*>& frames) {
-  Rooted<GCVector<RematerializedFrame*>> tempFrames(
-      cx, GCVector<RematerializedFrame*>(cx));
+    MaybeReadFallback& fallback, RematerializedFrameVector& frames) {
+  Rooted<RematerializedFrameVector> tempFrames(cx,
+                                               RematerializedFrameVector(cx));
   if (!tempFrames.resize(iter.frameCount())) {
     return false;
   }
 
   while (true) {
     size_t frameNo = iter.frameNo();
-    tempFrames[frameNo].set(RematerializedFrame::New(cx, top, iter, fallback));
+    tempFrames[frameNo].reset(
+        RematerializedFrame::New(cx, top, iter, fallback));
     if (!tempFrames[frameNo]) {
       return false;
     }
     if (tempFrames[frameNo]->environmentChain()) {
-      if (!EnsureHasEnvironmentObjects(cx, tempFrames[frameNo].get())) {
+      if (!EnsureHasEnvironmentObjects(cx, tempFrames[frameNo].get().get())) {
         return false;
       }
     }
@@ -112,17 +114,6 @@ bool RematerializedFrame::RematerializeInlineFrames(
 
   frames = std::move(tempFrames.get());
   return true;
-}
-
-/* static */
-void RematerializedFrame::FreeInVector(GCVector<RematerializedFrame*>& frames) {
-  for (size_t i = 0; i < frames.length(); i++) {
-    RematerializedFrame* f = frames[i];
-    MOZ_ASSERT(!Debugger::inFrameMaps(f));
-    f->RematerializedFrame::~RematerializedFrame();
-    js_free(f);
-  }
-  frames.clear();
 }
 
 CallObject& RematerializedFrame::callObj() const {

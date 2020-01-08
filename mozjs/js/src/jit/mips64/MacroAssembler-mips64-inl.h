@@ -9,6 +9,8 @@
 
 #include "jit/mips64/MacroAssembler-mips64.h"
 
+#include "vm/BigIntType.h"  // JS::BigInt
+
 #include "jit/mips-shared/MacroAssembler-mips-shared-inl.h"
 
 namespace js {
@@ -52,6 +54,13 @@ void MacroAssembler::move16To64SignExtend(Register src, Register64 dest) {
 
 void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   ma_sll(dest.reg, src, Imm32(0));
+}
+
+// ===============================================================
+// Load instructions
+
+void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
+  load32(src, dest);
 }
 
 // ===============================================================
@@ -216,8 +225,12 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest) {
   MOZ_ASSERT(dest.reg != ScratchRegister);
   mov(ImmWord(imm.value), ScratchRegister);
+#ifdef MIPSR6
+  as_dmulu(dest.reg, ScratchRegister, dest.reg);
+#else
   as_dmultu(dest.reg, ScratchRegister);
   as_mflo(dest.reg);
+#endif
 }
 
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest,
@@ -229,8 +242,12 @@ void MacroAssembler::mul64(Imm64 imm, const Register64& dest,
 void MacroAssembler::mul64(const Register64& src, const Register64& dest,
                            const Register temp) {
   MOZ_ASSERT(temp == InvalidReg);
+#ifdef MIPSR6
+  as_dmulu(dest.reg, src.reg, dest.reg);
+#else
   as_dmultu(dest.reg, src.reg);
   as_mflo(dest.reg);
+#endif
 }
 
 void MacroAssembler::mul64(const Operand& src, const Register64& dest,
@@ -259,6 +276,8 @@ void MacroAssembler::inc64(AbsoluteAddress dest) {
 }
 
 void MacroAssembler::neg64(Register64 reg) { as_dsubu(reg.reg, zero, reg.reg); }
+
+void MacroAssembler::negPtr(Register reg) { as_dsubu(reg, zero, reg); }
 
 // ===============================================================
 // Shift functions
@@ -452,12 +471,7 @@ void MacroAssembler::branch64(Condition cond, const Address& lhs,
 
 void MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs,
                                       Register rhs, Label* label) {
-  if (rhs != ScratchRegister) {
-    movePtr(rhs, ScratchRegister);
-  }
-  // Instead of unboxing lhs, box rhs and do direct comparison with lhs.
-  rshiftPtr(Imm32(1), ScratchRegister);
-  branchPtr(cond, lhs, ScratchRegister, label);
+  branchPtr(cond, lhs, rhs, label);
 }
 
 template <class L>
@@ -546,6 +560,20 @@ void MacroAssembler::branchTestSymbol(Condition cond, const ValueOperand& value,
   branchTestSymbol(cond, scratch2, label);
 }
 
+void MacroAssembler::branchTestBigInt(Condition cond, Register tag,
+                                      Label* label) {
+  MOZ_ASSERT(cond == Equal || cond == NotEqual);
+  ma_b(tag, ImmTag(JSVAL_TAG_BIGINT), label, cond);
+}
+
+void MacroAssembler::branchTestBigInt(Condition cond, const BaseIndex& address,
+                                      Label* label) {
+  SecondScratchRegisterScope scratch2(*this);
+  computeEffectiveAddress(address, scratch2);
+  splitTag(scratch2, scratch2);
+  branchTestBigInt(cond, scratch2, label);
+}
+
 void MacroAssembler::branchTestBigInt(Condition cond, const ValueOperand& value,
                                       Label* label) {
   SecondScratchRegisterScope scratch2(*this);
@@ -557,9 +585,8 @@ void MacroAssembler::branchTestBigIntTruthy(bool b, const ValueOperand& value,
                                             Label* label) {
   SecondScratchRegisterScope scratch2(*this);
   unboxBigInt(value, scratch2);
-  loadPtr(Address(scratch2, BigInt::offsetOfLengthSignAndReservedBits()),
-          scratch2);
-  ma_b(scratch2, ImmWord(0), label, b ? NotEqual : Equal);
+  load32(Address(scratch2, BigInt::offsetOfDigitLength()), scratch2);
+  ma_b(scratch2, Imm32(0), label, b ? NotEqual : Equal);
 }
 
 void MacroAssembler::branchTestNull(Condition cond, const ValueOperand& value,

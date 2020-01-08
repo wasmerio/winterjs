@@ -10,13 +10,6 @@
 #define builtin_TypedObjectConstants_h
 
 ///////////////////////////////////////////////////////////////////////////
-// Values to be returned by SetFromTypedArrayApproach
-
-#define JS_SETTYPEDARRAY_SAME_TYPE 0
-#define JS_SETTYPEDARRAY_OVERLAPPING 1
-#define JS_SETTYPEDARRAY_DISJOINT 2
-
-///////////////////////////////////////////////////////////////////////////
 // Slots for objects using the typed array layout
 
 #define JS_TYPEDARRAYLAYOUT_BUFFER_SLOT 0
@@ -92,6 +85,8 @@
 #define JS_SCALARTYPEREPR_FLOAT32 6
 #define JS_SCALARTYPEREPR_FLOAT64 7
 #define JS_SCALARTYPEREPR_UINT8_CLAMPED 8
+#define JS_SCALARTYPEREPR_BIGINT64 9
+#define JS_SCALARTYPEREPR_BIGUINT64 10
 
 // These constants are for use exclusively in JS code. In C++ code,
 // prefer ReferenceTypeRepresentation::TYPE_ANY etc, which allows

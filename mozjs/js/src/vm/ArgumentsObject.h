@@ -10,11 +10,13 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "gc/Barrier.h"
+#include "util/BitArray.h"
 #include "vm/NativeObject.h"
 
 namespace js {
 
 class AbstractFramePtr;
+class ArgumentsObject;
 class ScriptFrameIter;
 
 namespace jit {
@@ -57,7 +59,7 @@ class RareArgumentsData {
 // modification.
 struct ArgumentsData {
   /*
-   * numArgs = Max(numFormalArgs, numActualArgs)
+   * numArgs = std::max(numFormalArgs, numActualArgs)
    * The array 'args' has numArgs elements.
    */
   uint32_t numArgs;
@@ -373,7 +375,7 @@ class ArgumentsObject : public NativeObject {
                             : 0);
   }
 
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
   static size_t objectMoved(JSObject* dst, JSObject* src);
 
@@ -412,12 +414,12 @@ class ArgumentsObject : public NativeObject {
 };
 
 class MappedArgumentsObject : public ArgumentsObject {
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
   static const ClassExtension classExt_;
   static const ObjectOps objectOps_;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   JSFunction& callee() const {
     return getFixedSlot(CALLEE_SLOT).toObject().as<JSFunction>();
@@ -444,11 +446,11 @@ class MappedArgumentsObject : public ArgumentsObject {
 };
 
 class UnmappedArgumentsObject : public ArgumentsObject {
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
   static const ClassExtension classExt_;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
  private:
   static bool obj_enumerate(JSContext* cx, HandleObject obj);

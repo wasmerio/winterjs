@@ -35,9 +35,8 @@ testGetParam("unusedChunks");
 testGetParam("totalChunks");
 
 testChangeParam("maxBytes");
-testChangeParam("maxMallocBytes");
 testChangeParam("mode");
-testChangeParam("sliceTimeBudget");
+testChangeParam("sliceTimeBudgetMS");
 testChangeParam("markStackLimit");
 testChangeParam("highFrequencyTimeLimit");
 testChangeParam("highFrequencyLowLimit");
@@ -48,9 +47,13 @@ testChangeParam("lowFrequencyHeapGrowth");
 testChangeParam("dynamicHeapGrowth");
 testChangeParam("dynamicMarkSlice");
 testChangeParam("allocationThreshold");
+testChangeParam("nonIncrementalFactor");
+testChangeParam("avoidInterruptFactor");
 testChangeParam("minEmptyChunkCount");
 testChangeParam("maxEmptyChunkCount");
 testChangeParam("compactingEnabled");
+testChangeParam("mallocThresholdBase");
+testChangeParam("mallocGrowthFactor");
 
 testMBParamValue("highFrequencyLowLimit");
 testMBParamValue("highFrequencyHighLimit");

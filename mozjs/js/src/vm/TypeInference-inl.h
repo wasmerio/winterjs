@@ -20,7 +20,9 @@
 #include "builtin/Symbol.h"
 #include "gc/GC.h"
 #include "jit/BaselineJIT.h"
+#include "jit/JitScript.h"
 #include "js/HeapAPI.h"
+#include "util/DiagnosticAssertions.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
 #include "vm/JSFunction.h"
@@ -31,9 +33,10 @@
 #include "vm/SharedArrayObject.h"
 #include "vm/StringObject.h"
 #include "vm/TypedArrayObject.h"
-#include "vm/UnboxedObject.h"
 
+#include "jit/JitScript-inl.h"
 #include "vm/JSContext-inl.h"
+#include "vm/JSScript-inl.h"
 #include "vm/ObjectGroup-inl.h"
 
 namespace js {
@@ -281,6 +284,12 @@ static inline const char* TypeIdString(jsid id) {
 // complex ways which can't be understood statically.
 class TypeNewScript {
  private:
+  // Variable-length list of TypeNewScriptInitializer pointers.
+  struct InitializerList {
+    size_t length;
+    TypeNewScriptInitializer entries[1];
+  };
+
   // Scripted function which this information was computed for.
   HeapPtr<JSFunction*> function_ = {};
 
@@ -291,9 +300,7 @@ class TypeNewScript {
   // After the new script properties analyses have been performed, a template
   // object to use for newly constructed objects. The shape of this object
   // reflects all definite properties the object will have, and the
-  // allocation kind to use. This is null if the new objects have an unboxed
-  // layout, in which case the UnboxedLayout provides the initial structure
-  // of the object.
+  // allocation kind to use.
   HeapPtr<PlainObject*> templateObject_ = {};
 
   // Order in which definite properties become initialized. We need this in
@@ -304,7 +311,7 @@ class TypeNewScript {
   // shape. Property assignments in inner frames are preceded by a series of
   // SETPROP_FRAME entries specifying the stack down to the frame containing
   // the write.
-  TypeNewScriptInitializer* initializerList = nullptr;
+  InitializerList* initializerList = nullptr;
 
   // If there are additional properties found by the acquired properties
   // analysis which were not found by the definite properties analysis, this
@@ -354,35 +361,41 @@ class TypeNewScript {
   bool rollbackPartiallyInitializedObjects(JSContext* cx, ObjectGroup* group);
 
   static bool make(JSContext* cx, ObjectGroup* group, JSFunction* fun);
-  static TypeNewScript* makeNativeVersion(JSContext* cx,
-                                          TypeNewScript* newScript,
-                                          PlainObject* templateObject);
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+  size_t gcMallocBytes() const;
 
   static size_t offsetOfPreliminaryObjects() {
     return offsetof(TypeNewScript, preliminaryObjects);
   }
+
+  static size_t sizeOfInitializerList(size_t length);
 };
-
-inline UnboxedLayout::~UnboxedLayout() {
-  if (newScript_) {
-    newScript_->clear();
-  }
-  js_delete(newScript_);
-  js_free(traceList_);
-
-  nativeGroup_.init(nullptr);
-  nativeShape_.init(nullptr);
-  replacementGroup_.init(nullptr);
-  constructorCode_.init(nullptr);
-}
 
 inline bool ObjectGroup::hasUnanalyzedPreliminaryObjects() {
   return (newScriptDontCheckGeneration() &&
           !newScriptDontCheckGeneration()->analyzed()) ||
          maybePreliminaryObjectsDontCheckGeneration();
 }
+
+class MOZ_RAII AutoSuppressAllocationMetadataBuilder {
+  JS::Zone* zone;
+  bool saved;
+
+ public:
+  explicit AutoSuppressAllocationMetadataBuilder(JSContext* cx)
+      : AutoSuppressAllocationMetadataBuilder(cx->realm()->zone()) {}
+
+  explicit AutoSuppressAllocationMetadataBuilder(JS::Zone* zone)
+      : zone(zone), saved(zone->suppressAllocationMetadataBuilder) {
+    zone->suppressAllocationMetadataBuilder = true;
+  }
+
+  ~AutoSuppressAllocationMetadataBuilder() {
+    zone->suppressAllocationMetadataBuilder = saved;
+  }
+};
 
 /*
  * Structure for type inference entry point functions. All functions which can
@@ -394,10 +407,6 @@ inline bool ObjectGroup::hasUnanalyzedPreliminaryObjects() {
  * is not reentrant and that recompilations occur properly.
  */
 struct MOZ_RAII AutoEnterAnalysis {
-  // For use when initializing an UnboxedLayout.  The UniquePtr's destructor
-  // must run when GC is not suppressed.
-  UniquePtr<UnboxedLayout> unboxedLayoutToCleanUp;
-
   // Prevent GC activity in the middle of analysis.
   gc::AutoSuppressGC suppressGC;
 
@@ -411,7 +420,7 @@ struct MOZ_RAII AutoEnterAnalysis {
   // Prevent us from calling the objectMetadataCallback.
   js::AutoSuppressAllocationMetadataBuilder suppressMetadata;
 
-  FreeOp* freeOp;
+  JSFreeOp* freeOp;
   Zone* zone;
 
   explicit AutoEnterAnalysis(JSContext* cx)
@@ -419,7 +428,7 @@ struct MOZ_RAII AutoEnterAnalysis {
     init(cx->defaultFreeOp(), cx->zone());
   }
 
-  AutoEnterAnalysis(FreeOp* fop, Zone* zone)
+  AutoEnterAnalysis(JSFreeOp* fop, Zone* zone)
       : suppressGC(TlsContext.get()), suppressMetadata(zone) {
     init(fop, zone);
   }
@@ -437,7 +446,7 @@ struct MOZ_RAII AutoEnterAnalysis {
   }
 
  private:
-  void init(FreeOp* fop, Zone* zone) {
+  void init(JSFreeOp* fop, Zone* zone) {
 #ifdef JS_CRASH_DIAGNOSTICS
     MOZ_RELEASE_ASSERT(CurrentThreadCanAccessZone(zone));
 #endif
@@ -455,8 +464,6 @@ struct MOZ_RAII AutoEnterAnalysis {
 // Interface functions
 /////////////////////////////////////////////////////////////////////
 
-void MarkIteratorUnknownSlow(JSContext* cx);
-
 void TypeMonitorCallSlow(JSContext* cx, JSObject* callee, const CallArgs& args,
                          bool constructing);
 
@@ -468,7 +475,7 @@ inline void TypeMonitorCall(JSContext* cx, const js::CallArgs& args,
                             bool constructing) {
   if (args.callee().is<JSFunction>()) {
     JSFunction* fun = &args.callee().as<JSFunction>();
-    if (fun->isInterpreted() && fun->nonLazyScript()->types()) {
+    if (fun->isInterpreted() && fun->nonLazyScript()->hasJitScript()) {
       TypeMonitorCallSlow(cx, &args.callee(), args, constructing);
     }
   }
@@ -611,124 +618,18 @@ inline void MarkObjectStateChange(JSContext* cx, JSObject* obj) {
   }
 }
 
-/* Interface helpers for JSScript*. */
-extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
-                              TypeSet::Type type);
-extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
-                              StackTypeSet* types, TypeSet::Type type);
-extern void TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc,
-                              const Value& rval);
-
-/////////////////////////////////////////////////////////////////////
-// Script interface functions
-/////////////////////////////////////////////////////////////////////
-
-/* static */ inline StackTypeSet* TypeScript::ThisTypes(JSScript* script) {
-  if (TypeScript* types = script->types()) {
-    AutoSweepTypeScript sweep(script);
-    return types->typeArray(sweep) + script->numBytecodeTypeSets();
-  }
-  return nullptr;
-}
-
-/*
- * Note: for non-escaping arguments, argTypes reflect only the initial type of
- * the variable (e.g. passed values for argTypes, or undefined for localTypes)
- * and not types from subsequent assignments.
- */
-
-/* static */ inline StackTypeSet* TypeScript::ArgTypes(JSScript* script,
-                                                       unsigned i) {
-  MOZ_ASSERT(i < script->functionNonDelazifying()->nargs());
-  if (TypeScript* types = script->types()) {
-    AutoSweepTypeScript sweep(script);
-    return types->typeArray(sweep) + script->numBytecodeTypeSets() + 1 + i;
-  }
-  return nullptr;
-}
-
-template <typename TYPESET>
-/* static */ inline TYPESET* TypeScript::BytecodeTypes(JSScript* script,
-                                                       jsbytecode* pc,
-                                                       uint32_t* bytecodeMap,
-                                                       uint32_t* hint,
-                                                       TYPESET* typeArray) {
-  MOZ_ASSERT(CodeSpec[*pc].format & JOF_TYPESET);
-  uint32_t offset = script->pcToOffset(pc);
-
-  // See if this pc is the next typeset opcode after the last one looked up.
-  size_t numBytecodeTypeSets = script->numBytecodeTypeSets();
-  if ((*hint + 1) < numBytecodeTypeSets && bytecodeMap[*hint + 1] == offset) {
-    (*hint)++;
-    return typeArray + *hint;
-  }
-
-  // See if this pc is the same as the last one looked up.
-  if (bytecodeMap[*hint] == offset) {
-    return typeArray + *hint;
-  }
-
-  // Fall back to a binary search.  We'll either find the exact offset, or
-  // there are more JOF_TYPESET opcodes than nTypeSets in the script (as can
-  // happen if the script is very long) and we'll use the last location.
-  size_t loc;
-  bool found =
-      mozilla::BinarySearch(bytecodeMap, 0, numBytecodeTypeSets, offset, &loc);
-  if (found) {
-    MOZ_ASSERT(bytecodeMap[loc] == offset);
-  } else {
-    MOZ_ASSERT(numBytecodeTypeSets == JSScript::MaxBytecodeTypeSets);
-    loc = numBytecodeTypeSets - 1;
-  }
-
-  *hint = mozilla::AssertedCast<uint32_t>(loc);
-  return typeArray + *hint;
-}
-
-/* static */ inline StackTypeSet* TypeScript::BytecodeTypes(JSScript* script,
-                                                            jsbytecode* pc) {
-  MOZ_ASSERT(CurrentThreadCanAccessZone(script->zone()));
-  TypeScript* types = script->types();
-  if (!types) {
-    return nullptr;
-  }
-  AutoSweepTypeScript sweep(script);
-  uint32_t* hint = types->bytecodeTypeMapHint();
-  return BytecodeTypes(script, pc, types->bytecodeTypeMap(), hint,
-                       types->typeArray(sweep));
-}
-
-/* static */ inline void TypeScript::Monitor(JSContext* cx, JSScript* script,
-                                             jsbytecode* pc,
-                                             const js::Value& rval) {
-  TypeMonitorResult(cx, script, pc, rval);
-}
-
-/* static */ inline void TypeScript::Monitor(JSContext* cx, JSScript* script,
-                                             jsbytecode* pc,
-                                             TypeSet::Type type) {
-  TypeMonitorResult(cx, script, pc, type);
-}
-
-/* static */ inline void TypeScript::Monitor(JSContext* cx,
-                                             const js::Value& rval) {
-  jsbytecode* pc;
-  RootedScript script(cx, cx->currentScript(&pc));
-  Monitor(cx, script, pc, rval);
-}
-
-/* static */ inline void TypeScript::Monitor(JSContext* cx, JSScript* script,
-                                             jsbytecode* pc,
-                                             StackTypeSet* types,
-                                             const js::Value& rval) {
+/* static */ inline void jit::JitScript::MonitorBytecodeType(
+    JSContext* cx, JSScript* script, jsbytecode* pc, StackTypeSet* types,
+    const js::Value& rval) {
   TypeSet::Type type = TypeSet::GetValueType(rval);
   if (!types->hasType(type)) {
-    TypeMonitorResult(cx, script, pc, types, type);
+    MonitorBytecodeTypeSlow(cx, script, pc, types, type);
   }
 }
 
-/* static */ inline void TypeScript::MonitorAssign(JSContext* cx,
-                                                   HandleObject obj, jsid id) {
+/* static */ inline void jit::JitScript::MonitorAssign(JSContext* cx,
+                                                       HandleObject obj,
+                                                       jsid id) {
   if (!obj->isSingleton()) {
     /*
      * Mark as unknown any object which has had dynamic assignments to
@@ -754,15 +655,18 @@ template <typename TYPESET>
   }
 }
 
-/* static */ inline void TypeScript::SetThis(JSContext* cx, JSScript* script,
-                                             TypeSet::Type type) {
+/* static */ inline void jit::JitScript::MonitorThisType(JSContext* cx,
+                                                         JSScript* script,
+                                                         TypeSet::Type type) {
   cx->check(script, type);
 
-  AutoSweepTypeScript sweep(script);
-  StackTypeSet* types = ThisTypes(script);
-  if (!types) {
+  JitScript* jitScript = script->maybeJitScript();
+  if (!jitScript) {
     return;
   }
+
+  AutoSweepJitScript sweep(script);
+  StackTypeSet* types = jitScript->thisTypes(sweep, script);
 
   if (!types->hasType(type)) {
     AutoEnterAnalysis enter(cx);
@@ -773,21 +677,24 @@ template <typename TYPESET>
   }
 }
 
-/* static */ inline void TypeScript::SetThis(JSContext* cx, JSScript* script,
-                                             const js::Value& value) {
-  SetThis(cx, script, TypeSet::GetValueType(value));
+/* static */ inline void jit::JitScript::MonitorThisType(
+    JSContext* cx, JSScript* script, const js::Value& value) {
+  MonitorThisType(cx, script, TypeSet::GetValueType(value));
 }
 
-/* static */ inline void TypeScript::SetArgument(JSContext* cx,
-                                                 JSScript* script, unsigned arg,
-                                                 TypeSet::Type type) {
+/* static */ inline void jit::JitScript::MonitorArgType(JSContext* cx,
+                                                        JSScript* script,
+                                                        unsigned arg,
+                                                        TypeSet::Type type) {
   cx->check(script->compartment(), type);
 
-  AutoSweepTypeScript sweep(script);
-  StackTypeSet* types = ArgTypes(script, arg);
-  if (!types) {
+  JitScript* jitScript = script->maybeJitScript();
+  if (!jitScript) {
     return;
   }
+
+  AutoSweepJitScript sweep(script);
+  StackTypeSet* types = jitScript->argTypes(sweep, script, arg);
 
   if (!types->hasType(type)) {
     AutoEnterAnalysis enter(cx);
@@ -798,20 +705,9 @@ template <typename TYPESET>
   }
 }
 
-/* static */ inline void TypeScript::SetArgument(JSContext* cx,
-                                                 JSScript* script, unsigned arg,
-                                                 const js::Value& value) {
-  SetArgument(cx, script, arg, TypeSet::GetValueType(value));
-}
-
-inline AutoKeepTypeScripts::AutoKeepTypeScripts(JSContext* cx)
-    : zone_(cx->zone()->types), prev_(zone_.keepTypeScripts) {
-  zone_.keepTypeScripts = true;
-}
-
-inline AutoKeepTypeScripts::~AutoKeepTypeScripts() {
-  MOZ_ASSERT(zone_.keepTypeScripts);
-  zone_.keepTypeScripts = prev_;
+/* static */ inline void jit::JitScript::MonitorArgType(
+    JSContext* cx, JSScript* script, unsigned arg, const js::Value& value) {
+  MonitorArgType(cx, script, arg, TypeSet::GetValueType(value));
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1018,8 +914,8 @@ struct TypeHashSet {
       return bool(reinterpret_cast<uintptr_t>(elem) & U::TypeHashSetMarkBit);
     };
     auto toggleMarkBit = [](U* elem) -> U* {
-      return reinterpret_cast<U*>(
-          reinterpret_cast<uintptr_t>(elem) ^ U::TypeHashSetMarkBit);
+      return reinterpret_cast<U*>(reinterpret_cast<uintptr_t>(elem) ^
+                                  U::TypeHashSetMarkBit);
     };
 
     // When we have a single element it is stored in-place of the function
@@ -1182,7 +1078,7 @@ inline void HeapTypeSet::newPropertyState(const AutoSweepObjectGroup& sweep,
   checkMagic();
 
   /* Propagate the change to all constraints. */
-  if (!cx->helperThread()) {
+  if (!cx->isHelperThreadContext()) {
     TypeConstraint* constraint = constraintList(sweep);
     while (constraint) {
       constraint->newPropertyState(cx, this);
@@ -1273,7 +1169,7 @@ inline bool TypeSet::hasSingleton(unsigned i) const {
   return getSingletonNoBarrier(i);
 }
 
-inline const Class* TypeSet::getObjectClass(unsigned i) const {
+inline const JSClass* TypeSet::getObjectClass(unsigned i) const {
   if (JSObject* object = getSingleton(i)) {
     return object->getClass();
   }
@@ -1313,10 +1209,13 @@ inline HeapTypeSet* ObjectGroup::getProperty(const AutoSweepObjectGroup& sweep,
   MOZ_ASSERT(JSID_IS_VOID(id) || JSID_IS_EMPTY(id) || JSID_IS_STRING(id) ||
              JSID_IS_SYMBOL(id));
   MOZ_ASSERT_IF(!JSID_IS_EMPTY(id), id == IdToTypeId(id));
-  MOZ_ASSERT(!unknownProperties(sweep));
   MOZ_ASSERT_IF(obj, obj->group() == this);
   MOZ_ASSERT_IF(singleton(), obj);
   MOZ_ASSERT(cx->compartment() == compartment());
+
+  if (unknownProperties(sweep)) {
+    return nullptr;
+  }
 
   if (HeapTypeSet* types = maybeGetProperty(sweep, id)) {
     return types;
@@ -1420,36 +1319,27 @@ inline AutoSweepObjectGroup::~AutoSweepObjectGroup() {
 }
 #endif
 
-inline AutoSweepTypeScript::AutoSweepTypeScript(JSScript* script)
+inline AutoSweepJitScript::AutoSweepJitScript(JSScript* script)
 #ifdef DEBUG
     : zone_(script->zone()),
-      typeScript_(script->types())
+      jitScript_(script->maybeJitScript())
 #endif
 {
-  if (TypeScript* types = script->types()) {
+  if (jit::JitScript* jitScript = script->maybeJitScript()) {
     Zone* zone = script->zone();
-    if (types->typesNeedsSweep(zone)) {
-      types->sweepTypes(*this, zone);
+    if (jitScript->typesNeedsSweep(zone)) {
+      jitScript->sweepTypes(*this, zone);
     }
   }
 }
 
 #ifdef DEBUG
-inline AutoSweepTypeScript::~AutoSweepTypeScript() {
+inline AutoSweepJitScript::~AutoSweepJitScript() {
   // This should still hold.
-  MOZ_ASSERT_IF(typeScript_, !typeScript_->typesNeedsSweep(zone_));
+  MOZ_ASSERT_IF(jitScript_, !jitScript_->typesNeedsSweep(zone_));
 }
 #endif
 
-inline bool TypeScript::typesNeedsSweep(Zone* zone) const {
-  MOZ_ASSERT(!js::TlsContext.get()->inUnsafeCallWithABI);
-  return typesGeneration() != zone->types.generation;
-}
-
 }  // namespace js
-
-inline bool JSScript::ensureHasTypes(JSContext* cx, js::AutoKeepTypeScripts&) {
-  return types() || makeTypes(cx);
-}
 
 #endif /* vm_TypeInference_inl_h */

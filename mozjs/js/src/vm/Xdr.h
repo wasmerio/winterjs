@@ -8,6 +8,7 @@
 #define vm_Xdr_h
 
 #include "mozilla/EndianUtils.h"
+#include "mozilla/MaybeOneOf.h"
 #include "mozilla/TypeTraits.h"
 #include "mozilla/Utf8.h"
 
@@ -27,6 +28,9 @@ class LifoAlloc;
 enum XDRMode { XDR_ENCODE, XDR_DECODE };
 
 using XDRResult = mozilla::Result<mozilla::Ok, JS::TranscodeResult>;
+
+using XDRAtomTable = JS::GCVector<PreBarriered<JSAtom*>>;
+using XDRAtomMap = JS::GCHashMap<PreBarriered<JSAtom*>, uint32_t>;
 
 class XDRBufferBase {
  public:
@@ -79,11 +83,6 @@ class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
     return nullptr;
   }
 
-  uintptr_t uptr() const {
-    // Note: Avoid bounds check assertion if the buffer is not yet allocated.
-    return reinterpret_cast<uintptr_t>(buffer_.begin() + cursor_);
-  }
-
  private:
   JS::TranscodeBuffer& buffer_;
 };
@@ -113,11 +112,6 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
   uint8_t* write(size_t n) {
     MOZ_CRASH("Should never write in decode mode");
     return nullptr;
-  }
-
-  uintptr_t uptr() const {
-    // Note: Avoid bounds check assertion at the end of the buffer.
-    return reinterpret_cast<uintptr_t>(buffer_.begin().get() + cursor_);
   }
 
  private:
@@ -168,6 +162,10 @@ class MOZ_RAII AutoXDRTree {
   XDRCoderBase* xdr_;
 };
 
+template <typename CharT>
+using XDRTranscodeString =
+    mozilla::MaybeOneOf<const CharT*, js::UniquePtr<CharT[], JS::FreePolicy>>;
+
 class XDRCoderBase {
  private:
 #ifdef DEBUG
@@ -209,18 +207,25 @@ class XDRCoderBase {
 template <XDRMode mode>
 class XDRState : public XDRCoderBase {
  protected:
-  XDRBuffer<mode> buf;
+  XDRBuffer<mode> mainBuf;
+  XDRBuffer<mode>* buf;
 
  public:
   XDRState(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
-      : buf(cx, buffer, cursor) {}
+      : mainBuf(cx, buffer, cursor), buf(&mainBuf) {}
 
   template <typename RangeType>
-  XDRState(JSContext* cx, const RangeType& range) : buf(cx, range) {}
+  XDRState(JSContext* cx, const RangeType& range)
+      : mainBuf(cx, range), buf(&mainBuf) {}
+
+  // No default copy constructor or copying assignment, because |buf|
+  // is an internal pointer.
+  XDRState(const XDRState&) = delete;
+  XDRState& operator=(const XDRState&) = delete;
 
   virtual ~XDRState(){};
 
-  JSContext* cx() const { return buf.cx(); }
+  JSContext* cx() const { return mainBuf.cx(); }
 
   virtual bool hasOptions() const { return false; }
   virtual const JS::ReadOnlyCompileOptions& options() {
@@ -229,6 +234,22 @@ class XDRState : public XDRCoderBase {
   virtual bool hasScriptSourceObjectOut() const { return false; }
   virtual ScriptSourceObject** scriptSourceObjectOut() {
     MOZ_CRASH("does not have scriptSourceObjectOut.");
+  }
+
+  virtual bool hasAtomMap() const { return false; }
+  virtual XDRAtomMap& atomMap() { MOZ_CRASH("does not have atomMap"); }
+  virtual uint32_t& natoms() { MOZ_CRASH("does not have atomMap."); }
+
+  virtual bool hasAtomTable() const { return false; }
+  virtual XDRAtomTable& atomTable() { MOZ_CRASH("does not have atomTable"); }
+  virtual void finishAtomTable() { MOZ_CRASH("does not have atomTable"); }
+
+  virtual bool isMainBuf() { return true; }
+
+  virtual void switchToAtomBuf() { MOZ_CRASH("cannot switch to atom buffer."); }
+  virtual void switchToMainBuf() { MOZ_CRASH("cannot switch to main buffer."); }
+  virtual void switchToHeaderBuf() {
+    MOZ_CRASH("cannot switch to header buffer.");
   }
 
   XDRResult fail(JS::TranscodeResult code) {
@@ -241,7 +262,7 @@ class XDRState : public XDRCoderBase {
   }
 
   XDRResult peekData(const uint8_t** pptr, size_t length) {
-    const uint8_t* ptr = buf.read(length);
+    const uint8_t* ptr = buf->read(length);
     if (!ptr) {
       return fail(JS::TranscodeResult_Failure_BadDecode);
     }
@@ -251,13 +272,13 @@ class XDRState : public XDRCoderBase {
 
   XDRResult codeUint8(uint8_t* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Throw);
       }
       *ptr = *n;
     } else {
-      const uint8_t* ptr = buf.read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Failure_BadDecode);
       }
@@ -268,13 +289,13 @@ class XDRState : public XDRCoderBase {
 
   XDRResult codeUint16(uint16_t* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Throw);
       }
       mozilla::LittleEndian::writeUint16(ptr, *n);
     } else {
-      const uint8_t* ptr = buf.read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Failure_BadDecode);
       }
@@ -285,13 +306,13 @@ class XDRState : public XDRCoderBase {
 
   XDRResult codeUint32(uint32_t* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Throw);
       }
       mozilla::LittleEndian::writeUint32(ptr, *n);
     } else {
-      const uint8_t* ptr = buf.read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Failure_BadDecode);
       }
@@ -302,13 +323,13 @@ class XDRState : public XDRCoderBase {
 
   XDRResult codeUint64(uint64_t* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Throw);
       }
       mozilla::LittleEndian::writeUint64(ptr, *n);
     } else {
-      const uint8_t* ptr = buf.read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(*n));
       if (!ptr) {
         return fail(JS::TranscodeResult_Failure_BadDecode);
       }
@@ -372,13 +393,13 @@ class XDRState : public XDRCoderBase {
       return Ok();
     }
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(len);
+      uint8_t* ptr = buf->write(len);
       if (!ptr) {
         return fail(JS::TranscodeResult_Throw);
       }
       memcpy(ptr, bytes, len);
     } else {
-      const uint8_t* ptr = buf.read(len);
+      const uint8_t* ptr = buf->read(len);
       if (!ptr) {
         return fail(JS::TranscodeResult_Failure_BadDecode);
       }
@@ -387,41 +408,19 @@ class XDRState : public XDRCoderBase {
     return Ok();
   }
 
-  /*
-   * During encoding the string is written into the buffer together with its
-   * terminating '\0'. During decoding the method returns a pointer into the
-   * decoding buffer and the caller must copy the string if it will outlive
-   * the decoding buffer.
-   */
-  XDRResult codeCString(const char** sp) {
-    uint64_t len64;
-    if (mode == XDR_ENCODE) {
-      len64 = (uint64_t)(strlen(*sp) + 1);
-    }
-    MOZ_TRY(codeUint64(&len64));
-    size_t len = (size_t)len64;
-
-    if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf.write(len);
-      if (!ptr) {
-        return fail(JS::TranscodeResult_Throw);
-      }
-      memcpy(ptr, *sp, len);
-      MOZ_ASSERT(ptr[len - 1] == '\0');
-    } else {
-      const uint8_t* ptr = buf.read(len);
-      if (!ptr || ptr[len - 1] != '\0') {
-        return fail(JS::TranscodeResult_Failure_BadDecode);
-      }
-      *sp = reinterpret_cast<const char*>(ptr);
-    }
-    return Ok();
-  }
+  // Prefer using a variant below that is encoding aware.
+  XDRResult codeChars(char* chars, size_t nchars);
 
   XDRResult codeChars(JS::Latin1Char* chars, size_t nchars);
   XDRResult codeChars(mozilla::Utf8Unit* units, size_t nchars);
-
   XDRResult codeChars(char16_t* chars, size_t nchars);
+
+  // Transcode null-terminated strings. When decoding, a new buffer is
+  // allocated and ownership is returned to caller.
+  //
+  // NOTE: Throws if string longer than JSString::MAX_LENGTH.
+  XDRResult codeCharsZ(XDRTranscodeString<char>& buffer);
+  XDRResult codeCharsZ(XDRTranscodeString<char16_t>& buffer);
 
   XDRResult codeFunction(JS::MutableHandleFunction objp,
                          HandleScriptSourceObject sourceObject = nullptr);
@@ -429,7 +428,27 @@ class XDRState : public XDRCoderBase {
 };
 
 using XDREncoder = XDRState<XDR_ENCODE>;
-using XDRDecoder = XDRState<XDR_DECODE>;
+using XDRDecoderBase = XDRState<XDR_DECODE>;
+
+class XDRDecoder : public XDRDecoderBase {
+ public:
+  XDRDecoder(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
+      : XDRDecoderBase(cx, buffer, cursor), atomTable_(cx) {}
+
+  template <typename RangeType>
+  XDRDecoder(JSContext* cx, const RangeType& range)
+      : XDRDecoderBase(cx, range), atomTable_(cx) {}
+
+  bool hasAtomTable() const override { return hasFinishedAtomTable_; }
+  XDRAtomTable& atomTable() override { return atomTable_; }
+  void finishAtomTable() override { hasFinishedAtomTable_ = true; }
+
+  void trace(JSTracer* trc);
+
+ private:
+  XDRAtomTable atomTable_;
+  bool hasFinishedAtomTable_ = false;
+};
 
 class XDROffThreadDecoder : public XDRDecoder {
   const JS::ReadOnlyCompileOptions* options_;
@@ -526,7 +545,16 @@ class XDRIncrementalEncoder : public XDREncoder {
   // Tree of slices.
   SlicesTree tree_;
   JS::TranscodeBuffer slices_;
+  // Map from atoms to their index in the atom buffer
+  XDRAtomMap atomMap_;
+  // Atom buffer.
+  JS::TranscodeBuffer atoms_;
+  XDRBuffer<XDR_ENCODE> atomBuf_;
+  // Header buffer.
+  JS::TranscodeBuffer header_;
+  XDRBuffer<XDR_ENCODE> headerBuf_;
   bool oom_;
+  uint32_t natoms_ = 0;
 
   class DepthFirstSliceIterator;
 
@@ -535,9 +563,25 @@ class XDRIncrementalEncoder : public XDREncoder {
       : XDREncoder(cx, slices_, 0),
         scope_(nullptr),
         node_(nullptr),
+        atomMap_(cx),
+        atomBuf_(cx, atoms_, 0),
+        headerBuf_(cx, header_, 0),
         oom_(false) {}
 
   virtual ~XDRIncrementalEncoder() {}
+
+  bool hasAtomMap() const override { return true; }
+  XDRAtomMap& atomMap() override { return atomMap_; }
+  uint32_t& natoms() override { return natoms_; }
+
+  bool isMainBuf() override { return buf == &mainBuf; }
+
+  // Switch from streaming into the main buffer into the atom buffer.
+  void switchToAtomBuf() override { buf = &atomBuf_; }
+  // Switch to streaming into the main buffer.
+  void switchToMainBuf() override { buf = &mainBuf; }
+  // Switch to streaming into the header buffer.
+  void switchToHeaderBuf() override { buf = &headerBuf_; }
 
   AutoXDRTree::Key getTopLevelTreeKey() const override;
   AutoXDRTree::Key getTreeKey(JSFunction* fun) const override;
@@ -548,10 +592,15 @@ class XDRIncrementalEncoder : public XDREncoder {
   // Append the content collected during the incremental encoding into the
   // buffer given as argument.
   XDRResult linearize(JS::TranscodeBuffer& buffer);
+
+  void trace(JSTracer* trc);
 };
 
 template <XDRMode mode>
 XDRResult XDRAtom(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
+
+template <XDRMode mode>
+XDRResult XDRAtomData(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
 
 } /* namespace js */
 

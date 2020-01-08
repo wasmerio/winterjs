@@ -37,6 +37,7 @@ struct ScratchDoubleScope : FloatRegister {
 
 static constexpr Register OsrFrameReg{Registers::invalid_reg};
 static constexpr Register PreBarrierReg{Registers::invalid_reg};
+static constexpr Register InterpreterPCReg{Registers::invalid_reg};
 static constexpr Register CallTempReg0{Registers::invalid_reg};
 static constexpr Register CallTempReg1{Registers::invalid_reg};
 static constexpr Register CallTempReg2{Registers::invalid_reg};
@@ -44,8 +45,8 @@ static constexpr Register CallTempReg3{Registers::invalid_reg};
 static constexpr Register CallTempReg4{Registers::invalid_reg};
 static constexpr Register CallTempReg5{Registers::invalid_reg};
 static constexpr Register InvalidReg{Registers::invalid_reg};
-  static constexpr Register CallTempNonArgRegs[] = {InvalidReg, InvalidReg};
-  static const uint32_t NumCallTempNonArgRegs =
+static constexpr Register CallTempNonArgRegs[] = {InvalidReg, InvalidReg};
+static const uint32_t NumCallTempNonArgRegs =
     mozilla::ArrayLength(CallTempNonArgRegs);
 
 static constexpr Register IntArgReg0{Registers::invalid_reg};
@@ -95,6 +96,7 @@ static constexpr Register WasmTableCallScratchReg1{Registers::invalid_reg};
 static constexpr Register WasmTableCallSigReg{Registers::invalid_reg};
 static constexpr Register WasmTableCallIndexReg{Registers::invalid_reg};
 static constexpr Register WasmTlsReg{Registers::invalid_reg};
+static constexpr Register WasmJitEntryReturnScratch{Registers::invalid_reg};
 
 static constexpr uint32_t ABIStackAlignment = 4;
 static constexpr uint32_t CodeAlignment = sizeof(void*);
@@ -173,6 +175,8 @@ class Assembler : public AssemblerShared {
                                    const Disassembler::HeapAccess& heapAccess) {
     MOZ_CRASH();
   }
+
+  void setUnlimitedBuffer() { MOZ_CRASH(); }
 };
 
 class Operand {
@@ -228,6 +232,7 @@ class MacroAssemblerNone : public Assembler {
   static bool SupportsFloatingPoint() { return false; }
   static bool SupportsSimd() { return false; }
   static bool SupportsUnalignedAccesses() { return false; }
+  static bool SupportsFastUnalignedAccesses() { return false; }
 
   void executableCopy(void*, bool = true) { MOZ_CRASH(); }
   void copyJumpRelocationTable(uint8_t*) { MOZ_CRASH(); }
@@ -254,7 +259,6 @@ class MacroAssemblerNone : public Assembler {
   void nopAlign(size_t) { MOZ_CRASH(); }
   void checkStackAlignment() { MOZ_CRASH(); }
   uint32_t currentOffset() { MOZ_CRASH(); }
-  CodeOffset labelForPatch() { MOZ_CRASH(); }
 
   void nop() { MOZ_CRASH(); }
   void breakpoint() { MOZ_CRASH(); }
@@ -287,6 +291,10 @@ class MacroAssemblerNone : public Assembler {
   void loadValue(T, S) {
     MOZ_CRASH();
   }
+  template <typename T, typename S>
+  void loadUnalignedValue(T, S) {
+    MOZ_CRASH();
+  }
   template <typename T>
   void pushValue(const T&) {
     MOZ_CRASH();
@@ -299,7 +307,7 @@ class MacroAssemblerNone : public Assembler {
   void tagValue(JSValueType, Register, ValueOperand) { MOZ_CRASH(); }
   void retn(Imm32 n) { MOZ_CRASH(); }
   template <typename T>
-  void push(T) {
+  void push(const T&) {
     MOZ_CRASH();
   }
   template <typename T>
@@ -318,8 +326,6 @@ class MacroAssemblerNone : public Assembler {
   CodeOffset pushWithPatch(T) {
     MOZ_CRASH();
   }
-
-  CodeOffsetJump jumpWithPatch(RepatchLabel*) { MOZ_CRASH(); }
 
   void testNullSet(Condition, ValueOperand, Register) { MOZ_CRASH(); }
   void testObjectSet(Condition, ValueOperand, Register) { MOZ_CRASH(); }
@@ -343,7 +349,7 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
-  void move32(T, Register) {
+  void move32(const T&, Register) {
     MOZ_CRASH();
   }
   template <typename T, typename S>
@@ -451,6 +457,10 @@ class MacroAssemblerNone : public Assembler {
   void boxDouble(FloatRegister, ValueOperand, FloatRegister) { MOZ_CRASH(); }
   void boxNonDouble(JSValueType, Register, ValueOperand) { MOZ_CRASH(); }
   template <typename T>
+  void boxDouble(FloatRegister src, const T& dest) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   void unboxInt32(T, Register) {
     MOZ_CRASH();
   }
@@ -478,10 +488,6 @@ class MacroAssemblerNone : public Assembler {
   void unboxDouble(T, FloatRegister) {
     MOZ_CRASH();
   }
-  template <typename T>
-  void unboxPrivate(T, Register) {
-    MOZ_CRASH();
-  }
   void unboxValue(const ValueOperand&, AnyRegister, JSValueType) {
     MOZ_CRASH();
   }
@@ -490,6 +496,10 @@ class MacroAssemblerNone : public Assembler {
   }
   void unboxNonDouble(const Address&, Register, JSValueType) { MOZ_CRASH(); }
   void unboxGCThingForPreBarrierTrampoline(const Address&, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
+  void unboxObjectOrNull(const T& src, Register dest) {
     MOZ_CRASH();
   }
   void notBoolean(ValueOperand) { MOZ_CRASH(); }
@@ -579,10 +589,6 @@ class ABIArgGenerator {
   ABIArg& current() { MOZ_CRASH(); }
   uint32_t stackBytesConsumedSoFar() const { MOZ_CRASH(); }
 };
-
-static inline void PatchJump(CodeLocationJump&, CodeLocationLabel) {
-  MOZ_CRASH();
-}
 
 static inline bool GetTempRegForIntArg(uint32_t, uint32_t, Register*) {
   MOZ_CRASH();

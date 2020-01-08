@@ -78,7 +78,7 @@ bool PropOpEmitter::emitGet(JSAtom* prop) {
   } else {
     op = isLength_ ? JSOP_LENGTH : JSOP_GETPROP;
   }
-  if (!bce_->emitAtomOp(propAtomIndex_, op)) {
+  if (!bce_->emitAtomOp(propAtomIndex_, op, ShouldInstrument::Yes)) {
     //              [stack] # if Get
     //              [stack] PROP
     //              [stack] # if Call
@@ -103,11 +103,11 @@ bool PropOpEmitter::emitGet(JSAtom* prop) {
 }
 
 bool PropOpEmitter::prepareForRhs() {
-  MOZ_ASSERT(isSimpleAssignment() || isCompoundAssignment());
-  MOZ_ASSERT_IF(isSimpleAssignment(), state_ == State::Obj);
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit() || isCompoundAssignment());
+  MOZ_ASSERT_IF(isSimpleAssignment() || isPropInit(), state_ == State::Obj);
   MOZ_ASSERT_IF(isCompoundAssignment(), state_ == State::Get);
 
-  if (isSimpleAssignment()) {
+  if (isSimpleAssignment() || isPropInit()) {
     // For CompoundAssignment, SUPERBASE is already emitted by emitGet.
     if (isSuper()) {
       if (!bce_->emitSuperBase()) {
@@ -125,7 +125,7 @@ bool PropOpEmitter::prepareForRhs() {
 
 bool PropOpEmitter::skipObjAndRhs() {
   MOZ_ASSERT(state_ == State::Start);
-  MOZ_ASSERT(isSimpleAssignment());
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit());
 
 #ifdef DEBUG
   state_ = State::Rhs;
@@ -174,20 +174,23 @@ bool PropOpEmitter::emitDelete(JSAtom* prop) {
 }
 
 bool PropOpEmitter::emitAssignment(JSAtom* prop) {
-  MOZ_ASSERT(isSimpleAssignment() || isCompoundAssignment());
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit() || isCompoundAssignment());
   MOZ_ASSERT(state_ == State::Rhs);
 
-  if (isSimpleAssignment()) {
+  if (isSimpleAssignment() || isPropInit()) {
     if (!prepareAtomIndex(prop)) {
       return false;
     }
   }
 
+  MOZ_ASSERT_IF(isPropInit(), !isSuper());
   JSOp setOp =
-      isSuper()
-          ? bce_->sc->strict() ? JSOP_STRICTSETPROP_SUPER : JSOP_SETPROP_SUPER
-          : bce_->sc->strict() ? JSOP_STRICTSETPROP : JSOP_SETPROP;
-  if (!bce_->emitAtomOp(propAtomIndex_, setOp)) {
+      isPropInit()
+          ? JSOP_INITPROP
+          : isSuper() ? bce_->sc->strict() ? JSOP_STRICTSETPROP_SUPER
+                                           : JSOP_SETPROP_SUPER
+                      : bce_->sc->strict() ? JSOP_STRICTSETPROP : JSOP_SETPROP;
+  if (!bce_->emitAtomOp(propAtomIndex_, setOp, ShouldInstrument::Yes)) {
     //              [stack] VAL
     return false;
   }
@@ -215,52 +218,26 @@ bool PropOpEmitter::emitIncDec(JSAtom* prop) {
     return false;
   }
   if (isPostIncDec()) {
+    //              [stack] OBJ SUPERBASE? N
     if (!bce_->emit1(JSOP_DUP)) {
       //            [stack] .. N N
       return false;
     }
+    if (!bce_->emit2(JSOP_UNPICK, 2 + isSuper())) {
+      //            [stack] N OBJ SUPERBASE? N
+      return false;
+    }
   }
   if (!bce_->emit1(incOp)) {
-    //              [stack] ... N? N+1
+    //              [stack] ... N+1
     return false;
-  }
-  if (isPostIncDec()) {
-    if (isSuper()) {
-      //            [stack] THIS OBJ N N+1
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] OBJ N N+1 THIS
-        return false;
-      }
-      if (!bce_->emit1(JSOP_SWAP)) {
-        //          [stack] OBJ N THIS N+1
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] N THIS N+1 OBJ
-        return false;
-      }
-      if (!bce_->emit1(JSOP_SWAP)) {
-        //          [stack] N THIS OBJ N+1
-        return false;
-      }
-    } else {
-      //            [stack] OBJ N N+1
-      if (!bce_->emit2(JSOP_PICK, 2)) {
-        //          [stack] N N+1 OBJ
-        return false;
-      }
-      if (!bce_->emit1(JSOP_SWAP)) {
-        //          [stack] N OBJ N+1
-        return false;
-      }
-    }
   }
 
   JSOp setOp =
       isSuper()
           ? bce_->sc->strict() ? JSOP_STRICTSETPROP_SUPER : JSOP_SETPROP_SUPER
           : bce_->sc->strict() ? JSOP_STRICTSETPROP : JSOP_SETPROP;
-  if (!bce_->emitAtomOp(propAtomIndex_, setOp)) {
+  if (!bce_->emitAtomOp(propAtomIndex_, setOp, ShouldInstrument::Yes)) {
     //              [stack] N? N+1
     return false;
   }

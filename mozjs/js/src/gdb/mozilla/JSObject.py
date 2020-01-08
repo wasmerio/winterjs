@@ -1,3 +1,7 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at http://mozilla.org/MPL/2.0/.
+
 # Pretty-printers for SpiderMonkey JSObjects.
 
 import re
@@ -14,7 +18,7 @@ class JSObjectTypeCache(object):
         baseshape_flags = gdb.lookup_type('js::BaseShape::Flag')
         self.flag_DELEGATE = prettyprinters.enum_value(baseshape_flags, 'js::BaseShape::DELEGATE')
         self.func_ptr_type = gdb.lookup_type('JSFunction').pointer()
-        self.class_NON_NATIVE = gdb.parse_and_eval('js::Class::NON_NATIVE')
+        self.class_NON_NATIVE = gdb.parse_and_eval('JSClass::NON_NATIVE')
         self.NativeObject_ptr_t = gdb.lookup_type('js::NativeObject').pointer()
         self.Shape_ptr_t = gdb.lookup_type('js::Shape').pointer()
 
@@ -50,7 +54,7 @@ class JSObjectPtrOrRef(prettyprinters.Pointer):
             return '[object {}]'.format(class_name)
         else:
             native = self.value.cast(self.otc.NativeObject_ptr_t)
-            shape = native['shapeOrExpando_'].cast(self.otc.Shape_ptr_t)
+            shape = native['shape_'].cast(self.otc.Shape_ptr_t)
             baseshape = deref(shape['base_'])
             flags = baseshape['flags']
             is_delegate = bool(flags & self.otc.flag_DELEGATE)

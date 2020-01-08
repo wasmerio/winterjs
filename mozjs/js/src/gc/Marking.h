@@ -33,11 +33,7 @@ class JitCode;
 }  // namespace jit
 
 #ifdef DEBUG
-// Return true if this trace is happening on behalf of gray buffering during
-// the marking phase of incremental GC.
-bool IsBufferGrayRootsTracer(JSTracer* trc);
-
-bool IsUnmarkGrayTracer(JSTracer* trc);
+bool IsTracerKind(JSTracer* trc, JS::CallbackTracer::TracerKind kind);
 #endif
 
 namespace gc {
@@ -89,7 +85,7 @@ inline bool IsMarkedUnbarriered(JSRuntime* rt, T* thingp) {
 // zones that are not currently being collected or are owned by another runtime
 // are always reported as being marked.
 template <typename T>
-inline bool IsMarked(JSRuntime* rt, WriteBarrieredBase<T>* thingp) {
+inline bool IsMarked(JSRuntime* rt, WriteBarriered<T>* thingp) {
   return IsMarkedInternal(rt,
                           ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
@@ -102,7 +98,7 @@ inline bool IsMarkedBlackUnbarriered(JSRuntime* rt, T* thingp) {
 
 // Report whether a GC thing has been marked black.
 template <typename T>
-inline bool IsMarkedBlack(JSRuntime* rt, WriteBarrieredBase<T>* thingp) {
+inline bool IsMarkedBlack(JSRuntime* rt, WriteBarriered<T>* thingp) {
   return IsMarkedBlackInternal(
       rt, ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
@@ -113,18 +109,20 @@ inline bool IsAboutToBeFinalizedUnbarriered(T* thingp) {
 }
 
 template <typename T>
-inline bool IsAboutToBeFinalized(WriteBarrieredBase<T>* thingp) {
+inline bool IsAboutToBeFinalized(const WriteBarriered<T>* thingp) {
   return IsAboutToBeFinalizedInternal(
       ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 template <typename T>
-inline bool IsAboutToBeFinalized(ReadBarrieredBase<T>* thingp) {
+inline bool IsAboutToBeFinalized(ReadBarriered<T>* thingp) {
   return IsAboutToBeFinalizedInternal(
       ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
 bool IsAboutToBeFinalizedDuringSweep(TenuredCell& tenured);
+
+inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell* cell);
 
 inline Cell* ToMarkable(const Value& v) {
   if (v.isGCThing()) {
@@ -183,7 +181,7 @@ template <typename T>
 inline void CheckGCThingAfterMovingGC(T* t);
 
 template <typename T>
-inline void CheckGCThingAfterMovingGC(const ReadBarriered<T*>& t);
+inline void CheckGCThingAfterMovingGC(const WeakHeapPtr<T*>& t);
 
 inline void CheckValueAfterMovingGC(const JS::Value& value);
 

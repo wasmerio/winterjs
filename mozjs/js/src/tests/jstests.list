@@ -10,16 +10,11 @@ skip script non262/String/normalize-generateddata-input.js # input data for othe
 slow script test262/built-ins/decodeURI/S15.1.3.1_A2.5_T1.js
 slow script test262/built-ins/decodeURIComponent/S15.1.3.2_A2.5_T1.js
 
-# Fields are not fully implemented yet
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1499448
-skip script non262/fields/access.js
-skip script non262/fields/basic.js
-skip script non262/fields/error.js
-skip script non262/fields/field_types.js
-skip script non262/fields/literal.js
-skip script non262/fields/mixed_methods.js
-skip script non262/fields/quirks.js
-skip script non262/reflect-parse/class-fields.js
+# Windows10-aarch64 fails certain tests.
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1526003
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1526012
+skip-if((xulRuntime.XPCOMABI.match(/aarch64/))&&(xulRuntime.OS=="WINNT")) script non262/Math/fround.js
+skip-if((xulRuntime.XPCOMABI.match(/aarch64/))&&(xulRuntime.OS=="WINNT")) script non262/Math/log2-approx.js
 
 
 ###########################################################################
@@ -43,8 +38,6 @@ skip script test262/built-ins/ThrowTypeError/unique-per-realm-function-proto.js
 # Test262 tests disabled when features are only conditionally available #
 #########################################################################
 
-skip-if(!Array.prototype.values) script test262/built-ins/Array/prototype/Symbol.iterator.js
-skip-if(!Array.prototype.values) include test262/built-ins/Array/prototype/values/jstests.list
 skip-if(!String.prototype.normalize) include test262/built-ins/String/prototype/normalize/jstests.list
 
 # Requires ICU to detect Final_Sigma case mapping context
@@ -56,6 +49,13 @@ skip-if(!this.hasOwnProperty("Intl")) script test262/built-ins/String/prototype/
 # Skip intl402 tests when Intl isn't available.
 skip-if(!this.hasOwnProperty("Intl")) include test262/intl402/jstests.list
 
+# Skip Intl.Locale tests when the addIntlExtras helper isn't available.
+skip-if(!this.hasOwnProperty('addIntlExtras')) include test262/intl402/Locale/jstests.list
+skip-if(!this.hasOwnProperty('addIntlExtras')) script test262/intl402/Intl/getCanonicalLocales/Locale-object.js
+
+# Skip Intl.ListFormat tests when the addIntlExtras helper isn't available.
+skip-if(!this.hasOwnProperty('addIntlExtras')) include test262/intl402/ListFormat/jstests.list
+
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1415303
 skip-if(!this.hasOwnProperty("Atomics")) include test262/built-ins/Atomics/jstests.list
 skip-if(!this.hasOwnProperty("SharedArrayBuffer")) include test262/built-ins/SharedArrayBuffer/jstests.list
@@ -66,21 +66,37 @@ skip-if(!this.hasOwnProperty("SharedArrayBuffer")) include test262/built-ins/Sha
 #####################################
 
 # Defines a non-configurable property on the WindowProxy object.
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-update.js
+skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-init.js
 skip-if(!xulRuntime.shell) script test262/annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-update.js
 skip-if(!xulRuntime.shell) script test262/language/eval-code/direct/var-env-func-init-global-update-non-configurable.js
 skip-if(!xulRuntime.shell) script test262/language/eval-code/indirect/var-env-func-init-global-update-non-configurable.js
@@ -116,36 +132,13 @@ skip-if(!xulRuntime.shell) script test262/language/eval-code/indirect/var-env-va
 skip-if(!xulRuntime.shell) script test262/language/global-code/decl-func.js
 skip-if(!xulRuntime.shell) script test262/language/global-code/decl-var.js
 
+# Atomics tests (Atomics/notify, Atomics/wait) are disabled because our $.agent implementation needs getSharedArrayBuffer, setSharedArrayBuffer and evalInWorker: https://bugzilla.mozilla.org/show_bug.cgi?id=1598612
+skip-if(!xulRuntime.shell) include test262/built-ins/Atomics/notify/jstests.list
+skip-if(!xulRuntime.shell) include test262/built-ins/Atomics/wait/jstests.list
 
 ##################################################
 # Test262 tests skipped due to SpiderMonkey bugs #
 ##################################################
-
-# %ThrowTypeError% should be anonymous
-skip script test262/built-ins/ThrowTypeError/name.js
-
-# BigInt typed arrays -- BigInt64Array, BigUint64Array -- aren't implemented
-# yet -- bug 1456569.
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-use-default-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-invocation.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-returns-another-instance.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-inherited.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-length.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor-length-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-custom-ctor.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-species-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/speciesctor-get-ctor-abrupt.js
-
-# Anonymous functions have own name property in SpiderMonkey
-skip script test262/language/expressions/assignment/fn-name-lhs-cover.js
-skip script test262/language/expressions/assignment/fn-name-lhs-member.js
-skip script test262/language/expressions/function/name.js
-skip script test262/language/expressions/generators/name.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1079853
 skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-detachbuffer.js
@@ -196,753 +189,6 @@ skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/tonumb
 skip script test262/built-ins/TypedArrayConstructors/internals/Set/detached-buffer-realm.js
 skip script test262/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js
 skip script test262/built-ins/TypedArrayConstructors/internals/Set/tonumber-value-detached-buffer.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1129202
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/tonumber-value-throws.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/key-is-not-canonical-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/tonumber-value-throws.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1456569
-skip script test262/built-ins/TypedArray/prototype/reverse/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/reverse/BigInt/returns-original-object.js
-skip script test262/built-ins/TypedArray/prototype/reverse/BigInt/preserves-non-numeric-properties.js
-skip script test262/built-ins/TypedArray/prototype/reverse/BigInt/reverts.js
-skip script test262/built-ins/TypedArray/prototype/reverse/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/fromIndex-minus-zero.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/return-abrupt-tointeger-fromindex-symbol.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/length-zero-returns-minus-one.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/return-abrupt-tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/fromIndex-infinity.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/search-found-returns-index.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/search-not-found-returns-minus-one.js
-skip script test262/built-ins/TypedArray/prototype/indexOf/BigInt/fromIndex-equal-or-greater-length-returns-minus-one.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/length-zero-returns-minus-one.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/fromIndex-minus-zero.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/return-abrupt-tointeger-fromindex-symbol.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/return-abrupt-tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/fromIndex-infinity.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/search-found-returns-index.js
-skip script test262/built-ins/TypedArray/prototype/lastIndexOf/BigInt/search-not-found-returns-minus-one.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/return-abrupt-from-separator.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/empty-instance-empty-string.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/custom-separator-result-from-tostring-on-each-simple-value.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/result-from-tostring-on-each-simple-value.js
-skip script test262/built-ins/TypedArray/prototype/join/BigInt/return-abrupt-from-separator-symbol.js
-skip script test262/built-ins/TypedArray/prototype/byteLength/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/byteLength/BigInt/return-bytelength.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-call-parameters.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-call-this-strict-strict.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/return-negative-one-if-predicate-returns-false-value.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-call-changes-value.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/return-abrupt-from-predicate-call.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-call-this-non-strict.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/return-index-predicate-result-is-true.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-is-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/get-length-ignores-length-prop.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-not-called-on-empty-array.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-set-value-during-interaction.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/returns-true-if-any-cb-returns-true.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-arguments-without-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-no-interaction-over-non-integer.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/callbackfn-arguments-with-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/some/BigInt/returns-false-if-every-cb-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/byteOffset/BigInt/return-byteoffset.js
-skip script test262/built-ins/TypedArray/prototype/byteOffset/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/returns-undefined.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-set-value-during-interaction.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-arguments-without-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-no-interaction-over-non-integer.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-is-not-callable.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/forEach/BigInt/callbackfn-arguments-with-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/length/BigInt/return-length.js
-skip script test262/built-ins/TypedArray/prototype/length/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/entries/BigInt/return-itor.js
-skip script test262/built-ins/TypedArray/prototype/entries/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/entries/BigInt/iter-prototype.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-call-parameters.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/return-found-value-predicate-result-is-true.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/return-undefined-if-predicate-returns-false-value.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-call-this-strict-strict.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-call-changes-value.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/return-abrupt-from-predicate-call.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-call-this-non-strict.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-is-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/get-length-ignores-length-prop.js
-skip script test262/built-ins/TypedArray/prototype/find/BigInt/predicate-not-called-on-empty-array.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor-returns-another-instance.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/tointeger-end.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/infinity.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-use-default-ctor.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/set-values-from-different-ctor-type.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/return-abrupt-from-start.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-ctor-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/results-with-empty-length.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/tointeger-start.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/result-does-not-copy-ordinary-properties.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-ctor-inherited.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor-length-throws.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/return-abrupt-from-end-symbol.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor-invocation.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/results-with-different-length.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/return-abrupt-from-start-symbol.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/results-with-same-length.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/return-abrupt-from-end.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-ctor-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor-length.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-custom-ctor.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/minus-zero.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-custom-ctor-same-targettype.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/speciesctor-get-species-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-custom-ctor-other-targettype.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-zero-count-custom-ctor-other-targettype.js
-skip script test262/built-ins/TypedArray/prototype/slice/BigInt/detached-buffer-zero-count-custom-ctor-same-targettype.js
-skip script test262/built-ins/TypedArray/prototype/Symbol.toStringTag/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/Symbol.toStringTag/BigInt/return-typedarrayname.js
-skip script test262/built-ins/TypedArray/prototype/buffer/BigInt/return-buffer.js
-skip script test262/built-ins/TypedArray/prototype/buffer/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/keys/BigInt/return-itor.js
-skip script test262/built-ins/TypedArray/prototype/keys/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/keys/BigInt/iter-prototype.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor-returns-another-instance.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-use-default-ctor.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-set-value-during-iteration.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-ctor-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-called-before-ctor.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-ctor-inherited.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor-length-throws.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-no-iteration-over-non-integer.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor-invocation.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/result-full-callbackfn-returns-true.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/values-are-set.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-arguments-without-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-ctor-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor-length.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/result-does-not-share-buffer.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-custom-ctor.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/speciesctor-get-species-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-called-before-species.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/result-empty-callbackfn-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-arguments-with-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-custom-ctor-returns-another-instance.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-end.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-custom-ctor-throws.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/infinity.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-use-default-ctor.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-ctor-returns-throws.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/results-with-empty-length.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/result-does-not-copy-ordinary-properties.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/result-is-new-instance-from-same-ctor.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-ctor-inherited.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/return-abrupt-from-begin.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/return-abrupt-from-end-symbol.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-custom-ctor-invocation.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/results-with-different-length.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/results-with-same-length.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/return-abrupt-from-end.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-begin.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-ctor-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-ctor.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-custom-ctor.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/minus-zero.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/result-is-new-instance-with-shared-buffer.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/speciesctor-get-species-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/subarray/BigInt/return-abrupt-from-begin-symbol.js
-skip script test262/built-ins/TypedArray/prototype/values/BigInt/return-itor.js
-skip script test262/built-ins/TypedArray/prototype/values/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/values/BigInt/iter-prototype.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-result.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/calls-tolocalestring-from-each-value.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/empty-instance-returns-empty-string.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/calls-valueof-from-each-value.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-nextelement-tolocalestring.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-firstelement-valueof.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-nextelement-tostring.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/calls-tostring-from-each-value.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-firstelement-tostring.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-firstelement-tolocalestring.js
-skip script test262/built-ins/TypedArray/prototype/toLocaleString/BigInt/return-abrupt-from-nextelement-valueof.js
-skip script test262/built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/search-not-found-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/fromIndex-minus-zero.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/return-abrupt-tointeger-fromindex-symbol.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/fromIndex-equal-or-greater-length-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/return-abrupt-tointeger-fromindex.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/fromIndex-infinity.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/search-found-returns-true.js
-skip script test262/built-ins/TypedArray/prototype/includes/BigInt/length-zero-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-set-value-during-interaction.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/returns-false-if-any-cb-returns-false.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/returns-true-if-every-cb-returns-true.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-arguments-without-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-no-interaction-over-non-integer.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/every/BigInt/callbackfn-arguments-with-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-set-value-during-iteration.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-arguments-default-accumulator.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-arguments-custom-accumulator.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/empty-instance-with-no-initialvalue-throws.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/empty-instance-return-initialvalue.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/return-first-value-without-callbackfn.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/result-is-last-callbackfn-return.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-is-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/result-of-any-type.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/reduce/BigInt/callbackfn-no-iteration-over-non-integer-properties.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-non-numeric.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-this.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-non-numeric-throw.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-abrupt-from-start.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/coerced-indexes.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-abrupt-from-start-as-symbol.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-relative-end.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-abrupt-from-end.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-abrupt-from-set-value.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-custom-start-and-end.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-conversion-once.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/return-abrupt-from-end-as-symbol.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-symbol-throws.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/get-length-ignores-length-prop.js
-skip script test262/built-ins/TypedArray/prototype/fill/BigInt/fill-values-relative-start.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/get-length-uses-internal-arraylength.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-set-value-during-iteration.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-arguments-default-accumulator.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-arguments-custom-accumulator.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/empty-instance-with-no-initialvalue-throws.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/empty-instance-return-initialvalue.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/return-first-value-without-callbackfn.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/result-is-last-callbackfn-return.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-is-not-callable-throws.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/result-of-any-type.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-no-iteration-over-non-integer-properties.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-target.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/coerced-values-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-this.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-target-is-symbol.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/coerced-values-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/non-negative-target-and-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-out-of-bounds-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/non-negative-out-of-bounds-target-and-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/coerced-values-target.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-out-of-bounds-target.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/undefined-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/non-negative-target-start-and-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/negative-out-of-bounds-start.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/non-negative-out-of-bounds-end.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-end-is-symbol.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-start-is-symbol.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/get-length-ignores-length-prop.js
-skip script test262/built-ins/TypedArray/prototype/copyWithin/BigInt/return-abrupt-from-target.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-return-affects-returned-object.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-return-does-not-copy-non-integer-properties.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-no-interaction-over-non-integer-properties.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-set-value-during-interaction.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-return-does-not-change-instance.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-returns-abrupt.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/return-new-typedarray-from-positive-length.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-arguments-without-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-not-called-on-empty.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-is-not-callable.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-this.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/return-new-typedarray-from-empty-length.js
-skip script test262/built-ins/TypedArray/prototype/map/BigInt/callbackfn-arguments-with-thisarg.js
-skip script test262/built-ins/TypedArray/prototype/set/src-typedarray-big-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/undefined-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-offset-tointeger.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-target-byteoffset-internal.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-srcbuffer-detached-during-tointeger-offset-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/string-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-tointeger-offset.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-targetbuffer-detached-on-tointeger-offset-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-return-abrupt-from-tointeger-offset-symbol.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-diff-buffer-same-type.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/boolean-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/bigint-tobigint64.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-src-arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-same-buffer-same-type.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-negative-integer-offset-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-target-arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-diff-buffer-other-type-sab.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-tonumber-value-symbol.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/number-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-targetbuffer-detached-during-tointeger-offset-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/null-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-get-value.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-set-values-in-order.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-set-values.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-target-arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-diff-buffer-other-type.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/symbol-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/string-nan-tobigint.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-src-values-are-not-cached.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/bigint-tobiguint64.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/src-typedarray-big.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-offset-tointeger.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-same-buffer-same-type-sab.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-get-length.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-src-range-greather-than-target-throws-rangeerror.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-return-abrupt-from-tointeger-offset.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-length.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/src-typedarray-not-big-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-length-symbol.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-negative-integer-offset-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-src-byteoffset-internal.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-targetbuffer-detached-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-toobject-offset.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-tointeger-offset-symbol.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-src-tonumber-value-type-conversions.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-src-tonumber-value.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/array-arg-targetbuffer-detached-on-get-src-value-throws.js
-skip script test262/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-set-values-diff-buffer-same-type-sab.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/detached-buffer-comparefn.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/comparefn-calls.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/return-same-instance.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/comparefn-nonfunction-call-throws.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/sorted-values.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/sortcompare-with-no-tostring.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/detached-buffer.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/arraylength-internal.js
-skip script test262/built-ins/TypedArray/prototype/sort/BigInt/comparefn-call-throws.js
-skip script test262/built-ins/Atomics/store/bigint/bad-range.js
-skip script test262/built-ins/Atomics/store/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/store/bigint/good-views.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-add.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-or.js
-skip script test262/built-ins/Atomics/wait/bigint/bad-range.js
-skip script test262/built-ins/Atomics/wait/bigint/non-shared-bufferdata-throws.js
-skip script test262/built-ins/Atomics/wait/bigint/nan-for-timeout.js
-skip script test262/built-ins/Atomics/wait/bigint/waiterlist-block-indexedposition-wake.js
-skip script test262/built-ins/Atomics/wait/bigint/negative-index-throws.js
-skip script test262/built-ins/Atomics/wait/bigint/value-not-equal.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-and.js
-skip script test262/built-ins/Atomics/wait/bigint/negative-timeout.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-sub.js
-skip script test262/built-ins/Atomics/wait/bigint/negative-timeout-agent.js
-skip script test262/built-ins/Atomics/wait/bigint/waiterlist-order-of-operations-is-fifo.js
-skip script test262/built-ins/Atomics/wait/bigint/null-bufferdata-throws.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-exchange.js
-skip script test262/built-ins/Atomics/wait/bigint/out-of-range-index-throws.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-store.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-compareExchange.js
-skip script test262/built-ins/Atomics/wait/bigint/false-for-timeout.js
-skip script test262/built-ins/Atomics/wait/bigint/false-for-timeout-agent.js
-skip script test262/built-ins/Atomics/wait/bigint/was-woken-before-timeout.js
-skip script test262/built-ins/Atomics/wait/bigint/non-bigint64-typedarray-throws.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-no-operation.js
-skip script test262/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-xor.js
-skip script test262/built-ins/Atomics/add/bigint/bad-range.js
-skip script test262/built-ins/Atomics/add/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/add/bigint/good-views.js
-skip script test262/built-ins/Atomics/xor/bigint/bad-range.js
-skip script test262/built-ins/Atomics/xor/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/xor/bigint/good-views.js
-skip script test262/built-ins/Atomics/notify/bigint/bad-range.js
-skip script test262/built-ins/Atomics/notify/bigint/non-shared-bufferdata-throws.js
-skip script test262/built-ins/Atomics/notify/bigint/notify-all-on-loc.js
-skip script test262/built-ins/Atomics/notify/bigint/null-bufferdata-throws.js
-skip script test262/built-ins/Atomics/notify/bigint/non-bigint64-typedarray-throws.js
-skip script test262/built-ins/Atomics/load/bigint/bad-range.js
-skip script test262/built-ins/Atomics/load/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/load/bigint/good-views.js
-skip script test262/built-ins/Atomics/isLockFree/bigint/expected-return-value.js
-skip script test262/built-ins/Atomics/and/bigint/bad-range.js
-skip script test262/built-ins/Atomics/and/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/and/bigint/good-views.js
-skip script test262/built-ins/Atomics/or/bigint/bad-range.js
-skip script test262/built-ins/Atomics/or/bigint/good-views.js
-skip script test262/built-ins/Atomics/or/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/compareExchange/bigint/bad-range.js
-skip script test262/built-ins/Atomics/compareExchange/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/compareExchange/bigint/good-views.js
-skip script test262/built-ins/Atomics/exchange/bigint/bad-range.js
-skip script test262/built-ins/Atomics/exchange/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/exchange/bigint/good-views.js
-skip script test262/built-ins/Atomics/sub/bigint/bad-range.js
-skip script test262/built-ins/Atomics/sub/bigint/nonshared-int-views.js
-skip script test262/built-ins/Atomics/sub/bigint/good-views.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/iter-access-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/source-value-is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/iter-next-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-without-thisarg-non-strict.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/inherited.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-empty.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-does-not-instantiate-ta-throws.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/this-is-not-constructor.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/arylk-get-length-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-arguments.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/invoked-as-func.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/arylk-to-length-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-from-ordinary-object.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-from-sparse-array.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/iter-invoke-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-returns-other-instance.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/set-value-abrupt-completion.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/custom-ctor-returns-smaller-instance-throws.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-without-thisarg-strict-strict.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/iter-next-value-error.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-with-mapfn.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-without-mapfn.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-is-not-callable.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/new-instance-using-custom-ctor.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/custom-ctor.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-abrupt-completion.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/mapfn-this-with-thisarg.js
-skip script test262/built-ins/TypedArrayConstructors/from/BigInt/property-abrupt-completion.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prop-desc.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/BYTES_PER_ELEMENT.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/name.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prototype.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/constructor.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/length.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/proto.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prototype/not-typedarray-object.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prototype/BYTES_PER_ELEMENT.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prototype/constructor.js
-skip script test262/built-ins/TypedArrayConstructors/BigInt64Array/prototype/proto.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prop-desc.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/BYTES_PER_ELEMENT.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/name.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prototype.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/constructor.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/length.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/proto.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prototype/not-typedarray-object.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prototype/BYTES_PER_ELEMENT.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prototype/constructor.js
-skip script test262/built-ins/TypedArrayConstructors/BigUint64Array/prototype/proto.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/use-custom-proto-if-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/returns-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/custom-proto-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/undefined-newtarget-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/use-default-proto-if-custom-proto-is-not-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/no-args/new-instance-extensibility.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/undefined-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-valueof.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/string-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterating-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/boolean-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/bigint-tobigint64.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/use-custom-proto-if-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/custom-proto-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterator-not-callable-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-excessive-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/number-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-property.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/null-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-tostring.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-valueof-typeerror.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-to-primitive.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/symbol-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-from-property.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/iterator-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/as-generator-iterable-returns.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/as-array-returns.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/string-nan-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/bigint-tobiguint64.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/length-is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-obj-to-primitive-typeerror.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/undefined-newtarget-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/throws-setting-symbol-property.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/use-default-proto-if-custom-proto-is-not-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-not-object-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/detached-when-species-retrieved-same-type.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/custom-proto-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-prototype-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/detached-when-species-retrieved-different-type.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-custom-proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-returns-new-typedarray.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-not-ctor.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-prototype-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-null.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-null.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-value-not-obj-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-custom-species.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-undefined.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/undefined-newtarget-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-species-custom.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/src-typedarray-not-big-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-species-not-ctor-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/same-ctor-buffer-ctor-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/other-ctor-buffer-ctor-custom-species-proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/typedarray-arg/new-instance-extensibility.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-default-proto-if-custom-proto-is-not-object-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-length-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-and-offset-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/returns-new-instance-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/is-referenced-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-offset-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-offset-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-custom-proto-if-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-throws-from-modulo-element-size.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/typedarray-backed-by-sharedarraybuffer.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-byteoffset-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-bytelength-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-is-symbol-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/invoked-with-undefined-newtarget-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-custom-proto-if-object-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-access-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/invoked-with-undefined-newtarget.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-detachbuffer.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-bytelength.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-symbol-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-zero-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/new-instance-extensibility-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-length-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-throws-from-modulo-element-size-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-negative-length-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-to-number-detachbuffer.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/returns-new-instance.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/toindex-byteoffset.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/detachedbuffer.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-and-offset.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-offset.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/is-referenced.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-to-number-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-zero.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/bufferbyteoffset-throws-from-modulo-element-size.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-negative-length.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/defined-length-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/length-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/excessive-offset-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/proto-from-ctor-realm-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/byteoffset-is-negative-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/use-default-proto-if-custom-proto-is-not-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/custom-proto-access-throws-sab.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg/new-instance-extensibility.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/use-custom-proto-if-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/returns-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/custom-proto-access-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/toindex-length.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/proto-from-ctor-realm.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/init-zeros.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/undefined-newtarget-throws.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-infinity-throws-rangeerror.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/is-negative-integer-throws-rangeerror.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/use-default-proto-if-custom-proto-is-not-object.js
-skip script test262/built-ins/TypedArrayConstructors/ctors-bigint/length-arg/new-instance-extensibility.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/argument-number-value-throws.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/new-instance.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/argument-is-symbol-throws.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/inherited.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/new-instance-empty.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-does-not-instantiate-ta-throws.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/this-is-not-constructor.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/invoked-as-func.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-returns-other-instance.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/custom-ctor-returns-smaller-instance-throws.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/new-instance-using-custom-ctor.js
-skip script test262/built-ins/TypedArrayConstructors/of/BigInt/custom-ctor.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer-key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-minus-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/detached-buffer-key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-not-numeric-index-get-throws.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/key-is-out-of-bounds.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/indexed-value-sab.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Get/BigInt/indexed-value.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-lower-than-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/non-extensible-new-key.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-enumerable.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-not-writable.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-desc-configurable.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/desc-value-throws.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/set-value.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex-accessor-desc.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/non-extensible-redefine-key.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-greater-than-last-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-minus-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/this-is-not-extensible.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/undefined-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/string-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer-key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/boolean-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/bigint-tobigint64.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/detached-buffer-key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/number-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/symbol-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-out-of-bounds.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/string-nan-tobigint.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-minus-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/bigint-tobiguint64.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/key-is-not-numeric-index-set-throws.js
-skip script test262/built-ins/TypedArrayConstructors/internals/Set/BigInt/indexed-value.js
-skip script test262/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes.js
-skip script test262/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes-and-string-keys.js
-skip script test262/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/not-enumerable-keys.js
-skip script test262/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/BigInt/integer-indexes-and-string-and-symbol-keys-.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer-key-is-not-number.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-lower-than-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/detached-buffer-key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/abrupt-from-ordinary-has-parent-hasproperty.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/inherited-property.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-greater-than-last-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/key-is-minus-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/HasProperty/BigInt/indexed-value.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer-key-is-not-number.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-numeric-index.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/detached-buffer-key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/index-prop-desc.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-symbol.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-out-of-bounds.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-minus-zero.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/key-is-not-integer.js
-skip script test262/built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-big-throws.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/bigint-Symbol.iterator.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/reverse/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/indexOf/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/lastIndexOf/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/join/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/byteLength/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/findIndex/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/some/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/byteOffset/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/forEach/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/length/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/entries/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/find/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/slice/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/Symbol.toStringTag/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/buffer/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/keys/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/filter/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/subarray/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/values/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/toLocaleString/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/toString/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/every/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/reduce/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/fill/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/reduceRight/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/copyWithin/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/map/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/set/bigint-inherited.js
-skip script test262/built-ins/TypedArrayConstructors/prototype/sort/bigint-inherited.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1317405
 skip script test262/language/computed-property-names/class/static/method-number.js
@@ -1001,62 +247,43 @@ skip script test262/language/expressions/prefix-increment/S11.4.4_A5_T5.js
 skip script test262/language/expressions/prefix-increment/S11.4.4_A6_T1.js
 skip script test262/language/expressions/prefix-increment/S11.4.4_A6_T2.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1288457
-skip script test262/built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1296236
-skip script test262/built-ins/Proxy/revocable/revocation-function-name.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1296235
-skip script test262/built-ins/Promise/all/resolve-element-function-name.js
-skip script test262/built-ins/Promise/executor-function-name.js
-skip script test262/built-ins/Promise/reject-function-name.js
-skip script test262/built-ins/Promise/resolve-function-name.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=944846
 skip script test262/built-ins/Number/prototype/toExponential/return-values.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1225839
-skip script test262/built-ins/Function/internals/Call/class-ctor-realm.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1288457
-skip script test262/built-ins/Function/internals/Construct/base-ctor-revoked-proxy-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Function/internals/Call/class-ctor-realm.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1297179
-skip script test262/built-ins/Proxy/apply/arguments-realm.js
-skip script test262/built-ins/Proxy/apply/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/construct/arguments-realm.js
-skip script test262/built-ins/Proxy/construct/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/defineProperty/desc-realm.js
-skip script test262/built-ins/Proxy/defineProperty/null-handler-realm.js
-skip script test262/built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable-realm.js
-skip script test262/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target-realm.js
-skip script test262/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-realm.js
-skip script test262/built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js
-skip script test262/built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js
-skip script test262/built-ins/Proxy/defineProperty/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/deleteProperty/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/get/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm.js
-skip script test262/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/getPrototypeOf/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/has/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/isExtensible/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/ownKeys/return-not-list-object-throws-realm.js
-skip script test262/built-ins/Proxy/ownKeys/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/preventExtensions/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/set/trap-is-not-callable-realm.js
-skip script test262/built-ins/Proxy/setPrototypeOf/trap-is-not-callable-realm.js
+# All of these tests pass except with --more-compartments.
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/apply/arguments-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/apply/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/arguments-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/desc-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/null-handler-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/defineProperty/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/deleteProperty/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/get/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/getPrototypeOf/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/has/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/isExtensible/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/ownKeys/return-not-list-object-throws-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/ownKeys/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/preventExtensions/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/set/trap-is-not-callable-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/setPrototypeOf/trap-is-not-callable-realm.js
 
 # Errors thrown from wrong realm, similar to 1225839, 1288457, and 1297179.
-skip script test262/built-ins/Array/length/define-own-prop-length-overflow-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Array/length/define-own-prop-length-overflow-realm.js
 skip script test262/built-ins/Function/internals/Construct/derived-return-val-realm.js
 skip script test262/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1317416
-skip script test262/language/expressions/super/realm.js
-skip script test262/built-ins/GeneratorFunction/proto-from-ctor-realm.js
-skip script test262/built-ins/Function/prototype/bind/proto-from-ctor-realm.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1317395
 skip script test262/built-ins/ArrayBuffer/prototype/byteLength/detached-buffer.js
@@ -1076,8 +303,8 @@ skip script test262/language/statements/for/cptn-decl-expr-iter.js
 skip script test262/language/statements/for/cptn-decl-expr-no-iter.js
 skip script test262/language/statements/for/cptn-expr-expr-iter.js
 skip script test262/language/statements/for/cptn-expr-expr-no-iter.js
-skip script test262/language/statements/for/S12.6.3_A9.1.js
-skip script test262/language/statements/for/S12.6.3_A9.js
+skip script test262/language/statements/for/head-init-expr-check-empty-inc-empty-completion.js
+skip script test262/language/statements/for/head-init-var-check-empty-inc-empty-completion.js
 skip script test262/language/statements/for-of/cptn-decl-abrupt-empty.js
 skip script test262/language/statements/for-of/cptn-decl-itr.js
 skip script test262/language/statements/for-of/cptn-decl-no-itr.js
@@ -1111,58 +338,6 @@ skip script test262/language/statements/while/cptn-no-iter.js
 skip script test262/language/statements/with/cptn-abrupt-empty.js
 skip script test262/language/statements/with/cptn-nrml.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1296234
-skip script test262/intl402/Collator/prototype/compare/compare-function-name.js
-skip script test262/intl402/DateTimeFormat/prototype/format/format-function-name.js
-skip script test262/intl402/NumberFormat/prototype/format/format-function-name.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1317373
-skip script test262/annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-init.js
-skip script test262/annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-init.js
-
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1340307
-skip script test262/language/module-code/instn-resolve-empty-export.js
-skip script test262/language/module-code/instn-resolve-empty-import.js
-skip script test262/language/module-code/instn-resolve-err-reference.js
-skip script test262/language/module-code/instn-resolve-order-depth.js
-skip script test262/language/module-code/instn-resolve-order-src.js
-skip script test262/language/module-code/parse-err-reference.js
-skip script test262/language/expressions/postfix-increment/target-cover-yieldexpr.js
-skip script test262/language/expressions/postfix-increment/target-newtarget.js
-skip script test262/language/expressions/postfix-increment/target-cover-newtarget.js
-skip script test262/language/expressions/postfix-increment/non-simple.js
-skip script test262/language/expressions/postfix-decrement/target-cover-yieldexpr.js
-skip script test262/language/expressions/postfix-decrement/target-newtarget.js
-skip script test262/language/expressions/postfix-decrement/target-cover-newtarget.js
-skip script test262/language/expressions/postfix-decrement/non-simple.js
-skip script test262/language/expressions/prefix-increment/target-cover-yieldexpr.js
-skip script test262/language/expressions/prefix-increment/target-newtarget.js
-skip script test262/language/expressions/prefix-increment/target-cover-newtarget.js
-skip script test262/language/expressions/prefix-increment/non-simple.js
-skip script test262/language/expressions/prefix-decrement/target-cover-yieldexpr.js
-skip script test262/language/expressions/prefix-decrement/target-newtarget.js
-skip script test262/language/expressions/prefix-decrement/target-cover-newtarget.js
-skip script test262/language/expressions/prefix-decrement/non-simple.js
-skip script test262/language/asi/S7.9_A5.7_T1.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-1-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-2-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-3-update-expression.js
-skip script test262/language/expressions/dynamic-import/syntax/invalid/invalid-asssignmenttargettype-reference-error-4-update-expression.js
-
 # Dependent on evalInWorker, setSharedArrayBuffer, and
 # getSharedArrayBuffer, plus the test cases can't actually run in the
 # browser even if that were fixed, https://bugzil.la/1349863
@@ -1181,10 +356,6 @@ skip-if(!xulRuntime.shell) script test262/built-ins/Atomics/wake/wake-in-order.j
 skip-if(!xulRuntime.shell) script test262/built-ins/Atomics/wake/wake-one.js
 skip-if(!xulRuntime.shell) script test262/built-ins/Atomics/wake/wake-all-on-loc.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1346081
-skip script test262/intl402/NumberFormat/prototype/format/format-fraction-digits-precision.js
-skip script test262/intl402/NumberFormat/prototype/format/format-significant-digits-precision.js
-
 # Hoisted block-level function named "arguments" not initialized with undefined per B.3.3.1
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1339123
 skip script test262/annexB/language/function-code/block-decl-func-skip-arguments.js
@@ -1193,44 +364,99 @@ skip script test262/annexB/language/function-code/block-decl-func-skip-arguments
 skip script test262/language/expressions/assignment/destructuring/keyed-destructuring-property-reference-target-evaluation-order.js
 skip script test262/language/expressions/assignment/destructuring/iterator-destructuring-property-reference-target-evaluation-order.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1495072
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1558971
 skip script test262/language/expressions/await/await-monkey-patched-promise.js
 skip script test262/language/expressions/await/async-await-interleaved.js
 skip script test262/language/expressions/await/for-await-of-interleaved.js
 skip script test262/language/expressions/await/async-generator-interleaved.js
+skip script test262/language/statements/for-await-of/async-from-sync-iterator-continuation-abrupt-completion-get-constructor.js
+skip script test262/language/statements/for-await-of/ticks-with-async-iter-resolved-promise-and-constructor-lookup-two.js
+skip script test262/language/statements/for-await-of/ticks-with-sync-iter-resolved-promise-and-constructor-lookup.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1321616
-skip script test262/annexB/built-ins/Function/createdynfn-html-close-comment-params.js
+skip script test262/annexB/built-ins/Function/createdynfn-no-line-terminator-html-close-comment-body.js
 
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1462745
 skip script test262/annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1473229
-skip include test262/intl402/RelativeTimeFormat/prototype/formatToParts/jstests.list
-
-# Need to add "numberingSystem" to resolvedOptions() to address
-# https://github.com/tc39/test262/pull/2011 apparently -- bug 1521819.
-skip script test262/intl402/RelativeTimeFormat/prototype/resolvedOptions/order.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1508683
-skip script test262/built-ins/RegExp/prototype/multiline/cross-realm.js
-skip script test262/built-ins/RegExp/prototype/global/cross-realm.js
-skip script test262/built-ins/RegExp/prototype/sticky/cross-realm.js
-skip script test262/built-ins/RegExp/prototype/ignoreCase/cross-realm.js
-skip script test262/built-ins/RegExp/prototype/unicode/cross-realm.js
-skip script test262/built-ins/RegExp/prototype/source/cross-realm.js
+# All of these tests pass except with --more-compartments.
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/multiline/cross-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/global/cross-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/sticky/cross-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/ignoreCase/cross-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/unicode/cross-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/RegExp/prototype/source/cross-realm.js
 
-# The Intl spec recently changed from canonicalizing locales using RFC 5646 to
-# using UTS 35.  This still needs to be implemented in bug 1522070.  See also
-# <https://github.com/tc39/ecma402/commit/77cd7634e6aef828b0d0a4d97dece622c5f8e01f>.
-skip script test262/intl402/Intl/getCanonicalLocales/non-iana-canon.js
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1545038
+# All of these tests pass except with --more-compartments.
+ignore-flag(--more-compartments) script test262/built-ins/String/prototype/valueOf/non-generic-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/String/prototype/valueOf/non-generic-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/String/prototype/toString/non-generic-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/String/prototype/toString/non-generic-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/apply/null-handler-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/apply/null-handler-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-number-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-number-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/null-handler-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/null-handler-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-undefined-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-undefined-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-symbol-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-symbol-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-string-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-string-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-null-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-null-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
+ignore-flag(--more-compartments) script test262/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1508684
-skip script test262/language/expressions/import.meta/syntax/invalid-assignment-target-update-expr.js
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1560355
+skip-if(release_or_beta) skip script test262/intl402/DateTimeFormat/numbering-system-calendar-options.js
+skip-if(release_or_beta) skip script test262/intl402/DateTimeFormat/constructor-calendar-numberingSystem-order.js
+skip-if(release_or_beta) skip script test262/intl402/NumberFormat/numbering-system-options.js
+skip-if(release_or_beta) skip script test262/intl402/NumberFormat/constructor-numberingSystem-order.js
+skip-if(release_or_beta) skip script test262/intl402/NumberFormat/constructor-options-throwing-getters.js
 
-# https://github.com/tc39/test262/pull/1995 seemingly needs SpiderMonkey changes
-# before we can run the updated test -- bug 1531091.
-skip script test262/intl402/Collator/missing-unicode-ext-value-defaults-to-true.js
+# The relatedYear field type required by these tests is only supported in
+# nightly because the change hasn't been merged into the main spec yet.
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1591664
+skip-if(release_or_beta) script test262/intl402/DateTimeFormat/prototype/formatToParts/related-year.js
+skip-if(release_or_beta) script test262/intl402/DateTimeFormat/prototype/formatToParts/pattern-on-calendar.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1277801
+skip script test262/built-ins/Object/prototype/toString/symbol-tag-non-str-builtin.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1589095
+# Intl.ListFormat doesn't yet support "disjunction" and "unit" types
+# Intl.ListFormat doesn't yet support "short" and "narrow" styles
+skip script test262/intl402/ListFormat/prototype/formatToParts/en-us-disjunction.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/es-es-narrow.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/en-us-unit.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/en-us-narrow.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/es-es-long.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/es-es-short.js
+skip script test262/intl402/ListFormat/prototype/formatToParts/en-us-short.js
+skip script test262/intl402/ListFormat/prototype/resolvedOptions/type.js
+skip script test262/intl402/ListFormat/prototype/format/es-es-narrow.js
+skip script test262/intl402/ListFormat/prototype/format/en-us-disjunction.js
+skip script test262/intl402/ListFormat/prototype/format/en-us-unit.js
+skip script test262/intl402/ListFormat/prototype/format/en-us-narrow.js
+skip script test262/intl402/ListFormat/prototype/format/es-es-long.js
+skip script test262/intl402/ListFormat/prototype/format/es-es-short.js
+skip script test262/intl402/ListFormat/prototype/format/en-us-short.js
+skip script test262/intl402/ListFormat/constructor/constructor/options-style-valid.js
+skip script test262/intl402/ListFormat/constructor/constructor/options-toobject-prototype.js
+skip script test262/intl402/ListFormat/constructor/constructor/options-order.js
+skip script test262/intl402/ListFormat/constructor/constructor/options-type-valid.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1590543
+skip script test262/built-ins/String/prototype/matchAll/flags-nonglobal-throws.js
+skip script test262/built-ins/String/prototype/matchAll/flags-undefined-throws.js
+
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1591099
+skip script test262/intl402/ListFormat/constructor/constructor/proto-from-ctor-realm.js
+skip script test262/intl402/Locale/proto-from-ctor-realm.js
 
 
 ###########################################################
@@ -1244,3 +470,10 @@ skip script test262/harness/detachArrayBuffer.js
 ####################################################
 # Tests disabled due to invalid test expectations  #
 ####################################################
+
+# See review notes for https://github.com/tc39/ecma402/pull/347
+skip script test262/intl402/DateTimeFormat/constructor-options-fractionalSecondDigits-valid.js
+
+# Draft proposal doesn't yet implement the changes proposed in
+# <https://github.com/tc39/proposal-unified-intl-numberformat/issues/63>.
+skip script test262/intl402/NumberFormat/constructor-unit.js

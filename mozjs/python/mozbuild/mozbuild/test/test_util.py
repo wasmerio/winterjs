@@ -3,27 +3,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 import itertools
 import hashlib
 import os
 import unittest
-import shutil
 import string
 import sys
-import tempfile
 import textwrap
 
 from mozfile.mozfile import NamedTemporaryFile
-from mozunit import (
-    main,
-    MockedOpen,
-)
+from mozunit import main
 
 from mozbuild.util import (
     expand_variables,
-    FileAvoidWrite,
     group_unified_files,
     hash_file,
     indented_repr,
@@ -83,84 +77,6 @@ class TestHashing(unittest.TestCase):
         self.assertEqual(actual, expected)
 
 
-class TestFileAvoidWrite(unittest.TestCase):
-    def test_file_avoid_write(self):
-        with MockedOpen({'file': 'content'}):
-            # Overwriting an existing file replaces its content
-            faw = FileAvoidWrite('file')
-            faw.write('bazqux')
-            self.assertEqual(faw.close(), (True, True))
-            self.assertEqual(open('file', 'r').read(), 'bazqux')
-
-            # Creating a new file (obviously) stores its content
-            faw = FileAvoidWrite('file2')
-            faw.write('content')
-            self.assertEqual(faw.close(), (False, True))
-            self.assertEqual(open('file2').read(), 'content')
-
-        with MockedOpen({'file': 'content'}):
-            with FileAvoidWrite('file') as file:
-                file.write('foobar')
-
-            self.assertEqual(open('file', 'r').read(), 'foobar')
-
-        class MyMockedOpen(MockedOpen):
-            '''MockedOpen extension to raise an exception if something
-            attempts to write in an opened file.
-            '''
-            def __call__(self, name, mode):
-                if 'w' in mode:
-                    raise Exception('Unexpected open with write mode')
-                return MockedOpen.__call__(self, name, mode)
-
-        with MyMockedOpen({'file': 'content'}):
-            # Validate that MyMockedOpen works as intended
-            file = FileAvoidWrite('file')
-            file.write('foobar')
-            self.assertRaises(Exception, file.close)
-
-            # Check that no write actually happens when writing the
-            # same content as what already is in the file
-            faw = FileAvoidWrite('file')
-            faw.write('content')
-            self.assertEqual(faw.close(), (True, False))
-
-    def test_diff_not_default(self):
-        """Diffs are not produced by default."""
-
-        with MockedOpen({'file': 'old'}):
-            faw = FileAvoidWrite('file')
-            faw.write('dummy')
-            faw.close()
-            self.assertIsNone(faw.diff)
-
-    def test_diff_update(self):
-        """Diffs are produced on file update."""
-
-        with MockedOpen({'file': 'old'}):
-            faw = FileAvoidWrite('file', capture_diff=True)
-            faw.write('new')
-            faw.close()
-
-            diff = '\n'.join(faw.diff)
-            self.assertIn('-old', diff)
-            self.assertIn('+new', diff)
-
-    def test_diff_create(self):
-        """Diffs are produced when files are created."""
-
-        tmpdir = tempfile.mkdtemp()
-        try:
-            path = os.path.join(tmpdir, 'file')
-            faw = FileAvoidWrite(path, capture_diff=True)
-            faw.write('new')
-            faw.close()
-
-            diff = '\n'.join(faw.diff)
-            self.assertIn('+new', diff)
-        finally:
-            shutil.rmtree(tmpdir)
-
 class TestResolveTargetToMake(unittest.TestCase):
     def setUp(self):
         self.topobjdir = data_path
@@ -195,20 +111,25 @@ class TestResolveTargetToMake(unittest.TestCase):
     def test_regular_file(self):
         self.assertResolve('test-dir/with/file', ('test-dir/with', 'file'))
         self.assertResolve('test-dir/with/without/file', ('test-dir/with', 'without/file'))
-        self.assertResolve('test-dir/with/without/with/file', ('test-dir/with/without/with', 'file'))
+        self.assertResolve('test-dir/with/without/with/file',
+                           ('test-dir/with/without/with', 'file'))
 
         self.assertResolve('test-dir/without/file', ('test-dir', 'without/file'))
         self.assertResolve('test-dir/without/with/file', ('test-dir/without/with', 'file'))
-        self.assertResolve('test-dir/without/with/without/file', ('test-dir/without/with', 'without/file'))
+        self.assertResolve('test-dir/without/with/without/file',
+                           ('test-dir/without/with', 'without/file'))
 
     def test_Makefile(self):
         self.assertResolve('test-dir/with/Makefile', ('test-dir', 'with/Makefile'))
         self.assertResolve('test-dir/with/without/Makefile', ('test-dir/with', 'without/Makefile'))
-        self.assertResolve('test-dir/with/without/with/Makefile', ('test-dir/with', 'without/with/Makefile'))
+        self.assertResolve('test-dir/with/without/with/Makefile',
+                           ('test-dir/with', 'without/with/Makefile'))
 
         self.assertResolve('test-dir/without/Makefile', ('test-dir', 'without/Makefile'))
         self.assertResolve('test-dir/without/with/Makefile', ('test-dir', 'without/with/Makefile'))
-        self.assertResolve('test-dir/without/with/without/Makefile', ('test-dir/without/with', 'without/Makefile'))
+        self.assertResolve('test-dir/without/with/without/Makefile',
+                           ('test-dir/without/with', 'without/Makefile'))
+
 
 class TestHierarchicalStringList(unittest.TestCase):
     def setUp(self):
@@ -224,18 +145,18 @@ class TestHierarchicalStringList(unittest.TestCase):
     def test_exports_subdir(self):
         self.assertEqual(self.EXPORTS._children, {})
         self.EXPORTS.foo += ["foo.h"]
-        self.assertItemsEqual(self.EXPORTS._children, {"foo" : True})
+        self.assertItemsEqual(self.EXPORTS._children, {"foo": True})
         self.assertEqual(self.EXPORTS.foo._strings, ["foo.h"])
         self.EXPORTS.bar += ["bar.h"]
         self.assertItemsEqual(self.EXPORTS._children,
-                              {"foo" : True, "bar" : True})
+                              {"foo": True, "bar": True})
         self.assertEqual(self.EXPORTS.foo._strings, ["foo.h"])
         self.assertEqual(self.EXPORTS.bar._strings, ["bar.h"])
 
     def test_exports_multiple_subdir(self):
         self.EXPORTS.foo.bar = ["foobar.h"]
-        self.assertItemsEqual(self.EXPORTS._children, {"foo" : True})
-        self.assertItemsEqual(self.EXPORTS.foo._children, {"bar" : True})
+        self.assertItemsEqual(self.EXPORTS._children, {"foo": True})
+        self.assertItemsEqual(self.EXPORTS.foo._children, {"bar": True})
         self.assertItemsEqual(self.EXPORTS.foo.bar._children, {})
         self.assertEqual(self.EXPORTS._strings, [])
         self.assertEqual(self.EXPORTS.foo._strings, [])
@@ -270,24 +191,24 @@ class TestHierarchicalStringList(unittest.TestCase):
                          "<type 'bool'>")
 
     def test_del_exports(self):
-        with self.assertRaises(MozbuildDeletionError) as mde:
+        with self.assertRaises(MozbuildDeletionError):
             self.EXPORTS.foo += ['bar.h']
             del self.EXPORTS.foo
 
     def test_unsorted(self):
-        with self.assertRaises(UnsortedError) as ee:
+        with self.assertRaises(UnsortedError):
             self.EXPORTS += ['foo.h', 'bar.h']
 
-        with self.assertRaises(UnsortedError) as ee:
+        with self.assertRaises(UnsortedError):
             self.EXPORTS.foo = ['foo.h', 'bar.h']
 
-        with self.assertRaises(UnsortedError) as ee:
+        with self.assertRaises(UnsortedError):
             self.EXPORTS.foo += ['foo.h', 'bar.h']
 
     def test_reassign(self):
         self.EXPORTS.foo = ['foo.h']
 
-        with self.assertRaises(KeyError) as ee:
+        with self.assertRaises(KeyError):
             self.EXPORTS.foo = ['bar.h']
 
     def test_walk(self):
@@ -496,7 +417,7 @@ class TestStrictOrderingOnAppendListWithFlagsFactory(unittest.TestCase):
             l['a'] = 'foo'
 
         with self.assertRaises(Exception):
-            c = l['c']
+            l['c']
 
         self.assertEqual(l['a'].foo, False)
         l['a'].foo = True
@@ -865,6 +786,7 @@ class TestMisc(unittest.TestCase):
             }),
             'before abc between a b c after'
         )
+
 
 class TestEnumString(unittest.TestCase):
     def test_string(self):

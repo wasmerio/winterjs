@@ -25,6 +25,8 @@ namespace js {
  * All values except ropes are hashable as-is.
  */
 class HashableValue {
+  // This is used for map and set keys. We use OrderedHashTableRef to update all
+  // nursery keys on minor GC, so a post barrier is not required here.
   PreBarrieredValue value;
 
  public:
@@ -103,8 +105,8 @@ class MapObject : public NativeObject {
       "IteratorKind Entries must match self-hosting define for item kind "
       "key-and-value.");
 
-  static const Class class_;
-  static const Class protoClass_;
+  static const JSClass class_;
+  static const JSClass protoClass_;
 
   enum { NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
 
@@ -137,11 +139,11 @@ class MapObject : public NativeObject {
       OrderedHashMap<Value, Value, UnbarrieredHashPolicy, ZoneAllocPolicy>;
   friend class OrderedHashTableRef<MapObject>;
 
-  static void sweepAfterMinorGC(FreeOp* fop, MapObject* mapobj);
+  static void sweepAfterMinorGC(JSFreeOp* fop, MapObject* mapobj);
 
  private:
   static const ClassSpec classSpec_;
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
@@ -150,7 +152,7 @@ class MapObject : public NativeObject {
   static ValueMap& extract(HandleObject o);
   static ValueMap& extract(const CallArgs& args);
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static MOZ_MUST_USE bool construct(JSContext* cx, unsigned argc, Value* vp);
 
   static bool is(HandleValue v);
@@ -179,7 +181,7 @@ class MapObject : public NativeObject {
 
 class MapIteratorObject : public NativeObject {
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   enum { TargetSlot, RangeSlot, KindSlot, SlotCount };
 
@@ -196,7 +198,7 @@ class MapIteratorObject : public NativeObject {
   static MapIteratorObject* create(JSContext* cx, HandleObject mapobj,
                                    ValueMap* data,
                                    MapObject::IteratorKind kind);
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   static MOZ_MUST_USE bool next(Handle<MapIteratorObject*> mapIterator,
@@ -223,8 +225,8 @@ class SetObject : public NativeObject {
       "IteratorKind Entries must match self-hosting define for item kind "
       "key-and-value.");
 
-  static const Class class_;
-  static const Class protoClass_;
+  static const JSClass class_;
+  static const JSClass protoClass_;
 
   enum { NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
 
@@ -251,11 +253,11 @@ class SetObject : public NativeObject {
       OrderedHashSet<Value, UnbarrieredHashPolicy, ZoneAllocPolicy>;
   friend class OrderedHashTableRef<SetObject>;
 
-  static void sweepAfterMinorGC(FreeOp* fop, SetObject* setobj);
+  static void sweepAfterMinorGC(JSFreeOp* fop, SetObject* setobj);
 
  private:
   static const ClassSpec classSpec_;
-  static const ClassOps classOps_;
+  static const JSClassOps classOps_;
 
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
@@ -265,7 +267,7 @@ class SetObject : public NativeObject {
   static ValueSet& extract(HandleObject o);
   static ValueSet& extract(const CallArgs& args);
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
 
   static bool is(HandleValue v);
@@ -292,7 +294,7 @@ class SetObject : public NativeObject {
 
 class SetIteratorObject : public NativeObject {
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   enum { TargetSlot, RangeSlot, KindSlot, SlotCount };
 
@@ -309,7 +311,7 @@ class SetIteratorObject : public NativeObject {
   static SetIteratorObject* create(JSContext* cx, HandleObject setobj,
                                    ValueSet* data,
                                    SetObject::IteratorKind kind);
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   static MOZ_MUST_USE bool next(Handle<SetIteratorObject*> setIterator,

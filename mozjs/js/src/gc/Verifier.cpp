@@ -4,9 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "gc/Verifier.h"
+
 #include "mozilla/DebugOnly.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Sprintf.h"
+
+#include <algorithm>
 
 #ifdef MOZ_VALGRIND
 #  include <valgrind/memcheck.h>
@@ -86,7 +90,7 @@ typedef HashMap<void*, VerifyNode*, DefaultHasher<void*>, SystemAllocPolicy>
 class js::VerifyPreTracer final : public JS::CallbackTracer {
   JS::AutoDisableGenerationalGC noggc;
 
-  void onChild(const JS::GCCellPtr& thing) override;
+  bool onChild(const JS::GCCellPtr& thing) override;
 
  public:
   /* The gcNumber when the verification began. */
@@ -119,18 +123,18 @@ class js::VerifyPreTracer final : public JS::CallbackTracer {
  * This function builds up the heap snapshot by adding edges to the current
  * node.
  */
-void VerifyPreTracer::onChild(const JS::GCCellPtr& thing) {
+bool VerifyPreTracer::onChild(const JS::GCCellPtr& thing) {
   MOZ_ASSERT(!IsInsideNursery(thing.asCell()));
 
   // Skip things in other runtimes.
   if (thing.asCell()->asTenured().runtimeFromAnyThread() != runtime()) {
-    return;
+    return true;
   }
 
   edgeptr += sizeof(EdgeValue);
   if (edgeptr >= term) {
     edgeptr = term;
-    return;
+    return true;
   }
 
   VerifyNode* node = curnode;
@@ -140,6 +144,7 @@ void VerifyPreTracer::onChild(const JS::GCCellPtr& thing) {
   node->edges[i].kind = thing.kind();
   node->edges[i].label = contextName();
   node->count++;
+  return true;
 }
 
 static VerifyNode* MakeNode(VerifyPreTracer* trc, void* thing,
@@ -197,7 +202,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
   AutoPrepareForTracing prep(cx);
 
   {
-    AutoLockGC lock(cx->runtime());
+    AutoLockGC lock(this);
     for (auto chunk = allNonEmptyChunks(lock); !chunk.done(); chunk.next()) {
       chunk->bitmap.clear();
     }
@@ -216,6 +221,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
   /* Create the root node. */
   trc->curnode = MakeNode(trc, nullptr, JS::TraceKind(0));
 
+  MOZ_ASSERT(incrementalState == State::NotActive);
   incrementalState = State::MarkRoots;
 
   /* Make all the roots be edges emanating from the root node. */
@@ -248,7 +254,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
   incrementalState = State::Mark;
   marker.start();
 
-  for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
+  for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
     MOZ_ASSERT(!zone->usedByHelperThread());
     zone->setNeedsIncrementalBarrier(true);
     zone->arenas.clearFreeLists();
@@ -266,11 +272,11 @@ static bool IsMarkedOrAllocated(TenuredCell* cell) {
   return cell->isMarkedAny();
 }
 
-struct CheckEdgeTracer : public JS::CallbackTracer {
+struct CheckEdgeTracer final : public JS::CallbackTracer {
   VerifyNode* node;
   explicit CheckEdgeTracer(JSRuntime* rt)
       : JS::CallbackTracer(rt), node(nullptr) {}
-  void onChild(const JS::GCCellPtr& thing) override;
+  bool onChild(const JS::GCCellPtr& thing) override;
 };
 
 static const uint32_t MAX_VERIFIER_EDGES = 1000;
@@ -282,24 +288,25 @@ static const uint32_t MAX_VERIFIER_EDGES = 1000;
  * non-nullptr edges (i.e., the ones from the original snapshot that must have
  * been modified) must point to marked objects.
  */
-void CheckEdgeTracer::onChild(const JS::GCCellPtr& thing) {
+bool CheckEdgeTracer::onChild(const JS::GCCellPtr& thing) {
   // Skip things in other runtimes.
   if (thing.asCell()->asTenured().runtimeFromAnyThread() != runtime()) {
-    return;
+    return true;
   }
 
   /* Avoid n^2 behavior. */
   if (node->count > MAX_VERIFIER_EDGES) {
-    return;
+    return true;
   }
 
   for (uint32_t i = 0; i < node->count; i++) {
     if (node->edges[i].thing == thing.asCell()) {
       MOZ_ASSERT(node->edges[i].kind == thing.kind());
       node->edges[i].thing = nullptr;
-      return;
+      return true;
     }
   }
+  return true;
 }
 
 void js::gc::AssertSafeToSkipBarrier(TenuredCell* thing) {
@@ -341,7 +348,7 @@ void gc::GCRuntime::endVerifyPreBarriers() {
   bool compartmentCreated = false;
 
   /* We need to disable barriers before tracing, which may invoke barriers. */
-  for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next()) {
+  for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
     if (!zone->needsIncrementalBarrier()) {
       compartmentCreated = true;
     }
@@ -357,6 +364,7 @@ void gc::GCRuntime::endVerifyPreBarriers() {
   number++;
 
   verifyPreData = nullptr;
+  MOZ_ASSERT(incrementalState == State::Mark);
   incrementalState = State::NotActive;
 
   if (!compartmentCreated && IsIncrementalGCUnsafe(rt) == AbortReason::None &&
@@ -447,40 +455,6 @@ void js::gc::GCRuntime::finishVerifier() {
 
 #if defined(JS_GC_ZEAL) || defined(DEBUG)
 
-// Like gc::MarkColor but allows the possibility of the cell being
-// unmarked. Order is important here, with white being 'least marked'
-// and black being 'most marked'.
-enum class CellColor : uint8_t { White = 0, Gray = 1, Black = 2 };
-
-static CellColor GetCellColor(Cell* cell) {
-  if (cell->isMarkedBlack()) {
-    return CellColor::Black;
-  }
-
-  if (cell->isMarkedGray()) {
-    return CellColor::Gray;
-  }
-
-  return CellColor::White;
-}
-
-static const char* CellColorName(CellColor color) {
-  switch (color) {
-    case CellColor::White:
-      return "white";
-    case CellColor::Black:
-      return "black";
-    case CellColor::Gray:
-      return "gray";
-    default:
-      MOZ_CRASH("Unexpected cell color");
-  }
-}
-
-static const char* GetCellColorName(Cell* cell) {
-  return CellColorName(GetCellColor(cell));
-}
-
 class HeapCheckTracerBase : public JS::CallbackTracer {
  public:
   explicit HeapCheckTracerBase(JSRuntime* rt, WeakMapTraceKind weakTraceKind);
@@ -498,7 +472,7 @@ class HeapCheckTracerBase : public JS::CallbackTracer {
   size_t failures;
 
  private:
-  void onChild(const JS::GCCellPtr& thing) override;
+  bool onChild(const JS::GCCellPtr& thing) override;
 
   struct WorkItem {
     WorkItem(JS::GCCellPtr thing, const char* name, int parentIndex)
@@ -532,22 +506,22 @@ HeapCheckTracerBase::HeapCheckTracerBase(JSRuntime* rt,
 #  endif
 }
 
-void HeapCheckTracerBase::onChild(const JS::GCCellPtr& thing) {
+bool HeapCheckTracerBase::onChild(const JS::GCCellPtr& thing) {
   Cell* cell = thing.asCell();
   checkCell(cell);
 
   if (visited.lookup(cell)) {
-    return;
+    return true;
   }
 
   if (!visited.put(cell)) {
     oom = true;
-    return;
+    return true;
   }
 
   // Don't trace into GC things owned by another runtime.
   if (cell->runtimeFromAnyThread() != rt) {
-    return;
+    return true;
   }
 
   // Don't trace into GC in zones being used by helper threads.
@@ -561,13 +535,15 @@ void HeapCheckTracerBase::onChild(const JS::GCCellPtr& thing) {
   }
 
   if (zone->usedByHelperThread()) {
-    return;
+    return true;
   }
 
   WorkItem item(thing, contextName(), parentIndex);
   if (!stack.append(item)) {
     oom = true;
   }
+
+  return true;
 }
 
 bool HeapCheckTracerBase::traceHeap(AutoTraceSession& session) {
@@ -596,7 +572,7 @@ void HeapCheckTracerBase::dumpCellInfo(Cell* cell) {
   JSObject* obj =
       kind == JS::TraceKind::Object ? static_cast<JSObject*>(cell) : nullptr;
 
-  fprintf(stderr, "%s %s", GetCellColorName(cell), GCTraceKindToAscii(kind));
+  fprintf(stderr, "%s %s", cell->color().name(), GCTraceKindToAscii(kind));
   if (obj) {
     fprintf(stderr, " %s", obj->getClass()->name);
   }
@@ -763,7 +739,7 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
                                       Cell* value) {
   bool ok = true;
 
-  DebugOnly<Zone*> zone = map->zone();
+  Zone* zone = map->zone();
   MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
   MOZ_ASSERT(zone->isGCMarking());
 
@@ -778,25 +754,26 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
   Zone* valueZone = GetCellZoneFromAnyThread(value);
   MOZ_ASSERT(valueZone == zone || valueZone->isAtomsZone());
 
-  CellColor mapColor =
-      map->markColor == MarkColor::Black ? CellColor::Black : CellColor::Gray;
-  if (object && GetCellColor(object) != mapColor) {
+  if (object && object->color() != map->mapColor) {
     fprintf(stderr, "WeakMap object is marked differently to the map\n");
     fprintf(stderr, "(map %p is %s, object %p is %s)\n", map,
-            CellColorName(mapColor), object,
-            CellColorName(GetCellColor(object)));
+            map->mapColor.name(), object, object->color().name());
     ok = false;
   }
 
-  CellColor keyColor = GetCellColor(key);
-  CellColor valueColor =
-      valueZone->isGCMarking() ? GetCellColor(value) : CellColor::Black;
+  // Values belonging to other runtimes or in uncollected zones are treated as
+  // black.
+  CellColor valueColor = CellColor::Black;
+  if (value->runtimeFromAnyThread() == zone->runtimeFromAnyThread() &&
+      valueZone->isGCMarking()) {
+    valueColor = value->color();
+  }
 
-  if (valueColor < Min(mapColor, keyColor)) {
+  if (valueColor < std::min(map->mapColor, key->color())) {
     fprintf(stderr, "WeakMap value is less marked than map and key\n");
     fprintf(stderr, "(map %p is %s, key %p is %s, value %p is %s)\n", map,
-            CellColorName(mapColor), key, CellColorName(keyColor), value,
-            CellColorName(valueColor));
+            map->mapColor.name(), key, key->color().name(), value,
+            valueColor.name());
     ok = false;
   }
 
@@ -815,17 +792,17 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
 
   CellColor delegateColor;
   if (delegate->zone()->isGCMarking() || delegate->zone()->isGCSweeping()) {
-    delegateColor = GetCellColor(delegate);
+    delegateColor = delegate->color();
   } else {
     // IsMarked() assumes cells in uncollected zones are marked.
     delegateColor = CellColor::Black;
   }
 
-  if (keyColor < Min(mapColor, delegateColor)) {
-    fprintf(stderr, "WeakMap key is less marked than map and delegate\n");
+  if (key->color() < std::min(map->mapColor, delegateColor)) {
+    fprintf(stderr, "WeakMap key is less marked than map or delegate\n");
     fprintf(stderr, "(map %p is %s, delegate %p is %s, key %p is %s)\n", map,
-            CellColorName(mapColor), delegate, CellColorName(delegateColor),
-            key, CellColorName(keyColor));
+            map->mapColor.name(), delegate, delegateColor.name(), key,
+            key->color().name());
     ok = false;
   }
 

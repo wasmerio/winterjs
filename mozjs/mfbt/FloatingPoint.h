@@ -278,6 +278,18 @@ static MOZ_ALWAYS_INLINE T NegativeInfinity() {
 }
 
 /**
+ * Computes the bit pattern for an infinity with the specified sign bit.
+ */
+template <typename T, int SignBit>
+struct InfinityBits {
+  using Traits = FloatingPoint<T>;
+
+  static_assert(SignBit == 0 || SignBit == 1, "bad sign bit");
+  static constexpr typename Traits::Bits value =
+      (SignBit * Traits::kSignBit) | Traits::kExponentBits;
+};
+
+/**
  * Computes the bit pattern for a NaN with the specified sign bit and
  * significand bits.
  */
@@ -491,6 +503,18 @@ static inline bool NumbersAreIdentical(T aValue1, T aValue2) {
     return IsNaN(aValue2);
   }
   return BitwiseCast<Bits>(aValue1) == BitwiseCast<Bits>(aValue2);
+}
+
+/**
+ * Return true iff |aValue| and |aValue2| are equal (ignoring sign if both are
+ * zero) or both NaN.
+ */
+template <typename T>
+static inline bool EqualOrBothNaN(T aValue1, T aValue2) {
+  if (IsNaN(aValue1)) {
+    return IsNaN(aValue2);
+  }
+  return aValue1 == aValue2;
 }
 
 namespace detail {

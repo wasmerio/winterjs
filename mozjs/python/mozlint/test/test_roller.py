@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import os
 import platform
 import signal
@@ -33,7 +31,7 @@ def test_roll_successful(lint, linters, files):
     assert len(result.issues) == 1
     assert result.failed == set([])
 
-    path = result.issues.keys()[0]
+    path = list(result.issues.keys())[0]
     assert os.path.basename(path) == 'foobar.js'
 
     errors = result.issues[path]
@@ -148,7 +146,7 @@ def test_roll_warnings(lint, linters, files):
 
 
 def fake_run_worker(config, paths, **lintargs):
-    result = ResultSummary()
+    result = ResultSummary(lintargs['root'])
     result.issues['count'].append(1)
     return result
 
@@ -188,6 +186,37 @@ def test_max_paths_per_job(monkeypatch, lint, linters, files, max_paths, expecte
 
 
 @pytest.mark.skipif(platform.system() == 'Windows',
+                    reason="monkeypatch issues with multiprocessing on Windows")
+@pytest.mark.parametrize('num_procs', [1, 4, 8, 16])
+def test_number_of_jobs_global(monkeypatch, lint, linters, files, num_procs):
+    monkeypatch.setattr(sys.modules[lint.__module__], '_run_worker', fake_run_worker)
+
+    linters = linters('global')
+    lint.read(linters)
+    num_jobs = len(lint.roll(files, num_procs=num_procs).issues['count'])
+
+    assert num_jobs == 1
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
+                    reason="monkeypatch issues with multiprocessing on Windows")
+@pytest.mark.parametrize('max_paths', [1, 4, 16])
+def test_max_paths_per_job_global(monkeypatch, lint, linters, files, max_paths):
+    monkeypatch.setattr(sys.modules[lint.__module__], '_run_worker', fake_run_worker)
+
+    files = files[:4]
+    assert len(files) == 4
+
+    linters = linters('global')[:1]
+    assert len(linters) == 1
+
+    lint.MAX_PATHS_PER_JOB = max_paths
+    lint.read(linters)
+    num_jobs = len(lint.roll(files, num_procs=2).issues['count'])
+    assert num_jobs == 1
+
+
+@pytest.mark.skipif(platform.system() == 'Windows',
                     reason="signal.CTRL_C_EVENT isn't causing a KeyboardInterrupt on Windows")
 def test_keyboard_interrupt():
     # We use two linters so we'll have two jobs. One (string.yml) will complete
@@ -195,12 +224,17 @@ def test_keyboard_interrupt():
     # will be be stuck blocking on the ProcessPoolExecutor._call_queue when the
     # signal arrives and the other still be doing work.
     cmd = [sys.executable, 'runcli.py', '-l=string', '-l=slow']
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=here)
+    env = os.environ.copy()
+    env['PYTHONPATH'] = os.pathsep.join(sys.path)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            cwd=here, env=env, universal_newlines=True)
     time.sleep(1)
     proc.send_signal(signal.SIGINT)
 
     out = proc.communicate()[0]
+    print(out)
     assert 'warning: not all files were linted' in out
+    assert '2 problems' in out
     assert 'Traceback' not in out
 
 

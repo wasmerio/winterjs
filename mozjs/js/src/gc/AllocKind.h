@@ -45,12 +45,16 @@ namespace gc {
     D(OBJECT0_BACKGROUND,  Object,       JSObject,          JSObject_Slots0,   true,   true,   true) \
     D(OBJECT2,             Object,       JSObject,          JSObject_Slots2,   false,  false,  true) \
     D(OBJECT2_BACKGROUND,  Object,       JSObject,          JSObject_Slots2,   true,   true,   true) \
+    D(ARRAYBUFFER4,        Object,       JSObject,          JSObject_Slots4,   true,   true,   true) \
     D(OBJECT4,             Object,       JSObject,          JSObject_Slots4,   false,  false,  true) \
     D(OBJECT4_BACKGROUND,  Object,       JSObject,          JSObject_Slots4,   true,   true,   true) \
+    D(ARRAYBUFFER8,        Object,       JSObject,          JSObject_Slots8,   true,   true,   true) \
     D(OBJECT8,             Object,       JSObject,          JSObject_Slots8,   false,  false,  true) \
     D(OBJECT8_BACKGROUND,  Object,       JSObject,          JSObject_Slots8,   true,   true,   true) \
+    D(ARRAYBUFFER12,       Object,       JSObject,          JSObject_Slots12,  true,   true,   true) \
     D(OBJECT12,            Object,       JSObject,          JSObject_Slots12,  false,  false,  true) \
     D(OBJECT12_BACKGROUND, Object,       JSObject,          JSObject_Slots12,  true,   true,   true) \
+    D(ARRAYBUFFER16,       Object,       JSObject,          JSObject_Slots16,  true,   true,   true) \
     D(OBJECT16,            Object,       JSObject,          JSObject_Slots16,  false,  false,  true) \
     D(OBJECT16_BACKGROUND, Object,       JSObject,          JSObject_Slots16,  true,   true,   true)
 
@@ -63,8 +67,8 @@ namespace gc {
     D(BASE_SHAPE,          BaseShape,    js::BaseShape,     js::BaseShape,     true,   false,  true) \
     D(OBJECT_GROUP,        ObjectGroup,  js::ObjectGroup,   js::ObjectGroup,   true,   false,  false) \
     D(EXTERNAL_STRING,     String,       JSExternalString,  JSExternalString,  true,   false,  true) \
-    D(FAT_INLINE_ATOM,     String,       js::FatInlineAtom, js::FatInlineAtom, true,   false,  true) \
-    D(ATOM,                String,       js::NormalAtom,    js::NormalAtom,    true,   false,  true) \
+    D(FAT_INLINE_ATOM,     String,       js::FatInlineAtom, js::FatInlineAtom, true,   false,  false) \
+    D(ATOM,                String,       js::NormalAtom,    js::NormalAtom,    true,   false,  false) \
     D(SYMBOL,              Symbol,       JS::Symbol,        JS::Symbol,        true,   false,  false) \
     D(BIGINT,              BigInt,       JS::BigInt,        JS::BigInt,        true,   false,  true) \
     D(JITCODE,             JitCode,      js::jit::JitCode,  js::jit::JitCode,  false,  false,  false) \
@@ -201,12 +205,16 @@ static inline bool IsBackgroundFinalized(AllocKind kind) {
   static const bool map[] = {
 #define DEFINE_BACKGROUND_FINALIZED(_1, _2, _3, _4, bgFinal, _5, _6) bgFinal,
       FOR_EACH_ALLOCKIND(DEFINE_BACKGROUND_FINALIZED)
-#undef DEFINE_BG_FINALIZE
+#undef DEFINE_BACKGROUND_FINALIZED
   };
 
   static_assert(mozilla::ArrayLength(map) == size_t(AllocKind::LIMIT),
                 "IsBackgroundFinalized sanity check");
   return map[size_t(kind)];
+}
+
+static inline bool IsForegroundFinalized(AllocKind kind) {
+  return !IsBackgroundFinalized(kind);
 }
 
 static inline bool IsCompactingKind(AllocKind kind) {

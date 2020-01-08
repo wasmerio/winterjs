@@ -13,12 +13,12 @@
 
 #include "builtin/ModuleObject.h"
 #include "gc/Allocator.h"
-#include "gc/FreeOp.h"
 #include "util/StringBuffer.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/JSScript.h"
 #include "wasm/WasmInstance.h"
 
+#include "gc/FreeOp-inl.h"
 #include "gc/ObjectKind-inl.h"
 #include "vm/Shape-inl.h"
 
@@ -61,6 +61,8 @@ const char* js::ScopeKindString(ScopeKind kind) {
       return "named lambda";
     case ScopeKind::StrictNamedLambda:
       return "strict named lambda";
+    case ScopeKind::FunctionLexical:
+      return "function lexical";
     case ScopeKind::With:
       return "with";
     case ScopeKind::Eval:
@@ -81,7 +83,7 @@ const char* js::ScopeKindString(ScopeKind kind) {
   MOZ_CRASH("Bad ScopeKind");
 }
 
-static Shape* EmptyEnvironmentShape(JSContext* cx, const Class* cls,
+static Shape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
                                     uint32_t numSlots,
                                     uint32_t baseShapeFlags) {
   // Put as many slots into the object header as possible.
@@ -115,7 +117,7 @@ static Shape* NextEnvironmentShape(JSContext* cx, HandleAtom name,
 }
 
 static Shape* CreateEnvironmentShape(JSContext* cx, BindingIter& bi,
-                                     const Class* cls, uint32_t numSlots,
+                                     const JSClass* cls, uint32_t numSlots,
                                      uint32_t baseShapeFlags) {
   RootedShape shape(cx,
                     EmptyEnvironmentShape(cx, cls, numSlots, baseShapeFlags));
@@ -141,6 +143,11 @@ static Shape* CreateEnvironmentShape(JSContext* cx, BindingIter& bi,
   return shape;
 }
 
+template <class Data>
+inline size_t SizeOfAllocatedData(Data* data) {
+  return SizeOfData<Data>(data->length);
+}
+
 template <typename ConcreteScope>
 static UniquePtr<typename ConcreteScope::Data> CopyScopeData(
     JSContext* cx, typename ConcreteScope::Data* data) {
@@ -154,7 +161,7 @@ static UniquePtr<typename ConcreteScope::Data> CopyScopeData(
     }
   }
 
-  size_t size = SizeOfData<typename ConcreteScope::Data>(data->length);
+  size_t size = SizeOfAllocatedData(data);
   void* bytes = cx->pod_malloc<char>(size);
   if (!bytes) {
     return nullptr;
@@ -170,7 +177,7 @@ static UniquePtr<typename ConcreteScope::Data> CopyScopeData(
 template <typename ConcreteScope>
 static bool PrepareScopeData(
     JSContext* cx, BindingIter& bi,
-    Handle<UniquePtr<typename ConcreteScope::Data>> data, const Class* cls,
+    Handle<UniquePtr<typename ConcreteScope::Data>> data, const JSClass* cls,
     uint32_t baseShapeFlags, MutableHandleShape envShape) {
   // Copy a fresh BindingIter for use below.
   BindingIter freshBi(bi);
@@ -334,6 +341,10 @@ template <typename ConcreteScope>
 inline void Scope::initData(
     MutableHandle<UniquePtr<typename ConcreteScope::Data>> data) {
   MOZ_ASSERT(!data_);
+
+  AddCellMemory(this, SizeOfAllocatedData(data.get().get()),
+                MemoryUse::ScopeData);
+
   data_ = data.get().release();
 }
 
@@ -408,7 +419,8 @@ Scope* Scope::clone(JSContext* cx, HandleScope scope, HandleScope enclosing) {
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
     case ScopeKind::NamedLambda:
-    case ScopeKind::StrictNamedLambda: {
+    case ScopeKind::StrictNamedLambda:
+    case ScopeKind::FunctionLexical: {
       Rooted<UniquePtr<LexicalScope::Data>> dataClone(cx);
       dataClone =
           CopyScopeData<LexicalScope>(cx, &scope->as<LexicalScope>().data());
@@ -451,14 +463,12 @@ Scope* Scope::clone(JSContext* cx, HandleScope scope, HandleScope enclosing) {
   return nullptr;
 }
 
-void Scope::finalize(FreeOp* fop) {
+void Scope::finalize(JSFreeOp* fop) {
   MOZ_ASSERT(CurrentThreadIsGCSweeping());
-  if (data_) {
-    // We don't need to call the destructors for any GCPtrs in Data because
-    // this only happens during a GC.
-    fop->free_(data_);
-    data_ = nullptr;
-  }
+  applyScopeDataTyped([this, fop](auto data) {
+    fop->delete_(this, data, SizeOfAllocatedData(data), MemoryUse::ScopeData);
+  });
+  data_ = nullptr;
 }
 
 size_t Scope::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -483,6 +493,7 @@ uint32_t LexicalScope::firstFrameSlot() const {
     case ScopeKind::Lexical:
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
+    case ScopeKind::FunctionLexical:
       // For intra-frame scopes, find the enclosing scope's next frame slot.
       return nextFrameSlot(enclosing());
     case ScopeKind::NamedLambda:
@@ -508,6 +519,7 @@ uint32_t LexicalScope::nextFrameSlot(Scope* scope) {
       case ScopeKind::Lexical:
       case ScopeKind::SimpleCatch:
       case ScopeKind::Catch:
+      case ScopeKind::FunctionLexical:
         return si.scope()->as<LexicalScope>().nextFrameSlot();
       case ScopeKind::NamedLambda:
       case ScopeKind::StrictNamedLambda:
@@ -582,7 +594,7 @@ LexicalScope* LexicalScope::createWithData(JSContext* cx, ScopeKind kind,
 
 /* static */
 Shape* LexicalScope::getEmptyExtensibleEnvironmentShape(JSContext* cx) {
-  const Class* cls = &LexicalEnvironmentObject::class_;
+  const JSClass* cls = &LexicalEnvironmentObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls), BaseShape::DELEGATE);
 }
 
@@ -648,10 +660,6 @@ static inline uint32_t FunctionScopeEnvShapeFlags(bool hasParameterExprs) {
   return BaseShape::QUALIFIED_VAROBJ | BaseShape::DELEGATE;
 }
 
-Zone* FunctionScope::Data::zone() const {
-  return canonicalFunction ? canonicalFunction->zone() : nullptr;
-}
-
 /* static */
 FunctionScope* FunctionScope::create(JSContext* cx, Handle<Data*> dataArg,
                                      bool hasParameterExprs,
@@ -666,14 +674,17 @@ FunctionScope* FunctionScope::create(JSContext* cx, Handle<Data*> dataArg,
     return nullptr;
   }
 
-  return createWithData(cx, &data, hasParameterExprs, needsEnvironment, fun,
-                        enclosing);
+  return createWithData(
+      cx, &data, hasParameterExprs,
+      dataArg ? dataArg->isFieldInitializer : IsFieldInitializer::No,
+      needsEnvironment, fun, enclosing);
 }
 
 /* static */
 FunctionScope* FunctionScope::createWithData(
     JSContext* cx, MutableHandle<UniquePtr<Data>> data, bool hasParameterExprs,
-    bool needsEnvironment, HandleFunction fun, HandleScope enclosing) {
+    IsFieldInitializer isFieldInitializer, bool needsEnvironment,
+    HandleFunction fun, HandleScope enclosing) {
   MOZ_ASSERT(data);
   MOZ_ASSERT(fun->isTenured());
 
@@ -689,6 +700,7 @@ FunctionScope* FunctionScope::createWithData(
     return nullptr;
   }
 
+  data->isFieldInitializer = isFieldInitializer;
   data->hasParameterExprs = hasParameterExprs;
   data->canonicalFunction.init(fun);
 
@@ -722,7 +734,7 @@ bool FunctionScope::isSpecialName(JSContext* cx, JSAtom* name) {
 /* static */
 Shape* FunctionScope::getEmptyEnvironmentShape(JSContext* cx,
                                                bool hasParameterExprs) {
-  const Class* cls = &CallObject::class_;
+  const JSClass* cls = &CallObject::class_;
   uint32_t shapeFlags = FunctionScopeEnvShapeFlags(hasParameterExprs);
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls), shapeFlags);
 }
@@ -773,14 +785,18 @@ XDRResult FunctionScope::XDR(XDRState<mode>* xdr, HandleFunction fun,
 
     uint8_t needsEnvironment;
     uint8_t hasParameterExprs;
+    uint8_t isFieldInitializer;
     uint32_t nextFrameSlot;
     if (mode == XDR_ENCODE) {
       needsEnvironment = scope->hasEnvironment();
       hasParameterExprs = data->hasParameterExprs;
+      isFieldInitializer =
+          (data->isFieldInitializer == IsFieldInitializer::Yes ? 1 : 0);
       nextFrameSlot = data->nextFrameSlot;
     }
     MOZ_TRY(xdr->codeUint8(&needsEnvironment));
     MOZ_TRY(xdr->codeUint8(&hasParameterExprs));
+    MOZ_TRY(xdr->codeUint8(&isFieldInitializer));
     MOZ_TRY(xdr->codeUint16(&data->nonPositionalFormalStart));
     MOZ_TRY(xdr->codeUint16(&data->varStart));
     MOZ_TRY(xdr->codeUint32(&nextFrameSlot));
@@ -792,8 +808,10 @@ XDRResult FunctionScope::XDR(XDRState<mode>* xdr, HandleFunction fun,
         MOZ_ASSERT(!data->nextFrameSlot);
       }
 
-      scope.set(createWithData(cx, &uniqueData.ref(), hasParameterExprs,
-                               needsEnvironment, fun, enclosing));
+      scope.set(createWithData(
+          cx, &uniqueData.ref(), hasParameterExprs,
+          isFieldInitializer ? IsFieldInitializer::Yes : IsFieldInitializer::No,
+          needsEnvironment, fun, enclosing));
       if (!scope) {
         return xdr->fail(JS::TranscodeResult_Throw);
       }
@@ -880,7 +898,7 @@ VarScope* VarScope::createWithData(JSContext* cx, ScopeKind kind,
 
 /* static */
 Shape* VarScope::getEmptyEnvironmentShape(JSContext* cx) {
-  const Class* cls = &VarEnvironmentObject::class_;
+  const JSClass* cls = &VarEnvironmentObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls),
                                VarScopeEnvShapeFlags);
 }
@@ -1136,7 +1154,7 @@ Scope* EvalScope::nearestVarScopeForDirectEval(Scope* scope) {
 
 /* static */
 Shape* EvalScope::getEmptyEnvironmentShape(JSContext* cx) {
-  const Class* cls = &VarEnvironmentObject::class_;
+  const JSClass* cls = &VarEnvironmentObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls),
                                EvalScopeEnvShapeFlags);
 }
@@ -1242,7 +1260,7 @@ ModuleScope* ModuleScope::createWithData(JSContext* cx,
 
 /* static */
 Shape* ModuleScope::getEmptyEnvironmentShape(JSContext* cx) {
-  const Class* cls = &ModuleEnvironmentObject::class_;
+  const JSClass* cls = &ModuleEnvironmentObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls),
                                ModuleScopeEnvShapeFlags);
 }
@@ -1331,7 +1349,7 @@ WasmInstanceScope* WasmInstanceScope::create(JSContext* cx,
 
 /* static */
 Shape* WasmInstanceScope::getEmptyEnvironmentShape(JSContext* cx) {
-  const Class* cls = &WasmInstanceEnvironmentObject::class_;
+  const JSClass* cls = &WasmInstanceEnvironmentObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls),
                                WasmInstanceEnvShapeFlags);
 }
@@ -1386,7 +1404,7 @@ WasmFunctionScope* WasmFunctionScope::create(JSContext* cx,
 
 /* static */
 Shape* WasmFunctionScope::getEmptyEnvironmentShape(JSContext* cx) {
-  const Class* cls = &WasmFunctionCallObject::class_;
+  const JSClass* cls = &WasmFunctionCallObject::class_;
   return EmptyEnvironmentShape(cx, cls, JSSLOT_FREE(cls),
                                WasmFunctionEnvShapeFlags);
 }
@@ -1403,6 +1421,7 @@ BindingIter::BindingIter(Scope* scope) {
     case ScopeKind::Lexical:
     case ScopeKind::SimpleCatch:
     case ScopeKind::Catch:
+    case ScopeKind::FunctionLexical:
       init(scope->as<LexicalScope>().data(),
            scope->as<LexicalScope>().firstFrameSlot(), 0);
       break;

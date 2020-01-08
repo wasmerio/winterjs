@@ -17,16 +17,15 @@ include('../js-cxxflags.mozbuild')
 
 
 # Generate frontend/ReservedWordsGenerated.h from frontend/ReservedWords.h
-GENERATED_FILES += ['ReservedWordsGenerated.h']
-ReservedWordsGenerated = GENERATED_FILES['ReservedWordsGenerated.h']
-ReservedWordsGenerated.script = 'GenerateReservedWords.py'
-ReservedWordsGenerated.inputs += ['ReservedWords.h']
+GeneratedFile('ReservedWordsGenerated.h', script='GenerateReservedWords.py',
+              inputs=['ReservedWords.h'])
 
 
 UNIFIED_SOURCES += [
     'BytecodeCompiler.cpp',
     'BytecodeControlStructures.cpp',
     'BytecodeEmitter.cpp',
+    'BytecodeSection.cpp',
     'CallOrNewEmitter.cpp',
     'CForEmitter.cpp',
     'DefaultEmitter.cpp',
@@ -46,8 +45,10 @@ UNIFIED_SOURCES += [
     'NameFunctions.cpp',
     'NameOpEmitter.cpp',
     'ObjectEmitter.cpp',
+    'ObjLiteral.cpp',
     'ParseContext.cpp',
     'ParseNode.cpp',
+    'ParseNodeVerify.cpp',
     'PropOpEmitter.cpp',
     'SharedContext.cpp',
     'SwitchEmitter.cpp',
@@ -75,12 +76,14 @@ if CONFIG['JS_BUILD_BINAST']:
         'BinASTRuntimeSupport.cpp',
         'BinASTToken.cpp',
         'BinASTTokenReaderBase.cpp',
+        'BinASTTokenReaderContext.cpp',
         'BinASTTokenReaderMultipart.cpp',
     ]
 
-    DIRS += [
-        'binast'
-    ]
+    if CONFIG['JS_STANDALONE']:
+        DIRS += [
+            'binast'
+        ]
 
     # Instrument BinAST files for fuzzing as we have a fuzzing target for BinAST.
     if CONFIG['FUZZING_INTERFACES'] and CONFIG['LIBFUZZER']:

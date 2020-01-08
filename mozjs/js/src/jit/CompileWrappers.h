@@ -35,15 +35,12 @@ class CompileRuntime {
   // Compilation does not occur off thread when the Gecko Profiler is enabled.
   GeckoProfilerRuntime& geckoProfiler();
 
-  bool jitSupportsFloatingPoint();
   bool hadOutOfMemory();
   bool profilingScripts();
 
   const JSAtomState& names();
   const PropertyName* emptyString();
   const StaticStrings& staticStrings();
-  const Value& NaNValue();
-  const Value& positiveInfinityValue();
   const WellKnownSymbols& wellKnownSymbols();
 
   const void* mainContextPtr();
@@ -84,7 +81,6 @@ class CompileZone {
 
   uint32_t* addressOfNurseryAllocCount();
 
-  bool nurseryExists();
   bool canNurseryAllocateStrings();
   void setMinorGCShouldCancelIonCompilations();
 };

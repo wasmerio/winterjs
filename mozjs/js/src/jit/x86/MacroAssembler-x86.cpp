@@ -15,6 +15,8 @@
 #include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/JSScript-inl.h"
@@ -629,6 +631,8 @@ void MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access,
       break;
     case Scalar::Int64:
     case Scalar::Uint8Clamped:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected type");
   }
@@ -700,6 +704,8 @@ void MacroAssembler::wasmLoadI64(const wasm::MemoryAccessDesc& access,
     case Scalar::Float64:
       MOZ_CRASH("non-int64 loads should use load()");
     case Scalar::Uint8Clamped:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected array type");
   }
@@ -738,6 +744,8 @@ void MacroAssembler::wasmStore(const wasm::MemoryAccessDesc& access,
     case Scalar::Int64:
       MOZ_CRASH("Should be handled in storeI64.");
     case Scalar::MaxTypedArrayViewType:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
       MOZ_CRASH("unexpected type");
   }
 
@@ -1233,6 +1241,17 @@ void MacroAssembler::convertInt64ToFloat32(Register64 input,
   fstp32(Operand(esp, 0));
   vmovss(Address(esp, 0), output);
   freeStack(2 * sizeof(intptr_t));
+}
+
+void MacroAssembler::PushBoxed(FloatRegister reg) { Push(reg); }
+
+CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
+  return movWithPatch(ImmPtr(nullptr), dest);
+}
+
+void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
+                                          CodeLocationLabel target) {
+  PatchDataWithValueCheck(loc, ImmPtr(target.raw()), ImmPtr(nullptr));
 }
 
 //}}} check_macroassembler_style

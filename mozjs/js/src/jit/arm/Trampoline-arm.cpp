@@ -14,11 +14,10 @@
 #  include "jit/PerfSpewer.h"
 #endif
 #include "jit/VMFunctions.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/Realm.h"
 
 #include "jit/MacroAssembler-inl.h"
-#include "jit/SharedICHelpers-inl.h"
-#include "jit/VMFunctionList-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -236,7 +235,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     // 8, so we add the size of 2 instructions to skip the instructions
     // emitted by storePtr and jump(&skipJump).
     {
-      AutoForbidPools afp(&masm, 5);
+      AutoForbidPoolsAndNops afp(&masm, 5);
       Label skipJump;
       masm.mov(pc, scratch);
       masm.addPtr(Imm32(2 * sizeof(uint32_t)), scratch);
@@ -685,7 +684,7 @@ JitRuntime::BailoutTable JitRuntime::generateBailoutTable(MacroAssembler& masm,
   {
     // Emit the table without any pools being inserted.
     Label bailout;
-    AutoForbidPools afp(&masm, BAILOUT_TABLE_SIZE);
+    AutoForbidPoolsAndNops afp(&masm, BAILOUT_TABLE_SIZE);
     for (size_t i = 0; i < BAILOUT_TABLE_SIZE; i++) {
       masm.ma_bl(&bailout);
     }
@@ -868,7 +867,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
       break;
 
     case Type_Double:
-      if (cx->runtime()->jitSupportsFloatingPoint) {
+      if (JitOptions.supportsFloatingPoint) {
         masm.loadDouble(Address(sp, 0), ReturnDoubleReg);
       } else {
         masm.assumeUnreachable(
@@ -920,7 +919,7 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.pop(temp1);
 
   LiveRegisterSet save;
-  if (cx->runtime()->jitSupportsFloatingPoint) {
+  if (JitOptions.supportsFloatingPoint) {
     save.set() =
         RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
                     FloatRegisterSet(FloatRegisters::VolatileDoubleMask));
@@ -946,69 +945,6 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.ret();
 
   return offset;
-}
-
-JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx) {
-  StackMacroAssembler masm;
-
-  Register scratch1 = r0;
-  Register scratch2 = r1;
-
-  // Load BaselineFrame pointer in scratch1.
-  masm.mov(r11, scratch1);
-  masm.subPtr(Imm32(BaselineFrame::Size()), scratch1);
-
-  // Enter a stub frame and call the HandleDebugTrap VM function. Ensure the
-  // stub frame has a nullptr ICStub pointer, since this pointer is marked
-  // during GC.
-  masm.movePtr(ImmPtr(nullptr), ICStubReg);
-  EmitBaselineEnterStubFrame(masm, scratch2);
-
-  using Fn = bool (*)(JSContext*, BaselineFrame*, uint8_t*, bool*);
-  VMFunctionId id = VMFunctionToId<Fn, jit::HandleDebugTrap>::id;
-  TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
-
-  masm.push(lr);
-  masm.push(scratch1);
-  EmitBaselineCallVM(code, masm);
-
-  EmitBaselineLeaveStubFrame(masm);
-
-  // If the stub returns |true|, we have to perform a forced return (return
-  // from the JS frame). If the stub returns |false|, just return from the
-  // trap stub so that execution continues at the current pc.
-  Label forcedReturn;
-  masm.branchTest32(Assembler::NonZero, ReturnReg, ReturnReg, &forcedReturn);
-  masm.mov(lr, pc);
-
-  masm.bind(&forcedReturn);
-  masm.loadValue(Address(r11, BaselineFrame::reverseOffsetOfReturnValue()),
-                 JSReturnOperand);
-  masm.mov(r11, sp);
-  masm.pop(r11);
-
-  // Before returning, if profiling is turned on, make sure that
-  // lastProfilingFrame is set to the correct caller frame.
-  {
-    Label skipProfilingInstrumentation;
-    AbsoluteAddress addressOfEnabled(
-        cx->runtime()->geckoProfiler().addressOfEnabled());
-    masm.branch32(Assembler::Equal, addressOfEnabled, Imm32(0),
-                  &skipProfilingInstrumentation);
-    masm.profilerExitFrame();
-    masm.bind(&skipProfilingInstrumentation);
-  }
-
-  masm.ret();
-
-  Linker linker(masm, "DebugTrapHandler");
-  JitCode* codeDbg = linker.newCode(cx, CodeKind::Other);
-
-#ifdef JS_ION_PERF
-  writePerfSpewerJitCodeProfile(codeDbg, "DebugTrapHandler");
-#endif
-
-  return codeDbg;
 }
 
 void JitRuntime::generateExceptionTailStub(MacroAssembler& masm, void* handler,

@@ -21,14 +21,9 @@
 #include "mozilla/ReentrancyGuard.h"
 #include "mozilla/TemplateLib.h"
 #include "mozilla/TypeTraits.h"
+#include "mozilla/Span.h"
 
 #include <new>  // for placement new
-
-/* Silence dire "bugs in previous versions of MSVC have been fixed" warnings */
-#ifdef _MSC_VER
-#  pragma warning(push)
-#  pragma warning(disable : 4345)
-#endif
 
 namespace mozilla {
 
@@ -403,7 +398,14 @@ class MOZ_NON_PARAM Vector final : private AllocPolicy {
         : CapacityAndReserved(aCapacity, aReserved) {}
     CRAndStorage() = default;
 
-    T* storage() { return nullptr; }
+    T* storage() {
+      // If this returns |nullptr|, functions like |Vector::begin()| would too,
+      // breaking callers that pass a vector's elements as pointer/length to
+      // code that bounds its operation by length but (even just as a sanity
+      // check) always wants a non-null pointer.  Fake up an aligned, non-null
+      // pointer to support these callers.
+      return reinterpret_cast<T*>(sizeof(T));
+    }
   };
 
   CRAndStorage<kInlineCapacity, 0> mTail;
@@ -522,6 +524,12 @@ class MOZ_NON_PARAM Vector final : private AllocPolicy {
     MOZ_ASSERT(!empty());
     return *(end() - 1);
   }
+
+  operator mozilla::Span<const T>() const {
+    return mozilla::MakeSpan(mBegin, mLength);
+  }
+
+  operator mozilla::Span<T>() { return mozilla::MakeSpan(mBegin, mLength); }
 
   class Range {
     friend class Vector;
@@ -788,10 +796,24 @@ class MOZ_NON_PARAM Vector final : private AllocPolicy {
 
   /**
    * Removes the elements [|aBegin|, |aEnd|), which must fall in the bounds
-   * [begin, end), shifting existing elements from |aEnd + 1| onward to aBegin's
-   * old position.
+   * [begin, end), shifting existing elements from |aEnd| onward to aBegin's old
+   * position.
    */
   void erase(T* aBegin, T* aEnd);
+
+  /**
+   * Removes all elements that satisfy the predicate, shifting existing elements
+   * lower to fill erased gaps.
+   */
+  template <typename Pred>
+  void eraseIf(Pred aPred);
+
+  /**
+   * Removes all elements that compare equal to |aU|, shifting existing elements
+   * lower to fill erased gaps.
+   */
+  template <typename U>
+  void eraseIfEqual(const U& aU);
 
   /**
    * Measure the size of the vector's heap-allocated storage.
@@ -823,7 +845,7 @@ class MOZ_NON_PARAM Vector final : private AllocPolicy {
 
 template <typename T, size_t N, class AP>
 MOZ_ALWAYS_INLINE Vector<T, N, AP>::Vector(AP aAP)
-    : AP(aAP),
+    : AP(std::move(aAP)),
       mLength(0),
       mTail(kInlineCapacity, 0)
 #ifdef DEBUG
@@ -1279,6 +1301,26 @@ inline void Vector<T, N, AP>::erase(T* aBegin, T* aEnd) {
 }
 
 template <typename T, size_t N, class AP>
+template <typename Pred>
+void Vector<T, N, AP>::eraseIf(Pred aPred) {
+  // remove_if finds the first element to be erased, and then efficiently move-
+  // assigns elements to effectively overwrite elements that satisfy the
+  // predicate. It returns the new end pointer, after which there are only
+  // moved-from elements ready to be destroyed, so we just need to shrink the
+  // vector accordingly.
+  T* newEnd = std::remove_if(begin(), end(),
+                             [&aPred](const T& aT) { return aPred(aT); });
+  MOZ_ASSERT(newEnd <= end());
+  shrinkBy(end() - newEnd);
+}
+
+template <typename T, size_t N, class AP>
+template <typename U>
+void Vector<T, N, AP>::eraseIfEqual(const U& aU) {
+  return eraseIf([&aU](const T& aT) { return aT == aU; });
+}
+
+template <typename T, size_t N, class AP>
 template <typename U>
 MOZ_ALWAYS_INLINE bool Vector<T, N, AP>::append(const U* aInsBegin,
                                                 const U* aInsEnd) {
@@ -1477,9 +1519,5 @@ inline void Vector<T, N, AP>::swap(Vector& aOther) {
 }
 
 }  // namespace mozilla
-
-#ifdef _MSC_VER
-#  pragma warning(pop)
-#endif
 
 #endif /* mozilla_Vector_h */

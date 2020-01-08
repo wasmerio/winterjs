@@ -25,16 +25,16 @@
 #include "jit/JitOptions.h"
 #include "js/BuildId.h"  // JS::BuildIdCharVector
 #include "threading/LockGuard.h"
-#include "util/NSPR.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmSerialize.h"
+#include "wasm/WasmUtility.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
-#include "vm/Debugger-inl.h"
 #include "vm/JSAtom-inl.h"
 
 using namespace js;
@@ -62,8 +62,11 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
 
   void cancel() override { cancelled_ = true; }
 
-  void execute() override {
+  void runTask() override {
     CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
+  }
+  ThreadType threadType() override {
+    return ThreadType::THREAD_TYPE_WASM_TIER2;
   }
 };
 
@@ -286,14 +289,6 @@ MutableModule Module::deserialize(const uint8_t* begin, size_t size,
     return nullptr;
   }
 
-  if (metadata->nameCustomSectionIndex) {
-    metadata->namePayload =
-        customSections[*metadata->nameCustomSectionIndex].payload;
-  } else {
-    MOZ_RELEASE_ASSERT(!metadata->moduleName);
-    MOZ_RELEASE_ASSERT(metadata->funcNames.empty());
-  }
-
   SharedCode code;
   cursor = Code::deserialize(cursor, linkData, *metadata, &code);
   if (!cursor) {
@@ -303,21 +298,30 @@ MutableModule Module::deserialize(const uint8_t* begin, size_t size,
   MOZ_RELEASE_ASSERT(cursor == begin + size);
   MOZ_RELEASE_ASSERT(!!maybeMetadata == code->metadata().isAsmJS());
 
+  if (metadata->nameCustomSectionIndex) {
+    metadata->namePayload =
+        customSections[*metadata->nameCustomSectionIndex].payload;
+  } else {
+    MOZ_RELEASE_ASSERT(!metadata->moduleName);
+    MOZ_RELEASE_ASSERT(metadata->funcNames.empty());
+  }
+
   return js_new<Module>(*code, std::move(imports), std::move(exports),
                         std::move(dataSegments), std::move(elemSegments),
-                        std::move(customSections));
+                        std::move(customSections), nullptr, nullptr, nullptr,
+                        /* loggingDeserialized = */ true);
 }
 
 void Module::serialize(const LinkData& linkData,
                        JS::OptimizedEncodingListener& listener) const {
-  Vector<uint8_t, 0, SystemAllocPolicy> bytes;
-  if (!bytes.resize(serializedSize(linkData))) {
+  auto bytes = MakeUnique<JS::OptimizedEncodingBytes>();
+  if (!bytes || !bytes->resize(serializedSize(linkData))) {
     return;
   }
 
-  serialize(linkData, bytes.begin(), bytes.length());
+  serialize(linkData, bytes->begin(), bytes->length());
 
-  listener.storeOptimizedEncoding(bytes.begin(), bytes.length());
+  listener.storeOptimizedEncoding(std::move(bytes));
 }
 
 /* virtual */
@@ -342,7 +346,8 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
 
   uint32_t cpu = ObservedCPUFeatures();
 
-  if (!buildId->reserve(buildId->length() + 10 /* "()" + 8 nibbles */)) {
+  if (!buildId->reserve(buildId->length() +
+                        12 /* "()" + 8 nibbles + "m[+-]" */)) {
     return false;
   }
 
@@ -353,103 +358,15 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
   }
   buildId->infallibleAppend(')');
 
+  buildId->infallibleAppend('m');
+  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled() ? '+' : '-');
+
   return true;
-}
-
-struct MemUnmap {
-  uint32_t size;
-  MemUnmap() : size(0) {}
-  explicit MemUnmap(uint32_t size) : size(size) {}
-  void operator()(uint8_t* p) {
-    MOZ_ASSERT(size);
-    PR_MemUnmap(p, size);
-  }
-};
-
-typedef UniquePtr<uint8_t, MemUnmap> UniqueMapping;
-
-static UniqueMapping MapFile(PRFileDesc* file, PRFileInfo* info) {
-  if (PR_GetOpenFileInfo(file, info) != PR_SUCCESS) {
-    return nullptr;
-  }
-
-  PRFileMap* map = PR_CreateFileMap(file, info->size, PR_PROT_READONLY);
-  if (!map) {
-    return nullptr;
-  }
-
-  // PRFileMap objects do not need to be kept alive after the memory has been
-  // mapped, so unconditionally close the PRFileMap, regardless of whether
-  // PR_MemMap succeeds.
-  uint8_t* memory = (uint8_t*)PR_MemMap(map, 0, info->size);
-  PR_CloseFileMap(map);
-  return UniqueMapping(memory, MemUnmap(info->size));
-}
-
-RefPtr<JS::WasmModule> wasm::DeserializeModule(PRFileDesc* bytecodeFile,
-                                               UniqueChars filename,
-                                               unsigned line) {
-  // We have to compile new code here so if we're fundamentally unable to
-  // compile, we have to fail. If you change this code, update the
-  // MutableCompileArgs setting below.
-  if (!BaselineCanCompile() && !IonCanCompile()) {
-    return nullptr;
-  }
-
-  PRFileInfo bytecodeInfo;
-  UniqueMapping bytecodeMapping = MapFile(bytecodeFile, &bytecodeInfo);
-  if (!bytecodeMapping) {
-    return nullptr;
-  }
-
-  MutableBytes bytecode = js_new<ShareableBytes>();
-  if (!bytecode ||
-      !bytecode->bytes.initLengthUninitialized(bytecodeInfo.size)) {
-    return nullptr;
-  }
-
-  memcpy(bytecode->bytes.begin(), bytecodeMapping.get(), bytecodeInfo.size);
-
-  ScriptedCaller scriptedCaller;
-  scriptedCaller.filename = std::move(filename);
-  scriptedCaller.line = line;
-
-  MutableCompileArgs args = js_new<CompileArgs>(std::move(scriptedCaller));
-  if (!args) {
-    return nullptr;
-  }
-
-  // The true answer to whether various flags are enabled is provided by
-  // the JSContext that originated the call that caused this deserialization
-  // attempt to happen. We don't have that context here, so we assume that
-  // shared memory is enabled; we will catch a wrong assumption later, during
-  // instantiation.
-  //
-  // (We would prefer to store this value with the Assumptions when
-  // serializing, and for the caller of the deserialization machinery to
-  // provide the value from the originating context.)
-  //
-  // Note this is guarded at the top of this function.
-
-  args->ionEnabled = IonCanCompile();
-  args->baselineEnabled = BaselineCanCompile();
-  args->sharedMemoryEnabled = true;
-
-  UniqueChars error;
-  UniqueCharsVector warnings;
-  SharedModule module = CompileBuffer(*args, *bytecode, &error, &warnings);
-  if (!module) {
-    return nullptr;
-  }
-
-  // The public interface is effectively const.
-  return RefPtr<JS::WasmModule>(const_cast<Module*>(module.get()));
 }
 
 /* virtual */
 void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
                            Metadata::SeenSet* seenMetadata,
-                           ShareableBytes::SeenSet* seenBytes,
                            Code::SeenSet* seenCode, size_t* code,
                            size_t* data) const {
   code_->addSizeOfMiscIfNotSeen(mallocSizeOf, seenMetadata, seenCode, code,
@@ -464,6 +381,16 @@ void Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
   if (debugUnlinkedCode_) {
     *data += debugUnlinkedCode_->sizeOfExcludingThis(mallocSizeOf);
   }
+}
+
+void Module::initGCMallocBytesExcludingCode() {
+  // The size doesn't have to be exact so use the serialization framework to
+  // calculate a value.
+  gcMallocBytesExcludingCode_ = sizeof(*this) + SerializedVectorSize(imports_) +
+                                SerializedVectorSize(exports_) +
+                                SerializedVectorSize(dataSegments_) +
+                                SerializedVectorSize(elemSegments_) +
+                                SerializedVectorSize(customSections_);
 }
 
 // Extracting machine code as JS object. The result has the "code" property, as
@@ -560,102 +487,111 @@ bool Module::extractCode(JSContext* cx, Tier tier,
   return true;
 }
 
-static uint32_t EvaluateInitExpr(HandleValVector globalImportValues,
+static uint32_t EvaluateInitExpr(const ValVector& globalImportValues,
                                  InitExpr initExpr) {
   switch (initExpr.kind()) {
     case InitExpr::Kind::Constant:
       return initExpr.val().i32();
     case InitExpr::Kind::GetGlobal:
-      return globalImportValues[initExpr.globalIndex()].get().i32();
+      return globalImportValues[initExpr.globalIndex()].i32();
   }
 
   MOZ_CRASH("bad initializer expression");
 }
 
+#ifdef DEBUG
+static bool AllSegmentsArePassive(const DataSegmentVector& vec) {
+  for (const DataSegment* seg : vec) {
+    if (seg->active()) {
+      return false;
+    }
+  }
+  return true;
+}
+#endif
+
 bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
-                          Handle<FunctionVector> funcImports,
                           HandleWasmMemoryObject memoryObj,
-                          HandleValVector globalImportValues) const {
-  MOZ_ASSERT_IF(!memoryObj, dataSegments_.empty());
+                          const ValVector& globalImportValues) const {
+  MOZ_ASSERT_IF(!memoryObj, AllSegmentsArePassive(dataSegments_));
 
   Instance& instance = instanceObj->instance();
   const SharedTableVector& tables = instance.tables();
 
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  // Bulk memory changes the error checking behavior: we may write partial data.
+  // Bulk memory changes the error checking behavior: we apply segments
+  // in-order and terminate if one has an out-of-bounds range.
+  // We enable bulk memory semantics if shared memory is enabled.
+#ifdef ENABLE_WASM_BULKMEM_OPS
+  const bool eagerBoundsCheck = false;
+#else
+  // Bulk memory must be available if shared memory is enabled.
+  const bool eagerBoundsCheck =
+      !cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
+#endif
 
-  // Perform all error checks up front so that this function does not perform
-  // partial initialization if an error is reported.
+  if (eagerBoundsCheck) {
+    // Perform all error checks up front so that this function does not perform
+    // partial initialization if an error is reported. In addition, we need to
+    // to report OOBs as a link error when bulk-memory is disabled.
 
-  for (const ElemSegment* seg : elemSegments_) {
-    if (!seg->active()) {
-      continue;
-    }
-
-    uint32_t tableLength = tables[seg->tableIndex]->length();
-    uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
-
-    if (offset > tableLength || tableLength - offset < seg->length()) {
-      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_FIT,
-                               "elem", "table");
-      return false;
-    }
-  }
-
-  if (memoryObj) {
-    uint32_t memoryLength = memoryObj->volatileMemoryLength();
-    for (const DataSegment* seg : dataSegments_) {
+    for (const ElemSegment* seg : elemSegments_) {
       if (!seg->active()) {
         continue;
       }
 
+      uint32_t tableLength = tables[seg->tableIndex]->length();
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
 
-      if (offset > memoryLength ||
-          memoryLength - offset < seg->bytes.length()) {
+      if (offset > tableLength || tableLength - offset < seg->length()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "data", "memory");
+                                 JSMSG_WASM_BAD_FIT, "elem", "table");
         return false;
+      }
+    }
+
+    if (memoryObj) {
+      uint32_t memoryLength = memoryObj->volatileMemoryLength();
+      for (const DataSegment* seg : dataSegments_) {
+        if (!seg->active()) {
+          continue;
+        }
+
+        uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
+
+        if (offset > memoryLength ||
+            memoryLength - offset < seg->bytes.length()) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_BAD_FIT, "data", "memory");
+          return false;
+        }
       }
     }
   }
 
-  // Now that initialization can't fail partway through, write data/elem
-  // segments into memories/tables.
-#endif
+  // Write data/elem segments into memories/tables.
 
   for (const ElemSegment* seg : elemSegments_) {
     if (seg->active()) {
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->length();
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      uint32_t tableLength = tables[seg->tableIndex]->length();
-      bool fail = false;
-      if (offset > tableLength) {
-        fail = true;
-        count = 0;
-      } else if (tableLength - offset < count) {
-        fail = true;
-        count = tableLength - offset;
+
+      if (!eagerBoundsCheck) {
+        uint32_t tableLength = tables[seg->tableIndex]->length();
+        if (offset > tableLength || tableLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
+          return false;
+        }
       }
-#endif
-      if (count) {
-        instance.initElems(seg->tableIndex, *seg, offset, 0, count);
+
+      if (!instance.initElems(seg->tableIndex, *seg, offset, 0, count)) {
+        return false;  // OOM
       }
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      if (fail) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "elem", "table");
-        return false;
-      }
-#endif
     }
   }
 
   if (memoryObj) {
-#ifdef ENABLE_WASM_BULKMEM_OPS
     uint32_t memoryLength = memoryObj->volatileMemoryLength();
-#endif
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -666,26 +602,15 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
 
       uint32_t offset = EvaluateInitExpr(globalImportValues, seg->offset());
       uint32_t count = seg->bytes.length();
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      bool fail = false;
-      if (offset > memoryLength) {
-        fail = true;
-        count = 0;
-      } else if (memoryLength - offset < count) {
-        fail = true;
-        count = memoryLength - offset;
+
+      if (!eagerBoundsCheck) {
+        if (offset > memoryLength || memoryLength - offset < count) {
+          JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                   JSMSG_WASM_OUT_OF_BOUNDS);
+          return false;
+        }
       }
-#endif
-      if (count) {
-        memcpy(memoryBase + offset, seg->bytes.begin(), count);
-      }
-#ifdef ENABLE_WASM_BULKMEM_OPS
-      if (fail) {
-        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                                 JSMSG_WASM_BAD_FIT, "data", "memory");
-        return false;
-      }
-#endif
+      memcpy(memoryBase + offset, seg->bytes.begin(), count);
     }
   }
 
@@ -707,7 +632,7 @@ static const Import& FindImportForFuncImport(const ImportVector& imports,
 }
 
 bool Module::instantiateFunctions(JSContext* cx,
-                                  Handle<FunctionVector> funcImports) const {
+                                  const JSFunctionVector& funcImports) const {
 #ifdef DEBUG
   for (auto t : code().tiers()) {
     MOZ_ASSERT(funcImports.length() == metadata(t).funcImports.length());
@@ -721,8 +646,8 @@ bool Module::instantiateFunctions(JSContext* cx,
   Tier tier = code().stableTier();
 
   for (size_t i = 0; i < metadata(tier).funcImports.length(); i++) {
-    HandleFunction f = funcImports[i];
-    if (!IsExportedFunction(f) || ExportedFunctionToInstance(f).isAsmJS()) {
+    JSFunction* f = funcImports[i];
+    if (!IsWasmExportedFunction(f)) {
       continue;
     }
 
@@ -803,7 +728,7 @@ bool Module::instantiateMemory(JSContext* cx,
                                MutableHandleWasmMemoryObject memory) const {
   if (!metadata().usesMemory()) {
     MOZ_ASSERT(!memory);
-    MOZ_ASSERT(dataSegments_.empty());
+    MOZ_ASSERT(AllSegmentsArePassive(dataSegments_));
     return true;
   }
 
@@ -841,6 +766,8 @@ bool Module::instantiateMemory(JSContext* cx,
       return false;
     }
   }
+
+  MOZ_RELEASE_ASSERT(memory->isHuge() == metadata().omitsBoundsChecks);
 
   return true;
 }
@@ -904,7 +831,7 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
 }
 
 bool Module::instantiateTables(JSContext* cx,
-                               WasmTableObjectVector& tableImports,
+                               const WasmTableObjectVector& tableImports,
                                MutableHandle<WasmTableObjectVector> tableObjs,
                                SharedTableVector* tables) const {
   uint32_t tableIndex = 0;
@@ -925,7 +852,7 @@ bool Module::instantiateTables(JSContext* cx,
   return true;
 }
 
-static void ExtractGlobalValue(HandleValVector globalImportValues,
+static void ExtractGlobalValue(const ValVector& globalImportValues,
                                uint32_t globalIndex, const GlobalDesc& global,
                                MutableHandleVal result) {
   switch (global.kind()) {
@@ -954,7 +881,7 @@ static void ExtractGlobalValue(HandleValVector globalImportValues,
 }
 
 static bool EnsureGlobalObject(JSContext* cx,
-                               HandleValVector globalImportValues,
+                               const ValVector& globalImportValues,
                                size_t globalIndex, const GlobalDesc& global,
                                WasmGlobalObjectVector& globalObjs) {
   if (globalIndex < globalObjs.length() && globalObjs[globalIndex]) {
@@ -980,7 +907,7 @@ static bool EnsureGlobalObject(JSContext* cx,
 }
 
 bool Module::instantiateGlobals(JSContext* cx,
-                                HandleValVector globalImportValues,
+                                const ValVector& globalImportValues,
                                 WasmGlobalObjectVector& globalObjs) const {
   // If there are exported globals that aren't in globalObjs because they
   // originate in this module or because they were immutable imports that came
@@ -1083,10 +1010,10 @@ SharedCode Module::getDebugEnabledCode() const {
 
 static bool GetFunctionExport(JSContext* cx,
                               HandleWasmInstanceObject instanceObj,
-                              Handle<FunctionVector> funcImports,
+                              const JSFunctionVector& funcImports,
                               const Export& exp, MutableHandleValue val) {
   if (exp.funcIndex() < funcImports.length() &&
-      IsExportedWasmFunction(funcImports[exp.funcIndex()])) {
+      IsWasmExportedFunction(funcImports[exp.funcIndex()])) {
     val.setObject(*funcImports[exp.funcIndex()]);
     return true;
   }
@@ -1103,7 +1030,7 @@ static bool GetFunctionExport(JSContext* cx,
 
 static bool CreateExportObject(JSContext* cx,
                                HandleWasmInstanceObject instanceObj,
-                               Handle<FunctionVector> funcImports,
+                               const JSFunctionVector& funcImports,
                                const WasmTableObjectVector& tableObjs,
                                HandleWasmMemoryObject memoryObj,
                                const WasmGlobalObjectVector& globalObjs,
@@ -1175,7 +1102,8 @@ static bool CreateExportObject(JSContext* cx,
 #ifdef ENABLE_WASM_GC
 static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
                             const char* format, uint32_t fieldNo,
-                            AutoIdVector* ids, AutoValueVector* fieldTypeObjs,
+                            MutableHandleIdVector ids,
+                            MutableHandleValueVector fieldTypeObjs,
                             Vector<StructFieldProps>* fieldProps) {
   char buf[20];
   sprintf(buf, format, fieldNo);
@@ -1215,6 +1143,7 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
       t = GlobalObject::getOrCreateReferenceTypeDescr(
           cx, cx->global(), ReferenceType::TYPE_OBJECT);
       break;
+    case ValType::FuncRef:
     case ValType::AnyRef:
       t = GlobalObject::getOrCreateReferenceTypeDescr(
           cx, cx->global(), ReferenceType::TYPE_WASM_ANYREF);
@@ -1224,11 +1153,11 @@ static bool MakeStructField(JSContext* cx, const ValType& v, bool isMutable,
   }
   MOZ_ASSERT(t != nullptr);
 
-  if (!ids->append(id)) {
+  if (!ids.append(id)) {
     return false;
   }
 
-  if (!fieldTypeObjs->append(ObjectValue(*t))) {
+  if (!fieldTypeObjs.append(ObjectValue(*t))) {
     return false;
   }
 
@@ -1252,7 +1181,7 @@ bool Module::makeStructTypeDescrs(
   MOZ_CRASH("Should not have seen any struct types");
 #else
 
-#  ifndef ENABLE_TYPED_OBJECTS
+#  ifndef JS_HAS_TYPED_OBJECTS
 #    error "GC types require TypedObject"
 #  endif
 
@@ -1271,8 +1200,8 @@ bool Module::makeStructTypeDescrs(
            .toObject());
 
   for (const StructType& structType : structTypes()) {
-    AutoIdVector ids(cx);
-    AutoValueVector fieldTypeObjs(cx);
+    RootedIdVector ids(cx);
+    RootedValueVector fieldTypeObjs(cx);
     Vector<StructFieldProps> fieldProps(cx);
     bool allowConstruct = true;
 
@@ -1335,20 +1264,16 @@ bool Module::makeStructTypeDescrs(
 #endif
 }
 
-bool Module::instantiate(JSContext* cx, Handle<FunctionVector> funcImports,
-                         WasmTableObjectVector& tableImports,
-                         HandleWasmMemoryObject memoryImport,
-                         HandleValVector globalImportValues,
-                         WasmGlobalObjectVector& globalObjs,
+bool Module::instantiate(JSContext* cx, ImportValues& imports,
                          HandleObject instanceProto,
                          MutableHandleWasmInstanceObject instance) const {
   MOZ_RELEASE_ASSERT(cx->wasmHaveSignalHandlers);
 
-  if (!instantiateFunctions(cx, funcImports)) {
+  if (!instantiateFunctions(cx, imports.funcs)) {
     return false;
   }
 
-  RootedWasmMemoryObject memory(cx, memoryImport);
+  RootedWasmMemoryObject memory(cx, imports.memory);
   if (!instantiateMemory(cx, &memory)) {
     return false;
   }
@@ -1358,11 +1283,11 @@ bool Module::instantiate(JSContext* cx, Handle<FunctionVector> funcImports,
 
   Rooted<WasmTableObjectVector> tableObjs(cx);
   SharedTableVector tables;
-  if (!instantiateTables(cx, tableImports, &tableObjs, &tables)) {
+  if (!instantiateTables(cx, imports.tables, &tableObjs, &tables)) {
     return false;
   }
 
-  if (!instantiateGlobals(cx, globalImportValues, globalObjs)) {
+  if (!instantiateGlobals(cx, imports.globalValues, imports.globalObjs)) {
     return false;
   }
 
@@ -1398,15 +1323,15 @@ bool Module::instantiate(JSContext* cx, Handle<FunctionVector> funcImports,
 
   instance.set(WasmInstanceObject::create(
       cx, code, dataSegments_, elemSegments_, std::move(tlsData), memory,
-      std::move(tables), std::move(structTypeDescrs.get()), funcImports,
-      metadata().globals, globalImportValues, globalObjs, instanceProto,
-      std::move(maybeDebug)));
+      std::move(tables), std::move(structTypeDescrs.get()), imports.funcs,
+      metadata().globals, imports.globalValues, imports.globalObjs,
+      instanceProto, std::move(maybeDebug)));
   if (!instance) {
     return false;
   }
 
-  if (!CreateExportObject(cx, instance, funcImports, tableObjs.get(), memory,
-                          globalObjs, exports_)) {
+  if (!CreateExportObject(cx, instance, imports.funcs, tableObjs.get(), memory,
+                          imports.globalObjs, exports_)) {
     return false;
   }
 
@@ -1423,7 +1348,7 @@ bool Module::instantiate(JSContext* cx, Handle<FunctionVector> funcImports,
   // constructed since this can make the instance live to content (even if the
   // start function fails).
 
-  if (!initSegments(cx, instance, funcImports, memory, globalImportValues)) {
+  if (!initSegments(cx, instance, memory, imports.globalValues)) {
     return false;
   }
 

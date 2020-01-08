@@ -22,8 +22,8 @@ class SavedFrame : public NativeObject {
   static const ClassSpec classSpec_;
 
  public:
-  static const Class class_;
-  static const Class protoClass_;
+  static const JSClass class_;
+  static const JSClass protoClass_;
   static const JSPropertySpec protoAccessors[];
   static const JSFunctionSpec protoFunctions[];
   static const JSFunctionSpec staticFunctions[];
@@ -41,7 +41,7 @@ class SavedFrame : public NativeObject {
   static bool parentProperty(JSContext* cx, unsigned argc, Value* vp);
   static bool toStringMethod(JSContext* cx, unsigned argc, Value* vp);
 
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
 
   // Convenient getters for SavedFrame's reserved slots for use from C++.
   JSAtom* getSource();
@@ -106,8 +106,7 @@ class SavedFrame : public NativeObject {
   struct Lookup;
   struct HashPolicy;
 
-  typedef JS::GCHashSet<ReadBarriered<SavedFrame*>, HashPolicy,
-                        SystemAllocPolicy>
+  typedef JS::GCHashSet<WeakHeapPtr<SavedFrame*>, HashPolicy, SystemAllocPolicy>
       Set;
 
  private:
@@ -152,7 +151,7 @@ struct SavedFrame::HashPolicy {
   static HashNumber hash(const Lookup& lookup);
   static bool match(SavedFrame* existing, const Lookup& lookup);
 
-  typedef ReadBarriered<SavedFrame*> Key;
+  typedef WeakHeapPtr<SavedFrame*> Key;
   static void rekey(Key& key, const Key& newKey);
 };
 
@@ -195,6 +194,13 @@ struct ReconstructedSavedFramePrincipals : public JSPrincipals {
 
   MOZ_MUST_USE bool write(JSContext* cx,
                           JSStructuredCloneWriter* writer) override {
+    MOZ_ASSERT(false,
+               "ReconstructedSavedFramePrincipals should never be exposed to "
+               "embedders");
+    return false;
+  }
+
+  bool isSystemOrAddonPrincipal() override {
     MOZ_ASSERT(false,
                "ReconstructedSavedFramePrincipals should never be exposed to "
                "embedders");

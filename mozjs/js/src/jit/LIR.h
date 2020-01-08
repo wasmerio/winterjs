@@ -21,6 +21,7 @@
 #include "jit/MIRGraph.h"
 #include "jit/Registers.h"
 #include "jit/Safepoints.h"
+#include "util/Memory.h"
 
 namespace js {
 namespace jit {
@@ -410,7 +411,6 @@ class LDefinition {
     DOUBLE,      // 64-bit floating-point value (FPU).
     SIMD128INT,  // 128-bit SIMD integer vector (FPU).
     SIMD128FLOAT,  // 128-bit SIMD floating point vector (FPU).
-    SINCOS,
 #ifdef JS_NUNBOX32
     // A type virtual register must be followed by a payload virtual
     // register, as both will be tracked as a single gcthing.
@@ -538,8 +538,6 @@ class LDefinition {
       case MIRType::Value:
         return LDefinition::BOX;
 #endif
-      case MIRType::SinCosDouble:
-        return LDefinition::SINCOS;
       case MIRType::Slots:
       case MIRType::Elements:
         return LDefinition::SLOTS;

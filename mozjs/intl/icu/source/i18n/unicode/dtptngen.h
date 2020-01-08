@@ -14,6 +14,10 @@
 #ifndef __DTPTNGEN_H__
 #define __DTPTNGEN_H__
 
+#include "unicode/utypes.h"
+
+#if U_SHOW_CPLUSPLUS_API
+
 #include "unicode/datefmt.h"
 #include "unicode/locid.h"
 #include "unicode/udat.h"
@@ -273,18 +277,16 @@ public:
      */
     const UnicodeString& getAppendItemName(UDateTimePatternField field) const;
 
-#ifndef U_HIDE_DRAFT_API
     /**
      * The general interface to get a display name for a particular date/time field,
      * in one of several possible display widths.
      *
      * @param field  The desired UDateTimePatternField, such as UDATPG_ERA_FIELD.
      * @param width  The desired UDateTimePGDisplayWidth, such as UDATPG_ABBREVIATED.
-     * @return.      The display name for field
-     * @draft ICU 61
+     * @return       The display name for field
+     * @stable ICU 61
      */
     UnicodeString getFieldDisplayName(UDateTimePatternField field, UDateTimePGDisplayWidth width) const;
-#endif  // U_HIDE_DRAFT_API
 
     /**
      * The DateTimeFormat is a message format pattern used to compose date and
@@ -563,11 +565,10 @@ private:
     void setDateTimeFromCalendar(const Locale& locale, UErrorCode& status);
     void setDecimalSymbols(const Locale& locale, UErrorCode& status);
     UDateTimePatternField getAppendFormatNumber(const char* field) const;
-#ifndef U_HIDE_DRAFT_API
+    // Note for the next 3: UDateTimePGDisplayWidth is now stable ICU 61
     UDateTimePatternField getFieldAndWidthIndices(const char* key, UDateTimePGDisplayWidth* widthP) const;
     void setFieldDisplayName(UDateTimePatternField field, UDateTimePGDisplayWidth width, const UnicodeString& value);
     UnicodeString& getMutableFieldDisplayName(UDateTimePatternField field, UDateTimePGDisplayWidth width);
-#endif  // U_HIDE_DRAFT_API
     void getAppendName(UDateTimePatternField field, UnicodeString& value);
     UnicodeString mapSkeletonMetacharacters(const UnicodeString& patternForm, int32_t* flags, UErrorCode& status);
     const UnicodeString* getBestRaw(DateTimeMatcher& source, int32_t includeMask, DistanceInfo* missingFields, UErrorCode& status, const PtnSkeleton** specifiedSkeletonPtr = 0);
@@ -587,5 +588,7 @@ private:
 } ;// end class DateTimePatternGenerator
 
 U_NAMESPACE_END
+
+#endif /* U_SHOW_CPLUSPLUS_API */
 
 #endif

@@ -4,11 +4,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"  // mozilla::ArrayLength
+#include "mozilla/Utf8.h"        // mozilla::Utf8Unit
+
 #include "jsfriendapi.h"
-#include "builtin/String.h"
 
 #include "js/BuildId.h"  // JS::BuildIdCharVector, JS::SetProcessBuildIdOp
-#include "js/CompilationAndEvaluation.h"
+#include "js/CompilationAndEvaluation.h"  // JS::CompileDontInflate
+#include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "js/Transcoding.h"
 #include "jsapi-tests/tests.h"
 #include "vm/JSScript.h"
@@ -48,7 +51,7 @@ enum TestCase {
 };
 
 BEGIN_TEST(testXDR_bug506491) {
-  const char* s =
+  static const char s[] =
       "function makeClosure(s, name, value) {\n"
       "    eval(s);\n"
       "    Math.sin(value);\n"
@@ -61,8 +64,11 @@ BEGIN_TEST(testXDR_bug506491) {
   JS::CompileOptions options(cx);
   options.setFileAndLine(__FILE__, __LINE__);
 
-  JS::RootedScript script(cx);
-  CHECK(JS::CompileUtf8(cx, options, s, strlen(s), &script));
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  CHECK(srcBuf.init(cx, s, mozilla::ArrayLength(s) - 1,
+                    JS::SourceOwnership::Borrowed));
+
+  JS::RootedScript script(cx, JS::CompileDontInflate(cx, options, srcBuf));
   CHECK(script);
 
   script = FreezeThaw(cx, script);
@@ -88,8 +94,10 @@ BEGIN_TEST(testXDR_bug516827) {
   JS::CompileOptions options(cx);
   options.setFileAndLine(__FILE__, __LINE__);
 
-  JS::RootedScript script(cx);
-  CHECK(JS::CompileUtf8(cx, options, "", 0, &script));
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  CHECK(srcBuf.init(cx, "", 0, JS::SourceOwnership::Borrowed));
+
+  JS::RootedScript script(cx, JS::CompileDontInflate(cx, options, srcBuf));
   CHECK(script);
 
   script = FreezeThaw(cx, script);
@@ -118,8 +126,10 @@ BEGIN_TEST(testXDR_source) {
     JS::CompileOptions options(cx);
     options.setFileAndLine(__FILE__, __LINE__);
 
-    JS::RootedScript script(cx);
-    CHECK(JS::CompileUtf8(cx, options, *s, strlen(*s), &script));
+    JS::SourceText<mozilla::Utf8Unit> srcBuf;
+    CHECK(srcBuf.init(cx, *s, strlen(*s), JS::SourceOwnership::Borrowed));
+
+    JS::RootedScript script(cx, JS::CompileDontInflate(cx, options, srcBuf));
     CHECK(script);
 
     script = FreezeThaw(cx, script);
@@ -144,7 +154,10 @@ BEGIN_TEST(testXDR_sourceMap) {
     JS::CompileOptions options(cx);
     options.setFileAndLine(__FILE__, __LINE__);
 
-    CHECK(JS::CompileUtf8(cx, options, "", 0, &script));
+    JS::SourceText<mozilla::Utf8Unit> srcBuf;
+    CHECK(srcBuf.init(cx, "", 0, JS::SourceOwnership::Borrowed));
+
+    script = JS::CompileDontInflate(cx, options, srcBuf);
     CHECK(script);
 
     size_t len = strlen(*sm);

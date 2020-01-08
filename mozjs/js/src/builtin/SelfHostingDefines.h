@@ -63,14 +63,13 @@
 #define PROP_DESC_GETTER_INDEX 1
 #define PROP_DESC_SETTER_INDEX 2
 
-// The extended slot in which the self-hosted name for self-hosted builtins is
-// stored.
-#define LAZY_FUNCTION_NAME_SLOT 0
+// The extended slot of uncloned self-hosted function, in which the original
+// name for self-hosted builtins is stored by `_SetCanonicalName`.
+#define ORIGINAL_FUNCTION_NAME_SLOT 0
 
-// The extended slot which contains a boolean value that indicates whether
-// that the canonical name of the self-hosted builtins is set in self-hosted
-// global. This slot is used only in debug build.
-#define HAS_SELFHOSTED_CANONICAL_NAME_SLOT 0
+// The extended slot of cloned self-hosted function, in which the self-hosted
+// name for self-hosted builtins is stored.
+#define LAZY_FUNCTION_NAME_SLOT 0
 
 // Stores the length for bound functions, so the .length property doesn't need
 // to be resolved eagerly.
@@ -118,32 +117,6 @@
 #define MODULE_STATUS_EVALUATED 4
 #define MODULE_STATUS_EVALUATED_ERROR 5
 
-#define STRING_GENERICS_CHAR_AT 0
-#define STRING_GENERICS_CHAR_CODE_AT 1
-#define STRING_GENERICS_CONCAT 2
-#define STRING_GENERICS_ENDS_WITH 3
-#define STRING_GENERICS_INCLUDES 4
-#define STRING_GENERICS_INDEX_OF 5
-#define STRING_GENERICS_LAST_INDEX_OF 6
-#define STRING_GENERICS_LOCALE_COMPARE 7
-#define STRING_GENERICS_MATCH 8
-#define STRING_GENERICS_NORMALIZE 9
-#define STRING_GENERICS_REPLACE 10
-#define STRING_GENERICS_SEARCH 11
-#define STRING_GENERICS_SLICE 12
-#define STRING_GENERICS_SPLIT 13
-#define STRING_GENERICS_STARTS_WITH 14
-#define STRING_GENERICS_SUBSTR 15
-#define STRING_GENERICS_SUBSTRING 16
-#define STRING_GENERICS_TO_LOWER_CASE 17
-#define STRING_GENERICS_TO_LOCALE_LOWER_CASE 18
-#define STRING_GENERICS_TO_LOCALE_UPPER_CASE 19
-#define STRING_GENERICS_TO_UPPER_CASE 20
-#define STRING_GENERICS_TRIM 21
-#define STRING_GENERICS_TRIM_LEFT 22
-#define STRING_GENERICS_TRIM_RIGHT 23
-#define STRING_GENERICS_METHODS_LIMIT 24
-
 #define INTL_INTERNALS_OBJECT_SLOT 0
 
 #define NOT_OBJECT_KIND_DESCRIPTOR 0
@@ -157,5 +130,7 @@
 #define TYPEDARRAY_KIND_FLOAT32 6
 #define TYPEDARRAY_KIND_FLOAT64 7
 #define TYPEDARRAY_KIND_UINT8CLAMPED 8
+#define TYPEDARRAY_KIND_BIGINT64 9
+#define TYPEDARRAY_KIND_BIGUINT64 10
 
 #endif

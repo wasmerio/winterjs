@@ -7,7 +7,6 @@
 #include "frontend/IfEmitter.h"
 
 #include "frontend/BytecodeEmitter.h"
-#include "frontend/SourceNotes.h"
 #include "vm/Opcodes.h"
 
 using namespace js;
@@ -24,29 +23,20 @@ IfEmitter::IfEmitter(BytecodeEmitter* bce, Kind kind)
 IfEmitter::IfEmitter(BytecodeEmitter* bce)
     : IfEmitter(bce, Kind::MayContainLexicalAccessInBranch) {}
 
-bool BranchEmitterBase::emitThenInternal(SrcNoteType type) {
+bool BranchEmitterBase::emitThenInternal() {
   // The end of TDZCheckCache for cond for else-if.
   if (kind_ == Kind::MayContainLexicalAccessInBranch) {
     tdzCache_.reset();
   }
 
-  // Emit an annotated branch-if-false around the then part.
-  if (!bce_->newSrcNote(type)) {
-    return false;
-  }
+  // Emit a branch-if-false around the then part.
   if (!bce_->emitJump(JSOP_IFEQ, &jumpAroundThen_)) {
     return false;
   }
 
-  // To restore stack depth in else part, save depth of the then part.
-#ifdef DEBUG
-  // If DEBUG, this is also necessary to calculate |pushed_|.
-  thenDepth_ = bce_->stackDepth;
-#else
-  if (type == SRC_COND || type == SRC_IF_ELSE) {
-    thenDepth_ = bce_->stackDepth;
-  }
-#endif
+  // To restore stack depth in else part (if present), save depth of the then
+  // part.
+  thenDepth_ = bce_->bytecodeSection().stackDepth();
 
   // Enclose then-branch with TDZCheckCache.
   if (kind_ == Kind::MayContainLexicalAccessInBranch) {
@@ -59,10 +49,10 @@ bool BranchEmitterBase::emitThenInternal(SrcNoteType type) {
 void BranchEmitterBase::calculateOrCheckPushed() {
 #ifdef DEBUG
   if (!calculatedPushed_) {
-    pushed_ = bce_->stackDepth - thenDepth_;
+    pushed_ = bce_->bytecodeSection().stackDepth() - thenDepth_;
     calculatedPushed_ = true;
   } else {
-    MOZ_ASSERT(pushed_ == bce_->stackDepth - thenDepth_);
+    MOZ_ASSERT(pushed_ == bce_->bytecodeSection().stackDepth() - thenDepth_);
   }
 #endif
 }
@@ -92,7 +82,7 @@ bool BranchEmitterBase::emitElseInternal() {
   jumpAroundThen_ = JumpList();
 
   // Restore stack depth of the then part.
-  bce_->stackDepth = thenDepth_;
+  bce_->bytecodeSection().setStackDepth(thenDepth_);
 
   // Enclose else-branch with TDZCheckCache.
   if (kind_ == Kind::MayContainLexicalAccessInBranch) {
@@ -111,7 +101,7 @@ bool BranchEmitterBase::emitEndInternal() {
 
   calculateOrCheckPushed();
 
-  if (jumpAroundThen_.offset != -1) {
+  if (jumpAroundThen_.offset.valid()) {
     // No else part for the last branch, fixup the branch-if-false to
     // come here.
     if (!bce_->emitJumpTargetAndPatch(jumpAroundThen_)) {
@@ -149,7 +139,7 @@ bool IfEmitter::emitThen() {
   MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
   MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
 
-  if (!emitThenInternal(SRC_IF)) {
+  if (!emitThenInternal()) {
     return false;
   }
 
@@ -164,7 +154,7 @@ bool IfEmitter::emitThenElse() {
   MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
   MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
 
-  if (!emitThenInternal(SRC_IF_ELSE)) {
+  if (!emitThenInternal()) {
     return false;
   }
 
@@ -212,8 +202,8 @@ bool IfEmitter::emitEnd() {
   MOZ_ASSERT(state_ == State::Then || state_ == State::Else);
   // If there was an else part for the last branch, jumpAroundThen_ is
   // already fixed up when emitting the else part.
-  MOZ_ASSERT_IF(state_ == State::Then, jumpAroundThen_.offset != -1);
-  MOZ_ASSERT_IF(state_ == State::Else, jumpAroundThen_.offset == -1);
+  MOZ_ASSERT_IF(state_ == State::Then, jumpAroundThen_.offset.valid());
+  MOZ_ASSERT_IF(state_ == State::Else, !jumpAroundThen_.offset.valid());
 
   if (!emitEndInternal()) {
     return false;
@@ -246,7 +236,7 @@ bool CondEmitter::emitCond() {
 
 bool CondEmitter::emitThenElse() {
   MOZ_ASSERT(state_ == State::Cond);
-  if (!emitThenInternal(SRC_COND)) {
+  if (!emitThenInternal()) {
     return false;
   }
 
@@ -271,7 +261,7 @@ bool CondEmitter::emitElse() {
 
 bool CondEmitter::emitEnd() {
   MOZ_ASSERT(state_ == State::Else);
-  MOZ_ASSERT(jumpAroundThen_.offset == -1);
+  MOZ_ASSERT(!jumpAroundThen_.offset.valid());
 
   if (!emitEndInternal()) {
     return false;

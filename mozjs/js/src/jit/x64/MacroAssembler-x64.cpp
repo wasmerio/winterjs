@@ -12,6 +12,8 @@
 #include "jit/JitRealm.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -426,7 +428,7 @@ void MacroAssembler::moveValue(const TypedOrValueRegister& src,
     convertFloat32ToDouble(freg, scratch);
     freg = scratch;
   }
-  vmovq(freg, dest.valueReg());
+  boxDouble(freg, dest, freg);
 }
 
 void MacroAssembler::moveValue(const ValueOperand& src,
@@ -542,7 +544,7 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                        MIRType valueType, const T& dest,
                                        MIRType slotType) {
   if (valueType == MIRType::Double) {
-    storeDouble(value.reg().typedReg().fpu(), dest);
+    boxDouble(value.reg().typedReg().fpu(), dest);
     return;
   }
 
@@ -579,6 +581,12 @@ template void MacroAssembler::storeUnboxedValue(
     const ConstantOrRegister& value, MIRType valueType,
     const BaseObjectElementIndex& dest, MIRType slotType);
 
+void MacroAssembler::PushBoxed(FloatRegister reg) {
+  subq(Imm32(sizeof(double)), StackPointer);
+  boxDouble(reg, Address(StackPointer, 0));
+  adjustFrame(sizeof(double));
+}
+
 // ========================================================================
 // wasm support
 
@@ -612,6 +620,8 @@ void MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access,
       break;
     case Scalar::Int64:
       MOZ_CRASH("int64 loads must use load64");
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::Uint8Clamped:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected array type");
@@ -652,6 +662,8 @@ void MacroAssembler::wasmLoadI64(const wasm::MemoryAccessDesc& access,
     case Scalar::Float64:
       MOZ_CRASH("non-int64 loads should use load()");
     case Scalar::Uint8Clamped:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected array type");
   }
@@ -687,6 +699,8 @@ void MacroAssembler::wasmStore(const wasm::MemoryAccessDesc& access,
       storeUncanonicalizedDouble(value.fpu(), dstAddr);
       break;
     case Scalar::Uint8Clamped:
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::MaxTypedArrayViewType:
       MOZ_CRASH("unexpected array type");
   }
@@ -1040,6 +1054,18 @@ void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
                                      Register64 value, const Address& mem,
                                      Register64 temp, Register64 output) {
   AtomicFetchOp64(*this, nullptr, op, value.reg, mem, temp.reg, output.reg);
+}
+
+CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
+  return leaRipRelative(dest);
+}
+
+void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
+                                          CodeLocationLabel target) {
+  ptrdiff_t off = target - loc;
+  MOZ_ASSERT(off > ptrdiff_t(INT32_MIN));
+  MOZ_ASSERT(off < ptrdiff_t(INT32_MAX));
+  PatchWrite_Imm32(loc, Imm32(off));
 }
 
 //}}} check_macroassembler_style

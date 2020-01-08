@@ -137,7 +137,7 @@ struct Statistics {
 
   static MOZ_MUST_USE bool initialize();
 
-  explicit Statistics(JSRuntime* rt);
+  explicit Statistics(gc::GCRuntime* gc);
   ~Statistics();
 
   Statistics(const Statistics&) = delete;
@@ -179,6 +179,9 @@ struct Statistics {
       slices_.back().resetReason = reason;
     }
   }
+
+  void measureInitialHeapSize();
+  void adoptHeapSizeDuringIncrementalGC(Zone* mergedZone);
 
   void nonincremental(gc::AbortReason reason) {
     MOZ_ASSERT(reason != gc::AbortReason::None);
@@ -296,7 +299,7 @@ struct Statistics {
   UniqueChars renderJsonSlice(size_t sliceNum) const;
 
   // Return JSON for the previous nursery collection.
-  UniqueChars renderNurseryJson(JSRuntime* rt) const;
+  UniqueChars renderNurseryJson() const;
 
 #ifdef DEBUG
   // Print a logging message.
@@ -306,7 +309,7 @@ struct Statistics {
 #endif
 
  private:
-  JSRuntime* runtime;
+  gc::GCRuntime* const gc;
 
   /* File used for MOZ_GCTIMER output. */
   FILE* gcTimerFile;
@@ -357,9 +360,12 @@ struct Statistics {
     uint32_t tenured;
   } allocsSinceMinorGC;
 
-  /* Heap size before and after the GC ran. */
-  size_t preHeapSize;
-  size_t postHeapSize;
+  /* Total GC heap size before and after the GC ran. */
+  size_t preTotalHeapBytes;
+  size_t postTotalHeapBytes;
+
+  /* GC heap size for collected zones before GC ran. */
+  size_t preCollectedHeapBytes;
 
   /* If the GC was triggered by exceeding some threshold, record the
    * threshold and the value that exceeded it. */
@@ -372,7 +378,7 @@ struct Statistics {
   uint64_t startingMajorGCNumber;
   uint64_t startingSliceNumber;
 
-  /* Records the maximum GC pause in an API-controlled interval (in us). */
+  /* Records the maximum GC pause in an API-controlled interval. */
   mutable TimeDuration maxPauseInInterval;
 
   /* Phases that are currently on stack. */
@@ -389,6 +395,8 @@ struct Statistics {
 
   /* Sweep times for SCCs of compartments. */
   Vector<TimeDuration, 0, SystemAllocPolicy> sccTimes;
+
+  TimeDuration timeSinceLastGC;
 
   JS::GCSliceCallback sliceCallback;
   JS::GCNurseryCollectionCallback nurseryCollectionCallback;
@@ -417,11 +425,16 @@ struct Statistics {
   ProfileDurations totalTimes_;
   uint64_t sliceCount_;
 
+  JSContext* context();
+
   Phase currentPhase() const;
   Phase lookupChildPhase(PhaseKind phaseKind) const;
 
-  void beginGC(JSGCInvocationKind kind);
+  void beginGC(JSGCInvocationKind kind, const TimeStamp& currentTime);
   void endGC();
+
+  void sendGCTelemetry();
+  void sendSliceTelemetry(const SliceData& slice);
 
   void recordPhaseBegin(Phase phase);
   void recordPhaseEnd(Phase phase);

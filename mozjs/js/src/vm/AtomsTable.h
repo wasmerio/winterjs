@@ -39,6 +39,9 @@ class MOZ_RAII AutoLockAllAtoms {
   ~AutoLockAllAtoms();
 };
 
+// This is a tagged pointer to an atom that duplicates the atom's pinned flag so
+// that we don't have to check the atom itself when marking pinned atoms (there
+// can be a great many atoms). See bug 1445196.
 class AtomStateEntry {
   uintptr_t bits;
 
@@ -185,7 +188,7 @@ class AtomsTable {
   void tracePinnedAtoms(JSTracer* trc, const AutoAccessAtomsZone& access);
 
   // Sweep all atoms non-incrementally.
-  void sweepAll(JSRuntime* rt);
+  void traceWeak(JSTracer* trc);
 
   bool startIncrementalSweep();
 

@@ -8,8 +8,6 @@ Library('icuuc')
 FINAL_LIBRARY = 'icu'
 
 DEFINES['U_COMMON_IMPLEMENTATION'] = True
-if CONFIG['JS_ENABLE_UWP']:
-    DEFINES['U_PLATFORM_HAS_WINUWP_API'] = 1
 
 LOCAL_INCLUDES += ['/intl/icu/source/i18n']
 

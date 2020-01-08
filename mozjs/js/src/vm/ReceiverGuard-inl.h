@@ -11,43 +11,32 @@
 
 #include "builtin/TypedObject.h"
 #include "vm/JSObject.h"
-#include "vm/ShapedObject.h"
-#include "vm/UnboxedObject.h"
 
 namespace js {
 
 MOZ_ALWAYS_INLINE
-ReceiverGuard::ReceiverGuard(JSObject* obj) : group(nullptr), shape(nullptr) {
-  if (!obj->isNative()) {
-    if (obj->is<UnboxedPlainObject>()) {
-      group = obj->group();
-      if (UnboxedExpandoObject* expando =
-              obj->as<UnboxedPlainObject>().maybeExpando()) {
-        shape = expando->lastProperty();
-      }
-      return;
-    }
-    if (obj->is<TypedObject>()) {
-      group = obj->group();
-      return;
-    }
+ReceiverGuard::ReceiverGuard(JSObject* obj) : group_(nullptr), shape_(nullptr) {
+  if (obj->isNative() || IsProxy(obj)) {
+    shape_ = obj->shape();
+    return;
   }
-  shape = obj->as<ShapedObject>().shape();
+  MOZ_ASSERT(obj->is<TypedObject>());
+  group_ = obj->group();
 }
 
 MOZ_ALWAYS_INLINE
 ReceiverGuard::ReceiverGuard(ObjectGroup* group, Shape* shape)
-    : group(group), shape(shape) {
-  if (group) {
-    const Class* clasp = group->clasp();
-    if (clasp == &UnboxedPlainObject::class_) {
-      // Keep both group and shape.
-    } else if (IsTypedObjectClass(clasp)) {
-      this->shape = nullptr;
+    : group_(group), shape_(shape) {
+  if (group_) {
+    const JSClass* clasp = group_->clasp();
+    if (IsTypedObjectClass(clasp)) {
+      this->shape_ = nullptr;
     } else {
-      this->group = nullptr;
+      this->group_ = nullptr;
     }
   }
+  // Only one of group_ or shape_ may be active at a time.
+  MOZ_ASSERT_IF(group_ || shape_, !!group_ != !!shape_);
 }
 
 }  // namespace js

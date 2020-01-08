@@ -164,12 +164,14 @@ class MockedOpen(object):
         f.write('foo')
     self.assertRaises(Exception,f.open('foo', 'r'))
     '''
+
     def __init__(self, files={}):
         self.files = {}
         for name, content in files.items():
             self.files[normcase(os.path.abspath(name))] = content
 
-    def __call__(self, name, mode='r'):
+    def __call__(self, name, mode='r', buffering=None):
+        # buffering is ignored.
         absname = normcase(os.path.abspath(name))
         if 'w' in mode:
             file = MockedFile(self, absname)

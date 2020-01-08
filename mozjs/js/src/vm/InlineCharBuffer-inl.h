@@ -74,7 +74,8 @@ class MOZ_NON_PARAM InlineCharBuffer {
     }
 
     MOZ_ASSERT(!heapStorage, "heap storage already allocated");
-    heapStorage = cx->make_pod_array<CharT>(length + 1);
+    heapStorage =
+        cx->make_pod_arena_array<CharT>(js::StringBufferArena, length);
     return !!heapStorage;
   }
 
@@ -86,7 +87,8 @@ class MOZ_NON_PARAM InlineCharBuffer {
     }
 
     if (!heapStorage) {
-      heapStorage = cx->make_pod_array<CharT>(newLength + 1);
+      heapStorage =
+          cx->make_pod_arena_array<CharT>(js::StringBufferArena, newLength);
       if (!heapStorage) {
         return false;
       }
@@ -97,7 +99,8 @@ class MOZ_NON_PARAM InlineCharBuffer {
     }
 
     CharT* oldChars = heapStorage.release();
-    CharT* newChars = cx->pod_realloc(oldChars, oldLength + 1, newLength + 1);
+    CharT* newChars = cx->pod_arena_realloc(js::StringBufferArena, oldChars,
+                                            oldLength, newLength);
     if (!newChars) {
       js_free(oldChars);
       return false;
@@ -126,7 +129,6 @@ class MOZ_NON_PARAM InlineCharBuffer {
     MOZ_ASSERT(heapStorage,
                "heap storage was not allocated for non-inline string");
 
-    heapStorage.get()[length] = '\0';  // Null-terminate
     return NewStringDontDeflate<CanGC>(cx, std::move(heapStorage), length);
   }
 
@@ -144,7 +146,6 @@ class MOZ_NON_PARAM InlineCharBuffer {
     MOZ_ASSERT(heapStorage,
                "heap storage was not allocated for non-inline string");
 
-    heapStorage.get()[length] = '\0';  // Null-terminate
     return NewString<CanGC>(cx, std::move(heapStorage), length);
   }
 };

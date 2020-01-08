@@ -16,6 +16,47 @@
 
 namespace js {
 
+class StringBufferAllocPolicy {
+  TempAllocPolicy impl_;
+
+  const arena_id_t& arenaId_;
+
+ public:
+  StringBufferAllocPolicy(JSContext* cx, const arena_id_t& arenaId)
+      : impl_(cx), arenaId_(arenaId) {}
+
+  template <typename T>
+  T* maybe_pod_malloc(size_t numElems) {
+    return impl_.maybe_pod_arena_malloc<T>(arenaId_, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_calloc(size_t numElems) {
+    return impl_.maybe_pod_arena_calloc<T>(arenaId_, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return impl_.maybe_pod_arena_realloc<T>(arenaId_, p, oldSize, newSize);
+  }
+  template <typename T>
+  T* pod_malloc(size_t numElems) {
+    return impl_.pod_arena_malloc<T>(arenaId_, numElems);
+  }
+  template <typename T>
+  T* pod_calloc(size_t numElems) {
+    return impl_.pod_arena_calloc<T>(arenaId_, numElems);
+  }
+  template <typename T>
+  T* pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return impl_.pod_arena_realloc<T>(arenaId_, p, oldSize, newSize);
+  }
+  template <typename T>
+  void free_(T* p, size_t numElems = 0) {
+    impl_.free_(p, numElems);
+  }
+  void reportAllocOverflow() const { impl_.reportAllocOverflow(); }
+  bool checkSimulatedOOM() const { return impl_.checkSimulatedOOM(); }
+};
+
 /*
  * String builder that eagerly checks for over-allocation past the maximum
  * string length.
@@ -28,14 +69,19 @@ namespace js {
  * See |extractWellSized|.
  */
 class StringBuffer {
+ protected:
+  template <typename CharT>
+  using BufferType = Vector<CharT, 64 / sizeof(CharT), StringBufferAllocPolicy>;
+
   /*
    * The Vector's buffer may be either stolen or copied, so we need to use
    * TempAllocPolicy and account for the memory manually when stealing.
    */
-  typedef Vector<Latin1Char, 64> Latin1CharBuffer;
-  typedef Vector<char16_t, 32> TwoByteCharBuffer;
+  using Latin1CharBuffer = BufferType<Latin1Char>;
+  using TwoByteCharBuffer = BufferType<char16_t>;
 
-  JSContext* cx;
+  JSContext* cx_;
+  const arena_id_t& arenaId_;
 
   /*
    * If Latin1 strings are enabled, cb starts out as a Latin1CharBuffer. When
@@ -44,53 +90,59 @@ class StringBuffer {
    */
   mozilla::MaybeOneOf<Latin1CharBuffer, TwoByteCharBuffer> cb;
 
-#ifdef DEBUG
-  /*
-   * Make sure ensureTwoByteChars() is called before calling
-   * infallibleAppend(char16_t).
-   */
-  bool hasEnsuredTwoByteChars_;
-#endif
-
   /* Number of reserve()'d chars, see inflateChars. */
   size_t reserved_;
 
   StringBuffer(const StringBuffer& other) = delete;
   void operator=(const StringBuffer& other) = delete;
 
-  MOZ_ALWAYS_INLINE bool isLatin1() const {
-    return cb.constructed<Latin1CharBuffer>();
+  template <typename CharT>
+  MOZ_ALWAYS_INLINE bool isCharType() const {
+    return cb.constructed<BufferType<CharT>>();
   }
-  MOZ_ALWAYS_INLINE bool isTwoByte() const { return !isLatin1(); }
+
+  MOZ_ALWAYS_INLINE bool isLatin1() const { return isCharType<Latin1Char>(); }
+
+  MOZ_ALWAYS_INLINE bool isTwoByte() const { return isCharType<char16_t>(); }
+
+  template <typename CharT>
+  MOZ_ALWAYS_INLINE BufferType<CharT>& chars() {
+    MOZ_ASSERT(isCharType<CharT>());
+    return cb.ref<BufferType<CharT>>();
+  }
+
+  template <typename CharT>
+  MOZ_ALWAYS_INLINE const BufferType<CharT>& chars() const {
+    MOZ_ASSERT(isCharType<CharT>());
+    return cb.ref<BufferType<CharT>>();
+  }
 
   MOZ_ALWAYS_INLINE TwoByteCharBuffer& twoByteChars() {
-    return cb.ref<TwoByteCharBuffer>();
+    return chars<char16_t>();
   }
 
   MOZ_ALWAYS_INLINE const TwoByteCharBuffer& twoByteChars() const {
-    return cb.ref<TwoByteCharBuffer>();
+    return chars<char16_t>();
+  }
+
+  MOZ_ALWAYS_INLINE Latin1CharBuffer& latin1Chars() {
+    return chars<Latin1Char>();
+  }
+
+  MOZ_ALWAYS_INLINE const Latin1CharBuffer& latin1Chars() const {
+    return chars<Latin1Char>();
   }
 
   MOZ_MUST_USE bool inflateChars();
 
+  template <typename CharT>
+  JSLinearString* finishStringInternal(JSContext* cx);
+
  public:
-  explicit StringBuffer(JSContext* cx)
-      : cx(cx)
-#ifdef DEBUG
-        ,
-        hasEnsuredTwoByteChars_(false)
-#endif
-        ,
-        reserved_(0) {
-    cb.construct<Latin1CharBuffer>(cx);
-  }
-
-  MOZ_ALWAYS_INLINE Latin1CharBuffer& latin1Chars() {
-    return cb.ref<Latin1CharBuffer>();
-  }
-
-  MOZ_ALWAYS_INLINE const Latin1CharBuffer& latin1Chars() const {
-    return cb.ref<Latin1CharBuffer>();
+  explicit StringBuffer(JSContext* cx,
+                        const arena_id_t& arenaId = js::MallocArena)
+      : cx_(cx), arenaId_(arenaId), reserved_(0) {
+    cb.construct<Latin1CharBuffer>(StringBufferAllocPolicy{cx_, arenaId_});
   }
 
   void clear() {
@@ -110,6 +162,14 @@ class StringBuffer {
   MOZ_MUST_USE bool resize(size_t len) {
     return isLatin1() ? latin1Chars().resize(len) : twoByteChars().resize(len);
   }
+  MOZ_MUST_USE bool growByUninitialized(size_t incr) {
+    return isLatin1() ? latin1Chars().growByUninitialized(incr)
+                      : twoByteChars().growByUninitialized(incr);
+  }
+  void shrinkTo(size_t newLength) {
+    return isLatin1() ? latin1Chars().shrinkTo(newLength)
+                      : twoByteChars().shrinkTo(newLength);
+  }
   bool empty() const {
     return isLatin1() ? latin1Chars().empty() : twoByteChars().empty();
   }
@@ -121,14 +181,7 @@ class StringBuffer {
   }
 
   MOZ_MUST_USE bool ensureTwoByteChars() {
-    if (isLatin1() && !inflateChars()) {
-      return false;
-    }
-
-#ifdef DEBUG
-    hasEnsuredTwoByteChars_ = true;
-#endif
-    return true;
+    return isTwoByte() || inflateChars();
   }
 
   MOZ_MUST_USE bool append(const char16_t c) {
@@ -146,11 +199,6 @@ class StringBuffer {
     return isLatin1() ? latin1Chars().append(c) : twoByteChars().append(c);
   }
   MOZ_MUST_USE bool append(char c) { return append(Latin1Char(c)); }
-
-  TwoByteCharBuffer& rawTwoByteBuffer() {
-    MOZ_ASSERT(hasEnsuredTwoByteChars_);
-    return twoByteChars();
-  }
 
   inline MOZ_MUST_USE bool append(const char16_t* begin, const char16_t* end);
 
@@ -225,31 +273,41 @@ class StringBuffer {
    * calling ensureTwoByteChars().
    */
   void infallibleAppend(const char16_t* chars, size_t len) {
-    MOZ_ASSERT(hasEnsuredTwoByteChars_);
     twoByteChars().infallibleAppend(chars, len);
   }
-  void infallibleAppend(char16_t c) {
-    MOZ_ASSERT(hasEnsuredTwoByteChars_);
-    twoByteChars().infallibleAppend(c);
-  }
+  void infallibleAppend(char16_t c) { twoByteChars().infallibleAppend(c); }
 
   bool isUnderlyingBufferLatin1() const { return isLatin1(); }
 
-  char16_t* rawTwoByteBegin() { return twoByteChars().begin(); }
-  char16_t* rawTwoByteEnd() { return twoByteChars().end(); }
-  const char16_t* rawTwoByteBegin() const { return twoByteChars().begin(); }
-  const char16_t* rawTwoByteEnd() const { return twoByteChars().end(); }
+  template <typename CharT>
+  CharT* begin() {
+    return chars<CharT>().begin();
+  }
 
-  Latin1Char* rawLatin1Begin() { return latin1Chars().begin(); }
-  Latin1Char* rawLatin1End() { return latin1Chars().end(); }
-  const Latin1Char* rawLatin1Begin() const { return latin1Chars().begin(); }
-  const Latin1Char* rawLatin1End() const { return latin1Chars().end(); }
+  template <typename CharT>
+  CharT* end() {
+    return chars<CharT>().end();
+  }
 
-  /*
-   * Creates a string from the characters in this buffer, then (regardless
-   * whether string creation succeeded or failed) empties the buffer.
-   */
-  JSFlatString* finishString();
+  template <typename CharT>
+  const CharT* begin() const {
+    return chars<CharT>().begin();
+  }
+
+  template <typename CharT>
+  const CharT* end() const {
+    return chars<CharT>().end();
+  }
+
+  char16_t* rawTwoByteBegin() { return begin<char16_t>(); }
+  char16_t* rawTwoByteEnd() { return end<char16_t>(); }
+  const char16_t* rawTwoByteBegin() const { return begin<char16_t>(); }
+  const char16_t* rawTwoByteEnd() const { return end<char16_t>(); }
+
+  Latin1Char* rawLatin1Begin() { return begin<Latin1Char>(); }
+  Latin1Char* rawLatin1End() { return end<Latin1Char>(); }
+  const Latin1Char* rawLatin1Begin() const { return begin<Latin1Char>(); }
+  const Latin1Char* rawLatin1End() const { return end<Latin1Char>(); }
 
   /* Identical to finishString() except that an atom is created. */
   JSAtom* finishAtom();
@@ -260,6 +318,18 @@ class StringBuffer {
    * null-terminated unless the last appended character was '\0'.
    */
   char16_t* stealChars();
+};
+
+class JSStringBuilder : public StringBuffer {
+ public:
+  explicit JSStringBuilder(JSContext* cx)
+      : StringBuffer(cx, js::StringBufferArena) {}
+
+  /*
+   * Creates a string from the characters in this buffer, then (regardless
+   * whether string creation succeeded or failed) empties the buffer.
+   */
+  JSLinearString* finishString();
 };
 
 inline bool StringBuffer::append(const char16_t* begin, const char16_t* end) {
@@ -332,7 +402,7 @@ inline bool StringBuffer::appendSubstring(JSLinearString* base, size_t off,
 
 inline bool StringBuffer::appendSubstring(JSString* base, size_t off,
                                           size_t len) {
-  JSLinearString* linear = base->ensureLinear(cx);
+  JSLinearString* linear = base->ensureLinear(cx_);
   if (!linear) {
     return false;
   }
@@ -341,7 +411,7 @@ inline bool StringBuffer::appendSubstring(JSString* base, size_t off,
 }
 
 inline bool StringBuffer::append(JSString* str) {
-  JSLinearString* linear = str->ensureLinear(cx);
+  JSLinearString* linear = str->ensureLinear(cx_);
   if (!linear) {
     return false;
   }

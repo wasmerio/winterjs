@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /* -*- indent-tabs-mode: nil; js-indent-level: 4 -*- */
 
 "use strict";
@@ -28,7 +32,6 @@ function checkExternalFunction(entry)
         "atof",
         /memchr/,
         "strlen",
-        "Servo_ComputedValues_EqualCustomProperties",
         /Servo_DeclarationBlock_GetCssText/,
         "Servo_GetArcStringData",
         "Servo_IsWorkerThread",
@@ -201,9 +204,6 @@ function treatAsSafeArgument(entry, varName, csuName)
         ["Gecko_SetStyleCoordCalcValue", null, null],
         ["Gecko_StyleClipPath_SetURLValue", "aClip", null],
         ["Gecko_nsStyleFilter_SetURLValue", "aEffects", null],
-        ["Gecko_nsStyleSVGPaint_CopyFrom", "aDest", null],
-        ["Gecko_nsStyleSVGPaint_SetURLValue", "aPaint", null],
-        ["Gecko_nsStyleSVGPaint_Reset", "aPaint", null],
         ["Gecko_nsStyleSVG_SetDashArrayLength", "aSvg", null],
         ["Gecko_nsStyleSVG_CopyDashArray", "aDst", null],
         ["Gecko_nsStyleFont_SetLang", "aFont", null],

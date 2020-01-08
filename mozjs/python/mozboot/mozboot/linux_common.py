@@ -6,13 +6,23 @@
 # needed to install Stylo and Node dependencies.  This class must come before
 # BaseBootstrapper in the inheritance list.
 
-from __future__ import absolute_import, print_function
+from __future__ import absolute_import, print_function, unicode_literals
 
 import os
 
 
 def is_non_x86_64():
     return os.uname()[4] != 'x86_64'
+
+
+class SccacheInstall(object):
+    def __init__(self, **kwargs):
+        pass
+
+    def ensure_sccache_packages(self, state_dir, checkout_root):
+        from mozboot import sccache
+
+        self.install_toolchain_artifact(state_dir, checkout_root, sccache.LINUX_SCCACHE)
 
 
 class StyloInstall(object):

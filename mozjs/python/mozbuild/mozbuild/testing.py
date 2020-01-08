@@ -2,19 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
-import cPickle as pickle
 import os
 import sys
 
-import mozpack.path as mozpath
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
-from mozpack.copier import FileCopier
-from mozpack.manifests import InstallManifest
 
 import manifestparser
-
+import mozpack.path as mozpath
+from mozpack.copier import FileCopier
+from mozpack.manifests import InstallManifest
 
 # These definitions provide a single source of truth for modules attempting
 # to get a view of all tests for a build. Used by the emitter to figure out
@@ -49,6 +51,10 @@ TEST_MANIFESTS = dict(
     PUPPETEER_FIREFOX=('firefox-ui-functional', 'firefox-ui', '.', False),
     PYTHON_UNITTEST=('python', 'python', '.', False),
     CRAMTEST=('cram', 'cram', '.', False),
+    TELEMETRY_TESTS_CLIENT=(
+        'telemetry-tests-client',
+        'toolkit/components/telemetry/tests/marionette', '.', False
+    ),
 
     # marionette tests are run from the srcdir
     # TODO(ato): make packaging work as for other test suites
@@ -62,16 +68,19 @@ TEST_MANIFESTS = dict(
     XPCSHELL_TESTS=('xpcshell', 'xpcshell', '.', True),
 )
 
-# Reftests have their own manifest format and are processed separately.
+# reftests, wpt, and puppeteer all have their own manifest formats
+# and are processed separately
 REFTEST_FLAVORS = ('crashtest', 'reftest')
-
-# Web platform tests have their own manifest format and are processed separately.
+PUPPETEER_FLAVORS = ('puppeteer',)
 WEB_PLATFORM_TESTS_FLAVORS = ('web-platform-tests',)
+
 
 def all_test_flavors():
     return ([v[0] for v in TEST_MANIFESTS.values()] +
             list(REFTEST_FLAVORS) +
+            list(PUPPETEER_FLAVORS) +
             list(WEB_PLATFORM_TESTS_FLAVORS))
+
 
 class TestInstallInfo(object):
     def __init__(self):
@@ -88,6 +97,7 @@ class TestInstallInfo(object):
         self.deferred_installs |= other.deferred_installs
         return self
 
+
 class SupportFilesConverter(object):
     """Processes a "support-files" entry from a test object, either from
     a parsed object from a test manifests or its representation in
@@ -97,6 +107,7 @@ class SupportFilesConverter(object):
     effect, and the structure of the parsed objects from manifests will have a
     lot of repeated entries, so this class takes care of memoizing.
     """
+
     def __init__(self):
         self._fields = (('head', set()),
                         ('support-files', set()),
@@ -126,8 +137,9 @@ class SupportFilesConverter(object):
                 # directory for the benefit of tests specifying 'install-to-subdir'.
                 key = field, pattern, out_dir
                 if key in info.seen:
-                    raise ValueError("%s appears multiple times in a test manifest under a %s field,"
-                                     " please omit the duplicate entry." % (pattern, field))
+                    raise ValueError(
+                        "%s appears multiple times in a test manifest under a %s field,"
+                        " please omit the duplicate entry." % (pattern, field))
                 info.seen.add(key)
                 if key in seen:
                     continue
@@ -175,6 +187,7 @@ class SupportFilesConverter(object):
                     info.installs.append((full, mozpath.normpath(dest_path)))
         return info
 
+
 def _resolve_installs(paths, topobjdir, manifest):
     """Using the given paths as keys, find any unresolved installs noted
     by the build backend corresponding to those keys, and add them
@@ -188,9 +201,9 @@ def _resolve_installs(paths, topobjdir, manifest):
         path = path[2:]
         if path not in resolved_installs:
             raise Exception('A cross-directory support file path noted in a '
-                'test manifest does not appear in any other manifest.\n "%s" '
-                'must appear in another test manifest to specify an install '
-                'for "!/%s".' % (path, path))
+                            'test manifest does not appear in any other manifest.\n "%s" '
+                            'must appear in another test manifest to specify an install '
+                            'for "!/%s".' % (path, path))
         installs = resolved_installs[path]
         for install_info in installs:
             try:
@@ -290,12 +303,14 @@ def read_manifestparser_manifest(context, manifest_path):
                                        finder=context._finder,
                                        handle_defaults=False)
 
+
 def read_reftest_manifest(context, manifest_path):
     import reftest
     path = manifest_path.full_path
     manifest = reftest.ReftestManifest(finder=context._finder)
     manifest.load(path)
     return manifest
+
 
 def read_wpt_manifest(context, paths):
     manifest_path, tests_root = paths

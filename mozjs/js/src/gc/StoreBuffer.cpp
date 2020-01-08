@@ -55,9 +55,10 @@ void StoreBuffer::GenericBuffer::trace(JSTracer* trc) {
 }
 
 StoreBuffer::StoreBuffer(JSRuntime* rt, const Nursery& nursery)
-    : bufferVal(this),
-      bufferCell(this),
-      bufferSlot(this),
+    : bufferVal(this, JS::GCReason::FULL_VALUE_BUFFER),
+      bufStrCell(this, JS::GCReason::FULL_CELL_PTR_STR_BUFFER),
+      bufObjCell(this, JS::GCReason::FULL_CELL_PTR_OBJ_BUFFER),
+      bufferSlot(this, JS::GCReason::FULL_SLOT_BUFFER),
       bufferWholeCell(this),
       bufferGeneric(this),
       cancelIonCompilations_(false),
@@ -74,7 +75,8 @@ StoreBuffer::StoreBuffer(JSRuntime* rt, const Nursery& nursery)
 
 void StoreBuffer::checkEmpty() const {
   MOZ_ASSERT(bufferVal.isEmpty());
-  MOZ_ASSERT(bufferCell.isEmpty());
+  MOZ_ASSERT(bufStrCell.isEmpty());
+  MOZ_ASSERT(bufObjCell.isEmpty());
   MOZ_ASSERT(bufferSlot.isEmpty());
   MOZ_ASSERT(bufferWholeCell.isEmpty());
   MOZ_ASSERT(bufferGeneric.isEmpty());
@@ -116,7 +118,8 @@ void StoreBuffer::clear() {
   cancelIonCompilations_ = false;
 
   bufferVal.clear();
-  bufferCell.clear();
+  bufStrCell.clear();
+  bufObjCell.clear();
   bufferSlot.clear();
   bufferWholeCell.clear();
   bufferGeneric.clear();
@@ -133,7 +136,8 @@ void StoreBuffer::setAboutToOverflow(JS::GCReason reason) {
 void StoreBuffer::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                          JS::GCSizes* sizes) {
   sizes->storeBufferVals += bufferVal.sizeOfExcludingThis(mallocSizeOf);
-  sizes->storeBufferCells += bufferCell.sizeOfExcludingThis(mallocSizeOf);
+  sizes->storeBufferCells += bufStrCell.sizeOfExcludingThis(mallocSizeOf) +
+                             bufObjCell.sizeOfExcludingThis(mallocSizeOf);
   sizes->storeBufferSlots += bufferSlot.sizeOfExcludingThis(mallocSizeOf);
   sizes->storeBufferWholeCells +=
       bufferWholeCell.sizeOfExcludingThis(mallocSizeOf);
@@ -191,5 +195,4 @@ void StoreBuffer::WholeCellBuffer::clear() {
 }
 
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::ValueEdge>;
-template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::CellPtrEdge>;
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::SlotsEdge>;

@@ -126,6 +126,14 @@ class TraceLoggerCollectorBuffer {
 };
 
 #ifdef JS_TRACE_LOGGING
+
+// Initialize the trace logger.  This must be called before using any of the
+// other trace logging functions.
+extern JS_PUBLIC_API bool InitTraceLogger();
+
+// Return whether the trace logger is supported in this browser session.
+extern JS_PUBLIC_API bool TraceLoggerSupported();
+
 // Begin trace logging events.  This will activate some of the
 // textId's for various events and set the global option
 // JSJITCOMPILER_ENABLE_TRACELOGGER to true.
@@ -140,13 +148,23 @@ extern JS_PUBLIC_API void StopTraceLogger(JSContext* cx);
 // Clear and free any event data that was recorded by the trace logger.
 extern JS_PUBLIC_API void ResetTraceLogger(void);
 
+// Spew trace logger statistics.
+extern JS_PUBLIC_API void SpewTraceLoggerThread(JSContext* cx);
+
+// Spew trace logger statistics.
+extern JS_PUBLIC_API void SpewTraceLoggerForCurrentProcess();
+
 #else
 // Define empty inline functions for when trace logging compilation is not
 // enabled.  TraceLogging.cpp will not be built in that case so we need to
 // provide something for any routines that reference these.
+inline bool InitTraceLogger() { return true; }
+inline bool TraceLoggerSupported() { return false; }
 inline void StartTraceLogger(JSContext* cx) {}
 inline void StopTraceLogger(JSContext* cx) {}
 inline void ResetTraceLogger(void) {}
+inline void SpewTraceLoggerThread(JSContext* cx) {}
+inline void SpewTraceLoggerForCurrentProcess() {}
 inline size_t TraceLoggerDictionaryImpl::NextChunk(JSContext* cx,
                                                    size_t* dataIndex,
                                                    ImplType buffer[],

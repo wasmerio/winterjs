@@ -6,9 +6,13 @@
 
 #include "frontend/TryEmitter.h"
 
-#include "frontend/BytecodeEmitter.h"
-#include "frontend/SourceNotes.h"
-#include "vm/Opcodes.h"
+#include "mozilla/Assertions.h"  // MOZ_ASSERT
+
+#include "frontend/BytecodeEmitter.h"  // BytecodeEmitter
+#include "frontend/SharedContext.h"    // StatementKind
+#include "frontend/SourceNotes.h"      // SrcNote, SRC_*
+#include "vm/JSScript.h"               // JSTRY_CATCH, JSTRY_FINALLY
+#include "vm/Opcodes.h"                // JSOP_*
 
 using namespace js;
 using namespace js::frontend;
@@ -31,7 +35,6 @@ TryEmitter::TryEmitter(BytecodeEmitter* bce, Kind kind, ControlKind controlKind)
     controlInfo_.emplace(
         bce_, hasFinally() ? StatementKind::Finally : StatementKind::Try);
   }
-  finallyStart_.offset = 0;
 }
 
 // Emits JSOP_GOTO to the end of try-catch-finally.
@@ -53,7 +56,7 @@ bool TryEmitter::emitTry() {
   // For that we store in a try note associated with the catch or
   // finally block the stack depth upon the try entry. The interpreter
   // uses this depth to properly unwind the stack and the scope chain.
-  depth_ = bce_->stackDepth;
+  depth_ = bce_->bytecodeSection().stackDepth();
 
   // Record the try location, then emit the try block.
   if (!bce_->newSrcNote(SRC_TRY, &noteIndex_)) {
@@ -62,7 +65,7 @@ bool TryEmitter::emitTry() {
   if (!bce_->emit1(JSOP_TRY)) {
     return false;
   }
-  tryStart_ = bce_->offset();
+  tryStart_ = bce_->bytecodeSection().offset();
 
 #ifdef DEBUG
   state_ = State::Try;
@@ -72,7 +75,7 @@ bool TryEmitter::emitTry() {
 
 bool TryEmitter::emitTryEnd() {
   MOZ_ASSERT(state_ == State::Try);
-  MOZ_ASSERT(depth_ == bce_->stackDepth);
+  MOZ_ASSERT(depth_ == bce_->bytecodeSection().stackDepth());
 
   // GOSUB to finally, if present.
   if (hasFinally() && controlInfo_) {
@@ -83,7 +86,8 @@ bool TryEmitter::emitTryEnd() {
 
   // Source note points to the jump at the end of the try block.
   if (!bce_->setSrcNoteOffset(noteIndex_, SrcNote::Try::EndOfTryJumpOffset,
-                              bce_->offset() - tryStart_ + JSOP_TRY_LENGTH)) {
+                              bce_->bytecodeSection().offset() - tryStart_ +
+                                  BytecodeOffsetDiff(JSOP_TRY_LENGTH))) {
     return false;
   }
 
@@ -105,7 +109,7 @@ bool TryEmitter::emitCatch() {
     return false;
   }
 
-  MOZ_ASSERT(bce_->stackDepth == depth_);
+  MOZ_ASSERT(bce_->bytecodeSection().stackDepth() == depth_);
 
   if (controlKind_ == ControlKind::Syntactic) {
     // Clear the frame's return value that might have been set by the
@@ -118,6 +122,14 @@ bool TryEmitter::emitCatch() {
     if (!bce_->emit1(JSOP_SETRVAL)) {
       return false;
     }
+  }
+
+  if (!bce_->emit1(JSOP_EXCEPTION)) {
+    return false;
+  }
+
+  if (!instrumentEntryPoint()) {
+    return false;
   }
 
 #ifdef DEBUG
@@ -138,7 +150,7 @@ bool TryEmitter::emitCatchEnd() {
     if (!bce_->emitGoSub(&controlInfo_->gosubs)) {
       return false;
     }
-    MOZ_ASSERT(bce_->stackDepth == depth_);
+    MOZ_ASSERT(bce_->bytecodeSection().stackDepth() == depth_);
 
     // Jump over the finally block.
     if (!bce_->emitJump(JSOP_GOTO, &catchAndFinallyJump_)) {
@@ -177,7 +189,7 @@ bool TryEmitter::emitFinally(
     }
   }
 
-  MOZ_ASSERT(bce_->stackDepth == depth_);
+  MOZ_ASSERT(bce_->bytecodeSection().stackDepth() == depth_);
 
   if (!bce_->emitJumpTarget(&finallyStart_)) {
     return false;
@@ -217,6 +229,10 @@ bool TryEmitter::emitFinally(
     }
   }
 
+  if (!instrumentEntryPoint()) {
+    return false;
+  }
+
 #ifdef DEBUG
   state_ = State::Finally;
 #endif
@@ -253,7 +269,7 @@ bool TryEmitter::emitEnd() {
     }
   }
 
-  MOZ_ASSERT(bce_->stackDepth == depth_);
+  MOZ_ASSERT(bce_->bytecodeSection().stackDepth() == depth_);
 
   // ReconstructPCStack needs a NOP here to mark the end of the last
   // catch block.
@@ -287,5 +303,16 @@ bool TryEmitter::emitEnd() {
 #ifdef DEBUG
   state_ = State::End;
 #endif
+  return true;
+}
+
+bool TryEmitter::instrumentEntryPoint() {
+  // Frames for async functions can resume execution at catch or finally blocks
+  // if an await operation threw an exception. While the frame might already be
+  // on the stack, the Entry instrumentation kind only indicates that a new
+  // frame *might* have been pushed.
+  if (bce_->sc->isFunctionBox() && bce_->sc->asFunctionBox()->isAsync()) {
+    return bce_->emitInstrumentation(InstrumentationKind::Entry);
+  }
   return true;
 }

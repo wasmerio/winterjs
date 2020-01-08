@@ -21,7 +21,6 @@ from operator import itemgetter
 # Skip all tests which use features not supported in SpiderMonkey.
 UNSUPPORTED_FEATURES = set([
     "tail-call-optimization",
-    "class-fields-public",
     "class-static-fields-public",
     "class-fields-private",
     "class-static-fields-private",
@@ -29,23 +28,29 @@ UNSUPPORTED_FEATURES = set([
     "class-static-methods-private",
     "regexp-dotall",
     "regexp-lookbehind",
+    "regexp-match-indices",
     "regexp-named-groups",
     "regexp-unicode-property-escapes",
-    "numeric-separator-literal",
-    "Intl.Locale",
-    "global",
     "export-star-as-namespace-from-module",
-    "Intl.ListFormat",
+    "Intl.DateTimeFormat-quarter",
+    "Intl.DateTimeFormat-datetimestyle",
+    "Intl.DateTimeFormat-dayPeriod",
+    "Intl.DateTimeFormat-formatRange",
+    "Intl.DisplayNames",
     "Intl.Segmenter",
-    "Intl.NumberFormat-unified",
+    "WeakRef",
+    "FinalizationGroup",
+    "optional-chaining",
+    "top-level-await",
 ])
 FEATURE_CHECK_NEEDED = {
     "Atomics": "!this.hasOwnProperty('Atomics')",
-    "BigInt": "!this.hasOwnProperty('BigInt')",
     "SharedArrayBuffer": "!this.hasOwnProperty('SharedArrayBuffer')",
-    "dynamic-import": "!xulRuntime.shell",
 }
-RELEASE_OR_BETA = set()
+RELEASE_OR_BETA = set([
+    "Intl.NumberFormat-unified",
+    "Intl.DateTimeFormat-fractionalSecondDigits",
+])
 
 
 @contextlib.contextmanager
@@ -90,7 +95,7 @@ def tryParseTestFile(test262parser, source, testName):
         return None
 
 
-def createRefTestEntry(skip, skipIf, error, isModule):
+def createRefTestEntry(skip, skipIf, error, isModule, isAsync):
     """
     Returns the |reftest| tuple (terms, comments) from the input arguments. Or a
     tuple of empty strings if no reftest entry is required.
@@ -112,6 +117,9 @@ def createRefTestEntry(skip, skipIf, error, isModule):
 
     if isModule:
         terms.append("module")
+
+    if isAsync:
+        terms.append("async")
 
     return (" ".join(terms), ", ".join(comments))
 
@@ -253,8 +261,8 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
 
     # Async tests are marked with the "async" attribute. It is an error for a
     # test to use the $DONE function without specifying the "async" attribute.
-    async = "async" in testRec
-    assert b"$DONE" not in testSource or async, "Missing async attribute in: %s" % testName
+    isAsync = "async" in testRec
+    assert b"$DONE" not in testSource or isAsync, "Missing async attribute in: %s" % testName
 
     # When the "module" attribute is set, the source code is module code.
     isModule = "module" in testRec
@@ -266,6 +274,11 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     isNegative = "negative" in testRec
     assert not isNegative or type(testRec["negative"]) == dict
     errorType = testRec["negative"]["type"] if isNegative else None
+
+    # Test262 contains tests both marked "negative" and "async". In this case
+    # "negative" is expected to overrule the "async" attribute.
+    if isNegative and isAsync:
+        isAsync = False
 
     # CanBlockIsFalse is set when the test expects that the implementation
     # cannot block on the main thread.
@@ -298,7 +311,7 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
             if "Atomics" in testRec["features"] and "SharedArrayBuffer" in testRec["features"]:
                 refTestSkipIf.append(("(this.hasOwnProperty('getBuildConfiguration')"
                                       "&&getBuildConfiguration()['arm64-simulator'])",
-                                     "ARM64 Simulator cannot emulate atomics"))
+                                      "ARM64 Simulator cannot emulate atomics"))
 
     # Includes for every test file in a directory is collected in a single
     # shell.js file per directory level. This is done to avoid adding all
@@ -308,12 +321,13 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
         includeSet.update(testRec["includes"])
 
     # Add reportCompare() after all positive, synchronous tests.
-    if not isNegative and not async:
+    if not isNegative and not isAsync:
         testEpilogue = "reportCompare(0, 0);"
     else:
         testEpilogue = ""
 
-    (terms, comments) = createRefTestEntry(refTestSkip, refTestSkipIf, errorType, isModule)
+    (terms, comments) = createRefTestEntry(refTestSkip, refTestSkipIf, errorType, isModule,
+                                           isAsync)
     if raw:
         refTest = ""
         externRefTest = (terms, comments)
@@ -353,8 +367,10 @@ def convertFixtureFile(fixtureSource, fixtureName):
     refTestSkipIf = []
     errorType = None
     isModule = False
+    isAsync = False
 
-    (terms, comments) = createRefTestEntry(refTestSkip, refTestSkipIf, errorType, isModule)
+    (terms, comments) = createRefTestEntry(refTestSkip, refTestSkipIf, errorType, isModule,
+                                           isAsync)
     refTest = createRefTestLine(terms, comments)
 
     source = createSource(fixtureSource, refTest, "", "")
@@ -402,6 +418,9 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
     explicitIncludes[os.path.join("built-ins", "TypedArray")] = ["byteConversionValues.js",
                                                                  "detachArrayBuffer.js", "nans.js"]
     explicitIncludes[os.path.join("built-ins", "TypedArrays")] = ["detachArrayBuffer.js"]
+
+    # Intl.Locale and Intl.ListFormat aren't yet enabled by default.
+    localIncludesMap[os.path.join("intl402")] = ["test262-intl-locale.js"]
 
     # Process all test directories recursively.
     for (dirPath, dirNames, fileNames) in os.walk(testDir):

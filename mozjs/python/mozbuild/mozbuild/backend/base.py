@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 from abc import (
     ABCMeta,
@@ -263,7 +263,7 @@ class BuildBackend(LoggingMixin):
         return status
 
     @contextmanager
-    def _write_file(self, path=None, fh=None, mode='rU'):
+    def _write_file(self, path=None, fh=None, readmode='rU'):
         """Context manager to write a file.
 
         This is a glorified wrapper around FileAvoidWrite with integration to
@@ -278,7 +278,7 @@ class BuildBackend(LoggingMixin):
         if path is not None:
             assert fh is None
             fh = FileAvoidWrite(path, capture_diff=True, dry_run=self.dry_run,
-                                mode=mode)
+                                readmode=readmode)
         else:
             assert fh is not None
 

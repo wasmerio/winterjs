@@ -31,10 +31,6 @@ class UTF8Chars;
 class WTF8Chars;
 class UTF8CharsZ;
 
-using AutoValueVector = AutoVector<Value>;
-using AutoIdVector = AutoVector<jsid>;
-using AutoObjectVector = AutoVector<JSObject*>;
-
 using ValueVector = JS::GCVector<JS::Value>;
 using IdVector = JS::GCVector<jsid>;
 using ScriptVector = JS::GCVector<JSScript*>;
@@ -87,9 +83,15 @@ using JS::Ok;
 using JS::OOM;
 using JS::Result;
 
-using JS::AutoIdVector;
-using JS::AutoObjectVector;
-using JS::AutoValueVector;
+using JS::HandleIdVector;
+using JS::HandleObjectVector;
+using JS::HandleValueVector;
+using JS::MutableHandleIdVector;
+using JS::MutableHandleObjectVector;
+using JS::MutableHandleValueVector;
+using JS::RootedIdVector;
+using JS::RootedObjectVector;
+using JS::RootedValueVector;
 
 using JS::IdVector;
 using JS::ScriptVector;

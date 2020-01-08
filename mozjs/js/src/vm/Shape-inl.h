@@ -31,7 +31,8 @@ inline AutoKeepShapeCaches::~AutoKeepShapeCaches() {
   cx_->zone()->setKeepShapeCaches(prev_);
 }
 
-inline StackBaseShape::StackBaseShape(const Class* clasp, uint32_t objectFlags)
+inline StackBaseShape::StackBaseShape(const JSClass* clasp,
+                                      uint32_t objectFlags)
     : flags(objectFlags), clasp(clasp) {}
 
 MOZ_ALWAYS_INLINE Shape* Shape::search(JSContext* cx, jsid id) {
@@ -177,7 +178,7 @@ inline AccessorShape::AccessorShape(const StackShape& other, uint32_t nfixed)
 }
 
 inline void Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed,
-                                       GCPtrShape* dictp) {
+                                       DictionaryShapeLink next) {
   if (child.isAccessorShape()) {
     new (this) AccessorShape(child, nfixed);
   } else {
@@ -185,10 +186,45 @@ inline void Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed,
   }
   this->immutableFlags |= IN_DICTIONARY;
 
-  this->listp = nullptr;
-  if (dictp) {
-    insertIntoDictionary(dictp);
+  MOZ_ASSERT(dictNext.isNone());
+  if (!next.isNone()) {
+    insertIntoDictionaryBefore(next);
   }
+}
+
+inline void Shape::setNextDictionaryShape(Shape* shape) {
+  setDictionaryNextPtr(DictionaryShapeLink(shape));
+}
+
+inline void Shape::setDictionaryObject(JSObject* obj) {
+  setDictionaryNextPtr(DictionaryShapeLink(obj));
+}
+
+inline void Shape::clearDictionaryNextPtr() {
+  setDictionaryNextPtr(DictionaryShapeLink());
+}
+
+inline void Shape::setDictionaryNextPtr(DictionaryShapeLink next) {
+  MOZ_ASSERT(inDictionary());
+  dictNextPreWriteBarrier();
+  dictNext = next;
+}
+
+inline void Shape::dictNextPreWriteBarrier() {
+  // Only object pointers are traced, so we only need to barrier those.
+  if (dictNext.isObject()) {
+    JSObject::writeBarrierPre(dictNext.toObject());
+  }
+}
+
+inline GCPtrShape* DictionaryShapeLink::prevPtr() {
+  MOZ_ASSERT(!isNone());
+
+  if (isShape()) {
+    return &toShape()->parent;
+  }
+
+  return toObject()->as<NativeObject>().shapePtr();
 }
 
 template <class ObjectSubclass>
@@ -290,7 +326,7 @@ MOZ_ALWAYS_INLINE ShapeTable::Entry& ShapeTable::searchUnchecked(jsid id) {
   /* Collision: double hash. */
   uint32_t sizeLog2 = HASH_BITS - hashShift_;
   HashNumber hash2 = Hash2(hash0, sizeLog2, hashShift_);
-  uint32_t sizeMask = JS_BITMASK(sizeLog2);
+  uint32_t sizeMask = BitMask(sizeLog2);
 
   /* Save the first removed entry pointer so we can recycle it if adding. */
   Entry* firstRemoved;

@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /* -*- indent-tabs-mode: nil; js-indent-level: 4 -*- */
 
 "use strict";
@@ -512,8 +516,8 @@ function edgeCanGC(edge)
         var variable = callee.Variable;
 
         if (variable.Kind == "Func") {
-            var callee = mangled(variable.Name[0]);
-            if ((callee in gcFunctions) || ((callee + internalMarker) in gcFunctions))
+            var func = mangled(variable.Name[0]);
+            if ((func in gcFunctions) || ((func + internalMarker) in gcFunctions))
                 return "'" + variable.Name[0] + "'";
             return null;
         }

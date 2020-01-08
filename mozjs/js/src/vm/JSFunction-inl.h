@@ -32,22 +32,18 @@ inline bool CanReuseFunctionForClone(JSContext* cx, HandleFunction fun) {
   if (!fun->isSingleton()) {
     return false;
   }
-  if (fun->isInterpretedLazy()) {
-    LazyScript* lazy = fun->lazyScript();
-    if (lazy->hasBeenCloned()) {
-      return false;
-    }
-    lazy->setHasBeenCloned();
-  } else {
-    JSScript* script = fun->nonLazyScript();
-    if (script->hasBeenCloned()) {
-      return false;
-    }
-    script->setHasBeenCloned();
-    if (LazyScript* lazy = script->maybeLazyScript()) {
+
+  if (fun->baseScript()->hasBeenCloned()) {
+    return false;
+  }
+  fun->baseScript()->setHasBeenCloned();
+
+  if (fun->hasScript()) {
+    if (LazyScript* lazy = fun->nonLazyScript()->maybeLazyScript()) {
       lazy->setHasBeenCloned();
     }
   }
+
   return true;
 }
 
@@ -106,7 +102,7 @@ inline JSFunction* CloneFunctionObjectIfNotSingleton(
 
   debugCheckNewObject(group, shape, kind, heap);
 
-  const js::Class* clasp = group->clasp();
+  const JSClass* clasp = group->clasp();
   MOZ_ASSERT(clasp->isJSFunction());
 
   static constexpr size_t NumDynamicSlots = 0;
@@ -139,9 +135,9 @@ inline JSFunction* CloneFunctionObjectIfNotSingleton(
   fun->atom_.unsafeSet(nullptr);
 
   if (kind == js::gc::AllocKind::FUNCTION_EXTENDED) {
-    fun->setFlags(JSFunction::EXTENDED);
+    fun->setFlags(FunctionFlags::EXTENDED);
     for (js::GCPtrValue& extendedSlot : fun->toExtended()->extendedSlots) {
-      extendedSlot.unsafeSet(JS::DoubleValue(+0.0));
+      extendedSlot.unsafeSet(JS::UndefinedValue());
     }
   } else {
     fun->setFlags(0);

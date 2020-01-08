@@ -8,8 +8,11 @@ import abc
 import errno
 import os
 import re
+import shutil
 import subprocess
 import sys
+
+from mozbuild.util import ensure_subprocess_env
 
 from distutils.spawn import find_executable
 from distutils.version import LooseVersion
@@ -44,6 +47,11 @@ class MissingUpstreamRepo(Exception):
     """Represents a failure to automatically detect an upstream repo."""
 
 
+class CannotDeleteFromRootOfRepositoryException(Exception):
+    """Represents that the code attempted to delete all files from the root of
+    the repository, which is not permitted."""
+
+
 def get_tool_path(tool):
     """Obtain the path of `tool`."""
     if os.path.isabs(tool) and os.path.exists(tool):
@@ -55,6 +63,12 @@ def get_tool_path(tool):
                              '|mach bootstrap| to ensure your environment is up to '
                              'date.' % tool)
     return path
+
+
+def _paths_equal(a, b):
+    """Return True iff the two paths refer to the "same" file on disk."""
+    return (os.path.normpath(os.path.realpath(a)) ==
+            os.path.normpath(os.path.realpath(b)))
 
 
 class Repository(object):
@@ -99,7 +113,7 @@ class Repository(object):
         try:
             return subprocess.check_output(cmd,
                                            cwd=self.path,
-                                           env=self._env,
+                                           env=ensure_subprocess_env(self._env),
                                            universal_newlines=True)
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
@@ -205,6 +219,12 @@ class Repository(object):
         """
 
     @abc.abstractmethod
+    def clean_directory(self, path):
+        """Undo all changes (including removing new untracked files) in the
+        given `path`.
+        """
+
+    @abc.abstractmethod
     def push_to_try(self, message):
         """Create a temporary commit, push it to try and clean it up
         afterwards.
@@ -213,6 +233,28 @@ class Repository(object):
         extension is not installed. On git, MissingVCSExtension will be raised
         if git cinnabar is not present.
         """
+
+    def commit(self, message, author=None, date=None, paths=None):
+        """Create a commit using the provided commit message. The author, date,
+        and files/paths to be included may also be optionally provided. The
+        message, author and date arguments must be strings, and are passed as-is
+        to the commit command. Multiline commit messages are supported. The
+        paths argument must be None or an array of strings that represents the
+        set of files and folders to include in the commit.
+        """
+        args = ['commit', '-m', message]
+        if author is not None:
+            if isinstance(self, HgRepository):
+                args = args + ['--user', author]
+            elif isinstance(self, GitRepository):
+                args = args + ['--author', author]
+            else:
+                raise MissingVCSInfo('Unknown repo type')
+        if date is not None:
+            args = args + ['--date', date]
+        if paths is not None:
+            args = args + paths
+        self._run(*args)
 
 
 class HgRepository(Repository):
@@ -322,7 +364,7 @@ class HgRepository(Repository):
 
     def add_remove_files(self, path):
         args = ['addremove', path]
-        if self.tool_version >= b'3.9':
+        if self.tool_version >= str('3.9'):
             args = ['--config', 'extensions.automv='] + args
         self._run(*args)
 
@@ -346,9 +388,20 @@ class HgRepository(Repository):
         # means we are clean.
         return not len(self._run(*args).strip())
 
+    def clean_directory(self, path):
+        if _paths_equal(self.path, path):
+            raise CannotDeleteFromRootOfRepositoryException()
+        self._run('revert', path)
+        for f in self._run('st', '-un', path).split():
+            if os.path.isfile(f):
+                os.remove(f)
+            else:
+                shutil.rmtree(f)
+
     def push_to_try(self, message):
         try:
-            subprocess.check_call((self._tool, 'push-to-try', '-m', message), cwd=self.path)
+            subprocess.check_call((self._tool, 'push-to-try', '-m', message), cwd=self.path,
+                                  env=self._env)
         except subprocess.CalledProcessError:
             try:
                 self._run('showconfig', 'extensions.push-to-try')
@@ -449,11 +502,17 @@ class GitRepository(Repository):
 
         return not len(self._run(*args).strip())
 
+    def clean_directory(self, path):
+        if _paths_equal(self.path, path):
+            raise CannotDeleteFromRootOfRepositoryException()
+        self._run('checkout', '--', path)
+        self._run('clean', '-df', path)
+
     def push_to_try(self, message):
         if not self.has_git_cinnabar:
             raise MissingVCSExtension('cinnabar')
 
-        self._run('commit', '--allow-empty', '-m', message)
+        self._run('-c', 'commit.gpgSign=false', 'commit', '--allow-empty', '-m', message)
         try:
             subprocess.check_call((self._tool, 'push', 'hg::ssh://hg.mozilla.org/try',
                                    '+HEAD:refs/heads/branches/default/tip'), cwd=self.path)

@@ -22,6 +22,7 @@
 #include "jit/shared/Assembler-shared.h"
 #include "js/HashTable.h"
 #include "threading/ExclusiveData.h"
+#include "util/Memory.h"
 #include "vm/MutexIDs.h"
 #include "wasm/WasmGC.h"
 #include "wasm/WasmTypes.h"
@@ -236,6 +237,11 @@ class FuncExport {
     return pod.eagerInterpEntryOffset_;
   }
 
+  bool canHaveJitEntry() const {
+    return !funcType_.temporarilyUnsupportedReftypeForEntry() &&
+           JitOptions.enableWasmJitEntry;
+  }
+
   bool clone(const FuncExport& src) {
     mozilla::PodAssign(&pod, &src.pod);
     return funcType_.clone(src.funcType_);
@@ -326,7 +332,7 @@ struct MetadataCacheablePod {
 
 typedef uint8_t ModuleHash[8];
 typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncArgTypesVector;
-typedef Vector<ExprType, 0, SystemAllocPolicy> FuncReturnTypesVector;
+typedef Vector<ValTypeVector, 0, SystemAllocPolicy> FuncReturnTypesVector;
 
 struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   FuncTypeWithIdVector funcTypeIds;
@@ -334,6 +340,7 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   TableDescVector tables;
   CacheableChars filename;
   CacheableChars sourceMapURL;
+  bool omitsBoundsChecks;
 
   // namePayload points at the name section's CustomSection::payload so that
   // the Names (which are use payload-relative offsets) can be used
@@ -596,22 +603,20 @@ class JumpTables {
             const CodeRangeVector& codeRanges);
 
   void setJitEntry(size_t i, void* target) const {
-    // See comment in wasm::Module::finishTier2 and JumpTables::init.
+    // Make sure that write is atomic; see comment in wasm::Module::finishTier2
+    // to that effect.
     MOZ_ASSERT(i < numFuncs_);
-    jit_.get()[2 * i] = target;
-    jit_.get()[2 * i + 1] = target;
+    jit_.get()[i] = target;
   }
   void** getAddressOfJitEntry(size_t i) const {
     MOZ_ASSERT(i < numFuncs_);
-    MOZ_ASSERT(jit_.get()[2 * i]);
-    return &jit_.get()[2 * i];
+    MOZ_ASSERT(jit_.get()[i]);
+    return &jit_.get()[i];
   }
   size_t funcIndexFromJitEntry(void** target) const {
     MOZ_ASSERT(target >= &jit_.get()[0]);
-    MOZ_ASSERT(target <= &(jit_.get()[2 * numFuncs_ - 1]));
-    size_t index = (intptr_t*)target - (intptr_t*)&jit_.get()[0];
-    MOZ_ASSERT(index % 2 == 0);
-    return index / 2;
+    MOZ_ASSERT(target <= &(jit_.get()[numFuncs_ - 1]));
+    return (intptr_t*)target - (intptr_t*)&jit_.get()[0];
   }
 
   void setTieringEntry(size_t i, void* target) const {

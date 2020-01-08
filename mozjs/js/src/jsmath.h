@@ -15,18 +15,13 @@
 
 namespace js {
 
-struct Class;
-class GlobalObject;
-
 typedef double (*UnaryFunType)(double);
 
 /*
  * JS math functions.
  */
 
-extern const Class MathClass;
-
-extern JSObject* InitMathClass(JSContext* cx, Handle<GlobalObject*> global);
+extern const JSClass MathClass;
 
 extern uint64_t GenerateRandomSeed();
 
@@ -62,8 +57,6 @@ extern bool math_pow(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern bool minmax_impl(JSContext* cx, bool max, js::HandleValue a,
                         js::HandleValue b, js::MutableHandleValue res);
-
-extern void math_sincos_impl(double x, double* sin, double* cos);
 
 extern bool math_imul_handle(JSContext* cx, HandleValue lhs, HandleValue rhs,
                              MutableHandleValue res);

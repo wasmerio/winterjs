@@ -17,6 +17,26 @@ from .base import (
 )
 
 
+class WordCounter(ftl.Visitor):
+    def __init__(self):
+        self.word_count = 0
+
+    def generic_visit(self, node):
+        if isinstance(
+            node,
+            (ftl.Span, ftl.Annotation, ftl.BaseComment)
+        ):
+            return
+        super(WordCounter, self).generic_visit(node)
+
+    def visit_SelectExpression(self, node):
+        # optimize select expressions to only go through the variants
+        self.visit(node.variants)
+
+    def visit_TextElement(self, node):
+        self.word_count += len(node.value.split())
+
+
 class FluentAttribute(Entry):
     ignored_fields = ['span']
 
@@ -77,14 +97,9 @@ class FluentEntity(Entity):
 
     def count_words(self):
         if self._word_count is None:
-            self._word_count = 0
-
-            def count_words(node):
-                if isinstance(node, ftl.TextElement):
-                    self._word_count += len(node.value.split())
-                return node
-
-            self.root_node.traverse(count_words)
+            counter = WordCounter()
+            counter.visit(self.root_node)
+            self._word_count = counter.word_count
 
         return self._word_count
 
@@ -94,7 +109,13 @@ class FluentEntity(Entity):
 
     # In Fluent we treat entries as a whole.  FluentChecker reports errors at
     # offsets calculated from the beginning of the entry.
-    def value_position(self, offset=0):
+    def value_position(self, offset=None):
+        if offset is None:
+            # no offset given, use our value start or id end
+            if self.val_span:
+                offset = self.val_span[0] - self.span[0]
+            else:
+                offset = self.key_span[1] - self.span[0]
         return self.position(offset)
 
     @property

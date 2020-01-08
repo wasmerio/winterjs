@@ -23,6 +23,7 @@
 #include "mozilla/ThreadLocal.h"
 
 #include "threading/Thread.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/Realm.h"
 #include "vm/Runtime.h"
 #include "wasm/WasmInstance.h"
@@ -136,7 +137,7 @@ using mozilla::DebugOnly;
 #    define EPC_sig(p) ((p)->uc_mcontext.pc)
 #    define RFP_sig(p) ((p)->uc_mcontext.regs[29])
 #    define RLR_sig(p) ((p)->uc_mcontext.regs[30])
-#    define R31_sig(p) ((p)->uc_mcontext.regs[31])
+#    define R31_sig(p) ((p)->uc_mcontext.sp)
 #  endif
 #  if defined(__linux__) && defined(__mips__)
 #    define EPC_sig(p) ((p)->uc_mcontext.pc)
@@ -742,7 +743,6 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
 // Compiled in all user binaries, so should be stable over time.
 static const unsigned sThreadLocalArrayPointerIndex = 11;
 
-#ifndef JS_ENABLE_UWP
 static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
   // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
   if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
@@ -766,7 +766,6 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
 
   return EXCEPTION_CONTINUE_EXECUTION;
 }
-#endif
 
 #elif defined(XP_DARWIN)
 // On OSX we are forced to use the lower-level Mach exception mechanism instead
@@ -1026,13 +1025,11 @@ void wasm::EnsureEagerProcessSignalHandlers() {
   // such as MemoryProtectionExceptionHandler that assume we are crashing.
   const bool firstHandler = true;
 #  endif
-#  ifndef JS_ENABLE_UWP
   if (!AddVectoredExceptionHandler(firstHandler, WasmTrapHandler)) {
     // Windows has all sorts of random security knobs for disabling things
     // so make this a dynamic failure that disables wasm, not a MOZ_CRASH().
     return;
   }
-#  endif
 
 #elif defined(XP_DARWIN)
   // All the Mach setup in EnsureLazyProcessSignalHandlers.

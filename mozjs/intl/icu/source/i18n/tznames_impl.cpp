@@ -21,11 +21,14 @@
 #include "unicode/utf16.h"
 
 #include "tznames_impl.h"
+#include "bytesinkutil.h"
+#include "charstr.h"
 #include "cmemory.h"
 #include "cstring.h"
 #include "uassert.h"
 #include "mutex.h"
 #include "resource.h"
+#include "ulocimp.h"
 #include "uresimp.h"
 #include "ureslocs.h"
 #include "zonemeta.h"
@@ -49,8 +52,7 @@ static const UChar NO_NAME[]            = { 0 };   // for empty no-fallback time
 static const char* TZDBNAMES_KEYS[]               = {"ss", "sd"};
 static const int32_t TZDBNAMES_KEYS_SIZE = UPRV_LENGTHOF(TZDBNAMES_KEYS);
 
-static UMutex gTZDBNamesMapLock = U_MUTEX_INITIALIZER;
-static UMutex gDataMutex = U_MUTEX_INITIALIZER;
+static UMutex gDataMutex;
 
 static UHashtable* gTZDBNamesMap = NULL;
 static icu::UInitOnce gTZDBNamesMapInitOnce = U_INITONCE_INITIALIZER;
@@ -357,8 +359,6 @@ TextTrieMap::getChildNode(CharacterNode *parent, UChar c) const {
     return NULL;
 }
 
-// Mutex for protecting the lazy creation of the Trie node structure on the first call to search().
-static UMutex TextTrieMutex = U_MUTEX_INITIALIZER;
 
 // buildTrie() - The Trie node structure is needed.  Create it from the data that was
 //               saved at the time the ZoneStringFormatter was created.  The Trie is only
@@ -386,6 +386,10 @@ TextTrieMap::search(const UnicodeString &text, int32_t start,
         //       the ICU atomic safe functions for assigning and testing.
         //       Don't test the pointer fLazyContents.
         //       Don't do unless it's really required.
+
+        // Mutex for protecting the lazy creation of the Trie node structure on the first call to search().
+        static UMutex TextTrieMutex;
+
         Mutex lock(&TextTrieMutex);
         if (fLazyContents != NULL) {
             TextTrieMap *nonConstThis = const_cast<TextTrieMap *>(this);
@@ -1109,7 +1113,7 @@ TimeZoneNamesImpl::operator==(const TimeZoneNames& other) const {
     return FALSE;
 }
 
-TimeZoneNames*
+TimeZoneNamesImpl*
 TimeZoneNamesImpl::clone() const {
     UErrorCode status = U_ZERO_ERROR;
     return new TimeZoneNamesImpl(fLocale, status);
@@ -2131,9 +2135,12 @@ TZDBTimeZoneNames::TZDBTimeZoneNames(const Locale& locale)
     int32_t regionLen = static_cast<int32_t>(uprv_strlen(region));
     if (regionLen == 0) {
         UErrorCode status = U_ZERO_ERROR;
-        char loc[ULOC_FULLNAME_CAPACITY];
-        uloc_addLikelySubtags(fLocale.getName(), loc, sizeof(loc), &status);
-        regionLen = uloc_getCountry(loc, fRegion, sizeof(fRegion), &status);
+        CharString loc;
+        {
+            CharStringByteSink sink(&loc);
+            ulocimp_addLikelySubtags(fLocale.getName(), sink, &status);
+        }
+        regionLen = uloc_getCountry(loc.data(), fRegion, sizeof(fRegion), &status);
         if (U_SUCCESS(status) && regionLen < (int32_t)sizeof(fRegion)) {
             useWorld = FALSE;
         }
@@ -2158,7 +2165,7 @@ TZDBTimeZoneNames::operator==(const TimeZoneNames& other) const {
     return FALSE;
 }
 
-TimeZoneNames*
+TZDBTimeZoneNames*
 TZDBTimeZoneNames::clone() const {
     return new TZDBTimeZoneNames(fLocale);
 }
@@ -2243,6 +2250,7 @@ TZDBTimeZoneNames::getMetaZoneNames(const UnicodeString& mzID, UErrorCode& statu
     U_ASSERT(status == U_ZERO_ERROR);   // already checked length above
     mzIDKey[mzID.length()] = 0;
 
+    static UMutex gTZDBNamesMapLock;
     umtx_lock(&gTZDBNamesMapLock);
     {
         void *cacheVal = uhash_get(gTZDBNamesMap, mzIDKey);

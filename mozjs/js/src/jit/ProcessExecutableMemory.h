@@ -9,7 +9,7 @@
 
 #include "mozilla/Attributes.h"
 
-#include "jsutil.h"
+#include "util/Poison.h"
 
 namespace js {
 namespace jit {
@@ -19,7 +19,44 @@ namespace jit {
 #if JS_BITS_PER_WORD == 32
 static const size_t MaxCodeBytesPerProcess = 140 * 1024 * 1024;
 #else
-static const size_t MaxCodeBytesPerProcess = 1 * 1024 * 1024 * 1024;
+// This is the largest number which satisfies various alignment static
+// asserts that is <= INT32_MAX. The INT32_MAX limit is required for making a
+// single call to RtlInstallFunctionTableCallback(). (This limit could be
+// relaxed in the future by making multiple calls.)
+static const size_t MaxCodeBytesPerProcess = 2044 * 1024 * 1024;
+#endif
+
+// Limit on the number of bytes of code memory per buffer.  This limit comes
+// about because we encode an unresolved relative unconditional branch during
+// assembly as a branch instruction that carries the absolute offset of the next
+// branch instruction in the chain of branches that all reference the same
+// unresolved label.  For this architecture to work, no branch instruction may
+// lie at an offset greater than the maximum forward branch distance.  This is
+// true on both ARM and ARM64.
+//
+// Notably, even though we know that the offsets thus encoded are always
+// positive offsets, we use only the positive part of the signed range of the
+// branch offset.
+//
+// On ARM-32, we are limited by BOffImm::IsInRange(), which checks that the
+// offset is no greater than 2^25-4 in the offset's 26-bit signed field.
+//
+// On ARM-64, we are limited by Instruction::ImmBranchMaxForwardOffset(), which
+// checks that the offset is no greater than 2^27-4 in the offset's 28-bit
+// signed field.
+//
+// On MIPS, there are no limitations because the assembler has to implement
+// jump chaining to be effective at all (jump offsets are quite small).
+//
+// On x86 and x64, there are no limitations here because the assembler
+// MOZ_CRASHes if the 32-bit offset is exceeded.
+
+#if defined(JS_CODEGEN_ARM)
+static const size_t MaxCodeBytesPerBuffer = (1 << 25) - 4;
+#elif defined(JS_CODEGEN_ARM64)
+static const size_t MaxCodeBytesPerBuffer = (1 << 27) - 4;
+#else
+static const size_t MaxCodeBytesPerBuffer = MaxCodeBytesPerProcess;
 #endif
 
 // Executable code is allocated in 64K chunks. ExecutableAllocator uses pools
@@ -33,8 +70,11 @@ enum class ProtectionSetting {
   Executable,
 };
 
+enum class MustFlushICache { No, Yes };
+
 extern MOZ_MUST_USE bool ReprotectRegion(void* start, size_t size,
-                                         ProtectionSetting protection);
+                                         ProtectionSetting protection,
+                                         MustFlushICache flushICache);
 
 // Functions called at process start-up/shutdown to initialize/release the
 // executable memory region.

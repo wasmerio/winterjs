@@ -7,8 +7,6 @@
 #ifndef mozilla_WindowsVersion_h
 #define mozilla_WindowsVersion_h
 
-#ifndef JS_ENABLE_UWP
-
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include <stdint.h>
@@ -160,6 +158,10 @@ MOZ_ALWAYS_INLINE bool IsWin10Sep2018UpdateOrLater() {
   return IsWindows10BuildOrLater(17763);
 }
 
+MOZ_ALWAYS_INLINE bool IsWin10May2019UpdateOrLater() {
+  return IsWindows10BuildOrLater(18362);
+}
+
 MOZ_ALWAYS_INLINE bool IsNotWin7PreRTM() {
   return IsWin7SP1OrLater() || IsWindowsBuildOrLater(7600);
 }
@@ -199,7 +201,5 @@ inline bool IsWin7AndPre2000Compatible() {
 }
 
 }  // namespace mozilla
-
-#endif
 
 #endif /* mozilla_WindowsVersion_h */

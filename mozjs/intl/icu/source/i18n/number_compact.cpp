@@ -260,7 +260,7 @@ void CompactHandler::precomputeAllModifiers(MutablePatternModifier &buildReferen
         ParsedPatternInfo patternInfo;
         PatternParser::parseToPatternInfo(UnicodeString(patternString), patternInfo, status);
         if (U_FAILURE(status)) { return; }
-        buildReference.setPatternInfo(&patternInfo);
+        buildReference.setPatternInfo(&patternInfo, UNUM_COMPACT_FIELD);
         info.mod = buildReference.createImmutable(status);
         if (U_FAILURE(status)) { return; }
         info.patternString = patternString;
@@ -272,15 +272,15 @@ void CompactHandler::processQuantity(DecimalQuantity &quantity, MicroProps &micr
     parent->processQuantity(quantity, micros, status);
     if (U_FAILURE(status)) { return; }
 
-    // Treat zero as if it had magnitude 0
+    // Treat zero, NaN, and infinity as if they had magnitude 0
     int32_t magnitude;
-    if (quantity.isZero()) {
+    if (quantity.isZeroish()) {
         magnitude = 0;
         micros.rounder.apply(quantity, status);
     } else {
         // TODO: Revisit chooseMultiplierAndApply
         int32_t multiplier = micros.rounder.chooseMultiplierAndApply(quantity, data, status);
-        magnitude = quantity.isZero() ? 0 : quantity.getMagnitude();
+        magnitude = quantity.isZeroish() ? 0 : quantity.getMagnitude();
         magnitude -= multiplier;
     }
 
@@ -297,7 +297,7 @@ void CompactHandler::processQuantity(DecimalQuantity &quantity, MicroProps &micr
         for (; i < precomputedModsLength; i++) {
             const CompactModInfo &info = precomputedMods[i];
             if (u_strcmp(patternString, info.patternString) == 0) {
-                info.mod->applyToMicros(micros, quantity);
+                info.mod->applyToMicros(micros, quantity, status);
                 break;
             }
         }
@@ -310,7 +310,7 @@ void CompactHandler::processQuantity(DecimalQuantity &quantity, MicroProps &micr
         ParsedPatternInfo &patternInfo = const_cast<CompactHandler *>(this)->unsafePatternInfo;
         PatternParser::parseToPatternInfo(UnicodeString(patternString), patternInfo, status);
         static_cast<MutablePatternModifier*>(const_cast<Modifier*>(micros.modMiddle))
-            ->setPatternInfo(&patternInfo);
+            ->setPatternInfo(&patternInfo, UNUM_COMPACT_FIELD);
     }
 
     // We already performed rounding. Do not perform it again.

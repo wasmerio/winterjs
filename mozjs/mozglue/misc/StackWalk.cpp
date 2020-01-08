@@ -14,6 +14,11 @@
 
 #include <string.h>
 
+#if defined(ANDROID) && defined(MOZ_LINKER)
+#  include "Linker.h"
+#  include <android/log.h>
+#endif
+
 using namespace mozilla;
 
 // for _Unwind_Backtrace from libcxxrt or libunwind
@@ -72,11 +77,9 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
 // We need a way to know if we are building for WXP (or later), as if we are, we
 // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
 // A value of 9 indicates we want to use the new APIs.
-#ifndef JS_ENABLE_UWP
 #  if API_VERSION_NUMBER < 9
 #    error Too old imagehlp.h
 #  endif
-#endif
 
 struct WalkStackData {
   // Are we walking the stack of the calling thread? Note that we need to avoid
@@ -117,14 +120,16 @@ CRITICAL_SECTION gDbgHelpCS;
 // more difficult for WalkStackMain64 to read the suspended thread's counter.
 static Atomic<size_t> sStackWalkSuppressions;
 
+void SuppressStackWalking() { ++sStackWalkSuppressions; }
+
+void DesuppressStackWalking() { --sStackWalkSuppressions; }
+
 MFBT_API
-AutoSuppressStackWalking::AutoSuppressStackWalking() {
-  ++sStackWalkSuppressions;
-}
+AutoSuppressStackWalking::AutoSuppressStackWalking() { SuppressStackWalking(); }
 
 MFBT_API
 AutoSuppressStackWalking::~AutoSuppressStackWalking() {
-  --sStackWalkSuppressions;
+  DesuppressStackWalking();
 }
 
 static uint8_t* sJitCodeRegionStart;
@@ -176,9 +181,6 @@ static void InitializeDbgHelpCriticalSection() {
 }
 
 static void WalkStackMain64(struct WalkStackData* aData) {
-#ifdef JS_ENABLE_UWP
-  return;
-#else
   // Get a context for the specified thread.
   CONTEXT context_buf;
   CONTEXT* context;
@@ -364,7 +366,6 @@ static void WalkStackMain64(struct WalkStackData* aData) {
     }
 #  endif
   }
-#endif
 }
 
 /**
@@ -458,7 +459,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
                                         ULONG aModuleSize, PVOID aUserContext) {
   BOOL retval = TRUE;
   DWORD64 addr = *(DWORD64*)aUserContext;
-#ifndef JS_ENABLE_UWP
+
   /*
    * You'll want to control this if we are running on an
    *  architecture where the addresses go the other direction.
@@ -478,7 +479,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
       PrintError("SymLoadModule64");
     }
   }
-#endif
+
   return retval;
 }
 
@@ -510,7 +511,6 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
 #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
 #  endif
 
-#ifndef JS_ENABLE_UWP
 BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
                                 PIMAGEHLP_MODULE64 aModuleInfo,
                                 PIMAGEHLP_LINE64 aLineInfo) {
@@ -567,24 +567,22 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
 
   return retval;
 }
-#endif
 
 static bool EnsureSymInitialized() {
   static bool gInitialized = false;
-  bool retStat = true;
+  bool retStat;
 
   if (gInitialized) {
     return gInitialized;
   }
 
   InitializeDbgHelpCriticalSection();
-#ifndef JS_ENABLE_UWP
+
   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
   if (!retStat) {
     PrintError("SymInitialize");
   }
-#endif
 
   gInitialized = retStat;
   /* XXX At some point we need to arrange to call SymCleanup */
@@ -592,7 +590,6 @@ static bool EnsureSymInitialized() {
   return retStat;
 }
 
-#ifndef JS_ENABLE_UWP
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
   aDetails->library[0] = '\0';
@@ -656,7 +653,6 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
   return true;
 }
-#endif
 
 // i386 or PPC Linux stackwalking code
 #elif HAVE_DLADDR &&                                           \
@@ -681,6 +677,8 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
 #    include <cxxabi.h>
 #  endif  // MOZ_DEMANGLE_SYMBOLS
 
+namespace mozilla {
+
 void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen) {
   aBuffer[0] = '\0';
 
@@ -695,6 +693,8 @@ void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen) {
   }
 #  endif  // MOZ_DEMANGLE_SYMBOLS
 }
+
+}  // namespace mozilla
 
 // {x86, ppc} x {Linux, Mac} stackwalking code.
 #  if ((defined(__i386) || defined(PPC) || defined(__ppc__)) && \
@@ -804,7 +804,13 @@ bool MFBT_API MozDescribeCodeAddress(void* aPC,
   aDetails->foffset = 0;
 
   Dl_info info;
+
+#  if defined(ANDROID) && defined(MOZ_LINKER)
+  int ok = __wrap_dladdr(aPC, &info);
+#  else
   int ok = dladdr(aPC, &info);
+#  endif
+
   if (!ok) {
     return true;
   }

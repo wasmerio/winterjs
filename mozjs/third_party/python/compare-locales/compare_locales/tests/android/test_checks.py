@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -5,7 +6,7 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
 
-from compare_locales.tests.test_checks import BaseHelper
+from compare_locales.tests import BaseHelper
 from compare_locales.paths import File
 
 
@@ -67,6 +68,19 @@ class SimpleStringsTest(BaseHelper):
                     "or one CDATA surrounded by whitespace",
                     "android"
                  ),
+            )
+        )
+
+    def test_bad_encoding(self):
+        self._test(
+            ANDROID_WRAPPER % 'touché'.encode('latin-1'),
+            (
+                (
+                    "warning",
+                    24,
+                    "\ufffd in: foo",
+                    "encodings"
+                ),
             )
         )
 

@@ -28,6 +28,7 @@
 #include "unicode/ures.h"
 #include "unicode/ustring.h"
 #include "unicode/rep.h"
+#include "unicode/region.h"
 #include "cpputils.h"
 #include "mutex.h"
 #include "umutex.h"
@@ -471,9 +472,14 @@ enum AllowedHourFormat{
     ALLOWED_HOUR_FORMAT_UNKNOWN = -1,
     ALLOWED_HOUR_FORMAT_h,
     ALLOWED_HOUR_FORMAT_H,
+    ALLOWED_HOUR_FORMAT_K,  // Added ICU-20383, used by JP
+    ALLOWED_HOUR_FORMAT_k,  // Added ICU-20383, not currently used
     ALLOWED_HOUR_FORMAT_hb,
-    ALLOWED_HOUR_FORMAT_Hb,
     ALLOWED_HOUR_FORMAT_hB,
+    ALLOWED_HOUR_FORMAT_Kb, // Added ICU-20383, not currently used
+    ALLOWED_HOUR_FORMAT_KB, // Added ICU-20383, not currently used
+    // ICU-20383 The following are unlikely and not currently used
+    ALLOWED_HOUR_FORMAT_Hb,
     ALLOWED_HOUR_FORMAT_HB
 };
 
@@ -511,36 +517,55 @@ struct AllowedHourFormatsSink : public ResourceSink {
             const char *regionOrLocale = key;
             ResourceTable formatList = value.getTable(errorCode);
             if (U_FAILURE(errorCode)) { return; }
+            // below we construct a list[] that has an entry for the "preferred" value at [0],
+            // followed by 1 or more entries for the "allowed" values, terminated with an
+            // entry for ALLOWED_HOUR_FORMAT_UNKNOWN (not included in length below)
+            LocalMemory<int32_t> list;
+            int32_t length = 0;
+            int32_t preferredFormat = ALLOWED_HOUR_FORMAT_UNKNOWN;
             for (int32_t j = 0; formatList.getKeyAndValue(j, key, value); ++j) {
-                if (uprv_strcmp(key, "allowed") == 0) {  // Ignore "preferred" list.
-                    LocalMemory<int32_t> list;
-                    int32_t length;
+                if (uprv_strcmp(key, "allowed") == 0) {
                     if (value.getType() == URES_STRING) {
-                        if (list.allocateInsteadAndReset(2) == nullptr) {
-                            errorCode = U_MEMORY_ALLOCATION_ERROR;
-                            return;
-                        }
-                        list[0] = getHourFormatFromUnicodeString(value.getUnicodeString(errorCode));
-                        length = 1;
-                    }
-                    else {
-                        ResourceArray allowedFormats = value.getArray(errorCode);
-                        length = allowedFormats.getSize();
+                        length = 2; // 1 preferred to add later, 1 allowed to add now
                         if (list.allocateInsteadAndReset(length + 1) == nullptr) {
                             errorCode = U_MEMORY_ALLOCATION_ERROR;
                             return;
                         }
-                        for (int32_t k = 0; k < length; ++k) {
-                            allowedFormats.getValue(k, value);
+                        list[1] = getHourFormatFromUnicodeString(value.getUnicodeString(errorCode));
+                    }
+                    else {
+                        ResourceArray allowedFormats = value.getArray(errorCode);
+                        length = allowedFormats.getSize() + 1; // 1 preferred, getSize allowed
+                        if (list.allocateInsteadAndReset(length + 1) == nullptr) {
+                            errorCode = U_MEMORY_ALLOCATION_ERROR;
+                            return;
+                        }
+                        for (int32_t k = 1; k < length; ++k) {
+                            allowedFormats.getValue(k-1, value);
                             list[k] = getHourFormatFromUnicodeString(value.getUnicodeString(errorCode));
                         }
                     }
-                    list[length] = ALLOWED_HOUR_FORMAT_UNKNOWN;
-                    uhash_put(localeToAllowedHourFormatsMap,
-                              const_cast<char *>(regionOrLocale), list.orphan(), &errorCode);
-                    if (U_FAILURE(errorCode)) { return; }
+                } else if (uprv_strcmp(key, "preferred") == 0) {
+                    preferredFormat = getHourFormatFromUnicodeString(value.getUnicodeString(errorCode));
                 }
             }
+            if (length > 1) {
+                list[0] = (preferredFormat!=ALLOWED_HOUR_FORMAT_UNKNOWN)? preferredFormat: list[1];
+            } else {
+                // fallback handling for missing data
+                length = 2; // 1 preferred, 1 allowed
+                if (list.allocateInsteadAndReset(length + 1) == nullptr) {
+                    errorCode = U_MEMORY_ALLOCATION_ERROR;
+                    return;
+                }
+                list[0] = (preferredFormat!=ALLOWED_HOUR_FORMAT_UNKNOWN)? preferredFormat: ALLOWED_HOUR_FORMAT_H;
+                list[1] = list[0];
+            }
+            list[length] = ALLOWED_HOUR_FORMAT_UNKNOWN;
+            // At this point list[] will have at least two non-ALLOWED_HOUR_FORMAT_UNKNOWN entries,
+            // followed by ALLOWED_HOUR_FORMAT_UNKNOWN.
+            uhash_put(localeToAllowedHourFormatsMap, const_cast<char *>(regionOrLocale), list.orphan(), &errorCode);
+            if (U_FAILURE(errorCode)) { return; }
         }
     }
 
@@ -548,10 +573,14 @@ struct AllowedHourFormatsSink : public ResourceSink {
         if (s.length() == 1) {
             if (s[0] == LOW_H) { return ALLOWED_HOUR_FORMAT_h; }
             if (s[0] == CAP_H) { return ALLOWED_HOUR_FORMAT_H; }
+            if (s[0] == CAP_K) { return ALLOWED_HOUR_FORMAT_K; }
+            if (s[0] == LOW_K) { return ALLOWED_HOUR_FORMAT_k; }
         } else if (s.length() == 2) {
             if (s[0] == LOW_H && s[1] == LOW_B) { return ALLOWED_HOUR_FORMAT_hb; }
-            if (s[0] == CAP_H && s[1] == LOW_B) { return ALLOWED_HOUR_FORMAT_Hb; }
             if (s[0] == LOW_H && s[1] == CAP_B) { return ALLOWED_HOUR_FORMAT_hB; }
+            if (s[0] == CAP_K && s[1] == LOW_B) { return ALLOWED_HOUR_FORMAT_Kb; }
+            if (s[0] == CAP_K && s[1] == CAP_B) { return ALLOWED_HOUR_FORMAT_KB; }
+            if (s[0] == CAP_H && s[1] == LOW_B) { return ALLOWED_HOUR_FORMAT_Hb; }
             if (s[0] == CAP_H && s[1] == CAP_B) { return ALLOWED_HOUR_FORMAT_HB; }
         }
 
@@ -585,42 +614,74 @@ U_CFUNC void U_CALLCONV DateTimePatternGenerator::loadAllowedHourFormatsData(UEr
     ures_getAllItemsWithFallback(rb.getAlias(), "timeData", sink, status);    
 }
 
-void DateTimePatternGenerator::getAllowedHourFormats(const Locale &locale, UErrorCode &status) {
-    if (U_FAILURE(status)) { return; }
-    const char *localeID = locale.getName();
-    char maxLocaleID[ULOC_FULLNAME_CAPACITY];
-    int32_t length = uloc_addLikelySubtags(localeID, maxLocaleID, ULOC_FULLNAME_CAPACITY, &status);
-    if (U_FAILURE(status)) {
-        return;
-    } else if (length == ULOC_FULLNAME_CAPACITY) {  // no room for NUL
-        status = U_BUFFER_OVERFLOW_ERROR;
-        return;
-    }
-    Locale maxLocale = Locale(maxLocaleID);
-
-    const char *country = maxLocale.getCountry();
-    if (*country == '\0') { country = "001"; }
-    const char *language = maxLocale.getLanguage();
-
+static int32_t* getAllowedHourFormatsLangCountry(const char* language, const char* country, UErrorCode& status) {
     CharString langCountry;
-    langCountry.append(language, static_cast<int32_t>(uprv_strlen(language)), status);
+    langCountry.append(language, status);
     langCountry.append('_', status);
-    langCountry.append(country, static_cast<int32_t>(uprv_strlen(country)), status);
+    langCountry.append(country, status);
 
-    int32_t *allowedFormats;
+    int32_t* allowedFormats;
     allowedFormats = (int32_t *)uhash_get(localeToAllowedHourFormatsMap, langCountry.data());
     if (allowedFormats == nullptr) {
         allowedFormats = (int32_t *)uhash_get(localeToAllowedHourFormatsMap, const_cast<char *>(country));
     }
 
+    return allowedFormats;
+}
+
+void DateTimePatternGenerator::getAllowedHourFormats(const Locale &locale, UErrorCode &status) {
+    if (U_FAILURE(status)) { return; }
+
+    const char *language = locale.getLanguage();
+    const char *country = locale.getCountry();
+    Locale maxLocale;  // must be here for correct lifetime
+    if (*language == '\0' || *country == '\0') {
+        maxLocale = locale;
+        UErrorCode localStatus = U_ZERO_ERROR;
+        maxLocale.addLikelySubtags(localStatus);
+        if (U_SUCCESS(localStatus)) {
+            language = maxLocale.getLanguage();
+            country = maxLocale.getCountry();
+        }
+    }
+    if (*language == '\0') {
+        // Unexpected, but fail gracefully
+        language = "und";
+    }
+    if (*country == '\0') {
+        country = "001";
+    }
+
+    int32_t* allowedFormats = getAllowedHourFormatsLangCountry(language, country, status);
+
+    // Check if the region has an alias
+    if (allowedFormats == nullptr) {
+        UErrorCode localStatus = U_ZERO_ERROR;
+        const Region* region = Region::getInstance(country, localStatus);
+        if (U_SUCCESS(localStatus)) {
+            country = region->getRegionCode(); // the real region code
+            allowedFormats = getAllowedHourFormatsLangCountry(language, country, status);
+        }
+    }
+
     if (allowedFormats != nullptr) {  // Lookup is successful
+        // Here allowedFormats points to a list consisting of key for preferredFormat,
+        // followed by one or more keys for allowedFormats, then followed by ALLOWED_HOUR_FORMAT_UNKNOWN.
+        switch (allowedFormats[0]) {
+            case ALLOWED_HOUR_FORMAT_h: fDefaultHourFormatChar = LOW_H; break;
+            case ALLOWED_HOUR_FORMAT_H: fDefaultHourFormatChar = CAP_H; break;
+            case ALLOWED_HOUR_FORMAT_K: fDefaultHourFormatChar = CAP_K; break;
+            case ALLOWED_HOUR_FORMAT_k: fDefaultHourFormatChar = LOW_K; break;
+            default: fDefaultHourFormatChar = CAP_H; break;
+        }
         for (int32_t i = 0; i < UPRV_LENGTHOF(fAllowedHourFormats); ++i) {
-            fAllowedHourFormats[i] = allowedFormats[i];
-            if (allowedFormats[i] == ALLOWED_HOUR_FORMAT_UNKNOWN) {
+            fAllowedHourFormats[i] = allowedFormats[i + 1];
+            if (fAllowedHourFormats[i] == ALLOWED_HOUR_FORMAT_UNKNOWN) {
                 break;
             }
         }
     } else {  // Lookup failed, twice
+        fDefaultHourFormatChar = CAP_H;
         fAllowedHourFormats[0] = ALLOWED_HOUR_FORMAT_H;
         fAllowedHourFormats[1] = ALLOWED_HOUR_FORMAT_UNKNOWN;
     }
@@ -750,12 +811,11 @@ DateTimePatternGenerator::hackTimes(const UnicodeString& hackPattern, UErrorCode
 
 #define ULOC_LOCALE_IDENTIFIER_CAPACITY (ULOC_FULLNAME_CAPACITY + 1 + ULOC_KEYWORD_AND_VALUES_CAPACITY)
 
-static const UChar hourFormatChars[] = { CAP_H, LOW_H, CAP_K, LOW_K, 0 }; // HhKk, the hour format characters
-
 void
 DateTimePatternGenerator::getCalendarTypeToUse(const Locale& locale, CharString& destination, UErrorCode& err) {
     destination.clear().append(DT_DateTimeGregorianTag, -1, err); // initial default
     if ( U_SUCCESS(err) ) {
+        UErrorCode localStatus = U_ZERO_ERROR;
         char localeWithCalendarKey[ULOC_LOCALE_IDENTIFIER_CAPACITY];
         // obtain a locale that always has the calendar key value that should be used
         ures_getFunctionalEquivalent(
@@ -767,8 +827,7 @@ DateTimePatternGenerator::getCalendarTypeToUse(const Locale& locale, CharString&
             locale.getName(),
             nullptr,
             FALSE,
-            &err);
-        if (U_FAILURE(err)) { return; }
+            &localStatus);
         localeWithCalendarKey[ULOC_LOCALE_IDENTIFIER_CAPACITY-1] = 0; // ensure null termination
         // now get the calendar key value from that locale
         char calendarType[ULOC_KEYWORDS_CAPACITY];
@@ -777,13 +836,17 @@ DateTimePatternGenerator::getCalendarTypeToUse(const Locale& locale, CharString&
             "calendar",
             calendarType,
             ULOC_KEYWORDS_CAPACITY,
-            &err);
-        if (U_FAILURE(err)) { return; }
+            &localStatus);
+        // If the input locale was invalid, don't fail with missing resource error, instead
+        // continue with default of Gregorian.
+        if (U_FAILURE(localStatus) && localStatus != U_MISSING_RESOURCE_ERROR) {
+            err = localStatus;
+            return;
+        }
         if (calendarTypeLen < ULOC_KEYWORDS_CAPACITY) {
             destination.clear().append(calendarType, -1, err);
             if (U_FAILURE(err)) { return; }
         }
-        err = U_ZERO_ERROR;
     }
 }
 
@@ -791,18 +854,9 @@ void
 DateTimePatternGenerator::consumeShortTimePattern(const UnicodeString& shortTimePattern,
         UErrorCode& status) {
     if (U_FAILURE(status)) { return; }
-    // set fDefaultHourFormatChar to the hour format character from this pattern
-    int32_t tfIdx, tfLen = shortTimePattern.length();
-    UBool ignoreChars = FALSE;
-    for (tfIdx = 0; tfIdx < tfLen; tfIdx++) {
-        UChar tfChar = shortTimePattern.charAt(tfIdx);
-        if ( tfChar == SINGLE_QUOTE ) {
-            ignoreChars = !ignoreChars; // toggle (handle quoted literals & '' for single quote)
-        } else if ( !ignoreChars && u_strchr(hourFormatChars, tfChar) != nullptr ) {
-            fDefaultHourFormatChar = tfChar;
-            break;
-        }
-    }
+    // ICU-20383 No longer set fDefaultHourFormatChar to the hour format character from
+    // this pattern; instead it is set from localeToAllowedHourFormatsMap which now
+    // includes entries for both preferred and allowed formats.
 
     // HACK for hh:ss
     hackTimes(shortTimePattern, status);
@@ -1140,20 +1194,24 @@ DateTimePatternGenerator::mapSkeletonMetacharacters(const UnicodeString& pattern
                 if (patChr == LOW_J) {
                     hourChar = fDefaultHourFormatChar;
                 } else {
-                    AllowedHourFormat preferred;
+                    AllowedHourFormat bestAllowed;
                     if (fAllowedHourFormats[0] != ALLOWED_HOUR_FORMAT_UNKNOWN) {
-                        preferred = (AllowedHourFormat)fAllowedHourFormats[0];
+                        bestAllowed = (AllowedHourFormat)fAllowedHourFormats[0];
                     } else {
                         status = U_INVALID_FORMAT_ERROR;
                         return UnicodeString();
                     }
-                    if (preferred == ALLOWED_HOUR_FORMAT_H || preferred == ALLOWED_HOUR_FORMAT_HB || preferred == ALLOWED_HOUR_FORMAT_Hb) {
+                    if (bestAllowed == ALLOWED_HOUR_FORMAT_H || bestAllowed == ALLOWED_HOUR_FORMAT_HB || bestAllowed == ALLOWED_HOUR_FORMAT_Hb) {
                         hourChar = CAP_H;
+                    } else if (bestAllowed == ALLOWED_HOUR_FORMAT_K || bestAllowed == ALLOWED_HOUR_FORMAT_KB || bestAllowed == ALLOWED_HOUR_FORMAT_Kb) {
+                        hourChar = CAP_K;
+                    } else if (bestAllowed == ALLOWED_HOUR_FORMAT_k) {
+                        hourChar = LOW_K;
                     }
                     // in #13183 just add b/B to skeleton, no longer need to set special flags
-                    if (preferred == ALLOWED_HOUR_FORMAT_HB || preferred == ALLOWED_HOUR_FORMAT_hB) {
+                    if (bestAllowed == ALLOWED_HOUR_FORMAT_HB || bestAllowed == ALLOWED_HOUR_FORMAT_hB || bestAllowed == ALLOWED_HOUR_FORMAT_KB) {
                         dayPeriodChar = CAP_B;
-                    } else if (preferred == ALLOWED_HOUR_FORMAT_Hb || preferred == ALLOWED_HOUR_FORMAT_hb) {
+                    } else if (bestAllowed == ALLOWED_HOUR_FORMAT_Hb || bestAllowed == ALLOWED_HOUR_FORMAT_hb || bestAllowed == ALLOWED_HOUR_FORMAT_Kb) {
                         dayPeriodChar = LOW_B;
                     }
                 }
@@ -1804,7 +1862,7 @@ PatternMap::copyFrom(const PatternMap& other, UErrorCode& status) {
                 if (prevElem != nullptr) {
                     prevElem->next.adoptInstead(curElem);
                 } else {
-                    U_ASSERT(false);
+                    UPRV_UNREACHABLE;
                 }
             }
             prevElem = curElem;
@@ -2517,7 +2575,8 @@ UChar SkeletonFields::getFirstChar() const {
 }
 
 
-PtnSkeleton::PtnSkeleton() {
+PtnSkeleton::PtnSkeleton()
+    : addedDefaultDayPeriod(FALSE) {
 }
 
 PtnSkeleton::PtnSkeleton(const PtnSkeleton& other) {
@@ -2528,6 +2587,7 @@ void PtnSkeleton::copyFrom(const PtnSkeleton& other) {
     uprv_memcpy(type, other.type, sizeof(type));
     original.copyFrom(other.original);
     baseOriginal.copyFrom(other.baseOriginal);
+    addedDefaultDayPeriod = other.addedDefaultDayPeriod;
 }
 
 void PtnSkeleton::clear() {

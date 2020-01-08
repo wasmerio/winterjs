@@ -14,7 +14,7 @@ MOZ_ARG_WITH_BOOL(system-icu,
     MOZ_SYSTEM_ICU=1)
 
 if test -n "$MOZ_SYSTEM_ICU"; then
-    PKG_CHECK_MODULES(MOZ_ICU, icu-i18n >= 63.1)
+    PKG_CHECK_MODULES(MOZ_ICU, icu-i18n >= 64.1)
     CFLAGS="$CFLAGS $MOZ_ICU_CFLAGS"
     CXXFLAGS="$CXXFLAGS $MOZ_ICU_CFLAGS"
     AC_DEFINE(MOZ_SYSTEM_ICU)
@@ -23,40 +23,30 @@ fi
 AC_SUBST(MOZ_SYSTEM_ICU)
 
 MOZ_ARG_WITH_STRING(intl-api,
-[  --with-intl-api, --with-intl-api=build, --without-intl-api
+[  --with-intl-api, --without-intl-api
     Determine the status of the ECMAScript Internationalization API.  The first
-    (or lack of any of these) builds and exposes the API.  The second builds it
-    but doesn't use ICU or expose the API to script.  The third doesn't build
-    ICU at all.],
+    (or lack of any of these) builds and exposes the API.  The second doesn't
+    build ICU at all.],
     _INTL_API=$withval)
 
-ENABLE_INTL_API=
-EXPOSE_INTL_API=
+JS_HAS_INTL_API=
 case "$_INTL_API" in
 no)
     ;;
-build)
-    ENABLE_INTL_API=1
-    ;;
 yes)
-    ENABLE_INTL_API=1
-    EXPOSE_INTL_API=1
+    JS_HAS_INTL_API=1
     ;;
 *)
     AC_MSG_ERROR([Invalid value passed to --with-intl-api: $_INTL_API])
     ;;
 esac
 
-if test -n "$ENABLE_INTL_API"; then
+if test -n "$JS_HAS_INTL_API"; then
     USE_ICU=1
 fi
 
-if test -n "$EXPOSE_INTL_API"; then
-    AC_DEFINE(EXPOSE_INTL_API)
-fi
-
-if test -n "$ENABLE_INTL_API"; then
-    AC_DEFINE(ENABLE_INTL_API)
+if test -n "$JS_HAS_INTL_API"; then
+    AC_DEFINE(JS_HAS_INTL_API)
 fi
 
 dnl Settings for the implementation of the ECMAScript Internationalization API
@@ -82,7 +72,7 @@ if test -n "$USE_ICU"; then
 fi
 
 AC_SUBST(MOZ_ICU_VERSION)
-AC_SUBST(ENABLE_INTL_API)
+AC_SUBST(JS_HAS_INTL_API)
 AC_SUBST(USE_ICU)
 AC_SUBST(ICU_DATA_FILE)
 

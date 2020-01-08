@@ -18,6 +18,7 @@
 
 #include "wasm/WasmFrameIter.h"
 
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmStubs.h"
 
@@ -417,7 +418,7 @@ static void GenerateCallablePrologue(MacroAssembler& masm, uint32_t* entry) {
   // ProfilingFrameIterator needs to know the offsets of several key
   // instructions from entry. To save space, we make these offsets static
   // constants and assert that they match the actual codegen below. On ARM,
-  // this requires AutoForbidPools to prevent a constant pool from being
+  // this requires AutoForbidPoolsAndNops to prevent a constant pool from being
   // randomly inserted between two instructions.
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
   {
@@ -439,7 +440,8 @@ static void GenerateCallablePrologue(MacroAssembler& masm, uint32_t* entry) {
     // We do not use the PseudoStackPointer.
     MOZ_ASSERT(masm.GetStackPointer64().code() == sp.code());
 
-    AutoForbidPools afp(&masm, /* number of instructions in scope = */ 5);
+    AutoForbidPoolsAndNops afp(&masm,
+                               /* number of instructions in scope = */ 5);
 
     *entry = masm.currentOffset();
 
@@ -458,7 +460,8 @@ static void GenerateCallablePrologue(MacroAssembler& masm, uint32_t* entry) {
 #else
   {
 #  if defined(JS_CODEGEN_ARM)
-    AutoForbidPools afp(&masm, /* number of instructions in scope = */ 7);
+    AutoForbidPoolsAndNops afp(&masm,
+                               /* number of instructions in scope = */ 7);
 
     *entry = masm.currentOffset();
 
@@ -510,7 +513,7 @@ static void GenerateCallableEpilogue(MacroAssembler& masm, unsigned framePushed,
   // We do not use the PseudoStackPointer.
   MOZ_ASSERT(masm.GetStackPointer64().code() == sp.code());
 
-  AutoForbidPools afp(&masm, /* number of instructions in scope = */ 5);
+  AutoForbidPoolsAndNops afp(&masm, /* number of instructions in scope = */ 5);
 
   masm.Ldr(ARMRegister(FramePointer, 64),
            MemOperand(sp, offsetof(Frame, callerFP)));
@@ -528,7 +531,7 @@ static void GenerateCallableEpilogue(MacroAssembler& masm, unsigned framePushed,
 #else
   // Forbid pools for the same reason as described in GenerateCallablePrologue.
 #  if defined(JS_CODEGEN_ARM)
-  AutoForbidPools afp(&masm, /* number of instructions in scope = */ 7);
+  AutoForbidPoolsAndNops afp(&masm, /* number of instructions in scope = */ 7);
 #  endif
 
   // There is an important ordering constraint here: fp must be repointed to
@@ -697,7 +700,8 @@ void wasm::GenerateJitEntryPrologue(MacroAssembler& masm, Offsets* offsets) {
 
   {
 #if defined(JS_CODEGEN_ARM)
-    AutoForbidPools afp(&masm, /* number of instructions in scope = */ 2);
+    AutoForbidPoolsAndNops afp(&masm,
+                               /* number of instructions in scope = */ 2);
     offsets->begin = masm.currentOffset();
     MOZ_ASSERT(BeforePushRetAddr == 0);
     masm.push(lr);
@@ -705,7 +709,8 @@ void wasm::GenerateJitEntryPrologue(MacroAssembler& masm, Offsets* offsets) {
     offsets->begin = masm.currentOffset();
     masm.push(ra);
 #elif defined(JS_CODEGEN_ARM64)
-    AutoForbidPools afp(&masm, /* number of instructions in scope = */ 3);
+    AutoForbidPoolsAndNops afp(&masm,
+                               /* number of instructions in scope = */ 3);
     offsets->begin = masm.currentOffset();
     MOZ_ASSERT(BeforePushRetAddr == 0);
     // Subtract from SP first as SP must be aligned before offsetting.
@@ -753,8 +758,7 @@ ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation)
   initFromExitFP(activation.wasmExitFP());
 }
 
-ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation,
-                                               const Frame* fp)
+ProfilingFrameIterator::ProfilingFrameIterator(const Frame* fp)
     : code_(nullptr),
       codeRange_(nullptr),
       callerFP_(nullptr),
@@ -1257,9 +1261,11 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
     case SymbolicAddress::CallImport_I32:
     case SymbolicAddress::CallImport_I64:
     case SymbolicAddress::CallImport_F64:
+    case SymbolicAddress::CallImport_FuncRef:
     case SymbolicAddress::CallImport_AnyRef:
     case SymbolicAddress::CoerceInPlace_ToInt32:
     case SymbolicAddress::CoerceInPlace_ToNumber:
+    case SymbolicAddress::BoxValue_Anyref:
       MOZ_ASSERT(!NeedsBuiltinThunk(func),
                  "not in sync with NeedsBuiltinThunk");
       break;
@@ -1348,15 +1354,19 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
     case SymbolicAddress::ReportInt64JSCall:
       return "jit call to int64 wasm function";
     case SymbolicAddress::MemCopy:
+    case SymbolicAddress::MemCopyShared:
       return "call to native memory.copy function";
     case SymbolicAddress::DataDrop:
       return "call to native data.drop function";
     case SymbolicAddress::MemFill:
+    case SymbolicAddress::MemFillShared:
       return "call to native memory.fill function";
     case SymbolicAddress::MemInit:
       return "call to native memory.init function";
     case SymbolicAddress::TableCopy:
       return "call to native table.copy function";
+    case SymbolicAddress::TableFill:
+      return "call to native table.fill function";
     case SymbolicAddress::ElemDrop:
       return "call to native elem.drop function";
     case SymbolicAddress::TableGet:
@@ -1369,6 +1379,8 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
       return "call to native table.set function";
     case SymbolicAddress::TableSize:
       return "call to native table.size function";
+    case SymbolicAddress::FuncRef:
+      return "call to native func.ref function";
     case SymbolicAddress::PostBarrier:
       return "call to native GC postbarrier (in wasm)";
     case SymbolicAddress::PostBarrierFiltering:

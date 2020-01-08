@@ -20,10 +20,11 @@
 #include "jsnum.h"
 
 #include "builtin/Array.h"
-#include "gc/Zone.h"
 #include "jit/AtomicOperations.h"
 #include "js/Conversions.h"
 #include "js/Value.h"
+#include "util/Memory.h"
+#include "vm/BigIntType.h"
 #include "vm/JSContext.h"
 #include "vm/NativeObject.h"
 
@@ -71,6 +72,16 @@ inline uint32_t ConvertNumber<uint32_t, float>(float src) {
 }
 
 template <>
+inline int64_t ConvertNumber<int64_t, float>(float src) {
+  return JS::ToInt64(src);
+}
+
+template <>
+inline uint64_t ConvertNumber<uint64_t, float>(float src) {
+  return JS::ToUint64(src);
+}
+
+template <>
 inline int8_t ConvertNumber<int8_t, double>(double src) {
   return JS::ToInt8(src);
 }
@@ -103,6 +114,16 @@ inline int32_t ConvertNumber<int32_t, double>(double src) {
 template <>
 inline uint32_t ConvertNumber<uint32_t, double>(double src) {
   return JS::ToUint32(src);
+}
+
+template <>
+inline int64_t ConvertNumber<int64_t, double>(double src) {
+  return JS::ToInt64(src);
+}
+
+template <>
+inline uint64_t ConvertNumber<uint64_t, double>(double src) {
+  return JS::ToUint64(src);
 }
 
 template <typename To, typename From>
@@ -147,6 +168,16 @@ template <>
 struct TypeIDOfType<uint32_t> {
   static const Scalar::Type id = Scalar::Uint32;
   static const JSProtoKey protoKey = JSProto_Uint32Array;
+};
+template <>
+struct TypeIDOfType<int64_t> {
+  static const Scalar::Type id = Scalar::BigInt64;
+  static const JSProtoKey protoKey = JSProto_BigInt64Array;
+};
+template <>
+struct TypeIDOfType<uint64_t> {
+  static const Scalar::Type id = Scalar::BigUint64;
+  static const JSProtoKey protoKey = JSProto_BigUint64Array;
 };
 template <>
 struct TypeIDOfType<float> {
@@ -331,6 +362,20 @@ class ElementSpecific {
         }
         break;
       }
+      case Scalar::BigInt64: {
+        SharedMem<int64_t*> src = data.cast<int64_t*>();
+        for (uint32_t i = 0; i < count; ++i) {
+          Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
+        }
+        break;
+      }
+      case Scalar::BigUint64: {
+        SharedMem<uint64_t*> src = data.cast<uint64_t*>();
+        for (uint32_t i = 0; i < count; ++i) {
+          Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
+        }
+        break;
+      }
       case Scalar::Float32: {
         SharedMem<float*> src = data.cast<float*>();
         for (uint32_t i = 0; i < count; ++i) {
@@ -372,7 +417,7 @@ class ElementSpecific {
       // Attempt fast-path infallible conversion of dense elements up to
       // the first potentially side-effectful lookup or conversion.
       uint32_t bound =
-          Min(source->as<NativeObject>().getDenseInitializedLength(), len);
+          std::min(source->as<NativeObject>().getDenseInitializedLength(), len);
 
       SharedMem<T*> dest =
           target->dataPointerEither().template cast<T*>() + offset;
@@ -404,7 +449,7 @@ class ElementSpecific {
         return false;
       }
 
-      len = Min(len, target->length());
+      len = std::min(len, target->length());
       if (i >= len) {
         break;
       }
@@ -452,7 +497,7 @@ class ElementSpecific {
 
     // Convert any remaining elements by first collecting them into a
     // temporary list, and then copying them into the typed array.
-    AutoValueVector values(cx);
+    RootedValueVector values(cx);
     if (!values.append(srcValues + i, len - i)) {
       return false;
     }
@@ -560,6 +605,20 @@ class ElementSpecific {
         }
         break;
       }
+      case Scalar::BigInt64: {
+        int64_t* src = static_cast<int64_t*>(data);
+        for (uint32_t i = 0; i < len; ++i) {
+          Ops::store(dest++, ConvertNumber<T>(*src++));
+        }
+        break;
+      }
+      case Scalar::BigUint64: {
+        uint64_t* src = static_cast<uint64_t*>(data);
+        for (uint32_t i = 0; i < len; ++i) {
+          Ops::store(dest++, ConvertNumber<T>(*src++));
+        }
+        break;
+      }
       case Scalar::Float32: {
         float* src = static_cast<float*>(data);
         for (uint32_t i = 0; i < len; ++i) {
@@ -584,10 +643,30 @@ class ElementSpecific {
   }
 
   static bool canConvertInfallibly(const Value& v) {
+    if (TypeIDOfType<T>::id == Scalar::BigInt64 ||
+        TypeIDOfType<T>::id == Scalar::BigUint64) {
+      // Numbers, Null, Undefined, and Symbols throw a TypeError. Strings may
+      // OOM and Objects may have side-effects.
+      return v.isBigInt() || v.isBoolean();
+    }
+    // BigInts and Symbols throw a TypeError. Strings may OOM and Objects may
+    // have side-effects.
     return v.isNumber() || v.isBoolean() || v.isNull() || v.isUndefined();
   }
 
   static T infallibleValueToNative(const Value& v) {
+    if (TypeIDOfType<T>::id == Scalar::BigInt64) {
+      if (v.isBigInt()) {
+        return T(BigInt::toInt64(v.toBigInt()));
+      }
+      return T(v.toBoolean());
+    }
+    if (TypeIDOfType<T>::id == Scalar::BigUint64) {
+      if (v.isBigInt()) {
+        return T(BigInt::toUint64(v.toBigInt()));
+      }
+      return T(v.toBoolean());
+    }
     if (v.isInt32()) {
       return T(v.toInt32());
     }
@@ -610,6 +689,16 @@ class ElementSpecific {
 
     if (MOZ_LIKELY(canConvertInfallibly(v))) {
       *result = infallibleValueToNative(v);
+      return true;
+    }
+
+    if (std::is_same<T, int64_t>::value) {
+      JS_TRY_VAR_OR_RETURN_FALSE(cx, *result, ToBigInt64(cx, v));
+      return true;
+    }
+
+    if (std::is_same<T, uint64_t>::value) {
+      JS_TRY_VAR_OR_RETURN_FALSE(cx, *result, ToBigUint64(cx, v));
       return true;
     }
 

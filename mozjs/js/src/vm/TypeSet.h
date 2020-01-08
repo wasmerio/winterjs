@@ -16,27 +16,27 @@
 #include <stdint.h>  // intptr_t, uintptr_t, uint8_t, uint32_t
 #include <stdio.h>   // FILE
 
-#include "jstypes.h"  // JS_BITS_PER_WORD
-#include "jsutil.h"   // JS_CRASH_DIAGNOSTICS
+#include "jstypes.h"  // JS_BITS_PER_WORD, JS_PUBLIC_API
 
 #include "jit/IonTypes.h"      // jit::MIRType
 #include "js/GCAnnotations.h"  // JS_HAZ_GC_POINTER
 #include "js/Id.h"
-#include "js/TracingAPI.h"   // JSTracer
-#include "js/TypeDecls.h"    // IF_BIGINT
-#include "js/Utility.h"      // UniqueChars
-#include "js/Value.h"        // JSVAL_TYPE_*
-#include "js/Vector.h"       // js::Vector
+#include "js/TracingAPI.h"  // JSTracer
+#include "js/TypeDecls.h"   // IF_BIGINT
+#include "js/Utility.h"     // UniqueChars
+#include "js/Value.h"       // JSVAL_TYPE_*
+#include "js/Vector.h"      // js::Vector
+#include "util/DiagnosticAssertions.h"
 #include "vm/TaggedProto.h"  // js::TaggedProto
 
-struct JSContext;
-class JSObject;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSObject;
 
 namespace JS {
 
-class Compartment;
-class Realm;
-class Zone;
+class JS_PUBLIC_API Compartment;
+class JS_PUBLIC_API Realm;
+class JS_PUBLIC_API Zone;
 
 }  // namespace JS
 
@@ -52,7 +52,6 @@ class TempAllocator;
 class AutoClearTypeInferenceStateOnOOM;
 class AutoSweepBase;
 class AutoSweepObjectGroup;
-struct Class;
 class CompilerConstraintList;
 class HeapTypeSetKey;
 class LifoAlloc;
@@ -187,11 +186,7 @@ enum : uint32_t {
 
   // (0x00200000 is unused)
 
-  /*
-   * For a global object, whether any array buffers in this compartment with
-   * typed object views have ever been detached.
-   */
-  OBJECT_FLAG_TYPED_OBJECT_HAS_DETACHED_BUFFER = 0x00400000,
+  // (0x00400000 is unused)
 
   /*
    * Whether objects with this type should be allocated directly in the
@@ -235,7 +230,7 @@ class TemporaryTypeSet;
  * Information about the set of types associated with an lvalue. There are
  * three kinds of type sets:
  *
- * - StackTypeSet are associated with TypeScripts, for arguments and values
+ * - StackTypeSet are associated with JitScripts, for arguments and values
  *   observed at property reads. These are implicitly frozen on compilation
  *   and only have constraints added to them which can trigger invalidation of
  *   TypeNewScript information.
@@ -255,12 +250,6 @@ class TemporaryTypeSet;
  *   the new group. When this occurs, the properties of the old and new group
  *   will both be marked as unknown, which will prevent Ion from optimizing
  *   based on the object's type information.
- *
- * - If an unboxed object is converted to a native object, its group will also
- *   change and type sets containing the old group will not necessarily contain
- *   the new group. Unlike the above case, this will not degrade property type
- *   information, but Ion will no longer optimize unboxed objects with the old
- *   group.
  */
 class TypeSet {
  protected:
@@ -297,7 +286,7 @@ class TypeSet {
     inline ObjectGroup* groupNoBarrier();
     inline JSObject* singletonNoBarrier();
 
-    const Class* clasp();
+    const JSClass* clasp();
     TaggedProto proto();
     TypeNewScript* newScript();
 
@@ -305,8 +294,6 @@ class TypeSet {
     bool hasFlags(CompilerConstraintList* constraints, ObjectGroupFlags flags);
     bool hasStableClassAndProto(CompilerConstraintList* constraints);
     void watchStateChangeForTypedArrayData(CompilerConstraintList* constraints);
-    void watchStateChangeForUnboxedConvertedToNative(
-        CompilerConstraintList* constraints);
     HeapTypeSetKey property(jsid id);
     void ensureTrackedProperty(JSContext* cx, jsid id);
 
@@ -492,7 +479,7 @@ class TypeSet {
   inline ObjectGroup* getGroupNoBarrier(unsigned i) const;
 
   /* The Class of an object in this set. */
-  inline const Class* getObjectClass(unsigned i) const;
+  inline const JSClass* getObjectClass(unsigned i) const;
 
   bool canSetDefinite(unsigned slot) {
     // Note: the cast is required to work around an MSVC issue.
@@ -680,7 +667,7 @@ class ConstraintTypeSet : public TypeSet {
   }
 
   // This takes a reference to AutoSweepBase to ensure we swept the owning
-  // ObjectGroup or TypeScript.
+  // ObjectGroup or JitScript.
   TypeConstraint* constraintList(const AutoSweepBase& sweep) const {
     checkMagic();
     if (constraintList_) {
@@ -798,7 +785,7 @@ class TemporaryTypeSet : public TypeSet {
                       ObjectGroupFlags flags);
 
   /* Get the class shared by all objects in this set, or nullptr. */
-  const Class* getKnownClass(CompilerConstraintList* constraints);
+  const JSClass* getKnownClass(CompilerConstraintList* constraints);
 
   /*
    * Get the realm shared by all objects in this set, or nullptr. Returns
@@ -821,7 +808,7 @@ class TemporaryTypeSet : public TypeSet {
    * The iteration may end early if the result becomes known early.
    */
   ForAllResult forAllClasses(CompilerConstraintList* constraints,
-                             bool (*func)(const Class* clasp));
+                             bool (*func)(const JSClass* clasp));
 
   /*
    * Returns true if all objects in this set have the same prototype, and

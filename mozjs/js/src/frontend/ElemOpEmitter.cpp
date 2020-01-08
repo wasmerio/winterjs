@@ -70,17 +70,7 @@ bool ElemOpEmitter::emitGet() {
   }
   if (isIncDec() || isCompoundAssignment()) {
     if (isSuper()) {
-      // There's no such thing as JSOP_DUP3, so we have to be creative.
-      // Note that pushing things again is no fewer JSOps.
-      if (!bce_->emitDupAt(2)) {
-        //          [stack] THIS KEY SUPERBASE THIS
-        return false;
-      }
-      if (!bce_->emitDupAt(2)) {
-        //          [stack] THIS KEY SUPERBASE THIS KEY
-        return false;
-      }
-      if (!bce_->emitDupAt(2)) {
+      if (!bce_->emitDupAt(2, 3)) {
         //          [stack] THIS KEY SUPERBASE THIS KEY SUPERBASE
         return false;
       }
@@ -100,7 +90,7 @@ bool ElemOpEmitter::emitGet() {
   } else {
     op = JSOP_GETELEM;
   }
-  if (!bce_->emitElemOpBase(op)) {
+  if (!bce_->emitElemOpBase(op, ShouldInstrument::Yes)) {
     //              [stack] # if Get
     //              [stack] ELEM
     //              [stack] # if Call
@@ -125,11 +115,11 @@ bool ElemOpEmitter::emitGet() {
 }
 
 bool ElemOpEmitter::prepareForRhs() {
-  MOZ_ASSERT(isSimpleAssignment() || isCompoundAssignment());
-  MOZ_ASSERT_IF(isSimpleAssignment(), state_ == State::Key);
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit() || isCompoundAssignment());
+  MOZ_ASSERT_IF(isSimpleAssignment() || isPropInit(), state_ == State::Key);
   MOZ_ASSERT_IF(isCompoundAssignment(), state_ == State::Get);
 
-  if (isSimpleAssignment()) {
+  if (isSimpleAssignment() || isPropInit()) {
     // For CompoundAssignment, SUPERBASE is already emitted by emitGet.
     if (isSuper()) {
       if (!bce_->emitSuperBase()) {
@@ -147,7 +137,7 @@ bool ElemOpEmitter::prepareForRhs() {
 
 bool ElemOpEmitter::skipObjAndKeyAndRhs() {
   MOZ_ASSERT(state_ == State::Start);
-  MOZ_ASSERT(isSimpleAssignment());
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit());
 
 #ifdef DEBUG
   state_ = State::Rhs;
@@ -196,14 +186,18 @@ bool ElemOpEmitter::emitDelete() {
 }
 
 bool ElemOpEmitter::emitAssignment() {
-  MOZ_ASSERT(isSimpleAssignment() || isCompoundAssignment());
+  MOZ_ASSERT(isSimpleAssignment() || isPropInit() || isCompoundAssignment());
   MOZ_ASSERT(state_ == State::Rhs);
 
+  MOZ_ASSERT_IF(isPropInit(), !isSuper());
+
   JSOp setOp =
-      isSuper()
-          ? bce_->sc->strict() ? JSOP_STRICTSETELEM_SUPER : JSOP_SETELEM_SUPER
-          : bce_->sc->strict() ? JSOP_STRICTSETELEM : JSOP_SETELEM;
-  if (!bce_->emitElemOpBase(setOp)) {
+      isPropInit()
+          ? JSOP_INITELEM
+          : isSuper() ? bce_->sc->strict() ? JSOP_STRICTSETELEM_SUPER
+                                           : JSOP_SETELEM_SUPER
+                      : bce_->sc->strict() ? JSOP_STRICTSETELEM : JSOP_SETELEM;
+  if (!bce_->emitElemOpBase(setOp, ShouldInstrument::Yes)) {
     //              [stack] ELEM
     return false;
   }
@@ -231,58 +225,26 @@ bool ElemOpEmitter::emitIncDec() {
     return false;
   }
   if (isPostIncDec()) {
+    //              [stack] OBJ KEY SUPERBASE? N
     if (!bce_->emit1(JSOP_DUP)) {
-      //            [stack] ... N? N
+      //            [stack] ... N N
+      return false;
+    }
+    if (!bce_->emit2(JSOP_UNPICK, 3 + isSuper())) {
+      //            [stack] N OBJ KEY SUPERBASE? N
       return false;
     }
   }
   if (!bce_->emit1(incOp)) {
-    //              [stack] ... N? N+1
+    //              [stack] ... N+1
     return false;
-  }
-  if (isPostIncDec()) {
-    if (isSuper()) {
-      //            [stack] THIS KEY OBJ N N+1
-
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] KEY SUPERBASE N N+1 THIS
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] SUPERBASE N N+1 THIS KEY
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 4)) {
-        //          [stack] N N+1 THIS KEY SUPERBASE
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] N THIS KEY SUPERBASE N+1
-        return false;
-      }
-    } else {
-      //            [stack] OBJ KEY N N+1
-
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] KEY N N+1 OBJ
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 3)) {
-        //          [stack] N N+1 OBJ KEY
-        return false;
-      }
-      if (!bce_->emit2(JSOP_PICK, 2)) {
-        //          [stack] N OBJ KEY N+1
-        return false;
-      }
-    }
   }
 
   JSOp setOp =
       isSuper()
           ? (bce_->sc->strict() ? JSOP_STRICTSETELEM_SUPER : JSOP_SETELEM_SUPER)
           : (bce_->sc->strict() ? JSOP_STRICTSETELEM : JSOP_SETELEM);
-  if (!bce_->emitElemOpBase(setOp)) {
+  if (!bce_->emitElemOpBase(setOp, ShouldInstrument::Yes)) {
     //              [stack] N? N+1
     return false;
   }

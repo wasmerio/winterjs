@@ -12,6 +12,7 @@
 #include "vm/GeneratorObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
+#include "vm/NativeObject.h"
 #include "vm/Realm.h"
 #include "vm/SelfHosting.h"
 
@@ -21,54 +22,61 @@ using namespace js;
 
 using mozilla::Maybe;
 
-/* static */
-bool GlobalObject::initAsyncFunction(JSContext* cx,
-                                     Handle<GlobalObject*> global) {
-  if (global->getReservedSlot(ASYNC_FUNCTION_PROTO).isObject()) {
-    return true;
+static JSObject* CreateAsyncFunction(JSContext* cx, JSProtoKey key) {
+  RootedObject proto(
+      cx, GlobalObject::getOrCreateFunctionConstructor(cx, cx->global()));
+  if (!proto) {
+    return nullptr;
   }
 
-  RootedObject asyncFunctionProto(
-      cx, NewSingletonObjectWithFunctionPrototype(cx, global));
-  if (!asyncFunctionProto) {
-    return false;
-  }
-
-  if (!DefineToStringTag(cx, asyncFunctionProto, cx->names().AsyncFunction)) {
-    return false;
-  }
-
-  RootedValue function(cx, global->getConstructor(JSProto_Function));
-  if (!function.toObjectOrNull()) {
-    return false;
-  }
-  RootedObject proto(cx, &function.toObject());
-  RootedAtom name(cx, cx->names().AsyncFunction);
-  RootedObject asyncFunction(
-      cx, NewFunctionWithProto(cx, AsyncFunctionConstructor, 1,
-                               JSFunction::NATIVE_CTOR, nullptr, name, proto));
-  if (!asyncFunction) {
-    return false;
-  }
-  if (!LinkConstructorAndPrototype(cx, asyncFunction, asyncFunctionProto,
-                                   JSPROP_PERMANENT | JSPROP_READONLY,
-                                   JSPROP_READONLY)) {
-    return false;
-  }
-
-  global->setReservedSlot(ASYNC_FUNCTION, ObjectValue(*asyncFunction));
-  global->setReservedSlot(ASYNC_FUNCTION_PROTO,
-                          ObjectValue(*asyncFunctionProto));
-  return true;
+  HandlePropertyName name = cx->names().AsyncFunction;
+  return NewFunctionWithProto(cx, AsyncFunctionConstructor, 1,
+                              FunctionFlags::NATIVE_CTOR, nullptr, name, proto);
 }
+
+static JSObject* CreateAsyncFunctionPrototype(JSContext* cx, JSProtoKey key) {
+  return NewSingletonObjectWithFunctionPrototype(cx, cx->global());
+}
+
+static bool AsyncFunctionClassFinish(JSContext* cx, HandleObject asyncFunction,
+                                     HandleObject asyncFunctionProto) {
+  // Change the "constructor" property to non-writable before adding any other
+  // properties, so it's still the last property and can be modified without a
+  // dictionary-mode transition.
+  MOZ_ASSERT(StringEqualsAscii(
+      JSID_TO_LINEAR_STRING(
+          asyncFunctionProto->as<NativeObject>().lastProperty()->propid()),
+      "constructor"));
+  MOZ_ASSERT(!asyncFunctionProto->as<NativeObject>().inDictionaryMode());
+
+  RootedValue asyncFunctionVal(cx, ObjectValue(*asyncFunction));
+  if (!DefineDataProperty(cx, asyncFunctionProto, cx->names().constructor,
+                          asyncFunctionVal, JSPROP_READONLY)) {
+    return false;
+  }
+  MOZ_ASSERT(!asyncFunctionProto->as<NativeObject>().inDictionaryMode());
+
+  return DefineToStringTag(cx, asyncFunctionProto, cx->names().AsyncFunction);
+}
+
+static const ClassSpec AsyncFunctionClassSpec = {
+    CreateAsyncFunction,
+    CreateAsyncFunctionPrototype,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    AsyncFunctionClassFinish,
+    ClassSpec::DontDefineConstructor};
+
+const JSClass js::AsyncFunctionClass = {"AsyncFunction", 0, JS_NULL_CLASS_OPS,
+                                        &AsyncFunctionClassSpec};
 
 enum class ResumeKind { Normal, Throw };
 
-// Async Functions proposal 2.2 steps 3.f, 3.g.
-// Async Functions proposal 2.2 steps 3.d-e, 3.g.
-// Implemented in js/src/builtin/Promise.cpp
-
-// Async Functions proposal 2.2 steps 3-8, 2.4 steps 2-7, 2.5 steps 2-7.
+// ES2020 draft rev a09fc232c137800dbf51b6204f37fdede4ba1646
+// 6.2.3.1.1 Await Fulfilled Functions
+// 6.2.3.1.2 Await Rejected Functions
 static bool AsyncFunctionResume(JSContext* cx,
                                 Handle<AsyncFunctionGeneratorObject*> generator,
                                 ResumeKind kind, HandleValue valueOrReason) {
@@ -78,6 +86,14 @@ static bool AsyncFunctionResume(JSContext* cx,
   // inconsistent state, because we don't have a resume index set and therefore
   // don't know where to resume the async function. Return here in that case.
   if (generator->isClosed()) {
+    return true;
+  }
+
+  // The debugger sets the async function's generator object into the "running"
+  // state while firing debugger events to ensure the debugger can't re-enter
+  // the async function, cf. |AutoSetGeneratorRunning| in Debugger.cpp. Catch
+  // this case here by checking if the generator is already runnning.
+  if (generator->isRunning()) {
     return true;
   }
 
@@ -110,15 +126,16 @@ static bool AsyncFunctionResume(JSContext* cx,
                               &generatorOrValue)) {
     if (!generator->isClosed()) {
       generator->setClosed();
+    }
 
-      // Handle the OOM case mentioned above.
-      if (cx->isExceptionPending()) {
-        RootedValue exn(cx);
-        if (!GetAndClearException(cx, &exn)) {
-          return false;
-        }
-        return AsyncFunctionThrown(cx, resultPromise, exn);
+    // Handle the OOM case mentioned above.
+    if (resultPromise->state() == JS::PromiseState::Pending &&
+        cx->isExceptionPending()) {
+      RootedValue exn(cx);
+      if (!GetAndClearException(cx, &exn)) {
+        return false;
       }
+      return AsyncFunctionThrown(cx, resultPromise, exn);
     }
     return false;
   }
@@ -131,26 +148,19 @@ static bool AsyncFunctionResume(JSContext* cx,
   return true;
 }
 
-// Async Functions proposal 2.3 steps 1-8.
-// Implemented in js/src/builtin/Promise.cpp
-
-// Async Functions proposal 2.4.
+// ES2020 draft rev a09fc232c137800dbf51b6204f37fdede4ba1646
+// 6.2.3.1.1 Await Fulfilled Functions
 MOZ_MUST_USE bool js::AsyncFunctionAwaitedFulfilled(
     JSContext* cx, Handle<AsyncFunctionGeneratorObject*> generator,
     HandleValue value) {
-  // Step 1 (implicit).
-
-  // Steps 2-7.
   return AsyncFunctionResume(cx, generator, ResumeKind::Normal, value);
 }
 
-// Async Functions proposal 2.5.
+// ES2020 draft rev a09fc232c137800dbf51b6204f37fdede4ba1646
+// 6.2.3.1.2 Await Rejected Functions
 MOZ_MUST_USE bool js::AsyncFunctionAwaitedRejected(
     JSContext* cx, Handle<AsyncFunctionGeneratorObject*> generator,
     HandleValue reason) {
-  // Step 1 (implicit).
-
-  // Step 2-7.
   return AsyncFunctionResume(cx, generator, ResumeKind::Throw, reason);
 }
 
@@ -170,9 +180,25 @@ JSObject* js::AsyncFunctionResolve(
   return promise;
 }
 
-const Class AsyncFunctionGeneratorObject::class_ = {
+const JSClass AsyncFunctionGeneratorObject::class_ = {
     "AsyncFunctionGenerator",
-    JSCLASS_HAS_RESERVED_SLOTS(AsyncFunctionGeneratorObject::RESERVED_SLOTS)};
+    JSCLASS_HAS_RESERVED_SLOTS(AsyncFunctionGeneratorObject::RESERVED_SLOTS),
+    &classOps_,
+};
+
+const JSClassOps AsyncFunctionGeneratorObject::classOps_ = {
+    nullptr,                                  /* addProperty */
+    nullptr,                                  /* delProperty */
+    nullptr,                                  /* enumerate */
+    nullptr,                                  /* newEnumerate */
+    nullptr,                                  /* resolve */
+    nullptr,                                  /* mayResolve */
+    nullptr,                                  /* finalize */
+    nullptr,                                  /* call */
+    nullptr,                                  /* hasInstance */
+    nullptr,                                  /* construct */
+    CallTraceMethod<AbstractGeneratorObject>, /* trace */
+};
 
 AsyncFunctionGeneratorObject* AsyncFunctionGeneratorObject::create(
     JSContext* cx, HandleFunction fun) {

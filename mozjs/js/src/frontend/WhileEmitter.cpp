@@ -50,13 +50,12 @@ bool WhileEmitter::emitBody(const Maybe<uint32_t>& whilePos,
     }
   }
 
-  JumpTarget top = {-1};
+  JumpTarget top = {BytecodeOffset::invalidOffset()};
   if (!bce_->emitJumpTarget(&top)) {
     return false;
   }
 
   loopInfo_.emplace(bce_, StatementKind::WhileLoop);
-  loopInfo_->setContinueTarget(top.offset);
 
   if (!bce_->newSrcNote(SRC_WHILE, &noteIndex_)) {
     return false;
@@ -83,6 +82,10 @@ bool WhileEmitter::emitCond(const Maybe<uint32_t>& condPos) {
 
   tdzCacheForBody_.reset();
 
+  if (!loopInfo_->emitContinueTarget(bce_)) {
+    return false;
+  }
+
   if (!loopInfo_->emitLoopEntry(bce_, condPos)) {
     return false;
   }
@@ -100,7 +103,8 @@ bool WhileEmitter::emitEnd() {
     return false;
   }
 
-  if (!bce_->addTryNote(JSTRY_LOOP, bce_->stackDepth, loopInfo_->headOffset(),
+  if (!bce_->addTryNote(JSTRY_LOOP, bce_->bytecodeSection().stackDepth(),
+                        loopInfo_->headOffset(),
                         loopInfo_->breakTargetOffset())) {
     return false;
   }

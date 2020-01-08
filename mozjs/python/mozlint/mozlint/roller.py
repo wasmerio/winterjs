@@ -2,16 +2,19 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
+import atexit
+import copy
+import logging
 import os
 import signal
 import sys
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import _python_exit as futures_atexit
 from itertools import chain
 from math import ceil
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, get_context
 from multiprocessing.queues import Queue
 from subprocess import CalledProcessError
 
@@ -27,14 +30,27 @@ from .types import supported_types
 SHUTDOWN = False
 orig_sigint = signal.getsignal(signal.SIGINT)
 
+logger = logging.getLogger("mozlint")
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s.%(msecs)d %(lintname)s (%(pid)s) | %(message)s",
+                              "%H:%M:%S")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 
 def _run_worker(config, paths, **lintargs):
-    result = ResultSummary()
+    log = logging.LoggerAdapter(logger, {
+        "lintname": config.get("name"),
+        "pid": os.getpid()
+    })
+    lintargs['log'] = log
+    result = ResultSummary(lintargs['root'])
 
     if SHUTDOWN:
         return result
 
     func = supported_types[config['type']]
+    start_time = time.time()
     try:
         res = func(paths, config, **lintargs) or []
     except Exception:
@@ -43,6 +59,8 @@ def _run_worker(config, paths, **lintargs):
     except (KeyboardInterrupt, SystemExit):
         return result
     finally:
+        end_time = time.time()
+        log.debug("Finished in {:.2f} seconds".format(end_time - start_time))
         sys.stdout.flush()
 
     if not isinstance(res, (list, tuple)):
@@ -55,6 +73,7 @@ def _run_worker(config, paths, **lintargs):
                 continue
 
             result.issues[r.path].append(r)
+
     return result
 
 
@@ -65,6 +84,9 @@ class InterruptableQueue(Queue):
     This is needed to gracefully handle KeyboardInterrupts when a worker is
     blocking on ProcessPoolExecutor's call queue.
     """
+    def __init__(self, *args, **kwargs):
+        kwargs['ctx'] = get_context()
+        super(InterruptableQueue, self).__init__(*args, **kwargs)
 
     def get(self, *args, **kwargs):
         try:
@@ -82,6 +104,24 @@ def _worker_sigint_handler(signum, frame):
     global SHUTDOWN
     SHUTDOWN = True
     orig_sigint(signum, frame)
+
+
+def wrap_futures_atexit():
+    """Sometimes futures' atexit handler can spew tracebacks. This wrapper
+    suppresses them."""
+    try:
+        futures_atexit()
+    except Exception:
+        # Generally `atexit` handlers aren't supposed to raise exceptions, but the
+        # futures' handler can sometimes raise when the user presses `CTRL-C`. We
+        # suppress all possible exceptions here so users have a nice experience
+        # when canceling their lint run. Any exceptions raised by this function
+        # won't be useful anyway.
+        pass
+
+
+atexit.unregister(futures_atexit)
+atexit.register(wrap_futures_atexit)
 
 
 class LintRoller(object):
@@ -106,17 +146,22 @@ class LintRoller(object):
         self.lintargs['root'] = root
 
         # result state
-        self.result = ResultSummary()
+        self.result = ResultSummary(root)
 
         self.root = root
         self.exclude = exclude or []
+
+        if lintargs.get('show_verbose'):
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.setLevel(logging.WARNING)
 
     def read(self, paths):
         """Parse one or more linters and add them to the registry.
 
         :param paths: A path or iterable of paths to linter definitions.
         """
-        if isinstance(paths, basestring):
+        if isinstance(paths, str):
             paths = (paths,)
 
         for linter in chain(*[self.parse(p) for p in paths]):
@@ -134,7 +179,9 @@ class LintRoller(object):
                 continue
 
             try:
-                res = findobject(linter['setup'])(**self.lintargs)
+                setupargs = copy.deepcopy(self.lintargs)
+                setupargs['name'] = linter['name']
+                res = findobject(linter['setup'])(**setupargs)
             except Exception:
                 traceback.print_exc()
                 res = 1
@@ -162,6 +209,9 @@ class LintRoller(object):
 
             lpaths = list(lpaths) or [os.getcwd()]
             chunk_size = min(self.MAX_PATHS_PER_JOB, int(ceil(len(lpaths) / num_procs))) or 1
+            if linter['type'] == 'global':
+                # Global linters lint the entire tree in one job.
+                chunk_size = len(lpaths) or 1
             assert chunk_size > 0
 
             while lpaths:
@@ -192,7 +242,7 @@ class LintRoller(object):
         # Need to use a set in case vcs operations specify the same file
         # more than once.
         paths = paths or set()
-        if isinstance(paths, basestring):
+        if isinstance(paths, str):
             paths = set([paths])
         elif isinstance(paths, (list, tuple)):
             paths = set(paths)
@@ -253,7 +303,7 @@ class LintRoller(object):
             more than a couple seconds.
             """
             [f.cancel() for f in futures]
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=True)
             print("\nwarning: not all files were linted")
             signal.signal(signal.SIGINT, signal.SIG_IGN)
 

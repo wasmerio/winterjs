@@ -245,10 +245,6 @@ inline uint_fast8_t CountTrailingZeroes64(uint64_t aValue) {
 #  endif
 }
 
-#  ifdef MOZ_HAVE_BITSCAN64
-#    undef MOZ_HAVE_BITSCAN64
-#  endif
-
 #elif defined(__clang__) || defined(__GNUC__)
 
 #  if defined(__clang__)
@@ -260,27 +256,27 @@ inline uint_fast8_t CountTrailingZeroes64(uint64_t aValue) {
 #  endif
 
 inline uint_fast8_t CountLeadingZeroes32(uint32_t aValue) {
-  return __builtin_clz(aValue);
+  return static_cast<uint_fast8_t>(__builtin_clz(aValue));
 }
 
 inline uint_fast8_t CountTrailingZeroes32(uint32_t aValue) {
-  return __builtin_ctz(aValue);
+  return static_cast<uint_fast8_t>(__builtin_ctz(aValue));
 }
 
 inline uint_fast8_t CountPopulation32(uint32_t aValue) {
-  return __builtin_popcount(aValue);
+  return static_cast<uint_fast8_t>(__builtin_popcount(aValue));
 }
 
 inline uint_fast8_t CountPopulation64(uint64_t aValue) {
-  return __builtin_popcountll(aValue);
+  return static_cast<uint_fast8_t>(__builtin_popcountll(aValue));
 }
 
 inline uint_fast8_t CountLeadingZeroes64(uint64_t aValue) {
-  return __builtin_clzll(aValue);
+  return static_cast<uint_fast8_t>(__builtin_clzll(aValue));
 }
 
 inline uint_fast8_t CountTrailingZeroes64(uint64_t aValue) {
-  return __builtin_ctzll(aValue);
+  return static_cast<uint_fast8_t>(__builtin_ctzll(aValue));
 }
 
 #else
