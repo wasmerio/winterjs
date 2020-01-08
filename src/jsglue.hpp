@@ -16,6 +16,7 @@
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/Equality.h"
+#include "js/ForOfIterator.h"
 #include "js/Id.h"
 #include "js/Initialization.h"
 #include "js/JSON.h"

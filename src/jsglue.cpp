@@ -29,7 +29,7 @@ JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx) {
 }
 
 JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
-    return JS::shadow::Zone::asShadowZone(zone);
+    return JS::shadow::Zone::from(zone);
 }
 
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
