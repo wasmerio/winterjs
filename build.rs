@@ -143,6 +143,13 @@ fn build_jsapi(build_dir: &Path) {
 
     let mut cmd = Command::new(make);
 
+    let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
+    let mut cppflags = OsString::from("-I");
+    cppflags.push(OsString::from(encoding_c_mem_include_dir.replace("\\", "/")));
+    cppflags.push(" ");
+    cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
+    cmd.env("CPPFLAGS", cppflags);
+
     // We're using the MSYS make which doesn't work with the mingw32-make-style
     // MAKEFLAGS, so remove that from the env if present.
     if target.contains("windows") {

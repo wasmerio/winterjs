@@ -28,6 +28,8 @@ name = "mozjs_sys"
 doctest = false
 
 [dependencies]
+encoding_c = "0.9.6"
+encoding_c_mem = "0.2.5"
 libc = "0.2"
 libz-sys = "1.0"
 
