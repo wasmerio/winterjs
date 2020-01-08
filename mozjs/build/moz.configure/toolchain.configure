@@ -1319,8 +1319,14 @@ set_config('COLOR_CFLAGS', color_cflags)
 # this setup.
 
 
-@depends(c_compiler, target)
-def libcxx_override_visibility(c_compiler, target):
+option(env='_LIBCPP_INLINE_VISIBILITY',
+       nargs=1,
+       help='Visibility of libc++ inlines')
+
+@depends('_LIBCPP_INLINE_VISIBILITY', c_compiler, target)
+def libcxx_override_visibility(value, c_compiler, target):
+    if len(value):
+        return value[0]
     if c_compiler.type == 'clang' and target.os == 'Android':
         return namespace(
             empty='',

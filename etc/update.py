@@ -50,7 +50,7 @@ def apply_patches():
 
     for p in patches:
         print("  Applying patch: %s." % p)
-        subprocess.check_call(["git", "apply", p], stdout=subprocess.DEVNULL)
+        subprocess.check_call(["git", "apply", "--reject", "--directory=" + TARGET, p], stdout=subprocess.DEVNULL)
 
 def main(args):
     extract = None

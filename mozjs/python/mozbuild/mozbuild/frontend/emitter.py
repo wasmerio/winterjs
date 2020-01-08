@@ -1196,7 +1196,7 @@ class TreeMetadataEmitter(LoggingMixin):
             yield sub
 
         for defines_var, cls, backend_flags in (
-                ('DEFINES', Defines, (computed_flags, computed_as_flags,)),
+                ('DEFINES', Defines, (computed_flags,)),
                 ('HOST_DEFINES', HostDefines, (computed_host_flags,)),
                 ('WASM_DEFINES', WasmDefines, (computed_wasm_flags,))):
             defines = context.get(defines_var)

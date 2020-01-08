@@ -7,8 +7,10 @@
 #include "WindowsUnicode.h"
 
 #include <windows.h>
+#ifndef JS_ENABLE_UWP
 // For UNICODE_STRING
 #include <winternl.h>
+#endif
 
 #include <string.h>
 
@@ -47,6 +49,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr) {
   return WideToUTF8(aStr.data(), aStr.length());
 }
 
+#ifndef JS_ENABLE_UWP
 mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
   if (!aStr) {
     return nullptr;
@@ -54,6 +57,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
 
   return WideToUTF8(aStr->Buffer, aStr->Length / sizeof(WCHAR));
 }
+#endif
 
 }  // namespace glue
 }  // namespace mozilla

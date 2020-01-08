@@ -2212,7 +2212,7 @@ fi
 
 
 # Target the Windows 8.1 SDK by default
-WINVER=601
+WINVER=A00
 
 case "$target" in
 *-mingw*)

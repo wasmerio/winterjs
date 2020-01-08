@@ -18,6 +18,12 @@ js_option('--with-android-ndk', nargs=1,
           default=default_android_ndk_root,
           help='location where the Android NDK can be found{|}')
 
+js_option('--with-android-ndk-version', nargs=1,
+          help='android NDK version')
+
+js_option('--with-android-platform', nargs=1,
+          help='location of the Android platform')
+
 js_option('--with-android-toolchain', nargs=1,
           help='location of the Android toolchain')
 
@@ -78,14 +84,18 @@ set_config('ANDROID_NDK', ndk)
 add_old_configure_assignment('android_ndk', ndk)
 
 
-@depends(ndk)
+@depends('--with-android-ndk-version', ndk)
 @checking('for android ndk version')
 @imports(_from='__builtin__', _import='open')
 @imports(_from='mozboot.android', _import='NDK_VERSION')
-def ndk_version(ndk):
+def ndk_version(value, ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
+
+    if value:
+        return value[0]
+
     with open(os.path.join(ndk, 'source.properties'), 'r') as f:
         revision = [line for line in f if line.startswith('Pkg.Revision')]
         if not revision:
@@ -125,12 +135,15 @@ set_config('ANDROID_NDK_MAJOR_VERSION', ndk_version.major)
 set_config('ANDROID_NDK_MINOR_VERSION', ndk_version.minor)
 
 
-@depends(target, android_version, ndk)
+@depends('--with-android-platform', target, android_version, ndk)
 @checking('for android platform directory')
 @imports(_from='os.path', _import='isdir')
-def android_platform(target, android_version, ndk):
+def android_platform(value, target, android_version, ndk):
     if target.os != 'Android':
         return
+
+    if value:
+        return value[0]
 
     if 'aarch64' == target.cpu:
         target_dir_name = 'arm64'
@@ -270,7 +283,7 @@ js_option(env='STLPORT_CPPFLAGS',
 @imports(_from='os.path', _import='isdir')
 def stlport_cppflags(value, ndk):
     if value and len(value):
-        return value.split()
+        return value[0].split()
     if not ndk:
         return
 
@@ -319,6 +332,8 @@ def extra_toolchain_flags(android_system, android_sysroot, toolchain_dir,
              android_system,
              '-isystem',
              os.path.join(android_sysroot, 'usr', 'include'),
+             '--sysroot',
+             android_sysroot,
              '-gcc-toolchain',
              toolchain_dir,
              '-D__ANDROID_API__=%d' % android_version]

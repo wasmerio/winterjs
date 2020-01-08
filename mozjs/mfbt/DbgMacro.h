@@ -172,7 +172,7 @@ std::ostream& operator<<(std::ostream& aOut, const T (&aArray)[N]) {
 //                         // MOZ_DBG as an rvalue reference and so wants to
 //                         // invoke B's move constructor to initialize b2
 #ifndef MOZILLA_OFFICIAL
-#  define MOZ_DBG(expression_...) \
+#  define MOZ_DBG(expression_, ...) \
     mozilla::detail::MozDbg(__FILE__, __LINE__, #expression_, expression_)
 #endif
 
@@ -194,7 +194,7 @@ std::ostream& operator<<(std::ostream& aOut, const T (&aArray)[N]) {
 //
 // generates an operator<< that outputs strings like
 // "Point { x = 1.0, y = 2.0 }".
-#define MOZ_DEFINE_DBG(type_, members_...)                                   \
+#define MOZ_DEFINE_DBG(type_, members_, ...)                                   \
   friend std::ostream& operator<<(std::ostream& aOut, const type_& aValue) { \
     return aOut << #type_                                                    \
                 << (MOZ_ARG_COUNT(members_) == 0 ? "" : " { ")               \

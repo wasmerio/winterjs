@@ -199,7 +199,5 @@ maybe-configure:
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
 	  AS="$(AS)" AR="$(AR)" \
 	  STLPORT_LIBS="$(STLPORT_LIBS)" \
-	  RUST_TARGET="$(TARGET)" RUST_HOST="$(HOST)" \
-	  RUST_SYSROOT="${RUST_SYSROOT}" \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi

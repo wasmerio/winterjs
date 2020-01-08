@@ -18,8 +18,6 @@ def building_js(build_project):
 option(env='JS_STANDALONE', default=building_js,
        help='Reserved for internal use')
 
-include('../build/moz.configure/rust.configure',
-        when='--enable-compile-environment')
 include('../build/moz.configure/bindgen.configure',
         when='--enable-compile-environment')
 include('../build/moz.configure/lto-pgo.configure',
@@ -46,6 +44,19 @@ set_define('JS_64BIT', depends(target)(lambda t: t.bitness == 64 or None))
 
 set_define('JS_PUNBOX64', depends(target)(lambda t: t.bitness == 64 or None))
 set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
+
+
+js_option('--enable-uwp',
+          default=False,
+          help='{Enable|Disable} building for UWP environments')
+
+@depends('--enable-uwp')
+def js_enable_uwp(value):
+    if value:
+        return True
+
+set_config('JS_ENABLE_UWP', js_enable_uwp)
+set_define('JS_ENABLE_UWP', js_enable_uwp)
 
 
 # SpiderMonkey as a shared library, and how its symbols are exported
@@ -220,13 +231,13 @@ with only_when('--enable-compile-environment'):
     imply_option('--enable-frame-pointers', True, when=profiling)
 
 
-@depends(profiling, target)
-def imply_vtune(value, target):
+@depends(profiling, target, js_enable_uwp)
+def imply_vtune(value, target, uwp):
     ok_cpu    = target.cpu in ['x86', 'x86_64']
     ok_kernel = target.kernel == 'WINNT' or \
                 (target.kernel == 'Linux' and target.os == 'GNU')
 
-    if value and ok_cpu and ok_kernel:
+    if value and ok_cpu and ok_kernel and not uwp:
         return True
 
 set_config('MOZ_PROFILING', profiling)

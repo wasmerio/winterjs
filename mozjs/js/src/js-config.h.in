@@ -61,6 +61,9 @@
 /* Define to 1 if SpiderMonkey is in PUNBOX64 mode. */
 #undef JS_PUNBOX64
 
+/* Define to 1 if SpiderMonkey is built in a UWP environment. */
+#undef JS_ENABLE_UWP
+
 /* MOZILLA JSAPI version number components */
 #undef MOZJS_MAJOR_VERSION
 #undef MOZJS_MINOR_VERSION
