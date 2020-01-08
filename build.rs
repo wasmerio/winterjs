@@ -169,6 +169,7 @@ fn build_jsapi(build_dir: &Path) {
         .arg(cargo_manifest_dir.join("makefile.cargo"))
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
+        .env("NO_RUST_PANIC_HOOK", "1")
         .status()
         .expect("Failed to run `make`");
     assert!(result.success());
@@ -359,10 +360,8 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
     "JS::Auto.*Impl",
-    "JS::Auto.*Vector.*",
+    "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
-    "JS::ReadOnlyCompileOptions",
-    "JS::Rooted<JS::Auto.*Vector.*>",
     "JS::detail::CallArgsBase.*",
     "js::detail::UniqueSelector.*",
     "mozilla::BufferList",
@@ -388,6 +387,10 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // Bindgen generates bitfields with private fields, so they cannot
     // be used in const expressions.
     "JSJitInfo",
+    // We don't need them and bindgen doesn't like them.
+    "JS::HandleVector",
+    "JS::MutableHandleVector",
+    "JS::Rooted.*Vector",
 ];
 
 /// Definitions for types that were blacklisted

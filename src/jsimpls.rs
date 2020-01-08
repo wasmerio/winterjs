@@ -13,6 +13,7 @@ use jsapi::JSJitSetterCallArgs;
 use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
 use jsapi::JSPropertySpec;
+use jsapi::JSPropertySpec_Name;
 use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
 use jsapi::jsid;
@@ -345,7 +346,7 @@ impl JSJitSetterCallArgs {
 
 impl JSFunctionSpec {
     pub const ZERO: Self = JSFunctionSpec {
-        name: 0 as *const _,
+        name: JSPropertySpec_Name { string_: ptr::null() },
         selfHostedName: 0 as *const _,
         flags: 0,
         nargs: 0,
@@ -353,7 +354,7 @@ impl JSFunctionSpec {
     };
 
     pub fn is_zeroed(&self) -> bool {
-        self.name.is_null() &&
+        (unsafe { self.name.string_.is_null() }) &&
             self.selfHostedName.is_null() &&
             self.flags == 0 &&
             self.nargs == 0 &&
@@ -363,14 +364,14 @@ impl JSFunctionSpec {
 
 impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
-        name: 0 as *const _,
+        name: JSPropertySpec_Name { string_: ptr::null() },
         flags: 0,
-        __bindgen_anon_1: ::jsapi::JSPropertySpec__bindgen_ty_1 {
-            accessors: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1 {
-                getter: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+        u: ::jsapi::JSPropertySpec_AccessorsOrValue {
+            accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
+                getter: ::jsapi::JSPropertySpec_Accessor {
                     native: JSNativeWrapper::ZERO,
                 },
-                setter: ::jsapi::JSPropertySpec__bindgen_ty_1__bindgen_ty_1__bindgen_ty_2 {
+                setter: ::jsapi::JSPropertySpec_Accessor {
                     native: JSNativeWrapper::ZERO,
                 },
             },
@@ -378,10 +379,10 @@ impl JSPropertySpec {
     };
 
     pub fn is_zeroed(&self) -> bool {
-        self.name.is_null() &&
+        (unsafe { self.name.string_.is_null() }) &&
             self.flags == 0 &&
-            unsafe { self.__bindgen_anon_1.accessors.getter.native.is_zeroed() } &&
-            unsafe { self.__bindgen_anon_1.accessors.setter.native.is_zeroed() }
+            unsafe { self.u.accessors.getter.native.is_zeroed() } &&
+            unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
 }
 

@@ -49,7 +49,9 @@ static GLOBAL_CLASS: JSClass = JSClass {
     name: "global\0" as *const str as *const i8,
     flags:  JSCLASS_GLOBAL_FLAGS,
     cOps: &GLOBAL_CLASS_OPS,
-    reserved: [ ptr::null_mut(),  ptr::null_mut(),  ptr::null_mut() ],
+    spec: ptr::null(),
+    ext: ptr::null(),
+    oOps: ptr::null(),
 };
 
 #[test]
@@ -62,7 +64,7 @@ fn main() {
         // Create a JS context.
         let heap_size = 64 * 1024 * 1024;
         let nursery_size = 8 * 1024 * 1024;
-        let cx: *mut JSContext = JS_NewContext(heap_size, nursery_size, ptr::null_mut());
+        let cx: *mut JSContext = JS_NewContext(heap_size + nursery_size, ptr::null_mut());
         assert!(!cx.is_null());
         assert!(JS::InitSelfHostedCode(cx));
 
@@ -74,7 +76,7 @@ fn main() {
             &GLOBAL_CLASS,
             ptr::null_mut(),
             FireOnNewGlobalHook,
-            &options
+            options
         );
         let realm = JS::EnterRealm(cx, global);
 
@@ -85,7 +87,13 @@ fn main() {
 
         // Evaluate 1+1.
         let script = "1+1".as_bytes();
-        assert!(JS::EvaluateUtf8(cx, &options._base, &script[0] as *const _ as *const _, script.len(), rval_handle));
+        let mut source = JS::SourceText {
+            units_: script.as_ptr() as *const _,
+            length_: script.len() as u32,
+            ownsUnits_: false,
+            _phantom_0: std::marker::PhantomData,
+        };
+        assert!(JS::Evaluate2(cx, &options._base, &mut source, rval_handle));
         assert!(rval.to_int32() == 2);
 
         // Shut everything down.

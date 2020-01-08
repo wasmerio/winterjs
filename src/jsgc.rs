@@ -4,7 +4,6 @@
 
 use jsapi::JS;
 use jsapi::jsid;
-use jsapi::JSFlatString;
 use jsapi::JSFunction;
 use jsapi::JSObject;
 use jsapi::JSScript;
@@ -28,11 +27,6 @@ pub trait RootKind {
 impl RootKind for *mut JSObject {
     #[inline(always)]
     fn rootKind() -> JS::RootKind { JS::RootKind::Object }
-}
-
-impl RootKind for *mut JSFlatString {
-    #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::String }
 }
 
 impl RootKind for *mut JSFunction {
@@ -99,7 +93,7 @@ impl GCMethods for *mut JSObject {
     unsafe fn initial() -> *mut JSObject { ptr::null_mut() }
     unsafe fn post_barrier(v: *mut *mut JSObject,
                            prev: *mut JSObject, next: *mut JSObject) {
-        JS::HeapObjectPostBarrier(v, prev, next);
+        JS::HeapObjectWriteBarriers(v, prev, next);
     }
 }
 
@@ -117,15 +111,14 @@ impl GCMethods for *mut JSFunction {
     unsafe fn initial() -> *mut JSFunction { ptr::null_mut() }
     unsafe fn post_barrier(v: *mut *mut JSFunction,
                            prev: *mut JSFunction, next: *mut JSFunction) {
-        JS::HeapObjectPostBarrier(mem::transmute(v),
-                                  mem::transmute(prev), mem::transmute(next));
+        JS::HeapObjectWriteBarriers(mem::transmute(v), mem::transmute(prev), mem::transmute(next));
     }
 }
 
 impl GCMethods for JS::Value {
     unsafe fn initial() -> JS::Value { JS::Value::default() }
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
-        JS::HeapValuePostBarrier(v, &prev, &next);
+        JS::HeapValueWriteBarriers(v, &prev, &next);
     }
 }
 

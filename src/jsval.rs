@@ -198,7 +198,7 @@ pub fn PrivateValue(o: *const c_void) -> JSVal {
 impl JSVal {
     #[inline(always)]
     fn asBits(&self) -> u64 {
-        unsafe { self.asBits_ }
+        self.asBits_
     }
 
     #[inline(always)]
