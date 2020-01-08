@@ -325,6 +325,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
     "JSFUN_.*",
     "JSITER_.*",
     "JSPROP_.*",
+    "JSREG_.*",
     "JS_.*",
 ];
 
