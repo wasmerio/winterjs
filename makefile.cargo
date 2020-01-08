@@ -8,8 +8,7 @@ CONFIGURE_FLAGS := \
 	--disable-js-shell \
 	--disable-tests \
 	--disable-shared-js \
-	--build-backends=RecursiveMake \
-        --enable-posix-nspr-emulation
+	--build-backends=RecursiveMake
 
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
