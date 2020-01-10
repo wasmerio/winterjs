@@ -42,14 +42,6 @@ fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
 
-    for var in ENV_VARS {
-        println!("cargo:rerun-if-env-changed={}", var);
-    }
-
-    for file in EXTRA_FILES {
-        println!("cargo:rerun-if-changed={}", file);
-    }
-
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let src_dir = out_dir.join("mozjs");
     let build_dir = out_dir.join("build");
@@ -64,6 +56,18 @@ fn main() {
     build_jsapi(&src_dir, &build_dir);
     build_jsglue(&build_dir);
     build_jsapi_bindings(&build_dir);
+
+    for var in ENV_VARS {
+        println!("cargo:rerun-if-env-changed={}", var);
+    }
+
+    for entry in WalkDir::new("mozjs") {
+        println!("cargo:rerun-if-changed={}", entry.path().display());
+    }
+
+    for file in EXTRA_FILES {
+        println!("cargo:rerun-if-changed={}", file);
+    }
 }
 
 fn find_make() -> OsString {
@@ -389,7 +393,6 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
 fn copy_sources(source: &Path, target: &Path) {
     for entry in WalkDir::new(source) {
         let entry = entry.expect("could not walk source tree");
-        println!("cargo:rerun-if-changed={}", entry.path().display());
         let relative_path = entry.path().strip_prefix(&source).unwrap();
         let target_path = target.join(relative_path);
 
