@@ -271,13 +271,13 @@ def profiling(value):
 
 add_old_configure_assignment('MOZ_PROFILING', profiling)
 
-@depends(profiling, target)
-def imply_vtune(value, target):
+@depends(profiling, target, js_enable_uwp)
+def imply_vtune(value, target, uwp):
     ok_cpu    = target.cpu in ['x86', 'x86_64']
     ok_kernel = target.kernel == 'WINNT' or \
                 (target.kernel == 'Linux' and target.os == 'GNU')
 
-    if value and ok_cpu and ok_kernel:
+    if value and ok_cpu and ok_kernel and not uwp:
         return True
 
 set_config('MOZ_PROFILING', profiling)
