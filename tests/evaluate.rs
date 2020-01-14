@@ -6,13 +6,10 @@ extern crate mozjs_sys;
 
 use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsapi::JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
-use mozjs_sys::jsapi::JSCLASS_GLOBAL_APPLICATION_SLOTS;
-use mozjs_sys::jsapi::JSCLASS_IS_GLOBAL;
-use mozjs_sys::jsapi::JSCLASS_RESERVED_SLOTS_SHIFT;
+use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
 use mozjs_sys::jsapi::JSClass;
 use mozjs_sys::jsapi::JSClassOps;
 use mozjs_sys::jsapi::JSContext;
-use mozjs_sys::jsapi::JSProtoKey;
 use mozjs_sys::jsapi::JS_DestroyContext;
 use mozjs_sys::jsapi::JS_GlobalObjectTraceHook;
 use mozjs_sys::jsapi::JS_NewGlobalObject;
@@ -25,10 +22,6 @@ use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
 use std::mem;
 use std::ptr;
 
-// Some constants that are #defined in jsapi, so not exposed by bindgen
-const JSCLASS_GLOBAL_SLOT_COUNT: u32 = JSCLASS_GLOBAL_APPLICATION_SLOTS + (JSProtoKey::JSProto_LIMIT as u32) * 3 + 36;
-const JSCLASS_GLOBAL_FLAGS: u32 = JSCLASS_IS_GLOBAL | (JSCLASS_GLOBAL_SLOT_COUNT << JSCLASS_RESERVED_SLOTS_SHIFT);
-    
 // The class operations for the global object.
 static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     addProperty: None,
