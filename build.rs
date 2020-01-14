@@ -42,28 +42,33 @@ fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
 
-    for var in ENV_VARS {
-        println!("cargo:rerun-if-env-changed={}", var);
-    }
-
-    for file in EXTRA_FILES {
-        println!("cargo:rerun-if-changed={}", file);
-    }
-
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let src_dir = out_dir.join("mozjs");
     let build_dir = out_dir.join("build");
 
     // Used by rust-mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    copy_sources("mozjs".as_ref(), &src_dir);
-
     fs::create_dir_all(&build_dir).expect("could not create build dir");
 
-    build_jsapi(&src_dir, &build_dir);
+    build_jsapi(&build_dir);
     build_jsglue(&build_dir);
     build_jsapi_bindings(&build_dir);
+
+    for var in ENV_VARS {
+        println!("cargo:rerun-if-env-changed={}", var);
+    }
+
+    for entry in WalkDir::new("mozjs") {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if !ignore(path) {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+
+    for file in EXTRA_FILES {
+        println!("cargo:rerun-if-changed={}", file);
+    }
 }
 
 fn find_make() -> OsString {
@@ -121,7 +126,7 @@ fn cc_flags() -> Vec<&'static str> {
     result
 }
 
-fn build_jsapi(src_dir: &Path, build_dir: &Path) {
+fn build_jsapi(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
 
@@ -156,7 +161,7 @@ fn build_jsapi(src_dir: &Path, build_dir: &Path) {
         .args(&["-R", "-f"])
         .arg(cargo_manifest_dir.join("makefile.cargo"))
         .current_dir(&build_dir)
-        .env("SRC_DIR", &src_dir)
+        .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .status()
         .expect("Failed to run `make`");
     assert!(result.success());
@@ -386,46 +391,19 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
 ];
 
-fn copy_sources(source: &Path, target: &Path) {
-    for entry in WalkDir::new(source) {
-        let entry = entry.expect("could not walk source tree");
-        println!("cargo:rerun-if-changed={}", entry.path().display());
-        let relative_path = entry.path().strip_prefix(&source).unwrap();
-        let target_path = target.join(relative_path);
+/// Rerun this build script if files under mozjs/ changed, unless this returns true.
+/// Keep this in sync with .gitignore
+fn ignore(path: &Path) -> bool {
+    let ignored_extensions = ["pyc", "so", "dll", "dylib"];
+    let ignored_trailing_paths = [["psutil", "build"], ["psutil", "tmp"]];
 
-        if entry.path().is_dir() {
-            if !target_path.exists() {
-                fs::create_dir(target_path).expect("could not create directory");
-            }
-        } else {
-            copy_file(entry.path(), &target_path)
-        }
-    }
-}
-
-fn copy_file(source: &Path, target: &Path) {
-    if !target_is_up_to_date(&source, &target) {
-        fs::copy(&source, &target).expect("could not copy file");
-    }
-}
-
-fn target_is_up_to_date(source: &Path, target: &Path) -> bool {
-    if !target.exists() {
-        return false;
-    }
-
-    let source_metadata = source.metadata().expect("could not read source metadata");
-    let target_metadata = target.metadata().expect("could not read target metadata");
-
-    let source_modified = match source_metadata.modified() {
-        Ok(modified) => modified,
-        Err(_) => return false,
-    };
-
-    let target_modified = match target_metadata.modified() {
-        Ok(modified) => modified,
-        Err(_) => return false,
-    };
-
-    source_modified < target_modified
+    path.extension().map_or(false, |extension| {
+        ignored_extensions.iter().any(|&ignored| extension == ignored)
+    }) ||
+    ignored_trailing_paths.iter().any(|trailing| {
+        let mut components = path.components().rev();
+        trailing.iter().rev().all(|&ignored| {
+            components.next().map_or(false, |component| component.as_os_str() == ignored)
+        })
+    })
 }
