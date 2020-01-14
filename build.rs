@@ -237,12 +237,13 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::METHODS;
 
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_25)
+        .rust_target(bindgen::RustTarget::Stable_1_40)
         .header("./src/jsglue.hpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
         // similar ergonomics but avoids some potential Rust UB footguns.
         .rustified_enum(".*")
+        .size_t_is_usize(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
         .rustfmt_bindings(true)
