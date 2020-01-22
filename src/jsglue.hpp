@@ -30,6 +30,7 @@
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"
 #include "js/Utility.h"
+#include "js/Warnings.h"
 
 // Reexport some functions that are marked inline.
 
