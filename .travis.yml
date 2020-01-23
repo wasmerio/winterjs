@@ -14,12 +14,12 @@ addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
-      - llvm-toolchain-xenial-5.0
+      - llvm-toolchain-xenial-8
     packages:
       - autoconf2.13
       - gcc-7
       - g++-7
-      - clang-5.0
+      - clang-8
   homebrew:
     update: true
     packages:
