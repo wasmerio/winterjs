@@ -21,6 +21,7 @@
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/MemoryMetrics.h"
+#include "js/Modules.h"
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
 #include "js/Realm.h"
