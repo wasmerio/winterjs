@@ -385,9 +385,6 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // We provide our own definition because SM's use of templates
     // is more than bindgen can cope with.
     "JS::Rooted",
-    // Bindgen generates bitfields with private fields, so they cannot
-    // be used in const expressions.
-    "JSJitInfo",
     // We don't need them and bindgen doesn't like them.
     "JS::HandleVector",
     "JS::MutableHandleVector",
@@ -397,7 +394,6 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
 /// Definitions for types that were blacklisted
 const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type FILE = ::libc::FILE;"),
-    ("root", "pub type JSJitInfo = ::jsjit::JSJitInfo;"),
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
 ];
