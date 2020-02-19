@@ -179,20 +179,12 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
     }
 }
 
-#[cfg(target_pointer_width = "64")]
 #[inline(always)]
 pub fn PrivateValue(o: *const c_void) -> JSVal {
     let ptrBits = o as usize as u64;
-    assert!((ptrBits & 1) == 0);
-    AsJSVal(ptrBits >> 1)
-}
-
-#[cfg(target_pointer_width = "32")]
-#[inline(always)]
-pub fn PrivateValue(o: *const c_void) -> JSVal {
-    let ptrBits = o as usize as u64;
-    assert!((ptrBits & 1) == 0);
-    BuildJSVal(ValueTag::PRIVATE, ptrBits)
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(ptrBits & 0xFFFF000000000000, 0);
+    AsJSVal(ptrBits)
 }
 
 impl JSVal {
@@ -434,18 +426,11 @@ impl JSVal {
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn to_private(&self) -> *const c_void {
         assert!(self.is_double());
-        assert!((self.asBits() & 0x8000000000000000u64) == 0);
-        (self.asBits() << 1) as usize as *const c_void
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn to_private(&self) -> *const c_void {
-        let ptrBits: u32 = (self.asBits() & 0x00000000FFFFFFFF) as u32;
-        ptrBits as *const c_void
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(self.asBits() & 0xFFFF000000000000, 0);
+        self.asBits() as usize as *const c_void
     }
 
     #[inline(always)]
