@@ -26,6 +26,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXXFLAGS",
     "MAKE",
     "MOZ_TOOLS",
+    "MOZJS_FORCE_RERUN",
     "MOZTOOLS_PATH",
     "PYTHON",
     "STLPORT_LIBS",
@@ -57,20 +58,22 @@ fn main() {
     build_jsglue(&build_dir);
     build_jsapi_bindings(&build_dir);
 
-    for var in ENV_VARS {
-        println!("cargo:rerun-if-env-changed={}", var);
-    }
-
-    for entry in WalkDir::new("mozjs") {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if !ignore(path) {
-            println!("cargo:rerun-if-changed={}", path.display());
+    if env::var_os("MOZJS_FORCE_RERUN").is_none() {
+        for var in ENV_VARS {
+            println!("cargo:rerun-if-env-changed={}", var);
         }
-    }
 
-    for file in EXTRA_FILES {
-        println!("cargo:rerun-if-changed={}", file);
+        for entry in WalkDir::new("mozjs") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if !ignore(path) {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+
+        for file in EXTRA_FILES {
+            println!("cargo:rerun-if-changed={}", file);
+        }
     }
 }
 
