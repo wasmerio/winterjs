@@ -42,6 +42,9 @@ fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
 
+    // https://github.com/servo/servo/issues/14759
+    env::set_var("MOZ_NO_DEBUG_RTL", "1");
+
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let build_dir = out_dir.join("build");
 
