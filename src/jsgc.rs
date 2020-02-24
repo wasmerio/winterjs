@@ -19,7 +19,6 @@ use std::ptr;
 /// A trait for JS types that can be registered as roots.
 pub trait RootKind {
     #[allow(non_snake_case)]
-    #[inline(always)]
     /// Returns the rooting kind for `Self`.
     fn rootKind() -> JS::RootKind;
 }
