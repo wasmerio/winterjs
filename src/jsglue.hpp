@@ -115,17 +115,17 @@ class JSJitMethodCallArgsReplacement
 
 /// <div rustbindgen replaces="JS::MutableHandleIdVector" />
 struct MutableHandleIdVector_Simple {
-    uintptr_t handle_mut;
+    void *ptr;
 };
 
 /// <div rustbindgen replaces="JS::HandleObjectVector" />
 struct HandleObjectVector_Simple {
-    uintptr_t handle_mut;
+    void *ptr;
 };
 
 /// <div rustbindgen replaces="JS::MutableHandleObjectVector" />
 struct MutableHandleObjectVector_Simple {
-    uintptr_t handle_mut;
+    void *ptr;
 };
 
 #endif
