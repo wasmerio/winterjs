@@ -7,6 +7,7 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
+	--disable-export-js \
 	--disable-shared-js \
 	--build-backends=RecursiveMake
 
@@ -155,12 +156,6 @@ else ifeq ($(MSYSTEM),MINGW64)
 	# Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
 	# to exist
 	MOZ_TOOLS=/
-
-	# We don't need to build shared JS, and we need to disable export attrs
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
-else
-	# We don't need to build shared JS
-	CONFIGURE_FLAGS += --disable-shared-js
 endif
 
 # If we need to do extra work to find an appropriate python on
