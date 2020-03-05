@@ -24,7 +24,7 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/TextUtils.h"
 
-#include <ctype.h>
+#include <algorithm>
 #include <math.h>
 #include <string.h>
 
@@ -32,9 +32,7 @@
 #include "jsfriendapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
-#include "jsutil.h"
 
-#include "builtin/String.h"
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/LocaleSensitive.h"
@@ -42,6 +40,7 @@
 #include "js/Wrapper.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
+#include "vm/DateObject.h"
 #include "vm/DateTime.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
@@ -58,6 +57,7 @@ using mozilla::ArrayLength;
 using mozilla::Atomic;
 using mozilla::BitwiseCast;
 using mozilla::IsAsciiAlpha;
+using mozilla::IsAsciiDigit;
 using mozilla::IsFinite;
 using mozilla::IsNaN;
 using mozilla::NumbersAreIdentical;
@@ -131,7 +131,7 @@ namespace {
 
 class DateTimeHelper {
  private:
-#if ENABLE_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
   static double localTZA(double t, DateTimeInfo::TimeZoneOffset offset);
 #else
   static int equivalentYearForDST(int year);
@@ -146,7 +146,7 @@ class DateTimeHelper {
   static double UTC(double t);
   static JSString* timeZoneComment(JSContext* cx, double utcTime,
                                    double localTime);
-#if !ENABLE_INTL_API || MOZ_SYSTEM_ICU
+#if !JS_HAS_INTL_API || MOZ_SYSTEM_ICU
   static size_t formatTime(char* buf, size_t buflen, const char* fmt,
                            double utcTime, double localTime);
 #endif
@@ -441,7 +441,7 @@ JS_PUBLIC_API void JS::SetTimeResolutionUsec(uint32_t resolution, bool jitter) {
   sJitter = jitter;
 }
 
-#if ENABLE_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
 // ES2019 draft rev 0ceb728a1adbffe42b26972a6541fd7f398b1557
 // 20.3.1.7 LocalTZA ( t, isUTC )
 double DateTimeHelper::localTZA(double t, DateTimeInfo::TimeZoneOffset offset) {
@@ -563,7 +563,7 @@ double DateTimeHelper::UTC(double t) {
 
   return t - adjustTime(t - DateTimeInfo::localTZA() - msPerHour);
 }
-#endif /* ENABLE_INTL_API && !MOZ_SYSTEM_ICU */
+#endif /* JS_HAS_INTL_API && !MOZ_SYSTEM_ICU */
 
 static double LocalTime(double t) { return DateTimeHelper::localTime(t); }
 
@@ -799,7 +799,7 @@ static bool ParseDigitsN(size_t n, size_t* result, const CharT* s, size_t* i,
                          size_t limit) {
   size_t init = *i;
 
-  if (ParseDigits(result, s, i, Min(limit, init + n))) {
+  if (ParseDigits(result, s, i, std::min(limit, init + n))) {
     return (*i - init) == n;
   }
 
@@ -819,7 +819,7 @@ static bool ParseDigitsNOrLess(size_t n, size_t* result, const CharT* s,
                                size_t* i, size_t limit) {
   size_t init = *i;
 
-  if (ParseDigits(result, s, i, Min(limit, init + n))) {
+  if (ParseDigits(result, s, i, std::min(limit, init + n))) {
     return ((*i - init) > 0) && ((*i - init) <= n);
   }
 
@@ -904,6 +904,7 @@ template <typename CharT>
 static bool ParseISOStyleDate(const CharT* s, size_t length,
                               ClippedTime* result) {
   size_t i = 0;
+  size_t pre = 0;
   int tzMul = 1;
   int dateMul = 1;
   size_t year = 1970;
@@ -916,6 +917,8 @@ static bool ParseISOStyleDate(const CharT* s, size_t length,
   bool isLocalTime = false;
   size_t tzHour = 0;
   size_t tzMin = 0;
+  bool isPermissive = false;
+  bool isStrict = false;
 
 #define PEEK(ch) (i < length && s[i] == ch)
 
@@ -946,8 +949,16 @@ static bool ParseISOStyleDate(const CharT* s, size_t length,
   }
 
 #define NEED_NDIGITS_OR_LESS(n, field)                 \
+  pre = i;                                             \
   if (!ParseDigitsNOrLess(n, &field, s, &i, length)) { \
     return false;                                      \
+  }                                                    \
+  if (i < pre + (n)) {                                 \
+    if (isStrict) {                                    \
+      return false;                                    \
+    } else {                                           \
+      isPermissive = true;                             \
+    }                                                  \
   }
 
   if (PEEK('+') || PEEK('-')) {
@@ -956,7 +967,7 @@ static bool ParseISOStyleDate(const CharT* s, size_t length,
     }
     ++i;
     NEED_NDIGITS(6, year);
-  } else if (!PEEK('T')) {
+  } else {
     NEED_NDIGITS(4, year);
   }
   DONE_DATE_UNLESS('-');
@@ -965,7 +976,15 @@ static bool ParseISOStyleDate(const CharT* s, size_t length,
   NEED_NDIGITS_OR_LESS(2, day);
 
 done_date:
-  if (PEEK('T') || PEEK(' ')) {
+  if (PEEK('T')) {
+    if (isPermissive) {
+      // Require standard format "[+00]1970-01-01" if a time part marker "T"
+      // exists
+      return false;
+    }
+    isStrict = true;
+    i++;
+  } else if (PEEK(' ')) {
     i++;
   } else {
     goto done;
@@ -1037,6 +1056,7 @@ done:
 #undef NEED
 #undef DONE_UNLESS
 #undef NEED_NDIGITS
+#undef NEED_NDIGITS_OR_LESS
 }
 
 template <typename CharT>
@@ -1391,7 +1411,7 @@ static bool date_parse(JSContext* cx, unsigned argc, Value* vp) {
 
 static ClippedTime NowAsMillis(JSContext* cx) {
   double now = PRMJ_Now();
-  bool clampAndJitter = cx->realm()->creationOptions().clampAndJitterTime();
+  bool clampAndJitter = cx->realm()->behaviors().clampAndJitterTime();
   if (clampAndJitter && sReduceMicrosecondTimePrecisionCallback) {
     now = sReduceMicrosecondTimePrecisionCallback(now);
   } else if (clampAndJitter && sResolutionUsec) {
@@ -1450,16 +1470,16 @@ void DateObject::setUTCTime(ClippedTime t, MutableHandleValue vp) {
 }
 
 void DateObject::fillLocalTimeSlots() {
-  const int32_t localTZA = DateTimeInfo::localTZA();
+  const int32_t utcTZOffset = DateTimeInfo::utcToLocalStandardOffsetSeconds();
 
   /* Check if the cache is already populated. */
   if (!getReservedSlot(LOCAL_TIME_SLOT).isUndefined() &&
-      getReservedSlot(TZA_SLOT).toInt32() == localTZA) {
+      getReservedSlot(UTC_TIME_ZONE_OFFSET_SLOT).toInt32() == utcTZOffset) {
     return;
   }
 
   /* Remember time zone used to generate the local cache. */
-  setReservedSlot(TZA_SLOT, Int32Value(localTZA));
+  setReservedSlot(UTC_TIME_ZONE_OFFSET_SLOT, Int32Value(utcTZOffset));
 
   double utcTime = UTCTime().toNumber();
 
@@ -2667,7 +2687,7 @@ static bool date_toJSON(JSContext* cx, unsigned argc, Value* vp) {
   return Call(cx, toISO, obj, args.rval());
 }
 
-#if ENABLE_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
 JSString* DateTimeHelper::timeZoneComment(JSContext* cx, double utcTime,
                                           double localTime) {
   const char* locale = cx->runtime()->getDefaultLocale();
@@ -2755,7 +2775,7 @@ JSString* DateTimeHelper::timeZoneComment(JSContext* cx, double utcTime,
     bool usetz = true;
     for (size_t i = 0; i < tzlen; i++) {
       char16_t c = tzbuf[i];
-      if (c > 127 || !isprint(c)) {
+      if (!IsAsciiPrintable(c)) {
         usetz = false;
         break;
       }
@@ -2773,7 +2793,7 @@ JSString* DateTimeHelper::timeZoneComment(JSContext* cx, double utcTime,
 
   return cx->names().empty;
 }
-#endif /* ENABLE_INTL_API && !MOZ_SYSTEM_ICU */
+#endif /* JS_HAS_INTL_API && !MOZ_SYSTEM_ICU */
 
 static JSString* TimeZoneComment(JSContext* cx, double utcTime,
                                  double localTime) {
@@ -2867,7 +2887,7 @@ static bool FormatDate(JSContext* cx, double utcTime, FormatSpec format,
   return true;
 }
 
-#if !EXPOSE_INTL_API
+#if !JS_HAS_INTL_API
 static bool ToLocaleFormatHelper(JSContext* cx, HandleObject obj,
                                  const char* format, MutableHandleValue rval) {
   double utcTime = obj->as<DateObject>().UTCTime().toNumber();
@@ -2891,11 +2911,12 @@ static bool ToLocaleFormatHelper(JSContext* cx, HandleObject obj,
     if (strcmp(format, "%x") == 0 && result_len >= 6 &&
         /* Format %x means use OS settings, which may have 2-digit yr, so
            hack end of 3/11/22 or 11.03.22 or 11Mar22 to use 4-digit yr...*/
-        !isdigit(buf[result_len - 3]) && isdigit(buf[result_len - 2]) &&
-        isdigit(buf[result_len - 1]) &&
+        !IsAsciiDigit(buf[result_len - 3]) &&
+        IsAsciiDigit(buf[result_len - 2]) &&
+        IsAsciiDigit(buf[result_len - 1]) &&
         /* ...but not if starts with 4-digit year, like 2022/3/11. */
-        !(isdigit(buf[0]) && isdigit(buf[1]) && isdigit(buf[2]) &&
-          isdigit(buf[3]))) {
+        !(IsAsciiDigit(buf[0]) && IsAsciiDigit(buf[1]) &&
+          IsAsciiDigit(buf[2]) && IsAsciiDigit(buf[3]))) {
       int year = int(YearFromTime(localTime));
       snprintf(buf + (result_len - 2), (sizeof buf) - (result_len - 2), "%d",
                year);
@@ -2974,7 +2995,7 @@ static bool date_toLocaleTimeString(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   return CallNonGenericMethod<IsDate, date_toLocaleTimeString_impl>(cx, args);
 }
-#endif /* !EXPOSE_INTL_API */
+#endif /* !JS_HAS_INTL_API */
 
 /* ES5 15.9.5.4. */
 MOZ_ALWAYS_INLINE bool date_toTimeString_impl(JSContext* cx,
@@ -3003,7 +3024,7 @@ static bool date_toDateString(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 MOZ_ALWAYS_INLINE bool date_toSource_impl(JSContext* cx, const CallArgs& args) {
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
   if (!sb.append("(new Date(") ||
       !NumberValueToStringBuffer(
           cx, args.thisv().toObject().as<DateObject>().UTCTime(), sb) ||
@@ -3113,7 +3134,7 @@ static const JSFunctionSpec date_methods[] = {
     JS_FN("setMilliseconds", date_setMilliseconds, 1, 0),
     JS_FN("setUTCMilliseconds", date_setUTCMilliseconds, 1, 0),
     JS_FN("toUTCString", date_toGMTString, 0, 0),
-#if EXPOSE_INTL_API
+#if JS_HAS_INTL_API
     JS_SELF_HOSTED_FN(js_toLocaleString_str, "Date_toLocaleString", 0, 0),
     JS_SELF_HOSTED_FN("toLocaleDateString", "Date_toLocaleDateString", 0, 0),
     JS_SELF_HOSTED_FN("toLocaleTimeString", "Date_toLocaleTimeString", 0, 0),
@@ -3339,14 +3360,14 @@ static const ClassSpec DateObjectClassSpec = {
     nullptr,
     FinishDateClassInit};
 
-const Class DateObject::class_ = {js_Date_str,
-                                  JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
-                                      JSCLASS_HAS_CACHED_PROTO(JSProto_Date),
-                                  JS_NULL_CLASS_OPS, &DateObjectClassSpec};
+const JSClass DateObject::class_ = {js_Date_str,
+                                    JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
+                                        JSCLASS_HAS_CACHED_PROTO(JSProto_Date),
+                                    JS_NULL_CLASS_OPS, &DateObjectClassSpec};
 
-const Class DateObject::protoClass_ = {js_Object_str,
-                                       JSCLASS_HAS_CACHED_PROTO(JSProto_Date),
-                                       JS_NULL_CLASS_OPS, &DateObjectClassSpec};
+const JSClass DateObject::protoClass_ = {
+    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_Date), JS_NULL_CLASS_OPS,
+    &DateObjectClassSpec};
 
 JSObject* js::NewDateObjectMsec(JSContext* cx, ClippedTime t,
                                 HandleObject proto /* = nullptr */) {

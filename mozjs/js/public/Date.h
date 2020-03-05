@@ -36,8 +36,8 @@
 #include "js/RootingAPI.h"   // JS::Handle
 #include "js/Value.h"        // JS::CanonicalizeNaN, JS::DoubleValue, JS::Value
 
-struct JSContext;
-class JSObject;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSObject;
 
 namespace JS {
 
@@ -114,7 +114,7 @@ inline ClippedTime TimeClip(double time) {
 // Produce a double Value from the given time.  Because times may be NaN,
 // prefer using this to manual canonicalization.
 inline Value TimeValue(ClippedTime time) {
-  return DoubleValue(CanonicalizeNaN(time.toDouble()));
+  return CanonicalizedDoubleValue(time.toDouble());
 }
 
 // Create a new Date object whose [[DateValue]] internal slot contains the

@@ -1,8 +1,8 @@
-This directory contains SpiderMonkey 67.
+This directory contains SpiderMonkey 72.
 
-This release is based on a revision of Mozilla 67:
+This release is based on a revision of Mozilla 72:
   https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 
-MDN hosts the latest SpiderMonkey 67 release notes:
-  https://developer.mozilla.org/en-US/docs/SpiderMonkey/67
+MDN hosts the latest SpiderMonkey 72 release notes:
+  https://developer.mozilla.org/en-US/docs/SpiderMonkey/72

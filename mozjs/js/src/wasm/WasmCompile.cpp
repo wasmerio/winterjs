@@ -21,6 +21,8 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/Unused.h"
 
+#include <algorithm>
+
 #include "jit/ProcessExecutableMemory.h"
 #include "util/Text.h"
 #include "wasm/WasmBaselineCompile.h"
@@ -28,6 +30,7 @@
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmOpIter.h"
+#include "wasm/WasmProcess.h"
 #include "wasm/WasmSignalHandlers.h"
 #include "wasm/WasmValidate.h"
 
@@ -116,6 +119,16 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
     forceTiering = false;
   }
 
+#ifdef ENABLE_WASM_CRANELIFT
+  if (!baseline && !ion && !cranelift) {
+    if (cx->options().wasmCranelift() && !CraneliftCanCompile()) {
+      // We're forcing to use Cranelift on a platform that doesn't support it.
+      JS_ReportErrorASCII(cx, "cranelift isn't supported on this platform");
+      return nullptr;
+    }
+  }
+#endif
+
   // HasCompilerSupport() should prevent failure here.
   MOZ_RELEASE_ASSERT(baseline || ion || cranelift);
 
@@ -131,6 +144,7 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   target->sharedMemoryEnabled = sharedMemory;
   target->forceTiering = forceTiering;
   target->gcEnabled = gc;
+  target->hugeMemory = wasm::IsHugeMemoryEnabled();
 
   return target;
 }
@@ -272,7 +286,7 @@ double wasm::EstimateCompiledCodeSize(Tier tier, size_t bytecodeSize) {
 // If parallel Ion compilation is going to take longer than this, we should
 // tier.
 
-static const double tierCutoffMs = 250;
+static const double tierCutoffMs = 10;
 
 // Compilation rate values are empirical except when noted, the reference
 // systems are:
@@ -335,7 +349,7 @@ static double CodesizeCutoff(SystemClass cls) {
 // performance increase is nil or negative once the program moves beyond one
 // socket.  However, few browser users have such systems.
 
-static double EffectiveCores(SystemClass cls, uint32_t cores) {
+static double EffectiveCores(uint32_t cores) {
   if (cores <= 3) {
     return pow(cores, 0.9);
   }
@@ -375,7 +389,7 @@ static bool TieringBeneficial(uint32_t codeSize) {
   // The number of cores we will use is bounded both by the CPU count and the
   // worker count.
 
-  uint32_t cores = Min(cpuCount, workers);
+  uint32_t cores = std::min(cpuCount, workers);
 
   SystemClass cls = ClassifySystem();
 
@@ -383,7 +397,7 @@ static bool TieringBeneficial(uint32_t codeSize) {
   // bother.
 
   double cutoffSize = CodesizeCutoff(cls);
-  double effectiveCores = EffectiveCores(cls, cores);
+  double effectiveCores = EffectiveCores(cores);
 
   if ((codeSize / effectiveCores) < cutoffSize) {
     return false;
@@ -425,13 +439,18 @@ CompilerEnvironment::CompilerEnvironment(const CompileArgs& args)
 CompilerEnvironment::CompilerEnvironment(CompileMode mode, Tier tier,
                                          OptimizedBackend optimizedBackend,
                                          DebugEnabled debugEnabled,
-                                         bool gcTypesConfigured)
+                                         bool refTypesConfigured,
+                                         bool gcTypesConfigured,
+                                         bool hugeMemory)
     : state_(InitialWithModeTierDebug),
       mode_(mode),
       tier_(tier),
       optimizedBackend_(optimizedBackend),
       debug_(debugEnabled),
-      gcTypes_(gcTypesConfigured) {}
+      refTypes_(refTypesConfigured),
+      gcTypes_(gcTypesConfigured),
+      multiValues_(true),
+      hugeMemory_(hugeMemory) {}
 
 void CompilerEnvironment::computeParameters(bool gcFeatureOptIn) {
   MOZ_ASSERT(state_ == InitialWithModeTierDebug);
@@ -456,6 +475,7 @@ void CompilerEnvironment::computeParameters(Decoder& d, bool gcFeatureOptIn) {
   bool debugEnabled = args_->debugEnabled;
   bool craneliftEnabled = args_->craneliftEnabled;
   bool forceTiering = args_->forceTiering;
+  bool hugeMemory = args_->hugeMemory;
 
   bool hasSecondTier = ionEnabled || craneliftEnabled;
   MOZ_ASSERT_IF(gcEnabled || debugEnabled, baselineEnabled);
@@ -485,6 +505,9 @@ void CompilerEnvironment::computeParameters(Decoder& d, bool gcFeatureOptIn) {
 
   debug_ = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
   gcTypes_ = gcEnabled;
+  refTypes_ = !craneliftEnabled;
+  multiValues_ = !craneliftEnabled;
+  hugeMemory_ = hugeMemory;
   state_ = Computed;
 }
 
@@ -555,9 +578,9 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   Decoder d(bytecode.bytes, 0, error, warnings);
 
   CompilerEnvironment compilerEnv(args);
-  ModuleEnvironment env(
-      args.gcEnabled, &compilerEnv,
-      args.sharedMemoryEnabled ? Shareable::True : Shareable::False);
+  ModuleEnvironment env(&compilerEnv, args.sharedMemoryEnabled
+                                          ? Shareable::True
+                                          : Shareable::False);
   if (!DecodeModuleEnvironment(d, &env)) {
     return nullptr;
   }
@@ -584,17 +607,19 @@ void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
   Decoder d(bytecode, 0, &error);
 
   bool gcTypesConfigured = false;  // No optimized backend support yet
+  bool refTypesConfigured = !args.craneliftEnabled;
   OptimizedBackend optimizedBackend = args.craneliftEnabled
                                           ? OptimizedBackend::Cranelift
                                           : OptimizedBackend::Ion;
 
   CompilerEnvironment compilerEnv(CompileMode::Tier2, Tier::Optimized,
                                   optimizedBackend, DebugEnabled::False,
-                                  gcTypesConfigured);
+                                  refTypesConfigured, gcTypesConfigured,
+                                  args.hugeMemory);
 
-  ModuleEnvironment env(
-      gcTypesConfigured, &compilerEnv,
-      args.sharedMemoryEnabled ? Shareable::True : Shareable::False);
+  ModuleEnvironment env(&compilerEnv, args.sharedMemoryEnabled
+                                          ? Shareable::True
+                                          : Shareable::False);
   if (!DecodeModuleEnvironment(d, &env)) {
     return;
   }
@@ -641,7 +666,7 @@ class StreamingDecoder {
   size_t currentOffset() const { return d_.currentOffset(); }
 
   bool waitForBytes(size_t numBytes) {
-    numBytes = Min(numBytes, d_.bytesRemain());
+    numBytes = std::min(numBytes, d_.bytesRemain());
     const uint8_t* requiredEnd = d_.currentPosition() + numBytes;
     auto codeBytesEnd = codeBytesEnd_.lock();
     while (codeBytesEnd < requiredEnd) {
@@ -702,9 +727,9 @@ SharedModule wasm::CompileStreaming(
     const Atomic<bool>& cancelled, UniqueChars* error,
     UniqueCharsVector* warnings) {
   CompilerEnvironment compilerEnv(args);
-  ModuleEnvironment env(
-      args.gcEnabled, &compilerEnv,
-      args.sharedMemoryEnabled ? Shareable::True : Shareable::False);
+  ModuleEnvironment env(&compilerEnv, args.sharedMemoryEnabled
+                                          ? Shareable::True
+                                          : Shareable::False);
 
   {
     Decoder d(envBytes, 0, error, warnings);

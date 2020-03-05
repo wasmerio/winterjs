@@ -8,18 +8,18 @@ dist: xenial
 os:
   - linux
   - osx
-osx_image: xcode9.3
+osx_image: xcode10.2
 
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
-      - llvm-toolchain-xenial-5.0
+      - llvm-toolchain-xenial-8
     packages:
       - autoconf2.13
-      - gcc-6
-      - g++-6
-      - clang-5.0
+      - gcc-7
+      - g++-7
+      - clang-8
   homebrew:
     update: true
     packages:
@@ -36,7 +36,7 @@ env:
 
 before_script:
   - rustup component add rustfmt-preview
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC=gcc-6; export CXX=g++-6; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC=gcc-7; export CXX=g++-7; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export PYTHON3="/usr/local/opt/python/bin/python3"; fi
 
 script:

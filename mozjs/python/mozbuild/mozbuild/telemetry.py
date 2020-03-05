@@ -9,13 +9,15 @@ This file contains a voluptuous schema definition for build system telemetry, an
 to fill an instance of that schema for a single mach invocation.
 '''
 
-from datetime import datetime
 import json
 import os
 import math
 import platform
 import pprint
 import sys
+from datetime import datetime
+
+from six import string_types, PY3
 from voluptuous import (
     Any,
     Optional,
@@ -32,21 +34,23 @@ from .base import (
 from .configure.constants import CompilerType
 
 schema = Schema({
-    Required('client_id', description='A UUID to uniquely identify a client'): basestring,
+    Required('client_id', description='A UUID to uniquely identify a client'): Any(*string_types),
     Required('time', description='Time at which this event happened'): Datetime(),
-    Required('command', description='The mach command that was invoked'): basestring,
+    Required('command', description='The mach command that was invoked'): Any(*string_types),
     Required('argv', description=(
         'Full mach commandline. ' +
-        'If the commandline contains absolute paths they will be sanitized.')): [basestring],
+        'If the commandline contains ' +
+        'absolute paths they will be sanitized.')): [Any(*string_types)],
     Required('success', description='true if the command succeeded'): bool,
     Optional('exception', description=(
-        'If a Python exception was encountered during the execution of the command, ' +
-        'this value contains the result of calling `repr` on the exception object.')): basestring,
+        'If a Python exception was encountered during the execution ' +
+        'of the command, this value contains the result of calling `repr` ' +
+        'on the exception object.')): Any(*string_types),
     Optional('file_types_changed', description=(
         'This array contains a list of objects with {ext, count} properties giving the count ' +
         'of files changed since the last invocation grouped by file type')): [
             {
-                Required('ext', description='File extension'): basestring,
+                Required('ext', description='File extension'): Any(*string_types),
                 Required('count', description='Count of changed files with this extension'): int,
             }
         ],
@@ -61,10 +65,14 @@ schema = Schema({
         Optional('sccache', description='true if ccache in use is sccache'): bool,
         Optional('icecream', description='true if icecream in use'): bool,
     },
+    Optional('build_attrs', description='Attributes characterizing a build'): {
+        Optional('cpu_percent', description='cpu utilization observed during a build'): int,
+        Optional('clobber', description='true if the build was a clobber/full build'): bool,
+    },
     Required('system'): {
         # We don't need perfect granularity here.
         Required('os', description='Operating system'): Any('windows', 'macos', 'linux', 'other'),
-        Optional('cpu_brand', description='CPU brand string from CPUID'): basestring,
+        Optional('cpu_brand', description='CPU brand string from CPUID'): Any(*string_types),
         Optional('logical_cores', description='Number of logical CPU cores present'): int,
         Optional('physical_cores', description='Number of physical CPU cores present'): int,
         Optional('memory_gb', description='System memory in GB'): int,
@@ -83,12 +91,16 @@ def get_client_id(state_dir):
     '''
     path = os.path.join(state_dir, 'telemetry_client_id.json')
     if os.path.exists(path):
-        with open(path, 'rb') as f:
+        with open(path, 'r') as f:
             return json.load(f)['client_id']
     import uuid
     # uuid4 is random, other uuid types may include identifiers from the local system.
     client_id = str(uuid.uuid4())
-    with open(path, 'wb') as f:
+    if PY3:
+        file_mode = 'w'
+    else:
+        file_mode = 'wb'
+    with open(path, file_mode) as f:
         json.dump({'client_id': client_id}, f)
     return client_id
 
@@ -97,11 +109,11 @@ def cpu_brand_linux():
     '''
     Read the CPU brand string out of /proc/cpuinfo on Linux.
     '''
-    with open('/proc/cpuinfo', 'rb') as f:
+    with open('/proc/cpuinfo', 'r') as f:
         for line in f:
             if line.startswith('model name'):
                 _, brand = line.split(': ', 1)
-                return brand.rstrip().decode('ascii')
+                return brand.rstrip()
     # not found?
     return None
 
@@ -214,14 +226,27 @@ def get_build_opts(substs):
         compiler = substs.get('CC_TYPE', None)
         if compiler:
             opts['compiler'] = str(compiler)
-        # icecream may be enabled by setting CC/CXX to symlinks to icecc,
-        # or if using it together with ccache by setting CCACHE_PREFIX=icecc.
-        prefix = os.path.basename(substs.get('CCACHE_PREFIX', ''))
-        if substs.get('CXX_IS_ICECREAM', None) or prefix == 'icecc':
+        if substs.get('CXX_IS_ICECREAM', None):
             opts['icecream'] = True
         return opts
     except BuildEnvironmentNotFoundException:
         return {}
+
+
+def get_build_attrs(attrs):
+    '''
+    Extracts clobber and cpu usage info from command attributes.
+    '''
+    res = {}
+    clobber = attrs.get('clobber')
+    if clobber:
+        res['clobber'] = clobber
+    usage = attrs.get('usage')
+    if usage:
+        cpu_percent = usage.get('cpu_percent')
+        if cpu_percent:
+            res['cpu_percent'] = int(round(cpu_percent))
+    return res
 
 
 def filter_args(command, argv, paths):
@@ -249,7 +274,7 @@ def filter_args(command, argv, paths):
 
 
 def gather_telemetry(command='', success=False, start_time=None, end_time=None,
-                     mach_context=None, substs={}, paths={}):
+                     mach_context=None, substs={}, paths={}, command_attrs=None):
     '''
     Gather telemetry about the build and the user's system and pass it to the telemetry
     handler to be stored for later submission.
@@ -270,6 +295,7 @@ def gather_telemetry(command='', success=False, start_time=None, end_time=None,
         # TODO: use a monotonic clock: https://bugzilla.mozilla.org/show_bug.cgi?id=1481624
         'duration_ms': int((end_time - start_time) * 1000),
         'build_opts': get_build_opts(substs),
+        'build_attrs': get_build_attrs(command_attrs),
         'system': get_system_info(),
         # TODO: exception: https://bugzilla.mozilla.org/show_bug.cgi?id=1481617
         # TODO: file_types_changed: https://bugzilla.mozilla.org/show_bug.cgi?id=1481774

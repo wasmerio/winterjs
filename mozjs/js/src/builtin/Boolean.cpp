@@ -27,9 +27,10 @@
 
 using namespace js;
 
-const Class BooleanObject::class_ = {
+const JSClass BooleanObject::class_ = {
     "Boolean",
-    JSCLASS_HAS_RESERVED_SLOTS(1) | JSCLASS_HAS_CACHED_PROTO(JSProto_Boolean)};
+    JSCLASS_HAS_RESERVED_SLOTS(1) | JSCLASS_HAS_CACHED_PROTO(JSProto_Boolean),
+    JS_NULL_CLASS_OPS, &BooleanObject::classSpec_};
 
 MOZ_ALWAYS_INLINE bool IsBoolean(HandleValue v) {
   return v.isBoolean() || (v.isObject() && v.toObject().is<BooleanObject>());
@@ -42,7 +43,7 @@ MOZ_ALWAYS_INLINE bool bool_toSource_impl(JSContext* cx, const CallArgs& args) {
   bool b = thisv.isBoolean() ? thisv.toBoolean()
                              : thisv.toObject().as<BooleanObject>().unbox();
 
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
   if (!sb.append("(new Boolean(") || !BooleanToStringBuffer(b, sb) ||
       !sb.append("))")) {
     return false;
@@ -119,38 +120,25 @@ static bool Boolean(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-JSObject* js::InitBooleanClass(JSContext* cx, Handle<GlobalObject*> global) {
-  Rooted<BooleanObject*> booleanProto(
-      cx, GlobalObject::createBlankPrototype<BooleanObject>(cx, global));
+JSObject* BooleanObject::createPrototype(JSContext* cx, JSProtoKey key) {
+  BooleanObject* booleanProto =
+      GlobalObject::createBlankPrototype<BooleanObject>(cx, cx->global());
   if (!booleanProto) {
     return nullptr;
   }
   booleanProto->setFixedSlot(BooleanObject::PRIMITIVE_VALUE_SLOT,
                              BooleanValue(false));
-
-  RootedFunction ctor(cx, GlobalObject::createConstructor(
-                              cx, Boolean, cx->names().Boolean, 1,
-                              gc::AllocKind::FUNCTION, &jit::JitInfo_Boolean));
-  if (!ctor) {
-    return nullptr;
-  }
-
-  if (!LinkConstructorAndPrototype(cx, ctor, booleanProto)) {
-    return nullptr;
-  }
-
-  if (!DefinePropertiesAndFunctions(cx, booleanProto, nullptr,
-                                    boolean_methods)) {
-    return nullptr;
-  }
-
-  if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_Boolean, ctor,
-                                            booleanProto)) {
-    return nullptr;
-  }
-
   return booleanProto;
 }
+
+const ClassSpec BooleanObject::classSpec_ = {
+    GenericCreateConstructor<Boolean, 1, gc::AllocKind::FUNCTION,
+                             &jit::JitInfo_Boolean>,
+    BooleanObject::createPrototype,
+    nullptr,
+    nullptr,
+    boolean_methods,
+    nullptr};
 
 JSString* js::BooleanToString(JSContext* cx, bool b) {
   return b ? cx->names().true_ : cx->names().false_;

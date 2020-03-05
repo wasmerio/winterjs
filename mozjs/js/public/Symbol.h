@@ -15,12 +15,12 @@
 
 #include "js/RootingAPI.h"  // JS::Handle
 
-struct JSContext;
-class JSString;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSString;
 
 namespace JS {
 
-class Symbol;
+class JS_PUBLIC_API Symbol;
 
 /**
  * Create a new Symbol with the given description. This function never returns
@@ -103,9 +103,8 @@ extern JS_PUBLIC_API Symbol* GetWellKnownSymbol(JSContext* cx,
  * Return true if the given JSPropertySpec::name or JSFunctionSpec::name value
  * is actually a symbol code and not a string. See JS_SYM_FN.
  */
-inline bool PropertySpecNameIsSymbol(const char* name) {
-  uintptr_t u = reinterpret_cast<uintptr_t>(name);
-  return u != 0 && u - 1 < WellKnownSymbolLimit;
+inline bool PropertySpecNameIsSymbol(uintptr_t name) {
+  return name != 0 && name - 1 < WellKnownSymbolLimit;
 }
 
 }  // namespace JS

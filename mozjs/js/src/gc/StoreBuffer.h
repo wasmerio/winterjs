@@ -80,10 +80,13 @@ class StoreBuffer {
 
     StoreBuffer* owner_;
 
+    JS::GCReason gcReason_;
+
     /* Maximum number of entries before we request a minor GC. */
     const static size_t MaxEntries = 48 * 1024 / sizeof(T);
 
-    explicit MonoTypeBuffer(StoreBuffer* owner) : last_(T()), owner_(owner) {}
+    explicit MonoTypeBuffer(StoreBuffer* owner, JS::GCReason reason)
+        : last_(T()), owner_(owner), gcReason_(reason) {}
 
     void clear() {
       last_ = T();
@@ -117,7 +120,7 @@ class StoreBuffer {
       last_ = T();
 
       if (MOZ_UNLIKELY(stores_.count() > MaxEntries)) {
-        owner_->setAboutToOverflow(T::FullBufferReason);
+        owner_->setAboutToOverflow(gcReason_);
       }
     }
 
@@ -240,11 +243,12 @@ class StoreBuffer {
     static bool match(const Edge& k, const Lookup& l) { return k == l; }
   };
 
+  template <typename T>
   struct CellPtrEdge {
-    Cell** edge;
+    T** edge = nullptr;
 
-    CellPtrEdge() : edge(nullptr) {}
-    explicit CellPtrEdge(Cell** v) : edge(v) {}
+    CellPtrEdge() = default;
+    explicit CellPtrEdge(T** v) : edge(v) {}
     bool operator==(const CellPtrEdge& other) const {
       return edge == other.edge;
     }
@@ -259,20 +263,13 @@ class StoreBuffer {
 
     void trace(TenuringTracer& mover) const;
 
-    CellPtrEdge tagged() const {
-      return CellPtrEdge((Cell**)(uintptr_t(edge) | 1));
-    }
-    CellPtrEdge untagged() const {
-      return CellPtrEdge((Cell**)(uintptr_t(edge) & ~1));
-    }
-    bool isTagged() const { return bool(uintptr_t(edge) & 1); }
-
     explicit operator bool() const { return edge != nullptr; }
 
-    typedef PointerEdgeHasher<CellPtrEdge> Hasher;
-
-    static const auto FullBufferReason = JS::GCReason::FULL_CELL_PTR_BUFFER;
+    using Hasher = PointerEdgeHasher<CellPtrEdge<T>>;
   };
+
+  using ObjectPtrEdge = CellPtrEdge<JSObject>;
+  using StringPtrEdge = CellPtrEdge<JSString>;
 
   struct ValueEdge {
     JS::Value* edge;
@@ -294,19 +291,9 @@ class StoreBuffer {
 
     void trace(TenuringTracer& mover) const;
 
-    ValueEdge tagged() const {
-      return ValueEdge((JS::Value*)(uintptr_t(edge) | 1));
-    }
-    ValueEdge untagged() const {
-      return ValueEdge((JS::Value*)(uintptr_t(edge) & ~1));
-    }
-    bool isTagged() const { return bool(uintptr_t(edge) & 1); }
-
     explicit operator bool() const { return edge != nullptr; }
 
     typedef PointerEdgeHasher<ValueEdge> Hasher;
-
-    static const auto FullBufferReason = JS::GCReason::FULL_VALUE_BUFFER;
   };
 
   struct SlotsEdge {
@@ -368,8 +355,8 @@ class StoreBuffer {
     // overlap.
     void merge(const SlotsEdge& other) {
       MOZ_ASSERT(overlaps(other));
-      uint32_t end = Max(start_ + count_, other.start_ + other.count_);
-      start_ = Min(start_, other.start_);
+      uint32_t end = std::max(start_ + count_, other.start_ + other.count_);
+      start_ = std::min(start_, other.start_);
       count_ = end - start_;
     }
 
@@ -388,8 +375,6 @@ class StoreBuffer {
       }
       static bool match(const SlotsEdge& k, const Lookup& l) { return k == l; }
     } Hasher;
-
-    static const auto FullBufferReason = JS::GCReason::FULL_SLOT_BUFFER;
   };
 
   template <typename Buffer, typename Edge>
@@ -417,7 +402,8 @@ class StoreBuffer {
   }
 
   MonoTypeBuffer<ValueEdge> bufferVal;
-  MonoTypeBuffer<CellPtrEdge> bufferCell;
+  MonoTypeBuffer<StringPtrEdge> bufStrCell;
+  MonoTypeBuffer<ObjectPtrEdge> bufObjCell;
   MonoTypeBuffer<SlotsEdge> bufferSlot;
   WholeCellBuffer bufferWholeCell;
   GenericBuffer bufferGeneric;
@@ -451,8 +437,13 @@ class StoreBuffer {
   /* Insert a single edge into the buffer/remembered set. */
   void putValue(JS::Value* vp) { put(bufferVal, ValueEdge(vp)); }
   void unputValue(JS::Value* vp) { unput(bufferVal, ValueEdge(vp)); }
-  void putCell(Cell** cellp) { put(bufferCell, CellPtrEdge(cellp)); }
-  void unputCell(Cell** cellp) { unput(bufferCell, CellPtrEdge(cellp)); }
+
+  void putCell(JSString** strp) { put(bufStrCell, StringPtrEdge(strp)); }
+  void unputCell(JSString** strp) { unput(bufStrCell, StringPtrEdge(strp)); }
+
+  void putCell(JSObject** strp) { put(bufObjCell, ObjectPtrEdge(strp)); }
+  void unputCell(JSObject** strp) { unput(bufObjCell, ObjectPtrEdge(strp)); }
+
   void putSlot(NativeObject* obj, int kind, uint32_t start, uint32_t count) {
     SlotsEdge edge(obj, kind, start, count);
     if (bufferSlot.last_.overlaps(edge)) {
@@ -474,7 +465,10 @@ class StoreBuffer {
 
   /* Methods to trace the source of all edges in the store buffer. */
   void traceValues(TenuringTracer& mover) { bufferVal.trace(mover); }
-  void traceCells(TenuringTracer& mover) { bufferCell.trace(mover); }
+  void traceCells(TenuringTracer& mover) {
+    bufStrCell.trace(mover);
+    bufObjCell.trace(mover);
+  }
   void traceSlots(TenuringTracer& mover) { bufferSlot.trace(mover); }
   void traceWholeCells(TenuringTracer& mover) { bufferWholeCell.trace(mover); }
   void traceGenericEntries(JSTracer* trc) { bufferGeneric.trace(trc); }
@@ -492,6 +486,8 @@ class StoreBuffer {
 class ArenaCellSet {
   friend class StoreBuffer;
 
+  using ArenaCellBits = BitArray<MaxArenaCellIndex>;
+
   // The arena this relates to.
   Arena* arena;
 
@@ -499,7 +495,7 @@ class ArenaCellSet {
   ArenaCellSet* next;
 
   // Bit vector for each possible cell start position.
-  BitArray<MaxArenaCellIndex> bits;
+  ArenaCellBits bits;
 
 #ifdef DEBUG
   // The minor GC number when this was created. This object should not survive
@@ -519,6 +515,10 @@ class ArenaCellSet {
   }
 
  public:
+  using WordT = ArenaCellBits::WordT;
+  const size_t BitsPerWord = ArenaCellBits::bitsPerElement;
+  const size_t NumWords = ArenaCellBits::numSlots;
+
   ArenaCellSet(Arena* arena, ArenaCellSet* next);
 
   bool hasCell(const TenuredCell* cell) const {
@@ -534,6 +534,8 @@ class ArenaCellSet {
   void putCell(size_t cellIndex);
 
   void check() const;
+
+  WordT getWord(size_t wordIndex) const { return bits.getWord(wordIndex); }
 
   // Sentinel object used for all empty sets.
   //

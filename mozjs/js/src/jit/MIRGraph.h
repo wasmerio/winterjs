@@ -288,7 +288,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock> {
   // phis at the loop header, returns a disabling abort.
   MOZ_MUST_USE AbortReason setBackedge(TempAllocator& alloc,
                                        MBasicBlock* block);
-  MOZ_MUST_USE bool setBackedgeWasm(MBasicBlock* block);
+  MOZ_MUST_USE bool setBackedgeWasm(MBasicBlock* block, size_t paramCount);
 
   // Resets a LOOP_HEADER block to a NORMAL block.  This is needed when
   // optimizations remove the backedge.
@@ -747,8 +747,6 @@ class MIRGraph {
   void insertBlockAfter(MBasicBlock* at, MBasicBlock* block);
   void insertBlockBefore(MBasicBlock* at, MBasicBlock* block);
 
-  void renumberBlocksAfter(MBasicBlock* at);
-
   void unmarkBlocks();
 
   void setReturnAccumulator(MIRGraphReturns* accum) {
@@ -798,12 +796,6 @@ class MIRGraph {
   void allocDefinitionId(MDefinition* ins) { ins->setId(idGen_++); }
   uint32_t getNumInstructionIds() { return idGen_; }
   MResumePoint* entryResumePoint() { return entryBlock()->entryResumePoint(); }
-
-  void copyIds(const MIRGraph& other) {
-    idGen_ = other.idGen_;
-    blockIdGen_ = other.blockIdGen_;
-    numBlocks_ = other.numBlocks_;
-  }
 
   void setOsrBlock(MBasicBlock* osrBlock) {
     MOZ_ASSERT(!osrBlock_);

@@ -8,10 +8,12 @@
 #define vm_TypedArrayObject_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/TextUtils.h"
 
 #include "gc/Barrier.h"
 #include "js/Class.h"
+#include "js/Result.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/ArrayBufferViewObject.h"
 #include "vm/JSObject.h"
@@ -26,7 +28,9 @@
   MACRO(uint32_t, Uint32)              \
   MACRO(float, Float32)                \
   MACRO(double, Float64)               \
-  MACRO(uint8_clamped, Uint8Clamped)
+  MACRO(uint8_clamped, Uint8Clamped)   \
+  MACRO(int64_t, BigInt64)             \
+  MACRO(uint64_t, BigUint64)
 
 namespace js {
 
@@ -68,16 +72,16 @@ class TypedArrayObject : public ArrayBufferViewObject {
     return a->bufferEither() == b->bufferEither();
   }
 
-  static const Class classes[Scalar::MaxTypedArrayViewType];
-  static const Class protoClasses[Scalar::MaxTypedArrayViewType];
-  static const Class sharedTypedArrayPrototypeClass;
+  static const JSClass classes[Scalar::MaxTypedArrayViewType];
+  static const JSClass protoClasses[Scalar::MaxTypedArrayViewType];
+  static const JSClass sharedTypedArrayPrototypeClass;
 
-  static const Class* classForType(Scalar::Type type) {
+  static const JSClass* classForType(Scalar::Type type) {
     MOZ_ASSERT(type < Scalar::MaxTypedArrayViewType);
     return &classes[type];
   }
 
-  static const Class* protoClassForType(Scalar::Type type) {
+  static const JSClass* protoClassForType(Scalar::Type type) {
     MOZ_ASSERT(type < Scalar::MaxTypedArrayViewType);
     return &protoClasses[type];
   }
@@ -129,18 +133,26 @@ class TypedArrayObject : public ArrayBufferViewObject {
   void assertZeroLengthArrayData() const {};
 #endif
 
-  Value getElement(uint32_t index);
-  static void setElement(TypedArrayObject& obj, uint32_t index, double d);
+  template <AllowGC allowGC>
+  bool getElement(JSContext* cx, uint32_t index,
+                  typename MaybeRooted<Value, allowGC>::MutableHandleType val);
+  bool getElementPure(uint32_t index, Value* vp);
 
   /*
    * Copy all elements from this typed array to vp. vp must point to rooted
    * memory.
    */
-  void getElements(Value* vp);
+  static bool getElements(JSContext* cx, Handle<TypedArrayObject*> tarray,
+                          Value* vp);
 
   static bool GetTemplateObjectForNative(JSContext* cx, Native native,
-                                         const CallArgs& args,
+                                         const JS::HandleValueArray args,
                                          MutableHandleObject res);
+
+  /*
+   * Maximum allowed byte length for any typed array.
+   */
+  static constexpr size_t MAX_BYTE_LENGTH = INT32_MAX;
 
   /*
    * Byte length above which created typed arrays will have singleton types.
@@ -153,7 +165,7 @@ class TypedArrayObject : public ArrayBufferViewObject {
 
   static bool isOriginalByteOffsetGetter(Native native);
 
-  static void finalize(FreeOp* fop, JSObject* obj);
+  static void finalize(JSFreeOp* fop, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   /* Initialization bits */
@@ -186,6 +198,8 @@ class TypedArrayObject : public ArrayBufferViewObject {
 
   static bool set(JSContext* cx, unsigned argc, Value* vp);
 
+  bool convertForSideEffect(JSContext* cx, HandleValue v) const;
+
  private:
   static bool set_impl(JSContext* cx, const CallArgs& args);
 };
@@ -203,12 +217,12 @@ extern TypedArrayObject* NewTypedArrayWithTemplateAndBuffer(
     JSContext* cx, HandleObject templateObj, HandleObject arrayBuffer,
     HandleValue byteOffset, HandleValue length);
 
-inline bool IsTypedArrayClass(const Class* clasp) {
+inline bool IsTypedArrayClass(const JSClass* clasp) {
   return &TypedArrayObject::classes[0] <= clasp &&
          clasp < &TypedArrayObject::classes[Scalar::MaxTypedArrayViewType];
 }
 
-inline Scalar::Type GetTypedArrayClassType(const Class* clasp) {
+inline Scalar::Type GetTypedArrayClassType(const JSClass* clasp) {
   MOZ_ASSERT(IsTypedArrayClass(clasp));
   return static_cast<Scalar::Type>(clasp - &TypedArrayObject::classes[0]);
 }
@@ -230,42 +244,63 @@ inline size_t TypedArrayObject::bytesPerElement() const {
   return Scalar::byteSize(type());
 }
 
-// Return value is whether the string is some integer. If the string is an
-// integer which is not representable as a uint64_t, the return value is true
-// and the resulting index is UINT64_MAX.
+// ES2020 draft rev a5375bdad264c8aa264d9c44f57408087761069e
+// 7.1.16 CanonicalNumericIndexString
+//
+// Checks whether or not the string is a canonical numeric index string. If the
+// string is a canonical numeric index which is not representable as a uint64_t,
+// the returned index is UINT64_MAX.
 template <typename CharT>
-bool StringIsTypedArrayIndex(const CharT* s, size_t length, uint64_t* indexp);
+JS::Result<mozilla::Maybe<uint64_t>> StringIsTypedArrayIndex(
+    JSContext* cx, mozilla::Range<const CharT> s);
 
-inline bool IsTypedArrayIndex(jsid id, uint64_t* indexp) {
+// A string |s| is a TypedArray index (or: canonical numeric index string) iff
+// |s| is "-0" or |SameValue(ToString(ToNumber(s)), s)| is true. So check for
+// any characters which can start the string representation of a number,
+// including "NaN" and "Infinity".
+template <typename CharT>
+inline bool CanStartTypedArrayIndex(CharT ch) {
+  return mozilla::IsAsciiDigit(ch) || ch == '-' || ch == 'N' || ch == 'I';
+}
+
+inline JS::Result<mozilla::Maybe<uint64_t>> IsTypedArrayIndex(JSContext* cx,
+                                                              jsid id) {
+  using ResultType = decltype(IsTypedArrayIndex(cx, id));
+
   if (JSID_IS_INT(id)) {
     int32_t i = JSID_TO_INT(id);
     MOZ_ASSERT(i >= 0);
-    *indexp = static_cast<uint64_t>(i);
-    return true;
+    return mozilla::Some(static_cast<uint64_t>(i));
   }
 
   if (MOZ_UNLIKELY(!JSID_IS_STRING(id))) {
-    return false;
+    return ResultType(mozilla::Nothing());
   }
 
   JS::AutoCheckCannotGC nogc;
   JSAtom* atom = JSID_TO_ATOM(id);
-  size_t length = atom->length();
+  if (atom->length() == 0) {
+    return ResultType(mozilla::Nothing());
+  }
 
   if (atom->hasLatin1Chars()) {
-    const Latin1Char* s = atom->latin1Chars(nogc);
-    if (!mozilla::IsAsciiDigit(*s) && *s != '-') {
-      return false;
+    mozilla::Range<const Latin1Char> chars = atom->latin1Range(nogc);
+    if (!CanStartTypedArrayIndex(chars[0])) {
+      return ResultType(mozilla::Nothing());
     }
-    return StringIsTypedArrayIndex(s, length, indexp);
+    return StringIsTypedArrayIndex(cx, chars);
   }
 
-  const char16_t* s = atom->twoByteChars(nogc);
-  if (!mozilla::IsAsciiDigit(*s) && *s != '-') {
-    return false;
+  mozilla::Range<const char16_t> chars = atom->twoByteRange(nogc);
+  if (!CanStartTypedArrayIndex(chars[0])) {
+    return ResultType(mozilla::Nothing());
   }
-  return StringIsTypedArrayIndex(s, length, indexp);
+  return StringIsTypedArrayIndex(cx, chars);
 }
+
+bool SetTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
+                          uint64_t index, HandleValue v,
+                          ObjectOpResult& result);
 
 /*
  * Implements [[DefineOwnProperty]] for TypedArrays when the property
@@ -288,6 +323,8 @@ static inline constexpr unsigned TypedArrayShift(Scalar::Type viewType) {
     case Scalar::Uint32:
     case Scalar::Float32:
       return 2;
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
     case Scalar::Int64:
     case Scalar::Float64:
       return 3;
@@ -299,19 +336,6 @@ static inline constexpr unsigned TypedArrayShift(Scalar::Type viewType) {
 static inline unsigned TypedArrayElemSize(Scalar::Type viewType) {
   return 1u << TypedArrayShift(viewType);
 }
-
-// Assign
-//
-//   target[targetOffset] = unsafeSrcCrossCompartment[0]
-//   ...
-//   target[targetOffset + unsafeSrcCrossCompartment.length - 1] =
-//       unsafeSrcCrossCompartment[unsafeSrcCrossCompartment.length - 1]
-//
-// where the source element range doesn't overlap the target element range in
-// memory.
-extern void SetDisjointTypedElements(
-    TypedArrayObject* target, uint32_t targetOffset,
-    TypedArrayObject* unsafeSrcCrossCompartment);
 
 }  // namespace js
 

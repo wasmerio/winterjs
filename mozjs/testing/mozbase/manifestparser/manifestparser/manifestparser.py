@@ -4,13 +4,15 @@
 
 from __future__ import absolute_import, print_function
 
-from StringIO import StringIO
+from io import BytesIO
 import json
 import fnmatch
 import os
 import shutil
 import sys
 import types
+
+from six import string_types
 
 from .ini import read_ini
 from .filters import (
@@ -23,7 +25,6 @@ from .filters import (
 __all__ = ['ManifestParser', 'TestManifest', 'convert']
 
 relpath = os.path.relpath
-string = (basestring,)
 
 
 # path normalization
@@ -120,7 +121,7 @@ class ManifestParser(object):
             return include_file
 
         # get directory of this file if not file-like object
-        if isinstance(filename, string):
+        if isinstance(filename, string_types):
             # If we're using mercurial as our filesystem via a finder
             # during manifest reading, the getcwd() calls that happen
             # with abspath calls will not be meaningful, so absolute
@@ -195,13 +196,34 @@ class ManifestParser(object):
 
             # otherwise an item
             # apply ancestor defaults, while maintaining current file priority
-            data = dict(self._ancestor_defaults.items() + data.items())
+            data = dict(list(self._ancestor_defaults.items()) + list(data.items()))
 
             test = data
             test['name'] = section
 
+            def relative_to_root(path):
+                # Microoptimization, because relpath is quite expensive.
+                # We know that rootdir is an absolute path or empty. If path
+                # starts with rootdir, then path is also absolute and the tail
+                # of the path is the relative path (possibly non-normalized,
+                # when here is unknown).
+                # For this to work rootdir needs to be terminated with a path
+                # separator, so that references to sibling directories with
+                # a common prefix don't get misscomputed (e.g. /root and
+                # /rootbeer/file).
+                # When the rootdir is unknown, the relpath needs to be left
+                # unchanged. We use an empty string as rootdir in that case,
+                # which leaves relpath unchanged after slicing.
+                if path.startswith(rootdir):
+                    return path[len(rootdir):]
+                else:
+                    return relpath(path, rootdir)
+
             # Will be None if the manifest being read is a file-like object.
             test['manifest'] = filename
+            test['manifest_relpath'] = None
+            if test['manifest']:
+                test['manifest_relpath'] = relative_to_root(normalize_path(test['manifest']))
 
             # determine the path
             path = test.get('path', section)
@@ -216,23 +238,7 @@ class ManifestParser(object):
                     path = os.path.join(here, path)
                     if '..' in path:
                         path = os.path.normpath(path)
-
-                # Microoptimization, because relpath is quite expensive.
-                # We know that rootdir is an absolute path or empty. If path
-                # starts with rootdir, then path is also absolute and the tail
-                # of the path is the relative path (possibly non-normalized,
-                # when here is unknown).
-                # For this to work rootdir needs to be terminated with a path
-                # separator, so that references to sibling directories with
-                # a common prefix don't get misscomputed (e.g. /root and
-                # /rootbeer/file).
-                # When the rootdir is unknown, the relpath needs to be left
-                # unchanged. We use an empty string as rootdir in that case,
-                # which leaves relpath unchanged after slicing.
-                if path.startswith(rootdir):
-                    _relpath = path[len(rootdir):]
-                else:
-                    _relpath = relpath(path, rootdir)
+                _relpath = relative_to_root(path)
 
             test['path'] = path
             test['relpath'] = _relpath
@@ -264,7 +270,7 @@ class ManifestParser(object):
 
         # ensure all files exist
         missing = [filename for filename in filenames
-                   if isinstance(filename, string) and not self.path_exists(filename)]
+                   if isinstance(filename, string_types) and not self.path_exists(filename)]
         if missing:
             raise IOError('Missing files: %s' % ', '.join(missing))
 
@@ -277,7 +283,7 @@ class ManifestParser(object):
             # set the per file defaults
             defaults = _defaults.copy()
             here = None
-            if isinstance(filename, string):
+            if isinstance(filename, string_types):
                 here = os.path.dirname(os.path.abspath(filename))
                 defaults['here'] = here  # directory of master .ini file
 
@@ -409,7 +415,7 @@ class ManifestParser(object):
         """
 
         files = set([])
-        if isinstance(directories, basestring):
+        if isinstance(directories, string_types):
             directories = [directories]
 
         # get files in directories
@@ -446,8 +452,8 @@ class ManifestParser(object):
 
         # open file if `fp` given as string
         close = False
-        if isinstance(fp, string):
-            fp = file(fp, 'w')
+        if isinstance(fp, string_types):
+            fp = open(fp, 'w')
             close = True
 
         # root directory
@@ -492,7 +498,15 @@ class ManifestParser(object):
             print('[%s]' % path, file=fp)
 
             # reserved keywords:
-            reserved = ['path', 'name', 'here', 'manifest', 'relpath', 'ancestor-manifest']
+            reserved = [
+                'path',
+                'name',
+                'here',
+                'manifest',
+                'manifest_relpath',
+                'relpath',
+                'ancestor-manifest'
+            ]
             for key in sorted(test.keys()):
                 if key in reserved:
                     continue
@@ -508,7 +522,7 @@ class ManifestParser(object):
             fp.close()
 
     def __str__(self):
-        fp = StringIO()
+        fp = BytesIO()
         self.write(fp=fp)
         value = fp.getvalue()
         return value
@@ -602,7 +616,7 @@ class ManifestParser(object):
         internal function to import directories
         """
 
-        if isinstance(pattern, basestring):
+        if isinstance(pattern, string_types):
             patterns = [pattern]
         else:
             patterns = pattern
@@ -692,7 +706,7 @@ class ManifestParser(object):
 
             manifest_path = os.path.join(dirpath, filename)
             if (dirnames or filenames) and not (os.path.exists(manifest_path) and overwrite):
-                with file(manifest_path, 'w') as manifest:
+                with open(manifest_path, 'w') as manifest:
                     for dirname in dirnames:
                         print('[include:%s]' % os.path.join(dirname, filename), file=manifest)
                     for _filename in filenames:
@@ -717,7 +731,7 @@ class ManifestParser(object):
         pattern -- shell pattern (glob) or patterns of filenames to match
         ignore -- directory names to ignore
         write -- filename or file-like object of manifests to write;
-                 if `None` then a StringIO instance will be created
+                 if `None` then a BytesIO instance will be created
         relative_to -- write paths relative to this path;
                        if false then the paths are absolute
         """
@@ -725,11 +739,11 @@ class ManifestParser(object):
         # determine output
         opened_manifest_file = None  # name of opened manifest file
         absolute = not relative_to  # whether to output absolute path names as names
-        if isinstance(write, string):
+        if isinstance(write, string_types):
             opened_manifest_file = write
-            write = file(write, 'w')
+            write = open(write, 'w')
         if write is None:
-            write = StringIO()
+            write = BytesIO()
 
         # walk the directories, generating manifests
         def callback(directory, dirpath, dirnames, filenames):

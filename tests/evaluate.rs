@@ -6,13 +6,10 @@ extern crate mozjs_sys;
 
 use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsapi::JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
-use mozjs_sys::jsapi::JSCLASS_GLOBAL_APPLICATION_SLOTS;
-use mozjs_sys::jsapi::JSCLASS_IS_GLOBAL;
-use mozjs_sys::jsapi::JSCLASS_RESERVED_SLOTS_SHIFT;
+use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
 use mozjs_sys::jsapi::JSClass;
 use mozjs_sys::jsapi::JSClassOps;
 use mozjs_sys::jsapi::JSContext;
-use mozjs_sys::jsapi::JSProtoKey;
 use mozjs_sys::jsapi::JS_DestroyContext;
 use mozjs_sys::jsapi::JS_GlobalObjectTraceHook;
 use mozjs_sys::jsapi::JS_NewGlobalObject;
@@ -25,10 +22,6 @@ use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
 use std::mem;
 use std::ptr;
 
-// Some constants that are #defined in jsapi, so not exposed by bindgen
-const JSCLASS_GLOBAL_SLOT_COUNT: u32 = JSCLASS_GLOBAL_APPLICATION_SLOTS + (JSProtoKey::JSProto_LIMIT as u32) * 3 + 36;
-const JSCLASS_GLOBAL_FLAGS: u32 = JSCLASS_IS_GLOBAL | (JSCLASS_GLOBAL_SLOT_COUNT << JSCLASS_RESERVED_SLOTS_SHIFT);
-    
 // The class operations for the global object.
 static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     addProperty: None,
@@ -49,7 +42,9 @@ static GLOBAL_CLASS: JSClass = JSClass {
     name: "global\0" as *const str as *const i8,
     flags:  JSCLASS_GLOBAL_FLAGS,
     cOps: &GLOBAL_CLASS_OPS,
-    reserved: [ ptr::null_mut(),  ptr::null_mut(),  ptr::null_mut() ],
+    spec: ptr::null(),
+    ext: ptr::null(),
+    oOps: ptr::null(),
 };
 
 #[test]
@@ -62,7 +57,7 @@ fn main() {
         // Create a JS context.
         let heap_size = 64 * 1024 * 1024;
         let nursery_size = 8 * 1024 * 1024;
-        let cx: *mut JSContext = JS_NewContext(heap_size, nursery_size, ptr::null_mut());
+        let cx: *mut JSContext = JS_NewContext(heap_size + nursery_size, ptr::null_mut());
         assert!(!cx.is_null());
         assert!(JS::InitSelfHostedCode(cx));
 
@@ -74,7 +69,7 @@ fn main() {
             &GLOBAL_CLASS,
             ptr::null_mut(),
             FireOnNewGlobalHook,
-            &options
+            options
         );
         let realm = JS::EnterRealm(cx, global);
 
@@ -85,7 +80,13 @@ fn main() {
 
         // Evaluate 1+1.
         let script = "1+1".as_bytes();
-        assert!(JS::EvaluateUtf8(cx, &options._base, &script[0] as *const _ as *const _, script.len(), rval_handle));
+        let mut source = JS::SourceText {
+            units_: script.as_ptr() as *const _,
+            length_: script.len() as u32,
+            ownsUnits_: false,
+            _phantom_0: std::marker::PhantomData,
+        };
+        assert!(JS::Evaluate2(cx, &options._base, &mut source, rval_handle));
         assert!(rval.to_int32() == 2);
 
         // Shut everything down.

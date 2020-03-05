@@ -9,6 +9,16 @@
 #include "ThirdPartyPaths.h"
 #include "plugin.h"
 
+inline StringRef getFilename(const SourceManager &SM, SourceLocation Loc) {
+  // We use the presumed location to handle #line directives and such, so the
+  // plugin is friendly to icecc / sccache users.
+  auto PL = SM.getPresumedLoc(Loc);
+  if (PL.isValid()) {
+    return StringRef(PL.getFilename());
+  }
+  return SM.getFilename(Loc);
+}
+
 // Check if the given expression contains an assignment expression.
 // This can either take the form of a Binary Operator or a
 // Overloaded Operator Call.
@@ -181,7 +191,7 @@ inline bool isIgnoredPathForImplicitConversion(const Decl *Declaration) {
   Declaration = Declaration->getCanonicalDecl();
   SourceLocation Loc = Declaration->getLocation();
   const SourceManager &SM = Declaration->getASTContext().getSourceManager();
-  SmallString<1024> FileName = SM.getFilename(Loc);
+  SmallString<1024> FileName = getFilename(SM, Loc);
   llvm::sys::fs::make_absolute(FileName);
   llvm::sys::path::reverse_iterator Begin = llvm::sys::path::rbegin(FileName),
                                     End = llvm::sys::path::rend(FileName);
@@ -201,7 +211,7 @@ inline bool isIgnoredPathForImplicitConversion(const Decl *Declaration) {
 inline bool isIgnoredPathForSprintfLiteral(const CallExpr *Call,
                                            const SourceManager &SM) {
   SourceLocation Loc = Call->getBeginLoc();
-  SmallString<1024> FileName = SM.getFilename(Loc);
+  SmallString<1024> FileName = getFilename(SM, Loc);
   llvm::sys::fs::make_absolute(FileName);
   llvm::sys::path::reverse_iterator Begin = llvm::sys::path::rbegin(FileName),
                                     End = llvm::sys::path::rend(FileName);
@@ -280,30 +290,55 @@ inline bool typeIsRefPtr(QualType Q) {
 // The method defined in clang for ignoring implicit nodes doesn't work with
 // some AST trees. To get around this, we define our own implementation of
 // IgnoreTrivials.
-inline const Stmt *IgnoreTrivials(const Stmt *s) {
-  while (true) {
+inline const Stmt *MaybeSkipOneTrivial(const Stmt *s) {
     if (!s) {
       return nullptr;
-    } else if (auto *ewc = dyn_cast<ExprWithCleanups>(s)) {
-      s = ewc->getSubExpr();
-    } else if (auto *mte = dyn_cast<MaterializeTemporaryExpr>(s)) {
-      s = mte->GetTemporaryExpr();
-    } else if (auto *bte = dyn_cast<CXXBindTemporaryExpr>(s)) {
-      s = bte->getSubExpr();
-    } else if (auto *ce = dyn_cast<CastExpr>(s)) {
-      s = ce->getSubExpr();
-    } else if (auto *pe = dyn_cast<ParenExpr>(s)) {
-      s = pe->getSubExpr();
-    } else {
-      break;
     }
+    if (auto *ewc = dyn_cast<ExprWithCleanups>(s)) {
+      return ewc->getSubExpr();
+    }
+    if (auto *mte = dyn_cast<MaterializeTemporaryExpr>(s)) {
+      // With clang 10 and up `getTemporary` has been replaced with the more
+      // versatile `getSubExpr`.
+#if CLANG_VERSION_FULL >= 1000
+      return mte->getSubExpr();
+#else
+      return mte->GetTemporaryExpr();
+#endif
+    }
+    if (auto *bte = dyn_cast<CXXBindTemporaryExpr>(s)) {
+      return bte->getSubExpr();
+    }
+    if (auto *ce = dyn_cast<CastExpr>(s)) {
+      s = ce->getSubExpr();
+    }
+    if (auto *pe = dyn_cast<ParenExpr>(s)) {
+      s = pe->getSubExpr();
+    }
+    // Not a trivial.
+    return s;
+}
+
+inline const Stmt *IgnoreTrivials(const Stmt *s) {
+  while (true) {
+    const Stmt* newS = MaybeSkipOneTrivial(s);
+    if (newS == s) {
+      return newS;
+    }
+    s = newS;
   }
 
-  return s;
+  // Unreachable
+  return nullptr;
 }
 
 inline const Expr *IgnoreTrivials(const Expr *e) {
   return cast_or_null<Expr>(IgnoreTrivials(static_cast<const Stmt *>(e)));
+}
+
+// Returns the input if the input is not a trivial.
+inline const Expr *MaybeSkipOneTrivial(const Expr *e) {
+  return cast_or_null<Expr>(MaybeSkipOneTrivial(static_cast<const Stmt *>(e)));
 }
 
 const FieldDecl *getBaseRefCntMember(QualType T);
@@ -343,18 +378,16 @@ inline bool isPlacementNew(const CXXNewExpr *Expression) {
   return true;
 }
 
-extern DenseMap<unsigned, bool> InThirdPartyPathCache;
+extern DenseMap<StringRef, bool> InThirdPartyPathCache;
 
 inline bool inThirdPartyPath(SourceLocation Loc, const SourceManager &SM) {
-  Loc = SM.getFileLoc(Loc);
-
-  unsigned id = SM.getFileID(Loc).getHashValue();
-  auto pair = InThirdPartyPathCache.find(id);
+  StringRef OriginalFileName = getFilename(SM, Loc);
+  auto pair = InThirdPartyPathCache.find(OriginalFileName);
   if (pair != InThirdPartyPathCache.end()) {
     return pair->second;
   }
 
-  SmallString<1024> FileName = SM.getFilename(Loc);
+  SmallString<1024> FileName = OriginalFileName;
   llvm::sys::fs::make_absolute(FileName);
 
   for (uint32_t i = 0; i < MOZ_THIRD_PARTY_PATHS_COUNT; ++i) {
@@ -378,13 +411,13 @@ inline bool inThirdPartyPath(SourceLocation Loc, const SourceManager &SM) {
 
       // We found a match!
       if (IThirdPartyB == ThirdPartyE) {
-        InThirdPartyPathCache.insert(std::make_pair(id, true));
+        InThirdPartyPathCache.insert(std::make_pair(OriginalFileName, true));
         return true;
       }
     }
   }
 
-  InThirdPartyPathCache.insert(std::make_pair(id, false));
+  InThirdPartyPathCache.insert(std::make_pair(OriginalFileName, false));
   return false;
 }
 

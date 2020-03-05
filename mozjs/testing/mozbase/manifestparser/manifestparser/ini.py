@@ -7,12 +7,14 @@ from __future__ import absolute_import
 import os
 import sys
 
+from six import string_types
+
 __all__ = ['read_ini', 'combine_fields']
 
 
 class IniParseError(Exception):
     def __init__(self, fp, linenum, msg):
-        if isinstance(fp, basestring):
+        if isinstance(fp, string_types):
             path = fp
         elif hasattr(fp, 'name'):
             path = fp.name
@@ -43,8 +45,8 @@ def read_ini(fp, variables=None, default='DEFAULT', defaults_only=False,
     sections = []
     key = value = None
     section_names = set()
-    if isinstance(fp, basestring):
-        fp = file(fp)
+    if isinstance(fp, string_types):
+        fp = open(fp)
 
     # read the lines
     for (linenum, line) in enumerate(fp.read().splitlines(), start=1):
@@ -67,11 +69,11 @@ def read_ini(fp, variables=None, default='DEFAULT', defaults_only=False,
         while comment_start == sys.maxsize and inline_prefixes:
             next_prefixes = {}
             for prefix, index in inline_prefixes.items():
-                index = line.find(prefix, index+1)
+                index = stripped.find(prefix, index+1)
                 if index == -1:
                     continue
                 next_prefixes[prefix] = index
-                if index == 0 or (index > 0 and line[index-1].isspace()):
+                if index == 0 or (index > 0 and stripped[index-1].isspace()):
                     comment_start = min(comment_start, index)
             inline_prefixes = next_prefixes
 
@@ -121,11 +123,13 @@ def read_ini(fp, variables=None, default='DEFAULT', defaults_only=False,
                 value = value.strip()
                 key_indent = line_indent
 
+                # make sure this key isn't already in the section
+                if key and current_section is not variables:
+                    assert key not in current_section
+
                 if strict:
-                    # make sure this key isn't already in the section or empty
+                    # make sure this key isn't empty
                     assert key
-                    if current_section is not variables:
-                        assert key not in current_section
 
                 current_section[key] = value
                 break

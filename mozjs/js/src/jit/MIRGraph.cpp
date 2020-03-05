@@ -116,16 +116,6 @@ void MIRGraph::insertBlockBefore(MBasicBlock* at, MBasicBlock* block) {
   numBlocks_++;
 }
 
-void MIRGraph::renumberBlocksAfter(MBasicBlock* at) {
-  MBasicBlockIterator iter = begin(at);
-  iter++;
-
-  uint32_t id = at->id();
-  for (; iter != end(); iter++) {
-    iter->setId(++id);
-  }
-}
-
 bool MIRGraph::removeSuccessorBlocks(MBasicBlock* start) {
   if (!start->hasLastIns()) {
     return true;
@@ -136,6 +126,9 @@ bool MIRGraph::removeSuccessorBlocks(MBasicBlock* start) {
   // Mark all successors.
   Vector<MBasicBlock*, 4, SystemAllocPolicy> blocks;
   for (size_t i = 0; i < start->numSuccessors(); i++) {
+    if (!start->getSuccessor(i)) {
+      continue;
+    }
     if (start->getSuccessor(i)->isMarked()) {
       continue;
     }
@@ -151,6 +144,9 @@ bool MIRGraph::removeSuccessorBlocks(MBasicBlock* start) {
     }
 
     for (size_t j = 0; j < block->numSuccessors(); j++) {
+      if (!block->getSuccessor(j)) {
+        continue;
+      }
       if (block->getSuccessor(j)->isMarked()) {
         continue;
       }
@@ -452,6 +448,9 @@ MBasicBlock* MBasicBlock::New(MIRGraph& graph, const CompileInfo& info,
         block->setSlot(i, phi);
       }
     } else {
+      if (!block->ensureHasSlots(0)) {
+        return nullptr;
+      }
       block->copySlots(pred);
     }
 
@@ -515,6 +514,7 @@ bool MBasicBlock::ensureHasSlots(size_t num) {
 
 void MBasicBlock::copySlots(MBasicBlock* from) {
   MOZ_ASSERT(stackPosition_ <= from->stackPosition_);
+  MOZ_ASSERT(stackPosition_ <= nslots());
 
   MDefinition** thisSlots = slots_.begin();
   MDefinition** fromSlots = from->slots_.begin();
@@ -1162,9 +1162,6 @@ AbortReason MBasicBlock::setBackedge(TempAllocator& alloc, MBasicBlock* pred) {
   }
 
   if (hadTypeChange) {
-    for (MPhiIterator phi = phisBegin(); phi != phisEnd(); phi++) {
-      phi->removeOperand(phi->numOperands() - 1);
-    }
     return AbortReason::Disable;
   }
 
@@ -1178,11 +1175,11 @@ AbortReason MBasicBlock::setBackedge(TempAllocator& alloc, MBasicBlock* pred) {
   return AbortReason::NoAbort;
 }
 
-bool MBasicBlock::setBackedgeWasm(MBasicBlock* pred) {
+bool MBasicBlock::setBackedgeWasm(MBasicBlock* pred, size_t paramCount) {
   // Predecessors must be finished, and at the correct stack depth.
   MOZ_ASSERT(hasLastIns());
   MOZ_ASSERT(pred->hasLastIns());
-  MOZ_ASSERT(stackDepth() == pred->stackDepth());
+  MOZ_ASSERT(stackDepth() + paramCount == pred->stackDepth());
 
   // We must be a pending loop header
   MOZ_ASSERT(kind_ == PENDING_LOOP_HEADER);
@@ -1217,8 +1214,11 @@ bool MBasicBlock::setBackedgeWasm(MBasicBlock* pred) {
     MOZ_ASSERT(phi->numOperands() == 1);
     entryDef->addInlineInput(exitDef);
 
-    MOZ_ASSERT(slot < pred->stackDepth());
-    setSlot(slot, entryDef);
+    // Two cases here: phis that correspond to locals, and phis that correspond
+    // to loop parameters.  Only phis for locals go in slots.
+    if (slot < stackDepth()) {
+      setSlot(slot, entryDef);
+    }
   }
 
   // We are now a loop header proper
@@ -1435,7 +1435,6 @@ bool MBasicBlock::inheritPhisFromBackedge(TempAllocator& alloc,
       return false;
     }
     *hadTypeChange |= typeChange;
-    setSlot(slot, entryDef);
   }
 
   return true;
@@ -1591,7 +1590,7 @@ void MBasicBlock::dumpStack() {
 }
 
 void MIRGraph::dump(GenericPrinter& out) {
-#ifdef DEBUG
+#ifdef JS_JITSPEW
   for (MBasicBlockIterator iter(begin()); iter != end(); iter++) {
     iter->dump(out);
     out.printf("\n");
@@ -1606,7 +1605,7 @@ void MIRGraph::dump() {
 }
 
 void MBasicBlock::dump(GenericPrinter& out) {
-#ifdef DEBUG
+#ifdef JS_JITSPEW
   out.printf("block%u:%s%s%s\n", id(), isLoopHeader() ? " (loop header)" : "",
              unreachable() ? " (unreachable)" : "",
              isMarked() ? " (marked)" : "");

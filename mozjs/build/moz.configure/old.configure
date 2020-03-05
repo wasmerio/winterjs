@@ -5,13 +5,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-@imports('codecs')
-@imports('sys')
-def encoded_open(path, mode):
-    encoding = 'mbcs' if sys.platform == 'win32' else 'utf-8'
-    return codecs.open(path, mode, encoding)
-
-
 option(env='AUTOCONF', nargs=1, help='Path to autoconf 2.13')
 
 
@@ -76,7 +69,7 @@ def prepare_mozconfig(mozconfig):
         return items
 
 
-@depends('OLD_CONFIGURE', prepare_mozconfig, autoconf, check_build_environment,
+@depends('OLD_CONFIGURE', 'MOZILLABUILD', prepare_mozconfig, autoconf, check_build_environment,
          shell, old_configure_assignments, build_project)
 @imports(_from='__builtin__', _import='open')
 @imports(_from='__builtin__', _import='print')
@@ -88,7 +81,13 @@ def prepare_mozconfig(mozconfig):
 @imports(_from='os.path', _import='getmtime')
 @imports(_from='os.path', _import='exists')
 @imports(_from='mozbuild.shellutil', _import='quote')
-def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
+@imports(_from='tempfile', _import='NamedTemporaryFile')
+@imports(_from='os', _import='environ')
+@imports(_from='os', _import='remove')
+@imports(_from='os', _import='rename')
+@imports(_from='subprocess', _import='CalledProcessError')
+@imports(_from='__builtin__', _import='OSError')
+def prepare_configure(old_configure, mozillabuild, mozconfig, autoconf, build_env, shell,
                       old_configure_assignments, build_project):
     # os.path.abspath in the sandbox will ensure forward slashes on Windows,
     # which is actually necessary because this path actually ends up literally
@@ -118,10 +117,25 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
 
     if refresh:
         log.info('Refreshing %s with %s', old_configure, autoconf)
-        script = subprocess.check_output([
-            shell, autoconf,
-            '--localdir=%s' % os.path.dirname(old_configure),
-            old_configure + '.in'])
+
+        try:
+            script = subprocess.check_output([
+                shell, autoconf,
+                '--localdir=%s' % os.path.dirname(old_configure),
+                old_configure + '.in'])
+        except CalledProcessError as exc:
+            # Autoconf on win32 may break due to a bad $PATH.  Let the user know
+            # their $PATH is suspect.
+            if mozillabuild:
+                mozillabuild_path = normsep(mozillabuild[0])
+                sh_path = normsep(find_program('sh'))
+                if mozillabuild_path not in sh_path:
+                    log.warning("The '{}msys/bin' directory is not first in $PATH. "
+                                "This may cause autoconf to fail. ($PATH is currently "
+                                "set to: {})".format(mozillabuild_path, environ[
+                        'PATH']))
+            die('autoconf exited with return code {}'.format(exc.returncode))
+
         if not script:
             die('Generated old-configure is empty! Check that your autoconf 2.13 program works!')
 
@@ -129,11 +143,22 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
         # This could be done with a m4 macro, but it's way easier this way
         script = script.replace('>./config.log', '>>${CONFIG_LOG=./config.log}')
 
-        with open(old_configure, 'wb') as fh:
+        with NamedTemporaryFile(mode='wb', prefix=os.path.basename(old_configure),
+                                dir=os.path.dirname(old_configure), delete=False) as fh:
             fh.write(script)
 
+        try:
+            rename(fh.name, old_configure)
+        except OSError:
+            try:
+                # Likely the file already existed (on Windows). Retry after removing it.
+                remove(old_configure)
+                rename(fh.name, old_configure)
+            except OSError as e:
+                die('Failed re-creating old-configure: %s' % e.message)
+
     cmd = [shell, old_configure]
-    with encoded_open('old-configure.vars', 'w') as out:
+    with open('old-configure.vars', 'w') as out:
         log.debug('Injecting the following to old-configure:')
 
         def inject(command):
@@ -176,7 +201,6 @@ def old_configure_options(*options):
 @old_configure_options(
     '--cache-file',
     '--datadir',
-    '--enable-content-sandbox',
     '--enable-cookies',
     '--enable-cpp-rtti',
     '--enable-crashreporter',
@@ -195,7 +219,6 @@ def old_configure_options(*options):
     '--enable-libproxy',
     '--enable-llvm-hacks',
     '--enable-logrefcnt',
-    '--enable-memory-sanitizer',
     '--enable-mobile-optimize',
     '--enable-necko-wifi',
     '--enable-negotiateauth',
@@ -203,11 +226,9 @@ def old_configure_options(*options):
     '--enable-nspr-build',
     '--enable-official-branding',
     '--enable-parental-controls',
-    '--enable-posix-nspr-emulation',
     '--enable-pref-extensions',
     '--enable-readline',
     '--enable-sandbox',
-    '--enable-signmar',
     '--enable-startup-notification',
     '--enable-startupcache',
     '--enable-strip',
@@ -216,10 +237,7 @@ def old_configure_options(*options):
     '--enable-system-extension-dirs',
     '--enable-system-pixman',
     '--enable-system-sqlite',
-    '--enable-thread-sanitizer',
-    '--enable-signed-overflow-sanitizer',
     '--enable-universalchardet',
-    '--enable-unsigned-overflow-sanitizer',
     '--enable-updater',
     '--enable-xul',
     '--enable-zipwriter',
@@ -231,7 +249,6 @@ def old_configure_options(*options):
     '--with-android-min-sdk',
     '--with-app-basename',
     '--with-app-name',
-    '--with-arch',
     '--with-branding',
     '--with-cross-lib',
     '--with-debug-label',
@@ -239,8 +256,6 @@ def old_configure_options(*options):
     '--with-doc-include-dirs',
     '--with-doc-input-dirs',
     '--with-doc-output-dir',
-    '--with-float-abi',
-    '--with-fpu',
     '--with-intl-api',
     '--with-ios-sdk',
     '--with-jitreport-granularity',
@@ -253,7 +268,6 @@ def old_configure_options(*options):
     '--with-nss-prefix',
     '--with-qemu-exe',
     '--with-sixgill',
-    '--with-soft-float',
     '--with-system-bz2',
     '--with-system-icu',
     '--with-system-libevent',
@@ -261,8 +275,6 @@ def old_configure_options(*options):
     '--with-system-nss',
     '--with-system-png',
     '--with-system-zlib',
-    '--with-thumb',
-    '--with-thumb-interwork',
     '--with-unify-dist',
     '--with-user-appdir',
     '--x-includes',
@@ -305,7 +317,6 @@ def prepare_configure_options(extra_old_configure_args, all_options, *options):
 @imports('types')
 @imports(_from='mozbuild.shellutil', _import='quote')
 @imports(_from='mozbuild.shellutil', _import='split')
-@imports(_from='mozbuild.util', _import='encode')
 def old_configure(prepare_configure, prepare_configure_options, altered_path):
     cmd = prepare_configure + prepare_configure_options.options
     extra_env = prepare_configure_options.extra_env
@@ -337,7 +348,7 @@ def old_configure(prepare_configure, prepare_configure_options, altered_path):
         env['PATH'] = altered_path
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            env=encode(env))
+                            env=env)
     while True:
         line = proc.stdout.readline()
         if not line:
@@ -348,7 +359,7 @@ def old_configure(prepare_configure, prepare_configure_options, altered_path):
     if ret:
         with log.queue_debug():
             if config_log:
-                with encoded_open(config_log.baseFilename, 'r') as fh:
+                with open(config_log.baseFilename, 'r') as fh:
                     fh.seek(log_size)
                     for line in fh:
                         log.debug(line.rstrip())
@@ -365,7 +376,7 @@ def old_configure(prepare_configure, prepare_configure_options, altered_path):
         'split': split,
         'unique_list': unique_list,
     }
-    with encoded_open('config.data', 'r') as fh:
+    with open('config.data', 'r') as fh:
         code = compile(fh.read(), 'config.data', 'exec')
         # Every variation of the exec() function I tried led to:
         # SyntaxError: unqualified exec is not allowed in function 'main' it

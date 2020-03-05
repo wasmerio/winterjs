@@ -10,14 +10,12 @@
 #include "mozilla/Printf.h"
 #include "mozilla/RangedPtr.h"
 
-#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 
-#include "jsutil.h"
-
 #include "ds/LifoAlloc.h"
 #include "js/CharacterEncoding.h"
+#include "util/Memory.h"
 #include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/JSContext.h"
@@ -198,19 +196,21 @@ bool Sprinter::put(const char* s, size_t len) {
 bool Sprinter::putString(JSString* s) {
   InvariantChecker ic(this);
 
-  JSFlatString* flat = s->ensureFlat(context);
-  if (!flat) {
+  JSLinearString* linear = s->ensureLinear(context);
+  if (!linear) {
     return false;
   }
 
-  size_t length = JS::GetDeflatedUTF8StringLength(flat);
+  size_t length = JS::GetDeflatedUTF8StringLength(linear);
 
   char* buffer = reserve(length);
   if (!buffer) {
     return false;
   }
 
-  JS::DeflateStringToUTF8Buffer(flat, mozilla::RangedPtr<char>(buffer, length));
+  mozilla::DebugOnly<size_t> written =
+      JS::DeflateStringToUTF8Buffer(linear, mozilla::MakeSpan(buffer, length));
+  MOZ_ASSERT(written == length);
 
   buffer[length] = '\0';
   return true;
@@ -293,7 +293,7 @@ static bool QuoteString(Sprinter* sp, const mozilla::Range<const CharT> chars,
     char16_t c = *t;
     while (c < 127 && c != '\\') {
       if (target == QuoteTarget::String) {
-        if (!isprint(c) || c == quote || c == '\t') {
+        if (!IsAsciiPrintable(c) || c == quote || c == '\t') {
           break;
         }
       } else {
@@ -434,7 +434,7 @@ bool Fprinter::put(const char* s, size_t len) {
     reportOutOfMemory();
     return false;
   }
-#ifdef XP_WIN32
+#ifdef XP_WIN
   if ((file_ == stderr) && (IsDebuggerPresent())) {
     UniqueChars buf = DuplicateString(s, len);
     if (!buf) {

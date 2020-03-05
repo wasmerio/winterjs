@@ -30,8 +30,8 @@
  * Certain aspects of tokenizing are used everywhere:
  *
  *   * modifiers (used to select which context-sensitive interpretation of a
- *     character should be used to decide what token it is), modifier
- *     exceptions, and modifier assertion handling;
+ *     character should be used to decide what token it is) and modifier
+ *     assertion handling;
  *   * flags on the overall stream (have we encountered any characters on this
  *     line?  have we hit a syntax error?  and so on);
  *   * and certain token-count constants.
@@ -204,18 +204,20 @@
 #include "jspubtd.h"
 
 #include "frontend/ErrorReporter.h"
+#include "frontend/Token.h"
 #include "frontend/TokenKind.h"
 #include "js/CompileOptions.h"
+#include "js/HashTable.h"    // js::HashMap
+#include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "util/Text.h"
 #include "util/Unicode.h"
 #include "vm/ErrorReporting.h"
 #include "vm/JSAtom.h"
-#include "vm/RegExpConstants.h"
 #include "vm/StringType.h"
 
-struct JSContext;
+struct JS_PUBLIC_API JSContext;
 struct KeywordInfo;
 
 namespace js {
@@ -223,231 +225,6 @@ namespace js {
 class AutoKeepAtoms;
 
 namespace frontend {
-
-class FunctionBox;
-
-struct TokenPos {
-  uint32_t begin;  // Offset of the token's first code unit.
-  uint32_t end;    // Offset of 1 past the token's last code unit.
-
-  TokenPos() : begin(0), end(0) {}
-  TokenPos(uint32_t begin, uint32_t end) : begin(begin), end(end) {}
-
-  // Return a TokenPos that covers left, right, and anything in between.
-  static TokenPos box(const TokenPos& left, const TokenPos& right) {
-    MOZ_ASSERT(left.begin <= left.end);
-    MOZ_ASSERT(left.end <= right.begin);
-    MOZ_ASSERT(right.begin <= right.end);
-    return TokenPos(left.begin, right.end);
-  }
-
-  bool operator==(const TokenPos& bpos) const {
-    return begin == bpos.begin && end == bpos.end;
-  }
-
-  bool operator!=(const TokenPos& bpos) const {
-    return begin != bpos.begin || end != bpos.end;
-  }
-
-  bool operator<(const TokenPos& bpos) const { return begin < bpos.begin; }
-
-  bool operator<=(const TokenPos& bpos) const { return begin <= bpos.begin; }
-
-  bool operator>(const TokenPos& bpos) const { return !(*this <= bpos); }
-
-  bool operator>=(const TokenPos& bpos) const { return !(*this < bpos); }
-
-  bool encloses(const TokenPos& pos) const {
-    return begin <= pos.begin && pos.end <= end;
-  }
-};
-
-enum DecimalPoint { NoDecimal = false, HasDecimal = true };
-
-enum class InvalidEscapeType {
-  // No invalid character escapes.
-  None,
-  // A malformed \x escape.
-  Hexadecimal,
-  // A malformed \u escape.
-  Unicode,
-  // An otherwise well-formed \u escape which represents a
-  // codepoint > 10FFFF.
-  UnicodeOverflow,
-  // An octal escape in a template token.
-  Octal
-};
-
-// The only escapes found in IdentifierName are of the Unicode flavor.
-enum class IdentifierEscapes { None, SawUnicodeEscape };
-
-enum class NameVisibility { Public, Private };
-
-class TokenStreamShared;
-
-struct Token {
- private:
-  // Sometimes the parser needs to inform the tokenizer to interpret
-  // subsequent text in a particular manner: for example, to tokenize a
-  // keyword as an identifier, not as the actual keyword, on the right-hand
-  // side of a dotted property access.  Such information is communicated to
-  // the tokenizer as a Modifier when getting the next token.
-  //
-  // Ideally this definition would reside in TokenStream as that's the real
-  // user, but the debugging-use of it here causes a cyclic dependency (and
-  // C++ provides no way to forward-declare an enum inside a class).  So
-  // define it here, then typedef it into TokenStream with static consts to
-  // bring the initializers into scope.
-  enum Modifier {
-    // Normal operation.
-    None,
-
-    // Looking for an operand, not an operator.  In practice, this means
-    // that when '/' is seen, we look for a regexp instead of just returning
-    // Div.
-    Operand,
-
-    // Treat subsequent code units as the tail of a template literal, after
-    // a template substitution, beginning with a "}", continuing with zero
-    // or more template literal code units, and ending with either "${" or
-    // the end of the template literal.  For example:
-    //
-    //   var entity = "world";
-    //   var s = `Hello ${entity}!`;
-    //                          ^ TemplateTail context
-    TemplateTail,
-  };
-  enum ModifierException {
-    NoException,
-
-    // Used in following 2 cases:
-    // a) After |yield| we look for a token on the same line that starts an
-    // expression (Operand): |yield <expr>|.  If no token is found, the
-    // |yield| stands alone, and the next token on a subsequent line must
-    // be: a comma continuing a comma expression, a semicolon terminating
-    // the statement that ended with |yield|, or the start of another
-    // statement (possibly an expression statement).  The comma/semicolon
-    // cases are gotten as operators (None), contrasting with Operand
-    // earlier.
-    // b) After an arrow function with a block body in an expression
-    // statement, the next token must be: a colon in a conditional
-    // expression, a comma continuing a comma expression, a semicolon
-    // terminating the statement, or the token on a subsequent line that is
-    // the start of another statement (possibly an expression statement).
-    // Colon is gotten as operator (None), and it should only be gotten in
-    // conditional expression and missing it results in SyntaxError.
-    // Comma/semicolon cases are also gotten as operators (None), and 4th
-    // case is gotten after them.  If no comma/semicolon found but EOL,
-    // the next token should be gotten as operand in 4th case (especially
-    // if '/' is the first code unit).  So we should peek the token as
-    // operand before try getting colon/comma/semicolon.
-    // See also the comment in Parser::assignExpr().
-    NoneIsOperand,
-
-    // If a semicolon is inserted automatically, the next token is already
-    // gotten with None, but we expect Operand.
-    OperandIsNone,
-  };
-  friend class TokenStreamShared;
-
- public:
-  // WARNING: TokenStreamPosition assumes that the only GC things a Token
-  //          includes are atoms.  DON'T ADD NON-ATOM GC THING POINTERS HERE
-  //          UNLESS YOU ADD ADDITIONAL ROOTING TO THAT CLASS.
-
-  /** The type of this token. */
-  TokenKind type;
-
-  /** The token's position in the overall script. */
-  TokenPos pos;
-
-  union {
-   private:
-    friend struct Token;
-
-    /** Non-numeric atom. */
-    PropertyName* name;
-
-    /** Potentially-numeric atom. */
-    JSAtom* atom;
-
-    struct {
-      /** Numeric literal's value. */
-      double value;
-
-      /** Does the numeric literal contain a '.'? */
-      DecimalPoint decimalPoint;
-    } number;
-
-    /** Regular expression flags; use charBuffer to access source chars. */
-    RegExpFlag reflags;
-  } u;
-
-#ifdef DEBUG
-  /** The modifier used to get this token. */
-  Modifier modifier;
-
-  /**
-   * Exception for this modifier to permit modifier mismatches in certain
-   * situations.
-   */
-  ModifierException modifierException;
-#endif
-
-  // Mutators
-
-  void setName(PropertyName* name) {
-    MOZ_ASSERT(type == TokenKind::Name || type == TokenKind::PrivateName);
-    u.name = name;
-  }
-
-  void setAtom(JSAtom* atom) {
-    MOZ_ASSERT(type == TokenKind::String || type == TokenKind::TemplateHead ||
-               type == TokenKind::NoSubsTemplate);
-    u.atom = atom;
-  }
-
-  void setRegExpFlags(RegExpFlag flags) {
-    MOZ_ASSERT(type == TokenKind::RegExp);
-    MOZ_ASSERT((flags & AllFlags) == flags);
-    u.reflags = flags;
-  }
-
-  void setNumber(double n, DecimalPoint decimalPoint) {
-    MOZ_ASSERT(type == TokenKind::Number);
-    u.number.value = n;
-    u.number.decimalPoint = decimalPoint;
-  }
-
-  // Type-safe accessors
-
-  PropertyName* name() const {
-    MOZ_ASSERT(type == TokenKind::Name || type == TokenKind::PrivateName);
-    return u.name->JSAtom::asPropertyName();  // poor-man's type verification
-  }
-
-  JSAtom* atom() const {
-    MOZ_ASSERT(type == TokenKind::String || type == TokenKind::TemplateHead ||
-               type == TokenKind::NoSubsTemplate);
-    return u.atom;
-  }
-
-  RegExpFlag regExpFlags() const {
-    MOZ_ASSERT(type == TokenKind::RegExp);
-    MOZ_ASSERT((u.reflags & AllFlags) == u.reflags);
-    return u.reflags;
-  }
-
-  double number() const {
-    MOZ_ASSERT(type == TokenKind::Number);
-    return u.number.value;
-  }
-
-  DecimalPoint decimalPoint() const {
-    MOZ_ASSERT(type == TokenKind::Number);
-    return u.number.decimalPoint;
-  }
-};
 
 extern TokenKind ReservedWordTokenKind(PropertyName* str);
 
@@ -487,42 +264,17 @@ class TokenStreamShared {
   static constexpr unsigned maxLookahead = 2;
 
   using Modifier = Token::Modifier;
-  static constexpr Modifier None = Token::None;
-  static constexpr Modifier Operand = Token::Operand;
-  static constexpr Modifier TemplateTail = Token::TemplateTail;
-
-  using ModifierException = Token::ModifierException;
-  static constexpr ModifierException NoException = Token::NoException;
-  static constexpr ModifierException NoneIsOperand = Token::NoneIsOperand;
-  static constexpr ModifierException OperandIsNone = Token::OperandIsNone;
+  static constexpr Modifier SlashIsDiv = Token::SlashIsDiv;
+  static constexpr Modifier SlashIsRegExp = Token::SlashIsRegExp;
+  static constexpr Modifier SlashIsInvalid = Token::SlashIsInvalid;
 
   static void verifyConsistentModifier(Modifier modifier,
-                                       Token lookaheadToken) {
-#ifdef DEBUG
-    // Easy case: modifiers match.
-    if (modifier == lookaheadToken.modifier) {
-      return;
-    }
-
-    if (lookaheadToken.modifierException == OperandIsNone) {
-      // getToken(Operand) permissibly following getToken().
-      if (modifier == Operand && lookaheadToken.modifier == None) {
-        return;
-      }
-    }
-
-    if (lookaheadToken.modifierException == NoneIsOperand) {
-      // getToken() permissibly following getToken(Operand).
-      if (modifier == None && lookaheadToken.modifier == Operand) {
-        return;
-      }
-    }
-
-    MOZ_ASSERT_UNREACHABLE(
-        "this token was previously looked up with a "
-        "different modifier, potentially making "
-        "tokenization non-deterministic");
-#endif
+                                       const Token& nextToken) {
+    MOZ_ASSERT(
+        modifier == nextToken.modifier || modifier == SlashIsInvalid,
+        "This token was scanned with both SlashIsRegExp and SlashIsDiv, "
+        "indicating the parser is confused about how to handle a slash here. "
+        "See comment at Token::Modifier.");
   }
 };
 
@@ -566,6 +318,15 @@ class MOZ_STACK_CLASS TokenStreamPosition final {
   unsigned lookahead;
   Token lookaheadTokens[TokenStreamShared::maxLookahead];
 } JS_HAZ_ROOTED;
+
+template <typename Unit>
+class SourceUnits;
+
+// Column numbers *ought* be in terms of counts of code points, but in the past
+// we counted code units.  Set this to 0 to keep returning counts of code units
+// (even for UTF-8, which is clearly wrong, but we don't ship UTF-8 yet so this
+// is fine until we can fix users that depend on code-unit counting).
+#define JS_COLUMN_DIMENSION_IS_CODE_POINTS() 1
 
 class TokenStreamAnyChars : public TokenStreamShared {
  public:
@@ -658,50 +419,36 @@ class TokenStreamAnyChars : public TokenStreamShared {
   InvalidEscapeType invalidTemplateEscapeType = InvalidEscapeType::None;
 
  public:
-  void addModifierException(ModifierException modifierException) {
+  // Call this immediately after parsing an OrExpression to allow scanning the
+  // next token with SlashIsRegExp without asserting (even though we just
+  // peeked at it in SlashIsDiv mode).
+  //
+  // It's OK to disable the assertion because the places where this is called
+  // have peeked at the next token in SlashIsDiv mode, and checked that it is
+  // *not* a Div token.
+  //
+  // To see why it is necessary to disable the assertion, consider these two
+  // programs:
+  //
+  //     x = arg => q       // per spec, this is all one statement, and the
+  //     /a/g;              // slashes are division operators
+  //
+  //     x = arg => {}      // per spec, ASI at the end of this line
+  //     /a/g;              // and that's a regexp literal
+  //
+  // The first program shows why orExpr() has use SlashIsDiv mode when peeking
+  // ahead for the next operator after parsing `q`. The second program shows
+  // why matchOrInsertSemicolon() must use SlashIsRegExp mode when scanning
+  // ahead for a semicolon.
+  void allowGettingNextTokenWithSlashIsRegExp() {
 #ifdef DEBUG
+    // Check the precondition: Caller already peeked ahead at the next token,
+    // in SlashIsDiv mode, and it is *not* a Div token.
+    MOZ_ASSERT(hasLookahead());
     const Token& next = nextToken();
-
-    // Permit adding the same exception multiple times.  This is important
-    // particularly for Parser::assignExpr's early fast-path cases and
-    // arrow function parsing: we want to add modifier exceptions in the
-    // fast paths, then potentially (but not necessarily) duplicate them
-    // after parsing all of an arrow function.
-    if (next.modifierException == modifierException) {
-      return;
-    }
-
-    if (next.modifierException == NoneIsOperand) {
-      // Token after yield expression without operand already has
-      // NoneIsOperand exception.
-      MOZ_ASSERT(modifierException == OperandIsNone);
-      MOZ_ASSERT(next.type != TokenKind::Div,
-                 "next token requires contextual specifier to be parsed "
-                 "unambiguously");
-
-      // Do not update modifierException.
-      return;
-    }
-
-    MOZ_ASSERT(next.modifierException == NoException);
-    switch (modifierException) {
-      case NoneIsOperand:
-        MOZ_ASSERT(next.modifier == Operand);
-        MOZ_ASSERT(next.type != TokenKind::Div,
-                   "next token requires contextual specifier to be parsed "
-                   "unambiguously");
-        break;
-      case OperandIsNone:
-        MOZ_ASSERT(next.modifier == None);
-        MOZ_ASSERT(
-            next.type != TokenKind::Div && next.type != TokenKind::RegExp,
-            "next token requires contextual specifier to be parsed "
-            "unambiguously");
-        break;
-      default:
-        MOZ_CRASH("unexpected modifier exception");
-    }
-    tokens[nextCursor()].modifierException = modifierException;
+    MOZ_ASSERT(next.modifier == SlashIsDiv);
+    MOZ_ASSERT(next.type != TokenKind::Div);
+    tokens[nextCursor()].modifier = SlashIsRegExp;
 #endif
   }
 
@@ -858,6 +605,8 @@ class TokenStreamAnyChars : public TokenStreamShared {
 
     /** Return the offset of the start of the line for |lineToken|. */
     uint32_t lineStart(LineToken lineToken) const {
+      MOZ_ASSERT(lineToken.index + 1 < lineStartOffsets_.length(),
+                 "recorded line-start information must be available");
       return lineStartOffsets_[lineToken.index];
     }
   };
@@ -896,10 +645,66 @@ class TokenStreamAnyChars : public TokenStreamShared {
   MOZ_ALWAYS_INLINE void updateFlagsForEOL() { flags.isDirtyLine = false; }
 
  private:
+#if JS_COLUMN_DIMENSION_IS_CODE_POINTS()
+  /**
+   * Compute the "partial" column number in Unicode code points of the absolute
+   * |offset| within source text on the line of |lineToken| (which must have
+   * been computed from |offset|).
+   *
+   * A partial column number on a line that isn't the first line is just the
+   * actual column number.  But a partial column number on the first line is the
+   * column number *ignoring the initial line/column of the script*.  For
+   * example, consider this HTML with line/column number keys:
+   *
+   *                 1         2            3
+   *       0123456789012345678901234   567890
+   *     ------------------------------------
+   *   1 | <html>
+   *   2 | <head>
+   *   3 |   <script>var x = 3;  x &lt; 4;
+   *   4 | const y = 7;</script>
+   *   5 | </head>
+   *   6 | <body></body>
+   *   7 | </html>
+   *
+   * The script would be compiled specifying initial (line, column) of (3, 10)
+   * using |JS::ReadOnlyCompileOptions::{lineno,column}|.  And the column
+   * reported by |computeColumn| for the "v" of |var| would be 10.  But the
+   * partial column number of the "v" in |var|, that this function returns,
+   * would be 0.  On the other hand, the column reported by |computeColumn| and
+   * the partial column number returned by this function for the "c" in |const|
+   * would both be 0, because it's not in the first line of source text.
+   *
+   * The partial column is with respect *only* to the JavaScript source text as
+   * SpiderMonkey sees it.  In the example, the "&lt;" is converted to "<" by
+   * the browser before SpiderMonkey would see it.  So the partial column of the
+   * "4" in the inequality would be 16, not 19.
+   *
+   * Code points are not all equal length, so counting requires *some* kind of
+   * linear-time counting from the start of the line.  This function attempts
+   * various tricks to reduce this cost.  If these optimizations succeed,
+   * repeated calls to this function on a line will pay a one-time cost linear
+   * in the length of the line, then each call pays a separate constant-time
+   * cost.  If the optimizations do not succeed, this function works in time
+   * linear in the length of the line.
+   *
+   * It's unusual for a function in *this* class to be |Unit|-templated, but
+   * while this operation manages |Unit|-agnostic fields in this class and in
+   * |srcCoords|, it must *perform* |Unit|-sensitive computations to fill them.
+   * And this is the best place to do that.
+   */
+  template <typename Unit>
+  uint32_t computePartialColumn(const LineToken lineToken,
+                                const uint32_t offset,
+                                const SourceUnits<Unit>& sourceUnits) const;
+#endif  // JS_COLUMN_DIMENSION_IS_CODE_POINTS()
+
+  /**
+   * Update line/column information for the start of a new line at
+   * |lineStartOffset|.
+   */
   MOZ_MUST_USE MOZ_ALWAYS_INLINE bool internalUpdateLineInfoForEOL(
       uint32_t lineStartOffset);
-
-  void undoInternalUpdateLineInfoForEOL();
 
  public:
   const Token& nextToken() const {
@@ -945,6 +750,58 @@ class TokenStreamAnyChars : public TokenStreamShared {
 
   const char* getFilename() const { return filename_; }
 
+ private:
+#if JS_COLUMN_DIMENSION_IS_CODE_POINTS()
+  static constexpr uint32_t ColumnChunkLength = 128;
+
+  enum class UnitsType : unsigned char{
+      PossiblyMultiUnit = 0,
+      GuaranteedSingleUnit = 1,
+  };
+
+  class ChunkInfo {
+   public:
+    ChunkInfo(uint32_t col, UnitsType type)
+        : unitsType_(static_cast<unsigned char>(type)) {
+      memcpy(column_, &col, sizeof(col));
+    }
+
+    uint32_t column() const {
+      uint32_t col;
+      memcpy(&col, column_, sizeof(uint32_t));
+      return col;
+    }
+
+    UnitsType unitsType() const {
+      MOZ_ASSERT(unitsType_ <= 1, "unitsType_ must be 0 or 1");
+      return static_cast<UnitsType>(unitsType_);
+    }
+
+    void guaranteeSingleUnits() {
+      MOZ_ASSERT(unitsType() == UnitsType::PossiblyMultiUnit,
+                 "should only be setting to possibly optimize from the "
+                 "pessimistic case");
+      unitsType_ = static_cast<unsigned char>(UnitsType::GuaranteedSingleUnit);
+    }
+
+   private:
+    // Store everything in |unsigned char|s so everything packs.
+    unsigned char column_[sizeof(uint32_t)];
+    unsigned char unitsType_;
+  };
+
+  /**
+   * Line number (of lines at least |ColumnChunkLength| code units long) to
+   * a sequence of the column numbers at |ColumnChunkLength| boundaries rewound
+   * (if needed) to the nearest code point boundary.
+   *
+   * Entries appear in this map only when a column computation of sufficient
+   * distance is performed on a line, and the vectors are lazily filled as
+   * greater offsets within lines require column computations.
+   */
+  mutable HashMap<uint32_t, Vector<ChunkInfo>> longLineColumnInfo_;
+#endif  // JS_COLUMN_DIMENSION_IS_CODE_POINTS()
+
  protected:
   // Options used for parsing/tokenizing.
   const JS::ReadOnlyCompileOptions& options_;
@@ -989,6 +846,29 @@ class TokenStreamAnyChars : public TokenStreamShared {
   JSContext* const cx;
   bool mutedErrors;
   StrictModeGetter* strictModeGetter;  // used to test for strict mode
+
+#if JS_COLUMN_DIMENSION_IS_CODE_POINTS()
+  // Computing accurate column numbers requires at *some* point linearly
+  // iterating through prior source units in the line to properly account for
+  // multi-unit code points.  This is quadratic if counting happens repeatedly.
+  //
+  // But usually we need columns for advancing offsets through scripts.  By
+  // caching the last ((line number, offset) => relative column) mapping (in
+  // similar manner to how |SourceUnits::lastIndex_| is used to cache
+  // (offset => line number) mappings) we can usually avoid re-iterating through
+  // the common line prefix.
+  //
+  // Additionally, we avoid hash table lookup costs by caching the
+  // |Vector<ChunkInfo>*| for the line of the last lookup.  (|nullptr| means we
+  // have to look it up -- or it hasn't been created yet.)  This pointer is
+  // invalidated when a lookup on a new line occurs, but as it's not a pointer
+  // at literal element data, it's *not* invalidated when new entries are added
+  // to such a vector.
+  mutable uint32_t lineOfLastColumnComputation_ = UINT32_MAX;
+  mutable Vector<ChunkInfo>* lastChunkVectorForLine_ = nullptr;
+  mutable uint32_t lastOffsetOfComputedColumn_ = UINT32_MAX;
+  mutable uint32_t lastComputedColumn_ = 0;
+#endif  // JS_COLUMN_DIMENSION_IS_CODE_POINTS()
 };
 
 constexpr char16_t CodeUnitValue(char16_t unit) { return unit; }
@@ -1273,11 +1153,11 @@ class SourceUnits {
     char16_t v = 0;
     for (uint8_t i = 0; i < n; i++) {
       auto unit = CodeUnitValue(ptr[i]);
-      if (!JS7_ISHEX(unit)) {
+      if (!mozilla::IsAsciiHexDigit(unit)) {
         return false;
       }
 
-      v = (v << 4) | JS7_UNHEX(unit);
+      v = (v << 4) | mozilla::AsciiAlphanumericToNumber(unit);
     }
 
     *out = v;
@@ -1538,7 +1418,7 @@ class TokenStreamCharsShared {
    */
   static constexpr MOZ_ALWAYS_INLINE MOZ_MUST_USE bool isAsciiCodePoint(
       int32_t unit) {
-    return mozilla::IsAscii(unit);
+    return mozilla::IsAscii(static_cast<char32_t>(unit));
   }
 
   JSAtom* drainCharBufferIntoAtom(JSContext* cx) {
@@ -1870,12 +1750,6 @@ class TokenStart {
   uint32_t offset() const { return startOffset_; }
 };
 
-// Column numbers *ought* be in terms of counts of code points, but in the past
-// we counted code units.  Set this to 0 to keep returning counts of code units
-// (even for UTF-8, which is clearly wrong, but we don't ship UTF-8 yet so this
-// is fine until we can fix users that depend on code-unit counting).
-#define JS_COLUMN_DIMENSION_IS_CODE_POINTS 0
-
 template <typename Unit, class AnyCharsAccess>
 class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
   using CharsBase = TokenStreamCharsBase<Unit>;
@@ -1899,7 +1773,6 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     // occurs and then the token is re-gotten (or peeked, etc.), we can
     // assert both gets used compatible modifiers.
     token->modifier = modifier;
-    token->modifierException = TokenStreamShared::NoException;
 #endif
 
     return token;
@@ -1943,6 +1816,14 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     return static_cast<TokenStreamSpecific*>(this);
   }
 
+ protected:
+  /**
+   * Compute the column number in Unicode code points of the absolute |offset|
+   * within source text on the line corresponding to |lineToken|.
+   *
+   * |offset| must be a code point boundary, preceded only by validly-encoded
+   * source units.  (It doesn't have to be *followed* by valid source units.)
+   */
   uint32_t computeColumn(LineToken lineToken, uint32_t offset) const;
   void computeLineAndColumn(uint32_t offset, uint32_t* line,
                             uint32_t* column) const;
@@ -1999,9 +1880,10 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     token->setName(name);
   }
 
-  void newRegExpToken(RegExpFlag reflags, TokenStart start, TokenKind* out) {
-    Token* token =
-        newToken(TokenKind::RegExp, start, TokenStreamShared::Operand, out);
+  void newRegExpToken(JS::RegExpFlags reflags, TokenStart start,
+                      TokenKind* out) {
+    Token* token = newToken(TokenKind::RegExp, start,
+                            TokenStreamShared::SlashIsRegExp, out);
     token->setRegExpFlags(reflags);
   }
 
@@ -2131,8 +2013,6 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
 
     return drainCharBufferIntoAtom(anyChars.cx);
   }
-
-  inline void setFunctionStart(FunctionBox* funbox) const;
 };
 
 template <typename Unit, class AnyCharsAccess>
@@ -2547,6 +2427,10 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 
   MOZ_MUST_USE bool putIdentInCharBuffer(const Unit* identStart);
 
+  using IsIntegerUnit = bool (*)(int32_t);
+  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool matchInteger(IsIntegerUnit isIntegerUnit,
+                                                   int32_t* nextUnit);
+
   /**
    * Tokenize a decimal number that begins at |numStart| into the provided
    * token.
@@ -2602,7 +2486,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
  public:
   // Advance to the next token.  If the token stream encountered an error,
   // return false.  Otherwise return true and store the token kind in |*ttp|.
-  MOZ_MUST_USE bool getToken(TokenKind* ttp, Modifier modifier = None) {
+  MOZ_MUST_USE bool getToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     // Check for a pushed-back token resulting from mismatching lookahead.
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead != 0) {
@@ -2619,7 +2503,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return getTokenInternal(ttp, modifier);
   }
 
-  MOZ_MUST_USE bool peekToken(TokenKind* ttp, Modifier modifier = None) {
+  MOZ_MUST_USE bool peekToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead > 0) {
       MOZ_ASSERT(!anyChars.flags.hadError);
@@ -2634,7 +2518,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  MOZ_MUST_USE bool peekTokenPos(TokenPos* posp, Modifier modifier = None) {
+  MOZ_MUST_USE bool peekTokenPos(TokenPos* posp,
+                                 Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead == 0) {
       TokenKind tt;
@@ -2651,7 +2536,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  MOZ_MUST_USE bool peekOffset(uint32_t* offset, Modifier modifier = None) {
+  MOZ_MUST_USE bool peekOffset(uint32_t* offset,
+                               Modifier modifier = SlashIsDiv) {
     TokenPos pos;
     if (!peekTokenPos(&pos, modifier)) {
       return false;
@@ -2667,7 +2553,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   // currentToken() shouldn't be consulted.  (This is the only place Eol
   // is produced.)
   MOZ_ALWAYS_INLINE MOZ_MUST_USE bool peekTokenSameLine(
-      TokenKind* ttp, Modifier modifier = None) {
+      TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     const Token& curr = anyChars.currentToken();
 
@@ -2720,7 +2606,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 
   // Get the next token from the stream if its kind is |tt|.
   MOZ_MUST_USE bool matchToken(bool* matchedp, TokenKind tt,
-                               Modifier modifier = None) {
+                               Modifier modifier = SlashIsDiv) {
     TokenKind token;
     if (!getToken(&token, modifier)) {
       return false;
@@ -2734,7 +2620,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  void consumeKnownToken(TokenKind tt, Modifier modifier = None) {
+  void consumeKnownToken(TokenKind tt, Modifier modifier = SlashIsDiv) {
     bool matched;
     MOZ_ASSERT(anyCharsAccess().hasLookahead());
     MOZ_ALWAYS_TRUE(matchToken(&matched, tt, modifier));
@@ -2750,10 +2636,10 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     *endsExpr = anyCharsAccess().isExprEnding[size_t(tt)];
     if (*endsExpr) {
       // If the next token ends an overall Expression, we'll parse this
-      // Expression without ever invoking Parser::orExpr().  But we need
-      // that function's side effect of adding this modifier exception,
-      // so we have to do it manually here.
-      anyCharsAccess().addModifierException(OperandIsNone);
+      // Expression without ever invoking Parser::orExpr().  But we need that
+      // function's DEBUG-only side effect of marking this token as safe to get
+      // with SlashIsRegExp, so we have to do it manually here.
+      anyCharsAccess().allowGettingNextTokenWithSlashIsRegExp();
     }
     return true;
   }
@@ -2782,6 +2668,29 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   MOZ_MUST_USE bool getStringOrTemplateToken(char untilChar, Modifier modifier,
                                              TokenKind* out);
 
+  // Parse a TemplateMiddle or TemplateTail token (one of the string-like parts
+  // of a template string) after already consuming the leading `RightCurly`.
+  // (The spec says the `}` is the first character of the TemplateMiddle/
+  // TemplateTail, but we treat it as a separate token because that's much
+  // easier to implement in both TokenStream and the parser.)
+  //
+  // This consumes a token and sets the current token, like `getToken()`.  It
+  // doesn't take a Modifier because there's no risk of encountering a division
+  // operator or RegExp literal.
+  //
+  // On success, `*ttp` is either `TokenKind::TemplateHead` (if we got a
+  // TemplateMiddle token) or `TokenKind::NoSubsTemplate` (if we got a
+  // TemplateTail). That may seem strange; there are four different template
+  // token types in the spec, but we only use two. We use `TemplateHead` for
+  // TemplateMiddle because both end with `...${`, and `NoSubsTemplate` for
+  // TemplateTail because both contain the end of the template, including the
+  // closing quote mark. They're not treated differently, either in the parser
+  // or in the tokenizer.
+  MOZ_MUST_USE bool getTemplateToken(TokenKind* ttp) {
+    MOZ_ASSERT(anyCharsAccess().currentToken().type == TokenKind::RightCurly);
+    return getStringOrTemplateToken('`', SlashIsInvalid, ttp);
+  }
+
   MOZ_MUST_USE bool getDirectives(bool isMultiline, bool shouldWarnDeprecated);
   MOZ_MUST_USE bool getDirective(
       bool isMultiline, bool shouldWarnDeprecated, const char* directive,
@@ -2802,7 +2711,8 @@ template <typename Unit>
 template <class AnyCharsAccess>
 inline TokenStreamPosition<Unit>::TokenStreamPosition(
     AutoKeepAtoms& keepAtoms,
-    TokenStreamSpecific<Unit, AnyCharsAccess>& tokenStream) {
+    TokenStreamSpecific<Unit, AnyCharsAccess>& tokenStream)
+    : currentToken(tokenStream.anyCharsAccess().currentToken()) {
   TokenStreamAnyChars& anyChars = tokenStream.anyCharsAccess();
 
   buf =

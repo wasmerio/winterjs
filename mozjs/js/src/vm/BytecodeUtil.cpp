@@ -18,7 +18,6 @@
 #include "mozilla/Vector.h"
 
 #include <algorithm>
-#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,20 +25,19 @@
 #include "jsapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
-#include "jsutil.h"
 
-#include "builtin/String.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/SourceNotes.h"
-#include "gc/FreeOp.h"
-#include "gc/GCInternals.h"
 #include "js/CharacterEncoding.h"
 #include "js/Printf.h"
 #include "js/Symbol.h"
+#include "util/Memory.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
+#include "vm/BytecodeLocation.h"
 #include "vm/CodeCoverage.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/FrameIter.h"  // js::{,Script}FrameIter
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
@@ -50,6 +48,8 @@
 #include "vm/Shape.h"
 
 #include "gc/PrivateIterators-inl.h"
+#include "vm/BytecodeIterator-inl.h"
+#include "vm/BytecodeLocation-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
@@ -137,6 +137,9 @@ static MOZ_MUST_USE bool DumpIonScriptCounts(Sprinter* sp, HandleScript script,
 static MOZ_MUST_USE bool DumpPCCounts(JSContext* cx, HandleScript script,
                                       Sprinter* sp) {
   MOZ_ASSERT(script->hasScriptCounts());
+
+  // Ensure the Disassemble1 call below does not discard the script counts.
+  gc::AutoSuppressGC suppress(cx);
 
 #ifdef DEBUG
   jsbytecode* pc = script->code();
@@ -678,6 +681,7 @@ uint32_t BytecodeParser::simulateOp(JSOp op, uint32_t offset,
     case JSOP_INITGLEXICAL:
     case JSOP_INITLEXICAL:
     case JSOP_OR:
+    case JSOP_COALESCE:
     case JSOP_SETALIASEDVAR:
     case JSOP_SETARG:
     case JSOP_SETINTRINSIC:
@@ -1154,7 +1158,7 @@ static UniqueChars ToDisassemblySource(JSContext* cx, HandleValue v) {
       if (!str) {
         return nullptr;
       }
-      return StringToNewUTF8CharsZ(cx, *str);
+      return QuoteString(cx, str);
     }
 
     if (obj.is<RegExpObject>()) {
@@ -1162,7 +1166,7 @@ static UniqueChars ToDisassemblySource(JSContext* cx, HandleValue v) {
       if (!source) {
         return nullptr;
       }
-      return StringToNewUTF8CharsZ(cx, *source);
+      return QuoteString(cx, source);
     }
   }
 
@@ -1428,14 +1432,6 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-    case JOF_CODE_OFFSET: {
-      ptrdiff_t off = GET_CODE_OFFSET(pc);
-      if (!sp->jsprintf(" %u (%+d)", unsigned(loc + int(off)), int(off))) {
-        return 0;
-      }
-      break;
-    }
-
     case JOF_SCOPE: {
       RootedScope scope(cx, script->getScope(GET_UINT32_INDEX(pc)));
       UniqueChars bytes;
@@ -1474,9 +1470,16 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       break;
     }
 
-    case JOF_BIGINT:
     case JOF_DOUBLE: {
-      RootedValue v(cx, script->getConst(GET_UINT32_INDEX(pc)));
+      double d = GET_INLINE_VALUE(pc).toDouble();
+      if (!sp->jsprintf(" %lf", d)) {
+        return 0;
+      }
+      break;
+    }
+
+    case JOF_BIGINT: {
+      RootedValue v(cx, BigIntValue(script->getBigInt(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
       if (!bytes) {
         return 0;
@@ -1974,7 +1977,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     case JSOP_BIGINT:
 #if defined(DEBUG) || defined(JS_JITSPEW)
       // BigInt::dump() only available in this configuration.
-      script->getConst(GET_UINT32_INDEX(pc)).toBigInt()->dump(sprinter);
+      script->getBigInt(pc)->dump(sprinter);
       return !sprinter.hadOutOfMemory();
 #else
       return write("[bigint]");
@@ -2012,8 +2015,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
         return write("CONSTRUCTOR");
 
       case JSOP_DOUBLE:
-        return sprinter.printf(
-            "%lf", script->getConst(GET_UINT32_INDEX(pc)).toDouble());
+        return sprinter.printf("%lf", GET_INLINE_VALUE(pc).toDouble());
 
       case JSOP_EXCEPTION:
         return write("EXCEPTION");
@@ -2078,6 +2080,7 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
 
       case JSOP_NEWINIT:
       case JSOP_NEWOBJECT:
+      case JSOP_NEWOBJECT_WITHGROUP:
       case JSOP_OBJWITHPROTO:
         return write("OBJ");
 
@@ -2183,7 +2186,7 @@ JSAtom* ExpressionDecompiler::loadAtom(jsbytecode* pc) {
 }
 
 JSAtom* ExpressionDecompiler::getArg(unsigned slot) {
-  MOZ_ASSERT(script->functionNonDelazifying());
+  MOZ_ASSERT(script->isFunction());
   MOZ_ASSERT(slot < script->numArgs());
 
   for (PositionalFormalParameterIter fi(script); fi; fi++) {
@@ -2526,11 +2529,10 @@ extern bool js::IsValidBytecodeOffset(JSContext* cx, JSScript* script,
  * PurgePCCounts            None      None      None
  */
 
-static void ReleaseScriptCounts(FreeOp* fop) {
-  JSRuntime* rt = fop->runtime();
+static void ReleaseScriptCounts(JSRuntime* rt) {
   MOZ_ASSERT(rt->scriptAndCountsVector);
 
-  fop->delete_(rt->scriptAndCountsVector.ref());
+  js_delete(rt->scriptAndCountsVector.ref());
   rt->scriptAndCountsVector = nullptr;
 }
 
@@ -2542,7 +2544,7 @@ JS_FRIEND_API void js::StartPCCountProfiling(JSContext* cx) {
   }
 
   if (rt->scriptAndCountsVector) {
-    ReleaseScriptCounts(rt->defaultFreeOp());
+    ReleaseScriptCounts(rt);
   }
 
   ReleaseAllJITCode(rt->defaultFreeOp());
@@ -2561,7 +2563,7 @@ JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
   ReleaseAllJITCode(rt->defaultFreeOp());
 
   auto* vec = cx->new_<PersistentRooted<ScriptAndCountsVector>>(
-      cx, ScriptAndCountsVector(SystemAllocPolicy()));
+      cx, ScriptAndCountsVector());
   if (!vec) {
     return;
   }
@@ -2569,7 +2571,7 @@ JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
   for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
     for (auto script = zone->cellIter<JSScript>(); !script.done();
          script.next()) {
-      if (script->hasScriptCounts() && script->types()) {
+      if (script->hasScriptCounts() && script->hasJitScript()) {
         if (!vec->append(script)) {
           return;
         }
@@ -2589,7 +2591,7 @@ JS_FRIEND_API void js::PurgePCCounts(JSContext* cx) {
   }
   MOZ_ASSERT(!rt->profilingScripts);
 
-  ReleaseScriptCounts(rt->defaultFreeOp());
+  ReleaseScriptCounts(rt);
 }
 
 JS_FRIEND_API size_t js::GetPCCountScriptCount(JSContext* cx) {
@@ -2644,7 +2646,7 @@ JS_FRIEND_API JSString* js::GetPCCountScriptSummary(JSContext* cx,
   }
   json.property("line", script->lineno());
 
-  if (JSFunction* fun = script->functionNonDelazifying()) {
+  if (JSFunction* fun = script->function()) {
     if (JSAtom* atom = fun->displayAtom()) {
       if (!JSONStringProperty(sp, json, "name", atom)) {
         return nullptr;
@@ -2853,14 +2855,30 @@ JS_FRIEND_API JSString* js::GetPCCountScriptContents(JSContext* cx,
   return NewStringCopyZ<CanGC>(cx, sp.string());
 }
 
+struct CollectedScripts {
+  MutableHandle<ScriptVector> scripts;
+  bool ok = true;
+
+  explicit CollectedScripts(MutableHandle<ScriptVector> scripts)
+      : scripts(scripts) {}
+
+  static void consider(JSRuntime* rt, void* data, JSScript* script,
+                       const JS::AutoRequireNoGC& nogc) {
+    auto self = static_cast<CollectedScripts*>(data);
+    if (!script->filename()) {
+      return;
+    }
+    if (!self->scripts.append(script)) {
+      self->ok = false;
+    }
+  }
+};
+
 static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
                              GenericPrinter& out) {
-  JSRuntime* rt = cx->runtime();
-
   AutoRealmUnchecked ar(cx, realm);
 
   // Collect the list of scripts which are part of the current realm.
-  { js::gc::AutoPrepareForTracing apft(cx); }
 
   // Hold the scripts that we have already flushed, to avoid flushing them
   // twice.
@@ -2868,21 +2886,23 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
   Rooted<JSScriptSet> scriptsDone(cx, JSScriptSet(cx));
 
   Rooted<ScriptVector> queue(cx, ScriptVector(cx));
-  for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-    for (auto script = zone->cellIter<JSScript>(); !script.done();
-         script.next()) {
-      if (script->realm() != realm || !script->filename()) {
-        continue;
-      }
 
-      if (!queue.append(script)) {
-        return false;
-      }
+  {
+    CollectedScripts result(&queue);
+    IterateScripts(cx, realm, &result, &CollectedScripts::consider);
+    if (!result.ok) {
+      return false;
     }
   }
 
   if (queue.length() == 0) {
     return true;
+  }
+
+  // Ensure the LCovRealm exists to collect info into.
+  coverage::LCovRealm* lcovRealm = realm->lcovRealm();
+  if (!lcovRealm) {
+    return false;
   }
 
   // Collect code coverage info for one realm.
@@ -2892,8 +2912,7 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
 
     JSScriptSet::AddPtr entry = scriptsDone.lookupForAdd(script);
     if (script->filename() && !entry) {
-      realm->lcovOutput.collectCodeCoverageInfo(realm, script,
-                                                script->filename());
+      realm->collectCodeCoverageInfo(script, script->filename());
       script->resetScriptCounts();
 
       if (!scriptsDone.add(entry, script)) {
@@ -2909,12 +2928,14 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
     // the functions them visited in the opposite order when popping
     // elements from the stack of remaining scripts, such that the
     // functions are more-less listed with increasing line numbers.
-    if (!script->hasObjects()) {
-      continue;
-    }
-    auto objects = script->objects();
-    for (JSObject* obj : mozilla::Reversed(objects)) {
+    auto gcthings = script->gcthings();
+    for (JS::GCCellPtr gcThing : mozilla::Reversed(gcthings)) {
+      if (!gcThing.is<JSObject>()) {
+        continue;
+      }
+
       // Only continue on JSFunction objects.
+      JSObject* obj = &gcThing.as<JSObject>();
       if (!obj->is<JSFunction>()) {
         continue;
       }
@@ -2935,7 +2956,7 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
   } while (!queue.empty());
 
   bool isEmpty = true;
-  realm->lcovOutput.exportInto(out, &isEmpty);
+  lcovRealm->exportInto(out, &isEmpty);
   if (out.hadOutOfMemory()) {
     return false;
   }
@@ -2943,9 +2964,9 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
   return true;
 }
 
-JS_FRIEND_API char* js::GetCodeCoverageSummary(JSContext* cx, size_t* length) {
+JS_FRIEND_API UniqueChars js::GetCodeCoverageSummaryAll(JSContext* cx,
+                                                        size_t* length) {
   Sprinter out(cx);
-
   if (!out.init()) {
     return nullptr;
   }
@@ -2957,23 +2978,24 @@ JS_FRIEND_API char* js::GetCodeCoverageSummary(JSContext* cx, size_t* length) {
     }
   }
 
-  if (out.hadOutOfMemory()) {
+  *length = out.getOffset();
+  return js::DuplicateString(cx, out.string(), *length);
+}
+
+JS_FRIEND_API UniqueChars js::GetCodeCoverageSummary(JSContext* cx,
+                                                     size_t* length) {
+  Sprinter out(cx);
+  if (!out.init()) {
+    return nullptr;
+  }
+
+  if (!GenerateLcovInfo(cx, cx->realm(), out)) {
     JS_ReportOutOfMemory(cx);
     return nullptr;
   }
 
-  ptrdiff_t len = out.stringEnd() - out.string();
-  char* res = cx->pod_malloc<char>(len + 1);
-  if (!res) {
-    return nullptr;
-  }
-
-  js_memcpy(res, out.string(), len);
-  res[len] = 0;
-  if (length) {
-    *length = len;
-  }
-  return res;
+  *length = out.getOffset();
+  return js::DuplicateString(cx, out.string(), *length);
 }
 
 bool js::GetSuccessorBytecodes(JSScript* script, jsbytecode* pc,
@@ -3014,16 +3036,16 @@ bool js::GetSuccessorBytecodes(JSScript* script, jsbytecode* pc,
 
 bool js::GetPredecessorBytecodes(JSScript* script, jsbytecode* pc,
                                  PcVector& predecessors) {
-  jsbytecode* end = script->code() + script->length();
-  MOZ_ASSERT(pc >= script->code() && pc < end);
-  for (jsbytecode* npc = script->code(); npc < end; npc = GetNextPc(npc)) {
+  MOZ_ASSERT(js::BytecodeLocation(script, pc).isInBounds(script));
+
+  for (const BytecodeLocation& loc : js::AllBytecodesIterable(script)) {
     PcVector successors;
-    if (!GetSuccessorBytecodes(script, npc, successors)) {
+    if (!GetSuccessorBytecodes(script, loc.toRawBytecode(), successors)) {
       return false;
     }
     for (size_t i = 0; i < successors.length(); i++) {
       if (successors[i] == pc) {
-        if (!predecessors.append(npc)) {
+        if (!predecessors.append(loc.toRawBytecode())) {
           return false;
         }
         break;

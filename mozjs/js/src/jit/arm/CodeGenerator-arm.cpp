@@ -172,10 +172,6 @@ void CodeGeneratorARM::bailoutIf(Assembler::Condition condition,
 }
 
 void CodeGeneratorARM::bailoutFrom(Label* label, LSnapshot* snapshot) {
-  if (masm.bailed()) {
-    return;
-  }
-
   MOZ_ASSERT_IF(!masm.oom(), label->used());
   MOZ_ASSERT_IF(!masm.oom(), !label->bound());
 
@@ -1152,7 +1148,7 @@ void CodeGeneratorARM::emitTableSwitchDispatch(MTableSwitch* mir,
   // Inhibit pools within the following sequence because we are indexing into
   // a pc relative table. The region will have one instruction for ma_ldr, one
   // for ma_b, and each table case takes one word.
-  AutoForbidPools afp(&masm, 1 + 1 + cases);
+  AutoForbidPoolsAndNops afp(&masm, 1 + 1 + cases);
   masm.ma_ldr(DTRAddr(pc, DtrRegImmShift(index, LSL, 2)), pc, Offset,
               Assembler::NotSigned);
   masm.ma_b(defaultcase);
@@ -1931,6 +1927,11 @@ void CodeGenerator::visitAsmJSLoadHeap(LAsmJSLoadHeap* ins) {
                             scratch, Offset, cond);
     }
   }
+}
+
+void CodeGenerator::visitWasmHeapBase(LWasmHeapBase* ins) {
+  MOZ_ASSERT(ins->tlsPtr()->isBogus());
+  masm.movePtr(HeapReg, ToRegister(ins->output()));
 }
 
 template <typename T>

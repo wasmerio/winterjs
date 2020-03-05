@@ -18,6 +18,8 @@ namespace js {
 
 class AsyncGeneratorObject;
 
+extern const JSClass AsyncGeneratorFunctionClass;
+
 // Resume the async generator when the `await` operand fulfills to `value`.
 MOZ_MUST_USE bool AsyncGeneratorAwaitedFulfilled(
     JSContext* cx, Handle<AsyncGeneratorObject*> asyncGenObj,
@@ -79,7 +81,7 @@ class AsyncGeneratorRequest : public NativeObject {
   friend AsyncGeneratorObject;
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static AsyncGeneratorRequest* create(JSContext* cx,
                                        CompletionKind completionKind,
@@ -116,6 +118,7 @@ class AsyncGeneratorObject : public AbstractGeneratorObject {
     Slots
   };
 
+ public:
   enum State {
     // "suspendedStart" in the spec.
     // Suspended after invocation.
@@ -135,7 +138,7 @@ class AsyncGeneratorObject : public AbstractGeneratorObject {
     // while executing.
     State_AwaitingYieldReturn,
 
-    // Part of "executing" in the spec.
+    // "awaiting-return" in the spec.
     // Awaiting on the value passed by AsyncGenerator#return which is called
     // after completed.
     State_AwaitingReturn,
@@ -150,6 +153,7 @@ class AsyncGeneratorObject : public AbstractGeneratorObject {
   }
   void setState(State state_) { setFixedSlot(Slot_State, Int32Value(state_)); }
 
+ private:
   // Queue is implemented in 2 ways.  If only one request is queued ever,
   // request is stored directly to the slot.  Once 2 requests are queued, a
   // list is created and requests are appended into it, and the list is
@@ -184,7 +188,8 @@ class AsyncGeneratorObject : public AbstractGeneratorObject {
   }
 
  public:
-  static const Class class_;
+  static const JSClass class_;
+  static const JSClassOps classOps_;
 
   static AsyncGeneratorObject* create(JSContext* cx, HandleFunction asyncGen);
 
@@ -278,7 +283,7 @@ class AsyncFromSyncIteratorObject : public NativeObject {
   }
 
  public:
-  static const Class class_;
+  static const JSClass class_;
 
   static JSObject* create(JSContext* cx, HandleObject iter,
                           HandleValue nextMethod);

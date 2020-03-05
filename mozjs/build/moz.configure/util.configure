@@ -23,26 +23,10 @@ def configure_error(message):
 # A wrapper to obtain a process' output and return code.
 # Returns a tuple (retcode, stdout, stderr).
 @imports('os')
-@imports(_from='__builtin__', _import='unicode')
 @imports('subprocess')
 @imports(_from='mozbuild.shellutil', _import='quote')
+@imports(_from='mozbuild.util', _import='system_encoding')
 def get_cmd_output(*args, **kwargs):
-    # subprocess on older Pythons can't handle unicode keys or values in
-    # environment dicts. Normalize automagically so callers don't have to
-    # deal with this.
-    if 'env' in kwargs:
-        normalized_env = {}
-        for k, v in kwargs['env'].items():
-            if isinstance(k, unicode):
-                k = k.encode('utf-8', 'strict')
-
-            if isinstance(v, unicode):
-                v = v.encode('utf-8', 'strict')
-
-            normalized_env[k] = v
-
-        kwargs['env'] = normalized_env
-
     log.debug('Executing: `%s`', quote(*args))
     proc = subprocess.Popen(args, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
@@ -53,6 +37,8 @@ def get_cmd_output(*args, **kwargs):
                             close_fds=os.name != 'nt',
                             **kwargs)
     stdout, stderr = proc.communicate()
+    stdout = stdout.decode(system_encoding, 'replace')
+    stderr = stderr.decode(system_encoding, 'replace')
     return proc.wait(), stdout, stderr
 
 
@@ -75,7 +61,7 @@ def check_cmd_output(*args, **kwargs):
         for out, desc in ((stdout, 'output'), (stderr, 'error output')):
             if out:
                 log.debug('Its %s was:', desc)
-                with LineIO(lambda l: log.debug('| %s', l), 'replace') as o:
+                with LineIO(lambda l: log.debug('| %s', l)) as o:
                     o.write(out)
         if onerror:
             return onerror()
@@ -216,7 +202,6 @@ def find_program(file, paths=None):
 
 
 @imports('os')
-@imports('subprocess')
 @imports(_from='mozbuild.configure.util', _import='LineIO')
 @imports(_from='tempfile', _import='mkstemp')
 def try_invoke_compiler(compiler, language, source, flags=None, onerror=None):

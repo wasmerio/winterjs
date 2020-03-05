@@ -15,11 +15,6 @@
 namespace js {
 namespace jit {
 
-// Longer scripts can only be compiled off thread, as these compilations
-// can be expensive and stall the main thread for too long.
-static const uint32_t MAX_MAIN_THREAD_SCRIPT_SIZE = 2 * 1000;
-static const uint32_t MAX_MAIN_THREAD_LOCALS_AND_ARGS = 256;
-
 // Possible register allocators which may be used.
 enum IonRegisterAllocator {
   RegisterAllocator_Backtracking,
@@ -62,10 +57,12 @@ struct DefaultJitOptions {
   bool disableRecoverIns;
   bool disableScalarReplacement;
   bool disableCacheIR;
-  bool disableCacheIRBinaryArith;
-  bool disableSincos;
   bool disableSink;
   bool disableOptimizationLevels;
+  bool baselineInterpreter;
+  bool baselineJit;
+  bool ion;
+  bool nativeRegExp;
   bool forceInlineCaches;
   bool fullDebugChecks;
   bool limitScriptSize;
@@ -75,14 +72,15 @@ struct DefaultJitOptions {
 #ifdef JS_TRACE_LOGGING
   bool enableTraceLogger;
 #endif
-#ifdef WASM_CODEGEN_DEBUG
   bool enableWasmJitExit;
   bool enableWasmJitEntry;
   bool enableWasmIonFastCalls;
+#ifdef WASM_CODEGEN_DEBUG
   bool enableWasmImportCallSpew;
   bool enableWasmFuncCallSpew;
 #endif
-  uint32_t baselineWarmUpThreshold;
+  uint32_t baselineInterpreterWarmUpThreshold;
+  uint32_t baselineJitWarmUpThreshold;
   uint32_t normalIonWarmUpThreshold;
   uint32_t fullIonWarmUpThreshold;
   uint32_t exceptionBailoutThreshold;
@@ -96,8 +94,13 @@ struct DefaultJitOptions {
   uint32_t branchPruningBlockSpanFactor;
   uint32_t branchPruningEffectfulInstFactor;
   uint32_t branchPruningThreshold;
-  uint32_t wasmBatchIonThreshold;
+  uint32_t ionMaxScriptSize;
+  uint32_t ionMaxScriptSizeMainThread;
+  uint32_t ionMaxLocalsAndArgs;
+  uint32_t ionMaxLocalsAndArgsMainThread;
   uint32_t wasmBatchBaselineThreshold;
+  uint32_t wasmBatchIonThreshold;
+  uint32_t wasmBatchCraneliftThreshold;
   mozilla::Maybe<IonRegisterAllocator> forcedRegisterAllocator;
 
   // Spectre mitigation flags. Each mitigation has its own flag in order to
@@ -110,11 +113,12 @@ struct DefaultJitOptions {
   bool spectreValueMasking;
   bool spectreJitToCxxCalls;
 
-  // The options below affect the rest of the VM, and not just the JIT.
-  bool disableUnboxedObjects;
+  bool supportsFloatingPoint;
+  bool supportsUnalignedAccesses;
 
   DefaultJitOptions();
   bool isSmallFunction(JSScript* script) const;
+  void setEagerBaselineCompilation();
   void setEagerIonCompilation();
   void setNormalIonWarmUpThreshold(uint32_t warmUpThreshold);
   void setFullIonWarmUpThreshold(uint32_t warmUpThreshold);
@@ -122,12 +126,24 @@ struct DefaultJitOptions {
   void resetFullIonWarmUpThreshold();
   void enableGvn(bool val);
 
-  bool eagerIonCompilation() const {
-    return normalIonWarmUpThreshold == 0;
-  }
+  bool eagerIonCompilation() const { return normalIonWarmUpThreshold == 0; }
 };
 
 extern DefaultJitOptions JitOptions;
+
+inline bool IsBaselineInterpreterEnabled() {
+#ifdef JS_CODEGEN_NONE
+  return false;
+#else
+  return JitOptions.baselineInterpreter && JitOptions.supportsFloatingPoint;
+#endif
+}
+
+inline bool IsBaselineJitEnabled() {
+  return IsBaselineInterpreterEnabled() && JitOptions.baselineJit;
+}
+
+inline bool IsIonEnabled() { return IsBaselineJitEnabled() && JitOptions.ion; }
 
 }  // namespace jit
 }  // namespace js

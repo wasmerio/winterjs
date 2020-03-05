@@ -6,8 +6,11 @@
 
 #include "util/StringBuffer.h"
 
+#include "mozilla/Latin1.h"
 #include "mozilla/Range.h"
 #include "mozilla/Unused.h"
+
+#include <algorithm>
 
 #include "vm/JSObject-inl.h"
 #include "vm/StringType-inl.h"
@@ -15,9 +18,10 @@
 using namespace js;
 
 template <typename CharT, class Buffer>
-static CharT* ExtractWellSized(JSContext* cx, Buffer& cb) {
+static CharT* ExtractWellSized(Buffer& cb) {
   size_t capacity = cb.capacity();
   size_t length = cb.length();
+  StringBufferAllocPolicy allocPolicy = cb.allocPolicy();
 
   CharT* buf = cb.extractOrCopyRawBuffer();
   if (!buf) {
@@ -27,9 +31,9 @@ static CharT* ExtractWellSized(JSContext* cx, Buffer& cb) {
   /* For medium/big buffers, avoid wasting more than 1/4 of the memory. */
   MOZ_ASSERT(capacity >= length);
   if (length > Buffer::sMaxInlineStorage && capacity - length > length / 4) {
-    CharT* tmp = cx->pod_realloc<CharT>(buf, capacity, length + 1);
+    CharT* tmp = allocPolicy.pod_realloc<CharT>(buf, capacity, length + 1);
     if (!tmp) {
-      js_free(buf);
+      allocPolicy.free_(buf);
       return nullptr;
     }
     buf = tmp;
@@ -43,65 +47,68 @@ char16_t* StringBuffer::stealChars() {
     return nullptr;
   }
 
-  return ExtractWellSized<char16_t>(cx, twoByteChars());
+  return ExtractWellSized<char16_t>(twoByteChars());
 }
 
 bool StringBuffer::inflateChars() {
   MOZ_ASSERT(isLatin1());
 
-  TwoByteCharBuffer twoByte(cx);
+  TwoByteCharBuffer twoByte(StringBufferAllocPolicy{cx_, arenaId_});
 
   /*
    * Note: we don't use Vector::capacity() because it always returns a
    * value >= sInlineCapacity. Since Latin1CharBuffer::sInlineCapacity >
    * TwoByteCharBuffer::sInlineCapacitychars, we'd always malloc here.
    */
-  size_t capacity = Max(reserved_, latin1Chars().length());
+  size_t capacity = std::max(reserved_, latin1Chars().length());
   if (!twoByte.reserve(capacity)) {
     return false;
   }
 
-  twoByte.infallibleAppend(latin1Chars().begin(), latin1Chars().length());
+  twoByte.infallibleGrowByUninitialized(latin1Chars().length());
+
+  mozilla::ConvertLatin1toUtf16(mozilla::AsChars(latin1Chars()), twoByte);
 
   cb.destroy();
   cb.construct<TwoByteCharBuffer>(std::move(twoByte));
   return true;
 }
 
-template <typename CharT, class Buffer>
-static JSFlatString* FinishStringFlat(JSContext* cx, StringBuffer& sb,
-                                      Buffer& cb) {
-  size_t len = sb.length();
-  if (!sb.append('\0')) {
-    return nullptr;
+template <typename CharT>
+JSLinearString* StringBuffer::finishStringInternal(JSContext* cx) {
+  size_t len = length();
+
+  if (JSAtom* staticStr = cx->staticStrings().lookup(begin<CharT>(), len)) {
+    return staticStr;
   }
 
-  UniquePtr<CharT[], JS::FreePolicy> buf(ExtractWellSized<CharT>(cx, cb));
+  if (JSInlineString::lengthFits<CharT>(len)) {
+    mozilla::Range<const CharT> range(begin<CharT>(), len);
+    return NewInlineString<CanGC>(cx, range);
+  }
+
+  UniquePtr<CharT[], JS::FreePolicy> buf(
+      ExtractWellSized<CharT>(chars<CharT>()));
+
   if (!buf) {
     return nullptr;
   }
 
-  JSFlatString* str = NewStringDontDeflate<CanGC>(cx, std::move(buf), len);
+  JSLinearString* str = NewStringDontDeflate<CanGC>(cx, std::move(buf), len);
   if (!str) {
     return nullptr;
   }
 
-  /*
-   * The allocation was made on a TempAllocPolicy, so account for the string
-   * data on the string's zone.
-   */
-  cx->updateMallocCounter(sizeof(CharT) * len);
-
   return str;
 }
 
-JSFlatString* StringBuffer::finishString() {
+JSLinearString* JSStringBuilder::finishString() {
   size_t len = length();
   if (len == 0) {
-    return cx->names().empty;
+    return cx_->names().empty;
   }
 
-  if (!JSString::validateLength(cx, len)) {
+  if (!JSString::validateLength(cx_, len)) {
     return nullptr;
   }
 
@@ -110,35 +117,23 @@ JSFlatString* StringBuffer::finishString() {
   JS_STATIC_ASSERT(JSFatInlineString::MAX_LENGTH_LATIN1 <
                    Latin1CharBuffer::InlineLength);
 
-  if (isLatin1()) {
-    if (JSInlineString::lengthFits<Latin1Char>(len)) {
-      mozilla::Range<const Latin1Char> range(latin1Chars().begin(), len);
-      return NewInlineString<CanGC>(cx, range);
-    }
-  } else {
-    if (JSInlineString::lengthFits<char16_t>(len)) {
-      mozilla::Range<const char16_t> range(twoByteChars().begin(), len);
-      return NewInlineString<CanGC>(cx, range);
-    }
-  }
-
-  return isLatin1() ? FinishStringFlat<Latin1Char>(cx, *this, latin1Chars())
-                    : FinishStringFlat<char16_t>(cx, *this, twoByteChars());
+  return isLatin1() ? finishStringInternal<Latin1Char>(cx_)
+                    : finishStringInternal<char16_t>(cx_);
 }
 
 JSAtom* StringBuffer::finishAtom() {
   size_t len = length();
   if (len == 0) {
-    return cx->names().empty;
+    return cx_->names().empty;
   }
 
   if (isLatin1()) {
-    JSAtom* atom = AtomizeChars(cx, latin1Chars().begin(), len);
+    JSAtom* atom = AtomizeChars(cx_, latin1Chars().begin(), len);
     latin1Chars().clear();
     return atom;
   }
 
-  JSAtom* atom = AtomizeChars(cx, twoByteChars().begin(), len);
+  JSAtom* atom = AtomizeChars(cx_, twoByteChars().begin(), len);
   twoByteChars().clear();
   return atom;
 }

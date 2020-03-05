@@ -14,6 +14,7 @@
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
 #include "frontend/SharedContext.h"
+#include "util/Poison.h"
 #include "util/StringBuffer.h"
 #include "vm/JSFunction.h"
 
@@ -193,11 +194,10 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
           }
           break;
 
-        case ParseNodeKind::Colon:
+        case ParseNodeKind::PropertyDefinition:
         case ParseNodeKind::Shorthand:
-          // Record the ParseNodeKind::Colon/Shorthand but skip the
-          // ParseNodeKind::Object so we're not flagged as a
-          // contributor.
+          // Record the ParseNodeKind::PropertyDefinition/Shorthand but skip the
+          // ParseNodeKind::Object so we're not flagged as a contributor.
           pos--;
           MOZ_FALLTHROUGH;
 
@@ -272,7 +272,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
     for (int pos = size - 1; pos >= 0; pos--) {
       ParseNode* node = toName[pos];
 
-      if (node->isKind(ParseNodeKind::Colon) ||
+      if (node->isKind(ParseNodeKind::PropertyDefinition) ||
           node->isKind(ParseNodeKind::Shorthand)) {
         ParseNode* left = node->as<BinaryNode>().left();
         if (left->isKind(ParseNodeKind::ObjectPropertyName) ||
@@ -458,7 +458,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
     MOZ_ASSERT(initialParents == nparents_, "nparents imbalance detected");
     MOZ_ASSERT(parents_[initialParents] == pn,
                "pushed child shouldn't change underneath us");
-    AlwaysPoison(&parents_[initialParents], 0xFF,
+    AlwaysPoison(&parents_[initialParents], JS_OOB_PARSE_NODE_PATTERN,
                  sizeof(parents_[initialParents]), MemCheckKind::MakeUndefined);
 
     return ok;

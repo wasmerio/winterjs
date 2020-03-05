@@ -16,17 +16,7 @@
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
-#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wattributes"
-#endif  // JS_BROKEN_GCC_ATTRIBUTE_WARNING
-
 class JS_PUBLIC_API JSTracer;
-
-#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
-#  pragma GCC diagnostic pop
-#endif  // JS_BROKEN_GCC_ATTRIBUTE_WARNING
-
 class ProfilingStack;
 
 // This file defines the classes ProfilingStack and ProfilingStackFrame.
@@ -157,6 +147,14 @@ class ProfilingStackFrame {
                   mozilla::recordreplay::Behavior::DontPreserve>
       pcOffsetIfJS_;
 
+  // ID of the JS Realm for JS stack frames.
+  // Must not be used on non-JS frames; it'll contain either the default 0,
+  // or a leftover value from a previous JS stack frame that was using this
+  // ProfilingStackFrame object.
+  mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire,
+                  mozilla::recordreplay::Behavior::DontPreserve>
+      realmID_;
+
   // Bits 0...8 hold the Flags. Bits 9...31 hold the category pair.
   mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire,
                   mozilla::recordreplay::Behavior::DontPreserve>
@@ -173,6 +171,8 @@ class ProfilingStackFrame {
     spOrScript = spScript;
     int32_t offsetIfJS = other.pcOffsetIfJS_;
     pcOffsetIfJS_ = offsetIfJS;
+    uint64_t realmID = other.realmID_;
+    realmID_ = realmID;
     uint32_t flagsAndCategory = other.flagsAndCategoryPair_;
     flagsAndCategoryPair_ = flagsAndCategory;
     return *this;
@@ -221,7 +221,9 @@ class ProfilingStackFrame {
     // and to be replaced by the subcategory's label.
     LABEL_DETERMINED_BY_CATEGORY_PAIR = 1 << 8,
 
-    FLAGS_BITCOUNT = 9,
+    NONSENSITIVE = 1 << 9,
+
+    FLAGS_BITCOUNT = 10,
     FLAGS_MASK = (1 << FLAGS_BITCOUNT) - 1
   };
 
@@ -233,6 +235,10 @@ class ProfilingStackFrame {
 
   bool isLabelFrame() const {
     return uint32_t(flagsAndCategoryPair_) & uint32_t(Flags::IS_LABEL_FRAME);
+  }
+
+  bool isNonsensitive() const {
+    return uint32_t(flagsAndCategoryPair_) & uint32_t(Flags::NONSENSITIVE);
   }
 
   bool isSpMarkerFrame() const {
@@ -296,11 +302,12 @@ class ProfilingStackFrame {
   }
 
   void initJsFrame(const char* aLabel, const char* aDynamicString,
-                   JSScript* aScript, jsbytecode* aPc) {
+                   JSScript* aScript, jsbytecode* aPc, uint64_t aRealmID) {
     label_ = aLabel;
     dynamicString_ = aDynamicString;
     spOrScript = aScript;
     pcOffsetIfJS_ = pcToOffset(aScript, aPc);
+    realmID_ = aRealmID;
     flagsAndCategoryPair_ =
         uint32_t(Flags::IS_JS_FRAME) | (uint32_t(JS::ProfilingCategoryPair::JS)
                                         << uint32_t(Flags::FLAGS_BITCOUNT));
@@ -315,6 +322,8 @@ class ProfilingStackFrame {
     return JS::ProfilingCategoryPair(flagsAndCategoryPair_ >>
                                      uint32_t(Flags::FLAGS_BITCOUNT));
   }
+
+  uint64_t realmID() const { return realmID_; }
 
   void* stackAddress() const {
     MOZ_ASSERT(!isJsFrame());
@@ -433,7 +442,7 @@ class ProfilingStack final {
   }
 
   void pushJsFrame(const char* label, const char* dynamicString,
-                   JSScript* script, jsbytecode* pc) {
+                   JSScript* script, jsbytecode* pc, uint64_t aRealmID) {
     // This thread is the only one that ever changes the value of
     // stackPointer. Only load the atomic once.
     uint32_t oldStackPointer = stackPointer;
@@ -441,7 +450,8 @@ class ProfilingStack final {
     if (MOZ_UNLIKELY(oldStackPointer >= capacity)) {
       ensureCapacitySlow();
     }
-    frames[oldStackPointer].initJsFrame(label, dynamicString, script, pc);
+    frames[oldStackPointer].initJsFrame(label, dynamicString, script, pc,
+                                        aRealmID);
 
     // This must happen at the end, see the comment in pushLabelFrame.
     stackPointer = stackPointer + 1;
@@ -553,8 +563,8 @@ class GeckoProfilerThread {
    *   - exit: this function has ceased execution, and no further
    *           entries/exits will be made
    */
-  bool enter(JSContext* cx, JSScript* script, JSFunction* maybeFun);
-  void exit(JSScript* script, JSFunction* maybeFun);
+  bool enter(JSContext* cx, JSScript* script);
+  void exit(JSContext* cx, JSScript* script);
   inline void updatePC(JSContext* cx, JSScript* script, jsbytecode* pc);
 };
 

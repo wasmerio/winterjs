@@ -126,8 +126,16 @@ static constexpr Register WasmTableCallScratchReg1 = ABINonArgReg1;
 static constexpr Register WasmTableCallSigReg = ABINonArgReg2;
 static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 
+// Register used as a scratch along the return path in the fast js -> wasm stub
+// code.  This must not overlap ReturnReg, JSReturnOperand, or WasmTlsReg. It
+// must be a volatile register.
+static constexpr Register WasmJitEntryReturnScratch = ebx;
+
 static constexpr Register OsrFrameReg = edx;
 static constexpr Register PreBarrierReg = edx;
+
+// Not enough registers for a PC register (R0-R2 use 2 registers each).
+static constexpr Register InterpreterPCReg = InvalidReg;
 
 // Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
 static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
@@ -196,17 +204,6 @@ static const Scale ScalePointer = TimesFour;
 namespace js {
 namespace jit {
 
-static inline void PatchJump(CodeLocationJump jump, CodeLocationLabel label) {
-#ifdef DEBUG
-  // Assert that we're overwriting a jump instruction, either:
-  //   0F 80+cc <imm32>, or
-  //   E9 <imm32>
-  unsigned char* x = (unsigned char*)jump.raw() - 5;
-  MOZ_ASSERT(((*x >= 0x80 && *x <= 0x8F) && *(x - 1) == 0x0F) || (*x == 0xE9));
-#endif
-  X86Encoding::SetRel32(jump.raw(), label.raw());
-}
-
 static inline Operand LowWord(const Operand& op) {
   switch (op.kind()) {
     case Operand::MEM_REG_DISP:
@@ -262,7 +259,7 @@ class Assembler : public AssemblerX86Shared {
 
   // Copy the assembly code to the given buffer, and perform any pending
   // relocations relying on the target address.
-  void executableCopy(uint8_t* buffer, bool flushICache = true);
+  void executableCopy(uint8_t* buffer);
 
   // Actual assembly emitting functions.
 

@@ -15,32 +15,116 @@
 #include "js/Id.h"
 #include "js/RootingAPI.h"
 #include "js/Value.h"
+#include "util/Poison.h"
 
 /*
  * [SMDOC] GC Barriers
  *
- * A write barrier is a mechanism used by incremental or generation GCs to
+ * Several kinds of barrier are necessary to allow the GC to function correctly.
+ * These are triggered by reading or writing to GC pointers in the heap and
+ * serve to tell the collector about changes to the graph of reachable GC
+ * things.
+ *
+ * Since it would be awkward to change every write to memory into a function
+ * call, this file contains a bunch of C++ classes and templates that use
+ * operator overloading to take care of barriers automatically. In most cases,
+ * all that's necessary is to replace:
+ *
+ *     Type* field;
+ *
+ * with:
+ *
+ *     HeapPtr<Type> field;
+ *
+ * All heap-based GC pointers and tagged pointers must use one of these classes,
+ * except in a couple of exceptional cases.
+ *
+ * These classes are designed to be used by the internals of the JS engine.
+ * Barriers designed to be used externally are provided in js/RootingAPI.h.
+ *
+ * Overview
+ * ========
+ *
+ * This file implements the following concrete classes:
+ *
+ * HeapPtr       General wrapper for heap-based pointers that provides pre- and
+ *               post-write barriers. Most clients should use this.
+ *
+ * GCPtr         An optimisation of HeapPtr for objects which are only destroyed
+ *               by GC finalization (this rules out use in Vector, for example).
+ *
+ * PreBarriered  Provides a pre-barrier but not a post-barrier. Necessary when
+ *               generational GC updates are handled manually, e.g. for hash
+ *               table keys that don't use MovableCellHasher.
+ *
+ * HeapSlot      Provides pre and post-barriers, optimised for use in JSObject
+ *               slots and elements.
+ *
+ * WeakHeapPtr   Provides read and post-write barriers, for use with weak
+ *               pointers.
+ *
+ * The following classes are implemented in js/RootingAPI.h (in the JS
+ * namespace):
+ *
+ * Heap          General wrapper for external clients. Like HeapPtr but also
+ *               handles cycle collector concerns. Most external clients should
+ *               use this.
+ *
+ * TenuredHeap   Like Heap but doesn't allow nursery pointers. Allows storing
+ *               flags in unused lower bits of the pointer.
+ *
+ * Which class to use?
+ * -------------------
+ *
+ * Answer the following questions to decide which barrier class is right for
+ * your use case:
+ *
+ * Is your code part of the JS engine?
+ *   Yes, it's internal =>
+ *     Is your pointer weak or strong?
+ *       Strong =>
+ *         Do you want automatic handling of nursery pointers?
+ *           Yes, of course =>
+ *             Can your object be destroyed outside of a GC?
+ *               Yes => Use HeapPtr<T>
+ *               No => Use GCPtr<T> (optimization)
+ *           No, I'll do this myself => Use PreBarriered<T>
+ *       Weak => Use WeakHeapPtr<T>
+ *   No, it's external =>
+ *     Can your pointer refer to nursery objects?
+ *       Yes => Use JS::Heap<T>
+ *       Never => Use JS::TenuredHeap<T> (optimization)
+ *
+ * Write barriers
+ * ==============
+ *
+ * A write barrier is a mechanism used by incremental or generational GCs to
  * ensure that every value that needs to be marked is marked. In general, the
  * write barrier should be invoked whenever a write can cause the set of things
  * traced through by the GC to change. This includes:
+ *
  *   - writes to object properties
  *   - writes to array slots
  *   - writes to fields like JSObject::shape_ that we trace through
  *   - writes to fields in private data
  *   - writes to non-markable fields like JSObject::private that point to
  *     markable data
- * The last category is the trickiest. Even though the private pointers does not
+ *
+ * The last category is the trickiest. Even though the private pointer does not
  * point to a GC thing, changing the private pointer may change the set of
  * objects that are traced by the GC. Therefore it needs a write barrier.
  *
  * Every barriered write should have the following form:
+ *
  *   <pre-barrier>
  *   obj->field = value; // do the actual write
  *   <post-barrier>
+ *
  * The pre-barrier is used for incremental GC and the post-barrier is for
  * generational GC.
  *
- *                               PRE-BARRIER
+ * Pre-write barrier
+ * -----------------
  *
  * To understand the pre-barrier, let's consider how incremental GC works. The
  * GC itself is divided into "slices". Between each slice, JS code is allowed to
@@ -97,18 +181,8 @@
  * value0. E.g., see JSObject::writeBarrierPre, which is used if obj->field is
  * a JSObject*. It takes value0 as a parameter.
  *
- *                                READ-BARRIER
- *
- * Incremental GC requires that weak pointers have read barriers. The problem
- * happens when, during an incremental GC, some code reads a weak pointer and
- * writes it somewhere on the heap that has been marked black in a previous
- * slice. Since the weak pointer will not otherwise be marked and will be swept
- * and finalized in the last slice, this will leave the pointer just written
- * dangling after the GC. To solve this, we immediately mark black all weak
- * pointers that get read between slices so that it is safe to store them in an
- * already marked part of the heap, e.g. in Rooted.
- *
- *                                POST-BARRIER
+ * Post-write barrier
+ * ------------------
  *
  * For generational GC, we want to be able to quickly collect the nursery in a
  * minor collection.  Part of the way this is achieved is to only mark the
@@ -119,9 +193,9 @@
  * reference them. The solution is to maintain information about these pointers,
  * and mark their targets when we start a minor collection.
  *
- * The pointers can be thought of as edges in object graph, and the set of edges
- * from the tenured generation into the nursery is know as the remembered set.
- * Post barriers are used to track this remembered set.
+ * The pointers can be thought of as edges in an object graph, and the set of
+ * edges from the tenured generation into the nursery is known as the remembered
+ * set. Post barriers are used to track this remembered set.
  *
  * Whenever a slot which could contain such a pointer is written, we check
  * whether the pointed-to thing is in the nursery (if storeBuffer() returns a
@@ -130,15 +204,33 @@
  * come to do a minor collection we can examine the contents of the store buffer
  * and mark any edge targets that are in the nursery.
  *
- *                            IMPLEMENTATION DETAILS
+ * Read barriers
+ * =============
  *
- * Since it would be awkward to change every write to memory into a function
- * call, this file contains a bunch of C++ classes and templates that use
- * operator overloading to take care of barriers automatically. In many cases,
- * all that's necessary to make some field be barriered is to replace
- *     Type* field;
- * with
- *     GCPtr<Type> field;
+ * Weak pointer read barrier
+ * -------------------------
+ *
+ * Weak pointers must have a read barrier to prevent the referent from being
+ * collected if it is read after the start of an incremental GC.
+ *
+ * The problem happens when, during an incremental GC, some code reads a weak
+ * pointer and writes it somewhere on the heap that has been marked black in a
+ * previous slice. Since the weak pointer will not otherwise be marked and will
+ * be swept and finalized in the last slice, this will leave the pointer just
+ * written dangling after the GC. To solve this, we immediately mark black all
+ * weak pointers that get read between slices so that it is safe to store them
+ * in an already marked part of the heap, e.g. in Rooted.
+ *
+ * Cycle collector read barrier
+ * ----------------------------
+ *
+ * Heap pointers external to the engine may be marked gray. The JS API has an
+ * invariant that no gray pointers may be passed, and this maintained by a read
+ * barrier that calls ExposeGCThingToActiveJS on such pointers. This is
+ * implemented by JS::Heap<T> in js/RootingAPI.h.
+ *
+ * Implementation Details
+ * ======================
  *
  * One additional note: not all object writes need to be pre-barriered. Writes
  * to newly allocated objects do not need a pre-barrier. In these cases, we use
@@ -146,11 +238,11 @@
  * the init naming idiom in many places to signify that a field is being
  * assigned for the first time.
  *
- * This file implements four classes, illustrated here:
+ * This file implements the following hierarchy of classes:
  *
  * BarrieredBase             base class of all barriers
  *  |  |
- *  | WriteBarrieredBase     base class which provides common write operations
+ *  | WriteBarriered         base class which provides common write operations
  *  |  |  |  |  |
  *  |  |  |  | PreBarriered  provides pre-barriers only
  *  |  |  |  |
@@ -161,15 +253,15 @@
  *  |  |
  *  | HeapSlot               similar to GCPtr, but tailored to slots storage
  *  |
- * ReadBarrieredBase         base class which provides common read operations
+ * ReadBarriered             base class which provides common read operations
  *  |
- * ReadBarriered             provides read barriers only
+ * WeakHeapPtr               provides read barriers only
  *
  *
  * The implementation of the barrier logic is implemented on T::writeBarrier.*,
  * via:
  *
- * WriteBarrieredBase<T>::pre
+ * WriteBarriered<T>::pre
  *  -> InternalBarrierMethods<T*>::preBarrier
  *      -> T::writeBarrierPre
  *  -> InternalBarrierMethods<Value>::preBarrier
@@ -183,10 +275,9 @@
  *  -> InternalBarrierMethods<Value>::postBarrier
  *      -> StoreBuffer::put
  *
- * These classes are designed to be used by the internals of the JS engine.
- * Barriers designed to be used externally are provided in js/RootingAPI.h.
- * These external barriers call into the same post-barrier implementations at
- * InternalBarrierMethods<T>::post via an indirect call to Heap(.+)Barrier.
+ * Barriers for use outside of the JS engine call into the same barrier
+ * implementations at InternalBarrierMethods<T>::post via an indirect call to
+ * Heap(.+)PostWriteBarrier.
  *
  * These clases are designed to be used to wrap GC thing pointers or values that
  * act like them (i.e. JS::Value and jsid).  It is possible to use them for
@@ -194,38 +285,9 @@
  * is not usually necessary and should be done with caution.
  */
 
-class JSFlatString;
-class JSLinearString;
-
 namespace js {
 
-class AccessorShape;
-class ArrayObject;
-class ArgumentsObject;
-class ArrayBufferObjectMaybeShared;
-class ArrayBufferObject;
-class ArrayBufferViewObject;
-class SharedArrayBufferObject;
-class BaseShape;
-class DebugEnvironmentProxy;
-class GlobalObject;
-class LazyScript;
-class ModuleObject;
-class ModuleEnvironmentObject;
-class ModuleNamespaceObject;
 class NativeObject;
-class PlainObject;
-class PropertyName;
-class SavedFrame;
-class EnvironmentObject;
-class ScriptSourceObject;
-class Shape;
-class UnownedBaseShape;
-class ObjectGroup;
-
-namespace jit {
-class JitCode;
-}  // namespace jit
 
 #ifdef DEBUG
 
@@ -353,27 +415,26 @@ class MOZ_NON_MEMMOVABLE BarrieredBase {
   T value;
 
  public:
+  using ElementType = T;
+
   // Note: this is public because C++ cannot friend to a specific template
   // instantiation. Friending to the generic template leads to a number of
   // unintended consequences, including template resolution ambiguity and a
   // circular dependency with Tracing.h.
-  T* unsafeUnbarrieredForTracing() { return &value; }
+  T* unsafeUnbarrieredForTracing() const { return const_cast<T*>(&value); }
 };
 
 // Base class for barriered pointer types that intercept only writes.
 template <class T>
-class WriteBarrieredBase
-    : public BarrieredBase<T>,
-      public WrappedPtrOperations<T, WriteBarrieredBase<T>> {
+class WriteBarriered : public BarrieredBase<T>,
+                       public WrappedPtrOperations<T, WriteBarriered<T>> {
  protected:
   using BarrieredBase<T>::value;
 
-  // WriteBarrieredBase is not directly instantiable.
-  explicit WriteBarrieredBase(const T& v) : BarrieredBase<T>(v) {}
+  // WriteBarriered is not directly instantiable.
+  explicit WriteBarriered(const T& v) : BarrieredBase<T>(v) {}
 
  public:
-  using ElementType = T;
-
   DECLARE_POINTER_CONSTREF_OPS(T);
 
   // Use this if the automatic coercion to T isn't working.
@@ -395,40 +456,61 @@ class WriteBarrieredBase
   }
 };
 
+#define DECLARE_POINTER_ASSIGN_AND_MOVE_OPS(Wrapper, T) \
+  DECLARE_POINTER_ASSIGN_OPS(Wrapper, T)                \
+  Wrapper<T>& operator=(Wrapper<T>&& other) {           \
+    setUnchecked(other.release());                      \
+    return *this;                                       \
+  }
+
 /*
  * PreBarriered only automatically handles pre-barriers. Post-barriers must be
  * manually implemented when using this class. GCPtr and HeapPtr should be used
  * in all cases that do not require explicit low-level control of moving
- * behavior, e.g. for HashMap keys.
+ * behavior.
+ *
+ * This class is useful for example for HashMap keys where automatically
+ * updating a moved nursery pointer would break the hash table.
  */
 template <class T>
-class PreBarriered : public WriteBarrieredBase<T> {
+class PreBarriered : public WriteBarriered<T> {
  public:
-  PreBarriered() : WriteBarrieredBase<T>(JS::SafelyInitialized<T>()) {}
+  PreBarriered() : WriteBarriered<T>(JS::SafelyInitialized<T>()) {}
   /*
    * Allow implicit construction for use in generic contexts, such as
    * DebuggerWeakMap::markKeys.
    */
-  MOZ_IMPLICIT PreBarriered(const T& v) : WriteBarrieredBase<T>(v) {}
-  explicit PreBarriered(const PreBarriered<T>& v)
-      : WriteBarrieredBase<T>(v.value) {}
+  MOZ_IMPLICIT PreBarriered(const T& v) : WriteBarriered<T>(v) {}
+
+  explicit PreBarriered(const PreBarriered<T>& other)
+      : WriteBarriered<T>(other.value) {}
+
+  PreBarriered(PreBarriered<T>&& other) : WriteBarriered<T>(other.release()) {}
+
   ~PreBarriered() { this->pre(); }
 
   void init(const T& v) { this->value = v; }
 
   /* Use to set the pointer to nullptr. */
-  void clear() {
-    this->pre();
-    this->value = nullptr;
-  }
+  void clear() { set(JS::SafelyInitialized<T>()); }
 
-  DECLARE_POINTER_ASSIGN_OPS(PreBarriered, T);
+  DECLARE_POINTER_ASSIGN_AND_MOVE_OPS(PreBarriered, T);
 
  private:
   void set(const T& v) {
     AssertTargetIsNotGray(v);
+    setUnchecked(v);
+  }
+
+  void setUnchecked(const T& v) {
     this->pre();
     this->value = v;
+  }
+
+  T release() {
+    T tmp = this->value;
+    this->value = JS::SafelyInitialized<T>();
+    return tmp;
   }
 };
 
@@ -444,15 +526,18 @@ class PreBarriered : public WriteBarrieredBase<T> {
  * automatically handling deletion or movement.
  */
 template <class T>
-class GCPtr : public WriteBarrieredBase<T> {
+class GCPtr : public WriteBarriered<T> {
  public:
-  GCPtr() : WriteBarrieredBase<T>(JS::SafelyInitialized<T>()) {}
-  explicit GCPtr(const T& v) : WriteBarrieredBase<T>(v) {
+  GCPtr() : WriteBarriered<T>(JS::SafelyInitialized<T>()) {}
+
+  explicit GCPtr(const T& v) : WriteBarriered<T>(v) {
     this->post(JS::SafelyInitialized<T>(), v);
   }
-  explicit GCPtr(const GCPtr<T>& v) : WriteBarrieredBase<T>(v) {
+
+  explicit GCPtr(const GCPtr<T>& v) : WriteBarriered<T>(v) {
     this->post(JS::SafelyInitialized<T>(), v);
   }
+
 #ifdef DEBUG
   ~GCPtr() {
     // No barriers are necessary as this only happens when we are sweeping
@@ -482,6 +567,10 @@ class GCPtr : public WriteBarrieredBase<T> {
  private:
   void set(const T& v) {
     AssertTargetIsNotGray(v);
+    setUnchecked(v);
+  }
+
+  void setUnchecked(const T& v) {
     this->pre();
     T tmp = this->value;
     this->value = v;
@@ -521,22 +610,20 @@ class GCPtr : public WriteBarrieredBase<T> {
  * when the relocation would otherwise occur without the GC's knowledge.
  */
 template <class T>
-class HeapPtr : public WriteBarrieredBase<T> {
+class HeapPtr : public WriteBarriered<T> {
  public:
-  HeapPtr() : WriteBarrieredBase<T>(JS::SafelyInitialized<T>()) {}
+  HeapPtr() : WriteBarriered<T>(JS::SafelyInitialized<T>()) {}
 
   // Implicitly adding barriers is a reasonable default.
-  MOZ_IMPLICIT HeapPtr(const T& v) : WriteBarrieredBase<T>(v) {
+  MOZ_IMPLICIT HeapPtr(const T& v) : WriteBarriered<T>(v) {
     this->post(JS::SafelyInitialized<T>(), this->value);
   }
 
-  /*
-   * For HeapPtr, move semantics are equivalent to copy semantics. In
-   * C++, a copy constructor taking const-ref is the way to get a single
-   * function that will be used for both lvalue and rvalue copies, so we can
-   * simply omit the rvalue variant.
-   */
-  MOZ_IMPLICIT HeapPtr(const HeapPtr<T>& v) : WriteBarrieredBase<T>(v) {
+  MOZ_IMPLICIT HeapPtr(const HeapPtr<T>& other) : WriteBarriered<T>(other) {
+    this->post(JS::SafelyInitialized<T>(), this->value);
+  }
+
+  HeapPtr(HeapPtr<T>&& other) : WriteBarriered<T>(other.release()) {
     this->post(JS::SafelyInitialized<T>(), this->value);
   }
 
@@ -551,7 +638,7 @@ class HeapPtr : public WriteBarrieredBase<T> {
     this->post(JS::SafelyInitialized<T>(), this->value);
   }
 
-  DECLARE_POINTER_ASSIGN_OPS(HeapPtr, T);
+  DECLARE_POINTER_ASSIGN_AND_MOVE_OPS(HeapPtr, T);
 
   /* Make this friend so it can access pre() and post(). */
   template <class T1, class T2>
@@ -561,26 +648,34 @@ class HeapPtr : public WriteBarrieredBase<T> {
  protected:
   void set(const T& v) {
     AssertTargetIsNotGray(v);
+    setUnchecked(v);
+  }
+
+  void setUnchecked(const T& v) {
     this->pre();
     postBarrieredSet(v);
   }
 
   void postBarrieredSet(const T& v) {
-    AssertTargetIsNotGray(v);
     T tmp = this->value;
     this->value = v;
     this->post(tmp, this->value);
+  }
+
+  T release() {
+    T tmp = this->value;
+    postBarrieredSet(JS::SafelyInitialized<T>());
+    return tmp;
   }
 };
 
 // Base class for barriered pointer types that intercept reads and writes.
 template <typename T>
-class ReadBarrieredBase : public BarrieredBase<T> {
+class ReadBarriered : public BarrieredBase<T> {
  protected:
-  // ReadBarrieredBase is not directly instantiable.
-  explicit ReadBarrieredBase(const T& v) : BarrieredBase<T>(v) {}
+  // ReadBarriered is not directly instantiable.
+  explicit ReadBarriered(const T& v) : BarrieredBase<T>(v) {}
 
- protected:
   void read() const { InternalBarrierMethods<T>::readBarrier(this->value); }
   void post(const T& prev, const T& next) {
     InternalBarrierMethods<T>::postBarrier(&this->value, prev, next);
@@ -595,34 +690,34 @@ class ReadBarrieredBase : public BarrieredBase<T> {
 // insert manual post-barriers on the table for rekeying if the key is based in
 // any way on the address of the object.
 template <typename T>
-class ReadBarriered : public ReadBarrieredBase<T>,
-                      public WrappedPtrOperations<T, ReadBarriered<T>> {
+class WeakHeapPtr : public ReadBarriered<T>,
+                    public WrappedPtrOperations<T, WeakHeapPtr<T>> {
  protected:
-  using ReadBarrieredBase<T>::value;
+  using ReadBarriered<T>::value;
 
  public:
-  ReadBarriered() : ReadBarrieredBase<T>(JS::SafelyInitialized<T>()) {}
+  WeakHeapPtr() : ReadBarriered<T>(JS::SafelyInitialized<T>()) {}
 
   // It is okay to add barriers implicitly.
-  MOZ_IMPLICIT ReadBarriered(const T& v) : ReadBarrieredBase<T>(v) {
+  MOZ_IMPLICIT WeakHeapPtr(const T& v) : ReadBarriered<T>(v) {
     this->post(JS::SafelyInitialized<T>(), v);
   }
 
   // The copy constructor creates a new weak edge but the wrapped pointer does
   // not escape, so no read barrier is necessary.
-  explicit ReadBarriered(const ReadBarriered& v) : ReadBarrieredBase<T>(v) {
-    this->post(JS::SafelyInitialized<T>(), v.unbarrieredGet());
+  explicit WeakHeapPtr(const WeakHeapPtr& other) : ReadBarriered<T>(other) {
+    this->post(JS::SafelyInitialized<T>(), value);
   }
 
   // Move retains the lifetime status of the source edge, so does not fire
   // the read barrier of the defunct edge.
-  ReadBarriered(ReadBarriered&& v) : ReadBarrieredBase<T>(std::move(v)) {
-    this->post(JS::SafelyInitialized<T>(), v.value);
+  WeakHeapPtr(WeakHeapPtr&& other) : ReadBarriered<T>(other.release()) {
+    this->post(JS::SafelyInitialized<T>(), value);
   }
 
-  ~ReadBarriered() { this->post(this->value, JS::SafelyInitialized<T>()); }
+  ~WeakHeapPtr() { this->post(this->value, JS::SafelyInitialized<T>()); }
 
-  ReadBarriered& operator=(const ReadBarriered& v) {
+  WeakHeapPtr& operator=(const WeakHeapPtr& v) {
     AssertTargetIsNotGray(v.value);
     T prior = this->value;
     this->value = v.value;
@@ -650,21 +745,32 @@ class ReadBarriered : public ReadBarrieredBase<T>,
 
   void set(const T& v) {
     AssertTargetIsNotGray(v);
+    setUnchecked(v);
+  }
+
+ private:
+  void setUnchecked(const T& v) {
     T tmp = this->value;
     this->value = v;
     this->post(tmp, v);
+  }
+
+  T release() {
+    T tmp = value;
+    set(JS::SafelyInitialized<T>());
+    return tmp;
   }
 };
 
 // A WeakRef pointer does not hold its target live and is automatically nulled
 // out when the GC discovers that it is not reachable from any other path.
 template <typename T>
-using WeakRef = ReadBarriered<T>;
+using WeakRef = WeakHeapPtr<T>;
 
 // A pre- and post-barriered Value that is specialized to be aware that it
 // resides in a slots or elements vector. This allows it to be relocated in
 // memory, but with substantially less overhead than a HeapPtr.
-class HeapSlot : public WriteBarrieredBase<Value> {
+class HeapSlot : public WriteBarriered<Value> {
  public:
   enum Kind { Slot = 0, Element = 1 };
 
@@ -758,6 +864,8 @@ class HeapSlotArray {
 template <class T1, class T2>
 static inline void BarrieredSetPair(Zone* zone, HeapPtr<T1*>& v1, T1* val1,
                                     HeapPtr<T2*>& v2, T2* val2) {
+  AssertTargetIsNotGray(val1);
+  AssertTargetIsNotGray(val2);
   if (T1::needWriteBarrierPre(zone)) {
     v1.pre();
     v2.pre();
@@ -779,14 +887,20 @@ static inline void BarrieredSetPair(Zone* zone, HeapPtr<T1*>& v1, T1* val1,
  * class!
  */
 template <typename T>
-class ImmutableTenuredPtr {
+class MOZ_HEAP_CLASS ImmutableTenuredPtr {
   T value;
 
  public:
   operator T() const { return value; }
   T operator->() const { return value; }
 
-  operator Handle<T>() const { return Handle<T>::fromMarkedLocation(&value); }
+  // `ImmutableTenuredPtr<T>` is implicitly convertible to `Handle<T>`.
+  //
+  // In case you need to convert to `Handle<U>` where `U` is base class of `T`,
+  // convert this to `Handle<T>` by `toHandle()` and then use implicit
+  // conversion from `Handle<T>` to `Handle<U>`.
+  operator Handle<T>() const { return toHandle(); }
+  Handle<T> toHandle() const { return Handle<T>::fromMarkedLocation(&value); }
 
   void init(T ptr) {
     MOZ_ASSERT(ptr->isTenured());
@@ -797,6 +911,10 @@ class ImmutableTenuredPtr {
   T get() const { return value; }
   const T* address() { return &value; }
 };
+
+#if MOZ_IS_GCC
+template struct JS_PUBLIC_API MovableCellHasher<JSObject*>;
+#endif
 
 template <typename T>
 struct MovableCellHasher<PreBarriered<T>> {
@@ -839,8 +957,8 @@ struct MovableCellHasher<HeapPtr<T>> {
 };
 
 template <typename T>
-struct MovableCellHasher<ReadBarriered<T>> {
-  using Key = ReadBarriered<T>;
+struct MovableCellHasher<WeakHeapPtr<T>> {
+  using Key = WeakHeapPtr<T>;
   using Lookup = T;
 
   static bool hasHash(const Lookup& l) {
@@ -858,10 +976,10 @@ struct MovableCellHasher<ReadBarriered<T>> {
   static void rekey(Key& k, const Key& newKey) { k.unsafeSet(newKey); }
 };
 
-/* Useful for hashtables with a GCPtr as key. */
+/* Useful for hashtables with a HeapPtr as key. */
 template <class T>
-struct GCPtrHasher {
-  typedef GCPtr<T> Key;
+struct HeapPtrHasher {
+  typedef HeapPtr<T> Key;
   typedef T Lookup;
 
   static HashNumber hash(Lookup obj) { return DefaultHasher<T>::hash(obj); }
@@ -879,10 +997,10 @@ struct PreBarrieredHasher {
   static void rekey(Key& k, const Key& newKey) { k.unsafeSet(newKey); }
 };
 
-/* Useful for hashtables with a ReadBarriered as key. */
+/* Useful for hashtables with a WeakHeapPtr as key. */
 template <class T>
-struct ReadBarrieredHasher {
-  typedef ReadBarriered<T> Key;
+struct WeakHeapPtrHasher {
+  typedef WeakHeapPtr<T> Key;
   typedef T Lookup;
 
   static HashNumber hash(Lookup obj) { return DefaultHasher<T>::hash(obj); }
@@ -892,28 +1010,49 @@ struct ReadBarrieredHasher {
   }
 };
 
+// Wrapper around GCCellPtr for use with RootedVector<StackGCCellPtr>.
+class MOZ_STACK_CLASS StackGCCellPtr {
+  JS::GCCellPtr ptr_;
+
+ public:
+  MOZ_IMPLICIT StackGCCellPtr(JS::GCCellPtr ptr) : ptr_(ptr) {}
+  StackGCCellPtr() = default;
+
+  void operator=(const StackGCCellPtr& other) { ptr_ = other.ptr_; }
+
+  void trace(JSTracer* trc);
+
+  JS::GCCellPtr get() const { return ptr_; }
+};
+
 }  // namespace js
 
 namespace mozilla {
 
-/* Specialized hashing policy for GCPtrs. */
 template <class T>
-struct DefaultHasher<js::GCPtr<T>> : js::GCPtrHasher<T> {};
+struct DefaultHasher<js::HeapPtr<T>> : js::HeapPtrHasher<T> {};
+
+template <class T>
+struct DefaultHasher<js::GCPtr<T>> {
+  // Not implemented. GCPtr can't be used as a hash table key because it has a
+  // post barrier but doesn't support relocation.
+};
 
 template <class T>
 struct DefaultHasher<js::PreBarriered<T>> : js::PreBarrieredHasher<T> {};
 
-/* Specialized hashing policy for ReadBarriereds. */
 template <class T>
-struct DefaultHasher<js::ReadBarriered<T>> : js::ReadBarrieredHasher<T> {};
+struct DefaultHasher<js::WeakHeapPtr<T>> : js::WeakHeapPtrHasher<T> {};
 
 }  // namespace mozilla
 
 namespace js {
 
 class ArrayObject;
-class ArrayBufferObject;
+class DebugEnvironmentProxy;
 class GlobalObject;
+class ObjectGroup;
+class PropertyName;
 class Scope;
 class ScriptSourceObject;
 class Shape;
@@ -921,63 +1060,51 @@ class BaseShape;
 class UnownedBaseShape;
 class WasmInstanceObject;
 class WasmTableObject;
+
 namespace jit {
 class JitCode;
 }  // namespace jit
 
-typedef PreBarriered<JSObject*> PreBarrieredObject;
-typedef PreBarriered<JSScript*> PreBarrieredScript;
-typedef PreBarriered<jit::JitCode*> PreBarrieredJitCode;
-typedef PreBarriered<JSString*> PreBarrieredString;
-typedef PreBarriered<JSAtom*> PreBarrieredAtom;
+using PreBarrieredId = PreBarriered<jsid>;
+using PreBarrieredObject = PreBarriered<JSObject*>;
+using PreBarrieredValue = PreBarriered<Value>;
 
-typedef GCPtr<NativeObject*> GCPtrNativeObject;
-typedef GCPtr<ArrayObject*> GCPtrArrayObject;
-typedef GCPtr<ArrayBufferObjectMaybeShared*> GCPtrArrayBufferObjectMaybeShared;
-typedef GCPtr<ArrayBufferObject*> GCPtrArrayBufferObject;
-typedef GCPtr<BaseShape*> GCPtrBaseShape;
-typedef GCPtr<JSAtom*> GCPtrAtom;
-typedef GCPtr<JSFlatString*> GCPtrFlatString;
-typedef GCPtr<JSFunction*> GCPtrFunction;
-typedef GCPtr<JSLinearString*> GCPtrLinearString;
-typedef GCPtr<JSObject*> GCPtrObject;
-typedef GCPtr<JSScript*> GCPtrScript;
-typedef GCPtr<JSString*> GCPtrString;
-typedef GCPtr<ModuleObject*> GCPtrModuleObject;
-typedef GCPtr<ModuleEnvironmentObject*> GCPtrModuleEnvironmentObject;
-typedef GCPtr<ModuleNamespaceObject*> GCPtrModuleNamespaceObject;
-typedef GCPtr<PlainObject*> GCPtrPlainObject;
-typedef GCPtr<PropertyName*> GCPtrPropertyName;
-typedef GCPtr<Shape*> GCPtrShape;
-typedef GCPtr<UnownedBaseShape*> GCPtrUnownedBaseShape;
-typedef GCPtr<jit::JitCode*> GCPtrJitCode;
-typedef GCPtr<ObjectGroup*> GCPtrObjectGroup;
-typedef GCPtr<Scope*> GCPtrScope;
+using GCPtrNativeObject = GCPtr<NativeObject*>;
+using GCPtrArrayObject = GCPtr<ArrayObject*>;
+using GCPtrBaseShape = GCPtr<BaseShape*>;
+using GCPtrAtom = GCPtr<JSAtom*>;
+using GCPtrBigInt = GCPtr<BigInt*>;
+using GCPtrFunction = GCPtr<JSFunction*>;
+using GCPtrLinearString = GCPtr<JSLinearString*>;
+using GCPtrObject = GCPtr<JSObject*>;
+using GCPtrScript = GCPtr<JSScript*>;
+using GCPtrString = GCPtr<JSString*>;
+using GCPtrShape = GCPtr<Shape*>;
+using GCPtrUnownedBaseShape = GCPtr<UnownedBaseShape*>;
+using GCPtrObjectGroup = GCPtr<ObjectGroup*>;
+using GCPtrScope = GCPtr<Scope*>;
+using GCPtrValue = GCPtr<Value>;
+using GCPtrId = GCPtr<jsid>;
 
-typedef PreBarriered<Value> PreBarrieredValue;
-typedef GCPtr<Value> GCPtrValue;
+using ImmutablePropertyNamePtr = ImmutableTenuredPtr<PropertyName*>;
+using ImmutableSymbolPtr = ImmutableTenuredPtr<JS::Symbol*>;
 
-typedef PreBarriered<jsid> PreBarrieredId;
-typedef GCPtr<jsid> GCPtrId;
+using WeakHeapPtrDebugEnvironmentProxy = WeakHeapPtr<DebugEnvironmentProxy*>;
+using WeakHeapPtrGlobalObject = WeakHeapPtr<GlobalObject*>;
+using WeakHeapPtrObject = WeakHeapPtr<JSObject*>;
+using WeakHeapPtrScript = WeakHeapPtr<JSScript*>;
+using WeakHeapPtrScriptSourceObject = WeakHeapPtr<ScriptSourceObject*>;
+using WeakHeapPtrShape = WeakHeapPtr<Shape*>;
+using WeakHeapPtrJitCode = WeakHeapPtr<jit::JitCode*>;
+using WeakHeapPtrObjectGroup = WeakHeapPtr<ObjectGroup*>;
+using WeakHeapPtrSymbol = WeakHeapPtr<JS::Symbol*>;
+using WeakHeapPtrWasmInstanceObject = WeakHeapPtr<WasmInstanceObject*>;
+using WeakHeapPtrWasmTableObject = WeakHeapPtr<WasmTableObject*>;
 
-typedef ImmutableTenuredPtr<PropertyName*> ImmutablePropertyNamePtr;
-typedef ImmutableTenuredPtr<JS::Symbol*> ImmutableSymbolPtr;
-
-typedef ReadBarriered<DebugEnvironmentProxy*>
-    ReadBarrieredDebugEnvironmentProxy;
-typedef ReadBarriered<GlobalObject*> ReadBarrieredGlobalObject;
-typedef ReadBarriered<JSObject*> ReadBarrieredObject;
-typedef ReadBarriered<JSFunction*> ReadBarrieredFunction;
-typedef ReadBarriered<JSScript*> ReadBarrieredScript;
-typedef ReadBarriered<ScriptSourceObject*> ReadBarrieredScriptSourceObject;
-typedef ReadBarriered<Shape*> ReadBarrieredShape;
-typedef ReadBarriered<jit::JitCode*> ReadBarrieredJitCode;
-typedef ReadBarriered<ObjectGroup*> ReadBarrieredObjectGroup;
-typedef ReadBarriered<JS::Symbol*> ReadBarrieredSymbol;
-typedef ReadBarriered<WasmInstanceObject*> ReadBarrieredWasmInstanceObject;
-typedef ReadBarriered<WasmTableObject*> ReadBarrieredWasmTableObject;
-
-typedef ReadBarriered<Value> ReadBarrieredValue;
+using HeapPtrJitCode = HeapPtr<jit::JitCode*>;
+using HeapPtrObject = HeapPtr<JSObject*>;
+using HeapPtrRegExpShared = HeapPtr<RegExpShared*>;
+using HeapPtrValue = HeapPtr<Value>;
 
 namespace detail {
 
@@ -997,8 +1124,8 @@ struct DefineComparisonOps<HeapPtr<T>> : mozilla::TrueType {
 };
 
 template <typename T>
-struct DefineComparisonOps<ReadBarriered<T>> : mozilla::TrueType {
-  static const T& get(const ReadBarriered<T>& v) { return v.unbarrieredGet(); }
+struct DefineComparisonOps<WeakHeapPtr<T>> : mozilla::TrueType {
+  static const T& get(const WeakHeapPtr<T>& v) { return v.unbarrieredGet(); }
 };
 
 template <>

@@ -8,26 +8,31 @@
 #define vm_ErrorObject_h_
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/Assertions.h"
 
+#include <stdint.h>
+
+#include "jspubtd.h"
+#include "NamespaceImports.h"
+
+#include "gc/Barrier.h"
+#include "js/Class.h"
+#include "js/ErrorReport.h"
+#include "js/RootingAPI.h"
+#include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
+#include "js/Value.h"
+#include "vm/JSObject.h"
 #include "vm/NativeObject.h"
-#include "vm/SavedStacks.h"
 #include "vm/Shape.h"
 
 namespace js {
-
-/*
- * Initialize the exception constructor/prototype hierarchy.
- */
-extern JSObject* InitExceptionClasses(JSContext* cx, HandleObject obj);
+class ArrayObject;
 
 class ErrorObject : public NativeObject {
   static JSObject* createProto(JSContext* cx, JSProtoKey key);
 
   static JSObject* createConstructor(JSContext* cx, JSProtoKey key);
-
-  /* For access to createProto. */
-  friend JSObject* js::InitExceptionClasses(JSContext* cx, HandleObject global);
 
   static bool init(JSContext* cx, Handle<ErrorObject*> obj, JSExnType type,
                    UniquePtr<JSErrorReport> errorReport, HandleString fileName,
@@ -35,7 +40,7 @@ class ErrorObject : public NativeObject {
                    uint32_t columnNumber, HandleString message);
 
   static const ClassSpec classSpecs[JSEXN_ERROR_LIMIT];
-  static const Class protoClasses[JSEXN_ERROR_LIMIT];
+  static const JSClass protoClasses[JSEXN_ERROR_LIMIT];
 
  protected:
   static const uint32_t EXNTYPE_SLOT = 0;
@@ -51,14 +56,14 @@ class ErrorObject : public NativeObject {
   static const uint32_t RESERVED_SLOTS = TIME_WARP_SLOT + 1;
 
  public:
-  static const Class classes[JSEXN_ERROR_LIMIT];
+  static const JSClass classes[JSEXN_ERROR_LIMIT];
 
-  static const Class* classForType(JSExnType type) {
+  static const JSClass* classForType(JSExnType type) {
     MOZ_ASSERT(type < JSEXN_WARN);
     return &classes[type];
   }
 
-  static bool isErrorClass(const Class* clasp) {
+  static bool isErrorClass(const JSClass* clasp) {
     return &classes[0] <= clasp &&
            clasp < &classes[0] + mozilla::ArrayLength(classes);
   }
@@ -114,11 +119,32 @@ class ErrorObject : public NativeObject {
   static bool setStack_impl(JSContext* cx, const CallArgs& args);
 };
 
+class AggregateErrorObject : public ErrorObject {
+  friend class ErrorObject;
+
+  // [[AggregateErrors]] slot of AggregateErrorObjects.
+  static const uint32_t AGGREGATE_ERRORS_SLOT = ErrorObject::RESERVED_SLOTS;
+  static const uint32_t RESERVED_SLOTS = AGGREGATE_ERRORS_SLOT + 1;
+
+ public:
+  ArrayObject* aggregateErrors() const;
+  void setAggregateErrors(ArrayObject* errors);
+
+  // Getter for the AggregateError.prototype.errors accessor.
+  static bool getErrors(JSContext* cx, unsigned argc, Value* vp);
+  static bool getErrors_impl(JSContext* cx, const CallArgs& args);
+};
+
 }  // namespace js
 
 template <>
 inline bool JSObject::is<js::ErrorObject>() const {
   return js::ErrorObject::isErrorClass(getClass());
+}
+
+template <>
+inline bool JSObject::is<js::AggregateErrorObject>() const {
+  return hasClass(js::ErrorObject::classForType(JSEXN_AGGREGATEERR));
 }
 
 #endif  // vm_ErrorObject_h_

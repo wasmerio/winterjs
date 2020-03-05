@@ -4,7 +4,7 @@
 
 # This module contains code for running an HTTP server to view build info.
 
-from __future__ import absolute_import, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 import BaseHTTPServer
 import json
@@ -18,13 +18,13 @@ class HTTPHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         s = self.server.wrapper
         p = self.path
 
-        if p == '/list':
+        if p == '/build_resources.json':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
 
             keys = sorted(s.json_files.keys())
-            json.dump({'files': keys}, self.wfile)
+            json.dump({'files': ['resources/%s' % k for k in keys]}, self.wfile)
             return
 
         if p.startswith('/resources/'):
@@ -42,7 +42,7 @@ class HTTPHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return
 
         if p == '/':
-            p = '/index.html'
+            p = '/build_resources.html'
 
         self.serve_docroot(s.doc_root, p[1:])
 

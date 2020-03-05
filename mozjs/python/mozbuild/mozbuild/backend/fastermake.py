@@ -5,10 +5,8 @@
 from __future__ import absolute_import, unicode_literals, print_function
 
 from mozbuild.backend.base import PartialBackend
-from mozbuild.backend.common import CommonBackend
-from mozbuild.frontend.context import (
-    ObjDirPath,
-)
+from mozbuild.backend.make import MakeBackend
+from mozbuild.frontend.context import ObjDirPath
 from mozbuild.frontend.data import (
     ChromeManifestEntry,
     FinalTargetPreprocessedFiles,
@@ -25,7 +23,7 @@ from mozpack.manifests import InstallManifest
 import mozpack.path as mozpath
 
 
-class FasterMakeBackend(CommonBackend, PartialBackend):
+class FasterMakeBackend(MakeBackend, PartialBackend):
     def _init(self):
         super(FasterMakeBackend, self)._init()
 
@@ -39,6 +37,7 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
         self._has_xpidl = False
 
         self._generated_files_map = {}
+        self._generated_files = []
 
     def _add_preprocess(self, obj, path, dest, target=None, **kwargs):
         if target is None:
@@ -134,13 +133,13 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
 
         elif isinstance(obj, GeneratedFile):
             if obj.outputs:
-                first_output = mozpath.relpath(mozpath.join(obj.objdir, obj.outputs[0]), self.environment.topobjdir)
+                first_output = mozpath.relpath(mozpath.join(
+                    obj.objdir, obj.outputs[0]), self.environment.topobjdir)
                 for o in obj.outputs[1:]:
                     fullpath = mozpath.join(obj.objdir, o)
-                    self._generated_files_map[mozpath.relpath(fullpath, self.environment.topobjdir)] = first_output
-            # We don't actually handle GeneratedFiles, we just need to know if
-            # we can build multiple of them from a single make invocation in the
-            # faster backend.
+                    self._generated_files_map[mozpath.relpath(
+                        fullpath, self.environment.topobjdir)] = first_output
+            self._generated_files.append(obj)
             return False
 
         elif isinstance(obj, XPIDLModule):
@@ -159,6 +158,11 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
         mk.create_rule(['default'])
         mk.add_statement('TOPSRCDIR = %s' % self.environment.topsrcdir)
         mk.add_statement('TOPOBJDIR = %s' % self.environment.topobjdir)
+        mk.add_statement('MDDEPDIR = .deps')
+        mk.add_statement('TOUCH ?= touch')
+        mk.add_statement('include $(TOPSRCDIR)/config/makefiles/functions.mk')
+        mk.add_statement('include $(TOPSRCDIR)/config/AB_rCD.mk')
+        mk.add_statement('AB_CD = en-US')
         if not self._has_xpidl:
             mk.add_statement('NO_XPIDL = 1')
 
@@ -194,7 +198,6 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
             mk.create_rule([target]).add_dependencies(
                 '$(TOPOBJDIR)/%s' % d for d in deps)
 
-
         # This is not great, but it's better to have some dependencies on these Python files.
         python_deps = [
             '$(TOPSRCDIR)/python/mozbuild/mozbuild/action/l10n_merge.py',
@@ -208,7 +211,14 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
             for (merge, ref_file, l10n_file) in deps:
                 rule = mk.create_rule([merge]).add_dependencies(
                     [ref_file, l10n_file] + python_deps)
-                rule.add_commands(['$(PYTHON) -m mozbuild.action.l10n_merge --output {} --ref-file {} --l10n-file {}'.format(merge, ref_file, l10n_file)])
+                rule.add_commands(
+                    [
+                        '$(PYTHON) -m mozbuild.action.l10n_merge '
+                        '--output {} --ref-file {} --l10n-file {}'.format(
+                            merge, ref_file, l10n_file
+                        )
+                    ]
+                )
                 # Add a dummy rule for the l10n file since it might not exist.
                 mk.create_rule([l10n_file])
 
@@ -220,7 +230,8 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
                                  'install_%s' % base.replace('/', '_'))) as fh:
                 install_manifest.write(fileobj=fh)
 
-        # For artifact builds only, write a single unified manifest for consumption by |mach watch|.
+        # For artifact builds only, write a single unified manifest
+        # for consumption by |mach watch|.
         if self.environment.is_artifact_build:
             unified_manifest = InstallManifest()
             for base, install_manifest in self._install_manifests.iteritems():
@@ -236,7 +247,30 @@ class FasterMakeBackend(CommonBackend, PartialBackend):
                                  'unified_install_dist_bin')) as fh:
                 unified_manifest.write(fileobj=fh)
 
+        for obj in self._generated_files:
+            for stmt in self._format_statements_for_generated_file(obj,
+                                                                   'default'):
+                mk.add_statement(stmt)
+
         with self._write_file(
                 mozpath.join(self.environment.topobjdir, 'faster',
                              'Makefile')) as fh:
             mk.dump(fh, removal_guard=False)
+
+    def _pretty_path(self, path, obj):
+        if path.startswith(self.environment.topobjdir):
+            return mozpath.join(
+                '$(TOPOBJDIR)',
+                mozpath.relpath(path, self.environment.topobjdir))
+        elif path.startswith(self.environment.topsrcdir):
+            return mozpath.join(
+                '$(TOPSRCDIR)',
+                mozpath.relpath(path, self.environment.topsrcdir))
+        else:
+            return path
+
+    def _format_generated_file_input_name(self, path, obj):
+        return self._pretty_path(path.full_path, obj)
+
+    def _format_generated_file_output_name(self, path, obj):
+        return self._pretty_path(mozpath.join(obj.objdir, path), obj)

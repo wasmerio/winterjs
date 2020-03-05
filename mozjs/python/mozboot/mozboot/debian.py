@@ -2,10 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
+from __future__ import absolute_import, print_function, unicode_literals
 
 from mozboot.base import BaseBootstrapper
-from mozboot.linux_common import NasmInstall, NodeInstall, StyloInstall, ClangStaticAnalysisInstall
+from mozboot.linux_common import (
+    ClangStaticAnalysisInstall,
+    NasmInstall,
+    NodeInstall,
+    SccacheInstall,
+    StyloInstall,
+)
 
 
 MERCURIAL_INSTALL_PROMPT = '''
@@ -19,17 +25,14 @@ Mercurial via the "pip" Python packaging utility. This will likely result
 in files being placed in /usr/local/bin and /usr/local/lib.
 
 How would you like to continue?
-
-1) Install a modern Mercurial via pip (recommended)
-2) Install a legacy Mercurial via apt
-3) Do not install Mercurial
-
-Choice:
-'''.strip()
+  1. Install a modern Mercurial via pip (recommended)
+  2. Install a legacy Mercurial via apt
+  3. Do not install Mercurial
+Your choice: '''
 
 
 class DebianBootstrapper(NasmInstall, NodeInstall, StyloInstall, ClangStaticAnalysisInstall,
-                         BaseBootstrapper):
+                         SccacheInstall, BaseBootstrapper):
     # These are common packages for all Debian-derived distros (such as
     # Ubuntu).
     COMMON_PACKAGES = [
@@ -60,7 +63,6 @@ class DebianBootstrapper(NasmInstall, NodeInstall, StyloInstall, ClangStaticAnal
         'libcurl4-openssl-dev',
         'libdbus-1-dev',
         'libdbus-glib-1-dev',
-        'libgconf2-dev',
         'libgtk-3-dev',
         'libgtk2.0-dev',
         'libpulse-dev',
@@ -107,8 +109,8 @@ class DebianBootstrapper(NasmInstall, NodeInstall, StyloInstall, ClangStaticAnal
                             self.which('python3.5')])
 
         if not have_python3:
-            python3_packages = self.check_output([
-                'apt-cache', 'pkgnames', 'python3'])
+            python3_packages = self.check_output(
+                ['apt-cache', 'pkgnames', 'python3'], universal_newlines=True)
             python3_packages = python3_packages.splitlines()
 
             if 'python3' in python3_packages:

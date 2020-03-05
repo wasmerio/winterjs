@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // Copyright (C) 2018 Kevin Gibbons. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---

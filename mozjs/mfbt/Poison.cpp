@@ -14,6 +14,9 @@
 #include "mozilla/Assertions.h"
 #ifdef _WIN32
 #  include <windows.h>
+#  ifdef JS_ENABLE_UWP
+#    include <memoryapi.h>
+#  endif
 #elif !defined(__OS2__)
 #  include <unistd.h>
 #  include <sys/mman.h>

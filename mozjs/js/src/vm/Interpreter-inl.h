@@ -10,10 +10,10 @@
 #include "vm/Interpreter.h"
 
 #include "mozilla/Maybe.h"
+#include "mozilla/WrappingOperations.h"
 
 #include "jsnum.h"
 
-#include "builtin/String.h"
 #include "jit/Ion.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Realm.h"
@@ -25,7 +25,6 @@
 #include "vm/ObjectOperations-inl.h"
 #include "vm/Stack-inl.h"
 #include "vm/StringType-inl.h"
-#include "vm/UnboxedObject-inl.h"
 
 namespace js {
 
@@ -58,9 +57,7 @@ static inline bool GuardFunApplyArgumentsOptimization(JSContext* cx,
   if (args.length() == 2 && IsOptimizedArguments(frame, args[1])) {
     if (!IsNativeFunction(args.calleev(), js::fun_apply)) {
       RootedScript script(cx, frame.script());
-      if (!JSScript::argumentsOptimizationFailed(cx, script)) {
-        return false;
-      }
+      JSScript::argumentsOptimizationFailed(cx, script);
       args[1].setObject(frame.argsObj());
     }
   }
@@ -361,15 +358,8 @@ inline void InitGlobalLexicalOperation(JSContext* cx,
 
 inline bool InitPropertyOperation(JSContext* cx, JSOp op, HandleObject obj,
                                   HandlePropertyName name, HandleValue rhs) {
-  if (obj->is<PlainObject>() || obj->is<JSFunction>()) {
-    unsigned propAttrs = GetInitDataPropAttrs(op);
-    return NativeDefineDataProperty(cx, obj.as<NativeObject>(), name, rhs,
-                                    propAttrs);
-  }
-
-  MOZ_ASSERT(obj->as<UnboxedPlainObject>().layout().lookup(name));
-  RootedId id(cx, NameToId(name));
-  return PutProperty(cx, obj, id, rhs, false);
+  unsigned propAttrs = GetInitDataPropAttrs(op);
+  return DefineDataProperty(cx, obj, name, rhs, propAttrs);
 }
 
 static MOZ_ALWAYS_INLINE bool NegOperation(JSContext* cx,
@@ -573,9 +563,7 @@ static MOZ_ALWAYS_INLINE bool GetElemOptimizedArguments(
     }
 
     RootedScript script(cx, frame.script());
-    if (!JSScript::argumentsOptimizationFailed(cx, script)) {
-      return false;
-    }
+    JSScript::argumentsOptimizationFailed(cx, script);
 
     lref.set(ObjectValue(frame.argsObj()));
   }
@@ -929,7 +917,12 @@ static MOZ_ALWAYS_INLINE bool BitLsh(JSContext* cx, MutableHandleValue lhs,
     return BigInt::lsh(cx, lhs, rhs, out);
   }
 
-  out.setInt32(lhs.toInt32() << (rhs.toInt32() & 31));
+  // Signed left-shift is undefined on overflow, so |lhs << (rhs & 31)| won't
+  // work.  Instead, convert to unsigned space (where overflow is treated
+  // modularly), perform the operation there, then convert back.
+  uint32_t left = static_cast<uint32_t>(lhs.toInt32());
+  uint8_t right = rhs.toInt32() & 31;
+  out.setInt32(mozilla::WrapToSigned(left << right));
   return true;
 }
 

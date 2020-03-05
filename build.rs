@@ -26,6 +26,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXXFLAGS",
     "MAKE",
     "MOZ_TOOLS",
+    "MOZJS_FORCE_RERUN",
     "MOZTOOLS_PATH",
     "PYTHON",
     "STLPORT_LIBS",
@@ -42,6 +43,9 @@ fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
 
+    // https://github.com/servo/servo/issues/14759
+    env::set_var("MOZ_NO_DEBUG_RTL", "1");
+
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let build_dir = out_dir.join("build");
 
@@ -54,20 +58,22 @@ fn main() {
     build_jsglue(&build_dir);
     build_jsapi_bindings(&build_dir);
 
-    for var in ENV_VARS {
-        println!("cargo:rerun-if-env-changed={}", var);
-    }
-
-    for entry in WalkDir::new("mozjs") {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if !ignore(path) {
-            println!("cargo:rerun-if-changed={}", path.display());
+    if env::var_os("MOZJS_FORCE_RERUN").is_none() {
+        for var in ENV_VARS {
+            println!("cargo:rerun-if-env-changed={}", var);
         }
-    }
 
-    for file in EXTRA_FILES {
-        println!("cargo:rerun-if-changed={}", file);
+        for entry in WalkDir::new("mozjs") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if !ignore(path) {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+
+        for file in EXTRA_FILES {
+            println!("cargo:rerun-if-changed={}", file);
+        }
     }
 }
 
@@ -143,6 +149,13 @@ fn build_jsapi(build_dir: &Path) {
 
     let mut cmd = Command::new(make);
 
+    let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
+    let mut cppflags = OsString::from("-I");
+    cppflags.push(OsString::from(encoding_c_mem_include_dir.replace("\\", "/")));
+    cppflags.push(" ");
+    cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
+    cmd.env("CPPFLAGS", cppflags);
+
     // We're using the MSYS make which doesn't work with the mingw32-make-style
     // MAKEFLAGS, so remove that from the env if present.
     if target.contains("windows") {
@@ -162,6 +175,7 @@ fn build_jsapi(build_dir: &Path) {
         .arg(cargo_manifest_dir.join("makefile.cargo"))
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
+        .env("NO_RUST_PANIC_HOOK", "1")
         .status()
         .expect("Failed to run `make`");
     assert!(result.success());
@@ -229,12 +243,13 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::METHODS;
 
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_25)
+        .rust_target(bindgen::RustTarget::Stable_1_40)
         .header("./src/jsglue.hpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
         // similar ergonomics but avoids some potential Rust UB footguns.
         .rustified_enum(".*")
+        .size_t_is_usize(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
         .rustfmt_bindings(true)
@@ -352,10 +367,8 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
     "JS::Auto.*Impl",
-    "JS::Auto.*Vector.*",
+    "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
-    "JS::ReadOnlyCompileOptions",
-    "JS::Rooted<JS::Auto.*Vector.*>",
     "JS::detail::CallArgsBase.*",
     "js::detail::UniqueSelector.*",
     "mozilla::BufferList",
@@ -378,15 +391,15 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // We provide our own definition because SM's use of templates
     // is more than bindgen can cope with.
     "JS::Rooted",
-    // Bindgen generates bitfields with private fields, so they cannot
-    // be used in const expressions.
-    "JSJitInfo",
+    // We don't need them and bindgen doesn't like them.
+    "JS::HandleVector",
+    "JS::MutableHandleVector",
+    "JS::Rooted.*Vector",
 ];
 
 /// Definitions for types that were blacklisted
 const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type FILE = ::libc::FILE;"),
-    ("root", "pub type JSJitInfo = ::jsjit::JSJitInfo;"),
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
 ];
@@ -394,6 +407,13 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
 /// Rerun this build script if files under mozjs/ changed, unless this returns true.
 /// Keep this in sync with .gitignore
 fn ignore(path: &Path) -> bool {
+    // Python pollutes a bunch of source directories with pyc and so files,
+    // making cargo believe that the crate needs a rebuild just because a
+    // directory's mtime changed.
+    if path.is_dir() {
+        return true;
+    }
+
     let ignored_extensions = ["pyc", "so", "dll", "dylib"];
     let ignored_trailing_paths = [["psutil", "build"], ["psutil", "tmp"]];
 

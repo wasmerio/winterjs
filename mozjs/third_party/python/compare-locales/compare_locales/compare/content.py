@@ -13,7 +13,7 @@ import re
 
 from compare_locales import parser
 from compare_locales import mozpath
-from compare_locales.checks import getChecker
+from compare_locales.checks import getChecker, EntityPos
 from compare_locales.keyedtuple import KeyedTuple
 
 from .observer import ObserverList
@@ -195,11 +195,9 @@ class ContentComparer:
                 if isinstance(l10n_entities[entity_id],
                               parser.Junk):
                     junk = l10n_entities[entity_id]
-                    params = (junk.val,) + junk.position() + junk.position(-1)
                     self.observers.notify(
                         'error', l10n,
-                        'Unparsed content "%s" from line %d column %d'
-                        ' to line %d column %d' % params
+                        junk.error_message()
                     )
                     if merge_file is not None:
                         skips.append(junk)
@@ -226,7 +224,10 @@ class ContentComparer:
                         # run checks:
                 if checker:
                     for tp, pos, msg, cat in checker.check(refent, l10nent):
-                        line, col = l10nent.value_position(pos)
+                        if isinstance(pos, EntityPos):
+                            line, col = l10nent.position(pos)
+                        else:
+                            line, col = l10nent.value_position(pos)
                         # skip error entities when merging
                         if tp == 'error' and merge_file is not None:
                             skips.append(l10nent)

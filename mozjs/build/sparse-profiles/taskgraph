@@ -56,3 +56,19 @@ path:.cron.yml
 
 # for the wrench-deps toolchain task
 path:gfx/wr/Cargo.lock
+
+# for the mar-tools toolchain task
+path:mfbt/
+path:modules/libmar/
+path:other-licenses/bsdiff/
+path:other-licenses/nsis/Contrib/CityHash/cityhash/
+path:toolkit/mozapps/update/updater
+
+# for the browsertime toolchain task
+path:tools/browsertime/mach_commands.py
+path:tools/browsertime/package.json
+
+# for the geckodriver toolchain task
+path:testing/geckodriver
+path:testing/mozbase/rust
+path:testing/webdriver

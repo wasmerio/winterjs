@@ -11,8 +11,6 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/TextUtils.h"
 
-#include <ctype.h>
-
 #include "jsnum.h"
 
 #include "builtin/Array.h"
@@ -23,7 +21,9 @@
 
 using namespace js;
 
+using mozilla::AsciiAlphanumericToNumber;
 using mozilla::IsAsciiDigit;
+using mozilla::IsAsciiHexDigit;
 using mozilla::RangedPtr;
 
 JSONParserBase::~JSONParserBase() {
@@ -77,7 +77,7 @@ void JSONParser<CharT>::getTextPosition(uint32_t* column, uint32_t* line) {
 
 template <typename CharT>
 void JSONParser<CharT>::error(const char* msg) {
-  if (errorHandling == RaiseError) {
+  if (parseType == ParseType::JSONParse) {
     uint32_t column = 1, line = 1;
     getTextPosition(&column, &line);
 
@@ -93,7 +93,9 @@ void JSONParser<CharT>::error(const char* msg) {
   }
 }
 
-bool JSONParserBase::errorReturn() { return errorHandling == NoError; }
+bool JSONParserBase::errorReturn() {
+  return parseType == ParseType::AttemptForEval;
+}
 
 template <typename CharT>
 template <JSONParserBase::StringType ST>
@@ -120,9 +122,10 @@ JSONParserBase::Token JSONParser<CharT>::readString() {
     if (*current == '"') {
       size_t length = current - start;
       current++;
-      JSFlatString* str = (ST == JSONParser::PropertyName)
-                              ? AtomizeChars(cx, start.get(), length)
-                              : NewStringCopyN<CanGC>(cx, start.get(), length);
+      JSLinearString* str =
+          (ST == JSONParser::PropertyName)
+              ? AtomizeChars(cx, start.get(), length)
+              : NewStringCopyN<CanGC>(cx, start.get(), length);
       if (!str) {
         return token(OOM);
       }
@@ -144,7 +147,7 @@ JSONParserBase::Token JSONParser<CharT>::readString() {
    * of unescaped characters into a temporary buffer, then an escaped
    * character, and repeat until the entire string is consumed.
    */
-  StringBuffer buffer(cx);
+  JSStringBuilder buffer(cx);
   do {
     if (start < current && !buffer.append(start.get(), current.get())) {
       return token(OOM);
@@ -156,9 +159,9 @@ JSONParserBase::Token JSONParser<CharT>::readString() {
 
     char16_t c = *current++;
     if (c == '"') {
-      JSFlatString* str = (ST == JSONParser::PropertyName)
-                              ? buffer.finishAtom()
-                              : buffer.finishString();
+      JSLinearString* str = (ST == JSONParser::PropertyName)
+                                ? buffer.finishAtom()
+                                : buffer.finishString();
       if (!str) {
         return token(OOM);
       }
@@ -203,17 +206,17 @@ JSONParserBase::Token JSONParser<CharT>::readString() {
 
       case 'u':
         if (end - current < 4 ||
-            !(JS7_ISHEX(current[0]) && JS7_ISHEX(current[1]) &&
-              JS7_ISHEX(current[2]) && JS7_ISHEX(current[3]))) {
+            !(IsAsciiHexDigit(current[0]) && IsAsciiHexDigit(current[1]) &&
+              IsAsciiHexDigit(current[2]) && IsAsciiHexDigit(current[3]))) {
           // Point to the first non-hexadecimal character (which may be
           // missing).
-          if (current == end || !JS7_ISHEX(current[0])) {
+          if (current == end || !IsAsciiHexDigit(current[0])) {
             ;  // already at correct location
-          } else if (current + 1 == end || !JS7_ISHEX(current[1])) {
+          } else if (current + 1 == end || !IsAsciiHexDigit(current[1])) {
             current += 1;
-          } else if (current + 2 == end || !JS7_ISHEX(current[2])) {
+          } else if (current + 2 == end || !IsAsciiHexDigit(current[2])) {
             current += 2;
-          } else if (current + 3 == end || !JS7_ISHEX(current[3])) {
+          } else if (current + 3 == end || !IsAsciiHexDigit(current[3])) {
             current += 3;
           } else {
             MOZ_CRASH("logic error determining first erroneous character");
@@ -222,8 +225,10 @@ JSONParserBase::Token JSONParser<CharT>::readString() {
           error("bad Unicode escape");
           return token(Error);
         }
-        c = (JS7_UNHEX(current[0]) << 12) | (JS7_UNHEX(current[1]) << 8) |
-            (JS7_UNHEX(current[2]) << 4) | (JS7_UNHEX(current[3]));
+        c = (AsciiAlphanumericToNumber(current[0]) << 12) |
+            (AsciiAlphanumericToNumber(current[1]) << 8) |
+            (AsciiAlphanumericToNumber(current[2]) << 4) |
+            (AsciiAlphanumericToNumber(current[3]));
         current += 4;
         break;
 
@@ -295,7 +300,8 @@ JSONParserBase::Token JSONParser<CharT>::readNumber() {
     }
 
     double d;
-    if (!GetFullInteger(cx, digitStart.get(), current.get(), 10, &d)) {
+    if (!GetFullInteger(cx, digitStart.get(), current.get(), 10,
+                        IntegerSeparatorHandling::None, &d)) {
       return token(OOM);
     }
     return numberToken(negative ? -d : d);
@@ -663,6 +669,17 @@ bool JSONParser<CharT>::parse(MutableHandleValue vp) {
       JSONMember:
         if (token == String) {
           jsid id = AtomToId(atomValue());
+          if (parseType == ParseType::AttemptForEval) {
+            // In |JSON.parse|, "__proto__" is a property like any other and may
+            // appear multiple times. In object literal syntax, "__proto__" is
+            // prototype mutation and can appear at most once. |JSONParser| only
+            // supports the former semantics, so if this parse attempt is for
+            // |eval|, return true (without reporting an error) to indicate the
+            // JSON parse attempt was unsuccessful.
+            if (id == NameToId(cx->names().proto)) {
+              return true;
+            }
+          }
           PropertyVector& properties = stack.back().properties();
           if (!properties.append(IdValuePair(id))) {
             return false;

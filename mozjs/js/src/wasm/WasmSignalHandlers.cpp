@@ -23,6 +23,7 @@
 #include "mozilla/ThreadLocal.h"
 
 #include "threading/Thread.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/Realm.h"
 #include "vm/Runtime.h"
 #include "wasm/WasmInstance.h"
@@ -136,7 +137,7 @@ using mozilla::DebugOnly;
 #    define EPC_sig(p) ((p)->uc_mcontext.pc)
 #    define RFP_sig(p) ((p)->uc_mcontext.regs[29])
 #    define RLR_sig(p) ((p)->uc_mcontext.regs[30])
-#    define R31_sig(p) ((p)->uc_mcontext.regs[31])
+#    define R31_sig(p) ((p)->uc_mcontext.sp)
 #  endif
 #  if defined(__linux__) && defined(__mips__)
 #    define EPC_sig(p) ((p)->uc_mcontext.pc)

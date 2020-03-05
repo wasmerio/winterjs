@@ -8,12 +8,12 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "jsutil.h"
 #include "NamespaceImports.h"
 
 #include "gc/GCInternals.h"
 #include "gc/PublicIterators.h"
 #include "gc/Zone.h"
+#include "util/Memory.h"
 #include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/JSFunction.h"
@@ -37,23 +37,28 @@ void CheckTracedThing(JSTracer* trc, T thing);
 }  // namespace js
 
 /*** Callback Tracer Dispatch ***********************************************/
-
 template <typename T>
-T* DoCallback(JS::CallbackTracer* trc, T** thingp, const char* name) {
+bool DoCallback(JS::CallbackTracer* trc, T** thingp, const char* name) {
   CheckTracedThing(trc, *thingp);
   JS::AutoTracingName ctx(trc, name);
-  trc->dispatchToOnEdge(thingp);
-  return *thingp;
+
+  return trc->dispatchToOnEdge(thingp);
 }
-#define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(name, type, _) \
-  template type* DoCallback<type>(JS::CallbackTracer*, type**, const char*);
+#define INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS(name, type, _, _1) \
+  template bool DoCallback<type>(JS::CallbackTracer*, type**, const char*);
 JS_FOR_EACH_TRACEKIND(INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS);
 #undef INSTANTIATE_ALL_VALID_TRACE_FUNCTIONS
 
 template <typename T>
-T DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
-  auto thing = MapGCThingTyped(*thingp, [trc, name](auto t) {
-    return TaggedPtr<T>::wrap(DoCallback(trc, &t, name));
+bool DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
+  // Return true by default. For some types the lambda below won't be called.
+  bool ret = true;
+  auto thing = MapGCThingTyped(*thingp, [trc, name, &ret](auto t) {
+    if (!DoCallback(trc, &t, name)) {
+      ret = false;
+      return TaggedPtr<T>::empty();
+    }
+    return TaggedPtr<T>::wrap(t);
   });
   // Only update *thingp if the value changed, to avoid TSan false positives for
   // template objects when using DumpHeapTracer or UbiNode tracers while Ion
@@ -61,15 +66,14 @@ T DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name) {
   if (thing.isSome() && thing.value() != *thingp) {
     *thingp = thing.value();
   }
-  return *thingp;
+  return ret;
 }
-template JS::Value DoCallback<JS::Value>(JS::CallbackTracer*, JS::Value*,
-                                         const char*);
-template JS::PropertyKey DoCallback<JS::PropertyKey>(JS::CallbackTracer*,
-                                                     JS::PropertyKey*,
-                                                     const char*);
-template TaggedProto DoCallback<TaggedProto>(JS::CallbackTracer*, TaggedProto*,
-                                             const char*);
+template bool DoCallback<JS::Value>(JS::CallbackTracer*, JS::Value*,
+                                    const char*);
+template bool DoCallback<JS::PropertyKey>(JS::CallbackTracer*, JS::PropertyKey*,
+                                          const char*);
+template bool DoCallback<TaggedProto>(JS::CallbackTracer*, TaggedProto*,
+                                      const char*);
 
 void JS::CallbackTracer::getTracingEdgeName(char* buffer, size_t bufferSize) {
   MOZ_ASSERT(bufferSize > 0);
@@ -102,20 +106,26 @@ void js::TraceChildren(JSTracer* trc, void* thing, JS::TraceKind kind) {
 
 JS_PUBLIC_API void JS::TraceIncomingCCWs(
     JSTracer* trc, const JS::CompartmentSet& compartments) {
-  for (js::CompartmentsIter comp(trc->runtime()); !comp.done(); comp.next()) {
-    if (compartments.has(comp)) {
+  for (CompartmentsIter source(trc->runtime()); !source.done(); source.next()) {
+    if (compartments.has(source)) {
       continue;
     }
-
-    for (Compartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
-      mozilla::DebugOnly<const CrossCompartmentKey> prior = e.front().key();
-      e.front().mutableKey().applyToWrapped([trc, &compartments](auto tp) {
-        Compartment* comp = (*tp)->maybeCompartment();
-        if (comp && compartments.has(comp)) {
-          TraceManuallyBarrieredEdge(trc, tp, "cross-compartment wrapper");
-        }
-      });
-      MOZ_ASSERT(e.front().key() == prior);
+    // Iterate over all compartments that |source| has wrappers for.
+    for (Compartment::WrappedObjectCompartmentEnum dest(source); !dest.empty();
+         dest.popFront()) {
+      if (!compartments.has(dest)) {
+        continue;
+      }
+      // Iterate over all wrappers from |source| to |dest| compartments.
+      for (Compartment::ObjectWrapperEnum e(source, dest); !e.empty();
+           e.popFront()) {
+        JSObject* obj = e.front().key();
+        MOZ_ASSERT(compartments.has(obj->compartment()));
+        mozilla::DebugOnly<JSObject*> prior = obj;
+        TraceManuallyBarrieredEdge(trc, &obj,
+                                   "cross-compartment wrapper target");
+        MOZ_ASSERT(obj == prior);
+      }
     }
   }
 }
@@ -157,76 +167,11 @@ void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
   } while (shape);
 }
 
-// Object groups can point to other object groups via an UnboxedLayout or the
-// the original unboxed group link. There can potentially be deep or cyclic
-// chains of such groups to trace through without going through a thing that
-// participates in cycle collection. These need to be handled iteratively to
-// avoid blowing the stack when running the cycle collector's callback tracer.
-struct ObjectGroupCycleCollectorTracer : public JS::CallbackTracer {
-  explicit ObjectGroupCycleCollectorTracer(JS::CallbackTracer* innerTracer)
-      : JS::CallbackTracer(innerTracer->runtime(), DoNotTraceWeakMaps),
-        innerTracer(innerTracer) {}
-
-  void onChild(const JS::GCCellPtr& thing) override;
-
-  JS::CallbackTracer* innerTracer;
-  Vector<ObjectGroup*, 4, SystemAllocPolicy> seen, worklist;
-};
-
-void ObjectGroupCycleCollectorTracer::onChild(const JS::GCCellPtr& thing) {
-  if (thing.is<BaseShape>()) {
-    // The CC does not care about BaseShapes, and no additional GC things
-    // will be reached by following this edge.
-    return;
-  }
-
-  if (thing.is<JSObject>() || thing.is<JSScript>()) {
-    // Invoke the inner cycle collector callback on this child. It will not
-    // recurse back into TraceChildren.
-    innerTracer->onChild(thing);
-    return;
-  }
-
-  if (thing.is<ObjectGroup>()) {
-    // If this group is required to be in an ObjectGroup chain, trace it
-    // via the provided worklist rather than continuing to recurse.
-    ObjectGroup& group = thing.as<ObjectGroup>();
-    AutoSweepObjectGroup sweep(&group);
-    if (group.maybeUnboxedLayout(sweep)) {
-      for (size_t i = 0; i < seen.length(); i++) {
-        if (seen[i] == &group) {
-          return;
-        }
-      }
-      if (seen.append(&group) && worklist.append(&group)) {
-        return;
-      } else {
-        // If append fails, keep tracing normally. The worst that will
-        // happen is we end up overrecursing.
-      }
-    }
-  }
-
-  TraceChildren(this, thing.asCell(), thing.kind());
-}
-
 void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc,
                                      ObjectGroup* group) {
   MOZ_ASSERT(trc->isCallbackTracer());
 
-  // Early return if this group is not required to be in an ObjectGroup chain.
-  AutoSweepObjectGroup sweep(group);
-  if (!group->maybeUnboxedLayout(sweep)) {
-    return group->traceChildren(trc);
-  }
-
-  ObjectGroupCycleCollectorTracer groupTracer(trc->asCallbackTracer());
-  group->traceChildren(&groupTracer);
-
-  while (!groupTracer.worklist.empty()) {
-    ObjectGroup* innerGroup = groupTracer.worklist.popCopy();
-    innerGroup->traceChildren(&groupTracer);
-  }
+  group->traceChildren(trc);
 }
 
 /*** Traced Edge Printer ****************************************************/
@@ -251,28 +196,25 @@ static const char* StringKindHeader(JSString* str) {
     return "atom: ";
   }
 
-  if (str->isFlat()) {
-    if (str->isExtensible()) {
-      return "extensible: ";
+  if (str->isExtensible()) {
+    return "extensible: ";
+  }
+
+  if (str->isInline()) {
+    if (str->isFatInline()) {
+      return "fat inline: ";
     }
-    if (str->isUndepended()) {
-      return "undepended: ";
-    }
-    if (str->isInline()) {
-      if (str->isFatInline()) {
-        return "fat inline: ";
-      }
-      return "inline: ";
-    }
-    return "flat: ";
+    return "inline: ";
   }
 
   if (str->isDependent()) {
     return "dependent: ";
   }
+
   if (str->isExternal()) {
     return "external: ";
   }
+
   return "linear: ";
 }
 

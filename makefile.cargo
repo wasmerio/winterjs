@@ -7,9 +7,9 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
+	--disable-export-js \
 	--disable-shared-js \
-	--build-backends=RecursiveMake \
-        --enable-posix-nspr-emulation
+	--build-backends=RecursiveMake
 
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
@@ -156,12 +156,6 @@ else ifeq ($(MSYSTEM),MINGW64)
 	# Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
 	# to exist
 	MOZ_TOOLS=/
-
-	# We don't need to build shared JS, and we need to disable export attrs
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
-else
-	# We don't need to build shared JS
-	CONFIGURE_FLAGS += --disable-shared-js
 endif
 
 # If we need to do extra work to find an appropriate python on
@@ -199,7 +193,5 @@ maybe-configure:
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
 	  AS="$(AS)" AR="$(AR)" \
 	  STLPORT_LIBS="$(STLPORT_LIBS)" \
-	  RUST_TARGET="$(TARGET)" RUST_HOST="$(HOST)" \
-	  RUST_SYSROOT="${RUST_SYSROOT}" \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi

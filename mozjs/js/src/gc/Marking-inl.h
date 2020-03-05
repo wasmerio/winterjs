@@ -12,9 +12,10 @@
 #include "mozilla/Maybe.h"
 
 #include "gc/RelocationOverlay.h"
-
 #include "vm/BigIntType.h"
 #include "vm/RegExpShared.h"
+
+#include "gc/Nursery-inl.h"
 
 namespace js {
 namespace gc {
@@ -36,6 +37,7 @@ struct TaggedPtr<JS::Value> {
                   "Type must be a GC thing derived from js::gc::Cell");
     return JS::PrivateGCThingValue(priv);
   }
+  static JS::Value empty() { return JS::UndefinedValue(); }
 };
 
 template <>
@@ -44,11 +46,13 @@ struct TaggedPtr<jsid> {
     return NON_INTEGER_ATOM_TO_JSID(&str->asAtom());
   }
   static jsid wrap(JS::Symbol* sym) { return SYMBOL_TO_JSID(sym); }
+  static jsid empty() { return JSID_VOID; }
 };
 
 template <>
 struct TaggedPtr<TaggedProto> {
   static TaggedProto wrap(JSObject* obj) { return TaggedProto(obj); }
+  static TaggedProto empty() { return TaggedProto(); }
 };
 
 template <typename T>
@@ -116,6 +120,16 @@ inline void RelocationOverlay::forwardTo(Cell* cell) {
   dataWithTag_ = uintptr_t(cell) | gcFlags | Cell::FORWARD_BIT;
 }
 
+inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell** cellp) {
+  MOZ_ASSERT(JS::RuntimeHeapIsMinorCollecting());
+
+  if ((*cellp)->isTenured()) {
+    return false;
+  }
+
+  return !Nursery::getForwardedPointer(cellp);
+}
+
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 template <typename T>
@@ -131,7 +145,7 @@ inline void CheckGCThingAfterMovingGC(T* t) {
 }
 
 template <typename T>
-inline void CheckGCThingAfterMovingGC(const ReadBarriered<T*>& t) {
+inline void CheckGCThingAfterMovingGC(const WeakHeapPtr<T*>& t) {
   CheckGCThingAfterMovingGC(t.unbarrieredGet());
 }
 

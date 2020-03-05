@@ -10,6 +10,7 @@
 #include "gc/ArenaList.h"
 
 #include "gc/Heap.h"
+#include "gc/Zone.h"
 
 void js::gc::SortedArenaListSegment::append(Arena* arena) {
   MOZ_ASSERT(arena);
@@ -311,16 +312,12 @@ void js::gc::ArenaLists::checkEmptyFreeLists() {
   MOZ_ASSERT(freeLists().allEmpty());
 }
 
-bool js::gc::ArenaLists::checkEmptyArenaLists() {
-  bool empty = true;
+void js::gc::ArenaLists::checkEmptyArenaLists() {
 #ifdef DEBUG
   for (auto i : AllAllocKinds()) {
-    if (!checkEmptyArenaList(i)) {
-      empty = false;
-    }
+    checkEmptyArenaList(i);
   }
 #endif
-  return empty;
 }
 
 #endif  // gc_ArenaList_inl_h

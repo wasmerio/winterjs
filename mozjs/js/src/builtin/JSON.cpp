@@ -11,13 +11,13 @@
 #include "mozilla/Range.h"
 #include "mozilla/ScopeExit.h"
 
+#include <algorithm>
+
 #include "jsnum.h"
 #include "jstypes.h"
-#include "jsutil.h"
 
 #include "builtin/Array.h"
 #include "builtin/BigInt.h"
-#include "builtin/String.h"
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
 #include "util/StringBuffer.h"
@@ -40,9 +40,6 @@ using mozilla::Maybe;
 using mozilla::RangedPtr;
 
 using JS::AutoStableStringChars;
-
-const Class js::JSONClass = {js_JSON_str,
-                             JSCLASS_HAS_CACHED_PROTO(JSProto_JSON)};
 
 /* ES5 15.12.3 Quote.
  * Requires that the destination has enough space allocated for src after
@@ -138,34 +135,19 @@ static MOZ_ALWAYS_INLINE RangedPtr<DstCharT> InfallibleQuote(
   return dstPtr;
 }
 
-template <typename SrcCharT, typename CharVectorT>
-static bool Quote(JSContext* cx, CharVectorT& sb, JSLinearString* str) {
-  // We resize the backing buffer to the maximum size we could possibly need,
-  // write the escaped string into it, and shrink it back to the size we ended
-  // up needing.
-
-  size_t len = str->length();
-  CheckedInt<size_t> reservedLen = CheckedInt<size_t>(len) * 6 + 2;
-  if (MOZ_UNLIKELY(!reservedLen.isValid())) {
-    ReportAllocationOverflow(cx);
-    return false;
-  }
-
-  size_t sbInitialLen = sb.length();
-  if (!sb.growByUninitialized(reservedLen.value())) {
-    return false;
-  }
-
-  typedef typename CharVectorT::ElementType DstCharT;
+template <typename SrcCharT, typename DstCharT>
+static size_t QuoteHelper(const JSLinearString& linear, StringBuffer& sb,
+                          size_t sbOffset) {
+  size_t len = linear.length();
 
   JS::AutoCheckCannotGC nogc;
-  RangedPtr<const SrcCharT> srcBegin{str->chars<SrcCharT>(nogc), len};
-  RangedPtr<DstCharT> dstBegin{sb.begin(), sb.begin(), sb.end()};
+  RangedPtr<const SrcCharT> srcBegin{linear.chars<SrcCharT>(nogc), len};
+  RangedPtr<DstCharT> dstBegin{sb.begin<DstCharT>(), sb.begin<DstCharT>(),
+                               sb.end<DstCharT>()};
   RangedPtr<DstCharT> dstEnd =
-      InfallibleQuote(srcBegin, srcBegin + len, dstBegin + sbInitialLen);
-  size_t newSize = dstEnd - dstBegin;
-  sb.shrinkTo(newSize);
-  return true;
+      InfallibleQuote(srcBegin, srcBegin + len, dstBegin + sbOffset);
+
+  return dstEnd - dstBegin;
 }
 
 static bool Quote(JSContext* cx, StringBuffer& sb, JSString* str) {
@@ -174,20 +156,40 @@ static bool Quote(JSContext* cx, StringBuffer& sb, JSString* str) {
     return false;
   }
 
-  // Check if either has non-latin1 before calling ensure, so that the buffer's
-  // hasEnsured flag is set if the converstion to twoByte was automatic.
-  if (!sb.isUnderlyingBufferLatin1() || linear->hasTwoByteChars()) {
-    if (!sb.ensureTwoByteChars()) {
-      return false;
-    }
-  }
-  if (linear->hasTwoByteChars()) {
-    return Quote<char16_t>(cx, sb.rawTwoByteBuffer(), linear);
+  if (linear->hasTwoByteChars() && !sb.ensureTwoByteChars()) {
+    return false;
   }
 
-  return sb.isUnderlyingBufferLatin1()
-             ? Quote<Latin1Char>(cx, sb.latin1Chars(), linear)
-             : Quote<Latin1Char>(cx, sb.rawTwoByteBuffer(), linear);
+  // We resize the backing buffer to the maximum size we could possibly need,
+  // write the escaped string into it, and shrink it back to the size we ended
+  // up needing.
+
+  size_t len = linear->length();
+  size_t sbInitialLen = sb.length();
+
+  CheckedInt<size_t> reservedLen = CheckedInt<size_t>(len) * 6 + 2;
+  if (MOZ_UNLIKELY(!reservedLen.isValid())) {
+    ReportAllocationOverflow(cx);
+    return false;
+  }
+
+  if (!sb.growByUninitialized(reservedLen.value())) {
+    return false;
+  }
+
+  size_t newSize;
+
+  if (linear->hasTwoByteChars()) {
+    newSize = QuoteHelper<char16_t, char16_t>(*linear, sb, sbInitialLen);
+  } else if (sb.isUnderlyingBufferLatin1()) {
+    newSize = QuoteHelper<Latin1Char, Latin1Char>(*linear, sb, sbInitialLen);
+  } else {
+    newSize = QuoteHelper<Latin1Char, char16_t>(*linear, sb, sbInitialLen);
+  }
+
+  sb.shrinkTo(newSize);
+
+  return true;
 }
 
 namespace {
@@ -197,7 +199,7 @@ using ObjectVector = GCVector<JSObject*, 8>;
 class StringifyContext {
  public:
   StringifyContext(JSContext* cx, StringBuffer& sb, const StringBuffer& gap,
-                   HandleObject replacer, const AutoIdVector& propertyList,
+                   HandleObject replacer, const RootedIdVector& propertyList,
                    bool maybeSafely)
       : sb(sb),
         gap(gap),
@@ -214,7 +216,7 @@ class StringifyContext {
   const StringBuffer& gap;
   RootedObject replacer;
   Rooted<ObjectVector> stack;
-  const AutoIdVector& propertyList;
+  const RootedIdVector& propertyList;
   uint32_t depth;
   bool maybeSafely;
 };
@@ -435,8 +437,8 @@ static bool JO(JSContext* cx, HandleObject obj, StringifyContext* scx) {
   }
 
   /* Steps 5-7. */
-  Maybe<AutoIdVector> ids;
-  const AutoIdVector* props;
+  Maybe<RootedIdVector> ids;
+  const RootedIdVector* props;
   if (scx->replacer && !scx->replacer->isCallable()) {
     // NOTE: We can't assert |IsArray(scx->replacer)| because the replacer
     //       might have been a revocable proxy to an array.  Such a proxy
@@ -454,7 +456,7 @@ static bool JO(JSContext* cx, HandleObject obj, StringifyContext* scx) {
   }
 
   /* My kingdom for not-quite-initialized-from-the-start references. */
-  const AutoIdVector& propertyList = *props;
+  const RootedIdVector& propertyList = *props;
 
   /* Steps 8-10, 13. */
   bool wroteMember = false;
@@ -477,7 +479,9 @@ static bool JO(JSContext* cx, HandleObject obj, StringifyContext* scx) {
     if (scx->maybeSafely) {
       RootedNativeObject nativeObj(cx, &obj->as<NativeObject>());
       Rooted<PropertyResult> prop(cx);
-      NativeLookupOwnPropertyNoResolve(cx, nativeObj, id, &prop);
+      if (!NativeLookupOwnPropertyNoResolve(cx, nativeObj, id, &prop)) {
+        return false;
+      }
       MOZ_ASSERT(prop && prop.isNativeProperty() &&
                  prop.shape()->isDataDescriptor());
     }
@@ -725,7 +729,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
              "input to JS::ToJSONMaybeSafely must be a plain object or array");
 
   /* Step 4. */
-  AutoIdVector propertyList(cx);
+  RootedIdVector propertyList(cx);
   if (replacer) {
     bool isArray;
     if (replacer->isCallable()) {
@@ -747,7 +751,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
       // size, the set will naturally resize to accommodate them.
       const uint32_t MaxInitialSize = 32;
       Rooted<GCHashSet<jsid>> idSet(
-          cx, GCHashSet<jsid>(cx, Min(len, MaxInitialSize)));
+          cx, GCHashSet<jsid>(cx, std::min(len, MaxInitialSize)));
 
       /* Step 4b(iii)(4). */
       uint32_t k = 0;
@@ -825,7 +829,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
     /* Step 6. */
     double d;
     MOZ_ALWAYS_TRUE(ToInteger(cx, space, &d));
-    d = Min(10.0, d);
+    d = std::min(10.0, d);
     if (d >= 1 && !gap.appendN(' ', uint32_t(d))) {
       return false;
     }
@@ -835,7 +839,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
     if (!str) {
       return false;
     }
-    size_t len = Min(size_t(10), str->length());
+    size_t len = std::min(size_t(10), str->length());
     if (!gap.appendSubstring(str, 0, len)) {
       return false;
     }
@@ -938,7 +942,7 @@ static bool Walk(JSContext* cx, HandleObject holder, HandleId name,
       }
     } else {
       /* Step 2b(i). */
-      AutoIdVector keys(cx);
+      RootedIdVector keys(cx);
       if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, &keys)) {
         return false;
       }
@@ -1004,7 +1008,8 @@ bool js::ParseJSONWithReviver(JSContext* cx,
                               const mozilla::Range<const CharT> chars,
                               HandleValue reviver, MutableHandleValue vp) {
   /* 15.12.2 steps 2-3. */
-  Rooted<JSONParser<CharT>> parser(cx, JSONParser<CharT>(cx, chars));
+  Rooted<JSONParser<CharT>> parser(
+      cx, JSONParser<CharT>(cx, chars, JSONParserBase::ParseType::JSONParse));
   if (!parser.parse(vp)) {
     return false;
   }
@@ -1070,7 +1075,7 @@ bool json_stringify(JSContext* cx, unsigned argc, Value* vp) {
   RootedValue value(cx, args.get(0));
   RootedValue space(cx, args.get(2));
 
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
   if (!Stringify(cx, &value, replacer, space, sb, StringifyBehavior::Normal)) {
     return false;
   }
@@ -1096,30 +1101,21 @@ static const JSFunctionSpec json_static_methods[] = {
     JS_FN("parse", json_parse, 2, 0), JS_FN("stringify", json_stringify, 3, 0),
     JS_FS_END};
 
-JSObject* js::InitJSONClass(JSContext* cx, Handle<GlobalObject*> global) {
+static const JSPropertySpec json_static_properties[] = {
+    JS_STRING_SYM_PS(toStringTag, "JSON", JSPROP_READONLY), JS_PS_END};
+
+static JSObject* CreateJSONObject(JSContext* cx, JSProtoKey key) {
+  Handle<GlobalObject*> global = cx->global();
   RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
   if (!proto) {
     return nullptr;
   }
-  RootedObject JSON(
-      cx, NewObjectWithGivenProto(cx, &JSONClass, proto, SingletonObject));
-  if (!JSON) {
-    return nullptr;
-  }
-
-  if (!JS_DefineProperty(cx, global, js_JSON_str, JSON, JSPROP_RESOLVING)) {
-    return nullptr;
-  }
-
-  if (!JS_DefineFunctions(cx, JSON, json_static_methods)) {
-    return nullptr;
-  }
-
-  if (!DefineToStringTag(cx, JSON, cx->names().JSON)) {
-    return nullptr;
-  }
-
-  global->setConstructor(JSProto_JSON, ObjectValue(*JSON));
-
-  return JSON;
+  return NewObjectWithGivenProto(cx, &JSONClass, proto, SingletonObject);
 }
+
+static const ClassSpec JSONClassSpec = {
+    CreateJSONObject, nullptr, json_static_methods, json_static_properties};
+
+const JSClass js::JSONClass = {js_JSON_str,
+                               JSCLASS_HAS_CACHED_PROTO(JSProto_JSON),
+                               JS_NULL_CLASS_OPS, &JSONClassSpec};

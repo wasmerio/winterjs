@@ -121,6 +121,7 @@ void exitJsDirectory() {
 
 #endif  // defined(XP_UNIX) || defined(XP_WIN)
 
+// Read a full file (binary).
 void readFull(const char* path, js::Vector<uint8_t>& buf) {
   enterJsDirectory();
   buf.shrinkTo(0);
@@ -150,7 +151,9 @@ void readFull(const char* path, js::Vector<uint8_t>& buf) {
   exitJsDirectory();
 }
 
-void readFull(JSContext* cx, const char* path, js::Vector<char16_t>& buf) {
+// Read a full file (text)
+void readFull(JSContext* cx, const char* path,
+              js::Vector<mozilla::Utf8Unit>& buf) {
   buf.shrinkTo(0);
 
   js::Vector<uint8_t> intermediate(cx);
@@ -240,13 +243,11 @@ void runTestFromPath(JSContext* cx, const char* path) {
       continue;
     }
 
-    {
-      // Make sure that we run GC between two tests. Otherwise, since we're
-      // running everything from the same cx and without returning to JS, there
-      // is nothing to deallocate the ASTs.
-      JS::PrepareForFullGC(cx);
-      cx->runtime()->gc.gc(GC_NORMAL, JS::GCReason::NO_REASON);
-    }
+    // Make sure that we run GC between two tests. Otherwise, since we're
+    // running everything from the same cx and without returning to JS, there is
+    // nothing to deallocate the ASTs.
+    JS_GC(cx);
+
     LifoAllocScope allocScope(&cx->tempLifoAlloc());
 
     // Find files whose name ends with ".binjs".
@@ -273,14 +274,14 @@ void runTestFromPath(JSContext* cx, const char* path) {
     fprintf(stderr, "Testing %s\n", txtPath.begin());
 
     // Read text file.
-    js::Vector<char16_t> txtSource(cx);
+    js::Vector<mozilla::Utf8Unit> txtSource(cx);
     readFull(cx, txtPath.begin(), txtSource);
 
     // Parse text file.
     CompileOptions txtOptions(cx);
     txtOptions.setFileAndLine(txtPath.begin(), 0);
 
-    UsedNameTracker txtUsedNames(cx);
+    frontend::ParseInfo parseInfo(cx, allocScope);
 
     RootedScriptSourceObject sourceObject(
         cx,
@@ -289,11 +290,10 @@ void runTestFromPath(JSContext* cx, const char* path) {
       MOZ_CRASH("Couldn't initialize ScriptSourceObject");
     }
 
-    js::frontend::Parser<js::frontend::FullParseHandler, char16_t> txtParser(
-        cx, allocScope.alloc(), txtOptions, txtSource.begin(),
-        txtSource.length(),
-        /* foldConstants = */ false, txtUsedNames, nullptr, nullptr,
-        sourceObject, frontend::ParseGoal::Script);
+    js::frontend::Parser<js::frontend::FullParseHandler, mozilla::Utf8Unit>
+        txtParser(cx, txtOptions, txtSource.begin(), txtSource.length(),
+                  /* foldConstants = */ false, parseInfo, nullptr, nullptr,
+                  sourceObject, frontend::ParseGoal::Script);
     if (!txtParser.checkOptions()) {
       MOZ_CRASH("Bad options");
     }
@@ -328,7 +328,7 @@ void runTestFromPath(JSContext* cx, const char* path) {
     CompileOptions binOptions(cx);
     binOptions.setFileAndLine(binPath.begin(), 0);
 
-    frontend::UsedNameTracker binUsedNames(cx);
+    frontend::ParseInfo binParseInfo(cx, allocScope);
 
     frontend::Directives directives(false);
     frontend::GlobalSharedContext globalsc(cx, ScopeKind::Global, directives,
@@ -341,8 +341,8 @@ void runTestFromPath(JSContext* cx, const char* path) {
       MOZ_CRASH();
     }
 
-    frontend::BinASTParser<Tok> binParser(cx, allocScope.alloc(), binUsedNames,
-                                          binOptions, sourceObj);
+    frontend::BinASTParser<Tok> binParser(cx, binParseInfo, binOptions,
+                                          sourceObj);
 
     auto binParsed = binParser.parse(
         &globalsc,
@@ -468,3 +468,15 @@ BEGIN_TEST(testBinASTReaderMultipartECMAScript2) {
   return true;
 }
 END_TEST(testBinASTReaderMultipartECMAScript2)
+
+BEGIN_TEST(testBinASTReaderContextECMAScript2) {
+#if defined(XP_WIN)
+  runTestFromPath<js::frontend::BinASTTokenReaderContext>(
+      cx, "jsapi-tests\\binast\\parser\\context\\");
+#else
+  runTestFromPath<js::frontend::BinASTTokenReaderContext>(
+      cx, "jsapi-tests/binast/parser/context/");
+#endif  // defined(XP_XIN)
+  return true;
+}
+END_TEST(testBinASTReaderContextECMAScript2)

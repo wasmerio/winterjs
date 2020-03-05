@@ -3,10 +3,13 @@
 
 #include "jit/JitOptions.h"               // js::jit::JitOptions
 #include "js/CallArgs.h"                  // JS::CallArgs, JS::CallArgsFromVp
-#include "js/CompilationAndEvaluation.h"  // JS::Evaluate
+#include "js/CompilationAndEvaluation.h"  // JS::EvaluateDontInflate
 #include "js/CompileOptions.h"            // JS::CompileOptions
 #include "js/RootingAPI.h"                // JS::Rooted
+#include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "js/Value.h"                     // JS::Value
+
+#include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
 #include <stdint.h>  // uint32_t
 #include <string.h>  // strlen
@@ -35,18 +38,23 @@ FRAGMENT(unwind, simple) {
     return;
   }
 
-  // baseline-eager.
-  uint32_t saveThreshold = js::jit::JitOptions.baselineWarmUpThreshold;
-  js::jit::JitOptions.baselineWarmUpThreshold = 0;
+  // Define an itercount property and use it to ensure Baseline compilation.
+  uint32_t threshold = js::jit::JitOptions.baselineJitWarmUpThreshold;
+  RootedValue val(cx, Int32Value(threshold + 10));
+  if (!JS_DefineProperty(cx, global, "itercount", val, 0)) {
+    return;
+  }
 
   int line0 = __LINE__;
   const char* bytes =
       "\n"
       "function unwindFunctionInner() {\n"
+      "    for (var i = 0; i < itercount; i++) {}\n"
       "    return something();\n"
       "}\n"
       "\n"
       "function unwindFunctionOuter() {\n"
+      "    for (var i = 0; i < itercount; i++) {}\n"
       "    return unwindFunctionInner();\n"
       "}\n"
       "\n"
@@ -55,8 +63,11 @@ FRAGMENT(unwind, simple) {
   JS::CompileOptions opts(cx);
   opts.setFileAndLine(__FILE__, line0 + 1);
 
-  JS::Rooted<JS::Value> rval(cx);
-  JS::EvaluateUtf8(cx, opts, bytes, strlen(bytes), &rval);
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  if (!srcBuf.init(cx, bytes, strlen(bytes), JS::SourceOwnership::Borrowed)) {
+    return;
+  }
 
-  js::jit::JitOptions.baselineWarmUpThreshold = saveThreshold;
+  JS::Rooted<JS::Value> rval(cx);
+  JS::EvaluateDontInflate(cx, opts, srcBuf, &rval);
 }

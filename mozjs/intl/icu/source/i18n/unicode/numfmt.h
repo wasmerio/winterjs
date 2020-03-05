@@ -26,6 +26,8 @@
 
 #include "unicode/utypes.h"
 
+#if U_SHOW_CPLUSPLUS_API
+
 /**
  * \file
  * \brief C++ API: Compatibility APIs for number formatting.
@@ -237,6 +239,12 @@ public:
         kPermillField = UNUM_PERMILL_FIELD,
         /** @stable ICU 2.0 */
         kSignField = UNUM_SIGN_FIELD,
+#ifndef U_HIDE_DRAFT_API
+        /** @draft ICU 64 */
+        kMeasureUnitField = UNUM_MEASURE_UNIT_FIELD,
+        /** @draft ICU 64 */
+        kCompactField = UNUM_COMPACT_FIELD,
+#endif  // U_HIDE_DRAFT_API
 
     /**
      * These constants are provided for backwards compatibility only.
@@ -253,6 +261,14 @@ public:
      * @stable ICU 2.0
      */
     virtual ~NumberFormat();
+
+    /**
+     * Clones this object polymorphically.
+     * The caller owns the result and should delete it when done.
+     * @return clone, or nullptr if an error occurred
+     * @stable ICU 2.0
+     */
+    virtual NumberFormat* clone() const = 0;
 
     /**
      * Return true if the given Format objects are semantically equal.
@@ -633,7 +649,9 @@ public:
      * @param result        Formattable to be set to the parse result.
      *                      If parse fails, return contents are undefined.
      * @param status        Output parameter set to a failure error code
-     *                      when a failure occurs.
+     *                      when a failure occurs. The error code when the
+     *                      string fails to parse is U_INVALID_FORMAT_ERROR,
+     *                      unless overridden by a subclass.
      * @see                 NumberFormat::isParseIntegerOnly
      * @stable ICU 2.0
      */
@@ -1248,6 +1266,8 @@ NumberFormat::isLenient() const
 U_NAMESPACE_END
 
 #endif /* #if !UCONFIG_NO_FORMATTING */
+
+#endif /* U_SHOW_CPLUSPLUS_API */
 
 #endif // _NUMFMT
 //eof

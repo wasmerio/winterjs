@@ -180,19 +180,24 @@ class TbplFormatter(BaseFormatter):
         if message and message[-1] == "\n":
             message = message[:-1]
 
+        status = data["status"]
+
         if "expected" in data:
-            if not message:
-                message = "- expected %s" % data["expected"]
-            failure_line = "TEST-UNEXPECTED-%s | %s | %s %s\n" % (
-                data["status"], data["test"], data["subtest"],
-                message)
-            if data["expected"] != "PASS":
-                info_line = "TEST-INFO | expected %s\n" % data["expected"]
-                return failure_line + info_line
-            return failure_line
+            if status in data.get("known_intermittent", []):
+                status = "KNOWN-INTERMITTENT-%s" % status
+            else:
+                if not message:
+                    message = "- expected %s" % data["expected"]
+                failure_line = "TEST-UNEXPECTED-%s | %s | %s %s\n" % (
+                    status, data["test"], data["subtest"],
+                    message)
+                if data["expected"] != "PASS":
+                    info_line = "TEST-INFO | expected %s\n" % data["expected"]
+                    return failure_line + info_line
+                return failure_line
 
         return "TEST-%s | %s | %s %s\n" % (
-            data["status"], data["test"], data["subtest"],
+            status, data["test"], data["subtest"],
             message)
 
     def test_end(self, data):
@@ -226,29 +231,34 @@ class TbplFormatter(BaseFormatter):
                 screenshot_msg = ("\nREFTEST   IMAGE: data:image/png;base64,%s" %
                                   screenshots[0]["screenshot"])
 
+        status = data['status']
+
         if "expected" in data:
-            message = data.get("message", "")
-            if not message:
-                message = "expected %s" % data["expected"]
-            if "stack" in data:
-                message += "\n%s" % data["stack"]
-            if message and message[-1] == "\n":
-                message = message[:-1]
-
-            message += screenshot_msg
-
-            failure_line = "TEST-UNEXPECTED-%s | %s | %s\n" % (
-                data["status"], test_id, message)
-
-            if data["expected"] not in ("PASS", "OK"):
-                expected_msg = "expected %s | " % data["expected"]
+            if status in data.get("known_intermittent", []):
+                status = "KNOWN-INTERMITTENT-%s" % status
             else:
-                expected_msg = ""
-            info_line = "TEST-INFO %s%s\n" % (expected_msg, duration_msg)
+                message = data.get("message", "")
+                if not message:
+                    message = "expected %s" % data["expected"]
+                if "stack" in data:
+                    message += "\n%s" % data["stack"]
+                if message and message[-1] == "\n":
+                    message = message[:-1]
 
-            return failure_line + info_line
+                message += screenshot_msg
 
-        sections = ["TEST-%s" % data['status'], test_id]
+                failure_line = "TEST-UNEXPECTED-%s | %s | %s\n" % (
+                    data["status"], test_id, message)
+
+                if data["expected"] not in ("PASS", "OK"):
+                    expected_msg = "expected %s | " % data["expected"]
+                else:
+                    expected_msg = ""
+                info_line = "TEST-INFO %s%s\n" % (expected_msg, duration_msg)
+
+                return failure_line + info_line
+
+        sections = ["TEST-%s" % status, test_id]
         if duration_msg:
             sections.append(duration_msg)
         rv.append(' | '.join(sections) + '\n')
@@ -341,15 +351,26 @@ class TbplFormatter(BaseFormatter):
     def _format_suite_summary(self, suite, summary):
         counts = summary['counts']
         logs = summary['unexpected_logs']
+        intermittent_logs = summary['intermittent_logs']
 
         total = sum(self.summary.aggregate('count', counts).values())
         expected = sum(self.summary.aggregate('expected', counts).values())
-        status_str = "{}/{}".format(expected, total)
+        intermittents = sum(self.summary.aggregate('known_intermittent', counts).values())
+        known = " ({} known intermittent tests)".format(intermittents) if intermittents else ""
+        status_str = "{}/{}{}".format(expected, total, known)
         rv = ["{}: {}".format(suite, status_str)]
 
         for results in logs.values():
             for data in results:
                 rv.append("  {}".format(self._format_status(data)))
+
+        if intermittent_logs:
+            rv.append("Known Intermittent tests:")
+            for results in intermittent_logs.values():
+                for data in results:
+                    data["subtest"] = data.get("subtest", "")
+                    rv.append("  {}".format(self._format_status(data)))
+
         return "\n".join(rv)
 
     def shutdown(self, data):

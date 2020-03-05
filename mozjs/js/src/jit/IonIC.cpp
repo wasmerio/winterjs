@@ -8,6 +8,7 @@
 
 #include "jit/CacheIRCompiler.h"
 #include "jit/Linker.h"
+#include "util/DiagnosticAssertions.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -15,11 +16,16 @@
 using namespace js;
 using namespace js::jit;
 
-void IonIC::updateBaseAddress(JitCode* code) {
-  fallbackLabel_.repoint(code);
-  rejoinLabel_.repoint(code);
+void IonIC::resetCodeRaw(IonScript* ionScript) {
+  codeRaw_ = fallbackAddr(ionScript);
+}
 
-  codeRaw_ = fallbackLabel_.raw();
+uint8_t* IonIC::fallbackAddr(IonScript* ionScript) const {
+  return ionScript->method()->raw() + fallbackOffset_;
+}
+
+uint8_t* IonIC::rejoinAddr(IonScript* ionScript) const {
+  return ionScript->method()->raw() + rejoinOffset_;
 }
 
 Register IonIC::scratchRegisterForEntryJump() {
@@ -71,11 +77,11 @@ Register IonIC::scratchRegisterForEntryJump() {
   MOZ_CRASH("Invalid kind");
 }
 
-void IonIC::discardStubs(Zone* zone) {
+void IonIC::discardStubs(Zone* zone, IonScript* ionScript) {
   if (firstStub_ && zone->needsIncrementalBarrier()) {
     // We are removing edges from IonIC to gcthings. Perform one final trace
     // of the stub for incremental GC, as it must know about those edges.
-    trace(zone->barrierTracer());
+    trace(zone->barrierTracer(), ionScript);
   }
 
 #ifdef JS_CRASH_DIAGNOSTICS
@@ -88,16 +94,16 @@ void IonIC::discardStubs(Zone* zone) {
 #endif
 
   firstStub_ = nullptr;
-  codeRaw_ = fallbackLabel_.raw();
+  resetCodeRaw(ionScript);
   state_.trackUnlinkedAllStubs();
 }
 
-void IonIC::reset(Zone* zone) {
-  discardStubs(zone);
+void IonIC::reset(Zone* zone, IonScript* ionScript) {
+  discardStubs(zone, ionScript);
   state_.reset();
 }
 
-void IonIC::trace(JSTracer* trc) {
+void IonIC::trace(JSTracer* trc, IonScript* ionScript) {
   if (script_) {
     TraceManuallyBarrieredEdge(trc, &script_, "IonIC::script_");
   }
@@ -112,7 +118,41 @@ void IonIC::trace(JSTracer* trc) {
     nextCodeRaw = stub->nextCodeRaw();
   }
 
-  MOZ_ASSERT(nextCodeRaw == fallbackLabel_.raw());
+  MOZ_ASSERT(nextCodeRaw == fallbackAddr(ionScript));
+}
+
+// This helper handles ICState updates/transitions while attaching CacheIR
+// stubs.
+template <typename IRGenerator, typename IC, typename... Args>
+static void TryAttachIonStub(JSContext* cx, IC* ic, IonScript* ionScript,
+                             Args&&... args) {
+  if (ic->state().maybeTransition()) {
+    ic->discardStubs(cx->zone(), ionScript);
+  }
+
+  if (ic->state().canAttachStub()) {
+    RootedScript script(cx, ic->script());
+    bool attached = false;
+    IRGenerator gen(cx, script, ic->pc(), ic->state().mode(),
+                    std::forward<Args>(args)...);
+    switch (gen.tryAttachStub()) {
+      case AttachDecision::Attach:
+        ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
+                              &attached);
+        break;
+      case AttachDecision::NoAction:
+        break;
+      case AttachDecision::TemporarilyUnoptimizable:
+        attached = true;
+        break;
+      case AttachDecision::Deferred:
+        MOZ_ASSERT_UNREACHABLE("Not expected in generic TryAttachIonStub");
+        break;
+    }
+    if (!attached) {
+      ic->state().trackNotAttached();
+    }
+  }
 }
 
 /* static */
@@ -129,27 +169,30 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   }
 
   if (ic->state().maybeTransition()) {
-    ic->discardStubs(cx->zone());
+    ic->discardStubs(cx->zone(), ionScript);
   }
 
   bool attached = false;
   if (ic->state().canAttachStub()) {
-    // IonBuilder calls PropertyReadNeedsTypeBarrier to determine if it
-    // needs a type barrier. Unfortunately, PropertyReadNeedsTypeBarrier
-    // does not account for getters, so we should only attach a getter
-    // stub if we inserted a type barrier.
     jsbytecode* pc = ic->idempotent() ? nullptr : ic->pc();
-    bool isTemporarilyUnoptimizable = false;
-    GetPropIRGenerator gen(cx, outerScript, pc, ic->kind(), ic->state().mode(),
-                           &isTemporarilyUnoptimizable, val, idVal, val,
-                           ic->resultFlags());
-    if (ic->idempotent() ? gen.tryAttachIdempotentStub()
-                         : gen.tryAttachStub()) {
-      ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
-                            &attached);
+    GetPropIRGenerator gen(cx, outerScript, pc, ic->state().mode(), ic->kind(),
+                           val, idVal, val, ic->resultFlags());
+    switch (ic->idempotent() ? gen.tryAttachIdempotentStub()
+                             : gen.tryAttachStub()) {
+      case AttachDecision::Attach:
+        ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
+                              &attached);
+        break;
+      case AttachDecision::NoAction:
+        break;
+      case AttachDecision::TemporarilyUnoptimizable:
+        attached = true;
+        break;
+      case AttachDecision::Deferred:
+        MOZ_ASSERT_UNREACHABLE("No deferred GetProp stubs");
+        break;
     }
-
-    if (!attached && !isTemporarilyUnoptimizable) {
+    if (!attached) {
       ic->state().trackNotAttached();
     }
   }
@@ -191,7 +234,7 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   if (!ic->idempotent()) {
     // Monitor changes to cache entry.
     if (!ic->monitoredResult()) {
-      TypeScript::Monitor(cx, ic->script(), ic->pc(), res);
+      JitScript::MonitorBytecodeType(cx, ic->script(), ic->pc(), res);
     }
   }
 
@@ -208,25 +251,13 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
   AutoDetectInvalidation adi(cx, res, ionScript);
 
   if (ic->state().maybeTransition()) {
-    ic->discardStubs(cx->zone());
+    ic->discardStubs(cx->zone(), ionScript);
   }
 
-  bool attached = false;
-  if (ic->state().canAttachStub()) {
-    RootedValue val(cx, ObjectValue(*obj));
-    bool isTemporarilyUnoptimizable = false;
-    GetPropIRGenerator gen(cx, outerScript, ic->pc(), ic->kind(),
-                           ic->state().mode(), &isTemporarilyUnoptimizable, val,
-                           idVal, receiver, GetPropertyResultFlags::All);
-    if (gen.tryAttachStub()) {
-      ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
-                            &attached);
-    }
-
-    if (!attached && !isTemporarilyUnoptimizable) {
-      ic->state().trackNotAttached();
-    }
-  }
+  RootedValue val(cx, ObjectValue(*obj));
+  TryAttachIonStub<GetPropIRGenerator, IonGetPropSuperIC>(
+      cx, ic, ionScript, ic->kind(), val, idVal, receiver,
+      GetPropertyResultFlags::All);
 
   RootedId id(cx);
   if (!ValueToId<CanGC>(cx, idVal, &id)) {
@@ -238,7 +269,7 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
   }
 
   // Monitor changes to cache entry.
-  TypeScript::Monitor(cx, ic->script(), ic->pc(), res);
+  JitScript::MonitorBytecodeType(cx, ic->script(), ic->pc(), res);
   return true;
 }
 
@@ -246,42 +277,46 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
 bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
                               IonSetPropertyIC* ic, HandleObject obj,
                               HandleValue idVal, HandleValue rhs) {
+  using DeferType = SetPropIRGenerator::DeferType;
+
   RootedShape oldShape(cx);
   RootedObjectGroup oldGroup(cx);
   IonScript* ionScript = outerScript->ionScript();
 
   bool attached = false;
-  bool isTemporarilyUnoptimizable = false;
-  bool canAddSlot = false;
+  DeferType deferType = DeferType::None;
 
   if (ic->state().maybeTransition()) {
-    ic->discardStubs(cx->zone());
+    ic->discardStubs(cx->zone(), ionScript);
   }
 
   if (ic->state().canAttachStub()) {
-    oldShape = obj->maybeShape();
+    oldShape = obj->shape();
     oldGroup = JSObject::getGroup(cx, obj);
     if (!oldGroup) {
       return false;
-    }
-    if (obj->is<UnboxedPlainObject>()) {
-      MOZ_ASSERT(!oldShape);
-      if (UnboxedExpandoObject* expando =
-              obj->as<UnboxedPlainObject>().maybeExpando()) {
-        oldShape = expando->lastProperty();
-      }
     }
 
     RootedValue objv(cx, ObjectValue(*obj));
     RootedScript script(cx, ic->script());
     jsbytecode* pc = ic->pc();
-    SetPropIRGenerator gen(cx, script, pc, ic->kind(), ic->state().mode(),
-                           &isTemporarilyUnoptimizable, &canAddSlot, objv,
+    SetPropIRGenerator gen(cx, script, pc, ic->kind(), ic->state().mode(), objv,
                            idVal, rhs, ic->needsTypeBarrier(),
                            ic->guardHoles());
-    if (gen.tryAttachStub()) {
-      ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
-                            &attached, gen.typeCheckInfo());
+    switch (gen.tryAttachStub()) {
+      case AttachDecision::Attach:
+        ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
+                              &attached, gen.typeCheckInfo());
+        break;
+      case AttachDecision::NoAction:
+        break;
+      case AttachDecision::TemporarilyUnoptimizable:
+        attached = true;
+        break;
+      case AttachDecision::Deferred:
+        deferType = gen.deferType();
+        MOZ_ASSERT(deferType != DeferType::None);
+        break;
     }
   }
 
@@ -333,54 +368,39 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   // The SetProperty call might have entered this IC recursively, so try
   // to transition.
   if (ic->state().maybeTransition()) {
-    ic->discardStubs(cx->zone());
+    ic->discardStubs(cx->zone(), ionScript);
   }
 
-  if (ic->state().canAttachStub()) {
+  bool canAttachStub = ic->state().canAttachStub();
+  if (deferType != DeferType::None && canAttachStub) {
     RootedValue objv(cx, ObjectValue(*obj));
     RootedScript script(cx, ic->script());
     jsbytecode* pc = ic->pc();
-    SetPropIRGenerator gen(cx, script, pc, ic->kind(), ic->state().mode(),
-                           &isTemporarilyUnoptimizable, &canAddSlot, objv,
+    SetPropIRGenerator gen(cx, script, pc, ic->kind(), ic->state().mode(), objv,
                            idVal, rhs, ic->needsTypeBarrier(),
                            ic->guardHoles());
-    if (canAddSlot && gen.tryAttachAddSlotStub(oldGroup, oldShape)) {
-      ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
-                            &attached, gen.typeCheckInfo());
-    } else {
-      gen.trackAttached(nullptr);
-    }
+    MOZ_ASSERT(deferType == DeferType::AddSlot);
+    AttachDecision decision = gen.tryAttachAddSlotStub(oldGroup, oldShape);
 
-    if (!attached && !isTemporarilyUnoptimizable) {
-      ic->state().trackNotAttached();
+    switch (decision) {
+      case AttachDecision::Attach:
+        ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
+                              &attached, gen.typeCheckInfo());
+        break;
+      case AttachDecision::NoAction:
+        gen.trackAttached(IRGenerator::NotAttached);
+        break;
+      case AttachDecision::TemporarilyUnoptimizable:
+      case AttachDecision::Deferred:
+        MOZ_ASSERT_UNREACHABLE("Invalid attach result");
+        break;
     }
+  }
+  if (!attached && canAttachStub) {
+    ic->state().trackNotAttached();
   }
 
   return true;
-}
-
-// This helper handles ICState updates/transitions while attaching CacheIR
-// stubs.
-template <typename IRGenerator, typename IC, typename... Args>
-static void TryAttachIonStub(JSContext* cx, IC* ic, IonScript* ionScript,
-                             Args&&... args) {
-  if (ic->state().maybeTransition()) {
-    ic->discardStubs(cx->zone());
-  }
-
-  if (ic->state().canAttachStub()) {
-    RootedScript script(cx, ic->script());
-    bool attached = false;
-    IRGenerator gen(cx, script, ic->pc(), ic->state().mode(),
-                    std::forward<Args>(args)...);
-    if (gen.tryAttachStub()) {
-      ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript,
-                            &attached);
-    }
-    if (!attached) {
-      ic->state().trackNotAttached();
-    }
-  }
 }
 
 /* static */
@@ -411,7 +431,7 @@ bool IonGetNameIC::update(JSContext* cx, HandleScript outerScript,
     }
   }
 
-  // No need to call TypeScript::Monitor, IonBuilder always inserts a type
+  // No need to call JitScript::Monitor, IonBuilder always inserts a type
   // barrier after GetName ICs.
 
   return true;
@@ -594,6 +614,24 @@ bool IonBinaryArithIC::update(JSContext* cx, HandleScript outerScript,
       }
       break;
     }
+    case JSOP_LSH: {
+      if (!BitLsh(cx, &lhsCopy, &rhsCopy, ret)) {
+        return false;
+      }
+      break;
+    }
+    case JSOP_RSH: {
+      if (!BitRsh(cx, &lhsCopy, &rhsCopy, ret)) {
+        return false;
+      }
+      break;
+    }
+    case JSOP_URSH: {
+      if (!UrshOperation(cx, &lhsCopy, &rhsCopy, ret)) {
+        return false;
+      }
+      break;
+    }
     default:
       MOZ_CRASH("Unhandled binary arith op");
   }
@@ -641,22 +679,22 @@ bool IonCompareIC::update(JSContext* cx, HandleScript outerScript,
       }
       break;
     case JSOP_EQ:
-      if (!LooselyEqual<true>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!LooselyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
     case JSOP_NE:
-      if (!LooselyEqual<false>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!LooselyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
     case JSOP_STRICTEQ:
-      if (!StrictlyEqual<true>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!StrictlyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
     case JSOP_STRICTNE:
-      if (!StrictlyEqual<false>(cx, &lhsCopy, &rhsCopy, res)) {
+      if (!StrictlyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;

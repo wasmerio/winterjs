@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import unicode_literals, absolute_import
-
 import os
 
 from mozpack import path as mozpath
@@ -94,7 +92,7 @@ def collapse(paths, base=None, dotfiles=False):
         return [base]
 
     if not base:
-        paths = map(mozpath.abspath, paths)
+        paths = list(map(mozpath.abspath, paths))
         base = mozpath.commonprefix(paths)
 
         if not os.path.isdir(base):
@@ -146,17 +144,17 @@ def filterpaths(root, paths, include, exclude=None, extensions=None):
         return FilterPath(path)
 
     # Includes are always paths and should always exist.
-    include = map(normalize, include)
+    include = list(map(normalize, include))
 
     # Exclude paths with and without globs will be handled separately,
     # pull them apart now.
-    exclude = map(normalize, exclude or [])
+    exclude = list(map(normalize, exclude or []))
     excludepaths = [p for p in exclude if p.exists]
     excludeglobs = [p.path for p in exclude if not p.exists]
 
     keep = set()
     discard = set()
-    for path in map(normalize, paths):
+    for path in list(map(normalize, paths)):
         # Exclude bad file extensions
         if extensions and path.isfile and path.ext not in extensions:
             continue
@@ -259,7 +257,7 @@ def expand_exclusions(paths, config, root):
     Returns:
         Generator which generates list of paths that weren't excluded.
     """
-    extensions = [e.lstrip('.') for e in config['extensions']]
+    extensions = [e.lstrip('.') for e in config.get('extensions', [])]
 
     def normalize(path):
         path = mozpath.normpath(path)
@@ -267,7 +265,7 @@ def expand_exclusions(paths, config, root):
             return path
         return mozpath.join(root, path)
 
-    exclude = map(normalize, config.get('exclude', []))
+    exclude = list(map(normalize, config.get('exclude', [])))
     for path in paths:
         path = mozpath.normsep(path)
         if os.path.isfile(path):

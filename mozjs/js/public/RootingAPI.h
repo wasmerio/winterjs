@@ -209,10 +209,16 @@ class Rooted;
 template <typename T>
 class PersistentRooted;
 
-JS_FRIEND_API void HeapObjectPostBarrier(JSObject** objp, JSObject* prev,
-                                         JSObject* next);
-JS_FRIEND_API void HeapStringPostBarrier(JSString** objp, JSString* prev,
-                                         JSString* next);
+JS_FRIEND_API void HeapObjectPostWriteBarrier(JSObject** objp, JSObject* prev,
+                                              JSObject* next);
+JS_FRIEND_API void HeapStringPostWriteBarrier(JSString** objp, JSString* prev,
+                                              JSString* next);
+JS_FRIEND_API void HeapObjectWriteBarriers(JSObject** objp, JSObject* prev,
+                                           JSObject* next);
+JS_FRIEND_API void HeapStringWriteBarriers(JSString** objp, JSString* prev,
+                                           JSString* next);
+JS_FRIEND_API void HeapScriptWriteBarriers(JSScript** objp, JSScript* prev,
+                                           JSScript* next);
 
 /**
  * Create a safely-initialized |T|, suitable for use as a default value in
@@ -261,15 +267,27 @@ inline void AssertGCThingIsNotNurseryAllocable(js::gc::Cell* cell) {}
 #endif
 
 /**
- * The Heap<T> class is a heap-stored reference to a JS GC thing. All members of
- * heap classes that refer to GC things should use Heap<T> (or possibly
- * TenuredHeap<T>, described below).
+ * The Heap<T> class is a heap-stored reference to a JS GC thing for use outside
+ * the JS engine. All members of heap classes that refer to GC things should use
+ * Heap<T> (or possibly TenuredHeap<T>, described below).
  *
  * Heap<T> is an abstraction that hides some of the complexity required to
  * maintain GC invariants for the contained reference. It uses operator
- * overloading to provide a normal pointer interface, but notifies the GC every
- * time the value it contains is updated. This is necessary for generational GC,
- * which keeps track of all pointers into the nursery.
+ * overloading to provide a normal pointer interface, but adds barriers to
+ * notify the GC of changes.
+ *
+ * Heap<T> implements the following barriers:
+ *
+ *  - Post-write barrier (necessary for generational GC).
+ *  - Read barrier (necessary for incremental GC and cycle collector
+ *    integration).
+ *
+ * Note Heap<T> does not have a pre-write barrier as used internally in the
+ * engine. The read barrier is used to mark anything read from a Heap<T> during
+ * an incremental GC.
+ *
+ * Heap<T> may be moved or destroyed outside of GC finalization and hence may be
+ * used in dynamic storage such as a Vector.
  *
  * Heap<T> instances must be traced when their containing object is traced to
  * keep the pointed-to GC thing alive.
@@ -289,10 +307,10 @@ class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
  public:
   using ElementType = T;
 
-  Heap() {
+  Heap() : ptr(SafelyInitialized<T>()) {
+    // No barriers are required for initialization to the default value.
     static_assert(sizeof(T) == sizeof(Heap<T>),
                   "Heap<T> must be binary compatible with T.");
-    init(SafelyInitialized<T>());
   }
   explicit Heap(const T& p) { init(p); }
 
@@ -302,9 +320,15 @@ class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
    * that will be used for both lvalue and rvalue copies, so we can simply
    * omit the rvalue variant.
    */
-  explicit Heap(const Heap<T>& p) { init(p.ptr); }
+  explicit Heap(const Heap<T>& other) { init(other.ptr); }
 
-  ~Heap() { post(ptr, SafelyInitialized<T>()); }
+  Heap& operator=(Heap<T>&& other) {
+    set(other.unbarrieredGet());
+    other.set(SafelyInitialized<T>());
+    return *this;
+  }
+
+  ~Heap() { postWriteBarrier(ptr, SafelyInitialized<T>()); }
 
   DECLARE_POINTER_CONSTREF_OPS(T);
   DECLARE_POINTER_ASSIGN_OPS(Heap, T);
@@ -318,7 +342,15 @@ class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
   }
   const T& unbarrieredGet() const { return ptr; }
 
+  void set(const T& newPtr) {
+    T tmp = ptr;
+    ptr = newPtr;
+    postWriteBarrier(tmp, ptr);
+  }
+
   T* unsafeGet() { return &ptr; }
+
+  void unbarrieredSet(const T& newPtr) { ptr = newPtr; }
 
   explicit operator bool() const {
     return bool(js::BarrierMethods<T>::asGCThingOrNull(ptr));
@@ -330,17 +362,11 @@ class MOZ_NON_MEMMOVABLE Heap : public js::HeapBase<T, Heap<T>> {
  private:
   void init(const T& newPtr) {
     ptr = newPtr;
-    post(SafelyInitialized<T>(), ptr);
+    postWriteBarrier(SafelyInitialized<T>(), ptr);
   }
 
-  void set(const T& newPtr) {
-    T tmp = ptr;
-    ptr = newPtr;
-    post(tmp, ptr);
-  }
-
-  void post(const T& prev, const T& next) {
-    js::BarrierMethods<T>::postBarrier(&ptr, prev, next);
+  void postWriteBarrier(const T& prev, const T& next) {
+    js::BarrierMethods<T>::postWriteBarrier(&ptr, prev, next);
   }
 
   T ptr;
@@ -499,6 +525,11 @@ class TenuredHeap : public js::HeapBase<T, TenuredHeap<T>> {
   uintptr_t bits;
 };
 
+static MOZ_ALWAYS_INLINE bool ObjectIsMarkedGray(
+    const JS::TenuredHeap<JSObject*>& obj) {
+  return ObjectIsMarkedGray(obj.unbarrieredGetPtr());
+}
+
 /**
  * Reference to a T that has been rooted elsewhere. This is most useful
  * as a parameter type, which guarantees that the T lvalue is properly
@@ -650,8 +681,11 @@ class MOZ_STACK_CLASS MutableHandle
 
 namespace js {
 
+namespace detail {
+
+// Default implementations for barrier methods on GC thing pointers.
 template <typename T>
-struct BarrierMethods<T*> {
+struct PtrBarrierMethodsBase {
   static T* initial() { return nullptr; }
   static gc::Cell* asGCThingOrNull(T* v) {
     if (!v) {
@@ -660,12 +694,6 @@ struct BarrierMethods<T*> {
     MOZ_ASSERT(uintptr_t(v) > 32);
     return reinterpret_cast<gc::Cell*>(v);
   }
-  static void postBarrier(T** vp, T* prev, T* next) {
-    if (next) {
-      JS::AssertGCThingIsNotNurseryAllocable(
-          reinterpret_cast<js::gc::Cell*>(next));
-    }
-  }
   static void exposeToJS(T* t) {
     if (t) {
       js::gc::ExposeGCThingToActiveJS(JS::GCCellPtr(t));
@@ -673,18 +701,23 @@ struct BarrierMethods<T*> {
   }
 };
 
-template <>
-struct BarrierMethods<JSObject*> {
-  static JSObject* initial() { return nullptr; }
-  static gc::Cell* asGCThingOrNull(JSObject* v) {
-    if (!v) {
-      return nullptr;
+}  // namespace detail
+
+template <typename T>
+struct BarrierMethods<T*> : public detail::PtrBarrierMethodsBase<T> {
+  static void postWriteBarrier(T** vp, T* prev, T* next) {
+    if (next) {
+      JS::AssertGCThingIsNotNurseryAllocable(
+          reinterpret_cast<js::gc::Cell*>(next));
     }
-    MOZ_ASSERT(uintptr_t(v) > 32);
-    return reinterpret_cast<gc::Cell*>(v);
   }
-  static void postBarrier(JSObject** vp, JSObject* prev, JSObject* next) {
-    JS::HeapObjectPostBarrier(vp, prev, next);
+};
+
+template <>
+struct BarrierMethods<JSObject*>
+    : public detail::PtrBarrierMethodsBase<JSObject> {
+  static void postWriteBarrier(JSObject** vp, JSObject* prev, JSObject* next) {
+    JS::HeapObjectPostWriteBarrier(vp, prev, next);
   }
   static void exposeToJS(JSObject* obj) {
     if (obj) {
@@ -694,19 +727,13 @@ struct BarrierMethods<JSObject*> {
 };
 
 template <>
-struct BarrierMethods<JSFunction*> {
-  static JSFunction* initial() { return nullptr; }
-  static gc::Cell* asGCThingOrNull(JSFunction* v) {
-    if (!v) {
-      return nullptr;
-    }
-    MOZ_ASSERT(uintptr_t(v) > 32);
-    return reinterpret_cast<gc::Cell*>(v);
-  }
-  static void postBarrier(JSFunction** vp, JSFunction* prev, JSFunction* next) {
-    JS::HeapObjectPostBarrier(reinterpret_cast<JSObject**>(vp),
-                              reinterpret_cast<JSObject*>(prev),
-                              reinterpret_cast<JSObject*>(next));
+struct BarrierMethods<JSFunction*>
+    : public detail::PtrBarrierMethodsBase<JSFunction> {
+  static void postWriteBarrier(JSFunction** vp, JSFunction* prev,
+                               JSFunction* next) {
+    JS::HeapObjectPostWriteBarrier(reinterpret_cast<JSObject**>(vp),
+                                   reinterpret_cast<JSObject*>(prev),
+                                   reinterpret_cast<JSObject*>(next));
   }
   static void exposeToJS(JSFunction* fun) {
     if (fun) {
@@ -716,22 +743,10 @@ struct BarrierMethods<JSFunction*> {
 };
 
 template <>
-struct BarrierMethods<JSString*> {
-  static JSString* initial() { return nullptr; }
-  static gc::Cell* asGCThingOrNull(JSString* v) {
-    if (!v) {
-      return nullptr;
-    }
-    MOZ_ASSERT(uintptr_t(v) > 32);
-    return reinterpret_cast<gc::Cell*>(v);
-  }
-  static void postBarrier(JSString** vp, JSString* prev, JSString* next) {
-    JS::HeapStringPostBarrier(vp, prev, next);
-  }
-  static void exposeToJS(JSString* v) {
-    if (v) {
-      js::gc::ExposeGCThingToActiveJS(JS::GCCellPtr(v));
-    }
+struct BarrierMethods<JSString*>
+    : public detail::PtrBarrierMethodsBase<JSString> {
+  static void postWriteBarrier(JSString** vp, JSString* prev, JSString* next) {
+    JS::HeapStringPostWriteBarrier(vp, prev, next);
   }
 };
 
@@ -907,12 +922,11 @@ class RootingContext {
 class JS_PUBLIC_API AutoGCRooter {
  protected:
   enum class Tag : uint8_t {
-    Array,      /* js::AutoArrayRooter */
-    ValueArray, /* js::AutoValueArray */
-    Parser,     /* js::frontend::Parser */
-#if defined(JS_BUILD_BINAST)
-    BinASTParser,  /* js::frontend::BinASTParser */
-#endif             // defined(JS_BUILD_BINAST)
+    Array,         /* js::AutoArrayRooter */
+    ValueArray,    /* js::AutoValueArray */
+    Parser,        /* js::frontend::Parser */
+    BinASTParser,  /* js::frontend::BinASTParser; only used if built with
+                    * JS_BUILD_BINAST support */
     WrapperVector, /* js::AutoWrapperVector */
     Wrapper,       /* js::AutoWrapperRooter */
     Custom         /* js::CustomAutoRooter */
@@ -968,6 +982,12 @@ using MaybeWrapped =
                                       JS::RootKind::Traceable,
                                   js::DispatchWrapper<T>, T>::Type;
 
+// Dummy types to make it easier to understand template overload preference
+// ordering.
+struct FallbackOverload {};
+struct PreferredOverload : FallbackOverload {};
+using OverloadSelector = PreferredOverload;
+
 } /* namespace detail */
 
 /**
@@ -993,13 +1013,37 @@ class MOZ_RAII Rooted : public js::RootedBase<T, Rooted<T>> {
     return rootLists(RootingContext::get(cx));
   }
 
+  // Define either one or two Rooted(cx) constructors: the fallback one, which
+  // constructs a Rooted holding a SafelyInitialized<T>, and a convenience one
+  // for types that can be constructed with a cx, which will give a Rooted
+  // holding a T(cx).
+
+  // Dummy type to distinguish these constructors from Rooted(cx, initial)
+  struct CtorDispatcher {};
+
+  // Normal case: construct an empty Rooted holding a safely initialized but
+  // empty T.
+  template <typename RootingContext>
+  Rooted(const RootingContext& cx, CtorDispatcher, detail::FallbackOverload)
+      : Rooted(cx, SafelyInitialized<T>()) {}
+
+  // If T can be constructed with a cx, then define another constructor for it
+  // that will be preferred.
+  template <typename RootingContext,
+            typename = typename std::enable_if<
+                std::is_constructible<T, RootingContext>::value>::type>
+  Rooted(const RootingContext& cx, CtorDispatcher, detail::PreferredOverload)
+      : Rooted(cx, T(cx)) {}
+
  public:
   using ElementType = T;
 
+  // Construct an empty Rooted. Delegates to an internal constructor that
+  // chooses a specific meaning of "empty" depending on whether T can be
+  // constructed with a cx.
   template <typename RootingContext>
-  explicit Rooted(const RootingContext& cx) : ptr(SafelyInitialized<T>()) {
-    registerWithRootLists(rootLists(cx));
-  }
+  explicit Rooted(const RootingContext& cx)
+      : Rooted(cx, CtorDispatcher(), detail::OverloadSelector()) {}
 
   template <typename RootingContext, typename S>
   Rooted(const RootingContext& cx, S&& initial)
@@ -1207,10 +1251,9 @@ JS_PUBLIC_API void AddPersistentRoot(JSRuntime* rt, RootKind kind,
  *
  * These roots can be used in heap-allocated data structures, so they are not
  * associated with any particular JSContext or stack. They are registered with
- * the JSRuntime itself, without locking, so they require a full JSContext to be
- * initialized, not one of its more restricted superclasses. Initialization may
- * take place on construction, or in two phases if the no-argument constructor
- * is called followed by init().
+ * the JSRuntime itself, without locking. Initialization may take place on
+ * construction, or in two phases if the no-argument constructor is called
+ * followed by init().
  *
  * Note that you must not use an PersistentRooted in an object owned by a JS
  * object:
@@ -1306,8 +1349,14 @@ class PersistentRooted
 
   bool initialized() { return ListBase::isInList(); }
 
-  void init(JSContext* cx) { init(cx, SafelyInitialized<T>()); }
+  void init(RootingContext* cx) { init(cx, SafelyInitialized<T>()); }
+  void init(JSContext* cx) { init(RootingContext::get(cx)); }
 
+  template <typename U>
+  void init(RootingContext* cx, U&& initial) {
+    ptr = std::forward<U>(initial);
+    registerWithRootLists(cx);
+  }
   template <typename U>
   void init(JSContext* cx, U&& initial) {
     ptr = std::forward<U>(initial);
@@ -1337,60 +1386,15 @@ class PersistentRooted
     return ptr;
   }
 
- private:
   template <typename U>
   void set(U&& value) {
     MOZ_ASSERT(initialized());
     ptr = std::forward<U>(value);
   }
 
+ private:
   detail::MaybeWrapped<T> ptr;
 } JS_HAZ_ROOTED;
-
-class JS_PUBLIC_API ObjectPtr {
-  Heap<JSObject*> value;
-
- public:
-  using ElementType = JSObject*;
-
-  ObjectPtr() : value(nullptr) {}
-
-  explicit ObjectPtr(JSObject* obj) : value(obj) {}
-
-  ObjectPtr(const ObjectPtr& other) : value(other.value) {}
-
-  ObjectPtr(ObjectPtr&& other) : value(other.value) { other.value = nullptr; }
-
-  /* Always call finalize before the destructor. */
-  ~ObjectPtr() { MOZ_ASSERT(!value); }
-
-  void finalize(JSRuntime* rt);
-  void finalize(JSContext* cx);
-
-  void init(JSObject* obj) { value = obj; }
-
-  JSObject* get() const { return value; }
-  JSObject* unbarrieredGet() const { return value.unbarrieredGet(); }
-
-  void writeBarrierPre(JSContext* cx) { IncrementalPreWriteBarrier(value); }
-
-  void updateWeakPointerAfterGC();
-
-  ObjectPtr& operator=(JSObject* obj) {
-    IncrementalPreWriteBarrier(value);
-    value = obj;
-    return *this;
-  }
-
-  void trace(JSTracer* trc, const char* name);
-
-  JSObject& operator*() const { return *value; }
-  JSObject* operator->() const { return value; }
-  operator JSObject*() const { return value; }
-
-  explicit operator bool() const { return value.unbarrieredGet(); }
-  explicit operator bool() { return value.unbarrieredGet(); }
-};
 
 } /* namespace JS */
 
@@ -1483,13 +1487,6 @@ template <typename T>
 struct DefineComparisonOps<JS::TenuredHeap<T>> : mozilla::TrueType {
   static const T get(const JS::TenuredHeap<T>& v) {
     return v.unbarrieredGetPtr();
-  }
-};
-
-template <>
-struct DefineComparisonOps<JS::ObjectPtr> : mozilla::TrueType {
-  static const JSObject* get(const JS::ObjectPtr& v) {
-    return v.unbarrieredGet();
   }
 };
 

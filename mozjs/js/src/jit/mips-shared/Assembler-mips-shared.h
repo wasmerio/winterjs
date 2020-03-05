@@ -304,6 +304,10 @@ enum RSField {
   rs_ctc1 = 6 << RSShift,
   rs_mthc1 = 7 << RSShift,
   rs_bc1 = 8 << RSShift,
+  rs_f = 0x9 << RSShift,
+  rs_t = 0xd << RSShift,
+  rs_s_r6 = 20 << RSShift,
+  rs_d_r6 = 21 << RSShift,
   rs_s = 16 << RSShift,
   rs_d = 17 << RSShift,
   rs_w = 20 << RSShift,
@@ -346,12 +350,25 @@ enum FunctionField {
 
   ff_mult = 24,
   ff_multu = 25,
+
+  ff_mulu = 25,
+  ff_muh = 24,
+  ff_muhu = 25,
+  ff_dmul = 28,
+  ff_dmulu = 29,
+  ff_dmuh = 28,
+  ff_dmuhu = 29,
+
   ff_div = 26,
+  ff_mod = 26,
   ff_divu = 27,
+  ff_modu = 27,
   ff_dmult = 28,
   ff_dmultu = 29,
   ff_ddiv = 30,
+  ff_dmod = 30,
   ff_ddivu = 31,
+  ff_dmodu = 31,
 
   ff_add = 32,
   ff_addu = 33,
@@ -374,7 +391,9 @@ enum FunctionField {
   ff_tlt = 50,
   ff_tltu = 51,
   ff_teq = 52,
+  ff_seleqz = 53,
   ff_tne = 54,
+  ff_selnez = 55,
   ff_dsll = 56,
   ff_dsrl = 58,
   ff_dsra = 59,
@@ -385,10 +404,16 @@ enum FunctionField {
   // special2 encoding of function field.
   ff_madd = 0,
   ff_maddu = 1,
+#ifdef MIPSR6
+  ff_clz = 16,
+  ff_dclz = 18,
+  ff_mul = 24,
+#else
   ff_mul = 2,
   ff_clz = 32,
-  ff_clo = 33,
   ff_dclz = 36,
+#endif
+  ff_clo = 33,
 
   // special3 encoding of function field.
   ff_ext = 0,
@@ -400,6 +425,10 @@ enum FunctionField {
   ff_dinsu = 6,
   ff_dins = 7,
   ff_bshfl = 32,
+  ff_sc = 38,
+  ff_scd = 39,
+  ff_ll = 54,
+  ff_lld = 55,
 
   // cop1 encoding of function field.
   ff_add_fmt = 0,
@@ -425,12 +454,25 @@ enum FunctionField {
   ff_movz_fmt = 18,
   ff_movn_fmt = 19,
 
+  ff_min = 28,
+  ff_max = 30,
+
   ff_cvt_s_fmt = 32,
   ff_cvt_d_fmt = 33,
   ff_cvt_w_fmt = 36,
   ff_cvt_l_fmt = 37,
   ff_cvt_ps_s = 38,
 
+#ifdef MIPSR6
+  ff_c_f_fmt = 0,
+  ff_c_un_fmt = 1,
+  ff_c_eq_fmt = 2,
+  ff_c_ueq_fmt = 3,
+  ff_c_olt_fmt = 4,
+  ff_c_ult_fmt = 5,
+  ff_c_ole_fmt = 6,
+  ff_c_ule_fmt = 7,
+#else
   ff_c_f_fmt = 48,
   ff_c_un_fmt = 49,
   ff_c_eq_fmt = 50,
@@ -439,6 +481,7 @@ enum FunctionField {
   ff_c_ult_fmt = 53,
   ff_c_ole_fmt = 54,
   ff_c_ule_fmt = 55,
+#endif
 
   ff_madd_s = 32,
   ff_madd_d = 33,
@@ -645,8 +688,6 @@ inline Imm32 Imm64::firstHalf() const { return low(); }
 
 inline Imm32 Imm64::secondHalf() const { return hi(); }
 
-void PatchJump(CodeLocationJump& jump_, CodeLocationLabel label);
-
 static constexpr int32_t SliceSize = 1024;
 typedef js::jit::AssemblerBuffer<SliceSize, Instruction> MIPSBuffer;
 
@@ -748,11 +789,6 @@ class AssemblerMIPSShared : public AssemblerShared {
  protected:
   Instruction* editSrc(BufferOffset bo) { return m_buffer.getInst(bo); }
 
- public:
-  uint32_t actualIndex(uint32_t) const;
-  static uint8_t* PatchableJumpAddress(JitCode* code, uint32_t index);
-
- protected:
   // structure for fixing up pc-relative loads/jumps when a the machine code
   // gets moved (executable copy, gc, etc.)
   struct RelativePatch {
@@ -796,6 +832,8 @@ class AssemblerMIPSShared : public AssemblerShared {
   // As opposed to x86/x64 version, the data relocation has to be executed
   // before to recover the pointer, and not after.
   void writeDataRelocation(ImmGCPtr ptr) {
+    // Raw GC pointer relocations and Value relocations both end up in
+    // TraceOneDataRelocation.
     if (ptr.value) {
       if (gc::IsInsideNursery(ptr.value)) {
         embedsNurseryPointers_ = true;
@@ -814,6 +852,7 @@ class AssemblerMIPSShared : public AssemblerShared {
   }
 
  public:
+  void setUnlimitedBuffer() { m_buffer.setUnlimited(); }
   bool oom() const;
 
   void setPrinter(Sprinter* sp) {
@@ -863,7 +902,7 @@ class AssemblerMIPSShared : public AssemblerShared {
   bool appendRawCode(const uint8_t* code, size_t numBytes);
   bool reserve(size_t size);
   bool swapBuffer(wasm::Bytes& bytes);
-  void executableCopy(void* buffer, bool flushICache = true);
+  void executableCopy(void* buffer);
   void copyJumpRelocationTable(uint8_t* dest);
   void copyDataRelocationTable(uint8_t* dest);
 
@@ -924,6 +963,22 @@ class AssemblerMIPSShared : public AssemblerShared {
   BufferOffset as_maddu(Register rs, Register rt);
   BufferOffset as_ddiv(Register rs, Register rt);
   BufferOffset as_ddivu(Register rs, Register rt);
+
+  BufferOffset as_muh(Register rd, Register rs, Register rt);
+  BufferOffset as_muhu(Register rd, Register rs, Register rt);
+  BufferOffset as_mulu(Register rd, Register rs, Register rt);
+  BufferOffset as_dmuh(Register rd, Register rs, Register rt);
+  BufferOffset as_dmuhu(Register rd, Register rs, Register rt);
+  BufferOffset as_dmul(Register rd, Register rs, Register rt);
+  BufferOffset as_dmulu(Register rd, Register rs, Register rt);
+  BufferOffset as_div(Register rd, Register rs, Register rt);
+  BufferOffset as_divu(Register rd, Register rs, Register rt);
+  BufferOffset as_mod(Register rd, Register rs, Register rt);
+  BufferOffset as_modu(Register rd, Register rs, Register rt);
+  BufferOffset as_ddiv(Register rd, Register rs, Register rt);
+  BufferOffset as_ddivu(Register rd, Register rs, Register rt);
+  BufferOffset as_dmod(Register rd, Register rs, Register rt);
+  BufferOffset as_dmodu(Register rd, Register rs, Register rt);
 
   // Logical instructions
   BufferOffset as_and(Register rd, Register rs, Register rt);
@@ -1011,6 +1066,8 @@ class AssemblerMIPSShared : public AssemblerShared {
   BufferOffset as_movn(Register rd, Register rs, Register rt);
   BufferOffset as_movt(Register rd, Register rs, uint16_t cc = 0);
   BufferOffset as_movf(Register rd, Register rs, uint16_t cc = 0);
+  BufferOffset as_seleqz(Register rd, Register rs, Register rt);
+  BufferOffset as_selnez(Register rd, Register rs, Register rt);
 
   // Bit twiddling.
   BufferOffset as_clz(Register rd, Register rs);
@@ -1115,6 +1172,11 @@ class AssemblerMIPSShared : public AssemblerShared {
   BufferOffset as_sqrts(FloatRegister fd, FloatRegister fs);
   BufferOffset as_sqrtd(FloatRegister fd, FloatRegister fs);
 
+  BufferOffset as_max(FloatFormat fmt, FloatRegister fd, FloatRegister fs,
+                      FloatRegister ft);
+  BufferOffset as_min(FloatFormat fmt, FloatRegister fd, FloatRegister fs,
+                      FloatRegister ft);
+
   // FP compare instructions
   BufferOffset as_cf(FloatFormat fmt, FloatRegister fs, FloatRegister ft,
                      FPConditionBit fcc = FCC0);
@@ -1174,6 +1236,7 @@ class AssemblerMIPSShared : public AssemblerShared {
 #endif
   }
   static bool SupportsUnalignedAccesses() { return true; }
+  static bool SupportsFastUnalignedAccesses() { return false; }
   static bool SupportsSimd() { return js::jit::SupportsSimd; }
 
   static bool HasRoundInstruction(RoundingMode mode) { return false; }
@@ -1216,8 +1279,6 @@ class AssemblerMIPSShared : public AssemblerShared {
 
   static void UpdateLuiOriValue(Instruction* inst0, Instruction* inst1,
                                 uint32_t value);
-
-  bool bailed() { return m_buffer.bail(); }
 
   void verifyHeapAccessDisassembly(uint32_t begin, uint32_t end,
                                    const Disassembler::HeapAccess& heapAccess) {

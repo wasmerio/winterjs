@@ -7,7 +7,7 @@
 #ifndef jit_JitFrames_h
 #define jit_JitFrames_h
 
-#include <stdint.h>
+#include <stdint.h>  // uintptr_t
 
 #include "jit/JSJitFrameIter.h"
 #include "vm/JSContext.h"
@@ -60,7 +60,7 @@ static inline JSScript* CalleeTokenToScript(CalleeToken token) {
 }
 static inline bool CalleeTokenIsModuleScript(CalleeToken token) {
   CalleeTokenTag tag = GetCalleeTokenTag(token);
-  return tag == CalleeToken_Script && CalleeTokenToScript(token)->module();
+  return tag == CalleeToken_Script && CalleeTokenToScript(token)->isModule();
 }
 
 static inline JSScript* ScriptFromCalleeToken(CalleeToken token) {

@@ -71,8 +71,8 @@ static bool ConstructCCW(JSContext* cx, const JSClass* globalClasp,
   return true;
 }
 
-class CCWTestTracer : public JS::CallbackTracer {
-  void onChild(const JS::GCCellPtr& thing) override {
+class CCWTestTracer final : public JS::CallbackTracer {
+  bool onChild(const JS::GCCellPtr& thing) override {
     numberOfThingsTraced++;
 
     printf("*thingp         = %p\n", thing.asCell());
@@ -84,6 +84,7 @@ class CCWTestTracer : public JS::CallbackTracer {
     if (thing.asCell() != *expectedThingp || thing.kind() != expectedKind) {
       okay = false;
     }
+    return true;
   }
 
  public:
@@ -137,9 +138,9 @@ BEGIN_TEST(testTracingIncomingCCWs) {
 }
 END_TEST(testTracingIncomingCCWs)
 
-static size_t countWrappers(JS::Compartment* comp) {
+static size_t countObjectWrappers(JS::Compartment* comp) {
   size_t count = 0;
-  for (JS::Compartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
+  for (JS::Compartment::ObjectWrapperEnum e(comp); !e.empty(); e.popFront()) {
     ++count;
   }
   return count;
@@ -166,9 +167,9 @@ BEGIN_TEST(testDeadNurseryCCW) {
   wrappee = wrapper = nullptr;
 
   // Now a GC should clear the CCW.
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
   cx->runtime()->gc.evictNursery();
-  CHECK(countWrappers(global1->compartment()) == 0);
+  CHECK(countObjectWrappers(global1->compartment()) == 0);
 
   // Check for corruption of the CCW table by doing a full GC to force sweeping.
   JS_GC(cx);
@@ -195,9 +196,9 @@ BEGIN_TEST(testLiveNurseryCCW) {
   CHECK(js::gc::IsInsideNursery(wrapper));
 
   // Now a GC should not kill the CCW.
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
   cx->runtime()->gc.evictNursery();
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
 
   CHECK(!js::gc::IsInsideNursery(wrappee));
   CHECK(!js::gc::IsInsideNursery(wrapper));
@@ -233,9 +234,9 @@ BEGIN_TEST(testLiveNurseryWrapperCCW) {
   wrappee = nullptr;
 
   // Now a GC should not kill the CCW.
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
   cx->runtime()->gc.evictNursery();
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
 
   CHECK(!js::gc::IsInsideNursery(wrapper));
 
@@ -268,9 +269,9 @@ BEGIN_TEST(testLiveNurseryWrappeeCCW) {
   wrapper = nullptr;
 
   // Now a GC should not kill the CCW.
-  CHECK(countWrappers(global1->compartment()) == 1);
+  CHECK(countObjectWrappers(global1->compartment()) == 1);
   cx->runtime()->gc.evictNursery();
-  CHECK(countWrappers(global1->compartment()) == 0);
+  CHECK(countObjectWrappers(global1->compartment()) == 0);
 
   CHECK(!js::gc::IsInsideNursery(wrappee));
 
@@ -334,7 +335,7 @@ BEGIN_TEST(testIncrementalRoots) {
   }
 
   // This is marked during markRuntime
-  JS::AutoObjectVector vec(cx);
+  JS::RootedObjectVector vec(cx);
   if (!vec.append(root)) {
     return false;
   }
@@ -343,7 +344,7 @@ BEGIN_TEST(testIncrementalRoots) {
   // can use them.
   cx->runtime()->gc.minorGC(JS::GCReason::API);
 
-  // Release all roots except for the AutoObjectVector.
+  // Release all roots except for the RootedObjectVector.
   obj = root = nullptr;
 
   // We need to manipulate interior nodes, but the JSAPI understandably wants
@@ -372,7 +373,7 @@ BEGIN_TEST(testIncrementalRoots) {
   // descendants. It shouldn't make it all the way through (it gets a budget
   // of 1000, and the graph is about 3000 objects deep).
   js::SliceBudget budget(js::WorkBudget(1000));
-  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
+  JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_ZONE_INCREMENTAL);
   rt->gc.startDebugGC(GC_NORMAL, budget);
 
   // We'd better be between iGC slices now. There's always a risk that

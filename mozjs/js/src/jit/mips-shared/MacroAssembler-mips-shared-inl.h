@@ -30,6 +30,8 @@ void MacroAssembler::move16SignExtend(Register src, Register dest) {
   ma_seh(dest, src);
 }
 
+void MacroAssembler::loadAbiReturnAddress(Register dest) { movePtr(ra, dest); }
+
 // ===============================================================
 // Logical instructions
 
@@ -156,21 +158,41 @@ void MacroAssembler::mulDoublePtr(ImmPtr imm, Register temp,
 void MacroAssembler::quotient32(Register rhs, Register srcDest,
                                 bool isUnsigned) {
   if (isUnsigned) {
+#ifdef MIPSR6
+    as_divu(srcDest, srcDest, rhs);
+#else
     as_divu(srcDest, rhs);
+#endif
   } else {
+#ifdef MIPSR6
+    as_div(srcDest, srcDest, rhs);
+#else
     as_div(srcDest, rhs);
+#endif
   }
+#ifndef MIPSR6
   as_mflo(srcDest);
+#endif
 }
 
 void MacroAssembler::remainder32(Register rhs, Register srcDest,
                                  bool isUnsigned) {
   if (isUnsigned) {
+#ifdef MIPSR6
+    as_modu(srcDest, srcDest, rhs);
+#else
     as_divu(srcDest, rhs);
+#endif
   } else {
+#ifdef MIPSR6
+    as_mod(srcDest, srcDest, rhs);
+#else
     as_div(srcDest, rhs);
+#endif
   }
+#ifndef MIPSR6
   as_mfhi(srcDest);
+#endif
 }
 
 void MacroAssembler::divFloat32(FloatRegister src, FloatRegister dest) {
@@ -488,6 +510,8 @@ void MacroAssembler::branchSub32(Condition cond, T src, Register dest,
       break;
     case NonZero:
     case Zero:
+    case Signed:
+    case NotSigned:
       ma_subu(dest, src);
       ma_b(dest, dest, overflow, cond);
       break;
@@ -636,7 +660,7 @@ void MacroAssembler::branchTestNumber(Condition cond, Register tag,
                                       Label* label) {
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
   Condition actual = cond == Equal ? BelowOrEqual : Above;
-  ma_b(tag, ImmTag(JSVAL_UPPER_INCL_TAG_OF_NUMBER_SET), label, actual);
+  ma_b(tag, ImmTag(JS::detail::ValueUpperInclNumberTag), label, actual);
 }
 
 void MacroAssembler::branchTestBoolean(Condition cond, Register tag,
@@ -737,7 +761,7 @@ void MacroAssembler::branchTestGCThing(Condition cond, const Address& address,
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
   SecondScratchRegisterScope scratch2(*this);
   extractTag(address, scratch2);
-  ma_b(scratch2, ImmTag(JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET), label,
+  ma_b(scratch2, ImmTag(JS::detail::ValueLowerInclGCThingTag), label,
        (cond == Equal) ? AboveOrEqual : Below);
 }
 void MacroAssembler::branchTestGCThing(Condition cond, const BaseIndex& address,
@@ -745,14 +769,14 @@ void MacroAssembler::branchTestGCThing(Condition cond, const BaseIndex& address,
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
   SecondScratchRegisterScope scratch2(*this);
   extractTag(address, scratch2);
-  ma_b(scratch2, ImmTag(JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET), label,
+  ma_b(scratch2, ImmTag(JS::detail::ValueLowerInclGCThingTag), label,
        (cond == Equal) ? AboveOrEqual : Below);
 }
 
 void MacroAssembler::branchTestPrimitive(Condition cond, Register tag,
                                          Label* label) {
   MOZ_ASSERT(cond == Equal || cond == NotEqual);
-  ma_b(tag, ImmTag(JSVAL_UPPER_EXCL_TAG_OF_PRIMITIVE_SET), label,
+  ma_b(tag, ImmTag(JS::detail::ValueUpperExclPrimitiveTag), label,
        (cond == Equal) ? Below : AboveOrEqual);
 }
 
@@ -783,18 +807,64 @@ void MacroAssembler::branchToComputedAddress(const BaseIndex& addr) {
 
 void MacroAssembler::cmp32Move32(Condition cond, Register lhs, Register rhs,
                                  Register src, Register dest) {
-  MOZ_CRASH();
+  Register scratch = ScratchRegister;
+  MOZ_ASSERT(src != scratch && dest != scratch);
+  cmp32Set(cond, lhs, rhs, scratch);
+#ifdef MIPSR6
+  as_selnez(src, src, scratch);
+  as_seleqz(dest, dest, scratch);
+  as_or(dest, dest, src);
+#else
+  as_movn(dest, src, scratch);
+#endif
 }
 
 void MacroAssembler::cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs,
                                   Register src, Register dest) {
-  MOZ_CRASH();
+  Register scratch = ScratchRegister;
+  MOZ_ASSERT(src != scratch && dest != scratch);
+  cmp32Set(cond, lhs, rhs, scratch);
+#ifdef MIPSR6
+  as_selnez(src, src, scratch);
+  as_seleqz(dest, dest, scratch);
+  as_or(dest, dest, src);
+#else
+  as_movn(dest, src, scratch);
+#endif
 }
 
 void MacroAssembler::cmp32Move32(Condition cond, Register lhs,
                                  const Address& rhs, Register src,
                                  Register dest) {
-  MOZ_CRASH();
+  SecondScratchRegisterScope scratch2(*this);
+  MOZ_ASSERT(lhs != scratch2 && src != scratch2 && dest != scratch2);
+  load32(rhs, scratch2);
+  cmp32Move32(cond, lhs, scratch2, src, dest);
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs,
+                                 const Address& rhs, const Address& src,
+                                 Register dest) {
+  Label skip;
+  branch32(cond, rhs, lhs, &skip);
+  load32(src, dest);
+  bind(&skip);
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs, Register rhs,
+                                 const Address& src, Register dest) {
+  Label skip;
+  branch32(cond, rhs, lhs, &skip);
+  load32(src, dest);
+  bind(&skip);
+}
+
+void MacroAssembler::cmp32LoadPtr(Condition cond, const Address& lhs, Imm32 rhs,
+                                  const Address& src, Register dest) {
+  Label skip;
+  branch32(Assembler::InvertCondition(cond), lhs, rhs, &skip);
+  loadPtr(src, dest);
+  bind(&skip);
 }
 
 void MacroAssembler::test32LoadPtr(Condition cond, const Address& addr,
@@ -875,12 +945,21 @@ void MacroAssembler::memoryBarrier(MemoryBarrierBits barrier) {
 void MacroAssembler::clampIntToUint8(Register reg) {
   // If reg is < 0, then we want to clamp to 0.
   as_slti(ScratchRegister, reg, 0);
+#ifdef MIPSR6
+  as_seleqz(reg, reg, ScratchRegister);
+#else
   as_movn(reg, zero, ScratchRegister);
-
+#endif
   // If reg is >= 255, then we want to clamp to 255.
   ma_li(SecondScratchReg, Imm32(255));
   as_slti(ScratchRegister, reg, 255);
+#ifdef MIPSR6
+  as_seleqz(SecondScratchReg, SecondScratchReg, ScratchRegister);
+  as_selnez(reg, reg, ScratchRegister);
+  as_or(reg, reg, SecondScratchReg);
+#else
   as_movz(reg, SecondScratchReg, ScratchRegister);
+#endif
 }
 
 //}}} check_macroassembler_style

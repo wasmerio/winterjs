@@ -11,15 +11,18 @@
 
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/Iteration.h"
 
 #include "vm/JSContext-inl.h"
 
-inline void JS::Realm::initGlobal(js::GlobalObject& global) {
+inline void JS::Realm::initGlobal(js::GlobalObject& global,
+                                  js::LexicalEnvironmentObject& lexicalEnv) {
   MOZ_ASSERT(global.realm() == this);
   MOZ_ASSERT(!global_);
   global_.set(&global);
+  lexicalEnv_.set(&lexicalEnv);
 }
 
 js::GlobalObject* JS::Realm::maybeGlobal() const {
@@ -27,8 +30,8 @@ js::GlobalObject* JS::Realm::maybeGlobal() const {
   return global_;
 }
 
-js::GlobalObject* JS::Realm::unsafeUnbarrieredMaybeGlobal() const {
-  return *global_.unsafeGet();
+js::LexicalEnvironmentObject* JS::Realm::unbarrieredLexicalEnvironment() const {
+  return *lexicalEnv_.unsafeGet();
 }
 
 inline bool JS::Realm::globalIsAboutToBeFinalized() {
@@ -37,9 +40,15 @@ inline bool JS::Realm::globalIsAboutToBeFinalized() {
          js::gc::IsAboutToBeFinalizedUnbarriered(global_.unsafeGet());
 }
 
-inline bool JS::Realm::hasLiveGlobal() {
+inline bool JS::Realm::hasLiveGlobal() const {
   js::GlobalObject* global = unsafeUnbarrieredMaybeGlobal();
   return global && !js::gc::IsAboutToBeFinalizedUnbarriered(&global);
+}
+
+inline bool JS::Realm::marked() const {
+  // Preserve this Realm if it has a live global or if it has been entered (to
+  // ensure we don't destroy the Realm while we're allocating its global).
+  return hasLiveGlobal() || hasBeenEnteredIgnoringJit();
 }
 
 /* static */ inline js::ObjectRealm& js::ObjectRealm::get(const JSObject* obj) {
@@ -70,6 +79,19 @@ js::AutoAllocInAtomsZone::AutoAllocInAtomsZone(JSContext* cx)
 
 js::AutoAllocInAtomsZone::~AutoAllocInAtomsZone() {
   cx_->leaveAtomsZone(origin_);
+}
+
+js::AutoMaybeLeaveAtomsZone::AutoMaybeLeaveAtomsZone(JSContext* cx)
+    : cx_(cx), wasInAtomsZone_(cx->zone() && cx->zone()->isAtomsZone()) {
+  if (wasInAtomsZone_) {
+    cx_->leaveAtomsZone(nullptr);
+  }
+}
+
+js::AutoMaybeLeaveAtomsZone::~AutoMaybeLeaveAtomsZone() {
+  if (wasInAtomsZone_) {
+    cx_->enterAtomsZone();
+  }
 }
 
 js::AutoRealmUnchecked::AutoRealmUnchecked(JSContext* cx, JS::Realm* target)

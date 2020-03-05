@@ -26,14 +26,6 @@ This module performs the following steps:
   extract relevant files from Mac OS X DMG files into a friendly archive format
   so we don't have to mount DMG files frequently.
 
-The bulk of the complexity is in managing and persisting several caches.  If
-we found a Python LRU cache that pickled cleanly, we could remove a lot of
-this code!  Sadly, I found no such candidate implementations, so we pickle
-pylru caches manually.
-
-None of the instances (or the underlying caches) are safe for concurrent use.
-A future need, perhaps.
-
 This module requires certain modules be importable from the ambient Python
 environment.  |mach artifact| ensures these modules are available, but other
 consumers will need to arrange this themselves.
@@ -42,11 +34,9 @@ consumers will need to arrange this themselves.
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import binascii
 import collections
 import functools
 import glob
-import hashlib
 import logging
 import operator
 import os
@@ -68,11 +58,13 @@ from taskgraph.util.taskcluster import (
     list_artifacts,
 )
 
+from mozbuild.artifact_cache import ArtifactCache
 from mozbuild.artifact_builds import JOB_CHOICES
 from mozbuild.util import (
     ensureParentDir,
     FileAvoidWrite,
     mkdir,
+    ensure_subprocess_env,
 )
 import mozinstall
 from mozpack.files import (
@@ -85,12 +77,9 @@ from mozpack.mozjar import (
 )
 from mozpack.packager.unpack import UnpackFinder
 import mozpack.path as mozpath
-from dlmanager import (
-    DownloadManager,
-    PersistLimit,
-)
 
-NUM_PUSHHEADS_TO_QUERY_PER_PARENT = 50  # Number of candidate pushheads to cache per parent changeset.
+# Number of candidate pushheads to cache per parent changeset.
+NUM_PUSHHEADS_TO_QUERY_PER_PARENT = 50
 
 # Number of parent changesets to consider as possible pushheads.
 # There isn't really such a thing as a reasonable default here, because we don't
@@ -101,36 +90,34 @@ NUM_REVISIONS_TO_QUERY = 500
 
 MAX_CACHED_TASKS = 400  # Number of pushheads to cache Task Cluster task data for.
 
-# Minimum number of downloaded artifacts to keep. Each artifact can be very large,
-# so don't make this to large!
-MIN_CACHED_ARTIFACTS = 6
-
-# Maximum size of the downloaded artifacts to keep in cache, in bytes (1GiB).
-MAX_CACHED_ARTIFACTS_SIZE = 1024 * 1024 * 1024
-
 # Downloaded artifacts are cached, and a subset of their contents extracted for
 # easy installation.  This is most noticeable on Mac OS X: since mounting and
 # copying from DMG files is very slow, we extract the desired binaries to a
 # separate archive for fast re-installation.
 PROCESSED_SUFFIX = '.processed.jar'
 
-CANDIDATE_TREES = (
-    'mozilla-central',
-    'integration/mozilla-inbound',
-    'releases/mozilla-beta'
-)
 
 class ArtifactJob(object):
+    trust_domain = 'gecko'
+    candidate_trees = [
+        'mozilla-central',
+        'integration/autoland',
+        'releases/mozilla-beta',
+        'releases/mozilla-release',
+    ]
+    try_tree = 'try'
+
     # These are a subset of TEST_HARNESS_BINS in testing/mochitest/Makefile.in.
     # Each item is a pair of (pattern, (src_prefix, dest_prefix), where src_prefix
     # is the prefix of the pattern relevant to its location in the archive, and
     # dest_prefix is the prefix to be added that will yield the final path relative
     # to dist/.
     test_artifact_patterns = {
-        ('bin/BadCertServer', ('bin', 'bin')),
+        ('bin/BadCertAndPinningServer', ('bin', 'bin')),
+        ('bin/DelegatedCredentialsServer', ('bin', 'bin')),
         ('bin/GenerateOCSPResponse', ('bin', 'bin')),
         ('bin/OCSPStaplingServer', ('bin', 'bin')),
-        ('bin/SymantecSanctionsServer', ('bin', 'bin')),
+        ('bin/SanctionsTestServer', ('bin', 'bin')),
         ('bin/certutil', ('bin', 'bin')),
         ('bin/fileid', ('bin', 'bin')),
         ('bin/geckodriver', ('bin', 'bin')),
@@ -152,6 +139,7 @@ class ArtifactJob(object):
                  download_tests=True,
                  download_symbols=False,
                  download_host_bins=False,
+                 download_maven_zip=False,
                  substs=None):
         self._package_re = re.compile(self.package_re)
         self._tests_re = None
@@ -160,6 +148,9 @@ class ArtifactJob(object):
         self._host_bins_re = None
         if download_host_bins:
             self._host_bins_re = re.compile(r'public/build/host/bin/(mar|mbsdiff)(.exe)?')
+        self._maven_zip_re = None
+        if download_maven_zip:
+            self._maven_zip_re = re.compile(r'public/build/target\.maven\.zip')
         self._log = log
         self._substs = substs
         self._symbols_archive_suffix = None
@@ -175,9 +166,16 @@ class ArtifactJob(object):
     def find_candidate_artifacts(self, artifacts):
         # TODO: Handle multiple artifacts, taking the latest one.
         tests_artifact = None
+        maven_zip_artifact = None
         for artifact in artifacts:
             name = artifact['name']
-            if self._package_re and self._package_re.match(name):
+            if self._maven_zip_re:
+                if self._maven_zip_re.match(name):
+                    maven_zip_artifact = name
+                    yield name
+                else:
+                    continue
+            elif self._package_re and self._package_re.match(name):
                 yield name
             elif self._host_bins_re and self._host_bins_re.match(name):
                 yield name
@@ -187,12 +185,15 @@ class ArtifactJob(object):
             elif self._symbols_archive_suffix and name.endswith(self._symbols_archive_suffix):
                 yield name
             else:
-                self.log(logging.DEBUG, 'artifact',
+                self.log(logging.INFO, 'artifact',
                          {'name': name},
                          'Not yielding artifact named {name} as a candidate artifact')
         if self._tests_re and not tests_artifact:
             raise ValueError('Expected tests archive matching "{re}", but '
                              'found none!'.format(re=self._tests_re))
+        if self._maven_zip_re and not maven_zip_artifact:
+            raise ValueError('Expected Maven zip archive matching "{re}", but '
+                             'found none!'.format(re=self._maven_zip_re))
 
     def process_artifact(self, filename, processed_filename):
         if filename.endswith(ArtifactJob._test_zip_archive_suffix) and self._tests_re:
@@ -232,6 +233,15 @@ class ArtifactJob(object):
                     writer.add(destpath.encode('utf-8'), reader[filename], mode=mode)
                     added_entry = True
                     break
+
+                if filename.endswith('.ini'):
+                    # The artifact build writes test .ini files into the object
+                    # directory; they don't come from the upstream test archive.
+                    self.log(logging.INFO, 'artifact',
+                             {'filename': filename},
+                             'Skipping test INI file {filename}')
+                    continue
+
                 for files_entry in OBJDIR_TEST_FILES.values():
                     origin_pattern = files_entry['pattern']
                     leaf_filename = filename
@@ -269,6 +279,15 @@ class ArtifactJob(object):
                         writer.add(destpath.encode('utf-8'), entry.open(), mode=mode)
                         added_entry = True
                         break
+
+                    if filename.endswith('.ini'):
+                        # The artifact build writes test .ini files into the object
+                        # directory; they don't come from the upstream test archive.
+                        self.log(logging.INFO, 'artifact',
+                                 {'filename': filename},
+                                 'Skipping test INI file {filename}')
+                        continue
+
                     for files_entry in OBJDIR_TEST_FILES.values():
                         origin_pattern = files_entry['pattern']
                         leaf_filename = filename
@@ -286,10 +305,15 @@ class ArtifactJob(object):
                              'matched an archive path.'.format(
                                  patterns=LinuxArtifactJob.test_artifact_patterns))
 
-    def process_symbols_archive(self, filename, processed_filename):
+    def process_symbols_archive(self, filename, processed_filename, skip_compressed=False):
         with JarWriter(file=processed_filename, compress_level=5) as writer:
             reader = JarReader(filename)
             for filename in reader.entries:
+                if skip_compressed and filename.endswith('.gz'):
+                    self.log(logging.INFO, 'artifact',
+                             {'filename': filename},
+                             'Skipping compressed ELF debug symbol file {filename}')
+                    continue
                 destpath = mozpath.join('crashreporter-symbols', filename)
                 self.log(logging.INFO, 'artifact',
                          {'destpath': destpath},
@@ -305,14 +329,26 @@ class ArtifactJob(object):
             destpath = mozpath.join('host/bin', orig_basename)
             writer.add(destpath.encode('utf-8'), open(filename, 'rb'))
 
+    @staticmethod
+    def transform_job(job, tree):
+        # PGO builds are now known as "shippable" for all platforms but Android.
+        # For macOS and linux32 shippable builds are equivalent to opt builds and
+        # replace them on some trees. Additionally, we no longer produce win64
+        # opt builds on integration branches.
+        if job.endswith('-pgo') or job in ('macosx64-opt', 'linux-opt',
+                                           'win64-opt'):
+            tree += '.shippable'
+        if job.endswith('-pgo'):
+            job = job.replace('-pgo', '-opt')
+
+        return job, tree
+
 
 class AndroidArtifactJob(ArtifactJob):
-    package_re = r'public/build/target\.apk'
+    package_re = r'public/build/geckoview_example\.apk'
     product = 'mobile'
 
     package_artifact_patterns = {
-        'application.ini',
-        'platform.ini',
         '**/*.so',
     }
 
@@ -325,8 +361,8 @@ class AndroidArtifactJob(ArtifactJob):
 
                 dirname, basename = os.path.split(p)
                 self.log(logging.INFO, 'artifact',
-                    {'basename': basename},
-                   'Adding {basename} to processed archive')
+                         {'basename': basename},
+                         'Adding {basename} to processed archive')
 
                 basedir = 'bin'
                 if not basename.endswith('.so'):
@@ -334,24 +370,65 @@ class AndroidArtifactJob(ArtifactJob):
                 basename = mozpath.join(basedir, basename)
                 writer.add(basename.encode('utf-8'), f.open())
 
+    def process_symbols_archive(self, filename, processed_filename):
+        ArtifactJob.process_symbols_archive(
+            self, filename, processed_filename, skip_compressed=True)
+
+        if self._symbols_archive_suffix != 'crashreporter-symbols-full.zip':
+            return
+
+        import gzip
+
+        with JarWriter(file=processed_filename, compress_level=5) as writer:
+            reader = JarReader(filename)
+            for filename in reader.entries:
+                if not filename.endswith('.gz'):
+                    continue
+
+                # Uncompress "libxul.so/D3271457813E976AE7BF5DAFBABABBFD0/libxul.so.dbg.gz"
+                # into "libxul.so.dbg".
+                #
+                # After running `settings append target.debug-file-search-paths $file`,
+                # where file=/path/to/topobjdir/dist/crashreporter-symbols,
+                # Android Studio's lldb (7.0.0, at least) will find the ELF debug symbol files.
+                #
+                # There are other paths that will work but none seem more desireable.  See
+                # https://github.com/llvm-mirror/lldb/blob/882670690ca69d9dd96b7236c620987b11894af9/source/Host/common/Symbols.cpp#L324.
+                basename = os.path.basename(filename).replace('.gz', '')
+                destpath = mozpath.join('crashreporter-symbols', basename)
+                self.log(logging.INFO, 'artifact',
+                         {'destpath': destpath},
+                         'Adding uncompressed ELF debug symbol file '
+                         '{destpath} to processed archive')
+                writer.add(destpath.encode('utf-8'),
+                           gzip.GzipFile(fileobj=reader[filename].uncompressed_data))
+
+    @staticmethod
+    def transform_job(job, tree):
+        return job, tree
+
 
 class LinuxArtifactJob(ArtifactJob):
     package_re = r'public/build/target\.tar\.bz2'
     product = 'firefox'
 
-    package_artifact_patterns = {
-        'firefox/application.ini',
-        'firefox/crashreporter',
-        'firefox/dependentlibs.list',
-        'firefox/firefox',
-        'firefox/firefox-bin',
-        'firefox/minidump-analyzer',
-        'firefox/pingsender',
-        'firefox/platform.ini',
-        'firefox/plugin-container',
-        'firefox/updater',
-        'firefox/**/*.so',
+    _package_artifact_patterns = {
+        '{product}/crashreporter',
+        '{product}/dependentlibs.list',
+        '{product}/{product}',
+        '{product}/{product}-bin',
+        '{product}/minidump-analyzer',
+        '{product}/pingsender',
+        '{product}/plugin-container',
+        '{product}/updater',
+        '{product}/**/*.so',
     }
+
+    @property
+    def package_artifact_patterns(self):
+        return {
+            p.format(product=self.product) for p in self._package_artifact_patterns
+        }
 
     def process_package_artifact(self, filename, processed_filename):
         added_entry = False
@@ -365,7 +442,7 @@ class LinuxArtifactJob(ArtifactJob):
                     # We strip off the relative "firefox/" bit from the path,
                     # but otherwise preserve it.
                     destpath = mozpath.join('bin',
-                                            mozpath.relpath(p, "firefox"))
+                                            mozpath.relpath(p, self.product))
                     self.log(logging.INFO, 'artifact',
                              {'destpath': destpath},
                              'Adding {destpath} to processed archive')
@@ -382,13 +459,44 @@ class MacArtifactJob(ArtifactJob):
     package_re = r'public/build/target\.dmg'
     product = 'firefox'
 
+    # These get copied into dist/bin without the path, so "root/a/b/c" -> "dist/bin/c".
+    _paths_no_keep_path = ('Contents/MacOS', [
+        'crashreporter.app/Contents/MacOS/crashreporter',
+        '{product}',
+        '{product}-bin',
+        'libfreebl3.dylib',
+        'liblgpllibs.dylib',
+        # 'liblogalloc.dylib',
+        'libmozglue.dylib',
+        'libnss3.dylib',
+        'libnssckbi.dylib',
+        'libnssdbm3.dylib',
+        'libplugin_child_interpose.dylib',
+        # 'libreplace_jemalloc.dylib',
+        # 'libreplace_malloc.dylib',
+        'libmozavutil.dylib',
+        'libmozavcodec.dylib',
+        'libsoftokn3.dylib',
+        'minidump-analyzer',
+        'pingsender',
+        'plugin-container.app/Contents/MacOS/plugin-container',
+        'updater.app/Contents/MacOS/org.mozilla.updater',
+        # 'xpcshell',
+        'XUL',
+    ])
+
+    @property
+    def paths_no_keep_path(self):
+        root, paths = self._paths_no_keep_path
+        return (root, [p.format(product=self.product) for p in paths])
+
     def process_package_artifact(self, filename, processed_filename):
         tempdir = tempfile.mkdtemp()
         oldcwd = os.getcwd()
         try:
             self.log(logging.INFO, 'artifact',
-                {'tempdir': tempdir},
-                'Unpacking DMG into {tempdir}')
+                     {'tempdir': tempdir},
+                     'Unpacking DMG into {tempdir}')
             if self._substs['HOST_OS_ARCH'] == 'Linux':
                 # This is a cross build, use hfsplus and dmg tools to extract the dmg.
                 os.chdir(tempdir)
@@ -412,36 +520,8 @@ class MacArtifactJob(ArtifactJob):
                 raise ValueError('Expected one source bundle, found: {}'.format(bundle_dirs))
             [source] = bundle_dirs
 
-            # These get copied into dist/bin without the path, so "root/a/b/c" -> "dist/bin/c".
-            paths_no_keep_path = ('Contents/MacOS', [
-                'crashreporter.app/Contents/MacOS/crashreporter',
-                'firefox',
-                'firefox-bin',
-                'libfreebl3.dylib',
-                'liblgpllibs.dylib',
-                # 'liblogalloc.dylib',
-                'libmozglue.dylib',
-                'libnss3.dylib',
-                'libnssckbi.dylib',
-                'libnssdbm3.dylib',
-                'libplugin_child_interpose.dylib',
-                # 'libreplace_jemalloc.dylib',
-                # 'libreplace_malloc.dylib',
-                'libmozavutil.dylib',
-                'libmozavcodec.dylib',
-                'libsoftokn3.dylib',
-                'pingsender',
-                'plugin-container.app/Contents/MacOS/plugin-container',
-                'updater.app/Contents/MacOS/org.mozilla.updater',
-                # 'xpcshell',
-                'XUL',
-            ])
-
             # These get copied into dist/bin with the path, so "root/a/b/c" -> "dist/bin/a/b/c".
             paths_keep_path = [
-                ('Contents/MacOS', [
-                    'crashreporter.app/Contents/MacOS/minidump-analyzer',
-                ]),
                 ('Contents/Resources', [
                     'browser/components/libbrowsercomps.dylib',
                     'dependentlibs.list',
@@ -453,13 +533,13 @@ class MacArtifactJob(ArtifactJob):
             ]
 
             with JarWriter(file=processed_filename, compress_level=5) as writer:
-                root, paths = paths_no_keep_path
+                root, paths = self.paths_no_keep_path
                 finder = UnpackFinder(mozpath.join(source, root))
                 for path in paths:
                     for p, f in finder.find(path):
                         self.log(logging.INFO, 'artifact',
-                            {'path': p},
-                            'Adding {path} to processed archive')
+                                 {'path': p},
+                                 'Adding {path} to processed archive')
                         destpath = mozpath.join('bin', os.path.basename(p))
                         writer.add(destpath.encode('utf-8'), f, mode=f.mode)
 
@@ -479,33 +559,39 @@ class MacArtifactJob(ArtifactJob):
                 shutil.rmtree(tempdir)
             except (OSError, IOError):
                 self.log(logging.WARN, 'artifact',
-                    {'tempdir': tempdir},
-                    'Unable to delete {tempdir}')
+                         {'tempdir': tempdir},
+                         'Unable to delete {tempdir}')
                 pass
 
 
 class WinArtifactJob(ArtifactJob):
     package_re = r'public/build/target\.(zip|tar\.gz)'
-    package_artifact_patterns = {
-        'firefox/dependentlibs.list',
-        'firefox/platform.ini',
-        'firefox/application.ini',
-        'firefox/**/*.dll',
-        'firefox/*.exe',
-        'firefox/*.tlb',
+    product = 'firefox'
+
+    _package_artifact_patterns = {
+        '{product}/dependentlibs.list',
+        '{product}/**/*.dll',
+        '{product}/*.exe',
+        '{product}/*.tlb',
     }
 
-    product = 'firefox'
+    @property
+    def package_artifact_patterns(self):
+        return {
+            p.format(product=self.product) for p in self._package_artifact_patterns
+        }
 
     # These are a subset of TEST_HARNESS_BINS in testing/mochitest/Makefile.in.
     test_artifact_patterns = {
-        ('bin/BadCertServer.exe', ('bin', 'bin')),
+        ('bin/BadCertAndPinningServer.exe', ('bin', 'bin')),
+        ('bin/DelegatedCredentialsServer.exe', ('bin', 'bin')),
         ('bin/GenerateOCSPResponse.exe', ('bin', 'bin')),
         ('bin/OCSPStaplingServer.exe', ('bin', 'bin')),
-        ('bin/SymantecSanctionsServer.exe', ('bin', 'bin')),
+        ('bin/SanctionsTestServer.exe', ('bin', 'bin')),
         ('bin/certutil.exe', ('bin', 'bin')),
         ('bin/fileid.exe', ('bin', 'bin')),
         ('bin/geckodriver.exe', ('bin', 'bin')),
+        ('bin/minidumpwriter.exe', ('bin', 'bin')),
         ('bin/pk12util.exe', ('bin', 'bin')),
         ('bin/screenshot.exe', ('bin', 'bin')),
         ('bin/ssltunnel.exe', ('bin', 'bin')),
@@ -523,11 +609,11 @@ class WinArtifactJob(ArtifactJob):
                     continue
 
                 # strip off the relative "firefox/" bit from the path:
-                basename = mozpath.relpath(p, "firefox")
+                basename = mozpath.relpath(p, self.product)
                 basename = mozpath.join('bin', basename)
                 self.log(logging.INFO, 'artifact',
-                    {'basename': basename},
-                    'Adding {basename} to processed archive')
+                         {'basename': basename},
+                         'Adding {basename} to processed archive')
                 writer.add(basename.encode('utf-8'), f.open(), mode=f.mode)
                 added_entry = True
 
@@ -537,13 +623,43 @@ class WinArtifactJob(ArtifactJob):
                                  patterns=self.artifact_patterns))
 
 
+class ThunderbirdMixin(object):
+    trust_domain = 'comm'
+    product = 'thunderbird'
+    candidate_trees = [
+        'comm-central',
+    ]
+    try_tree = 'try-comm-central'
+
+    @staticmethod
+    def transform_job(job, tree):
+        return job, tree
+
+
+class LinuxThunderbirdArtifactJob(ThunderbirdMixin, LinuxArtifactJob):
+    pass
+
+
+class MacThunderbirdArtifactJob(ThunderbirdMixin, MacArtifactJob):
+    _paths_no_keep_path = MacArtifactJob._paths_no_keep_path
+    _paths_no_keep_path[1].extend([
+        'libldap60.dylib',
+        'libldif60.dylib',
+        'libprldap60.dylib',
+    ])
+
+
+class WinThunderbirdArtifactJob(ThunderbirdMixin, WinArtifactJob):
+    pass
+
+
 def startswithwhich(s, prefixes):
     for prefix in prefixes:
         if s.startswith(prefix):
             return prefix
 
 
-JOB_DETAILS = {
+MOZ_JOB_DETAILS = {
     j: {
         'android': AndroidArtifactJob,
         'linux': LinuxArtifactJob,
@@ -552,7 +668,15 @@ JOB_DETAILS = {
     }[startswithwhich(j, ('android', 'linux', 'macosx', 'win'))]
     for j in JOB_CHOICES
 }
-
+COMM_JOB_DETAILS = {
+    j: {
+        'android': None,
+        'linux': LinuxThunderbirdArtifactJob,
+        'macosx': MacThunderbirdArtifactJob,
+        'win': WinThunderbirdArtifactJob,
+    }[startswithwhich(j, ('android', 'linux', 'macosx', 'win'))]
+    for j in JOB_CHOICES
+}
 
 
 def cachedmethod(cachefunc):
@@ -585,7 +709,8 @@ class CacheManager(object):
     Provide simple logging.
     '''
 
-    def __init__(self, cache_dir, cache_name, cache_size, cache_callback=None, log=None, skip_cache=False):
+    def __init__(self, cache_dir, cache_name, cache_size, cache_callback=None,
+                 log=None, skip_cache=False):
         self._skip_cache = skip_cache
         self._cache = pylru.lrucache(cache_size, callback=cache_callback)
         self._cache_filename = mozpath.join(cache_dir, cache_name + '-cache.pickle')
@@ -598,9 +723,9 @@ class CacheManager(object):
 
     def load_cache(self):
         if self._skip_cache:
-            self.log(logging.DEBUG, 'artifact',
-                {},
-                'Skipping cache: ignoring load_cache!')
+            self.log(logging.INFO, 'artifact',
+                     {},
+                     'Skipping cache: ignoring load_cache!')
             return
 
         try:
@@ -612,25 +737,26 @@ class CacheManager(object):
             # exceptions, so it's not worth trying to be fine grained here.
             # We ignore any exception, so the cache is effectively dropped.
             self.log(logging.INFO, 'artifact',
-                {'filename': self._cache_filename, 'exception': repr(e)},
-                'Ignoring exception unpickling cache file {filename}: {exception}')
+                     {'filename': self._cache_filename, 'exception': repr(e)},
+                     'Ignoring exception unpickling cache file {filename}: {exception}')
             pass
 
     def dump_cache(self):
         if self._skip_cache:
-            self.log(logging.DEBUG, 'artifact',
-                {},
-                'Skipping cache: ignoring dump_cache!')
+            self.log(logging.INFO, 'artifact',
+                     {},
+                     'Skipping cache: ignoring dump_cache!')
             return
 
         ensureParentDir(self._cache_filename)
-        pickle.dump(list(reversed(list(self._cache.items()))), open(self._cache_filename, 'wb'), -1)
+        pickle.dump(list(reversed(list(self._cache.items()))),
+                    open(self._cache_filename, 'wb'), -1)
 
     def clear_cache(self):
         if self._skip_cache:
-            self.log(logging.DEBUG, 'artifact',
-                {},
-                'Skipping cache: ignoring clear_cache!')
+            self.log(logging.INFO, 'artifact',
+                     {},
+                     'Skipping cache: ignoring clear_cache!')
             return
 
         with self:
@@ -643,11 +769,13 @@ class CacheManager(object):
     def __exit__(self, type, value, traceback):
         self.dump_cache()
 
+
 class PushheadCache(CacheManager):
     '''Helps map tree/revision pairs to parent pushheads according to the pushlog.'''
 
     def __init__(self, cache_dir, log=None, skip_cache=False):
-        CacheManager.__init__(self, cache_dir, 'pushhead_cache', MAX_CACHED_TASKS, log=log, skip_cache=skip_cache)
+        CacheManager.__init__(self, cache_dir, 'pushhead_cache',
+                              MAX_CACHED_TASKS, log=log, skip_cache=skip_cache)
 
     @cachedmethod(operator.attrgetter('_cache'))
     def parent_pushhead_id(self, tree, revision):
@@ -674,28 +802,25 @@ class PushheadCache(CacheManager):
             p['changesets'][-1] for p in result['pushes'].values()
         ]
 
+
 class TaskCache(CacheManager):
     '''Map candidate pushheads to Task Cluster task IDs and artifact URLs.'''
 
     def __init__(self, cache_dir, log=None, skip_cache=False):
-        CacheManager.__init__(self, cache_dir, 'artifact_url', MAX_CACHED_TASKS, log=log, skip_cache=skip_cache)
+        CacheManager.__init__(self, cache_dir, 'artifact_url',
+                              MAX_CACHED_TASKS, log=log, skip_cache=skip_cache)
 
     @cachedmethod(operator.attrgetter('_cache'))
-    def artifacts(self, tree, job, rev):
-        try:
-            artifact_job_class = JOB_DETAILS[job]
-        except KeyError:
-            self.log(logging.INFO, 'artifact',
-                {'job': job},
-                'Unknown job {job}')
-            raise KeyError("Unknown job")
-
+    def artifacts(self, tree, job, artifact_job_class, rev):
         # Grab the second part of the repo name, which is generally how things
-        # are indexed. Eg: 'integration/mozilla-inbound' is indexed as
-        # 'mozilla-inbound'
+        # are indexed. Eg: 'integration/autoland' is indexed as
+        # 'autoland'
         tree = tree.split('/')[1] if '/' in tree else tree
 
-        namespace = 'gecko.v2.{tree}.revision.{rev}.{product}.{job}'.format(
+        job, tree = artifact_job_class.transform_job(job, tree)
+
+        namespace = '{trust_domain}.v2.{tree}.revision.{rev}.{product}.{job}'.format(
+            trust_domain=artifact_job_class.trust_domain,
             rev=rev,
             tree=tree,
             product=artifact_job_class.product,
@@ -709,182 +834,10 @@ class TaskCache(CacheManager):
         except KeyError:
             # Not all revisions correspond to pushes that produce the job we
             # care about; and even those that do may not have completed yet.
-            raise ValueError('Task for {namespace} does not exist (yet)!'.format(namespace=namespace))
+            raise ValueError(
+                'Task for {namespace} does not exist (yet)!'.format(namespace=namespace))
 
         return taskId, list_artifacts(taskId)
-
-
-class ArtifactPersistLimit(PersistLimit):
-    '''Handle persistence for artifacts cache
-
-    When instantiating a DownloadManager, it starts by filling the
-    PersistLimit instance it's given with register_dir_content.
-    In practice, this registers all the files already in the cache directory.
-    After a download finishes, the newly downloaded file is registered, and the
-    oldest files registered to the PersistLimit instance are removed depending
-    on the size and file limits it's configured for.
-    This is all good, but there are a few tweaks we want here:
-    - We have pickle files in the cache directory that we don't want purged.
-    - Files that were just downloaded in the same session shouldn't be purged.
-      (if for some reason we end up downloading more than the default max size,
-       we don't want the files to be purged)
-    To achieve this, this subclass of PersistLimit inhibits the register_file
-    method for pickle files and tracks what files were downloaded in the same
-    session to avoid removing them.
-
-    The register_file method may be used to register cache matches too, so that
-    later sessions know they were freshly used.
-    '''
-
-    def __init__(self, log=None):
-        super(ArtifactPersistLimit, self).__init__(
-            size_limit=MAX_CACHED_ARTIFACTS_SIZE,
-            file_limit=MIN_CACHED_ARTIFACTS)
-        self._log = log
-        self._registering_dir = False
-        self._downloaded_now = set()
-
-    def log(self, *args, **kwargs):
-        if self._log:
-            self._log(*args, **kwargs)
-
-    def register_file(self, path):
-        if path.endswith('.pickle') or \
-                os.path.basename(path) == '.metadata_never_index':
-            return
-        if not self._registering_dir:
-            # Touch the file so that subsequent calls to a mach artifact
-            # command know it was recently used. While remove_old_files
-            # is based on access time, in various cases, the access time is not
-            # updated when just reading the file, so we force an update.
-            try:
-                os.utime(path, None)
-            except OSError:
-                pass
-            self._downloaded_now.add(path)
-        super(ArtifactPersistLimit, self).register_file(path)
-
-    def register_dir_content(self, directory, pattern="*"):
-        self._registering_dir = True
-        super(ArtifactPersistLimit, self).register_dir_content(
-            directory, pattern)
-        self._registering_dir = False
-
-    def remove_old_files(self):
-        from dlmanager import fs
-        files = sorted(self.files, key=lambda f: f.stat.st_atime)
-        kept = []
-        while len(files) > self.file_limit and \
-                self._files_size >= self.size_limit:
-            f = files.pop(0)
-            if f.path in self._downloaded_now:
-                kept.append(f)
-                continue
-            try:
-                fs.remove(f.path)
-            except WindowsError:
-                # For some reason, on automation, we can't remove those files.
-                # So for now, ignore the error.
-                kept.append(f)
-                continue
-            self.log(logging.INFO, 'artifact',
-                {'filename': f.path},
-                'Purged artifact {filename}')
-            self._files_size -= f.stat.st_size
-        self.files = files + kept
-
-    def remove_all(self):
-        from dlmanager import fs
-        for f in self.files:
-            fs.remove(f.path)
-        self._files_size = 0
-        self.files = []
-
-
-class ArtifactCache(object):
-    '''Fetch Task Cluster artifact URLs and purge least recently used artifacts from disk.'''
-
-    def __init__(self, cache_dir, log=None, skip_cache=False):
-        mkdir(cache_dir, not_indexed=True)
-        self._cache_dir = cache_dir
-        self._log = log
-        self._skip_cache = skip_cache
-        self._persist_limit = ArtifactPersistLimit(log)
-        self._download_manager = DownloadManager(
-            self._cache_dir, persist_limit=self._persist_limit)
-        self._last_dl_update = -1
-
-    def log(self, *args, **kwargs):
-        if self._log:
-            self._log(*args, **kwargs)
-
-    def fetch(self, url, force=False):
-        fname = os.path.basename(url)
-        try:
-            # Use the file name from the url if it looks like a hash digest.
-            if len(fname) not in (32, 40, 56, 64, 96, 128):
-                raise TypeError()
-            binascii.unhexlify(fname)
-        except TypeError:
-            # We download to a temporary name like HASH[:16]-basename to
-            # differentiate among URLs with the same basenames.  We used to then
-            # extract the build ID from the downloaded artifact and use it to make a
-            # human readable unique name, but extracting build IDs is time consuming
-            # (especially on Mac OS X, where we must mount a large DMG file).
-            hash = hashlib.sha256(url).hexdigest()[:16]
-            # Strip query string and fragments.
-            basename = os.path.basename(urlparse.urlparse(url).path)
-            fname = hash + '-' + basename
-
-        path = os.path.abspath(mozpath.join(self._cache_dir, fname))
-        if self._skip_cache and os.path.exists(path):
-            self.log(logging.DEBUG, 'artifact',
-                {'path': path},
-                'Skipping cache: removing cached downloaded artifact {path}')
-            os.remove(path)
-
-        self.log(logging.INFO, 'artifact',
-            {'path': path},
-            'Downloading to temporary location {path}')
-        try:
-            dl = self._download_manager.download(url, fname)
-
-            def download_progress(dl, bytes_so_far, total_size):
-                if not total_size:
-                    return
-                percent = (float(bytes_so_far) / total_size) * 100
-                now = int(percent / 5)
-                if now == self._last_dl_update:
-                    return
-                self._last_dl_update = now
-                self.log(logging.INFO, 'artifact',
-                         {'bytes_so_far': bytes_so_far, 'total_size': total_size, 'percent': percent},
-                         'Downloading... {percent:02.1f} %')
-
-            if dl:
-                dl.set_progress(download_progress)
-                dl.wait()
-            else:
-                # Avoid the file being removed if it was in the cache already.
-                path = os.path.join(self._cache_dir, fname)
-                self._persist_limit.register_file(path)
-
-            self.log(logging.INFO, 'artifact',
-                {'path': os.path.abspath(mozpath.join(self._cache_dir, fname))},
-                'Downloaded artifact to {path}')
-            return os.path.abspath(mozpath.join(self._cache_dir, fname))
-        finally:
-            # Cancel any background downloads in progress.
-            self._download_manager.cancel()
-
-    def clear_cache(self):
-        if self._skip_cache:
-            self.log(logging.DEBUG, 'artifact',
-                {},
-                'Skipping cache: ignoring clear_cache!')
-            return
-
-        self._persist_limit.remove_all()
 
 
 class Artifacts(object):
@@ -893,7 +846,8 @@ class Artifacts(object):
     def __init__(self, tree, substs, defines, job=None, log=None,
                  cache_dir='.', hg=None, git=None, skip_cache=False,
                  topsrcdir=None, download_tests=True, download_symbols=False,
-                 download_host_bins=False):
+                 download_host_bins=False,
+                 download_maven_zip=False, no_process=False):
         if (hg and git) or (not hg and not git):
             raise ValueError("Must provide path to exactly one of hg and git")
 
@@ -907,27 +861,41 @@ class Artifacts(object):
         self._cache_dir = cache_dir
         self._skip_cache = skip_cache
         self._topsrcdir = topsrcdir
+        self._no_process = no_process
+
+        app = self._substs.get('MOZ_BUILD_APP')
+        job_details = COMM_JOB_DETAILS if app == 'comm/mail' else MOZ_JOB_DETAILS
 
         try:
-            cls = JOB_DETAILS[self._job]
+            cls = job_details[self._job]
             self._artifact_job = cls(log=self._log,
                                      download_tests=download_tests,
                                      download_symbols=download_symbols,
                                      download_host_bins=download_host_bins,
+                                     download_maven_zip=download_maven_zip,
                                      substs=self._substs)
         except KeyError:
             self.log(logging.INFO, 'artifact',
-                {'job': self._job},
-                'Unknown job {job}')
+                     {'job': self._job},
+                     'Unknown job {job}')
             raise KeyError("Unknown job")
 
         self._task_cache = TaskCache(self._cache_dir, log=self._log, skip_cache=self._skip_cache)
-        self._artifact_cache = ArtifactCache(self._cache_dir, log=self._log, skip_cache=self._skip_cache)
-        self._pushhead_cache = PushheadCache(self._cache_dir, log=self._log, skip_cache=self._skip_cache)
+        self._artifact_cache = ArtifactCache(
+            self._cache_dir, log=self._log, skip_cache=self._skip_cache)
+        self._pushhead_cache = PushheadCache(
+            self._cache_dir, log=self._log, skip_cache=self._skip_cache)
 
     def log(self, *args, **kwargs):
         if self._log:
             self._log(*args, **kwargs)
+
+    def run_hg(self, *args, **kwargs):
+        env = kwargs.get('env', {})
+        env['HGPLAIN'] = '1'
+        kwargs['env'] = ensure_subprocess_env(env)
+        return subprocess.check_output([self._hg] + list(args),
+                                       **kwargs)
 
     def _guess_artifact_job(self):
         # Add the "-debug" suffix to the guessed artifact job name
@@ -975,7 +943,7 @@ class Artifacts(object):
         with self._pushhead_cache as pushhead_cache:
             found_pushids = {}
 
-            search_trees = list(CANDIDATE_TREES)
+            search_trees = self._artifact_job.candidate_trees
             for tree in search_trees:
                 self.log(logging.INFO, 'artifact',
                          {'tree': tree,
@@ -1035,17 +1003,22 @@ class Artifacts(object):
 
         # Mercurial updated the ordering of "last" in 4.3. We use revision
         # numbers to order here to accommodate multiple versions of hg.
-        last_revs = subprocess.check_output([
-            self._hg, 'log',
-            '--template', '{rev}:{node}\n',
-            '-r', 'last(public() and ::., {num})'.format(
-                num=NUM_REVISIONS_TO_QUERY)
-        ], cwd=self._topsrcdir).splitlines()
+        last_revs = self.run_hg('log', '--template', '{rev}:{node}\n',
+                                '-r', 'last(public() and ::., {num})'.format(
+                                    num=NUM_REVISIONS_TO_QUERY),
+                                cwd=self._topsrcdir).splitlines()
 
+        if len(last_revs) == 0:
+            raise Exception("""\
+There are no public revisions.
+This can happen if the repository is created from bundle file and never pulled
+from remote.  Please run `hg pull` and build again.
+see https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Source_Code/Mercurial/Bundles\
+""")
 
         self.log(logging.INFO, 'artifact',
-            {'len': len(last_revs)},
-            'hg suggested {len} candidate revisions')
+                 {'len': len(last_revs)},
+                 'hg suggested {len} candidate revisions')
 
         def to_pair(line):
             rev, node = line.split(':', 1)
@@ -1058,10 +1031,10 @@ class Artifacts(object):
         nodes = [pair[1] for pair in sorted(pairs, reverse=True)]
 
         for node in nodes[:20]:
-            self.log(logging.DEBUG, 'artifact',
+            self.log(logging.INFO, 'artifact',
                      {'node': node},
                      'hg suggested candidate revision: {node}')
-        self.log(logging.DEBUG, 'artifact',
+        self.log(logging.INFO, 'artifact',
                  {'remaining': max(0, len(nodes) - 20)},
                  'hg suggested candidate revision: and {remaining} more')
 
@@ -1086,22 +1059,21 @@ class Artifacts(object):
             yield candidate_pushheads[rev], rev
 
         if not count:
-            raise Exception('Could not find any candidate pushheads in the last {num} revisions.\n'
-                            'Search started with {rev}, which must be known to Mozilla automation.\n\n'
-                            'see https://developer.mozilla.org/en-US/docs/Artifact_builds'.format(
-                                rev=last_revs[0], num=NUM_PUSHHEADS_TO_QUERY_PER_PARENT))
+            raise Exception(
+                'Could not find any candidate pushheads in the last {num} revisions.\n'
+                'Search started with {rev}, which must be known to Mozilla automation.\n\n'
+                'see https://developer.mozilla.org/en-US/docs/Artifact_builds'.format(
+                    rev=last_revs[0], num=NUM_PUSHHEADS_TO_QUERY_PER_PARENT))
 
     def find_pushhead_artifacts(self, task_cache, job, tree, pushhead):
         try:
-            taskId, artifacts = task_cache.artifacts(tree, job, pushhead)
+            taskId, artifacts = task_cache.artifacts(
+                tree, job, self._artifact_job.__class__, pushhead)
         except ValueError:
             return None
 
         urls = []
         for artifact_name in self._artifact_job.find_candidate_artifacts(artifacts):
-            # We can easily extract the task ID from the URL.  We can't easily
-            # extract the build ID; we use the .ini files embedded in the
-            # downloaded artifact for this.
             url = get_artifact_url(taskId, artifact_name)
             urls.append(url)
         if urls:
@@ -1114,59 +1086,73 @@ class Artifacts(object):
 
     def install_from_file(self, filename, distdir):
         self.log(logging.INFO, 'artifact',
-            {'filename': filename},
-            'Installing from {filename}')
+                 {'filename': filename},
+                 'Installing from {filename}')
+
+        # Copy all .so files, avoiding modification where possible.
+        ensureParentDir(mozpath.join(distdir, '.dummy'))
+
+        if self._no_process:
+            orig_basename = os.path.basename(filename)
+            # Turn 'HASH-target...' into 'target...' if possible.  It might not
+            # be possible if the file is given directly on the command line.
+            before, _sep, after = orig_basename.rpartition('-')
+            if re.match(r'[0-9a-fA-F]{16}$', before):
+                orig_basename = after
+            path = mozpath.join(distdir, orig_basename)
+            with FileAvoidWrite(path, readmode='rb') as fh:
+                shutil.copyfileobj(open(filename, mode='rb'), fh)
+            self.log(logging.INFO, 'artifact',
+                     {'path': path},
+                     'Copied unprocessed artifact: to {path}')
+            return
 
         # Do we need to post-process?
         processed_filename = filename + PROCESSED_SUFFIX
 
         if self._skip_cache and os.path.exists(processed_filename):
-            self.log(logging.DEBUG, 'artifact',
-                {'path': processed_filename},
-                'Skipping cache: removing cached processed artifact {path}')
+            self.log(logging.INFO, 'artifact',
+                     {'path': processed_filename},
+                     'Skipping cache: removing cached processed artifact {path}')
             os.remove(processed_filename)
 
         if not os.path.exists(processed_filename):
             self.log(logging.INFO, 'artifact',
-                {'filename': filename},
-                'Processing contents of {filename}')
+                     {'filename': filename},
+                     'Processing contents of {filename}')
             self.log(logging.INFO, 'artifact',
-                {'processed_filename': processed_filename},
-                'Writing processed {processed_filename}')
+                     {'processed_filename': processed_filename},
+                     'Writing processed {processed_filename}')
             self._artifact_job.process_artifact(filename, processed_filename)
 
         self._artifact_cache._persist_limit.register_file(processed_filename)
 
         self.log(logging.INFO, 'artifact',
-            {'processed_filename': processed_filename},
-            'Installing from processed {processed_filename}')
-
-        # Copy all .so files, avoiding modification where possible.
-        ensureParentDir(mozpath.join(distdir, '.dummy'))
+                 {'processed_filename': processed_filename},
+                 'Installing from processed {processed_filename}')
 
         with zipfile.ZipFile(processed_filename) as zf:
             for info in zf.infolist():
-                if info.filename.endswith('.ini'):
-                    continue
                 n = mozpath.join(distdir, info.filename)
-                fh = FileAvoidWrite(n, mode='rb')
+                fh = FileAvoidWrite(n, readmode='rb')
                 shutil.copyfileobj(zf.open(info), fh)
                 file_existed, file_updated = fh.close()
                 self.log(logging.INFO, 'artifact',
-                    {'updating': 'Updating' if file_updated else 'Not updating', 'filename': n},
-                    '{updating} {filename}')
+                         {'updating': 'Updating' if file_updated else 'Not updating',
+                          'filename': n},
+                         '{updating} {filename}')
                 if not file_existed or file_updated:
                     # Libraries and binaries may need to be marked executable,
                     # depending on platform.
-                    perms = info.external_attr >> 16 # See http://stackoverflow.com/a/434689.
-                    perms |= stat.S_IWUSR | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH # u+w, a+r.
+                    perms = info.external_attr >> 16  # See http://stackoverflow.com/a/434689.
+                    perms |= stat.S_IWUSR | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH  # u+w, a+r.
                     os.chmod(n, perms)
         return 0
 
     def install_from_url(self, url, distdir):
         self.log(logging.INFO, 'artifact',
-            {'url': url},
-            'Installing from {url}')
+                 {'url': url},
+                 'Installing from {url}')
         filename = self._artifact_cache.fetch(url)
         return self.install_from_file(filename, distdir)
 
@@ -1183,7 +1169,7 @@ class Artifacts(object):
             for trees, hg_hash in hg_pushheads:
                 for tree in trees:
                     count += 1
-                    self.log(logging.DEBUG, 'artifact',
+                    self.log(logging.INFO, 'artifact',
                              {'hg_hash': hg_hash,
                               'tree': tree},
                              'Trying to find artifacts for hg revision {hg_hash} on tree {tree}.')
@@ -1207,8 +1193,8 @@ class Artifacts(object):
         revision = None
         try:
             if self._hg:
-                revision = subprocess.check_output([self._hg, 'log', '--template', '{node}\n',
-                                                  '-r', revset], cwd=self._topsrcdir).strip()
+                revision = self.run_hg('log', '--template', '{node}\n', '-r', revset,
+                                       cwd=self._topsrcdir).strip()
             elif self._git:
                 revset = subprocess.check_output([
                     self._git, 'rev-parse', '%s^{commit}' % revset],
@@ -1239,7 +1225,10 @@ class Artifacts(object):
                  'Will only accept artifacts from a pushhead at {revision} '
                  '(matched revset "{revset}").')
         # Include try in our search to allow pulling from a specific push.
-        pushheads = [(list(CANDIDATE_TREES) + ['try'], revision)]
+        pushheads = [(
+            self._artifact_job.candidate_trees + [self._artifact_job.try_tree],
+            revision
+        )]
         return self._install_from_hg_pushheads(pushheads, distdir)
 
     def install_from_task(self, taskId, distdir):
@@ -1247,13 +1236,11 @@ class Artifacts(object):
 
         urls = []
         for artifact_name in self._artifact_job.find_candidate_artifacts(artifacts):
-            # We can easily extract the task ID from the URL.  We can't easily
-            # extract the build ID; we use the .ini files embedded in the
-            # downloaded artifact for this.
             url = get_artifact_url(taskId, artifact_name)
             urls.append(url)
         if not urls:
-            raise ValueError('Task {taskId} existed, but no artifacts found!'.format(taskId=taskId))
+            raise ValueError(
+                'Task {taskId} existed, but no artifacts found!'.format(taskId=taskId))
         for url in urls:
             if self.install_from_url(url, distdir):
                 return 1
@@ -1282,11 +1269,10 @@ class Artifacts(object):
 
             return self.install_from_recent(distdir)
 
-
     def clear_cache(self):
         self.log(logging.INFO, 'artifact',
-            {},
-            'Deleting cached artifacts and caches.')
+                 {},
+                 'Deleting cached artifacts and caches.')
         self._task_cache.clear_cache()
         self._artifact_cache.clear_cache()
         self._pushhead_cache.clear_cache()

@@ -44,6 +44,12 @@ struct JSPrincipals {
   virtual bool write(JSContext* cx, JSStructuredCloneWriter* writer) = 0;
 
   /*
+   * Whether the principal corresponds to a System or AddOn Principal.
+   * Technically this also checks for an ExpandedAddonPrincipal.
+   */
+  virtual bool isSystemOrAddonPrincipal() = 0;
+
+  /*
    * This is not defined by the JS engine but should be provided by the
    * embedding.
    */
@@ -123,5 +129,34 @@ using JSReadPrincipalsOp = bool (*)(JSContext* cx,
  */
 extern JS_PUBLIC_API void JS_InitReadPrincipalsCallback(
     JSContext* cx, JSReadPrincipalsOp read);
+
+namespace JS {
+
+class MOZ_RAII AutoHoldPrincipals {
+  JSContext* cx_;
+  JSPrincipals* principals_ = nullptr;
+
+ public:
+  explicit AutoHoldPrincipals(JSContext* cx, JSPrincipals* principals = nullptr)
+      : cx_(cx) {
+    reset(principals);
+  }
+
+  ~AutoHoldPrincipals() { reset(nullptr); }
+
+  void reset(JSPrincipals* principals) {
+    if (principals) {
+      JS_HoldPrincipals(principals);
+    }
+    if (principals_) {
+      JS_DropPrincipals(cx_, principals_);
+    }
+    principals_ = principals;
+  }
+
+  JSPrincipals* get() const { return principals_; }
+};
+
+}  // namespace JS
 
 #endif /* js_Principals_h */

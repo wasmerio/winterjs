@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <nox@nox.paris>
+Date: Tue, 7 Jan 2020 12:16:05 +0100
+Subject: [PATCH] Do not rely on internal .cargo/config
+
+
+diff --git a/config/recurse.mk b/config/recurse.mk
+index 4188e9e2136d..21984e7f808a 100644
+--- a/config/recurse.mk
++++ b/config/recurse.mk
+@@ -205,18 +205,6 @@ endif
+ # Those need to depend on config/export for system wrappers.
+ $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export
+ 
+-# Rust targets, and export targets that run cbindgen need
+-# $topobjdir/.cargo/config to be preprocessed first. Ideally, we'd only set it
+-# as a dependency of the rust targets, but unfortunately, that pushes Make to
+-# execute them much later than we'd like them to be when the file doesn't exist
+-# prior to Make running. So we also set it as a dependency of pre-export, which
+-# ensures it exists before recursing the rust targets and the export targets
+-# that run cbindgen, tricking Make into keeping them early.
+-$(rust_targets) gfx/webrender_bindings/export layout/style/export xpcom/base/export: $(DEPTH)/.cargo/config
+-ifndef TEST_MOZBUILD
+-pre-export:: $(DEPTH)/.cargo/config
+-endif
+-
+ # When building gtest as part of the build (LINK_GTEST_DURING_COMPILE),
+ # force the build system to get to it first, so that it can be linked
+ # quickly without LTO, allowing the build system to go ahead with
+diff --git a/moz.build b/moz.build
+index 94419df73ada..487b8b4dbabd 100644
+--- a/moz.build
++++ b/moz.build
+@@ -163,8 +163,6 @@ if CONFIG['MOZ_BUILD_APP']:
+ else:
+     include('/toolkit/toolkit.mozbuild')
+ 
+-OBJDIR_PP_FILES['.cargo'] += ['.cargo/config.in']
+-
+ DEFINES['top_srcdir'] = TOPSRCDIR
+ 
+ include('build/templates.mozbuild')

@@ -1,4 +1,4 @@
-// |reftest| skip -- class-fields-public is not supported
+// |reftest| async
 // This file was procedurally generated from the following sources:
 // - src/class-elements/literal-names.case
 // - src/class-elements/productions/cls-decl-after-same-line-static-async-gen.template

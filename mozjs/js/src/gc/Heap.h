@@ -7,42 +7,27 @@
 #ifndef gc_Heap_h
 #define gc_Heap_h
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
-#include "mozilla/PodOperations.h"
-
-#include <stddef.h>
-#include <stdint.h>
-
-#include "jsfriendapi.h"
-#include "jspubtd.h"
-#include "jstypes.h"
-#include "jsutil.h"
 
 #include "ds/BitArray.h"
 #include "gc/AllocKind.h"
 #include "gc/GCEnum.h"
-#include "gc/Memory.h"
-#include "js/HeapAPI.h"
-#include "js/RootingAPI.h"
-#include "js/TracingAPI.h"
 #include "js/TypeDecls.h"
-
-#include "vm/Printer.h"
+#include "util/Poison.h"
 
 namespace js {
 
 class AutoLockGC;
 class AutoLockGCBgAlloc;
-class FreeOp;
+class NurseryDecommitTask;
 
 namespace gc {
 
 class Arena;
 class ArenaCellSet;
 class ArenaList;
+class GCRuntime;
 class SortedArenaList;
 class StoreBuffer;
 class TenuredCell;
@@ -97,7 +82,7 @@ const size_t ArenaBitmapWords =
  */
 class FreeSpan {
   friend class Arena;
-  friend class ArenaCellIterImpl;
+  friend class ArenaCellIter;
   friend class ArenaFreeCellIter;
 
   uint16_t first;
@@ -290,7 +275,11 @@ class Arena {
   // previously allocated for some zone, use release() instead.
   void setAsNotAllocated() {
     firstFreeSpan.initAsEmpty();
-    zone = nullptr;
+
+    // Poison zone pointer to highlight UAF on released arenas in crash data.
+    AlwaysPoison(&zone, JS_FREED_ARENA_PATTERN, sizeof(zone),
+                 MemCheckKind::MakeNoAccess);
+
     allocKind = size_t(AllocKind::LIMIT);
     onDelayedMarkingList_ = 0;
     hasDelayedBlackMarking_ = 0;
@@ -451,7 +440,7 @@ class Arena {
   inline size_t& atomBitmapStart();
 
   template <typename T>
-  size_t finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize);
+  size_t finalize(JSFreeOp* fop, AllocKind thingKind, size_t thingSize);
 
   static void staticAsserts();
 
@@ -553,6 +542,7 @@ struct ChunkInfo {
 
  private:
   friend class ChunkPool;
+  friend class js::NurseryDecommitTask;
   Chunk* next;
   Chunk* prev;
 
@@ -791,34 +781,36 @@ struct Chunk {
 
   bool isNurseryChunk() const { return trailer.storeBuffer; }
 
-  Arena* allocateArena(JSRuntime* rt, JS::Zone* zone, AllocKind kind,
+  Arena* allocateArena(GCRuntime* gc, JS::Zone* zone, AllocKind kind,
                        const AutoLockGC& lock);
 
-  void releaseArena(JSRuntime* rt, Arena* arena, const AutoLockGC& lock);
+  void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
   void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-  MOZ_MUST_USE bool decommitOneFreeArena(JSRuntime* rt, AutoLockGC& lock);
-  void decommitAllArenasWithoutUnlocking(const AutoLockGC& lock);
-
-  static Chunk* allocate(JSRuntime* rt);
-  void init(JSRuntime* rt);
-
- private:
+  MOZ_MUST_USE bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
   void decommitAllArenas();
 
+  // This will decommit each unused not-already decommitted arena. It performs a
+  // system call for each arena but is only used during OOM.
+  void decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock);
+
+  static Chunk* allocate(GCRuntime* gc);
+  void init(GCRuntime* gc);
+
+ private:
   /* Search for a decommitted arena to allocate. */
   unsigned findDecommittedArenaOffset();
   Arena* fetchNextDecommittedArena();
 
-  void addArenaToFreeList(JSRuntime* rt, Arena* arena);
+  void addArenaToFreeList(GCRuntime* gc, Arena* arena);
   void addArenaToDecommittedList(const Arena* arena);
 
-  void updateChunkListAfterAlloc(JSRuntime* rt, const AutoLockGC& lock);
-  void updateChunkListAfterFree(JSRuntime* rt, const AutoLockGC& lock);
+  void updateChunkListAfterAlloc(GCRuntime* gc, const AutoLockGC& lock);
+  void updateChunkListAfterFree(GCRuntime* gc, const AutoLockGC& lock);
 
  public:
   /* Unlink and return the freeArenasHead. */
-  Arena* fetchNextFreeArena(JSRuntime* rt);
+  Arena* fetchNextFreeArena(GCRuntime* gc);
 };
 
 static_assert(
@@ -837,54 +829,6 @@ static_assert(
     js::gc::ChunkStoreBufferOffset ==
         offsetof(Chunk, trailer) + offsetof(ChunkTrailer, storeBuffer),
     "The hardcoded API storeBuffer offset must match the actual offset.");
-
-/*
- * Tracks the used sizes for owned heap data and automatically maintains the
- * memory usage relationship between GCRuntime and Zones.
- */
-class HeapSize {
-  /*
-   * A heap usage that contains our parent's heap usage, or null if this is
-   * the top-level usage container.
-   */
-  HeapSize* const parent_;
-
-  /*
-   * The approximate number of bytes in use on the GC heap, to the nearest
-   * ArenaSize. This does not include any malloc data. It also does not
-   * include not-actively-used addresses that are still reserved at the OS
-   * level for GC usage. It is atomic because it is updated by both the active
-   * and GC helper threads.
-   */
-  mozilla::Atomic<size_t, mozilla::ReleaseAcquire,
-                  mozilla::recordreplay::Behavior::DontPreserve>
-      gcBytes_;
-
- public:
-  explicit HeapSize(HeapSize* parent) : parent_(parent), gcBytes_(0) {}
-
-  size_t gcBytes() const { return gcBytes_; }
-
-  void addGCArena() {
-    gcBytes_ += ArenaSize;
-    if (parent_) {
-      parent_->addGCArena();
-    }
-  }
-  void removeGCArena() {
-    MOZ_ASSERT(gcBytes_ >= ArenaSize);
-    gcBytes_ -= ArenaSize;
-    if (parent_) {
-      parent_->removeGCArena();
-    }
-  }
-
-  /* Pair to adoptArenas. Adopts the attendant usage statistics. */
-  void adopt(HeapSize& other) {
-    gcBytes_ += other.gcBytes_;
-    other.gcBytes_ = 0;
-  }
-};
 
 inline void Arena::checkAddress() const {
   mozilla::DebugOnly<uintptr_t> addr = uintptr_t(this);

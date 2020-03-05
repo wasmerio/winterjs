@@ -15,16 +15,16 @@ using namespace js;
 
 /*
  * RegExpStatics allocates memory -- in order to keep the statics stored
- * per-global and not leak, we create a js::Class to wrap the C++ instance and
+ * per-global and not leak, we create a JSClass to wrap the C++ instance and
  * provide an appropriate finalizer. We lazily create and store an instance of
- * that js::Class in a global reserved slot.
+ * that JSClass in a global reserved slot.
  */
 
-static void resc_finalize(FreeOp* fop, JSObject* obj) {
+static void resc_finalize(JSFreeOp* fop, JSObject* obj) {
   MOZ_ASSERT(fop->onMainThread());
   RegExpStatics* res =
       static_cast<RegExpStatics*>(obj->as<RegExpStaticsObject>().getPrivate());
-  fop->delete_(res);
+  fop->delete_(obj, res, MemoryUse::RegExpStatics);
 }
 
 static void resc_trace(JSTracer* trc, JSObject* obj) {
@@ -34,19 +34,19 @@ static void resc_trace(JSTracer* trc, JSObject* obj) {
   }
 }
 
-static const ClassOps RegExpStaticsObjectClassOps = {nullptr, /* addProperty */
-                                                     nullptr, /* delProperty */
-                                                     nullptr, /* enumerate */
-                                                     nullptr, /* newEnumerate */
-                                                     nullptr, /* resolve */
-                                                     nullptr, /* mayResolve */
-                                                     resc_finalize,
-                                                     nullptr, /* call */
-                                                     nullptr, /* hasInstance */
-                                                     nullptr, /* construct */
-                                                     resc_trace};
+static const JSClassOps RegExpStaticsObjectClassOps = {
+    nullptr,                /* addProperty */
+    nullptr,                /* delProperty */
+    nullptr,                /* enumreate */
+    nullptr,                /* newEnumerate */
+    nullptr,                /* resolve */
+    nullptr,                /* mayResolve */
+    resc_finalize, nullptr, /* call */
+    nullptr,                /* hasInstance */
+    nullptr,                /* construct */
+    resc_trace};
 
-const Class RegExpStaticsObject::class_ = {
+const JSClass RegExpStaticsObject::class_ = {
     "RegExpStatics", JSCLASS_HAS_PRIVATE | JSCLASS_FOREGROUND_FINALIZE,
     &RegExpStaticsObjectClassOps};
 
@@ -60,7 +60,9 @@ RegExpStaticsObject* RegExpStatics::create(JSContext* cx) {
   if (!res) {
     return nullptr;
   }
-  obj->setPrivate(static_cast<void*>(res));
+  // TODO: This doesn't account for match vector heap memory used if there are
+  // more 10 matches. This is likely to be rare.
+  InitObjectPrivate(obj, res, MemoryUse::RegExpStatics);
   return obj;
 }
 

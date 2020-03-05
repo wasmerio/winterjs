@@ -17,6 +17,8 @@ namespace js {
 
 class AsyncFunctionGeneratorObject;
 
+extern const JSClass AsyncFunctionClass;
+
 // Resume the async function when the `await` operand resolves.
 // Split into two functions depending on whether the awaited value was
 // fulfilled or rejected.
@@ -45,7 +47,8 @@ class AsyncFunctionGeneratorObject : public AbstractGeneratorObject {
     RESERVED_SLOTS
   };
 
-  static const Class class_;
+  static const JSClass class_;
+  static const JSClassOps classOps_;
 
   static AsyncFunctionGeneratorObject* create(JSContext* cx,
                                               HandleFunction asyncGen);

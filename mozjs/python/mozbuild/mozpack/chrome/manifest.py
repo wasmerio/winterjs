@@ -2,25 +2,22 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, unicode_literals
 
 import re
 import os
 
-try:
-    from urlparse import urlparse
-except ImportError:
-    from urllib.parse import urlparse
-
 import mozpack.path as mozpath
 from mozpack.chrome.flags import Flags
 from mozpack.errors import errors
+from six.moves.urllib.parse import urlparse
 
 
 class ManifestEntry(object):
     '''
     Base class for all manifest entry types.
     Subclasses may define the following class or member variables:
+
         - localized: indicates whether the manifest entry is used for localized
           data.
         - type: the manifest entry type (e.g. 'content' in
@@ -368,4 +365,5 @@ def is_manifest(path):
     Return whether the given path is that of a manifest file.
     '''
     return path.endswith('.manifest') and not path.endswith('.CRT.manifest') \
-        and not path.endswith('.exe.manifest')
+        and not path.endswith('.exe.manifest') \
+        and os.path.basename(path) != "cose.manifest"

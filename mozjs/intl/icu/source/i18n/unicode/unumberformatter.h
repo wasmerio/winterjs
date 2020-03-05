@@ -7,8 +7,10 @@
 #ifndef __UNUMBERFORMATTER_H__
 #define __UNUMBERFORMATTER_H__
 
+#include "unicode/parseerr.h"
 #include "unicode/ufieldpositer.h"
 #include "unicode/umisc.h"
+#include "unicode/uformattedvalue.h"
 
 
 /**
@@ -75,8 +77,6 @@
  * </pre>
  */
 
-
-#ifndef U_HIDE_DRAFT_API
 /**
  * An enum declaring how to render units, including currencies. Example outputs when formatting 123 USD and 123
  * meters in <em>en-CA</em>:
@@ -93,7 +93,7 @@
  * <p>
  * This enum is similar to {@link UMeasureFormatWidth}.
  *
- * @draft ICU 60
+ * @stable ICU 60
  */
 typedef enum UNumberUnitWidth {
     /**
@@ -105,7 +105,7 @@ typedef enum UNumberUnitWidth {
      * In CLDR, this option corresponds to the "Narrow" format for measure units and the "¤¤¤¤¤" placeholder for
      * currencies.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_UNIT_WIDTH_NARROW,
 
@@ -121,7 +121,7 @@ typedef enum UNumberUnitWidth {
      * In CLDR, this option corresponds to the "Short" format for measure units and the "¤" placeholder for
      * currencies.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_UNIT_WIDTH_SHORT,
 
@@ -132,7 +132,7 @@ typedef enum UNumberUnitWidth {
      * In CLDR, this option corresponds to the default format for measure units and the "¤¤¤" placeholder for
      * currencies.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_UNIT_WIDTH_FULL_NAME,
 
@@ -143,7 +143,7 @@ typedef enum UNumberUnitWidth {
      * <p>
      * In CLDR, this option corresponds to the "¤¤" placeholder for currencies.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_UNIT_WIDTH_ISO_CODE,
 
@@ -152,7 +152,7 @@ typedef enum UNumberUnitWidth {
      * monetary symbols and formats as with SHORT, but omit the currency symbol. For measure units, the behavior is
      * equivalent to not specifying the unit at all.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_UNIT_WIDTH_HIDDEN,
 
@@ -163,9 +163,7 @@ typedef enum UNumberUnitWidth {
      */
             UNUM_UNIT_WIDTH_COUNT
 } UNumberUnitWidth;
-#endif  /* U_HIDE_DRAFT_API */
 
-#ifndef U_HIDE_DRAFT_API
 /**
  * An enum declaring the strategy for when and how to display grouping separators (i.e., the
  * separator, often a comma or period, after every 2-3 powers of ten). The choices are several
@@ -190,13 +188,13 @@ typedef enum UNumberUnitWidth {
  * Note: This enum specifies the strategy for grouping sizes. To set which character to use as the
  * grouping separator, use the "symbols" setter.
  *
- * @draft ICU 63
+ * @stable ICU 63
  */
 typedef enum UNumberGroupingStrategy {
     /**
      * Do not display grouping separators in any locale.
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_GROUPING_OFF,
 
@@ -212,7 +210,7 @@ typedef enum UNumberGroupingStrategy {
      * Locale data is used to determine whether to separate larger numbers into groups of 2
      * (customary in South Asia) or groups of 3 (customary in Europe and the Americas).
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_GROUPING_MIN2,
 
@@ -227,7 +225,7 @@ typedef enum UNumberGroupingStrategy {
      * Locale data is used to determine whether to separate larger numbers into groups of 2
      * (customary in South Asia) or groups of 3 (customary in Europe and the Americas).
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_GROUPING_AUTO,
 
@@ -243,7 +241,7 @@ typedef enum UNumberGroupingStrategy {
      * Locale data is used to determine whether to separate larger numbers into groups of 2
      * (customary in South Asia) or groups of 3 (customary in Europe and the Americas).
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_GROUPING_ON_ALIGNED,
 
@@ -251,7 +249,7 @@ typedef enum UNumberGroupingStrategy {
      * Use the Western defaults: groups of 3 and enabled for all numbers 1000 or greater. Do not use
      * locale data for determining the grouping strategy.
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_GROUPING_THOUSANDS
 
@@ -267,17 +265,6 @@ typedef enum UNumberGroupingStrategy {
 
 } UNumberGroupingStrategy;
 
-#ifndef U_HIDE_DEPRECATED_API
-/**
- * Old name for compatibility: will be removed in ICU 64.
- * @deprecated ICU 63
- */
-typedef UNumberGroupingStrategy UGroupingStrategy;
-#endif  /* U_HIDE_DEPRECATED_API */
-
-#endif  /* U_HIDE_DRAFT_API */
-
-#ifndef U_HIDE_DRAFT_API
 /**
  * An enum declaring how to denote positive and negative numbers. Example outputs when formatting
  * 123, 0, and -123 in <em>en-US</em>:
@@ -295,14 +282,14 @@ typedef UNumberGroupingStrategy UGroupingStrategy;
  * <p>
  * The exact format, including the position and the code point of the sign, differ by locale.
  *
- * @draft ICU 60
+ * @stable ICU 60
  */
 typedef enum UNumberSignDisplay {
     /**
      * Show the minus sign on negative numbers, and do not show the sign on positive numbers. This is the default
      * behavior.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_SIGN_AUTO,
 
@@ -310,14 +297,14 @@ typedef enum UNumberSignDisplay {
      * Show the minus sign on negative numbers and the plus sign on positive numbers, including zero.
      * To hide the sign on zero, see {@link UNUM_SIGN_EXCEPT_ZERO}.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_SIGN_ALWAYS,
 
     /**
      * Do not show the sign on positive or negative numbers.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_SIGN_NEVER,
 
@@ -333,7 +320,7 @@ typedef enum UNumberSignDisplay {
      * AUTO sign display strategy when formatting without a currency unit. This limitation may be lifted in the
      * future.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_SIGN_ACCOUNTING,
 
@@ -343,24 +330,25 @@ typedef enum UNumberSignDisplay {
      * ACCOUNTING sign display strategy. To hide the sign on zero, see
      * {@link UNUM_SIGN_ACCOUNTING_EXCEPT_ZERO}.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_SIGN_ACCOUNTING_ALWAYS,
 
     /**
      * Show the minus sign on negative numbers and the plus sign on positive numbers. Do not show a
-     * sign on zero.
+     * sign on zero or NaN, unless the sign bit is set (-0.0 gets a sign).
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_SIGN_EXCEPT_ZERO,
 
     /**
      * Use the locale-dependent accounting format on negative numbers, and show the plus sign on
-     * positive numbers. Do not show a sign on zero. For more information on the accounting format,
-     * see the ACCOUNTING sign display strategy.
+     * positive numbers. Do not show a sign on zero or NaN, unless the sign bit is set (-0.0 gets a
+     * sign). For more information on the accounting format, see the ACCOUNTING sign display
+     * strategy.
      *
-     * @draft ICU 61
+     * @stable ICU 61
      */
             UNUM_SIGN_ACCOUNTING_EXCEPT_ZERO,
 
@@ -371,9 +359,7 @@ typedef enum UNumberSignDisplay {
      */
             UNUM_SIGN_COUNT
 } UNumberSignDisplay;
-#endif  /* U_HIDE_DRAFT_API */
 
-#ifndef U_HIDE_DRAFT_API
 /**
  * An enum declaring how to render the decimal separator.
  *
@@ -382,20 +368,22 @@ typedef enum UNumberSignDisplay {
  * <li>UNUM_DECIMAL_SEPARATOR_AUTO: "1", "1.1"
  * <li>UNUM_DECIMAL_SEPARATOR_ALWAYS: "1.", "1.1"
  * </ul>
+ *
+ * @stable ICU 60
  */
 typedef enum UNumberDecimalSeparatorDisplay {
     /**
      * Show the decimal separator when there are one or more digits to display after the separator, and do not show
      * it otherwise. This is the default behavior.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_DECIMAL_SEPARATOR_AUTO,
 
     /**
      * Always show the decimal separator, even if there are no digits to display after the separator.
      *
-     * @draft ICU 60
+     * @stable ICU 60
      */
             UNUM_DECIMAL_SEPARATOR_ALWAYS,
 
@@ -406,9 +394,6 @@ typedef enum UNumberDecimalSeparatorDisplay {
      */
             UNUM_DECIMAL_SEPARATOR_COUNT
 } UNumberDecimalSeparatorDisplay;
-#endif  /* U_HIDE_DRAFT_API */
-
-#ifndef U_HIDE_DRAFT_API
 
 struct UNumberFormatter;
 /**
@@ -416,7 +401,7 @@ struct UNumberFormatter;
  *
  * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
  *
- * @draft ICU 62
+ * @stable ICU 62
  */
 typedef struct UNumberFormatter UNumberFormatter;
 
@@ -426,7 +411,7 @@ struct UFormattedNumber;
  *
  * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
  *
- * @draft ICU 62
+ * @stable ICU 62
  */
 typedef struct UFormattedNumber UFormattedNumber;
 
@@ -446,24 +431,41 @@ typedef struct UFormattedNumber UFormattedNumber;
  * @param skeletonLen The number of UChars in the skeleton string, or -1 it it is NUL-terminated.
  * @param locale The NUL-terminated locale ID.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT UNumberFormatter* U_EXPORT2
+U_STABLE UNumberFormatter* U_EXPORT2
 unumf_openForSkeletonAndLocale(const UChar* skeleton, int32_t skeletonLen, const char* locale,
                                UErrorCode* ec);
 
 
+#ifndef U_HIDE_DRAFT_API
 /**
- * Creates a new UFormattedNumber for holding the result of a number formatting operation.
+ * Like unumf_openForSkeletonAndLocale, but accepts a UParseError, which will be populated with the
+ * location of a skeleton syntax error if such a syntax error exists.
  *
- * Objects of type UFormattedNumber are not guaranteed to be threadsafe.
- *
- * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
+ * @param skeleton The skeleton string, like u"percent precision-integer"
+ * @param skeletonLen The number of UChars in the skeleton string, or -1 it it is NUL-terminated.
+ * @param locale The NUL-terminated locale ID.
+ * @param perror A parse error struct populated if an error occurs when parsing. Can be NULL.
+ *               If no error occurs, perror->offset will be set to -1.
+ * @param ec Set if an error occurs.
+ * @draft ICU 64
+ */
+U_DRAFT UNumberFormatter* U_EXPORT2
+unumf_openForSkeletonAndLocaleWithError(
+       const UChar* skeleton, int32_t skeletonLen, const char* locale, UParseError* perror, UErrorCode* ec);
+#endif  // U_HIDE_DRAFT_API
+
+
+/**
+ * Creates an object to hold the result of a UNumberFormatter
+ * operation. The object can be used repeatedly; it is cleared whenever
+ * passed to a format function.
  *
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT UFormattedNumber* U_EXPORT2
+U_STABLE UFormattedNumber* U_EXPORT2
 unumf_openResult(UErrorCode* ec);
 
 
@@ -480,9 +482,9 @@ unumf_openResult(UErrorCode* ec);
  * @param value The number to be formatted.
  * @param uresult The object that will be mutated to store the result; see unumf_openResult.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_formatInt(const UNumberFormatter* uformatter, int64_t value, UFormattedNumber* uresult,
                 UErrorCode* ec);
 
@@ -500,9 +502,9 @@ unumf_formatInt(const UNumberFormatter* uformatter, int64_t value, UFormattedNum
  * @param value The number to be formatted.
  * @param uresult The object that will be mutated to store the result; see unumf_openResult.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_formatDouble(const UNumberFormatter* uformatter, double value, UFormattedNumber* uresult,
                    UErrorCode* ec);
 
@@ -524,17 +526,41 @@ unumf_formatDouble(const UNumberFormatter* uformatter, double value, UFormattedN
  * @param valueLen The length of the numeric string, or -1 if it is NUL-terminated.
  * @param uresult The object that will be mutated to store the result; see unumf_openResult.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_formatDecimal(const UNumberFormatter* uformatter, const char* value, int32_t valueLen,
                     UFormattedNumber* uresult, UErrorCode* ec);
+
+#ifndef U_HIDE_DRAFT_API
+/**
+ * Returns a representation of a UFormattedNumber as a UFormattedValue,
+ * which can be subsequently passed to any API requiring that type.
+ *
+ * The returned object is owned by the UFormattedNumber and is valid
+ * only as long as the UFormattedNumber is present and unchanged in memory.
+ *
+ * You can think of this method as a cast between types.
+ *
+ * @param uresult The object containing the formatted string.
+ * @param ec Set if an error occurs.
+ * @return A UFormattedValue owned by the input object.
+ * @draft ICU 64
+ */
+U_DRAFT const UFormattedValue* U_EXPORT2
+unumf_resultAsValue(const UFormattedNumber* uresult, UErrorCode* ec);
+#endif  /* U_HIDE_DRAFT_API */
 
 
 /**
  * Extracts the result number string out of a UFormattedNumber to a UChar buffer if possible.
  * If bufferCapacity is greater than the required length, a terminating NUL is written.
  * If bufferCapacity is less than the required length, an error code is set.
+ *
+ * Also see ufmtval_getString, which returns a NUL-terminated string:
+ *
+ *     int32_t len;
+ *     const UChar* str = ufmtval_getString(unumf_resultAsValue(uresult, &ec), &len, &ec);
  *
  * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
  *
@@ -543,9 +569,9 @@ unumf_formatDecimal(const UNumberFormatter* uformatter, const char* value, int32
  * @param bufferCapacity The number of UChars available in the buffer.
  * @param ec Set if an error occurs.
  * @return The required length.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT int32_t U_EXPORT2
+U_STABLE int32_t U_EXPORT2
 unumf_resultToString(const UFormattedNumber* uresult, UChar* buffer, int32_t bufferCapacity,
                      UErrorCode* ec);
 
@@ -554,6 +580,8 @@ unumf_resultToString(const UFormattedNumber* uresult, UChar* buffer, int32_t buf
  * Determines the start and end indices of the next occurrence of the given <em>field</em> in the
  * output string. This allows you to determine the locations of, for example, the integer part,
  * fraction part, or symbols.
+ *
+ * This is a simpler but less powerful alternative to {@link ufmtval_nextPosition}.
  *
  * If a field occurs just once, calling this method will find that occurrence and return it. If a
  * field occurs multiple times, this method may be called repeatedly with the following pattern:
@@ -579,9 +607,9 @@ unumf_resultToString(const UFormattedNumber* uresult, UChar* buffer, int32_t buf
  *            (exclusive index). If a field position is not found, the FieldPosition is not changed and
  *            the method returns FALSE.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT UBool U_EXPORT2
+U_STABLE UBool U_EXPORT2
 unumf_resultNextFieldPosition(const UFormattedNumber* uresult, UFieldPosition* ufpos, UErrorCode* ec);
 
 
@@ -589,7 +617,10 @@ unumf_resultNextFieldPosition(const UFormattedNumber* uresult, UFieldPosition* u
  * Populates the given iterator with all fields in the formatted output string. This allows you to
  * determine the locations of the integer part, fraction part, and sign.
  *
- * If you need information on only one field, use unumf_resultNextFieldPosition().
+ * This is an alternative to the more powerful {@link ufmtval_nextPosition} API.
+ *
+ * If you need information on only one field, use {@link ufmtval_nextPosition} or
+ * {@link unumf_resultNextFieldPosition}.
  *
  * @param uresult The object containing the formatted number.
  * @param ufpositer
@@ -601,34 +632,37 @@ unumf_resultNextFieldPosition(const UFormattedNumber* uresult, UFieldPosition* u
  *         overlap, but they may nest. For example, 1234 could format as "1,234" which might consist of a
  *         grouping separator field for ',' and an integer field encompassing the entire string.
  * @param ec Set if an error occurs.
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_resultGetAllFieldPositions(const UFormattedNumber* uresult, UFieldPositionIterator* ufpositer,
                                  UErrorCode* ec);
+
+
+// TODO(ICU-20775): Propose this as API.
+// NOTE: This is not currently implemented.
+// U_DRAFT int32_t U_EXPORT2
+// unumf_resultToDecimalNumber(const UFormattedNumber* uresult, char* buffer, int32_t bufferCapacity,
+//                             UErrorCode* ec);
 
 
 /**
  * Releases the UNumberFormatter created by unumf_openForSkeletonAndLocale().
  *
- * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
- *
  * @param uformatter An object created by unumf_openForSkeletonAndLocale().
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_close(UNumberFormatter* uformatter);
 
 
 /**
  * Releases the UFormattedNumber created by unumf_openResult().
  *
- * NOTE: This is a C-compatible API; C++ users should build against numberformatter.h instead.
- *
  * @param uresult An object created by unumf_openResult().
- * @draft ICU 62
+ * @stable ICU 62
  */
-U_DRAFT void U_EXPORT2
+U_STABLE void U_EXPORT2
 unumf_closeResult(UFormattedNumber* uresult);
 
 
@@ -648,12 +682,12 @@ U_NAMESPACE_BEGIN
  *
  * @see LocalPointerBase
  * @see LocalPointer
- * @draft ICU 62
+ * @stable ICU 62
  */
 U_DEFINE_LOCAL_OPEN_POINTER(LocalUNumberFormatterPointer, UNumberFormatter, unumf_close);
 
 /**
- * \class LocalUNumberFormatterPointer
+ * \class LocalUFormattedNumberPointer
  * "Smart pointer" class; closes a UFormattedNumber via unumf_closeResult().
  * For most methods see the LocalPointerBase base class.
  *
@@ -665,65 +699,12 @@ U_DEFINE_LOCAL_OPEN_POINTER(LocalUNumberFormatterPointer, UNumberFormatter, unum
  *
  * @see LocalPointerBase
  * @see LocalPointer
- * @draft ICU 62
+ * @stable ICU 62
  */
 U_DEFINE_LOCAL_OPEN_POINTER(LocalUFormattedNumberPointer, UFormattedNumber, unumf_closeResult);
 
 U_NAMESPACE_END
 #endif // U_SHOW_CPLUSPLUS_API
 
-#endif  /* U_HIDE_DRAFT_API */
-
 #endif //__UNUMBERFORMATTER_H__
 #endif /* #if !UCONFIG_NO_FORMATTING */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

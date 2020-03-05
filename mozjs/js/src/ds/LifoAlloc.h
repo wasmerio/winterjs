@@ -16,6 +16,7 @@
 #include "mozilla/TemplateLib.h"
 #include "mozilla/TypeTraits.h"
 
+#include <algorithm>
 #include <new>
 #include <stddef.h>  // size_t
 
@@ -24,9 +25,9 @@
 // maintains a bunch of linked memory segments. In order to prevent malloc/free
 // thrashing, unused segments are deallocated when garbage collection occurs.
 
-#include "jsutil.h"
-
 #include "js/UniquePtr.h"
+#include "util/Memory.h"
+#include "util/Poison.h"
 
 namespace js {
 
@@ -232,32 +233,26 @@ class BumpChunk : public SingleLinkedListElement<BumpChunk> {
 #endif
 
   // Poison the memory with memset, in order to catch errors due to
-  // use-after-free, with undefinedChunkMemory pattern, or to catch
-  // use-before-init with uninitializedChunkMemory.
+  // use-after-free, with JS_LIFO_UNDEFINED_PATTERN pattern, or to catch
+  // use-before-init with JS_LIFO_UNINITIALIZED_PATTERN.
 #if defined(DEBUG)
 #  define LIFO_HAVE_MEM_CHECKS 1
-
-  // Byte used for poisoning unused memory after releasing memory.
-  static constexpr int undefinedChunkMemory = 0xcd;
-  // Byte used for poisoning uninitialized memory after reserving memory.
-  static constexpr int uninitializedChunkMemory = 0xce;
-
-#  define LIFO_MAKE_MEM_NOACCESS(addr, size)  \
-    do {                                      \
-      uint8_t* base = (addr);                 \
-      size_t sz = (size);                     \
-      MOZ_MAKE_MEM_UNDEFINED(base, sz);       \
-      memset(base, undefinedChunkMemory, sz); \
-      MOZ_MAKE_MEM_NOACCESS(base, sz);        \
+#  define LIFO_MAKE_MEM_NOACCESS(addr, size)       \
+    do {                                           \
+      uint8_t* base = (addr);                      \
+      size_t sz = (size);                          \
+      MOZ_MAKE_MEM_UNDEFINED(base, sz);            \
+      memset(base, JS_LIFO_UNDEFINED_PATTERN, sz); \
+      MOZ_MAKE_MEM_NOACCESS(base, sz);             \
     } while (0)
 
-#  define LIFO_MAKE_MEM_UNDEFINED(addr, size)     \
-    do {                                          \
-      uint8_t* base = (addr);                     \
-      size_t sz = (size);                         \
-      MOZ_MAKE_MEM_UNDEFINED(base, sz);           \
-      memset(base, uninitializedChunkMemory, sz); \
-      MOZ_MAKE_MEM_UNDEFINED(base, sz);           \
+#  define LIFO_MAKE_MEM_UNDEFINED(addr, size)          \
+    do {                                               \
+      uint8_t* base = (addr);                          \
+      size_t sz = (size);                              \
+      MOZ_MAKE_MEM_UNDEFINED(base, sz);                \
+      memset(base, JS_LIFO_UNINITIALIZED_PATTERN, sz); \
+      MOZ_MAKE_MEM_UNDEFINED(base, sz);                \
     } while (0)
 
 #elif defined(MOZ_HAVE_MEM_CHECKS)
@@ -515,7 +510,7 @@ class LifoAlloc {
   BumpChunkList chunks_;
 
   // List of chunks containing allocated data where each allocation is larger
-  // than the oversize threshold. Each chunk contains exactly on allocation.
+  // than the oversize threshold. Each chunk contains exactly one allocation.
   // This reduces wasted space in the chunk list.
   //
   // Oversize chunks are allocated on demand and freed as soon as they are
@@ -770,7 +765,11 @@ class LifoAlloc {
     detail::BumpChunk::Mark chunk;
     detail::BumpChunk::Mark oversize;
   };
-  Mark mark();
+
+  // Note: MOZ_NEVER_INLINE is a work around for a Clang 9 (PGO) miscompilation.
+  // See bug 1583907.
+  MOZ_NEVER_INLINE Mark mark();
+
   void release(Mark mark);
 
  private:
@@ -975,6 +974,13 @@ class MOZ_NON_TEMPORARY_CLASS LifoAllocScope {
   ~LifoAllocScope() {
     if (shouldRelease) {
       lifoAlloc->release(mark);
+
+      /*
+       * The parser can allocate enormous amounts of memory for large functions.
+       * Eagerly free the memory now (which otherwise won't be freed until the
+       * next GC) to avoid unnecessary OOMs.
+       */
+      lifoAlloc->freeAllIfHugeAndUnused();
     }
   }
 
@@ -1021,7 +1027,7 @@ class LifoAllocPolicy {
       return nullptr;
     }
     MOZ_ASSERT(!(oldSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value));
-    memcpy(n, p, Min(oldSize * sizeof(T), newSize * sizeof(T)));
+    memcpy(n, p, std::min(oldSize * sizeof(T), newSize * sizeof(T)));
     return n;
   }
   template <typename T>

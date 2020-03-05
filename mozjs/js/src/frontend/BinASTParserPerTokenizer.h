@@ -20,6 +20,7 @@
 #include "frontend/BinASTEnum.h"
 #include "frontend/BinASTParserBase.h"
 #include "frontend/BinASTToken.h"
+#include "frontend/BinASTTokenReaderContext.h"
 #include "frontend/BinASTTokenReaderMultipart.h"
 #include "frontend/FullParseHandler.h"
 #include "frontend/ParseContext.h"
@@ -54,8 +55,9 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
 
   using AutoList = typename Tokenizer::AutoList;
   using AutoTaggedTuple = typename Tokenizer::AutoTaggedTuple;
-  using BinASTFields = typename Tokenizer::BinASTFields;
   using Chars = typename Tokenizer::Chars;
+  using RootContext = BinASTTokenReaderBase::RootContext;
+  using FieldOrRootContext = BinASTTokenReaderBase::FieldOrRootContext;
 
  public:
   // Auto-generated types.
@@ -63,8 +65,7 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
   using VariableDeclarationKind = binast::VariableDeclarationKind;
 
  public:
-  BinASTParserPerTokenizer(JSContext* cx, LifoAlloc& alloc,
-                           UsedNameTracker& usedNames,
+  BinASTParserPerTokenizer(JSContext* cx, ParseInfo& parseInfo,
                            const JS::ReadOnlyCompileOptions& options,
                            HandleScriptSourceObject sourceObject,
                            Handle<LazyScript*> lazyScript = nullptr);
@@ -135,18 +136,23 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
 
   // Build a function object for a function-producing production. Called AFTER
   // creating the scope.
-  JS::Result<FunctionNode*> makeEmptyFunctionNode(const size_t start,
-                                                  const BinASTKind kind,
-                                                  FunctionBox* funbox);
-
-  JS::Result<FunctionNode*> buildFunction(const size_t start,
-                                          const BinASTKind kind,
-                                          ParseNode* name, ListNode* params,
-                                          ParseNode* body);
   JS::Result<FunctionBox*> buildFunctionBox(GeneratorKind generatorKind,
                                             FunctionAsyncKind functionAsyncKind,
                                             FunctionSyntaxKind syntax,
                                             ParseNode* name);
+
+  JS::Result<FunctionNode*> makeEmptyFunctionNode(
+      const size_t start, const FunctionSyntaxKind syntaxKind,
+      FunctionBox* funbox);
+  MOZ_MUST_USE JS::Result<Ok> setFunctionParametersAndBody(FunctionNode* fun,
+                                                           ListNode* params,
+                                                           ParseNode* body);
+
+  MOZ_MUST_USE JS::Result<Ok> finishEagerFunction(FunctionBox* funbox,
+                                                  uint32_t nargs);
+  MOZ_MUST_USE JS::Result<Ok> finishLazyFunction(FunctionBox* funbox,
+                                                 uint32_t nargs, size_t start,
+                                                 size_t end);
 
   // Add name to a given scope.
   MOZ_MUST_USE JS::Result<Ok> addScopeName(
@@ -193,6 +199,16 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
   // a strict directive.
   void forceStrictIfNecessary(SharedContext* sc, ListNode* directives);
 
+  // Whether invalid BinASTKind/BinASTVariant can be encoded in the file.
+  // This is used to avoid generating unnecessary branches for more
+  // optimized format.
+  static constexpr bool isInvalidKindPossible() {
+    return mozilla::IsSame<Tok, BinASTTokenReaderMultipart>::value;
+  }
+  static constexpr bool isInvalidVariantPossible() {
+    return mozilla::IsSame<Tok, BinASTTokenReaderMultipart>::value;
+  }
+
  protected:
   // Implement ErrorReportMixin.
   const JS::ReadOnlyCompileOptions& options_;
@@ -224,7 +240,7 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
      */
 
     ObjectBox* objbox = alloc_.new_<ObjectBox>(obj, traceListHead_);
-    if (!objbox) {
+    if (MOZ_UNLIKELY(!objbox)) {
       ReportOutOfMemory(cx_);
       return nullptr;
     }
@@ -285,6 +301,8 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
   mozilla::Maybe<Tokenizer> tokenizer_;
   VariableDeclarationKind variableDeclarationKind_;
 
+  FunctionTreeHolder treeHolder_;
+
   friend class BinASTParseContext;
   friend class AutoVariableDeclarationKind;
 
@@ -304,6 +322,44 @@ class BinASTParserPerTokenizer : public BinASTParserBase,
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
+  template <typename CharsT>
+  bool parseRegExpFlags(CharsT flags, size_t length, JS::RegExpFlags* reflags) {
+    MOZ_ASSERT(*reflags == JS::RegExpFlag::NoFlags);
+    for (size_t i = 0; i < length; i++) {
+      auto c = flags[i];
+      if (c == 'g' && !reflags->global()) {
+        *reflags |= JS::RegExpFlag::Global;
+      } else if (c == 'i' && !reflags->ignoreCase()) {
+        *reflags |= JS::RegExpFlag::IgnoreCase;
+      } else if (c == 'm' && !reflags->multiline()) {
+        *reflags |= JS::RegExpFlag::Multiline;
+      } else if (c == 'u' && !reflags->unicode()) {
+        *reflags |= JS::RegExpFlag::Unicode;
+      } else if (c == 'y' && !reflags->sticky()) {
+        *reflags |= JS::RegExpFlag::Sticky;
+      } else {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool parseRegExpFlags(Chars flags, JS::RegExpFlags* reflags) {
+    return parseRegExpFlags(flags.begin(), flags.end() - flags.begin(),
+                            reflags);
+  }
+
+  bool parseRegExpFlags(HandleAtom flags, JS::RegExpFlags* reflags) {
+    JS::AutoCheckCannotGC nogc;
+    if (flags->hasLatin1Chars()) {
+      return parseRegExpFlags(flags->latin1Chars(nogc), flags->length(),
+                              reflags);
+    }
+    return parseRegExpFlags(flags->twoByteChars(nogc), flags->length(),
+                            reflags);
+  }
+
  private:
   // Some methods in this class require access to auto-generated methods in
   // BinASTParser which derives this class.
@@ -320,12 +376,13 @@ class BinASTParseContext : public ParseContext {
   template <typename Tok>
   BinASTParseContext(JSContext* cx, BinASTParserPerTokenizer<Tok>* parser,
                      SharedContext* sc, Directives* newDirectives)
-      : ParseContext(cx, parser->pc_, sc, *parser, parser->usedNames_,
+      : ParseContext(cx, parser->pc_, sc, *parser, parser->getParseInfo(),
                      newDirectives, /* isFull = */ true) {}
 };
 
 void TraceBinASTParser(JSTracer* trc, JS::AutoGCRooter* parser);
 
+extern template class BinASTParserPerTokenizer<BinASTTokenReaderContext>;
 extern template class BinASTParserPerTokenizer<BinASTTokenReaderMultipart>;
 
 }  // namespace frontend

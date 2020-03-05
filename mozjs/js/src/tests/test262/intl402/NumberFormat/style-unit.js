@@ -1,4 +1,4 @@
-// |reftest| skip -- Intl.NumberFormat-unified is not supported
+// |reftest| skip-if(release_or_beta) -- Intl.NumberFormat-unified is not released yet
 // Copyright 2018 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -21,7 +21,7 @@ const validOptions = [
 ];
 
 for (const [validOption, expected] of validOptions) {
-  const nf = new Intl.NumberFormat([], {"style": validOption, "unit": "generic"});
+  const nf = new Intl.NumberFormat([], {"style": validOption, "unit": "gigabit"});
   const resolvedOptions = nf.resolvedOptions();
   assert.sameValue(resolvedOptions.style, expected);
 }

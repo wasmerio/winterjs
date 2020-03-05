@@ -62,7 +62,6 @@ struct CompiledCode {
   CallSiteVector callSites;
   CallSiteTargetVector callSiteTargets;
   TrapSiteVectorArray trapSites;
-  CallFarJumpVector callFarJumps;
   SymbolicAccessVector symbolicAccesses;
   jit::CodeLabelVector codeLabels;
   StackMaps stackMaps;
@@ -75,7 +74,6 @@ struct CompiledCode {
     callSites.clear();
     callSiteTargets.clear();
     trapSites.clear();
-    callFarJumps.clear();
     symbolicAccesses.clear();
     codeLabels.clear();
     stackMaps.clear();
@@ -85,8 +83,7 @@ struct CompiledCode {
   bool empty() {
     return bytes.empty() && codeRanges.empty() && callSites.empty() &&
            callSiteTargets.empty() && trapSites.empty() &&
-           callFarJumps.empty() && symbolicAccesses.empty() &&
-           codeLabels.empty() && stackMaps.empty();
+           symbolicAccesses.empty() && codeLabels.empty() && stackMaps.empty();
   }
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
@@ -114,7 +111,7 @@ typedef ExclusiveWaitableData<CompileTaskState> ExclusiveCompileTaskState;
 // A CompileTask holds a batch of input functions that are to be compiled on a
 // helper thread as well as, eventually, the results of compilation.
 
-struct CompileTask {
+struct CompileTask : public RunnableTask {
   const ModuleEnvironment& env;
   ExclusiveCompileTaskState& state;
   LifoAlloc lifo;
@@ -125,7 +122,12 @@ struct CompileTask {
               size_t defaultChunkSize)
       : env(env), state(state), lifo(defaultChunkSize) {}
 
+  virtual ~CompileTask(){};
+
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+  void runTask() override;
+  ThreadType threadType() override { return ThreadType::THREAD_TYPE_WASM; }
 };
 
 // A ModuleGenerator encapsulates the creation of a wasm module. During the
@@ -137,6 +139,12 @@ struct CompileTask {
 class MOZ_STACK_CLASS ModuleGenerator {
   typedef Vector<CompileTask, 0, SystemAllocPolicy> CompileTaskVector;
   typedef Vector<jit::CodeOffset, 0, SystemAllocPolicy> CodeOffsetVector;
+  struct CallFarJump {
+    uint32_t funcIndex;
+    jit::CodeOffset jump;
+    CallFarJump(uint32_t fi, jit::CodeOffset j) : funcIndex(fi), jump(j) {}
+  };
+  typedef Vector<CallFarJump, 0, SystemAllocPolicy> CallFarJumpVector;
 
   // Constant parameters
   SharedCompileArgs const compileArgs_;

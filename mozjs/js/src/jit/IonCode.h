@@ -101,7 +101,7 @@ class JitCode : public gc::TenuredCell {
   size_t headerSize() const { return headerSize_; }
 
   void traceChildren(JSTracer* trc);
-  void finalize(FreeOp* fop);
+  void finalize(JSFreeOp* fop);
   void setInvalidated() { invalidated_ = true; }
 
   void setHasBytecodeMap() { hasBytecodeMap_ = true; }
@@ -132,7 +132,7 @@ class JitCode : public gc::TenuredCell {
   // object can be allocated, nullptr is returned. On failure, |pool| is
   // automatically released, so the code may be freed.
   template <AllowGC allowGC>
-  static JitCode* New(JSContext* cx, uint8_t* code, uint32_t bufferSize,
+  static JitCode* New(JSContext* cx, uint8_t* code, uint32_t totalSize,
                       uint32_t headerSize, ExecutablePool* pool, CodeKind kind);
 
  public:
@@ -150,7 +150,7 @@ class IonIC;
 struct IonScript {
  private:
   // Code pointer containing the actual method.
-  PreBarrieredJitCode method_;
+  HeapPtrJitCode method_;
 
   // Entrypoint for OSR, or nullptr.
   jsbytecode* osrPc_;
@@ -230,6 +230,9 @@ struct IonScript {
   uint32_t constantTable_;
   uint32_t constantEntries_;
 
+  // The size of this allocation.
+  uint32_t allocBytes_ = 0;
+
   // Number of references from invalidation records.
   uint32_t invalidationCount_;
 
@@ -257,6 +260,8 @@ struct IonScript {
     return (SnapshotOffset*)&bottomBuffer()[bailoutTable_];
   }
   PreBarrieredValue* constants() {
+    // Nursery constants are manually barriered in CodeGenerator::link() so a
+    // post barrier is not required..
     return (PreBarrieredValue*)&bottomBuffer()[constantTable_];
   }
   const SafepointIndex* safepointIndices() const {
@@ -272,9 +277,6 @@ struct IonScript {
   uint32_t* icIndex() { return (uint32_t*)&bottomBuffer()[icIndex_]; }
   uint8_t* runtimeData() { return &bottomBuffer()[runtimeData_]; }
 
- private:
-  void trace(JSTracer* trc);
-
  public:
   // Do not call directly, use IonScript::New. This is public for cx->new_.
   explicit IonScript(IonCompilationId compilationId);
@@ -288,8 +290,10 @@ struct IonScript {
                         size_t icEntries, size_t runtimeSize,
                         size_t safepointsSize,
                         OptimizationLevel optimizationLevel);
-  static void Trace(JSTracer* trc, IonScript* script);
-  static void Destroy(FreeOp* fop, IonScript* script);
+
+  static void Destroy(JSFreeOp* fop, IonScript* script);
+
+  void trace(JSTracer* trc);
 
   static inline size_t offsetOfMethod() { return offsetof(IonScript, method_); }
   static inline size_t offsetOfOsrEntryOffset() {
@@ -432,7 +436,7 @@ struct IonScript {
 
   size_t invalidationCount() const { return invalidationCount_; }
   void incrementInvalidationCount() { invalidationCount_++; }
-  void decrementInvalidationCount(FreeOp* fop) {
+  void decrementInvalidationCount(JSFreeOp* fop) {
     MOZ_ASSERT(invalidationCount_);
     invalidationCount_--;
     if (!invalidationCount_) {
@@ -449,6 +453,8 @@ struct IonScript {
   bool isRecompiling() const { return recompiling_; }
 
   void clearRecompiling() { recompiling_ = false; }
+
+  size_t allocBytes() const { return allocBytes_; }
 
   enum ShouldIncreaseAge { IncreaseAge = true, KeepAge = false };
 
@@ -592,11 +598,10 @@ struct IonScriptCounts {
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
     size_t size = 0;
     auto currCounts = this;
-    while (currCounts) {
-      const IonScriptCounts* currCount = currCounts;
-      currCounts = currCount->previous_;
-      size += currCount->sizeOfOneIncludingThis(mallocSizeOf);
-    }
+    do {
+      size += currCounts->sizeOfOneIncludingThis(mallocSizeOf);
+      currCounts = currCounts->previous_;
+    } while (currCounts);
     return size;
   }
 
@@ -610,27 +615,6 @@ struct IonScriptCounts {
 };
 
 struct VMFunction;
-
-struct AutoFlushICache {
- private:
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
-    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
-  uintptr_t start_;
-  uintptr_t stop_;
-#  ifdef JS_JITSPEW
-  const char* name_;
-#  endif
-  bool inhibit_;
-  AutoFlushICache* prev_;
-#endif
-
- public:
-  static void setRange(uintptr_t p, size_t len);
-  static void flush(uintptr_t p, size_t len);
-  static void setInhibit();
-  ~AutoFlushICache();
-  explicit AutoFlushICache(const char* nonce, bool inhibit = false);
-};
 
 }  // namespace jit
 

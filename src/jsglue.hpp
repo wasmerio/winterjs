@@ -16,10 +16,12 @@
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/Equality.h"
+#include "js/ForOfIterator.h"
 #include "js/Id.h"
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/MemoryMetrics.h"
+#include "js/Modules.h"
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
 #include "js/Realm.h"
@@ -29,6 +31,7 @@
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"
 #include "js/Utility.h"
+#include "js/Warnings.h"
 
 // Reexport some functions that are marked inline.
 
@@ -108,6 +111,22 @@ class JSJitMethodCallArgsReplacement
 #ifdef JS_DEBUG
     JS::detail::NoUsedRval wantUsedRval_;
 #endif
+};
+
+/// <div rustbindgen replaces="JS::MutableHandleIdVector" />
+struct MutableHandleIdVector_Simple {
+    void *ptr;
+};
+static_assert(sizeof(JS::MutableHandleIdVector) == sizeof(MutableHandleIdVector_Simple), "wrong handle size");
+
+/// <div rustbindgen replaces="JS::HandleObjectVector" />
+struct HandleObjectVector_Simple {
+    void *ptr;
+};
+
+/// <div rustbindgen replaces="JS::MutableHandleObjectVector" />
+struct MutableHandleObjectVector_Simple {
+    void *ptr;
 };
 
 #endif

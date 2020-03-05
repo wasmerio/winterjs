@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // This file was procedurally generated from the following sources:
 // - src/class-elements/grammar-field-identifier-alt.case
 // - src/class-elements/syntax/valid/cls-decl-elements-valid-syntax.template

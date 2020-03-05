@@ -9,6 +9,8 @@ import posixpath
 import tempfile
 import shutil
 
+import six
+
 from automation import Automation
 from mozdevice import ADBTimeoutError
 from mozlog import get_default_logger
@@ -25,13 +27,13 @@ class RemoteAutomation(Automation):
 
     def __init__(self, device, appName='', remoteProfile=None, remoteLog=None,
                  processArgs=None):
+        super(RemoteAutomation, self).__init__()
         self.device = device
         self.appName = appName
         self.remoteProfile = remoteProfile
         self.remoteLog = remoteLog
         self.processArgs = processArgs or {}
         self.lastTestSeen = "remoteautomation.py"
-        Automation.__init__(self)
 
     def runApp(self, testURL, env, app, profileDir, extraArgs,
                utilityPath=None, xrePath=None, debuggerInfo=None, symbolsPath=None,
@@ -101,9 +103,6 @@ class RemoteAutomation(Automation):
         env.setdefault('MOZ_IN_AUTOMATION', '1')
 
         # Set WebRTC logging in case it is not set yet.
-        # On Android, environment variables cannot contain ',' so the
-        # standard WebRTC setting for NSPR_LOG_MODULES is not available.
-        # env.setdefault('NSPR_LOG_MODULES', 'signaling:5,mtransport:5,datachannel:5,jsep:5,MediaPipelineFactory:5')  # NOQA: E501
         env.setdefault('R_LOG_LEVEL', '6')
         env.setdefault('R_LOG_DESTINATION', 'stderr')
         env.setdefault('R_LOG_VERBOSE', '1')
@@ -156,13 +155,7 @@ class RemoteAutomation(Automation):
             dumpDir = tempfile.mkdtemp()
             remoteCrashDir = posixpath.join(self.remoteProfile, 'minidumps')
             if not self.device.is_dir(remoteCrashDir):
-                # If crash reporting is enabled (MOZ_CRASHREPORTER=1), the
-                # minidumps directory is automatically created when Fennec
-                # (first) starts, so its lack of presence is a hint that
-                # something went wrong.
-                print("Automation Error: No crash directory (%s) found on remote device" %
-                      remoteCrashDir)
-                return True
+                return False
             self.device.pull(remoteCrashDir, dumpDir)
 
             logger = get_default_logger()
@@ -255,8 +248,6 @@ class RemoteAutomation(Automation):
         Fetch the full remote log file, log any new content and return True if new
         content processed.
         """
-        if not self.device.is_file(self.remoteLog):
-            return False
         try:
             newLogContent = self.device.get_file(self.remoteLog, offset=self.stdoutlen)
         except ADBTimeoutError:
@@ -294,7 +285,13 @@ class RemoteAutomation(Automation):
 
         for line in lines:
             # This passes the line to the logger (to be logged or buffered)
-            parsed_messages = self.messageLogger.write(line)
+            if isinstance(line, six.text_type):
+                # if line is unicode - let's encode it to bytes
+                parsed_messages = self.messageLogger.write(line.encode('UTF-8', 'replace'))
+            else:
+                # if line is bytes type, write it as it is
+                parsed_messages = self.messageLogger.write(line)
+
             for message in parsed_messages:
                 if isinstance(message, dict) and message.get('action') == 'test_start':
                     self.lastTestSeen = message['test']
@@ -334,6 +331,13 @@ class RemoteAutomation(Automation):
         top = self.procName
         slowLog = False
         endTime = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
+        # wait for log creation on startup
+        retries = 0
+        while retries < 20 and not self.device.is_file(self.remoteLog):
+            retries += 1
+            time.sleep(1)
+        if not self.device.is_file(self.remoteLog):
+            print("Failed wait for remote log: %s missing?" % self.remoteLog)
         while top == self.procName:
             # Get log updates on each interval, but if it is taking
             # too long, only do it every 60 seconds

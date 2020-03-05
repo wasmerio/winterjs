@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <nox@nox.paris>
+Date: Tue, 7 Jan 2020 12:34:28 +0100
+Subject: [PATCH] Don't include C define flags in assembler arguments
+
+
+diff --git a/python/mozbuild/mozbuild/frontend/emitter.py b/python/mozbuild/mozbuild/frontend/emitter.py
+index 2d49e328dc1f..70dc6e22cbf6 100644
+--- a/python/mozbuild/mozbuild/frontend/emitter.py
++++ b/python/mozbuild/mozbuild/frontend/emitter.py
+@@ -1140,7 +1140,7 @@ class TreeMetadataEmitter(LoggingMixin):
+             yield sub
+
+         for defines_var, cls, backend_flags in (
+-                ('DEFINES', Defines, (computed_flags, computed_as_flags,)),
++                ('DEFINES', Defines, (computed_flags,)),
+                 ('HOST_DEFINES', HostDefines, (computed_host_flags,)),
+                 ('WASM_DEFINES', WasmDefines, (computed_wasm_flags,))):
+             defines = context.get(defines_var)

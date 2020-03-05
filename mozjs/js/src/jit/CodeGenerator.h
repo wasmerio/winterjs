@@ -62,6 +62,8 @@ class OutOfLineRegExpPrototypeOptimizable;
 class OutOfLineRegExpInstanceOptimizable;
 class OutOfLineLambdaArrow;
 class OutOfLineNaNToZero;
+class OutOfLineZeroIfNaN;
+class OutOfLineTypedArrayIndexToInt32;
 
 class CodeGenerator final : public CodeGeneratorSpecific {
   void generateArgumentsChecks(bool assert = false);
@@ -129,6 +131,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitOutOfLineIsConstructor(OutOfLineIsConstructor* ool);
 
   void visitOutOfLineNaNToZero(OutOfLineNaNToZero* ool);
+  void visitOutOfLineZeroIfNaN(OutOfLineZeroIfNaN* ool);
 
   void visitCheckOverRecursedFailure(CheckOverRecursedFailure* ool);
 
@@ -143,6 +146,9 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void visitOutOfLineNewArray(OutOfLineNewArray* ool);
   void visitOutOfLineNewObject(OutOfLineNewObject* ool);
+
+  void visitOutOfLineTypedArrayIndexToInt32(
+      OutOfLineTypedArrayIndexToInt32* ool);
 
  private:
   void emitPostWriteBarrier(const LAllocation* obj);
@@ -178,10 +184,10 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitNewObjectVMCall(LNewObject* lir);
 
   void emitGetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register expandoScratch, Register scratch,
+                                  Register scratch,
                                   const TypedOrValueRegister& output);
   void emitSetPropertyPolymorphic(LInstruction* lir, Register obj,
-                                  Register expandoScratch, Register scratch,
+                                  Register scratch,
                                   const ConstantOrRegister& value);
   void emitCompareS(LInstruction* lir, JSOp op, Register left, Register right,
                     Register output);
@@ -243,7 +249,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                            GetPropertyResultFlags flags);
   void addSetPropertyCache(LInstruction* ins, LiveRegisterSet liveRegs,
                            Register objReg, Register temp,
-                           FloatRegister tempDouble, FloatRegister tempF32,
                            const ConstantOrRegister& id,
                            const ConstantOrRegister& value, bool strict,
                            bool needsPostBarrier, bool needsTypeBarrier,

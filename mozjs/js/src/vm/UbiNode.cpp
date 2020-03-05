@@ -12,8 +12,7 @@
 
 #include <algorithm>
 
-#include "builtin/String.h"
-
+#include "debugger/Debugger.h"
 #include "jit/IonCode.h"
 #include "js/Debug.h"
 #include "js/TracingAPI.h"
@@ -23,7 +22,6 @@
 #include "js/Vector.h"
 #include "util/Text.h"
 #include "vm/BigIntType.h"
-#include "vm/Debugger.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
@@ -34,7 +32,7 @@
 #include "vm/StringType.h"
 #include "vm/SymbolType.h"
 
-#include "vm/Debugger-inl.h"
+#include "debugger/Debugger-inl.h"
 #include "vm/JSObject-inl.h"
 
 using namespace js;
@@ -72,7 +70,7 @@ struct CopyToBufferMatcher {
     return i;
   }
 
-  size_t match(JSAtom* atom) {
+  size_t operator()(JSAtom* atom) {
     if (!atom) {
       return 0;
     }
@@ -86,7 +84,7 @@ struct CopyToBufferMatcher {
                                     length);
   }
 
-  size_t match(const char16_t* chars) {
+  size_t operator()(const char16_t* chars) {
     if (!chars) {
       return 0;
     }
@@ -103,9 +101,11 @@ size_t JS::ubi::AtomOrTwoByteChars::copyToBuffer(
 }
 
 struct LengthMatcher {
-  size_t match(JSAtom* atom) { return atom ? atom->length() : 0; }
+  size_t operator()(JSAtom* atom) { return atom ? atom->length() : 0; }
 
-  size_t match(const char16_t* chars) { return chars ? js_strlen(chars) : 0; }
+  size_t operator()(const char16_t* chars) {
+    return chars ? js_strlen(chars) : 0;
+  }
 };
 
 size_t JS::ubi::AtomOrTwoByteChars::length() {
@@ -189,25 +189,25 @@ Value Node::exposeToJS() const {
 
 // A JS::CallbackTracer subclass that adds a Edge to a Vector for each
 // edge on which it is invoked.
-class EdgeVectorTracer : public JS::CallbackTracer {
+class EdgeVectorTracer final : public JS::CallbackTracer {
   // The vector to which we add Edges.
   EdgeVector* vec;
 
   // True if we should populate the edge's names.
   bool wantNames;
 
-  void onChild(const JS::GCCellPtr& thing) override {
+  bool onChild(const JS::GCCellPtr& thing) override {
     if (!okay) {
-      return;
+      return true;
     }
 
     // Don't trace permanent atoms and well-known symbols that are owned by
     // a parent JSRuntime.
     if (thing.is<JSString>() && thing.as<JSString>().isPermanentAtom()) {
-      return;
+      return true;
     }
     if (thing.is<JS::Symbol>() && thing.as<JS::Symbol>().isWellKnownSymbol()) {
-      return;
+      return true;
     }
 
     char16_t* name16 = nullptr;
@@ -221,7 +221,7 @@ class EdgeVectorTracer : public JS::CallbackTracer {
       name16 = js_pod_malloc<char16_t>(strlen(name) + 1);
       if (!name16) {
         okay = false;
-        return;
+        return true;
       }
 
       size_t i;
@@ -237,8 +237,10 @@ class EdgeVectorTracer : public JS::CallbackTracer {
     // retains it, and its destructor will free it.
     if (!vec->append(Edge(name16, Node(thing)))) {
       okay = false;
-      return;
+      return true;
     }
+
+    return true;
   }
 
  public:
@@ -521,6 +523,23 @@ void SetConstructUbiNodeForDOMObjectCallback(JSContext* cx,
                                                               JSObject*)) {
   cx->runtime()->constructUbiNodeForDOMObjectCallback = callback;
 }
+
+JS_PUBLIC_API const char* CoarseTypeToString(CoarseType type) {
+  switch (type) {
+    case CoarseType::Other:
+      return "Other";
+    case CoarseType::Object:
+      return "Object";
+    case CoarseType::Script:
+      return "Script";
+    case CoarseType::String:
+      return "String";
+    case CoarseType::DOMNode:
+      return "DOMNode";
+    default:
+      return "Unknown";
+  }
+};
 
 }  // namespace ubi
 }  // namespace JS

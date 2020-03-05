@@ -122,23 +122,24 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether CacheIR stubs are used.
   SET_DEFAULT(disableCacheIR, false);
 
-  // Toggles whether CacheIR stubs for binary arith operations are used
-  SET_DEFAULT(disableCacheIRBinaryArith, false);
-
-// Toggles whether sincos optimization is globally disabled.
-// See bug984018: The MacOS is the only one that has the sincos fast.
-#if defined(XP_MACOSX)
-  SET_DEFAULT(disableSincos, false);
-#else
-  SET_DEFAULT(disableSincos, true);
-#endif
-
   // Toggles whether sink code motion is globally disabled.
   SET_DEFAULT(disableSink, true);
 
   // Toggles whether the use of multiple Ion optimization levels is globally
   // disabled.
   SET_DEFAULT(disableOptimizationLevels, false);
+
+  // Whether the Baseline Interpreter is enabled.
+  SET_DEFAULT(baselineInterpreter, true);
+
+  // Whether the Baseline JIT is enabled.
+  SET_DEFAULT(baselineJit, true);
+
+  // Whether the IonMonkey JIT is enabled.
+  SET_DEFAULT(ion, true);
+
+  // Whether the RegExp JIT is enabled.
+  SET_DEFAULT(nativeRegExp, true);
 
   // Whether IonBuilder should prefer IC generation above specialized MIR.
   SET_DEFAULT(forceInlineCaches, false);
@@ -153,9 +154,13 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(runExtraChecks, false);
 
   // How many invocations or loop iterations are needed before functions
+  // enter the Baseline Interpreter.
+  SET_DEFAULT(baselineInterpreterWarmUpThreshold, 10);
+
+  // How many invocations or loop iterations are needed before functions
   // are compiled with the baseline compiler.
   // Duplicated in all.js - ensure both match.
-  SET_DEFAULT(baselineWarmUpThreshold, 10);
+  SET_DEFAULT(baselineJitWarmUpThreshold, 100);
 
   // How many invocations or loop iterations are needed before functions
   // are compiled with the Ion compiler at OptimizationLevel::Normal.
@@ -205,6 +210,14 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(branchPruningEffectfulInstFactor, 3500);
   SET_DEFAULT(branchPruningThreshold, 4000);
 
+  // Limits on bytecode length and number of locals/arguments for Ion
+  // compilation. There are different (lower) limits for when off-thread Ion
+  // compilation isn't available.
+  SET_DEFAULT(ionMaxScriptSize, 100 * 1000);
+  SET_DEFAULT(ionMaxScriptSizeMainThread, 2 * 1000);
+  SET_DEFAULT(ionMaxLocalsAndArgs, 10 * 1000);
+  SET_DEFAULT(ionMaxLocalsAndArgsMainThread, 256);
+
   // Force the used register allocator instead of letting the optimization
   // pass decide.
   const char* forcedRegisterAllocatorEnv = "JIT_OPTION_forcedRegisterAllocator";
@@ -231,8 +244,9 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(spectreJitToCxxCalls, true);
 #endif
 
-  // Toggles whether unboxed plain objects can be created by the VM.
-  SET_DEFAULT(disableUnboxedObjects, false);
+  // These are set to their actual values in InitializeJit.
+  SET_DEFAULT(supportsFloatingPoint, false);
+  SET_DEFAULT(supportsUnalignedAccesses, false);
 
   // Toggles the optimization whereby offsets are folded into loads and not
   // included in the bounds check.
@@ -247,8 +261,12 @@ DefaultJitOptions::DefaultJitOptions() {
   // Until which wasm bytecode size should we accumulate functions, in order
   // to compile efficiently on helper threads. Baseline code compiles much
   // faster than Ion code so use scaled thresholds (see also bug 1320374).
+  // Cranelift compiles at about half the speed of Ion, but is much more
+  // affected by malloc/free costs, so set its threshold relatively high, in
+  // order to reduce overall allocation costs.  See bug 1586791.
   SET_DEFAULT(wasmBatchBaselineThreshold, 10000);
   SET_DEFAULT(wasmBatchIonThreshold, 1100);
+  SET_DEFAULT(wasmBatchCraneliftThreshold, 5000);
 
 #ifdef JS_TRACE_LOGGING
   // Toggles whether the traceLogger should be on or off.  In either case,
@@ -258,10 +276,10 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(enableTraceLogger, false);
 #endif
 
-#ifdef WASM_CODEGEN_DEBUG
   SET_DEFAULT(enableWasmJitExit, true);
   SET_DEFAULT(enableWasmJitEntry, true);
   SET_DEFAULT(enableWasmIonFastCalls, true);
+#ifdef WASM_CODEGEN_DEBUG
   SET_DEFAULT(enableWasmImportCallSpew, false);
   SET_DEFAULT(enableWasmFuncCallSpew, false);
 #endif
@@ -273,8 +291,13 @@ bool DefaultJitOptions::isSmallFunction(JSScript* script) const {
 
 void DefaultJitOptions::enableGvn(bool enable) { disableGvn = !enable; }
 
+void DefaultJitOptions::setEagerBaselineCompilation() {
+  baselineInterpreterWarmUpThreshold = 0;
+  baselineJitWarmUpThreshold = 0;
+}
+
 void DefaultJitOptions::setEagerIonCompilation() {
-  baselineWarmUpThreshold = 0;
+  setEagerBaselineCompilation();
   normalIonWarmUpThreshold = 0;
   fullIonWarmUpThreshold = 0;
 }

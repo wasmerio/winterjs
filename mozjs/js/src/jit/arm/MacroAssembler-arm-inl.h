@@ -85,6 +85,8 @@ void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
   load32(src, dest);
 }
 
+void MacroAssembler::loadAbiReturnAddress(Register dest) { movePtr(lr, dest); }
+
 // ===============================================================
 // Logical instructions
 
@@ -1864,7 +1866,6 @@ void MacroAssembler::branchTestMagic(Condition cond, const Address& valaddr,
 }
 
 void MacroAssembler::branchToComputedAddress(const BaseIndex& addr) {
-  MOZ_ASSERT(addr.base == pc, "Unsupported jump from any other addresses.");
   MOZ_ASSERT(
       addr.offset == 0,
       "NYI: offsets from pc should be shifted by the number of instructions.");
@@ -1873,9 +1874,12 @@ void MacroAssembler::branchToComputedAddress(const BaseIndex& addr) {
   uint32_t scale = Imm32::ShiftOf(addr.scale).value;
 
   ma_ldr(DTRAddr(base, DtrRegImmShift(addr.index, LSL, scale)), pc);
-  // When loading from pc, the pc is shifted to the next instruction, we
-  // add one extra instruction to accomodate for this shifted offset.
-  breakpoint();
+
+  if (base == pc) {
+    // When loading from pc, the pc is shifted to the next instruction, we
+    // add one extra instruction to accomodate for this shifted offset.
+    breakpoint();
+  }
 }
 
 void MacroAssembler::cmp32Move32(Condition cond, Register lhs, Register rhs,
@@ -1897,6 +1901,26 @@ void MacroAssembler::cmp32Move32(Condition cond, Register lhs,
   SecondScratchRegisterScope scratch2(*this);
   ma_ldr(rhs, scratch, scratch2);
   cmp32Move32(cond, lhs, scratch, src, dest);
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs,
+                                 const Address& rhs, const Address& src,
+                                 Register dest) {
+  // This is never used, but must be present to facilitate linking on arm.
+  MOZ_CRASH("No known use cases");
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs, Register rhs,
+                                 const Address& src, Register dest) {
+  // This is never used, but must be present to facilitate linking on arm.
+  MOZ_CRASH("No known use cases");
+}
+
+void MacroAssembler::cmp32LoadPtr(Condition cond, const Address& lhs, Imm32 rhs,
+                                  const Address& src, Register dest) {
+  cmp32(lhs, rhs);
+  ScratchRegisterScope scratch(*this);
+  ma_ldr(src, dest, scratch, Offset, cond);
 }
 
 void MacroAssembler::test32LoadPtr(Condition cond, const Address& addr,

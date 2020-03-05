@@ -18,26 +18,18 @@
 namespace js {
 namespace gc {
 
-class ArenaCellIterUnderGC : public ArenaCellIterImpl {
+class ArenaCellIterUnderGC : public ArenaCellIter {
  public:
-  explicit ArenaCellIterUnderGC(Arena* arena)
-      : ArenaCellIterImpl(arena, CellIterDoesntNeedBarrier) {
+  explicit ArenaCellIterUnderGC(Arena* arena) : ArenaCellIter(arena) {
     MOZ_ASSERT(CurrentThreadIsPerformingGC());
   }
 };
 
-class ArenaCellIterUnderFinalize : public ArenaCellIterImpl {
+class ArenaCellIterUnderFinalize : public ArenaCellIter {
  public:
-  explicit ArenaCellIterUnderFinalize(Arena* arena)
-      : ArenaCellIterImpl(arena, CellIterDoesntNeedBarrier) {
+  explicit ArenaCellIterUnderFinalize(Arena* arena) : ArenaCellIter(arena) {
     MOZ_ASSERT(CurrentThreadIsGCSweeping());
   }
-};
-
-class ArenaCellIterUnbarriered : public ArenaCellIterImpl {
- public:
-  explicit ArenaCellIterUnbarriered(Arena* arena)
-      : ArenaCellIterImpl(arena, CellIterDoesntNeedBarrier) {}
 };
 
 class GrayObjectIter : public ZoneAllCellIter<js::gc::TenuredCell> {
@@ -58,16 +50,18 @@ class GCZonesIter {
   ZonesIter zone;
 
  public:
-  explicit GCZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
-      : zone(rt, selector) {
+  explicit GCZonesIter(GCRuntime* gc, ZoneSelector selector = WithAtoms)
+      : zone(gc, selector) {
     MOZ_ASSERT(JS::RuntimeHeapIsBusy());
-    MOZ_ASSERT_IF(rt->gc.atomsZone->isCollectingFromAnyThread(),
-                  !rt->hasHelperThreadZones());
+    MOZ_ASSERT_IF(gc->atomsZone->isCollectingFromAnyThread(),
+                  !gc->rt->hasHelperThreadZones());
 
     if (!done() && !zone->isCollectingFromAnyThread()) {
       next();
     }
   }
+  explicit GCZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
+      : GCZonesIter(&rt->gc, selector) {}
 
   bool done() const { return zone.done(); }
 
@@ -97,12 +91,14 @@ class SweepGroupZonesIter {
   ZoneSelector selector;
 
  public:
-  explicit SweepGroupZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
+  explicit SweepGroupZonesIter(GCRuntime* gc, ZoneSelector selector = WithAtoms)
       : selector(selector) {
     MOZ_ASSERT(CurrentThreadIsPerformingGC());
-    current = rt->gc.getCurrentSweepGroup();
+    current = gc->getCurrentSweepGroup();
     maybeSkipAtomsZone();
   }
+  explicit SweepGroupZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms)
+      : SweepGroupZonesIter(&rt->gc, selector) {}
 
   void maybeSkipAtomsZone() {
     if (selector == SkipAtoms && current && current->isAtomsZone()) {
@@ -133,7 +129,7 @@ using SweepGroupCompartmentsIter =
 using SweepGroupRealmsIter =
     CompartmentsOrRealmsIterT<SweepGroupZonesIter, RealmsInZoneIter>;
 
-// Iterate the free cells in an arena. See also ArenaCellIterImpl which iterates
+// Iterate the free cells in an arena. See also ArenaCellIter which iterates
 // the allocated cells.
 class ArenaFreeCellIter {
   Arena* arena;

@@ -9,8 +9,12 @@
 
 #include "vm/NativeObject.h"
 
+#include "mozilla/Maybe.h"
+
 #include "builtin/TypedObject.h"
+#include "gc/Allocator.h"
 #include "gc/GCTrace.h"
+#include "js/Result.h"
 #include "proxy/Proxy.h"
 #include "vm/JSContext.h"
 #include "vm/ProxyObject.h"
@@ -139,7 +143,7 @@ inline void NativeObject::copyDenseElements(uint32_t dstStart, const Value* src,
   if (count == 0) {
     return;
   }
-  if (JS::shadow::Zone::asShadowZone(zone())->needsIncrementalBarrier()) {
+  if (zone()->needsIncrementalBarrier()) {
     uint32_t numShifted = getElementsHeader()->numShiftedElements();
     for (uint32_t i = 0; i < count; ++i) {
       elements_[dstStart + i].set(this, HeapSlot::Element,
@@ -232,7 +236,7 @@ inline void NativeObject::moveDenseElements(uint32_t dstStart,
    * write barrier is invoked here on B, despite the fact that it exists in
    * the array before and after the move.
    */
-  if (JS::shadow::Zone::asShadowZone(zone())->needsIncrementalBarrier()) {
+  if (zone()->needsIncrementalBarrier()) {
     uint32_t numShifted = getElementsHeader()->numShiftedElements();
     if (dstStart < srcStart) {
       HeapSlot* dst = elements_ + dstStart;
@@ -257,7 +261,7 @@ inline void NativeObject::moveDenseElements(uint32_t dstStart,
 inline void NativeObject::moveDenseElementsNoPreBarrier(uint32_t dstStart,
                                                         uint32_t srcStart,
                                                         uint32_t count) {
-  MOZ_ASSERT(!shadowZone()->needsIncrementalBarrier());
+  MOZ_ASSERT(!zone()->needsIncrementalBarrier());
 
   MOZ_ASSERT(dstStart + count <= getDenseCapacity());
   MOZ_ASSERT(srcStart + count <= getDenseCapacity());
@@ -269,7 +273,7 @@ inline void NativeObject::moveDenseElementsNoPreBarrier(uint32_t dstStart,
 }
 
 inline void NativeObject::reverseDenseElementsNoPreBarrier(uint32_t length) {
-  MOZ_ASSERT(!shadowZone()->needsIncrementalBarrier());
+  MOZ_ASSERT(!zone()->needsIncrementalBarrier());
 
   MOZ_ASSERT(!denseElementsAreCopyOnWrite());
   MOZ_ASSERT(isExtensible());
@@ -443,11 +447,15 @@ inline DenseElementResult NativeObject::setOrExtendDenseElements(
   return DenseElementResult::Success;
 }
 
-inline Value NativeObject::getDenseOrTypedArrayElement(uint32_t idx) {
+template <AllowGC allowGC>
+inline bool NativeObject::getDenseOrTypedArrayElement(
+    JSContext* cx, uint32_t idx,
+    typename MaybeRooted<Value, allowGC>::MutableHandleType val) {
   if (is<TypedArrayObject>()) {
-    return as<TypedArrayObject>().getElement(idx);
+    return as<TypedArrayObject>().getElement<allowGC>(cx, idx, val);
   }
-  return getDenseElement(idx);
+  val.set(getDenseElement(idx));
+  return true;
 }
 
 MOZ_ALWAYS_INLINE void NativeObject::setSlotWithType(JSContext* cx,
@@ -463,13 +471,6 @@ MOZ_ALWAYS_INLINE void NativeObject::setSlotWithType(JSContext* cx,
   AddTypePropertyId(cx, this, shape->propid(), value);
 }
 
-inline void NativeObject::updateShapeAfterMovingGC() {
-  Shape* shape = this->shape();
-  if (IsForwarded(shape)) {
-    shapeRef().unsafeSet(Forwarded(shape));
-  }
-}
-
 inline bool NativeObject::isInWholeCellBuffer() const {
   const gc::TenuredCell* cell = &asTenured();
   gc::ArenaCellSet* cells = cell->arena()->bufferedCells();
@@ -481,7 +482,7 @@ inline bool NativeObject::isInWholeCellBuffer() const {
     js::HandleShape shape, js::HandleObjectGroup group) {
   debugCheckNewObject(group, shape, kind, heap);
 
-  const js::Class* clasp = group->clasp();
+  const JSClass* clasp = group->clasp();
   MOZ_ASSERT(clasp->isNative());
   MOZ_ASSERT(!clasp->isJSFunction(), "should use JSFunction::create");
 
@@ -522,45 +523,18 @@ inline bool NativeObject::isInWholeCellBuffer() const {
 }
 
 /* static */ inline JS::Result<NativeObject*, JS::OOM&>
-NativeObject::createWithTemplate(JSContext* cx, js::gc::InitialHeap heap,
-                                 HandleObject templateObject) {
+NativeObject::createWithTemplate(JSContext* cx, HandleObject templateObject) {
   RootedObjectGroup group(cx, templateObject->group());
+
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
+
   RootedShape shape(cx, templateObject->as<NativeObject>().lastProperty());
 
   gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
-  MOZ_ASSERT(CanBeFinalizedInBackground(kind, shape->getObjectClass()));
-  kind = gc::GetBackgroundAllocKind(kind);
+  MOZ_ASSERT(CanChangeToBackgroundAllocKind(kind, shape->getObjectClass()));
+  kind = gc::ForegroundToBackgroundAllocKind(kind);
 
   return create(cx, kind, heap, shape, group);
-}
-
-MOZ_ALWAYS_INLINE uint32_t NativeObject::numDynamicSlots() const {
-  return dynamicSlotsCount(numFixedSlots(), slotSpan(), getClass());
-}
-
-/* static */ MOZ_ALWAYS_INLINE uint32_t NativeObject::dynamicSlotsCount(
-    uint32_t nfixed, uint32_t span, const Class* clasp) {
-  if (span <= nfixed) {
-    return 0;
-  }
-  span -= nfixed;
-
-  // Increase the slots to SLOT_CAPACITY_MIN to decrease the likelihood
-  // the dynamic slots need to get increased again. ArrayObjects ignore
-  // this because slots are uncommon in that case.
-  if (clasp != &ArrayObject::class_ && span <= SLOT_CAPACITY_MIN) {
-    return SLOT_CAPACITY_MIN;
-  }
-
-  uint32_t slots = mozilla::RoundUpPow2(span);
-  MOZ_ASSERT(slots >= span);
-  return slots;
-}
-
-/* static */ MOZ_ALWAYS_INLINE uint32_t
-NativeObject::dynamicSlotsCount(Shape* shape) {
-  return dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(),
-                           shape->getObjectClass());
 }
 
 MOZ_ALWAYS_INLINE bool NativeObject::updateSlotsForSpan(JSContext* cx,
@@ -622,10 +596,10 @@ inline js::gc::AllocKind NativeObject::allocKindForTenure() const {
   using namespace js::gc;
   AllocKind kind = GetGCObjectFixedSlotsKind(numFixedSlots());
   MOZ_ASSERT(!IsBackgroundFinalized(kind));
-  if (!CanBeFinalizedInBackground(kind, getClass())) {
+  if (!CanChangeToBackgroundAllocKind(kind, getClass())) {
     return kind;
   }
-  return GetBackgroundAllocKind(kind);
+  return ForegroundToBackgroundAllocKind(kind);
 }
 
 inline js::GlobalObject& NativeObject::global() const { return nonCCWGlobal(); }
@@ -634,8 +608,8 @@ inline js::gc::AllocKind PlainObject::allocKindForTenure() const {
   using namespace js::gc;
   AllocKind kind = GetGCObjectFixedSlotsKind(numFixedSlots());
   MOZ_ASSERT(!IsBackgroundFinalized(kind));
-  MOZ_ASSERT(CanBeFinalizedInBackground(kind, getClass()));
-  return GetBackgroundAllocKind(kind);
+  MOZ_ASSERT(CanChangeToBackgroundAllocKind(kind, getClass()));
+  return ForegroundToBackgroundAllocKind(kind);
 }
 
 /* Make an object with pregenerated shape from a NEWOBJECT bytecode. */
@@ -646,7 +620,7 @@ static inline PlainObject* CopyInitializerObject(
 
   gc::AllocKind allocKind =
       gc::GetGCObjectFixedSlotsKind(baseobj->numFixedSlots());
-  allocKind = gc::GetBackgroundAllocKind(allocKind);
+  allocKind = gc::ForegroundToBackgroundAllocKind(allocKind);
   MOZ_ASSERT_IF(baseobj->isTenured(),
                 allocKind == baseobj->asTenured().getAllocKind());
   RootedPlainObject obj(
@@ -663,21 +637,21 @@ static inline PlainObject* CopyInitializerObject(
 }
 
 inline NativeObject* NewNativeObjectWithGivenTaggedProto(
-    JSContext* cx, const Class* clasp, Handle<TaggedProto> proto,
+    JSContext* cx, const JSClass* clasp, Handle<TaggedProto> proto,
     gc::AllocKind allocKind, NewObjectKind newKind) {
   return MaybeNativeObject(
       NewObjectWithGivenTaggedProto(cx, clasp, proto, allocKind, newKind));
 }
 
 inline NativeObject* NewNativeObjectWithGivenTaggedProto(
-    JSContext* cx, const Class* clasp, Handle<TaggedProto> proto,
+    JSContext* cx, const JSClass* clasp, Handle<TaggedProto> proto,
     NewObjectKind newKind = GenericObject) {
   return MaybeNativeObject(
       NewObjectWithGivenTaggedProto(cx, clasp, proto, newKind));
 }
 
 inline NativeObject* NewNativeObjectWithGivenProto(JSContext* cx,
-                                                   const Class* clasp,
+                                                   const JSClass* clasp,
                                                    HandleObject proto,
                                                    gc::AllocKind allocKind,
                                                    NewObjectKind newKind) {
@@ -686,20 +660,20 @@ inline NativeObject* NewNativeObjectWithGivenProto(JSContext* cx,
 }
 
 inline NativeObject* NewNativeObjectWithGivenProto(
-    JSContext* cx, const Class* clasp, HandleObject proto,
+    JSContext* cx, const JSClass* clasp, HandleObject proto,
     NewObjectKind newKind = GenericObject) {
   return MaybeNativeObject(NewObjectWithGivenProto(cx, clasp, proto, newKind));
 }
 
 inline NativeObject* NewNativeObjectWithClassProto(
-    JSContext* cx, const Class* clasp, HandleObject proto,
+    JSContext* cx, const JSClass* clasp, HandleObject proto,
     gc::AllocKind allocKind, NewObjectKind newKind = GenericObject) {
   return MaybeNativeObject(
       NewObjectWithClassProto(cx, clasp, proto, allocKind, newKind));
 }
 
 inline NativeObject* NewNativeObjectWithClassProto(
-    JSContext* cx, const Class* clasp, HandleObject proto,
+    JSContext* cx, const JSClass* clasp, HandleObject proto,
     NewObjectKind newKind = GenericObject) {
   return MaybeNativeObject(NewObjectWithClassProto(cx, clasp, proto, newKind));
 }
@@ -785,9 +759,17 @@ static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
   // so that integer properties on the prototype are ignored even for out
   // of bounds accesses.
   if (obj->template is<TypedArrayObject>()) {
-    uint64_t index;
-    if (IsTypedArrayIndex(id, &index)) {
-      if (index < obj->template as<TypedArrayObject>().length()) {
+    JS::Result<mozilla::Maybe<uint64_t>> index = IsTypedArrayIndex(cx, id);
+    if (index.isErr()) {
+      if (!allowGC) {
+        cx->recoverFromOutOfMemory();
+      }
+      return false;
+    }
+
+    if (index.inspect()) {
+      if (index.inspect().value() <
+          obj->template as<TypedArrayObject>().length()) {
         propp.setDenseOrTypedArrayElement();
       } else {
         propp.setNotFound();
@@ -807,7 +789,7 @@ static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
 
   // id was not found in obj. Try obj's resolve hook, if any.
   if (obj->getClass()->getResolve()) {
-    MOZ_ASSERT(!cx->helperThread());
+    MOZ_ASSERT(!cx->isHelperThreadContext());
     if (!allowGC) {
       return false;
     }
@@ -842,25 +824,27 @@ static MOZ_ALWAYS_INLINE bool LookupOwnPropertyInline(
  * Simplified version of LookupOwnPropertyInline that doesn't call resolve
  * hooks.
  */
-static inline void NativeLookupOwnPropertyNoResolve(
+static inline MOZ_MUST_USE bool NativeLookupOwnPropertyNoResolve(
     JSContext* cx, HandleNativeObject obj, HandleId id,
     MutableHandle<PropertyResult> result) {
   // Check for a native dense element.
   if (JSID_IS_INT(id) && obj->containsDenseElement(JSID_TO_INT(id))) {
     result.setDenseOrTypedArrayElement();
-    return;
+    return true;
   }
 
   // Check for a typed array element.
   if (obj->is<TypedArrayObject>()) {
-    uint64_t index;
-    if (IsTypedArrayIndex(id, &index)) {
-      if (index < obj->as<TypedArrayObject>().length()) {
+    mozilla::Maybe<uint64_t> index;
+    JS_TRY_VAR_OR_RETURN_FALSE(cx, index, IsTypedArrayIndex(cx, id));
+
+    if (index) {
+      if (index.value() < obj->as<TypedArrayObject>().length()) {
         result.setDenseOrTypedArrayElement();
       } else {
         result.setNotFound();
       }
-      return;
+      return true;
     }
   }
 
@@ -870,6 +854,7 @@ static inline void NativeLookupOwnPropertyNoResolve(
   } else {
     result.setNotFound();
   }
+  return true;
 }
 
 template <AllowGC allowGC>
@@ -902,7 +887,7 @@ static MOZ_ALWAYS_INLINE bool LookupPropertyInline(
       break;
     }
     if (!proto->isNative()) {
-      MOZ_ASSERT(!cx->helperThread());
+      MOZ_ASSERT(!cx->isHelperThreadContext());
       if (!allowGC) {
         return false;
       }

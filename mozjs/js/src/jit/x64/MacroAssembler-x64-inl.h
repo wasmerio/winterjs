@@ -566,13 +566,7 @@ void MacroAssembler::branchPtr(Condition cond, wasm::SymbolicAddress lhs,
 
 void MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs,
                                       Register rhs, Label* label) {
-  ScratchRegisterScope scratch(*this);
-  if (rhs != scratch) {
-    movePtr(rhs, scratch);
-  }
-  // Instead of unboxing lhs, box rhs and do direct comparison with lhs.
-  rshiftPtr(Imm32(1), scratch);
-  branchPtr(cond, lhs, scratch, label);
+  branchPtr(cond, lhs, rhs, label);
 }
 
 void MacroAssembler::branchTruncateFloat32ToPtr(FloatRegister src,
@@ -594,7 +588,14 @@ void MacroAssembler::branchTruncateFloat32MaybeModUint32(FloatRegister src,
 void MacroAssembler::branchTruncateFloat32ToInt32(FloatRegister src,
                                                   Register dest, Label* fail) {
   branchTruncateFloat32ToPtr(src, dest, fail);
-  branch32(Assembler::Above, dest, Imm32(0xffffffff), fail);
+
+  // Check that the result is in the int32_t range.
+  ScratchRegisterScope scratch(*this);
+  move32To64SignExtend(dest, Register64(scratch));
+  cmpPtr(dest, scratch);
+  j(Assembler::NotEqual, fail);
+
+  movl(dest, dest);  // Zero upper 32-bits.
 }
 
 void MacroAssembler::branchTruncateDoubleToPtr(FloatRegister src, Register dest,
@@ -618,7 +619,14 @@ void MacroAssembler::branchTruncateDoubleMaybeModUint32(FloatRegister src,
 void MacroAssembler::branchTruncateDoubleToInt32(FloatRegister src,
                                                  Register dest, Label* fail) {
   branchTruncateDoubleToPtr(src, dest, fail);
-  branch32(Assembler::Above, dest, Imm32(0xffffffff), fail);
+
+  // Check that the result is in the int32_t range.
+  ScratchRegisterScope scratch(*this);
+  move32To64SignExtend(dest, Register64(scratch));
+  cmpPtr(dest, scratch);
+  j(Assembler::NotEqual, fail);
+
+  movl(dest, dest);  // Zero upper 32-bits.
 }
 
 void MacroAssembler::branchTest32(Condition cond, const AbsoluteAddress& lhs,
@@ -659,6 +667,12 @@ void MacroAssembler::branchToComputedAddress(const BaseIndex& address) {
 
 void MacroAssembler::cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs,
                                   Register src, Register dest) {
+  cmp32(lhs, rhs);
+  cmovCCq(cond, Operand(src), dest);
+}
+
+void MacroAssembler::cmp32LoadPtr(Condition cond, const Address& lhs, Imm32 rhs,
+                                  const Address& src, Register dest) {
   cmp32(lhs, rhs);
   cmovCCq(cond, Operand(src), dest);
 }
@@ -816,7 +830,7 @@ void MacroAssemblerX64::loadInt32OrDouble(const T& src, FloatRegister dest) {
   convertInt32ToDouble(src, dest);
   jump(&end);
   bind(&notInt32);
-  loadDouble(src, dest);
+  unboxDouble(src, dest);
   bind(&end);
 }
 
@@ -832,9 +846,11 @@ void MacroAssemblerX64::ensureDouble(const ValueOperand& source,
     asMasm().branchTestInt32(Assembler::NotEqual, tag, failure);
   }
 
-  ScratchRegisterScope scratch(asMasm());
-  unboxInt32(source, scratch);
-  convertInt32ToDouble(scratch, dest);
+  {
+    ScratchRegisterScope scratch(asMasm());
+    unboxInt32(source, scratch);
+    convertInt32ToDouble(scratch, dest);
+  }
   jump(&done);
 
   bind(&isDouble);

@@ -83,13 +83,14 @@ bool MResumePoint::writeRecoverData(CompactBufferWriter& writer) const {
     }
 
     if (reachablePC) {
-      if (JSOp(*bailPC) == JSOP_FUNCALL) {
+      JSOp bailOp = JSOp(*bailPC);
+      if (bailOp == JSOP_FUNCALL) {
         // For fun.call(this, ...); the reconstructStackDepth will
         // include the this. When inlining that is not included.  So the
         // exprStackSlots will be one less.
         MOZ_ASSERT(stackDepth - exprStack <= 1);
-      } else if (JSOp(*bailPC) != JSOP_FUNAPPLY &&
-                 !IsIonInlinableGetterOrSetterPC(bailPC)) {
+      } else if (bailOp != JSOP_FUNAPPLY &&
+                 !IsIonInlinableGetterOrSetterOp(bailOp)) {
         // For fun.apply({}, arguments) the reconstructStackDepth will
         // have stackdepth 4, but it could be that we inlined the
         // funapply. In that case exprStackSlots, will have the real
@@ -825,7 +826,7 @@ RHypot::RHypot(CompactBufferReader& reader)
     : numOperands_(reader.readUnsigned()) {}
 
 bool RHypot::recover(JSContext* cx, SnapshotIterator& iter) const {
-  JS::AutoValueVector vec(cx);
+  JS::RootedValueVector vec(cx);
 
   if (!vec.reserve(numOperands_)) {
     return false;
@@ -1228,11 +1229,13 @@ bool MNewArray::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
   writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArray));
   writer.writeUnsigned(length());
+  writer.writeByte(uint8_t(convertDoubleElements()));
   return true;
 }
 
 RNewArray::RNewArray(CompactBufferReader& reader) {
   count_ = reader.readUnsigned();
+  convertDoubleElements_ = reader.readByte();
 }
 
 bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
@@ -1241,7 +1244,7 @@ bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
   RootedObjectGroup group(cx, templateObject->group());
 
   ArrayObject* resultObject =
-      NewFullyAllocatedArrayTryUseGroup(cx, group, count_);
+      NewArrayWithGroup(cx, count_, group, convertDoubleElements_);
   if (!resultObject) {
     return false;
   }
@@ -1254,13 +1257,10 @@ bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
 bool MNewArrayCopyOnWrite::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
   writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArrayCopyOnWrite));
-  writer.writeByte(initialHeap());
   return true;
 }
 
-RNewArrayCopyOnWrite::RNewArrayCopyOnWrite(CompactBufferReader& reader) {
-  initialHeap_ = gc::InitialHeap(reader.readByte());
-}
+RNewArrayCopyOnWrite::RNewArrayCopyOnWrite(CompactBufferReader& reader) {}
 
 bool RNewArrayCopyOnWrite::recover(JSContext* cx,
                                    SnapshotIterator& iter) const {
@@ -1268,8 +1268,7 @@ bool RNewArrayCopyOnWrite::recover(JSContext* cx,
                                    &iter.read().toObject().as<ArrayObject>());
   RootedValue result(cx);
 
-  ArrayObject* resultObject =
-      NewDenseCopyOnWriteArray(cx, templateObject, initialHeap_);
+  ArrayObject* resultObject = NewDenseCopyOnWriteArray(cx, templateObject);
   if (!resultObject) {
     return false;
   }
@@ -1451,41 +1450,12 @@ RObjectState::RObjectState(CompactBufferReader& reader) {
 bool RObjectState::recover(JSContext* cx, SnapshotIterator& iter) const {
   RootedObject object(cx, &iter.read().toObject());
   RootedValue val(cx);
+  RootedNativeObject nativeObject(cx, &object->as<NativeObject>());
+  MOZ_ASSERT(nativeObject->slotSpan() == numSlots());
 
-  if (object->is<UnboxedPlainObject>()) {
-    const UnboxedLayout& layout = object->as<UnboxedPlainObject>().layout();
-
-    RootedId id(cx);
-    RootedValue receiver(cx, ObjectValue(*object));
-    const UnboxedLayout::PropertyVector& properties = layout.properties();
-    for (size_t i = 0; i < properties.length(); i++) {
-      val = iter.read();
-
-      // This is the default placeholder value of MObjectState, when no
-      // properties are defined yet.
-      if (val.isUndefined()) {
-        continue;
-      }
-
-      id = NameToId(properties[i].name);
-      ObjectOpResult result;
-
-      // SetProperty can only fail due to OOM.
-      if (!SetProperty(cx, object, id, val, receiver, result)) {
-        return false;
-      }
-      if (!result) {
-        return result.reportError(cx, object, id);
-      }
-    }
-  } else {
-    RootedNativeObject nativeObject(cx, &object->as<NativeObject>());
-    MOZ_ASSERT(nativeObject->slotSpan() == numSlots());
-
-    for (size_t i = 0; i < numSlots(); i++) {
-      val = iter.read();
-      nativeObject->setSlot(i, val);
-    }
+  for (size_t i = 0; i < numSlots(); i++) {
+    val = iter.read();
+    nativeObject->setSlot(i, val);
   }
 
   val.setObject(*object);

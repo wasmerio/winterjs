@@ -33,8 +33,6 @@ namespace jit {
   _(AliasSummaries)                        \
   /* Information during GVN */             \
   _(GVN)                                   \
-  /* Information during sincos */          \
-  _(Sincos)                                \
   /* Information during sinking */         \
   _(Sink)                                  \
   /* Information during Range analysis */  \
@@ -66,6 +64,8 @@ namespace jit {
   _(MIRExpressions)                        \
   /* Print control flow graph */           \
   _(CFG)                                   \
+  /* Spew Tracelogger summary stats */     \
+  _(ScriptStats)                           \
                                            \
   /* BASELINE COMPILER SPEW */             \
                                            \

@@ -231,9 +231,16 @@ static constexpr Register WasmTableCallScratchReg1 = ABINonArgReg1;
 static constexpr Register WasmTableCallSigReg = ABINonArgReg2;
 static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 
+// Register used as a scratch along the return path in the fast js -> wasm stub
+// code.  This must not overlap ReturnReg, JSReturnOperand, or WasmTlsReg.  It
+// must be a volatile register.
+static constexpr Register WasmJitEntryReturnScratch = rbx;
+
 static constexpr Register OsrFrameReg = IntArgReg3;
 
 static constexpr Register PreBarrierReg = rdx;
+
+static constexpr Register InterpreterPCReg = r14;
 
 static constexpr uint32_t ABIStackAlignment = 16;
 static constexpr uint32_t CodeAlignment = 16;
@@ -327,9 +334,6 @@ class Assembler : public AssemblerX86Shared {
   using AssemblerX86Shared::push;
   using AssemblerX86Shared::vmovq;
 
-  static uint8_t* PatchableJumpAddress(JitCode* code, size_t index);
-  static void PatchJumpEntry(uint8_t* entry, uint8_t* target);
-
   Assembler() : extendedJumpTable_(0) {}
 
   static void TraceJumpRelocations(JSTracer* trc, JitCode* code,
@@ -341,7 +345,7 @@ class Assembler : public AssemblerX86Shared {
 
   // Copy the assembly code to the given buffer, and perform any pending
   // relocations relying on the target address.
-  void executableCopy(uint8_t* buffer, bool flushICache = true);
+  void executableCopy(uint8_t* buffer);
 
   // Actual assembly emitting functions.
 
@@ -722,6 +726,10 @@ class Assembler : public AssemblerX86Shared {
         break;
       case Operand::MEM_ADDRESS32:
         masm.addq_mr(src.address(), dest.encoding());
+        break;
+      case Operand::MEM_SCALE:
+        masm.addq_mr(src.disp(), src.base(), src.index(), src.scale(),
+                     dest.encoding());
         break;
       default:
         MOZ_CRASH("unexpected operand kind");
@@ -1133,15 +1141,6 @@ class Assembler : public AssemblerX86Shared {
     masm.vcvtsq2ss_rr(src1.encoding(), src0.encoding(), dest.encoding());
   }
 };
-
-static inline void PatchJump(CodeLocationJump jump, CodeLocationLabel label) {
-  if (X86Encoding::CanRelinkJump(jump.raw(), label.raw())) {
-    X86Encoding::SetRel32(jump.raw(), label.raw());
-  } else {
-    X86Encoding::SetRel32(jump.raw(), jump.jumpTableEntry());
-    Assembler::PatchJumpEntry(jump.jumpTableEntry(), label.raw());
-  }
-}
 
 static inline bool GetIntArgReg(uint32_t intArg, uint32_t floatArg,
                                 Register* out) {

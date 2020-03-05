@@ -74,6 +74,8 @@ static constexpr Register WasmTableCallScratchReg1 = ABINonArgReg1;
 static constexpr Register WasmTableCallSigReg = ABINonArgReg2;
 static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 
+static constexpr Register InterpreterPCReg = t5;
+
 static constexpr Register JSReturnReg = v1;
 static constexpr Register JSReturnReg_Type = JSReturnReg;
 static constexpr Register JSReturnReg_Data = JSReturnReg;
@@ -200,7 +202,6 @@ class Assembler : public AssemblerMIPSShared {
 
   using AssemblerMIPSShared::bind;
 
-  void bind(RepatchLabel* label);
   static void Bind(uint8_t* rawCode, const CodeLabel& label);
 
   void processCodeLabels(uint8_t* rawCode);
@@ -214,7 +215,7 @@ class Assembler : public AssemblerMIPSShared {
 
   // Copy the assembly code to the given buffer, and perform any pending
   // relocations relying on the target address.
-  void executableCopy(uint8_t* buffer, bool flushICache = true);
+  void executableCopy(uint8_t* buffer);
 
   static uint32_t PatchWrite_NearCallSize();
 

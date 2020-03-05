@@ -9,6 +9,8 @@
 
 #include "jit/mips32/MacroAssembler-mips32.h"
 
+#include "vm/BigIntType.h"  // JS::BigInt
+
 #include "jit/mips-shared/MacroAssembler-mips-shared-inl.h"
 
 namespace js {
@@ -64,6 +66,13 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
     move32(src, dest.low);
   }
   ma_sra(dest.high, dest.low, Imm32(31));
+}
+
+// ===============================================================
+// Load instructions
+
+void MacroAssembler::load32SignExtendToPtr(const Address& src, Register dest) {
+  load32(src, dest);
 }
 
 // ===============================================================
@@ -300,6 +309,8 @@ void MacroAssembler::neg64(Register64 reg) {
   as_subu(reg.high, zero, reg.high);
   as_subu(reg.high, reg.high, ScratchRegister);
 }
+
+void MacroAssembler::negPtr(Register reg) { as_subu(reg, zero, reg); }
 
 void MacroAssembler::mulBy3(Register src, Register dest) {
   MOZ_ASSERT(src != ScratchRegister);
@@ -814,6 +825,18 @@ void MacroAssembler::branchTestSymbol(Condition cond, const ValueOperand& value,
   branchTestSymbol(cond, value.typeReg(), label);
 }
 
+void MacroAssembler::branchTestBigInt(Condition cond, Register tag,
+                                      Label* label) {
+  branchTestBigIntImpl(cond, tag, label);
+}
+
+void MacroAssembler::branchTestBigInt(Condition cond, const BaseIndex& address,
+                                      Label* label) {
+  SecondScratchRegisterScope scratch2(*this);
+  splitTag(value, scratch2);
+  branchTestBigInt(cond, scratch2, label);
+}
+
 void MacroAssembler::branchTestBigInt(Condition cond, const ValueOperand& value,
                                       Label* label) {
   branchTestBigInt(cond, value.typeReg(), label);
@@ -823,7 +846,7 @@ void MacroAssembler::branchTestBigIntTruthy(bool b, const ValueOperand& value,
                                             Label* label) {
   Register bi = value.payloadReg();
   SecondScratchRegisterScope scratch2(*this);
-  ma_lw(scratch2, Address(bi, BigInt::offsetOfLengthSignAndReservedBits()));
+  ma_lw(scratch2, Address(bi, BigInt::offsetOfDigitLength()));
   ma_b(scratch2, Imm32(0), label, b ? NotEqual : Equal);
 }
 

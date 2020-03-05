@@ -1,4 +1,3 @@
-// |reftest| skip -- class-fields-public is not supported
 // Copyright (C) 2017 Valerie Young. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -40,7 +39,6 @@ info: |
     3. Let newDesc be the PropertyDescriptor { [[Value]]: V, [[Writable]]: true, [[Enumerable]]: true,
       [[Configurable]]: true }.
     4. Return ? O.[[DefineOwnProperty]](P, newDesc).
-includes: [propertyHelper.js]
 ---*/
 
 var x = "constructor";

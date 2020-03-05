@@ -10,6 +10,7 @@
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/DbgMacro.h"
 
 /*****************************************************************************/
 
@@ -22,6 +23,8 @@ class nsISupports;
 namespace mozilla {
 template <class T>
 class OwningNonNull;
+template <class T>
+class StaticLocalRefPtr;
 template <class T>
 class StaticRefPtr;
 #if defined(XP_WIN)
@@ -145,6 +148,10 @@ class MOZ_IS_REFPTR RefPtr {
   template <class U>
   MOZ_IMPLICIT RefPtr(const mozilla::OwningNonNull<U>& aOther);
 
+  // Defined in StaticLocalPtr.h
+  template <class U>
+  MOZ_IMPLICIT RefPtr(const mozilla::StaticLocalRefPtr<U>& aOther);
+
   // Defined in StaticPtr.h
   template <class U>
   MOZ_IMPLICIT RefPtr(const mozilla::StaticRefPtr<U>& aOther);
@@ -208,6 +215,10 @@ class MOZ_IS_REFPTR RefPtr {
   // Defined in OwningNonNull.h
   template <class U>
   RefPtr<T>& operator=(const mozilla::OwningNonNull<U>& aOther);
+
+  // Defined in StaticLocalPtr.h
+  template <class U>
+  RefPtr<T>& operator=(const mozilla::StaticLocalRefPtr<U>& aOther);
 
   // Defined in StaticPtr.h
   template <class U>
@@ -521,6 +532,13 @@ inline bool operator!=(const RefPtr<T>& aLhs, decltype(nullptr)) {
 template <class T>
 inline bool operator!=(decltype(nullptr), const RefPtr<T>& aRhs) {
   return nullptr != aRhs.get();
+}
+
+// MOZ_DBG support
+
+template <class T>
+std::ostream& operator<<(std::ostream& aOut, const RefPtr<T>& aObj) {
+  return mozilla::DebugValue(aOut, aObj.get());
 }
 
 /*****************************************************************************/

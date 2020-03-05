@@ -138,21 +138,6 @@ assertErrorMessage(() => wasmEval(moduleWithSections([v2vSigSection, declSection
 assertErrorMessage(() => wasmEval(moduleWithSections([v2vSigSection, declSection([0]), bodySection([funcBody({locals:[], body:[UnreachableCode,EndCode]})])])), CompileError, bodyMismatch);
 assertErrorMessage(() => wasmEval(moduleWithSections([v2vSigSection, declSection([0]), bodySection([funcBody({locals:[], body:[EndCode,UnreachableCode]})])])), CompileError, bodyMismatch);
 
-// Deep nesting shouldn't crash or even throw. This test takes a long time to
-// run with the JITs disabled, so to avoid occasional timeout, disable. Also
-// in eager mode, this triggers pathological recompilation, so only run for
-// "normal" JIT modes. This test is totally independent of the JITs so this
-// shouldn't matter.
-var jco = getJitCompilerOptions();
-if (jco["ion.enable"] && jco["baseline.enable"] && jco["baseline.warmup.trigger"] > 0 && jco["ion.warmup.trigger"] > 10) {
-    var manyBlocks = [];
-    for (var i = 0; i < 20000; i++)
-        manyBlocks.push(BlockCode, VoidCode);
-    for (var i = 0; i < 20000; i++)
-        manyBlocks.push(EndCode);
-    wasmEval(moduleWithSections([v2vSigSection, declSection([0]), bodySection([funcBody({locals:[], body:manyBlocks})])]));
-}
-
 // Ignore errors in name section.
 var tooBigNameSection = {
     name: userDefinedId,
@@ -230,9 +215,17 @@ assertErrorMessage(() => wasmEval(moduleWithSections([
     nameSection([moduleNameSubsection('hi')])])
 ).f(), RuntimeError, /unreachable/);
 
-// Diagnose nonstandard block signature types.
-for (var bad of [0xff, 0, 1, 0x3f])
-    assertErrorMessage(() => wasmEval(moduleWithSections([sigSection([v2vSig]), declSection([0]), bodySection([funcBody({locals:[], body:[BlockCode, bad, EndCode]})])])), CompileError, /invalid inline block type/);
+// Diagnose invalid block signature types.
+for (var bad of [0xff, 1, 0x3f])
+    assertErrorMessage(() => wasmEval(moduleWithSections([sigSection([v2vSig]), declSection([0]), bodySection([funcBody({locals:[], body:[BlockCode, bad, EndCode]})])])), CompileError, /invalid .*block type/);
+
+const multiValueModule = moduleWithSections([sigSection([v2vSig]), declSection([0]), bodySection([funcBody({locals:[], body:[BlockCode, 0, EndCode]})])]);
+if (wasmMultiValueEnabled()) {
+    // In this test module, 0 denotes a void-to-void block type.
+    assertEq(WebAssembly.validate(multiValueModule), true);
+} else {
+    assertErrorMessage(() => wasmEval(multiValueModule), CompileError, /invalid .*block type/);
+}
 
 // Ensure all invalid opcodes rejected
 for (let op of undefinedOpcodes) {
@@ -256,10 +249,10 @@ function checkIllegalPrefixed(prefix, opcode) {
 //
 // June 2017 threads draft:
 //
-//  0x00 .. 0x02 are wait/wake ops
+//  0x00 .. 0x03 are wait/wake/fence ops
 //  0x10 .. 0x4f are primitive atomic ops
 
-for (let i = 3; i < 0x10; i++)
+for (let i = 0x4; i < 0x10; i++)
     checkIllegalPrefixed(ThreadPrefix, i);
 
 for (let i = 0x4f; i < 0x100; i++)

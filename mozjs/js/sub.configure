@@ -9,7 +9,6 @@
 @imports('logging')
 @imports('os')
 @imports('pickle')
-@imports('subprocess')
 @imports('sys')
 @imports(_from='__main__', _import='config_status')
 @imports(_from='__builtin__', _import='OSError')
@@ -17,7 +16,6 @@
 @imports(_from='__builtin__', _import='object')
 @imports(_from='mozbuild.configure', _import='ConfigureSandbox')
 @imports(_from='mozbuild.configure.util', _import='ConfigureOutputHandler')
-@imports(_from='mozbuild.util', _import='encode')
 def js_subconfigure(build_env, prepare_configure_options, mozconfig,
                     old_configure, old_configure_assignments, cache_file):
 
@@ -58,7 +56,7 @@ def js_subconfigure(build_env, prepare_configure_options, mozconfig,
         if not o.startswith('--with-system-nspr')
     ]
 
-    if not substs.get('ENABLE_INTL_API'):
+    if not substs.get('JS_HAS_INTL_API'):
         options.append('--without-intl-api')
 
     if substs.get('NSPR_CFLAGS') or substs.get('NSPR_LIBS'):

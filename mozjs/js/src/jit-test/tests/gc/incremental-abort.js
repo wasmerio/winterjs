@@ -24,11 +24,13 @@ function testAbort(zoneCount, objectCount, sliceCount, abortState)
         zones.push(zone);
     }
 
+    gc();
+
     var didAbort = false;
     startgc(sliceCount, "shrinking");
+    assertEq(currentgc().isShrinking, true);
     while (gcstate() !== "NotActive") {
-        var state = gcstate();
-        if (state == abortState) {
+        if (gcstate() == abortState) {
             abortgc();
             didAbort = true;
             break;

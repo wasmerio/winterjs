@@ -116,7 +116,7 @@ const definedOpcodes =
     [0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
      0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
      0x10, 0x11,
-     0x1a, 0x1b,
+     0x1a, 0x1b, 0x1c,
      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
      0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
      0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
@@ -352,6 +352,50 @@ function elemSection(elemArrays) {
         body.push(...varU32(array.elems.length));
         for (let elem of array.elems)
             body.push(...varU32(elem));
+    }
+    return { name: elemId, body };
+}
+
+// For now, the encoding spec is here:
+// https://github.com/WebAssembly/bulk-memory-operations/issues/98#issuecomment-507330729
+
+const LegacyActiveExternVal = 0;
+const PassiveExternVal = 1;
+const ActiveExternVal = 2;
+const DeclaredExternVal = 3;
+const LegacyActiveElemExpr = 4;
+const PassiveElemExpr = 5;
+const ActiveElemExpr = 6;
+const DeclaredElemExpr = 7;
+
+function generalElemSection(elemObjs) {
+    let body = [];
+    body.push(...varU32(elemObjs.length));
+    for (let elemObj of elemObjs) {
+        body.push(elemObj.flag);
+        if ((elemObj.flag & 3) == 2)
+            body.push(...varU32(elemObj.table));
+        // TODO: This is not very flexible
+        if ((elemObj.flag & 1) == 0) {
+            body.push(...varU32(I32ConstCode));
+            body.push(...varS32(elemObj.offset));
+            body.push(...varU32(EndCode));
+        }
+        if (elemObj.flag & 4) {
+            if (elemObj.flag & 3)
+                body.push(elemObj.typeCode & 255);
+            // Each element is an array of bytes
+            body.push(...varU32(elemObj.elems.length));
+            for (let elemBytes of elemObj.elems)
+                body.push(...elemBytes);
+        } else {
+            if (elemObj.flag & 3)
+                body.push(elemObj.externKind & 255);
+            // Each element is a putative function index
+            body.push(...varU32(elemObj.elems.length));
+            for (let elem of elemObj.elems)
+                body.push(...varU32(elem));
+        }
     }
     return { name: elemId, body };
 }

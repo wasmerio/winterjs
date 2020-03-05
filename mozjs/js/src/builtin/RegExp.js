@@ -3,11 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // ES6 draft rev34 (2015/02/20) 21.2.5.3 get RegExp.prototype.flags
-function RegExpFlagsGetter() {
+// Uncloned functions with `$` prefix are allocated as extended function
+// to store the original name in `_SetCanonicalName`.
+function $RegExpFlagsGetter() {
     // Steps 1-2.
     var R = this;
     if (!IsObject(R))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, R === null ? "null" : typeof R);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, R === null ? "null" : typeof R);
 
     // Step 3.
     var result = "";
@@ -35,17 +37,17 @@ function RegExpFlagsGetter() {
     // Step 19.
     return result;
 }
-_SetCanonicalName(RegExpFlagsGetter, "get flags");
+_SetCanonicalName($RegExpFlagsGetter, "get flags");
 
 // ES 2017 draft 40edb3a95a475c1b251141ac681b8793129d9a6d 21.2.5.14.
-function RegExpToString()
+function $RegExpToString()
 {
     // Step 1.
     var R = this;
 
     // Step 2.
     if (!IsObject(R))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, R === null ? "null" : typeof R);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, R === null ? "null" : typeof R);
 
     // Step 3.
     var pattern = ToString(R.source);
@@ -56,7 +58,7 @@ function RegExpToString()
     // Steps 5-6.
     return "/" + pattern + "/" + flags;
 }
-_SetCanonicalName(RegExpToString, "toString");
+_SetCanonicalName($RegExpToString, "toString");
 
 // ES 2016 draft Mar 25, 2016 21.2.5.2.3.
 function AdvanceStringIndex(S, index) {
@@ -102,7 +104,7 @@ function RegExpMatch(string) {
 
     // Step 2.
     if (!IsObject(rx))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, rx === null ? "null" : typeof rx);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, rx === null ? "null" : typeof rx);
 
     // Step 3.
     var S = ToString(string);
@@ -248,7 +250,7 @@ function RegExpReplace(string, replaceValue) {
 
     // Step 2.
     if (!IsObject(rx))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, rx === null ? "null" : typeof rx);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, rx === null ? "null" : typeof rx);
 
     // Step 3.
     var S = ToString(string);
@@ -385,7 +387,7 @@ function RegExpReplaceSlowPath(rx, S, lengthS, replaceValue,
         var matchLength = matched.length;
 
         // Steps 14.e-f.
-        var position = std_Math_max(std_Math_min(ToInteger(result.index), lengthS), 0);
+        var position = std_Math_max(std_Math_min(ToIntegerPositiveZero(result.index), lengthS), 0);
 
         var n, capN, replacement;
         if (functionalReplace || firstDollarIndex !== -1) {
@@ -661,7 +663,7 @@ function RegExpSearch(string) {
 
     // Step 2.
     if (!IsObject(rx))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, rx === null ? "null" : typeof rx);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, rx === null ? "null" : typeof rx);
 
     // Step 3.
     var S = ToString(string);
@@ -755,7 +757,7 @@ function RegExpSplit(string, limit) {
 
     // Step 2.
     if (!IsObject(rx))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, rx === null ? "null" : typeof rx);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, rx === null ? "null" : typeof rx);
 
     // Step 3.
     var S = ToString(string);
@@ -1060,7 +1062,7 @@ function RegExpTest(string) {
     // Steps 1-2.
     var R = this;
     if (!IsObject(R))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, R === null ? "null" : typeof R);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, R === null ? "null" : typeof R);
 
     // Steps 3-4.
     var S = ToString(string);
@@ -1070,11 +1072,11 @@ function RegExpTest(string) {
 }
 
 // ES 2016 draft Mar 25, 2016 21.2.4.2.
-function RegExpSpecies() {
+function $RegExpSpecies() {
     // Step 1.
     return this;
 }
-_SetCanonicalName(RegExpSpecies, "get [Symbol.species]");
+_SetCanonicalName($RegExpSpecies, "get [Symbol.species]");
 
 function IsRegExpMatchAllOptimizable(rx, C) {
     if (!IsRegExpObject(rx))
@@ -1098,7 +1100,7 @@ function RegExpMatchAll(string) {
 
     // Step 2.
     if (!IsObject(rx))
-        ThrowTypeError(JSMSG_NOT_NONNULL_OBJECT, rx === null ? "null" : typeof rx);
+        ThrowTypeError(JSMSG_OBJECT_REQUIRED, rx === null ? "null" : typeof rx);
 
     // Step 3.
     var str = ToString(string);
@@ -1307,4 +1309,24 @@ function RegExpStringIteratorNext() {
     // Steps 11.a.iii and 11.b.ii.
     result.value = match;
     return result;
+}
+
+// ES2020 draft rev e97c95d064750fb949b6778584702dd658cf5624
+// 7.2.8 IsRegExp ( argument )
+function IsRegExp(argument) {
+    // Step 1.
+    if (!IsObject(argument)) {
+        return false;
+    }
+
+    // Step 2.
+    var matcher = argument[std_match];
+
+    // Step 3.
+    if (matcher !== undefined) {
+        return !!matcher;
+    }
+
+    // Steps 4-5.
+    return IsPossiblyWrappedRegExpObject(argument);
 }

@@ -21,10 +21,16 @@ U_NAMESPACE_BEGIN
 // data member of AdoptingModifierStore.
 // (When building DLLs for Windows this is required.)
 #if U_PF_WINDOWS <= U_PLATFORM && U_PLATFORM <= U_PF_CYGWIN
+#if defined(_MSC_VER)
 // Ignore warning 4661 as LocalPointerBase does not use operator== or operator!=
-#pragma warning(suppress: 4661)
+#pragma warning(push)
+#pragma warning(disable : 4661)
+#endif
 template class U_I18N_API LocalPointerBase<number::impl::AdoptingModifierStore>;
 template class U_I18N_API LocalPointer<number::impl::AdoptingModifierStore>;
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 #endif
 
 namespace number {
@@ -40,9 +46,9 @@ class U_I18N_API ImmutablePatternModifier : public MicroPropsGenerator, public U
 
     void processQuantity(DecimalQuantity&, MicroProps& micros, UErrorCode& status) const U_OVERRIDE;
 
-    void applyToMicros(MicroProps& micros, DecimalQuantity& quantity) const;
+    void applyToMicros(MicroProps& micros, const DecimalQuantity& quantity, UErrorCode& status) const;
 
-    const Modifier* getModifier(int8_t signum, StandardPlural::Form plural) const;
+    const Modifier* getModifier(Signum signum, StandardPlural::Form plural) const;
 
   private:
     ImmutablePatternModifier(AdoptingModifierStore* pm, const PluralRules* rules,
@@ -95,8 +101,11 @@ class U_I18N_API MutablePatternModifier
      * Sets a reference to the parsed decimal format pattern, usually obtained from
      * {@link PatternStringParser#parseToPatternInfo(String)}, but any implementation of {@link AffixPatternProvider} is
      * accepted.
+     *
+     * @param field
+     *            Which field to use for literal characters in the pattern.
      */
-    void setPatternInfo(const AffixPatternProvider *patternInfo);
+    void setPatternInfo(const AffixPatternProvider *patternInfo, Field field);
 
     /**
      * Sets attributes that imply changes to the literal interpretation of the pattern string affixes.
@@ -133,7 +142,7 @@ class U_I18N_API MutablePatternModifier
      *            The plural form of the number, required only if the pattern contains the triple
      *            currency sign, "¤¤¤" (and as indicated by {@link #needsPlurals()}).
      */
-    void setNumberProperties(int8_t signum, StandardPlural::Form plural);
+    void setNumberProperties(Signum signum, StandardPlural::Form plural);
 
     /**
      * Returns true if the pattern represented by this MurkyModifier requires a plural keyword in order to localize.
@@ -175,7 +184,7 @@ class U_I18N_API MutablePatternModifier
 
     void processQuantity(DecimalQuantity &, MicroProps &micros, UErrorCode &status) const U_OVERRIDE;
 
-    int32_t apply(NumberStringBuilder &output, int32_t leftIndex, int32_t rightIndex,
+    int32_t apply(FormattedStringBuilder &output, int32_t leftIndex, int32_t rightIndex,
                   UErrorCode &status) const U_OVERRIDE;
 
     int32_t getPrefixLength() const U_OVERRIDE;
@@ -203,8 +212,9 @@ class U_I18N_API MutablePatternModifier
 
     // Pattern details (initialized in setPatternInfo and setPatternAttributes)
     const AffixPatternProvider *fPatternInfo;
+    Field fField;
     UNumberSignDisplay fSignDisplay;
-    bool perMilleReplacesPercent;
+    bool fPerMilleReplacesPercent;
 
     // Symbol details (initialized in setSymbols)
     const DecimalFormatSymbols *fSymbols;
@@ -213,7 +223,7 @@ class U_I18N_API MutablePatternModifier
     const PluralRules *fRules;
 
     // Number details (initialized in setNumberProperties)
-    int8_t fSignum;
+    Signum fSignum;
     StandardPlural::Form fPlural;
 
     // QuantityChain details (initialized in addToChain)
@@ -230,17 +240,17 @@ class U_I18N_API MutablePatternModifier
      * CREATES A NEW HEAP OBJECT; THE CALLER GETS OWNERSHIP.
      *
      * @param a
-     *            A working NumberStringBuilder object; passed from the outside to prevent the need to create many new
+     *            A working FormattedStringBuilder object; passed from the outside to prevent the need to create many new
      *            instances if this method is called in a loop.
      * @param b
-     *            Another working NumberStringBuilder object.
+     *            Another working FormattedStringBuilder object.
      * @return The constant modifier object.
      */
     ConstantMultiFieldModifier *createConstantModifier(UErrorCode &status);
 
-    int32_t insertPrefix(NumberStringBuilder &sb, int position, UErrorCode &status);
+    int32_t insertPrefix(FormattedStringBuilder &sb, int position, UErrorCode &status);
 
-    int32_t insertSuffix(NumberStringBuilder &sb, int position, UErrorCode &status);
+    int32_t insertSuffix(FormattedStringBuilder &sb, int position, UErrorCode &status);
 
     void prepareAffix(bool isPrefix);
 };

@@ -8,7 +8,7 @@
 
 #include "mozilla/ScopeExit.h"
 
-#include "jsutil.h"
+#include <algorithm>
 
 #include "gc/Marking.h"
 #include "jit/BaselineDebugModeOSR.h"
@@ -26,7 +26,6 @@
 #include "jit/Snapshots.h"
 #include "jit/VMFunctions.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/Debugger.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/Interpreter.h"
 #include "vm/JSFunction.h"
@@ -37,9 +36,10 @@
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmInstance.h"
 
+#include "debugger/DebugAPI-inl.h"
 #include "gc/Nursery-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
-#include "vm/Debugger-inl.h"
+#include "vm/GeckoProfiler-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Probes-inl.h"
 #include "vm/TypeInference-inl.h"
@@ -160,8 +160,7 @@ static void HandleExceptionIon(JSContext* cx, const InlineFrameIterator& frame,
     // We need to bail when there is a catchable exception, and we are the
     // debuggee of a Debugger with a live onExceptionUnwind hook, or if a
     // Debugger has observed this frame (e.g., for onPop).
-    bool shouldBail =
-        Debugger::hasLiveHook(cx->global(), Debugger::OnExceptionUnwind);
+    bool shouldBail = DebugAPI::hasExceptionUnwindHook(cx->global());
     RematerializedFrame* rematFrame = nullptr;
     if (!shouldBail) {
       JitActivation* act = cx->activation()->asJit();
@@ -195,9 +194,6 @@ static void HandleExceptionIon(JSContext* cx, const InlineFrameIterator& frame,
   }
 
   RootedScript script(cx, frame.script());
-  if (!script->hasTrynotes()) {
-    return;
-  }
 
   for (TryNoteIterIon tni(cx, frame); !tni.done(); ++tni) {
     const JSTryNote* tn = *tni;
@@ -215,7 +211,7 @@ static void HandleExceptionIon(JSContext* cx, const InlineFrameIterator& frame,
           // Ion can compile try-catch, but bailing out to catch
           // exceptions is slow. Reset the warm-up counter so that if we
           // catch many exceptions we won't Ion-compile the script.
-          script->resetWarmUpCounter();
+          script->resetWarmUpCounterToDelayIonCompilation();
 
           if (*hitBailoutException) {
             break;
@@ -294,43 +290,34 @@ static void SettleOnTryNote(JSContext* cx, const JSTryNote* tn,
   *pc = script->offsetToPC(tn->start + tn->length);
 }
 
-struct AutoBaselineHandlingException {
-  BaselineFrame* frame;
-  AutoBaselineHandlingException(BaselineFrame* frame, jsbytecode* pc)
-      : frame(frame) {
-    frame->setIsHandlingException();
-    frame->setOverridePc(pc);
-  }
-  ~AutoBaselineHandlingException() {
-    frame->unsetIsHandlingException();
-    frame->clearOverridePc();
-  }
-};
-
 class BaselineTryNoteFilter {
-  BaselineFrame* frame_;
+  const JSJitFrameIter& frame_;
 
  public:
-  explicit BaselineTryNoteFilter(BaselineFrame* frame) : frame_(frame) {}
+  explicit BaselineTryNoteFilter(const JSJitFrameIter& frame) : frame_(frame) {}
   bool operator()(const JSTryNote* note) {
-    MOZ_ASSERT(frame_->numValueSlots() >= frame_->script()->nfixed());
-    uint32_t currDepth = frame_->numValueSlots() - frame_->script()->nfixed();
+    BaselineFrame* frame = frame_.baselineFrame();
+
+    uint32_t numValueSlots = frame_.baselineFrameNumValueSlots();
+    MOZ_ASSERT(numValueSlots >= frame->script()->nfixed());
+
+    uint32_t currDepth = numValueSlots - frame->script()->nfixed();
     return note->stackDepth <= currDepth;
   }
 };
 
 class TryNoteIterBaseline : public TryNoteIter<BaselineTryNoteFilter> {
  public:
-  TryNoteIterBaseline(JSContext* cx, BaselineFrame* frame, jsbytecode* pc)
-      : TryNoteIter(cx, frame->script(), pc, BaselineTryNoteFilter(frame)) {}
+  TryNoteIterBaseline(JSContext* cx, const JSJitFrameIter& frame,
+                      jsbytecode* pc)
+      : TryNoteIter(cx, frame.script(), pc, BaselineTryNoteFilter(frame)) {}
 };
 
 // Close all live iterators on a BaselineFrame due to exception unwinding. The
 // pc parameter is updated to where the envs have been unwound to.
 static void CloseLiveIteratorsBaselineForUncatchableException(
     JSContext* cx, const JSJitFrameIter& frame, jsbytecode* pc) {
-  for (TryNoteIterBaseline tni(cx, frame.baselineFrame(), pc); !tni.done();
-       ++tni) {
+  for (TryNoteIterBaseline tni(cx, frame, pc); !tni.done(); ++tni) {
     const JSTryNote* tn = *tni;
     switch (tn->kind) {
       case JSTRY_FOR_IN: {
@@ -353,10 +340,12 @@ static void CloseLiveIteratorsBaselineForUncatchableException(
 static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
                                     EnvironmentIter& ei,
                                     ResumeFromException* rfe, jsbytecode** pc) {
+  MOZ_ASSERT(frame.baselineFrame()->runningInInterpreter(),
+             "Caller must ensure frame is an interpreter frame");
+
   RootedScript script(cx, frame.baselineFrame()->script());
 
-  for (TryNoteIterBaseline tni(cx, frame.baselineFrame(), *pc); !tni.done();
-       ++tni) {
+  for (TryNoteIterBaseline tni(cx, frame, *pc); !tni.done(); ++tni) {
     const JSTryNote* tn = *tni;
 
     MOZ_ASSERT(cx->isExceptionPending());
@@ -373,24 +362,26 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
         // Ion can compile try-catch, but bailing out to catch
         // exceptions is slow. Reset the warm-up counter so that if we
         // catch many exceptions we won't Ion-compile the script.
-        script->resetWarmUpCounter();
+        script->resetWarmUpCounterToDelayIonCompilation();
 
         // Resume at the start of the catch block.
-        PCMappingSlotInfo slotInfo;
+        const BaselineInterpreter& interp =
+            cx->runtime()->jitRuntime()->baselineInterpreter();
+        frame.baselineFrame()->setInterpreterFields(*pc);
         rfe->kind = ResumeFromException::RESUME_CATCH;
-        rfe->target =
-            script->baselineScript()->nativeCodeForPC(script, *pc, &slotInfo);
-        MOZ_ASSERT(slotInfo.isStackSynced());
+        rfe->target = interp.interpretOpAddr().value;
         return true;
       }
 
       case JSTRY_FINALLY: {
-        PCMappingSlotInfo slotInfo;
         SettleOnTryNote(cx, tn, frame, ei, rfe, pc);
+
+        const BaselineInterpreter& interp =
+            cx->runtime()->jitRuntime()->baselineInterpreter();
+        frame.baselineFrame()->setInterpreterFields(*pc);
         rfe->kind = ResumeFromException::RESUME_FINALLY;
-        rfe->target =
-            script->baselineScript()->nativeCodeForPC(script, *pc, &slotInfo);
-        MOZ_ASSERT(slotInfo.isStackSynced());
+        rfe->target = interp.interpretOpAddr().value;
+
         // Drop the exception instead of leaking cross compartment data.
         if (!cx->getPendingException(
                 MutableHandleValue::fromMarkedLocation(&rfe->exception))) {
@@ -441,9 +432,38 @@ static bool ProcessTryNotesBaseline(JSContext* cx, const JSJitFrameIter& frame,
   return true;
 }
 
-static void HandleExceptionBaseline(JSContext* cx, const JSJitFrameIter& frame,
-                                    ResumeFromException* rfe, jsbytecode* pc) {
+static void HandleExceptionBaseline(JSContext* cx, JSJitFrameIter& frame,
+                                    CommonFrameLayout* prevFrame,
+                                    ResumeFromException* rfe) {
   MOZ_ASSERT(frame.isBaselineJS());
+  MOZ_ASSERT(prevFrame);
+
+  jsbytecode* pc;
+  frame.baselineScriptAndPc(nullptr, &pc);
+
+  // Ensure the BaselineFrame is an interpreter frame. This is easy to do and
+  // simplifies the code below and interaction with DebugModeOSR.
+  //
+  // Note that we never return to this frame via the previous frame's return
+  // address. We could set the return address to nullptr to ensure it's never
+  // used, but the profiler expects a non-null return value for its JitCode map
+  // lookup so we have to use an address in the interpreter code instead.
+  if (!frame.baselineFrame()->runningInInterpreter()) {
+    const BaselineInterpreter& interp =
+        cx->runtime()->jitRuntime()->baselineInterpreter();
+    uint8_t* retAddr = interp.codeRaw();
+    BaselineFrame* baselineFrame = frame.baselineFrame();
+
+    // Suppress profiler sampling while we fix up the frame to ensure the
+    // sampler thread doesn't see an inconsistent state.
+    AutoSuppressProfilerSampling suppressProfilerSampling(cx);
+    baselineFrame->switchFromJitToInterpreterForExceptionHandler(cx, pc);
+    prevFrame->setReturnAddress(retAddr);
+
+    // Ensure the current iterator's resumePCInCurrentFrame_ isn't used
+    // anywhere.
+    frame.setResumePCInCurrentFrame(nullptr);
+  }
 
   bool frameOk = false;
   RootedScript script(cx, frame.baselineFrame()->script());
@@ -465,10 +485,12 @@ static void HandleExceptionBaseline(JSContext* cx, const JSJitFrameIter& frame,
     return;
   }
 
+  bool hasTryNotes = !script->trynotes().empty();
+
 again:
   if (cx->isExceptionPending()) {
     if (!cx->isClosingGenerator()) {
-      switch (Debugger::onExceptionUnwind(cx, frame.baselineFrame())) {
+      switch (DebugAPI::onExceptionUnwind(cx, frame.baselineFrame())) {
         case ResumeMode::Terminate:
           // Uncatchable exception.
           MOZ_ASSERT(!cx->isExceptionPending());
@@ -480,7 +502,7 @@ again:
           break;
 
         case ResumeMode::Return:
-          if (script->hasTrynotes()) {
+          if (hasTryNotes) {
             CloseLiveIteratorsBaselineForUncatchableException(cx, frame, pc);
           }
           ForcedReturn(cx, frame, pc, rfe);
@@ -491,7 +513,7 @@ again:
       }
     }
 
-    if (script->hasTrynotes()) {
+    if (hasTryNotes) {
       EnvironmentIter ei(cx, frame.baselineFrame(), pc);
       if (!ProcessTryNotesBaseline(cx, frame, ei, rfe, &pc)) {
         goto again;
@@ -505,8 +527,8 @@ again:
     }
 
     frameOk = HandleClosingGeneratorReturn(cx, frame.baselineFrame(), frameOk);
-    frameOk = Debugger::onLeaveFrame(cx, frame.baselineFrame(), pc, frameOk);
-  } else if (script->hasTrynotes()) {
+    frameOk = DebugAPI::onLeaveFrame(cx, frame.baselineFrame(), pc, frameOk);
+  } else if (hasTryNotes) {
     CloseLiveIteratorsBaselineForUncatchableException(cx, frame, pc);
   }
 
@@ -580,20 +602,12 @@ void HandleException(ResumeFromException* rfe) {
   }
 #endif
 
-  // The Debugger onExceptionUnwind hook (reachable via
-  // HandleExceptionBaseline below) may cause on-stack recompilation of
-  // baseline scripts, which may patch return addresses on the stack. Since
-  // JSJitFrameIter cache the previous frame's return address when
-  // iterating, we need a variant here that is automatically updated should
-  // on-stack recompilation occur.
-  DebugModeOSRVolatileJitFrameIter iter(cx);
-  while (true) {
-    iter.skipNonScriptedJSFrames();
-    if (iter.done()) {
-      break;
-    }
-
+  JitFrameIter iter(cx->activation()->asJit(),
+                    /* mustUnwindActivation = */ true);
+  CommonFrameLayout* prevJitFrame = nullptr;
+  while (!iter.done()) {
     if (iter.isWasm()) {
+      prevJitFrame = nullptr;
       HandleExceptionWasm(cx, &iter.asWasm(), rfe);
       if (!iter.done()) {
         ++iter;
@@ -601,11 +615,13 @@ void HandleException(ResumeFromException* rfe) {
       continue;
     }
 
+    JSJitFrameIter& frame = iter.asJSJit();
+
     // JIT code can enter same-compartment realms, so reset cx->realm to
     // this frame's realm.
-    cx->setRealmForJitExceptionHandler(iter.realm());
-
-    const JSJitFrameIter& frame = iter.asJSJit();
+    if (frame.isScripted()) {
+      cx->setRealmForJitExceptionHandler(iter.realm());
+    }
 
     if (frame.isIonJS()) {
       // Search each inlined frame for live iterator objects, and close
@@ -648,7 +664,7 @@ void HandleException(ResumeFromException* rfe) {
         // is exiting.
 
         JSScript* script = frames.script();
-        probes::ExitScript(cx, script, script->functionNonDelazifying(),
+        probes::ExitScript(cx, script, script->function(),
                            /* popProfilerFrame = */ false);
         if (!frames.more()) {
           TraceLogStopEvent(logger, TraceLogger_IonMonkey);
@@ -669,31 +685,7 @@ void HandleException(ResumeFromException* rfe) {
       }
 
     } else if (frame.isBaselineJS()) {
-      // Set a flag on the frame to signal to DebugModeOSR that we're
-      // handling an exception. Also ensure the frame has an override
-      // pc. We clear the frame's override pc when we leave this block,
-      // this is fine because we're either:
-      //
-      // (1) Going to enter a catch or finally block. We don't want to
-      //     keep the old pc when we're executing JIT code.
-      // (2) Going to pop the frame, either here or a forced return.
-      //     In this case nothing will observe the frame's pc.
-      // (3) Performing an exception bailout. In this case
-      //     FinishBailoutToBaseline will set the pc to the resume pc
-      //     and clear it before it returns to JIT code.
-      jsbytecode* pc;
-      frame.baselineScriptAndPc(nullptr, &pc);
-      AutoBaselineHandlingException handlingException(frame.baselineFrame(),
-                                                      pc);
-
-      HandleExceptionBaseline(cx, frame, rfe, pc);
-
-      // If we are propagating an exception through a frame with
-      // on-stack recompile info, we should free the allocated
-      // RecompileInfo struct before we leave this block, as we will not
-      // be returning to the recompile handler.
-      auto deleteDebugModeOSRInfo = mozilla::MakeScopeExit(
-          [=] { frame.baselineFrame()->deleteDebugModeOSRInfo(); });
+      HandleExceptionBaseline(cx, frame, prevJitFrame, rfe);
 
       if (rfe->kind != ResumeFromException::RESUME_ENTRY_FRAME &&
           rfe->kind != ResumeFromException::RESUME_FORCED_RETURN) {
@@ -705,7 +697,7 @@ void HandleException(ResumeFromException* rfe) {
 
       // Unwind profiler pseudo-stack
       JSScript* script = frame.script();
-      probes::ExitScript(cx, script, script->functionNonDelazifying(),
+      probes::ExitScript(cx, script, script->function(),
                          /* popProfilerFrame = */ false);
 
       if (rfe->kind == ResumeFromException::RESUME_FORCED_RETURN) {
@@ -713,6 +705,7 @@ void HandleException(ResumeFromException* rfe) {
       }
     }
 
+    prevJitFrame = frame.current();
     ++iter;
   }
 
@@ -810,7 +803,7 @@ static void TraceThisAndArguments(JSTracer* trc, const JSJitFrameIter& frame,
     nformals = fun->nargs();
   }
 
-  size_t newTargetOffset = Max(nargs, fun->nargs());
+  size_t newTargetOffset = std::max(nargs, fun->nargs());
 
   Value* argv = layout->argv();
 
@@ -851,7 +844,7 @@ static void TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame) {
     // This frame has been invalidated, meaning that its IonScript is no
     // longer reachable through the callee token (JSFunction/JSScript->ion
     // is now nullptr or recompiled). Manually trace it here.
-    IonScript::Trace(trc, ionScript);
+    ionScript->trace(trc);
   } else {
     ionScript = frame.ionScriptFromCalleeToken();
   }
@@ -1116,8 +1109,9 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
   }
 
   if (frame.isExitFrameLayout<DirectWasmJitCallFrameLayout>()) {
-    // Nothing to do: we can't have object arguments (yet!) and the callee
-    // is traced elsewhere.
+    // Nothing needs to be traced here at the moment -- the arguments to the
+    // callee are traced by the callee, and the inlined caller does not push
+    // anything else.
     return;
   }
 
@@ -1162,6 +1156,9 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
         TraceGenericPointerRoot(trc, reinterpret_cast<gc::Cell**>(argBase),
                                 "ion-vm-args");
         break;
+      case VMFunctionData::RootBigInt:
+        TraceRoot(trc, reinterpret_cast<JS::BigInt**>(argBase), "ion-vm-args");
+        break;
     }
 
     switch (f->argProperties(explicitArg)) {
@@ -1198,6 +1195,9 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
       case VMFunctionData::RootCell:
         TraceGenericPointerRoot(trc, footer->outParam<gc::Cell*>(),
                                 "ion-vm-out");
+        break;
+      case VMFunctionData::RootBigInt:
+        TraceRoot(trc, footer->outParam<JS::BigInt*>(), "ion-vm-out");
         break;
     }
   }
@@ -1338,61 +1338,52 @@ void GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes) {
 
     MOZ_ASSERT(it.frame().isBaselineJS() || it.frame().isIonJS());
 
-    // Don't use the return address if the BaselineFrame has an override pc.
-    // The override pc is cheap to get, so we won't benefit from the cache,
-    // and the override pc could change without the return address changing.
-    // Moreover, sometimes when an override pc is present during exception
-    // handling, the return address is set to nullptr as a sanity check,
-    // since we do not return to the frame that threw the exception.
-    if (!it.frame().isBaselineJS() ||
-        !it.frame().baselineFrame()->hasOverridePc()) {
-      retAddr = it.frame().resumePCinCurrentFrame();
-      MOZ_ASSERT(retAddr);
-    } else {
-      retAddr = nullptr;
+    // Don't use the return address and the cache if the BaselineFrame is
+    // running in the Baseline Interpreter. In this case the bytecode pc is
+    // cheap to get, so we won't benefit from the cache, and the return address
+    // does not map to a single bytecode pc.
+    if (it.frame().isBaselineJS() &&
+        it.frame().baselineFrame()->runningInInterpreter()) {
+      it.frame().baselineScriptAndPc(scriptRes, pcRes);
+      return;
     }
+
+    retAddr = it.frame().resumePCinCurrentFrame();
   } else {
     MOZ_ASSERT(it.frame().isBailoutJS());
     retAddr = it.frame().returnAddress();
   }
 
-  uint32_t hash;
-  if (retAddr) {
-    hash = PcScriptCache::Hash(retAddr);
+  MOZ_ASSERT(retAddr);
 
-    // Lazily initialize the cache. The allocation may safely fail and will not
-    // GC.
-    if (MOZ_UNLIKELY(cx->ionPcScriptCache == nullptr)) {
-      cx->ionPcScriptCache =
-          MakeUnique<PcScriptCache>(cx->runtime()->gc.gcNumber());
-    }
+  uint32_t hash = PcScriptCache::Hash(retAddr);
 
-    if (cx->ionPcScriptCache.ref() &&
-        cx->ionPcScriptCache->get(cx->runtime(), hash, retAddr, scriptRes,
-                                  pcRes)) {
-      return;
-    }
+  // Lazily initialize the cache. The allocation may safely fail and will not
+  // GC.
+  if (MOZ_UNLIKELY(cx->ionPcScriptCache == nullptr)) {
+    cx->ionPcScriptCache =
+        MakeUnique<PcScriptCache>(cx->runtime()->gc.gcNumber());
   }
 
-  // Lookup failed: undertake expensive process to recover the innermost inlined
-  // frame.
-  jsbytecode* pc = nullptr;
+  if (cx->ionPcScriptCache.ref() &&
+      cx->ionPcScriptCache->get(cx->runtime(), hash, retAddr, scriptRes,
+                                pcRes)) {
+    return;
+  }
+
+  // Lookup failed: undertake expensive process to determine script and pc.
   if (it.frame().isIonJS() || it.frame().isBailoutJS()) {
     InlineFrameIterator ifi(cx, &it.frame());
     *scriptRes = ifi.script();
-    pc = ifi.pc();
+    *pcRes = ifi.pc();
   } else {
     MOZ_ASSERT(it.frame().isBaselineJS());
-    it.frame().baselineScriptAndPc(scriptRes, &pc);
-  }
-
-  if (pcRes) {
-    *pcRes = pc;
+    it.frame().baselineScriptAndPc(scriptRes, pcRes);
   }
 
   // Add entry to cache.
-  if (retAddr && cx->ionPcScriptCache.ref()) {
-    cx->ionPcScriptCache->add(hash, retAddr, pc, *scriptRes);
+  if (cx->ionPcScriptCache.ref()) {
+    cx->ionPcScriptCache->add(hash, retAddr, *pcRes, *scriptRes);
   }
 }
 
@@ -2035,7 +2026,7 @@ void InlineFrameIterator::findNextFrame() {
 
   size_t i = 1;
   for (; i <= remaining && si_.moreFrames(); i++) {
-    MOZ_ASSERT(IsIonInlinablePC(pc_));
+    MOZ_ASSERT(IsIonInlinableOp(JSOp(*pc_)));
 
     // Recover the number of actual arguments from the script.
     if (JSOp(*pc_) != JSOP_FUNAPPLY) {
@@ -2218,14 +2209,15 @@ bool InlineFrameIterator::isConstructing() const {
     ++parent;
 
     // Inlined Getters and Setters are never constructing.
-    if (IsIonInlinableGetterOrSetterPC(parent.pc())) {
+    JSOp parentOp = JSOp(*parent.pc());
+    if (IsIonInlinableGetterOrSetterOp(parentOp)) {
       return false;
     }
 
     // In the case of a JS frame, look up the pc from the snapshot.
-    MOZ_ASSERT(IsCallPC(parent.pc()) && !IsSpreadCallPC(parent.pc()));
+    MOZ_ASSERT(IsCallOp(parentOp) && !IsSpreadCallOp(parentOp));
 
-    return IsConstructorCallPC(parent.pc());
+    return IsConstructorCallOp(parentOp);
   }
 
   return frame_->isConstructing();

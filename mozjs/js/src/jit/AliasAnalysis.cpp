@@ -129,8 +129,6 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::MaybeToDoubleElement:
     case MDefinition::Opcode::TypedArrayLength:
     case MDefinition::Opcode::TypedArrayByteOffset:
-    case MDefinition::Opcode::SetTypedObjectOffset:
-    case MDefinition::Opcode::SetDisjointTypedElements:
     case MDefinition::Opcode::ArrayPopShift:
     case MDefinition::Opcode::ArrayPush:
     case MDefinition::Opcode::LoadTypedArrayElementHole:
@@ -144,8 +142,6 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::GuardReceiverPolymorphic:
     case MDefinition::Opcode::GuardObjectGroup:
     case MDefinition::Opcode::GuardObjectIdentity:
-    case MDefinition::Opcode::GuardUnboxedExpando:
-    case MDefinition::Opcode::LoadUnboxedExpando:
     case MDefinition::Opcode::LoadSlot:
     case MDefinition::Opcode::StoreSlot:
     case MDefinition::Opcode::InArray:
@@ -171,6 +167,7 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::AtomicTypedArrayElementBinop:
     case MDefinition::Opcode::AsmJSLoadHeap:
     case MDefinition::Opcode::AsmJSStoreHeap:
+    case MDefinition::Opcode::WasmHeapBase:
     case MDefinition::Opcode::WasmLoadTls:
     case MDefinition::Opcode::WasmLoad:
     case MDefinition::Opcode::WasmStore:
@@ -181,7 +178,6 @@ static inline const MDefinition* GetObject(const MDefinition* ins) {
     case MDefinition::Opcode::WasmLoadGlobalCell:
     case MDefinition::Opcode::WasmStoreGlobalVar:
     case MDefinition::Opcode::WasmStoreGlobalCell:
-    case MDefinition::Opcode::WasmLoadRef:
     case MDefinition::Opcode::WasmStoreRef:
     case MDefinition::Opcode::ArrayJoin:
     case MDefinition::Opcode::ArraySlice:

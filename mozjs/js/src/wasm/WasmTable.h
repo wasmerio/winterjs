@@ -29,8 +29,8 @@ namespace wasm {
 // stateful objects exposed to WebAssembly. asm.js also uses Tables to represent
 // its homogeneous function-pointer tables.
 //
-// A table of AnyFunction holds FunctionTableElems, which are (instance*,index)
-// pairs, where the instance must be traced.
+// A table of FuncRef holds FunctionTableElems, which are (code*,tls*) pairs,
+// where the tls must be traced.
 //
 // A table of AnyRef holds JSObject pointers, which must be traced.
 
@@ -38,17 +38,18 @@ namespace wasm {
 // the most appropriate representation for Cell::anyref.
 STATIC_ASSERT_ANYREF_IS_JSOBJECT;
 
-typedef GCVector<JS::Heap<JSObject*>, 0, SystemAllocPolicy> TableAnyRefVector;
+typedef GCVector<HeapPtr<JSObject*>, 0, SystemAllocPolicy> TableAnyRefVector;
 
 class Table : public ShareableBase<Table> {
-  using InstanceSet = JS::WeakCache<GCHashSet<
-      ReadBarrieredWasmInstanceObject,
-      MovableCellHasher<ReadBarrieredWasmInstanceObject>, SystemAllocPolicy>>;
-  using UniqueAnyFuncArray = UniquePtr<FunctionTableElem[], JS::FreePolicy>;
+  using InstanceSet =
+      JS::WeakCache<GCHashSet<WeakHeapPtrWasmInstanceObject,
+                              MovableCellHasher<WeakHeapPtrWasmInstanceObject>,
+                              SystemAllocPolicy>>;
+  using UniqueFuncRefArray = UniquePtr<FunctionTableElem[], JS::FreePolicy>;
 
-  ReadBarrieredWasmTableObject maybeObject_;
+  WeakHeapPtrWasmTableObject maybeObject_;
   InstanceSet observers_;
-  UniqueAnyFuncArray functions_;  // either functions_ has data
+  UniqueFuncRefArray functions_;  // either functions_ has data
   TableAnyRefVector objects_;     //   or objects_, but not both
   const TableKind kind_;
   uint32_t length_;
@@ -57,7 +58,7 @@ class Table : public ShareableBase<Table> {
   template <class>
   friend struct js::MallocProvider;
   Table(JSContext* cx, const TableDesc& td, HandleWasmTableObject maybeObject,
-        UniqueAnyFuncArray functions);
+        UniqueFuncRefArray functions);
   Table(JSContext* cx, const TableDesc& td, HandleWasmTableObject maybeObject,
         TableAnyRefVector&& objects);
 
@@ -70,9 +71,8 @@ class Table : public ShareableBase<Table> {
   void trace(JSTracer* trc);
 
   TableKind kind() const { return kind_; }
-  bool isTypedFunction() const { return kind_ == TableKind::TypedFunction; }
   bool isFunction() const {
-    return kind_ == TableKind::AnyFunction || kind_ == TableKind::TypedFunction;
+    return kind_ == TableKind::FuncRef || kind_ == TableKind::AsmJS;
   }
   uint32_t length() const { return length_; }
   Maybe<uint32_t> maximum() const { return maximum_; }
@@ -80,30 +80,36 @@ class Table : public ShareableBase<Table> {
   // Only for function values.  Raw pointer to the table.
   uint8_t* functionBase() const;
 
-  // get/setAnyFunc is allowed only on table-of-funcref.
-  // get/setAnyRef is allowed only on table-of-anyref.
+  // set/get/fillFuncRef is allowed only on table-of-funcref.
+  // get/fillAnyRef is allowed only on table-of-anyref.
   // setNull is allowed on either.
-  const FunctionTableElem& getAnyFunc(uint32_t index) const;
-  void setAnyFunc(uint32_t index, void* code, const Instance* instance);
+
+  const FunctionTableElem& getFuncRef(uint32_t index) const;
+  bool getFuncRef(JSContext* cx, uint32_t index,
+                  MutableHandleFunction fun) const;
+  void setFuncRef(uint32_t index, void* code, const Instance* instance);
+  void fillFuncRef(uint32_t index, uint32_t fillCount, FuncRef ref,
+                   JSContext* cx);
 
   AnyRef getAnyRef(uint32_t index) const;
-  const void* getAnyRefLocForCompiledCode(uint32_t index) const;
-  void setAnyRef(uint32_t index, AnyRef);
+  void fillAnyRef(uint32_t index, uint32_t fillCount, AnyRef ref);
 
   void setNull(uint32_t index);
 
-  // Copy entry from |srcTable| at |srcIndex| to this table at |dstIndex|.
-  // Used by table.copy.
-  void copy(const Table& srcTable, uint32_t dstIndex, uint32_t srcIndex);
+  // Copy entry from |srcTable| at |srcIndex| to this table at |dstIndex|.  Used
+  // by table.copy.  May OOM if it needs to box up a function during an upcast.
+  bool copy(const Table& srcTable, uint32_t dstIndex, uint32_t srcIndex);
 
   // grow() returns (uint32_t)-1 if it could not grow.
-  uint32_t grow(uint32_t delta, JSContext* cx);
+  uint32_t grow(uint32_t delta);
   bool movingGrowable() const;
   bool addMovingGrowObserver(JSContext* cx, WasmInstanceObject* instance);
 
   // about:memory reporting:
 
   size_t sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const;
+
+  size_t gcMallocBytes() const;
 };
 
 typedef RefPtr<Table> SharedTable;

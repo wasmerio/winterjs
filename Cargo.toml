@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository = "https://github.com/servo/mozjs/"
-version = "0.67.1"
+version = "0.68.0"
 authors = ["Mozilla"]
 links = "mozjs"
 build = "build.rs"
@@ -28,10 +28,12 @@ name = "mozjs_sys"
 doctest = false
 
 [dependencies]
+encoding_c = "0.9.6"
+encoding_c_mem = "0.2.5"
 libc = "0.2"
 libz-sys = "1.0"
 
 [build-dependencies]
-bindgen = { version = "0.51.1", default-features = false, features = ["which-rustfmt"] }
+bindgen = { version = "0.53", default-features = false, features = ["runtime", "which-rustfmt"] }
 cc = "1.0"
 walkdir = "2"

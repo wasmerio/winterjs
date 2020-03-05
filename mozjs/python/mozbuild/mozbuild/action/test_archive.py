@@ -32,10 +32,11 @@ import buildconfig
 STAGE = mozpath.join(buildconfig.topobjdir, 'dist', 'test-stage')
 
 TEST_HARNESS_BINS = [
-    'BadCertServer',
+    'BadCertAndPinningServer',
+    'DelegatedCredentialsServer',
     'GenerateOCSPResponse',
     'OCSPStaplingServer',
-    'SymantecSanctionsServer',
+    'SanctionsTestServer',
     'SmokeDMD',
     'certutil',
     'crashinject',
@@ -102,6 +103,7 @@ ARCHIVE_FILES = {
             'pattern': '**',
             'ignore': [
                 'cppunittest/**',
+                'condprof/**',
                 'gtest/**',
                 'mochitest/**',
                 'reftest/**',
@@ -138,8 +140,9 @@ ARCHIVE_FILES = {
             'source': buildconfig.topsrcdir,
             'base': '',
             'manifests': [
+                'dom/media/test/marionette/manifest.ini',
                 'testing/marionette/harness/marionette_harness/tests/unit-tests.ini',
-                'gfx/tests/marionette/manifest.ini',
+                'gfx/tests/marionette/manifest.ini'
             ],
             # We also need the manifests and harness_unit tests
             'pattern': 'testing/marionette/harness/marionette_harness/tests/**',
@@ -245,6 +248,12 @@ ARCHIVE_FILES = {
             'base': 'third_party/python/six',
             'pattern': '**',
             'dest': 'tools/six',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'third_party/python/distro',
+            'pattern': '**',
+            'dest': 'tools/distro',
         },
         {
             'source': buildconfig.topobjdir,
@@ -403,6 +412,42 @@ ARCHIVE_FILES = {
             'base': 'testing',
             'pattern': 'mozharness/**',
         },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/manifestparser',
+            'pattern': 'manifestparser/**',
+            'dest': 'mozharness',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozfile',
+            'pattern': 'mozfile/**',
+            'dest': 'mozharness',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozinfo',
+            'pattern': 'mozinfo/**',
+            'dest': 'mozharness',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozprocess',
+            'pattern': 'mozprocess/**',
+            'dest': 'mozharness',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'third_party/python/six',
+            'pattern': 'six.py',
+            'dest': 'mozharness',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'third_party/python/distro',
+            'pattern': 'distro.py',
+            'dest': 'mozharness',
+        },
     ],
     'reftest': [
         {
@@ -455,6 +500,37 @@ ARCHIVE_FILES = {
             'base': 'third_party/webkit/PerformanceTests',
             'pattern': '**',
             'dest': 'talos/talos/tests/webkit/PerformanceTests/',
+        },
+    ],
+    'condprof': [
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing',
+            'pattern': 'condprofile/**',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozfile',
+            'pattern': '**',
+            'dest': 'condprofile/mozfile',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozprofile',
+            'pattern': '**',
+            'dest': 'condprofile/mozprofile',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'testing/mozbase/mozdevice',
+            'pattern': '**',
+            'dest': 'condprofile/mozdevice',
+        },
+        {
+            'source': buildconfig.topsrcdir,
+            'base': 'third_party/python/virtualenv',
+            'pattern': '**',
+            'dest': 'condprofile/virtualenv',
         },
     ],
     'raptor': [
@@ -520,9 +596,9 @@ ARCHIVE_FILES = {
                 'head.js',
                 'mach_test_package_commands.py',
                 'moz-http2/**',
-                'moz-spdy/**',
                 'node-http2/**',
-                'node-spdy/**',
+                'node-ip/**',
+                'dns-packet/**',
                 'remotexpcshelltests.py',
                 'runxpcshelltests.py',
                 'xpcshellcommandline.py',
@@ -600,6 +676,20 @@ if buildconfig.substs.get('commtopsrcdir'):
         'dest': 'mozharness/configs'
     }
     ARCHIVE_FILES['mozharness'].append(mozharness_comm)
+    marionette_comm = {
+        'source': commtopsrcdir,
+        'base': '',
+        'manifest': 'testing/marionette/unit-tests.ini',
+        'dest': 'marionette/tests/comm',
+    }
+    ARCHIVE_FILES['common'].append(marionette_comm)
+    thunderbirdinstance = {
+        'source': commtopsrcdir,
+        'base': 'testing/marionette',
+        'pattern': 'thunderbirdinstance.py',
+        'dest': 'marionette/client/marionette_driver',
+    }
+    ARCHIVE_FILES['common'].append(thunderbirdinstance)
 
 
 # "common" is our catch all archive and it ignores things from other archives.
@@ -611,7 +701,7 @@ for k, v in ARCHIVE_FILES.items():
         continue
 
     ignores = set(itertools.chain(*(e.get('ignore', [])
-                                  for e in ARCHIVE_FILES['common'])))
+                                    for e in ARCHIVE_FILES['common'])))
 
     if not any(p.startswith('%s/' % k) for p in ignores):
         raise Exception('"common" ignore list probably should contain %s' % k)
@@ -676,7 +766,7 @@ def find_files(archive):
         if manifest:
             manifests.append(manifest)
         if manifests:
-            dirs = find_manifest_dirs(buildconfig.topsrcdir, manifests)
+            dirs = find_manifest_dirs(os.path.join(source, base), manifests)
             patterns.extend({'{}/**'.format(d) for d in dirs})
 
         ignore = list(entry.get('ignore', []))

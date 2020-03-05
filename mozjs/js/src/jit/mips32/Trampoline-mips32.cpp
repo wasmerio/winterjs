@@ -17,10 +17,10 @@
 #  include "jit/PerfSpewer.h"
 #endif
 #include "jit/VMFunctions.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/Realm.h"
 
 #include "jit/MacroAssembler-inl.h"
-#include "jit/SharedICHelpers-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -672,11 +672,12 @@ void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
 }
 
 bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
-                                   const VMFunction& f) {
-  MOZ_ASSERT(functionWrappers_);
+                                   const VMFunctionData& f, void* nativeFun,
+                                   uint32_t* wrapperOffset) {
+  *wrapperOffset = startTrampolineCode(masm);
 
-  uint32_t wrapperOffset = startTrampolineCode(masm);
-
+  // Avoid conflicts with argument registers while discarding the result after
+  // the function call.
   AllocatableGeneralRegisterSet regs(Register::Codes::WrapperMask);
 
   static_assert(
@@ -767,24 +768,24 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   // Copy any arguments.
   for (uint32_t explicitArg = 0; explicitArg < f.explicitArgs; explicitArg++) {
     switch (f.argProperties(explicitArg)) {
-      case VMFunction::WordByValue:
+      case VMFunctionData::WordByValue:
         masm.passABIArg(MoveOperand(argsBase, argDisp), MoveOp::GENERAL);
         argDisp += sizeof(uint32_t);
         break;
-      case VMFunction::DoubleByValue:
+      case VMFunctionData::DoubleByValue:
         // Values should be passed by reference, not by value, so we
         // assert that the argument is a double-precision float.
         MOZ_ASSERT(f.argPassedInFloatReg(explicitArg));
         masm.passABIArg(MoveOperand(argsBase, argDisp), MoveOp::DOUBLE);
         argDisp += sizeof(double);
         break;
-      case VMFunction::WordByRef:
+      case VMFunctionData::WordByRef:
         masm.passABIArg(
             MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
             MoveOp::GENERAL);
         argDisp += sizeof(uint32_t);
         break;
-      case VMFunction::DoubleByRef:
+      case VMFunctionData::DoubleByRef:
         // Copy double sized argument to aligned place.
         masm.ma_ldc1WordAligned(ScratchDoubleReg, argsBase, argDisp);
         masm.as_sdc1(ScratchDoubleReg, doubleArgs, doubleArgDisp);
@@ -807,7 +808,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
         MoveOp::GENERAL);
   }
 
-  masm.callWithABI(f.wrapped, MoveOp::GENERAL,
+  masm.callWithABI(nativeFun, MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
   if (!generateTLExitVM(masm, f)) {
@@ -856,7 +857,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
       break;
 
     case Type_Double:
-      if (cx->runtime()->jitSupportsFloatingPoint) {
+      if (JitOptions.supportsFloatingPoint) {
         masm.as_ldc1(ReturnDoubleReg, StackPointer, 0);
       } else {
         masm.assumeUnreachable(
@@ -878,7 +879,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
                   f.explicitStackSlots() * sizeof(uintptr_t) +
                   f.extraValuesToPop * sizeof(Value)));
 
-  return functionWrappers_->putNew(&f, wrapperOffset);
+  return true;
 }
 
 uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
@@ -903,7 +904,7 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.pop(temp1);
 
   LiveRegisterSet save;
-  if (cx->runtime()->jitSupportsFloatingPoint) {
+  if (JitOptions.supportsFloatingPoint) {
     save.set() = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
                              FloatRegisterSet(FloatRegisters::VolatileMask));
   } else {
@@ -931,76 +932,6 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.abiret();
 
   return offset;
-}
-
-typedef bool (*HandleDebugTrapFn)(JSContext*, BaselineFrame*, uint8_t*, bool*);
-static const VMFunction HandleDebugTrapInfo =
-    FunctionInfo<HandleDebugTrapFn>(HandleDebugTrap, "HandleDebugTrap");
-
-JitCode* JitRuntime::generateDebugTrapHandler(JSContext* cx) {
-  StackMacroAssembler masm(cx);
-
-  Register scratch1 = t0;
-  Register scratch2 = t1;
-
-  // Load BaselineFrame pointer in scratch1.
-  masm.movePtr(s5, scratch1);
-  masm.subPtr(Imm32(BaselineFrame::Size()), scratch1);
-
-  // Enter a stub frame and call the HandleDebugTrap VM function. Ensure
-  // the stub frame has a nullptr ICStub pointer, since this pointer is
-  // marked during GC.
-  masm.movePtr(ImmPtr(nullptr), ICStubReg);
-  EmitBaselineEnterStubFrame(masm, scratch2);
-
-  TrampolinePtr code =
-      cx->runtime()->jitRuntime()->getVMWrapper(HandleDebugTrapInfo);
-
-  masm.subPtr(Imm32(2 * sizeof(uintptr_t)), StackPointer);
-  masm.storePtr(ra, Address(StackPointer, sizeof(uintptr_t)));
-  masm.storePtr(scratch1, Address(StackPointer, 0));
-
-  EmitBaselineCallVM(code, masm);
-
-  EmitBaselineLeaveStubFrame(masm);
-
-  // If the stub returns |true|, we have to perform a forced return
-  // (return from the JS frame). If the stub returns |false|, just return
-  // from the trap stub so that execution continues at the current pc.
-  Label forcedReturn;
-  masm.branchTest32(Assembler::NonZero, ReturnReg, ReturnReg, &forcedReturn);
-
-  // ra was restored by EmitLeaveStubFrame
-  masm.branch(ra);
-
-  masm.bind(&forcedReturn);
-  masm.loadValue(Address(s5, BaselineFrame::reverseOffsetOfReturnValue()),
-                 JSReturnOperand);
-  masm.movePtr(s5, StackPointer);
-  masm.pop(s5);
-
-  // Before returning, if profiling is turned on, make sure that
-  // lastProfilingFrame is set to the correct caller frame.
-  {
-    Label skipProfilingInstrumentation;
-    AbsoluteAddress addressOfEnabled(
-        cx->runtime()->geckoProfiler().addressOfEnabled());
-    masm.branch32(Assembler::Equal, addressOfEnabled, Imm32(0),
-                  &skipProfilingInstrumentation);
-    masm.profilerExitFrame();
-    masm.bind(&skipProfilingInstrumentation);
-  }
-
-  masm.ret();
-
-  Linker linker(masm, "DebugTrapHandler");
-  JitCode* codeDbg = linker.newCode(cx, CodeKind::Other);
-
-#ifdef JS_ION_PERF
-  writePerfSpewerJitCodeProfile(codeDbg, "DebugTrapHandler");
-#endif
-
-  return codeDbg;
 }
 
 void JitRuntime::generateExceptionTailStub(MacroAssembler& masm, void* handler,

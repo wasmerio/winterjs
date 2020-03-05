@@ -11,6 +11,8 @@
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/MacroAssembler.h"
+#include "util/Memory.h"
+#include "vm/JitActivation.h"  // js::jit::JitActivation
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -109,7 +111,6 @@ BufferOffset MacroAssemblerCompat::movePatchablePtr(ImmWord ptr,
 
 void MacroAssemblerCompat::loadPrivate(const Address& src, Register dest) {
   loadPtr(src, dest);
-  asMasm().lshiftPtr(Imm32(1), dest);
 }
 
 void MacroAssemblerCompat::handleFailureWithHandlerTail(
@@ -296,7 +297,7 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
                                         Register ptrScratch_,
                                         AnyRegister outany, Register64 out64) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   MOZ_ASSERT(ptr_ == ptrScratch_);
 
@@ -309,12 +310,13 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
   asMasm().memoryBarrierBefore(access.sync());
 
   // Reg+Reg addressing is directly encodable in one Load instruction, hence
-  // the AutoForbidPools will ensure that the access metadata is emitted at
-  // the address of the Load.
+  // the AutoForbidPoolsAndNops will ensure that the access metadata is emitted
+  // at the address of the Load.
   MemOperand srcAddr(memoryBase, ptr);
 
   {
-    AutoForbidPools afp(this, /* max number of instructions in scope = */ 1);
+    AutoForbidPoolsAndNops afp(this,
+                               /* max number of instructions in scope = */ 1);
     append(access, asMasm().currentOffset());
     switch (access.type()) {
       case Scalar::Int8:
@@ -349,6 +351,8 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
         Ldr(SelectFPReg(outany, out64, 64), srcAddr);
         break;
       case Scalar::Uint8Clamped:
+      case Scalar::BigInt64:
+      case Scalar::BigUint64:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
@@ -362,7 +366,7 @@ void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
                                          Register memoryBase_, Register ptr_,
                                          Register ptrScratch_) {
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < wasm::OffsetGuardLimit);
+  MOZ_ASSERT(offset < wasm::MaxOffsetGuardLimit);
 
   MOZ_ASSERT(ptr_ == ptrScratch_);
 
@@ -375,12 +379,13 @@ void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
   asMasm().memoryBarrierBefore(access.sync());
 
   // Reg+Reg addressing is directly encodable in one Store instruction, hence
-  // the AutoForbidPools will ensure that the access metadata is emitted at
-  // the address of the Store.
+  // the AutoForbidPoolsAndNops will ensure that the access metadata is emitted
+  // at the address of the Store.
   MemOperand dstAddr(memoryBase, ptr);
 
   {
-    AutoForbidPools afp(this, /* max number of instructions in scope = */ 1);
+    AutoForbidPoolsAndNops afp(this,
+                               /* max number of instructions in scope = */ 1);
     append(access, asMasm().currentOffset());
     switch (access.type()) {
       case Scalar::Int8:
@@ -405,6 +410,8 @@ void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
         Str(SelectFPReg(valany, val64, 64), dstAddr);
         break;
       case Scalar::Uint8Clamped:
+      case Scalar::BigInt64:
+      case Scalar::BigUint64:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
@@ -597,6 +604,12 @@ void MacroAssembler::Push(FloatRegister f) {
   adjustFrame(sizeof(double));
 }
 
+void MacroAssembler::PushBoxed(FloatRegister reg) {
+  subFromStackPtr(Imm32(sizeof(double)));
+  boxDouble(reg, Address(getStackPointer(), 0));
+  adjustFrame(sizeof(double));
+}
+
 void MacroAssembler::Pop(Register reg) {
   pop(reg);
   adjustFrame(-1 * int64_t(sizeof(int64_t)));
@@ -669,9 +682,8 @@ void MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset) {
   ptrdiff_t relTarget = (int)calleeOffset - ((int)callerOffset - 4);
   ptrdiff_t relTarget00 = relTarget >> 2;
   MOZ_RELEASE_ASSERT((relTarget & 0x3) == 0);
-  MOZ_RELEASE_ASSERT(vixl::is_int26(relTarget00));
+  MOZ_RELEASE_ASSERT(vixl::IsInt26(relTarget00));
   bl(inst, relTarget00);
-  AutoFlushICache::flush(uintptr_t(inst), 4);
 }
 
 CodeOffset MacroAssembler::farJumpWithPatch() {
@@ -679,7 +691,8 @@ CodeOffset MacroAssembler::farJumpWithPatch() {
   const ARMRegister scratch = temps.AcquireX();
   const ARMRegister scratch2 = temps.AcquireX();
 
-  AutoForbidPools afp(this, /* max number of instructions in scope = */ 7);
+  AutoForbidPoolsAndNops afp(this,
+                             /* max number of instructions in scope = */ 7);
 
   mozilla::DebugOnly<uint32_t> before = currentOffset();
 
@@ -715,12 +728,11 @@ void MacroAssembler::patchFarJump(CodeOffset farJump, uint32_t targetOffset) {
   inst2->SetInstructionBits((uint32_t)(distance >> 32));
 }
 
-CodeOffset MacroAssembler::nopPatchableToCall(const wasm::CallSiteDesc& desc) {
-  AutoForbidPools afp(this, /* max number of instructions in scope = */ 1);
-  CodeOffset offset(currentOffset());
+CodeOffset MacroAssembler::nopPatchableToCall() {
+  AutoForbidPoolsAndNops afp(this,
+                             /* max number of instructions in scope = */ 1);
   Nop();
-  append(desc, CodeOffset(currentOffset()));
-  return offset;
+  return CodeOffset(currentOffset());
 }
 
 void MacroAssembler::patchNopToCall(uint8_t* call, uint8_t* target) {
@@ -728,7 +740,6 @@ void MacroAssembler::patchNopToCall(uint8_t* call, uint8_t* target) {
   Instruction* instr = reinterpret_cast<Instruction*>(inst);
   MOZ_ASSERT(instr->IsBL() || instr->IsNOP());
   bl(instr, (target - inst) >> 2);
-  AutoFlushICache::flush(uintptr_t(inst), 4);
 }
 
 void MacroAssembler::patchCallToNop(uint8_t* call) {
@@ -736,7 +747,6 @@ void MacroAssembler::patchCallToNop(uint8_t* call) {
   Instruction* instr = reinterpret_cast<Instruction*>(inst);
   MOZ_ASSERT(instr->IsBL() || instr->IsNOP());
   nop(instr);
-  AutoFlushICache::flush(uintptr_t(inst), 4);
 }
 
 void MacroAssembler::pushReturnAddress() {
@@ -1028,7 +1038,7 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                        MIRType valueType, const T& dest,
                                        MIRType slotType) {
   if (valueType == MIRType::Double) {
-    storeDouble(value.reg().typedReg().fpu(), dest);
+    boxDouble(value.reg().typedReg().fpu(), dest);
     return;
   }
 
@@ -1071,7 +1081,8 @@ void MacroAssembler::comment(const char* msg) { Assembler::comment(msg); }
 // wasm support
 
 CodeOffset MacroAssembler::wasmTrapInstruction() {
-  AutoForbidPools afp(this, /* max number of instructions in scope = */ 1);
+  AutoForbidPoolsAndNops afp(this,
+                             /* max number of instructions in scope = */ 1);
   CodeOffset offs(currentOffset());
   Unreachable();
   return offs;
@@ -1079,14 +1090,21 @@ CodeOffset MacroAssembler::wasmTrapInstruction() {
 
 void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
                                      Register boundsCheckLimit, Label* label) {
-  // Not used on ARM64, we rely on signal handling instead
-  MOZ_CRASH("NYI - wasmBoundsCheck");
+  branch32(cond, index, boundsCheckLimit, label);
+  if (JitOptions.spectreIndexMasking) {
+    csel(ARMRegister(index, 32), vixl::wzr, ARMRegister(index, 32), cond);
+  }
 }
 
 void MacroAssembler::wasmBoundsCheck(Condition cond, Register index,
                                      Address boundsCheckLimit, Label* label) {
-  // Not used on ARM64, we rely on signal handling instead
-  MOZ_CRASH("NYI - wasmBoundsCheck");
+  MOZ_ASSERT(boundsCheckLimit.offset ==
+             offsetof(wasm::TlsData, boundsCheckLimit));
+
+  branch32(cond, index, boundsCheckLimit, label);
+  if (JitOptions.spectreIndexMasking) {
+    csel(ARMRegister(index, 32), vixl::wzr, ARMRegister(index, 32), cond);
+  }
 }
 
 // FCVTZU behaves as follows:
@@ -1511,15 +1529,16 @@ static void LoadExclusive(MacroAssembler& masm,
   bool signExtend = Scalar::isSignedIntType(srcType);
 
   // With this address form, a single native ldxr* will be emitted, and the
-  // AutoForbidPools ensures that the metadata is emitted at the address of
-  // the ldxr*.
+  // AutoForbidPoolsAndNops ensures that the metadata is emitted at the address
+  // of the ldxr*.
   MOZ_ASSERT(ptr.IsImmediateOffset() && ptr.offset() == 0);
 
   switch (Scalar::byteSize(srcType)) {
     case 1: {
       {
-        AutoForbidPools afp(&masm,
-                            /* max number of instructions in scope = */ 1);
+        AutoForbidPoolsAndNops afp(
+            &masm,
+            /* max number of instructions in scope = */ 1);
         if (access) {
           masm.append(*access, masm.currentOffset());
         }
@@ -1532,8 +1551,9 @@ static void LoadExclusive(MacroAssembler& masm,
     }
     case 2: {
       {
-        AutoForbidPools afp(&masm,
-                            /* max number of instructions in scope = */ 1);
+        AutoForbidPoolsAndNops afp(
+            &masm,
+            /* max number of instructions in scope = */ 1);
         if (access) {
           masm.append(*access, masm.currentOffset());
         }
@@ -1546,8 +1566,9 @@ static void LoadExclusive(MacroAssembler& masm,
     }
     case 4: {
       {
-        AutoForbidPools afp(&masm,
-                            /* max number of instructions in scope = */ 1);
+        AutoForbidPoolsAndNops afp(
+            &masm,
+            /* max number of instructions in scope = */ 1);
         if (access) {
           masm.append(*access, masm.currentOffset());
         }
@@ -1560,8 +1581,9 @@ static void LoadExclusive(MacroAssembler& masm,
     }
     case 8: {
       {
-        AutoForbidPools afp(&masm,
-                            /* max number of instructions in scope = */ 1);
+        AutoForbidPoolsAndNops afp(
+            &masm,
+            /* max number of instructions in scope = */ 1);
         if (access) {
           masm.append(*access, masm.currentOffset());
         }
@@ -1569,7 +1591,9 @@ static void LoadExclusive(MacroAssembler& masm,
       }
       break;
     }
-    default: { MOZ_CRASH(); }
+    default: {
+      MOZ_CRASH();
+    }
   }
 }
 
@@ -2001,6 +2025,26 @@ void MacroAssembler::flexibleDivMod32(Register rhs, Register srcDest,
   // Compute remainder
   Mul(scratch, ARMRegister(srcDest, 32), ARMRegister(rhs, 32));
   Sub(ARMRegister(remOutput, 32), src, scratch);
+}
+
+CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
+  AutoForbidPoolsAndNops afp(this,
+                             /* max number of instructions in scope = */ 1);
+  CodeOffset offset(currentOffset());
+  adr(ARMRegister(dest, 64), 0, LabelDoc());
+  return offset;
+}
+
+void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
+                                          CodeLocationLabel target) {
+  ptrdiff_t off = target - loc;
+  MOZ_RELEASE_ASSERT(vixl::IsInt21(off));
+
+  Instruction* cur = reinterpret_cast<Instruction*>(loc.raw());
+  MOZ_ASSERT(cur->IsADR());
+
+  vixl::Register rd = vixl::Register::XRegFromCode(cur->Rd());
+  adr(cur, rd, off);
 }
 
 // ========================================================================

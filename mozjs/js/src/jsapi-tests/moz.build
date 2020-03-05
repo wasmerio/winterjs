@@ -7,6 +7,7 @@
 GeckoProgram('jsapi-tests', linkage=None)
 
 include('../js-cxxflags.mozbuild')
+include('../js-standalone.mozbuild')
 
 UNIFIED_SOURCES += [
     'selfTest.cpp',
@@ -16,12 +17,12 @@ UNIFIED_SOURCES += [
     'testArrayBufferView.cpp',
     'testArrayBufferWithUserOwnedContents.cpp',
     'testAtomicOperations.cpp',
+    'testAtomizeUtf8NonAsciiLatin1CodePoint.cpp',
     'testBoundFunction.cpp',
     'testBug604087.cpp',
     'testCallArgs.cpp',
     'testCallNonGenericMethodOnProxy.cpp',
     'testChromeBuffer.cpp',
-    'testCloneScript.cpp',
     'testCompileNonSyntactic.cpp',
     'testCompileUtf8.cpp',
     'testDateToLocaleString.cpp',
@@ -51,14 +52,13 @@ UNIFIED_SOURCES += [
     'testGCExactRooting.cpp',
     'testGCFinalizeCallback.cpp',
     'testGCGrayMarking.cpp',
-    'testGCHeapPostBarriers.cpp',
+    'testGCHeapBarriers.cpp',
     'testGCHooks.cpp',
     'testGCMarking.cpp',
     'testGCOutOfMemory.cpp',
     'testGCStoreBufferRemoval.cpp',
     'testGCUniqueId.cpp',
     'testGCWeakCache.cpp',
-    'testGCWeakRef.cpp',
     'testGetPropertyDescriptor.cpp',
     'testHashTable.cpp',
     'testIndexToString.cpp',
@@ -72,10 +72,12 @@ UNIFIED_SOURCES += [
     'testLookup.cpp',
     'testLooselyEqual.cpp',
     'testMappedArrayBuffer.cpp',
+    'testMemoryAssociation.cpp',
     'testMutedErrors.cpp',
     'testNewObject.cpp',
     'testNewTargetInvokeConstructor.cpp',
     'testNullRoot.cpp',
+    'testNumberToString.cpp',
     'testObjectEmulatingUndefined.cpp',
     'testOOM.cpp',
     'testParseJSON.cpp',
@@ -170,16 +172,6 @@ LOCAL_INCLUDES += [
 USE_LIBS += [
     'static:js',
 ]
-
-if CONFIG['ENABLE_WASM_CRANELIFT']:
-    USE_LIBS += [
-        'jsrust'
-    ]
-
-if CONFIG['MOZ_NEEDS_LIBATOMIC']:
-    OS_LIBS += ['atomic']
-
-OS_LIBS += CONFIG['MOZ_ZLIB_LIBS']
 
 DEFINES['topsrcdir'] = '%s/js/src' % TOPSRCDIR
 OBJDIR_PP_FILES.js.src['jsapi-tests'] += ['jsapi-tests-gdb.py.in']

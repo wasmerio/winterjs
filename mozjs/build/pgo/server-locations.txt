@@ -175,9 +175,15 @@ http://fingerprinting.example.com:80
 http://not-tracking.example.com:80
 http://tracking.example.org:80
 http://another-tracking.example.net:80
+http://social-tracking.example.org:80
 http://itisatracker.org:80
 https://itisatracker.org:443
 http://trackertest.org:80
+#
+# Used while testing TLS session ticket resumption for third-party trackers (bug 1500533)
+# (DO NOT USE THIS HOST IN OTHER TESTS!)
+#
+https://tlsresumptiontest.example.org:443
 
 https://malware.example.com:443
 https://unwanted.example.com:443
@@ -187,6 +193,7 @@ https://fingerprinting.example.com:443
 https://not-tracking.example.com:443
 https://tracking.example.org:443
 https://another-tracking.example.net:443
+https://social-tracking.example.org:443
 
 #
 # Used while testing flash blocking (Bug 1307604)
@@ -198,6 +205,12 @@ http://exception.flashblock.example.com:80
 http://subdocument.example.com:80
 https://subdocument.example.com:443
 http://exception.subdocument.example.com:80
+
+#
+# Used while testing tracking protection (Bug 1580416)
+# Not that apps.fbsbx.com is a public suffix
+#
+http://mochitest.apps.fbsbx.com:80
 
 #
 # Flash usage can fail unless this URL exists
@@ -281,17 +294,23 @@ https://sha256ee.example.com:443                                  privileged,cer
 # Hosts for imminent distrust warning tests
 https://imminently-distrusted.example.com:443                     privileged,cert=imminently_distrusted
 
-# Hosts for ssl3/rc4 console warning tests
-https://ssl3.example.com:443        privileged,ssl3
-https://rc4.example.com:443         privileged,rc4
-https://ssl3rc4.example.com:443     privileged,ssl3,rc4
-https://tls1.example.com:443        privileged,tls1
+# Hosts for ssl3/rc4/tls1 warning tests
+https://ssl3.example.com:443         privileged,ssl3
+https://rc4.example.com:443          privileged,rc4
+https://ssl3rc4.example.com:443      privileged,ssl3,rc4
+https://tls1.example.com:443         privileged,tls1
+https://tls11.example.com:443        privileged,tls1_1
+https://tls12.example.com:443        privileged,tls1_2
+https://tls13.example.com:443        privileged,tls1,tls1_3
 
 # Hosts for youtube rewrite tests
 https://mochitest.youtube.com:443
 
 # Host for U2F localhost tests
 https://localhost:443
+
+# Bug 1402530
+http://localhost:80                 privileged
 
 # Host for testing APIs whitelisted for mozilla.org
 https://www.mozilla.org:443

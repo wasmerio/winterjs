@@ -1,5 +1,5 @@
-commit 4f715ae124c418a15a3fa4d8fb14f406576a7ee5
-Author: Jeff Genovy <29107334+jefgen@users.noreply.github.com>
-Date:   Wed Apr 10 17:32:11 2019 -0700
+commit fd123bf023882f07bfacf51c39111be2f946d8f8
+Author: Steven R. Loomis <srloomis@us.ibm.com>
+Date:   Wed Oct 2 10:25:22 2019 -0700
 
-    ICU-20536 ICU 63.2 release tasks + tzdata2019a
+    ICU-20796 update C API Change Report

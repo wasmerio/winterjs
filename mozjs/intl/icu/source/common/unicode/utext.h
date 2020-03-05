@@ -766,12 +766,14 @@ utext_extract(UText *ut,
   *
   * @stable ICU 3.8
   */
-#define UTEXT_SETNATIVEINDEX(ut, ix)                       \
-    { int64_t __offset = (ix) - (ut)->chunkNativeStart; \
-      if (__offset>=0 && __offset<(int64_t)(ut)->nativeIndexingLimit && (ut)->chunkContents[__offset]<0xdc00) { \
-          (ut)->chunkOffset=(int32_t)__offset; \
-      } else { \
-          utext_setNativeIndex((ut), (ix)); } }
+#define UTEXT_SETNATIVEINDEX(ut, ix) UPRV_BLOCK_MACRO_BEGIN { \
+    int64_t __offset = (ix) - (ut)->chunkNativeStart; \
+    if (__offset>=0 && __offset<(int64_t)(ut)->nativeIndexingLimit && (ut)->chunkContents[__offset]<0xdc00) { \
+        (ut)->chunkOffset=(int32_t)__offset; \
+    } else { \
+        utext_setNativeIndex((ut), (ix)); \
+    } \
+} UPRV_BLOCK_MACRO_END
 
 
 
@@ -1555,7 +1557,7 @@ struct UText {
 U_STABLE UText * U_EXPORT2
 utext_setup(UText *ut, int32_t extraSpace, UErrorCode *status);
 
-#ifndef U_HIDE_INTERNAL_API
+// do not use #ifndef U_HIDE_INTERNAL_API around the following!
 /**
   * @internal
   *  Value used to help identify correctly initialized UText structs.
@@ -1564,7 +1566,6 @@ utext_setup(UText *ut, int32_t extraSpace, UErrorCode *status);
 enum {
     UTEXT_MAGIC = 0x345ad82c
 };
-#endif  /* U_HIDE_INTERNAL_API */
 
 /**
  * initializer to be used with local (stack) instances of a UText

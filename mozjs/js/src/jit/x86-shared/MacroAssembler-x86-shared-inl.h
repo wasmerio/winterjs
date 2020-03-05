@@ -32,6 +32,10 @@ void MacroAssembler::move16SignExtend(Register src, Register dest) {
   movswl(src, dest);
 }
 
+void MacroAssembler::loadAbiReturnAddress(Register dest) {
+  loadPtr(Address(getStackPointer(), 0), dest);
+}
+
 // ===============================================================
 // Logical instructions
 
@@ -990,6 +994,19 @@ void MacroAssembler::cmp32Move32(Condition cond, Register lhs,
                                  Register dest) {
   cmp32(lhs, Operand(rhs));
   cmovCCl(cond, src, dest);
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs,
+                                 const Address& rhs, const Address& src,
+                                 Register dest) {
+  cmp32(lhs, Operand(rhs));
+  cmovCCl(cond, Operand(src), dest);
+}
+
+void MacroAssembler::cmp32Load32(Condition cond, Register lhs, Register rhs,
+                                 const Address& src, Register dest) {
+  cmp32(lhs, rhs);
+  cmovCCl(cond, Operand(src), dest);
 }
 
 void MacroAssembler::spectreZeroRegister(Condition cond, Register scratch,

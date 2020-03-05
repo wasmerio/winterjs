@@ -9,10 +9,19 @@ import os
 import re
 import subprocess
 import sys
-import urllib2
 
 from distutils.version import LooseVersion
 from mozboot import rust
+
+# NOTE: This script is intended to be run with a vanilla Python install.  We
+# have to rely on the standard library instead of Python 2+3 helpers like
+# the six module.
+if sys.version_info < (3,):
+    from urllib2 import urlopen
+    input = raw_input  # noqa
+else:
+    from urllib.request import urlopen
+
 
 NO_MERCURIAL = '''
 Could not find Mercurial (hg) in the current shell's path. Try starting a new
@@ -143,15 +152,13 @@ ac_add_options --enable-artifact-builds
 '''
 
 # Upgrade Mercurial older than this.
-# This should match OLDEST_NON_LEGACY_VERSION from
-# the hg setup wizard in version-control-tools.
-MODERN_MERCURIAL_VERSION = LooseVersion('4.3.3')
+MODERN_MERCURIAL_VERSION = LooseVersion('4.8')
 
 # Upgrade Python older than this.
 MODERN_PYTHON_VERSION = LooseVersion('2.7.3')
 
 # Upgrade rust older than this.
-MODERN_RUST_VERSION = LooseVersion('1.32.0')
+MODERN_RUST_VERSION = LooseVersion('1.37.0')
 
 # Upgrade nasm older than this.
 MODERN_NASM_VERSION = LooseVersion('2.14')
@@ -280,6 +287,12 @@ class BaseBootstrapper(object):
             '%s does not yet implement ensure_nasm_packages()'
             % __name__)
 
+    def ensure_sccache_packages(self, state_dir, checkout_root):
+        '''
+        Install sccache.
+        '''
+        pass
+
     def ensure_node_packages(self, state_dir, checkout_root):
         '''
         Install any necessary packages needed to supply NodeJS'''
@@ -289,15 +302,12 @@ class BaseBootstrapper(object):
 
     def install_toolchain_static_analysis(self, state_dir, checkout_root, toolchain_job):
         clang_tools_path = os.path.join(state_dir, 'clang-tools')
-        import shutil
-        if os.path.exists(clang_tools_path):
-            shutil.rmtree(clang_tools_path)
-
-        # Re-create the directory for clang_tools
-        os.mkdir(clang_tools_path)
+        if not os.path.exists(clang_tools_path):
+            os.mkdir(clang_tools_path)
         self.install_toolchain_artifact(clang_tools_path, checkout_root, toolchain_job)
 
-    def install_toolchain_artifact(self, state_dir, checkout_root, toolchain_job):
+    def install_toolchain_artifact(self, state_dir, checkout_root, toolchain_job,
+                                   no_unpack=False):
         mach_binary = os.path.join(checkout_root, 'mach')
         mach_binary = os.path.abspath(mach_binary)
         if not os.path.exists(mach_binary):
@@ -311,6 +321,9 @@ class BaseBootstrapper(object):
 
         cmd = [sys.executable, mach_binary, 'artifact', 'toolchain',
                '--from-build', toolchain_job]
+
+        if no_unpack:
+            cmd += ['--no-unpack']
 
         subprocess.check_call(cmd, cwd=state_dir)
 
@@ -399,30 +412,18 @@ class BaseBootstrapper(object):
 
     def check_output(self, *args, **kwargs):
         """Run subprocess.check_output even if Python doesn't provide it."""
-        fn = getattr(subprocess, 'check_output', BaseBootstrapper._check_output)
-
-        return fn(*args, **kwargs)
-
-    @staticmethod
-    def _check_output(*args, **kwargs):
-        """Python 2.6 compatible implementation of subprocess.check_output."""
-        proc = subprocess.Popen(stdout=subprocess.PIPE, *args, **kwargs)
-        output, unused_err = proc.communicate()
-        retcode = proc.poll()
-        if retcode:
-            cmd = kwargs.get('args', args[0])
-            e = subprocess.CalledProcessError(retcode, cmd)
-            e.output = output
-            raise e
-
-        return output
+        # TODO Legacy Python 2.6 code, can be removed.
+        # We had a custom check_output() function for Python 2.6 backward
+        # compatibility.  Since py2.6 support was dropped we can remove this
+        # method.
+        return subprocess.check_output(*args, **kwargs)
 
     def prompt_int(self, prompt, low, high, limit=5):
         ''' Prompts the user with prompt and requires an integer between low and high. '''
         valid = False
         while not valid and limit > 0:
             try:
-                choice = int(raw_input(prompt))
+                choice = int(input(prompt))
                 if not low <= choice <= high:
                     print("ERROR! Please enter a valid option!")
                     limit -= 1
@@ -441,7 +442,7 @@ class BaseBootstrapper(object):
         ''' Prompts the user with prompt and requires a yes/no answer.'''
         valid = False
         while not valid:
-            choice = raw_input(prompt + ' [Y/n]: ').strip().lower()[:1]
+            choice = input(prompt + ' (Yn): ').strip().lower()[:1]
             if choice == '':
                 choice = 'y'
             if choice not in ('y', 'n'):
@@ -486,7 +487,8 @@ class BaseBootstrapper(object):
 
         info = self.check_output([path, version_param],
                                  env=env,
-                                 stderr=subprocess.STDOUT)
+                                 stderr=subprocess.STDOUT,
+                                 universal_newlines=True)
         match = re.search(name + ' ([a-z0-9\.]+)', info)
         if not match:
             print('ERROR! Unable to identify %s version.' % name)
@@ -673,7 +675,7 @@ class BaseBootstrapper(object):
             print('Your version of Rust (%s) is new enough.' % version)
             rustup = self.which('rustup', cargo_bin)
             if rustup:
-                self.ensure_rust_targets(rustup)
+                self.ensure_rust_targets(rustup, version)
             return
 
         if version:
@@ -697,9 +699,11 @@ class BaseBootstrapper(object):
             print('Will try to install Rust.')
             self.install_rust()
 
-    def ensure_rust_targets(self, rustup):
+    def ensure_rust_targets(self, rustup, rust_version):
         """Make sure appropriate cross target libraries are installed."""
-        target_list = subprocess.check_output([rustup, 'target', 'list'])
+        target_list = subprocess.check_output(
+            [rustup, 'target', 'list'], universal_newlines=True
+        )
         targets = [line.split()[0] for line in target_list.splitlines()
                    if 'installed' in line or 'default' in line]
         print('Rust supports %s targets.' % ', '.join(targets))
@@ -712,7 +716,11 @@ class BaseBootstrapper(object):
 
         if 'mobile_android' in self.application:
             # Let's add the most common targets.
-            android_targets = ('armv7-linux-androideabi',
+            if rust_version < LooseVersion('1.33'):
+                arm_target = 'armv7-linux-androideabi'
+            else:
+                arm_target = 'thumbv7neon-linux-androideabi'
+            android_targets = (arm_target,
                                'aarch64-linux-android',
                                'i686-linux-android',
                                'x86_64-linux-android', )
@@ -764,7 +772,7 @@ class BaseBootstrapper(object):
         that will be used to validate the downloaded file using the given
         digest algorithm.  The value of digest can be any value accepted by
         hashlib.new.  The default digest used is 'sha256'."""
-        f = urllib2.urlopen(url)
+        f = urlopen(url)
         h = hashlib.new(digest)
         with open(dest, 'wb') as out:
             while True:
@@ -793,7 +801,7 @@ class BaseBootstrapper(object):
 
         if 'JAVA_HOME' in os.environ:
             extra_search_dirs += (os.path.join(os.environ['JAVA_HOME'], 'bin'),)
-        java = self.which('java', extra_search_dirs)
+        java = self.which('java', *extra_search_dirs)
 
         if not java:
             raise Exception('You need to have Java version 1.8 installed. '
@@ -804,7 +812,8 @@ class BaseBootstrapper(object):
             output = subprocess.check_output([java,
                                               '-XshowSettings:properties',
                                               '-version'],
-                                             stderr=subprocess.STDOUT).rstrip()
+                                             stderr=subprocess.STDOUT,
+                                             universal_newlines=True).rstrip()
 
             # -version strings are pretty free-form, like: 'java version
             # "1.8.0_192"' or 'openjdk version "11.0.1" 2018-10-16', but the

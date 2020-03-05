@@ -80,18 +80,6 @@ def evaluate(ctx, node):
     return node.traverse(eval_node)
 
 
-def get_text(element):
-    '''Get text content of a PatternElement.'''
-    if isinstance(element, FTL.TextElement):
-        return element.value
-    if isinstance(element, FTL.Placeable):
-        if isinstance(element.expression, FTL.StringLiteral):
-            return element.expression.value
-        else:
-            return None
-    raise RuntimeError('Expected PatternElement')
-
-
 def chain_elements(elements):
     '''Flatten a list of FTL nodes into an iterator over PatternElements.'''
     for element in elements:
@@ -152,36 +140,49 @@ class Transform(FTL.BaseNode):
     def pattern_of(*elements):
         normalized = []
 
-        # Normalize text content: convert all text to TextElements, join
-        # adjacent text and prune empty.
-        for current in chain_elements(elements):
-            current_text = get_text(current)
-            if current_text is None:
-                normalized.append(current)
+        # Normalize text content: convert text content to TextElements, join
+        # adjacent text and prune empty. Text content is either existing
+        # TextElements or whitespace-only StringLiterals. This may result in
+        # leading and trailing whitespace being put back into TextElements if
+        # the new Pattern is built from existing Patterns (CONCAT(COPY...)).
+        # The leading and trailing whitespace of the new Pattern will be
+        # extracted later into new StringLiterals.
+        for element in chain_elements(elements):
+            if isinstance(element, FTL.TextElement):
+                text_content = element.value
+            elif isinstance(element, FTL.Placeable) \
+                    and isinstance(element.expression, FTL.StringLiteral) \
+                    and re.match(r'^ *$', element.expression.value):
+                text_content = element.expression.value
+            else:
+                # The element does not contain text content which should be
+                # normalized. It may be a number, a reference, or
+                # a StringLiteral which should be preserved in the Pattern.
+                normalized.append(element)
                 continue
 
             previous = normalized[-1] if len(normalized) else None
             if isinstance(previous, FTL.TextElement):
-                # Join adjacent TextElements
-                previous.value += current_text
-            elif len(current_text) > 0:
-                # Normalize non-empty text to a TextElement
-                normalized.append(FTL.TextElement(current_text))
+                # Join adjacent TextElements.
+                previous.value += text_content
+            elif len(text_content) > 0:
+                # Normalize non-empty text to a TextElement.
+                normalized.append(FTL.TextElement(text_content))
             else:
-                # Prune empty text
+                # Prune empty text.
                 pass
 
-        # Handle empty values
+        # Store empty values explicitly as {""}.
         if len(normalized) == 0:
             empty = FTL.Placeable(FTL.StringLiteral(''))
             return FTL.Pattern([empty])
 
-        # Handle explicit leading whitespace
+        # Extract explicit leading whitespace into a StringLiteral.
         if isinstance(normalized[0], FTL.TextElement):
             ws, text = extract_whitespace(re_leading_ws, normalized[0])
             normalized[:1] = [ws, text]
 
-        # Handle explicit trailing whitespace
+        # Extract explicit trailing whitespace into a StringLiteral.
         if isinstance(normalized[-1], FTL.TextElement):
             ws, text = extract_whitespace(re_trailing_ws, normalized[-1])
             normalized[-1:] = [text, ws]
@@ -194,6 +195,50 @@ class Transform(FTL.BaseNode):
 
 
 class Source(Transform):
+    """Base class for Transforms that get translations from source files.
+
+    The contract is that the first argument is the source path, and the
+    second is a key representing legacy string IDs, or Fluent id.attr.
+    """
+    def __init__(self, path, key):
+        self.path = path
+        self.key = key
+
+
+class FluentSource(Source):
+    """Declare a Fluent source translation to be copied over.
+
+    When evaluated, it clones the Pattern of the parsed source.
+    """
+    def __init__(self, path, key):
+        if not path.endswith('.ftl'):
+            raise NotSupportedError(
+                'Please use COPY to migrate from legacy files '
+                '({})'.format(path)
+            )
+        if key[0] == '-' and '.' in key:
+            raise NotSupportedError(
+                'Cannot migrate from Term Attributes, as they are'
+                'locale-dependent ({})'.format(path)
+            )
+        super(FluentSource, self).__init__(path, key)
+
+    def __call__(self, ctx):
+        pattern = ctx.get_fluent_source_pattern(self.path, self.key)
+        return pattern.clone()
+
+
+class COPY_PATTERN(FluentSource):
+    """Create a Pattern with the translation value from the given source.
+
+    The given key can be a Message ID, Message ID.attribute_name, or
+    Term ID. Accessing Term attributes is not supported, as they're internal
+    to the localization.
+    """
+    pass
+
+
+class LegacySource(Source):
     """Declare the source translation to be migrated with other transforms.
 
     When evaluated, `Source` returns a TextElement with the content from the
@@ -213,15 +258,14 @@ class Source(Transform):
     def __init__(self, path, key, trim=False):
         if path.endswith('.ftl'):
             raise NotSupportedError(
-                'Migrating translations from Fluent files is not supported '
+                'Please use COPY_PATTERN to migrate from Fluent files '
                 '({})'.format(path))
 
-        self.path = path
-        self.key = key
+        super(LegacySource, self).__init__(path, key)
         self.trim = trim
 
     def get_text(self, ctx):
-        return ctx.get_source(self.path, self.key)
+        return ctx.get_legacy_source(self.path, self.key)
 
     @staticmethod
     def trim_text(text):
@@ -240,7 +284,7 @@ class Source(Transform):
         return FTL.TextElement(text)
 
 
-class COPY(Source):
+class COPY(LegacySource):
     """Create a Pattern with the translation value from the given source."""
 
     def __call__(self, ctx):
@@ -343,7 +387,7 @@ class REPLACE_IN_TEXT(Transform):
         return Transform.pattern_of(*elements)
 
 
-class REPLACE(Source):
+class REPLACE(LegacySource):
     """Create a Pattern with interpolations from given source.
 
     Interpolations in the translation value from the given source will be
@@ -366,7 +410,7 @@ class REPLACE(Source):
         )(ctx)
 
 
-class PLURALS(Source):
+class PLURALS(LegacySource):
     """Create a Pattern with plurals from given source.
 
     Build an `FTL.SelectExpression` with the supplied `selector` and variants

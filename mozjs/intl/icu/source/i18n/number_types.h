@@ -17,13 +17,16 @@
 #include "unicode/platform.h"
 #include "unicode/uniset.h"
 #include "standardplural.h"
+#include "formatted_string_builder.h"
 
-U_NAMESPACE_BEGIN namespace number {
+U_NAMESPACE_BEGIN
+namespace number {
 namespace impl {
 
-// Typedef several enums for brevity and for easier comparison to Java.
+// For convenience and historical reasons, import the Field typedef to the namespace.
+typedef FormattedStringBuilder::Field Field;
 
-typedef UNumberFormatFields Field;
+// Typedef several enums for brevity and for easier comparison to Java.
 
 typedef UNumberFormatRoundingMode RoundingMode;
 
@@ -45,7 +48,6 @@ static constexpr char16_t kFallbackPaddingString[] = u" ";
 class Modifier;
 class MutablePatternModifier;
 class DecimalQuantity;
-class NumberStringBuilder;
 class ModifierStore;
 struct MicroProps;
 
@@ -87,6 +89,12 @@ enum AffixPatternType {
 
 enum CompactType {
     TYPE_DECIMAL, TYPE_CURRENCY
+};
+
+enum Signum {
+    SIGNUM_NEG = -1,
+    SIGNUM_ZERO = 0,
+    SIGNUM_POS = 1
 };
 
 
@@ -156,7 +164,7 @@ class U_I18N_API Modifier {
      *            formatted.
      * @return The number of characters (UTF-16 code units) that were added to the string builder.
      */
-    virtual int32_t apply(NumberStringBuilder& output, int leftIndex, int rightIndex,
+    virtual int32_t apply(FormattedStringBuilder& output, int leftIndex, int rightIndex,
                           UErrorCode& status) const = 0;
 
     /**
@@ -192,11 +200,11 @@ class U_I18N_API Modifier {
      */
     struct U_I18N_API Parameters {
         const ModifierStore* obj = nullptr;
-        int8_t signum;
+        Signum signum;
         StandardPlural::Form plural;
 
         Parameters();
-        Parameters(const ModifierStore* _obj, int8_t _signum, StandardPlural::Form _plural);
+        Parameters(const ModifierStore* _obj, Signum _signum, StandardPlural::Form _plural);
     };
 
     /**
@@ -227,7 +235,7 @@ class U_I18N_API ModifierStore {
     /**
      * Returns a Modifier with the given parameters (best-effort).
      */
-    virtual const Modifier* getModifier(int8_t signum, StandardPlural::Form plural) const = 0;
+    virtual const Modifier* getModifier(Signum signum, StandardPlural::Form plural) const = 0;
 };
 
 
@@ -345,6 +353,7 @@ class U_I18N_API NullableValue {
     bool fNull;
     T fValue;
 };
+
 
 } // namespace impl
 } // namespace number

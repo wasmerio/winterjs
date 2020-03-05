@@ -9,6 +9,7 @@
 
 #include "vm/ArrayObject.h"
 
+#include "gc/Allocator.h"
 #include "gc/GCTrace.h"
 #include "vm/StringType.h"
 
@@ -35,13 +36,15 @@ inline void ArrayObject::setLength(JSContext* cx, uint32_t length) {
 /* static */ inline ArrayObject* ArrayObject::createArrayInternal(
     JSContext* cx, gc::AllocKind kind, gc::InitialHeap heap, HandleShape shape,
     HandleObjectGroup group, AutoSetNewObjectMetadata&) {
-  const js::Class* clasp = group->clasp();
+  const JSClass* clasp = group->clasp();
   MOZ_ASSERT(shape && group);
   MOZ_ASSERT(clasp == shape->getObjectClass());
   MOZ_ASSERT(clasp == &ArrayObject::class_);
   MOZ_ASSERT_IF(clasp->hasFinalize(), heap == gc::TenuredHeap);
   MOZ_ASSERT_IF(group->hasUnanalyzedPreliminaryObjects(),
                 heap == js::gc::TenuredHeap);
+  MOZ_ASSERT_IF(group->shouldPreTenureDontCheckGeneration(),
+                heap == gc::TenuredHeap);
 
   // Arrays can use their fixed slots to store elements, so can't have shapes
   // which allow named properties to be stored in the fixed slots.

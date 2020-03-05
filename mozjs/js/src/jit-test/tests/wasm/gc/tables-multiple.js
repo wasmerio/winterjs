@@ -16,20 +16,20 @@ var ins = wasmEvalText(
       (table $t1 2 funcref)
       (table $t2 2 funcref)
       (type $ftype (func (param i32) (result i32)))
-      (elem $t1 (i32.const 0) $f1 $f2)
-      (elem $t2 (i32.const 0) $f3 $f4)
+      (elem $t1 (i32.const 0) func $f1 $f2)
+      (elem $t2 (i32.const 0) func $f3 $f4)
       (func $f1 (param $n i32) (result i32)
-       (i32.add (get_local $n) (i32.const 1)))
+       (i32.add (local.get $n) (i32.const 1)))
       (func $f2 (param $n i32) (result i32)
-       (i32.add (get_local $n) (i32.const 2)))
+       (i32.add (local.get $n) (i32.const 2)))
       (func $f3 (param $n i32) (result i32)
-       (i32.add (get_local $n) (i32.const 3)))
+       (i32.add (local.get $n) (i32.const 3)))
       (func $f4 (param $n i32) (result i32)
-       (i32.add (get_local $n) (i32.const 4)))
+       (i32.add (local.get $n) (i32.const 4)))
       (func (export "f") (param $fn i32) (param $n i32) (result i32)
-       (call_indirect $t1 $ftype (get_local $n) (get_local $fn)))
+       (call_indirect $t1 $ftype (local.get $n) (local.get $fn)))
       (func (export "g") (param $fn i32) (param $n i32) (result i32)
-       (call_indirect $t2 $ftype (get_local $n) (get_local $fn))))`).exports;
+       (call_indirect $t2 $ftype (local.get $n) (local.get $fn))))`).exports;
 
 assertEq(ins.f(0, 10), 11);
 assertEq(ins.f(1, 10), 12);
@@ -64,26 +64,26 @@ var ins = wasmEvalText(
     `(module
       (table $t0 (import "m" "t0") 2 funcref)
       (type $id_i32_t (func (param i32) (result i32)))
-      (func $id_i32 (param i32) (result i32) (get_local 0))
-      (elem $t0 (i32.const 1) $id_i32)
+      (func $id_i32 (param i32) (result i32) (local.get 0))
+      (elem $t0 (i32.const 1) func $id_i32)
 
       (table $t1 (import "m" "t1") 3 anyref)
 
       (table $t2 (import "m" "t2") 4 funcref)
       (type $id_f64_t (func (param f64) (result f64)))
-      (func $id_f64 (param f64) (result f64) (get_local 0))
-      (elem $t2 (i32.const 3) $id_f64)
+      (func $id_f64 (param f64) (result f64) (local.get 0))
+      (elem $t2 (i32.const 3) func $id_f64)
 
       (table $t3 (import "m" "t3") 5 anyref)
 
       (func (export "f0") (param i32) (result i32)
-       (call_indirect $t0 $id_i32_t (get_local 0) (i32.const 1)))
+       (call_indirect $t0 $id_i32_t (local.get 0) (i32.const 1)))
 
       (func (export "f1") (param anyref)
-       (table.set $t1 (i32.const 2) (get_local 0)))
+       (table.set $t1 (i32.const 2) (local.get 0)))
 
       (func (export "f2") (param f64) (result f64)
-       (call_indirect $t2 $id_f64_t (get_local 0) (i32.const 3)))
+       (call_indirect $t2 $id_f64_t (local.get 0) (i32.const 3)))
 
       (func (export "f3")
        (table.set $t3 (i32.const 4) (table.get $t1 (i32.const 2)))))`,
@@ -112,7 +112,7 @@ var ins = wasmEvalText(
       (table $t0 (import "m" "t0") 2 anyref)
       (table $t1 (import "m" "t1") 3 anyref)
       (func (export "f") (result i32)
-       (table.grow $t1 (i32.const 5) (ref.null)))
+       (table.grow $t1 (ref.null) (i32.const 5)))
       (func (export "size0") (result i32)
        (table.size $t0))
       (func (export "size1") (result i32)
@@ -133,7 +133,7 @@ var ins = wasmEvalText(
       (table $t0 (import "m" "t0") 2 anyref)
       (table $t1 (import "m" "t1") 3 anyref)
       (func (export "f") (param $dest i32) (param $src i32) (param $len i32)
-       (table.copy $t1 (get_local $dest) $t0 (get_local $src) (get_local $len))))`,
+       (table.copy $t1 (local.get $dest) $t0 (local.get $src) (local.get $len))))`,
     exp);
 
 exp.m.t0.set(0, {x:0});
@@ -149,14 +149,14 @@ var ins = wasmEvalText(
       (table $t0 2 anyref)
       (table $t1 2 anyref)
       (func (export "copy") (param $dest i32) (param $src i32) (param $len i32)
-       get_local $dest
-       get_local $src
-       get_local $len
+       local.get $dest
+       local.get $src
+       local.get $len
        table.copy $t1 $t0)
       (func (export "set") (param $n i32) (param $v anyref)
-       (table.set $t0 (get_local $n) (get_local $v)))
+       (table.set $t0 (local.get $n) (local.get $v)))
       (func (export "get") (param $n i32) (result anyref)
-       (table.get $t1 (get_local $n))))`,
+       (table.get $t1 (local.get $n))))`,
     exp);
 
 var values = [{x:0}, {x:1}];
@@ -188,8 +188,8 @@ for (let [x,y,result,init] of [['(export "t")', '', arg*13, true],
           (table $t (export "t") 2 funcref)
           (type $fn1 (func (param i32) (result i32)))
           (func $f1 (param $n i32) (result i32)
-           (i32.sub (get_local $n) (i32.const 11)))
-          (elem $t (i32.const 1) $f1))`);
+           (i32.sub (local.get $n) (i32.const 11)))
+          (elem $t (i32.const 1) func $f1))`);
 
     let text =
         `(module
@@ -198,12 +198,12 @@ for (let [x,y,result,init] of [['(export "t")', '', arg*13, true],
           (table $t1 ${y} 2 funcref)
           (type $fn1 (func (param i32) (result i32)))
           (func $f1 (param $n i32) (result i32)
-           (i32.mul (get_local $n) (i32.const 13)))
-          ${init ? "(elem $t1 (i32.const 1) $f1)" : ""}
+           (i32.mul (local.get $n) (i32.const 13)))
+          ${init ? "(elem $t1 (i32.const 1) func $f1)" : ""}
 
           (func (export "f") (param $n i32) (result i32)
            (table.copy $t0 (i32.const 0) $t1 (i32.const 0) (i32.const 2))
-           (call_indirect $t0 $fn1 (get_local $n) (i32.const 1))))`;
+           (call_indirect $t0 $fn1 (local.get $n) (i32.const 1))))`;
     var ins = wasmEvalText(text, {m: otherins.exports});
 
     assertEq(ins.exports.f(arg), result);
@@ -223,9 +223,9 @@ var ins = wasmEvalText(
       (import $t1 "m" "t1" (table 1 anyref))
       (table $t2 (export "t2") 1 funcref)
       (func (export "f") (result i32)
-       (table.grow $t0 (i32.const 1) (ref.null)))
+       (table.grow $t0 (ref.null) (i32.const 1)))
       (func (export "g") (result i32)
-       (table.grow $t1 (i32.const 1) (ref.null)))
+       (table.grow $t1 (ref.null) (i32.const 1)))
       (func (export "size") (result i32)
        (table.size $t2)))`,
     exp);
@@ -244,14 +244,14 @@ var ins = wasmEvalText(
     `(module
       (table $t0 2 funcref)
       (table $t1 2 funcref)
-      (elem passive $f0 $f1) ;; 0
+      (elem func $f0 $f1) ;; 0
       (type $ftype (func (param i32) (result i32)))
       (func $f0 (param i32) (result i32)
-       (i32.mul (get_local 0) (i32.const 13)))
+       (i32.mul (local.get 0) (i32.const 13)))
       (func $f1 (param i32) (result i32)
-       (i32.sub (get_local 0) (i32.const 11)))
+       (i32.sub (local.get 0) (i32.const 11)))
       (func (export "call") (param i32) (param i32) (result i32)
-       (call_indirect $t1 $ftype (get_local 1) (get_local 0)))
+       (call_indirect $t1 $ftype (local.get 1) (local.get 0)))
       (func (export "init")
        (table.init $t1 0 (i32.const 0) (i32.const 0) (i32.const 2))))`);
 
@@ -277,11 +277,11 @@ var ins = wasmEvalText(
       (import "m" "t1" (table $t1 2 funcref))
       (type $ftype (func (param f64) (result f64)))
       (func (export "f") (param $n f64) (result f64)
-       (f64.mul (get_local $n) (f64.const 3.25)))
+       (f64.mul (local.get $n) (f64.const 3.25)))
       (func (export "do0") (param $i i32) (param $n f64) (result f64)
-       (call_indirect $t0 $ftype (get_local $n) (get_local $i)))
+       (call_indirect $t0 $ftype (local.get $n) (local.get $i)))
       (func (export "do1") (param $i i32) (param $n f64) (result f64)
-       (call_indirect $t1 $ftype (get_local $n) (get_local $i))))`,
+       (call_indirect $t1 $ftype (local.get $n) (local.get $i))))`,
     exp);
 var ins2 = wasmEvalText(
     `(module
@@ -289,9 +289,9 @@ var ins2 = wasmEvalText(
       (import "m" "t1" (table $t1 2 funcref))
       (type $ftype (func (param f64) (result f64)))
       (func (export "do0") (param $i i32) (param $n f64) (result f64)
-       (call_indirect $t0 $ftype (get_local $n) (get_local $i)))
+       (call_indirect $t0 $ftype (local.get $n) (local.get $i)))
       (func (export "do1") (param $i i32) (param $n f64) (result f64)
-       (call_indirect $t1 $ftype (get_local $n) (get_local $i))))`,
+       (call_indirect $t1 $ftype (local.get $n) (local.get $i))))`,
     exp);
 
 assertEq(tbl.grow(10), 2);
@@ -333,7 +333,7 @@ assertErrorMessage(() => wasmEvalText(
       (table $t0 2 anyref)
       (table $t1 2 anyref)
       (func $f (param anyref)
-       (table.set 2 (i32.const 0) (get_local 0))))`),
+       (table.set 2 (i32.const 0) (local.get 0))))`),
                    WebAssembly.CompileError,
                    /table index out of range for table.set/);
 
@@ -369,14 +369,14 @@ assertErrorMessage(() => wasmEvalText(
       (table $t0 2 anyref)
       (table $t1 2 anyref)
       (func $f (result i32)
-       (table.grow 2 (i32.const 1) (ref.null))))`),
+       (table.grow 2 (ref.null) (i32.const 1))))`),
                    WebAssembly.CompileError,
                    /table index out of range for table.grow/);
 
 assertErrorMessage(() => wasmEvalText(
     `(module
       (table $t0 2 funcref)
-      (elem passive) ;; 0
+      (elem func) ;; 0
       (func $f (result i32)
        (table.init 2 0 (i32.const 0) (i32.const 0) (i32.const 0))))`),
                    WebAssembly.CompileError,
@@ -385,7 +385,7 @@ assertErrorMessage(() => wasmEvalText(
 assertErrorMessage(() => wasmEvalText(
     `(module
       (table $t0 2 funcref)
-      (elem 2 (i32.const 0)))`),
+      (elem 2 (i32.const 0) func))`),
                    WebAssembly.CompileError,
                    /table index out of range for element segment/);
 
@@ -403,14 +403,7 @@ assertErrorMessage(() => wasmEvalText(
 assertErrorMessage(() => wasmEvalText(
     `(module
       (table $t0 2 funcref)
-      (elem 0 passive (i32.const 0)))`),
-                   SyntaxError,
-                   /passive segment must not have a table/);
-
-assertErrorMessage(() => wasmEvalText(
-    `(module
-      (table $t0 2 funcref)
-      (elem passive) ;; 0
+      (elem func) ;; 0
       (func $f (result i32)
        (table.init $t0 (i32.const 0) (i32.const 0) (i32.const 0))))`), // no segment
                    SyntaxError,
@@ -434,3 +427,51 @@ assertErrorMessage(() => wasmEvalText(
                    SyntaxError,
                    /parsing wasm text/);
 
+// Make sure that dead code doesn't prevent compilation.
+wasmEvalText(
+    `(module
+       (table (export "t") 10 anyref)
+       (func (param i32)
+         (return)
+         (table.get (get_local 0))
+         (drop)
+        )
+    )`);
+
+wasmEvalText(
+    `(module
+       (table (export "t") 10 anyref)
+       (func (param i32) (param i32)
+         (return)
+         (table.grow (get_local 1))
+         (drop)
+        )
+    )`);
+
+wasmEvalText(
+    `(module
+       (table (export "t") 10 anyref)
+       (func (param i32) (param anyref)
+         (return)
+         (table.set (get_local 0) (get_local 1))
+        )
+    )`);
+
+wasmEvalText(
+    `(module
+       (table (export "t") 10 anyref)
+       (func
+         (return)
+         (table.size)
+         (drop)
+        )
+    )`);
+
+wasmEvalText(
+    `(module
+       (table (export "t") 10 anyref)
+       (func
+         (return)
+         (table.copy (i32.const 0) (i32.const 1))
+        )
+    )`);

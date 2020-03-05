@@ -11,7 +11,10 @@ import platform
 import subprocess
 import sys
 import uuid
-import __builtin__
+if sys.version_info[0] < 3:
+    import __builtin__ as builtins
+else:
+    import builtins
 
 from types import ModuleType
 
@@ -37,16 +40,21 @@ MACH_MODULES = [
     'devtools/shared/css/generated/mach_commands.py',
     'dom/bindings/mach_commands.py',
     'layout/tools/reftest/mach_commands.py',
-    'python/mach_commands.py',
-    'python/safety/mach_commands.py',
+    'mobile/android/mach_commands.py',
     'python/mach/mach/commands/commandinfo.py',
     'python/mach/mach/commands/settings.py',
+    'python/mach_commands.py',
     'python/mozboot/mozboot/mach_commands.py',
-    'python/mozbuild/mozbuild/mach_commands.py',
+    'python/mozbuild/mozbuild/artifact_commands.py',
     'python/mozbuild/mozbuild/backend/mach_commands.py',
+    'python/mozbuild/mozbuild/build_commands.py',
+    'python/mozbuild/mozbuild/code-analysis/mach_commands.py',
     'python/mozbuild/mozbuild/compilation/codecomplete.py',
     'python/mozbuild/mozbuild/frontend/mach_commands.py',
+    'python/mozbuild/mozbuild/mach_commands.py',
     'python/mozrelease/mozrelease/mach_commands.py',
+    'python/safety/mach_commands.py',
+    'remote/mach_commands.py',
     'taskcluster/mach_commands.py',
     'testing/awsy/mach_commands.py',
     'testing/firefox-ui/mach_commands.py',
@@ -56,18 +64,19 @@ MACH_MODULES = [
     'testing/mochitest/mach_commands.py',
     'testing/mozharness/mach_commands.py',
     'testing/raptor/mach_commands.py',
-    'testing/tps/mach_commands.py',
     'testing/talos/mach_commands.py',
+    'testing/tps/mach_commands.py',
     'testing/web-platform/mach_commands.py',
     'testing/xpcshell/mach_commands.py',
     'toolkit/components/telemetry/tests/marionette/mach_commands.py',
+    'tools/browsertime/mach_commands.py',
     'tools/compare-locales/mach_commands.py',
     'tools/docs/mach_commands.py',
     'tools/lint/mach_commands.py',
     'tools/mach_commands.py',
     'tools/power/mach_commands.py',
     'tools/tryselect/mach_commands.py',
-    'mobile/android/mach_commands.py',
+    'tools/vcs/mach_commands.py',
 ]
 
 
@@ -166,11 +175,12 @@ def bootstrap(topsrcdir, mozilla_dir=None):
     if mozilla_dir is None:
         mozilla_dir = topsrcdir
 
-    # Ensure we are running Python 2.7+. We put this check here so we generate a
-    # user-friendly error message rather than a cryptic stack trace on module
-    # import.
-    if sys.version_info[0] != 2 or sys.version_info[1] < 7:
-        print('Python 2.7 or above (but not Python 3) is required to run mach.')
+    # Ensure we are running Python 2.7 or 3.5+. We put this check here so we
+    # generate a user-friendly error message rather than a cryptic stack trace
+    # on module import.
+    major, minor = sys.version_info[:2]
+    if (major == 2 and minor < 7) or (major == 3 and minor < 5):
+        print('Python 2.7 or Python 3.5+ is required to run mach.')
         print('You are running Python', platform.python_version())
         sys.exit(1)
 
@@ -187,6 +197,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
                                              'build/virtualenv_packages.txt')]
     import mach.base
     import mach.main
+    from mach.util import setenv
     from mozboot.util import get_state_dir
 
     from mozbuild.util import patch_main
@@ -203,6 +214,28 @@ def bootstrap(topsrcdir, mozilla_dir=None):
         except (mozversioncontrol.InvalidRepoPath,
                 mozversioncontrol.MissingVCSTool):
             return None
+
+    def pre_dispatch_handler(context, handler, args):
+        # If --disable-tests flag was enabled in the mozconfig used to compile
+        # the build, tests will be disabled. Instead of trying to run
+        # nonexistent tests then reporting a failure, this will prevent mach
+        # from progressing beyond this point.
+        if handler.category == 'testing':
+            from mozbuild.base import BuildEnvironmentNotFoundException
+            try:
+                from mozbuild.base import MozbuildObject
+                # all environments should have an instance of build object.
+                build = MozbuildObject.from_environment()
+                if build is not None and hasattr(build, 'mozconfig'):
+                    ac_options = build.mozconfig['configure_args']
+                    if ac_options and '--disable-tests' in ac_options:
+                        print('Tests have been disabled by mozconfig with the flag ' +
+                              '"ac_add_options --disable-tests".\n' +
+                              'Remove the flag, and re-compile to enable tests.')
+                        sys.exit(1)
+            except BuildEnvironmentNotFoundException:
+                # likely automation environment, so do nothing.
+                pass
 
     def should_skip_telemetry_submission(handler):
         # The user is performing a maintenance command.
@@ -250,6 +283,8 @@ def bootstrap(topsrcdir, mozilla_dir=None):
         except Exception:
             substs = {}
 
+        command_attrs = getattr(context, 'command_attrs', {})
+
         # We gather telemetry for every operation.
         paths = {
             instance.topsrcdir: '$topsrcdir/',
@@ -263,7 +298,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
         data = gather_telemetry(command=handler.name, success=(result == 0),
                                 start_time=start_time, end_time=end_time,
                                 mach_context=context, substs=substs,
-                                paths=paths)
+                                command_attrs=command_attrs, paths=paths)
         if data:
             telemetry_dir = os.path.join(get_state_dir(), 'telemetry')
             try:
@@ -326,6 +361,9 @@ def bootstrap(topsrcdir, mozilla_dir=None):
         if key == 'topdir':
             return topsrcdir
 
+        if key == 'pre_dispatch_handler':
+            return pre_dispatch_handler
+
         if key == 'post_dispatch_handler':
             return post_dispatch_handler
 
@@ -337,7 +375,7 @@ def bootstrap(topsrcdir, mozilla_dir=None):
     # Note which process is top-level so that recursive mach invocations can avoid writing
     # telemetry data.
     if 'MACH_MAIN_PID' not in os.environ:
-        os.environ[b'MACH_MAIN_PID'] = str(os.getpid()).encode('ascii')
+        setenv('MACH_MAIN_PID', str(os.getpid()))
 
     driver = mach.main.Mach(os.getcwd())
     driver.populate_context_handler = populate_context
@@ -382,6 +420,9 @@ class ImportHook(object):
 
     def __call__(self, name, globals=None, locals=None, fromlist=None,
                  level=-1):
+        if sys.version_info[0] >= 3 and level < 0:
+            level = 0
+
         # name might be a relative import. Instead of figuring out what that
         # resolves to, which is complex, just rely on the real import.
         # Since we don't know the full module name, we can't check sys.modules,
@@ -399,7 +440,7 @@ class ImportHook(object):
         self._modules.add(resolved_name)
 
         # Builtin modules don't have a __file__ attribute.
-        if not hasattr(module, '__file__'):
+        if not getattr(module, '__file__', None):
             return module
 
         # Note: module.__file__ is not always absolute.
@@ -431,4 +472,4 @@ class ImportHook(object):
 
 
 # Install our hook
-__builtin__.__import__ = ImportHook(__builtin__.__import__)
+builtins.__import__ = ImportHook(builtins.__import__)

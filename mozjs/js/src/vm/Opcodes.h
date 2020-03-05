@@ -616,10 +616,10 @@
      *
      *   Category: Literals
      *   Type: Constants
-     *   Operands: uint32_t constIndex
+     *   Operands: DoubleValue literal
      *   Stack: => val
      */ \
-    MACRO(JSOP_DOUBLE, 60, "double", NULL, 5, 0, 1, JOF_DOUBLE) \
+    MACRO(JSOP_DOUBLE, 60, "double", NULL, 9, 0, 1, JOF_DOUBLE) \
     /*
      * Pushes string constant onto the stack.
      *
@@ -901,7 +901,10 @@
      * Pushes newly created object onto the stack.
      *
      * This opcode takes an object with the final shape, which can be set at
-     * the start and slots then filled in directly.
+     * the start and slots then filled in directly. We compute a group based on
+     * allocation site (or new group if the template's group is a singleton);
+     * see JSOP_NEWOBJECT_WITHGROUP for a variant that uses the same group as
+     * the template object.
      *
      *   Category: Literals
      *   Type: Object
@@ -1076,17 +1079,8 @@
      */ \
     MACRO(JSOP_STRICTSETPROP_SUPER, 105, "strictsetprop-super", NULL, 5, 3, 1, JOF_ATOM|JOF_PROP|JOF_PROPSET|JOF_DETECTING|JOF_CHECKSTRICT) \
     /*
-     * This opcode precedes every labeled statement. It's a no-op.
-     *
-     * 'offset' is the offset to the next instruction after this statement, the
-     * one 'break LABEL;' would jump to. IonMonkey uses this.
-     *
-     *   Category: Statements
-     *   Type: Jumps
-     *   Operands: int32_t offset
-     *   Stack: =>
      */ \
-    MACRO(JSOP_LABEL, 106, "label", NULL, 5, 0, 0, JOF_CODE_OFFSET) \
+    MACRO(JSOP_UNUSED106, 106, "unused", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Pops the top three values on the stack as 'val', 'obj' and 'receiver',
      * and performs 'obj.prop = val', pushing 'val' back onto the stack.
@@ -1242,40 +1236,8 @@
      */ \
     MACRO(JSOP_LINENO, 119, "lineno", NULL, 5, 0, 0, JOF_UINT32) \
     /*
-     * This no-op appears after the bytecode for EXPR in 'switch (EXPR) {...}'
-     * if the switch cannot be optimized using JSOP_TABLESWITCH.
-     *
-     * For a non-optimized switch statement like this:
-     *
-     *     switch (EXPR) {
-     *       case V0:
-     *         C0;
-     *       ...
-     *       default:
-     *         D;
-     *     }
-     *
-     * the bytecode looks like this:
-     *
-     *     (EXPR)
-     *     condswitch
-     *     (V0)
-     *     case ->C0
-     *     ...
-     *     default ->D
-     *     (C0)
-     *     ...
-     *     (D)
-     *
-     * Note that code for all case-labels is emitted first, then code for the
-     * body of each case clause.
-     *
-     *   Category: Statements
-     *   Type: Switch Statement
-     *   Operands:
-     *   Stack: =>
      */ \
-    MACRO(JSOP_CONDSWITCH, 120, "condswitch", NULL, 1, 0, 0, JOF_BYTE) \
+    MACRO(JSOP_UNUSED120, 120, "unused", NULL, 1, 0, 0, JOF_BYTE) \
     /*
      * Pops the top two values on the stack as 'val' and 'cond'. If 'cond' is
      * 'true', jumps to a 32-bit offset from the current bytecode, re-pushes
@@ -1989,6 +1951,7 @@
     MACRO(JSOP_UNPICK, 183, "unpick", NULL, 2, 0, 0, JOF_UINT8) \
     /*
      * Pops the top of stack value, pushes property of it onto the stack.
+     * Requires the value under 'obj' to be the receiver of the following call.
      *
      * Like JSOP_GETPROP but for call context.
      *
@@ -2083,7 +2046,8 @@
     MACRO(JSOP_ASYNCRESOLVE, 192, "async-resolve", NULL, 2, 2, 1, JOF_UINT8) \
     /*
      * Pops the top two values on the stack as 'propval' and 'obj', pushes
-     * 'propval' property of 'obj' onto the stack.
+     * 'propval' property of 'obj' onto the stack. Requires the value under
+     * 'obj' to be the receiver of the following call.
      *
      * Like JSOP_GETELEM but for call context.
      *
@@ -2235,7 +2199,8 @@
     MACRO(JSOP_ENVCALLEE, 206, "envcallee", NULL, 2, 0, 1, JOF_UINT8) \
     /*
      * No-op bytecode only emitted in some self-hosted functions. Not handled
-     * by the JITs so the script always runs in the interpreter.
+     * by the JITs or Baseline Interpreter so the script always runs in the C++
+     * interpreter.
      *
      *   Category: Other
      *   Operands:
@@ -2243,15 +2208,17 @@
      */ \
     MACRO(JSOP_FORCEINTERPRETER, 207, "forceinterpreter", NULL, 1, 0, 0, JOF_BYTE) \
     /*
-     * Bytecode emitted after 'yield' expressions to help the Debugger fix up
-     * the frame in the JITs. No-op in the interpreter.
+     * Bytecode emitted after 'yield' expressions. This is useful for the
+     * Debugger and AbstractGeneratorObject::isAfterYieldOrAwait. It's treated
+     * as jump target op so that the Baseline Interpreter can efficiently
+     * restore the frame's interpreterICEntry when resuming a generator.
      *
-     *   Category: Operators
-     *   Type: Debugger
-     *   Operands:
+     *   Category: Statements
+     *   Type: Generator
+     *   Operands: uint32_t icIndex
      *   Stack: =>
      */ \
-    MACRO(JSOP_DEBUGAFTERYIELD, 208, "debugafteryield", NULL, 1, 0, 0, JOF_BYTE) \
+    MACRO(JSOP_AFTERYIELD, 208, "afteryield", NULL, 5, 0, 0, JOF_ICINDEX) \
     /*
      * Pops the generator and the return value 'promise', stops interpretation
      * and returns 'promise'. Pushes resolved value onto the stack.
@@ -2451,7 +2418,7 @@
      *   Operands: uint32_t icIndex, uint8_t BITFIELD
      *   Stack: =>
      */ \
-    MACRO(JSOP_LOOPENTRY, 227, "loopentry", NULL, 6, 0, 0, JOF_LOOPENTRY|JOF_IC) \
+    MACRO(JSOP_LOOPENTRY, 227, "loopentry", NULL, 6, 0, 0, JOF_LOOPENTRY) \
     /*
      * Converts the value on the top of the stack to a String.
      *
@@ -2542,7 +2509,53 @@
      *   Operands: uint32_t constIndex
      *   Stack: => val
      */ \
-    MACRO(JSOP_BIGINT, 237, "bigint", NULL, 5, 0, 1, JOF_BIGINT)
+    MACRO(JSOP_BIGINT, 237, "bigint", NULL, 5, 0, 1, JOF_BIGINT) \
+    /*
+     * Pushes a boolean indicating if instrumentation is active.
+     *   Category: Other
+     *   Operands:
+     *   Stack: => val
+     */ \
+    MACRO(JSOP_INSTRUMENTATION_ACTIVE, 238, "instrumentationActive", NULL, 1, 0, 1, JOF_BYTE) \
+    /*
+     * Pushes the instrumentation callback for the current realm.
+     *   Category: Other
+     *   Operands:
+     *   Stack: => val
+     */ \
+    MACRO(JSOP_INSTRUMENTATION_CALLBACK, 239, "instrumentationCallback", NULL, 1, 0, 1, JOF_BYTE) \
+    /*
+     * Pushes the current script's instrumentation ID.
+     *   Category: Other
+     *   Operands:
+     *   Stack: => val
+     */ \
+    MACRO(JSOP_INSTRUMENTATION_SCRIPT_ID, 240, "instrumentationScriptId", NULL, 1, 0, 1, JOF_BYTE) \
+    /*
+     * If the value on top of the stack is not null or undefined, jumps to a 32-bit offset from the
+     * current bytecode.
+     *
+     *   Category: Statements
+     *   Type: Jumps
+     *   Operands: int32_t offset
+     *   Stack: cond => cond
+     */ \
+    MACRO(JSOP_COALESCE, 241, "coalesce", NULL, 5, 1, 1, JOF_JUMP|JOF_DETECTING) \
+    /*
+     * Pushes newly created object onto the stack.
+     *
+     * This opcode takes an object with the final shape, which can be set at
+     * the start and slots then filled in directly. Uses the group from the
+     * template object; see JSOP_NEWOBJECT for a variant with different
+     * heuristics.
+     *
+     *   Category: Literals
+     *   Type: Object
+     *   Operands: uint32_t baseobjIndex
+     *   Stack: => obj
+     */ \
+    MACRO(JSOP_NEWOBJECT_WITHGROUP, 242, "newobjectwithgroup", NULL, 5, 0, 1, JOF_OBJECT|JOF_IC)
+
 // clang-format on
 
 /*
@@ -2550,11 +2563,6 @@
  * a power of two.  Use this macro to do so.
  */
 #define FOR_EACH_TRAILING_UNUSED_OPCODE(MACRO) \
-  MACRO(238)                                   \
-  MACRO(239)                                   \
-  MACRO(240)                                   \
-  MACRO(241)                                   \
-  MACRO(242)                                   \
   MACRO(243)                                   \
   MACRO(244)                                   \
   MACRO(245)                                   \

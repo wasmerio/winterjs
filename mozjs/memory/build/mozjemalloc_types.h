@@ -56,11 +56,14 @@ typedef MALLOC_USABLE_SIZE_CONST_PTR void* usable_ptr_t;
 
 typedef size_t arena_id_t;
 
+#define ARENA_FLAG_RANDOMIZE_SMALL 1
+
 typedef struct arena_params_s {
   size_t mMaxDirty;
+  uint32_t mFlags;
 
 #ifdef __cplusplus
-  arena_params_s() : mMaxDirty(0) {}
+  arena_params_s() : mMaxDirty(0), mFlags(0) {}
 #endif
 } arena_params_t;
 
@@ -94,26 +97,21 @@ typedef struct {
 
 enum PtrInfoTag {
   // The pointer is not currently known to the allocator.
-  // 'addr' and 'size' are always 0.
+  // 'addr', 'size', and 'arenaId' are always 0.
   TagUnknown,
 
   // The pointer is within a live allocation.
-  // 'addr' and 'size' describe the allocation.
-  TagLiveSmall,
-  TagLiveLarge,
-  TagLiveHuge,
+  // 'addr', 'size', and 'arenaId' describe the allocation.
+  TagLiveAlloc,
 
   // The pointer is within a small freed allocation.
-  // 'addr' and 'size' describe the allocation.
-  TagFreedSmall,
+  // 'addr', 'size', and 'arenaId' describe the allocation.
+  TagFreedAlloc,
 
   // The pointer is within a freed page. Details about the original
   // allocation, including its size, are not available.
-  // 'addr' and 'size' describe the page.
-  TagFreedPageDirty,
-  TagFreedPageDecommitted,
-  TagFreedPageMadvised,
-  TagFreedPageZeroed,
+  // 'addr', 'size', and 'arenaId' describe the page.
+  TagFreedPage,
 };
 
 // The information in jemalloc_ptr_info_t could be represented in a variety of
@@ -121,27 +119,41 @@ enum PtrInfoTag {
 // - The number of fields is minimized.
 // - The 'tag' field unambiguously defines the meaning of the subsequent fields.
 // Helper functions are used to group together related categories of tags.
-typedef struct {
+typedef struct jemalloc_ptr_info_s {
   enum PtrInfoTag tag;
   void* addr;   // meaning depends on tag; see above
   size_t size;  // meaning depends on tag; see above
+
+#ifdef MOZ_DEBUG
+  arena_id_t arenaId;  // meaning depends on tag; see above
+#endif
+
+#ifdef __cplusplus
+  jemalloc_ptr_info_s() = default;
+  jemalloc_ptr_info_s(enum PtrInfoTag aTag, void* aAddr, size_t aSize,
+                      arena_id_t aArenaId)
+      : tag(aTag),
+        addr(aAddr),
+        size(aSize)
+#  ifdef MOZ_DEBUG
+        ,
+        arenaId(aArenaId)
+#  endif
+  {
+  }
+#endif
 } jemalloc_ptr_info_t;
 
 static inline bool jemalloc_ptr_is_live(jemalloc_ptr_info_t* info) {
-  return info->tag == TagLiveSmall || info->tag == TagLiveLarge ||
-         info->tag == TagLiveHuge;
+  return info->tag == TagLiveAlloc;
 }
 
 static inline bool jemalloc_ptr_is_freed(jemalloc_ptr_info_t* info) {
-  return info->tag == TagFreedSmall || info->tag == TagFreedPageDirty ||
-         info->tag == TagFreedPageDecommitted ||
-         info->tag == TagFreedPageMadvised || info->tag == TagFreedPageZeroed;
+  return info->tag == TagFreedAlloc || info->tag == TagFreedPage;
 }
 
 static inline bool jemalloc_ptr_is_freed_page(jemalloc_ptr_info_t* info) {
-  return info->tag == TagFreedPageDirty ||
-         info->tag == TagFreedPageDecommitted ||
-         info->tag == TagFreedPageMadvised || info->tag == TagFreedPageZeroed;
+  return info->tag == TagFreedPage;
 }
 
 #ifdef __cplusplus

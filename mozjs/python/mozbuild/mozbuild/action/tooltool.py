@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 
 # tooltool is a lookaside cache implemented in Python
 # Copyright (C) 2011 John H. Ford <john@johnford.info>
@@ -22,32 +22,87 @@
 # in which the manifest file resides and it should be called
 # 'manifest.tt'
 
+from __future__ import print_function
+from __future__ import absolute_import
+
+import base64
+import calendar
 import hashlib
-import httplib
+import hmac
 import json
 import logging
+import math
 import optparse
 import os
+import pprint
+import re
 import shutil
 import sys
 import tarfile
 import tempfile
 import threading
 import time
-import urllib2
-import urlparse
 import zipfile
 
+from io import open
+from io import BytesIO
 from subprocess import PIPE
 from subprocess import Popen
 
 __version__ = '1'
 
+# Allowed request header characters:
+# !#$%&'()*+,-./:;<=>?@[]^_`{|}~ and space, a-z, A-Z, 0-9, \, "
+REQUEST_HEADER_ATTRIBUTE_CHARS = re.compile(
+    r"^[ a-zA-Z0-9_\!#\$%&'\(\)\*\+,\-\./\:;<\=>\?@\[\]\^`\{\|\}~]*$")
 DEFAULT_MANIFEST_NAME = 'manifest.tt'
 TOOLTOOL_PACKAGE_SUFFIX = '.TOOLTOOL-PACKAGE'
+HAWK_VER = 1
+PY3 = sys.version_info[0] == 3
+
+if PY3:
+    open_attrs = dict(mode='w', encoding='utf-8')
+    six_binary_type = bytes
+    six_text_type = str
+    unicode = str  # Silence `pyflakes` from reporting `undefined name 'unicode'` in Python 3.
+    import urllib.request as urllib2
+    from http.client import HTTPSConnection, HTTPConnection
+    from urllib.parse import urlparse, urljoin
+    from urllib.request import Request
+    from urllib.error import HTTPError, URLError
+else:
+    open_attrs = dict(mode='wb')
+    six_binary_type = str
+    six_text_type = unicode
+    import urllib2
+    from httplib import HTTPSConnection, HTTPConnection
+    from urllib2 import Request, HTTPError, URLError
+    from urlparse import urlparse, urljoin
 
 
 log = logging.getLogger(__name__)
+
+
+def request_has_data(req):
+    if PY3:
+        return req.data is not None
+    return req.has_data()
+
+
+def to_binary(val):
+    if isinstance(val, six_text_type):
+        return val.encode('utf-8')
+    return val
+
+
+def to_text(val):
+    if isinstance(val, six_binary_type):
+        return val.decode('utf-8')
+    return val
+
+
+def get_hexdigest(val):
+    return hashlib.sha512(to_binary(val)).hexdigest()
 
 
 class FileRecordJSONEncoderException(Exception):
@@ -77,10 +132,207 @@ class MissingFileException(ExceptionWithFilename):
     pass
 
 
+class InvalidCredentials(Exception):
+    pass
+
+
+class BadHeaderValue(Exception):
+    pass
+
+
+def parse_url(url):
+    url_parts = urlparse(url)
+    url_dict = {
+        'scheme': url_parts.scheme,
+        'hostname': url_parts.hostname,
+        'port': url_parts.port,
+        'path': url_parts.path,
+        'resource': url_parts.path,
+        'query': url_parts.query,
+    }
+    if len(url_dict['query']) > 0:
+        url_dict['resource'] = '%s?%s' % (url_dict['resource'],  # pragma: no cover
+                                          url_dict['query'])
+
+    if url_parts.port is None:
+        if url_parts.scheme == 'http':
+            url_dict['port'] = 80
+        elif url_parts.scheme == 'https':  # pragma: no cover
+            url_dict['port'] = 443
+    return url_dict
+
+
+def utc_now(offset_in_seconds=0.0):
+    return int(math.floor(calendar.timegm(time.gmtime()) + float(offset_in_seconds)))
+
+
+def random_string(length):
+    return base64.urlsafe_b64encode(os.urandom(length))[:length]
+
+
+def prepare_header_val(val):
+    if isinstance(val, six_binary_type):
+        val = val.decode('utf-8')
+
+    if not REQUEST_HEADER_ATTRIBUTE_CHARS.match(val):
+        raise BadHeaderValue(  # pragma: no cover
+            'header value value={val} contained an illegal character'.format(val=repr(val)))
+
+    return val
+
+
+def parse_content_type(content_type):  # pragma: no cover
+    if content_type:
+        return content_type.split(';')[0].strip().lower()
+    else:
+        return ''
+
+
+def calculate_payload_hash(algorithm, payload, content_type):  # pragma: no cover
+    parts = [
+        part if isinstance(part, six_binary_type) else part.encode('utf8')
+        for part in ['hawk.' + str(HAWK_VER) + '.payload\n',
+                     parse_content_type(content_type) + '\n',
+                     payload or '',
+                     '\n',
+                     ]
+    ]
+
+    p_hash = hashlib.new(algorithm)
+    p_hash.update(''.join(parts))
+
+    log.debug('calculating payload hash from:\n{parts}'.format(parts=pprint.pformat(parts)))
+
+    return base64.b64encode(p_hash.digest())
+
+
+def validate_taskcluster_credentials(credentials):
+    if not hasattr(credentials, '__getitem__'):
+        raise InvalidCredentials('credentials must be a dict-like object')  # pragma: no cover
+    try:
+        credentials['clientId']
+        credentials['accessToken']
+    except KeyError:  # pragma: no cover
+        etype, val, tb = sys.exc_info()
+        raise InvalidCredentials('{etype}: {val}'.format(etype=etype, val=val))
+
+
+def normalize_header_attr(val):
+    if isinstance(val, six_binary_type):
+        return val.decode('utf-8')
+    return val  # pragma: no cover
+
+
+def normalize_string(mac_type,
+                     timestamp,
+                     nonce,
+                     method,
+                     name,
+                     host,
+                     port,
+                     content_hash,
+                     ):
+    return '\n'.join([
+        normalize_header_attr(header)
+        # The blank lines are important. They follow what the Node Hawk lib does.
+        for header in ['hawk.' + str(HAWK_VER) + '.' + mac_type,
+                       timestamp,
+                       nonce,
+                       method or '',
+                       name or '',
+                       host,
+                       port,
+                       content_hash or '',
+                       '',  # for ext which is empty in this case
+                       '',  # Add trailing new line.
+                       ]
+    ])
+
+
+def calculate_mac(mac_type,
+                  access_token,
+                  algorithm,
+                  timestamp,
+                  nonce,
+                  method,
+                  name,
+                  host,
+                  port,
+                  content_hash,
+                  ):
+    normalized = normalize_string(mac_type,
+                                  timestamp,
+                                  nonce,
+                                  method,
+                                  name,
+                                  host,
+                                  port,
+                                  content_hash)
+    log.debug(u'normalized resource for mac calc: {norm}'.format(norm=normalized))
+    digestmod = getattr(hashlib, algorithm)
+
+    if not isinstance(normalized, six_binary_type):
+        normalized = normalized.encode('utf8')
+
+    if not isinstance(access_token, six_binary_type):
+        access_token = access_token.encode('ascii')
+
+    result = hmac.new(access_token, normalized, digestmod)
+    return base64.b64encode(result.digest())
+
+
+def make_taskcluster_header(credentials, req):
+    validate_taskcluster_credentials(credentials)
+
+    url = req.get_full_url()
+    method = req.get_method()
+    algorithm = 'sha256'
+    timestamp = str(utc_now())
+    nonce = random_string(6)
+    url_parts = parse_url(url)
+
+    content_hash = None
+    if request_has_data(req):
+        content_hash = calculate_payload_hash(  # pragma: no cover
+            algorithm,
+            req.get_data(),
+            # maybe we should detect this from req.headers but we anyway expect json
+            content_type='application/json',
+        )
+
+    mac = calculate_mac('header',
+                        credentials['accessToken'],
+                        algorithm,
+                        timestamp,
+                        nonce,
+                        method,
+                        url_parts['resource'],
+                        url_parts['hostname'],
+                        str(url_parts['port']),
+                        content_hash,
+                        )
+
+    header = u'Hawk mac="{}"'.format(prepare_header_val(mac))
+
+    if content_hash:  # pragma: no cover
+        header = u'{}, hash="{}"'.format(header, prepare_header_val(content_hash))
+
+    header = u'{header}, id="{id}", ts="{ts}", nonce="{nonce}"'.format(
+        header=header,
+        id=prepare_header_val(credentials['clientId']),
+        ts=prepare_header_val(timestamp),
+        nonce=prepare_header_val(nonce),
+    )
+
+    log.debug('Hawk header for URL={} method={}: {}'.format(url, method, header))
+
+    return header
+
+
 class FileRecord(object):
 
     def __init__(self, filename, size, digest, algorithm, unpack=False,
-                 version=None, visibility=None, setup=None):
+                 version=None, visibility=None):
         object.__init__(self)
         if '/' in filename or '\\' in filename:
             log.error(
@@ -93,7 +345,6 @@ class FileRecord(object):
         self.unpack = unpack
         self.version = version
         self.visibility = visibility
-        self.setup = setup
 
     def __eq__(self, other):
         if self is other:
@@ -185,8 +436,6 @@ class FileRecordJSONEncoder(json.JSONEncoder):
                 rv['version'] = obj.version
             if obj.visibility is not None:
                 rv['visibility'] = obj.visibility
-            if obj.setup:
-                rv['setup'] = obj.setup
             return rv
 
     def default(self, f):
@@ -232,10 +481,9 @@ class FileRecordJSONDecoder(json.JSONDecoder):
                 unpack = obj.get('unpack', False)
                 version = obj.get('version', None)
                 visibility = obj.get('visibility', None)
-                setup = obj.get('setup')
                 rv = FileRecord(
                     obj['filename'], obj['size'], obj['digest'], obj['algorithm'],
-                    unpack, version, visibility, setup)
+                    unpack, version, visibility)
                 log.debug("materialized %s" % rv)
                 return rv
         return obj
@@ -310,16 +558,20 @@ class Manifest(object):
     def dump(self, output_file, fmt='json'):
         assert fmt in self.valid_formats
         if fmt == 'json':
-            rv = json.dump(
-                self.file_records, output_file, indent=2, cls=FileRecordJSONEncoder,
-                separators=(',', ': '))
-            print >> output_file, ''
-            return rv
+            return json.dump(
+                self.file_records, output_file,
+                indent=2, separators=(',', ': '),
+                cls=FileRecordJSONEncoder,
+            )
 
     def dumps(self, fmt='json'):
         assert fmt in self.valid_formats
         if fmt == 'json':
-            return json.dumps(self.file_records, cls=FileRecordJSONEncoder)
+            return json.dumps(
+                self.file_records,
+                indent=2, separators=(',', ': '),
+                cls=FileRecordJSONEncoder,
+            )
 
 
 def digest_file(f, a):
@@ -372,9 +624,9 @@ def list_manifest(manifest_file):
         ))
         return False
     for f in manifest.file_records:
-        print("%s\t%s\t%s" % ("P" if f.present() else "-",
-                              "V" if f.present() and f.validate() else "-",
-                              f.filename))
+        print("{}\t{}\t{}".format("P" if f.present() else "-",
+                                  "V" if f.present() and f.validate() else "-",
+                                  f.filename))
     return True
 
 
@@ -444,7 +696,7 @@ def add_files(manifest_file, algorithm, filenames, version, visibility, unpack):
     for old_fr in old_manifest.file_records:
         if old_fr.filename not in new_filenames:
             new_manifest.file_records.append(old_fr)
-    with open(manifest_file, 'wb') as output:
+    with open(manifest_file, **open_attrs) as output:
         new_manifest.dump(output, fmt='json')
     return all_files_added
 
@@ -466,8 +718,8 @@ def fetch_file(base_urls, file_record, grabchunk=1024 * 4, auth_file=None, regio
     fetched_path = None
     for base_url in base_urls:
         # Generate the URL for the file on the server side
-        url = urlparse.urljoin(base_url,
-                               '%s/%s' % (file_record.algorithm, file_record.digest))
+        url = urljoin(base_url,
+                      '%s/%s' % (file_record.algorithm, file_record.digest))
         if region is not None:
             url += '?region=' + region
 
@@ -475,26 +727,28 @@ def fetch_file(base_urls, file_record, grabchunk=1024 * 4, auth_file=None, regio
 
         # Well, the file doesn't exist locally.  Let's fetch it.
         try:
-            req = urllib2.Request(url)
+            req = Request(url)
             _authorize(req, auth_file)
             f = urllib2.urlopen(req)
             log.debug("opened %s for reading" % url)
-            with open(temp_path, 'wb') as out:
+            with open(temp_path, **open_attrs) as out:
                 k = True
                 size = 0
                 while k:
                     # TODO: print statistics as file transfers happen both for info and to stop
                     # buildbot timeouts
                     indata = f.read(grabchunk)
+                    if PY3:
+                        indata = to_text(indata)
                     out.write(indata)
                     size += len(indata)
-                    if indata == '':
+                    if len(indata) == 0:
                         k = False
                 log.info("File %s fetched from %s as %s" %
                          (file_record.filename, base_url, temp_path))
                 fetched_path = temp_path
                 break
-        except (urllib2.URLError, urllib2.HTTPError, ValueError):
+        except (URLError, HTTPError, ValueError):
             log.info("...failed to fetch '%s' from %s" %
                      (file_record.filename, base_url), exc_info=True)
         except IOError:  # pragma: no cover
@@ -519,12 +773,15 @@ def clean_path(dirname):
         shutil.rmtree(dirname)
 
 
-def unpack_file(filename, setup=None):
+CHECKSUM_SUFFIX = ".checksum"
+
+
+def unpack_file(filename):
     """Untar `filename`, assuming it is uncompressed or compressed with bzip2,
     xz, gzip, or unzip a zip file. The file is assumed to contain a single
     directory with a name matching the base of the given filename.
     Xz support is handled by shelling out to 'tar'."""
-    if tarfile.is_tarfile(filename):
+    if os.path.isfile(filename) and tarfile.is_tarfile(filename):
         tar_file, zip_ext = os.path.splitext(filename)
         base_file, tar_ext = os.path.splitext(tar_file)
         clean_path(base_file)
@@ -532,13 +789,22 @@ def unpack_file(filename, setup=None):
         tar = tarfile.open(filename)
         tar.extractall()
         tar.close()
-    elif filename.endswith('.tar.xz'):
+    elif os.path.isfile(filename) and filename.endswith('.tar.xz'):
         base_file = filename.replace('.tar.xz', '')
         clean_path(base_file)
         log.info('untarring "%s"' % filename)
-        if not execute('tar -Jxf %s 2>&1' % filename):
+        # Not using tar -Jxf because it fails on Windows for some reason.
+        process = Popen(['xz', '-d', '-c', filename], stdout=PIPE)
+        stdout, stderr = process.communicate()
+        if process.returncode != 0:
             return False
-    elif zipfile.is_zipfile(filename):
+        fileobj = BytesIO()
+        fileobj.write(stdout)
+        fileobj.seek(0)
+        tar = tarfile.open(fileobj=fileobj, mode='r|')
+        tar.extractall()
+        tar.close()
+    elif os.path.isfile(filename) and zipfile.is_zipfile(filename):
         base_file = filename.replace('.zip', '')
         clean_path(base_file)
         log.info('unzipping "%s"' % filename)
@@ -547,9 +813,6 @@ def unpack_file(filename, setup=None):
         z.close()
     else:
         log.error("Unknown archive extension for filename '%s'" % filename)
-        return False
-
-    if setup and not execute(os.path.join(base_file, setup)):
         return False
     return True
 
@@ -577,9 +840,6 @@ def fetch_files(manifest_file, base_urls, filenames=[], cache_folder=None,
 
     # Files that we want to unpack.
     unpack_files = []
-
-    # Setup for unpacked files.
-    setup_files = {}
 
     # Lets go through the manifest and fetch the files that we want
     for f in manifest.file_records:
@@ -640,13 +900,6 @@ def fetch_files(manifest_file, base_urls, filenames=[], cache_folder=None,
         else:
             log.debug("skipping %s" % f.filename)
 
-        if f.setup:
-            if f.unpack:
-                setup_files[f.filename] = f.setup
-            else:
-                log.error("'setup' requires 'unpack' being set for %s" % f.filename)
-                failed_files.append(f.filename)
-
     # lets ensure that fetched files match what the manifest specified
     for localfile, temp_file_name in fetched_files:
         # since I downloaded to a temp file, I need to perform all validations on the temp file
@@ -689,7 +942,7 @@ def fetch_files(manifest_file, base_urls, filenames=[], cache_folder=None,
 
     # Unpack files that need to be unpacked.
     for filename in unpack_files:
-        if not unpack_file(filename, setup_files.get(filename)):
+        if not unpack_file(filename):
             failed_files.append(filename)
 
     # If we failed to fetch or validate a file, we need to fail
@@ -757,21 +1010,40 @@ def _log_api_error(e):
 
 
 def _authorize(req, auth_file):
-    if auth_file:
-        log.debug("using bearer token in %s" % auth_file)
-        req.add_unredirected_header('Authorization',
-                                    'Bearer %s' % (open(auth_file, "rb").read().strip()))
+    if not auth_file:
+        return
+
+    is_taskcluster_auth = False
+    with open(auth_file) as f:
+        auth_file_content = f.read().strip()
+        try:
+            auth_file_content = json.loads(auth_file_content)
+            is_taskcluster_auth = True
+        except Exception:
+            pass
+
+    if is_taskcluster_auth:
+        taskcluster_header = make_taskcluster_header(auth_file_content, req)
+        log.debug("Using taskcluster credentials in %s" % auth_file)
+        req.add_unredirected_header('Authorization', taskcluster_header)
+    else:
+        log.debug("Using Bearer token in %s" % auth_file)
+        req.add_unredirected_header('Authorization', 'Bearer %s' % auth_file_content)
 
 
 def _send_batch(base_url, auth_file, batch, region):
-    url = urlparse.urljoin(base_url, 'upload')
+    url = urljoin(base_url, 'upload')
     if region is not None:
         url += "?region=" + region
-    req = urllib2.Request(url, json.dumps(batch), {'Content-Type': 'application/json'})
+    if PY3:
+        data = to_binary(json.dumps(batch))
+    else:
+        data = json.dumps(batch)
+    req = Request(url, data, {'Content-Type': 'application/json'})
     _authorize(req, auth_file)
     try:
         resp = urllib2.urlopen(req)
-    except (urllib2.URLError, urllib2.HTTPError) as e:
+    except (URLError, HTTPError) as e:
         _log_api_error(e)
         return None
     return json.load(resp)['result']
@@ -779,18 +1051,29 @@ def _send_batch(base_url, auth_file, batch, region):
 
 def _s3_upload(filename, file):
     # urllib2 does not support streaming, so we fall back to good old httplib
-    url = urlparse.urlparse(file['put_url'])
-    cls = httplib.HTTPSConnection if url.scheme == 'https' else httplib.HTTPConnection
+    url = urlparse(file['put_url'])
+    cls = HTTPSConnection if url.scheme == 'https' else HTTPConnection
     host, port = url.netloc.split(':') if ':' in url.netloc else (url.netloc, 443)
     port = int(port)
     conn = cls(host, port)
     try:
         req_path = "%s?%s" % (url.path, url.query) if url.query else url.path
-        conn.request('PUT', req_path, open(filename, "rb"),
-                     {'Content-type': 'application/octet-stream'})
-        resp = conn.getresponse()
-        resp_body = resp.read()
-        conn.close()
+        with open(filename, 'rb') as f:
+            content = f.read()
+            content_length = len(content)
+            f.seek(0)
+            conn.request(
+                'PUT',
+                req_path,
+                f,
+                {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': str(content_length),
+                },
+            )
+            resp = conn.getresponse()
+            resp_body = resp.read()
+            conn.close()
         if resp.status != 200:
             raise RuntimeError("Non-200 return from AWS: %s %s\n%s" %
                                (resp.status, resp.reason, resp_body))
@@ -802,14 +1085,14 @@ def _s3_upload(filename, file):
 
 
 def _notify_upload_complete(base_url, auth_file, file):
-    req = urllib2.Request(
-        urlparse.urljoin(
+    req = Request(
+        urljoin(
             base_url,
             'upload/complete/%(algorithm)s/%(digest)s' % file))
     _authorize(req, auth_file)
     try:
         urllib2.urlopen(req)
-    except urllib2.HTTPError as e:
+    except HTTPError as e:
         if e.code != 409:
             _log_api_error(e)
             return
@@ -860,7 +1143,7 @@ def upload(manifest, message, base_urls, auth_file, region):
     # Upload the files, each in a thread.  This allows us to start all of the
     # uploads before any of the URLs expire.
     threads = {}
-    for filename, file in files.iteritems():
+    for filename, file in files.items():
         if 'put_url' in file:
             log.info("%s: starting upload" % (filename,))
             thd = threading.Thread(target=_s3_upload,
@@ -874,7 +1157,7 @@ def upload(manifest, message, base_urls, auth_file, region):
     # re-join all of those threads as they exit
     success = True
     while threads:
-        for filename, thread in threads.items():
+        for filename, thread in list(threads.items()):
             if not thread.is_alive():
                 # _s3_upload has annotated file with result information
                 file = files[filename]
@@ -890,7 +1173,7 @@ def upload(manifest, message, base_urls, auth_file, region):
     # notify the server that the uploads are completed.  If the notification
     # fails, we don't consider that an error (the server will notice
     # eventually)
-    for filename, file in files.iteritems():
+    for filename, file in files.items():
         if 'put_url' in file and file['upload_ok']:
             log.info("notifying server of upload completion for %s" % (filename,))
             _notify_upload_complete(base_urls[0], auth_file, file)
@@ -996,14 +1279,17 @@ def main(argv, _skip_logging=False):
 
     (options_obj, args) = parser.parse_args(argv[1:])
 
-    # default the options list if not provided
-    if not options_obj.base_url:
-        options_obj.base_url = ['https://tooltool.mozilla-releng.net/']
+    tooltool_host = os.environ.get('TOOLTOOL_HOST', 'tooltool.mozilla-releng.net')
+    taskcluster_proxy_url = os.environ.get('TASKCLUSTER_PROXY_URL')
+    if taskcluster_proxy_url:
+        tooltool_url = '{}/{}'.format(taskcluster_proxy_url, tooltool_host)
+    else:
+        tooltool_url = 'https://{}'.format(tooltool_host)
 
     # ensure all URLs have a trailing slash
     def add_slash(url):
         return url if url.endswith('/') else (url + '/')
-    options_obj.base_url = [add_slash(u) for u in options_obj.base_url]
+    options_obj.base_url = [add_slash(tooltool_url)]
 
     # expand ~ in --authentication-file
     if options_obj.auth_file:
@@ -1028,6 +1314,7 @@ def main(argv, _skip_logging=False):
         parser.error('You must specify a command')
 
     return 0 if process_command(options, args) else 1
+
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main(sys.argv))

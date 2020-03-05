@@ -39,7 +39,7 @@ NTSTATUS NTAPI NtMapViewOfSection(
 NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE aProcess, PVOID aBaseAddress);
 
 static DWORD GetWin32ErrorCode(NTSTATUS aNtStatus) {
-  static const mozilla::DynamicallyLinkedFunctionPtr<decltype(
+  static const mozilla::StaticDynamicallyLinkedFunctionPtr<decltype(
       &RtlNtStatusToDosError)>
       pRtlNtStatusToDosError(L"ntdll.dll", "RtlNtStatusToDosError");
 
@@ -61,7 +61,7 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
 #ifdef JS_ENABLE_UWP
   return false;
 #else
-  static const DynamicallyLinkedFunctionPtr<decltype(&MapViewOfFileNuma2)>
+  static const StaticDynamicallyLinkedFunctionPtr<decltype(&MapViewOfFileNuma2)>
       pMapViewOfFileNuma2(L"Api-ms-win-core-memory-l1-1-5.dll",
                           "MapViewOfFileNuma2");
 
@@ -71,7 +71,7 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
                                NUMA_NO_PREFERRED_NODE);
   }
 
-  static const DynamicallyLinkedFunctionPtr<decltype(&NtMapViewOfSection)>
+  static const StaticDynamicallyLinkedFunctionPtr<decltype(&NtMapViewOfSection)>
       pNtMapViewOfSection(L"ntdll.dll", "NtMapViewOfSection");
 
   MOZ_ASSERT(!!pNtMapViewOfSection);
@@ -109,14 +109,15 @@ MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
 #ifdef JS_ENABLE_UWP
   return false;
 #else
-  static const DynamicallyLinkedFunctionPtr<decltype(&UnmapViewOfFile2)>
+  static const StaticDynamicallyLinkedFunctionPtr<decltype(&UnmapViewOfFile2)>
       pUnmapViewOfFile2(L"kernel32.dll", "UnmapViewOfFile2");
 
   if (!!pUnmapViewOfFile2) {
     return !!pUnmapViewOfFile2(aProcess, aBaseAddress, 0);
   }
 
-  static const DynamicallyLinkedFunctionPtr<decltype(&NtUnmapViewOfSection)>
+  static const StaticDynamicallyLinkedFunctionPtr<decltype(
+      &NtUnmapViewOfSection)>
       pNtUnmapViewOfSection(L"ntdll.dll", "NtUnmapViewOfSection");
 
   MOZ_ASSERT(!!pNtUnmapViewOfSection);

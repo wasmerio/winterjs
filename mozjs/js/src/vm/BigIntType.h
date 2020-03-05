@@ -10,6 +10,7 @@
 #include "mozilla/Range.h"
 #include "mozilla/Span.h"
 
+#include "jstypes.h"
 #include "gc/Barrier.h"
 #include "gc/GC.h"
 #include "gc/Heap.h"
@@ -24,7 +25,7 @@
 
 namespace JS {
 
-class BigInt;
+class JS_PUBLIC_API BigInt;
 
 }  // namespace JS
 
@@ -37,18 +38,21 @@ XDRResult XDRBigInt(XDRState<mode>* xdr, MutableHandle<JS::BigInt*> bi);
 
 namespace JS {
 
-class BigInt final : public js::gc::TenuredCell {
+class BigInt final
+    : public js::gc::CellWithLengthAndFlags<js::gc::TenuredCell> {
+  using Base = js::gc::CellWithLengthAndFlags<js::gc::TenuredCell>;
+
  public:
   using Digit = uintptr_t;
 
  private:
-  // The low js::gc::Cell::ReservedBits are reserved.
-  static constexpr uintptr_t SignBit = JS_BIT(js::gc::Cell::ReservedBits);
-  static constexpr uintptr_t LengthShift = js::gc::Cell::ReservedBits + 1;
+  // The low NumFlagBitsReservedForGC flag bits are reserved.
+  static constexpr uintptr_t SignBit = js::Bit(Base::NumFlagBitsReservedForGC);
   static constexpr size_t InlineDigitsLength =
-      (js::gc::MinCellSize - sizeof(uintptr_t)) / sizeof(Digit);
+      (js::gc::MinCellSize - sizeof(Base)) / sizeof(Digit);
 
-  uintptr_t lengthSignAndReservedBits_;
+  // Note: 32-bit length and flags fields are inherited from
+  // CellWithLengthAndFlags.
 
   // The digit storage starts with the least significant digit (little-endian
   // digit order).  Byte order within a digit is of course native endian.
@@ -60,8 +64,11 @@ class BigInt final : public js::gc::TenuredCell {
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::BigInt;
 
-  size_t digitLength() const {
-    return lengthSignAndReservedBits_ >> LengthShift;
+  size_t digitLength() const { return lengthField(); }
+
+  // Offset for direct access from JIT code.
+  static constexpr size_t offsetOfDigitLength() {
+    return Base::offsetOfLength();
   }
 
   bool hasInlineDigits() const { return digitLength() <= InlineDigitsLength; }
@@ -76,21 +83,16 @@ class BigInt final : public js::gc::TenuredCell {
   void setDigit(size_t idx, Digit digit) { digits()[idx] = digit; }
 
   bool isZero() const { return digitLength() == 0; }
-  bool isNegative() const { return lengthSignAndReservedBits_ & SignBit; }
-
-  // Offset for direct access from JIT code.
-  static constexpr size_t offsetOfLengthSignAndReservedBits() {
-    return offsetof(BigInt, lengthSignAndReservedBits_);
-  }
+  bool isNegative() const { return flagsField() & SignBit; }
 
   void initializeDigitsToZero();
 
   void traceChildren(JSTracer* trc);
-  void finalize(js::FreeOp* fop);
+  void finalize(JSFreeOp* fop);
   js::HashNumber hash();
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
-  static BigInt* createUninitialized(JSContext* cx, size_t length,
+  static BigInt* createUninitialized(JSContext* cx, size_t digitLength,
                                      bool isNegative);
   static BigInt* createFromDouble(JSContext* cx, double d);
   static BigInt* createFromUint64(JSContext* cx, uint64_t n);
@@ -120,6 +122,11 @@ class BigInt final : public js::gc::TenuredCell {
 
   static int64_t toInt64(BigInt* x);
   static uint64_t toUint64(BigInt* x);
+
+  // Return true if the BigInt is without loss of precision representable as an
+  // int64 and store the int64 value in the output. Otherwise return false and
+  // leave the value of the output parameter unspecified.
+  static bool isInt64(BigInt* x, int64_t* result);
 
   static BigInt* asIntN(JSContext* cx, Handle<BigInt*> x, uint64_t bits);
   static BigInt* asUintN(JSContext* cx, Handle<BigInt*> x, uint64_t bits);
@@ -174,8 +181,19 @@ class BigInt final : public js::gc::TenuredCell {
                                     unsigned radix, bool isNegative,
                                     bool* haveParseError);
 
+  template <typename CharT>
+  static bool literalIsZero(const mozilla::Range<const CharT> chars);
+
+  // Check a literal for a non-zero character after the radix indicators
+  // have been removed
+  template <typename CharT>
+  static bool literalIsZeroNoRadix(const mozilla::Range<const CharT> chars);
+
   static int8_t compare(BigInt* lhs, BigInt* rhs);
   static bool equal(BigInt* lhs, BigInt* rhs);
+  static bool equal(BigInt* lhs, double rhs);
+  static JS::Result<bool> equal(JSContext* cx, Handle<BigInt*> lhs,
+                                HandleString rhs);
   static JS::Result<bool> looselyEqual(JSContext* cx, Handle<BigInt*> lhs,
                                        HandleValue rhs);
 
@@ -204,10 +222,11 @@ class BigInt final : public js::gc::TenuredCell {
   static_assert(DigitBits == 32 || DigitBits == 64,
                 "Unexpected BigInt Digit size");
 
-  // The maximum number of digits that the current implementation supports
-  // would be 0x7fffffff / DigitBits. However, we use a lower limit for now,
-  // because raising it later is easier than lowering it.  Support up to 1
-  // million bits.
+  // Limit the size of bigint values to 1 million bits, to prevent excessive
+  // memory usage.  This limit may be raised in the future if needed.  Note
+  // however that there are many parts of the implementation that rely on being
+  // able to count and index bits using a 32-bit signed ints, so until those
+  // sites are fixed, the practical limit is 0x7fffffff bits.
   static constexpr size_t MaxBitLength = 1024 * 1024;
   static constexpr size_t MaxDigitLength = MaxBitLength / DigitBits;
 
@@ -334,8 +353,6 @@ class BigInt final : public js::gc::TenuredCell {
 
   static int8_t compare(BigInt* lhs, double rhs);
 
-  static bool equal(BigInt* lhs, double rhs);
-
   template <js::AllowGC allowGC>
   static JSLinearString* toStringBasePowerOfTwo(JSContext* cx, Handle<BigInt*>,
                                                 unsigned radix);
@@ -358,6 +375,25 @@ class BigInt final : public js::gc::TenuredCell {
   BigInt() = delete;
   BigInt(const BigInt& other) = delete;
   void operator=(const BigInt& other) = delete;
+
+ private:
+  // To help avoid writing Spectre-unsafe code, we only allow MacroAssembler to
+  // call the methods below.
+  friend class js::jit::MacroAssembler;
+
+  // Make offset accessors accessible to the MacroAssembler.
+  using Base::offsetOfFlags;
+  using Base::offsetOfLength;
+
+  static size_t offsetOfInlineDigits() {
+    return offsetof(BigInt, inlineDigits_);
+  }
+
+  static size_t offsetOfHeapDigits() { return offsetof(BigInt, heapDigits_); }
+
+  static constexpr size_t inlineDigitsLength() { return InlineDigitsLength; }
+
+  static constexpr size_t signBitMask() { return SignBit; }
 };
 
 static_assert(
@@ -387,7 +423,13 @@ extern JS::Result<JS::BigInt*, JS::OOM&> StringToBigInt(
 extern JS::BigInt* ParseBigIntLiteral(
     JSContext* cx, const mozilla::Range<const char16_t>& chars);
 
+// Check an already validated numeric literal for a non-zero value. Used by
+// the parsers node folder in deferred mode.
+extern bool BigIntLiteralIsZero(const mozilla::Range<const char16_t>& chars);
+
 extern JS::BigInt* ToBigInt(JSContext* cx, JS::Handle<JS::Value> v);
+extern JS::Result<int64_t> ToBigInt64(JSContext* cx, JS::Handle<JS::Value> v);
+extern JS::Result<uint64_t> ToBigUint64(JSContext* cx, JS::Handle<JS::Value> v);
 
 }  // namespace js
 

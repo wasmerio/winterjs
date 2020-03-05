@@ -17,6 +17,7 @@
 #include "builtin/Array.h"
 #include "builtin/Reflect.h"
 #include "frontend/ModuleSharedContext.h"
+#include "frontend/ParseInfo.h"
 #include "frontend/ParseNode.h"
 #include "frontend/Parser.h"
 #include "js/CharacterEncoding.h"
@@ -24,6 +25,7 @@
 #include "vm/BigIntType.h"
 #include "vm/JSAtom.h"
 #include "vm/JSObject.h"
+#include "vm/ModuleBuilder.h"  // js::ModuleBuilder
 #include "vm/RegExpObject.h"
 
 #include "vm/JSObject-inl.h"
@@ -100,6 +102,7 @@ enum BinaryOperator {
   BINOP_IN,
   BINOP_INSTANCEOF,
   BINOP_PIPELINE,
+  BINOP_COALESCE,
 
   BINOP_LIMIT
 };
@@ -176,6 +179,7 @@ static const char* const binopNames[] = {
     "in",         /* BINOP_IN */
     "instanceof", /* BINOP_INSTANCEOF */
     "|>",         /* BINOP_PIPELINE */
+    "??",         /* BINOP_COALESCE */
 };
 
 static const char* const unopNames[] = {
@@ -203,7 +207,7 @@ static const char* const callbackNames[] = {
 
 enum YieldKind { Delegating, NotDelegating };
 
-typedef AutoValueVector NodeVector;
+typedef RootedValueVector NodeVector;
 
 /*
  * ParseNode is a somewhat intricate data structure, and its invariants have
@@ -611,7 +615,7 @@ class NodeBuilder {
   MOZ_MUST_USE bool classMethod(HandleValue name, HandleValue body,
                                 PropKind kind, bool isStatic, TokenPos* pos,
                                 MutableHandleValue dst);
-  MOZ_MUST_USE bool classField(HandleValue name, HandleValue body,
+  MOZ_MUST_USE bool classField(HandleValue name, HandleValue initializer,
                                TokenPos* pos, MutableHandleValue dst);
 
   /*
@@ -632,7 +636,7 @@ class NodeBuilder {
   MOZ_MUST_USE bool updateExpression(HandleValue expr, bool incr, bool prefix,
                                      TokenPos* pos, MutableHandleValue dst);
 
-  MOZ_MUST_USE bool logicalExpression(bool lor, HandleValue left,
+  MOZ_MUST_USE bool logicalExpression(ParseNodeKind pnk, HandleValue left,
                                       HandleValue right, TokenPos* pos,
                                       MutableHandleValue dst);
 
@@ -820,8 +824,7 @@ bool NodeBuilder::newNodeLoc(TokenPos* pos, MutableHandleValue dst) {
 
 bool NodeBuilder::setNodeLoc(HandleObject node, TokenPos* pos) {
   if (!saveLoc) {
-    RootedValue nullVal(cx, NullValue());
-    return defineProperty(node, "loc", nullVal);
+    return true;
   }
 
   RootedValue loc(cx);
@@ -1102,12 +1105,28 @@ bool NodeBuilder::updateExpression(HandleValue expr, bool incr, bool prefix,
                  "prefix", prefixVal, dst);
 }
 
-bool NodeBuilder::logicalExpression(bool lor, HandleValue left,
+bool NodeBuilder::logicalExpression(ParseNodeKind pnk, HandleValue left,
                                     HandleValue right, TokenPos* pos,
                                     MutableHandleValue dst) {
   RootedValue opName(cx);
-  if (!atomValue(lor ? "||" : "&&", &opName)) {
-    return false;
+  switch (pnk) {
+    case ParseNodeKind::OrExpr:
+      if (!atomValue("||", &opName)) {
+        return false;
+      }
+      break;
+    case ParseNodeKind::CoalesceExpr:
+      if (!atomValue("??", &opName)) {
+        return false;
+      }
+      break;
+    case ParseNodeKind::AndExpr:
+      if (!atomValue("&&", &opName)) {
+        return false;
+      }
+      break;
+    default:
+      MOZ_CRASH("Unexpected ParseNodeKind: Must be `Or`, `And`, or `Coalesce`");
   }
 
   RootedValue cb(cx, callbacks[AST_LOGICAL_EXPR]);
@@ -1537,8 +1556,7 @@ bool NodeBuilder::classField(HandleValue name, HandleValue initializer,
     return callback(cb, name, initializer, pos, dst);
   }
 
-  return newNode(AST_CLASS_FIELD, pos, "name", name, "initializer", initializer,
-                 dst);
+  return newNode(AST_CLASS_FIELD, pos, "name", name, "init", initializer, dst);
 }
 
 bool NodeBuilder::classMembers(NodeVector& members, MutableHandleValue dst) {
@@ -1827,6 +1845,8 @@ BinaryOperator ASTSerializer::binop(ParseNodeKind kind) {
       return BINOP_INSTANCEOF;
     case ParseNodeKind::PipelineExpr:
       return BINOP_PIPELINE;
+    case ParseNodeKind::CoalesceExpr:
+      return BINOP_COALESCE;
     default:
       return BINOP_ERR;
   }
@@ -2470,6 +2490,9 @@ bool ASTSerializer::statement(ParseNode* pn, MutableHandleValue dst) {
       }
 
       for (ParseNode* item : memberList->contents()) {
+        if (item->is<LexicalScopeNode>()) {
+          item = item->as<LexicalScopeNode>().scopeBody();
+        }
         if (item->is<ClassField>()) {
           ClassField* field = &item->as<ClassField>();
           MOZ_ASSERT(memberList->pn_pos.encloses(field->pn_pos));
@@ -2502,16 +2525,16 @@ bool ASTSerializer::statement(ParseNode* pn, MutableHandleValue dst) {
 bool ASTSerializer::classMethod(ClassMethod* classMethod,
                                 MutableHandleValue dst) {
   PropKind kind;
-  switch (classMethod->getOp()) {
-    case JSOP_INITPROP:
+  switch (classMethod->accessorType()) {
+    case AccessorType::None:
       kind = PROP_INIT;
       break;
 
-    case JSOP_INITPROP_GETTER:
+    case AccessorType::Getter:
       kind = PROP_GETTER;
       break;
 
-    case JSOP_INITPROP_SETTER:
+    case AccessorType::Setter:
       kind = PROP_SETTER;
       break;
 
@@ -2540,10 +2563,18 @@ bool ASTSerializer::classField(ClassField* classField, MutableHandleValue dst) {
                            .head()
                            ->as<UnaryNode>()
                            .kid()
-                           ->as<AssignmentNode>()
+                           ->as<BinaryNode>()
                            .right();
-    if (!expression(value, &val)) {
-      return false;
+    // RawUndefinedExpr is the node we use for "there is no initializer". If one
+    // writes, literally, `x = undefined;`, it will not be a RawUndefinedExpr
+    // node, but rather a variable reference.
+    // Behavior for "there is no initializer" should be { ..., "init": null }
+    if (value->getKind() != ParseNodeKind::RawUndefinedExpr) {
+      if (!expression(value, &val)) {
+        return false;
+      }
+    } else {
+      val.setNull();
     }
   }
   return propertyName(&classField->name(), &key) &&
@@ -2553,9 +2584,10 @@ bool ASTSerializer::classField(ClassField* classField, MutableHandleValue dst) {
 bool ASTSerializer::leftAssociate(ListNode* node, MutableHandleValue dst) {
   MOZ_ASSERT(!node->empty());
 
-  ParseNodeKind kind = node->getKind();
-  bool lor = kind == ParseNodeKind::OrExpr;
-  bool logop = lor || (kind == ParseNodeKind::AndExpr);
+  ParseNodeKind pnk = node->getKind();
+  bool lor = pnk == ParseNodeKind::OrExpr;
+  bool coalesce = pnk == ParseNodeKind::CoalesceExpr;
+  bool logop = lor || coalesce || pnk == ParseNodeKind::AndExpr;
 
   ParseNode* head = node->head();
   RootedValue left(cx);
@@ -2571,7 +2603,7 @@ bool ASTSerializer::leftAssociate(ListNode* node, MutableHandleValue dst) {
     TokenPos subpos(node->pn_pos.begin, next->pn_pos.end);
 
     if (logop) {
-      if (!builder.logicalExpression(lor, left, right, &subpos, &left)) {
+      if (!builder.logicalExpression(pnk, left, right, &subpos, &left)) {
         return false;
       }
     } else {
@@ -2640,8 +2672,8 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
   switch (pn->getKind()) {
     case ParseNodeKind::Function: {
       FunctionNode* funNode = &pn->as<FunctionNode>();
-      ASTType type = funNode->funbox()->function()->isArrow() ? AST_ARROW_EXPR
-                                                              : AST_FUNC_EXPR;
+      ASTType type =
+          funNode->funbox()->isArrow() ? AST_ARROW_EXPR : AST_FUNC_EXPR;
       return function(funNode, type, dst);
     }
 
@@ -2668,6 +2700,7 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
                                            dst);
     }
 
+    case ParseNodeKind::CoalesceExpr:
     case ParseNodeKind::OrExpr:
     case ParseNodeKind::AndExpr:
       return leftAssociate(&pn->as<ListNode>(), dst);
@@ -2823,7 +2856,6 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
 
     case ParseNodeKind::DotExpr: {
       PropertyAccess* prop = &pn->as<PropertyAccess>();
-      // TODO(khyperia): Implement private field access.
       MOZ_ASSERT(prop->pn_pos.encloses(prop->expression().pn_pos));
 
       RootedValue expr(cx);
@@ -3107,21 +3139,26 @@ bool ASTSerializer::property(ParseNode* pn, MutableHandleValue dst) {
   }
 
   PropKind kind;
-  switch (pn->getOp()) {
-    case JSOP_INITPROP:
-      kind = PROP_INIT;
-      break;
+  if (pn->is<PropertyDefinition>()) {
+    switch (pn->as<PropertyDefinition>().accessorType()) {
+      case AccessorType::None:
+        kind = PROP_INIT;
+        break;
 
-    case JSOP_INITPROP_GETTER:
-      kind = PROP_GETTER;
-      break;
+      case AccessorType::Getter:
+        kind = PROP_GETTER;
+        break;
 
-    case JSOP_INITPROP_SETTER:
-      kind = PROP_SETTER;
-      break;
+      case AccessorType::Setter:
+        kind = PROP_SETTER;
+        break;
 
-    default:
-      LOCAL_NOT_REACHED("unexpected object-literal property");
+      default:
+        LOCAL_NOT_REACHED("unexpected object-literal property");
+    }
+  } else {
+    MOZ_ASSERT(pn->isKind(ParseNodeKind::Shorthand));
+    kind = PROP_INIT;
   }
 
   BinaryNode* node = &pn->as<BinaryNode>();
@@ -3129,9 +3166,9 @@ bool ASTSerializer::property(ParseNode* pn, MutableHandleValue dst) {
   ParseNode* valNode = node->right();
 
   bool isShorthand = node->isKind(ParseNodeKind::Shorthand);
-  bool isMethod = valNode->is<FunctionNode>() &&
-                  valNode->as<FunctionNode>().funbox()->function()->kind() ==
-                      JSFunction::Method;
+  bool isMethod =
+      valNode->is<FunctionNode>() &&
+      valNode->as<FunctionNode>().funbox()->kind() == FunctionFlags::Method;
   RootedValue key(cx), val(cx);
   return propertyName(keyNode, &key) && expression(valNode, &val) &&
          builder.propertyInitializer(key, val, kind, isShorthand, isMethod,
@@ -3147,7 +3184,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       break;
 
     case ParseNodeKind::RegExpExpr: {
-      RootedObject re1(cx, pn->as<RegExpLiteral>().objbox()->object());
+      RootedObject re1(cx, pn->as<RegExpLiteral>().getOrCreate(cx));
       LOCAL_ASSERT(re1 && re1->is<RegExpObject>());
 
       RootedObject re2(cx, CloneRegExpObject(cx, re1.as<RegExpObject>()));
@@ -3164,7 +3201,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       break;
 
     case ParseNodeKind::BigIntExpr: {
-      BigInt* x = pn->as<BigIntLiteral>().box()->value();
+      BigInt* x = pn->as<BigIntLiteral>().getOrCreateBigInt(cx);
       cx->check(x);
       val.setBigInt(x);
       break;
@@ -3245,8 +3282,10 @@ bool ASTSerializer::objectPattern(ListNode* obj, MutableHandleValue dst) {
       elts.infallibleAppend(spread);
       continue;
     }
-    LOCAL_ASSERT(propdef->isKind(ParseNodeKind::MutateProto) !=
-                 propdef->isOp(JSOP_INITPROP));
+    // Patterns can't have getters/setters.
+    LOCAL_ASSERT(!propdef->is<PropertyDefinition>() ||
+                 propdef->as<PropertyDefinition>().accessorType() ==
+                     AccessorType::None);
 
     RootedValue key(cx);
     ParseNode* target;
@@ -3311,7 +3350,6 @@ bool ASTSerializer::identifier(NameNode* id, MutableHandleValue dst) {
 bool ASTSerializer::function(FunctionNode* funNode, ASTType type,
                              MutableHandleValue dst) {
   FunctionBox* funbox = funNode->funbox();
-  RootedFunction func(cx, funbox->function());
 
   GeneratorStyle generatorStyle =
       funbox->isGenerator() ? GeneratorStyle::ES6 : GeneratorStyle::None;
@@ -3320,7 +3358,7 @@ bool ASTSerializer::function(FunctionNode* funNode, ASTType type,
   bool isExpression = funbox->hasExprBody();
 
   RootedValue id(cx);
-  RootedAtom funcAtom(cx, func->explicitName());
+  RootedAtom funcAtom(cx, funbox->explicitName());
   if (!optIdentifier(funcAtom, nullptr, &id)) {
     return false;
   }
@@ -3616,10 +3654,12 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
 
   CompileOptions options(cx);
   options.setFileAndLine(filename.get(), lineno);
-  options.setCanLazilyParse(false);
+  options.setForceFullParse();
   options.allowHTMLComments = target == ParseGoal::Script;
   mozilla::Range<const char16_t> chars = linearChars.twoByteRange();
-  UsedNameTracker usedNames(cx);
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  ParseInfo parseInfo(cx, allocScope);
 
   RootedScriptSourceObject sourceObject(
       cx, frontend::CreateScriptSourceObject(cx, options, mozilla::Nothing()));
@@ -3628,8 +3668,8 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
   }
 
   Parser<FullParseHandler, char16_t> parser(
-      cx, cx->tempLifoAlloc(), options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, usedNames, nullptr, nullptr, sourceObject,
+      cx, options, chars.begin().get(), chars.length(),
+      /* foldConstants = */ false, parseInfo, nullptr, nullptr, sourceObject,
       target);
   if (!parser.checkOptions()) {
     return false;
@@ -3663,6 +3703,10 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     }
 
     pn = pn->as<ModuleNode>().body();
+  }
+
+  if (!parser.publishDeferredItems()) {
+    return false;
   }
 
   RootedValue val(cx);

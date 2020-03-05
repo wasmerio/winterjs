@@ -36,7 +36,10 @@ class GCVector {
   mozilla::Vector<T, MinInlineCapacity, AllocPolicy> vector;
 
  public:
-  explicit GCVector(AllocPolicy alloc = AllocPolicy()) : vector(alloc) {}
+  using ElementType = T;
+
+  explicit GCVector(AllocPolicy alloc = AllocPolicy())
+      : vector(std::move(alloc)) {}
 
   GCVector(GCVector&& vec) : vector(std::move(vec.vector)) {}
 
@@ -73,6 +76,17 @@ class GCVector {
   template <typename U>
   bool append(U&& item) {
     return vector.append(std::forward<U>(item));
+  }
+
+  void erase(T* it) { vector.erase(it); }
+  void erase(T* begin, T* end) { vector.erase(begin, end); }
+  template <typename Pred>
+  void eraseIf(Pred pred) {
+    vector.eraseIf(pred);
+  }
+  template <typename U>
+  void eraseIfEqual(const U& u) {
+    vector.eraseIfEqual(u);
   }
 
   template <typename... Args>
@@ -125,8 +139,6 @@ class GCVector {
     return vector.sizeOfIncludingThis(mallocSizeOf);
   }
 
-  static void trace(GCVector* vec, JSTracer* trc) { vec->trace(trc); }
-
   void trace(JSTracer* trc) {
     for (auto& elem : vector) {
       GCPolicy<T>::trace(trc, &elem, "vector element");
@@ -136,20 +148,32 @@ class GCVector {
   bool needsSweep() const { return !this->empty(); }
 
   void sweep() {
-    uint32_t src, dst = 0;
-    for (src = 0; src < length(); src++) {
-      if (!GCPolicy<T>::needsSweep(&vector[src])) {
-        if (dst != src) {
-          vector[dst] = vector[src].unbarrieredGet();
+    T* src = begin();
+    T* dst = begin();
+    while (src != end()) {
+      if (!GCPolicy<T>::needsSweep(src)) {
+        if (src != dst) {
+          *dst = std::move(*src);
         }
         dst++;
       }
+      src++;
     }
 
-    if (dst != length()) {
-      vector.shrinkTo(dst);
-    }
+    MOZ_ASSERT(dst <= end());
+    shrinkBy(end() - dst);
   }
+};
+
+// AllocPolicy is optional. It has a default value declared in TypeDecls.h
+template <typename T, typename AllocPolicy>
+class MOZ_STACK_CLASS StackGCVector : public GCVector<T, 8, AllocPolicy> {
+ public:
+  using Base = GCVector<T, 8, AllocPolicy>;
+
+ private:
+  // Inherit constructor from GCVector.
+  using Base::Base;
 };
 
 }  // namespace JS
@@ -267,20 +291,49 @@ class MutableWrappedPtrOperations<JS::GCVector<T, Capacity, AllocPolicy>,
   }
   void erase(T* aT) { vec().erase(aT); }
   void erase(T* aBegin, T* aEnd) { vec().erase(aBegin, aEnd); }
+  template <typename Pred>
+  void eraseIf(Pred pred) {
+    vec().eraseIf(pred);
+  }
+  template <typename U>
+  void eraseIfEqual(const U& u) {
+    vec().eraseIfEqual(u);
+  }
 };
+
+template <typename Wrapper, typename T, typename AllocPolicy>
+class WrappedPtrOperations<JS::StackGCVector<T, AllocPolicy>, Wrapper>
+    : public WrappedPtrOperations<
+          typename JS::StackGCVector<T, AllocPolicy>::Base, Wrapper> {};
+
+template <typename Wrapper, typename T, typename AllocPolicy>
+class MutableWrappedPtrOperations<JS::StackGCVector<T, AllocPolicy>, Wrapper>
+    : public MutableWrappedPtrOperations<
+          typename JS::StackGCVector<T, AllocPolicy>::Base, Wrapper> {};
 
 }  // namespace js
 
 namespace JS {
 
-// An automatically rooted vector for stack use.
+// An automatically rooted GCVector for stack use.
 template <typename T>
-class AutoVector : public Rooted<GCVector<T, 8>> {
-  using Vec = GCVector<T, 8>;
+class RootedVector : public Rooted<StackGCVector<T>> {
+  using Vec = StackGCVector<T>;
   using Base = Rooted<Vec>;
 
  public:
-  explicit AutoVector(JSContext* cx) : Base(cx, Vec(cx)) {}
+  explicit RootedVector(JSContext* cx) : Base(cx, Vec(cx)) {}
+};
+
+// For use in rust code, an analog to RootedVector that doesn't require
+// instances to be destroyed in LIFO order.
+template <typename T>
+class PersistentRootedVector : public PersistentRooted<StackGCVector<T>> {
+  using Vec = StackGCVector<T>;
+  using Base = PersistentRooted<Vec>;
+
+ public:
+  explicit PersistentRootedVector(JSContext* cx) : Base(cx, Vec(cx)) {}
 };
 
 }  // namespace JS

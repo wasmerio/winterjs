@@ -6,7 +6,6 @@
 # (mach). It is packaged as a module because everything is a library.
 
 from __future__ import absolute_import, print_function, unicode_literals
-from collections import Iterable
 
 import argparse
 import codecs
@@ -17,6 +16,9 @@ import os
 import sys
 import traceback
 import uuid
+from collections import Iterable
+
+from six import string_types
 
 from .base import (
     CommandContext,
@@ -27,26 +29,26 @@ from .base import (
     UnrecognizedArgumentError,
     FailedCommandError,
 )
-
+from .config import ConfigSettings
 from .decorators import (
     CommandProvider,
 )
-
-from .config import ConfigSettings
 from .dispatcher import CommandAction
 from .logging import LoggingManager
 from .registrar import Registrar
+from .util import setenv
 
+SUGGEST_MACH_BUSTED = r'''
+You can invoke |./mach busted| to check if this issue is already on file. If it
+isn't, please use |./mach busted file| to report it. If |./mach busted| is
+misbehaving, you can also inspect the dependencies of bug 1543241.
+'''.lstrip()
 
 MACH_ERROR = r'''
 The error occurred in mach itself. This is likely a bug in mach itself or a
 fundamental problem with a loaded module.
 
-Please consider filing a bug against mach by going to the URL:
-
-    https://bugzilla.mozilla.org/enter_bug.cgi?product=Firefox%20Build%20System&component=Mach%20Core
-
-'''.lstrip()
+'''.lstrip() + SUGGEST_MACH_BUSTED
 
 ERROR_FOOTER = r'''
 If filing a bug, please include the full output of mach, including this error
@@ -59,15 +61,13 @@ COMMAND_ERROR = r'''
 The error occurred in the implementation of the invoked mach command.
 
 This should never occur and is likely a bug in the implementation of that
-command. Consider filing a bug for this issue.
-'''.lstrip()
+command.
+'''.lstrip() + SUGGEST_MACH_BUSTED
 
 MODULE_ERROR = r'''
 The error occurred in code that was called by the mach command. This is either
 a bug in the called code itself or in the way that mach is calling it.
-
-You should consider filing a bug for this issue.
-'''.lstrip()
+'''.lstrip() + SUGGEST_MACH_BUSTED
 
 NO_COMMAND_ERROR = r'''
 It looks like you tried to run mach without a command.
@@ -257,11 +257,11 @@ To see more help for a specific command, run:
         if module_name is None:
             # Ensure parent module is present otherwise we'll (likely) get
             # an error due to unknown parent.
-            if b'mach.commands' not in sys.modules:
-                mod = imp.new_module(b'mach.commands')
-                sys.modules[b'mach.commands'] = mod
+            if 'mach.commands' not in sys.modules:
+                mod = imp.new_module('mach.commands')
+                sys.modules['mach.commands'] = mod
 
-            module_name = 'mach.commands.%s' % uuid.uuid1().get_hex()
+            module_name = 'mach.commands.%s' % uuid.uuid4().hex
 
         try:
             imp.load_source(module_name, path)
@@ -340,21 +340,22 @@ To see more help for a specific command, run:
         orig_env = dict(os.environ)
 
         try:
-            if stdin.encoding is None:
-                sys.stdin = codecs.getreader('utf-8')(stdin)
+            if sys.version_info < (3, 0):
+                if stdin.encoding is None:
+                    sys.stdin = codecs.getreader('utf-8')(stdin)
 
-            if stdout.encoding is None:
-                sys.stdout = codecs.getwriter('utf-8')(stdout)
+                if stdout.encoding is None:
+                    sys.stdout = codecs.getwriter('utf-8')(stdout)
 
-            if stderr.encoding is None:
-                sys.stderr = codecs.getwriter('utf-8')(stderr)
+                if stderr.encoding is None:
+                    sys.stderr = codecs.getwriter('utf-8')(stderr)
 
             # Allow invoked processes (which may not have a handle on the
             # original stdout file descriptor) to know if the original stdout
             # is a TTY. This provides a mechanism to allow said processes to
             # enable emitting code codes, for example.
             if os.isatty(orig_stdout.fileno()):
-                os.environ[b'MACH_STDOUT_ISATTY'] = b'1'
+                setenv('MACH_STDOUT_ISATTY', '1')
 
             return self._run(argv)
         except KeyboardInterrupt:
@@ -426,6 +427,11 @@ To see more help for a specific command, run:
                                                  ' '.join(e.arguments)))
             return 1
 
+        if not hasattr(args, 'mach_handler'):
+            raise MachError('ArgumentParser result missing mach handler info.')
+
+        handler = getattr(args, 'mach_handler')
+
         # Add JSON logging to a file if requested.
         if args.logfile:
             self.log_manager.add_json_handler(args.logfile)
@@ -452,72 +458,6 @@ To see more help for a specific command, run:
             # to command line handling (e.g alias, defaults) will be ignored.
             self.load_settings(args.settings_file)
 
-        def _check_debugger(program):
-            """Checks if debugger specified in command line is installed.
-
-            Uses mozdebug to locate debuggers.
-
-            If the call does not raise any exceptions, mach is permitted
-            to continue execution.
-
-            Otherwise, mach execution is halted.
-
-            Args:
-                program (str): debugger program name.
-            """
-            import mozdebug
-            info = mozdebug.get_debugger_info(program)
-            if info is None:
-                print("Specified debugger '{}' is not found.\n".format(program) +
-                      "Is it installed? Is it in your PATH?")
-                sys.exit(1)
-
-        # For the codepath where ./mach <test_type> --debugger=<program>,
-        # assert that debugger value exists first, then check if installed on system.
-        if (hasattr(args.command_args, "debugger") and
-                getattr(args.command_args, "debugger") is not None):
-            _check_debugger(getattr(args.command_args, "debugger"))
-        # For the codepath where ./mach test --debugger=<program> <test_type>,
-        # debugger must be specified from command line with the = operator.
-        # Otherwise, an IndexError is raised, which is converted to an exit code of 1.
-        elif (hasattr(args.command_args, "extra_args") and
-                getattr(args.command_args, "extra_args")):
-            extra_args = getattr(args.command_args, "extra_args")
-            try:
-                debugger = [ea.split("=")[1] for ea in extra_args if "debugger" in ea]
-            except IndexError:
-                print("Debugger must be specified with '=' when invoking ./mach test.\n" +
-                      "Please correct the command and try again.")
-                sys.exit(1)
-            if debugger:
-                _check_debugger(''.join(debugger))
-
-        if not hasattr(args, 'mach_handler'):
-            raise MachError('ArgumentParser result missing mach handler info.')
-
-        handler = getattr(args, 'mach_handler')
-
-        # if --disable-tests flag was enabled in the mozconfig used to compile
-        # the build, tests will be disabled.
-        # instead of trying to run nonexistent tests then reporting a failure,
-        # this will prevent mach from progressing beyond this point.
-        if handler.category == 'testing':
-            from mozbuild.base import BuildEnvironmentNotFoundException
-            try:
-                from mozbuild.base import MozbuildObject
-                # all environments should have an instance of build object.
-                build = MozbuildObject.from_environment()
-                if build is not None and hasattr(build, 'mozconfig'):
-                    ac_options = build.mozconfig['configure_args']
-                    if ac_options and '--disable-tests' in ac_options:
-                        print('Tests have been disabled by mozconfig with the flag' +
-                              '"ac_add_options --disable-tests".\n' +
-                              'Remove the flag, and re-compile to enable tests.')
-                        return 1
-            except BuildEnvironmentNotFoundException:
-                # likely automation environment, so do nothing.
-                pass
-
         try:
             return Registrar._run_command_handler(handler, context=context,
                                                   debug_command=args.debug_command,
@@ -527,7 +467,7 @@ To see more help for a specific command, run:
         except FailedCommandError as e:
             print(e.message)
             return e.exit_code
-        except Exception as e:
+        except Exception:
             exc_type, exc_value, exc_tb = sys.exc_info()
 
             # The first two frames are us and are never used.
@@ -603,7 +543,7 @@ To see more help for a specific command, run:
 
             machrc, .machrc
         """
-        if isinstance(paths, basestring):
+        if isinstance(paths, string_types):
             paths = [paths]
 
         valid_names = ('machrc', '.machrc')
@@ -660,6 +600,8 @@ To see more help for a specific command, run:
         global_group.add_argument('--settings', dest='settings_file',
                                   metavar='FILENAME', default=None,
                                   help='Path to settings file.')
+        global_group.add_argument('--print-command', action='store_true',
+                                  help=argparse.SUPPRESS)
 
         for args, kwargs in self.global_arguments:
             global_group.add_argument(*args, **kwargs)

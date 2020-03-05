@@ -112,7 +112,7 @@ void GCTrace::traceNurseryAlloc(Cell* thing, size_t size) {
   if (thing) {
     /* We don't have AllocKind here, but we can work it out from size. */
     unsigned slots = (size - sizeof(JSObject)) / sizeof(JS::Value);
-    AllocKind kind = GetBackgroundAllocKind(GetGCObjectKind(slots));
+    AllocKind kind = ForegroundToBackgroundAllocKind(GetGCObjectKind(slots));
     TraceEvent(gcTraceFile, TraceEventNurseryAlloc, uint64_t(thing),
                uint8_t(kind));
   }
@@ -132,7 +132,7 @@ void GCTrace::traceTenuredAlloc(Cell* thing, AllocKind kind) {
   }
 }
 
-void js::gc::GCTrace::maybeTraceClass(const Class* clasp) {
+void js::gc::GCTrace::maybeTraceClass(const JSClass* clasp) {
   if (tracedClasses.has(clasp)) {
     return;
   }

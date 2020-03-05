@@ -83,11 +83,13 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/MemoryChecking.h"
 #include "mozilla/Range.h"
 #include "mozilla/RangedPtr.h"
 #include "mozilla/WrappingOperations.h"
 
 #include <functional>
+#include <limits>
 #include <math.h>
 #include <memory>
 
@@ -96,13 +98,13 @@
 
 #include "builtin/BigInt.h"
 #include "gc/Allocator.h"
-#include "gc/FreeOp.h"
 #include "js/Initialization.h"
 #include "js/StableStringChars.h"
 #include "js/Utility.h"
 #include "vm/JSContext.h"
 #include "vm/SelfHosting.h"
 
+#include "gc/FreeOp-inl.h"
 #include "vm/JSContext-inl.h"
 
 using namespace js;
@@ -126,17 +128,17 @@ static inline unsigned DigitLeadingZeroes(BigInt::Digit x) {
                         : mozilla::CountLeadingZeroes64(x);
 }
 
-BigInt* BigInt::createUninitialized(JSContext* cx, size_t length,
+BigInt* BigInt::createUninitialized(JSContext* cx, size_t digitLength,
                                     bool isNegative) {
-  if (length > MaxDigitLength) {
+  if (digitLength > MaxDigitLength) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_BIGINT_TOO_LARGE);
     return nullptr;
   }
 
   UniquePtr<Digit[], JS::FreePolicy> heapDigits;
-  if (length > InlineDigitsLength) {
-    heapDigits = cx->make_pod_array<Digit>(length);
+  if (digitLength > InlineDigitsLength) {
+    heapDigits = cx->make_pod_array<Digit>(digitLength);
     if (!heapDigits) {
       return nullptr;
     }
@@ -149,13 +151,14 @@ BigInt* BigInt::createUninitialized(JSContext* cx, size_t length,
     return nullptr;
   }
 
-  x->lengthSignAndReservedBits_ =
-      (length << LengthShift) | (isNegative ? SignBit : 0);
-  MOZ_ASSERT(x->digitLength() == length);
+  x->setLengthAndFlags(digitLength, isNegative ? SignBit : 0);
+
+  MOZ_ASSERT(x->digitLength() == digitLength);
   MOZ_ASSERT(x->isNegative() == isNegative);
 
   if (heapDigits) {
     x->heapDigits_ = heapDigits.release();
+    AddCellMemory(x, digitLength * sizeof(Digit), js::MemoryUse::BigIntDigits);
   }
 
   return x;
@@ -166,9 +169,10 @@ void BigInt::initializeDigitsToZero() {
   std::uninitialized_fill_n(digs.begin(), digs.Length(), 0);
 }
 
-void BigInt::finalize(js::FreeOp* fop) {
+void BigInt::finalize(JSFreeOp* fop) {
   if (hasHeapDigits()) {
-    fop->free_(heapDigits_);
+    size_t size = digitLength() * sizeof(Digit);
+    fop->free_(this, heapDigits_, size, js::MemoryUse::BigIntDigits);
   }
 }
 
@@ -211,7 +215,7 @@ BigInt* BigInt::neg(JSContext* cx, HandleBigInt x) {
   if (!result) {
     return nullptr;
   }
-  result->lengthSignAndReservedBits_ ^= SignBit;
+  result->toggleFlagBit(SignBit);
   return result;
 }
 
@@ -271,7 +275,7 @@ BigInt::Digit BigInt::digitDiv(Digit high, Digit low, Digit divisor,
           : "=a"(quotient), "=d"(rem)
           // Inputs: put `high` into rdx, `low` into rax, and `divisor` into
           // any register or stack slot.
-          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+          : "d"(high), "a"(low), [ divisor ] "rm"(divisor));
   *remainder = rem;
   return quotient;
 #elif defined(__i386__)
@@ -282,7 +286,7 @@ BigInt::Digit BigInt::digitDiv(Digit high, Digit low, Digit divisor,
           : "=a"(quotient), "=d"(rem)
           // Inputs: put `high` into edx, `low` into eax, and `divisor` into
           // any register or stack slot.
-          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+          : "d"(high), "a"(low), [ divisor ] "rm"(divisor));
   *remainder = rem;
   return quotient;
 #else
@@ -1411,12 +1415,16 @@ bool BigInt::calculateMaximumDigitsRequired(JSContext* cx, uint8_t radix,
                                             size_t charcount, size_t* result) {
   MOZ_ASSERT(2 <= radix && radix <= 36);
 
-  size_t bitsPerChar = maxBitsPerCharTable[radix];
+  uint8_t bitsPerChar = maxBitsPerCharTable[radix];
 
   MOZ_ASSERT(charcount > 0);
-  MOZ_ASSERT(charcount <= std::numeric_limits<size_t>::max() / bitsPerChar);
-  uint64_t n =
-      CeilDiv(charcount * bitsPerChar, DigitBits * bitsPerCharTableMultiplier);
+  MOZ_ASSERT(charcount <= std::numeric_limits<uint64_t>::max() / bitsPerChar);
+  static_assert(
+      MaxDigitLength < std::numeric_limits<size_t>::max(),
+      "can't safely cast calculateMaximumDigitsRequired result to size_t");
+
+  uint64_t n = CeilDiv(static_cast<uint64_t>(charcount) * bitsPerChar,
+                       DigitBits * bitsPerCharTableMultiplier);
   if (n > MaxDigitLength) {
     ReportOutOfMemory(cx);
     return false;
@@ -1512,29 +1520,47 @@ BigInt* BigInt::parseLiteral(JSContext* cx, const Range<const CharT> chars,
                             haveParseError);
 }
 
-// BigInt proposal section 5.1.1
-static bool IsInteger(double d) {
-  // Step 1 is an assertion checked by the caller.
-  // Step 2.
-  if (!mozilla::IsFinite(d)) {
-    return false;
+template <typename CharT>
+bool BigInt::literalIsZeroNoRadix(const Range<const CharT> chars) {
+  MOZ_ASSERT(chars.length());
+
+  RangedPtr<const CharT> start = chars.begin();
+  RangedPtr<const CharT> end = chars.end();
+
+  // Skipping leading zeroes.
+  while (start[0] == '0') {
+    start++;
+    if (start == end) {
+      return true;
+    }
   }
 
-  // Step 3.
-  double i = JS::ToInteger(d);
-
-  // Step 4.
-  if (i != d) {
-    return false;
-  }
-
-  // Step 5.
-  return true;
+  return false;
 }
 
+// trim and remove radix selection prefix.
+template <typename CharT>
+bool BigInt::literalIsZero(const Range<const CharT> chars) {
+  RangedPtr<const CharT> start = chars.begin();
+  const RangedPtr<const CharT> end = chars.end();
+
+  MOZ_ASSERT(chars.length());
+
+  // Skip over radix selector.
+  if (end - start > 2 && start[0] == '0') {
+    if (start[1] == 'b' || start[1] == 'B' || start[1] == 'x' ||
+        start[1] == 'X' || start[1] == 'o' || start[1] == 'O') {
+      return literalIsZeroNoRadix(Range<const CharT>(start + 2, end));
+    }
+  }
+
+  return literalIsZeroNoRadix(Range<const CharT>(start, end));
+}
+
+template bool BigInt::literalIsZero(const Range<const char16_t> chars);
+
 BigInt* BigInt::createFromDouble(JSContext* cx, double d) {
-  MOZ_ASSERT(::IsInteger(d),
-             "Only integer-valued doubles can convert to BigInt");
+  MOZ_ASSERT(IsInteger(d), "Only integer-valued doubles can convert to BigInt");
 
   if (d == 0) {
     return zero(cx);
@@ -1643,7 +1669,7 @@ BigInt* BigInt::createFromInt64(JSContext* cx, int64_t n) {
   }
 
   if (n < 0) {
-    res->lengthSignAndReservedBits_ |= SignBit;
+    res->setFlagBit(SignBit);
   }
   MOZ_ASSERT(res->isNegative() == (n < 0));
 
@@ -1654,7 +1680,7 @@ BigInt* BigInt::createFromInt64(JSContext* cx, int64_t n) {
 BigInt* js::NumberToBigInt(JSContext* cx, double d) {
   // Step 1 is an assertion checked by the caller.
   // Step 2.
-  if (!::IsInteger(d)) {
+  if (!IsInteger(d)) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_NUMBER_TO_BIGINT);
     return nullptr;
@@ -2236,6 +2262,43 @@ uint64_t BigInt::toUint64(BigInt* x) {
   return digit;
 }
 
+bool BigInt::isInt64(BigInt* x, int64_t* result) {
+  MOZ_MAKE_MEM_UNDEFINED(result, sizeof(*result));
+
+  size_t length = x->digitLength();
+  if (length > (DigitBits == 32 ? 2 : 1)) {
+    return false;
+  }
+
+  if (length == 0) {
+    *result = 0;
+    return true;
+  }
+
+  uint64_t magnitude = x->digit(0);
+  if (DigitBits == 32 && length > 1) {
+    magnitude |= static_cast<uint64_t>(x->digit(1)) << 32;
+  }
+
+  if (x->isNegative()) {
+    constexpr uint64_t Int64MinMagnitude = uint64_t(1) << 63;
+    if (magnitude <= Int64MinMagnitude) {
+      *result = magnitude == Int64MinMagnitude
+                    ? std::numeric_limits<int64_t>::min()
+                    : -AssertedCast<int64_t>(magnitude);
+      return true;
+    }
+  } else {
+    if (magnitude <=
+        static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+      *result = AssertedCast<int64_t>(magnitude);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Compute `2**bits - (x & (2**bits - 1))`.  Used when treating BigInt values as
 // arbitrary-precision two's complement signed integers.
 BigInt* BigInt::truncateAndSubFromPowerOfTwo(JSContext* cx, HandleBigInt x,
@@ -2243,6 +2306,12 @@ BigInt* BigInt::truncateAndSubFromPowerOfTwo(JSContext* cx, HandleBigInt x,
                                              bool resultNegative) {
   MOZ_ASSERT(bits != 0);
   MOZ_ASSERT(!x->isZero());
+
+  if (bits > MaxBitLength) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_BIGINT_TOO_LARGE);
+    return nullptr;
+  }
 
   size_t resultLength = CeilDiv(bits, DigitBits);
   RootedBigInt result(cx,
@@ -2349,7 +2418,7 @@ BigInt* BigInt::asUintN(JSContext* cx, HandleBigInt x, uint64_t bits) {
   if (res == nullptr) {
     return nullptr;
   }
-  
+
   while (length-- > 0) {
     res->setDigit(length, x->digit(length) & mask);
     mask = Digit(-1);
@@ -2688,6 +2757,22 @@ BigInt* js::ToBigInt(JSContext* cx, HandleValue val) {
   return nullptr;
 }
 
+JS::Result<int64_t> js::ToBigInt64(JSContext* cx, HandleValue v) {
+  BigInt* bi = ToBigInt(cx, v);
+  if (!bi) {
+    return cx->alreadyReportedError();
+  }
+  return BigInt::toInt64(bi);
+}
+
+JS::Result<uint64_t> js::ToBigUint64(JSContext* cx, HandleValue v) {
+  BigInt* bi = ToBigInt(cx, v);
+  if (!bi) {
+    return cx->alreadyReportedError();
+  }
+  return BigInt::toUint64(bi);
+}
+
 double BigInt::numberValue(BigInt* x) {
   if (x->isZero()) {
     return 0.0;
@@ -2702,12 +2787,13 @@ double BigInt::numberValue(BigInt* x) {
   size_t length = x->digitLength();
   MOZ_ASSERT(length != 0);
 
-  // Fast path for the likely-common case of up to a uint64_t of magnitude
-  // that doesn't exceed integral precision in IEEE-754.
+  // Fast path for the likely-common case of up to a uint64_t of magnitude not
+  // exceeding integral precision in IEEE-754.  (Note that we *depend* on this
+  // optimization being performed further down.)
   if (length <= 64 / DigitBits) {
     uint64_t magnitude = x->digit(0);
     if (DigitBits == 32 && length > 1) {
-      magnitude |= uint64_t(x->digit(1)) << 32;
+      magnitude |= static_cast<uint64_t>(x->digit(1)) << 32;
     }
     const uint64_t MaxIntegralPrecisionDouble = uint64_t(1)
                                                 << (SignificandWidth + 1);
@@ -2736,62 +2822,165 @@ double BigInt::numberValue(BigInt* x) {
   const uint8_t msdIgnoredBits = msdLeadingZeroes + 1;
   const uint8_t msdIncludedBits = DigitBits - msdIgnoredBits;
 
-  uint8_t bitsFilled = msdIncludedBits;
+  // We compute the final mantissa of the result, shifted upward to the top of
+  // the `uint64_t` space -- plus an extra bit to detect potential rounding.
+  constexpr uint8_t BitsNeededForShiftedMantissa = SignificandWidth + 1;
 
-  // Shift `msd`'s contributed bits upward to remove high-order zeroes and
-  // the highest set bit (which is implicit in IEEE-754 integral values so
-  // must be removed) and to add low-order zeroes.
+  // Shift `msd`'s contributed bits upward to remove high-order zeroes and the
+  // highest set bit (which is implicit in IEEE-754 integral values so must be
+  // removed) and to add low-order zeroes.  (Lower-order garbage bits are
+  // discarded when `shiftedMantissa` is converted to a real mantissa.)
   uint64_t shiftedMantissa =
       msdIncludedBits == 0 ? 0 : uint64_t(msd) << (64 - msdIncludedBits);
 
-  // Add in bits from the next one or two digits if `msd` didn't contain all
-  // bits necessary to define the result.  (The extra bit allows us to
-  // properly round an inexact overall result.)  Any lower bits that are
-  // uselessly set will be shifted away when `shiftedMantissa` is converted to
-  // a real mantissa.
-  if (bitsFilled < SignificandWidth + 1) {
+  // If the extra bit is set, correctly rounding the result may require
+  // examining all lower-order bits.  Also compute 1) the index of the Digit
+  // storing the extra bit, and 2) whether bits beneath the extra bit in that
+  // Digit are nonzero so we can round if needed.
+  size_t digitContainingExtraBit;
+  Digit bitsBeneathExtraBitInDigitContainingExtraBit;
+
+  // Add shifted bits to `shiftedMantissa` until we have a complete mantissa and
+  // an extra bit.
+  if (msdIncludedBits >= BitsNeededForShiftedMantissa) {
+    //       DigitBits=64 (necessarily for msdIncludedBits ≥ SignificandWidth+1;
+    //            |        C++ compiler range analysis ought eliminate this
+    //            |        check on 32-bit)
+    //   _________|__________
+    //  /                    |
+    //        msdIncludedBits
+    //      ________|________
+    //     /                 |
+    // [001···················|
+    //  \_/\_____________/\__|
+    //   |            |    |
+    // msdIgnoredBits |   bits below the extra bit (may be no bits)
+    //      BitsNeededForShiftedMantissa=SignificandWidth+1
+    digitContainingExtraBit = length - 1;
+
+    const uint8_t countOfBitsInDigitBelowExtraBit =
+        DigitBits - BitsNeededForShiftedMantissa - msdIgnoredBits;
+    bitsBeneathExtraBitInDigitContainingExtraBit =
+        msd & ((Digit(1) << countOfBitsInDigitBelowExtraBit) - 1);
+  } else {
     MOZ_ASSERT(length >= 2,
                "single-Digit numbers with this few bits should have been "
                "handled by the fast-path above");
 
     Digit second = x->digit(length - 2);
-    if (DigitBits == 32) {
-      shiftedMantissa |= uint64_t(second) << msdIgnoredBits;
-      bitsFilled += DigitBits;
+    if (DigitBits == 64) {
+      shiftedMantissa |= second >> msdIncludedBits;
 
-      // Add in bits from another digit, if any, if we still have unfilled
-      // significand bits.
-      if (bitsFilled < SignificandWidth + 1 && length >= 3) {
+      digitContainingExtraBit = length - 2;
+
+      //  msdIncludedBits + DigitBits
+      //      ________|_________
+      //     /                  |
+      //             DigitBits=64
+      // msdIncludedBits    |
+      //      __|___   _____|___
+      //     /      \ /         |
+      // [001········|···········|
+      //  \_/\_____________/\___|
+      //   |            |     |
+      // msdIgnoredBits | bits below the extra bit (always more than one)
+      //                |
+      //      BitsNeededForShiftedMantissa=SignificandWidth+1
+      const uint8_t countOfBitsInSecondDigitBelowExtraBit =
+          (msdIncludedBits + DigitBits) - BitsNeededForShiftedMantissa;
+
+      bitsBeneathExtraBitInDigitContainingExtraBit =
+          second << (DigitBits - countOfBitsInSecondDigitBelowExtraBit);
+    } else {
+      shiftedMantissa |= uint64_t(second) << msdIgnoredBits;
+
+      if (msdIncludedBits + DigitBits >= BitsNeededForShiftedMantissa) {
+        digitContainingExtraBit = length - 2;
+
+        //  msdIncludedBits + DigitBits
+        //      ______|________
+        //     /               |
+        //             DigitBits=32
+        // msdIncludedBits |
+        //      _|_   _____|___
+        //     /   \ /         |
+        // [001·····|···········|
+        //     \___________/\__|
+        //          |        |
+        //          |      bits below the extra bit (may be no bits)
+        //      BitsNeededForShiftedMantissa=SignificandWidth+1
+        const uint8_t countOfBitsInSecondDigitBelowExtraBit =
+            (msdIncludedBits + DigitBits) - BitsNeededForShiftedMantissa;
+
+        bitsBeneathExtraBitInDigitContainingExtraBit =
+            second & ((Digit(1) << countOfBitsInSecondDigitBelowExtraBit) - 1);
+      } else {
+        MOZ_ASSERT(length >= 3,
+                   "we must have at least three digits here, because "
+                   "`msdIncludedBits + 32 < BitsNeededForShiftedMantissa` "
+                   "guarantees `x < 2**53` -- and therefore the "
+                   "MaxIntegralPrecisionDouble optimization above will have "
+                   "handled two-digit cases");
+
         Digit third = x->digit(length - 3);
         shiftedMantissa |= uint64_t(third) >> msdIncludedBits;
-        // The second and third 32-bit digits contributed 64 bits total, filling
-        // well beyond the mantissa.
-        bitsFilled = 64;
+
+        digitContainingExtraBit = length - 3;
+
+        //    msdIncludedBits + DigitBits + DigitBits
+        //      ____________|______________
+        //     /                           |
+        //             DigitBits=32
+        // msdIncludedBits |     DigitBits=32
+        //      _|_   _____|___   ____|____
+        //     /   \ /         \ /         |
+        // [001·····|···········|···········|
+        //     \____________________/\_____|
+        //               |               |
+        //               |      bits below the extra bit
+        //      BitsNeededForShiftedMantissa=SignificandWidth+1
+        static_assert(2 * DigitBits > BitsNeededForShiftedMantissa,
+                      "two 32-bit digits should more than fill a mantissa");
+        const uint8_t countOfBitsInThirdDigitBelowExtraBit =
+            msdIncludedBits + 2 * DigitBits - BitsNeededForShiftedMantissa;
+
+        // Shift out the mantissa bits and the extra bit.
+        bitsBeneathExtraBitInDigitContainingExtraBit =
+            third << (DigitBits - countOfBitsInThirdDigitBelowExtraBit);
       }
-    } else {
-      shiftedMantissa |= second >> msdIncludedBits;
-      // A full 64-bit digit's worth of bits (some from the most significant
-      // digit, the rest from the next) fills well beyond the mantissa.
-      bitsFilled = 64;
     }
   }
 
-  // Round the overall result, if necessary.  (It's possible we don't need to
-  // round -- the number might not have enough bits to round.)
-  if (bitsFilled >= SignificandWidth + 1) {
-    constexpr uint64_t LeastSignificantBit = uint64_t(1)
-                                             << (64 - SignificandWidth);
-    constexpr uint64_t ExtraBit = LeastSignificantBit >> 1;
+  constexpr uint64_t LeastSignificantBit = uint64_t(1)
+                                           << (64 - SignificandWidth);
+  constexpr uint64_t ExtraBit = LeastSignificantBit >> 1;
 
-    // When the first bit outside the significand is set, the overall value
-    // is rounded: downward (i.e. no change to the bits) if the least
-    // significant bit in the significand is zero, upward if it instead is
-    // one.
-    if ((shiftedMantissa & ExtraBit) &&
-        (shiftedMantissa & LeastSignificantBit)) {
-      // We're rounding upward: add to the significand bits.  If they
-      // overflow, the exponent must also be increased.  If *that*
-      // overflows, return the appropriate infinity.
+  // The extra bit must be set for rounding to change the mantissa.
+  if ((shiftedMantissa & ExtraBit) != 0) {
+    bool shouldRoundUp;
+    if (shiftedMantissa & LeastSignificantBit) {
+      // If the lowest mantissa bit is set, it doesn't matter what lower bits
+      // are: nearest-even rounds up regardless.
+      shouldRoundUp = true;
+    } else {
+      // If the lowest mantissa bit is unset, *all* lower bits are relevant.
+      // All-zero bits below the extra bit situates `x` halfway between two
+      // values, and the nearest *even* value lies downward.  But if any bit
+      // below the extra bit is set, `x` is closer to the rounded-up value.
+      shouldRoundUp = bitsBeneathExtraBitInDigitContainingExtraBit != 0;
+      if (!shouldRoundUp) {
+        while (digitContainingExtraBit-- > 0) {
+          if (x->digit(digitContainingExtraBit) != 0) {
+            shouldRoundUp = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (shouldRoundUp) {
+      // Add one to the significand bits.  If they overflow, the exponent must
+      // also be increased.  If *that* overflows, return the correct infinity.
       uint64_t before = shiftedMantissa;
       shiftedMantissa += ExtraBit;
       if (shiftedMantissa < before) {
@@ -2984,6 +3173,16 @@ bool BigInt::equal(BigInt* lhs, double rhs) {
   return compare(lhs, rhs) == 0;
 }
 
+JS::Result<bool> BigInt::equal(JSContext* cx, Handle<BigInt*> lhs,
+                               HandleString rhs) {
+  BigInt* rhsBigInt;
+  MOZ_TRY_VAR(rhsBigInt, StringToBigInt(cx, rhs));
+  if (!rhsBigInt) {
+    return false;
+  }
+  return equal(lhs, rhsBigInt);
+}
+
 // BigInt proposal section 3.2.5
 JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
                                       HandleValue rhs) {
@@ -2996,13 +3195,8 @@ JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
 
   // Steps 6-7.
   if (rhs.isString()) {
-    RootedBigInt rhsBigInt(cx);
     RootedString rhsString(cx, rhs.toString());
-    MOZ_TRY_VAR(rhsBigInt, StringToBigInt(cx, rhsString));
-    if (!rhsBigInt) {
-      return false;
-    }
-    return equal(lhs, rhsBigInt);
+    return equal(cx, lhs, rhsString);
   }
 
   // Steps 8-9 (not applicable).
@@ -3208,6 +3402,12 @@ BigInt* js::ParseBigIntLiteral(JSContext* cx,
   }
   MOZ_RELEASE_ASSERT(!parseError);
   return res;
+}
+
+// Check a already validated numeric literal for a non-zero value. Used by
+// the parsers node folder in deferred mode.
+bool js::BigIntLiteralIsZero(const mozilla::Range<const char16_t>& chars) {
+  return BigInt::literalIsZero(chars);
 }
 
 template <js::AllowGC allowGC>

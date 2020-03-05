@@ -10,6 +10,7 @@
 #include "mozilla/HashFunctions.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <stdint.h>
 
 #include "jsfriendapi.h"
@@ -426,10 +427,11 @@ class SimdConstant {
 enum class IntConversionBehavior {
   // These two try to convert the input to an int32 using ToNumber and
   // will fail if the resulting int32 isn't strictly equal to the input.
-  Normal,
-  NegativeZeroCheck,
-  // These two will convert the input to an int32 with loss of precision.
+  Normal,             // Succeeds on -0: converts to 0.
+  NegativeZeroCheck,  // Fails on -0.
+  // These three will convert the input to an int32 with loss of precision.
   Truncate,
+  TruncateNoWrap,
   ClampToUint8,
 };
 
@@ -459,7 +461,6 @@ enum class MIRType : uint8_t {
   MagicUninitializedLexical,  // JS_UNINITIALIZED_LEXICAL magic value.
   // Types above are specialized.
   Value,
-  SinCosDouble,  // Optimizing a sin/cos to sincos.
   ObjectOrNull,
   None,         // Invalid, used as a placeholder.
   Slots,        // A slots vector
@@ -602,8 +603,6 @@ static inline const char* StringFromMIRType(MIRType type) {
       return "MagicUninitializedLexical";
     case MIRType::Value:
       return "Value";
-    case MIRType::SinCosDouble:
-      return "SinCosDouble";
     case MIRType::ObjectOrNull:
       return "ObjectOrNull";
     case MIRType::None:
@@ -693,37 +692,13 @@ static inline MIRType ScalarTypeToMIRType(Scalar::Type type) {
       return MIRType::Float32;
     case Scalar::Float64:
       return MIRType::Double;
+    case Scalar::BigInt64:
+    case Scalar::BigUint64:
+      MOZ_CRASH("NYI");
     case Scalar::MaxTypedArrayViewType:
       break;
   }
   MOZ_CRASH("unexpected kind");
-}
-
-static inline unsigned ScalarTypeToLength(Scalar::Type type) {
-  switch (type) {
-    case Scalar::Int8:
-    case Scalar::Uint8:
-    case Scalar::Int16:
-    case Scalar::Uint16:
-    case Scalar::Int32:
-    case Scalar::Uint32:
-    case Scalar::Int64:
-    case Scalar::Float32:
-    case Scalar::Float64:
-    case Scalar::Uint8Clamped:
-      return 1;
-    case Scalar::MaxTypedArrayViewType:
-      break;
-  }
-  MOZ_CRASH("unexpected kind");
-}
-
-static inline const char* PropertyNameToExtraName(PropertyName* name) {
-  JS::AutoCheckCannotGC nogc;
-  if (!name->hasLatin1Chars()) {
-    return nullptr;
-  }
-  return reinterpret_cast<const char*>(name->latin1Chars(nogc));
 }
 
 #ifdef DEBUG
@@ -738,15 +713,36 @@ static inline const char* PropertyNameToExtraName(PropertyName* name) {
 #endif  // DEBUG
 
 enum ABIArgType {
+  // A pointer sized integer
   ArgType_General = 0x1,
-  ArgType_Double = 0x2,
-  ArgType_Float32 = 0x3,
-  ArgType_Int64 = 0x4,
+  // A 32-bit integer
+  ArgType_Int32 = 0x2,
+  // A 64-bit integer
+  ArgType_Int64 = 0x3,
+  // A 32-bit floating point number
+  ArgType_Float32 = 0x4,
+  // A 64-bit floating point number
+  ArgType_Float64 = 0x5,
 
   RetType_Shift = 0x0,
   ArgType_Shift = 0x3,
   ArgType_Mask = 0x7
 };
+
+namespace detail {
+
+static constexpr int MakeABIFunctionType(
+    ABIArgType ret, std::initializer_list<ABIArgType> args) {
+  int abiType = ret << RetType_Shift;
+  int i = 1;
+  for (auto arg : args) {
+    abiType |= (arg << (ArgType_Shift * i));
+    i++;
+  }
+  return abiType;
+}
+
+}  // namespace detail
 
 enum ABIFunctionType {
   // VM functions that take 0-9 non-double arguments
@@ -763,13 +759,13 @@ enum ABIFunctionType {
 
   // int64 f(double)
   Args_Int64_Double =
-      (ArgType_Int64 << RetType_Shift) | (ArgType_Double << ArgType_Shift),
+      (ArgType_Int64 << RetType_Shift) | (ArgType_Float64 << ArgType_Shift),
 
   // double f()
-  Args_Double_None = ArgType_Double << RetType_Shift,
+  Args_Double_None = ArgType_Float64 << RetType_Shift,
 
   // int f(double)
-  Args_Int_Double = Args_General0 | (ArgType_Double << ArgType_Shift),
+  Args_Int_Double = Args_General0 | (ArgType_Float64 << ArgType_Shift),
 
   // int f(float32)
   Args_Int_Float32 = Args_General0 | (ArgType_Float32 << ArgType_Shift),
@@ -784,7 +780,7 @@ enum ABIFunctionType {
                         (ArgType_General << (ArgType_Shift * 2)),
 
   // double f(double)
-  Args_Double_Double = Args_Double_None | (ArgType_Double << ArgType_Shift),
+  Args_Double_Double = Args_Double_None | (ArgType_Float64 << ArgType_Shift),
 
   // double f(int)
   Args_Double_Int = Args_Double_None | (ArgType_General << ArgType_Shift),
@@ -796,11 +792,11 @@ enum ABIFunctionType {
   // double f(double, int)
   Args_Double_DoubleInt = Args_Double_None |
                           (ArgType_General << (ArgType_Shift * 1)) |
-                          (ArgType_Double << (ArgType_Shift * 2)),
+                          (ArgType_Float64 << (ArgType_Shift * 2)),
 
   // double f(double, double)
   Args_Double_DoubleDouble =
-      Args_Double_Double | (ArgType_Double << (ArgType_Shift * 2)),
+      Args_Double_Double | (ArgType_Float64 << (ArgType_Shift * 2)),
 
   // float f(float, float)
   Args_Float32_Float32Float32 =
@@ -808,32 +804,38 @@ enum ABIFunctionType {
 
   // double f(int, double)
   Args_Double_IntDouble = Args_Double_None |
-                          (ArgType_Double << (ArgType_Shift * 1)) |
+                          (ArgType_Float64 << (ArgType_Shift * 1)) |
                           (ArgType_General << (ArgType_Shift * 2)),
 
   // int f(int, double)
-  Args_Int_IntDouble = Args_General0 | (ArgType_Double << (ArgType_Shift * 1)) |
+  Args_Int_IntDouble = Args_General0 |
+                       (ArgType_Float64 << (ArgType_Shift * 1)) |
                        (ArgType_General << (ArgType_Shift * 2)),
+
+  // int f(double, int)
+  Args_Int_DoubleInt = Args_General0 |
+                       (ArgType_General << (ArgType_Shift * 1)) |
+                       (ArgType_Float64 << (ArgType_Shift * 2)),
 
   // double f(double, double, double)
   Args_Double_DoubleDoubleDouble =
-      Args_Double_DoubleDouble | (ArgType_Double << (ArgType_Shift * 3)),
+      Args_Double_DoubleDouble | (ArgType_Float64 << (ArgType_Shift * 3)),
 
   // double f(double, double, double, double)
   Args_Double_DoubleDoubleDoubleDouble =
-      Args_Double_DoubleDoubleDouble | (ArgType_Double << (ArgType_Shift * 4)),
+      Args_Double_DoubleDoubleDouble | (ArgType_Float64 << (ArgType_Shift * 4)),
 
   // int f(double, int, int)
   Args_Int_DoubleIntInt = Args_General0 |
                           (ArgType_General << (ArgType_Shift * 1)) |
                           (ArgType_General << (ArgType_Shift * 2)) |
-                          (ArgType_Double << (ArgType_Shift * 3)),
+                          (ArgType_Float64 << (ArgType_Shift * 3)),
 
   // int f(int, double, int, int)
   Args_Int_IntDoubleIntInt = Args_General0 |
                              (ArgType_General << (ArgType_Shift * 1)) |
                              (ArgType_General << (ArgType_Shift * 2)) |
-                             (ArgType_Double << (ArgType_Shift * 3)) |
+                             (ArgType_Float64 << (ArgType_Shift * 3)) |
                              (ArgType_General << (ArgType_Shift * 4)),
 
   Args_Int_GeneralGeneralGeneralInt64 =
@@ -846,8 +848,56 @@ enum ABIFunctionType {
                                       (ArgType_General << (ArgType_Shift * 1)) |
                                       (ArgType_General << (ArgType_Shift * 2)) |
                                       (ArgType_Int64 << (ArgType_Shift * 3)) |
-                                      (ArgType_Int64 << (ArgType_Shift * 4))
+                                      (ArgType_Int64 << (ArgType_Shift * 4)),
+
+  Args_Int32_General =
+      detail::MakeABIFunctionType(ArgType_Int32, {ArgType_General}),
+  Args_Int32_GeneralInt32 = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32}),
+  Args_Int32_GeneralInt32Int32 = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32}),
+  Args_Int32_GeneralInt32Int32Int32Int32 = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
+                      ArgType_Int32, ArgType_Int32}),
+  Args_Int32_GeneralInt32Int32Int32Int32Int32 = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
+                      ArgType_Int32, ArgType_Int32, ArgType_Int32}),
+  Args_Int32_GeneralInt32Int32Int32General = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
+                      ArgType_Int32, ArgType_General}),
+  Args_Int32_GeneralInt32Int32Int64 = detail::MakeABIFunctionType(
+      ArgType_Int32,
+      {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_Int64}),
+  Args_Int32_GeneralInt32Int32General = detail::MakeABIFunctionType(
+      ArgType_Int32,
+      {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General}),
+  Args_Int32_GeneralInt32Int64Int64 = detail::MakeABIFunctionType(
+      ArgType_Int32,
+      {ArgType_General, ArgType_Int32, ArgType_Int64, ArgType_Int64}),
+  Args_Int32_GeneralInt32GeneralInt32 = detail::MakeABIFunctionType(
+      ArgType_Int32,
+      {ArgType_General, ArgType_Int32, ArgType_General, ArgType_Int32}),
+  Args_Int32_GeneralInt32GeneralInt32Int32 = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_General,
+                      ArgType_Int32, ArgType_Int32}),
+  Args_Int32_GeneralGeneral = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_General}),
+  Args_Int32_GeneralGeneralInt32Int32 = detail::MakeABIFunctionType(
+      ArgType_Int32,
+      {ArgType_General, ArgType_General, ArgType_Int32, ArgType_Int32}),
+  Args_General_GeneralInt32 = detail::MakeABIFunctionType(
+      ArgType_General, {ArgType_General, ArgType_Int32}),
+  Args_General_GeneralInt32Int32 = detail::MakeABIFunctionType(
+      ArgType_General, {ArgType_General, ArgType_Int32, ArgType_Int32}),
+  Args_General_GeneralInt32Int32General = detail::MakeABIFunctionType(
+      ArgType_General,
+      {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General}),
 };
+
+static constexpr ABIFunctionType MakeABIFunctionType(
+    ABIArgType ret, std::initializer_list<ABIArgType> args) {
+  return ABIFunctionType(detail::MakeABIFunctionType(ret, args));
+}
 
 enum class BarrierKind : uint32_t {
   // No barrier is needed.
@@ -878,6 +928,15 @@ static const TruncFlags TRUNC_UNSIGNED = TruncFlags(1) << 0;
 static const TruncFlags TRUNC_SATURATING = TruncFlags(1) << 1;
 
 enum BranchDirection { FALSE_BRANCH, TRUE_BRANCH };
+
+template <typename T>
+constexpr T SplatByteToUInt(uint8_t val, uint8_t x) {
+  T splatted = val;
+  for (; x > 1; x--) {
+    splatted |= splatted << 8;
+  }
+  return splatted;
+}
 
 }  // namespace jit
 }  // namespace js

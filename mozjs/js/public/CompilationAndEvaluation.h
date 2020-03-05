@@ -19,15 +19,12 @@
 #include "js/RootingAPI.h"      // JS::Handle, JS::MutableHandle
 #include "js/Value.h"  // JS::Value and specializations of JS::*Handle-related types
 
-struct JSContext;
-class JSFunction;
-class JSObject;
-class JSScript;
+struct JS_PUBLIC_API JSContext;
+class JS_PUBLIC_API JSFunction;
+class JS_PUBLIC_API JSObject;
+class JS_PUBLIC_API JSScript;
 
 namespace JS {
-
-template <typename T>
-class AutoVector;
 
 template <typename UnitT>
 class SourceText;
@@ -52,12 +49,12 @@ extern JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(
 
 /*
  * NB: JS_ExecuteScript and the JS::Evaluate APIs come in two flavors: either
- * they use the global as the scope, or they take an AutoObjectVector of objects
- * to use as the scope chain.  In the former case, the global is also used as
- * the "this" keyword value and the variables object (ECMA parlance for where
- * 'var' and 'function' bind names) of the execution context for script.  In the
- * latter case, the first object in the provided list is used, unless the list
- * is empty, in which case the global is used.
+ * they use the global as the scope, or they take a HandleValueVector of
+ * objects to use as the scope chain.  In the former case, the global is also
+ * used as the "this" keyword value and the variables object (ECMA parlance for
+ * where 'var' and 'function' bind names) of the execution context for script.
+ * In the latter case, the first object in the provided list is used, unless the
+ * list is empty, in which case the global is used.
  *
  * Why a runtime option?  The alternative is to add APIs duplicating those
  * for the other value of flags, and that doesn't seem worth the code bloat
@@ -83,12 +80,12 @@ extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
  * objects that should end up on the script's scope chain.
  */
 extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
-                                           JS::AutoVector<JSObject*>& envChain,
+                                           JS::HandleObjectVector envChain,
                                            JS::Handle<JSScript*> script,
                                            JS::MutableHandle<JS::Value> rval);
 
 extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
-                                           JS::AutoVector<JSObject*>& envChain,
+                                           JS::HandleObjectVector envChain,
                                            JS::Handle<JSScript*> script);
 
 namespace JS {
@@ -107,12 +104,13 @@ extern JS_PUBLIC_API bool CloneAndExecuteScript(JSContext* cx,
  * environment chain.
  */
 extern JS_PUBLIC_API bool CloneAndExecuteScript(JSContext* cx,
-                                                AutoVector<JSObject*>& envChain,
+                                                HandleObjectVector envChain,
                                                 Handle<JSScript*> script,
                                                 MutableHandle<Value> rval);
 
 /**
- * Evaluate the given source buffer in the scope of the current global of cx.
+ * Evaluate the given source buffer in the scope of the current global of cx,
+ * and return the completion value in |rval|.
  */
 extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
                                    const ReadOnlyCompileOptions& options,
@@ -124,8 +122,7 @@ extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
  * the global object on it; that's implicit.  It needs to contain the other
  * objects that should end up on the script's scope chain.
  */
-extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
-                                   AutoVector<JSObject*>& envChain,
+extern JS_PUBLIC_API bool Evaluate(JSContext* cx, HandleObjectVector envChain,
                                    const ReadOnlyCompileOptions& options,
                                    SourceText<char16_t>& srcBuf,
                                    MutableHandle<Value> rval);
@@ -135,10 +132,28 @@ extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
  * and return the completion value in |rval|.  If the data contains invalid
  * UTF-8, an error is reported.
  */
-extern JS_PUBLIC_API bool EvaluateUtf8(JSContext* cx,
-                                       const ReadOnlyCompileOptions& options,
-                                       const char* bytes, size_t length,
-                                       MutableHandle<Value> rval);
+extern JS_PUBLIC_API bool Evaluate(JSContext* cx,
+                                   const ReadOnlyCompileOptions& options,
+                                   SourceText<mozilla::Utf8Unit>& srcBuf,
+                                   MutableHandle<Value> rval);
+
+/**
+ * Evaluate the provided UTF-8 data in the scope of the current global of |cx|,
+ * and return the completion value in |rval|.  If the data contains invalid
+ * UTF-8, an error is reported.
+ *
+ * The "DontInflate" suffix and (semantically unobservable) don't-inflate
+ * characteristic are temporary while bugs in UTF-8 compilation are ironed out.
+ * In the long term |JS::Evaluate| for UTF-8 will just never inflate, and this
+ * separate function will die.
+ *
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs that the UTF-16 compilation functions do not
+ *       have.  Use only if you're willing to take a risk!
+ */
+extern JS_PUBLIC_API bool EvaluateDontInflate(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<mozilla::Utf8Unit>& srcBuf, MutableHandle<Value> rval);
 
 /**
  * Evaluate the UTF-8 contents of the file at the given path, and return the
@@ -151,102 +166,129 @@ extern JS_PUBLIC_API bool EvaluateUtf8Path(
     MutableHandle<Value> rval);
 
 /**
- * |script| will always be set. On failure, it will be set to nullptr.
+ * Evaluate the UTF-8 contents of the file at the given path, and return the
+ * completion value in |rval|.  (The path itself is in the system encoding, not
+ * [necessarily] UTF-8.)  If the contents contain any malformed UTF-8, an error
+ * is reported.
+ *
+ * The "DontInflate" suffix and (semantically unobservable) don't-inflate
+ * characteristic are temporary while bugs in UTF-8 compilation are ironed out.
+ * In the long term |JS::EvaluateUtf8Path| will just never inflate, and this
+ * separate function will die.
+ *
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs that the UTF-16 compilation functions do not
+ *       have.  Use only if you're willing to take a risk!
  */
-extern JS_PUBLIC_API bool Compile(JSContext* cx,
-                                  const ReadOnlyCompileOptions& options,
-                                  SourceText<char16_t>& srcBuf,
-                                  MutableHandle<JSScript*> script);
+extern JS_PUBLIC_API bool EvaluateUtf8PathDontInflate(
+    JSContext* cx, const ReadOnlyCompileOptions& options, const char* filename,
+    MutableHandle<Value> rval);
 
 /**
- * Identical to |JS::Compile|, but compiles UTF-8.
- *
- * The "DontInflate" suffix is temporary while bugs in UTF-8 compilation are
- * ironed out.  In the long term this function and |JS::Compile| will follow
- * the same naming scheme.
- *
- * NOTE: This function DOES NOT INFLATE the UTF-8 bytes to UTF-16 before
- *       compiling them.  UTF-8 compilation is currently experimental and has
- *       known bugs.  Use only if you're willing to tolerate unspecified bugs!
+ * Compile the provided script using the given options.  Return the script on
+ * success, or return null on failure (usually with an error reported).
  */
-extern JS_PUBLIC_API bool CompileDontInflate(
+extern JS_PUBLIC_API JSScript* Compile(JSContext* cx,
+                                       const ReadOnlyCompileOptions& options,
+                                       SourceText<char16_t>& srcBuf);
+
+/**
+ * Compile the provided script using the given options.  Return the script on
+ * success, or return null on failure (usually with an error reported).
+ */
+extern JS_PUBLIC_API JSScript* Compile(JSContext* cx,
+                                       const ReadOnlyCompileOptions& options,
+                                       SourceText<mozilla::Utf8Unit>& srcBuf);
+
+/**
+ * Identical to |JS::Compile| for UTF-8, except this function directly parses
+ * its UTF-8 input without inflating it to UTF-16 and parsing that.
+ *
+ * The "DontInflate" suffix and (semantically unobservable) don't-inflate
+ * characteristic are temporary while bugs in UTF-8 compilation are ironed out.
+ * In the long term |JS::Compile| for UTF-8 will just never inflate, and this
+ * separate function will die.
+ *
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs that the UTF-16 compilation functions do not
+ *       have.  Use only if you're willing to take a risk!
+ */
+extern JS_PUBLIC_API JSScript* CompileDontInflate(
     JSContext* cx, const ReadOnlyCompileOptions& options,
-    SourceText<mozilla::Utf8Unit>& srcBuf, MutableHandle<JSScript*> script);
+    SourceText<mozilla::Utf8Unit>& srcBuf);
 
 /**
- * Compile the provided UTF-8 data into a script.  If the data contains invalid
- * UTF-8, an error is reported.
- *
- * |script| is always set to the compiled script or to null in case of error.
+ * Compile the UTF-8 contents of the given file into a script.  It is an error
+ * if the file contains invalid UTF-8.  Return the script on success, or return
+ * null on failure (usually with an error reported).
  */
-extern JS_PUBLIC_API bool CompileUtf8(JSContext* cx,
-                                      const ReadOnlyCompileOptions& options,
-                                      const char* bytes, size_t length,
-                                      MutableHandle<JSScript*> script);
+extern JS_PUBLIC_API JSScript* CompileUtf8File(
+    JSContext* cx, const ReadOnlyCompileOptions& options, FILE* file);
 
 /**
- * Compile the provided UTF-8 data into a script.  If the data contains invalid
- * UTF-8, an error is reported.
+ * Compile the UTF-8 contents of the given file into a script.  It is an error
+ * if the file contains invalid UTF-8.  Return the script on success, or return
+ * null on failure (usually with an error reported).
  *
- * |script| is always set to the compiled script or to null in case of error.
- *
- * NOTE: This function DOES NOT INFLATE the UTF-8 bytes to UTF-16 before
- *       compiling them.  UTF-8 compilation is currently experimental and has
- *       known bugs.  Use only if you're willing to tolerate unspecified bugs!
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs not present in |JS::CompileUtf8File| that
+ *       first inflates to UTF-16.  Use only if you're willing to take a risk!
  */
-extern JS_PUBLIC_API bool CompileUtf8DontInflate(
-    JSContext* cx, const ReadOnlyCompileOptions& options, const char* bytes,
-    size_t length, MutableHandle<JSScript*> script);
-
-/**
- * Compile the UTF-8 contents of the given file into a script.  If the contents
- * contain any malformed UTF-8, an error is reported.
- *
- * |script| is always set to the compiled script or to null in case of error.
- */
-extern JS_PUBLIC_API bool CompileUtf8File(JSContext* cx,
-                                          const ReadOnlyCompileOptions& options,
-                                          FILE* file,
-                                          MutableHandle<JSScript*> script);
-
-/**
- * Compile the UTF-8 contents of the given file into a script.  If the contents
- * contain any malformed UTF-8, an error is reported.
- *
- * |script| is always set to the compiled script or to null in case of error.
- *
- * NOTE: This function DOES NOT INFLATE the UTF-8 bytes to UTF-16 before
- *       compiling them.  UTF-8 compilation is currently experimental and has
- *       known bugs.  Use only if you're willing to tolerate unspecified bugs!
- */
-extern JS_PUBLIC_API bool CompileUtf8FileDontInflate(
-    JSContext* cx, const ReadOnlyCompileOptions& options, FILE* file,
-    MutableHandle<JSScript*> script);
+extern JS_PUBLIC_API JSScript* CompileUtf8FileDontInflate(
+    JSContext* cx, const ReadOnlyCompileOptions& options, FILE* file);
 
 /**
  * Compile the UTF-8 contents of the file at the given path into a script.
- * (The path itself is in the system encoding, not [necessarily] UTF-8.)  If
- * the contents contain any malformed UTF-8, an error is reported.
- *
- * |script| is always set to the compiled script or to null in case of error.
+ * (The path itself is in the system encoding, not [necessarily] UTF-8.)  It
+ * is an error if the file's contents are invalid UTF-8.  Return the script on
+ * success, or return null on failure (usually with an error reported).
  */
-extern JS_PUBLIC_API bool CompileUtf8Path(JSContext* cx,
-                                          const ReadOnlyCompileOptions& options,
-                                          const char* filename,
-                                          MutableHandle<JSScript*> script);
-
-extern JS_PUBLIC_API bool CompileForNonSyntacticScope(
-    JSContext* cx, const ReadOnlyCompileOptions& options,
-    SourceText<char16_t>& srcBuf, MutableHandle<JSScript*> script);
+extern JS_PUBLIC_API JSScript* CompileUtf8Path(
+    JSContext* cx, const ReadOnlyCompileOptions& options, const char* filename);
 
 /**
- * Compile the given UTF-8 data for non-syntactic scope.
+ * Compile the UTF-8 contents of the file at the given path into a script.
+ * (The path itself is in the system encoding, not [necessarily] UTF-8.)  It
+ * is an error if the file's contents are invalid UTF-8.  Return the script on
+ * success, or return null on failure (usually with an error reported).
  *
- * An exception is thrown if the data isn't valid UTF-8.
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs not present in |JS::CompileUtf8Path| that
+ *       first inflates to UTF-16.  Use only if you're willing to take a risk!
  */
-extern JS_PUBLIC_API bool CompileUtf8ForNonSyntacticScope(
-    JSContext* cx, const ReadOnlyCompileOptions& options, const char* bytes,
-    size_t length, MutableHandle<JSScript*> script);
+extern JS_PUBLIC_API JSScript* CompileUtf8PathDontInflate(
+    JSContext* cx, const ReadOnlyCompileOptions& options, const char* filename);
+
+extern JS_PUBLIC_API JSScript* CompileForNonSyntacticScope(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<char16_t>& srcBuf);
+
+/**
+ * Compile the provided UTF-8 data into a script in a non-syntactic scope.  It
+ * is an error if the data contains invalid UTF-8.  Return the script on
+ * success, or return null on failure (usually with an error reported).
+ */
+extern JS_PUBLIC_API JSScript* CompileForNonSyntacticScope(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<mozilla::Utf8Unit>& srcBuf);
+
+/**
+ * Compile the provided UTF-8 data into a script in a non-syntactic scope.  It
+ * is an error if the data contains invalid UTF-8.  Return the script on
+ * success, or return null on failure (usually with an error reported).
+ *
+ * The "DontInflate" suffix and (semantically unobservable) don't-inflate
+ * characteristic are temporary while bugs in UTF-8 compilation are ironed out.
+ * In the long term |JS::CompileForNonSyntacticScope| for UTF-8 will just never
+ * inflate, and this separate function will die.
+ *
+ * NOTE: UTF-8 compilation is currently experimental, and it's possible it has
+ *       as-yet-undiscovered bugs that the UTF-16 compilation functions do not
+ *       have.  Use only if you're willing to take a risk!
+ */
+extern JS_PUBLIC_API JSScript* CompileForNonSyntacticScopeDontInflate(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    SourceText<mozilla::Utf8Unit>& srcBuf);
 
 /**
  * Compile a function with envChain plus the global as its scope chain.
@@ -255,22 +297,31 @@ extern JS_PUBLIC_API bool CompileUtf8ForNonSyntacticScope(
  * objects, followed by the current global of the compartment cx is in.  This
  * global must not be explicitly included in the scope chain.
  */
-extern JS_PUBLIC_API bool CompileFunction(JSContext* cx,
-                                          AutoVector<JSObject*>& envChain,
-                                          const ReadOnlyCompileOptions& options,
-                                          const char* name, unsigned nargs,
-                                          const char* const* argnames,
-                                          SourceText<char16_t>& srcBuf,
-                                          MutableHandle<JSFunction*> fun);
+extern JS_PUBLIC_API JSFunction* CompileFunction(
+    JSContext* cx, HandleObjectVector envChain,
+    const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
+    const char* const* argnames, SourceText<char16_t>& srcBuf);
 
 /**
- * Same as above, but taking UTF-8 encoded const char* for the function body.
+ * Compile a function with envChain plus the global as its scope chain.
+ * envChain must contain objects in the current compartment of cx.  The actual
+ * scope chain used for the function will consist of With wrappers for those
+ * objects, followed by the current global of the compartment cx is in.  This
+ * global must not be explicitly included in the scope chain.
  */
-extern JS_PUBLIC_API bool CompileFunctionUtf8(
-    JSContext* cx, AutoVector<JSObject*>& envChain,
+extern JS_PUBLIC_API JSFunction* CompileFunction(
+    JSContext* cx, HandleObjectVector envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
-    const char* const* argnames, const char* utf8, size_t length,
-    MutableHandle<JSFunction*> fun);
+    const char* const* argnames, SourceText<mozilla::Utf8Unit>& srcBuf);
+
+/**
+ * Identical to the CompileFunction overload above for UTF-8, but with
+ * Rust-friendly ergonomics.
+ */
+extern JS_PUBLIC_API JSFunction* CompileFunctionUtf8(
+    JSContext* cx, HandleObjectVector envChain,
+    const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
+    const char* const* argnames, const char* utf8, size_t length);
 
 /*
  * Associate an element wrapper and attribute name with a previously compiled

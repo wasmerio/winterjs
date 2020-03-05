@@ -137,7 +137,7 @@ class FuncHook final {
   explicit operator bool() const { return !!mOrigFunc; }
 
   template <typename... ArgsType>
-  ReturnType operator()(ArgsType... aArgs) const {
+  ReturnType operator()(ArgsType&&... aArgs) const {
     return mOrigFunc(std::forward<ArgsType>(aArgs)...);
   }
 
@@ -214,22 +214,24 @@ class MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FuncHookCrossProcess final {
 
   bool Set(HANDLE aProcess, InterceptorT& aInterceptor, const char* aName,
            FuncPtrT aHookDest) {
+    FuncPtrT origFunc;
     if (!aInterceptor.AddHook(aName, reinterpret_cast<intptr_t>(aHookDest),
-                              reinterpret_cast<void**>(&mOrigFunc))) {
+                              reinterpret_cast<void**>(&origFunc))) {
       return false;
     }
 
-    return CopyStubToChildProcess(aProcess);
+    return CopyStubToChildProcess(origFunc, aProcess);
   }
 
   bool SetDetour(HANDLE aProcess, InterceptorT& aInterceptor, const char* aName,
                  FuncPtrT aHookDest) {
+    FuncPtrT origFunc;
     if (!aInterceptor.AddDetour(aName, reinterpret_cast<intptr_t>(aHookDest),
-                                reinterpret_cast<void**>(&mOrigFunc))) {
+                                reinterpret_cast<void**>(&origFunc))) {
       return false;
     }
 
-    return CopyStubToChildProcess(aProcess);
+    return CopyStubToChildProcess(origFunc, aProcess);
   }
 
   explicit operator bool() const { return !!mOrigFunc; }
@@ -238,7 +240,7 @@ class MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FuncHookCrossProcess final {
    * NB: This operator is only meaningful when invoked in the target process!
    */
   template <typename... ArgsType>
-  ReturnType operator()(ArgsType... aArgs) const {
+  ReturnType operator()(ArgsType&&... aArgs) const {
     return mOrigFunc(std::forward<ArgsType>(aArgs)...);
   }
 
@@ -250,17 +252,16 @@ class MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FuncHookCrossProcess final {
 #endif  // defined(DEBUG)
 
  private:
-  bool CopyStubToChildProcess(HANDLE aProcess) {
+  bool CopyStubToChildProcess(FuncPtrT aStub, HANDLE aProcess) {
     SIZE_T bytesWritten;
-    return !!::WriteProcessMemory(aProcess, &mOrigFunc, &mOrigFunc,
-                                  sizeof(mOrigFunc), &bytesWritten);
+    return ::WriteProcessMemory(aProcess, &mOrigFunc, &aStub, sizeof(FuncPtrT),
+                                &bytesWritten) &&
+           bytesWritten == sizeof(FuncPtrT);
   }
 
  private:
   FuncPtrT mOrigFunc;
 };
-
-enum { kDefaultTrampolineSize = 128 };
 
 template <typename MMPolicyT, typename InterceptorT>
 struct TypeResolver;
@@ -278,7 +279,7 @@ struct TypeResolver<mozilla::interceptor::MMPolicyOutOfProcess, InterceptorT> {
 };
 
 template <typename VMPolicy = mozilla::interceptor::VMSharingPolicyShared<
-              mozilla::interceptor::MMPolicyInProcess, kDefaultTrampolineSize>>
+              mozilla::interceptor::MMPolicyInProcess, true>>
 class WindowsDllInterceptor final
     : public TypeResolver<typename VMPolicy::MMPolicyT,
                           WindowsDllInterceptor<VMPolicy>> {
@@ -291,19 +292,17 @@ class WindowsDllInterceptor final
 #endif  // defined(_M_IX86)
 
   HMODULE mModule;
-  int mNHooks;
 
  public:
   template <typename... Args>
-  explicit WindowsDllInterceptor(Args... aArgs)
+  explicit WindowsDllInterceptor(Args&&... aArgs)
       : mDetourPatcher(std::forward<Args>(aArgs)...)
 #if defined(_M_IX86)
         ,
         mNopSpacePatcher(std::forward<Args>(aArgs)...)
 #endif  // defined(_M_IX86)
         ,
-        mModule(nullptr),
-        mNHooks(0) {
+        mModule(nullptr) {
   }
 
   WindowsDllInterceptor(const WindowsDllInterceptor&) = delete;
@@ -314,7 +313,7 @@ class WindowsDllInterceptor final
   ~WindowsDllInterceptor() { Clear(); }
 
   template <size_t N>
-  void Init(const char (&aModuleName)[N], int aNumHooks = 0) {
+  void Init(const char (&aModuleName)[N]) {
     wchar_t moduleName[N];
 
     for (size_t i = 0; i < N; ++i) {
@@ -323,27 +322,22 @@ class WindowsDllInterceptor final
       moduleName[i] = aModuleName[i];
     }
 
-    Init(moduleName, aNumHooks);
+    Init(moduleName);
   }
 
-  void Init(const wchar_t* aModuleName, int aNumHooks = 0) {
+  void Init(const wchar_t* aModuleName) {
     if (mModule) {
       return;
     }
 
     mModule = ::LoadLibraryW(aModuleName);
-    mNHooks = aNumHooks;
   }
 
   /** Force a specific configuration for testing purposes. NOT to be used in
       production code! **/
-  void TestOnlyDetourInit(const wchar_t* aModuleName, DetourFlags aFlags,
-                          int aNumHooks = 0) {
-    Init(aModuleName, aNumHooks);
-
-    if (!mDetourPatcher.Initialized()) {
-      mDetourPatcher.Init(aFlags, mNHooks);
-    }
+  void TestOnlyDetourInit(const wchar_t* aModuleName, DetourFlags aFlags) {
+    Init(aModuleName);
+    mDetourPatcher.Init(aFlags);
   }
 
   void Clear() {
@@ -429,7 +423,7 @@ class WindowsDllInterceptor final
       }
 #endif  // defined(_M_X64)
 
-      mDetourPatcher.Init(flags, mNHooks);
+      mDetourPatcher.Init(flags);
     }
 
     return mDetourPatcher.AddHook(aProc, aHookDest, aOrigFunc);
@@ -449,8 +443,7 @@ using WindowsDllInterceptor = interceptor::WindowsDllInterceptor<>;
 
 using CrossProcessDllInterceptor = interceptor::WindowsDllInterceptor<
     mozilla::interceptor::VMSharingPolicyUnique<
-        mozilla::interceptor::MMPolicyOutOfProcess,
-        mozilla::interceptor::kDefaultTrampolineSize>>;
+        mozilla::interceptor::MMPolicyOutOfProcess>>;
 
 }  // namespace mozilla
 

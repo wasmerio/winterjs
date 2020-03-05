@@ -53,16 +53,20 @@ extern const SymbolicAddressSignature SASigWaitI32;
 extern const SymbolicAddressSignature SASigWaitI64;
 extern const SymbolicAddressSignature SASigWake;
 extern const SymbolicAddressSignature SASigMemCopy;
+extern const SymbolicAddressSignature SASigMemCopyShared;
 extern const SymbolicAddressSignature SASigDataDrop;
 extern const SymbolicAddressSignature SASigMemFill;
+extern const SymbolicAddressSignature SASigMemFillShared;
 extern const SymbolicAddressSignature SASigMemInit;
 extern const SymbolicAddressSignature SASigTableCopy;
 extern const SymbolicAddressSignature SASigElemDrop;
+extern const SymbolicAddressSignature SASigTableFill;
 extern const SymbolicAddressSignature SASigTableGet;
 extern const SymbolicAddressSignature SASigTableGrow;
 extern const SymbolicAddressSignature SASigTableInit;
 extern const SymbolicAddressSignature SASigTableSet;
 extern const SymbolicAddressSignature SASigTableSize;
+extern const SymbolicAddressSignature SASigFuncRef;
 extern const SymbolicAddressSignature SASigPostBarrier;
 extern const SymbolicAddressSignature SASigPostBarrierFiltering;
 extern const SymbolicAddressSignature SASigStructNew;
@@ -93,7 +97,7 @@ void* HandleThrow(JSContext* cx, WasmFrameIter& iter);
 
 void* SymbolicAddressTarget(SymbolicAddress sym);
 
-void* MaybeGetBuiltinThunk(HandleFunction f, const FuncType& funcType);
+void* MaybeGetBuiltinThunk(JSFunction* f, const FuncType& funcType);
 
 void ReleaseBuiltinThunks();
 

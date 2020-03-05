@@ -19,7 +19,6 @@
 #include "jsfriendapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
-#include "jsutil.h"
 
 #include "ds/Sort.h"
 #include "gc/Heap.h"
@@ -27,6 +26,7 @@
 #include "js/Class.h"
 #include "js/Conversions.h"
 #include "js/PropertySpec.h"
+#include "util/Poison.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/ArgumentsObject.h"
@@ -48,7 +48,6 @@
 #include "vm/Interpreter-inl.h"
 #include "vm/JSAtom-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/UnboxedObject-inl.h"
 
 using namespace js;
 
@@ -171,7 +170,7 @@ static bool ToLength(JSContext* cx, HandleValue v, uint64_t* out) {
   if (d <= 0.0) {
     *out = 0;
   } else {
-    *out = uint64_t(Min(d, DOUBLE_INTEGRAL_PRECISION_LIMIT - 1));
+    *out = uint64_t(std::min(d, DOUBLE_INTEGRAL_PRECISION_LIMIT - 1));
   }
   return true;
 }
@@ -228,7 +227,7 @@ static bool StringIsArrayIndexHelper(const CharT* s, uint32_t length,
   }
 
   uint32_t c = 0, previous = 0;
-  uint32_t index = JS7_UNDEC(*s++);
+  uint32_t index = AsciiDigitToNumber(*s++);
 
   /* Don't allow leading zeros. */
   if (index == 0 && s != end) {
@@ -241,7 +240,7 @@ static bool StringIsArrayIndexHelper(const CharT* s, uint32_t length,
     }
 
     previous = index;
-    c = JS7_UNDEC(*s);
+    c = AsciiDigitToNumber(*s);
     index = 10 * index + c;
   }
 
@@ -451,10 +450,9 @@ bool js::GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
   }
 
   if (aobj->is<TypedArrayObject>()) {
-    TypedArrayObject* typedArray = &aobj->as<TypedArrayObject>();
+    Handle<TypedArrayObject*> typedArray = aobj.as<TypedArrayObject>();
     if (typedArray->length() == length) {
-      typedArray->getElements(vp);
-      return true;
+      return TypedArrayObject::getElements(cx, typedArray, vp);
     }
   }
 
@@ -586,8 +584,8 @@ static bool DeletePropertiesOrThrow(JSContext* cx, HandleObject obj,
       !obj->as<NativeObject>().denseElementsAreSealed()) {
     if (len <= UINT32_MAX) {
       // Skip forward to the initialized elements of this array.
-      len = Min(uint32_t(len),
-                obj->as<ArrayObject>().getDenseInitializedLength());
+      len = std::min(uint32_t(len),
+                     obj->as<ArrayObject>().getDenseInitializedLength());
     }
   }
 
@@ -884,7 +882,7 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
 
       Vector<uint32_t> indexes(cx);
       {
-        AutoIdVector props(cx);
+        RootedIdVector props(cx);
         if (!GetPropertyKeys(cx, arr, JSITER_OWNONLY | JSITER_HIDDEN, &props)) {
           return false;
         }
@@ -963,7 +961,7 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
   // invariant.  (Capacity was already reduced during element deletion, if
   // necessary.)
   ObjectElements* header = arr->getElementsHeader();
-  header->initializedLength = Min(header->initializedLength, newLen);
+  header->initializedLength = std::min(header->initializedLength, newLen);
 
   if (!arr->isExtensible()) {
     arr->shrinkCapacityToInitializedLength(cx);
@@ -1190,7 +1188,7 @@ static bool array_toSource(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
 
   if (detector.foundCycle()) {
     if (!sb.append("[]")) {
@@ -1283,7 +1281,8 @@ static bool ArrayJoinDenseKernel(JSContext* cx, SeparatorOp sepOp,
   // length > initLength we rely on the second loop to add the
   // other elements.
   MOZ_ASSERT(*numProcessed == 0);
-  uint64_t initLength = Min<uint64_t>(obj->getDenseInitializedLength(), length);
+  uint64_t initLength =
+      std::min<uint64_t>(obj->getDenseInitializedLength(), length);
   MOZ_ASSERT(initLength <= UINT32_MAX,
              "initialized length shouldn't exceed UINT32_MAX");
   uint32_t initLengthClamped = uint32_t(initLength);
@@ -1450,7 +1449,7 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Step 5.
-  StringBuffer sb(cx);
+  JSStringBuilder sb(cx);
   if (sepstr->hasTwoByteChars() && !sb.ensureTwoByteChars()) {
     return false;
   }
@@ -2355,8 +2354,8 @@ bool js::intrinsic_ArrayNativeSort(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   /* Re-create any holes that sorted to the end of the array. */
-  while (len > n) {
-    if (!CheckForInterrupt(cx) || !DeletePropertyOrThrow(cx, obj, --len)) {
+  for (uint32_t i = n; i < len; i++) {
+    if (!CheckForInterrupt(cx) || !DeletePropertyOrThrow(cx, obj, i)) {
       return false;
     }
   }
@@ -2840,7 +2839,7 @@ static ArrayObject* CopyDenseArrayElements(JSContext* cx,
              "initialized length shouldn't exceed UINT32_MAX");
   uint32_t newlength = 0;
   if (initlen > begin) {
-    newlength = Min<uint32_t>(initlen - begin, count);
+    newlength = std::min<uint32_t>(initlen - begin, count);
   }
 
   ArrayObject* narr = NewFullyAllocatedArrayTryReuseGroup(cx, obj, newlength);
@@ -2868,7 +2867,7 @@ static bool CopyArrayElements(JSContext* cx, HandleObject obj, uint64_t begin,
   // Use dense storage for new indexed properties where possible.
   {
     uint32_t index = 0;
-    uint32_t limit = Min<uint32_t>(count, JSID_INT_MAX);
+    uint32_t limit = std::min<uint32_t>(count, JSID_INT_MAX);
     for (; index < limit; index++) {
       bool hole;
       if (!CheckForInterrupt(cx) ||
@@ -2939,9 +2938,9 @@ static bool array_splice_impl(JSContext* cx, unsigned argc, Value* vp,
   /* Step 4. */
   uint64_t actualStart;
   if (relativeStart < 0) {
-    actualStart = Max(len + relativeStart, 0.0);
+    actualStart = std::max(len + relativeStart, 0.0);
   } else {
-    actualStart = Min(relativeStart, double(len));
+    actualStart = std::min(relativeStart, double(len));
   }
 
   /* Step 5. */
@@ -2961,7 +2960,7 @@ static bool array_splice_impl(JSContext* cx, unsigned argc, Value* vp,
 
     /* Step 7.c. */
     actualDeleteCount =
-        Min(Max(deleteCountDouble, 0.0), double(len - actualStart));
+        std::min(std::max(deleteCountDouble, 0.0), double(len - actualStart));
 
     /* Step 8. */
     uint32_t insertCount = args.length() - 2;
@@ -3618,7 +3617,7 @@ static bool ArraySliceDenseKernel(JSContext* cx, ArrayObject* arr,
   uint32_t count = end - begin;
   size_t initlen = arr->getDenseInitializedLength();
   if (initlen > begin) {
-    uint32_t newlength = Min<uint32_t>(initlen - begin, count);
+    uint32_t newlength = std::min<uint32_t>(initlen - begin, count);
     if (newlength > 0) {
       if (!result->ensureElements(cx, newlength)) {
         return false;
@@ -3767,10 +3766,10 @@ static const JSFunctionSpec array_methods[] = {
 
     JS_SELF_HOSTED_FN("fill", "ArrayFill", 3, 0),
 
-    JS_SELF_HOSTED_SYM_FN(iterator, "ArrayValues", 0, 0),
+    JS_SELF_HOSTED_SYM_FN(iterator, "$ArrayValues", 0, 0),
     JS_SELF_HOSTED_FN("entries", "ArrayEntries", 0, 0),
     JS_SELF_HOSTED_FN("keys", "ArrayKeys", 0, 0),
-    JS_SELF_HOSTED_FN("values", "ArrayValues", 0, 0),
+    JS_SELF_HOSTED_FN("values", "$ArrayValues", 0, 0),
 
     /* ES7 additions */
     JS_SELF_HOSTED_FN("includes", "ArrayIncludes", 2, 0),
@@ -3783,32 +3782,12 @@ static const JSFunctionSpec array_methods[] = {
 
 static const JSFunctionSpec array_static_methods[] = {
     JS_INLINABLE_FN("isArray", array_isArray, 1, 0, ArrayIsArray),
-    JS_SELF_HOSTED_FN("concat", "ArrayStaticConcat", 2, 0),
-    JS_SELF_HOSTED_FN("lastIndexOf", "ArrayStaticLastIndexOf", 2, 0),
-    JS_SELF_HOSTED_FN("indexOf", "ArrayStaticIndexOf", 2, 0),
-    JS_SELF_HOSTED_FN("forEach", "ArrayStaticForEach", 2, 0),
-    JS_SELF_HOSTED_FN("map", "ArrayStaticMap", 2, 0),
-    JS_SELF_HOSTED_FN("filter", "ArrayStaticFilter", 2, 0),
-    JS_SELF_HOSTED_FN("every", "ArrayStaticEvery", 2, 0),
-    JS_SELF_HOSTED_FN("some", "ArrayStaticSome", 2, 0),
-    JS_SELF_HOSTED_FN("reduce", "ArrayStaticReduce", 2, 0),
-    JS_SELF_HOSTED_FN("reduceRight", "ArrayStaticReduceRight", 2, 0),
-    JS_SELF_HOSTED_FN("join", "ArrayStaticJoin", 2, 0),
-    JS_SELF_HOSTED_FN("reverse", "ArrayStaticReverse", 1, 0),
-    JS_SELF_HOSTED_FN("sort", "ArrayStaticSort", 2, 0),
-    JS_SELF_HOSTED_FN("push", "ArrayStaticPush", 2, 0),
-    JS_SELF_HOSTED_FN("pop", "ArrayStaticPop", 1, 0),
-    JS_SELF_HOSTED_FN("shift", "ArrayStaticShift", 1, 0),
-    JS_SELF_HOSTED_FN("unshift", "ArrayStaticUnshift", 2, 0),
-    JS_SELF_HOSTED_FN("splice", "ArrayStaticSplice", 3, 0),
-    JS_SELF_HOSTED_FN("slice", "ArrayStaticSlice", 3, 0),
-    JS_SELF_HOSTED_FN("from", "ArrayFrom", 3, 0),
-    JS_FN("of", array_of, 0, 0),
+    JS_SELF_HOSTED_FN("from", "ArrayFrom", 3, 0), JS_FN("of", array_of, 0, 0),
 
     JS_FS_END};
 
 const JSPropertySpec array_static_props[] = {
-    JS_SELF_HOSTED_SYM_GET(species, "ArraySpecies", 0), JS_PS_END};
+    JS_SELF_HOSTED_SYM_GET(species, "$ArraySpecies", 0), JS_PS_END};
 
 static inline bool ArrayConstructorImpl(JSContext* cx, CallArgs& args,
                                         bool isConstructor) {
@@ -3971,7 +3950,7 @@ static bool array_proto_finish(JSContext* cx, JS::HandleObject ctor,
   return DefineDataProperty(cx, proto, id, value, JSPROP_READONLY);
 }
 
-static const ClassOps ArrayObjectClassOps = {
+static const JSClassOps ArrayObjectClassOps = {
     array_addProperty, nullptr, /* delProperty */
     nullptr,                    /* enumerate */
     nullptr,                    /* resolve */
@@ -3993,7 +3972,7 @@ static const ClassSpec ArrayObjectClassSpec = {
     nullptr,
     array_proto_finish};
 
-const Class ArrayObject::class_ = {
+const JSClass ArrayObject::class_ = {
     "Array",
     JSCLASS_HAS_CACHED_PROTO(JSProto_Array) | JSCLASS_DELAY_METADATA_BUILDER,
     &ArrayObjectClassOps, &ArrayObjectClassSpec};
@@ -4024,8 +4003,8 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(
     JSContext* cx, uint32_t length, HandleObject protoArg,
     NewObjectKind newKind = GenericObject) {
   gc::AllocKind allocKind = GuessArrayGCKind(length);
-  MOZ_ASSERT(CanBeFinalizedInBackground(allocKind, &ArrayObject::class_));
-  allocKind = GetBackgroundAllocKind(allocKind);
+  MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &ArrayObject::class_));
+  allocKind = ForegroundToBackgroundAllocKind(allocKind);
 
   RootedObject proto(cx, protoArg);
   if (!proto) {
@@ -4078,10 +4057,9 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(
   }
 
   AutoSetNewObjectMetadata metadata(cx);
-  RootedArrayObject arr(
-      cx, ArrayObject::createArray(
-              cx, allocKind, GetInitialHeap(newKind, &ArrayObject::class_),
-              shape, group, length, metadata));
+  RootedArrayObject arr(cx, ArrayObject::createArray(
+                                cx, allocKind, GetInitialHeap(newKind, group),
+                                shape, group, length, metadata));
   if (!arr) {
     return nullptr;
   }
@@ -4163,13 +4141,13 @@ ArrayObject* js::NewDenseFullyAllocatedArrayWithTemplate(
     JSContext* cx, uint32_t length, JSObject* templateObject) {
   AutoSetNewObjectMetadata metadata(cx);
   gc::AllocKind allocKind = GuessArrayGCKind(length);
-  MOZ_ASSERT(CanBeFinalizedInBackground(allocKind, &ArrayObject::class_));
-  allocKind = GetBackgroundAllocKind(allocKind);
+  MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &ArrayObject::class_));
+  allocKind = ForegroundToBackgroundAllocKind(allocKind);
 
   RootedObjectGroup group(cx, templateObject->group());
   RootedShape shape(cx, templateObject->as<ArrayObject>().lastProperty());
 
-  gc::InitialHeap heap = GetInitialHeap(GenericObject, &ArrayObject::class_);
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
   Rooted<ArrayObject*> arr(
       cx, ArrayObject::createArray(cx, allocKind, heap, shape, group, length,
                                    metadata));
@@ -4187,9 +4165,10 @@ ArrayObject* js::NewDenseFullyAllocatedArrayWithTemplate(
 }
 
 ArrayObject* js::NewDenseCopyOnWriteArray(JSContext* cx,
-                                          HandleArrayObject templateObject,
-                                          gc::InitialHeap heap) {
+                                          HandleArrayObject templateObject) {
   MOZ_ASSERT(!gc::IsInsideNursery(templateObject));
+
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, templateObject->group());
 
   ArrayObject* arr =
       ArrayObject::createCopyOnWriteArray(cx, heap, templateObject);
@@ -4469,7 +4448,8 @@ void js::ArraySpeciesLookup::initialize(JSContext* cx) {
 }
 
 void js::ArraySpeciesLookup::reset() {
-  AlwaysPoison(this, 0xBB, sizeof(*this), MemCheckKind::MakeUndefined);
+  AlwaysPoison(this, JS_RESET_VALUE_PATTERN, sizeof(*this),
+               MemCheckKind::MakeUndefined);
   state_ = State::Uninitialized;
 }
 

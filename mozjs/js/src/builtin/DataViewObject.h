@@ -62,8 +62,8 @@ class DataViewObject : public ArrayBufferViewObject {
       Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto);
 
  public:
-  static const Class class_;
-  static const Class protoClass_;
+  static const JSClass class_;
+  static const JSClass protoClass_;
 
   static Value byteOffsetValue(const DataViewObject* view) {
     Value v = view->getFixedSlot(BYTEOFFSET_SLOT);
@@ -153,10 +153,6 @@ class DataViewObject : public ArrayBufferViewObject {
  private:
   static const JSFunctionSpec methods[];
   static const JSPropertySpec properties[];
-
-  static const JSFunctionSpec bigIntMethods[];
-  static bool finishInit(JSContext* cx, JS::HandleObject ctor,
-                         JS::HandleObject proto);
 };
 
 }  // namespace js

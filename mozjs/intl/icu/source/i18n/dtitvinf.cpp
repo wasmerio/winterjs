@@ -42,7 +42,9 @@ U_NAMESPACE_BEGIN
 
 
 #ifdef DTITVINF_DEBUG
-#define PRINTMESG(msg) { std::cout << "(" << __FILE__ << ":" << __LINE__ << ") " << msg << "\n"; }
+#define PRINTMESG(msg) UPRV_BLOCK_MACRO_BEGIN { \
+    std::cout << "(" << __FILE__ << ":" << __LINE__ << ") " << msg << "\n"; \
+} UPRV_BLOCK_MACRO_END
 #endif
 
 UOBJECT_DEFINE_RTTI_IMPLEMENTATION(DateIntervalInfo)
@@ -326,7 +328,9 @@ struct DateIntervalInfo::DateIntervalSink : public ResourceSink {
         char c0;
         if ((c0 = patternLetter[0]) != 0 && patternLetter[1] == 0) {
             // Check that the pattern letter is accepted
-            if (c0 == 'y') {
+            if (c0 == 'G') {
+                return UCAL_ERA;
+            } else if (c0 == 'y') {
                 return UCAL_YEAR;
             } else if (c0 == 'M') {
                 return UCAL_MONTH;

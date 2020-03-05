@@ -30,7 +30,7 @@ class CompilerPreprocessor(Preprocessor):
     # simple "FOO" case.
     VARSUBST = re.compile('(?<!")(?P<VAR>\w+)(?!")', re.U)
     NON_WHITESPACE = re.compile('\S')
-    HAS_FEATURE_OR_BUILTIN = re.compile('(__has_(feature|builtin))\(([^\)]*)\)')
+    HAS_FEATURE_OR_BUILTIN = re.compile('(__has_(feature|builtin|attribute|warning))\(([^\)]*)\)')
 
     def __init__(self, *args, **kwargs):
         Preprocessor.__init__(self, *args, **kwargs)
@@ -42,6 +42,7 @@ class CompilerPreprocessor(Preprocessor):
         # different handling than what our Preprocessor does out of the box.
         # Hack around it enough that the configure tests work properly.
         context = self.context
+
         def normalize_numbers(value):
             if isinstance(value, types.StringTypes):
                 if value[-1:] == 'L' and value[:-1].isdigit():
@@ -49,6 +50,7 @@ class CompilerPreprocessor(Preprocessor):
             return value
         # Our Preprocessor doesn't handle macros with parameters, so we hack
         # around that for __has_feature()-like things.
+
         def normalize_has_feature_or_builtin(expr):
             return self.HAS_FEATURE_OR_BUILTIN.sub(r'\1\2', expr)
         self.context = self.Context(
@@ -162,6 +164,7 @@ class FakeCompiler(dict):
 
     For convenience, FakeCompiler instances can be added (+) to one another.
     '''
+
     def __init__(self, *definitions):
         for definition in definitions:
             if all(not isinstance(d, dict) for d in definition.itervalues()):
@@ -170,8 +173,22 @@ class FakeCompiler(dict):
                 self.setdefault(key, {}).update(value)
 
     def __call__(self, stdin, args):
-        files = [arg for arg in args if not arg.startswith('-')]
-        flags = [arg for arg in args if arg.startswith('-')]
+        files = []
+        flags = []
+        args = iter(args)
+        while True:
+            arg = next(args, None)
+            if arg is None:
+                break
+            if arg.startswith('-'):
+                # Ignore -isysroot and the argument that follows it.
+                if arg == '-isysroot':
+                    next(args, None)
+                else:
+                    flags.append(arg)
+            else:
+                files.append(arg)
+
         if '-E' in flags:
             assert len(files) == 1
             file = files[0]
@@ -344,6 +361,12 @@ class TestFakeCompiler(unittest.TestCase):
         })
 
 
+class PrependFlags(list):
+    '''Wrapper to allow to Prepend to flags instead of appending, in
+    CompilerResult.
+    '''
+
+
 class CompilerResult(ReadOnlyNamespace):
     '''Helper of convenience to manipulate toolchain results in unit tests
 
@@ -372,7 +395,11 @@ class CompilerResult(ReadOnlyNamespace):
         result = copy.deepcopy(self.__dict__)
         for k, v in other.iteritems():
             if k == 'flags':
-                result.setdefault(k, []).extend(v)
+                flags = result.setdefault(k, [])
+                if isinstance(v, PrependFlags):
+                    flags[:0] = v
+                else:
+                    flags.extend(v)
             else:
                 result[k] = v
         return CompilerResult(**result)

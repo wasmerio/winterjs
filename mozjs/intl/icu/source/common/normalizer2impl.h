@@ -245,9 +245,7 @@ private:
  */
 class U_COMMON_API Normalizer2Impl : public UObject {
 public:
-    Normalizer2Impl() : normTrie(NULL), fCanonIterData(NULL) {
-        fCanonIterDataInitOnce.reset();
-    }
+    Normalizer2Impl() : normTrie(NULL), fCanonIterData(NULL) { }
     virtual ~Normalizer2Impl();
 
     void init(const int32_t *inIndexes, const UCPTrie *inTrie,
@@ -264,7 +262,9 @@ public:
     // The trie stores values for lead surrogate code *units*.
     // Surrogate code *points* are inert.
     uint16_t getNorm16(UChar32 c) const {
-        return U_IS_LEAD(c) ? INERT : UCPTRIE_FAST_GET(normTrie, UCPTRIE_16, c);
+        return U_IS_LEAD(c) ?
+            static_cast<uint16_t>(INERT) :
+            UCPTRIE_FAST_GET(normTrie, UCPTRIE_16, c);
     }
     uint16_t getRawNorm16(UChar32 c) const { return UCPTRIE_FAST_GET(normTrie, UCPTRIE_16, c); }
 
@@ -721,7 +721,7 @@ private:
     const uint16_t *extraData;  // mappings and/or compositions for yesYes, yesNo & noNo characters
     const uint8_t *smallFCD;  // [0x100] one bit per 32 BMP code points, set if any FCD!=0
 
-    UInitOnce       fCanonIterDataInitOnce;
+    UInitOnce       fCanonIterDataInitOnce = U_INITONCE_INITIALIZER;
     CanonIterData  *fCanonIterData;
 };
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from __future__ import print_function, unicode_literals
+from __future__ import absolute_import, print_function, unicode_literals
 
 """
 This script converts the build system telemetry schema from voluptuous format to json-schema.
@@ -37,7 +37,7 @@ def main():
 
     schema = luscious.get_jsonschema(mozbuild.telemetry.schema)
     with open(args.output, 'wb') as f:
-        json.dump(schema, f, indent=2, sort_keys=True)
+        json.dump(schema, f, indent=2, separators=(',', ': '), sort_keys=True)
 
 
 if __name__ == '__main__':

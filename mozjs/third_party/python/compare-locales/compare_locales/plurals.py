@@ -50,10 +50,11 @@ CATEGORIES_BY_INDEX = (
     ('zero', 'other'),
     # 18 (Welsh),
     ('zero', 'one', 'two', 'few', 'many', 'other'),
+    # 19 (Bosnian, Croatian, Serbian)
+    ('one', 'few', 'other'),
 )
 
 CATEGORIES_EXCEPTIONS = {
-    7: ('one', 'few', 'other'),
 }
 
 CATEGORIES_BY_LOCALE = {
@@ -69,11 +70,12 @@ CATEGORIES_BY_LOCALE = {
     'az': CATEGORIES_BY_INDEX[1],
     'be': CATEGORIES_BY_INDEX[7],
     'bg': CATEGORIES_BY_INDEX[1],
+    'bn': CATEGORIES_BY_INDEX[2],
     'bn-BD': CATEGORIES_BY_INDEX[2],
     'bn-IN': CATEGORIES_BY_INDEX[2],
     'br': CATEGORIES_BY_INDEX[16],
     'brx': CATEGORIES_BY_INDEX[1],
-    'bs': CATEGORIES_EXCEPTIONS[7],
+    'bs': CATEGORIES_BY_INDEX[19],
     'ca': CATEGORIES_BY_INDEX[1],
     'cak': CATEGORIES_BY_INDEX[1],
     'crh': CATEGORIES_BY_INDEX[1],
@@ -111,7 +113,7 @@ CATEGORIES_BY_LOCALE = {
     'gu-IN': CATEGORIES_BY_INDEX[2],
     'he': CATEGORIES_BY_INDEX[1],
     'hi-IN': CATEGORIES_BY_INDEX[2],
-    'hr': CATEGORIES_EXCEPTIONS[7],
+    'hr': CATEGORIES_BY_INDEX[19],
     'hsb': CATEGORIES_BY_INDEX[10],
     'hto': CATEGORIES_BY_INDEX[1],
     'hu': CATEGORIES_BY_INDEX[1],
@@ -178,7 +180,7 @@ CATEGORIES_BY_LOCALE = {
     'sl': CATEGORIES_BY_INDEX[10],
     'son': CATEGORIES_BY_INDEX[1],
     'sq': CATEGORIES_BY_INDEX[1],
-    'sr': CATEGORIES_EXCEPTIONS[7],
+    'sr': CATEGORIES_BY_INDEX[19],
     'ss': CATEGORIES_BY_INDEX[1],
     'st': CATEGORIES_BY_INDEX[1],
     'sv-SE': CATEGORIES_BY_INDEX[1],

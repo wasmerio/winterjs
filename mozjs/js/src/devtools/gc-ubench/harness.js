@@ -1,13 +1,25 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 // Per-frame time sampling infra. Also GC'd: hopefully will not perturb things too badly.
 var numSamples = 500;
 var delays = new Array(numSamples);
 var gcs = new Array(numSamples);
 var minorGCs = new Array(numSamples);
+var majorGCs = new Array(numSamples);
+var slices = new Array(numSamples);
 var gcBytes = new Array(numSamples);
 var mallocBytes = new Array(numSamples);
 var sampleIndex = 0;
 var sampleTime = 16; // ms
 var gHistogram = new Map(); // {ms: count}
+
+var stroke = {
+    'gcslice': 'rgb(255,100,0)',
+    'minor': 'rgb(0,255,100)',
+    'initialMajor': 'rgb(180,60,255)'
+};
 
 var features = {
   trackingSizes: ('mozMemory' in performance),
@@ -152,34 +164,42 @@ LatencyGraph.prototype.draw = function () {
 
     // Draw vertical lines marking minor and major GCs
     if (features.showingGCs) {
-        var { width, height } = ctx.canvas;
+        const { width, height } = ctx.canvas;
 
-        ctx.strokeStyle = 'rgb(255,100,0)';
+        ctx.strokeStyle = stroke.gcslice;
         var idx = sampleIndex % numSamples;
-        var gcCount = gcs[idx];
+        const count = {
+            major: majorGCs[idx],
+            minor: 0,
+            slice: slices[idx]
+        };
         for (var i = 0; i < numSamples; i++) {
             idx = (sampleIndex + i) % numSamples;
-            if (gcCount < gcs[idx]) {
+            const isMajorStart = count.major < majorGCs[idx];
+            if (count.slice < slices[idx]) {
+                if (isMajorStart) ctx.strokeStyle = stroke.initialMajor;
                 ctx.beginPath();
                 ctx.moveTo(this.xpos(idx), 0);
                 ctx.lineTo(this.xpos(idx), this.layout.xAxisLabel_Y);
                 ctx.stroke();
+                if (isMajorStart) ctx.strokeStyle = stroke.gcslice;
             }
-            gcCount = gcs[idx];
+            count.major = majorGCs[idx];
+            count.slice = slices[idx];
         }
 
-        ctx.strokeStyle = 'rgb(0,255,100)';
+        ctx.strokeStyle = stroke.minor;
         idx = sampleIndex % numSamples;
-        gcCount = gcs[idx];
+        count.minor = gcs[idx];
         for (var i = 0; i < numSamples; i++) {
             idx = (sampleIndex + i) % numSamples;
-            if (gcCount < minorGCs[idx]) {
+            if (count.minor < minorGCs[idx]) {
                 ctx.beginPath();
                 ctx.moveTo(this.xpos(idx), 0);
                 ctx.lineTo(this.xpos(idx), 20);
                 ctx.stroke();
             }
-            gcCount = minorGCs[idx];
+            count.minor = minorGCs[idx];
         }
     }
 
@@ -343,6 +363,15 @@ function handler(timestamp)
         if (features.showingGCs) {
             gcs[idx] = performance.mozMemory.gcNumber;
             minorGCs[idx] = performance.mozMemory.minorGCCount;
+            majorGCs[idx] = performance.mozMemory.majorGCCount;
+
+            // Previous versions lacking sliceCount will fall back to assuming
+            // any GC activity was a major GC slice, even though that
+            // incorrectly includes minor GCs. Although this file is versioned
+            // with the code that implements the new sliceCount field, it is
+            // common to load the gc-ubench index.html with different browser
+            // versions.
+            slices[idx] = performance.mozMemory.sliceCount || performance.mozMemory.gcNumber;
         }
     }
 

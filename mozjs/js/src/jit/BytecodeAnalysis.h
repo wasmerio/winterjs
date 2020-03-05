@@ -25,6 +25,9 @@ struct BytecodeInfo {
   // If true, this is a JSOP_LOOPENTRY op inside a catch or finally block.
   bool loopEntryInCatchOrFinally : 1;
 
+  // True if the script has a resume offset for this bytecode op.
+  bool hasResumeOffset : 1;
+
   void init(unsigned depth) {
     MOZ_ASSERT(depth <= MAX_STACK_DEPTH);
     MOZ_ASSERT_IF(initialized, stackDepth == depth);
@@ -37,7 +40,6 @@ class BytecodeAnalysis {
   JSScript* script_;
   Vector<BytecodeInfo, 0, JitAllocPolicy> infos_;
 
-  bool usesEnvironmentChain_;
   bool hasTryFinally_;
 
  public:
@@ -46,21 +48,26 @@ class BytecodeAnalysis {
   MOZ_MUST_USE bool init(TempAllocator& alloc, GSNCache& gsn);
 
   BytecodeInfo& info(jsbytecode* pc) {
-    MOZ_ASSERT(infos_[script_->pcToOffset(pc)].initialized);
-    return infos_[script_->pcToOffset(pc)];
+    uint32_t pcOffset = script_->pcToOffset(pc);
+    MOZ_ASSERT(infos_[pcOffset].initialized);
+    return infos_[pcOffset];
   }
 
   BytecodeInfo* maybeInfo(jsbytecode* pc) {
-    if (infos_[script_->pcToOffset(pc)].initialized) {
-      return &infos_[script_->pcToOffset(pc)];
+    uint32_t pcOffset = script_->pcToOffset(pc);
+    if (infos_[pcOffset].initialized) {
+      return &infos_[pcOffset];
     }
     return nullptr;
   }
 
-  bool usesEnvironmentChain() const { return usesEnvironmentChain_; }
-
   bool hasTryFinally() const { return hasTryFinally_; }
 };
+
+// Bytecode analysis pass necessary for IonBuilder. The result is cached in
+// JitScript.
+struct IonBytecodeInfo;
+IonBytecodeInfo AnalyzeBytecodeForIon(JSContext* cx, JSScript* script);
 
 }  // namespace jit
 }  // namespace js

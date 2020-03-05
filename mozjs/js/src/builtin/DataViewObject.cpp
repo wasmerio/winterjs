@@ -11,6 +11,7 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/WrappingOperations.h"
 
+#include <algorithm>
 #include <string.h>
 #include <type_traits>
 
@@ -352,10 +353,12 @@ template <typename DataType, typename BufferPtrType>
 struct DataViewIO {
   typedef typename DataToRepType<DataType>::result ReadWriteType;
 
+  static constexpr auto alignMask =
+      std::min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1;
+
   static void fromBuffer(DataType* dest, BufferPtrType unalignedBuffer,
                          bool wantSwap) {
-    MOZ_ASSERT((reinterpret_cast<uintptr_t>(dest) &
-                (Min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1)) == 0);
+    MOZ_ASSERT((reinterpret_cast<uintptr_t>(dest) & alignMask) == 0);
     Memcpy((uint8_t*)dest, unalignedBuffer, sizeof(ReadWriteType));
     if (wantSwap) {
       ReadWriteType* rwDest = reinterpret_cast<ReadWriteType*>(dest);
@@ -365,8 +368,7 @@ struct DataViewIO {
 
   static void toBuffer(BufferPtrType unalignedBuffer, const DataType* src,
                        bool wantSwap) {
-    MOZ_ASSERT((reinterpret_cast<uintptr_t>(src) &
-                (Min<size_t>(MOZ_ALIGNOF(void*), sizeof(DataType)) - 1)) == 0);
+    MOZ_ASSERT((reinterpret_cast<uintptr_t>(src) & alignMask) == 0);
     ReadWriteType temp = *reinterpret_cast<const ReadWriteType*>(src);
     if (wantSwap) {
       temp = swapBytes(temp);
@@ -981,26 +983,17 @@ JSObject* DataViewObject::CreatePrototype(JSContext* cx, JSProtoKey key) {
                                             &DataViewObject::protoClass_);
 }
 
-// Add extra methods for BigInt if its run-time option is enabled.
-bool DataViewObject::finishInit(JSContext* cx, JS::HandleObject ctor,
-                                JS::HandleObject proto) {
-  if (cx->realm()->creationOptions().getBigIntEnabled()) {
-    return JS_DefineFunctions(cx, proto, bigIntMethods);
-  }
-  return true;
-}
-
-static const ClassOps DataViewObjectClassOps = {nullptr, /* addProperty */
-                                                nullptr, /* delProperty */
-                                                nullptr, /* enumerate */
-                                                nullptr, /* newEnumerate */
-                                                nullptr, /* resolve */
-                                                nullptr, /* mayResolve */
-                                                nullptr, /* finalize */
-                                                nullptr, /* call */
-                                                nullptr, /* hasInstance */
-                                                nullptr, /* construct */
-                                                ArrayBufferViewObject::trace};
+static const JSClassOps DataViewObjectClassOps = {nullptr, /* addProperty */
+                                                  nullptr, /* delProperty */
+                                                  nullptr, /* enumerate */
+                                                  nullptr, /* newEnumerate */
+                                                  nullptr, /* resolve */
+                                                  nullptr, /* mayResolve */
+                                                  nullptr, /* finalize */
+                                                  nullptr, /* call */
+                                                  nullptr, /* hasInstance */
+                                                  nullptr, /* construct */
+                                                  ArrayBufferViewObject::trace};
 
 const ClassSpec DataViewObject::classSpec_ = {
     GenericCreateConstructor<DataViewObject::construct, 1,
@@ -1009,17 +1002,16 @@ const ClassSpec DataViewObject::classSpec_ = {
     nullptr,
     nullptr,
     DataViewObject::methods,
-    DataViewObject::properties,
-    DataViewObject::finishInit};
+    DataViewObject::properties};
 
-const Class DataViewObject::class_ = {
+const JSClass DataViewObject::class_ = {
     "DataView",
     JSCLASS_HAS_PRIVATE |
         JSCLASS_HAS_RESERVED_SLOTS(DataViewObject::RESERVED_SLOTS) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_DataView),
     &DataViewObjectClassOps, &DataViewObject::classSpec_};
 
-const Class DataViewObject::protoClass_ = {
+const JSClass DataViewObject::protoClass_ = {
     js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_DataView),
     JS_NULL_CLASS_OPS, &DataViewObject::classSpec_};
 
@@ -1032,6 +1024,8 @@ const JSFunctionSpec DataViewObject::methods[] = {
     JS_FN("getUint32", DataViewObject::fun_getUint32, 1, 0),
     JS_FN("getFloat32", DataViewObject::fun_getFloat32, 1, 0),
     JS_FN("getFloat64", DataViewObject::fun_getFloat64, 1, 0),
+    JS_FN("getBigInt64", DataViewObject::fun_getBigInt64, 1, 0),
+    JS_FN("getBigUint64", DataViewObject::fun_getBigUint64, 1, 0),
     JS_FN("setInt8", DataViewObject::fun_setInt8, 2, 0),
     JS_FN("setUint8", DataViewObject::fun_setUint8, 2, 0),
     JS_FN("setInt16", DataViewObject::fun_setInt16, 2, 0),
@@ -1040,13 +1034,9 @@ const JSFunctionSpec DataViewObject::methods[] = {
     JS_FN("setUint32", DataViewObject::fun_setUint32, 2, 0),
     JS_FN("setFloat32", DataViewObject::fun_setFloat32, 2, 0),
     JS_FN("setFloat64", DataViewObject::fun_setFloat64, 2, 0),
-    JS_FS_END};
-
-const JSFunctionSpec DataViewObject::bigIntMethods[] = {
-    JS_FN("getBigInt64", DataViewObject::fun_getBigInt64, 1, 0),
-    JS_FN("getBigUint64", DataViewObject::fun_getBigUint64, 1, 0),
     JS_FN("setBigInt64", DataViewObject::fun_setBigInt64, 2, 0),
-    JS_FN("setBigUint64", DataViewObject::fun_setBigUint64, 2, 0), JS_FS_END};
+    JS_FN("setBigUint64", DataViewObject::fun_setBigUint64, 2, 0),
+    JS_FS_END};
 
 const JSPropertySpec DataViewObject::properties[] = {
     JS_PSG("buffer", DataViewObject::bufferGetter, 0),

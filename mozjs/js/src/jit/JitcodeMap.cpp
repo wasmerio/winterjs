@@ -115,6 +115,18 @@ void JitcodeGlobalEntry::IonEntry::youngestFrameLocationAtAddr(
   *pc = (*script)->offsetToPC(pcOffset);
 }
 
+uint64_t JitcodeGlobalEntry::IonEntry::lookupRealmID(void* ptr) const {
+  uint32_t ptrOffset;
+  JitcodeRegionEntry region = RegionAtAddr(*this, ptr, &ptrOffset);
+  JitcodeRegionEntry::ScriptPcIterator locationIter = region.scriptPcIterator();
+  MOZ_ASSERT(locationIter.hasMore());
+  uint32_t scriptIdx, pcOffset;
+  locationIter.readNext(&scriptIdx, &pcOffset);
+
+  JSScript* script = getScript(scriptIdx);
+  return script->realm()->creationOptions().profilerRealmID();
+}
+
 void JitcodeGlobalEntry::IonEntry::destroy() {
   // The region table is stored at the tail of the compacted data,
   // which means the start of the region table is a pointer to
@@ -190,12 +202,40 @@ void JitcodeGlobalEntry::BaselineEntry::youngestFrameLocationAtAddr(
   *pc = script_->baselineScript()->approximatePcForNativeAddress(script_, addr);
 }
 
+uint64_t JitcodeGlobalEntry::BaselineEntry::lookupRealmID() const {
+  return script_->realm()->creationOptions().profilerRealmID();
+}
+
 void JitcodeGlobalEntry::BaselineEntry::destroy() {
   if (!str_) {
     return;
   }
   js_free((void*)str_);
   str_ = nullptr;
+}
+
+void* JitcodeGlobalEntry::BaselineInterpreterEntry::canonicalNativeAddrFor(
+    void* ptr) const {
+  return ptr;
+}
+
+bool JitcodeGlobalEntry::BaselineInterpreterEntry::callStackAtAddr(
+    void* ptr, BytecodeLocationVector& results, uint32_t* depth) const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
+}
+
+uint32_t JitcodeGlobalEntry::BaselineInterpreterEntry::callStackAtAddr(
+    void* ptr, const char** results, uint32_t maxResults) const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
+}
+
+void JitcodeGlobalEntry::BaselineInterpreterEntry::youngestFrameLocationAtAddr(
+    void* ptr, JSScript** script, jsbytecode** pc) const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
+}
+
+uint64_t JitcodeGlobalEntry::BaselineInterpreterEntry::lookupRealmID() const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
 static inline JitcodeGlobalEntry& RejoinEntry(
@@ -231,6 +271,12 @@ void JitcodeGlobalEntry::IonCacheEntry::youngestFrameLocationAtAddr(
     JSRuntime* rt, void* ptr, JSScript** script, jsbytecode** pc) const {
   const JitcodeGlobalEntry& entry = RejoinEntry(rt, *this, ptr);
   return entry.youngestFrameLocationAtAddr(rt, rejoinAddr(), script, pc);
+}
+
+uint64_t JitcodeGlobalEntry::IonCacheEntry::lookupRealmID(JSRuntime* rt,
+                                                          void* ptr) const {
+  const JitcodeGlobalEntry& entry = RejoinEntry(rt, *this, ptr);
+  return entry.lookupRealmID(rt, ptr);
 }
 
 static int ComparePointers(const void* a, const void* b) {
@@ -274,98 +320,6 @@ int JitcodeGlobalEntry::compare(const JitcodeGlobalEntry& ent1,
 
   // query ptr < entry
   return flip * -1;
-}
-
-/* static */
-char* JitcodeGlobalEntry::createScriptString(JSContext* cx, JSScript* script,
-                                             size_t* length) {
-  // If the script has a function, try calculating its name.
-  bool hasName = false;
-  size_t nameLength = 0;
-  UniqueChars nameStr;
-  JSFunction* func = script->functionDelazifying();
-  if (func && func->displayAtom()) {
-    nameStr = StringToNewUTF8CharsZ(cx, *func->displayAtom());
-    if (!nameStr) {
-      return nullptr;
-    }
-
-    nameLength = strlen(nameStr.get());
-    hasName = true;
-  }
-
-  // Calculate filename length
-  const char* filenameStr = script->filename() ? script->filename() : "(null)";
-  size_t filenameLength = strlen(filenameStr);
-
-  // Calculate line + column length
-  bool hasLineAndColumn = false;
-  size_t lineAndColumnLength = 0;
-  char lineAndColumnStr[30];
-  if (hasName || (script->functionNonDelazifying() || script->isForEval())) {
-    lineAndColumnLength = SprintfLiteral(lineAndColumnStr, "%u:%u",
-                                         script->lineno(), script->column());
-    hasLineAndColumn = true;
-  }
-
-  // Full profile string for scripts with functions is:
-  //      FuncName (FileName:Lineno:Column)
-  // Full profile string for scripts without functions is:
-  //      FileName:Lineno:Column
-  // Full profile string for scripts without functions and without lines is:
-  //      FileName
-
-  // Calculate full string length.
-  size_t fullLength = 0;
-  if (hasName) {
-    MOZ_ASSERT(hasLineAndColumn);
-    fullLength = nameLength + 2 + filenameLength + 1 + lineAndColumnLength + 1;
-  } else if (hasLineAndColumn) {
-    fullLength = filenameLength + 1 + lineAndColumnLength;
-  } else {
-    fullLength = filenameLength;
-  }
-
-  // Allocate string.
-  char* str = cx->pod_malloc<char>(fullLength + 1);
-  if (!str) {
-    return nullptr;
-  }
-
-  size_t cur = 0;
-
-  // Fill string with func name if needed.
-  if (hasName) {
-    memcpy(str + cur, nameStr.get(), nameLength);
-    cur += nameLength;
-    str[cur++] = ' ';
-    str[cur++] = '(';
-  }
-
-  // Fill string with filename chars.
-  memcpy(str + cur, filenameStr, filenameLength);
-  cur += filenameLength;
-
-  // Fill line + column chars.
-  if (hasLineAndColumn) {
-    str[cur++] = ':';
-    memcpy(str + cur, lineAndColumnStr, lineAndColumnLength);
-    cur += lineAndColumnLength;
-  }
-
-  // Terminal ')' if necessary.
-  if (hasName) {
-    str[cur++] = ')';
-  }
-
-  MOZ_ASSERT(cur == fullLength);
-  str[cur] = 0;
-
-  if (length) {
-    *length = fullLength;
-  }
-
-  return str;
 }
 
 JitcodeGlobalTable::Enum::Enum(JitcodeGlobalTable& table, JSRuntime* rt)
@@ -459,7 +413,7 @@ JitcodeGlobalEntry* JitcodeGlobalTable::lookupInternal(void* ptr) {
 
 bool JitcodeGlobalTable::addEntry(const JitcodeGlobalEntry& entry) {
   MOZ_ASSERT(entry.isIon() || entry.isBaseline() || entry.isIonCache() ||
-             entry.isDummy());
+             entry.isBaselineInterpreter() || entry.isDummy());
 
   JitcodeGlobalEntry* searchTower[JitcodeSkiplistTower::MAX_HEIGHT];
   searchInternal(entry, searchTower);
@@ -806,7 +760,7 @@ bool JitcodeGlobalTable::markIteratively(GCMarker* marker) {
   return markedAny;
 }
 
-void JitcodeGlobalTable::sweep(JSRuntime* rt) {
+void JitcodeGlobalTable::traceWeak(JSRuntime* rt, JSTracer* trc) {
   AutoSuppressProfilerSampling suppressSampling(rt->mainContextFromOwnThread());
   for (Enum e(*this, rt); !e.empty(); e.popFront()) {
     JitcodeGlobalEntry* entry = e.front();
@@ -815,7 +769,9 @@ void JitcodeGlobalTable::sweep(JSRuntime* rt) {
       continue;
     }
 
-    if (entry->baseEntry().isJitcodeAboutToBeFinalized()) {
+    if (!TraceManuallyBarrieredWeakEdge(
+            trc, &entry->baseEntry().jitcode_,
+            "JitcodeGlobalTable::JitcodeGlobalEntry::jitcode_")) {
       e.removeFront();
     } else {
       entry->sweepChildren(rt);
@@ -836,10 +792,6 @@ bool JitcodeGlobalEntry::BaseEntry::traceJitcode(JSTracer* trc) {
 bool JitcodeGlobalEntry::BaseEntry::isJitcodeMarkedFromAnyThread(
     JSRuntime* rt) {
   return IsMarkedUnbarriered(rt, &jitcode_);
-}
-
-bool JitcodeGlobalEntry::BaseEntry::isJitcodeAboutToBeFinalized() {
-  return IsAboutToBeFinalizedUnbarriered(&jitcode_);
 }
 
 template <class ShouldTraceProvider>
@@ -1420,11 +1372,11 @@ bool JitcodeIonTable::makeIonEntry(JSContext* cx, JitCode* code,
   });
 
   for (uint32_t i = 0; i < numScripts; i++) {
-    char* str = JitcodeGlobalEntry::createScriptString(cx, scripts[i]);
+    UniqueChars str = GeckoProfilerRuntime::allocProfileString(cx, scripts[i]);
     if (!str) {
       return false;
     }
-    if (!profilingStrings.append(str)) {
+    if (!profilingStrings.append(str.release())) {
       return false;
     }
   }
@@ -1615,10 +1567,17 @@ JS::ProfiledFrameHandle::ProfiledFrameHandle(JSRuntime* rt,
 
 JS_PUBLIC_API JS::ProfilingFrameIterator::FrameKind
 JS::ProfiledFrameHandle::frameKind() const {
+  if (entry_.isBaselineInterpreter()) {
+    return JS::ProfilingFrameIterator::Frame_BaselineInterpreter;
+  }
   if (entry_.isBaseline()) {
     return JS::ProfilingFrameIterator::Frame_Baseline;
   }
   return JS::ProfilingFrameIterator::Frame_Ion;
+}
+
+JS_PUBLIC_API uint64_t JS::ProfiledFrameHandle::realmID() const {
+  return entry_.lookupRealmID(rt_, addr_);
 }
 
 JS_PUBLIC_API JS::ProfiledFrameRange JS::GetProfiledFrames(JSContext* cx,

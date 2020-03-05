@@ -93,6 +93,15 @@
 #endif
 
 /*
+ * MOZ_NEVER_INLINE_DEBUG is a macro which expands to MOZ_NEVER_INLINE
+ * in debug builds, and nothing in opt builds.
+ */
+#if defined(DEBUG)
+#  define MOZ_NEVER_INLINE_DEBUG MOZ_NEVER_INLINE
+#else
+#  define MOZ_NEVER_INLINE_DEBUG /* don't inline in opt builds */
+#endif
+/*
  * MOZ_NORETURN, specified at the start of a function declaration, indicates
  * that the given function does not return.  (The function definition does not
  * need to be annotated.)
@@ -567,6 +576,14 @@
  *   class, or if another class inherits from this class, then it is considered
  *   to be a static class as well, although this attribute need not be provided
  *   in such cases.
+ * MOZ_STATIC_LOCAL_CLASS: Applies to all classes. Any class with this
+ *   annotation is expected to be a static local variable, so it is
+ *   a compile-time error to use it, or an array of such objects, or as a
+ *   temporary object, or as the type of a new expression. If another class
+ *   inherits from this class then it is considered to be a static local
+ *   class as well, although this attribute need not be provided in such cases.
+ *   It is also a compile-time error for any class with this annotation to have
+ *   a non-trivial destructor.
  * MOZ_STACK_CLASS: Applies to all classes. Any class with this annotation is
  *   expected to live on the stack, so it is a compile-time error to use it, or
  *   an array of such objects, as a global or static variable, or as the type of
@@ -719,15 +736,16 @@
  *   Sometimes derived classes override methods that need to be called by their
  *   overridden counterparts. This marker indicates that the marked method must
  *   be called by the method that it overrides.
- * MOZ_MUST_RETURN_FROM_CALLER: Applies to function or method declarations.
- *   Callers of the annotated function/method must return from that function
- *   within the calling block using an explicit `return` statement.
- *   Only calls to Constructors, references to local and member variables,
- *   and calls to functions or methods marked as MOZ_MAY_CALL_AFTER_MUST_RETURN
- *   may be made after the MUST_RETURN_FROM_CALLER call.
+ * MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG: Applies to method declarations.
+ *   Callers of the annotated method must return from that function within the
+ *   calling block using an explicit `return` statement if the "this" value for
+ * the call is a parameter of the caller.  Only calls to Constructors,
+ * references to local and member variables, and calls to functions or methods
+ * marked as MOZ_MAY_CALL_AFTER_MUST_RETURN may be made after the
+ *   MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG call.
  * MOZ_MAY_CALL_AFTER_MUST_RETURN: Applies to function or method declarations.
  *   Calls to these methods may be made in functions after calls a
- *   MOZ_MUST_RETURN_FROM_CALLER function or method.
+ *   MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG method.
  */
 
 // gcc emits a nuisance warning -Wignored-attributes because attributes do not
@@ -757,6 +775,9 @@
       __attribute__((annotate("moz_can_run_script_boundary")))
 #    define MOZ_MUST_OVERRIDE __attribute__((annotate("moz_must_override")))
 #    define MOZ_STATIC_CLASS __attribute__((annotate("moz_global_class")))
+#    define MOZ_STATIC_LOCAL_CLASS                        \
+      __attribute__((annotate("moz_static_local_class"))) \
+          __attribute__((annotate("moz_trivial_dtor")))
 #    define MOZ_STACK_CLASS __attribute__((annotate("moz_stack_class")))
 #    define MOZ_NONHEAP_CLASS __attribute__((annotate("moz_nonheap_class")))
 #    define MOZ_HEAP_CLASS __attribute__((annotate("moz_heap_class")))
@@ -804,8 +825,8 @@
 #    define MOZ_NON_PARAM __attribute__((annotate("moz_non_param")))
 #    define MOZ_REQUIRED_BASE_METHOD \
       __attribute__((annotate("moz_required_base_method")))
-#    define MOZ_MUST_RETURN_FROM_CALLER \
-      __attribute__((annotate("moz_must_return_from_caller")))
+#    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG \
+      __attribute__((annotate("moz_must_return_from_caller_if_this_is_arg")))
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN \
       __attribute__((annotate("moz_may_call_after_must_return")))
 /*
@@ -827,6 +848,7 @@
 #    define MOZ_CAN_RUN_SCRIPT_BOUNDARY                     /* nothing */
 #    define MOZ_MUST_OVERRIDE                               /* nothing */
 #    define MOZ_STATIC_CLASS                                /* nothing */
+#    define MOZ_STATIC_LOCAL_CLASS                          /* nothing */
 #    define MOZ_STACK_CLASS                                 /* nothing */
 #    define MOZ_NONHEAP_CLASS                               /* nothing */
 #    define MOZ_HEAP_CLASS                                  /* nothing */
@@ -856,7 +878,7 @@
 #    define MOZ_NON_PARAM                                   /* nothing */
 #    define MOZ_NON_AUTOABLE                                /* nothing */
 #    define MOZ_REQUIRED_BASE_METHOD                        /* nothing */
-#    define MOZ_MUST_RETURN_FROM_CALLER                     /* nothing */
+#    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG      /* nothing */
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN                  /* nothing */
 #  endif /* defined(MOZ_CLANG_PLUGIN) || defined(XGILL_PLUGIN) */
 
