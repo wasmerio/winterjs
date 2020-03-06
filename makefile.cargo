@@ -11,6 +11,10 @@ CONFIGURE_FLAGS := \
 	--disable-shared-js \
 	--build-backends=RecursiveMake
 
+ifneq (,$(MACOS_SDK_PATH))
+	CONFIGURE_FLAGS += --with-macos-sdk=$(MACOS_SDK_PATH)
+endif
+
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
 	# Override any attempt to use the debug CRT when building with debug.
