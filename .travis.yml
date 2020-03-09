@@ -32,7 +32,7 @@ addons:
 
 env:
   - FEATURES=""
-  - FEATURES="--features debugmozjs"
+  - FEATURES="debugmozjs"
 
 before_script:
   - rustup component add rustfmt-preview
@@ -41,8 +41,8 @@ before_script:
 
 script:
   - ccache -z
-  - CCACHE=$(which ccache) travis_wait 30 cargo build --verbose $FEATURES
-  - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --lib --verbose $FEATURES
+  - CCACHE=$(which ccache) travis_wait 30 cargo build --verbose --features "$FEATURES"
+  - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --lib --verbose --features "$FEATURES"
   - ccache -s
 
 cache: ccache
