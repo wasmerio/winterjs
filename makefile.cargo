@@ -15,6 +15,10 @@ ifneq (,$(MACOS_SDK_PATH))
 	CONFIGURE_FLAGS += --with-macos-sdk=$(MACOS_SDK_PATH)
 endif
 
+ifneq (,$(CARGO_FEATURE_JITSPEW))
+    CONFIGURE_FLAGS += --enable-jitspew
+endif
+
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
 	# Override any attempt to use the debug CRT when building with debug.
