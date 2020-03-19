@@ -19,7 +19,6 @@ exclude = [
 debugmozjs = []
 profilemozjs = []
 uwp = []
-vslatestinstalled = []
 
 [lib]
 name = "mozjs_sys"
