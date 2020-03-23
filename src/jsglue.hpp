@@ -25,6 +25,7 @@
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
 #include "js/Realm.h"
+#include "js/RegExp.h"
 #include "js/SavedFrameAPI.h"
 #include "js/SourceText.h"
 #include "js/Stream.h"
