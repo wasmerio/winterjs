@@ -20,9 +20,6 @@ ifeq (windows,$(findstring windows,$(TARGET)))
 	# Override any attempt to use the debug CRT when building with debug.
 	CFLAGS += -MD
 	CXXFLAGS += -MD
-	ifeq (,$(CARGO_FEATURE_VSLATESTINSTALLED))
-		CONFIGURE_FLAGS += --with-visual-studio-version=2017
-	endif
 	ifneq (,$(CARGO_FEATURE_UWP))
 		CONFIGURE_FLAGS += --enable-uwp --without-intl-api --disable-vtune
 		CFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
