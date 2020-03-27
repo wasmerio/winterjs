@@ -335,20 +335,21 @@ void CodeGenerator::visitMulI(LMulI* ins) {
           }
         }
 
-        // Otherwise, just multiply.
+        // Otherwise, just multiply. We have to check for overflow.
+        // Negative zero was handled above.
         Label bailout;
-        Label* onZero = mul->canBeNegativeZero() ? &bailout : nullptr;
         Label* onOverflow = mul->canOverflow() ? &bailout : nullptr;
 
         vixl::UseScratchRegisterScope temps(&masm.asVIXL());
         const Register scratch = temps.AcquireW().asUnsized();
 
         masm.move32(Imm32(constant), scratch);
-        masm.mul32(lhsreg, scratch, destreg, onOverflow, onZero);
-        if (onZero || onOverflow) {
+        masm.mul32(lhsreg, scratch, destreg, onOverflow);
+
+        if (onOverflow) {
           bailoutFrom(&bailout, ins->snapshot());
         }
-        return;  // escape overflow check;
+        return;
     }
 
     // Overflow check.
@@ -357,14 +358,52 @@ void CodeGenerator::visitMulI(LMulI* ins) {
     }
   } else {
     Register rhsreg = ToRegister(rhs);
+    const ARMRegister rhsreg32 = ARMRegister(rhsreg, 32);
+
 
     Label bailout;
-    // TODO: x64 (but not other platforms) have an OOL path for onZero.
-    Label* onZero = mul->canBeNegativeZero() ? &bailout : nullptr;
     Label* onOverflow = mul->canOverflow() ? &bailout : nullptr;
 
-    masm.mul32(lhsreg, rhsreg, destreg, onOverflow, onZero);
-    if (onZero || onOverflow) {
+    if (mul->canBeNegativeZero()) {
+      // The product of two operands is negative zero iff one operand is
+      // zero, and the other is negative. Therefore, the sum of the
+      // two operands will also be negative (specifically, it will be
+      // the non-zero operand). If the result of the multiplication is 0,
+      // we can check the sign of the sum to determine whether we should
+      // bail out.
+
+      // If the multiplication will overwrite an operand, save that operand.
+      vixl::UseScratchRegisterScope temps(&masm.asVIXL());
+      const ARMRegister scratch32 = temps.AcquireW();
+      const Register scratch = scratch32.asUnsized();
+      ARMRegister lhsregAfter = lhsreg32;
+      ARMRegister rhsregAfter = rhsreg32;
+
+      MOZ_ASSERT(lhsreg != rhsreg);  // x*x can't be -0. See MMul::foldsTo.
+      if (lhsreg == destreg) {
+        masm.move32(lhsreg, scratch);
+        lhsregAfter = scratch32;
+      } else if (rhsreg == destreg) {
+        masm.move32(rhsreg, scratch);
+        rhsregAfter = scratch32;
+      }
+
+      // Do the multiplication.
+      masm.mul32(lhsreg, rhsreg, destreg, onOverflow);
+
+      // Bail out if (lhs * rhs == 0) && (lhs + rhs < 0)
+      Label done;
+      masm.branchTest32(Assembler::NonZero, destreg, destreg, &done);
+      masm.Add(scratch32, lhsregAfter, rhsregAfter);
+      masm.Cmp(scratch32, Operand(0));
+      bailoutIf(Assembler::LessThan, ins->snapshot());
+
+      masm.bind(&done);
+
+    } else {
+      masm.mul32(lhsreg, rhsreg, destreg, onOverflow);
+    }
+    if (onOverflow) {
       bailoutFrom(&bailout, ins->snapshot());
     }
   }
