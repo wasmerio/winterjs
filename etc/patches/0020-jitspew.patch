@@ -1,0 +1,381 @@
+commit 8b884afd95037af61f31969eec754fcdae71340d
+Author: Josh Matthews <josh@joshmatthews.net>
+Date:   Wed Mar 18 10:24:16 2020 -0400
+
+    Add support for IONFLAGS in UWP environments.
+
+diff --git a/mozjs/js/src/jit/AliasAnalysis.cpp b/mozjs/js/src/jit/AliasAnalysis.cpp
+index 06ed99ed1..b2b079416 100644
+--- a/mozjs/js/src/jit/AliasAnalysis.cpp
++++ b/mozjs/js/src/jit/AliasAnalysis.cpp
+@@ -48,7 +48,7 @@ class LoopAliasInfo : public TempObject {
+ void AliasAnalysis::spewDependencyList() {
+ #ifdef JS_JITSPEW
+   if (JitSpewEnabled(JitSpew_AliasSummaries)) {
+-    Fprinter& print = JitSpewPrinter();
++    GenericPrinter& print = JitSpewPrinter();
+     JitSpewHeader(JitSpew_AliasSummaries);
+     print.printf("Dependency list for other passes:\n");
+ 
+@@ -257,7 +257,7 @@ static void IonSpewDependency(MInstruction* load, MInstruction* store,
+     return;
+   }
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.printf("Load ");
+   load->printName(out);
+   out.printf(" %s on store ", verb);
+@@ -273,7 +273,7 @@ static void IonSpewAliasInfo(const char* pre, MInstruction* ins,
+     return;
+   }
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.printf("%s ", pre);
+   ins->printName(out);
+   out.printf(" %s\n", post);
+@@ -361,7 +361,7 @@ bool AliasAnalysis::analyze() {
+ 
+ #ifdef JS_JITSPEW
+         if (JitSpewEnabled(JitSpew_Alias)) {
+-          Fprinter& out = JitSpewPrinter();
++          GenericPrinter& out = JitSpewPrinter();
+           out.printf("Processing store ");
+           def->printName(out);
+           out.printf(" (flags %x)\n", set.flags());
+diff --git a/mozjs/js/src/jit/CacheIRSpewer.cpp b/mozjs/js/src/jit/CacheIRSpewer.cpp
+index bf7761111..49d183aae 100644
+--- a/mozjs/js/src/jit/CacheIRSpewer.cpp
++++ b/mozjs/js/src/jit/CacheIRSpewer.cpp
+@@ -11,8 +11,13 @@
+ #  include "mozilla/Sprintf.h"
+ 
+ #  ifdef XP_WIN
+-#    include <process.h>
+-#    define getpid _getpid
++#    ifdef JS_ENABLE_UWP
++#      include <processthreadsapi.h>
++#      define getpid GetCurrentProcessId
++#    else
++#      include <process.h>
++#      define getpid _getpid
++#    endif
+ #  else
+ #    include <unistd.h>
+ #  endif
+diff --git a/mozjs/js/src/jit/IonAnalysis.cpp b/mozjs/js/src/jit/IonAnalysis.cpp
+index 0a24c9351..9f089e920 100644
+--- a/mozjs/js/src/jit/IonAnalysis.cpp
++++ b/mozjs/js/src/jit/IonAnalysis.cpp
+@@ -5205,7 +5205,7 @@ void jit::DumpMIRExpressions(MIRGraph& graph) {
+ 
+   size_t depth = 2;
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   for (ReversePostorderIterator block(graph.rpoBegin());
+        block != graph.rpoEnd(); block++) {
+     for (MInstructionIterator iter(block->begin()), end(block->end());
+diff --git a/mozjs/js/src/jit/JitSpewer.cpp b/mozjs/js/src/jit/JitSpewer.cpp
+index b80270d9e..5854c5322 100644
+--- a/mozjs/js/src/jit/JitSpewer.cpp
++++ b/mozjs/js/src/jit/JitSpewer.cpp
+@@ -12,10 +12,15 @@
+ #  include "mozilla/Sprintf.h"
+ 
+ #  ifdef XP_WIN
+-#    include <process.h>
+-#    define getpid _getpid
+-#  else
+-#    include <unistd.h>
++#    ifdef JS_ENABLE_UWP
++#      define UNICODE
++#      include <Windows.h>
++#      include <processthreadsapi.h>
++#      define getpid GetCurrentProcessId
++#    else
++#      include <process.h>
++#      define getpid _getpid
++#    endif
+ #  endif
+ #  include "jit/Ion.h"
+ #  include "jit/MIR.h"
+@@ -337,8 +342,12 @@ AutoSpewEndFunction::~AutoSpewEndFunction() {
+   mir_->graphSpewer().endFunction();
+ }
+ 
+-Fprinter& jit::JitSpewPrinter() {
++GenericPrinter& jit::JitSpewPrinter() {
++#ifdef JS_ENABLE_UWP
++  static UWPPrinter out;
++#else
+   static Fprinter out;
++#endif
+   return out;
+ }
+ 
+@@ -410,10 +419,18 @@ void jit::CheckLogging() {
+ 
+   LoggingChecked = true;
+ 
++#ifdef JS_ENABLE_UWP
++  wchar_t wideEnvBuf[1024] = { 0 };
++  GetEnvironmentVariable(L"IONFLAGS", wideEnvBuf, sizeof(wideEnvBuf));
++  char envBuf[1024] = { 0 };
++  wcstombs(envBuf, wideEnvBuf, sizeof(envBuf));
++  char* env = &envBuf[0];
++#else
+   char* env = getenv("IONFLAGS");
+   if (!env) {
+     return;
+   }
++#endif
+ 
+   const char* found = strtok(env, ",");
+   while (found) {
+@@ -519,6 +536,7 @@ void jit::CheckLogging() {
+     found = strtok(nullptr, ",");
+   }
+ 
++#ifndef JS_ENABLE_UWP
+   FILE* spewfh = stderr;
+   const char* filename = getenv("ION_SPEW_FILENAME");
+   if (filename && *filename) {
+@@ -528,7 +546,8 @@ void jit::CheckLogging() {
+     MOZ_RELEASE_ASSERT(spewfh);
+     setbuf(spewfh, nullptr);  // Make unbuffered
+   }
+-  JitSpewPrinter().init(spewfh);
++  ((Fprinter&)JitSpewPrinter()).init(spewfh);
++#endif
+ }
+ 
+ JitSpewIndent::JitSpewIndent(JitSpewChannel channel) : channel_(channel) {
+@@ -543,7 +562,7 @@ void jit::JitSpewStartVA(JitSpewChannel channel, const char* fmt, va_list ap) {
+   }
+ 
+   JitSpewHeader(channel);
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.vprintf(fmt, ap);
+ }
+ 
+@@ -552,7 +571,7 @@ void jit::JitSpewContVA(JitSpewChannel channel, const char* fmt, va_list ap) {
+     return;
+   }
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.vprintf(fmt, ap);
+ }
+ 
+@@ -561,7 +580,7 @@ void jit::JitSpewFin(JitSpewChannel channel) {
+     return;
+   }
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.put("\n");
+ }
+ 
+@@ -584,7 +603,7 @@ void jit::JitSpewDef(JitSpewChannel channel, const char* str,
+   }
+ 
+   JitSpewHeader(channel);
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.put(str);
+   def->dump(out);
+   def->dumpLocation(out);
+@@ -608,7 +627,7 @@ void jit::JitSpewHeader(JitSpewChannel channel) {
+     return;
+   }
+ 
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.printf("[%s] ", ChannelNames[channel]);
+   for (size_t i = ChannelIndentLevel[channel]; i != 0; i--) {
+     out.put("  ");
+diff --git a/mozjs/js/src/jit/JitSpewer.h b/mozjs/js/src/jit/JitSpewer.h
+index c0ab86086..035de3892 100644
+--- a/mozjs/js/src/jit/JitSpewer.h
++++ b/mozjs/js/src/jit/JitSpewer.h
+@@ -156,7 +156,7 @@ class AutoSpewEndFunction {
+ };
+ 
+ void CheckLogging();
+-Fprinter& JitSpewPrinter();
++GenericPrinter& JitSpewPrinter();
+ 
+ class JitSpewIndent {
+   JitSpewChannel channel_;
+diff --git a/mozjs/js/src/jit/LIR.cpp b/mozjs/js/src/jit/LIR.cpp
+index f066d8f69..17eacb25e 100644
+--- a/mozjs/js/src/jit/LIR.cpp
++++ b/mozjs/js/src/jit/LIR.cpp
+@@ -499,7 +499,7 @@ void LInstruction::assignSnapshot(LSnapshot* snapshot) {
+ #ifdef JS_JITSPEW
+   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
+     JitSpewHeader(JitSpew_IonSnapshots);
+-    Fprinter& out = JitSpewPrinter();
++    GenericPrinter& out = JitSpewPrinter();
+     out.printf("Assigning snapshot %p to instruction %p (", (void*)snapshot,
+                (void*)this);
+     printName(out);
+diff --git a/mozjs/js/src/jit/Lowering.cpp b/mozjs/js/src/jit/Lowering.cpp
+index 50ce0c792..977381256 100644
+--- a/mozjs/js/src/jit/Lowering.cpp
++++ b/mozjs/js/src/jit/Lowering.cpp
+@@ -4765,7 +4765,7 @@ void LIRGenerator::visitWasmFloatConstant(MWasmFloatConstant* ins) {
+ #ifdef JS_JITSPEW
+ static void SpewResumePoint(MBasicBlock* block, MInstruction* ins,
+                             MResumePoint* resumePoint) {
+-  Fprinter& out = JitSpewPrinter();
++  GenericPrinter& out = JitSpewPrinter();
+   out.printf("Current resume point %p details:\n", (void*)resumePoint);
+   out.printf("    frame count: %u\n", resumePoint->frameCount());
+ 
+diff --git a/mozjs/js/src/jit/RangeAnalysis.cpp b/mozjs/js/src/jit/RangeAnalysis.cpp
+index 7c4341cd2..ae8bb01f0 100644
+--- a/mozjs/js/src/jit/RangeAnalysis.cpp
++++ b/mozjs/js/src/jit/RangeAnalysis.cpp
+@@ -119,7 +119,7 @@ static inline void SpewRange(MDefinition* def) {
+   if (JitSpewEnabled(JitSpew_Range) && def->type() != MIRType::None &&
+       def->range()) {
+     JitSpewHeader(JitSpew_Range);
+-    Fprinter& out = JitSpewPrinter();
++    GenericPrinter& out = JitSpewPrinter();
+     def->printName(out);
+     out.printf(" has range ");
+     def->range()->dump(out);
+@@ -133,7 +133,7 @@ static inline void SpewTruncate(MDefinition* def,
+ #ifdef JS_JITSPEW
+   if (JitSpewEnabled(JitSpew_Range)) {
+     JitSpewHeader(JitSpew_Range);
+-    Fprinter& out = JitSpewPrinter();
++    GenericPrinter& out = JitSpewPrinter();
+     out.printf("truncating ");
+     def->printName(out);
+     out.printf(" (kind: %s, clone: %d)\n",
+@@ -317,7 +317,7 @@ bool RangeAnalysis::addBetaNodes() {
+ 
+     if (JitSpewEnabled(JitSpew_Range)) {
+       JitSpewHeader(JitSpew_Range);
+-      Fprinter& out = JitSpewPrinter();
++      GenericPrinter& out = JitSpewPrinter();
+       out.printf("Adding beta node for %d with range ", val->id());
+       comp.dump(out);
+     }
+diff --git a/mozjs/js/src/jit/Snapshots.cpp b/mozjs/js/src/jit/Snapshots.cpp
+index e7bdcc6f2..9a42c0f35 100644
+--- a/mozjs/js/src/jit/Snapshots.cpp
++++ b/mozjs/js/src/jit/Snapshots.cpp
+@@ -465,7 +465,7 @@ void SnapshotReader::spewBailingFrom() const {
+ #  ifdef JS_JITSPEW
+   if (JitSpewEnabled(JitSpew_IonBailouts)) {
+     JitSpewHeader(JitSpew_IonBailouts);
+-    Fprinter& out = JitSpewPrinter();
++    GenericPrinter& out = JitSpewPrinter();
+     out.printf(" bailing from bytecode: %s, MIR: ", CodeName[pcOpcode_]);
+     MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
+     out.printf(" [%u], LIR: ", mirId_);
+@@ -595,7 +595,7 @@ bool SnapshotWriter::add(const RValueAllocation& alloc) {
+ 
+   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
+     JitSpewHeader(JitSpew_IonSnapshots);
+-    Fprinter& out = JitSpewPrinter();
++    GenericPrinter& out = JitSpewPrinter();
+     out.printf("    slot %u (%d): ", allocWritten_, offset);
+     alloc.dump(out);
+     out.printf("\n");
+diff --git a/mozjs/js/src/util/StructuredSpewer.h b/mozjs/js/src/util/StructuredSpewer.h
+index b4c2c1892..5f5a9ae2c 100644
+--- a/mozjs/js/src/util/StructuredSpewer.h
++++ b/mozjs/js/src/util/StructuredSpewer.h
+@@ -21,8 +21,13 @@
+ #  include "vm/Printer.h"
+ 
+ #  ifdef XP_WIN
+-#    include <process.h>
+-#    define getpid _getpid
++#    ifdef JS_ENABLE_UWP
++#      include <processthreadsapi.h>
++#      define getpid GetCurrentProcessId
++#    else
++#      include <process.h>
++#      define getpid _getpid
++#    endif
+ #  else
+ #    include <unistd.h>
+ #  endif
+diff --git a/mozjs/js/src/vm/Printer.cpp b/mozjs/js/src/vm/Printer.cpp
+index bbe730817..b77bfd866 100644
+--- a/mozjs/js/src/vm/Printer.cpp
++++ b/mozjs/js/src/vm/Printer.cpp
+@@ -540,4 +540,21 @@ bool LSprinter::put(const char* s, size_t len) {
+   return true;
+ }
+ 
++#ifdef JS_ENABLE_UWP
++bool UWPPrinter::put(const char* s, size_t len)
++{
++    const char* end = (const char*)memchr(s, '\n', len);
++    if (end) {
++        if (!buffer_.append(s, end - s + 1) || !buffer_.append(0)) {
++            return false;
++        }
++        OutputDebugStringA((const char*)buffer_.begin());
++        buffer_.clear();
++    } else {
++        end = s + len;
++    }
++    return buffer_.append(s, end - s);
++}
++#endif
++
+ }  // namespace js
+diff --git a/mozjs/js/src/vm/Printer.h b/mozjs/js/src/vm/Printer.h
+index 820b07b54..659fdfc87 100644
+--- a/mozjs/js/src/vm/Printer.h
++++ b/mozjs/js/src/vm/Printer.h
+@@ -8,6 +8,7 @@
+ #define vm_Printer_h
+ 
+ #include "mozilla/Attributes.h"
++#include "mozilla/Vector.h"
+ 
+ #include <stdarg.h>
+ #include <stddef.h>
+@@ -124,6 +125,18 @@ class Sprinter final : public GenericPrinter {
+   virtual void reportOutOfMemory() override;
+ };
+ 
++#ifdef JS_ENABLE_UWP
++class UWPPrinter : public GenericPrinter {
++   mozilla::Vector<uint8_t> buffer_;
++ public:
++   explicit UWPPrinter() {}
++  // Puts |len| characters from |s| at the current position and
++  // return true on success, false on failure.
++  virtual bool put(const char* s, size_t len) override;
++  using GenericPrinter::put;  // pick up |inline bool put(const char* s);|
++};
++#endif
++
+ // Fprinter, print a string directly into a file.
+ class Fprinter final : public GenericPrinter {
+  private:
+diff --git a/mozjs/js/src/wasm/WasmGenerator.cpp b/mozjs/js/src/wasm/WasmGenerator.cpp
+index 3059c6b14..55fa954b6 100644
+--- a/mozjs/js/src/wasm/WasmGenerator.cpp
++++ b/mozjs/js/src/wasm/WasmGenerator.cpp
+@@ -36,6 +36,8 @@
+ 
+ #include "jit/MacroAssembler-inl.h"
+ 
++#undef far
++
+ using namespace js;
+ using namespace js::jit;
+ using namespace js::wasm;

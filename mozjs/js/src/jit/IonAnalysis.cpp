@@ -5205,7 +5205,7 @@ void jit::DumpMIRExpressions(MIRGraph& graph) {
 
   size_t depth = 2;
 
-  Fprinter& out = JitSpewPrinter();
+  GenericPrinter& out = JitSpewPrinter();
   for (ReversePostorderIterator block(graph.rpoBegin());
        block != graph.rpoEnd(); block++) {
     for (MInstructionIterator iter(block->begin()), end(block->end());
