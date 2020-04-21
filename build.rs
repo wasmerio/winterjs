@@ -156,11 +156,7 @@ fn build_jsapi(build_dir: &Path) {
     cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 
-    // We're using the MSYS make which doesn't work with the mingw32-make-style
-    // MAKEFLAGS, so remove that from the env if present.
-    if target.contains("windows") {
-        cmd.env_remove("MAKEFLAGS").env_remove("MFLAGS");
-    } else if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
+    if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
         cmd.env("MAKEFLAGS", makeflags);
     }
 
