@@ -410,16 +410,9 @@ fn ignore(path: &Path) -> bool {
         return true;
     }
 
-    let ignored_extensions = ["pyc", "so", "dll", "dylib"];
-    let ignored_trailing_paths = [["psutil", "build"], ["psutil", "tmp"]];
+    let ignored_extensions = ["pyc", "o", "so", "dll", "dylib"];
 
     path.extension().map_or(false, |extension| {
         ignored_extensions.iter().any(|&ignored| extension == ignored)
-    }) ||
-    ignored_trailing_paths.iter().any(|trailing| {
-        let mut components = path.components().rev();
-        trailing.iter().rev().all(|&ignored| {
-            components.next().map_or(false, |component| component.as_os_str() == ignored)
-        })
     })
 }
