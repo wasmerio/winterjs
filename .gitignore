@@ -5,8 +5,7 @@
 # Keep this in sync with ignore() in build.rs
 
 *.pyc
+*.o
 *.so
 *.dll
 *.dylib
-psutil/build
-psutil/tmp
