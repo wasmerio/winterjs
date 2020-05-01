@@ -179,11 +179,6 @@ impl<T: GCMethods + Copy> Heap<T> {
         self.ptr.get()
     }
 
-    pub fn handle_mut(&self) -> JS::MutableHandle<T> {
-        unsafe {
-            JS::MutableHandle::from_marked_location(self.ptr.get())
-        }
-    }
     /// Retrieves a Handle to the underlying value.
     ///
     /// # Safety
