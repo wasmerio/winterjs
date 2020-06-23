@@ -36,16 +36,16 @@ JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
     return JS::CallArgsFromVp(argc, vp);
 }
 
-JS::StackCapture JS_StackCapture_AllFrames() {
-    return JS::StackCapture(JS::AllFrames());
+void JS_StackCapture_AllFrames(JS::StackCapture* capture) {
+    *capture = JS::StackCapture(JS::AllFrames());
 }
 
-JS::StackCapture JS_StackCapture_MaxFrames(uint32_t max) {
-    return JS::StackCapture(JS::MaxFrames(max));
+void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture* capture) {
+    *capture = JS::StackCapture(JS::MaxFrames(max));
 }
 
-JS::StackCapture JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames) {
-    return JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
+void JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames, JS::StackCapture* capture) {
+    *capture = JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
 }
 
 // Reexport some methods

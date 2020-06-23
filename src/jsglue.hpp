@@ -44,9 +44,9 @@ JS::RealmOptions* JS_NewRealmOptions();
 void DeleteRealmOptions(JS::RealmOptions* options);
 JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
 
-JS::StackCapture JS_StackCapture_AllFrames();
-JS::StackCapture JS_StackCapture_MaxFrames(uint32_t max);
-JS::StackCapture JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames);
+void JS_StackCapture_AllFrames(JS::StackCapture*);
+void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture*);
+void JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames, JS::StackCapture*);
 
 bool JS_ForOfIteratorInit(JS::ForOfIterator* iterator, JS::HandleValue iterable, JS::ForOfIterator::NonIterableBehavior nonIterableBehavior);
 bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator, JS::MutableHandleValue val, bool* done);
