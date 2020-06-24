@@ -98,12 +98,16 @@ impl GCMethods for *mut JSObject {
 
 impl GCMethods for *mut JSString {
     unsafe fn initial() -> *mut JSString { ptr::null_mut() }
-    unsafe fn post_barrier(_: *mut *mut JSString, _: *mut JSString, _: *mut JSString) {}
+    unsafe fn post_barrier(v: *mut *mut JSString, prev: *mut JSString, next: *mut JSString) {
+        JS::HeapStringWriteBarriers(v, prev, next);
+    }
 }
 
 impl GCMethods for *mut JSScript {
     unsafe fn initial() -> *mut JSScript { ptr::null_mut() }
-    unsafe fn post_barrier(_: *mut *mut JSScript, _: *mut JSScript, _: *mut JSScript) { }
+    unsafe fn post_barrier(v: *mut *mut JSScript, prev: *mut JSScript, next: *mut JSScript) {
+        JS::HeapScriptWriteBarriers(v, prev, next);
+    }
 }
 
 impl GCMethods for *mut JSFunction {
