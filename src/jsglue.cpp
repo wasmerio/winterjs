@@ -37,15 +37,22 @@ JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
 }
 
 void JS_StackCapture_AllFrames(JS::StackCapture* capture) {
-    *capture = JS::StackCapture(JS::AllFrames());
+    JS::StackCapture all = JS::StackCapture(JS::AllFrames());
+    // Since Rust can't provide a meaningful initial value for the
+    // pointer, it is uninitialized memory. This means we must
+    // overwrite its value, rather than perform an assignment
+    // which could invoke a destructor on uninitialized memory.
+    mozilla::PodAssign(capture, &all);
 }
 
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture* capture) {
-    *capture = JS::StackCapture(JS::MaxFrames(max));
+    JS::StackCapture maxFrames = JS::StackCapture(JS::MaxFrames(max));
+    mozilla::PodAssign(capture, &maxFrames);
 }
 
 void JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames, JS::StackCapture* capture) {
-    *capture = JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
+    JS::StackCapture subsumed = JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
+    mozilla::PodAssign(capture, &subsumed);
 }
 
 // Reexport some methods
