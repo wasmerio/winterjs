@@ -343,6 +343,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
     "JSPROP_.*",
     "JSREG_.*",
     "JS_.*",
+    "js::Proxy.*",
 ];
 
 /// Functions we want to generate bindings to.

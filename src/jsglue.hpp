@@ -24,6 +24,7 @@
 #include "js/Modules.h"
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
+#include "js/Proxy.h"
 #include "js/Realm.h"
 #include "js/RegExp.h"
 #include "js/SavedFrameAPI.h"
