@@ -7,10 +7,11 @@
 #ifndef mozilla_DynamicallyLinkedFunctionPtr_h
 #define mozilla_DynamicallyLinkedFunctionPtr_h
 
-#include "mozilla/Attributes.h"
-#include "mozilla/Move.h"
-
 #include <windows.h>
+
+#include <utility>
+
+#include "mozilla/Attributes.h"
 
 namespace mozilla {
 namespace detail {
@@ -46,11 +47,7 @@ class DynamicallyLinkedFunctionPtrBase {
 
   DynamicallyLinkedFunctionPtrBase(const wchar_t* aLibName,
                                    const char* aFuncName)
-#ifndef JS_ENABLE_UWP
       : mModule(::LoadLibraryW(aLibName)), mFunction(nullptr) {
-#else
-      : mModule(nullptr), mFunction(nullptr) {
-#endif
     if (!mModule) {
       return;
     }

@@ -10,6 +10,7 @@
 
 #include "builtin/WeakSetObject.h"
 #include "gc/FreeOp.h"
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/JSContext.h"
 #include "vm/SelfHosting.h"
@@ -92,7 +93,10 @@ bool WeakMapObject::get(JSContext* cx, unsigned argc, Value* vp) {
   if (ObjectValueWeakMap* map =
           args.thisv().toObject().as<WeakMapObject>().getMap()) {
     JSObject* key = &args[0].toObject();
-    if (ObjectValueWeakMap::Ptr ptr = map->lookup(key)) {
+    // The lookup here is only used for the removal, so we can skip the read
+    // barrier. This is not very important for performance, but makes it easier
+    // to test nonbarriered removal from internal weakmaps (eg Debugger maps.)
+    if (ObjectValueWeakMap::Ptr ptr = map->lookupUnbarriered(key)) {
       map->remove(ptr);
       args.rval().setBoolean(true);
       return true;
@@ -256,17 +260,19 @@ bool WeakMapObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-const JSClassOps WeakCollectionObject::classOps_ = {nullptr, /* addProperty */
-                                                    nullptr, /* delProperty */
-                                                    nullptr, /* enumerate */
-                                                    nullptr, /* newEnumerate */
-                                                    nullptr, /* resolve */
-                                                    nullptr, /* mayResolve */
-                                                    WeakCollection_finalize,
-                                                    nullptr, /* call */
-                                                    nullptr, /* hasInstance */
-                                                    nullptr, /* construct */
-                                                    WeakCollection_trace};
+const JSClassOps WeakCollectionObject::classOps_ = {
+    nullptr,                  // addProperty
+    nullptr,                  // delProperty
+    nullptr,                  // enumerate
+    nullptr,                  // newEnumerate
+    nullptr,                  // resolve
+    nullptr,                  // mayResolve
+    WeakCollection_finalize,  // finalize
+    nullptr,                  // call
+    nullptr,                  // hasInstance
+    nullptr,                  // construct
+    WeakCollection_trace,     // trace
+};
 
 const ClassSpec WeakMapObject::classSpec_ = {
     GenericCreateConstructor<WeakMapObject::construct, 0,
@@ -285,8 +291,8 @@ const JSClass WeakMapObject::class_ = {
     &WeakCollectionObject::classOps_, &WeakMapObject::classSpec_};
 
 const JSClass WeakMapObject::protoClass_ = {
-    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_WeakMap), JS_NULL_CLASS_OPS,
-    &WeakMapObject::classSpec_};
+    "WeakMap.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_WeakMap),
+    JS_NULL_CLASS_OPS, &WeakMapObject::classSpec_};
 
 const JSPropertySpec WeakMapObject::properties[] = {
     JS_STRING_SYM_PS(toStringTag, "WeakMap", JSPROP_READONLY), JS_PS_END};

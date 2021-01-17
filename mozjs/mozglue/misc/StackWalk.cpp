@@ -77,11 +77,9 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
 // We need a way to know if we are building for WXP (or later), as if we are, we
 // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
 // A value of 9 indicates we want to use the new APIs.
-#ifndef JS_ENABLE_UWP
 #  if API_VERSION_NUMBER < 9
 #    error Too old imagehlp.h
 #  endif
-#endif
 
 struct WalkStackData {
   // Are we walking the stack of the calling thread? Note that we need to avoid
@@ -183,9 +181,6 @@ static void InitializeDbgHelpCriticalSection() {
 }
 
 static void WalkStackMain64(struct WalkStackData* aData) {
-#ifdef JS_ENABLE_UWP
-  return;
-#else
   // Get a context for the specified thread.
   CONTEXT context_buf;
   CONTEXT* context;
@@ -371,7 +366,6 @@ static void WalkStackMain64(struct WalkStackData* aData) {
     }
 #  endif
   }
-#endif
 }
 
 /**
@@ -386,8 +380,6 @@ MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
                                  uint32_t aSkipFrames, uint32_t aMaxFrames,
                                  void* aClosure, HANDLE aThread,
                                  CONTEXT* aContext) {
-  static HANDLE myProcess = nullptr;
-  HANDLE myThread;
   struct WalkStackData data;
 
   InitializeDbgHelpCriticalSection();
@@ -402,29 +394,9 @@ MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
     data.walkCallingThread = (threadId == currentThreadId);
   }
 
-  // Have to duplicate handle to get a real handle.
-  if (!myProcess) {
-    if (!::DuplicateHandle(::GetCurrentProcess(), ::GetCurrentProcess(),
-                           ::GetCurrentProcess(), &myProcess,
-                           PROCESS_ALL_ACCESS, FALSE, 0)) {
-      if (data.walkCallingThread) {
-        PrintError("DuplicateHandle (process)");
-      }
-      return;
-    }
-  }
-  if (!::DuplicateHandle(::GetCurrentProcess(), targetThread,
-                         ::GetCurrentProcess(), &myThread, THREAD_ALL_ACCESS,
-                         FALSE, 0)) {
-    if (data.walkCallingThread) {
-      PrintError("DuplicateHandle (thread)");
-    }
-    return;
-  }
-
   data.skipFrames = aSkipFrames;
-  data.thread = myThread;
-  data.process = myProcess;
+  data.thread = targetThread;
+  data.process = ::GetCurrentProcess();
   void* local_pcs[1024];
   data.pcs = local_pcs;
   data.pc_count = 0;
@@ -448,8 +420,6 @@ MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
     WalkStackMain64(&data);
   }
 
-  ::CloseHandle(myThread);
-
   for (uint32_t i = 0; i < data.pc_count; ++i) {
     (*aCallback)(i + 1, data.pcs[i], data.sps[i], aClosure);
   }
@@ -465,7 +435,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
                                         ULONG aModuleSize, PVOID aUserContext) {
   BOOL retval = TRUE;
   DWORD64 addr = *(DWORD64*)aUserContext;
-#ifndef JS_ENABLE_UWP
+
   /*
    * You'll want to control this if we are running on an
    *  architecture where the addresses go the other direction.
@@ -485,7 +455,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
       PrintError("SymLoadModule64");
     }
   }
-#endif
+
   return retval;
 }
 
@@ -517,7 +487,6 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
 #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
 #  endif
 
-#ifndef JS_ENABLE_UWP
 BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
                                 PIMAGEHLP_MODULE64 aModuleInfo,
                                 PIMAGEHLP_LINE64 aLineInfo) {
@@ -574,24 +543,22 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
 
   return retval;
 }
-#endif
 
 static bool EnsureSymInitialized() {
   static bool gInitialized = false;
-  bool retStat = true;
+  bool retStat;
 
   if (gInitialized) {
     return gInitialized;
   }
 
   InitializeDbgHelpCriticalSection();
-#ifndef JS_ENABLE_UWP
+
   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
   if (!retStat) {
     PrintError("SymInitialize");
   }
-#endif
 
   gInitialized = retStat;
   /* XXX At some point we need to arrange to call SymCleanup */
@@ -599,7 +566,6 @@ static bool EnsureSymInitialized() {
   return retStat;
 }
 
-#ifndef JS_ENABLE_UWP
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
   aDetails->library[0] = '\0';
@@ -663,7 +629,6 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
   return true;
 }
-#endif
 
 // i386 or PPC Linux stackwalking code
 #elif HAVE_DLADDR &&                                           \
@@ -830,6 +795,11 @@ bool MFBT_API MozDescribeCodeAddress(void* aPC,
   aDetails->library[mozilla::ArrayLength(aDetails->library) - 1] = '\0';
   aDetails->loffset = (char*)aPC - (char*)info.dli_fbase;
 
+#  if !defined(XP_FREEBSD)
+  // On FreeBSD, dli_sname is unusably bad, it often returns things like
+  // 'gtk_xtbin_new' or 'XRE_GetBootstrap' instead of long C++ symbols. Just let
+  // GetFunction do the lookup directly in the ELF image.
+
   const char* symbol = info.dli_sname;
   if (!symbol || symbol[0] == '\0') {
     return true;
@@ -844,6 +814,8 @@ bool MFBT_API MozDescribeCodeAddress(void* aPC,
   }
 
   aDetails->foffset = (char*)aPC - (char*)info.dli_saddr;
+#  endif
+
   return true;
 }
 
@@ -941,8 +913,8 @@ MFBT_API void MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
              aFileName, aLineNo);
   } else if (aLibrary && aLibrary[0]) {
     // We have no filename, but we do have a library name. Use it and the
-    // library offset, and print them in a way that scripts like
-    // fix_{linux,macosx}_stacks.py can easily post-process.
+    // library offset, and print them in a way that `fix_stacks.py` can
+    // post-process.
     snprintf(aBuffer, aBufferSize, "#%02u: %s[%s +0x%" PRIxPTR "]",
              aFrameNumber, function, aLibrary,
              static_cast<uintptr_t>(aLOffset));

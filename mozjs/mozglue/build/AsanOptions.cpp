@@ -51,10 +51,23 @@
 //   stacks with allocations, we limit the default size here further to save
 //   some memory.
 //
+//   fast_unwind_on_check - Use the fast (frame-pointer-based) stack unwinder
+//   for internal CHECK failures. The slow unwinder doesn't work on Android.
+//
+//   fast_unwind_on_fatal - Use the fast (frame-pointer-based) stack unwinder
+//   to print fatal error reports. The slow unwinder doesn't work on Android.
+//
+// !! Note: __asan_default_options is not used on Android! (bug 1576213)
+// These should be updated in:
+//   mobile/android/geckoview/src/asan/resources/lib/*/wrap.sh
+//
 extern "C" MOZ_ASAN_BLACKLIST const char* __asan_default_options() {
   return "allow_user_segv_handler=1:alloc_dealloc_mismatch=0:detect_leaks=0"
 #  ifdef MOZ_ASAN_REPORTER
          ":malloc_context_size=20"
+#  endif
+#  ifdef __ANDROID__
+         ":fast_unwind_on_check=1:fast_unwind_on_fatal=1"
 #  endif
          ":max_free_fill_size=268435456:max_malloc_fill_size=268435456"
          ":malloc_fill_byte=228:free_fill_byte=229"
@@ -86,6 +99,7 @@ extern "C" const char* __lsan_default_suppressions() {
 
          // Bug 987918 - Font shutdown leaks when CLEANUP_MEMORY is not enabled.
          "leak:libfontconfig.so\n"
+         "leak:libfreetype.so\n"
          "leak:GI___strdup\n"
          // The symbol is really __GI___strdup, but if you have the leading _,
          // it doesn't suppress it.
@@ -127,6 +141,10 @@ extern "C" const char* __lsan_default_suppressions() {
          // mochitest suites.
          "leak:nss_ClearErrorStack\n"
 
+         // Bug 1602689 - leak at mozilla::NotNull, RacyRegisteredThread,
+         // RegisteredThread::RegisteredThread, mozilla::detail::UniqueSelector
+         "leak:RegisteredThread::RegisteredThread\n"
+
          //
          // Leaks with system libraries in their stacks. These show up across a
          // number of tests. Better symbols and disabling fast stackwalking may
@@ -149,6 +167,7 @@ extern "C" const char* __lsan_default_suppressions() {
          "leak:libresolv.so\n"
          "leak:libstdc++.so\n"
          "leak:libXrandr.so\n"
+         "leak:libX11.so\n"
          "leak:pthread_setspecific_internal\n"
          "leak:swrast_dri.so\n"
 

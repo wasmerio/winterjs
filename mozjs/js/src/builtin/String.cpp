@@ -13,7 +13,6 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/Range.h"
 #include "mozilla/TextUtils.h"
-#include "mozilla/TypeTraits.h"
 #include "mozilla/Unused.h"
 
 #include <algorithm>
@@ -33,6 +32,8 @@
 #include "builtin/RegExp.h"
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
 #if !JS_HAS_INTL_API
 #  include "js/LocaleSensitive.h"
 #endif
@@ -58,6 +59,7 @@
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
+#include "vm/ToSource.h"  // js::ValueToSource
 
 #include "vm/InlineCharBuffer-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -74,7 +76,6 @@ using mozilla::AsciiAlphanumericToNumber;
 using mozilla::CheckedInt;
 using mozilla::IsAsciiHexDigit;
 using mozilla::IsNaN;
-using mozilla::IsSame;
 using mozilla::PodCopy;
 using mozilla::RangedPtr;
 
@@ -444,10 +445,18 @@ static bool str_resolve(JSContext* cx, HandleObject obj, HandleId id,
 }
 
 static const JSClassOps StringObjectClassOps = {
-    nullptr,                /* addProperty */
-    nullptr,                /* delProperty */
-    str_enumerate, nullptr, /* newEnumerate */
-    str_resolve,   str_mayResolve};
+    nullptr,         // addProperty
+    nullptr,         // delProperty
+    str_enumerate,   // enumerate
+    nullptr,         // newEnumerate
+    str_resolve,     // resolve
+    str_mayResolve,  // mayResolve
+    nullptr,         // finalize
+    nullptr,         // call
+    nullptr,         // hasInstance
+    nullptr,         // construct
+    nullptr,         // trace
+};
 
 const JSClass StringObject::class_ = {
     js_String_str,
@@ -460,7 +469,7 @@ const JSClass StringObject::class_ = {
  * from nearly all String.prototype.* functions.
  */
 static MOZ_ALWAYS_INLINE JSString* ToStringForStringFunction(
-    JSContext* cx, HandleValue thisv) {
+    JSContext* cx, const char* funName, HandleValue thisv) {
   if (!CheckRecursionLimit(cx)) {
     return nullptr;
   }
@@ -482,8 +491,8 @@ static MOZ_ALWAYS_INLINE JSString* ToStringForStringFunction(
     }
   } else if (thisv.isNullOrUndefined()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CONVERT_TO,
-                              thisv.isNull() ? "null" : "undefined", "object");
+                              JSMSG_INCOMPATIBLE_PROTO, "String", funName,
+                              thisv.isNull() ? "null" : "undefined");
     return nullptr;
   }
 
@@ -684,12 +693,6 @@ static char16_t Final_Sigma(const char16_t* chars, size_t length,
   return unicode::GREEK_SMALL_LETTER_SIGMA;
 }
 
-static Latin1Char Final_Sigma(const Latin1Char* chars, size_t length,
-                              size_t index) {
-  MOZ_ASSERT_UNREACHABLE("U+03A3 is not a Latin-1 character");
-  return 0;
-}
-
 // If |srcLength == destLength| is true, the destination buffer was allocated
 // with the same size as the source buffer. When we append characters which
 // have special casing mappings, we test |srcLength == destLength| to decide
@@ -703,12 +706,14 @@ static size_t ToLowerCaseImpl(CharT* destChars, const CharT* srcChars,
                               size_t destLength) {
   MOZ_ASSERT(startIndex < srcLength);
   MOZ_ASSERT(srcLength <= destLength);
-  MOZ_ASSERT_IF((IsSame<CharT, Latin1Char>::value), srcLength == destLength);
+  if constexpr (std::is_same_v<CharT, Latin1Char>) {
+    MOZ_ASSERT(srcLength == destLength);
+  }
 
   size_t j = startIndex;
   for (size_t i = startIndex; i < srcLength; i++) {
-    char16_t c = srcChars[i];
-    if (!IsSame<CharT, Latin1Char>::value) {
+    CharT c = srcChars[i];
+    if constexpr (!std::is_same_v<CharT, Latin1Char>) {
       if (unicode::IsLeadSurrogate(c) && i + 1 < srcLength) {
         char16_t trail = srcChars[i + 1];
         if (unicode::IsTrailSurrogate(trail)) {
@@ -742,8 +747,6 @@ static size_t ToLowerCaseImpl(CharT* destChars, const CharT* srcChars,
     }
 
     c = unicode::ToLowerCase(c);
-    MOZ_ASSERT_IF((IsSame<CharT, Latin1Char>::value),
-                  c <= JSString::MAX_LATIN1_CHAR);
     destChars[j++] = c;
   }
 
@@ -763,12 +766,6 @@ static size_t ToLowerCaseLength(const char16_t* chars, size_t startIndex,
     }
   }
   return lowerLength;
-}
-
-static size_t ToLowerCaseLength(const Latin1Char* chars, size_t startIndex,
-                                size_t length) {
-  MOZ_ASSERT_UNREACHABLE("never called for Latin-1 strings");
-  return 0;
 }
 
 template <typename CharT>
@@ -796,10 +793,9 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
 
     // One element Latin-1 strings can be directly retrieved from the
     // static strings cache.
-    if (IsSame<CharT, Latin1Char>::value) {
+    if constexpr (std::is_same_v<CharT, Latin1Char>) {
       if (length == 1) {
-        char16_t lower = unicode::ToLowerCase(chars[0]);
-        MOZ_ASSERT(lower <= JSString::MAX_LATIN1_CHAR);
+        CharT lower = unicode::ToLowerCase(chars[0]);
         MOZ_ASSERT(StaticStrings::hasUnit(lower));
 
         return cx->staticStrings().getUnit(lower);
@@ -810,7 +806,7 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
     size_t i = 0;
     for (; i < length; i++) {
       CharT c = chars[i];
-      if (!IsSame<CharT, Latin1Char>::value) {
+      if constexpr (!std::is_same_v<CharT, Latin1Char>) {
         if (unicode::IsLeadSurrogate(c) && i + 1 < length) {
           CharT trail = chars[i + 1];
           if (unicode::IsTrailSurrogate(trail)) {
@@ -842,18 +838,21 @@ static JSString* ToLowerCase(JSContext* cx, JSLinearString* str) {
 
     size_t readChars =
         ToLowerCaseImpl(newChars.get(), chars, i, length, resultLength);
-    if (readChars < length) {
-      MOZ_ASSERT((!IsSame<CharT, Latin1Char>::value),
-                 "Latin-1 strings don't have special lower case mappings");
-      resultLength = ToLowerCaseLength(chars, readChars, length);
+    if constexpr (!std::is_same_v<CharT, Latin1Char>) {
+      if (readChars < length) {
+        resultLength = ToLowerCaseLength(chars, readChars, length);
 
-      if (!newChars.maybeRealloc(cx, length, resultLength)) {
-        return nullptr;
+        if (!newChars.maybeRealloc(cx, length, resultLength)) {
+          return nullptr;
+        }
+
+        MOZ_ALWAYS_TRUE(length == ToLowerCaseImpl(newChars.get(), chars,
+                                                  readChars, length,
+                                                  resultLength));
       }
-
-      MOZ_ALWAYS_TRUE(length == ToLowerCaseImpl(newChars.get(), chars,
-                                                readChars, length,
-                                                resultLength));
+    } else {
+      MOZ_ASSERT(readChars == length,
+                 "Latin-1 strings don't have special lower case mappings");
     }
   }
 
@@ -872,10 +871,11 @@ JSString* js::StringToLowerCase(JSContext* cx, HandleString string) {
   return ToLowerCase<char16_t>(cx, linear);
 }
 
-bool js::str_toLowerCase(JSContext* cx, unsigned argc, Value* vp) {
+static bool str_toLowerCase(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "toLowerCase", args.thisv()));
   if (!str) {
     return false;
   }
@@ -988,7 +988,8 @@ bool js::intl_toLocaleLowerCase(JSContext* cx, unsigned argc, Value* vp) {
 static bool str_toLocaleLowerCase(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(
+      cx, ToStringForStringFunction(cx, "toLocaleLowerCase", args.thisv()));
   if (!str) {
     return false;
   }
@@ -1074,8 +1075,8 @@ template <typename DestChar, typename SrcChar>
 static size_t ToUpperCaseImpl(DestChar* destChars, const SrcChar* srcChars,
                               size_t startIndex, size_t srcLength,
                               size_t destLength) {
-  static_assert(IsSame<SrcChar, Latin1Char>::value ||
-                    !IsSame<DestChar, Latin1Char>::value,
+  static_assert(std::is_same_v<SrcChar, Latin1Char> ||
+                    !std::is_same_v<DestChar, Latin1Char>,
                 "cannot write non-Latin-1 characters into Latin-1 string");
   MOZ_ASSERT(startIndex < srcLength);
   MOZ_ASSERT(srcLength <= destLength);
@@ -1083,7 +1084,7 @@ static size_t ToUpperCaseImpl(DestChar* destChars, const SrcChar* srcChars,
   size_t j = startIndex;
   for (size_t i = startIndex; i < srcLength; i++) {
     char16_t c = srcChars[i];
-    if (!IsSame<DestChar, Latin1Char>::value) {
+    if constexpr (!std::is_same_v<DestChar, Latin1Char>) {
       if (unicode::IsLeadSurrogate(c) && i + 1 < srcLength) {
         char16_t trail = srcChars[i + 1];
         if (unicode::IsTrailSurrogate(trail)) {
@@ -1108,22 +1109,14 @@ static size_t ToUpperCaseImpl(DestChar* destChars, const SrcChar* srcChars,
     }
 
     c = unicode::ToUpperCase(c);
-    MOZ_ASSERT_IF((IsSame<DestChar, Latin1Char>::value),
-                  c <= JSString::MAX_LATIN1_CHAR);
+    if constexpr (std::is_same_v<DestChar, Latin1Char>) {
+      MOZ_ASSERT(c <= JSString::MAX_LATIN1_CHAR);
+    }
     destChars[j++] = c;
   }
 
   MOZ_ASSERT(j == destLength);
   return srcLength;
-}
-
-// Explicit instantiation so we don't hit the static_assert from above.
-static bool ToUpperCaseImpl(Latin1Char* destChars, const char16_t* srcChars,
-                            size_t startIndex, size_t srcLength,
-                            size_t destLength) {
-  MOZ_ASSERT_UNREACHABLE(
-      "cannot write non-Latin-1 characters into Latin-1 string");
-  return false;
 }
 
 template <typename CharT>
@@ -1143,7 +1136,7 @@ static size_t ToUpperCaseLength(const CharT* chars, size_t startIndex,
 template <typename DestChar, typename SrcChar>
 static inline void CopyChars(DestChar* destChars, const SrcChar* srcChars,
                              size_t length) {
-  static_assert(!IsSame<DestChar, SrcChar>::value,
+  static_assert(!std::is_same_v<DestChar, SrcChar>,
                 "PodCopy is used for the same type case");
   for (size_t i = 0; i < length; i++) {
     destChars[i] = srcChars[i];
@@ -1201,7 +1194,7 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
 
     // Most one element Latin-1 strings can be directly retrieved from the
     // static strings cache.
-    if (IsSame<CharT, Latin1Char>::value) {
+    if constexpr (std::is_same_v<CharT, Latin1Char>) {
       if (length == 1) {
         Latin1Char c = chars[0];
         if (c != unicode::MICRO_SIGN &&
@@ -1223,7 +1216,7 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
     size_t i = 0;
     for (; i < length; i++) {
       CharT c = chars[i];
-      if (!IsSame<CharT, Latin1Char>::value) {
+      if constexpr (!std::is_same_v<CharT, Latin1Char>) {
         if (unicode::IsLeadSurrogate(c) && i + 1 < length) {
           CharT trail = chars[i + 1];
           if (unicode::IsTrailSurrogate(trail)) {
@@ -1260,9 +1253,8 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
     // If the original string is a two-byte string, its uppercase form is
     // so rarely Latin-1 that we don't even consider creating a new
     // Latin-1 string.
-    bool resultIsLatin1;
-    if (IsSame<CharT, Latin1Char>::value) {
-      resultIsLatin1 = true;
+    if constexpr (std::is_same_v<CharT, Latin1Char>) {
+      bool resultIsLatin1 = true;
       for (size_t j = i; j < length; j++) {
         Latin1Char c = chars[j];
         if (c == unicode::MICRO_SIGN ||
@@ -1274,16 +1266,21 @@ static JSString* ToUpperCase(JSContext* cx, JSLinearString* str) {
           MOZ_ASSERT(unicode::ToUpperCase(c) <= JSString::MAX_LATIN1_CHAR);
         }
       }
-    } else {
-      resultIsLatin1 = false;
-    }
 
-    if (resultIsLatin1) {
-      newChars.construct<Latin1Buffer>();
+      if (resultIsLatin1) {
+        newChars.construct<Latin1Buffer>();
 
-      if (!ToUpperCase(cx, newChars.ref<Latin1Buffer>(), chars, i, length,
-                       &resultLength)) {
-        return nullptr;
+        if (!ToUpperCase(cx, newChars.ref<Latin1Buffer>(), chars, i, length,
+                         &resultLength)) {
+          return nullptr;
+        }
+      } else {
+        newChars.construct<TwoByteBuffer>();
+
+        if (!ToUpperCase(cx, newChars.ref<TwoByteBuffer>(), chars, i, length,
+                         &resultLength)) {
+          return nullptr;
+        }
       }
     } else {
       newChars.construct<TwoByteBuffer>();
@@ -1314,10 +1311,11 @@ JSString* js::StringToUpperCase(JSContext* cx, HandleString string) {
   return ToUpperCase<char16_t>(cx, linear);
 }
 
-bool js::str_toUpperCase(JSContext* cx, unsigned argc, Value* vp) {
+static bool str_toUpperCase(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "toUpperCase", args.thisv()));
   if (!str) {
     return false;
   }
@@ -1404,7 +1402,8 @@ bool js::intl_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp) {
 static bool str_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(
+      cx, ToStringForStringFunction(cx, "toLocaleUpperCase", args.thisv()));
   if (!str) {
     return false;
   }
@@ -1452,7 +1451,8 @@ static bool str_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp) {
 // JSLocaleCallbacks) when Intl functionality is not exposed.
 static bool str_localeCompare(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(
+      cx, ToStringForStringFunction(cx, "localeCompare", args.thisv()));
   if (!str) {
     return false;
   }
@@ -1496,7 +1496,8 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1-2.
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "normalize", args.thisv()));
   if (!str) {
     return false;
   }
@@ -1635,7 +1636,7 @@ static bool str_charAt(JSContext* cx, unsigned argc, Value* vp) {
       goto out_of_range;
     }
   } else {
-    str = ToStringForStringFunction(cx, args.thisv());
+    str = ToStringForStringFunction(cx, "charAt", args.thisv());
     if (!str) {
       return false;
     }
@@ -1701,7 +1702,7 @@ bool js::str_charCodeAt(JSContext* cx, unsigned argc, Value* vp) {
   if (args.thisv().isString()) {
     str = args.thisv().toString();
   } else {
-    str = ToStringForStringFunction(cx, args.thisv());
+    str = ToStringForStringFunction(cx, "charCodeAt", args.thisv());
     if (!str) {
       return false;
     }
@@ -1763,7 +1764,7 @@ static int BoyerMooreHorspool(const TextChar* text, uint32_t textLen,
 
 template <typename TextChar, typename PatChar>
 struct MemCmp {
-  typedef uint32_t Extent;
+  using Extent = uint32_t;
   static MOZ_ALWAYS_INLINE Extent computeExtent(const PatChar*,
                                                 uint32_t patLen) {
     return (patLen - 1) * sizeof(PatChar);
@@ -1777,7 +1778,7 @@ struct MemCmp {
 
 template <typename TextChar, typename PatChar>
 struct ManualCmp {
-  typedef const PatChar* Extent;
+  using Extent = const PatChar*;
   static MOZ_ALWAYS_INLINE Extent computeExtent(const PatChar* pat,
                                                 uint32_t patLen) {
     return pat + patLen;
@@ -1802,25 +1803,25 @@ static const TextChar* FirstCharMatcherUnrolled(const TextChar* text,
   switch ((textend - t) & 7) {
     case 0:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 7:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 6:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 5:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 4:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 3:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 2:
       if (*t++ == pat) return t - 1;
-      MOZ_FALLTHROUGH;
+      [[fallthrough]];
     case 1:
       if (*t++ == pat) return t - 1;
   }
@@ -1933,7 +1934,7 @@ static MOZ_ALWAYS_INLINE int StringMatch(const TextChar* text, uint32_t textLen,
    * speed of memcmp. For small patterns, a simple loop is faster. We also can't
    * use memcmp if one of the strings is TwoByte and the other is Latin-1.
    */
-  return (patLen > 128 && IsSame<TextChar, PatChar>::value)
+  return (patLen > 128 && std::is_same_v<TextChar, PatChar>)
              ? Matcher<MemCmp<TextChar, PatChar>, TextChar, PatChar>(
                    text, textLen, pat, patLen)
              : Matcher<ManualCmp<TextChar, PatChar>, TextChar, PatChar>(
@@ -2192,7 +2193,7 @@ bool js::str_includes(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1-2.
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx, ToStringForStringFunction(cx, "includes", args.thisv()));
   if (!str) {
     return false;
   }
@@ -2244,7 +2245,7 @@ bool js::str_indexOf(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1, 2, and 3
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx, ToStringForStringFunction(cx, "indexOf", args.thisv()));
   if (!str) {
     return false;
   }
@@ -2324,11 +2325,12 @@ static int32_t LastIndexOfImpl(const TextChar* text, size_t textLen,
 
 // ES2017 draft rev 6859bb9ccaea9c6ede81d71e5320e3833b92cb3e
 // 21.1.3.9 String.prototype.lastIndexOf ( searchString [ , position ] )
-bool js::str_lastIndexOf(JSContext* cx, unsigned argc, Value* vp) {
+static bool str_lastIndexOf(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1-2.
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "lastIndexOf", args.thisv()));
   if (!str) {
     return false;
   }
@@ -2425,7 +2427,8 @@ bool js::str_startsWith(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1-2.
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "startsWith", args.thisv()));
   if (!str) {
     return false;
   }
@@ -2487,7 +2490,7 @@ bool js::str_endsWith(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Steps 1-2.
-  RootedString str(cx, ToStringForStringFunction(cx, args.thisv()));
+  RootedString str(cx, ToStringForStringFunction(cx, "endsWith", args.thisv()));
   if (!str) {
     return false;
   }
@@ -2567,9 +2570,9 @@ static void TrimString(const CharT* chars, bool trimStart, bool trimEnd,
   *pEnd = end;
 }
 
-static bool TrimString(JSContext* cx, const CallArgs& args, bool trimStart,
-                       bool trimEnd) {
-  JSString* str = ToStringForStringFunction(cx, args.thisv());
+static bool TrimString(JSContext* cx, const CallArgs& args, const char* funName,
+                       bool trimStart, bool trimEnd) {
+  JSString* str = ToStringForStringFunction(cx, funName, args.thisv());
   if (!str) {
     return false;
   }
@@ -2602,17 +2605,17 @@ static bool TrimString(JSContext* cx, const CallArgs& args, bool trimStart,
 
 static bool str_trim(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  return TrimString(cx, args, true, true);
+  return TrimString(cx, args, "trim", true, true);
 }
 
 static bool str_trimStart(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  return TrimString(cx, args, true, false);
+  return TrimString(cx, args, "trimStart", true, false);
 }
 
 static bool str_trimEnd(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  return TrimString(cx, args, false, true);
+  return TrimString(cx, args, "trimEnd", false, true);
 }
 
 // Utility for building a rope (lazy concatenation) of strings.
@@ -3085,8 +3088,8 @@ static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
 
   // Step 13.
   JSStringBuilder result(cx);
-  if (std::is_same<StrChar, char16_t>::value ||
-      std::is_same<RepChar, char16_t>::value) {
+  if constexpr (std::is_same_v<StrChar, char16_t> ||
+                std::is_same_v<RepChar, char16_t>) {
     if (!result.ensureTwoByteChars()) {
       return nullptr;
     }
@@ -3168,8 +3171,8 @@ static JSString* ReplaceAllInterleave(JSContext* cx, JSLinearString* string,
 
   // Step 13.
   JSStringBuilder result(cx);
-  if (std::is_same<StrChar, char16_t>::value ||
-      std::is_same<RepChar, char16_t>::value) {
+  if constexpr (std::is_same_v<StrChar, char16_t> ||
+                std::is_same_v<RepChar, char16_t>) {
     if (!result.ensureTwoByteChars()) {
       return nullptr;
     }
@@ -3575,49 +3578,12 @@ ArrayObject* js::StringSplitString(JSContext* cx, HandleObjectGroup group,
   return SplitHelper(cx, linearStr, limit, linearSep, group);
 }
 
-/*
- * Python-esque sequence operations.
- */
-static bool str_concat(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  JSString* str = ToStringForStringFunction(cx, args.thisv());
-  if (!str) {
-    return false;
-  }
-
-  for (unsigned i = 0; i < args.length(); i++) {
-    JSString* argStr = ToString<NoGC>(cx, args[i]);
-    if (!argStr) {
-      RootedString strRoot(cx, str);
-      argStr = ToString<CanGC>(cx, args[i]);
-      if (!argStr) {
-        return false;
-      }
-      str = strRoot;
-    }
-
-    JSString* next = ConcatStrings<NoGC>(cx, str, argStr);
-    if (next) {
-      str = next;
-    } else {
-      RootedString strRoot(cx, str), argStrRoot(cx, argStr);
-      str = ConcatStrings<CanGC>(cx, strRoot, argStrRoot);
-      if (!str) {
-        return false;
-      }
-    }
-  }
-
-  args.rval().setString(str);
-  return true;
-}
-
 static const JSFunctionSpec string_methods[] = {
     JS_FN(js_toSource_str, str_toSource, 0, 0),
 
     /* Java-like methods. */
-    JS_FN(js_toString_str, str_toString, 0, 0),
-    JS_FN(js_valueOf_str, str_toString, 0, 0),
+    JS_INLINABLE_FN(js_toString_str, str_toString, 0, 0, StringToString),
+    JS_INLINABLE_FN(js_valueOf_str, str_toString, 0, 0, StringValueOf),
     JS_INLINABLE_FN("toLowerCase", str_toLowerCase, 0, 0, StringToLowerCase),
     JS_INLINABLE_FN("toUpperCase", str_toUpperCase, 0, 0, StringToUpperCase),
     JS_INLINABLE_FN("charAt", str_charAt, 1, 0, StringCharAt),
@@ -3651,14 +3617,12 @@ static const JSFunctionSpec string_methods[] = {
     JS_SELF_HOSTED_FN("matchAll", "String_matchAll", 1, 0),
     JS_SELF_HOSTED_FN("search", "String_search", 1, 0),
     JS_SELF_HOSTED_FN("replace", "String_replace", 2, 0),
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_FN("replaceAll", "String_replaceAll", 2, 0),
-#endif
     JS_SELF_HOSTED_FN("split", "String_split", 2, 0),
     JS_SELF_HOSTED_FN("substr", "String_substr", 2, 0),
 
     /* Python-esque sequence methods. */
-    JS_FN("concat", str_concat, 1, 0),
+    JS_SELF_HOSTED_FN("concat", "String_concat", 1, 0),
     JS_SELF_HOSTED_FN("slice", "String_slice", 2, 0),
 
     /* HTML string methods. */
@@ -4132,7 +4096,7 @@ static MOZ_NEVER_INLINE EncodeResult Encode(StringBuffer& sb,
         return Encode_Failure;
       }
 
-      if (mozilla::IsSame<CharT, Latin1Char>::value) {
+      if constexpr (std::is_same_v<CharT, Latin1Char>) {
         if (c < 0x80) {
           if (!appendEncoded(c)) {
             return Encode_Failure;
@@ -4462,7 +4426,7 @@ static bool BuildFlatMatchArray(JSContext* cx, HandleString str,
 
   // Get the templateObject that defines the shape and type of the output
   // object.
-  JSObject* templateObject =
+  ArrayObject* templateObject =
       cx->realm()->regExps.getOrCreateMatchResultTemplateObject(cx);
   if (!templateObject) {
     return false;

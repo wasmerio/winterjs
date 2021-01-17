@@ -12,13 +12,14 @@
 
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/TypeTraits.h"
 
 #include <string.h>
+#include <type_traits>
 
 #include "jspubtd.h"
 
 #include "js/AllocPolicy.h"
+#include "js/GCAPI.h"
 #include "js/HashTable.h"
 #include "js/TracingAPI.h"
 #include "js/Utility.h"
@@ -157,8 +158,8 @@ struct InefficientNonFlatteningStringHashPolicy {
 #define ADD_SIZE_TO_N(tabKind, servoKind, mSize) n += mSize;
 #define ADD_SIZE_TO_N_IF_LIVE_GC_THING(tabKind, servoKind, mSize)     \
   /* Avoid self-comparison warnings by comparing enums indirectly. */ \
-  n += (mozilla::IsSame<int[ServoSizes::servoKind],                   \
-                        int[ServoSizes::GCHeapUsed]>::value)          \
+  n += (std::is_same_v<int[ServoSizes::servoKind],                    \
+                       int[ServoSizes::GCHeapUsed]>)                  \
            ? mSize                                                    \
            : 0;
 #define ADD_TO_TAB_SIZES(tabKind, servoKind, mSize) \
@@ -448,11 +449,12 @@ struct NotableScriptSourceInfo : public ScriptSourceInfo {
 };
 
 struct HelperThreadStats {
-#define FOR_EACH_SIZE(MACRO)       \
-  MACRO(_, MallocHeap, stateData)  \
-  MACRO(_, MallocHeap, parseTask)  \
-  MACRO(_, MallocHeap, ionBuilder) \
-  MACRO(_, MallocHeap, wasmCompile)
+#define FOR_EACH_SIZE(MACRO)           \
+  MACRO(_, MallocHeap, stateData)      \
+  MACRO(_, MallocHeap, parseTask)      \
+  MACRO(_, MallocHeap, ionCompileTask) \
+  MACRO(_, MallocHeap, wasmCompile)    \
+  MACRO(_, MallocHeap, contexts)
 
   HelperThreadStats() = default;
 
@@ -538,7 +540,6 @@ struct UnusedGCThingSizes {
 #define FOR_EACH_SIZE(MACRO)              \
   MACRO(Other, GCHeapUnused, object)      \
   MACRO(Other, GCHeapUnused, script)      \
-  MACRO(Other, GCHeapUnused, lazyScript)  \
   MACRO(Other, GCHeapUnused, shape)       \
   MACRO(Other, GCHeapUnused, baseShape)   \
   MACRO(Other, GCHeapUnused, objectGroup) \
@@ -577,9 +578,6 @@ struct UnusedGCThingSizes {
         break;
       case JS::TraceKind::JitCode:
         jitcode += n;
-        break;
-      case JS::TraceKind::LazyScript:
-        lazyScript += n;
         break;
       case JS::TraceKind::ObjectGroup:
         objectGroup += n;
@@ -624,8 +622,6 @@ struct ZoneStats {
   MACRO(Other, GCHeapUsed, bigIntsGCHeap)                  \
   MACRO(Other, MallocHeap, bigIntsMallocHeap)              \
   MACRO(Other, GCHeapAdmin, gcHeapArenaAdmin)              \
-  MACRO(Other, GCHeapUsed, lazyScriptsGCHeap)              \
-  MACRO(Other, MallocHeap, lazyScriptsMallocHeap)          \
   MACRO(Other, GCHeapUsed, jitCodesGCHeap)                 \
   MACRO(Other, GCHeapUsed, objectGroupsGCHeap)             \
   MACRO(Other, MallocHeap, objectGroupsMallocHeap)         \
@@ -851,9 +847,10 @@ struct RuntimeStats {
 
   mozilla::MallocSizeOf mallocSizeOf_;
 
-  virtual void initExtraRealmStats(JS::Handle<JS::Realm*> realm,
-                                   RealmStats* rstats) = 0;
-  virtual void initExtraZoneStats(JS::Zone* zone, ZoneStats* zstats) = 0;
+  virtual void initExtraRealmStats(JS::Realm* realm, RealmStats* rstats,
+                                   const JS::AutoRequireNoGC& nogc) = 0;
+  virtual void initExtraZoneStats(JS::Zone* zone, ZoneStats* zstats,
+                                  const JS::AutoRequireNoGC& nogc) = 0;
 
 #undef FOR_EACH_SIZE
 };

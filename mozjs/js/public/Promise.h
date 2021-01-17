@@ -8,7 +8,6 @@
 #define js_Promise_h
 
 #include "mozilla/Attributes.h"
-#include "mozilla/GuardObjects.h"
 
 #include "jspubtd.h"
 #include "js/RootingAPI.h"
@@ -136,7 +135,7 @@ extern JS_PUBLIC_API void SetJobQueue(JSContext* cx, JobQueue* queue);
  * interruption began must wait for the debuggee to be continued - and thus run
  * after microtasks enqueued after they were.
  *
- * Fortunately, this reordering is visible olny at the global level: when
+ * Fortunately, this reordering is visible only at the global level: when
  * implemented correctly, it is not detectable by an individual debuggee. Note
  * that a debuggee should generally be a complete unit of similar-origin related
  * browsing contexts. Since non-debuggee activity falls outside that unit, it
@@ -223,8 +222,7 @@ extern JS_PUBLIC_API void SetJobQueue(JSContext* cx, JobQueue* queue);
  */
 class MOZ_RAII JS_PUBLIC_API AutoDebuggerJobQueueInterruption {
  public:
-  explicit AutoDebuggerJobQueueInterruption(
-      MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
+  explicit AutoDebuggerJobQueueInterruption();
   ~AutoDebuggerJobQueueInterruption();
 
   bool init(JSContext* cx);
@@ -252,7 +250,6 @@ class MOZ_RAII JS_PUBLIC_API AutoDebuggerJobQueueInterruption {
   void runJobs();
 
  private:
-  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER;
   JSContext* cx;
   js::UniquePtr<JobQueue::SavedJobQueue> saved;
 };
@@ -355,6 +352,14 @@ extern JS_PUBLIC_API JS::Value GetPromiseResult(JS::HandleObject promise);
  */
 extern JS_PUBLIC_API bool GetPromiseIsHandled(JS::HandleObject promise);
 
+/*
+ * Given a settled (i.e. fulfilled or rejected, not pending) promise, sets
+ * |promise.[[PromiseIsHandled]]| to true and removes it from the list of
+ * unhandled rejected promises.
+ */
+extern JS_PUBLIC_API void SetSettledPromiseIsHandled(JSContext* cx,
+                                                     JS::HandleObject promise);
+
 /**
  * Returns a js::SavedFrame linked list of the stack that lead to the given
  * Promise's allocation.
@@ -408,14 +413,20 @@ extern JS_PUBLIC_API bool RejectPromise(JSContext* cx,
                                         JS::HandleValue rejectionValue);
 
 /**
- * Calls the current compartment's original Promise.prototype.then on the
- * given `promise`, with `onResolve` and `onReject` passed as arguments.
+ * Create a Promise with the given fulfill/reject handlers, that will be
+ * fulfilled/rejected with the value/reason that the promise `promise` is
+ * fulfilled/rejected with.
  *
- * Throws a TypeError if `promise` isn't a Promise (or possibly a different
- * error if it's a security wrapper or dead object proxy).
+ * This function basically acts like `promise.then(onFulfilled, onRejected)`,
+ * except that its behavior is unaffected by changes to `Promise`,
+ * `Promise[Symbol.species]`, `Promise.prototype.then`, `promise.constructor`,
+ * `promise.then`, and so on.
  *
- * Asserts that `onFulfilled` and `onRejected` are each either callable or
- * null.
+ * This function throws if `promise` is not a Promise from this or another
+ * realm.
+ *
+ * This function will assert if `onFulfilled` or `onRejected` is non-null and
+ * also not IsCallable.
  */
 extern JS_PUBLIC_API JSObject* CallOriginalPromiseThen(
     JSContext* cx, JS::HandleObject promise, JS::HandleObject onFulfilled,
@@ -424,20 +435,34 @@ extern JS_PUBLIC_API JSObject* CallOriginalPromiseThen(
 /**
  * Unforgeable, optimized version of the JS builtin Promise.prototype.then.
  *
- * Takes a Promise instance and `onResolve`, `onReject` callables to enqueue
- * as reactions for that promise. In difference to Promise.prototype.then,
+ * Takes a Promise instance and nullable `onFulfilled`/`onRejected` callables to
+ * enqueue as reactions for that promise. In contrast to Promise.prototype.then,
  * this doesn't create and return a new Promise instance.
  *
  * Throws a TypeError if `promise` isn't a Promise (or possibly a different
  * error if it's a security wrapper or dead object proxy).
- *
- * Asserts that `onFulfilled` and `onRejected` are each either callable or
- * null.
  */
 extern JS_PUBLIC_API bool AddPromiseReactions(JSContext* cx,
                                               JS::HandleObject promise,
                                               JS::HandleObject onFulfilled,
                                               JS::HandleObject onRejected);
+
+/**
+ * Unforgeable, optimized version of the JS builtin Promise.prototype.then.
+ *
+ * Takes a Promise instance and nullable `onFulfilled`/`onRejected` callables to
+ * enqueue as reactions for that promise. In contrast to Promise.prototype.then,
+ * this doesn't create and return a new Promise instance.
+ *
+ * Throws a TypeError if `promise` isn't a Promise (or possibly a different
+ * error if it's a security wrapper or dead object proxy).
+ *
+ * If `onRejected` is null and `promise` is rejected, this function -- unlike
+ * the function above -- will not report an unhandled rejection.
+ */
+extern JS_PUBLIC_API bool AddPromiseReactionsIgnoringUnhandledRejection(
+    JSContext* cx, JS::HandleObject promise, JS::HandleObject onFulfilled,
+    JS::HandleObject onRejected);
 
 // This enum specifies whether a promise is expected to keep track of
 // information that is useful for embedders to implement user activation

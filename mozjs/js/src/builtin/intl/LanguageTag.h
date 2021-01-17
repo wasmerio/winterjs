@@ -28,10 +28,10 @@
 #include "js/Utility.h"
 #include "js/Vector.h"
 
-struct JSContext;
+struct JS_PUBLIC_API JSContext;
 class JSLinearString;
-class JSString;
-class JSTracer;
+class JS_PUBLIC_API JSString;
+class JS_PUBLIC_API JSTracer;
 
 namespace js {
 
@@ -205,14 +205,8 @@ class MOZ_STACK_CLASS LanguageTag final {
 
   friend class LanguageTagParser;
 
- public:
-  // Flag to request canonicalized Unicode extensions.
-  enum class UnicodeExtensionCanonicalForm : bool { No, Yes };
-
- private:
-  bool canonicalizeUnicodeExtension(
-      JSContext* cx, JS::UniqueChars& unicodeExtension,
-      UnicodeExtensionCanonicalForm canonicalForm);
+  bool canonicalizeUnicodeExtension(JSContext* cx,
+                                    JS::UniqueChars& unicodeExtension);
 
   bool canonicalizeTransformExtension(JSContext* cx,
                                       JS::UniqueChars& transformExtension);
@@ -227,9 +221,22 @@ class MOZ_STACK_CLASS LanguageTag final {
 
   void performComplexLanguageMappings();
   void performComplexRegionMappings();
+  MOZ_MUST_USE bool performVariantMappings(JSContext* cx);
 
   MOZ_MUST_USE bool updateGrandfatheredMappings(JSContext* cx);
 
+  static const char* replaceTransformExtensionType(
+      mozilla::Span<const char> key, mozilla::Span<const char> type);
+
+ public:
+  /**
+   * Given a Unicode key and type, return the null-terminated preferred
+   * replacement for that type if there is one, or null if there is none, e.g.
+   * in effect
+   * |replaceUnicodeExtensionType("ca", "islamicc") == "islamic-civil"|
+   * and
+   * |replaceUnicodeExtensionType("ca", "islamic-civil") == nullptr|.
+   */
   static const char* replaceUnicodeExtensionType(
       mozilla::Span<const char> key, mozilla::Span<const char> type);
 
@@ -338,17 +345,13 @@ class MOZ_STACK_CLASS LanguageTag final {
     privateuse_ = std::move(privateuse);
   }
 
-  /**
-   * Canonicalize the base-name subtags, that means the language, script,
-   * region, and variant subtags.
-   */
+  /** Canonicalize the base-name (language, script, region, variant) subtags. */
   bool canonicalizeBaseName(JSContext* cx);
 
   /**
    * Canonicalize all extension subtags.
    */
-  bool canonicalizeExtensions(JSContext* cx,
-                              UnicodeExtensionCanonicalForm canonicalForm);
+  bool canonicalizeExtensions(JSContext* cx);
 
   /**
    * Canonicalizes the given structurally valid Unicode BCP 47 locale
@@ -367,22 +370,10 @@ class MOZ_STACK_CLASS LanguageTag final {
    *
    * becomes zh-Hans-MM-variant1-variant2-t-zh-latn-u-ca-chinese-x-private
    *
-   * UTS 35 specifies two different canonicalization algorithms. There's one to
-   * canonicalize BCP 47 language tags and other one to canonicalize Unicode
-   * locale identifiers. The latter one wasn't present when ECMA-402 was changed
-   * to use Unicode BCP 47 locale identifiers instead of BCP 47 language tags,
-   * so ECMA-402 currently only uses the former to canonicalize Unicode BCP 47
-   * locale identifiers.
-   *
    * Spec: ECMAScript Internationalization API Specification, 6.2.3.
-   * Spec:
-   * https://unicode.org/reports/tr35/#Canonical_Unicode_Locale_Identifiers
-   * Spec: https://unicode.org/reports/tr35/#BCP_47_Language_Tag_Conversion
    */
-  bool canonicalize(JSContext* cx,
-                    UnicodeExtensionCanonicalForm canonicalForm) {
-    return canonicalizeBaseName(cx) &&
-           canonicalizeExtensions(cx, canonicalForm);
+  bool canonicalize(JSContext* cx) {
+    return canonicalizeBaseName(cx) && canonicalizeExtensions(cx);
   }
 
   /**
@@ -477,10 +468,10 @@ class MOZ_STACK_CLASS LanguageTagParser final {
     size_t length = tok.length();
     if (locale_.is<const JS::Latin1Char*>()) {
       using T = const JS::Latin1Char;
-      subtag.set(mozilla::MakeSpan(locale_.as<T*>() + index, length));
+      subtag.set(mozilla::Span(locale_.as<T*>() + index, length));
     } else {
       using T = const char16_t;
-      subtag.set(mozilla::MakeSpan(locale_.as<T*>() + index, length));
+      subtag.set(mozilla::Span(locale_.as<T*>() + index, length));
     }
   }
 
@@ -701,6 +692,14 @@ class MOZ_STACK_CLASS LanguageTagParser final {
   // variants) of a language tag. Ignores any trailing characters.
   static bool parseBaseName(JSContext* cx, mozilla::Span<const char> locale,
                             LanguageTag& tag);
+
+  // Parse the input string as the base-name parts (language, script, region,
+  // variants) of a language tag. Returns Ok(true) if the input could be
+  // completely parsed, Ok(false) if the input couldn't be parsed, or Err() in
+  // case of internal error.
+  static JS::Result<bool> tryParseBaseName(JSContext* cx,
+                                           JSLinearString* locale,
+                                           LanguageTag& tag);
 
   // Return true iff |extension| can be parsed as a Unicode extension subtag.
   static bool canParseUnicodeExtension(mozilla::Span<const char> extension);

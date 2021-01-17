@@ -25,17 +25,22 @@
 
 #include "builtin/Array.h"
 #include "builtin/DataViewObject.h"
-#include "builtin/TypedObjectConstants.h"
+#include "builtin/TypedArrayConstants.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
+#include "gc/MaybeRooted.h"
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
+#include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewType, JS_GetTypedArray{Length,ByteOffset,ByteLength}, JS_IsTypedArrayObject
+#include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/UniquePtr.h"
 #include "js/Wrapper.h"
 #include "util/Text.h"
 #include "util/Windows.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -43,6 +48,7 @@
 #include "vm/PIC.h"
 #include "vm/SelfHosting.h"
 #include "vm/SharedMem.h"
+#include "vm/Uint8Clamped.h"
 #include "vm/WrapperObject.h"
 
 #include "gc/Nursery-inl.h"
@@ -89,6 +95,7 @@ bool TypedArrayObject::convertForSideEffect(JSContext* cx,
     }
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       MOZ_CRASH("Unsupported TypedArray type");
   }
   MOZ_ASSERT_UNREACHABLE("Invalid scalar type");
@@ -107,6 +114,8 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
     return true;
   }
 
+  size_t byteLength = tarray->byteLength().deprecatedGetUint32();
+
   AutoRealm ar(cx, tarray);
   Rooted<ArrayBufferObject*> buffer(
       cx, ArrayBufferObject::createZeroed(cx, tarray->byteLength()));
@@ -118,12 +127,11 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
   MOZ_ALWAYS_TRUE(buffer->addView(cx, tarray));
 
   // tarray is not shared, because if it were it would have a buffer.
-  memcpy(buffer->dataPointer(), tarray->dataPointerUnshared(),
-         tarray->byteLength());
+  memcpy(buffer->dataPointer(), tarray->dataPointerUnshared(), byteLength);
 
   // If the object is in the nursery, the buffer will be freed by the next
   // nursery GC. Free the data slot pointer if the object has no inline data.
-  size_t nbytes = RoundUp(tarray->byteLength(), sizeof(Value));
+  size_t nbytes = RoundUp(byteLength, sizeof(Value));
   Nursery& nursery = cx->nursery();
   if (tarray->isTenured() && !tarray->hasInlineElements() &&
       !nursery.isInside(tarray->elements())) {
@@ -143,7 +151,7 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
 
 #ifdef DEBUG
 void TypedArrayObject::assertZeroLengthArrayData() const {
-  if (length() == 0 && !hasBuffer()) {
+  if (length().get() == 0 && !hasBuffer()) {
     uint8_t* end = fixedData(TypedArrayObject::FIXED_DATA_START);
     MOZ_ASSERT(end[0] == ZeroLengthArrayData);
   }
@@ -169,7 +177,7 @@ void TypedArrayObject::finalize(JSFreeOp* fop, JSObject* obj) {
 
   // Free the data slot pointer if it does not point into the old JSObject.
   if (!curObj->hasInlineElements()) {
-    size_t nbytes = RoundUp(curObj->byteLength(), sizeof(Value));
+    size_t nbytes = RoundUp(curObj->byteLength().get(), sizeof(Value));
     fop->free_(obj, curObj->elements(), nbytes, MemoryUse::TypedArrayElements);
   }
 }
@@ -205,8 +213,8 @@ size_t TypedArrayObject::objectMoved(JSObject* obj, JSObject* old) {
 
   Nursery& nursery = obj->runtimeFromMainThread()->gc.nursery();
   if (!nursery.isInside(buf)) {
-    nursery.removeMallocedBuffer(buf);
-    size_t nbytes = RoundUp(newObj->byteLength(), sizeof(Value));
+    nursery.removeMallocedBufferDuringMinorGC(buf);
+    size_t nbytes = RoundUp(newObj->byteLength().get(), sizeof(Value));
     AddCellMemory(newObj, nbytes, MemoryUse::TypedArrayElements);
     return 0;
   }
@@ -214,7 +222,7 @@ size_t TypedArrayObject::objectMoved(JSObject* obj, JSObject* old) {
   // Determine if we can use inline data for the target array. If this is
   // possible, the nursery will have picked an allocation size that is large
   // enough.
-  size_t nbytes = oldObj->byteLength();
+  size_t nbytes = oldObj->byteLength().deprecatedGetUint32();
 
   constexpr size_t headerSize = dataOffset() + sizeof(HeapSlot);
 
@@ -262,11 +270,11 @@ size_t TypedArrayObject::objectMoved(JSObject* obj, JSObject* old) {
 
 bool TypedArrayObject::hasInlineElements() const {
   return elements() == this->fixedData(TypedArrayObject::FIXED_DATA_START) &&
-         byteLength() <= TypedArrayObject::INLINE_BUFFER_LIMIT;
+         byteLength().get() <= TypedArrayObject::INLINE_BUFFER_LIMIT;
 }
 
 void TypedArrayObject::setInlineElements() {
-  char* dataSlot = reinterpret_cast<char*>(this) + this->dataOffset();
+  char* dataSlot = reinterpret_cast<char*>(this) + dataOffset();
   *reinterpret_cast<void**>(dataSlot) =
       this->fixedData(TypedArrayObject::FIXED_DATA_START);
 }
@@ -415,8 +423,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
                                                   newKind);
     }
 
-    jsbytecode* pc;
-    RootedScript script(cx, cx->currentScript(&pc));
+    jsbytecode* pc = nullptr;
+    RootedScript script(cx);
+    if (IsTypeInferenceEnabled()) {
+      script = cx->currentScript(&pc);
+    }
+
     Rooted<TypedArrayObject*> obj(
         cx, newBuiltinClassInstance(cx, allocKind, GenericObject));
     if (!obj) {
@@ -433,13 +445,13 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static TypedArrayObject* makeInstance(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
-      CreateSingleton createSingleton, uint32_t byteOffset, uint32_t len,
+      CreateSingleton createSingleton, BufferSize byteOffset, BufferSize len,
       HandleObject proto, HandleObjectGroup group = nullptr) {
-    MOZ_ASSERT(len < MAX_BYTE_LENGTH / BYTES_PER_ELEMENT);
+    MOZ_ASSERT(len.get() < maxByteLength() / BYTES_PER_ELEMENT);
 
     gc::AllocKind allocKind =
         buffer ? gc::GetGCObjectKind(instanceClass())
-               : AllocKindForLazyBuffer(len * BYTES_PER_ELEMENT);
+               : AllocKindForLazyBuffer(len.get() * BYTES_PER_ELEMENT);
 
     // Subclassing mandates that we hand in the proto every time. Most of
     // the time, though, that [[Prototype]] will not be interesting. If
@@ -478,8 +490,13 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     MOZ_ASSERT(allocKind >= gc::GetGCObjectKind(instanceClass()));
 
     AutoSetNewObjectMetadata metadata(cx);
-    jsbytecode* pc;
-    RootedScript script(cx, cx->currentScript(&pc));
+
+    jsbytecode* pc = nullptr;
+    RootedScript script(cx);
+    if (IsTypeInferenceEnabled()) {
+      script = cx->currentScript(&pc);
+    }
+
     Rooted<TypedArrayObject*> tarray(
         cx, newBuiltinClassInstance(cx, allocKind, TenuredObject));
     if (!tarray) {
@@ -504,8 +521,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   static void initTypedArraySlots(TypedArrayObject* tarray, int32_t len) {
     MOZ_ASSERT(len >= 0);
     tarray->initFixedSlot(TypedArrayObject::BUFFER_SLOT, NullValue());
-    tarray->initFixedSlot(TypedArrayObject::LENGTH_SLOT, Int32Value(len));
-    tarray->initFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT, Int32Value(0));
+    tarray->initFixedSlot(TypedArrayObject::LENGTH_SLOT, PrivateValue(len));
+    tarray->initFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT,
+                          PrivateValue(size_t(0)));
 
     // Verify that the private slot is at the expected place.
     MOZ_ASSERT(tarray->numFixedSlots() == TypedArrayObject::DATA_SLOT);
@@ -524,7 +542,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       InitObjectPrivate(tarray, buf, nbytes, MemoryUse::TypedArrayElements);
     } else {
 #ifdef DEBUG
-      constexpr size_t dataOffset = TypedArrayObject::dataOffset();
+      constexpr size_t dataOffset = ArrayBufferViewObject::dataOffset();
       constexpr size_t offset = dataOffset + sizeof(HeapSlot);
       MOZ_ASSERT(offset + nbytes <= GetGCKindBytes(allocKind));
 #endif
@@ -537,13 +555,13 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static TypedArrayObject* makeTypedArrayWithTemplate(
       JSContext* cx, TypedArrayObject* templateObj, int32_t len) {
-    if (len < 0 || uint32_t(len) >= MAX_BYTE_LENGTH / BYTES_PER_ELEMENT) {
+    if (len < 0 || uint32_t(len) >= maxByteLength() / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_BAD_ARRAY_LENGTH);
       return nullptr;
     }
 
-    size_t nbytes = len * BYTES_PER_ELEMENT;
+    size_t nbytes = size_t(len) * BYTES_PER_ELEMENT;
     bool fitsInline = nbytes <= INLINE_BUFFER_LIMIT;
 
     AutoSetNewObjectMetadata metadata(cx);
@@ -723,7 +741,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   // Steps 9-12.
   static bool computeAndCheckLength(
       JSContext* cx, HandleArrayBufferObjectMaybeShared bufferMaybeUnwrapped,
-      uint64_t byteOffset, uint64_t lengthIndex, uint32_t* length) {
+      uint64_t byteOffset, uint64_t lengthIndex, BufferSize* length) {
     MOZ_ASSERT(byteOffset % BYTES_PER_ELEMENT == 0);
     MOZ_ASSERT(byteOffset < uint64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT));
     MOZ_ASSERT_IF(lengthIndex != UINT64_MAX,
@@ -737,9 +755,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     }
 
     // Step 10.
-    uint32_t bufferByteLength = bufferMaybeUnwrapped->byteLength();
+    size_t bufferByteLength = bufferMaybeUnwrapped->byteLength().get();
 
-    uint32_t len;
+    size_t len;
     if (lengthIndex == UINT64_MAX) {
       // Steps 11.a, 11.c.
       if (bufferByteLength % BYTES_PER_ELEMENT != 0 ||
@@ -752,7 +770,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       }
 
       // Step 11.b.
-      uint32_t newByteLength = bufferByteLength - uint32_t(byteOffset);
+      size_t newByteLength = bufferByteLength - size_t(byteOffset);
       len = newByteLength / BYTES_PER_ELEMENT;
     } else {
       // Step 12.a.
@@ -766,7 +784,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
         return false;
       }
 
-      len = uint32_t(lengthIndex);
+      len = size_t(lengthIndex);
     }
 
     // ArrayBuffer is too large for TypedArrays:
@@ -774,14 +792,14 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // buffers in TypedArrays must have less than or equal to
     // MAX_BYTE_LENGTH - BYTES_PER_ELEMENT - MAX_BYTE_LENGTH % BYTES_PER_ELEMENT
     // bytes.
-    if (len >= MAX_BYTE_LENGTH / BYTES_PER_ELEMENT) {
+    if (len >= maxByteLength() / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TYPED_ARRAY_CONSTRUCT_BOUNDS);
       return false;
     }
-    MOZ_ASSERT(byteOffset <= UINT32_MAX);
 
-    *length = len;
+    MOZ_ASSERT(len < SIZE_MAX);
+    *length = BufferSize(len);
     return true;
   }
 
@@ -793,19 +811,19 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       uint64_t byteOffset, uint64_t lengthIndex, HandleObject proto,
       HandleObjectGroup group = nullptr) {
     // Steps 9-12.
-    uint32_t length;
+    BufferSize length(0);
     if (!computeAndCheckLength(cx, buffer, byteOffset, lengthIndex, &length)) {
       return nullptr;
     }
 
     CreateSingleton createSingleton = CreateSingleton::No;
-    if (!group &&
-        length * BYTES_PER_ELEMENT >= TypedArrayObject::SINGLETON_BYTE_LENGTH) {
+    if (!group && length.get() * BYTES_PER_ELEMENT >=
+                      TypedArrayObject::SINGLETON_BYTE_LENGTH) {
       createSingleton = CreateSingleton::Yes;
     }
 
     // Steps 13-17.
-    return makeInstance(cx, buffer, createSingleton, uint32_t(byteOffset),
+    return makeInstance(cx, buffer, createSingleton, BufferSize(byteOffset),
                         length, proto, group);
   }
 
@@ -841,7 +859,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     RootedArrayBufferObjectMaybeShared unwrappedBuffer(cx);
     unwrappedBuffer = &unwrapped->as<ArrayBufferObjectMaybeShared>();
 
-    uint32_t length;
+    BufferSize length(0);
     if (!computeAndCheckLength(cx, unwrappedBuffer, byteOffset, lengthIndex,
                                &length)) {
       return nullptr;
@@ -867,7 +885,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       }
 
       typedArray = makeInstance(cx, unwrappedBuffer, CreateSingleton::No,
-                                uint32_t(byteOffset), length, wrappedProto);
+                                BufferSize(byteOffset), length, wrappedProto);
       if (!typedArray) {
         return nullptr;
       }
@@ -899,21 +917,21 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     return fromBufferWrapped(cx, bufobj, byteOffset, lengthIndex, nullptr);
   }
 
-  static bool maybeCreateArrayBuffer(JSContext* cx, uint32_t count,
+  static bool maybeCreateArrayBuffer(JSContext* cx, uint64_t count,
                                      HandleObject nonDefaultProto,
                                      MutableHandle<ArrayBufferObject*> buffer) {
-    if (count >= MAX_BYTE_LENGTH / BYTES_PER_ELEMENT) {
+    if (count >= maxByteLength() / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_BAD_ARRAY_LENGTH);
       return false;
     }
-    uint32_t byteLength = count * BYTES_PER_ELEMENT;
+    BufferSize byteLength = BufferSize(count * BYTES_PER_ELEMENT);
 
-    MOZ_ASSERT(byteLength < MAX_BYTE_LENGTH);
+    MOZ_ASSERT(byteLength.get() < maxByteLength());
     static_assert(INLINE_BUFFER_LIMIT % BYTES_PER_ELEMENT == 0,
                   "ArrayBuffer inline storage shouldn't waste any space");
 
-    if (!nonDefaultProto && byteLength <= INLINE_BUFFER_LIMIT) {
+    if (!nonDefaultProto && byteLength.get() <= INLINE_BUFFER_LIMIT) {
       // The array's data can be inline, and the buffer created lazily.
       return true;
     }
@@ -936,23 +954,17 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     // 22.2.4.1, step 2 and 22.2.4.2, step 4 (implicit).
     // 22.2.4.1, step 3 and 22.2.4.2, step 5 (call AllocateTypedArray).
 
-    if (nelements > UINT32_MAX) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_BAD_ARRAY_LENGTH);
-      return nullptr;
-    }
-
     Rooted<ArrayBufferObject*> buffer(cx);
-    if (!maybeCreateArrayBuffer(cx, uint32_t(nelements), nullptr, &buffer)) {
+    if (!maybeCreateArrayBuffer(cx, nelements, nullptr, &buffer)) {
       return nullptr;
     }
 
-    return makeInstance(cx, buffer, CreateSingleton::No, 0, uint32_t(nelements),
-                        proto);
+    return makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
+                        BufferSize(nelements), proto);
   }
 
   static bool AllocateArrayBuffer(JSContext* cx, HandleObject ctor,
-                                  uint32_t count,
+                                  BufferSize count,
                                   MutableHandle<ArrayBufferObject*> buffer);
 
   static TypedArrayObject* fromArray(JSContext* cx, HandleObject other,
@@ -967,23 +979,21 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
                                       HandleObject proto,
                                       HandleObjectGroup group);
 
-  static const NativeType getIndex(TypedArrayObject* tarray, uint32_t index) {
-    MOZ_ASSERT(index < tarray->length());
+  static const NativeType getIndex(TypedArrayObject* tarray, size_t index) {
+    MOZ_ASSERT(index < tarray->length().get());
     return jit::AtomicOperations::loadSafeWhenRacy(
         tarray->dataPointerEither().cast<NativeType*>() + index);
   }
 
-  static void setIndex(TypedArrayObject& tarray, uint32_t index,
-                       NativeType val) {
-    MOZ_ASSERT(index < tarray.length());
+  static void setIndex(TypedArrayObject& tarray, size_t index, NativeType val) {
+    MOZ_ASSERT(index < tarray.length().get());
     jit::AtomicOperations::storeSafeWhenRacy(
         tarray.dataPointerEither().cast<NativeType*>() + index, val);
   }
 
-  static bool getElement(JSContext* cx, TypedArrayObject* tarray,
-                         uint32_t index, MutableHandleValue val);
-  static bool getElementPure(TypedArrayObject* tarray, uint32_t index,
-                             Value* vp);
+  static bool getElement(JSContext* cx, TypedArrayObject* tarray, size_t index,
+                         MutableHandleValue val);
+  static bool getElementPure(TypedArrayObject* tarray, size_t index, Value* vp);
 
   static bool setElement(JSContext* cx, Handle<TypedArrayObject*> obj,
                          uint64_t index, HandleValue v, ObjectOpResult& result);
@@ -1006,18 +1016,18 @@ bool TypedArrayObjectTemplate<NativeType>::convertValue(JSContext* cx,
 #endif
 
   // Assign based on characteristics of the destination type
-  if (ArrayTypeIsFloatingPoint()) {
+  if constexpr (ArrayTypeIsFloatingPoint()) {
     *result = NativeType(d);
-  } else if (ArrayTypeIsUnsigned()) {
-    MOZ_ASSERT(sizeof(NativeType) <= 4);
+  } else if constexpr (ArrayTypeIsUnsigned()) {
+    static_assert(sizeof(NativeType) <= 4);
     uint32_t n = ToUint32(d);
     *result = NativeType(n);
-  } else if (ArrayTypeID() == Scalar::Uint8Clamped) {
+  } else if constexpr (ArrayTypeID() == Scalar::Uint8Clamped) {
     // The uint8_clamped type has a special rounding converter
     // for doubles.
     *result = NativeType(d);
   } else {
-    MOZ_ASSERT(sizeof(NativeType) <= 4);
+    static_assert(sizeof(NativeType) <= 4);
     int32_t n = ToInt32(d);
     *result = NativeType(n);
   }
@@ -1062,7 +1072,7 @@ template <typename NativeType>
   // Steps 9-10 are enforced by the caller.
 
   // Step 11.
-  uint32_t length = obj->length();
+  size_t length = obj->length().get();
 
   // Step 12.
   if (index >= length) {
@@ -1169,7 +1179,7 @@ TypedArrayObject* js::NewTypedArrayWithTemplateAndBuffer(
 // byteLength = count * BYTES_PER_ELEMENT
 template <typename T>
 /* static */ bool TypedArrayObjectTemplate<T>::AllocateArrayBuffer(
-    JSContext* cx, HandleObject ctor, uint32_t count,
+    JSContext* cx, HandleObject ctor, BufferSize count,
     MutableHandle<ArrayBufferObject*> buffer) {
   // 24.1.1.1 step 1 (partially).
   RootedObject proto(cx);
@@ -1189,7 +1199,7 @@ template <typename T>
   }
 
   // 24.1.1.1 steps 1 (remaining part), 2-6.
-  if (!maybeCreateArrayBuffer(cx, count, proto, buffer)) {
+  if (!maybeCreateArrayBuffer(cx, count.get(), proto, buffer)) {
     return false;
   }
 
@@ -1323,7 +1333,7 @@ template <typename T>
   // Step 8 (skipped).
 
   // Step 9.
-  uint32_t elementLength = srcArray->length();
+  BufferSize elementLength = srcArray->length();
 
   // Steps 10-15 (skipped).
 
@@ -1357,14 +1367,17 @@ template <typename T>
   // BigInt proposal 7.24, step 19.c.
   if (Scalar::isBigIntType(ArrayTypeID()) !=
       Scalar::isBigIntType(srcArray->type())) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_NOT_BIGINT);
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TYPED_ARRAY_NOT_COMPATIBLE,
+                              srcArray->getClass()->name,
+                              TypedArrayObject::classes[ArrayTypeID()].name);
     return nullptr;
   }
 
   // Steps 3-4 (remaining part), 20-23.
   Rooted<TypedArrayObject*> obj(
-      cx, makeInstance(cx, buffer, CreateSingleton::No, 0, elementLength, proto,
-                       group));
+      cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
+                       elementLength, proto, group));
   if (!obj) {
     return nullptr;
   }
@@ -1423,7 +1436,7 @@ template <typename T>
     HandleArrayObject array = other.as<ArrayObject>();
 
     // Step 6.b.
-    uint32_t len = array->getDenseInitializedLength();
+    size_t len = array->getDenseInitializedLength();
 
     // Step 6.c.
     Rooted<ArrayBufferObject*> buffer(cx);
@@ -1432,8 +1445,8 @@ template <typename T>
     }
 
     Rooted<TypedArrayObject*> obj(
-        cx,
-        makeInstance(cx, buffer, CreateSingleton::No, 0, len, proto, group));
+        cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
+                         BufferSize(len), proto, group));
     if (!obj) {
       return nullptr;
     }
@@ -1508,7 +1521,8 @@ template <typename T>
   }
 
   Rooted<TypedArrayObject*> obj(
-      cx, makeInstance(cx, buffer, CreateSingleton::No, 0, len, proto, group));
+      cx, makeInstance(cx, buffer, CreateSingleton::No, BufferSize(0),
+                       BufferSize(len), proto, group));
   if (!obj) {
     return nullptr;
   }
@@ -1586,24 +1600,51 @@ static bool GetTemplateObjectForNative(JSContext* cx,
   return true;
 }
 
+static bool LengthGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->lengthValue());
+  return true;
+}
+
 static bool TypedArray_lengthGetter(JSContext* cx, unsigned argc, Value* vp) {
-  return TypedArrayObject::Getter<TypedArrayObject::lengthValue>(cx, argc, vp);
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, LengthGetterImpl>(cx, args);
+}
+
+static bool ByteOffsetGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->byteOffsetValue());
+  return true;
 }
 
 static bool TypedArray_byteOffsetGetter(JSContext* cx, unsigned argc,
                                         Value* vp) {
-  return TypedArrayObject::Getter<TypedArrayObject::byteOffsetValue>(cx, argc,
-                                                                     vp);
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, ByteOffsetGetterImpl>(cx,
+                                                                          args);
 }
 
-bool BufferGetterImpl(JSContext* cx, const CallArgs& args) {
+static bool ByteLengthGetterImpl(JSContext* cx, const CallArgs& args) {
+  auto* tarr = &args.thisv().toObject().as<TypedArrayObject>();
+  args.rval().set(tarr->byteLengthValue());
+  return true;
+}
+
+static bool TypedArray_byteLengthGetter(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<TypedArrayObject::is, ByteLengthGetterImpl>(cx,
+                                                                          args);
+}
+
+static bool BufferGetterImpl(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(TypedArrayObject::is(args.thisv()));
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
   if (!TypedArrayObject::ensureHasBuffer(cx, tarray)) {
     return false;
   }
-  args.rval().set(TypedArrayObject::bufferValue(tarray));
+  args.rval().set(tarray->bufferValue());
   return true;
 }
 
@@ -1648,8 +1689,7 @@ static bool TypedArray_toStringTagGetter(JSContext* cx, unsigned argc,
 /* static */ const JSPropertySpec TypedArrayObject::protoAccessors[] = {
     JS_PSG("length", TypedArray_lengthGetter, 0),
     JS_PSG("buffer", TypedArray_bufferGetter, 0),
-    JS_PSG("byteLength",
-           TypedArrayObject::Getter<TypedArrayObject::byteLengthValue>, 0),
+    JS_PSG("byteLength", TypedArray_byteLengthGetter, 0),
     JS_PSG("byteOffset", TypedArray_byteOffsetGetter, 0),
     JS_SYM_GET(toStringTag, TypedArray_toStringTagGetter, 0),
     JS_PS_END};
@@ -1752,7 +1792,7 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
     }
 
     // Step 10 (Reordered).
-    uint32_t targetLength = target->length();
+    uint32_t targetLength = target->length().deprecatedGetUint32();
 
     // Step 22 (Split into two checks to provide better error messages).
     if (targetOffset > targetLength) {
@@ -1762,7 +1802,7 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
 
     // Step 22 (Cont'd).
     uint32_t offset = uint32_t(targetOffset);
-    if (srcTypedArray->length() > targetLength - offset) {
+    if (srcTypedArray->length().deprecatedGetUint32() > targetLength - offset) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_SOURCE_ARRAY_TOO_LONG);
       return false;
@@ -1770,7 +1810,9 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
 
     if (Scalar::isBigIntType(target->type()) !=
         Scalar::isBigIntType(srcTypedArray->type())) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_NOT_BIGINT);
+      JS_ReportErrorNumberASCII(
+          cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_NOT_COMPATIBLE,
+          srcTypedArray->getClass()->name, target->getClass()->name);
       return false;
     }
 
@@ -1791,7 +1833,7 @@ bool TypedArrayObject::set_impl(JSContext* cx, const CallArgs& args) {
     // Step 10.
     // We can't reorder this step because side-effects in step 16 can
     // detach the underlying array buffer from the typed array.
-    uint32_t targetLength = target->length();
+    uint32_t targetLength = target->length().deprecatedGetUint32();
 
     // Step 16.
     uint32_t srcLength;
@@ -1935,7 +1977,7 @@ namespace {
 // than 32-bits in size.
 template <typename NativeType>
 bool TypedArrayObjectTemplate<NativeType>::getElementPure(
-    TypedArrayObject* tarray, uint32_t index, Value* vp) {
+    TypedArrayObject* tarray, size_t index, Value* vp) {
   static_assert(sizeof(NativeType) < 4,
                 "this method must only handle NativeType values that are "
                 "always exact int32_t values");
@@ -1947,7 +1989,7 @@ bool TypedArrayObjectTemplate<NativeType>::getElementPure(
 // We need to specialize for floats and other integer types.
 template <>
 bool TypedArrayObjectTemplate<int32_t>::getElementPure(TypedArrayObject* tarray,
-                                                       uint32_t index,
+                                                       size_t index,
                                                        Value* vp) {
   *vp = Int32Value(getIndex(tarray, index));
   return true;
@@ -1955,7 +1997,7 @@ bool TypedArrayObjectTemplate<int32_t>::getElementPure(TypedArrayObject* tarray,
 
 template <>
 bool TypedArrayObjectTemplate<uint32_t>::getElementPure(
-    TypedArrayObject* tarray, uint32_t index, Value* vp) {
+    TypedArrayObject* tarray, size_t index, Value* vp) {
   uint32_t val = getIndex(tarray, index);
   *vp = NumberValue(val);
   return true;
@@ -1963,8 +2005,7 @@ bool TypedArrayObjectTemplate<uint32_t>::getElementPure(
 
 template <>
 bool TypedArrayObjectTemplate<float>::getElementPure(TypedArrayObject* tarray,
-                                                     uint32_t index,
-                                                     Value* vp) {
+                                                     size_t index, Value* vp) {
   float val = getIndex(tarray, index);
   double dval = val;
 
@@ -1984,8 +2025,7 @@ bool TypedArrayObjectTemplate<float>::getElementPure(TypedArrayObject* tarray,
 
 template <>
 bool TypedArrayObjectTemplate<double>::getElementPure(TypedArrayObject* tarray,
-                                                      uint32_t index,
-                                                      Value* vp) {
+                                                      size_t index, Value* vp) {
   double val = getIndex(tarray, index);
 
   /*
@@ -2001,14 +2041,14 @@ bool TypedArrayObjectTemplate<double>::getElementPure(TypedArrayObject* tarray,
 
 template <>
 bool TypedArrayObjectTemplate<int64_t>::getElementPure(TypedArrayObject* tarray,
-                                                       uint32_t index,
+                                                       size_t index,
                                                        Value* vp) {
   return false;
 }
 
 template <>
 bool TypedArrayObjectTemplate<uint64_t>::getElementPure(
-    TypedArrayObject* tarray, uint32_t index, Value* vp) {
+    TypedArrayObject* tarray, size_t index, Value* vp) {
   return false;
 }
 } /* anonymous namespace */
@@ -2018,7 +2058,7 @@ namespace {
 template <typename NativeType>
 bool TypedArrayObjectTemplate<NativeType>::getElement(JSContext* cx,
                                                       TypedArrayObject* tarray,
-                                                      uint32_t index,
+                                                      size_t index,
                                                       MutableHandleValue val) {
   MOZ_ALWAYS_TRUE(getElementPure(tarray, index, val.address()));
   return true;
@@ -2027,7 +2067,7 @@ bool TypedArrayObjectTemplate<NativeType>::getElement(JSContext* cx,
 template <>
 bool TypedArrayObjectTemplate<int64_t>::getElement(JSContext* cx,
                                                    TypedArrayObject* tarray,
-                                                   uint32_t index,
+                                                   size_t index,
                                                    MutableHandleValue val) {
   int64_t n = getIndex(tarray, index);
   BigInt* res = BigInt::createFromInt64(cx, n);
@@ -2041,7 +2081,7 @@ bool TypedArrayObjectTemplate<int64_t>::getElement(JSContext* cx,
 template <>
 bool TypedArrayObjectTemplate<uint64_t>::getElement(JSContext* cx,
                                                     TypedArrayObject* tarray,
-                                                    uint32_t index,
+                                                    size_t index,
                                                     MutableHandleValue val) {
   uint64_t n = getIndex(tarray, index);
   BigInt* res = BigInt::createFromUint64(cx, n);
@@ -2056,7 +2096,7 @@ bool TypedArrayObjectTemplate<uint64_t>::getElement(JSContext* cx,
 namespace js {
 
 template <>
-bool TypedArrayObject::getElement<CanGC>(JSContext* cx, uint32_t index,
+bool TypedArrayObject::getElement<CanGC>(JSContext* cx, size_t index,
                                          MutableHandleValue val) {
   switch (type()) {
 #define GET_ELEMENT(T, N) \
@@ -2066,6 +2106,7 @@ bool TypedArrayObject::getElement<CanGC>(JSContext* cx, uint32_t index,
 #undef GET_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2074,14 +2115,14 @@ bool TypedArrayObject::getElement<CanGC>(JSContext* cx, uint32_t index,
 
 template <>
 bool TypedArrayObject::getElement<NoGC>(
-    JSContext* cx, uint32_t index,
+    JSContext* cx, size_t index,
     typename MaybeRooted<Value, NoGC>::MutableHandleType vp) {
   return getElementPure(index, vp.address());
 }
 
 }  // namespace js
 
-bool TypedArrayObject::getElementPure(uint32_t index, Value* vp) {
+bool TypedArrayObject::getElementPure(size_t index, Value* vp) {
   switch (type()) {
 #define GET_ELEMENT_PURE(T, N) \
   case Scalar::N:              \
@@ -2090,6 +2131,7 @@ bool TypedArrayObject::getElementPure(uint32_t index, Value* vp) {
 #undef GET_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2100,7 +2142,7 @@ bool TypedArrayObject::getElementPure(uint32_t index, Value* vp) {
 bool TypedArrayObject::getElements(JSContext* cx,
                                    Handle<TypedArrayObject*> tarray,
                                    Value* vp) {
-  uint32_t length = tarray->length();
+  uint32_t length = tarray->length().deprecatedGetUint32();
   MOZ_ASSERT_IF(length > 0, !tarray->hasDetachedBuffer());
 
   switch (tarray->type()) {
@@ -2117,6 +2159,7 @@ bool TypedArrayObject::getElements(JSContext* cx,
 #undef GET_ELEMENTS
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2132,21 +2175,21 @@ bool TypedArrayObject::getElements(JSContext* cx,
  */
 
 static const JSClassOps TypedArrayClassOps = {
-    nullptr,                      /* addProperty */
-    nullptr,                      /* delProperty */
-    nullptr,                      /* enumerate   */
-    nullptr,                      /* newEnumerate */
-    nullptr,                      /* resolve     */
-    nullptr,                      /* mayResolve  */
-    TypedArrayObject::finalize,   /* finalize    */
-    nullptr,                      /* call        */
-    nullptr,                      /* hasInstance */
-    nullptr,                      /* construct   */
-    ArrayBufferViewObject::trace, /* trace  */
+    nullptr,                       // addProperty
+    nullptr,                       // delProperty
+    nullptr,                       // enumerate
+    nullptr,                       // newEnumerate
+    nullptr,                       // resolve
+    nullptr,                       // mayResolve
+    TypedArrayObject::finalize,    // finalize
+    nullptr,                       // call
+    nullptr,                       // hasInstance
+    nullptr,                       // construct
+    ArrayBufferViewObject::trace,  // trace
 };
 
 static const ClassExtension TypedArrayClassExtension = {
-    TypedArrayObject::objectMoved,
+    TypedArrayObject::objectMoved,  // objectMovedOp
 };
 
 static const JSPropertySpec
@@ -2204,8 +2247,8 @@ const JSClass TypedArrayObject::classes[Scalar::MaxTypedArrayViewType] = {
 // above), but it's what we've always done, so keep doing it till we
 // implement @@toStringTag or ES6 changes.
 const JSClass TypedArrayObject::protoClasses[Scalar::MaxTypedArrayViewType] = {
-#define IMPL_TYPED_ARRAY_PROTO_CLASS(NativeType, Name)                      \
-  {#Name "ArrayPrototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##Name##Array), \
+#define IMPL_TYPED_ARRAY_PROTO_CLASS(NativeType, Name)                       \
+  {#Name "Array.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##Name##Array), \
    JS_NULL_CLASS_OPS, &TypedArrayObjectClassSpecs[Scalar::Type::Name]},
 
     JS_FOR_EACH_TYPED_ARRAY(IMPL_TYPED_ARRAY_PROTO_CLASS)
@@ -2232,33 +2275,18 @@ bool js::IsTypedArrayConstructor(const JSObject* obj) {
   return false;
 }
 
-bool js::IsTypedArrayConstructor(HandleValue v, uint32_t type) {
-  switch (type) {
-    case Scalar::Int8:
-      return IsNativeFunction(v, Int8Array::class_constructor);
-    case Scalar::Uint8:
-      return IsNativeFunction(v, Uint8Array::class_constructor);
-    case Scalar::Int16:
-      return IsNativeFunction(v, Int16Array::class_constructor);
-    case Scalar::Uint16:
-      return IsNativeFunction(v, Uint16Array::class_constructor);
-    case Scalar::Int32:
-      return IsNativeFunction(v, Int32Array::class_constructor);
-    case Scalar::Uint32:
-      return IsNativeFunction(v, Uint32Array::class_constructor);
-    case Scalar::BigInt64:
-      return IsNativeFunction(v, BigInt64Array::class_constructor);
-    case Scalar::BigUint64:
-      return IsNativeFunction(v, BigUint64Array::class_constructor);
-    case Scalar::Float32:
-      return IsNativeFunction(v, Float32Array::class_constructor);
-    case Scalar::Float64:
-      return IsNativeFunction(v, Float64Array::class_constructor);
-    case Scalar::Uint8Clamped:
-      return IsNativeFunction(v, Uint8ClampedArray::class_constructor);
-    case Scalar::MaxTypedArrayViewType:
-      break;
+bool js::IsTypedArrayConstructor(HandleValue v, Scalar::Type type) {
+  return IsNativeFunction(v, TypedArrayConstructorNative(type));
+}
+
+JSNative js::TypedArrayConstructorNative(Scalar::Type type) {
+#define TYPED_ARRAY_CONSTRUCTOR_NATIVE(T, N) \
+  if (type == Scalar::N) {                   \
+    return N##Array::class_constructor;      \
   }
+  JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CONSTRUCTOR_NATIVE)
+#undef TYPED_ARRAY_CONSTRUCTOR_NATIVE
+
   MOZ_CRASH("unexpected typed array type");
 }
 
@@ -2267,28 +2295,28 @@ bool js::IsBufferSource(JSObject* object, SharedMem<uint8_t*>* dataPointer,
   if (object->is<TypedArrayObject>()) {
     TypedArrayObject& view = object->as<TypedArrayObject>();
     *dataPointer = view.dataPointerEither().cast<uint8_t*>();
-    *byteLength = view.byteLength();
+    *byteLength = view.byteLength().deprecatedGetUint32();
     return true;
   }
 
   if (object->is<DataViewObject>()) {
     DataViewObject& view = object->as<DataViewObject>();
     *dataPointer = view.dataPointerEither().cast<uint8_t*>();
-    *byteLength = view.byteLength();
+    *byteLength = view.byteLength().deprecatedGetUint32();
     return true;
   }
 
   if (object->is<ArrayBufferObject>()) {
     ArrayBufferObject& buffer = object->as<ArrayBufferObject>();
     *dataPointer = buffer.dataPointerShared();
-    *byteLength = buffer.byteLength();
+    *byteLength = buffer.byteLength().deprecatedGetUint32();
     return true;
   }
 
   if (object->is<SharedArrayBufferObject>()) {
     SharedArrayBufferObject& buffer = object->as<SharedArrayBufferObject>();
     *dataPointer = buffer.dataPointerShared();
-    *byteLength = buffer.byteLength();
+    *byteLength = buffer.byteLength().deprecatedGetUint32();
     return true;
   }
 
@@ -2489,6 +2517,7 @@ bool js::SetTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
 #undef SET_TYPED_ARRAY_ELEMENT
     case Scalar::MaxTypedArrayViewType:
     case Scalar::Int64:
+    case Scalar::Simd128:
       break;
   }
 
@@ -2508,8 +2537,7 @@ bool js::DefineTypedArrayElement(JSContext* cx, HandleObject obj,
 
   // Steps iv-v.
   // We (wrongly) ignore out of range defines with a value.
-  uint32_t length = obj->as<TypedArrayObject>().length();
-  if (index >= length) {
+  if (index >= obj->as<TypedArrayObject>().length().get()) {
     if (obj->as<TypedArrayObject>().hasDetachedBuffer()) {
       return result.failSoft(JSMSG_TYPED_ARRAY_DETACHED);
     }
@@ -2548,6 +2576,7 @@ bool js::DefineTypedArrayElement(JSContext* cx, HandleObject obj,
 #undef DEFINE_TYPED_ARRAY_ELEMENT
       case Scalar::MaxTypedArrayViewType:
       case Scalar::Int64:
+      case Scalar::Simd128:
         break;
     }
 
@@ -2616,7 +2645,7 @@ struct ExternalTypeOf<uint8_clamped> {
       return nullptr;                                                        \
     }                                                                        \
     TypedArrayObject* tarr = &obj->as<TypedArrayObject>();                   \
-    *length = tarr->length();                                                \
+    *length = tarr->length().deprecatedGetUint32();                          \
     *isShared = tarr->isSharedMemory();                                      \
     *data = static_cast<ExternalTypeOf<NativeType>::Type*>(                  \
         tarr->dataPointerEither().unwrap(                                    \
@@ -2648,7 +2677,7 @@ JS_FRIEND_API uint32_t JS_GetTypedArrayLength(JSObject* obj) {
   if (!tarr) {
     return 0;
   }
-  return tarr->length();
+  return tarr->length().deprecatedGetUint32();
 }
 
 JS_FRIEND_API uint32_t JS_GetTypedArrayByteOffset(JSObject* obj) {
@@ -2656,7 +2685,7 @@ JS_FRIEND_API uint32_t JS_GetTypedArrayByteOffset(JSObject* obj) {
   if (!tarr) {
     return 0;
   }
-  return tarr->byteOffset();
+  return tarr->byteOffset().deprecatedGetUint32();
 }
 
 JS_FRIEND_API uint32_t JS_GetTypedArrayByteLength(JSObject* obj) {
@@ -2664,7 +2693,7 @@ JS_FRIEND_API uint32_t JS_GetTypedArrayByteLength(JSObject* obj) {
   if (!tarr) {
     return 0;
   }
-  return tarr->byteLength();
+  return tarr->byteLength().deprecatedGetUint32();
 }
 
 JS_FRIEND_API bool JS_GetTypedArraySharedness(JSObject* obj) {

@@ -1,10 +1,9 @@
-// |reftest| skip-if(release_or_beta) -- Intl.NumberFormat-unified is not released yet
 // Copyright 2019 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-intl.numberformat.prototype.format
-description: Checks handling of the compactDisplay option to the NumberFormat constructor.
+description: Checks handling of the signDisplay option to the NumberFormat constructor.
 locale: [ja-JP]
 features: [Intl.NumberFormat-unified]
 ---*/
@@ -13,50 +12,65 @@ features: [Intl.NumberFormat-unified]
 const tests = [
   [
     "auto",
+    "-∞",
     "-987",
     "-0",
     "-0",
     "0",
     "0",
     "987",
+    "∞",
+    "NaN",
   ],
   [
     "always",
+    "-∞",
     "-987",
     "-0",
     "-0",
     "+0",
     "+0",
     "+987",
+    "+∞",
+    "+NaN",
   ],
   [
     "never",
+    "∞",
     "987",
     "0",
     "0",
     "0",
     "0",
     "987",
+    "∞",
+    "NaN",
   ],
   [
     "exceptZero",
+    "-∞",
     "-987",
-    "-0",
-    "-0",
     "0",
-    "+0",
+    "0",
+    "0",
+    "0",
     "+987",
+    "+∞",
+    "NaN",
   ],
 ];
 
-for (const [signDisplay, negative, negativeNearZero, negativeZero, zero, positiveNearZero, positive] of tests) {
+for (const [signDisplay, ...expected] of tests) {
   const nf = new Intl.NumberFormat("ja-JP", {signDisplay});
-  assert.sameValue(nf.format(-987), negative);
-  assert.sameValue(nf.format(-0.0001), negativeNearZero);
-  assert.sameValue(nf.format(-0), negativeZero);
-  assert.sameValue(nf.format(0), zero);
-  assert.sameValue(nf.format(0.0001), positiveNearZero);
-  assert.sameValue(nf.format(987), positive);
+  assert.sameValue(nf.format(-Infinity), expected[0], `-Infinity (${signDisplay})`);
+  assert.sameValue(nf.format(-987), expected[1], `-987 (${signDisplay})`);
+  assert.sameValue(nf.format(-0.0001), expected[2], `-0.0001 (${signDisplay})`);
+  assert.sameValue(nf.format(-0), expected[3], `-0 (${signDisplay})`);
+  assert.sameValue(nf.format(0), expected[4], `0 (${signDisplay})`);
+  assert.sameValue(nf.format(0.0001), expected[5], `0.0001 (${signDisplay})`);
+  assert.sameValue(nf.format(987), expected[6], `987 (${signDisplay})`);
+  assert.sameValue(nf.format(Infinity), expected[7], `Infinity (${signDisplay})`);
+  assert.sameValue(nf.format(NaN), expected[8], `NaN (${signDisplay})`);
 }
 
 

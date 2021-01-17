@@ -5,6 +5,10 @@ from __future__ import absolute_import
 from time import sleep
 
 import mozunit
+from mock import patch
+from pytest import raises
+
+from mozrunner import RunnerNotStartedError
 
 
 def test_start_process(runner):
@@ -48,5 +52,13 @@ def test_start_with_outputTimeout(runner):
     assert not runner.is_running()
 
 
-if __name__ == '__main__':
+def test_fail_to_start(runner):
+    with patch("mozprocess.ProcessHandler.__init__") as ph_mock:
+        ph_mock.side_effect = Exception("Boom!")
+        with raises(RunnerNotStartedError):
+            runner.start(outputTimeout=0.1)
+            sleep(1)
+
+
+if __name__ == "__main__":
     mozunit.main()

@@ -8,6 +8,7 @@
 #define mozilla_interceptor_MMPolicies_h
 
 #include "mozilla/Assertions.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/DynamicallyLinkedFunctionPtr.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
@@ -17,44 +18,6 @@
 #include "mozilla/WindowsMapRemoteView.h"
 
 #include <windows.h>
-
-// MinGW does not have these definitions yet
-#if defined(__MINGW32__)
-typedef struct _MEM_ADDRESS_REQUIREMENTS {
-  PVOID LowestStartingAddress;
-  PVOID HighestEndingAddress;
-  SIZE_T Alignment;
-} MEM_ADDRESS_REQUIREMENTS, *PMEM_ADDRESS_REQUIREMENTS;
-
-typedef enum MEM_EXTENDED_PARAMETER_TYPE {
-  MemExtendedParameterInvalidType = 0,
-  MemExtendedParameterAddressRequirements,
-  MemExtendedParameterNumaNode,
-  MemExtendedParameterPartitionHandle,
-  MemExtendedParameterUserPhysicalHandle,
-  MemExtendedParameterAttributeFlags,
-  MemExtendedParameterMax
-} MEM_EXTENDED_PARAMETER_TYPE,
-    *PMEM_EXTENDED_PARAMETER_TYPE;
-
-#  define MEM_EXTENDED_PARAMETER_TYPE_BITS 8
-
-typedef struct DECLSPEC_ALIGN(8) MEM_EXTENDED_PARAMETER {
-  struct {
-    DWORD64 Type : MEM_EXTENDED_PARAMETER_TYPE_BITS;
-    DWORD64 Reserved : 64 - MEM_EXTENDED_PARAMETER_TYPE_BITS;
-  } DUMMYSTRUCTNAME;
-
-  union {
-    DWORD64 ULong64;
-    PVOID Pointer;
-    SIZE_T Size;
-    HANDLE Handle;
-    DWORD ULong;
-  } DUMMYUNIONNAME;
-
-} MEM_EXTENDED_PARAMETER, *PMEM_EXTENDED_PARAMETER;
-#endif  // defined(__MINGW32__)
 
 #if (NTDDI_VERSION < NTDDI_WIN10_RS4) || defined(__MINGW32__)
 PVOID WINAPI VirtualAlloc2(HANDLE Process, PVOID BaseAddress, SIZE_T Size,
@@ -73,8 +36,64 @@ PVOID WINAPI MapViewOfFile3(HANDLE FileMapping, HANDLE Process,
 extern "C" errno_t rand_s(unsigned int* randomValue);
 #endif  // !defined(_CRT_RAND_S)
 
+// Declaring only the functions we need in NativeNt.h.  To include the entire
+// NativeNt.h causes circular dependency.
+namespace mozilla {
+namespace nt {
+SIZE_T WINAPI VirtualQueryEx(HANDLE aProcess, LPCVOID aAddress,
+                             PMEMORY_BASIC_INFORMATION aMemInfo,
+                             SIZE_T aMemInfoLen);
+
+SIZE_T WINAPI VirtualQuery(LPCVOID aAddress, PMEMORY_BASIC_INFORMATION aMemInfo,
+                           SIZE_T aMemInfoLen);
+}  // namespace nt
+}  // namespace mozilla
+
 namespace mozilla {
 namespace interceptor {
+
+// This class implements memory operations not involving any kernel32's
+// functions, so that derived classes can use them.
+class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcessPrimitive {
+ protected:
+  bool ProtectInternal(decltype(&::VirtualProtect) aVirtualProtect,
+                       void* aVAddress, size_t aSize, uint32_t aProtFlags,
+                       uint32_t* aPrevProtFlags) const {
+    MOZ_ASSERT(aPrevProtFlags);
+    BOOL ok = aVirtualProtect(aVAddress, aSize, aProtFlags,
+                              reinterpret_cast<PDWORD>(aPrevProtFlags));
+    if (!ok && aPrevProtFlags) {
+      // VirtualProtect can fail but still set valid protection flags.
+      // Let's clear those upon failure.
+      *aPrevProtFlags = 0;
+    }
+
+    return !!ok;
+  }
+
+ public:
+  bool Read(void* aToPtr, const void* aFromPtr, size_t aLen) const {
+    ::memcpy(aToPtr, aFromPtr, aLen);
+    return true;
+  }
+
+  bool Write(void* aToPtr, const void* aFromPtr, size_t aLen) const {
+    ::memcpy(aToPtr, aFromPtr, aLen);
+    return true;
+  }
+
+  /**
+   * @return true if the page that hosts aVAddress is accessible.
+   */
+  bool IsPageAccessible(uintptr_t aVAddress) const {
+    MEMORY_BASIC_INFORMATION mbi;
+    SIZE_T result = nt::VirtualQuery(reinterpret_cast<LPCVOID>(aVAddress), &mbi,
+                                     sizeof(mbi));
+
+    return result && mbi.AllocationProtect && mbi.State == MEM_COMMIT &&
+           mbi.Protect != PAGE_NOACCESS;
+  }
+};
 
 class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
  protected:
@@ -92,8 +111,34 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     return aUnaligned + ((-aUnaligned) & (aAlignTo - 1));
   }
 
+  static PVOID AlignUpToRegion(PVOID aUnaligned, uintptr_t aAlignTo,
+                               size_t aLen, size_t aDesiredLen) {
+    uintptr_t unaligned = reinterpret_cast<uintptr_t>(aUnaligned);
+    uintptr_t aligned = AlignUp(unaligned, aAlignTo);
+    MOZ_ASSERT(aligned >= unaligned);
+
+    if (aLen < aligned - unaligned) {
+      return nullptr;
+    }
+
+    aLen -= (aligned - unaligned);
+    return reinterpret_cast<PVOID>((aLen >= aDesiredLen) ? aligned : 0);
+  }
+
  public:
-  static DWORD ComputeAllocationSize(const uint32_t aRequestedSize) {
+#if defined(NIGHTLY_BUILD)
+  Maybe<DetourError> mLastError;
+  const Maybe<DetourError>& GetLastDetourError() const { return mLastError; }
+  template <typename... Args>
+  void SetLastDetourError(Args&&... aArgs) {
+    mLastError = Some(DetourError(std::forward<Args>(aArgs)...));
+  }
+#else
+  template <typename... Args>
+  void SetLastDetourError(Args&&... aArgs) {}
+#endif  // defined(NIGHTLY_BUILD)
+
+  DWORD ComputeAllocationSize(const uint32_t aRequestedSize) const {
     MOZ_ASSERT(aRequestedSize);
     DWORD result = aRequestedSize;
 
@@ -107,7 +152,7 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     return result;
   }
 
-  static DWORD GetAllocGranularity() {
+  DWORD GetAllocGranularity() const {
     static const DWORD kAllocGranularity = []() -> DWORD {
       SYSTEM_INFO sysInfo;
       ::GetSystemInfo(&sysInfo);
@@ -117,7 +162,7 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     return kAllocGranularity;
   }
 
-  static DWORD GetPageSize() {
+  DWORD GetPageSize() const {
     static const DWORD kPageSize = []() -> DWORD {
       SYSTEM_INFO sysInfo;
       ::GetSystemInfo(&sysInfo);
@@ -127,7 +172,7 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     return kPageSize;
   }
 
-  static uintptr_t GetMaxUserModeAddress() {
+  uintptr_t GetMaxUserModeAddress() const {
     static const uintptr_t kMaxUserModeAddr = []() -> uintptr_t {
       SYSTEM_INFO sysInfo;
       ::GetSystemInfo(&sysInfo);
@@ -160,9 +205,9 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
    * lower and upper bounds. This function converts from the former format to
    * the latter format.
    */
-  static Maybe<Span<const uint8_t>> SpanFromPivotAndDistance(
+  Maybe<Span<const uint8_t>> SpanFromPivotAndDistance(
       const uint32_t aSize, const uintptr_t aPivotAddr,
-      const uint32_t aMaxDistanceFromPivot) {
+      const uint32_t aMaxDistanceFromPivot) const {
     if (!aPivotAddr || !aMaxDistanceFromPivot) {
       return Nothing();
     }
@@ -229,8 +274,8 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     }
 
     // Return the result as a Span
-    return Some(MakeSpan(reinterpret_cast<const uint8_t*>(lowerBound.value()),
-                         upperBound.value() - lowerBound.value()));
+    return Some(Span(reinterpret_cast<const uint8_t*>(lowerBound.value()),
+                     upperBound.value() - lowerBound.value()));
   }
 
   /**
@@ -239,16 +284,22 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
    * virtual memory space for a block of unallocated memory that is sufficiently
    * large.
    */
-  static PVOID FindRegion(HANDLE aProcess, const size_t aDesiredBytesLen,
-                          const uint8_t* aRangeMin, const uint8_t* aRangeMax) {
+  PVOID FindRegion(HANDLE aProcess, const size_t aDesiredBytesLen,
+                   const uint8_t* aRangeMin, const uint8_t* aRangeMax) {
+    // Convert the given pointers to uintptr_t because we should not
+    // compare two pointers unless they are from the same array or object.
+    uintptr_t rangeMin = reinterpret_cast<uintptr_t>(aRangeMin);
+    uintptr_t rangeMax = reinterpret_cast<uintptr_t>(aRangeMax);
+
     const DWORD kGranularity = GetAllocGranularity();
-    MOZ_ASSERT(aDesiredBytesLen >= kGranularity);
     if (!aDesiredBytesLen) {
+      SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_INVALIDLEN);
       return nullptr;
     }
 
-    MOZ_ASSERT(aRangeMin < aRangeMax);
-    if (aRangeMin >= aRangeMax) {
+    MOZ_ASSERT(rangeMin < rangeMax);
+    if (rangeMin >= rangeMax) {
+      SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_INVALIDRANGE);
       return nullptr;
     }
 
@@ -259,31 +310,68 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
 
     // Reduce rnd to a value that falls within the acceptable range
     uintptr_t maxOffset =
-        (aRangeMax - aRangeMin - aDesiredBytesLen) / kGranularity;
-    uintptr_t offset = (uintptr_t(rnd) % maxOffset) * kGranularity;
+        (rangeMax - rangeMin - aDesiredBytesLen) / kGranularity;
+    // Divide by maxOffset + 1 because maxOffset * kGranularity is acceptable.
+    uintptr_t offset = (uintptr_t(rnd) % (maxOffset + 1)) * kGranularity;
 
     // Start searching at this address
-    const uint8_t* address = aRangeMin + offset;
+    const uintptr_t searchStart = rangeMin + offset;
     // The max address needs to incorporate the desired length
-    const uint8_t* const kMaxPtr = aRangeMax - aDesiredBytesLen;
+    const uintptr_t kMaxPtr = rangeMax - aDesiredBytesLen;
 
-    MOZ_DIAGNOSTIC_ASSERT(address <= kMaxPtr);
+    MOZ_DIAGNOSTIC_ASSERT(searchStart <= kMaxPtr);
 
     MEMORY_BASIC_INFORMATION mbi;
     SIZE_T len = sizeof(mbi);
 
     // Scan the range for a free chunk that is at least as large as
     // aDesiredBytesLen
-    while (address <= kMaxPtr &&
-           ::VirtualQueryEx(aProcess, address, &mbi, len)) {
-      if (mbi.State == MEM_FREE && mbi.RegionSize >= aDesiredBytesLen) {
-        return mbi.BaseAddress;
+    // Scan [searchStart, kMaxPtr]
+    for (uintptr_t address = searchStart; address <= kMaxPtr;) {
+      if (nt::VirtualQueryEx(aProcess, reinterpret_cast<uint8_t*>(address),
+                             &mbi, len) != len) {
+        SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
+                           ::GetLastError());
+        return nullptr;
       }
 
-      address =
-          reinterpret_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+      if (mbi.State == MEM_FREE) {
+        // |mbi.BaseAddress| is aligned with the page granularity, but may not
+        // be aligned with the allocation granularity.  VirtualAlloc does not
+        // accept such a non-aligned address unless the corresponding allocation
+        // region is free.  So we get the next boundary's start address.
+        PVOID regionStart = AlignUpToRegion(mbi.BaseAddress, kGranularity,
+                                            mbi.RegionSize, aDesiredBytesLen);
+        if (regionStart) {
+          return regionStart;
+        }
+      }
+
+      address = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
     }
 
+    // Scan [aRangeMin, searchStart)
+    for (uintptr_t address = rangeMin; address < searchStart;) {
+      if (nt::VirtualQueryEx(aProcess, reinterpret_cast<uint8_t*>(address),
+                             &mbi, len) != len) {
+        SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_VIRTUALQUERY_ERROR,
+                           ::GetLastError());
+        return nullptr;
+      }
+
+      if (mbi.State == MEM_FREE) {
+        PVOID regionStart = AlignUpToRegion(mbi.BaseAddress, kGranularity,
+                                            mbi.RegionSize, aDesiredBytesLen);
+        if (regionStart) {
+          return regionStart;
+        }
+      }
+
+      address = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+
+    SetLastDetourError(MMPOLICY_RESERVE_FINDREGION_NO_FREE_REGION,
+                       ::GetLastError());
     return nullptr;
   }
 
@@ -303,13 +391,18 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
    * to use for reserving the memory by calling |FindRegion|.
    */
   template <typename ReserveFnT, typename ReserveRangeFnT>
-  static PVOID Reserve(HANDLE aProcess, const uint32_t aSize,
-                       const ReserveFnT& aReserveFn,
-                       const ReserveRangeFnT& aReserveRangeFn,
-                       const Maybe<Span<const uint8_t>>& aBounds) {
+  PVOID Reserve(HANDLE aProcess, const uint32_t aSize,
+                const ReserveFnT& aReserveFn,
+                const ReserveRangeFnT& aReserveRangeFn,
+                const Maybe<Span<const uint8_t>>& aBounds) {
     if (!aBounds) {
       // No restrictions, let the OS choose the base address
-      return aReserveFn(aProcess, nullptr, aSize);
+      PVOID ret = aReserveFn(aProcess, nullptr, aSize);
+      if (!ret) {
+        SetLastDetourError(MMPOLICY_RESERVE_NOBOUND_RESERVE_ERROR,
+                           ::GetLastError());
+      }
+      return ret;
     }
 
     const uint8_t* lowerBound = GetLowerBound(aBounds.ref());
@@ -347,12 +440,18 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyBase {
     // If we run out of attempts, we fall through to the default case where
     // the system chooses any base address it wants. In that case, the hook
     // will be set on a best-effort basis.
-
-    return aReserveFn(aProcess, nullptr, aSize);
+    PVOID ret = aReserveFn(aProcess, nullptr, aSize);
+    if (!ret) {
+      SetLastDetourError(MMPOLICY_RESERVE_FINAL_RESERVE_ERROR,
+                         ::GetLastError());
+    }
+    return ret;
   }
 };
 
-class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcess : public MMPolicyBase {
+class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcess
+    : public MMPolicyInProcessPrimitive,
+      public MMPolicyBase {
  public:
   typedef MMPolicyInProcess MMPolicyT;
 
@@ -387,16 +486,6 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcess : public MMPolicyBase {
    */
   bool ShouldUnhookUponDestruction() const { return true; }
 
-  bool Read(void* aToPtr, const void* aFromPtr, size_t aLen) const {
-    ::memcpy(aToPtr, aFromPtr, aLen);
-    return true;
-  }
-
-  bool Write(void* aToPtr, const void* aFromPtr, size_t aLen) const {
-    ::memcpy(aToPtr, aFromPtr, aLen);
-    return true;
-  }
-
 #if defined(_M_IX86)
   bool WriteAtomic(void* aDestPtr, const uint16_t aValue) const {
     *static_cast<uint16_t*>(aDestPtr) = aValue;
@@ -406,27 +495,8 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcess : public MMPolicyBase {
 
   bool Protect(void* aVAddress, size_t aSize, uint32_t aProtFlags,
                uint32_t* aPrevProtFlags) const {
-    MOZ_ASSERT(aPrevProtFlags);
-    BOOL ok = ::VirtualProtect(aVAddress, aSize, aProtFlags,
-                               reinterpret_cast<PDWORD>(aPrevProtFlags));
-    if (!ok && aPrevProtFlags) {
-      // VirtualProtect can fail but still set valid protection flags.
-      // Let's clear those upon failure.
-      *aPrevProtFlags = 0;
-    }
-
-    return !!ok;
-  }
-
-  /**
-   * @return true if the page that hosts aVAddress is accessible.
-   */
-  bool IsPageAccessible(void* aVAddress) const {
-    MEMORY_BASIC_INFORMATION mbi;
-    SIZE_T result = ::VirtualQuery(aVAddress, &mbi, sizeof(mbi));
-
-    return result && mbi.AllocationProtect && (mbi.Type & MEM_IMAGE) &&
-           mbi.State == MEM_COMMIT && mbi.Protect != PAGE_NOACCESS;
+    return ProtectInternal(::VirtualProtect, aVAddress, aSize, aProtFlags,
+                           aPrevProtFlags);
   }
 
   bool FlushInstructionCache() const {
@@ -537,6 +607,51 @@ class MOZ_TRIVIAL_CTOR_DTOR MMPolicyInProcess : public MMPolicyBase {
   uint32_t mCommitOffset;
 };
 
+// This class manages in-process memory access without using functions
+// imported from kernel32.dll.  Instead, it uses functions in its own
+// function table that are provided from outside.
+class MMPolicyInProcessEarlyStage : public MMPolicyInProcessPrimitive {
+ public:
+  struct Kernel32Exports {
+    decltype(&::FlushInstructionCache) mFlushInstructionCache;
+    decltype(&::GetSystemInfo) mGetSystemInfo;
+    decltype(&::VirtualProtect) mVirtualProtect;
+  };
+
+ private:
+  static DWORD GetPageSize(const Kernel32Exports& aK32Exports) {
+    SYSTEM_INFO sysInfo;
+    aK32Exports.mGetSystemInfo(&sysInfo);
+    return sysInfo.dwPageSize;
+  }
+
+  const Kernel32Exports& mK32Exports;
+  const DWORD mPageSize;
+
+ public:
+  explicit MMPolicyInProcessEarlyStage(const Kernel32Exports& aK32Exports)
+      : mK32Exports(aK32Exports), mPageSize(GetPageSize(mK32Exports)) {}
+
+  // The pattern of constructing a local static variable with a lambda,
+  // which can be seen in MMPolicyBase, is compiled into code with the
+  // critical section APIs like EnterCriticalSection imported from kernel32.dll.
+  // Because this class needs to be able to run in a process's early stage
+  // when IAT is not yet resolved, we cannot use that patten, thus simply
+  // caching a value as a local member in the class.
+  DWORD GetPageSize() const { return mPageSize; }
+
+  bool Protect(void* aVAddress, size_t aSize, uint32_t aProtFlags,
+               uint32_t* aPrevProtFlags) const {
+    return ProtectInternal(mK32Exports.mVirtualProtect, aVAddress, aSize,
+                           aProtFlags, aPrevProtFlags);
+  }
+
+  bool FlushInstructionCache() const {
+    const HANDLE kCurrentProcess = reinterpret_cast<HANDLE>(-1);
+    return !!mK32Exports.mFlushInstructionCache(kCurrentProcess, nullptr, 0);
+  }
+};
+
 class MMPolicyOutOfProcess : public MMPolicyBase {
  public:
   typedef MMPolicyOutOfProcess MMPolicyT;
@@ -613,6 +728,8 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
     return false;
   }
 
+  // This function reads as many bytes as |aLen| from the target process and
+  // succeeds only when the entire area to be read is accessible.
   bool Read(void* aToPtr, const void* aFromPtr, size_t aLen) const {
     MOZ_ASSERT(mProcess);
     if (!mProcess) {
@@ -622,6 +739,40 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
     SIZE_T numBytes = 0;
     BOOL ok = ::ReadProcessMemory(mProcess, aFromPtr, aToPtr, aLen, &numBytes);
     return ok && numBytes == aLen;
+  }
+
+  // This function reads as many bytes as possible from the target process up
+  // to |aLen| bytes and returns the number of bytes which was actually read.
+  size_t TryRead(void* aToPtr, const void* aFromPtr, size_t aLen) const {
+    MOZ_ASSERT(mProcess);
+    if (!mProcess) {
+      return 0;
+    }
+
+    uint32_t pageSize = GetPageSize();
+    uintptr_t pageMask = pageSize - 1;
+
+    auto rangeStart = reinterpret_cast<uintptr_t>(aFromPtr);
+    auto rangeEnd = rangeStart + aLen;
+
+    while (rangeStart < rangeEnd) {
+      SIZE_T numBytes = 0;
+      BOOL ok = ::ReadProcessMemory(mProcess, aFromPtr, aToPtr,
+                                    rangeEnd - rangeStart, &numBytes);
+      if (ok) {
+        return numBytes;
+      }
+
+      // If ReadProcessMemory fails, try to read up to each page boundary from
+      // the end of the requested area one by one.
+      if (rangeEnd & pageMask) {
+        rangeEnd &= ~pageMask;
+      } else {
+        rangeEnd -= pageSize;
+      }
+    }
+
+    return 0;
   }
 
   bool Write(void* aToPtr, const void* aFromPtr, size_t aLen) const {
@@ -657,12 +808,13 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
   /**
    * @return true if the page that hosts aVAddress is accessible.
    */
-  bool IsPageAccessible(void* aVAddress) const {
+  bool IsPageAccessible(uintptr_t aVAddress) const {
     MEMORY_BASIC_INFORMATION mbi;
-    SIZE_T result = ::VirtualQueryEx(mProcess, aVAddress, &mbi, sizeof(mbi));
+    SIZE_T result = nt::VirtualQueryEx(
+        mProcess, reinterpret_cast<LPCVOID>(aVAddress), &mbi, sizeof(mbi));
 
-    return result && mbi.AllocationProtect && (mbi.Type & MEM_IMAGE) &&
-           mbi.State == MEM_COMMIT && mbi.Protect != PAGE_NOACCESS;
+    return result && mbi.AllocationProtect && mbi.State == MEM_COMMIT &&
+           mbi.Protect != PAGE_NOACCESS;
   }
 
   bool FlushInstructionCache() const {
@@ -690,11 +842,13 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
   uint32_t Reserve(const uint32_t aSize,
                    const Maybe<Span<const uint8_t>>& aBounds) {
     if (!aSize || !mProcess) {
+      SetLastDetourError(MMPOLICY_RESERVE_INVALIDARG);
       return 0;
     }
 
     if (mRemoteView) {
       MOZ_ASSERT(mReservationSize >= aSize);
+      SetLastDetourError(MMPOLICY_RESERVE_ZERO_RESERVATIONSIZE);
       return mReservationSize;
     }
 
@@ -704,12 +858,14 @@ class MMPolicyOutOfProcess : public MMPolicyBase {
                                    PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0,
                                    mReservationSize, nullptr);
     if (!mMapping) {
+      SetLastDetourError(MMPOLICY_RESERVE_CREATEFILEMAPPING, ::GetLastError());
       return 0;
     }
 
     mLocalView = static_cast<uint8_t*>(
         ::MapViewOfFile(mMapping, FILE_MAP_WRITE, 0, 0, 0));
     if (!mLocalView) {
+      SetLastDetourError(MMPOLICY_RESERVE_MAPVIEWOFFILE, ::GetLastError());
       return 0;
     }
 

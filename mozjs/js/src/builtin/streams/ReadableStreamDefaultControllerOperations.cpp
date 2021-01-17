@@ -13,7 +13,6 @@
 
 #include "jsfriendapi.h"  // js::AssertSameCompartment
 
-#include "builtin/Promise.h"  // js::PromiseObject
 #include "builtin/Stream.h"  // js::ReadableByteStreamControllerClearPendingPullIntos
 #include "builtin/streams/MiscellaneousOperations.h"  // js::CreateAlgorithmFromUnderlyingMethod, js::InvokeOrNoop, js::IsMaybeWrapped
 #include "builtin/streams/QueueWithSizes.h"  // js::EnqueueValueWithSize, js::ResetQueue
@@ -31,8 +30,9 @@
 #include "vm/JSContext.h"    // JSContext
 #include "vm/JSObject.h"     // JSObject
 #include "vm/List.h"         // js::ListObject
-#include "vm/Runtime.h"      // JSAtomState
-#include "vm/SavedFrame.h"   // js::SavedFrame
+#include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
+#include "vm/Runtime.h"        // JSAtomState
+#include "vm/SavedFrame.h"  // js::SavedFrame
 
 #include "builtin/streams/HandlerFunction-inl.h"          // js::NewHandler
 #include "builtin/streams/MiscellaneousOperations-inl.h"  // js::PromiseCall
@@ -189,14 +189,14 @@ MOZ_MUST_USE bool js::ReadableStreamControllerCallPullIfNeeded(
           ReadableStreamControllerGetDesiredSizeUnchecked(unwrappedController);
       source->requestData(cx, stream, desiredSize);
     }
-    pullPromise = PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+    pullPromise = PromiseResolvedWithUndefined(cx);
   } else {
     // The pull algorithm created in
     // SetUpReadableStreamDefaultControllerFromUnderlyingSource step 4.
     Rooted<Value> unwrappedPullMethod(cx, unwrappedController->pullMethod());
     if (unwrappedPullMethod.isUndefined()) {
       // CreateAlgorithmFromUnderlyingMethod step 7.
-      pullPromise = PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+      pullPromise = PromiseResolvedWithUndefined(cx);
     } else {
       // CreateAlgorithmFromUnderlyingMethod step 6.b.i.
       {

@@ -15,10 +15,11 @@
 
 #include "frontend/BytecodeEmitter.h"  // BytecodeEmitter
 #include "frontend/SharedContext.h"    // StatementKind
+#include "js/friend/ErrorMessages.h"   // JSMSG_*
 #include "js/TypeDecls.h"              // jsbytecode
 #include "util/BitArray.h"
 #include "vm/BytecodeUtil.h"  // SET_JUMP_OFFSET, JUMP_OFFSET_LEN, SET_RESUMEINDEX
-#include "vm/Opcodes.h"       // JSOP_*
+#include "vm/Opcodes.h"       // JSOp, JSOpLength_TableSwitch
 #include "vm/Runtime.h"       // ReportOutOfMemory
 
 using namespace js;
@@ -122,7 +123,7 @@ bool SwitchEmitter::emitDiscriminant(const Maybe<uint32_t>& switchPos) {
   return true;
 }
 
-bool SwitchEmitter::emitLexical(Handle<LexicalScope::Data*> bindings) {
+bool SwitchEmitter::emitLexical(ParserLexicalScopeData* bindings) {
   MOZ_ASSERT(state_ == State::Discriminant);
   MOZ_ASSERT(bindings);
 
@@ -184,8 +185,8 @@ bool SwitchEmitter::emitTable(const TableGenerator& tableGen) {
   }
 
   MOZ_ASSERT(top_ == bce_->bytecodeSection().offset());
-  if (!bce_->emitN(JSOP_TABLESWITCH,
-                   JSOP_TABLESWITCH_LENGTH - sizeof(jsbytecode))) {
+  if (!bce_->emitN(JSOp::TableSwitch,
+                   JSOpLength_TableSwitch - sizeof(jsbytecode))) {
     return false;
   }
 
@@ -205,14 +206,14 @@ bool SwitchEmitter::emitCaseOrDefaultJump(uint32_t caseIndex, bool isDefault) {
   MOZ_ASSERT(kind_ == Kind::Cond);
 
   if (isDefault) {
-    if (!bce_->emitJump(JSOP_DEFAULT, &condSwitchDefaultOffset_)) {
+    if (!bce_->emitJump(JSOp::Default, &condSwitchDefaultOffset_)) {
       return false;
     }
     return true;
   }
 
   JumpList caseJump;
-  if (!bce_->emitJump(JSOP_CASE, &caseJump)) {
+  if (!bce_->emitJump(JSOp::Case, &caseJump)) {
     return false;
   }
   caseOffsets_[caseIndex] = caseJump.offset;
@@ -225,7 +226,7 @@ bool SwitchEmitter::prepareForCaseValue() {
   MOZ_ASSERT(kind_ == Kind::Cond);
   MOZ_ASSERT(state_ == State::Cond || state_ == State::Case);
 
-  if (!bce_->emit1(JSOP_DUP)) {
+  if (!bce_->emit1(JSOp::Dup)) {
     return false;
   }
 
@@ -237,7 +238,7 @@ bool SwitchEmitter::emitCaseJump() {
   MOZ_ASSERT(kind_ == Kind::Cond);
   MOZ_ASSERT(state_ == State::CaseValue);
 
-  if (!bce_->emit1(JSOP_STRICTEQ)) {
+  if (!bce_->emit1(JSOp::StrictEq)) {
     return false;
   }
 
@@ -271,7 +272,7 @@ bool SwitchEmitter::emitCaseBody() {
   tdzCacheCaseAndBody_.reset();
 
   if (state_ == State::Cond || state_ == State::Case) {
-    // For cond switch, JSOP_DEFAULT is always emitted.
+    // For cond switch, JSOp::Default is always emitted.
     if (!emitImplicitDefault()) {
       return false;
     }
@@ -323,7 +324,7 @@ bool SwitchEmitter::emitDefaultBody() {
   tdzCacheCaseAndBody_.reset();
 
   if (state_ == State::Cond || state_ == State::Case) {
-    // For cond switch, JSOP_DEFAULT is always emitted.
+    // For cond switch, JSOp::Default is always emitted.
     if (!emitImplicitDefault()) {
       return false;
     }
@@ -382,7 +383,7 @@ bool SwitchEmitter::emitEnd() {
     // Allocate resume index range.
     uint32_t firstResumeIndex = 0;
     mozilla::Span<BytecodeOffset> offsets =
-        mozilla::MakeSpan(caseOffsets_.begin(), caseOffsets_.end());
+        mozilla::Span(caseOffsets_.begin(), caseOffsets_.end());
     if (!bce_->allocateResumeIndexRange(offsets, &firstResumeIndex)) {
       return false;
     }

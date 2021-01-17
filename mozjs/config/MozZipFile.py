@@ -2,8 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, unicode_literals
 import os
+import six
 import time
 import zipfile
 
@@ -11,25 +12,24 @@ from mozbuild.util import lock_file
 
 
 class ZipFile(zipfile.ZipFile):
-    """ Class with methods to open, read, write, close, list zip files.
+    """Class with methods to open, read, write, close, list zip files.
 
     Subclassing zipfile.ZipFile to allow for overwriting of existing
     entries, though only for writestr, not for write.
     """
 
-    def __init__(self, file, mode="r", compression=zipfile.ZIP_STORED,
-                 lock=False):
+    def __init__(self, file, mode="r", compression=zipfile.ZIP_STORED, lock=False):
         if lock:
-            assert isinstance(file, basestring)
-            self.lockfile = lock_file(file + '.lck')
+            assert isinstance(file, six.text_type)
+            self.lockfile = lock_file(file + ".lck")
         else:
             self.lockfile = None
 
-        if mode == 'a' and lock:
+        if mode == "a" and lock:
             # appending to a file which doesn't exist fails, but we can't check
             # existence util we hold the lock
             if (not os.path.isfile(file)) or os.path.getsize(file) == 0:
-                mode = 'w'
+                mode = "w"
 
         zipfile.ZipFile.__init__(self, file, mode, compression)
         self._remove = []
@@ -44,11 +44,12 @@ class ZipFile(zipfile.ZipFile):
         This method is overloaded to allow overwriting existing entries.
         """
         if not isinstance(zinfo_or_arcname, zipfile.ZipInfo):
-            zinfo = zipfile.ZipInfo(filename=zinfo_or_arcname,
-                                    date_time=time.localtime(time.time()))
+            zinfo = zipfile.ZipInfo(
+                filename=zinfo_or_arcname, date_time=time.localtime(time.time())
+            )
             zinfo.compress_type = self.compression
             # Add some standard UNIX file access permissions (-rw-r--r--).
-            zinfo.external_attr = (0x81a4 & 0xFFFF) << 16
+            zinfo.external_attr = (0x81A4 & 0xFFFF) << 16
         else:
             zinfo = zinfo_or_arcname
 
@@ -69,9 +70,10 @@ class ZipFile(zipfile.ZipFile):
                 if self.filelist[i].filename == zinfo.filename:
                     break
             zi = self.filelist[i]
-            if ((zinfo.compress_type == zipfile.ZIP_STORED
-                 and zi.compress_size == len(bytes))
-                    or (i + 1) == len(self.filelist)):
+            if (
+                zinfo.compress_type == zipfile.ZIP_STORED
+                and zi.compress_size == len(bytes)
+            ) or (i + 1) == len(self.filelist):
                 # make sure we're allowed to write, otherwise done by writestr below
                 self._writecheck(zi)
                 # overwrite existing entry
@@ -90,7 +92,7 @@ class ZipFile(zipfile.ZipFile):
                 # Couldn't optimize, sadly, just remember the old entry for removal
                 self._remove.append(self.filelist.pop(i))
         zipfile.ZipFile.writestr(self, zinfo, bytes)
-        self.filelist.sort(lambda l, r: cmp(l.header_offset, r.header_offset))
+        self.filelist.sort(key=lambda l: l.header_offset)
         if doSeek:
             self.fp.seek(self.end)
         self.end = self.fp.tell()
@@ -107,18 +109,21 @@ class ZipFile(zipfile.ZipFile):
             self.lockfile = None
             return r
 
-        if self.fp.mode != 'r+b':
+        if self.fp.mode != "r+b":
             # adjust file mode if we originally just wrote, now we rewrite
             self.fp.close()
-            self.fp = open(self.filename, 'r+b')
-        all = map(lambda zi: (zi, True), self.filelist) + \
-            map(lambda zi: (zi, False), self._remove)
-        all.sort(lambda l, r: cmp(l[0].header_offset, r[0].header_offset))
+            self.fp = open(self.filename, "r+b")
+        all = map(lambda zi: (zi, True), self.filelist) + map(
+            lambda zi: (zi, False), self._remove
+        )
+        all.sort(key=lambda l: l[0].header_offset)
         # empty _remove for multiple closes
         self._remove = []
 
-        lengths = [all[i+1][0].header_offset - all[i][0].header_offset
-                   for i in xrange(len(all)-1)]
+        lengths = [
+            all[i + 1][0].header_offset - all[i][0].header_offset
+            for i in xrange(len(all) - 1)
+        ]
         lengths.append(self.end - all[-1][0].header_offset)
         to_pos = 0
         for (zi, keep), length in zip(all, lengths):
@@ -126,7 +131,7 @@ class ZipFile(zipfile.ZipFile):
                 continue
             oldoff = zi.header_offset
             # python <= 2.4 has file_offset
-            if hasattr(zi, 'file_offset'):
+            if hasattr(zi, "file_offset"):
                 zi.file_offset = zi.file_offset + to_pos - oldoff
             zi.header_offset = to_pos
             self.fp.seek(oldoff)

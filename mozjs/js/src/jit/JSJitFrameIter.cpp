@@ -8,10 +8,17 @@
 
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineIC.h"
+#include "jit/CalleeToken.h"
+#include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitScript.h"
+#include "jit/SafepointIndex.h"
 #include "jit/Safepoints.h"
+#include "jit/ScriptFromCalleeToken.h"
+#include "jit/VMFunctions.h"
+#include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
 
 #include "vm/JSScript-inl.h"
 
@@ -114,6 +121,16 @@ JSScript* JSJitFrameIter::script() const {
   return script;
 }
 
+JSScript* JSJitFrameIter::maybeForwardedScript() const {
+  MOZ_ASSERT(isScripted());
+  if (isBaselineJS()) {
+    return MaybeForwardedScriptFromCalleeToken(baselineFrame()->calleeToken());
+  }
+  JSScript* script = MaybeForwardedScriptFromCalleeToken(calleeToken());
+  MOZ_ASSERT(script);
+  return script;
+}
+
 void JSJitFrameIter::baselineScriptAndPc(JSScript** scriptRes,
                                          jsbytecode** pcRes) const {
   MOZ_ASSERT(isBaselineJS());
@@ -209,8 +226,7 @@ MachineState JSJitFrameIter::machineState() const {
     machine.setRegisterLocation(*iter, --spill);
   }
 
-  uint8_t* spillAlign =
-      alignDoubleSpillWithOffset(reinterpret_cast<uint8_t*>(spill), 0);
+  uint8_t* spillAlign = alignDoubleSpill(reinterpret_cast<uint8_t*>(spill));
 
   char* floatSpill = reinterpret_cast<char*>(spillAlign);
   FloatRegisterSet fregs = reader.allFloatSpills().set();
@@ -317,9 +333,9 @@ void JSJitFrameIter::dumpBaseline() const {
 
   fprintf(stderr, "  script = %p, pc = %p (offset %u)\n", (void*)script, pc,
           uint32_t(script->pcToOffset(pc)));
-  fprintf(stderr, "  current op: %s\n", CodeName[*pc]);
+  fprintf(stderr, "  current op: %s\n", CodeName(JSOp(*pc)));
 
-  fprintf(stderr, "  actual args: %d\n", numActualArgs());
+  fprintf(stderr, "  actual args: %u\n", numActualArgs());
 
   for (unsigned i = 0; i < baselineFrameNumValueSlots(); i++) {
     fprintf(stderr, "  slot %u: ", i);
@@ -430,11 +446,13 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
   MOZ_ASSERT(depth > 0 && depth != UINT32_MAX);
   MOZ_ASSERT(location.length() == depth);
 
-  JitSpew(JitSpew_Profiling, "Found bytecode location of depth %d:", depth);
+  JitSpew(JitSpew_Profiling, "Found bytecode location of depth %u:", depth);
   for (size_t i = 0; i < location.length(); i++) {
-    JitSpew(JitSpew_Profiling, "   %s:%u - %zu", location[i].script->filename(),
-            location[i].script->lineno(),
-            size_t(location[i].pc - location[i].script->code()));
+    JitSpew(JitSpew_Profiling, "   %s:%u - %zu",
+            location[i].getDebugOnlyScript()->filename(),
+            location[i].getDebugOnlyScript()->lineno(),
+            size_t(location[i].toRawBytecode() -
+                   location[i].getDebugOnlyScript()->code()));
   }
 
   if (type_ == FrameType::IonJS) {
@@ -449,10 +467,12 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
               (int)idx, inlineFrames.script()->filename(),
               inlineFrames.script()->lineno(),
               size_t(inlineFrames.pc() - inlineFrames.script()->code()),
-              location[idx].script->filename(), location[idx].script->lineno(),
-              size_t(location[idx].pc - location[idx].script->code()));
+              location[idx].getDebugOnlyScript()->filename(),
+              location[idx].getDebugOnlyScript()->lineno(),
+              size_t(location[idx].toRawBytecode() -
+                     location[idx].getDebugOnlyScript()->code()));
 
-      MOZ_ASSERT(inlineFrames.script() == location[idx].script);
+      MOZ_ASSERT(inlineFrames.script() == location[idx].getDebugOnlyScript());
 
       if (inlineFrames.more()) {
         ++inlineFrames;
@@ -580,7 +600,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
 
   JSScript* callee = frameScript();
 
-  MOZ_ASSERT(entry->isIon() || entry->isBaseline() || entry->isIonCache() ||
+  MOZ_ASSERT(entry->isIon() || entry->isBaseline() ||
              entry->isBaselineInterpreter() || entry->isDummy());
 
   // Treat dummy lookups as an empty frame sequence.
@@ -617,20 +637,6 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
 
   if (entry->isBaselineInterpreter()) {
     type_ = FrameType::BaselineJS;
-    resumePCinCurrentFrame_ = pc;
-    return true;
-  }
-
-  if (entry->isIonCache()) {
-    void* ptr = entry->ionCacheEntry().rejoinAddr();
-    const JitcodeGlobalEntry& ionEntry = table->lookupInfallible(ptr);
-    MOZ_ASSERT(ionEntry.isIon());
-
-    if (ionEntry.ionEntry().getScript(0) != callee) {
-      return false;
-    }
-
-    type_ = FrameType::IonJS;
     resumePCinCurrentFrame_ = pc;
     return true;
   }

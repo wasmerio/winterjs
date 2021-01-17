@@ -14,14 +14,15 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
-#include "builtin/Promise.h"                              // js::PromiseObject
+#include "jstypes.h"  // JS_PUBLIC_API
+
 #include "builtin/streams/WritableStreamDefaultWriter.h"  // js::WritableStreamDefaultWriter
 #include "js/RootingAPI.h"                                // JS::Handle
 #include "js/Value.h"                                     // JS::{,Object}Value
 
 #include "vm/Compartment-inl.h"  // js::UnwrapInternalSlot
 
-struct JSContext;
+struct JS_PUBLIC_API JSContext;
 
 namespace js {
 

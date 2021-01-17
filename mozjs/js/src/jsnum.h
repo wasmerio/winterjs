@@ -7,7 +7,6 @@
 #ifndef jsnum_h
 #define jsnum_h
 
-#include "mozilla/Compiler.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Range.h"
 #include "mozilla/Utf8.h"
@@ -15,25 +14,18 @@
 #include "NamespaceImports.h"
 
 #include "js/Conversions.h"
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
 
 #include "vm/StringType.h"
 
-// This macro is should be `one' if current compiler supports builtin functions
-// like __builtin_sadd_overflow.
-#if MOZ_IS_GCC
-// GCC supports these functions.
-#  define BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(x) 1
-#else
-// For CLANG, we use its own function to check for this.
-#  ifdef __has_builtin
-#    define BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(x) __has_builtin(x)
-#  endif
-#endif
-#ifndef BUILTIN_CHECKED_ARITHMETIC_SUPPORTED
-#  define BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(x) 0
-#endif
-
 namespace js {
+
+namespace frontend {
+
+class ParserAtomsTable;
+class ParserAtom;
+
+}  // namespace frontend
 
 class GlobalObject;
 class StringBuffer;
@@ -54,16 +46,22 @@ extern JSObject* InitNumberClass(JSContext* cx, Handle<GlobalObject*> global);
 template <AllowGC allowGC>
 extern JSString* NumberToString(JSContext* cx, double d);
 
-extern JSString* NumberToStringHelperPure(JSContext* cx, double d);
+extern JSString* NumberToStringPure(JSContext* cx, double d);
 
 extern JSAtom* NumberToAtom(JSContext* cx, double d);
+
+const frontend::ParserAtom* NumberToParserAtom(
+    JSContext* cx, frontend::ParserAtomsTable& parserAtoms, double d);
 
 template <AllowGC allowGC>
 extern JSLinearString* Int32ToString(JSContext* cx, int32_t i);
 
-extern JSLinearString* Int32ToStringHelperPure(JSContext* cx, int32_t i);
+extern JSLinearString* Int32ToStringPure(JSContext* cx, int32_t i);
 
 extern JSAtom* Int32ToAtom(JSContext* cx, int32_t si);
+
+const frontend::ParserAtom* Int32ToParserAtom(
+    JSContext* cx, frontend::ParserAtomsTable& parserAtoms, int32_t si);
 
 // ES6 15.7.3.12
 extern bool IsInteger(const Value& val);
@@ -192,11 +190,23 @@ template <typename CharT>
 extern MOZ_MUST_USE bool GetDecimalNonInteger(JSContext* cx, const CharT* start,
                                               const CharT* end, double* dp);
 
+template <typename CharT>
+bool CharsToNumber(JSContext* cx, const CharT* chars, size_t length,
+                   double* result);
+
 extern MOZ_MUST_USE bool StringToNumber(JSContext* cx, JSString* str,
                                         double* result);
 
 extern MOZ_MUST_USE bool StringToNumberPure(JSContext* cx, JSString* str,
                                             double* result);
+
+/*
+ * Return true and set |*result| to the parsed number value if |str| can be
+ * parsed as a number using the same rules as in |StringToNumber|. Otherwise
+ * return false and leave |*result| in an indeterminate state.
+ */
+extern MOZ_MUST_USE bool MaybeStringToNumber(JSLinearString* str,
+                                             double* result);
 
 /* ES5 9.3 ToNumber, overwriting *vp with the appropriate number value. */
 MOZ_ALWAYS_INLINE MOZ_MUST_USE bool ToNumber(JSContext* cx,
@@ -236,8 +246,6 @@ MOZ_ALWAYS_INLINE MOZ_MUST_USE bool ToInt32OrBigInt(JSContext* cx,
   return ToInt32OrBigIntSlow(cx, vp);
 }
 
-MOZ_MUST_USE bool num_parseInt(JSContext* cx, unsigned argc, Value* vp);
-
 } /* namespace js */
 
 /*
@@ -274,7 +282,9 @@ extern MOZ_MUST_USE bool FullStringToDouble(JSContext* cx, const CharT* begin,
   return false;
 }
 
-extern MOZ_MUST_USE bool num_toString(JSContext* cx, unsigned argc, Value* vp);
+extern MOZ_MUST_USE bool ThisNumberValueForToLocaleString(JSContext* cx,
+                                                          unsigned argc,
+                                                          Value* vp);
 
 extern MOZ_MUST_USE bool num_valueOf(JSContext* cx, unsigned argc, Value* vp);
 
@@ -308,7 +318,8 @@ static MOZ_ALWAYS_INLINE bool IsDefinitelyIndex(const Value& v,
   return false;
 }
 
-/* ES5 9.4 ToInteger. */
+// ES2020 draft rev 6b05bc56ba4e3c7a2b9922c4282d9eb844426d9b
+// 7.1.5 ToInteger ( argument )
 static MOZ_MUST_USE inline bool ToInteger(JSContext* cx, HandleValue v,
                                           double* dp) {
   if (v.isInt32()) {
@@ -358,39 +369,6 @@ static MOZ_MUST_USE inline bool ToIndex(JSContext* cx, JS::HandleValue v,
 static MOZ_MUST_USE inline bool ToIndex(JSContext* cx, JS::HandleValue v,
                                         uint64_t* index) {
   return ToIndex(cx, v, JSMSG_BAD_INDEX, index);
-}
-
-MOZ_MUST_USE inline bool SafeAdd(int32_t one, int32_t two, int32_t* res) {
-#if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_sadd_overflow)
-  // Using compiler's builtin function.
-  return !__builtin_sadd_overflow(one, two, res);
-#else
-  // Use unsigned for the 32-bit operation since signed overflow gets
-  // undefined behavior.
-  *res = uint32_t(one) + uint32_t(two);
-  int64_t ores = (int64_t)one + (int64_t)two;
-  return ores == (int64_t)*res;
-#endif
-}
-
-MOZ_MUST_USE inline bool SafeSub(int32_t one, int32_t two, int32_t* res) {
-#if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_ssub_overflow)
-  return !__builtin_ssub_overflow(one, two, res);
-#else
-  *res = uint32_t(one) - uint32_t(two);
-  int64_t ores = (int64_t)one - (int64_t)two;
-  return ores == (int64_t)*res;
-#endif
-}
-
-MOZ_MUST_USE inline bool SafeMul(int32_t one, int32_t two, int32_t* res) {
-#if BUILTIN_CHECKED_ARITHMETIC_SUPPORTED(__builtin_smul_overflow)
-  return !__builtin_smul_overflow(one, two, res);
-#else
-  *res = uint32_t(one) * uint32_t(two);
-  int64_t ores = (int64_t)one * (int64_t)two;
-  return ores == (int64_t)*res;
-#endif
 }
 
 } /* namespace js */

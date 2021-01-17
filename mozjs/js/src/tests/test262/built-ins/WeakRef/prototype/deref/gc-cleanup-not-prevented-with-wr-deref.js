@@ -1,4 +1,4 @@
-// |reftest| skip async -- WeakRef is not supported
+// |reftest| skip-if(!this.hasOwnProperty('WeakRef')) async -- WeakRef is not enabled unconditionally
 // Copyright (C) 2019 Leo Balter. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -14,7 +14,7 @@ info: |
     a. Perform ! KeepDuringJob(target).
     b. Return target.
   6. Return undefined.
-features: [WeakRef, host-gc-required]
+features: [FinalizationRegistry.prototype.cleanupSome, cleanupSome, WeakRef, host-gc-required]
 includes: [async-gc.js]
 flags: [async, non-deterministic]
 ---*/

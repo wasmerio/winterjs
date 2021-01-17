@@ -13,8 +13,9 @@
 
 #include "jit/BaselineJIT.h"
 #include "jit/IonAnalysis.h"
+#include "jit/IonScript.h"
 #include "jit/JitScript.h"
-#include "vm/EnvironmentObject.h"
+#include "vm/GeneratorObject.h"  // js::AsyncGeneratorObject
 #include "vm/RegExpObject.h"
 #include "wasm/AsmJS.h"
 
@@ -58,9 +59,40 @@ ScriptAndCounts::ScriptAndCounts(ScriptAndCounts&& sac)
 void SetFrameArgumentsObject(JSContext* cx, AbstractFramePtr frame,
                              HandleScript script, JSObject* argsobj);
 
+inline void ScriptWarmUpData::initEnclosingScript(BaseScript* enclosingScript) {
+  MOZ_ASSERT(data_ == ResetState());
+  setTaggedPtr<EnclosingScriptTag>(enclosingScript);
+  static_assert(std::is_base_of_v<gc::TenuredCell, BaseScript>,
+                "BaseScript must be TenuredCell to avoid post-barriers");
+}
+inline void ScriptWarmUpData::clearEnclosingScript() {
+  gc::PreWriteBarrier(toEnclosingScript());
+  data_ = ResetState();
+}
+
+inline void ScriptWarmUpData::initEnclosingScope(Scope* enclosingScope) {
+  MOZ_ASSERT(data_ == ResetState());
+  setTaggedPtr<EnclosingScopeTag>(enclosingScope);
+  static_assert(std::is_base_of_v<gc::TenuredCell, Scope>,
+                "Scope must be TenuredCell to avoid post-barriers");
+}
+inline void ScriptWarmUpData::clearEnclosingScope() {
+  gc::PreWriteBarrier(toEnclosingScope());
+  data_ = ResetState();
+}
+
+inline JSPrincipals* BaseScript::principals() const {
+  return realm()->principals();
+}
+
+inline JSScript* BaseScript::asJSScript() {
+  MOZ_ASSERT(hasBytecode());
+  return static_cast<JSScript*>(this);
+}
+
 }  // namespace js
 
-inline JSFunction* JSScript::getFunction(size_t index) {
+inline JSFunction* JSScript::getFunction(js::GCThingIndex index) const {
   JSObject* obj = getObject(index);
   MOZ_RELEASE_ASSERT(obj->is<JSFunction>(), "Script object is not JSFunction");
   JSFunction* fun = &obj->as<JSFunction>();
@@ -68,18 +100,18 @@ inline JSFunction* JSScript::getFunction(size_t index) {
   return fun;
 }
 
-inline JSFunction* JSScript::getFunction(jsbytecode* pc) {
-  return getFunction(GET_UINT32_INDEX(pc));
+inline JSFunction* JSScript::getFunction(jsbytecode* pc) const {
+  return getFunction(GET_GCTHING_INDEX(pc));
 }
 
-inline js::RegExpObject* JSScript::getRegExp(size_t index) {
+inline js::RegExpObject* JSScript::getRegExp(js::GCThingIndex index) const {
   JSObject* obj = getObject(index);
   MOZ_RELEASE_ASSERT(obj->is<js::RegExpObject>(),
                      "Script object is not RegExpObject");
   return &obj->as<js::RegExpObject>();
 }
 
-inline js::RegExpObject* JSScript::getRegExp(jsbytecode* pc) {
+inline js::RegExpObject* JSScript::getRegExp(jsbytecode* pc) const {
   JSObject* obj = getObject(pc);
   MOZ_RELEASE_ASSERT(obj->is<js::RegExpObject>(),
                      "Script object is not RegExpObject");
@@ -128,25 +160,30 @@ inline js::Shape* JSScript::initialEnvironmentShape() const {
   return nullptr;
 }
 
-inline JSPrincipals* JSScript::principals() { return realm()->principals(); }
-
 inline bool JSScript::ensureHasAnalyzedArgsUsage(JSContext* cx) {
-  if (analyzedArgsUsage()) {
-    return true;
+  if (needsArgsAnalysis()) {
+    return js::jit::AnalyzeArgumentsUsage(cx, this);
   }
-  return js::jit::AnalyzeArgumentsUsage(cx, this);
+  return true;
 }
 
 inline bool JSScript::isDebuggee() const {
   return realm()->debuggerObservesAllExecution() || hasDebugScript();
 }
 
-inline bool JSScript::hasBaselineScript() const {
+inline bool js::BaseScript::hasBaselineScript() const {
   return hasJitScript() && jitScript()->hasBaselineScript();
 }
 
-inline bool JSScript::hasIonScript() const {
+inline bool js::BaseScript::hasIonScript() const {
   return hasJitScript() && jitScript()->hasIonScript();
+}
+
+inline void js::BaseScript::initSharedData(SharedImmutableScriptData* data) {
+  MOZ_ASSERT(sharedData_ == nullptr);
+  MOZ_ASSERT_IF(isGenerator() || isAsync(),
+                data->nfixed() <= AbstractGeneratorObject::FixedSlotLimit);
+  sharedData_ = data;
 }
 
 inline bool JSScript::isIonCompilingOffThread() const {
@@ -205,14 +242,14 @@ inline uint32_t JSScript::getWarmUpCount() const {
   if (warmUpData_.isWarmUpCount()) {
     return warmUpData_.toWarmUpCount();
   }
-  return warmUpData_.toJitScript()->warmUpCount_;
+  return warmUpData_.toJitScript()->warmUpCount();
 }
 
 inline void JSScript::incWarmUpCounter(uint32_t amount) {
   if (warmUpData_.isWarmUpCount()) {
     warmUpData_.incWarmUpCount(amount);
   } else {
-    warmUpData_.toJitScript()->warmUpCount_ += amount;
+    warmUpData_.toJitScript()->incWarmUpCount(amount);
   }
 }
 
@@ -221,7 +258,7 @@ inline void JSScript::resetWarmUpCounterForGC() {
   if (warmUpData_.isWarmUpCount()) {
     warmUpData_.resetWarmUpCount(0);
   } else {
-    warmUpData_.toJitScript()->warmUpCount_ = 0;
+    warmUpData_.toJitScript()->resetWarmUpCount(0);
   }
 }
 

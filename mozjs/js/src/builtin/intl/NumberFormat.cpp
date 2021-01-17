@@ -25,13 +25,14 @@
 #include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
 #include "builtin/intl/LanguageTag.h"
+#include "builtin/intl/MeasureUnitGenerated.h"
+#include "builtin/intl/RelativeTimeFormat.h"
 #include "builtin/intl/ScopedICUObject.h"
 #include "ds/Sort.h"
 #include "gc/FreeOp.h"
 #include "js/CharacterEncoding.h"
 #include "js/PropertySpec.h"
 #include "js/RootingAPI.h"
-#include "js/StableStringChars.h"
 #include "js/TypeDecls.h"
 #include "js/Vector.h"
 #include "unicode/udata.h"
@@ -45,6 +46,7 @@
 #include "vm/BigIntType.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/SelfHosting.h"
 #include "vm/Stack.h"
 #include "vm/StringType.h"
@@ -64,18 +66,22 @@ using js::intl::DateTimeFormatOptions;
 using js::intl::FieldType;
 using js::intl::IcuLocale;
 
-using JS::AutoStableStringChars;
-
-const JSClassOps NumberFormatObject::classOps_ = {nullptr, /* addProperty */
-                                                  nullptr, /* delProperty */
-                                                  nullptr, /* enumerate */
-                                                  nullptr, /* newEnumerate */
-                                                  nullptr, /* resolve */
-                                                  nullptr, /* mayResolve */
-                                                  NumberFormatObject::finalize};
+const JSClassOps NumberFormatObject::classOps_ = {
+    nullptr,                       // addProperty
+    nullptr,                       // delProperty
+    nullptr,                       // enumerate
+    nullptr,                       // newEnumerate
+    nullptr,                       // resolve
+    nullptr,                       // mayResolve
+    NumberFormatObject::finalize,  // finalize
+    nullptr,                       // call
+    nullptr,                       // hasInstance
+    nullptr,                       // construct
+    nullptr,                       // trace
+};
 
 const JSClass NumberFormatObject::class_ = {
-    js_Object_str,
+    "Intl.NumberFormat",
     JSCLASS_HAS_RESERVED_SLOTS(NumberFormatObject::SLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_NumberFormat) |
         JSCLASS_FOREGROUND_FINALIZE,
@@ -102,7 +108,8 @@ static const JSFunctionSpec numberFormat_methods[] = {
 
 static const JSPropertySpec numberFormat_properties[] = {
     JS_SELF_HOSTED_GET("format", "$Intl_NumberFormat_format_get", 0),
-    JS_STRING_SYM_PS(toStringTag, "Object", JSPROP_READONLY), JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "Intl.NumberFormat", JSPROP_READONLY),
+    JS_PS_END};
 
 static bool NumberFormat(JSContext* cx, unsigned argc, Value* vp);
 
@@ -325,87 +332,25 @@ bool js::intl::NumberFormatterSkeleton::currencyDisplay(
   MOZ_CRASH("unexpected currency display type");
 }
 
-struct MeasureUnit {
-  const char* const type;
-  const char* const subtype;
-};
-
-/**
- * The list of currently supported simple unit identifiers.
- *
- * Note: Keep in sync with the measure unit lists in
- * - js/src/builtin/intl/NumberFormat.js
- * - intl/icu/data_filter.json
- *
- * The list must be kept in alphabetical order of the |subtype|.
- */
-static constexpr MeasureUnit simpleMeasureUnits[] = {
-    // clang-format off
-    {"area", "acre"},
-    {"digital", "bit"},
-    {"digital", "byte"},
-    {"temperature", "celsius"},
-    {"length", "centimeter"},
-    {"duration", "day"},
-    {"angle", "degree"},
-    {"temperature", "fahrenheit"},
-    {"volume", "fluid-ounce"},
-    {"length", "foot"},
-    {"volume", "gallon"},
-    {"digital", "gigabit"},
-    {"digital", "gigabyte"},
-    {"mass", "gram"},
-    {"area", "hectare"},
-    {"duration", "hour"},
-    {"length", "inch"},
-    {"digital", "kilobit"},
-    {"digital", "kilobyte"},
-    {"mass", "kilogram"},
-    {"length", "kilometer"},
-    {"volume", "liter"},
-    {"digital", "megabit"},
-    {"digital", "megabyte"},
-    {"length", "meter"},
-    {"length", "mile"},
-    {"length", "mile-scandinavian"},
-    {"volume", "milliliter"},
-    {"length", "millimeter"},
-    {"duration", "millisecond"},
-    {"duration", "minute"},
-    {"duration", "month"},
-    {"mass", "ounce"},
-    {"concentr", "percent"},
-    {"digital", "petabyte"},
-    {"mass", "pound"},
-    {"duration", "second"},
-    {"mass", "stone"},
-    {"digital", "terabit"},
-    {"digital", "terabyte"},
-    {"duration", "week"},
-    {"length", "yard"},
-    {"duration", "year"},
-    // clang-format on
-};
-
-static const MeasureUnit& FindSimpleMeasureUnit(const char* subtype) {
+static const MeasureUnit& FindSimpleMeasureUnit(const char* name) {
   auto measureUnit = std::lower_bound(
-      std::begin(simpleMeasureUnits), std::end(simpleMeasureUnits), subtype,
-      [](const auto& measureUnit, const char* subtype) {
-        return strcmp(measureUnit.subtype, subtype) < 0;
+      std::begin(simpleMeasureUnits), std::end(simpleMeasureUnits), name,
+      [](const auto& measureUnit, const char* name) {
+        return strcmp(measureUnit.name, name) < 0;
       });
   MOZ_ASSERT(measureUnit != std::end(simpleMeasureUnits),
              "unexpected unit identifier: unit not found");
-  MOZ_ASSERT(strcmp(measureUnit->subtype, subtype) == 0,
+  MOZ_ASSERT(strcmp(measureUnit->name, name) == 0,
              "unexpected unit identifier: wrong unit found");
   return *measureUnit;
 }
 
 static constexpr size_t MaxUnitLength() {
-  // Enable by default when bug 1560664 is fixed.
-#if __cplusplus >= 201703L
+  // Enable by default when libstdc++ 7 is the minimal version expected
+#if _GLIBCXX_RELEASE >= 7
   size_t length = 0;
   for (const auto& unit : simpleMeasureUnits) {
-    length = std::max(length, std::char_traits<char>::length(unit.subtype));
+    length = std::max(length, std::char_traits<char>::length(unit.name));
   }
   return length * 2 + std::char_traits<char>::length("-per-");
 #else
@@ -421,7 +366,7 @@ bool js::intl::NumberFormatterSkeleton::unit(JSLinearString* unit) {
 
   auto appendUnit = [this](const MeasureUnit& unit) {
     return append(unit.type, strlen(unit.type)) && append('-') &&
-           append(unit.subtype, strlen(unit.subtype));
+           append(unit.name, strlen(unit.name));
   };
 
   // |unit| can be a compound unit identifier, separated by "-per-".
@@ -890,16 +835,7 @@ static UFormattedNumber* NewUFormattedNumber(JSContext* cx) {
   return formatted;
 }
 
-// We also support UFormattedNumber in addition to UFormattedValue, in case
-// we're compiling against a system ICU which doesn't expose draft APIs.
-
-#ifndef U_HIDE_DRAFT_API
-using PartitionNumberPatternResult = const UFormattedValue*;
-#else
-using PartitionNumberPatternResult = const UFormattedNumber*;
-#endif
-
-static PartitionNumberPatternResult PartitionNumberPattern(
+static const UFormattedValue* PartitionNumberPattern(
     JSContext* cx, const UNumberFormatter* nf, UFormattedNumber* formatted,
     HandleValue x) {
   UErrorCode status = U_ZERO_ERROR;
@@ -939,7 +875,6 @@ static PartitionNumberPatternResult PartitionNumberPattern(
     return nullptr;
   }
 
-#ifndef U_HIDE_DRAFT_API
   const UFormattedValue* formattedValue =
       unumf_resultAsValue(formatted, &status);
   if (U_FAILURE(status)) {
@@ -947,18 +882,10 @@ static PartitionNumberPatternResult PartitionNumberPattern(
     return nullptr;
   }
   return formattedValue;
-#else
-  return formatted;
-#endif
 }
 
 static JSString* FormattedNumberToString(
-    JSContext* cx, PartitionNumberPatternResult formattedValue) {
-#ifndef U_HIDE_DRAFT_API
-  static_assert(
-      std::is_same<PartitionNumberPatternResult, const UFormattedValue*>::value,
-      "UFormattedValue arm");
-
+    JSContext* cx, const UFormattedValue* formattedValue) {
   UErrorCode status = U_ZERO_ERROR;
   int32_t strLength;
   const char16_t* str = ufmtval_getString(formattedValue, &strLength, &status);
@@ -968,22 +895,12 @@ static JSString* FormattedNumberToString(
   }
 
   return NewStringCopyN<CanGC>(cx, str, AssertedCast<uint32_t>(strLength));
-#else
-  static_assert(std::is_same<PartitionNumberPatternResult,
-                             const UFormattedNumber*>::value,
-                "UFormattedNumber arm");
-
-  return CallICU(cx,
-                 [formatted](UChar* chars, int32_t size, UErrorCode* status) {
-                   return unumf_resultToString(formatted, chars, size, status);
-                 });
-#endif
 }
 
 static bool FormatNumeric(JSContext* cx, const UNumberFormatter* nf,
                           UFormattedNumber* formatted, HandleValue x,
                           MutableHandleValue result) {
-  PartitionNumberPatternResult formattedValue =
+  const UFormattedValue* formattedValue =
       PartitionNumberPattern(cx, nf, formatted, x);
   if (!formattedValue) {
     return false;
@@ -998,8 +915,11 @@ static bool FormatNumeric(JSContext* cx, const UNumberFormatter* nf,
   return true;
 }
 
+enum class FormattingType { ForUnit, NotForUnit };
+
 static FieldType GetFieldTypeForNumberField(UNumberFormatFields fieldName,
-                                            HandleValue x) {
+                                            HandleValue x,
+                                            FormattingType formattingType) {
   // See intl/icu/source/i18n/unicode/unum.h for a detailed field list.  This
   // list is deliberately exhaustive: cases might have to be added/removed if
   // this code is compiled with a different ICU with more UNumberFormatFields
@@ -1037,6 +957,11 @@ static FieldType GetFieldTypeForNumberField(UNumberFormatFields fieldName,
     }
 
     case UNUM_PERCENT_FIELD:
+      // Percent fields are returned as "unit" elements when the number
+      // formatter's style is "unit".
+      if (formattingType == FormattingType::ForUnit) {
+        return &JSAtomState::unit;
+      }
       return &JSAtomState::percentSign;
 
     case UNUM_CURRENCY_FIELD:
@@ -1058,13 +983,11 @@ static FieldType GetFieldTypeForNumberField(UNumberFormatFields fieldName,
     case UNUM_EXPONENT_FIELD:
       return &JSAtomState::exponentInteger;
 
-#ifndef U_HIDE_DRAFT_API
     case UNUM_MEASURE_UNIT_FIELD:
       return &JSAtomState::unit;
 
     case UNUM_COMPACT_FIELD:
       return &JSAtomState::compact;
-#endif
 
 #ifndef U_HIDE_DEPRECATED_API
     case UNUM_FIELD_COUNT:
@@ -1095,26 +1018,22 @@ class NumberFormatFields {
   using FieldsVector = Vector<Field, 16>;
 
   FieldsVector fields_;
-  HandleValue number_;
 
  public:
-  NumberFormatFields(JSContext* cx, HandleValue number)
-      : fields_(cx), number_(number) {}
+  explicit NumberFormatFields(JSContext* cx) : fields_(cx) {}
 
-  MOZ_MUST_USE bool append(int32_t field, int32_t begin, int32_t end);
+  MOZ_MUST_USE bool append(FieldType type, int32_t begin, int32_t end);
 
   MOZ_MUST_USE ArrayObject* toArray(JSContext* cx,
                                     JS::HandleString overallResult,
                                     FieldType unitType);
 };
 
-bool NumberFormatFields::append(int32_t field, int32_t begin, int32_t end) {
+bool NumberFormatFields::append(FieldType type, int32_t begin, int32_t end) {
   MOZ_ASSERT(begin >= 0);
   MOZ_ASSERT(end >= 0);
   MOZ_ASSERT(begin < end, "erm, aren't fields always non-empty?");
 
-  FieldType type =
-      GetFieldTypeForNumberField(UNumberFormatFields(field), number_);
   return fields_.emplaceBack(uint32_t(begin), uint32_t(end), type);
 }
 
@@ -1410,11 +1329,14 @@ ArrayObject* NumberFormatFields::toArray(JSContext* cx,
   return partsArray;
 }
 
-#ifndef U_HIDE_DRAFT_API
-bool js::intl::FormattedNumberToParts(JSContext* cx,
-                                      const UFormattedValue* formattedValue,
-                                      HandleValue number, FieldType unitType,
-                                      MutableHandleValue result) {
+static bool FormattedNumberToParts(JSContext* cx,
+                                   const UFormattedValue* formattedValue,
+                                   HandleValue number,
+                                   FieldType relativeTimeUnit,
+                                   FormattingType formattingType,
+                                   MutableHandleValue result) {
+  MOZ_ASSERT(number.isNumeric());
+
   RootedString overallResult(cx, FormattedNumberToString(cx, formattedValue));
   if (!overallResult) {
     return false;
@@ -1437,7 +1359,7 @@ bool js::intl::FormattedNumberToParts(JSContext* cx,
 
   // Vacuum up fields in the overall formatted string.
 
-  NumberFormatFields fields(cx, number);
+  NumberFormatFields fields(cx);
 
   while (true) {
     bool hasMore = ufmtval_nextPosition(formattedValue, fpos, &status);
@@ -1462,12 +1384,15 @@ bool js::intl::FormattedNumberToParts(JSContext* cx,
       return false;
     }
 
-    if (!fields.append(field, beginIndex, endIndex)) {
+    FieldType type = GetFieldTypeForNumberField(UNumberFormatFields(field),
+                                                number, formattingType);
+
+    if (!fields.append(type, beginIndex, endIndex)) {
       return false;
     }
   }
 
-  ArrayObject* array = fields.toArray(cx, overallResult, unitType);
+  ArrayObject* array = fields.toArray(cx, overallResult, relativeTimeUnit);
   if (!array) {
     return false;
   }
@@ -1475,75 +1400,37 @@ bool js::intl::FormattedNumberToParts(JSContext* cx,
   result.setObject(*array);
   return true;
 }
-#else
-static ArrayObject* LegacyFormattedNumberToParts(
-    JSContext* cx, const UFormattedNumber* formatted, HandleValue x,
-    MutableHandleValue result) {
-  RootedString overallResult(cx, FormattedNumberToString(cx, formatted));
-  if (!overallResult) {
-    return false;
-  }
 
-  UErrorCode status = U_ZERO_ERROR;
-  UFieldPositionIterator* fpositer = ufieldpositer_open(&status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return false;
-  }
-
-  MOZ_ASSERT(fpositer);
-  ScopedICUObject<UFieldPositionIterator, ufieldpositer_close> toClose(
-      fpositer);
-
-  unumf_resultGetAllFieldPositions(formatted, fpositer, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return false;
-  }
-
-  // Vacuum up fields in the overall formatted string.
-
-  NumberFormatFields fields(cx, x);
-
-  int32_t field, beginIndex, endIndex;
-  while ((field = ufieldpositer_next(fpositer, &beginIndex, &endIndex)) >= 0) {
-    if (!fields.append(field, beginIndex, endIndex)) {
-      return false;
-    }
-  }
-
-  ArrayObject* array = fields.toArray(cx, overallResult, nullptr);
-  if (!array) {
-    return false;
-  }
-
-  result.setObject(*array);
-  return true;
+bool js::intl::FormattedRelativeTimeToParts(
+    JSContext* cx, const UFormattedValue* formattedValue, double timeValue,
+    FieldType relativeTimeUnit, MutableHandleValue result) {
+  Value tval = DoubleValue(timeValue);
+  return FormattedNumberToParts(
+      cx, formattedValue, HandleValue::fromMarkedLocation(&tval),
+      relativeTimeUnit, FormattingType::NotForUnit, result);
 }
-#endif
 
 static bool FormatNumericToParts(JSContext* cx, const UNumberFormatter* nf,
                                  UFormattedNumber* formatted, HandleValue x,
+                                 FormattingType formattingType,
                                  MutableHandleValue result) {
-  PartitionNumberPatternResult formattedValue =
+  const UFormattedValue* formattedValue =
       PartitionNumberPattern(cx, nf, formatted, x);
   if (!formattedValue) {
     return false;
   }
 
-#ifndef U_HIDE_DRAFT_API
-  return intl::FormattedNumberToParts(cx, formattedValue, x, nullptr, result);
-#else
-  return LegacyFormattedNumberToParts(cx, formattedValue, x, result);
-#endif
+  return FormattedNumberToParts(cx, formattedValue, x, nullptr, formattingType,
+                                result);
 }
 
 bool js::intl_FormatNumber(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 3);
+  MOZ_ASSERT(args.length() == 4);
   MOZ_ASSERT(args[0].isObject());
   MOZ_ASSERT(args[1].isNumeric());
   MOZ_ASSERT(args[2].isBoolean());
+  MOZ_ASSERT(args[3].isBoolean());
 
   Rooted<NumberFormatObject*> numberFormat(
       cx, &args[0].toObject().as<NumberFormatObject>());
@@ -1575,7 +1462,11 @@ bool js::intl_FormatNumber(JSContext* cx, unsigned argc, Value* vp) {
 
   // Use the UNumberFormatter to actually format the number.
   if (args[2].toBoolean()) {
-    return FormatNumericToParts(cx, nf, formatted, args[1], args.rval());
+    FormattingType formattingType = args[3].toBoolean()
+                                        ? FormattingType::ForUnit
+                                        : FormattingType::NotForUnit;
+    return FormatNumericToParts(cx, nf, formatted, args[1], formattingType,
+                                args.rval());
   }
 
   return FormatNumeric(cx, nf, formatted, args[1], args.rval());

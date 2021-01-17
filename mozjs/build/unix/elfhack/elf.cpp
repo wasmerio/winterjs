@@ -180,6 +180,14 @@ Elf::Elf(std::ifstream& file) {
   sections = new ElfSection*[ehdr->e_shnum];
   for (int i = 0; i < ehdr->e_shnum; i++) sections[i] = nullptr;
   for (int i = 1; i < ehdr->e_shnum; i++) {
+    // The .dynamic section is going to have references to other sections,
+    // so it's better to start with that one and recursively initialize those
+    // other sections first, to avoid possible infinite recursion (bug 1606739).
+    if (tmp_shdr[i]->sh_type == SHT_DYNAMIC) {
+      getSection(i);
+    }
+  }
+  for (int i = 1; i < ehdr->e_shnum; i++) {
     if (sections[i] != nullptr) continue;
     getSection(i);
   }
@@ -501,7 +509,7 @@ ElfSection::ElfSection(Elf_Shdr& s, std::ifstream* file, Elf* parent)
     if (!data) {
       throw std::runtime_error("Could not malloc ElfSection data");
     }
-    int pos = file->tellg();
+    auto pos = file->tellg();
     file->seekg(shdr.sh_offset);
     file->read(data, shdr.sh_size);
     file->seekg(pos);
@@ -714,7 +722,7 @@ bool ElfDynamic_Section::setValueForType(unsigned int tag, ElfValue* val) {
 ElfDynamic_Section::ElfDynamic_Section(Elf_Shdr& s, std::ifstream* file,
                                        Elf* parent)
     : ElfSection(s, file, parent) {
-  int pos = file->tellg();
+  auto pos = file->tellg();
   dyns.resize(s.sh_size / s.sh_entsize);
   file->seekg(shdr.sh_offset);
   // Here we assume tags refer to only one section (e.g. DT_RELSZ accounts
@@ -815,7 +823,7 @@ void ElfDynamic_Section::serialize(std::ofstream& file, char ei_class,
 ElfSymtab_Section::ElfSymtab_Section(Elf_Shdr& s, std::ifstream* file,
                                      Elf* parent)
     : ElfSection(s, file, parent) {
-  int pos = file->tellg();
+  auto pos = file->tellg();
   syms.resize(s.sh_size / s.sh_entsize);
   ElfStrtab_Section* strtab = (ElfStrtab_Section*)getLink();
   file->seekg(shdr.sh_offset);

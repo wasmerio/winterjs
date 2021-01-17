@@ -14,8 +14,8 @@
 #include "gc/Marking.h"
 #include "jit/arm/disasm/Disasm-arm.h"
 #include "jit/arm/MacroAssembler-arm.h"
+#include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
-#include "jit/JitRealm.h"
 #include "jit/MacroAssembler.h"
 #include "vm/Realm.h"
 
@@ -48,6 +48,7 @@ ABIArg ABIArgGenerator::softNext(MIRType type) {
     case MIRType::Int32:
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+    case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
         stackOffset_ += sizeof(uint32_t);
@@ -109,6 +110,7 @@ ABIArg ABIArgGenerator::hardNext(MIRType type) {
     case MIRType::Int32:
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+    case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
         stackOffset_ += sizeof(uint32_t);
@@ -1114,13 +1116,6 @@ VFPRegister VFPRegister::uintOverlay(unsigned int which) const {
   return VFPRegister(code_, UInt);
 }
 
-bool VFPRegister::isInvalid() const { return _isInvalid; }
-
-bool VFPRegister::isMissing() const {
-  MOZ_ASSERT(!_isInvalid);
-  return _isMissing;
-}
-
 bool Assembler::oom() const {
   return AssemblerShared::oom() || m_buffer.oom() || jumpRelocations_.oom() ||
          dataRelocations_.oom();
@@ -1214,6 +1209,20 @@ BufferOffset Assembler::as_eor(Register dest, Register src1, Operand2 op2,
 BufferOffset Assembler::as_orr(Register dest, Register src1, Operand2 op2,
                                SBit s, Condition c) {
   return as_alu(dest, src1, op2, OpOrr, s, c);
+}
+
+// Reverse byte operations.
+BufferOffset Assembler::as_rev(Register dest, Register src, Condition c) {
+  return writeInst((int)c | 0b0000'0110'1011'1111'0000'1111'0011'0000 |
+                   RD(dest) | src.code());
+}
+BufferOffset Assembler::as_rev16(Register dest, Register src, Condition c) {
+  return writeInst((int)c | 0b0000'0110'1011'1111'0000'1111'1011'0000 |
+                   RD(dest) | src.code());
+}
+BufferOffset Assembler::as_revsh(Register dest, Register src, Condition c) {
+  return writeInst((int)c | 0b0000'0110'1111'1111'0000'1111'1011'0000 |
+                   RD(dest) | src.code());
 }
 
 // Mathematical operations.
@@ -2272,13 +2281,13 @@ struct PoolHeader : Instruction {
         : size(size_), isNatural(isNatural_), ONES(0xffff) {}
 
     explicit Header(const Instruction* i) {
-      JS_STATIC_ASSERT(sizeof(Header) == sizeof(uint32_t));
+      static_assert(sizeof(Header) == sizeof(uint32_t));
       memcpy(this, i, sizeof(Header));
       MOZ_ASSERT(ONES == 0xffff);
     }
 
     uint32_t raw() const {
-      JS_STATIC_ASSERT(sizeof(Header) == sizeof(uint32_t));
+      static_assert(sizeof(Header) == sizeof(uint32_t));
       uint32_t dest;
       memcpy(&dest, this, sizeof(Header));
       return dest;

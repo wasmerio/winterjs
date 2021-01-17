@@ -13,7 +13,6 @@
 
 #include "jsapi.h"  // JS_ReportErrorASCII
 
-#include "builtin/Promise.h"  // js::PromiseObject
 #include "builtin/streams/MiscellaneousOperations.h"  // js::CreateAlgorithmFromUnderlyingMethod, js::InvokeOrNoop
 #include "builtin/streams/QueueWithSizes.h"  // js::{EnqueueValueWithSize,QueueIsEmpty,ResetQueue}
 #include "builtin/streams/WritableStream.h"  // js::WritableStream
@@ -27,7 +26,8 @@
 #include "vm/JSContext.h"    // JSContext
 #include "vm/JSObject.h"     // JSObject
 #include "vm/List.h"         // js::ListObject
-#include "vm/Runtime.h"      // JSAtomState
+#include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
+#include "vm/Runtime.h"        // JSAtomState
 
 #include "builtin/streams/HandlerFunction-inl.h"  // js::TargetFromHandler
 #include "builtin/streams/MiscellaneousOperations-inl.h"  // js::PromiseCall
@@ -52,6 +52,7 @@ using js::ListObject;
 using js::NewHandler;
 using js::PeekQueueValue;
 using js::PromiseObject;
+using js::PromiseResolvedWithUndefined;
 using js::TargetFromHandler;
 using js::WritableStream;
 using js::WritableStreamCloseQueuedOrInFlight;
@@ -79,7 +80,7 @@ JSObject* js::WritableStreamControllerAbortSteps(
   Rooted<JSObject*> result(cx);
   if (unwrappedAbortMethod.isUndefined()) {
     // CreateAlgorithmFromUnderlyingMethod step 7.
-    result = PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+    result = PromiseResolvedWithUndefined(cx);
     if (!result) {
       return nullptr;
     }
@@ -683,7 +684,7 @@ static MOZ_MUST_USE JSObject* PerformCloseAlgorithm(
   // Step 7: (If method is undefined,) Return an algorithm which returns a
   //         promise resolved with undefined (implicit).
   if (unwrappedController->closeMethod().isUndefined()) {
-    return PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+    return PromiseResolvedWithUndefined(cx);
   }
 
   // Step 6: If method is not undefined,
@@ -733,7 +734,7 @@ static MOZ_MUST_USE JSObject* PerformWriteAlgorithm(
   // Step 7: (If method is undefined,) Return an algorithm which returns a
   //         promise resolved with undefined (implicit).
   if (unwrappedController->writeMethod().isUndefined()) {
-    return PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+    return PromiseResolvedWithUndefined(cx);
   }
 
   // Step 6: If method is not undefined,

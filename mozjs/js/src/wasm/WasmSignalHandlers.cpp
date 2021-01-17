@@ -226,6 +226,10 @@ using mozilla::DebugOnly;
 #  define R13_sig(p) ((p)->thread.__sp)
 #  define R14_sig(p) ((p)->thread.__lr)
 #  define R15_sig(p) ((p)->thread.__pc)
+#  define EPC_sig(p) ((p)->thread.__pc)
+#  define RFP_sig(p) ((p)->thread.__fp)
+#  define R31_sig(p) ((p)->thread.__sp)
+#  define RLR_sig(p) ((p)->thread.__lr)
 #else
 #  error "Don't know how to read/write to the thread state via the mcontext_t."
 #endif
@@ -351,6 +355,12 @@ struct macos_arm_context {
   arm_neon_state_t float_;
 };
 #    define CONTEXT macos_arm_context
+#  elif defined(__aarch64__)
+struct macos_aarch64_context {
+  arm_thread_state64_t thread;
+  arm_neon_state64_t float_;
+};
+#    define CONTEXT macos_aarch64_context
 #  else
 #    error Unsupported architecture
 #  endif
@@ -707,7 +717,9 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
   // due to this trap occurring in the indirect call prologue, while fp points
   // to the caller's Frame which can be in a different Module. In any case,
   // though, the containing JSContext is the same.
-  Instance* instance = ((Frame*)ContextToFP(context))->tls->instance;
+
+  auto* frame = reinterpret_cast<Frame*>(ContextToFP(context));
+  Instance* instance = GetNearestEffectiveTls(frame)->instance;
   MOZ_RELEASE_ASSERT(&instance->code() == &segment.code() ||
                      trap == Trap::IndirectCallBadSig);
 
@@ -743,7 +755,6 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
 // Compiled in all user binaries, so should be stable over time.
 static const unsigned sThreadLocalArrayPointerIndex = 11;
 
-#ifndef JS_ENABLE_UWP
 static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
   // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
   if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
@@ -767,7 +778,6 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
 
   return EXCEPTION_CONTINUE_EXECUTION;
 }
-#endif
 
 #elif defined(XP_DARWIN)
 // On OSX we are forced to use the lower-level Mach exception mechanism instead
@@ -818,6 +828,11 @@ static bool HandleMachException(const ExceptionRequest& request) {
   unsigned int float_state_count = ARM_NEON_STATE_COUNT;
   int thread_state = ARM_THREAD_STATE;
   int float_state = ARM_NEON_STATE;
+#  elif defined(__aarch64__)
+  unsigned int thread_state_count = ARM_THREAD_STATE64_COUNT;
+  unsigned int float_state_count = ARM_NEON_STATE64_COUNT;
+  int thread_state = ARM_THREAD_STATE64;
+  int float_state = ARM_NEON_STATE64;
 #  else
 #    error Unsupported architecture
 #  endif
@@ -999,11 +1014,6 @@ void wasm::EnsureEagerProcessSignalHandlers() {
   return;
 #endif
 
-  // Signal handlers are currently disabled when recording or replaying.
-  if (mozilla::recordreplay::IsRecordingOrReplaying()) {
-    return;
-  }
-
 #if defined(ANDROID) && defined(MOZ_LINKER)
   // Signal handling is broken on some android systems.
   if (IsSignalHandlingBroken()) {
@@ -1027,13 +1037,11 @@ void wasm::EnsureEagerProcessSignalHandlers() {
   // such as MemoryProtectionExceptionHandler that assume we are crashing.
   const bool firstHandler = true;
 #  endif
-#  ifndef JS_ENABLE_UWP
   if (!AddVectoredExceptionHandler(firstHandler, WasmTrapHandler)) {
     // Windows has all sorts of random security knobs for disabling things
     // so make this a dynamic failure that disables wasm, not a MOZ_CRASH().
     return;
   }
-#  endif
 
 #elif defined(XP_DARWIN)
   // All the Mach setup in EnsureLazyProcessSignalHandlers.
@@ -1176,7 +1184,8 @@ bool wasm::MemoryAccessTraps(const RegisterState& regs, uint8_t* addr,
     return false;
   }
 
-  Instance& instance = *reinterpret_cast<Frame*>(regs.fp)->tls->instance;
+  Instance& instance =
+      *GetNearestEffectiveTls(Frame::fromUntaggedWasmExitFP(regs.fp))->instance;
   MOZ_ASSERT(&instance.code() == &segment.code());
 
   if (!instance.memoryAccessInGuardRegion((uint8_t*)addr, numBytes)) {

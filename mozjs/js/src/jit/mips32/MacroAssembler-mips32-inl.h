@@ -68,6 +68,10 @@ void MacroAssembler::move32To64SignExtend(Register src, Register64 dest) {
   ma_sra(dest.high, dest.low, Imm32(31));
 }
 
+void MacroAssembler::move32ZeroExtendToPtr(Register src, Register dest) {
+  move32(src, dest);
+}
+
 // ===============================================================
 // Load instructions
 
@@ -131,6 +135,19 @@ void MacroAssembler::xor64(Register64 src, Register64 dest) {
 void MacroAssembler::xorPtr(Register src, Register dest) { ma_xor(dest, src); }
 
 void MacroAssembler::xorPtr(Imm32 imm, Register dest) { ma_xor(dest, imm); }
+
+// ===============================================================
+// Swap instructions
+
+void MacroAssembler::byteSwap64(Register64 reg) {
+  byteSwap32(reg.high);
+  byteSwap32(reg.low);
+
+  // swap reg.high and reg.low.
+  ma_xor(reg.high, reg.low);
+  ma_xor(reg.low, reg.high);
+  ma_xor(reg.high, reg.low);
+}
 
 // ===============================================================
 // Arithmetic functions
@@ -825,16 +842,11 @@ void MacroAssembler::branchTestSymbol(Condition cond, const ValueOperand& value,
   branchTestSymbol(cond, value.typeReg(), label);
 }
 
-void MacroAssembler::branchTestBigInt(Condition cond, Register tag,
-                                      Label* label) {
-  branchTestBigIntImpl(cond, tag, label);
-}
-
 void MacroAssembler::branchTestBigInt(Condition cond, const BaseIndex& address,
                                       Label* label) {
   SecondScratchRegisterScope scratch2(*this);
-  splitTag(value, scratch2);
-  branchTestBigInt(cond, scratch2, label);
+  Register tag = extractTag(address, scratch2);
+  branchTestBigInt(cond, tag, label);
 }
 
 void MacroAssembler::branchTestBigInt(Condition cond, const ValueOperand& value,

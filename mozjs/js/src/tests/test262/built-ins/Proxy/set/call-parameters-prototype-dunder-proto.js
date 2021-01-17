@@ -26,7 +26,7 @@ info: |
   ...
   12. Return true.
 includes: [proxyTrapsHelper.js]
-features: [Proxy]
+features: [Proxy, __proto__]
 ---*/
 
 var _handler, _target, _prop, _value, _receiver;

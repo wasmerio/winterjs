@@ -6,6 +6,8 @@
 
 #include "util/NativeStack.h"
 
+#include "mozilla/Assertions.h"  // MOZ_ASSERT, MOZ_RELEASE_ASSERT, MOZ_CRASH
+
 #ifdef XP_WIN
 #  include "util/Windows.h"
 #elif defined(XP_DARWIN) || defined(DARWIN) || defined(XP_UNIX)
@@ -31,7 +33,7 @@
 #  error "Unsupported platform"
 #endif
 
-#include "jsfriendapi.h"
+#include "js/friend/StackLimits.h"  // JS_STACK_GROWTH_DIRECTION
 
 #if defined(XP_WIN)
 
@@ -42,7 +44,7 @@ void* js::GetNativeStackBaseImpl() {
 
 #elif defined(SOLARIS)
 
-JS_STATIC_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
+static_assert(JS_STACK_GROWTH_DIRECTION < 0);
 
 void* js::GetNativeStackBaseImpl() {
   stack_t st;
@@ -52,7 +54,7 @@ void* js::GetNativeStackBaseImpl() {
 
 #elif defined(AIX)
 
-JS_STATIC_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
+static_assert(JS_STACK_GROWTH_DIRECTION < 0);
 
 void* js::GetNativeStackBaseImpl() {
   ucontext_t context;

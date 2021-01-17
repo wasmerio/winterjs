@@ -14,6 +14,7 @@
 #include "jsnum.h"
 
 #include "builtin/Array.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "util/StringBuffer.h"
 #include "vm/Realm.h"
 
@@ -681,7 +682,7 @@ bool JSONParser<CharT>::parse(MutableHandleValue vp) {
             }
           }
           PropertyVector& properties = stack.back().properties();
-          if (!properties.append(IdValuePair(id))) {
+          if (!properties.emplaceBack(id)) {
             return false;
           }
           token = advancePropertyColon();

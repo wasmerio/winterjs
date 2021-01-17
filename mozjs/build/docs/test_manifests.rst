@@ -137,14 +137,26 @@ dupe-manifest
 
    The value of this key is ignored.
 
-
 skip-if
    Skip this test if the specified condition is true.
    See :ref:`manifest_filter_language`.
 
+   Conditions can be specified on multiple lines, where each line is implicitly
+   joined by a logical OR (``||``). This makes it easier to add comments to
+   distinct failures. For example:
+
+   .. parsed-literal::
+
+      [test_foo.js]
+      skip-if =
+          os == "mac" && fission  # bug 123 - fails on fission
+          os == "windows" && debug  # bug 456 - hits an assertion
+
 fail-if
    Expect test failure if the specified condition is true.
    See :ref:`manifest_filter_language`.
+
+   Conditions can be specified on multiple lines (see ``skip-if``).
 
 run-sequentially
    If present, the test should not be run in parallel with other tests.
@@ -156,6 +168,13 @@ run-sequentially
 
    By convention, the value of this key is a string describing why the test
    can't be run in parallel.
+
+scheme
+   Changes the scheme and domain from which the test runs. (Only used in mochitest suites)
+   
+   There are two possible values:
+      - ``http`` (default): The test will run from http://mochi.test:8888
+      - ``https``: The test will run from https://example.com:443
 
 .. _manifest_filter_language:
 

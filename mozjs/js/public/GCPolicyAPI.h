@@ -54,26 +54,12 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
 
+#include <type_traits>
+
+#include "js/GCTypeMacros.h"  // JS_FOR_EACH_PUBLIC_GC_POINTER_TYPE
 #include "js/TraceKind.h"
 #include "js/TracingAPI.h"
 #include "js/TypeDecls.h"
-
-// Expand the given macro D for each public GC pointer.
-#define FOR_EACH_PUBLIC_GC_POINTER_TYPE(D) \
-  D(JS::Symbol*)                           \
-  D(JS::BigInt*)                           \
-  D(JSAtom*)                               \
-  D(JSFunction*)                           \
-  D(JSObject*)                             \
-  D(JSScript*)                             \
-  D(JSString*)
-
-// Expand the given macro D for each public tagged GC pointer type.
-#define FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(D) \
-  D(JS::Value)                                    \
-  D(jsid)
-
-#define FOR_EACH_PUBLIC_AGGREGATE_GC_POINTER_TYPE(D) D(JSPropertyDescriptor)
 
 namespace JS {
 
@@ -81,7 +67,7 @@ namespace JS {
 // policy dispatches to the underlying struct for GC interactions.
 template <typename T>
 struct StructGCPolicy {
-  static_assert(!mozilla::IsPointer<T>::value,
+  static_assert(!std::is_pointer_v<T>,
                 "Pointer type not allowed for StructGCPolicy");
 
   static void trace(JSTracer* trc, T* tp, const char* name) { tp->trace(trc); }
@@ -117,7 +103,7 @@ struct GCPolicy<uint64_t> : public IgnoreGCPolicy<uint64_t> {};
 
 template <typename T>
 struct GCPointerPolicy {
-  static_assert(mozilla::IsPointer<T>::value,
+  static_assert(std::is_pointer_v<T>,
                 "Non-pointer type not allowed for GCPointerPolicy");
 
   static void trace(JSTracer* trc, T* vp, const char* name) {
@@ -145,7 +131,7 @@ struct GCPointerPolicy {
   struct GCPolicy<Type> : public GCPointerPolicy<Type> {}; \
   template <>                                              \
   struct GCPolicy<Type const> : public GCPointerPolicy<Type const> {};
-FOR_EACH_PUBLIC_GC_POINTER_TYPE(EXPAND_SPECIALIZE_GCPOLICY)
+JS_FOR_EACH_PUBLIC_GC_POINTER_TYPE(EXPAND_SPECIALIZE_GCPOLICY)
 #undef EXPAND_SPECIALIZE_GCPOLICY
 
 template <typename T>
@@ -215,6 +201,9 @@ struct GCPolicy<mozilla::UniquePtr<T, D>> {
     return true;
   }
 };
+
+template <>
+struct GCPolicy<mozilla::Nothing> : public IgnoreGCPolicy<mozilla::Nothing> {};
 
 // GCPolicy<Maybe<T>> forwards tracing/sweeping to GCPolicy<T*> if
 // when the Maybe<T> is full.

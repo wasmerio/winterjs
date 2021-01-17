@@ -8,34 +8,37 @@
 
 #include "mozilla/Assertions.h"  // for AssertionConditionType
 #include "mozilla/HashTable.h"   // for HashMapEntry, HashTable<>::Ptr, HashMap
-#include "mozilla/Move.h"        // for std::move
 #include "mozilla/UniquePtr.h"   // for UniquePtr
+
+#include <utility>  // for std::move
 
 #include "jsapi.h"
 
-#include "debugger/DebugAPI.h"  // for DebugAPI
-#include "debugger/Debugger.h"  // for JSBreakpointSite, Breakpoint
-#include "gc/Barrier.h"         // for GCPtrNativeObject, WriteBarriered
-#include "gc/Cell.h"            // for TenuredCell
-#include "gc/FreeOp.h"          // for JSFreeOp
-#include "gc/GCEnum.h"          // for MemoryUse, MemoryUse::BreakpointSite
-#include "gc/Marking.h"         // for IsAboutToBeFinalized
-#include "gc/Zone.h"            // for Zone
-#include "gc/ZoneAllocator.h"   // for AddCellMemory
-#include "jit/BaselineJIT.h"    // for BaselineScript
-#include "vm/JSContext.h"       // for JSContext
-#include "vm/JSScript.h"        // for JSScript, DebugScriptMap
-#include "vm/NativeObject.h"    // for NativeObject
-#include "vm/Realm.h"           // for Realm, AutoRealm
-#include "vm/Runtime.h"         // for ReportOutOfMemory
-#include "vm/Stack.h"           // for ActivationIterator, Activation
+#include "debugger/DebugAPI.h"    // for DebugAPI
+#include "debugger/Debugger.h"    // for JSBreakpointSite, Breakpoint
+#include "gc/Cell.h"              // for TenuredCell
+#include "gc/FreeOp.h"            // for JSFreeOp
+#include "gc/GCEnum.h"            // for MemoryUse, MemoryUse::BreakpointSite
+#include "gc/Marking.h"           // for IsAboutToBeFinalized
+#include "gc/Zone.h"              // for Zone
+#include "gc/ZoneAllocator.h"     // for AddCellMemory
+#include "jit/BaselineJIT.h"      // for BaselineScript
+#include "vm/BytecodeIterator.h"  // for AllBytecodesIterable
+#include "vm/JSContext.h"         // for JSContext
+#include "vm/JSScript.h"          // for JSScript, DebugScriptMap
+#include "vm/NativeObject.h"      // for NativeObject
+#include "vm/Realm.h"             // for Realm, AutoRealm
+#include "vm/Runtime.h"           // for ReportOutOfMemory
+#include "vm/Stack.h"             // for ActivationIterator, Activation
 
-#include "gc/FreeOp-inl.h"     // for JSFreeOp::free_
-#include "gc/GC-inl.h"         // for ZoneCellIter
-#include "gc/Marking-inl.h"    // for CheckGCThingAfterMovingGC
-#include "vm/JSContext-inl.h"  // for JSContext::check
-#include "vm/JSScript-inl.h"   // for JSScript::hasBaselineScript
-#include "vm/Realm-inl.h"      // for AutoRealm::AutoRealm
+#include "gc/FreeOp-inl.h"            // for JSFreeOp::free_
+#include "gc/GC-inl.h"                // for ZoneCellIter
+#include "gc/Marking-inl.h"           // for CheckGCThingAfterMovingGC
+#include "gc/WeakMap-inl.h"           // for WeakMap::remove
+#include "vm/BytecodeIterator-inl.h"  // for AllBytecodesIterable
+#include "vm/JSContext-inl.h"         // for JSContext::check
+#include "vm/JSScript-inl.h"          // for JSScript::hasBaselineScript
+#include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 
 namespace js {
 
@@ -71,6 +74,8 @@ DebugScript* DebugScript::getOrCreate(JSContext* cx, JSScript* script) {
 
     script->zone()->debugScriptMap = std::move(map);
   }
+
+  MOZ_ASSERT(script->hasBytecode());
 
   DebugScript* borrowed = debug.get();
   if (!script->zone()->debugScriptMap->putNew(script, std::move(debug))) {
@@ -154,30 +159,20 @@ void DebugScript::destroyBreakpointSite(JSFreeOp* fop, JSScript* script,
 }
 
 /* static */
-void DebugScript::clearBreakpointsIn(JSFreeOp* fop, Realm* realm, Debugger* dbg,
-                                     JSObject* handler) {
-  for (auto script = realm->zone()->cellIter<JSScript>(); !script.done();
-       script.next()) {
-    if (script->realm() == realm && script->hasDebugScript()) {
-      clearBreakpointsIn(fop, script, dbg, handler);
-    }
-  }
-}
-
-/* static */
 void DebugScript::clearBreakpointsIn(JSFreeOp* fop, JSScript* script,
                                      Debugger* dbg, JSObject* handler) {
+  MOZ_ASSERT(script);
   // Breakpoints hold wrappers in the script's compartment for the handler. Make
   // sure we don't try to search for the unwrapped handler.
-  MOZ_ASSERT_IF(script && handler,
-                script->compartment() == handler->compartment());
+  MOZ_ASSERT_IF(handler, script->compartment() == handler->compartment());
 
   if (!script->hasDebugScript()) {
     return;
   }
 
-  for (jsbytecode* pc = script->code(); pc < script->codeEnd(); pc++) {
-    JSBreakpointSite* site = getBreakpointSite(script, pc);
+  AllBytecodesIterable iter(script);
+  for (BytecodeLocation loc : iter) {
+    JSBreakpointSite* site = getBreakpointSite(script, loc.toRawBytecode());
     if (site) {
       Breakpoint* nextbp;
       for (Breakpoint* bp = site->firstBreakpoint(); bp; bp = nextbp) {
@@ -257,7 +252,7 @@ bool DebugScript::incrementGeneratorObserverCount(JSContext* cx,
 
   // It is our caller's responsibility, before bumping the generator observer
   // count, to make sure that the baseline code includes the necessary
-  // JSOP_AFTERYIELD instrumentation by calling
+  // JSOp::AfterYield instrumentation by calling
   // {ensure,update}ExecutionObservabilityOfScript.
   MOZ_ASSERT_IF(script->hasBaselineScript(),
                 script->baselineScript()->hasDebugInstrumentation());

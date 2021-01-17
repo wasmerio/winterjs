@@ -17,11 +17,26 @@
 #include "jstypes.h"            // for JS_PUBLIC_API
 #include "debugger/Debugger.h"  // for DebuggerScriptReferent
 #include "gc/Cell.h"            // for Cell
-#include "vm/JSScript.h"        // for BaseScript, JSScript, LazyScript
+#include "vm/JSScript.h"        // for BaseScript, JSScript
 #include "vm/NativeObject.h"    // for NativeObject
 #include "wasm/WasmJS.h"        // for WasmInstanceObject
 
+#include "debugger/Debugger-inl.h"  // for Debugger::fromJSObject
+
 class JS_PUBLIC_API JSObject;
+
+// The Debugger.Script.prototype object also has a class of
+// DebuggerScript::class_ so we differentiate instances from the prototype
+// based on the presence of an owner debugger.
+inline bool js::DebuggerScript::isInstance() const {
+  return !getReservedSlot(OWNER_SLOT).isUndefined();
+}
+
+inline js::Debugger* js::DebuggerScript::owner() const {
+  MOZ_ASSERT(isInstance());
+  JSObject* dbgobj = &getReservedSlot(OWNER_SLOT).toObject();
+  return Debugger::fromJSObject(dbgobj);
+}
 
 js::gc::Cell* js::DebuggerScript::getReferentCell() const {
   return static_cast<gc::Cell*>(getPrivate());
@@ -29,24 +44,19 @@ js::gc::Cell* js::DebuggerScript::getReferentCell() const {
 
 js::DebuggerScriptReferent js::DebuggerScript::getReferent() const {
   if (gc::Cell* cell = getReferentCell()) {
-    if (cell->is<JSScript>()) {
-      return mozilla::AsVariant(cell->as<JSScript>());
-    }
-    if (cell->is<LazyScript>()) {
-      return mozilla::AsVariant(cell->as<LazyScript>());
+    if (cell->is<BaseScript>()) {
+      return mozilla::AsVariant(cell->as<BaseScript>());
     }
     MOZ_ASSERT(cell->is<JSObject>());
     return mozilla::AsVariant(
         &static_cast<NativeObject*>(cell)->as<WasmInstanceObject>());
   }
-  return mozilla::AsVariant(static_cast<JSScript*>(nullptr));
+  return mozilla::AsVariant(static_cast<BaseScript*>(nullptr));
 }
 
 js::BaseScript* js::DebuggerScript::getReferentScript() const {
   gc::Cell* cell = getReferentCell();
-
-  MOZ_ASSERT(cell->is<JSScript>() || cell->is<LazyScript>());
-  return static_cast<js::BaseScript*>(cell);
+  return cell->as<BaseScript>();
 }
 
 #endif /* debugger_Script_inl_h */

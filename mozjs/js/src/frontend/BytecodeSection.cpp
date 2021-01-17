@@ -7,127 +7,138 @@
 #include "frontend/BytecodeSection.h"
 
 #include "mozilla/Assertions.h"       // MOZ_ASSERT
-#include "mozilla/PodOperations.h"    // PodZero
 #include "mozilla/ReverseIterator.h"  // mozilla::Reversed
 
-#include "frontend/ParseNode.h"      // ObjectBox
+#include "frontend/AbstractScopePtr.h"  // ScopeIndex
+#include "frontend/CompilationInfo.h"
 #include "frontend/SharedContext.h"  // FunctionBox
 #include "vm/BytecodeUtil.h"         // INDEX_LIMIT, StackUses, StackDefs
-#include "vm/JSContext.h"            // JSContext
-#include "vm/RegExpObject.h"         // RegexpObject
+#include "vm/GlobalObject.h"
+#include "vm/JSContext.h"     // JSContext
+#include "vm/RegExpObject.h"  // RegexpObject
+#include "vm/Scope.h"         // GlobalScope
 
 using namespace js;
 using namespace js::frontend;
 
-bool GCThingList::append(ObjectBox* objbox, uint32_t* index) {
-  // Append the object to the vector and return the index in *index. Also add
-  // the ObjectBox to the |lastbox| linked list for finishInnerFunctions below.
+bool GCThingList::append(FunctionBox* funbox, GCThingIndex* index) {
+  // Append the function to the vector and return the index in *index.
+  *index = GCThingIndex(vector.length());
 
-  MOZ_ASSERT(objbox->isObjectBox());
-  MOZ_ASSERT(!objbox->emitLink);
-  objbox->emitLink = lastbox;
-  lastbox = objbox;
-
-  *index = vector.length();
-  return vector.append(
-      mozilla::AsVariant(StackGCCellPtr(JS::GCCellPtr(objbox->object()))));
-}
-
-void GCThingList::finishInnerFunctions() {
-  ObjectBox* objbox = lastbox;
-  while (objbox) {
-    if (objbox->isFunctionBox()) {
-      objbox->asFunctionBox()->finish();
-    }
-    objbox = objbox->emitLink;
-  }
-}
-
-bool GCThingList::finish(JSContext* cx, mozilla::Span<JS::GCCellPtr> array) {
-  MOZ_ASSERT(length() <= INDEX_LIMIT);
-  MOZ_ASSERT(length() == array.size());
-
-  struct Matcher {
-    JSContext* cx;
-    uint32_t i;
-    mozilla::Span<JS::GCCellPtr>& array;
-
-    bool operator()(StackGCCellPtr& value) {
-      array[i] = value.get();
-      return true;
-    }
-
-    bool operator()(BigIntCreationData& data) {
-      BigInt* bi = data.createBigInt(cx);
-      if (!bi) {
-        return false;
-      }
-      array[i] = JS::GCCellPtr(bi);
-      return true;
-    }
-
-    bool operator()(RegExpCreationData& data) {
-      RegExpObject* regexp = data.createRegExp(cx);
-      if (!regexp) {
-        return false;
-      }
-      array[i] = JS::GCCellPtr(regexp);
-      return true;
-    }
-
-    bool operator()(ObjLiteralCreationData& data) {
-      JSObject* obj = data.create(cx);
-      if (!obj) {
-        return false;
-      }
-      array[i] = JS::GCCellPtr(obj);
-      return true;
-    }
-  };
-
-  for (uint32_t i = 0; i < length(); i++) {
-    Matcher m{cx, i, array};
-    if (!vector[i].get().match(m)) {
-      return false;
-    }
+  if (!vector.emplaceBack(funbox->index())) {
+    return false;
   }
   return true;
 }
 
-bool CGTryNoteList::append(JSTryNoteKind kind, uint32_t stackDepth,
+AbstractScopePtr GCThingList::getScope(size_t index) const {
+  const TaggedScriptThingIndex& elem = vector[index];
+  if (elem.isEmptyGlobalScope()) {
+    // The empty enclosing scope should be stored by
+    // CompilationInput::initForSelfHostingGlobal.
+    MOZ_ASSERT(compilationInfo.input.enclosingScope);
+    MOZ_ASSERT(
+        !compilationInfo.input.enclosingScope->as<GlobalScope>().hasBindings());
+    return AbstractScopePtr(compilationInfo.input.enclosingScope);
+  }
+  return AbstractScopePtr(compilationInfo, elem.toScope());
+}
+
+mozilla::Maybe<ScopeIndex> GCThingList::getScopeIndex(size_t index) const {
+  const TaggedScriptThingIndex& elem = vector[index];
+  if (elem.isEmptyGlobalScope()) {
+    return mozilla::Nothing();
+  }
+  return mozilla::Some(vector[index].toScope());
+}
+
+bool js::frontend::EmitScriptThingsVector(
+    JSContext* cx, CompilationInfo& compilationInfo,
+    CompilationGCOutput& gcOutput,
+    mozilla::Span<const TaggedScriptThingIndex> things,
+    mozilla::Span<JS::GCCellPtr> output) {
+  MOZ_ASSERT(things.size() <= INDEX_LIMIT);
+  MOZ_ASSERT(things.size() == output.size());
+
+  auto& atomCache = compilationInfo.input.atomCache;
+  auto& stencil = compilationInfo.stencil;
+
+  for (uint32_t i = 0; i < things.size(); i++) {
+    const auto& thing = things[i];
+    switch (thing.tag()) {
+      case TaggedScriptThingIndex::Kind::ParserAtomIndex:
+      case TaggedScriptThingIndex::Kind::WellKnown: {
+        JSAtom* atom = atomCache.getExistingAtomAt(cx, thing.toAtom());
+        MOZ_ASSERT(atom);
+        output[i] = JS::GCCellPtr(atom);
+        break;
+      }
+      case TaggedScriptThingIndex::Kind::Null:
+        output[i] = JS::GCCellPtr(nullptr);
+        break;
+      case TaggedScriptThingIndex::Kind::BigInt: {
+        BigIntStencil& data = stencil.bigIntData[thing.toBigInt()];
+        BigInt* bi = data.createBigInt(cx);
+        if (!bi) {
+          return false;
+        }
+        output[i] = JS::GCCellPtr(bi);
+        break;
+      }
+      case TaggedScriptThingIndex::Kind::ObjLiteral: {
+        ObjLiteralStencil& data = stencil.objLiteralData[thing.toObjLiteral()];
+        JSObject* obj = data.create(cx, atomCache);
+        if (!obj) {
+          return false;
+        }
+        output[i] = JS::GCCellPtr(obj);
+        break;
+      }
+      case TaggedScriptThingIndex::Kind::RegExp: {
+        RegExpStencil& data = stencil.regExpData[thing.toRegExp()];
+        RegExpObject* regexp = data.createRegExp(cx, atomCache);
+        if (!regexp) {
+          return false;
+        }
+        output[i] = JS::GCCellPtr(regexp);
+        break;
+      }
+      case TaggedScriptThingIndex::Kind::Scope:
+        output[i] = JS::GCCellPtr(gcOutput.scopes[thing.toScope()]);
+        break;
+      case TaggedScriptThingIndex::Kind::Function:
+        output[i] = JS::GCCellPtr(gcOutput.functions[thing.toFunction()]);
+        break;
+      case TaggedScriptThingIndex::Kind::EmptyGlobalScope: {
+        Scope* scope = &cx->global()->emptyGlobalScope();
+        output[i] = JS::GCCellPtr(scope);
+        break;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool CGTryNoteList::append(TryNoteKind kind, uint32_t stackDepth,
                            BytecodeOffset start, BytecodeOffset end) {
   MOZ_ASSERT(start <= end);
 
   // Offsets are given relative to sections, but we only expect main-section
   // to have TryNotes. In finish() we will fixup base offset.
 
-  JSTryNote note;
-  note.kind = kind;
-  note.stackDepth = stackDepth;
-  note.start = start.toUint32();
-  note.length = (end - start).toUint32();
+  TryNote note(uint32_t(kind), stackDepth, start.toUint32(),
+               (end - start).toUint32());
 
   return list.append(note);
 }
 
-void CGTryNoteList::finish(mozilla::Span<JSTryNote> array) {
-  MOZ_ASSERT(length() == array.size());
-
-  for (unsigned i = 0; i < length(); i++) {
-    array[i] = list[i];
-  }
-}
-
-bool CGScopeNoteList::append(uint32_t scopeIndex, BytecodeOffset offset,
+bool CGScopeNoteList::append(GCThingIndex scopeIndex, BytecodeOffset offset,
                              uint32_t parent) {
-  CGScopeNote note;
-  mozilla::PodZero(&note);
-
-  // Offsets are given relative to sections. In finish() we will fixup base
-  // offset if needed.
-
+  ScopeNote note;
   note.index = scopeIndex;
   note.start = offset.toUint32();
+  note.length = 0;
   note.parent = parent;
 
   return list.append(note);
@@ -144,39 +155,25 @@ void CGScopeNoteList::recordEndFunctionBodyVar(uint32_t index) {
 void CGScopeNoteList::recordEndImpl(uint32_t index, uint32_t offset) {
   MOZ_ASSERT(index < length());
   MOZ_ASSERT(list[index].length == 0);
-  list[index].end = offset;
+  MOZ_ASSERT(offset >= list[index].start);
+  list[index].length = offset - list[index].start;
 }
 
-void CGScopeNoteList::finish(mozilla::Span<ScopeNote> array) {
-  MOZ_ASSERT(length() == array.size());
-
-  for (unsigned i = 0; i < length(); i++) {
-    MOZ_ASSERT(list[i].end >= list[i].start);
-    list[i].length = list[i].end - list[i].start;
-    array[i] = list[i];
-  }
+JSObject* ObjLiteralStencil::create(JSContext* cx,
+                                    CompilationAtomCache& atomCache) const {
+  return InterpretObjLiteral(cx, atomCache, atoms_, writer_);
 }
 
-void CGResumeOffsetList::finish(mozilla::Span<uint32_t> array) {
-  MOZ_ASSERT(length() == array.size());
-
-  for (unsigned i = 0; i < length(); i++) {
-    array[i] = list[i];
-  }
-}
-
-JSObject* ObjLiteralCreationData::create(JSContext* cx) {
-  return InterpretObjLiteral(cx, atoms_, writer_);
-}
-
-BytecodeSection::BytecodeSection(JSContext* cx, uint32_t lineNum)
+BytecodeSection::BytecodeSection(JSContext* cx, uint32_t lineNum,
+                                 uint32_t column)
     : code_(cx),
       notes_(cx),
       lastNoteOffset_(0),
       tryNoteList_(cx),
       scopeNoteList_(cx),
       resumeOffsetList_(cx),
-      currentLine_(lineNum) {}
+      currentLine_(lineNum),
+      lastColumn_(column) {}
 
 void BytecodeSection::updateDepth(BytecodeOffset target) {
   jsbytecode* pc = code(target);
@@ -193,7 +190,9 @@ void BytecodeSection::updateDepth(BytecodeOffset target) {
   }
 }
 
-PerScriptData::PerScriptData(JSContext* cx)
-    : gcThingList_(cx), atomIndices_(cx->frontendCollectionPool()) {}
+PerScriptData::PerScriptData(JSContext* cx,
+                             frontend::CompilationInfo& compilationInfo)
+    : gcThingList_(cx, compilationInfo),
+      atomIndices_(cx->frontendCollectionPool()) {}
 
 bool PerScriptData::init(JSContext* cx) { return atomIndices_.acquire(cx); }

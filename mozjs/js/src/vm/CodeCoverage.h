@@ -11,6 +11,7 @@
 
 #include "ds/LifoAlloc.h"
 
+#include "js/AllocPolicy.h"
 #include "js/HashTable.h"
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
@@ -76,9 +77,6 @@ class LCovRealm {
  public:
   explicit LCovRealm(JS::Realm* realm);
   ~LCovRealm();
-
-  // Collect code coverage information for the given source.
-  void collectCodeCoverageInfo(JSScript* script, const char* name);
 
   // Write the Lcov output in a buffer, such as the one associated with
   // the runtime code coverage trace file.
@@ -171,9 +169,8 @@ inline bool IsLCovEnabled() {
 // Initialize coverage info to track code coverage for a JSScript.
 bool InitScriptCoverage(JSContext* cx, JSScript* script);
 
-// Collect the code-coverage data from a script into relevant LCovSource. This
-// operations is infalible as it is typically called from JSScript finalizer.
-void CollectScriptCoverage(JSScript* script);
+// Collect the code-coverage data from a script into relevant LCovSource.
+bool CollectScriptCoverage(JSScript* script, bool finalizing);
 
 }  // namespace coverage
 }  // namespace js

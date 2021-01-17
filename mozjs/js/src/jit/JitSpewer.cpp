@@ -12,15 +12,10 @@
 #  include "mozilla/Sprintf.h"
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      define UNICODE
-#      include <Windows.h>
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
+#  else
+#    include <unistd.h>
 #  endif
 #  include "jit/Ion.h"
 #  include "jit/MIR.h"
@@ -167,8 +162,7 @@ bool IonSpewer::init() {
   if (usePid && *usePid != 0) {
     uint32_t pid = getpid();
     size_t len;
-    len = snprintf(jsonBuffer, bufferLength,
-                   JIT_SPEW_DIR "/ion%" PRIu32 ".json", pid);
+    len = SprintfLiteral(jsonBuffer, JIT_SPEW_DIR "/ion%" PRIu32 ".json", pid);
     if (bufferLength <= len) {
       fprintf(stderr, "Warning: IonSpewer::init: Cannot serialize file name.");
       return false;
@@ -342,12 +336,8 @@ AutoSpewEndFunction::~AutoSpewEndFunction() {
   mir_->graphSpewer().endFunction();
 }
 
-GenericPrinter& jit::JitSpewPrinter() {
-#ifdef JS_ENABLE_UWP
-  static UWPPrinter out;
-#else
+Fprinter& jit::JitSpewPrinter() {
   static Fprinter out;
-#endif
   return out;
 }
 
@@ -384,13 +374,11 @@ static void PrintHelpAndExit(int status = 0) {
       "  logs-sync     Same as logs, but flushes between each pass (sync. "
       "compiled functions only).\n"
       "  profiling     Profiling-related information\n"
-      "  trackopts     Optimization tracking information gathered by the "
-      "Gecko profiler. "
-      "(Note: call enableGeckoProfiling() in your script to enable it).\n"
-      "  trackopts-ext Encoding information about optimization tracking\n"
       "  dump-mir-expr Dump the MIR expressions\n"
-      "  cfg           Control flow graph generation\n"
       "  scriptstats   Tracelogger summary stats\n"
+      "  warp-snapshots WarpSnapshots created by WarpOracle\n"
+      "  warp-transpiler Warp CacheIR transpiler\n"
+      "  warp-trial-inlining Trial inlining for Warp\n"
       "  all           Everything\n"
       "\n"
       "  bl-aborts     Baseline compiler abort messages\n"
@@ -419,18 +407,10 @@ void jit::CheckLogging() {
 
   LoggingChecked = true;
 
-#ifdef JS_ENABLE_UWP
-  wchar_t wideEnvBuf[1024] = { 0 };
-  GetEnvironmentVariable(L"IONFLAGS", wideEnvBuf, sizeof(wideEnvBuf));
-  char envBuf[1024] = { 0 };
-  wcstombs(envBuf, wideEnvBuf, sizeof(envBuf));
-  char* env = &envBuf[0];
-#else
   char* env = getenv("IONFLAGS");
   if (!env) {
     return;
   }
-#endif
 
   const char* found = strtok(env, ",");
   while (found) {
@@ -491,17 +471,16 @@ void jit::CheckLogging() {
       EnableIonDebugSyncLogging();
     } else if (IsFlag(found, "profiling")) {
       EnableChannel(JitSpew_Profiling);
-    } else if (IsFlag(found, "trackopts")) {
-      JitOptions.disableOptimizationTracking = false;
-      EnableChannel(JitSpew_OptimizationTracking);
-    } else if (IsFlag(found, "trackopts-ext")) {
-      EnableChannel(JitSpew_OptimizationTrackingExtended);
     } else if (IsFlag(found, "dump-mir-expr")) {
       EnableChannel(JitSpew_MIRExpressions);
-    } else if (IsFlag(found, "cfg")) {
-      EnableChannel(JitSpew_CFG);
     } else if (IsFlag(found, "scriptstats")) {
       EnableChannel(JitSpew_ScriptStats);
+    } else if (IsFlag(found, "warp-snapshots")) {
+      EnableChannel(JitSpew_WarpSnapshots);
+    } else if (IsFlag(found, "warp-transpiler")) {
+      EnableChannel(JitSpew_WarpTranspiler);
+    } else if (IsFlag(found, "warp-trial-inlining")) {
+      EnableChannel(JitSpew_WarpTrialInlining);
     } else if (IsFlag(found, "all")) {
       LoggingBits = uint64_t(-1);
     } else if (IsFlag(found, "bl-aborts")) {
@@ -536,7 +515,6 @@ void jit::CheckLogging() {
     found = strtok(nullptr, ",");
   }
 
-#ifndef JS_ENABLE_UWP
   FILE* spewfh = stderr;
   const char* filename = getenv("ION_SPEW_FILENAME");
   if (filename && *filename) {
@@ -546,8 +524,7 @@ void jit::CheckLogging() {
     MOZ_RELEASE_ASSERT(spewfh);
     setbuf(spewfh, nullptr);  // Make unbuffered
   }
-  ((Fprinter&)JitSpewPrinter()).init(spewfh);
-#endif
+  JitSpewPrinter().init(spewfh);
 }
 
 JitSpewIndent::JitSpewIndent(JitSpewChannel channel) : channel_(channel) {
@@ -562,7 +539,7 @@ void jit::JitSpewStartVA(JitSpewChannel channel, const char* fmt, va_list ap) {
   }
 
   JitSpewHeader(channel);
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.vprintf(fmt, ap);
 }
 
@@ -571,7 +548,7 @@ void jit::JitSpewContVA(JitSpewChannel channel, const char* fmt, va_list ap) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.vprintf(fmt, ap);
 }
 
@@ -580,7 +557,7 @@ void jit::JitSpewFin(JitSpewChannel channel) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.put("\n");
 }
 
@@ -603,7 +580,7 @@ void jit::JitSpewDef(JitSpewChannel channel, const char* str,
   }
 
   JitSpewHeader(channel);
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.put(str);
   def->dump(out);
   def->dumpLocation(out);
@@ -627,7 +604,7 @@ void jit::JitSpewHeader(JitSpewChannel channel) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.printf("[%s] ", ChannelNames[channel]);
   for (size_t i = ChannelIndentLevel[channel]; i != 0; i--) {
     out.put("  ");

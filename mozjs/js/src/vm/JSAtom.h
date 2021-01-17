@@ -7,8 +7,10 @@
 #ifndef vm_JSAtom_h
 #define vm_JSAtom_h
 
+#include "mozilla/HashFunctions.h"
 #include "mozilla/Maybe.h"
 
+#include "gc/MaybeRooted.h"
 #include "gc/Rooting.h"
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
@@ -59,9 +61,26 @@ template <typename CharT>
 extern JSAtom* AtomizeChars(JSContext* cx, const CharT* chars, size_t length,
                             js::PinningBehavior pin = js::DoNotPinAtom);
 
+/* Atomize characters when the value of HashString is already known. */
+template <typename CharT>
+extern JSAtom* AtomizeChars(JSContext* cx, mozilla::HashNumber hash,
+                            const CharT* chars, size_t length);
+
+/**
+ * Create an atom whose contents are those of the |utf8ByteLength| code units
+ * starting at |utf8Chars|, interpreted as UTF-8.
+ *
+ * Throws if the code units do not contain valid UTF-8.
+ */
 extern JSAtom* AtomizeUTF8Chars(JSContext* cx, const char* utf8Chars,
                                 size_t utf8ByteLength);
 
+/**
+ * Create an atom whose contents are those of the |wtf8ByteLength| code units
+ * starting at |wtf8Chars|, interpreted as WTF-8.
+ *
+ * Throws if the code units do not contain valid WTF-8.
+ */
 extern JSAtom* AtomizeWTF8Chars(JSContext* cx, const char* wtf8Chars,
                                 size_t wtf8ByteLength);
 
@@ -77,6 +96,10 @@ extern JSAtom* ToAtom(JSContext* cx,
 // template<XDRMode mode>
 // XDRResult
 // XDRAtom(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
+
+// template<XDRMode mode>
+// XDRResult
+// XDRAtomOrNull(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
 
 extern JS::Handle<PropertyName*> ClassName(JSProtoKey key, JSContext* cx);
 

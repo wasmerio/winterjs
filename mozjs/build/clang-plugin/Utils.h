@@ -7,6 +7,7 @@
 
 #include "CustomAttributes.h"
 #include "ThirdPartyPaths.h"
+#include "ThreadAllows.h"
 #include "plugin.h"
 
 inline StringRef getFilename(const SourceManager &SM, SourceLocation Loc) {
@@ -133,7 +134,7 @@ inline bool typeHasVTable(QualType T) {
   return Offender && Offender->hasDefinition() && Offender->isDynamicClass();
 }
 
-inline std::string getDeclarationNamespace(const Decl *Declaration) {
+inline StringRef getDeclarationNamespace(const Decl *Declaration) {
   const DeclContext *DC =
       Declaration->getDeclContext()->getEnclosingNamespaceContext();
   const NamespaceDecl *ND = dyn_cast<NamespaceDecl>(DC);
@@ -153,7 +154,7 @@ inline std::string getDeclarationNamespace(const Decl *Declaration) {
 }
 
 inline bool isInIgnoredNamespaceForImplicitCtor(const Decl *Declaration) {
-  std::string Name = getDeclarationNamespace(Declaration);
+  StringRef Name = getDeclarationNamespace(Declaration);
   if (Name == "") {
     return false;
   }
@@ -163,7 +164,7 @@ inline bool isInIgnoredNamespaceForImplicitCtor(const Decl *Declaration) {
          Name == "boost" ||             // boost
          Name == "webrtc" ||            // upstream webrtc
          Name == "rtc" ||               // upstream webrtc 'base' package
-         Name.substr(0, 4) == "icu_" || // icu
+         Name.startswith("icu_") ||     // icu
          Name == "google" ||            // protobuf
          Name == "google_breakpad" ||   // breakpad
          Name == "soundtouch" ||        // libsoundtouch
@@ -172,11 +173,13 @@ inline bool isInIgnoredNamespaceForImplicitCtor(const Decl *Declaration) {
          Name == "dwarf2reader" ||      // dwarf2reader
          Name == "arm_ex_to_module" ||  // arm_ex_to_module
          Name == "testing" ||           // gtest
-         Name == "Json";                // jsoncpp
+         Name == "Json" ||              // jsoncpp
+         Name == "rlbox" ||             // rlbox
+         Name == "v8";                  // irregexp
 }
 
 inline bool isInIgnoredNamespaceForImplicitConversion(const Decl *Declaration) {
-  std::string Name = getDeclarationNamespace(Declaration);
+  StringRef Name = getDeclarationNamespace(Declaration);
   if (Name == "") {
     return false;
   }
@@ -184,7 +187,8 @@ inline bool isInIgnoredNamespaceForImplicitConversion(const Decl *Declaration) {
   return Name == "std" ||             // standard C++ lib
          Name == "__gnu_cxx" ||       // gnu C++ lib
          Name == "google_breakpad" || // breakpad
-         Name == "testing";           // gtest
+         Name == "testing" ||         // gtest
+         Name == "rlbox";             // rlbox
 }
 
 inline bool isIgnoredPathForImplicitConversion(const Decl *Declaration) {
@@ -225,7 +229,7 @@ inline bool isIgnoredPathForSprintfLiteral(const CallExpr *Call,
         Begin->compare_lower(StringRef("icu")) == 0 ||
         Begin->compare_lower(StringRef("jsoncpp")) == 0 ||
         Begin->compare_lower(StringRef("libstagefright")) == 0 ||
-        Begin->compare_lower(StringRef("mtransport")) == 0 ||
+        Begin->compare_lower(StringRef("transport")) == 0 ||
         Begin->compare_lower(StringRef("protobuf")) == 0 ||
         Begin->compare_lower(StringRef("skia")) == 0 ||
         Begin->compare_lower(StringRef("sfntly")) == 0 ||
@@ -291,37 +295,37 @@ inline bool typeIsRefPtr(QualType Q) {
 // some AST trees. To get around this, we define our own implementation of
 // IgnoreTrivials.
 inline const Stmt *MaybeSkipOneTrivial(const Stmt *s) {
-    if (!s) {
-      return nullptr;
-    }
-    if (auto *ewc = dyn_cast<ExprWithCleanups>(s)) {
-      return ewc->getSubExpr();
-    }
-    if (auto *mte = dyn_cast<MaterializeTemporaryExpr>(s)) {
-      // With clang 10 and up `getTemporary` has been replaced with the more
-      // versatile `getSubExpr`.
+  if (!s) {
+    return nullptr;
+  }
+  if (auto *ewc = dyn_cast<ExprWithCleanups>(s)) {
+    return ewc->getSubExpr();
+  }
+  if (auto *mte = dyn_cast<MaterializeTemporaryExpr>(s)) {
+    // With clang 10 and up `getTemporary` has been replaced with the more
+    // versatile `getSubExpr`.
 #if CLANG_VERSION_FULL >= 1000
-      return mte->getSubExpr();
+    return mte->getSubExpr();
 #else
-      return mte->GetTemporaryExpr();
+    return mte->GetTemporaryExpr();
 #endif
-    }
-    if (auto *bte = dyn_cast<CXXBindTemporaryExpr>(s)) {
-      return bte->getSubExpr();
-    }
-    if (auto *ce = dyn_cast<CastExpr>(s)) {
-      s = ce->getSubExpr();
-    }
-    if (auto *pe = dyn_cast<ParenExpr>(s)) {
-      s = pe->getSubExpr();
-    }
-    // Not a trivial.
-    return s;
+  }
+  if (auto *bte = dyn_cast<CXXBindTemporaryExpr>(s)) {
+    return bte->getSubExpr();
+  }
+  if (auto *ce = dyn_cast<CastExpr>(s)) {
+    s = ce->getSubExpr();
+  }
+  if (auto *pe = dyn_cast<ParenExpr>(s)) {
+    s = pe->getSubExpr();
+  }
+  // Not a trivial.
+  return s;
 }
 
 inline const Stmt *IgnoreTrivials(const Stmt *s) {
   while (true) {
-    const Stmt* newS = MaybeSkipOneTrivial(s);
+    const Stmt *newS = MaybeSkipOneTrivial(s);
     if (newS == s) {
       return newS;
     }

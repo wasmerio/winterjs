@@ -36,7 +36,6 @@ class BuildConfig(object):
         self.topsrcdir = None
         self.topobjdir = None
         self.defines = {}
-        self.non_global_defines = []
         self.substs = {}
         self.files = []
         self.mozconfig = None
@@ -52,20 +51,20 @@ class BuildConfig(object):
         if path not in code_cache or code_cache[path][0] != mtime:
             # Add config.status manually to sys.modules so it gets picked up by
             # iter_modules_in_path() for automatic dependencies.
-            mod = ModuleType('config.status')
+            mod = ModuleType("config.status")
             mod.__file__ = path
-            sys.modules['config.status'] = mod
+            sys.modules["config.status"] = mod
 
-            with open(path, 'rt') as fh:
+            with open(path, "rt") as fh:
                 source = fh.read()
                 code_cache[path] = (
                     mtime,
-                    compile(source, path, 'exec', dont_inherit=1)
+                    compile(source, path, "exec", dont_inherit=1),
                 )
 
         g = {
-            '__builtins__': __builtins__,
-            '__file__': path,
+            "__builtins__": __builtins__,
+            "__file__": path,
         }
         l = {}
         try:
@@ -75,7 +74,7 @@ class BuildConfig(object):
 
         config = BuildConfig()
 
-        for name in l['__all__']:
+        for name in l["__all__"]:
             setattr(config, name, l[name])
 
         return config
@@ -95,12 +94,10 @@ class ConfigEnvironment(object):
         the top object directory.
       - defines is a dict filled from AC_DEFINE and AC_DEFINE_UNQUOTED in
         autoconf.
-      - non_global_defines are a list of names appearing in defines above
-        that are not meant to be exported in ACDEFINES (see below)
       - substs is a dict filled from AC_SUBST in autoconf.
 
     ConfigEnvironment automatically defines one additional substs variable
-    from all the defines not appearing in non_global_defines:
+    from all the defines:
       - ACDEFINES contains the defines in the form -DNAME=VALUE, for use on
         preprocessor command lines. The order in which defines were given
         when creating the ConfigEnvironment is preserved.
@@ -120,41 +117,43 @@ class ConfigEnvironment(object):
     path or a path relative to the topobjdir.
     """
 
-    def __init__(self, topsrcdir, topobjdir, defines=None,
-                 non_global_defines=None, substs=None, source=None, mozconfig=None):
+    def __init__(
+        self,
+        topsrcdir,
+        topobjdir,
+        defines=None,
+        substs=None,
+        source=None,
+        mozconfig=None,
+    ):
 
         if not source:
-            source = mozpath.join(topobjdir, 'config.status')
+            source = mozpath.join(topobjdir, "config.status")
         self.source = source
         self.defines = ReadOnlyDict(defines or {})
-        self.non_global_defines = non_global_defines or []
         self.substs = dict(substs or {})
         self.topsrcdir = mozpath.abspath(topsrcdir)
         self.topobjdir = mozpath.abspath(topobjdir)
         self.mozconfig = mozpath.abspath(mozconfig) if mozconfig else None
-        self.lib_prefix = self.substs.get('LIB_PREFIX', '')
-        self.rust_lib_prefix = self.substs.get('RUST_LIB_PREFIX', '')
-        if 'LIB_SUFFIX' in self.substs:
-            self.lib_suffix = '.%s' % self.substs['LIB_SUFFIX']
-        if 'RUST_LIB_SUFFIX' in self.substs:
-            self.rust_lib_suffix = '.%s' % self.substs['RUST_LIB_SUFFIX']
-        self.dll_prefix = self.substs.get('DLL_PREFIX', '')
-        self.dll_suffix = self.substs.get('DLL_SUFFIX', '')
-        self.host_dll_prefix = self.substs.get('HOST_DLL_PREFIX', '')
-        self.host_dll_suffix = self.substs.get('HOST_DLL_SUFFIX', '')
-        if self.substs.get('IMPORT_LIB_SUFFIX'):
+        self.lib_prefix = self.substs.get("LIB_PREFIX", "")
+        if "LIB_SUFFIX" in self.substs:
+            self.lib_suffix = ".%s" % self.substs["LIB_SUFFIX"]
+        self.dll_prefix = self.substs.get("DLL_PREFIX", "")
+        self.dll_suffix = self.substs.get("DLL_SUFFIX", "")
+        self.host_dll_prefix = self.substs.get("HOST_DLL_PREFIX", "")
+        self.host_dll_suffix = self.substs.get("HOST_DLL_SUFFIX", "")
+        if self.substs.get("IMPORT_LIB_SUFFIX"):
             self.import_prefix = self.lib_prefix
-            self.import_suffix = '.%s' % self.substs['IMPORT_LIB_SUFFIX']
+            self.import_suffix = ".%s" % self.substs["IMPORT_LIB_SUFFIX"]
         else:
             self.import_prefix = self.dll_prefix
             self.import_suffix = self.dll_suffix
-        self.bin_suffix = self.substs.get('BIN_SUFFIX', '')
+        self.bin_suffix = self.substs.get("BIN_SUFFIX", "")
 
-        global_defines = [name for name in self.defines
-                          if name not in self.non_global_defines]
-        self.substs["ACDEFINES"] = ' '.join(
+        global_defines = [name for name in self.defines]
+        self.substs["ACDEFINES"] = " ".join(
             [
-                '-D%s=%s' % (name, shell_quote(self.defines[name]).replace('$', '$$'))
+                "-D%s=%s" % (name, shell_quote(self.defines[name]).replace("$", "$$"))
                 for name in sorted(global_defines)
             ]
         )
@@ -163,51 +162,40 @@ class ConfigEnvironment(object):
             if isinstance(obj, six.string_types):
                 return obj
             if isinstance(obj, Iterable):
-                return ' '.join(obj)
-            raise Exception('Unhandled type %s for %s', type(obj), str(name))
-        self.substs['ALLSUBSTS'] = '\n'.join(
-            sorted([
-                '%s = %s' % (
-                    name,
-                    serialize(name, self.substs[name])
-                    )
-                for name in self.substs if self.substs[name]
-                ])
+                return " ".join(obj)
+            raise Exception("Unhandled type %s for %s", type(obj), str(name))
+
+        self.substs["ALLSUBSTS"] = "\n".join(
+            sorted(
+                [
+                    "%s = %s" % (name, serialize(name, self.substs[name]))
+                    for name in self.substs
+                    if self.substs[name]
+                ]
             )
-        self.substs['ALLEMPTYSUBSTS'] = '\n'.join(
-            sorted([
-                '%s =' % name
-                for name in self.substs if not self.substs[name]
-                ])
-            )
+        )
+        self.substs["ALLEMPTYSUBSTS"] = "\n".join(
+            sorted(["%s =" % name for name in self.substs if not self.substs[name]])
+        )
 
         self.substs = ReadOnlyDict(self.substs)
 
-        self.external_source_dir = None
-        external = self.substs.get('EXTERNAL_SOURCE_DIR', '')
-        if external:
-            external = mozpath.normpath(external)
-            if not os.path.isabs(external):
-                external = mozpath.join(self.topsrcdir, external)
-            self.external_source_dir = mozpath.normpath(external)
-
     @property
     def is_artifact_build(self):
-        return self.substs.get('MOZ_ARTIFACT_BUILDS', False)
+        return self.substs.get("MOZ_ARTIFACT_BUILDS", False)
 
     @memoized_property
     def acdefines(self):
-        acdefines = dict((name, self.defines[name])
-                         for name in self.defines
-                         if name not in self.non_global_defines)
+        acdefines = dict((name, self.defines[name]) for name in self.defines)
         return ReadOnlyDict(acdefines)
 
     @staticmethod
     def from_config_status(path):
         config = BuildConfig.from_config_status(path)
 
-        return ConfigEnvironment(config.topsrcdir, config.topobjdir,
-                                 config.defines, config.non_global_defines, config.substs, path)
+        return ConfigEnvironment(
+            config.topsrcdir, config.topobjdir, config.defines, config.substs, path
+        )
 
 
 class PartialConfigDict(object):
@@ -221,7 +209,7 @@ class PartialConfigDict(object):
     def __init__(self, config_statusd, typ, environ_override=False):
         self._dict = {}
         self._datadir = mozpath.join(config_statusd, typ)
-        self._config_track = mozpath.join(self._datadir, 'config.track')
+        self._config_track = mozpath.join(self._datadir, "config.track")
         self._files = set()
         self._environ_override = environ_override
 
@@ -237,7 +225,8 @@ class PartialConfigDict(object):
     def _write_file(self, key, value):
         filename = mozpath.join(self._datadir, key)
         with FileAvoidWrite(filename) as fh:
-            json.dump(value, fh, indent=4, encoding=system_encoding)
+            to_write = json.dumps(value, indent=4)
+            fh.write(to_write.encode(system_encoding))
         return filename
 
     def _fill_group(self, values):
@@ -251,7 +240,7 @@ class PartialConfigDict(object):
         existing_files = self._load_config_track()
 
         new_files = set()
-        for k, v in values.iteritems():
+        for k, v in six.iteritems(values):
             new_files.add(self._write_file(k, v))
 
         for filename in existing_files - new_files:
@@ -264,11 +253,11 @@ class PartialConfigDict(object):
 
         with FileAvoidWrite(self._config_track) as fh:
             for f in sorted(new_files):
-                fh.write('%s\n' % f)
+                fh.write("%s\n" % f)
 
     def __getitem__(self, key):
         if self._environ_override:
-            if (key not in ('CPP', 'CXXCPP', 'SHELL')) and (key in os.environ):
+            if (key not in ("CPP", "CXXCPP", "SHELL")) and (key in os.environ):
                 return os.environ[key]
 
         if key not in self._dict:
@@ -321,7 +310,7 @@ class PartialConfigEnvironment(object):
     environment.
 
     The PartialConfigEnvironment automatically defines one additional subst variable
-    from all the defines not appearing in non_global_defines:
+    from all the defines:
       - ACDEFINES contains the defines in the form -DNAME=VALUE, for use on
         preprocessor command lines. The order in which defines were given
         when creating the ConfigEnvironment is preserved.
@@ -333,31 +322,32 @@ class PartialConfigEnvironment(object):
     """
 
     def __init__(self, topobjdir):
-        config_statusd = mozpath.join(topobjdir, 'config.statusd')
-        self.substs = PartialConfigDict(config_statusd, 'substs', environ_override=True)
-        self.defines = PartialConfigDict(config_statusd, 'defines')
+        config_statusd = mozpath.join(topobjdir, "config.statusd")
+        self.substs = PartialConfigDict(config_statusd, "substs", environ_override=True)
+        self.defines = PartialConfigDict(config_statusd, "defines")
         self.topobjdir = topobjdir
 
     def write_vars(self, config):
-        substs = config['substs'].copy()
-        defines = config['defines'].copy()
+        substs = config["substs"].copy()
+        defines = config["defines"].copy()
 
-        global_defines = [
-            name for name in config['defines']
-            if name not in config['non_global_defines']
-        ]
-        acdefines = ' '.join(['-D%s=%s' % (name,
-                                           shell_quote(config['defines'][name]).replace('$', '$$'))
-                              for name in sorted(global_defines)])
-        substs['ACDEFINES'] = acdefines
+        global_defines = [name for name in config["defines"]]
+        acdefines = " ".join(
+            [
+                "-D%s=%s"
+                % (name, shell_quote(config["defines"][name]).replace("$", "$$"))
+                for name in sorted(global_defines)
+            ]
+        )
+        substs["ACDEFINES"] = acdefines
 
         all_defines = OrderedDict()
         for k in global_defines:
-            all_defines[k] = config['defines'][k]
-        defines['ALLDEFINES'] = all_defines
+            all_defines[k] = config["defines"][k]
+        defines["ALLDEFINES"] = all_defines
 
         self.substs._fill_group(substs)
         self.defines._fill_group(defines)
 
     def get_dependencies(self):
-        return ['$(wildcard %s)' % f for f in self.substs._files | self.defines._files]
+        return ["$(wildcard %s)" % f for f in self.substs._files | self.defines._files]

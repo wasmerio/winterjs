@@ -6,8 +6,9 @@
 
 #include "jit/IonIC.h"
 
+#include "jit/AutoDetectInvalidation.h"
 #include "jit/CacheIRCompiler.h"
-#include "jit/Linker.h"
+#include "jit/VMFunctions.h"
 #include "util/DiagnosticAssertions.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -56,12 +57,18 @@ Register IonIC::scratchRegisterForEntryJump() {
       return asInIC()->temp();
     case CacheKind::HasOwn:
       return asHasOwnIC()->output();
+    case CacheKind::CheckPrivateField:
+      return asCheckPrivateFieldIC()->output();
     case CacheKind::GetIterator:
       return asGetIteratorIC()->temp1();
+    case CacheKind::OptimizeSpreadCall:
+      return asOptimizeSpreadCallIC()->temp();
     case CacheKind::InstanceOf:
       return asInstanceOfIC()->output();
     case CacheKind::UnaryArith:
       return asUnaryArithIC()->output().scratchReg();
+    case CacheKind::ToPropertyKey:
+      return asToPropertyKeyIC()->output().scratchReg();
     case CacheKind::BinaryArith:
       return asBinaryArithIC()->output().scratchReg();
     case CacheKind::Compare:
@@ -163,6 +170,9 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   IonScript* ionScript = outerScript->ionScript();
   AutoDetectInvalidation adi(cx, res, ionScript);
 
+  // Optimized-arguments and other magic values must not escape to Ion ICs.
+  MOZ_ASSERT(!val.isMagic());
+
   // If the IC is idempotent, we will redo the op in the interpreter.
   if (ic->idempotent()) {
     adi.disable();
@@ -215,6 +225,15 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
       Invalidate(cx, outerScript);
     }
 
+    // IonBuilder::createScriptedThis does not use InvalidedIdempotentCache
+    // flag so prevent bailout-loop by disabling Ion for the script.
+    MOZ_ASSERT(ic->kind() == CacheKind::GetProp);
+    if (idVal.toString()->asAtom().asPropertyName() == cx->names().prototype) {
+      if (val.isObject() && val.toObject().is<JSFunction>()) {
+        outerScript->disableIon();
+      }
+    }
+
     // We will redo the potentially effectful lookup in Baseline.
     return true;
   }
@@ -259,13 +278,20 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
       cx, ic, ionScript, ic->kind(), val, idVal, receiver,
       GetPropertyResultFlags::All);
 
-  RootedId id(cx);
-  if (!ValueToId<CanGC>(cx, idVal, &id)) {
-    return false;
-  }
+  if (ic->kind() == CacheKind::GetPropSuper) {
+    RootedPropertyName name(cx, idVal.toString()->asAtom().asPropertyName());
+    if (!GetProperty(cx, obj, receiver, name, res)) {
+      return false;
+    }
+  } else {
+    MOZ_ASSERT(ic->kind() == CacheKind::GetElemSuper);
 
-  if (!GetProperty(cx, obj, receiver, id, res)) {
-    return false;
+    JSOp op = JSOp(*ic->pc());
+    MOZ_ASSERT(op == JSOp::GetElemSuper);
+
+    if (!GetObjectElementOperation(cx, op, obj, receiver, idVal, res)) {
+      return false;
+    }
   }
 
   // Monitor changes to cache entry.
@@ -322,8 +348,9 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
 
   jsbytecode* pc = ic->pc();
   if (ic->kind() == CacheKind::SetElem) {
-    if (*pc == JSOP_INITELEM_INC) {
-      if (!InitArrayElemOperation(cx, pc, obj, idVal.toInt32(), rhs)) {
+    if (JSOp(*pc) == JSOp::InitElemInc || JSOp(*pc) == JSOp::InitElemArray) {
+      if (!InitArrayElemOperation(cx, pc, obj.as<ArrayObject>(),
+                                  idVal.toInt32(), rhs)) {
         return false;
       }
     } else if (IsPropertyInitOp(JSOp(*pc))) {
@@ -339,15 +366,15 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   } else {
     MOZ_ASSERT(ic->kind() == CacheKind::SetProp);
 
-    if (*pc == JSOP_INITGLEXICAL) {
+    if (JSOp(*pc) == JSOp::InitGLexical) {
       RootedScript script(cx, ic->script());
       MOZ_ASSERT(!script->hasNonSyntacticScope());
       InitGlobalLexicalOperation(cx, &cx->global()->lexicalEnvironment(),
                                  script, pc, rhs);
     } else if (IsPropertyInitOp(JSOp(*pc))) {
-      // This might be a JSOP_INITELEM op with a constant string id. We
+      // This might be a JSOp::InitElem op with a constant string id. We
       // can't call InitPropertyOperation here as that function is
-      // specialized for JSOP_INIT*PROP (it does not support arbitrary
+      // specialized for JSOp::Init*Prop (it does not support arbitrary
       // objects that might show up here).
       if (!InitElemOperation(cx, pc, obj, idVal, rhs)) {
         return false;
@@ -421,7 +448,7 @@ bool IonGetNameIC::update(JSContext* cx, HandleScript outerScript,
     return false;
   }
 
-  if (*GetNextPc(pc) == JSOP_TYPEOF) {
+  if (JSOp(*GetNextPc(pc)) == JSOp::Typeof) {
     if (!FetchName<GetNameMode::TypeOf>(cx, obj, holder, name, prop, res)) {
       return false;
     }
@@ -467,6 +494,18 @@ JSObject* IonGetIteratorIC::update(JSContext* cx, HandleScript outerScript,
 }
 
 /* static */
+bool IonOptimizeSpreadCallIC::update(JSContext* cx, HandleScript outerScript,
+                                     IonOptimizeSpreadCallIC* ic,
+                                     HandleValue value, bool* result) {
+  IonScript* ionScript = outerScript->ionScript();
+
+  TryAttachIonStub<OptimizeSpreadCallIRGenerator, IonOptimizeSpreadCallIC>(
+      cx, ic, ionScript, value);
+
+  return OptimizeSpreadCall(cx, value, result);
+}
+
+/* static */
 bool IonHasOwnIC::update(JSContext* cx, HandleScript outerScript,
                          IonHasOwnIC* ic, HandleValue val, HandleValue idVal,
                          int32_t* res) {
@@ -482,6 +521,19 @@ bool IonHasOwnIC::update(JSContext* cx, HandleScript outerScript,
 
   *res = found;
   return true;
+}
+
+/* static */
+bool IonCheckPrivateFieldIC::update(JSContext* cx, HandleScript outerScript,
+                                    IonCheckPrivateFieldIC* ic, HandleValue val,
+                                    HandleValue idVal, bool* res) {
+  IonScript* ionScript = outerScript->ionScript();
+  jsbytecode* pc = ic->pc();
+
+  TryAttachIonStub<CheckPrivateFieldIRGenerator, IonCheckPrivateFieldIC>(
+      cx, ic, ionScript, CacheKind::CheckPrivateField, idVal, val);
+
+  return CheckPrivateFieldOperation(cx, pc, val, idVal, res);
 }
 
 /* static */
@@ -508,6 +560,18 @@ bool IonInstanceOfIC::update(JSContext* cx, HandleScript outerScript,
 }
 
 /*  static */
+bool IonToPropertyKeyIC::update(JSContext* cx, HandleScript outerScript,
+                                IonToPropertyKeyIC* ic, HandleValue val,
+                                MutableHandleValue res) {
+  IonScript* ionScript = outerScript->ionScript();
+
+  TryAttachIonStub<ToPropertyKeyIRGenerator, IonToPropertyKeyIC>(
+      cx, ic, ionScript, val);
+
+  return ToPropertyKeyOperation(cx, val, res);
+}
+
+/*  static */
 bool IonUnaryArithIC::update(JSContext* cx, HandleScript outerScript,
                              IonUnaryArithIC* ic, HandleValue val,
                              MutableHandleValue res) {
@@ -516,30 +580,43 @@ bool IonUnaryArithIC::update(JSContext* cx, HandleScript outerScript,
   jsbytecode* pc = ic->pc();
   JSOp op = JSOp(*pc);
 
-  // The unary operations take a copied val because the original value is needed
-  // below.
-  RootedValue valCopy(cx, val);
   switch (op) {
-    case JSOP_BITNOT: {
-      if (!BitNot(cx, &valCopy, res)) {
+    case JSOp::BitNot: {
+      res.set(val);
+      if (!BitNot(cx, res, res)) {
         return false;
       }
       break;
     }
-    case JSOP_NEG: {
-      if (!NegOperation(cx, &valCopy, res)) {
+    case JSOp::Pos: {
+      res.set(val);
+      if (!ToNumber(cx, res)) {
         return false;
       }
       break;
     }
-    case JSOP_INC: {
-      if (!IncOperation(cx, &valCopy, res)) {
+    case JSOp::Neg: {
+      res.set(val);
+      if (!NegOperation(cx, res, res)) {
         return false;
       }
       break;
     }
-    case JSOP_DEC: {
-      if (!DecOperation(cx, &valCopy, res)) {
+    case JSOp::Inc: {
+      if (!IncOperation(cx, val, res)) {
+        return false;
+      }
+      break;
+    }
+    case JSOp::Dec: {
+      if (!DecOperation(cx, val, res)) {
+        return false;
+      }
+      break;
+    }
+    case JSOp::ToNumeric: {
+      res.set(val);
+      if (!ToNumeric(cx, res)) {
         return false;
       }
       break;
@@ -547,6 +624,7 @@ bool IonUnaryArithIC::update(JSContext* cx, HandleScript outerScript,
     default:
       MOZ_CRASH("Unexpected op");
   }
+  MOZ_ASSERT(res.isNumeric());
 
   TryAttachIonStub<UnaryArithIRGenerator, IonUnaryArithIC>(cx, ic, ionScript,
                                                            op, val, res);
@@ -570,64 +648,69 @@ bool IonBinaryArithIC::update(JSContext* cx, HandleScript outerScript,
 
   // Perform the compare operation.
   switch (op) {
-    case JSOP_ADD:
+    case JSOp::Add:
       // Do an add.
       if (!AddValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
-    case JSOP_SUB:
+    case JSOp::Sub:
       if (!SubValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
-    case JSOP_MUL:
+    case JSOp::Mul:
       if (!MulValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
-    case JSOP_DIV:
+    case JSOp::Div:
       if (!DivValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
-    case JSOP_MOD:
+    case JSOp::Mod:
       if (!ModValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
-    case JSOP_BITOR: {
+    case JSOp::Pow:
+      if (!PowValues(cx, &lhsCopy, &rhsCopy, ret)) {
+        return false;
+      }
+      break;
+    case JSOp::BitOr: {
       if (!BitOr(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
     }
-    case JSOP_BITXOR: {
+    case JSOp::BitXor: {
       if (!BitXor(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
     }
-    case JSOP_BITAND: {
+    case JSOp::BitAnd: {
       if (!BitAnd(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
     }
-    case JSOP_LSH: {
+    case JSOp::Lsh: {
       if (!BitLsh(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
     }
-    case JSOP_RSH: {
+    case JSOp::Rsh: {
       if (!BitRsh(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
     }
-    case JSOP_URSH: {
-      if (!UrshOperation(cx, &lhsCopy, &rhsCopy, ret)) {
+    case JSOp::Ursh: {
+      if (!UrshValues(cx, &lhsCopy, &rhsCopy, ret)) {
         return false;
       }
       break;
@@ -658,42 +741,42 @@ bool IonCompareIC::update(JSContext* cx, HandleScript outerScript,
 
   // Perform the compare operation.
   switch (op) {
-    case JSOP_LT:
+    case JSOp::Lt:
       if (!LessThan(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_LE:
+    case JSOp::Le:
       if (!LessThanOrEqual(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_GT:
+    case JSOp::Gt:
       if (!GreaterThan(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_GE:
+    case JSOp::Ge:
       if (!GreaterThanOrEqual(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_EQ:
+    case JSOp::Eq:
       if (!LooselyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_NE:
+    case JSOp::Ne:
       if (!LooselyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_STRICTEQ:
+    case JSOp::StrictEq:
       if (!StrictlyEqual<EqualityKind::Equal>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
       break;
-    case JSOP_STRICTNE:
+    case JSOp::StrictNe:
       if (!StrictlyEqual<EqualityKind::NotEqual>(cx, &lhsCopy, &rhsCopy, res)) {
         return false;
       }
@@ -718,15 +801,10 @@ void IonIC::attachStub(IonICStub* newStub, JitCode* code) {
   MOZ_ASSERT(code);
 
   if (firstStub_) {
-    IonICStub* last = firstStub_;
-    while (IonICStub* next = last->next()) {
-      last = next;
-    }
-    last->setNext(newStub, code);
-  } else {
-    firstStub_ = newStub;
-    codeRaw_ = code->raw();
+    newStub->setNext(firstStub_, codeRaw_);
   }
+  firstStub_ = newStub;
+  codeRaw_ = code->raw();
 
   state_.trackAttached();
 }

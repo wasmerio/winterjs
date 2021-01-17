@@ -19,6 +19,7 @@
 #ifndef wasm_code_h
 #define wasm_code_h
 
+#include "gc/Memory.h"
 #include "jit/shared/Assembler-shared.h"
 #include "js/HashTable.h"
 #include "threading/ExclusiveData.h"
@@ -77,7 +78,7 @@ struct LinkData : LinkDataCacheablePod {
   WASM_DECLARE_SERIALIZABLE(LinkData)
 };
 
-typedef UniquePtr<LinkData> UniqueLinkData;
+using UniqueLinkData = UniquePtr<LinkData>;
 
 // Executable code must be deallocated specially.
 
@@ -160,7 +161,9 @@ class CodeSegment {
 
 // A wasm ModuleSegment owns the allocated executable code for a wasm module.
 
-typedef UniquePtr<ModuleSegment> UniqueModuleSegment;
+using UniqueModuleSegment = UniquePtr<ModuleSegment>;
+
+enum IsTier2 { Tier2, NotTier2 };
 
 class ModuleSegment : public CodeSegment {
   const Tier tier_;
@@ -175,8 +178,9 @@ class ModuleSegment : public CodeSegment {
   static UniqueModuleSegment create(Tier tier, const Bytes& unlinkedBytes,
                                     const LinkData& linkData);
 
-  bool initialize(const CodeTier& codeTier, const LinkData& linkData,
-                  const Metadata& metadata, const MetadataTier& metadataTier);
+  bool initialize(IsTier2 compileMode, const CodeTier& codeTier,
+                  const LinkData& linkData, const Metadata& metadata,
+                  const MetadataTier& metadataTier);
 
   Tier tier() const { return tier_; }
 
@@ -238,8 +242,13 @@ class FuncExport {
   }
 
   bool canHaveJitEntry() const {
-    return !funcType_.temporarilyUnsupportedReftypeForEntry() &&
-           JitOptions.enableWasmJitEntry;
+    return
+#ifdef ENABLE_WASM_SIMD
+        !funcType_.hasV128ArgOrRet() &&
+#endif
+        !funcType_.temporarilyUnsupportedReftypeForEntry() &&
+        !funcType_.temporarilyUnsupportedResultCountForJitEntry() &&
+        JitOptions.enableWasmJitEntry;
   }
 
   bool clone(const FuncExport& src) {
@@ -315,19 +324,23 @@ typedef Vector<FuncImport, 0, SystemAllocPolicy> FuncImportVector;
 struct MetadataCacheablePod {
   ModuleKind kind;
   MemoryUsage memoryUsage;
-  uint32_t minMemoryLength;
+  uint64_t minMemoryLength;
   uint32_t globalDataLength;
-  Maybe<uint32_t> maxMemoryLength;
+  Maybe<uint64_t> maxMemoryLength;
   Maybe<uint32_t> startFuncIndex;
   Maybe<uint32_t> nameCustomSectionIndex;
   bool filenameIsURL;
+  bool v128Enabled;
+  bool omitsBoundsChecks;
 
   explicit MetadataCacheablePod(ModuleKind kind)
       : kind(kind),
         memoryUsage(MemoryUsage::None),
         minMemoryLength(0),
         globalDataLength(0),
-        filenameIsURL(false) {}
+        filenameIsURL(false),
+        v128Enabled(false),
+        omitsBoundsChecks(false) {}
 };
 
 typedef uint8_t ModuleHash[8];
@@ -340,7 +353,6 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   TableDescVector tables;
   CacheableChars filename;
   CacheableChars sourceMapURL;
-  bool omitsBoundsChecks;
 
   // namePayload points at the name section's CustomSection::payload so that
   // the Names (which are use payload-relative offsets) can be used
@@ -357,13 +369,20 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
 
   explicit Metadata(ModuleKind kind = ModuleKind::Wasm)
       : MetadataCacheablePod(kind), debugEnabled(false), debugHash() {}
-  virtual ~Metadata() {}
+  virtual ~Metadata() = default;
 
   MetadataCacheablePod& pod() { return *this; }
   const MetadataCacheablePod& pod() const { return *this; }
 
   bool usesMemory() const { return memoryUsage != MemoryUsage::None; }
   bool usesSharedMemory() const { return memoryUsage == MemoryUsage::Shared; }
+
+  // Invariant: The result of getFuncResultType can only be used as long as
+  // MetaData is live, because the returned ResultType may encode a pointer to
+  // debugFuncReturnTypes.
+  ResultType getFuncResultType(uint32_t funcIndex) const {
+    return ResultType::Vector(debugFuncReturnTypes[funcIndex]);
+  };
 
   // AsmJSMetadata derives Metadata iff isAsmJS(). Mostly this distinction is
   // encapsulated within AsmJS.cpp, but the additional virtual functions allow
@@ -399,8 +418,8 @@ struct Metadata : public ShareableBase<Metadata>, public MetadataCacheablePod {
   WASM_DECLARE_SERIALIZABLE(Metadata);
 };
 
-typedef RefPtr<Metadata> MutableMetadata;
-typedef RefPtr<const Metadata> SharedMetadata;
+using MutableMetadata = RefPtr<Metadata>;
+using SharedMetadata = RefPtr<const Metadata>;
 
 struct MetadataTier {
   explicit MetadataTier(Tier tier) : tier(tier) {}
@@ -504,7 +523,8 @@ class LazyStubTier {
   size_t lastStubSegmentIndex_;
 
   bool createMany(const Uint32Vector& funcExportIndices,
-                  const CodeTier& codeTier, size_t* stubSegmentIndex);
+                  const CodeTier& codeTier, bool flushAllThreadsIcaches,
+                  size_t* stubSegmentIndex);
 
  public:
   LazyStubTier() : lastStubSegmentIndex_(0) {}
@@ -535,8 +555,8 @@ class LazyStubTier {
 // CodeTier contains all the data related to a given compilation tier. It is
 // built during module generation and then immutably stored in a Code.
 
-typedef UniquePtr<CodeTier> UniqueCodeTier;
-typedef UniquePtr<const CodeTier> UniqueConstCodeTier;
+using UniqueCodeTier = UniquePtr<CodeTier>;
+using UniqueConstCodeTier = UniquePtr<const CodeTier>;
 
 class CodeTier {
   const Code* code_;
@@ -564,7 +584,7 @@ class CodeTier {
         lazyStubs_(mutexForTier(segment_->tier())) {}
 
   bool initialized() const { return !!code_ && segment_->initialized(); }
-  bool initialize(const Code& code, const LinkData& linkData,
+  bool initialize(IsTier2 isTier2, const Code& code, const LinkData& linkData,
                   const Metadata& metadata);
 
   Tier tier() const { return segment_->tier(); }
@@ -608,6 +628,15 @@ class JumpTables {
     MOZ_ASSERT(i < numFuncs_);
     jit_.get()[i] = target;
   }
+  void setJitEntryIfNull(size_t i, void* target) const {
+    // Make sure that compare-and-write is atomic; see comment in
+    // wasm::Module::finishTier2 to that effect.
+    MOZ_ASSERT(i < numFuncs_);
+    void* expected = nullptr;
+    (void)__atomic_compare_exchange_n(&jit_.get()[i], &expected, target,
+                                      /*weak=*/false, __ATOMIC_RELAXED,
+                                      __ATOMIC_RELAXED);
+  }
   void** getAddressOfJitEntry(size_t i) const {
     MOZ_ASSERT(i < numFuncs_);
     MOZ_ASSERT(jit_.get()[i]);
@@ -640,8 +669,8 @@ class JumpTables {
 //
 // profilingLabels_ is lazily initialized, but behind a lock.
 
-typedef RefPtr<const Code> SharedCode;
-typedef RefPtr<Code> MutableCode;
+using SharedCode = RefPtr<const Code>;
+using MutableCode = RefPtr<Code>;
 
 class Code : public ShareableBase<Code> {
   UniqueCodeTier tier1_;
@@ -666,6 +695,9 @@ class Code : public ShareableBase<Code> {
 
   void setJitEntry(size_t i, void* target) const {
     jumpTables_.setJitEntry(i, target);
+  }
+  void setJitEntryIfNull(size_t i, void* target) const {
+    jumpTables_.setJitEntryIfNull(i, target);
   }
   void** getAddressOfJitEntry(size_t i) const {
     return jumpTables_.getAddressOfJitEntry(i);

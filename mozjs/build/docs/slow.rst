@@ -98,7 +98,7 @@ Anyway, the build system spawns thousands of new processes during a
 build. Parts of the build that rely on rapid spawning of new processes
 are slow on Windows as a result. This is most pronounced when running
 *configure*. The configure file is a giant shell script and shell
-scripts rely heavily on new processes. This is why configure on Windows
+scripts rely heavily on new processes. This is why configure
 can run over a minute slower on Windows.
 
 Another reason Windows builds are slower is because Windows lacks proper
@@ -133,16 +133,14 @@ no-op build is spent in make traversal.
 make is inefficient
 ===================
 
-Compared to modern build backends like Tup or Ninja, make is slow and
-inefficient. We can only make make so fast. At some point, we'll hit a
+Compared to modern build backends like Tup or Ninja, `make` is slow and
+inefficient. We can only make `make` so fast. At some point, we'll hit a
 performance plateau and will need to use a different tool to make builds
 faster.
 
-Please note that clobber and incremental builds are different. A clobber
-build with make will likely be as fast as a clobber build with e.g. Tup.
-However, Tup should vastly outperform make when it comes to incremental
-builds. Therefore, this issue is mostly seen when performing incremental
-builds. For more information, see :ref:`tup`.
+Please note that clobber and incremental builds are different. A clobber build
+with `make` will likely be as fast as a clobber build with a modern build
+system.
 
 C++ header dependency hell
 ==========================

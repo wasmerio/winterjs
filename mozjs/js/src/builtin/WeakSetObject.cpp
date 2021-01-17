@@ -9,6 +9,7 @@
 #include "jsapi.h"
 
 #include "builtin/MapObject.h"
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/GlobalObject.h"
 #include "vm/Iteration.h"
@@ -146,8 +147,8 @@ const JSClass WeakSetObject::class_ = {
     &WeakCollectionObject::classOps_, &WeakSetObject::classSpec_};
 
 const JSClass WeakSetObject::protoClass_ = {
-    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_WeakSet), JS_NULL_CLASS_OPS,
-    &WeakSetObject::classSpec_};
+    "WeakSet.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_WeakSet),
+    JS_NULL_CLASS_OPS, &WeakSetObject::classSpec_};
 
 const JSPropertySpec WeakSetObject::properties[] = {
     JS_STRING_SYM_PS(toStringTag, "WeakSet", JSPROP_READONLY), JS_PS_END};

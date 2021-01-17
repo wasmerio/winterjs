@@ -62,13 +62,9 @@ static size_t virtualMemoryLimit = size_t(-1);
  * VirtualAlloc always hands out regions of memory in increasing order.
  */
 #if defined(XP_DARWIN)
-static mozilla::Atomic<int, mozilla::Relaxed,
-                       mozilla::recordreplay::Behavior::DontPreserve>
-    growthDirection(1);
+static mozilla::Atomic<int, mozilla::Relaxed> growthDirection(1);
 #elif defined(XP_UNIX)
-static mozilla::Atomic<int, mozilla::Relaxed,
-                       mozilla::recordreplay::Behavior::DontPreserve>
-    growthDirection(0);
+static mozilla::Atomic<int, mozilla::Relaxed> growthDirection(0);
 #endif
 
 /*
@@ -268,7 +264,6 @@ static inline uint64_t GetNumberInRange(uint64_t minNum, uint64_t maxNum) {
   do {
     mozilla::Maybe<uint64_t> result;
     do {
-      mozilla::recordreplay::AutoPassThroughThreadEvents pt;
       result = mozilla::RandomUint64();
     } while (!result);
     rndNum = result.value() / binSize;
@@ -702,9 +697,9 @@ static bool TryToAlignChunk(void** aRegion, void** aRetainedRegion,
         break;
       }
     } else {
-      void* lowerStart =
+      auto* lowerStart =
           reinterpret_cast<void*>(uintptr_t(regionStart) - offsetLower);
-      void* lowerEnd = reinterpret_cast<void*>(uintptr_t(lowerStart) + length);
+      auto* lowerEnd = reinterpret_cast<void*>(uintptr_t(lowerStart) + length);
       if (MapMemoryAt(lowerStart, offsetLower)) {
         UnmapInternal(lowerEnd, offsetLower);
         if (directionUncertain) {
@@ -835,9 +830,6 @@ bool MarkPagesInUseHard(void* region, size_t length) {
 }
 
 size_t GetPageFaultCount() {
-  if (mozilla::recordreplay::IsRecordingOrReplaying()) {
-    return 0;
-  }
 #ifdef XP_WIN
   PROCESS_MEMORY_COUNTERS pmc;
   if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)) == 0) {
@@ -895,15 +887,9 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
     }
     UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
     // If the offset or length are out of bounds, this call will fail.
-#ifdef JS_ENABLE_UWP
-    map = static_cast<uint8_t*>(
-        MapViewOfFileFromApp(hMap, FILE_MAP_COPY, ((ULONG64)offsetH << 32) | offsetL,
-                             alignedLength));
-#else
     map = static_cast<uint8_t*>(
         MapViewOfFileEx(hMap, FILE_MAP_COPY, offsetH, offsetL, alignedLength,
                         reinterpret_cast<void*>(region)));
-#endif
 
     // Retry if another thread mapped the address we were trying to use.
     if (map || GetLastError() != ERROR_INVALID_ADDRESS) {

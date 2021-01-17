@@ -14,6 +14,7 @@
 #include "jstypes.h"
 
 #include "js/CallArgs.h"
+#include "js/HeapAPI.h"
 #include "js/Id.h"
 #include "js/TypeDecls.h"
 
@@ -38,38 +39,6 @@ extern JS_FRIEND_DATA const JSClass* const FunctionClassPtr;
 }  // namespace js
 
 namespace JS {
-
-/**
- * The answer to a successful query as to whether an object is an Array per
- * ES6's internal |IsArray| operation (as exposed by |Array.isArray|).
- */
-enum class IsArrayAnswer { Array, NotArray, RevokedProxy };
-
-/**
- * ES6 7.2.2.
- *
- * Returns false on failure, otherwise returns true and sets |*isArray|
- * indicating whether the object passes ECMAScript's IsArray test.  This is the
- * same test performed by |Array.isArray|.
- *
- * This is NOT the same as asking whether |obj| is an Array or a wrapper around
- * one.  If |obj| is a proxy created by |Proxy.revocable()| and has been
- * revoked, or if |obj| is a proxy whose target (at any number of hops) is a
- * revoked proxy, this method throws a TypeError and returns false.
- */
-extern JS_PUBLIC_API bool IsArray(JSContext* cx, HandleObject obj,
-                                  bool* isArray);
-
-/**
- * Identical to IsArray above, but the nature of the object (if successfully
- * determined) is communicated via |*answer|.  In particular this method
- * returns true and sets |*answer = IsArrayAnswer::RevokedProxy| when called on
- * a revoked proxy.
- *
- * Most users will want the overload above, not this one.
- */
-extern JS_PUBLIC_API bool IsArray(JSContext* cx, HandleObject obj,
-                                  IsArrayAnswer* answer);
 
 /**
  * Per ES6, the [[DefineOwnProperty]] internal method has three different
@@ -109,9 +78,9 @@ extern JS_PUBLIC_API bool IsArray(JSContext* cx, HandleObject obj,
 class ObjectOpResult {
  private:
   /**
-   * code_ is either one of the special codes OkCode or Uninitialized, or
-   * an error code. For now the error codes are private to the JS engine;
-   * they're defined in js/src/js.msg.
+   * code_ is either one of the special codes OkCode or Uninitialized, or an
+   * error code. For now the error codes are JS friend API and are defined in
+   * js/public/friend/ErrorNumbers.msg.
    *
    * code_ is uintptr_t (rather than uint32_t) for the convenience of the
    * JITs, which would otherwise have to deal with either padding or stack
@@ -205,122 +174,120 @@ class ObjectOpResult {
   }
 
   /*
-   * Report an error or warning if necessary; return true to proceed and
-   * false if an error was reported. Call this when failure should cause
-   * a warning if extraWarnings are enabled.
+   * Report an error if necessary; return true to proceed and
+   * false if an error was reported.
    *
    * The precise rules are like this:
    *
    * -   If ok(), then we succeeded. Do nothing and return true.
-   * -   Otherwise, if |strict| is true, or if cx has both extraWarnings and
-   *     werrorOption enabled, throw a TypeError and return false.
-   * -   Otherwise, if cx has extraWarnings enabled, emit a warning and
-   *     return true.
+   * -   Otherwise, if |strict| is true, throw a TypeError and return false.
    * -   Otherwise, do nothing and return true.
    */
-  bool checkStrictErrorOrWarning(JSContext* cx, HandleObject obj, HandleId id,
-                                 bool strict) {
-    if (ok()) {
+  bool checkStrictModeError(JSContext* cx, HandleObject obj, HandleId id,
+                            bool strict) {
+    if (ok() || !strict) {
       return true;
     }
-    return reportStrictErrorOrWarning(cx, obj, id, strict);
+    return reportError(cx, obj, id);
   }
 
   /*
-   * The same as checkStrictErrorOrWarning(cx, id, strict), except the
+   * The same as checkStrictModeError(cx, id, strict), except the
    * operation is not associated with a particular property id. This is
    * used for [[PreventExtensions]] and [[SetPrototypeOf]]. failureCode()
    * must not be an error that has "{0}" in the error message.
    */
-  bool checkStrictErrorOrWarning(JSContext* cx, HandleObject obj, bool strict) {
-    return ok() || reportStrictErrorOrWarning(cx, obj, strict);
+  bool checkStrictModeError(JSContext* cx, HandleObject obj, bool strict) {
+    if (ok() || !strict) {
+      return true;
+    }
+    return reportError(cx, obj);
   }
 
   /* Throw a TypeError. Call this only if !ok(). */
-  bool reportError(JSContext* cx, HandleObject obj, HandleId id) {
-    return reportStrictErrorOrWarning(cx, obj, id, true);
-  }
+  bool reportError(JSContext* cx, HandleObject obj, HandleId id);
 
   /*
    * The same as reportError(cx, obj, id), except the operation is not
    * associated with a particular property id.
    */
-  bool reportError(JSContext* cx, HandleObject obj) {
-    return reportStrictErrorOrWarning(cx, obj, true);
-  }
+  bool reportError(JSContext* cx, HandleObject obj);
 
-  /* Helper function for checkStrictErrorOrWarning's slow path. */
-  JS_PUBLIC_API bool reportStrictErrorOrWarning(JSContext* cx, HandleObject obj,
-                                                HandleId id, bool strict);
-  JS_PUBLIC_API bool reportStrictErrorOrWarning(JSContext* cx, HandleObject obj,
-                                                bool strict);
-
-  /*
-   * Convenience method. Return true if ok() or if strict is false; otherwise
-   * throw a TypeError and return false.
-   */
+  // Convenience method. Return true if ok(); otherwise throw a TypeError
+  // and return false.
   bool checkStrict(JSContext* cx, HandleObject obj, HandleId id) {
-    return checkStrictErrorOrWarning(cx, obj, id, true);
+    return checkStrictModeError(cx, obj, id, true);
   }
 
-  /*
-   * Convenience method. The same as checkStrict(cx, id), except the
-   * operation is not associated with a particular property id.
-   */
+  // Convenience method. The same as checkStrict(cx, obj, id), except the
+  // operation is not associated with a particular property id.
   bool checkStrict(JSContext* cx, HandleObject obj) {
-    return checkStrictErrorOrWarning(cx, obj, true);
+    return checkStrictModeError(cx, obj, true);
   }
 };
 
 class PropertyResult {
-  union {
-    js::Shape* shape_;
-    uintptr_t bits_;
+  enum class Kind : uint8_t {
+    NotFound,
+    NativeProperty,
+    NonNativeProperty,
+    DenseElement,
+    TypedArrayElement,
   };
-
-  static const uintptr_t NotFound = 0;
-  static const uintptr_t NonNativeProperty = 1;
-  static const uintptr_t DenseOrTypedArrayElement = 1;
+  union {
+    // Set if kind is NativeProperty.
+    js::Shape* shape_;
+    // Set if kind is DenseElement.
+    uint32_t denseIndex_;
+    // Set if kind is TypedArrayElement.
+    size_t typedArrayIndex_;
+  };
+  Kind kind_ = Kind::NotFound;
 
  public:
-  PropertyResult() : bits_(NotFound) {}
-
-  explicit PropertyResult(js::Shape* propertyShape) : shape_(propertyShape) {
-    MOZ_ASSERT(!isFound() || isNativeProperty());
-  }
+  PropertyResult() = default;
 
   explicit operator bool() const { return isFound(); }
 
-  bool isFound() const { return bits_ != NotFound; }
-
-  bool isNonNativeProperty() const { return bits_ == NonNativeProperty; }
-
-  bool isDenseOrTypedArrayElement() const {
-    return bits_ == DenseOrTypedArrayElement;
-  }
-
-  bool isNativeProperty() const { return isFound() && !isNonNativeProperty(); }
-
-  js::Shape* maybeShape() const {
-    MOZ_ASSERT(!isNonNativeProperty());
-    return isFound() ? shape_ : nullptr;
-  }
+  bool isFound() const { return kind_ != Kind::NotFound; }
+  bool isNonNativeProperty() const { return kind_ == Kind::NonNativeProperty; }
+  bool isDenseElement() const { return kind_ == Kind::DenseElement; }
+  bool isTypedArrayElement() const { return kind_ == Kind::TypedArrayElement; }
+  bool isNativeProperty() const { return kind_ == Kind::NativeProperty; }
 
   js::Shape* shape() const {
     MOZ_ASSERT(isNativeProperty());
     return shape_;
   }
 
-  void setNotFound() { bits_ = NotFound; }
-
-  void setNativeProperty(js::Shape* propertyShape) {
-    shape_ = propertyShape;
-    MOZ_ASSERT(isNativeProperty());
+  uint32_t denseElementIndex() const {
+    MOZ_ASSERT(isDenseElement());
+    return denseIndex_;
   }
 
-  void setNonNativeProperty() { bits_ = NonNativeProperty; }
+  size_t typedArrayElementIndex() const {
+    MOZ_ASSERT(isTypedArrayElement());
+    return typedArrayIndex_;
+  }
 
-  void setDenseOrTypedArrayElement() { bits_ = DenseOrTypedArrayElement; }
+  void setNotFound() { kind_ = Kind::NotFound; }
+
+  void setNativeProperty(js::Shape* propertyShape) {
+    kind_ = Kind::NativeProperty;
+    shape_ = propertyShape;
+  }
+
+  void setNonNativeProperty() { kind_ = Kind::NonNativeProperty; }
+
+  void setDenseElement(uint32_t index) {
+    kind_ = Kind::DenseElement;
+    denseIndex_ = index;
+  }
+
+  void setTypedArrayElement(size_t index) {
+    kind_ = Kind::TypedArrayElement;
+    typedArrayIndex_ = index;
+  }
 
   void trace(JSTracer* trc);
 };
@@ -338,14 +305,15 @@ class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
  public:
   bool isFound() const { return value().isFound(); }
   explicit operator bool() const { return bool(value()); }
-  js::Shape* maybeShape() const { return value().maybeShape(); }
   js::Shape* shape() const { return value().shape(); }
+  uint32_t denseElementIndex() const { return value().denseElementIndex(); }
+  size_t typedArrayElementIndex() const {
+    return value().typedArrayElementIndex();
+  }
   bool isNativeProperty() const { return value().isNativeProperty(); }
   bool isNonNativeProperty() const { return value().isNonNativeProperty(); }
-  bool isDenseOrTypedArrayElement() const {
-    return value().isDenseOrTypedArrayElement();
-  }
-  js::Shape* asTaggedShape() const { return value().asTaggedShape(); }
+  bool isDenseElement() const { return value().isDenseElement(); }
+  bool isTypedArrayElement() const { return value().isTypedArrayElement(); }
 };
 
 template <class Wrapper>
@@ -357,7 +325,10 @@ class MutableWrappedPtrOperations<JS::PropertyResult, Wrapper>
   void setNotFound() { value().setNotFound(); }
   void setNativeProperty(js::Shape* shape) { value().setNativeProperty(shape); }
   void setNonNativeProperty() { value().setNonNativeProperty(); }
-  void setDenseOrTypedArrayElement() { value().setDenseOrTypedArrayElement(); }
+  void setDenseElement(uint32_t index) { value().setDenseElement(index); }
+  void setTypedArrayElement(size_t index) {
+    value().setTypedArrayElement(index);
+  }
 };
 
 }  // namespace js
@@ -746,7 +717,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 26;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 28;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |
@@ -785,7 +756,7 @@ struct MOZ_STATIC_CLASS JSClassOps {
 
 static constexpr const JSClassOps* JS_NULL_CLASS_OPS = nullptr;
 
-struct JSClass {
+struct alignas(js::gc::JSClassAlignBytes) JSClass {
   const char* name;
   uint32_t flags;
   const JSClassOps* cOps;
@@ -974,6 +945,7 @@ enum class ESClass {
   Arguments,
   Error,
   BigInt,
+  Function,  // Note: Only JSFunction objects.
 
   /** None of the above. */
   Other

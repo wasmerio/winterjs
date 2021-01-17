@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.NumberFormat-unified is not released yet
 // Copyright 2019 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -59,6 +58,18 @@ const tests = [
   [
     0.00159,
     [{"type":"integer","value":"0"},{"type":"decimal","value":"."},{"type":"fraction","value":"0016"}],
+  ],
+  [
+    -Infinity,
+    [{"type":"minusSign","value":"-"},{"type":"infinity","value":"∞"}],
+  ],
+  [
+    Infinity,
+    [{"type":"infinity","value":"∞"}],
+  ],
+  [
+    NaN,
+    [{"type":"nan","value":"NaN"}],
   ],
 ];
 

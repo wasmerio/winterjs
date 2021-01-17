@@ -254,6 +254,8 @@
   var SpecialPowers = global.SpecialPowers;
   var SpecialPowersCu = SpecialPowers.Cu;
   var SpecialPowersForceGC = SpecialPowers.forceGC;
+  var TestingFunctions = SpecialPowers.Cu.getJSTestingFunctions();
+  var ClearKeptObjects = TestingFunctions.clearKeptObjects;
 
   // Cached DOM nodes used by the test harness itself.  (We assume the test
   // doesn't misbehave in a way that actively interferes with what the test
@@ -387,6 +389,8 @@
   }
   global.gc = gc;
 
+  global.clearKeptObjects = ClearKeptObjects;
+
   function options(aOptionName) {
     // return value of options() is a comma delimited list
     // of the previously set values
@@ -428,7 +432,7 @@
   function jsTestDriverBrowserInit() {
     // Unset all options before running any test code, cf. the call to
     // |shellOptionsClear| in shell.js' set-up code.
-    for (var optionName of ["strict", "werror", "strict_mode"]) {
+    for (var optionName of ["strict_mode"]) {
       if (!HasOwnProperty(SpecialPowersCu, optionName))
         throw "options is out of sync with Components.utils";
 

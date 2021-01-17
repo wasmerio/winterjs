@@ -14,8 +14,8 @@
 #include "jit/arm64/Architecture-arm64.h"
 #include "jit/arm64/MacroAssembler-arm64.h"
 #include "jit/arm64/vixl/Disasm-vixl.h"
+#include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
-#include "jit/JitRealm.h"
 #include "vm/Realm.h"
 
 #include "gc/StoreBuffer-inl.h"
@@ -35,6 +35,7 @@ ABIArg ABIArgGenerator::next(MIRType type) {
     case MIRType::Int64:
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+    case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
         stackOffset_ += sizeof(uintptr_t);
@@ -51,13 +52,30 @@ ABIArg ABIArgGenerator::next(MIRType type) {
         stackOffset_ += sizeof(double);
         break;
       }
-      current_ = ABIArg(FloatRegister(
-          floatRegIndex_, type == MIRType::Double ? FloatRegisters::Double
-                                                  : FloatRegisters::Single));
+      current_ = ABIArg(FloatRegister(FloatRegisters::Encoding(floatRegIndex_),
+                                      type == MIRType::Double
+                                          ? FloatRegisters::Double
+                                          : FloatRegisters::Single));
       floatRegIndex_++;
       break;
 
+#ifdef ENABLE_WASM_SIMD
+    case MIRType::Simd128:
+      if (floatRegIndex_ == NumFloatArgRegs) {
+        current_ = ABIArg(stackOffset_);
+        stackOffset_ += FloatRegister::SizeOfSimd128;
+        break;
+      }
+      current_ = ABIArg(FloatRegister(FloatRegisters::Encoding(floatRegIndex_),
+                                      FloatRegisters::Simd128));
+      floatRegIndex_++;
+      break;
+#endif
+
     default:
+      // Note that in Assembler-x64.cpp there's a special case for Win64 which
+      // does not allow passing SIMD by value.  Since there's Win64 on ARM64 we
+      // may need to duplicate that logic here.
       MOZ_CRASH("Unexpected argument type");
   }
   return current_;
@@ -72,16 +90,6 @@ void Assembler::finish() {
   // The extended jump table is part of the code buffer.
   ExtendedJumpTable_ = emitExtendedJumpTable();
   Assembler::FinalizeCode();
-
-  // The jump relocation table starts with a fixed-width integer pointing
-  // to the start of the extended jump table.
-  // Space for this integer is allocated by Assembler::addJumpRelocation()
-  // before writing the first entry.
-  // Don't touch memory if we saw an OOM error.
-  if (jumpRelocations_.length() && !oom()) {
-    MOZ_ASSERT(jumpRelocations_.length() >= sizeof(uint32_t));
-    *(uint32_t*)jumpRelocations_.buffer() = ExtendedJumpTable_.getOffset();
-  }
 }
 
 bool Assembler::appendRawCode(const uint8_t* code, size_t numBytes) {
@@ -125,8 +133,26 @@ BufferOffset Assembler::emitExtendedJumpTable() {
     //   [Patchable 8-byte constant high bits]
     DebugOnly<size_t> preOffset = size_t(armbuffer_.nextOffset().getOffset());
 
-    ldr(vixl::ip0, ptrdiff_t(8 / vixl::kInstructionSize));
-    br(vixl::ip0);
+    // The unguarded use of ScratchReg64 here is OK:
+    //
+    // - The present function is called from code that does not claim any
+    //   scratch registers, we're done compiling user code and are emitting jump
+    //   tables.  Hence the scratch registers are available when we enter.
+    //
+    // - The pendingJumps_ represent jumps to other code sections that are not
+    //   known to this MacroAssembler instance, and we're generating code to
+    //   jump there.  It is safe to assume that any code using such a generated
+    //   branch to an unknown location did not store any valuable value in any
+    //   scratch register.  Hence the scratch registers can definitely be
+    //   clobbered here.
+    //
+    // - Scratch register usage is restricted to sequential control flow within
+    //   MacroAssembler functions.  Hence the scratch registers will not be
+    //   clobbered by ldr and br as they are Assembler primitives, not
+    //   MacroAssembler functions.
+
+    ldr(ScratchReg64, ptrdiff_t(8 / vixl::kInstructionSize));
+    br(ScratchReg64);
 
     DebugOnly<size_t> prePointer = size_t(armbuffer_.nextOffset().getOffset());
     MOZ_ASSERT_IF(!oom(),
@@ -155,13 +181,7 @@ void Assembler::executableCopy(uint8_t* buffer) {
   // The extended jump table may be used for distant jumps.
   for (size_t i = 0; i < pendingJumps_.length(); i++) {
     RelativePatch& rp = pendingJumps_[i];
-
-    if (!rp.target) {
-      // The patch target is nullptr for jumps that have been linked to
-      // a label within the same code block, but may be repatched later
-      // to jump to a different code block.
-      continue;
-    }
+    MOZ_ASSERT(rp.target);
 
     Instruction* target = (Instruction*)rp.target;
     Instruction* branch = (Instruction*)(buffer + rp.offset.getOffset());
@@ -281,29 +301,12 @@ void Assembler::bind(Label* label, BufferOffset targetOffset) {
   label->bind(targetOffset.getOffset());
 }
 
-void Assembler::addJumpRelocation(BufferOffset src, RelocationKind reloc) {
-  // Only JITCODE relocations are patchable at runtime.
-  MOZ_ASSERT(reloc == RelocationKind::JITCODE);
-
-  // The jump relocation table starts with a fixed-width integer pointing
-  // to the start of the extended jump table. But, we don't know the
-  // actual extended jump table offset yet, so write a 0 which we'll
-  // patch later in Assembler::finish().
-  if (!jumpRelocations_.length()) {
-    jumpRelocations_.writeFixedUint32_t(0);
-  }
-
-  // Each entry in the table is an (offset, extendedTableIndex) pair.
-  jumpRelocations_.writeUnsigned(src.getOffset());
-  jumpRelocations_.writeUnsigned(pendingJumps_.length());
-}
-
 void Assembler::addPendingJump(BufferOffset src, ImmPtr target,
                                RelocationKind reloc) {
   MOZ_ASSERT(target.value != nullptr);
 
   if (reloc == RelocationKind::JITCODE) {
-    addJumpRelocation(src, reloc);
+    jumpRelocations_.writeUnsigned(src.getOffset());
   }
 
   // This jump is not patchable at runtime. Extended jump table entry
@@ -311,17 +314,6 @@ void Assembler::addPendingJump(BufferOffset src, ImmPtr target,
   // jump and entry. This also causes GC tracing of the target.
   enoughMemory_ &=
       pendingJumps_.append(RelativePatch(src, target.value, reloc));
-}
-
-size_t Assembler::addPatchableJump(BufferOffset src, RelocationKind reloc) {
-  MOZ_CRASH("TODO: This is currently unused (and untested)");
-  if (reloc == RelocationKind::JITCODE) {
-    addJumpRelocation(src, reloc);
-  }
-
-  size_t extendedTableIndex = pendingJumps_.length();
-  enoughMemory_ &= pendingJumps_.append(RelativePatch(src, nullptr, reloc));
-  return extendedTableIndex;
 }
 
 void Assembler::PatchWrite_NearCall(CodeLocationLabel start,
@@ -332,7 +324,6 @@ void Assembler::PatchWrite_NearCall(CodeLocationLabel start,
   MOZ_RELEASE_ASSERT((relTarget & 0x3) == 0);
   MOZ_RELEASE_ASSERT(vixl::IsInt26(relTarget00));
 
-  // printf("patching %p with call to %p\n", start.raw(), toCall.raw());
   bl(dest, relTarget00);
 }
 
@@ -446,27 +437,20 @@ void Assembler::UpdateLoad64Value(Instruction* inst0, uint64_t value) {
 
 class RelocationIterator {
   CompactBufferReader reader_;
-  uint32_t tableStart_;
-  uint32_t offset_;
-  uint32_t extOffset_;
+  uint32_t offset_ = 0;
 
  public:
-  explicit RelocationIterator(CompactBufferReader& reader) : reader_(reader) {
-    // The first uint32_t stores the extended table offset.
-    tableStart_ = reader_.readFixedUint32_t();
-  }
+  explicit RelocationIterator(CompactBufferReader& reader) : reader_(reader) {}
 
   bool read() {
     if (!reader_.more()) {
       return false;
     }
     offset_ = reader_.readUnsigned();
-    extOffset_ = reader_.readUnsigned();
     return true;
   }
 
   uint32_t offset() const { return offset_; }
-  uint32_t extendedOffset() const { return extOffset_; }
 };
 
 static JitCode* CodeFromJump(JitCode* code, uint8_t* jump) {

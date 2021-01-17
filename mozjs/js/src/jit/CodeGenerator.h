@@ -11,6 +11,7 @@
 #if defined(JS_ION_PERF)
 #  include "jit/PerfSpewer.h"
 #endif
+#include "js/ScalarType.h"  // js::Scalar::Type
 
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/CodeGenerator-x86.h"
@@ -34,6 +35,8 @@
 
 namespace js {
 namespace jit {
+
+class WarpSnapshot;
 
 template <typename Fn, Fn fn, class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
@@ -60,10 +63,10 @@ class OutOfLineRegExpSearcher;
 class OutOfLineRegExpTester;
 class OutOfLineRegExpPrototypeOptimizable;
 class OutOfLineRegExpInstanceOptimizable;
-class OutOfLineLambdaArrow;
 class OutOfLineNaNToZero;
 class OutOfLineZeroIfNaN;
 class OutOfLineTypedArrayIndexToInt32;
+class OutOfLineBoxNonStrictThis;
 
 class CodeGenerator final : public CodeGeneratorSpecific {
   void generateArgumentsChecks(bool assert = false);
@@ -96,17 +99,20 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   MOZ_MUST_USE bool generate();
   MOZ_MUST_USE bool generateWasm(wasm::FuncTypeIdDesc funcTypeId,
                                  wasm::BytecodeOffset trapOffset,
-                                 const wasm::ValTypeVector& argTys,
+                                 const wasm::ArgTypeVector& argTys,
                                  const MachineState& trapExitLayout,
                                  size_t trapExitLayoutNumWords,
                                  wasm::FuncOffsets* offsets,
                                  wasm::StackMaps* stackMaps);
 
-  MOZ_MUST_USE bool link(JSContext* cx, CompilerConstraintList* constraints);
+  MOZ_MUST_USE bool link(JSContext* cx, CompilerConstraintList* constraints,
+                         const WarpSnapshot* snapshot);
 
   void emitOOLTestObject(Register objreg, Label* ifTruthy, Label* ifFalsy,
                          Register scratch);
   void emitIntToString(Register input, Register output, Label* ool);
+
+  void emitTypeOfObject(Register obj, Register output, Label* done);
 
   template <typename Fn, Fn fn, class ArgSeq, class StoreOutputTo>
   void visitOutOfLineCallVM(
@@ -119,8 +125,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
       OutOfLineRegExpPrototypeOptimizable* ool);
   void visitOutOfLineRegExpInstanceOptimizable(
       OutOfLineRegExpInstanceOptimizable* ool);
-
-  void visitOutOfLineLambdaArrow(OutOfLineLambdaArrow* ool);
 
   void visitOutOfLineTypeOfV(OutOfLineTypeOfV* ool);
 
@@ -137,6 +141,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void visitOutOfLineUnboxFloatingPoint(OutOfLineUnboxFloatingPoint* ool);
   void visitOutOfLineStoreElementHole(OutOfLineStoreElementHole* ool);
+
+  void visitOutOfLineBoxNonStrictThis(OutOfLineBoxNonStrictThis* ool);
 
   void visitOutOfLineICFallback(OutOfLineICFallback* ool);
 
@@ -163,22 +169,23 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void emitCallInvokeFunction(LInstruction* call, Register callereg,
                               bool isConstructing, bool ignoresReturnValue,
                               uint32_t argc, uint32_t unusedStack);
-  void emitCallInvokeFunctionShuffleNewTarget(LCallKnown* call,
-                                              Register calleeReg,
-                                              uint32_t numFormals,
-                                              uint32_t unusedStack);
   template <typename T>
   void emitApplyGeneric(T* apply);
   template <typename T>
   void emitCallInvokeFunction(T* apply, Register extraStackSize);
-  void emitAllocateSpaceForApply(Register argcreg, Register extraStackSpace,
-                                 Label* end);
+  void emitAllocateSpaceForApply(Register argcreg, Register extraStackSpace);
+  void emitAllocateSpaceForConstructAndPushNewTarget(
+      Register argcreg, Register newTargetAndExtraStackSpace);
   void emitCopyValuesForApply(Register argvSrcBase, Register argvIndex,
                               Register copyreg, size_t argvSrcOffset,
                               size_t argvDstOffset);
   void emitPopArguments(Register extraStackSize);
+  void emitPushElementsAsArguments(Register tmpArgc, Register elementsAndArgc,
+                                   Register extraStackSpace);
   void emitPushArguments(LApplyArgsGeneric* apply, Register extraStackSpace);
   void emitPushArguments(LApplyArrayGeneric* apply, Register extraStackSpace);
+  void emitPushArguments(LConstructArrayGeneric* construct,
+                         Register extraStackSpace);
 
   void visitNewArrayCallVM(LNewArray* lir);
   void visitNewObjectVMCall(LNewObject* lir);
@@ -191,8 +198,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                   const ConstantOrRegister& value);
   void emitCompareS(LInstruction* lir, JSOp op, Register left, Register right,
                     Register output);
-  void emitSameValue(FloatRegister left, FloatRegister right,
-                     FloatRegister temp, Register output);
 
   void emitConcat(LInstruction* lir, Register lhs, Register rhs,
                   Register output);
@@ -215,21 +220,14 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                 Register temp0, Register temp1, unsigned numFormals,
                 JSObject* templateObject, bool saveAndRestore,
                 Register resultreg);
-  void emitInstanceOf(LInstruction* ins, JSObject* prototypeObject);
-
-  enum CallableOrConstructor { Callable, Constructor };
-  template <CallableOrConstructor mode>
-  void emitIsCallableOrConstructor(Register object, Register output,
-                                   Label* failure);
+  void emitInstanceOf(LInstruction* ins, const LAllocation* prototypeObject);
 
   void loadJSScriptForBlock(MBasicBlock* block, Register reg);
   void loadOutermostJSScript(Register reg);
 
 #ifdef DEBUG
-  void emitAssertResultV(const ValueOperand output,
-                         const TemporaryTypeSet* typeset);
-  void emitAssertGCThingResult(Register input, MIRType type,
-                               const TemporaryTypeSet* typeset);
+  void emitAssertResultV(const ValueOperand output, const MDefinition* mir);
+  void emitAssertGCThingResult(Register input, const MDefinition* mir);
 #endif
 
 #ifdef DEBUG
@@ -269,8 +267,10 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   template <class OrderedHashTable>
   void emitLoadIteratorValues(Register result, Register temp, Register front);
 
-  template <size_t Defs>
-  void emitWasmCallBase(LWasmCallBase<Defs>* lir);
+  void emitStringToInt64(LInstruction* lir, Register input, Register64 output);
+
+  void emitCreateBigInt(LInstruction* lir, Scalar::Type type, Register64 input,
+                        Register output, Register maybeTemp);
 
   template <size_t NumDefs>
   void emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir);
@@ -329,12 +329,11 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void emitStoreElementTyped(const LAllocation* value, MIRType valueType,
                              MIRType elementType, Register elements,
-                             const LAllocation* index,
-                             int32_t offsetAdjustment);
+                             const LAllocation* index);
 
   // Bailout if an element about to be written to is a hole.
   void emitStoreHoleCheck(Register elements, const LAllocation* index,
-                          int32_t offsetAdjustment, LSnapshot* snapshot);
+                          LSnapshot* snapshot);
 
   void emitAssertRangeI(const Range* r, Register input);
   void emitAssertRangeD(const Range* r, FloatRegister input,
@@ -344,6 +343,16 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                    OutOfLineCode* ool);
 
   Vector<CodeOffset, 0, JitAllocPolicy> ionScriptLabels_;
+
+  // Used to bake in a pointer into the IonScript's list of nursery objects, for
+  // MNurseryObject codegen.
+  struct NurseryObjectLabel {
+    CodeOffset offset;
+    uint32_t nurseryIndex;
+    NurseryObjectLabel(CodeOffset offset, uint32_t nurseryIndex)
+        : offset(offset), nurseryIndex(nurseryIndex) {}
+  };
+  Vector<NurseryObjectLabel, 0, JitAllocPolicy> ionNurseryObjectLabels_;
 
   void branchIfInvalidated(Register temp, Label* invalidated);
 

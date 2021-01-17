@@ -63,13 +63,13 @@ MappingNode = yaml.nodes.MappingNode
 
 cdef class Mark:
     cdef readonly object name
-    cdef readonly int index
-    cdef readonly int line
-    cdef readonly int column
+    cdef readonly size_t index
+    cdef readonly size_t line
+    cdef readonly size_t column
     cdef readonly buffer
     cdef readonly pointer
 
-    def __init__(self, object name, int index, int line, int column,
+    def __init__(self, object name, size_t index, size_t line, size_t column,
             object buffer, object pointer):
         self.name = name
         self.index = index
@@ -762,11 +762,11 @@ cdef class CParser:
                         self.parsed_event.start_mark.column,
                         None, None)
                 if PY_MAJOR_VERSION < 3:
-                    raise ComposerError("found duplicate anchor; first occurence",
-                            self.anchors[anchor].start_mark, "second occurence", mark)
+                    raise ComposerError("found duplicate anchor; first occurrence",
+                            self.anchors[anchor].start_mark, "second occurrence", mark)
                 else:
-                    raise ComposerError(u"found duplicate anchor; first occurence",
-                            self.anchors[anchor].start_mark, u"second occurence", mark)
+                    raise ComposerError(u"found duplicate anchor; first occurrence",
+                            self.anchors[anchor].start_mark, u"second occurrence", mark)
         self.descend_resolver(parent, index)
         if self.parsed_event.type == YAML_SCALAR_EVENT:
             node = self._compose_scalar_node(anchor)
@@ -905,7 +905,7 @@ cdef class CParser:
                 raise error
         return 1
 
-cdef int input_handler(void *data, char *buffer, int size, int *read) except 0:
+cdef int input_handler(void *data, char *buffer, size_t size, size_t *read) except 0:
     cdef CParser parser
     parser = <CParser>data
     if parser.stream_cache is None:
@@ -1515,7 +1515,7 @@ cdef class CEmitter:
             self.ascend_resolver()
         return 1
 
-cdef int output_handler(void *data, char *buffer, int size) except 0:
+cdef int output_handler(void *data, char *buffer, size_t size) except 0:
     cdef CEmitter emitter
     emitter = <CEmitter>data
     if emitter.dump_unicode == 0:

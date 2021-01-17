@@ -38,9 +38,9 @@ def split_evenly(n, chunks):
         raise ChunkingError("Number of chunks is greater than number")
     if n % chunks == 0:
         # Either we can evenly split or only 1 chunk left
-        return [n / chunks] * chunks
+        return [n // chunks] * chunks
     # otherwise the current chunk should be a bit larger
-    max_size = n / chunks + 1
+    max_size = n // chunks + 1
     return [max_size] + split_evenly(n - max_size, chunks - 1)
 
 
@@ -49,8 +49,8 @@ def chunkify(things, this_chunk, chunks):
         raise ChunkingError("this_chunk is greater than total chunks")
 
     dist = split_evenly(len(things), chunks)
-    start = sum(dist[:this_chunk-1])
-    end = start + dist[this_chunk-1]
+    start = sum(dist[: this_chunk - 1])
+    end = start + dist[this_chunk - 1]
 
     try:
         return things[start:end]

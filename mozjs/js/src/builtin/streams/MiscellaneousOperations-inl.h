@@ -14,14 +14,14 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
-#include "builtin/Promise.h"  // js::PromiseObject
-#include "js/Promise.h"       // JS::{Resolve,Reject}Promise
-#include "js/RootingAPI.h"    // JS::Rooted, JS::{,Mutable}Handle
-#include "js/Value.h"         // JS::UndefinedHandleValue, JS::Value
-#include "vm/Compartment.h"   // JS::Compartment
-#include "vm/Interpreter.h"   // js::Call
-#include "vm/JSContext.h"     // JSContext
-#include "vm/JSObject.h"      // JSObject
+#include "js/Promise.h"        // JS::{Resolve,Reject}Promise
+#include "js/RootingAPI.h"     // JS::Rooted, JS::{,Mutable}Handle
+#include "js/Value.h"          // JS::UndefinedHandleValue, JS::Value
+#include "vm/Compartment.h"    // JS::Compartment
+#include "vm/Interpreter.h"    // js::Call
+#include "vm/JSContext.h"      // JSContext
+#include "vm/JSObject.h"       // JSObject
+#include "vm/PromiseObject.h"  // js::PromiseObject
 
 #include "vm/Compartment-inl.h"  // JS::Compartment::wrap
 #include "vm/JSContext-inl.h"    // JSContext::check

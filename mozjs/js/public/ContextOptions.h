@@ -25,16 +25,29 @@ class JS_PUBLIC_API ContextOptions {
         wasmBaseline_(true),
         wasmIon_(true),
         wasmCranelift_(false),
+        wasmReftypes_(true),
+        wasmFunctionReferences_(false),
         wasmGc_(false),
+        wasmMultiValue_(false),
+        wasmSimd_(false),
         testWasmAwaitTier2_(false),
         throwOnAsmJSValidationFailure_(false),
+        disableIon_(false),
+        disableEvalSecurityChecks_(false),
         asyncStack_(true),
+        asyncStackCaptureDebuggeeOnly_(false),
+        sourcePragmas_(true),
         throwOnDebuggeeWouldRun_(true),
         dumpStackOnDebuggeeWouldRun_(false),
-        werror_(false),
         strictMode_(false),
-        extraWarnings_(false),
-        fuzzing_(false) {}
+#ifdef JS_ENABLE_SMOOSH
+        trackNotImplemented_(false),
+        trySmoosh_(false),
+#endif
+        fuzzing_(false),
+        privateClassFields_(false),
+        privateClassMethods_(false) {
+  }
 
   bool asmJS() const { return asmJS_; }
   ContextOptions& setAsmJS(bool flag) {
@@ -90,9 +103,27 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
+  bool wasmReftypes() const { return wasmReftypes_; }
+  ContextOptions& setWasmReftypes(bool flag) {
+    wasmReftypes_ = flag;
+    return *this;
+  }
+
+  bool wasmFunctionReferences() const { return wasmFunctionReferences_; }
+  // Defined out-of-line because it depends on a compile-time option
+  ContextOptions& setWasmFunctionReferences(bool flag);
+
   bool wasmGc() const { return wasmGc_; }
   // Defined out-of-line because it depends on a compile-time option
   ContextOptions& setWasmGc(bool flag);
+
+  bool wasmMultiValue() const { return wasmMultiValue_; }
+  // Defined out-of-line because it depends on a compile-time option
+  ContextOptions& setWasmMultiValue(bool flag);
+
+  bool wasmSimd() const { return wasmSimd_; }
+  // Defined out-of-line because it depends on a compile-time option
+  ContextOptions& setWasmSimd(bool flag);
 
   bool throwOnAsmJSValidationFailure() const {
     return throwOnAsmJSValidationFailure_;
@@ -106,9 +137,53 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
+  // Override to allow disabling Ion for this context irrespective of the
+  // process-wide Ion-enabled setting. This must be set right after creating
+  // the context.
+  bool disableIon() const { return disableIon_; }
+  ContextOptions& setDisableIon() {
+    disableIon_ = true;
+    return *this;
+  }
+
+  bool privateClassFields() const { return privateClassFields_; }
+  ContextOptions& setPrivateClassFields(bool enabled) {
+    privateClassFields_ = enabled;
+    return *this;
+  }
+
+  bool privateClassMethods() const { return privateClassMethods_; }
+  ContextOptions& setPrivateClassMethods(bool enabled) {
+    privateClassMethods_ = enabled;
+    return *this;
+  }
+
+  // Override to allow disabling the eval restriction security checks for
+  // this context.
+  bool disableEvalSecurityChecks() const { return disableEvalSecurityChecks_; }
+  ContextOptions& setDisableEvalSecurityChecks() {
+    disableEvalSecurityChecks_ = true;
+    return *this;
+  }
+
   bool asyncStack() const { return asyncStack_; }
   ContextOptions& setAsyncStack(bool flag) {
     asyncStack_ = flag;
+    return *this;
+  }
+
+  bool asyncStackCaptureDebuggeeOnly() const {
+    return asyncStackCaptureDebuggeeOnly_;
+  }
+  ContextOptions& setAsyncStackCaptureDebuggeeOnly(bool flag) {
+    asyncStackCaptureDebuggeeOnly_ = flag;
+    return *this;
+  }
+
+  // Enable/disable support for parsing '//(#@) source(Mapping)?URL=' pragmas.
+  bool sourcePragmas() const { return sourcePragmas_; }
+  ContextOptions& setSourcePragmas(bool flag) {
+    sourcePragmas_ = flag;
     return *this;
   }
 
@@ -126,16 +201,6 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
-  bool werror() const { return werror_; }
-  ContextOptions& setWerror(bool flag) {
-    werror_ = flag;
-    return *this;
-  }
-  ContextOptions& toggleWerror() {
-    werror_ = !werror_;
-    return *this;
-  }
-
   bool strictMode() const { return strictMode_; }
   ContextOptions& setStrictMode(bool flag) {
     strictMode_ = flag;
@@ -146,15 +211,23 @@ class JS_PUBLIC_API ContextOptions {
     return *this;
   }
 
-  bool extraWarnings() const { return extraWarnings_; }
-  ContextOptions& setExtraWarnings(bool flag) {
-    extraWarnings_ = flag;
+#ifdef JS_ENABLE_SMOOSH
+  // Track Number of Not Implemented Calls by writing to a file
+  bool trackNotImplemented() const { return trackNotImplemented_; }
+  ContextOptions& setTrackNotImplemented(bool flag) {
+    trackNotImplemented_ = flag;
     return *this;
   }
-  ContextOptions& toggleExtraWarnings() {
-    extraWarnings_ = !extraWarnings_;
+
+  // Try compiling SmooshMonkey frontend first, and fallback to C++
+  // implementation when it fails.
+  bool trySmoosh() const { return trySmoosh_; }
+  ContextOptions& setTrySmoosh(bool flag) {
+    trySmoosh_ = flag;
     return *this;
   }
+
+#endif  // JS_ENABLE_SMOOSH
 
   bool fuzzing() const { return fuzzing_; }
   // Defined out-of-line because it depends on a compile-time option
@@ -162,10 +235,7 @@ class JS_PUBLIC_API ContextOptions {
 
   void disableOptionsForSafeMode() {
     setAsmJS(false);
-    setWasm(false);
     setWasmBaseline(false);
-    setWasmIon(false);
-    setWasmGc(false);
   }
 
  private:
@@ -176,16 +246,28 @@ class JS_PUBLIC_API ContextOptions {
   bool wasmBaseline_ : 1;
   bool wasmIon_ : 1;
   bool wasmCranelift_ : 1;
+  bool wasmReftypes_ : 1;
+  bool wasmFunctionReferences_ : 1;
   bool wasmGc_ : 1;
+  bool wasmMultiValue_ : 1;
+  bool wasmSimd_ : 1;
   bool testWasmAwaitTier2_ : 1;
   bool throwOnAsmJSValidationFailure_ : 1;
+  bool disableIon_ : 1;
+  bool disableEvalSecurityChecks_ : 1;
   bool asyncStack_ : 1;
+  bool asyncStackCaptureDebuggeeOnly_ : 1;
+  bool sourcePragmas_ : 1;
   bool throwOnDebuggeeWouldRun_ : 1;
   bool dumpStackOnDebuggeeWouldRun_ : 1;
-  bool werror_ : 1;
   bool strictMode_ : 1;
-  bool extraWarnings_ : 1;
+#ifdef JS_ENABLE_SMOOSH
+  bool trackNotImplemented_ : 1;
+  bool trySmoosh_ : 1;
+#endif
   bool fuzzing_ : 1;
+  bool privateClassFields_ : 1;
+  bool privateClassMethods_ : 1;
 };
 
 JS_PUBLIC_API ContextOptions& ContextOptionsRef(JSContext* cx);

@@ -26,6 +26,8 @@ inline const ThreadId::PlatformData* ThreadId::platformData() const {
 
 ThreadId::ThreadId() { platformData()->hasThread = false; }
 
+ThreadId::operator bool() const { return platformData()->hasThread; }
+
 bool ThreadId::operator==(const ThreadId& aOther) const {
   const PlatformData& self = *platformData();
   const PlatformData& other = *aOther.platformData();
@@ -106,7 +108,7 @@ void ThisThread::SetName(const char* name) {
 #else
   rv = pthread_setname_np(pthread_self(), name);
 #endif
-  MOZ_RELEASE_ASSERT(!rv || mozilla::recordreplay::IsRecordingOrReplaying());
+  MOZ_RELEASE_ASSERT(!rv);
 }
 
 void ThisThread::GetName(char* nameBuffer, size_t len) {

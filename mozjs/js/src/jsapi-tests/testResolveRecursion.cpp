@@ -5,6 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "js/Object.h"  // JS::GetPrivate, JS::SetPrivate
 #include "jsapi-tests/tests.h"
 
 /*
@@ -12,11 +13,19 @@
  * prevented.
  */
 BEGIN_TEST(testResolveRecursion) {
-  static const JSClassOps my_resolve_classOps = {nullptr,  // add
-                                                 nullptr,  // delete
-                                                 nullptr,  // enumerate
-                                                 nullptr,  // newEnumerate
-                                                 my_resolve};
+  static const JSClassOps my_resolve_classOps = {
+      nullptr,     // addProperty
+      nullptr,     // delProperty
+      nullptr,     // enumerate
+      nullptr,     // newEnumerate
+      my_resolve,  // resolve
+      nullptr,     // mayResolve
+      nullptr,     // finalize
+      nullptr,     // call
+      nullptr,     // hasInstance
+      nullptr,     // construct
+      nullptr,     // trace
+  };
 
   static const JSClass my_resolve_class = {"MyResolve", JSCLASS_HAS_PRIVATE,
                                            &my_resolve_classOps};
@@ -25,8 +34,8 @@ BEGIN_TEST(testResolveRecursion) {
   CHECK(obj1);
   obj2.init(cx, JS_NewObject(cx, &my_resolve_class));
   CHECK(obj2);
-  JS_SetPrivate(obj1, this);
-  JS_SetPrivate(obj2, this);
+  JS::SetPrivate(obj1, this);
+  JS::SetPrivate(obj2, this);
 
   JS::RootedValue obj1Val(cx, JS::ObjectValue(*obj1));
   JS::RootedValue obj2Val(cx, JS::ObjectValue(*obj2));
@@ -123,7 +132,7 @@ bool doResolve(JS::HandleObject obj, JS::HandleId id, bool* resolvedp) {
 
 static bool my_resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
                        bool* resolvedp) {
-  return static_cast<cls_testResolveRecursion*>(JS_GetPrivate(obj))
+  return static_cast<cls_testResolveRecursion*>(JS::GetPrivate(obj))
       ->doResolve(obj, id, resolvedp);
 }
 END_TEST(testResolveRecursion)
@@ -142,17 +151,19 @@ BEGIN_TEST(testResolveRecursion_InitStandardClasses) {
 }
 
 const JSClass* getGlobalClass() override {
-  static const JSClassOps myGlobalClassOps = {nullptr,  // add
-                                              nullptr,  // delete
-                                              nullptr,  // enumerate
-                                              nullptr,  // newEnumerate
-                                              my_resolve,
-                                              nullptr,  // mayResolve
-                                              nullptr,  // finalize
-                                              nullptr,  // call
-                                              nullptr,  // hasInstance
-                                              nullptr,  // construct
-                                              JS_GlobalObjectTraceHook};
+  static const JSClassOps myGlobalClassOps = {
+      nullptr,                   // addProperty
+      nullptr,                   // delProperty
+      nullptr,                   // enumerate
+      nullptr,                   // newEnumerate
+      my_resolve,                // resolve
+      nullptr,                   // mayResolve
+      nullptr,                   // finalize
+      nullptr,                   // call
+      nullptr,                   // hasInstance
+      nullptr,                   // construct
+      JS_GlobalObjectTraceHook,  // trace
+  };
 
   static const JSClass myGlobalClass = {
       "testResolveRecursion_InitStandardClasses_myGlobalClass",

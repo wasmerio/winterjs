@@ -12,9 +12,11 @@
 #include "jsapi.h"
 
 #include "builtin/SelfHostingDefines.h"
+#include "frontend/Stencil.h"
 #include "gc/ZoneAllocator.h"
 #include "js/GCVector.h"
 #include "js/Id.h"
+#include "js/Modules.h"
 #include "js/UniquePtr.h"
 #include "vm/JSAtom.h"
 #include "vm/NativeObject.h"
@@ -25,10 +27,10 @@ namespace js {
 class ModuleEnvironmentObject;
 class ModuleObject;
 
-typedef Rooted<ModuleObject*> RootedModuleObject;
-typedef Handle<ModuleObject*> HandleModuleObject;
-typedef Rooted<ModuleEnvironmentObject*> RootedModuleEnvironmentObject;
-typedef Handle<ModuleEnvironmentObject*> HandleModuleEnvironmentObject;
+using RootedModuleObject = Rooted<ModuleObject*>;
+using HandleModuleObject = Handle<ModuleObject*>;
+using RootedModuleEnvironmentObject = Rooted<ModuleEnvironmentObject*>;
+using HandleModuleEnvironmentObject = Handle<ModuleEnvironmentObject*>;
 
 class ImportEntryObject : public NativeObject {
  public:
@@ -53,8 +55,14 @@ class ImportEntryObject : public NativeObject {
   uint32_t columnNumber() const;
 };
 
-typedef Rooted<ImportEntryObject*> RootedImportEntryObject;
-typedef Handle<ImportEntryObject*> HandleImportEntryObject;
+using RootedImportEntryObject = Rooted<ImportEntryObject*>;
+using HandleImportEntryObject = Handle<ImportEntryObject*>;
+using RootedImportEntryVector = Rooted<GCVector<ImportEntryObject*> >;
+using MutableHandleImportEntryObject = MutableHandle<ImportEntryObject*>;
+
+template <XDRMode mode>
+XDRResult XDRImportEntryObject(XDRState<mode>* xdr,
+                               MutableHandleImportEntryObject impObj);
 
 class ExportEntryObject : public NativeObject {
  public:
@@ -83,8 +91,11 @@ class ExportEntryObject : public NativeObject {
   uint32_t columnNumber() const;
 };
 
-typedef Rooted<ExportEntryObject*> RootedExportEntryObject;
-typedef Handle<ExportEntryObject*> HandleExportEntryObject;
+template <XDRMode mode>
+XDRResult XDRExportEntries(XDRState<mode>* xdr, MutableHandleArrayObject vec);
+
+using RootedExportEntryObject = Rooted<ExportEntryObject*>;
+using HandleExportEntryObject = Handle<ExportEntryObject*>;
 
 class RequestedModuleObject : public NativeObject {
  public:
@@ -101,8 +112,15 @@ class RequestedModuleObject : public NativeObject {
   uint32_t columnNumber() const;
 };
 
-typedef Rooted<RequestedModuleObject*> RootedRequestedModuleObject;
-typedef Handle<RequestedModuleObject*> HandleRequestedModuleObject;
+using RootedRequestedModuleObject = Rooted<RequestedModuleObject*>;
+using HandleRequestedModuleObject = Handle<RequestedModuleObject*>;
+using RootedRequestedModuleVector = Rooted<GCVector<RequestedModuleObject*> >;
+using MutableHandleRequestedModuleObject =
+    MutableHandle<RequestedModuleObject*>;
+
+template <XDRMode mode>
+XDRResult XDRRequestedModuleObject(XDRState<mode>* xdr,
+                                   MutableHandleRequestedModuleObject reqObj);
 
 class IndirectBindingMap {
  public:
@@ -205,21 +223,8 @@ class ModuleNamespaceObject : public ProxyObject {
   static const ProxyHandler proxyHandler;
 };
 
-typedef Rooted<ModuleNamespaceObject*> RootedModuleNamespaceObject;
-typedef Handle<ModuleNamespaceObject*> HandleModuleNamespaceObject;
-
-struct FunctionDeclaration {
-  FunctionDeclaration(HandleAtom name, HandleFunction fun);
-  void trace(JSTracer* trc);
-
-  const HeapPtr<JSAtom*> name;
-  const HeapPtr<JSFunction*> fun;
-};
-
-// A vector of function bindings to be instantiated. This can be created in a
-// helper thread zone and so can't use ZoneAllocPolicy.
-using FunctionDeclarationVector =
-    GCVector<FunctionDeclaration, 0, SystemAllocPolicy>;
+using RootedModuleNamespaceObject = Rooted<ModuleNamespaceObject*>;
+using HandleModuleNamespaceObject = Handle<ModuleNamespaceObject*>;
 
 // Possible values for ModuleStatus are defined in SelfHostingDefines.h.
 using ModuleStatus = int32_t;
@@ -262,9 +267,14 @@ class ModuleObject : public NativeObject {
   static bool isInstance(HandleValue value);
 
   static ModuleObject* create(JSContext* cx);
-  void init(HandleScript script);
+
+  // Initialize the slots on this object that are dependent on the script.
+  void initScriptSlots(HandleScript script);
+
   void setInitialEnvironment(
       Handle<ModuleEnvironmentObject*> initialEnvironment);
+
+  void initStatusSlot();
   void initImportExportData(HandleArrayObject requestedModules,
                             HandleArrayObject importEntries,
                             HandleArrayObject localExportEntries,
@@ -302,10 +312,6 @@ class ModuleObject : public NativeObject {
 
   void setMetaObject(JSObject* obj);
 
-  // For BytecodeEmitter.
-  bool noteFunctionDeclaration(JSContext* cx, HandleAtom name,
-                               HandleFunction fun);
-
   // For intrinsic_InstantiateModuleFunctionDeclarations.
   static bool instantiateFunctionDeclarations(JSContext* cx,
                                               HandleModuleObject self);
@@ -319,6 +325,11 @@ class ModuleObject : public NativeObject {
                                                 HandleModuleObject self,
                                                 HandleObject exports);
 
+  static bool createEnvironment(JSContext* cx, HandleModuleObject self);
+
+  frontend::FunctionDeclarationVector* functionDeclarations();
+  void initFunctionDeclarations(frontend::FunctionDeclarationVector&& decls);
+
  private:
   static const JSClassOps classOps_;
 
@@ -326,7 +337,6 @@ class ModuleObject : public NativeObject {
   static void finalize(JSFreeOp* fop, JSObject* obj);
 
   bool hasImportBindings() const;
-  FunctionDeclarationVector* functionDeclarations();
 };
 
 JSObject* GetOrCreateModuleMetaObject(JSContext* cx, HandleObject module);
@@ -337,8 +347,12 @@ JSObject* CallModuleResolveHook(JSContext* cx, HandleValue referencingPrivate,
 JSObject* StartDynamicModuleImport(JSContext* cx, HandleScript script,
                                    HandleValue specifier);
 
-bool FinishDynamicModuleImport(JSContext* cx, HandleValue referencingPrivate,
+bool FinishDynamicModuleImport(JSContext* cx, JS::DynamicImportStatus status,
+                               HandleValue referencingPrivate,
                                HandleString specifier, HandleObject promise);
+
+template <XDRMode mode>
+XDRResult XDRModuleObject(XDRState<mode>* xdr, MutableHandleModuleObject modp);
 
 }  // namespace js
 

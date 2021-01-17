@@ -16,17 +16,20 @@
 #include "mozilla/FloatingPoint.h"
 
 #include <algorithm>
+#include <type_traits>
 
 #include "jsnum.h"
 
 #include "builtin/Array.h"
 #include "jit/AtomicOperations.h"
 #include "js/Conversions.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/Value.h"
 #include "util/Memory.h"
 #include "vm/BigIntType.h"
 #include "vm/JSContext.h"
 #include "vm/NativeObject.h"
+#include "vm/Uint8Clamped.h"
 
 #include "gc/ObjectKind-inl.h"
 #include "vm/ObjectOperations-inl.h"
@@ -129,9 +132,8 @@ inline uint64_t ConvertNumber<uint64_t, double>(double src) {
 template <typename To, typename From>
 inline To ConvertNumber(From src) {
   static_assert(
-      !mozilla::IsFloatingPoint<From>::value ||
-          (mozilla::IsFloatingPoint<From>::value &&
-           mozilla::IsFloatingPoint<To>::value),
+      !std::is_floating_point_v<From> ||
+          (std::is_floating_point_v<From> && std::is_floating_point_v<To>),
       "conversion from floating point to int should have been handled by "
       "specializations above");
   return To(src);
@@ -300,8 +302,9 @@ class ElementSpecific {
     MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(!source->hasDetachedBuffer(), "source isn't detached");
 
-    MOZ_ASSERT(offset <= target->length());
-    MOZ_ASSERT(source->length() <= target->length() - offset);
+    MOZ_ASSERT(offset <= target->length().deprecatedGetUint32());
+    MOZ_ASSERT(source->length().deprecatedGetUint32() <=
+               target->length().deprecatedGetUint32() - offset);
 
     if (TypedArrayObject::sameBuffer(target, source)) {
       return setFromOverlappingTypedArray(target, source, offset);
@@ -309,7 +312,7 @@ class ElementSpecific {
 
     SharedMem<T*> dest =
         target->dataPointerEither().template cast<T*>() + offset;
-    uint32_t count = source->length();
+    size_t count = source->length().get();
 
     if (source->type() == target->type()) {
       Ops::podCopy(dest, source->dataPointerEither().template cast<T*>(),
@@ -321,7 +324,7 @@ class ElementSpecific {
     switch (source->type()) {
       case Scalar::Int8: {
         SharedMem<int8_t*> src = data.cast<int8_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
@@ -329,63 +332,63 @@ class ElementSpecific {
       case Scalar::Uint8:
       case Scalar::Uint8Clamped: {
         SharedMem<uint8_t*> src = data.cast<uint8_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Int16: {
         SharedMem<int16_t*> src = data.cast<int16_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Uint16: {
         SharedMem<uint16_t*> src = data.cast<uint16_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Int32: {
         SharedMem<int32_t*> src = data.cast<int32_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Uint32: {
         SharedMem<uint32_t*> src = data.cast<uint32_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::BigInt64: {
         SharedMem<int64_t*> src = data.cast<int64_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::BigUint64: {
         SharedMem<uint64_t*> src = data.cast<uint64_t*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Float32: {
         SharedMem<float*> src = data.cast<float*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
       }
       case Scalar::Float64: {
         SharedMem<double*> src = data.cast<double*>();
-        for (uint32_t i = 0; i < count; ++i) {
+        for (size_t i = 0; i < count; ++i) {
           Ops::store(dest++, ConvertNumber<T>(Ops::load(src++)));
         }
         break;
@@ -404,20 +407,20 @@ class ElementSpecific {
    */
   static bool setFromNonTypedArray(JSContext* cx,
                                    Handle<TypedArrayObject*> target,
-                                   HandleObject source, uint32_t len,
-                                   uint32_t offset = 0) {
+                                   HandleObject source, size_t len,
+                                   size_t offset = 0) {
     MOZ_ASSERT(target->type() == TypeIDOfType<T>::id,
                "target type and NativeType must match");
     MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(!source->is<TypedArrayObject>(),
                "use setFromTypedArray instead of this method");
 
-    uint32_t i = 0;
+    size_t i = 0;
     if (source->isNative()) {
       // Attempt fast-path infallible conversion of dense elements up to
       // the first potentially side-effectful lookup or conversion.
-      uint32_t bound =
-          std::min(source->as<NativeObject>().getDenseInitializedLength(), len);
+      size_t bound = std::min<size_t>(
+          source->as<NativeObject>().getDenseInitializedLength(), len);
 
       SharedMem<T*> dest =
           target->dataPointerEither().template cast<T*>() + offset;
@@ -449,7 +452,7 @@ class ElementSpecific {
         return false;
       }
 
-      len = std::min(len, target->length());
+      len = std::min<size_t>(len, target->length().get());
       if (i >= len) {
         break;
       }
@@ -474,10 +477,10 @@ class ElementSpecific {
                "target type and NativeType must match");
     MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(IsPackedArray(source), "source array must be packed");
-    MOZ_ASSERT(source->getDenseInitializedLength() <= target->length());
+    MOZ_ASSERT(source->getDenseInitializedLength() <= target->length().get());
 
-    uint32_t len = source->getDenseInitializedLength();
-    uint32_t i = 0;
+    size_t len = source->getDenseInitializedLength();
+    size_t i = 0;
 
     // Attempt fast-path infallible conversion of dense elements up to the
     // first potentially side-effectful conversion.
@@ -503,7 +506,7 @@ class ElementSpecific {
     }
 
     RootedValue v(cx);
-    for (uint32_t j = 0; j < values.length(); i++, j++) {
+    for (size_t j = 0; j < values.length(); i++, j++) {
       v = values[j];
 
       T n;
@@ -514,7 +517,7 @@ class ElementSpecific {
       // |target| is a newly allocated typed array and not yet visible to
       // content script, so valueToNative can't detach the underlying
       // buffer.
-      MOZ_ASSERT(i < target->length());
+      MOZ_ASSERT(i < target->length().get());
 
       // Compute every iteration in case GC moves the data.
       SharedMem<T*> newDest = target->dataPointerEither().template cast<T*>();
@@ -527,7 +530,7 @@ class ElementSpecific {
  private:
   static bool setFromOverlappingTypedArray(Handle<TypedArrayObject*> target,
                                            Handle<TypedArrayObject*> source,
-                                           uint32_t offset) {
+                                           size_t offset) {
     // WARNING: |source| may be an unwrapped typed array from a different
     // compartment. Proceed with caution!
 
@@ -539,12 +542,12 @@ class ElementSpecific {
                "the provided arrays don't actually overlap, so it's "
                "undesirable to use this method");
 
-    MOZ_ASSERT(offset <= target->length());
-    MOZ_ASSERT(source->length() <= target->length() - offset);
+    MOZ_ASSERT(offset <= target->length().get());
+    MOZ_ASSERT(source->length().get() <= target->length().get() - offset);
 
     SharedMem<T*> dest =
         target->dataPointerEither().template cast<T*>() + offset;
-    uint32_t len = source->length();
+    size_t len = source->length().get();
 
     if (source->type() == target->type()) {
       SharedMem<T*> src = source->dataPointerEither().template cast<T*>();
@@ -564,7 +567,7 @@ class ElementSpecific {
     switch (source->type()) {
       case Scalar::Int8: {
         int8_t* src = static_cast<int8_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
@@ -572,63 +575,63 @@ class ElementSpecific {
       case Scalar::Uint8:
       case Scalar::Uint8Clamped: {
         uint8_t* src = static_cast<uint8_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Int16: {
         int16_t* src = static_cast<int16_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Uint16: {
         uint16_t* src = static_cast<uint16_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Int32: {
         int32_t* src = static_cast<int32_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Uint32: {
         uint32_t* src = static_cast<uint32_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::BigInt64: {
         int64_t* src = static_cast<int64_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::BigUint64: {
         uint64_t* src = static_cast<uint64_t*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Float32: {
         float* src = static_cast<float*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
       }
       case Scalar::Float64: {
         double* src = static_cast<double*>(data);
-        for (uint32_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           Ops::store(dest++, ConvertNumber<T>(*src++));
         }
         break;
@@ -692,12 +695,12 @@ class ElementSpecific {
       return true;
     }
 
-    if (std::is_same<T, int64_t>::value) {
+    if (std::is_same_v<T, int64_t>) {
       JS_TRY_VAR_OR_RETURN_FALSE(cx, *result, ToBigInt64(cx, v));
       return true;
     }
 
-    if (std::is_same<T, uint64_t>::value) {
+    if (std::is_same_v<T, uint64_t>) {
       JS_TRY_VAR_OR_RETURN_FALSE(cx, *result, ToBigUint64(cx, v));
       return true;
     }

@@ -17,6 +17,10 @@
 #include <pthread.h>
 #endif
 
+#if defined(XP_UNIX)
+#include <unistd.h>
+#endif
+
 #if defined(XP_OS2)
 #define INCL_DOSFILEMGR
 #include <os2.h>
@@ -71,7 +75,7 @@ char *TEST_DIR = "C:\\temp\\prdir";
 char *FILE_NAME = "pr_testfile";
 char *HIDDEN_FILE_NAME = "hidden_pr_testfile";
 #else
-char *TEST_DIR = "/tmp/testfile_dir";
+char *TEST_DIR = "./tmp-testfile_dir";
 char *FILE_NAME = "pr_testfile";
 char *HIDDEN_FILE_NAME = ".hidden_pr_testfile";
 #endif

@@ -145,7 +145,6 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
 // For an explanation of the problem being solved here, see
 // SetJitExceptionFilter in jsfriendapi.h.
 static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
-#ifndef JS_ENABLE_UWP
   if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
     MOZ_CRASH();
   }
@@ -233,9 +232,6 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
   AutoSuppressStackWalking suppress;
   return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
                                          RuntimeFunctionCallback, NULL, NULL);
-#else
-  return false;
-#endif
 }
 
 static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
@@ -255,11 +251,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   void* p = nullptr;
   for (size_t i = 0; i < 10; i++) {
     void* randomAddr = ComputeRandomAllocationAddress();
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (p) {
       break;
     }
@@ -267,11 +259,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
 
   if (!p) {
     // Try again without randomization.
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (!p) {
       return nullptr;
     }
@@ -322,17 +310,8 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
 
 static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
                                      ProtectionSetting protection) {
-#ifdef JS_ENABLE_UWP
-  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
-  if (p) {
-    ULONG oldProt;
-    bool r = VirtualProtectFromApp(addr, bytes, ProtectionSettingToFlags(protection), &oldProt);
-    MOZ_RELEASE_ASSERT(r);
-  }
-#else
   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
                          ProtectionSettingToFlags(protection));
-#endif
   if (!p) {
     return false;
   }
@@ -531,9 +510,7 @@ class ProcessExecutableMemory {
 
   // pagesAllocated_ is an Atomic so that bytesAllocated does not have to
   // take the lock.
-  mozilla::Atomic<size_t, mozilla::ReleaseAcquire,
-                  mozilla::recordreplay::Behavior::DontPreserve>
-      pagesAllocated_;
+  mozilla::Atomic<size_t, mozilla::ReleaseAcquire> pagesAllocated_;
 
   // Page where we should try to allocate next.
   size_t cursor_;
@@ -592,6 +569,11 @@ class ProcessExecutableMemory {
     MOZ_RELEASE_ASSERT(p >= base_ &&
                        uintptr_t(p) + bytes <=
                            uintptr_t(base_) + MaxCodeBytesPerProcess);
+  }
+
+  bool containsAddress(const void* p) const {
+    return p >= base_ &&
+           uintptr_t(p) < uintptr_t(base_) + MaxCodeBytesPerProcess;
   }
 
   void* allocate(size_t bytes, ProtectionSetting protection,
@@ -748,13 +730,19 @@ bool js::jit::CanLikelyAllocateMoreExecutableMemory() {
   return execMemory.bytesAllocated() + BufferSize <= MaxCodeBytesPerProcess;
 }
 
+bool js::jit::AddressIsInExecutableMemory(const void* p) {
+  return execMemory.containsAddress(p);
+}
+
 bool js::jit::ReprotectRegion(void* start, size_t size,
                               ProtectionSetting protection,
                               MustFlushICache flushICache) {
   // Flush ICache when making code executable, before we modify |size|.
-  if (flushICache == MustFlushICache::Yes) {
+  if (flushICache == MustFlushICache::LocalThreadOnly ||
+      flushICache == MustFlushICache::AllThreads) {
     MOZ_ASSERT(protection == ProtectionSetting::Executable);
-    jit::FlushICache(start, size);
+    bool codeIsThreadLocal = flushICache == MustFlushICache::LocalThreadOnly;
+    jit::FlushICache(start, size, codeIsThreadLocal);
   }
 
   // Calculate the start of the page containing this region,
@@ -789,11 +777,7 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
 #ifdef XP_WIN
   DWORD oldProtect;
   DWORD flags = ProtectionSettingToFlags(protection);
-#ifdef JS_ENABLE_UWP
-  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
-#else
   if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
-#endif
     return false;
   }
 #else

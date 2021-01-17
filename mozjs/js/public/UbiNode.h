@@ -13,13 +13,14 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Move.h"
 #include "mozilla/RangedPtr.h"
-#include "mozilla/TypeTraits.h"
 #include "mozilla/Variant.h"
+
+#include <utility>
 
 #include "jspubtd.h"
 
+#include "js/AllocPolicy.h"
 #include "js/GCAPI.h"
 #include "js/HashTable.h"
 #include "js/RootingAPI.h"
@@ -163,18 +164,24 @@
 // structure of the snapshot file, the analyses should be prepared for ubi::Node
 // graphs constructed from snapshots to be even more bizarre.
 
+namespace js {
+class BaseScript;
+}  // namespace js
+
 namespace JS {
+
+using ZoneSet =
+    js::HashSet<Zone*, js::DefaultHasher<Zone*>, js::SystemAllocPolicy>;
+
+using CompartmentSet =
+    js::HashSet<Compartment*, js::DefaultHasher<Compartment*>,
+                js::SystemAllocPolicy>;
+
 namespace ubi {
 
 class Edge;
 class EdgeRange;
 class StackFrame;
-
-}  // namespace ubi
-}  // namespace JS
-
-namespace JS {
-namespace ubi {
 
 using mozilla::Maybe;
 using mozilla::RangedPtr;
@@ -322,9 +329,8 @@ class StackFrame {
 
   template <typename T>
   void construct(T* ptr) {
-    static_assert(
-        mozilla::IsBaseOf<BaseStackFrame, ConcreteStackFrame<T>>::value,
-        "ConcreteStackFrame<T> must inherit from BaseStackFrame");
+    static_assert(std::is_base_of_v<BaseStackFrame, ConcreteStackFrame<T>>,
+                  "ConcreteStackFrame<T> must inherit from BaseStackFrame");
     static_assert(
         sizeof(ConcreteStackFrame<T>) == sizeof(*base()),
         "ubi::ConcreteStackFrame<T> specializations must be the same size as "
@@ -652,17 +658,6 @@ class JS_PUBLIC_API Base {
   // Return the object's [[Class]]'s name.
   virtual const char* jsObjectClassName() const { return nullptr; }
 
-  // If this object was constructed with `new` and we have the data available,
-  // place the contructor function's display name in the out parameter.
-  // Otherwise, place nullptr in the out parameter. Caller maintains ownership
-  // of the out parameter. True is returned on success, false is returned on
-  // OOM.
-  virtual MOZ_MUST_USE bool jsObjectConstructorName(
-      JSContext* cx, UniqueTwoByteChars& outName) const {
-    outName.reset(nullptr);
-    return true;
-  }
-
   // Methods for CoarseType::Script referents
 
   // Return the script's source's filename if available. If unavailable,
@@ -711,7 +706,7 @@ class Node {
     static_assert(
         sizeof(Concrete<T>) == sizeof(*base()),
         "ubi::Base specializations must be the same size as ubi::Base");
-    static_assert(mozilla::IsBaseOf<Base, Concrete<T>>::value,
+    static_assert(std::is_base_of_v<Base, Concrete<T>>,
                   "ubi::Concrete<T> must inherit from ubi::Base");
     Concrete<T>::construct(base(), ptr);
   }
@@ -811,10 +806,6 @@ class Node {
   const char16_t* descriptiveTypeName() const {
     return base()->descriptiveTypeName();
   }
-  MOZ_MUST_USE bool jsObjectConstructorName(JSContext* cx,
-                                            UniqueTwoByteChars& outName) const {
-    return base()->jsObjectConstructorName(cx, outName);
-  }
 
   const char* scriptFilename() const { return base()->scriptFilename(); }
 
@@ -870,7 +861,7 @@ using EdgeName = UniqueTwoByteChars;
 // An outgoing edge to a referent node.
 class Edge {
  public:
-  Edge() : name(nullptr), referent() {}
+  Edge() = default;
 
   // Construct an initialized Edge, taking ownership of |name|.
   Edge(char16_t* name, const Node& referent) : name(name), referent(referent) {}
@@ -898,7 +889,7 @@ class Edge {
   // (In real life we'll want a better representation for names, to avoid
   // creating tons of strings when the names follow a pattern; and we'll need
   // to think about lifetimes carefully to ensure traversal stays cheap.)
-  EdgeName name;
+  EdgeName name = nullptr;
 
   // This edge's referent.
   Node referent;
@@ -920,7 +911,7 @@ class EdgeRange {
   EdgeRange() : front_(nullptr) {}
 
  public:
-  virtual ~EdgeRange() {}
+  virtual ~EdgeRange() = default;
 
   // True if there are no more edges in this range.
   bool empty() const { return !front_; }
@@ -1107,12 +1098,14 @@ class JS_PUBLIC_API Concrete<JS::BigInt> : TracerConcrete<JS::BigInt> {
 };
 
 template <>
-class JS_PUBLIC_API Concrete<JSScript> : TracerConcreteWithRealm<JSScript> {
+class JS_PUBLIC_API Concrete<js::BaseScript>
+    : TracerConcreteWithRealm<js::BaseScript> {
  protected:
-  explicit Concrete(JSScript* ptr) : TracerConcreteWithRealm<JSScript>(ptr) {}
+  explicit Concrete(js::BaseScript* ptr)
+      : TracerConcreteWithRealm<js::BaseScript>(ptr) {}
 
  public:
-  static void construct(void* storage, JSScript* ptr) {
+  static void construct(void* storage, js::BaseScript* ptr) {
     new (storage) Concrete(ptr);
   }
 
@@ -1137,8 +1130,6 @@ class JS_PUBLIC_API Concrete<JSObject> : public TracerConcrete<JSObject> {
   JS::Realm* realm() const override;
 
   const char* jsObjectClassName() const override;
-  MOZ_MUST_USE bool jsObjectConstructorName(
-      JSContext* cx, UniqueTwoByteChars& outName) const override;
   Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
 
   bool hasAllocationStack() const override;

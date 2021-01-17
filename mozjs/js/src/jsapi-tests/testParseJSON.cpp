@@ -8,6 +8,9 @@
 #include <limits>
 #include <string.h>
 
+#include "js/Array.h"  // JS::IsArrayObject
+#include "js/Exception.h"
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/JSON.h"
 #include "js/MemoryFunctions.h"
 #include "js/Printf.h"
@@ -118,7 +121,7 @@ BEGIN_TEST(testParseJSON_success) {
   CHECK(Parse(cx, "[]", &v));
   CHECK(v.isObject());
   obj = &v.toObject();
-  CHECK(JS_IsArrayObject(cx, obj, &isArray));
+  CHECK(JS::IsArrayObject(cx, obj, &isArray));
   CHECK(isArray);
   CHECK(JS_GetProperty(cx, obj, "length", &v2));
   CHECK(v2.isInt32(0));
@@ -126,7 +129,7 @@ BEGIN_TEST(testParseJSON_success) {
   CHECK(Parse(cx, "[1]", &v));
   CHECK(v.isObject());
   obj = &v.toObject();
-  CHECK(JS_IsArrayObject(cx, obj, &isArray));
+  CHECK(JS::IsArrayObject(cx, obj, &isArray));
   CHECK(isArray);
   CHECK(JS_GetProperty(cx, obj, "0", &v2));
   CHECK(v2.isInt32(1));
@@ -137,13 +140,13 @@ BEGIN_TEST(testParseJSON_success) {
   CHECK(Parse(cx, "{}", &v));
   CHECK(v.isObject());
   obj = &v.toObject();
-  CHECK(JS_IsArrayObject(cx, obj, &isArray));
+  CHECK(JS::IsArrayObject(cx, obj, &isArray));
   CHECK(!isArray);
 
   CHECK(Parse(cx, "{ \"f\": 17 }", &v));
   CHECK(v.isObject());
   obj = &v.toObject();
-  CHECK(JS_IsArrayObject(cx, obj, &isArray));
+  CHECK(JS::IsArrayObject(cx, obj, &isArray));
   CHECK(!isArray);
   CHECK(JS_GetProperty(cx, obj, "f", &v2));
   CHECK(v2.isInt32(17));
@@ -296,12 +299,11 @@ inline bool Error(JSContext* cx, const char (&input)[N], uint32_t expectedLine,
   bool ok = JS_ParseJSON(cx, str.chars(), str.length(), &dummy);
   CHECK(!ok);
 
-  RootedValue exn(cx);
-  CHECK(JS_GetPendingException(cx, &exn));
-  JS_ClearPendingException(cx);
+  JS::ExceptionStack exnStack(cx);
+  CHECK(StealPendingExceptionStack(cx, &exnStack));
 
-  js::ErrorReport report(cx);
-  CHECK(report.init(cx, exn, js::ErrorReport::WithSideEffects));
+  JS::ErrorReportBuilder report(cx);
+  CHECK(report.init(cx, exnStack, JS::ErrorReportBuilder::WithSideEffects));
   CHECK(report.report()->errorNumber == JSMSG_JSON_BAD_PARSE);
 
   UniqueChars lineAndColumnASCII =

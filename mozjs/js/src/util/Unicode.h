@@ -68,8 +68,6 @@ const uint8_t UNICODE_ID_CONTINUE = UNICODE_ID_START + UNICODE_ID_CONTINUE_ONLY;
 
 constexpr char16_t NO_BREAK_SPACE = 0x00A0;
 constexpr char16_t MICRO_SIGN = 0x00B5;
-constexpr char16_t LATIN_CAPITAL_LETTER_A_WITH_GRAVE = 0x00C0;
-constexpr char16_t MULTIPLICATION_SIGN = 0x00D7;
 constexpr char16_t LATIN_SMALL_LETTER_SHARP_S = 0x00DF;
 constexpr char16_t LATIN_SMALL_LETTER_A_WITH_GRAVE = 0x00E0;
 constexpr char16_t DIVISION_SIGN = 0x00F7;
@@ -298,6 +296,27 @@ inline char16_t ToLowerCase(char16_t ch) {
   return uint16_t(ch) + info.lowerCase;
 }
 
+extern const JS::Latin1Char latin1ToLowerCaseTable[];
+
+/*
+ * Returns the simple lower case mapping (possibly the identity mapping; see
+ * ChangesWhenUpperCasedSpecialCasing for details) of the given Latin-1 code
+ * point.
+ */
+inline JS::Latin1Char ToLowerCase(JS::Latin1Char ch) {
+  return latin1ToLowerCaseTable[ch];
+}
+
+/*
+ * Returns the simple lower case mapping (possibly the identity mapping; see
+ * ChangesWhenUpperCasedSpecialCasing for details) of the given ASCII code
+ * point.
+ */
+inline char ToLowerCase(char ch) {
+  MOZ_ASSERT(static_cast<unsigned char>(ch) < 128);
+  return latin1ToLowerCaseTable[uint8_t(ch)];
+}
+
 /**
  * Returns true iff ToUpperCase(ch) != ch.
  *
@@ -344,15 +363,7 @@ inline bool ChangesWhenLowerCased(char16_t ch) {
 
 // Returns true iff ToLowerCase(ch) != ch.
 inline bool ChangesWhenLowerCased(JS::Latin1Char ch) {
-  if (MOZ_LIKELY(ch < 128)) {
-    return ch >= 'A' && ch <= 'Z';
-  }
-
-  // U+00C0 to U+00DE, except U+00D7, have a lowercase form.
-  bool hasLower = ((ch & ~0x1F) == LATIN_CAPITAL_LETTER_A_WITH_GRAVE) &&
-                  ((ch & MULTIPLICATION_SIGN) != MULTIPLICATION_SIGN);
-  MOZ_ASSERT(hasLower == ChangesWhenLowerCased(char16_t(ch)));
-  return hasLower;
+  return latin1ToLowerCaseTable[ch] != ch;
 }
 
 #define CHECK_RANGE(FROM, TO, LEAD, TRAIL_FROM, TRAIL_TO, DIFF) \
@@ -437,80 +448,9 @@ size_t LengthUpperCaseSpecialCasing(char16_t ch);
 void AppendUpperCaseSpecialCasing(char16_t ch, char16_t* elements,
                                   size_t* index);
 
-/*
- * For a codepoint C, CodepointsWithSameUpperCaseInfo stores three offsets
- * from C to up to three codepoints with same uppercase (no codepoint in
- * UnicodeData.txt has more than three such codepoints).
- *
- * To illustrate, consider the codepoint U+0399 GREEK CAPITAL LETTER IOTA, the
- * uppercased form of these three codepoints:
- *
- *   U+03B9 GREEK SMALL LETTER IOTA
- *   U+1FBE GREEK PROSGEGRAMMENI
- *   U+0345 COMBINING GREEK YPOGEGRAMMENI
- *
- * For the CodepointsWithSameUpperCaseInfo corresponding to this codepoint,
- * delta{1,2,3} are 16-bit modular deltas from 0x0399 to each respective
- * codepoint:
- *   uint16_t(0x03B9 - 0x0399),
- *   uint16_t(0x1FBE - 0x0399),
- *   uint16_t(0x0345 - 0x0399)
- * in an unimportant order.
- *
- * If there are fewer than three other codepoints, some fields are zero.
- * Consider the codepoint U+03B9 above, the other two codepoints U+1FBE and
- * U+0345 have same uppercase (U+0399 is not).  For the
- * CodepointsWithSameUpperCaseInfo corresponding to this codepoint,
- * delta{1,2,3} are:
- *   uint16_t(0x1FBE - 0x03B9),
- *   uint16_t(0x0345 - 0x03B9),
- *   uint16_t(0)
- * in an unimportant order.
- *
- * Because multiple codepoints map to a single CodepointsWithSameUpperCaseInfo,
- * a CodepointsWithSameUpperCaseInfo and its delta{1,2,3} have no meaning
- * standing alone: they have meaning only with respect to a codepoint mapping
- * to that CodepointsWithSameUpperCaseInfo.
- */
-class CodepointsWithSameUpperCaseInfo {
- public:
-  uint16_t delta1;
-  uint16_t delta2;
-  uint16_t delta3;
-};
-
-extern const uint8_t codepoints_with_same_upper_index1[];
-extern const uint8_t codepoints_with_same_upper_index2[];
-extern const CodepointsWithSameUpperCaseInfo
-    js_codepoints_with_same_upper_info[];
-
-class CodepointsWithSameUpperCase {
-  const CodepointsWithSameUpperCaseInfo& info_;
-  const char16_t code_;
-
-  static const CodepointsWithSameUpperCaseInfo& computeInfo(char16_t code) {
-    const size_t shift = 6;
-    size_t index = codepoints_with_same_upper_index1[code >> shift];
-    index = codepoints_with_same_upper_index2[(index << shift) +
-                                              (code & ((1 << shift) - 1))];
-    return js_codepoints_with_same_upper_info[index];
-  }
-
- public:
-  explicit CodepointsWithSameUpperCase(char16_t code)
-      : info_(computeInfo(code)), code_(code) {}
-
-  char16_t other1() const { return uint16_t(code_) + info_.delta1; }
-  char16_t other2() const { return uint16_t(code_) + info_.delta2; }
-  char16_t other3() const { return uint16_t(code_) + info_.delta3; }
-};
-
 class FoldingInfo {
  public:
   uint16_t folding;
-  uint16_t reverse1;
-  uint16_t reverse2;
-  uint16_t reverse3;
 };
 
 extern const uint8_t folding_index1[];
@@ -518,7 +458,7 @@ extern const uint8_t folding_index2[];
 extern const FoldingInfo js_foldinfo[];
 
 inline const FoldingInfo& CaseFoldInfo(char16_t code) {
-  const size_t shift = 6;
+  const size_t shift = 5;
   size_t index = folding_index1[code >> shift];
   index = folding_index2[(index << shift) + (code & ((1 << shift) - 1))];
   return js_foldinfo[index];
@@ -527,21 +467,6 @@ inline const FoldingInfo& CaseFoldInfo(char16_t code) {
 inline char16_t FoldCase(char16_t ch) {
   const FoldingInfo& info = CaseFoldInfo(ch);
   return uint16_t(ch) + info.folding;
-}
-
-inline char16_t ReverseFoldCase1(char16_t ch) {
-  const FoldingInfo& info = CaseFoldInfo(ch);
-  return uint16_t(ch) + info.reverse1;
-}
-
-inline char16_t ReverseFoldCase2(char16_t ch) {
-  const FoldingInfo& info = CaseFoldInfo(ch);
-  return uint16_t(ch) + info.reverse2;
-}
-
-inline char16_t ReverseFoldCase3(char16_t ch) {
-  const FoldingInfo& info = CaseFoldInfo(ch);
-  return uint16_t(ch) + info.reverse3;
 }
 
 inline bool IsSupplementary(uint32_t codePoint) {

@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.DateTimeFormat-fractionalSecondDigits is not released yet
 // Copyright 2019 Google Inc. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -32,8 +31,23 @@ function assertParts(parts, minute, second, fractionalSecond, message) {
   }
 }
 
-let dtf = new Intl.DateTimeFormat(
+assert.throws(RangeError, () => {
+  new Intl.DateTimeFormat(
     'en', { minute: "numeric", second: "numeric", fractionalSecondDigits: 0});
+}, "fractionalSecondDigits 0 should throw RangeError for out of range");
+
+assert.throws(RangeError, () => {
+  new Intl.DateTimeFormat(
+    'en', { minute: "numeric", second: "numeric", fractionalSecondDigits: 4});
+}, "fractionalSecondDigits 4 should throw RangeError for out of range");
+
+let dtf = new Intl.DateTimeFormat(
+    'en', { minute: "numeric", second: "numeric"});
+assertParts(dtf.formatToParts(d1), "02", "03", null, "no fractionalSecondDigits round down");
+assertParts(dtf.formatToParts(d2), "02", "03", null, "no fractionalSecondDigits round down");
+
+dtf = new Intl.DateTimeFormat(
+    'en', { minute: "numeric", second: "numeric", fractionalSecondDigits: undefined});
 assertParts(dtf.formatToParts(d1), "02", "03", null, "no fractionalSecondDigits round down");
 assertParts(dtf.formatToParts(d2), "02", "03", null, "no fractionalSecondDigits round down");
 

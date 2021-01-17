@@ -35,16 +35,18 @@ static void resc_trace(JSTracer* trc, JSObject* obj) {
 }
 
 static const JSClassOps RegExpStaticsObjectClassOps = {
-    nullptr,                /* addProperty */
-    nullptr,                /* delProperty */
-    nullptr,                /* enumreate */
-    nullptr,                /* newEnumerate */
-    nullptr,                /* resolve */
-    nullptr,                /* mayResolve */
-    resc_finalize, nullptr, /* call */
-    nullptr,                /* hasInstance */
-    nullptr,                /* construct */
-    resc_trace};
+    nullptr,        // addProperty
+    nullptr,        // delProperty
+    nullptr,        // enumerate
+    nullptr,        // newEnumerate
+    nullptr,        // resolve
+    nullptr,        // mayResolve
+    resc_finalize,  // finalize
+    nullptr,        // call
+    nullptr,        // hasInstance
+    nullptr,        // construct
+    resc_trace,     // trace
+};
 
 const JSClass RegExpStaticsObject::class_ = {
     "RegExpStatics", JSCLASS_HAS_PRIVATE | JSCLASS_FOREGROUND_FINALIZE,
@@ -90,8 +92,8 @@ bool RegExpStatics::executeLazy(JSContext* cx) {
 
   /* Execute the full regular expression. */
   RootedLinearString input(cx, matchesInput);
-  RegExpRunStatus status = RegExpShared::execute(cx, &shared, input, lazyIndex,
-                                                 &this->matches, nullptr);
+  RegExpRunStatus status =
+      RegExpShared::execute(cx, &shared, input, lazyIndex, &this->matches);
   if (status == RegExpRunStatus_Error) {
     return false;
   }

@@ -1,126 +1,52 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BaseProfiler.h"
+#include "mozilla/BaseProfileJSONWriter.h"
 
-#ifdef MOZ_BASE_PROFILER
+namespace mozilla::baseprofiler {
 
-#  include "BaseProfileJSONWriter.h"
+UniqueJSONStrings::UniqueJSONStrings(JSONWriter::CollectionStyle aStyle) {
+  mStringTableWriter.StartBareList(aStyle);
+}
 
-#  include "mozilla/HashFunctions.h"
-
-namespace mozilla {
-namespace baseprofiler {
-
-void ChunkedJSONWriteFunc::Write(const char* aStr) {
-  MOZ_ASSERT(mChunkPtr >= mChunkList.back().get() && mChunkPtr <= mChunkEnd);
-  MOZ_ASSERT(mChunkEnd >= mChunkList.back().get() + mChunkLengths.back());
-  MOZ_ASSERT(*mChunkPtr == '\0');
-
-  size_t len = strlen(aStr);
-
-  // Most strings to be written are small, but subprocess profiles (e.g.,
-  // from the content process in e10s) may be huge. If the string is larger
-  // than a chunk, allocate its own chunk.
-  char* newPtr;
-  if (len >= kChunkSize) {
-    AllocChunk(len + 1);
-    newPtr = mChunkPtr + len;
-  } else {
-    newPtr = mChunkPtr + len;
-    if (newPtr >= mChunkEnd) {
-      AllocChunk(kChunkSize);
-      newPtr = mChunkPtr + len;
+UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther,
+                                     JSONWriter::CollectionStyle aStyle) {
+  mStringTableWriter.StartBareList(aStyle);
+  uint32_t count = aOther.mStringHashToIndexMap.count();
+  if (count != 0) {
+    MOZ_RELEASE_ASSERT(mStringHashToIndexMap.reserve(count));
+    for (auto iter = aOther.mStringHashToIndexMap.iter(); !iter.done();
+         iter.next()) {
+      mStringHashToIndexMap.putNewInfallible(iter.get().key(),
+                                             iter.get().value());
     }
+    mStringTableWriter.CopyAndSplice(
+        aOther.mStringTableWriter.ChunkedWriteFunc());
+  }
+}
+
+UniqueJSONStrings::~UniqueJSONStrings() = default;
+
+void UniqueJSONStrings::SpliceStringTableElements(
+    SpliceableJSONWriter& aWriter) {
+  aWriter.TakeAndSplice(mStringTableWriter.TakeChunkedWriteFunc());
+}
+
+uint32_t UniqueJSONStrings::GetOrAddIndex(const Span<const char>& aStr) {
+  uint32_t count = mStringHashToIndexMap.count();
+  HashNumber hash = HashString(aStr.data(), aStr.size());
+  auto entry = mStringHashToIndexMap.lookupForAdd(hash);
+  if (entry) {
+    MOZ_ASSERT(entry->value() < count);
+    return entry->value();
   }
 
-  memcpy(mChunkPtr, aStr, len);
-  *newPtr = '\0';
-  mChunkPtr = newPtr;
-  mChunkLengths.back() += len;
+  MOZ_RELEASE_ASSERT(mStringHashToIndexMap.add(entry, hash, count));
+  mStringTableWriter.StringElement(aStr);
+  return count;
 }
 
-size_t ChunkedJSONWriteFunc::GetTotalLength() const {
-  MOZ_ASSERT(mChunkLengths.length() == mChunkList.length());
-  size_t totalLen = 1;
-  for (size_t i = 0; i < mChunkLengths.length(); i++) {
-    MOZ_ASSERT(strlen(mChunkList[i].get()) == mChunkLengths[i]);
-    totalLen += mChunkLengths[i];
-  }
-  return totalLen;
-}
-
-void ChunkedJSONWriteFunc::CopyDataIntoLazilyAllocatedBuffer(
-    const std::function<char*(size_t)>& aAllocator) const {
-  size_t totalLen = GetTotalLength();
-  char* ptr = aAllocator(totalLen);
-  for (size_t i = 0; i < mChunkList.length(); i++) {
-    size_t len = mChunkLengths[i];
-    memcpy(ptr, mChunkList[i].get(), len);
-    ptr += len;
-  }
-  *ptr = '\0';
-}
-
-UniquePtr<char[]> ChunkedJSONWriteFunc::CopyData() const {
-  UniquePtr<char[]> c;
-  CopyDataIntoLazilyAllocatedBuffer([&](size_t allocationSize) {
-    c = MakeUnique<char[]>(allocationSize);
-    return c.get();
-  });
-  return c;
-}
-
-void ChunkedJSONWriteFunc::Take(ChunkedJSONWriteFunc&& aOther) {
-  for (size_t i = 0; i < aOther.mChunkList.length(); i++) {
-    MOZ_ALWAYS_TRUE(mChunkLengths.append(aOther.mChunkLengths[i]));
-    MOZ_ALWAYS_TRUE(mChunkList.append(std::move(aOther.mChunkList[i])));
-  }
-  mChunkPtr = mChunkList.back().get() + mChunkLengths.back();
-  mChunkEnd = mChunkPtr;
-  aOther.mChunkPtr = nullptr;
-  aOther.mChunkEnd = nullptr;
-  aOther.mChunkList.clear();
-  aOther.mChunkLengths.clear();
-}
-
-void ChunkedJSONWriteFunc::AllocChunk(size_t aChunkSize) {
-  MOZ_ASSERT(mChunkLengths.length() == mChunkList.length());
-  UniquePtr<char[]> newChunk = MakeUnique<char[]>(aChunkSize);
-  mChunkPtr = newChunk.get();
-  mChunkEnd = mChunkPtr + aChunkSize;
-  *mChunkPtr = '\0';
-  MOZ_ALWAYS_TRUE(mChunkLengths.append(0));
-  MOZ_ALWAYS_TRUE(mChunkList.append(std::move(newChunk)));
-}
-
-void SpliceableJSONWriter::TakeAndSplice(ChunkedJSONWriteFunc* aFunc) {
-  Separator();
-  for (size_t i = 0; i < aFunc->mChunkList.length(); i++) {
-    WriteFunc()->Write(aFunc->mChunkList[i].get());
-  }
-  aFunc->mChunkPtr = nullptr;
-  aFunc->mChunkEnd = nullptr;
-  aFunc->mChunkList.clear();
-  aFunc->mChunkLengths.clear();
-  mNeedComma[mDepth] = true;
-}
-
-void SpliceableJSONWriter::Splice(const char* aStr) {
-  Separator();
-  WriteFunc()->Write(aStr);
-  mNeedComma[mDepth] = true;
-}
-
-void SpliceableChunkedJSONWriter::TakeAndSplice(ChunkedJSONWriteFunc* aFunc) {
-  Separator();
-  WriteFunc()->Take(std::move(*aFunc));
-  mNeedComma[mDepth] = true;
-}
-
-}  // namespace baseprofiler
-}  // namespace mozilla
-
-#endif  // MOZ_BASE_PROFILER
+}  // namespace mozilla::baseprofiler

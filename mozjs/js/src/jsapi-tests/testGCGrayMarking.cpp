@@ -7,8 +7,6 @@
 
 #include <algorithm>
 
-#include "gc/Heap.h"
-#include "gc/Verifier.h"
 #include "gc/WeakMap.h"
 #include "gc/Zone.h"
 #include "js/Proxy.h"
@@ -16,6 +14,12 @@
 
 using namespace js;
 using namespace js::gc;
+
+static constexpr CellColor AllCellColors[] = {CellColor::White, CellColor::Gray,
+                                              CellColor::Black};
+
+static constexpr CellColor MarkedCellColors[] = {CellColor::Gray,
+                                                 CellColor::Black};
 
 namespace js {
 
@@ -26,10 +30,6 @@ struct GCManagedObjectWeakMap : public ObjectWeakMap {
 }  // namespace js
 
 namespace JS {
-
-template <>
-struct DeletePolicy<js::GCManagedObjectWeakMap>
-    : public js::GCManagedDeletePolicy<js::GCManagedObjectWeakMap> {};
 
 template <>
 struct MapTypeToRootKind<js::GCManagedObjectWeakMap*> {
@@ -206,6 +206,8 @@ bool TestInternalWeakMaps() {
 bool TestJSWeakMap(MarkKeyOrDelegate markKey, CellColor weakMapMarkColor,
                    CellColor keyOrDelegateMarkColor,
                    CellColor expectedValueColor) {
+  using std::swap;
+
   // Test marking a JS WeakMap object.
   //
   // This marks the map and one of the key or delegate. The key/delegate and the
@@ -233,8 +235,8 @@ bool TestJSWeakMap(MarkKeyOrDelegate markKey, CellColor weakMapMarkColor,
                grayRoots.grayRoot2);
 
     if (markOrder != 0) {
-      mozilla::Swap(blackRoot1.get(), blackRoot2.get());
-      mozilla::Swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
+      swap(blackRoot1.get(), blackRoot2.get());
+      swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
     }
 
     JS_GC(cx);
@@ -337,6 +339,8 @@ bool CreateJSWeakMapObjects(JSObject** weakMapOut, JSObject** keyOut,
 
 bool TestInternalWeakMap(CellColor keyMarkColor, CellColor delegateMarkColor,
                          CellColor expectedColor) {
+  using std::swap;
+
   // Test marking for internal weakmaps (without an owning JSObject).
   //
   // All of the key, delegate and value are expected to end up the same color.
@@ -362,8 +366,8 @@ bool TestInternalWeakMap(CellColor keyMarkColor, CellColor delegateMarkColor,
     RootObject(delegate, delegateMarkColor, blackRoot2, grayRoots.grayRoot2);
 
     if (markOrder != 0) {
-      mozilla::Swap(blackRoot1.get(), blackRoot2.get());
-      mozilla::Swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
+      swap(blackRoot1.get(), blackRoot2.get());
+      swap(grayRoots.grayRoot1, grayRoots.grayRoot2);
     }
 
     JS_GC(cx);
@@ -606,8 +610,8 @@ struct ColorCheckFunctor {
 
     // Shapes and symbols are never marked gray.
     jsid id = shape->propid();
-    if (JSID_IS_GCTHING(id) &&
-        !CheckCellColor(JSID_TO_GCTHING(id).asCell(), MarkColor::Black)) {
+    if (id.isGCThing() &&
+        !CheckCellColor(id.toGCCellPtr().asCell(), MarkColor::Black)) {
       return false;
     }
 

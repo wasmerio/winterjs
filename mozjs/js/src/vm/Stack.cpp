@@ -18,8 +18,10 @@
 #include "gc/Marking.h"
 #include "gc/Tracer.h"  // js::TraceRoot
 #include "jit/JitcodeMap.h"
-#include "js/Value.h"      // JS::Value
-#include "vm/FrameIter.h"  // js::FrameIter
+#include "jit/JitRuntime.h"
+#include "js/friend/ErrorMessages.h"  // JSMSG_*
+#include "js/Value.h"                 // JS::Value
+#include "vm/FrameIter.h"             // js::FrameIter
 #include "vm/JSContext.h"
 #include "vm/Opcodes.h"
 #include "wasm/WasmInstance.h"
@@ -41,30 +43,13 @@ using JS::Value;
 
 void InterpreterFrame::initExecuteFrame(JSContext* cx, HandleScript script,
                                         AbstractFramePtr evalInFramePrev,
-                                        const Value& newTargetValue,
+                                        HandleValue newTargetValue,
                                         HandleObject envChain) {
   flags_ = 0;
   script_ = script;
 
-  // newTarget = NullValue is an initial sentinel for "please fill me in from
-  // the stack". It should never be passed from Ion code.
-  RootedValue newTarget(cx, newTargetValue);
-  if (script->isDirectEvalInFunction()) {
-    FrameIter iter(cx);
-    if (newTarget.isNull() && iter.hasScript() &&
-        iter.script()->bodyScope()->hasOnChain(ScopeKind::Function)) {
-      newTarget = iter.newTarget();
-    }
-  } else if (evalInFramePrev) {
-    if (newTarget.isNull() && evalInFramePrev.hasScript() &&
-        evalInFramePrev.script()->bodyScope()->hasOnChain(
-            ScopeKind::Function)) {
-      newTarget = evalInFramePrev.newTarget();
-    }
-  }
-
   Value* dstvp = (Value*)this - 1;
-  dstvp[0] = newTarget;
+  dstvp[0] = newTargetValue;
 
   envChain_ = envChain.get();
   prev_ = nullptr;
@@ -81,10 +66,6 @@ void InterpreterFrame::initExecuteFrame(JSContext* cx, HandleScript script,
 #ifdef DEBUG
   Debug_SetValueRangeToCrashOnTouch(&rval_, 1);
 #endif
-}
-
-bool InterpreterFrame::isNonGlobalEvalFrame() const {
-  return isEvalFrame() && script()->bodyScope()->as<EvalScope>().isNonGlobal();
 }
 
 ArrayObject* InterpreterFrame::createRestParameter(JSContext* cx) {
@@ -121,7 +102,6 @@ static inline void AssertScopeMatchesEnvironment(Scope* scope,
           break;
 
         case ScopeKind::FunctionBodyVar:
-        case ScopeKind::ParameterExpressionVar:
           MOZ_ASSERT(&env->as<VarEnvironmentObject>().scope() == si.scope());
           env = &env->as<VarEnvironmentObject>().enclosingEnvironment();
           break;
@@ -132,6 +112,7 @@ static inline void AssertScopeMatchesEnvironment(Scope* scope,
         case ScopeKind::NamedLambda:
         case ScopeKind::StrictNamedLambda:
         case ScopeKind::FunctionLexical:
+        case ScopeKind::ClassBody:
           MOZ_ASSERT(&env->as<LexicalEnvironmentObject>().scope() ==
                      si.scope());
           env = &env->as<LexicalEnvironmentObject>().enclosingEnvironment();
@@ -208,23 +189,9 @@ bool InterpreterFrame::prologue(JSContext* cx) {
   MOZ_ASSERT(cx->interpreterRegs().pc == script->code());
   MOZ_ASSERT(cx->realm() == script->realm());
 
-  if (isEvalFrame() || isGlobalFrame()) {
-    HandleObject env = environmentChain();
-    if (!CheckGlobalOrEvalDeclarationConflicts(cx, env, script)) {
-      // Treat this as a script entry, for consistency with Ion.
-      if (script->trackRecordReplayProgress()) {
-        mozilla::recordreplay::AdvanceExecutionProgressCounter();
-      }
-      return false;
-    }
+  if (!isFunctionFrame()) {
     return probes::EnterScript(cx, script, nullptr, this);
   }
-
-  if (isModuleFrame()) {
-    return probes::EnterScript(cx, script, nullptr, this);
-  }
-
-  MOZ_ASSERT(isFunctionFrame());
 
   // At this point, we've yet to push any environments. Check that they
   // match the enclosing scope.
@@ -284,7 +251,7 @@ bool InterpreterFrame::checkReturn(JSContext* cx, HandleValue thisv) {
   }
 
   if (thisv.isMagic(JS_UNINITIALIZED_LEXICAL)) {
-    return ThrowUninitializedThis(cx, this);
+    return ThrowUninitializedThis(cx);
   }
 
   setReturnValue(thisv);
@@ -436,7 +403,7 @@ InterpreterFrame* InterpreterStack::pushInvokeFrame(
 }
 
 InterpreterFrame* InterpreterStack::pushExecuteFrame(
-    JSContext* cx, HandleScript script, const Value& newTargetValue,
+    JSContext* cx, HandleScript script, HandleValue newTargetValue,
     HandleObject envChain, AbstractFramePtr evalInFrame) {
   LifoAlloc::Mark mark = allocator_.mark();
 
@@ -667,14 +634,30 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
   void* returnAddr = jsJitIter().resumePCinCurrentFrame();
   jit::JitcodeGlobalTable* table =
       cx_->runtime()->jitRuntime()->getJitcodeGlobalTable();
+
+  // NB:
+  // The following lookups should be infallible, but the ad-hoc stackwalking
+  // code rots easily and corner cases where frames can't be looked up
+  // occur too often (e.g. once every day).
+  //
+  // The calls to `lookup*` below have been changed from infallible ones to
+  // fallible ones.  The proper solution to this problem is to fix all
+  // the jitcode to use frame-pointers and reliably walk the stack with those.
+  const jit::JitcodeGlobalEntry* lookedUpEntry = nullptr;
   if (samplePositionInProfilerBuffer_) {
-    *entry = table->lookupForSamplerInfallible(
-        returnAddr, cx_->runtime(), *samplePositionInProfilerBuffer_);
+    lookedUpEntry = table->lookupForSampler(returnAddr, cx_->runtime(),
+                                            *samplePositionInProfilerBuffer_);
   } else {
-    *entry = table->lookupInfallible(returnAddr);
+    lookedUpEntry = table->lookup(returnAddr);
   }
 
-  MOZ_ASSERT(entry->isIon() || entry->isIonCache() || entry->isBaseline() ||
+  // Failed to look up a jitcode entry for the given address, ignore.
+  if (!lookedUpEntry) {
+    return mozilla::Nothing();
+  }
+  *entry = *lookedUpEntry;
+
+  MOZ_ASSERT(entry->isIon() || entry->isBaseline() ||
              entry->isBaselineInterpreter() || entry->isDummy());
 
   // Dummy frames produce no stack frames.

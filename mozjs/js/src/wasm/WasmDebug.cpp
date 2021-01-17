@@ -22,9 +22,11 @@
 
 #include "debugger/Debugger.h"
 #include "ds/Sort.h"
+#include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/MacroAssembler.h"
 #include "wasm/WasmInstance.h"
+#include "wasm/WasmStubs.h"
 #include "wasm/WasmValidate.h"
 
 #include "gc/FreeOp-inl.h"
@@ -278,11 +280,6 @@ void DebugState::clearBreakpointsIn(JSFreeOp* fop, WasmInstanceObject* instance,
   }
 }
 
-void DebugState::clearAllBreakpoints(JSFreeOp* fop,
-                                     WasmInstanceObject* instance) {
-  clearBreakpointsIn(fop, instance, nullptr, nullptr);
-}
-
 void DebugState::toggleDebugTrap(uint32_t offset, bool enabled) {
   MOZ_ASSERT(offset);
   uint8_t* trap = code_->segment(Tier::Debug).base() + offset;
@@ -342,9 +339,15 @@ void DebugState::ensureEnterFrameTrapsState(JSContext* cx, bool enabled) {
 }
 
 bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
-                                    size_t* argsLength) {
+                                    size_t* argsLength,
+                                    StackResults* stackResults) {
   const ValTypeVector& args = metadata().debugFuncArgTypes[funcIndex];
+  const ValTypeVector& results = metadata().debugFuncReturnTypes[funcIndex];
+  ResultType resultType(ResultType::Vector(results));
   *argsLength = args.length();
+  *stackResults = ABIResultIter::HasStackResults(resultType)
+                      ? StackResults::HasStackResults
+                      : StackResults::NoStackResults;
   if (!locals->appendAll(args)) {
     return false;
   }
@@ -360,18 +363,13 @@ bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
   return DecodeValidatedLocalEntries(d, locals);
 }
 
-bool DebugState::debugGetResultTypes(uint32_t funcIndex,
-                                     ValTypeVector* results) {
-  return results->appendAll(metadata().debugFuncReturnTypes[funcIndex]);
-}
-
 bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
                            MutableHandleValue vp) {
   const GlobalDesc& global = metadata().globals[globalIndex];
 
   if (global.isConstant()) {
     LitVal value = global.constantValue();
-    switch (value.type().code()) {
+    switch (value.type().kind()) {
       case ValType::I32:
         vp.set(Int32Value(value.i32()));
         break;
@@ -385,6 +383,16 @@ bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
       case ValType::F64:
         vp.set(NumberValue(JS::CanonicalizeNaN(value.f64())));
         break;
+      case ValType::Ref:
+        // It's possible to do better.  We could try some kind of hashing
+        // scheme, to make the pointer recognizable without revealing it.
+        vp.set(MagicValue(JS_OPTIMIZED_OUT));
+        break;
+      case ValType::V128:
+        // Debugger must be updated to handle this, and should be updated to
+        // handle i64 in any case.
+        vp.set(MagicValue(JS_OPTIMIZED_OUT));
+        break;
       default:
         MOZ_CRASH("Global constant type");
     }
@@ -396,7 +404,7 @@ bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
   if (global.isIndirect()) {
     dataPtr = *static_cast<void**>(dataPtr);
   }
-  switch (global.type().code()) {
+  switch (global.type().kind()) {
     case ValType::I32: {
       vp.set(Int32Value(*static_cast<int32_t*>(dataPtr)));
       break;
@@ -414,9 +422,20 @@ bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
       vp.set(NumberValue(JS::CanonicalizeNaN(*static_cast<double*>(dataPtr))));
       break;
     }
-    default:
+    case ValType::Ref: {
+      // Just hide it.  See above.
+      vp.set(MagicValue(JS_OPTIMIZED_OUT));
+      break;
+    }
+    case ValType::V128: {
+      // Just hide it.  See above.
+      vp.set(MagicValue(JS_OPTIMIZED_OUT));
+      break;
+    }
+    default: {
       MOZ_CRASH("Global variable type");
       break;
+    }
   }
   return true;
 }
@@ -445,7 +464,7 @@ bool DebugState::getSourceMappingURL(JSContext* cx,
       return true;  // ignoring invalid section data
     }
 
-    UTF8Chars utf8Chars(reinterpret_cast<const char*>(chars), nchars);
+    JS::UTF8Chars utf8Chars(reinterpret_cast<const char*>(chars), nchars);
     JSString* str = JS_NewStringCopyUTF8N(cx, utf8Chars);
     if (!str) {
       return false;
@@ -457,7 +476,7 @@ bool DebugState::getSourceMappingURL(JSContext* cx,
   // Check presence of "SourceMap:" HTTP response header.
   char* sourceMapURL = metadata().sourceMapURL.get();
   if (sourceMapURL && strlen(sourceMapURL)) {
-    UTF8Chars utf8Chars(sourceMapURL, strlen(sourceMapURL));
+    JS::UTF8Chars utf8Chars(sourceMapURL, strlen(sourceMapURL));
     JSString* str = JS_NewStringCopyUTF8N(cx, utf8Chars);
     if (!str) {
       return false;

@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "jit/BitSet.h"
+#include "jit/CompileInfo.h"
 #include "js/Printf.h"
 
 using namespace js;
@@ -675,6 +676,14 @@ bool BacktrackingAllocator::buildLivenessInfo() {
           }
         }
 
+        // * For non-call instructions, temps cover both the input and output,
+        //   so temps never alias uses (even at-start uses) or defs.
+        // * For call instructions, temps only cover the input (the output is
+        //   used for the force-spill ranges added above). This means temps
+        //   still don't alias uses but they can alias the (fixed) defs. For now
+        //   we conservatively require temps to have a fixed register for call
+        //   instructions to prevent a footgun.
+        MOZ_ASSERT_IF(ins->isCall(), temp->policy() == LDefinition::FIXED);
         CodePosition to =
             ins->isCall() ? outputOf(*ins) : outputOf(*ins).next();
 
@@ -698,18 +707,6 @@ bool BacktrackingAllocator::buildLivenessInfo() {
                         use->usedAtStart());
 
 #ifdef DEBUG
-          // Don't allow at-start call uses if there are temps of the same kind,
-          // so that we don't assign the same register. Only allow this when the
-          // use and temp are fixed registers, as they can't alias.
-          if (ins->isCall() && use->usedAtStart()) {
-            for (size_t i = 0; i < ins->numTemps(); i++) {
-              MOZ_ASSERT_IF(
-                  !ins->getTemp(i)->isBogusTemp(),
-                  vreg(ins->getTemp(i)).type() != vreg(use).type() ||
-                      (use->isFixedRegister() && ins->getTemp(i)->isFixed()));
-            }
-          }
-
           // If there are both useRegisterAtStart(x) and useRegister(y)
           // uses, we may assign the same register to both operands
           // (bug 772830). Don't allow this for now.
@@ -937,6 +934,10 @@ static bool IsThisSlotDefinition(LDefinition* def) {
              THIS_FRAME_ARGSLOT + sizeof(Value);
 }
 
+static bool HasStackPolicy(LDefinition* def) {
+  return def->policy() == LDefinition::STACK;
+}
+
 bool BacktrackingAllocator::tryMergeBundles(LiveBundle* bundle0,
                                             LiveBundle* bundle1) {
   // See if bundle0 and bundle1 can be merged together.
@@ -972,6 +973,17 @@ bool BacktrackingAllocator::tryMergeBundles(LiveBundle* bundle0,
         return true;
       }
     }
+  }
+
+  // When we make a call to a WebAssembly function that returns multiple
+  // results, some of those results can go on the stack.  The callee is passed a
+  // pointer to this stack area, which is represented as having policy
+  // LDefinition::STACK (with type LDefinition::STACKRESULTS).  Individual
+  // results alias parts of the stack area with a value-appropriate type, but
+  // policy LDefinition::STACK.  This aliasing between allocations makes it
+  // unsound to merge anything with a LDefinition::STACK policy.
+  if (HasStackPolicy(reg0.def()) || HasStackPolicy(reg1.def())) {
+    return true;
   }
 
   // Limit the number of times we compare ranges if there are many ranges in
@@ -1136,9 +1148,9 @@ bool BacktrackingAllocator::tryMergeReusedRegister(VirtualRegister& def,
   inputRange->distributeUses(postRange);
   MOZ_ASSERT(!inputRange->hasUses());
 
-  JitSpew(JitSpew_RegAlloc,
-          "  splitting reused input at %u to try to help grouping",
-          inputOf(def.ins()).bits());
+  JitSpewIfEnabled(JitSpew_RegAlloc,
+                   "  splitting reused input at %u to try to help grouping",
+                   inputOf(def.ins()).bits());
 
   LiveBundle* firstBundle = inputRange->bundle();
   input.removeRange(inputRange);
@@ -1157,6 +1169,22 @@ bool BacktrackingAllocator::tryMergeReusedRegister(VirtualRegister& def,
   secondBundle->addRange(postRange);
 
   return tryMergeBundles(def.firstBundle(), input.firstBundle());
+}
+
+void BacktrackingAllocator::allocateStackDefinition(VirtualRegister& reg) {
+  LInstruction* ins = reg.ins()->toInstruction();
+  if (reg.def()->type() == LDefinition::STACKRESULTS) {
+    LStackArea alloc(ins->toInstruction());
+    stackSlotAllocator.allocateStackArea(&alloc);
+    reg.def()->setOutput(alloc);
+  } else {
+    // Because the definitions are visited in order, the area has been allocated
+    // before we reach this result, so we know the operand is an LStackArea.
+    const LUse* use = ins->getOperand(0)->toUse();
+    VirtualRegister& area = vregs[use->virtualRegister()];
+    const LStackArea* areaAlloc = area.def()->output()->toStackArea();
+    reg.def()->setOutput(areaAlloc->resultAlloc(ins, reg.def()));
+  }
 }
 
 bool BacktrackingAllocator::mergeAndQueueRegisters() {
@@ -1245,6 +1273,12 @@ bool BacktrackingAllocator::mergeAndQueueRegisters() {
   // Add all bundles to the allocation queue, and create spill sets for them.
   for (size_t i = 1; i < graph.numVirtualRegisters(); i++) {
     VirtualRegister& reg = vregs[i];
+
+    // Eagerly allocate stack result areas and their component stack results.
+    if (reg.def() && reg.def()->policy() == LDefinition::STACK) {
+      allocateStackDefinition(reg);
+    }
+
     for (LiveRange::RegisterLinkIterator iter = reg.rangesBegin(); iter;
          iter++) {
       LiveRange* range = LiveRange::get(*iter);
@@ -1355,11 +1389,10 @@ bool BacktrackingAllocator::tryAllocateNonFixed(LiveBundle* bundle,
 
 bool BacktrackingAllocator::processBundle(MIRGenerator* mir,
                                           LiveBundle* bundle) {
-  if (JitSpewEnabled(JitSpew_RegAlloc)) {
-    JitSpew(JitSpew_RegAlloc, "Allocating %s [priority %zu] [weight %zu]",
-            bundle->toString().get(), computePriority(bundle),
-            computeSpillWeight(bundle));
-  }
+  JitSpewIfEnabled(JitSpew_RegAlloc,
+                   "Allocating %s [priority %zu] [weight %zu]",
+                   bundle->toString().get(), computePriority(bundle),
+                   computeSpillWeight(bundle));
 
   // A bundle can be processed by doing any of the following:
   //
@@ -1456,10 +1489,13 @@ bool BacktrackingAllocator::computeRequirement(LiveBundle* bundle,
     if (range->hasDefinition()) {
       // Deal with any definition constraints/hints.
       LDefinition::Policy policy = reg.def()->policy();
-      if (policy == LDefinition::FIXED) {
-        // Fixed policies get a FIXED requirement.
-        JitSpew(JitSpew_RegAlloc, "  Requirement %s, fixed by definition",
-                reg.def()->output()->toString().get());
+      if (policy == LDefinition::FIXED || policy == LDefinition::STACK) {
+        // Fixed and stack policies get a FIXED requirement.  (In the stack
+        // case, the allocation should have been performed already by
+        // mergeAndQueueRegisters.)
+        JitSpewIfEnabled(JitSpew_RegAlloc,
+                         "  Requirement %s, fixed by definition",
+                         reg.def()->output()->toString().get());
         if (!requirement->merge(Requirement(*reg.def()->output()))) {
           return false;
         }
@@ -1480,8 +1516,8 @@ bool BacktrackingAllocator::computeRequirement(LiveBundle* bundle,
       if (policy == LUse::FIXED) {
         AnyRegister required = GetFixedRegister(reg.def(), iter->use());
 
-        JitSpew(JitSpew_RegAlloc, "  Requirement %s, due to use at %u",
-                required.name(), iter->pos.bits());
+        JitSpewIfEnabled(JitSpew_RegAlloc, "  Requirement %s, due to use at %u",
+                         required.name(), iter->pos.bits());
 
         // If there are multiple fixed registers which the bundle is
         // required to use, fail. The bundle will need to be split before
@@ -1499,6 +1535,14 @@ bool BacktrackingAllocator::computeRequirement(LiveBundle* bundle,
           return false;
         }
       }
+
+      // The only case of STACK use policies is individual stack results using
+      // their containing stack result area, which is given a fixed allocation
+      // above.
+      MOZ_ASSERT_IF(policy == LUse::STACK,
+                    requirement->kind() == Requirement::FIXED);
+      MOZ_ASSERT_IF(policy == LUse::STACK,
+                    requirement->allocation().isStackArea());
     }
   }
 
@@ -1545,8 +1589,8 @@ bool BacktrackingAllocator::tryAllocateRegister(PhysicalRegister& r,
           return false;
         }
       } else {
-        JitSpew(JitSpew_RegAlloc, "  %s collides with fixed use %s",
-                rAlias.reg.name(), existing->toString().get());
+        JitSpewIfEnabled(JitSpew_RegAlloc, "  %s collides with fixed use %s",
+                         rAlias.reg.name(), existing->toString().get());
         *pfixed = true;
         return true;
       }
@@ -1580,22 +1624,17 @@ bool BacktrackingAllocator::tryAllocateRegister(PhysicalRegister& r,
 #endif
 
     if (conflicting.empty()) {
-      if (!conflicting.appendAll(aliasedConflicting)) {
-        return false;
-      }
+      conflicting = std::move(aliasedConflicting);
     } else {
       if (maximumSpillWeight(aliasedConflicting) <
           maximumSpillWeight(conflicting)) {
-        conflicting.clear();
-        if (!conflicting.appendAll(aliasedConflicting)) {
-          return false;
-        }
+        conflicting = std::move(aliasedConflicting);
       }
     }
     return true;
   }
 
-  JitSpew(JitSpew_RegAlloc, "  allocated to %s", r.reg.name());
+  JitSpewIfEnabled(JitSpew_RegAlloc, "  allocated to %s", r.reg.name());
 
   for (LiveRange::BundleLinkIterator iter = bundle->rangesBegin(); iter;
        iter++) {
@@ -1614,11 +1653,10 @@ bool BacktrackingAllocator::tryAllocateRegister(PhysicalRegister& r,
 }
 
 bool BacktrackingAllocator::evictBundle(LiveBundle* bundle) {
-  if (JitSpewEnabled(JitSpew_RegAlloc)) {
-    JitSpew(JitSpew_RegAlloc, "  Evicting %s [priority %zu] [weight %zu]",
-            bundle->toString().get(), computePriority(bundle),
-            computeSpillWeight(bundle));
-  }
+  JitSpewIfEnabled(JitSpew_RegAlloc,
+                   "  Evicting %s [priority %zu] [weight %zu]",
+                   bundle->toString().get(), computePriority(bundle),
+                   computeSpillWeight(bundle));
 
   AnyRegister reg(bundle->allocation().toRegister());
   PhysicalRegister& physical = registers[reg.code()];
@@ -1638,6 +1676,35 @@ bool BacktrackingAllocator::evictBundle(LiveBundle* bundle) {
 
 bool BacktrackingAllocator::splitAndRequeueBundles(
     LiveBundle* bundle, const LiveBundleVector& newBundles) {
+#ifdef DEBUG
+  if (newBundles.length() == 1) {
+    LiveBundle* newBundle = newBundles[0];
+    if (newBundle->numRanges() == bundle->numRanges() &&
+        computePriority(newBundle) == computePriority(bundle)) {
+      bool different = false;
+      LiveRange::BundleLinkIterator oldRanges = bundle->rangesBegin();
+      LiveRange::BundleLinkIterator newRanges = newBundle->rangesBegin();
+      while (oldRanges) {
+        LiveRange* oldRange = LiveRange::get(*oldRanges);
+        LiveRange* newRange = LiveRange::get(*newRanges);
+        if (oldRange->from() != newRange->from() ||
+            oldRange->to() != newRange->to()) {
+          different = true;
+          break;
+        }
+        oldRanges++;
+        newRanges++;
+      }
+
+      // This is likely to trigger an infinite loop in register allocation. This
+      // can be the result of invalid register constraints, making regalloc
+      // impossible; consider relaxing those.
+      MOZ_ASSERT(different,
+                 "Split results in the same bundle with the same priority");
+    }
+  }
+#endif
+
   if (JitSpewEnabled(JitSpew_RegAlloc)) {
     JitSpew(JitSpew_RegAlloc,
             "    splitting bundle %s into:", bundle->toString().get());
@@ -1708,10 +1775,8 @@ bool BacktrackingAllocator::tryAllocatingRegistersForSpillBundles() {
       return false;
     }
 
-    if (JitSpewEnabled(JitSpew_RegAlloc)) {
-      JitSpew(JitSpew_RegAlloc, "Spill or allocate %s",
-              bundle->toString().get());
-    }
+    JitSpewIfEnabled(JitSpew_RegAlloc, "Spill or allocate %s",
+                     bundle->toString().get());
 
     // Search for any available register which the bundle can be
     // allocated to.
@@ -2305,6 +2370,15 @@ static inline bool IsTraceable(VirtualRegister& reg) {
     return true;
   }
 #endif
+  if (reg.type() == LDefinition::STACKRESULTS) {
+    MOZ_ASSERT(reg.def());
+    const LStackArea* alloc = reg.def()->output()->toStackArea();
+    for (auto iter = alloc->results(); iter; iter.next()) {
+      if (iter.isGcPointer()) {
+        return true;
+      }
+    }
+  }
   return false;
 }
 
@@ -2362,7 +2436,8 @@ bool BacktrackingAllocator::populateSafepoints() {
                         def->type() == LDefinition::GENERAL ||
                             def->type() == LDefinition::INT32 ||
                             def->type() == LDefinition::FLOAT32 ||
-                            def->type() == LDefinition::DOUBLE);
+                            def->type() == LDefinition::DOUBLE ||
+                            def->type() == LDefinition::SIMD128);
           continue;
         }
 
@@ -2384,6 +2459,17 @@ bool BacktrackingAllocator::populateSafepoints() {
               return false;
             }
             break;
+          case LDefinition::STACKRESULTS: {
+            MOZ_ASSERT(a.isStackArea());
+            for (auto iter = a.toStackArea()->results(); iter; iter.next()) {
+              if (iter.isGcPointer()) {
+                if (!safepoint->addGcPointer(iter.alloc())) {
+                  return false;
+                }
+              }
+            }
+            break;
+          }
 #ifdef JS_NUNBOX32
           case LDefinition::TYPE:
             if (!safepoint->addNunboxType(i, a)) {
@@ -2824,8 +2910,8 @@ bool BacktrackingAllocator::trySplitAcrossHotcode(LiveBundle* bundle,
     return true;
   }
 
-  JitSpew(JitSpew_RegAlloc, "  split across hot range %s",
-          hotRange->toString().get());
+  JitSpewIfEnabled(JitSpew_RegAlloc, "  split across hot range %s",
+                   hotRange->toString().get());
 
   // Tweak the splitting method when compiling wasm code to look at actual
   // uses within the hot/cold code. This heuristic is in place as the below
@@ -2992,8 +3078,8 @@ bool BacktrackingAllocator::trySplitAfterLastRegisterUse(LiveBundle* bundle,
     return true;
   }
 
-  JitSpew(JitSpew_RegAlloc, "  split after last register use at %u",
-          lastRegisterTo.bits());
+  JitSpewIfEnabled(JitSpew_RegAlloc, "  split after last register use at %u",
+                   lastRegisterTo.bits());
 
   SplitPositionVector splitPositions;
   if (!splitPositions.append(lastRegisterTo)) {
@@ -3064,8 +3150,8 @@ bool BacktrackingAllocator::trySplitBeforeFirstRegisterUse(LiveBundle* bundle,
     return true;
   }
 
-  JitSpew(JitSpew_RegAlloc, "  split before first register use at %u",
-          firstRegisterFrom.bits());
+  JitSpewIfEnabled(JitSpew_RegAlloc, "  split before first register use at %u",
+                   firstRegisterFrom.bits());
 
   SplitPositionVector splitPositions;
   if (!splitPositions.append(firstRegisterFrom)) {

@@ -12,7 +12,10 @@ import gzip
 import os
 import signal
 import sys
+import socket
+
 from six.moves.urllib.request import urlretrieve
+from redo import retriable, retry
 
 try:
     import zstandard
@@ -34,8 +37,16 @@ LOG = get_proxy_logger(component="mozproxy")
 TOOLTOOL_PATHS = [os.path.join(mozharness_dir, "external_tools", "tooltool.py")]
 
 if "MOZ_UPLOAD_DIR" in os.environ:
-    TOOLTOOL_PATHS.append(os.path.join(
-        os.environ["MOZ_UPLOAD_DIR"], "..", "..", "mozharness", "external_tools", "tooltool.py"))
+    TOOLTOOL_PATHS.append(
+        os.path.join(
+            os.environ["MOZ_UPLOAD_DIR"],
+            "..",
+            "..",
+            "mozharness",
+            "external_tools",
+            "tooltool.py",
+        )
+    )
 
 
 def transform_platform(str_to_transform, config_platform, config_processor=None):
@@ -66,6 +77,7 @@ def transform_platform(str_to_transform, config_platform, config_processor=None)
     return str_to_transform
 
 
+@retriable(sleeptime=2)
 def tooltool_download(manifest, run_local, raptor_dir):
     """Download a file from tooltool using the provided tooltool manifest"""
 
@@ -115,9 +127,12 @@ def tooltool_download(manifest, run_local, raptor_dir):
             command, processOutputLine=outputHandler, storeOutput=False, cwd=raptor_dir
         )
         proc.run()
-        proc.wait()
+        if proc.wait() != 0:
+            raise Exception("Command failed")
     except Exception as e:
-        LOG.critical("Error while downloading the hostutils from tooltool: {}".format(str(e)))
+        LOG.critical(
+            "Error while downloading {} from tooltool:{}".format(manifest, str(e))
+        )
         if proc.poll() is None:
             proc.kill(signal.SIGTERM)
         raise
@@ -202,14 +217,31 @@ def download_file_from_url(url, local_dest, extract=False):
             return True
     else:
         LOG.info("downloading: %s to %s" % (url, local_dest))
-        _file, _headers = urlretrieve(url, local_dest)
+        try:
+            retry(urlretrieve, args=(url, local_dest), attempts=3, sleeptime=5)
+        except Exception:
+            LOG.error("Failed to download file: %s" % local_dest, exc_info=True)
+            if os.path.exists(local_dest):
+                # delete partial downloaded file
+                os.remove(local_dest)
+            return False
 
     if not extract:
         return os.path.exists(local_dest)
 
     typ = archive_type(local_dest)
     if typ is None:
+        LOG.info("Not able to determine archive type for: %s" % local_dest)
         return False
 
     extract_archive(local_dest, os.path.dirname(local_dest), typ)
     return True
+
+
+def get_available_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))
+    s.listen(1)
+    port = s.getsockname()[1]
+    s.close()
+    return port

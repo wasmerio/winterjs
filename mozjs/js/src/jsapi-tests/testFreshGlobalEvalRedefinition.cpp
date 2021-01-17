@@ -8,7 +8,7 @@
 #include "mozilla/ArrayUtils.h"  // mozilla::ArrayLength
 #include "mozilla/Utf8.h"        // mozilla::Utf8Unit
 
-#include "js/CompilationAndEvaluation.h"  // JS::EvaluateDontInflate
+#include "js/CompilationAndEvaluation.h"  // JS::Evaluate
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
 
@@ -18,17 +18,19 @@ static bool GlobalResolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
 }
 
 BEGIN_TEST(testRedefineGlobalEval) {
-  static const JSClassOps clsOps = {nullptr,
-                                    nullptr,
-                                    nullptr,
-                                    JS_NewEnumerateStandardClasses,
-                                    GlobalResolve,
-                                    nullptr,
-                                    nullptr,
-                                    nullptr,
-                                    nullptr,
-                                    nullptr,
-                                    JS_GlobalObjectTraceHook};
+  static const JSClassOps clsOps = {
+      nullptr,                         // addProperty
+      nullptr,                         // delProperty
+      nullptr,                         // enumerate
+      JS_NewEnumerateStandardClasses,  // newEnumerate
+      GlobalResolve,                   // resolve
+      nullptr,                         // mayResolve
+      nullptr,                         // finalize
+      nullptr,                         // call
+      nullptr,                         // hasInstance
+      nullptr,                         // construct
+      JS_GlobalObjectTraceHook,        // trace
+  };
 
   static const JSClass cls = {"global", JSCLASS_GLOBAL_FLAGS, &clsOps};
 
@@ -54,8 +56,7 @@ BEGIN_TEST(testRedefineGlobalEval) {
   CHECK(srcBuf.init(cx, data, mozilla::ArrayLength(data) - 1,
                     JS::SourceOwnership::Borrowed));
 
-  CHECK(JS::EvaluateDontInflate(cx, opts.setFileAndLine(__FILE__, __LINE__),
-                                srcBuf, &v));
+  CHECK(JS::Evaluate(cx, opts.setFileAndLine(__FILE__, __LINE__), srcBuf, &v));
 
   return true;
 }

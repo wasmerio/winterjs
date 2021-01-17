@@ -8,8 +8,8 @@
 
 #include "jsapi.h"
 
-#include "builtin/TypedObject.h"
 #include "gc/Tracer.h"
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "js/TracingAPI.h"
 #include "vm/ArrayBufferObject.h"
@@ -54,13 +54,12 @@ static bool BigIntConstructor(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 JSObject* BigIntObject::create(JSContext* cx, HandleBigInt bigInt) {
-  RootedObject obj(cx, NewBuiltinClassInstance(cx, &class_));
-  if (!obj) {
+  BigIntObject* bn = NewBuiltinClassInstance<BigIntObject>(cx);
+  if (!bn) {
     return nullptr;
   }
-  BigIntObject& bn = obj->as<BigIntObject>();
-  bn.setFixedSlot(PRIMITIVE_VALUE_SLOT, BigIntValue(bigInt));
-  return &bn;
+  bn->setFixedSlot(PRIMITIVE_VALUE_SLOT, BigIntValue(bigInt));
+  return bn;
 }
 
 BigInt* BigIntObject::unbox() const {
@@ -72,9 +71,8 @@ bool BigIntObject::valueOf_impl(JSContext* cx, const CallArgs& args) {
   // Step 1.
   HandleValue thisv = args.thisv();
   MOZ_ASSERT(IsBigInt(thisv));
-  RootedBigInt bi(cx, thisv.isBigInt()
-                          ? thisv.toBigInt()
-                          : thisv.toObject().as<BigIntObject>().unbox());
+  BigInt* bi = thisv.isBigInt() ? thisv.toBigInt()
+                                : thisv.toObject().as<BigIntObject>().unbox();
 
   args.rval().setBigInt(bi);
   return true;
@@ -135,7 +133,7 @@ bool BigIntObject::toLocaleString_impl(JSContext* cx, const CallArgs& args) {
                           ? thisv.toBigInt()
                           : thisv.toObject().as<BigIntObject>().unbox());
 
-  RootedString str(cx, BigInt::toString<CanGC>(cx, bi, 10));
+  JSString* str = BigInt::toString<CanGC>(cx, bi, 10);
   if (!str) {
     return false;
   }
@@ -209,16 +207,15 @@ const ClassSpec BigIntObject::classSpec_ = {
     BigIntObject::methods,
     BigIntObject::properties};
 
-// The class is named "Object" as a workaround for bug 1277801.
 const JSClass BigIntObject::class_ = {
-    "Object",
+    "BigInt",
     JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt) |
         JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
     JS_NULL_CLASS_OPS, &BigIntObject::classSpec_};
 
 const JSClass BigIntObject::protoClass_ = {
-    js_Object_str, JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt), JS_NULL_CLASS_OPS,
-    &BigIntObject::classSpec_};
+    "BigInt.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_BigInt),
+    JS_NULL_CLASS_OPS, &BigIntObject::classSpec_};
 
 const JSPropertySpec BigIntObject::properties[] = {
     // BigInt proposal section 5.3.5

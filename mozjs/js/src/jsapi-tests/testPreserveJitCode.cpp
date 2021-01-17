@@ -14,10 +14,10 @@
 
 using namespace JS;
 
-static void ScriptCallback(JSRuntime* rt, void* data, JSScript* script,
+static void ScriptCallback(JSRuntime* rt, void* data, js::BaseScript* script,
                            const JS::AutoRequireNoGC& nogc) {
   unsigned& count = *static_cast<unsigned*>(data);
-  if (script->hasIonScript()) {
+  if (script->asJSScript()->hasIonScript()) {
     ++count;
   }
 }
@@ -41,9 +41,9 @@ bool testPreserveJitCode(bool preserveJitCode, unsigned remainingIonScripts) {
   CHECK(global);
   JSAutoRealm ar(cx, global);
 
-  // The Ion JIT may be unavailable due to --disable-ion or lack of support
+  // The Ion JIT may be unavailable due to --disable-jit or lack of support
   // for this platform.
-  if (!js::jit::IsIonEnabled()) {
+  if (!js::jit::IsIonEnabled(cx)) {
     knownFail = true;
   }
 

@@ -13,14 +13,22 @@
 
 #include "NamespaceImports.h"  // for Value
 
-#include "builtin/Promise.h"    // for PromiseObject
 #include "debugger/Debugger.h"  // for Debugger
 #include "js/Wrapper.h"         // for CheckedUnwrapStatic
 #include "vm/JSObject.h"        // for JSObject
+#include "vm/PromiseObject.h"   // for js::PromiseObject
 
 #include "debugger/Debugger-inl.h"  // for Debugger::fromJSObject
 
+// The Debugger.Object.prototype object also has a class of
+// DebuggerObject::class_ so we differentiate instances from the prototype
+// based on the presence of an owner debugger.
+inline bool js::DebuggerObject::isInstance() const {
+  return !getReservedSlot(OWNER_SLOT).isUndefined();
+}
+
 inline js::Debugger* js::DebuggerObject::owner() const {
+  MOZ_ASSERT(isInstance());
   JSObject* dbgobj = &getReservedSlot(OWNER_SLOT).toObject();
   return Debugger::fromJSObject(dbgobj);
 }

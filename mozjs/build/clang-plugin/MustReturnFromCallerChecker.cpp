@@ -9,10 +9,10 @@ void MustReturnFromCallerChecker::registerMatchers(MatchFinder *AstMatcher) {
   // Look for a call to a MOZ_MUST_RETURN_FROM_CALLER member
   AstMatcher->addMatcher(
       cxxMemberCallExpr(
-              on(declRefExpr(to(parmVarDecl()))),
-              callee(functionDecl(isMozMustReturnFromCaller())),
-              anyOf(hasAncestor(lambdaExpr().bind("containing-lambda")),
-                    hasAncestor(functionDecl().bind("containing-func"))))
+          on(declRefExpr(to(parmVarDecl()))),
+          callee(functionDecl(isMozMustReturnFromCaller())),
+          anyOf(hasAncestor(lambdaExpr().bind("containing-lambda")),
+                hasAncestor(functionDecl().bind("containing-func"))))
           .bind("call"),
       this);
 }
@@ -47,13 +47,62 @@ void MustReturnFromCallerChecker::check(
   StmtToBlockMap BlockMap(TheCFG.get(), Result.Context);
   size_t CallIndex;
   const auto *Block = BlockMap.blockContainingStmt(Call, &CallIndex);
-  assert(Block && "This statement should be within the CFG!");
+  if (!Block) {
+    // This statement is not within the CFG!
+    return;
+  }
 
   if (!immediatelyReturns(Block, Result.Context, CallIndex + 1)) {
     diag(Call->getBeginLoc(),
          "You must immediately return after calling this function",
          DiagnosticIDs::Error);
   }
+}
+
+bool MustReturnFromCallerChecker::isIgnorable(const Stmt *S) {
+  auto AfterTrivials = IgnoreTrivials(S);
+
+  // After a call to MOZ_MUST_RETURN_FROM_CALLER function it's ok to have any of
+  // these expressions.
+  if (isa<ReturnStmt>(AfterTrivials) || isa<CXXConstructExpr>(AfterTrivials) ||
+      isa<DeclRefExpr>(AfterTrivials) || isa<MemberExpr>(AfterTrivials) ||
+      isa<IntegerLiteral>(AfterTrivials) ||
+      isa<FloatingLiteral>(AfterTrivials) ||
+      isa<CXXNullPtrLiteralExpr>(AfterTrivials) ||
+      isa<CXXBoolLiteralExpr>(AfterTrivials)) {
+    return true;
+  }
+
+  // Solitary `this` should be permited, like in the context `return this;`
+  if (auto TE = dyn_cast<CXXThisExpr>(AfterTrivials)) {
+    if (TE->child_begin() == TE->child_end()) {
+      return true;
+    }
+    return false;
+  }
+
+  // For UnaryOperator make sure we only accept arithmetic operations.
+  if (auto UO = dyn_cast<UnaryOperator>(AfterTrivials)) {
+    if (!UO->isArithmeticOp()) {
+      return false;
+    }
+    return isIgnorable(UO->getSubExpr());
+  }
+
+  // It's also OK to call any function or method which is annotated with
+  // MOZ_MAY_CALL_AFTER_MUST_RETURN. We consider all CXXConversionDecls
+  // to be MOZ_MAY_CALL_AFTER_MUST_RETURN (like operator T*()).
+  if (auto CE = dyn_cast<CallExpr>(AfterTrivials)) {
+    auto Callee = CE->getDirectCallee();
+    if (Callee && hasCustomAttribute<moz_may_call_after_must_return>(Callee)) {
+      return true;
+    }
+
+    if (Callee && isa<CXXConversionDecl>(Callee)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool MustReturnFromCallerChecker::immediatelyReturns(
@@ -69,30 +118,9 @@ bool MustReturnFromCallerChecker::immediatelyReturns(
       continue;
     }
 
-    auto AfterTrivials = IgnoreTrivials(S->getStmt());
-
-    // If we are looking at a ConstructExpr, a DeclRefExpr or a MemberExpr it's
-    // OK to use them after a call to a MOZ_MUST_RETURN_FROM_CALLER function.
-    // It is also, of course, OK to look at a ReturnStmt.
-    if (isa<ReturnStmt>(AfterTrivials) ||
-        isa<CXXConstructExpr>(AfterTrivials) ||
-        isa<DeclRefExpr>(AfterTrivials) || isa<MemberExpr>(AfterTrivials)) {
+    // Some statements should be ignored by default due to their CFG context.
+    if (isIgnorable(S->getStmt())) {
       continue;
-    }
-
-    // It's also OK to call any function or method which is annotated with
-    // MOZ_MAY_CALL_AFTER_MUST_RETURN. We consider all CXXConversionDecls
-    // to be MOZ_MAY_CALL_AFTER_MUST_RETURN (like operator T*()).
-    if (auto CE = dyn_cast<CallExpr>(AfterTrivials)) {
-      auto Callee = CE->getDirectCallee();
-      if (Callee &&
-          hasCustomAttribute<moz_may_call_after_must_return>(Callee)) {
-        continue;
-      }
-
-      if (Callee && isa<CXXConversionDecl>(Callee)) {
-        continue;
-      }
     }
 
     // Otherwise, this expression is problematic.

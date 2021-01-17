@@ -386,8 +386,11 @@ class VFPRegister {
   bool isUInt() const { return kind == UInt; }
   bool equiv(const VFPRegister& other) const { return other.kind == kind; }
   size_t size() const { return (kind == Double) ? 8 : 4; }
-  bool isInvalid() const;
-  bool isMissing() const;
+  bool isInvalid() const { return _isInvalid; }
+  bool isMissing() const {
+    MOZ_ASSERT(!_isInvalid);
+    return _isMissing;
+  }
 
   VFPRegister doubleOverlay(unsigned int which = 0) const;
   VFPRegister singleOverlay(unsigned int which = 0) const;
@@ -701,8 +704,21 @@ inline bool hasUnaliasedDouble() { return Has32DP(); }
 // a double as a temporary, you need a temporary double register.
 inline bool hasMultiAlias() { return true; }
 
-bool ParseARMHwCapFlags(const char* armHwCap);
+// InitARMFlags is called from the JitContext constructor to read the hardware
+// flags.  The call is a no-op after the first call, or if the JS shell has
+// already set the flags (it has a command line switch for this, see
+// ParseARMHwCapFlags).
+//
+// If the environment variable ARMHWCAP is set then the flags are read from it
+// instead; see ParseARMHwCapFlags.
 void InitARMFlags();
+
+// Parse a string denoting ARM hardware flags and unconditionally set the flags.
+// Doing this after the flags have been observed is likely to cause problems, as
+// code is allowed to assume that the flags are stable.
+bool ParseARMHwCapFlags(const char* armHwCap);
+
+// Retrive the ARM hardware flags at a bitmask.  They must have been set.
 uint32_t GetARMFlags();
 
 // If the simulator is used then the ABI choice is dynamic. Otherwise the ABI is

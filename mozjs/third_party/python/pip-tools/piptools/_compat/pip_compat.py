@@ -1,34 +1,29 @@
 # -*- coding=utf-8 -*-
-import importlib
+from __future__ import absolute_import
 
-def do_import(module_path, subimport=None, old_path=None):
-    old_path = old_path or module_path
-    prefixes = ["pip._internal", "pip"]
-    paths = [module_path, old_path]
-    search_order = ["{0}.{1}".format(p, pth) for p in prefixes for pth in paths if pth is not None]
-    package = subimport if subimport else None
-    for to_import in search_order:
-        if not subimport:
-            to_import, _, package = to_import.rpartition(".")
-        try:
-            imported = importlib.import_module(to_import)
-        except ImportError:
-            continue
-        else:
-            return getattr(imported, package)
+import pip
+from pip._internal.req import parse_requirements as _parse_requirements
+from pip._vendor.packaging.version import parse as parse_version
+
+PIP_VERSION = tuple(map(int, parse_version(pip.__version__).base_version.split(".")))
 
 
-InstallRequirement = do_import('req.req_install', 'InstallRequirement')
-parse_requirements = do_import('req.req_file', 'parse_requirements')
-RequirementSet = do_import('req.req_set', 'RequirementSet')
-user_cache_dir = do_import('utils.appdirs', 'user_cache_dir')
-FAVORITE_HASH = do_import('utils.hashes', 'FAVORITE_HASH')
-is_file_url = do_import('download', 'is_file_url')
-url_to_path = do_import('download', 'url_to_path')
-PackageFinder = do_import('index', 'PackageFinder')
-FormatControl = do_import('index', 'FormatControl')
-Wheel = do_import('wheel', 'Wheel')
-Command = do_import('cli.base_command', 'Command', old_path='basecommand')
-cmdoptions = do_import('cli.cmdoptions', old_path='cmdoptions')
-get_installed_distributions = do_import('utils.misc', 'get_installed_distributions', old_path='utils')
-PyPI = do_import('models.index', 'PyPI')
+if PIP_VERSION[:2] <= (20, 0):
+
+    def install_req_from_parsed_requirement(req, **kwargs):
+        return req
+
+    from pip._internal.utils.ui import BAR_TYPES
+
+else:
+    from pip._internal.req.constructors import install_req_from_parsed_requirement
+    from pip._internal.cli.progress_bars import BAR_TYPES
+
+
+def parse_requirements(
+    filename, session, finder=None, options=None, constraint=False, isolated=False
+):
+    for parsed_req in _parse_requirements(
+        filename, session, finder=finder, options=options, constraint=constraint
+    ):
+        yield install_req_from_parsed_requirement(parsed_req, isolated=isolated)

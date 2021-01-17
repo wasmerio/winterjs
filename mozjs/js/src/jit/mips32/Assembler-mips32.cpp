@@ -9,6 +9,8 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
+#include "jit/AutoWritableJitCode.h"
+
 using mozilla::DebugOnly;
 
 using namespace js;
@@ -26,6 +28,7 @@ ABIArg ABIArgGenerator::next(MIRType type) {
     case MIRType::Int32:
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+    case MIRType::StackResults:
       if (GetIntArgReg(usedArgSlots_, &destReg)) {
         current_ = ABIArg(destReg);
       } else {

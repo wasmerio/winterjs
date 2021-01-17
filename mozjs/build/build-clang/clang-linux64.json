@@ -1,5 +1,6 @@
 {
-    "stages": "3",
+    "stages": "4",
+    "pgo" : true,
     "build_libcxx": true,
     "build_wasm": true,
     "build_type": "Release",
@@ -9,10 +10,19 @@
     "cc": "{MOZ_FETCHES_DIR}/gcc/bin/gcc",
     "cxx": "{MOZ_FETCHES_DIR}/gcc/bin/g++",
     "as": "{MOZ_FETCHES_DIR}/gcc/bin/gcc",
+    "wasi-sysroot": "{MOZ_FETCHES_DIR}/wasi-sysroot",
     "patches": [
       "static-llvm-symbolizer.patch",
       "find_symbolizer_linux.patch",
       "rename_gcov_flush.patch",
-      "android-mangling-error.patch"
+      "critical_section_on_gcov_flush-rG02ce9d8ef5a8.patch",
+      "rG7e18aeba5062.patch",
+      "llvmorg-11-init-4265-g2dcbdba8540.patch",
+      "android-mangling-error.patch",
+      "unpoison-thread-stacks.patch",
+      "downgrade-mangling-error.patch",
+      "tsan-hang-be41a98ac222.patch",
+      "llvmorg-11-init-15486-gfc937806efd-dont-jump-to-landing-pads.patch",
+      "loosen-msvc-detection.patch"
     ]
 }

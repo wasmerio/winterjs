@@ -1,8 +1,7 @@
-// |jit-test| test-join=--no-unboxed-objects; --ion-pgo=on
-//
-// Unboxed object optimization might not trigger in all cases, thus we ensure
-// that Scalar Replacement optimization is working well independently of the
-// object representation.
+// |jit-test| --no-warp; --ion-pgo=on
+
+// Warp lacks Scalar Replacement support (bug 1650233). Re-evaluate after that
+// bug has been fixed.
 
 var max = 200;
 
@@ -40,7 +39,7 @@ function inline_notSoEmpty1(a, b, c, d) {
     // arguments, if somebody ever called fun.arguments inside it.
     return { v: (a.v + b.v + c.v + d.v - 10) / 4 };
 }
-var uceFault_notSoEmpty1 = eval(uneval(uceFault).replace('uceFault', 'uceFault_notSoEmpty1'));
+var uceFault_notSoEmpty1 = eval(`(${uceFault})`.replace('uceFault', 'uceFault_notSoEmpty1'));
 function notSoEmpty1() {
     var a = { v: i };
     var b = { v: 1 + a.v };
@@ -70,7 +69,7 @@ function inline_notSoEmpty2(a, b, c, d) {
     "use strict";
     return { v: (a.v + b.v + c.v + d.v - 10) / 4 };
 }
-var uceFault_notSoEmpty2 = eval(uneval(uceFault).replace('uceFault', 'uceFault_notSoEmpty2'));
+var uceFault_notSoEmpty2 = eval(`(${uceFault})`.replace('uceFault', 'uceFault_notSoEmpty2'));
 function notSoEmpty2(i) {
     var a = { v: i };
     var b = { v: 1 + a.v };

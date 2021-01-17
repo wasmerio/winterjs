@@ -28,23 +28,26 @@ Registers::Code Registers::FromName(const char* name) {
   }
 
   for (uint32_t i = 0; i < Total; i++) {
-    if (strcmp(GetName(Code(i)), name) == 0) {
+    if (strcmp(GetName(i), name) == 0) {
       return Code(i);
     }
   }
 
-  return invalid_reg;
+  return Invalid;
 }
 
 FloatRegisters::Code FloatRegisters::FromName(const char* name) {
   for (size_t i = 0; i < Total; i++) {
-    if (strcmp(GetName(Code(i)), name) == 0) {
+    if (strcmp(GetName(i), name) == 0) {
       return Code(i);
     }
   }
 
-  return invalid_fpreg;
+  return Invalid;
 }
+
+// These assume no SIMD registers as the register sets do not directly support
+// SIMD.  When SIMD is needed (wasm baseline + stubs), other routines are used.
 
 FloatRegisterSet FloatRegister::ReduceSetForPush(const FloatRegisterSet& s) {
   LiveFloatRegisterSet ret;
@@ -52,10 +55,6 @@ FloatRegisterSet FloatRegister::ReduceSetForPush(const FloatRegisterSet& s) {
     ret.addUnchecked(FromCode((*iter).encoding()));
   }
   return ret.set();
-}
-
-uint32_t FloatRegister::GetSizeInBytes(const FloatRegisterSet& s) {
-  return s.size() * sizeof(double);
 }
 
 uint32_t FloatRegister::GetPushSizeInBytes(const FloatRegisterSet& s) {
@@ -68,10 +67,21 @@ uint32_t FloatRegister::getRegisterDumpOffsetInBytes() {
   return encoding() * sizeof(double);
 }
 
+#if defined(ENABLE_WASM_SIMD)
+uint32_t FloatRegister::GetPushSizeInBytesForWasmStubs(
+    const FloatRegisterSet& s) {
+  return s.size() * SizeOfSimd128;
+}
+#endif
+
 uint32_t GetARM64Flags() { return 0; }
 
-void FlushICache(void* code, size_t size) {
-  vixl::CPU::EnsureIAndDCacheCoherency(code, size);
+void FlushICache(void* code, size_t size, bool codeIsThreadLocal) {
+  vixl::CPU::EnsureIAndDCacheCoherency(code, size, codeIsThreadLocal);
+}
+
+bool CanFlushICacheFromBackgroundThreads() {
+  return vixl::CPU::CanFlushICacheFromBackgroundThreads();
 }
 
 }  // namespace jit

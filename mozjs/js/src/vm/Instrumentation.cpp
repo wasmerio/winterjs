@@ -9,6 +9,8 @@
 #include "jsapi.h"
 
 #include "debugger/DebugAPI.h"
+#include "frontend/ParserAtom.h"
+#include "js/Object.h"  // JS::GetReservedSlot
 #include "proxy/DeadObjectProxy.h"
 
 #include "vm/JSObject-inl.h"
@@ -30,8 +32,9 @@ enum InstrumentationHolderSlots {
 };
 
 static RealmInstrumentation* GetInstrumentation(JSObject* obj) {
-  Value v = JS_GetReservedSlot(obj, RealmInstrumentationSlot);
-  return static_cast<RealmInstrumentation*>(v.toPrivate());
+  Value v = JS::GetReservedSlot(obj, RealmInstrumentationSlot);
+  return static_cast<RealmInstrumentation*>(v.isUndefined() ? nullptr
+                                                            : v.toPrivate());
 }
 
 /* static */
@@ -43,21 +46,23 @@ void RealmInstrumentation::holderFinalize(JSFreeOp* fop, JSObject* obj) {
 /* static */
 void RealmInstrumentation::holderTrace(JSTracer* trc, JSObject* obj) {
   RealmInstrumentation* instrumentation = GetInstrumentation(obj);
-  instrumentation->trace(trc);
+  if (instrumentation) {
+    instrumentation->trace(trc);
+  }
 }
 
 static const JSClassOps InstrumentationHolderClassOps = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve */
-    nullptr, /* mayResolve */
-    RealmInstrumentation::holderFinalize,
-    nullptr, /* call */
-    nullptr, /* hasInstance */
-    nullptr, /* construct */
-    RealmInstrumentation::holderTrace,
+    nullptr,                               // addProperty
+    nullptr,                               // delProperty
+    nullptr,                               // enumerate
+    nullptr,                               // newEnumerate
+    nullptr,                               // resolve
+    nullptr,                               // mayResolve
+    RealmInstrumentation::holderFinalize,  // finalize
+    nullptr,                               // call
+    nullptr,                               // hasInstance
+    nullptr,                               // construct
+    RealmInstrumentation::holderTrace,     // trace
 };
 
 static const JSClass InstrumentationHolderClass = {
@@ -89,15 +94,15 @@ static bool StringToInstrumentationKind(JSContext* cx, HandleString str,
 }
 
 /* static */
-JSAtom* RealmInstrumentation::getInstrumentationKindName(
-    JSContext* cx, InstrumentationKind kind) {
+const frontend::ParserAtom* RealmInstrumentation::getInstrumentationKindName(
+    JSContext* cx, frontend::ParserAtomsTable& parserAtoms,
+    InstrumentationKind kind) {
   for (size_t i = 0; i < mozilla::ArrayLength(instrumentationNames); i++) {
     if (kind == (InstrumentationKind)(1 << i)) {
-      JSString* str = JS_AtomizeString(cx, instrumentationNames[i]);
-      if (!str) {
-        return nullptr;
-      }
-      return &str->asAtom();
+      return parserAtoms
+          .internAscii(cx, instrumentationNames[i],
+                       strlen(instrumentationNames[i]))
+          .unwrapOr(nullptr);
     }
   }
   MOZ_CRASH("Unexpected instrumentation kind");
@@ -168,6 +173,7 @@ bool RealmInstrumentation::setActive(JSContext* cx,
   }
 
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
   if (active != instrumentation->active) {
     instrumentation->active = active;
 
@@ -188,6 +194,7 @@ bool RealmInstrumentation::isActive(GlobalObject* global) {
   MOZ_ASSERT(holder);
 
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
   return instrumentation->active;
 }
 
@@ -197,6 +204,7 @@ const int32_t* RealmInstrumentation::addressOfActive(GlobalObject* global) {
   MOZ_ASSERT(holder);
 
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
   return &instrumentation->active;
 }
 
@@ -206,6 +214,7 @@ JSObject* RealmInstrumentation::getCallback(GlobalObject* global) {
   MOZ_ASSERT(holder);
 
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
   return instrumentation->callback;
 }
 
@@ -217,6 +226,7 @@ uint32_t RealmInstrumentation::getInstrumentationKinds(GlobalObject* global) {
   }
 
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
   return instrumentation->kinds;
 }
 
@@ -227,6 +237,7 @@ bool RealmInstrumentation::getScriptId(JSContext* cx,
   MOZ_ASSERT(global == cx->global());
   RootedObject holder(cx, global->getInstrumentationHolder());
   RealmInstrumentation* instrumentation = GetInstrumentation(holder);
+  MOZ_ASSERT(instrumentation);
 
   RootedObject dbgObject(cx, UncheckedUnwrap(instrumentation->dbgObject));
 
