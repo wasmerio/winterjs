@@ -9,10 +9,6 @@ with Files("**"):
 
 Library("mfbt")
 
-EXPORTS += [
-    "../third_party/rust/encoding_c_mem/include/encoding_rs_mem.h",
-]
-
 EXPORTS.mozilla = [
     "Algorithm.h",
     "Alignment.h",

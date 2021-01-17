@@ -21,6 +21,9 @@
 #include "jstypes.h"
 
 #ifdef XP_WIN
+#ifdef JS_ENABLE_UWP
+#  include <windows.h>
+#endif
 #  include <windef.h>
 #  include <winbase.h>
 #  include <crtdbg.h>   /* for _CrtSetReportMode */
@@ -99,13 +102,17 @@ static void NowCalibrate() {
 
   // By wrapping a timeBegin/EndPeriod pair of calls around this loop,
   // the loop seems to take much less time (1 ms vs 15ms) on Vista.
+#ifndef JS_ENABLE_UWP
   timeBeginPeriod(1);
+#endif
   FILETIME ft, ftStart;
   GetSystemTimeAsFileTime(&ftStart);
   do {
     GetSystemTimeAsFileTime(&ft);
   } while (memcmp(&ftStart, &ft, sizeof(ft)) == 0);
+#ifndef JS_ENABLE_UWP
   timeEndPeriod(1);
+#endif
 
   LARGE_INTEGER now;
   QueryPerformanceCounter(&now);
@@ -135,11 +142,15 @@ void PRMJ_NowInit() {
   InitializeCriticalSectionAndSpinCount(&calibration.data_lock,
                                         DataLockSpinCount);
 
+#ifndef JS_ENABLE_UWP
   // Windows 8 has a new API function we can use.
   if (HMODULE h = GetModuleHandle("kernel32.dll")) {
     pGetSystemTimePreciseAsFileTime = (void(WINAPI*)(LPFILETIME))GetProcAddress(
         h, "GetSystemTimePreciseAsFileTime");
   }
+#else
+    pGetSystemTimePreciseAsFileTime = &GetSystemTimeAsFileTime;
+#endif
 }
 
 void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }

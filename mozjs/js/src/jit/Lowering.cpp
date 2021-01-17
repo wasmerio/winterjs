@@ -5749,7 +5749,7 @@ void LIRGenerator::visitWasmFloatConstant(MWasmFloatConstant* ins) {
 #ifdef JS_JITSPEW
 static void SpewResumePoint(MBasicBlock* block, MInstruction* ins,
                             MResumePoint* resumePoint) {
-  Fprinter& out = JitSpewPrinter();
+  GenericPrinter& out = JitSpewPrinter();
   out.printf("Current resume point %p details:\n", (void*)resumePoint);
   out.printf("    frame count: %u\n", resumePoint->frameCount());
 

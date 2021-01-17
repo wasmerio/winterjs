@@ -40,6 +40,8 @@
 
 #include "jit/MacroAssembler-inl.h"
 
+#undef far
+
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;

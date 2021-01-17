@@ -2009,8 +2009,8 @@ fi
 
 
 
-# Target the Windows 8.1 SDK by default
-WINVER=601
+# Target the Windows 10 SDK by default
+WINVER=A00
 
 case "$target" in
 *-mingw*)

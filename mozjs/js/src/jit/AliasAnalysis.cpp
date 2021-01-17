@@ -48,7 +48,7 @@ class LoopAliasInfo : public TempObject {
 void AliasAnalysis::spewDependencyList() {
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_AliasSummaries)) {
-    Fprinter& print = JitSpewPrinter();
+    GenericPrinter& print = JitSpewPrinter();
     JitSpewHeader(JitSpew_AliasSummaries);
     print.printf("Dependency list for other passes:\n");
 
@@ -281,7 +281,7 @@ static void IonSpewDependency(MInstruction* load, MInstruction* store,
     return;
   }
 
-  Fprinter& out = JitSpewPrinter();
+  GenericPrinter& out = JitSpewPrinter();
   out.printf("Load ");
   load->printName(out);
   out.printf(" %s on store ", verb);
@@ -297,7 +297,7 @@ static void IonSpewAliasInfo(const char* pre, MInstruction* ins,
     return;
   }
 
-  Fprinter& out = JitSpewPrinter();
+  GenericPrinter& out = JitSpewPrinter();
   out.printf("%s ", pre);
   ins->printName(out);
   out.printf(" %s\n", post);
@@ -385,7 +385,7 @@ bool AliasAnalysis::analyze() {
 
 #ifdef JS_JITSPEW
         if (JitSpewEnabled(JitSpew_Alias)) {
-          Fprinter& out = JitSpewPrinter();
+          GenericPrinter& out = JitSpewPrinter();
           out.printf("Processing store ");
           def->printName(out);
           out.printf(" (flags %x)\n", set.flags());
