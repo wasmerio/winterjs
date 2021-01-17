@@ -1,51 +1,44 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Anthony Ramine <nox@nox.paris>
-Date: Tue, 7 Jan 2020 12:47:41 +0100
-Subject: [PATCH] Introduce --enable-uwp
-
-
 diff --git a/config/external/icu/common/moz.build b/config/external/icu/common/moz.build
-index 61ff5dc72e38..9dfbf9cb7600 100644
+index ce1b0d0574..7310aca3b9 100644
 --- a/config/external/icu/common/moz.build
 +++ b/config/external/icu/common/moz.build
-@@ -8,6 +8,8 @@ Library('icuuc')
- FINAL_LIBRARY = 'icu'
+@@ -8,6 +8,8 @@ Library("icuuc")
+ FINAL_LIBRARY = "icu"
  
- DEFINES['U_COMMON_IMPLEMENTATION'] = True
-+if CONFIG['JS_ENABLE_UWP']:
-+    DEFINES['U_PLATFORM_HAS_WINUWP_API'] = 1
+ DEFINES["U_COMMON_IMPLEMENTATION"] = True
++if CONFIG["JS_ENABLE_UWP"]:
++    DEFINES["U_PLATFORM_HAS_WINUWP_API"] = 1
  
- LOCAL_INCLUDES += ['/intl/icu/source/i18n']
+ LOCAL_INCLUDES += ["/intl/icu/source/i18n"]
  
 diff --git a/js/moz.configure b/js/moz.configure
-index c33216ec973f..1a39b7abbe7d 100644
+index e65adafb73..243bcc4063 100644
 --- a/js/moz.configure
 +++ b/js/moz.configure
-@@ -48,6 +48,19 @@ set_define('JS_PUNBOX64', depends(target)(lambda t: t.bitness == 64 or None))
- set_define('JS_NUNBOX32', depends(target)(lambda t: t.bitness == 32 or None))
+@@ -78,6 +78,18 @@ set_define("JS_64BIT", depends(target)(lambda t: t.bitness == 64 or None))
+ set_define("JS_PUNBOX64", depends(target)(lambda t: t.bitness == 64 or None))
+ set_define("JS_NUNBOX32", depends(target)(lambda t: t.bitness == 32 or None))
  
- 
-+js_option('--enable-uwp',
-+          default=False,
-+          help='{Enable|Disable} building for UWP environments')
++option("--enable-uwp",
++       default=False,
++       help="{Enable|Disable} building for UWP environments")
 +
-+@depends('--enable-uwp')
++@depends("--enable-uwp")
 +def js_enable_uwp(value):
 +    if value:
 +        return True
 +
-+set_config('JS_ENABLE_UWP', js_enable_uwp)
-+set_define('JS_ENABLE_UWP', js_enable_uwp)
++set_config("JS_ENABLE_UWP", js_enable_uwp)
++set_define("JS_ENABLE_UWP", js_enable_uwp)
 +
-+
+ 
  # SpiderMonkey as a shared library, and how its symbols are exported
  # ==================================================================
- js_option('--disable-shared-js', when=js_standalone,
 diff --git a/js/src/builtin/TestingFunctions.cpp b/js/src/builtin/TestingFunctions.cpp
-index 299ea00ee8ba..9f88c837f3d0 100644
+index c9e0aced06..53c25564cd 100644
 --- a/js/src/builtin/TestingFunctions.cpp
 +++ b/js/src/builtin/TestingFunctions.cpp
-@@ -5352,7 +5352,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+@@ -5514,7 +5514,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    auto getTimeZone = [](std::time_t* now) -> const char* {
      std::tm local{};
  #if defined(_WIN32)
@@ -55,7 +48,7 @@ index 299ea00ee8ba..9f88c837f3d0 100644
      if (localtime_s(&local, now) == 0) {
        return _tzname[local.tm_isdst > 0];
      }
-@@ -5447,7 +5449,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+@@ -5609,7 +5611,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    }
  
  #if defined(_WIN32)
@@ -66,10 +59,10 @@ index 299ea00ee8ba..9f88c837f3d0 100644
    tzset();
  #endif /* _WIN32 */
 diff --git a/js/src/ds/MemoryProtectionExceptionHandler.cpp b/js/src/ds/MemoryProtectionExceptionHandler.cpp
-index ad272a270d84..f84800a830a8 100644
+index 3c4eb00c30..010316ff96 100644
 --- a/js/src/ds/MemoryProtectionExceptionHandler.cpp
 +++ b/js/src/ds/MemoryProtectionExceptionHandler.cpp
-@@ -111,7 +111,7 @@ static bool sExceptionHandlerInstalled = false;
+@@ -110,7 +110,7 @@ static bool sExceptionHandlerInstalled = false;
  static ProtectedRegionTree sProtectedRegions;
  
  bool MemoryProtectionExceptionHandler::isDisabled() {
@@ -78,7 +71,7 @@ index ad272a270d84..f84800a830a8 100644
    // Under Windows ASan, WasmFaultHandler registers itself at 'last' priority
    // in order to let ASan's ShadowExceptionHandler stay at 'first' priority.
    // Unfortunately that results in spurious wasm faults passing through the
-@@ -176,6 +176,7 @@ static mozilla::Atomic<bool> sHandlingException(false);
+@@ -175,6 +175,7 @@ static mozilla::Atomic<bool> sHandlingException(false);
  
  static long __stdcall VectoredExceptionHandler(
      EXCEPTION_POINTERS* ExceptionInfo) {
@@ -86,7 +79,7 @@ index ad272a270d84..f84800a830a8 100644
    EXCEPTION_RECORD* ExceptionRecord = ExceptionInfo->ExceptionRecord;
  
    // We only handle one kind of exception; ignore all others.
-@@ -200,6 +201,7 @@ static long __stdcall VectoredExceptionHandler(
+@@ -199,6 +200,7 @@ static long __stdcall VectoredExceptionHandler(
        }
      }
    }
@@ -94,25 +87,22 @@ index ad272a270d84..f84800a830a8 100644
  
    // Forward to the previous handler which may be a debugger,
    // the crash reporter or something else entirely.
-@@ -213,11 +215,11 @@ bool MemoryProtectionExceptionHandler::install() {
-   if (MemoryProtectionExceptionHandler::isDisabled()) {
+@@ -213,9 +215,11 @@ bool MemoryProtectionExceptionHandler::install() {
      return true;
    }
--
+ 
 +#ifndef JS_ENABLE_UWP
    // Install our new exception handler.
    sVectoredExceptionHandler = AddVectoredExceptionHandler(
        /* FirstHandler = */ true, VectoredExceptionHandler);
--
 +#endif
+ 
    sExceptionHandlerInstalled = sVectoredExceptionHandler != nullptr;
    return sExceptionHandlerInstalled;
- }
-@@ -225,9 +227,10 @@ bool MemoryProtectionExceptionHandler::install() {
- void MemoryProtectionExceptionHandler::uninstall() {
+@@ -225,8 +229,10 @@ void MemoryProtectionExceptionHandler::uninstall() {
    if (sExceptionHandlerInstalled) {
      MOZ_ASSERT(!sHandlingException);
--
+ 
 +#ifndef JS_ENABLE_UWP
      // Restore the previous exception handler.
      MOZ_ALWAYS_TRUE(RemoveVectoredExceptionHandler(sVectoredExceptionHandler));
@@ -121,10 +111,10 @@ index ad272a270d84..f84800a830a8 100644
      sExceptionHandlerInstalled = false;
    }
 diff --git a/js/src/gc/Memory.cpp b/js/src/gc/Memory.cpp
-index e2d4daa6186a..42ddca26d2fc 100644
+index 55e2fc2099..3d2801f837 100644
 --- a/js/src/gc/Memory.cpp
 +++ b/js/src/gc/Memory.cpp
-@@ -894,9 +894,15 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
+@@ -887,9 +887,15 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
      }
      UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
      // If the offset or length are out of bounds, this call will fail.
@@ -141,10 +131,10 @@ index e2d4daa6186a..42ddca26d2fc 100644
      // Retry if another thread mapped the address we were trying to use.
      if (map || GetLastError() != ERROR_INVALID_ADDRESS) {
 diff --git a/js/src/jit/ProcessExecutableMemory.cpp b/js/src/jit/ProcessExecutableMemory.cpp
-index 077828b37d83..aa30b73ef24c 100644
+index a877189f6b..5db033fa34 100644
 --- a/js/src/jit/ProcessExecutableMemory.cpp
 +++ b/js/src/jit/ProcessExecutableMemory.cpp
-@@ -137,6 +137,7 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
+@@ -145,6 +145,7 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
  // For an explanation of the problem being solved here, see
  // SetJitExceptionFilter in jsfriendapi.h.
  static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
@@ -152,7 +142,7 @@ index 077828b37d83..aa30b73ef24c 100644
    if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
      MOZ_CRASH();
    }
-@@ -224,6 +225,9 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
+@@ -232,6 +233,9 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
    AutoSuppressStackWalking suppress;
    return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
                                           RuntimeFunctionCallback, NULL, NULL);
@@ -162,7 +152,7 @@ index 077828b37d83..aa30b73ef24c 100644
  }
  
  static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
-@@ -243,7 +247,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
+@@ -251,7 +255,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
    void* p = nullptr;
    for (size_t i = 0; i < 10; i++) {
      void* randomAddr = ComputeRandomAllocationAddress();
@@ -174,7 +164,7 @@ index 077828b37d83..aa30b73ef24c 100644
      if (p) {
        break;
      }
-@@ -251,7 +259,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
+@@ -259,7 +267,11 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
  
    if (!p) {
      // Try again without randomization.
@@ -186,7 +176,7 @@ index 077828b37d83..aa30b73ef24c 100644
      if (!p) {
        return nullptr;
      }
-@@ -302,8 +314,17 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
+@@ -310,8 +322,17 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
  
  static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
                                       ProtectionSetting protection) {
@@ -204,23 +194,23 @@ index 077828b37d83..aa30b73ef24c 100644
    if (!p) {
      return false;
    }
-@@ -753,7 +774,11 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
+@@ -777,7 +798,11 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
  #ifdef XP_WIN
    DWORD oldProtect;
    DWORD flags = ProtectionSettingToFlags(protection);
 +#ifdef JS_ENABLE_UWP
 +  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
 +#else
-   if (!VirtualProtect(pageSTart, size, flags, &oldProtect)) {
+   if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
 +#endif
      return false;
    }
  #else
 diff --git a/js/src/js-config.h.in b/js/src/js-config.h.in
-index f2ce93e12212..8c723ea2d402 100644
+index b54f1bc2cb..bcea2070dd 100644
 --- a/js/src/js-config.h.in
 +++ b/js/src/js-config.h.in
-@@ -54,6 +54,9 @@
+@@ -58,6 +58,9 @@
  /* Define to 1 if SpiderMonkey is in PUNBOX64 mode. */
  #undef JS_PUNBOX64
  
@@ -231,10 +221,11 @@ index f2ce93e12212..8c723ea2d402 100644
  #undef MOZJS_MAJOR_VERSION
  #undef MOZJS_MINOR_VERSION
 diff --git a/js/src/old-configure b/js/src/old-configure
-index afdb8237ae36..35d29e063c5b 100644
+index 49feb33f14..e200f68260 100644
 --- a/js/src/old-configure
 +++ b/js/src/old-configure
-@@ -113,8 +113,8 @@ MOZ_TOOL_VARIABLES
+@@ -2009,8 +2009,8 @@ fi
+ 
  
  
 -# Target the Windows 8.1 SDK by default
@@ -245,10 +236,10 @@ index afdb8237ae36..35d29e063c5b 100644
  case "$target" in
  *-mingw*)
 diff --git a/js/src/old-configure.in b/js/src/old-configure.in
-index afdb8237ae36..35d29e063c5b 100644
+index ab899d30cb..fac3161e2a 100644
 --- a/js/src/old-configure.in
 +++ b/js/src/old-configure.in
-@@ -113,8 +113,8 @@ MOZ_TOOL_VARIABLES
+@@ -101,8 +101,8 @@ MOZ_TOOL_VARIABLES
  dnl Special win32 checks
  dnl ========================================================
  
@@ -260,11 +251,11 @@ index afdb8237ae36..35d29e063c5b 100644
  case "$target" in
  *-mingw*)
 diff --git a/js/src/vm/CodeCoverage.cpp b/js/src/vm/CodeCoverage.cpp
-index 8a89d5992e8a..14692732a529 100644
+index f96cfdff68..a4936e562d 100644
 --- a/js/src/vm/CodeCoverage.cpp
 +++ b/js/src/vm/CodeCoverage.cpp
 @@ -13,8 +13,13 @@
- #include <stdio.h>
+ #include <utility>
  #ifdef XP_WIN
  #  include <process.h>
 +#  include <windows.h>
@@ -278,7 +269,7 @@ index 8a89d5992e8a..14692732a529 100644
  #endif
  
 diff --git a/js/src/vm/Time.cpp b/js/src/vm/Time.cpp
-index 13c2f8a0c3c8..77e8ecd93ff6 100644
+index 059710064c..6ffc8e55c5 100644
 --- a/js/src/vm/Time.cpp
 +++ b/js/src/vm/Time.cpp
 @@ -21,6 +21,9 @@
@@ -326,10 +317,10 @@ index 13c2f8a0c3c8..77e8ecd93ff6 100644
  
  void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }
 diff --git a/js/src/wasm/WasmSignalHandlers.cpp b/js/src/wasm/WasmSignalHandlers.cpp
-index f8977a6b074a..03c39a6337d0 100644
+index a74ce62e25..e1214fce32 100644
 --- a/js/src/wasm/WasmSignalHandlers.cpp
 +++ b/js/src/wasm/WasmSignalHandlers.cpp
-@@ -742,6 +742,7 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
+@@ -755,6 +755,7 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
  // Compiled in all user binaries, so should be stable over time.
  static const unsigned sThreadLocalArrayPointerIndex = 11;
  
@@ -337,7 +328,7 @@ index f8977a6b074a..03c39a6337d0 100644
  static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
    // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
    if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
-@@ -765,6 +766,7 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
+@@ -778,6 +779,7 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
  
    return EXCEPTION_CONTINUE_EXECUTION;
  }
@@ -345,7 +336,7 @@ index f8977a6b074a..03c39a6337d0 100644
  
  #elif defined(XP_DARWIN)
  // On OSX we are forced to use the lower-level Mach exception mechanism instead
-@@ -1024,11 +1026,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
+@@ -1037,11 +1039,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
    // such as MemoryProtectionExceptionHandler that assume we are crashing.
    const bool firstHandler = true;
  #  endif
@@ -360,7 +351,7 @@ index f8977a6b074a..03c39a6337d0 100644
  #elif defined(XP_DARWIN)
    // All the Mach setup in EnsureLazyProcessSignalHandlers.
 diff --git a/mfbt/Poison.cpp b/mfbt/Poison.cpp
-index f490856a3155..900f33ca26a5 100644
+index f5d5b49865..0963781890 100644
 --- a/mfbt/Poison.cpp
 +++ b/mfbt/Poison.cpp
 @@ -14,6 +14,9 @@
@@ -373,7 +364,7 @@ index f490856a3155..900f33ca26a5 100644
  #elif !defined(__OS2__)
  #  include <unistd.h>
  #  include <sys/mman.h>
-@@ -42,7 +42,11 @@ uintptr_t gMozillaPoisonSize;
+@@ -36,7 +39,11 @@
  
  #ifdef _WIN32
  static void* ReserveRegion(uintptr_t aRegion, uintptr_t aSize) {
@@ -383,10 +374,10 @@ index f490856a3155..900f33ca26a5 100644
    return VirtualAlloc((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
 +#endif
  }
-
+ 
  static void ReleaseRegion(void* aRegion, uintptr_t aSize) {
 diff --git a/mfbt/RandomNum.cpp b/mfbt/RandomNum.cpp
-index 69f19e9d01fa..668c944a59eb 100644
+index c3bb9ecef4..7ea7d127df 100644
 --- a/mfbt/RandomNum.cpp
 +++ b/mfbt/RandomNum.cpp
 @@ -13,6 +13,7 @@
@@ -425,7 +416,7 @@ index 69f19e9d01fa..668c944a59eb 100644
    return Some(result);
  
 diff --git a/mfbt/WindowsVersion.h b/mfbt/WindowsVersion.h
-index 054279f778c8..f641299327c7 100644
+index 054279f778..f641299327 100644
 --- a/mfbt/WindowsVersion.h
 +++ b/mfbt/WindowsVersion.h
 @@ -7,6 +7,8 @@
@@ -445,10 +436,10 @@ index 054279f778c8..f641299327c7 100644
 +
  #endif /* mozilla_WindowsVersion_h */
 diff --git a/mozglue/misc/DynamicallyLinkedFunctionPtr.h b/mozglue/misc/DynamicallyLinkedFunctionPtr.h
-index dbf84c011748..04e0444e81aa 100644
+index 4313974ec5..7b6cb42190 100644
 --- a/mozglue/misc/DynamicallyLinkedFunctionPtr.h
 +++ b/mozglue/misc/DynamicallyLinkedFunctionPtr.h
-@@ -46,7 +46,11 @@ class DynamicallyLinkedFunctionPtrBase {
+@@ -47,7 +47,11 @@ class DynamicallyLinkedFunctionPtrBase {
  
    DynamicallyLinkedFunctionPtrBase(const wchar_t* aLibName,
                                     const char* aFuncName)
@@ -461,7 +452,7 @@ index dbf84c011748..04e0444e81aa 100644
        return;
      }
 diff --git a/mozglue/misc/StackWalk.cpp b/mozglue/misc/StackWalk.cpp
-index 2a42defec7d2..d4274e3c3397 100644
+index 24868ae5de..c6166b6a67 100644
 --- a/mozglue/misc/StackWalk.cpp
 +++ b/mozglue/misc/StackWalk.cpp
 @@ -77,9 +77,11 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
@@ -494,16 +485,15 @@ index 2a42defec7d2..d4274e3c3397 100644
  }
  
  /**
-@@ -459,7 +465,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
-                                         ULONG aModuleSize, PVOID aUserContext) {
+@@ -436,6 +442,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
    BOOL retval = TRUE;
    DWORD64 addr = *(DWORD64*)aUserContext;
--
+ 
 +#ifndef JS_ENABLE_UWP
    /*
     * You'll want to control this if we are running on an
     *  architecture where the addresses go the other direction.
-@@ -479,7 +485,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+@@ -455,7 +462,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
        PrintError("SymLoadModule64");
      }
    }
@@ -512,7 +502,7 @@ index 2a42defec7d2..d4274e3c3397 100644
    return retval;
  }
  
-@@ -511,6 +517,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+@@ -487,6 +494,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
  #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
  #  endif
  
@@ -520,7 +510,7 @@ index 2a42defec7d2..d4274e3c3397 100644
  BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
                                  PIMAGEHLP_MODULE64 aModuleInfo,
                                  PIMAGEHLP_LINE64 aLineInfo) {
-@@ -567,22 +574,24 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
+@@ -543,10 +551,11 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
  
    return retval;
  }
@@ -533,10 +523,10 @@ index 2a42defec7d2..d4274e3c3397 100644
  
    if (gInitialized) {
      return gInitialized;
-   }
+@@ -554,11 +563,13 @@ static bool EnsureSymInitialized() {
  
    InitializeDbgHelpCriticalSection();
--
+ 
 +#ifndef JS_ENABLE_UWP
    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
    retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
@@ -547,7 +537,7 @@ index 2a42defec7d2..d4274e3c3397 100644
  
    gInitialized = retStat;
    /* XXX At some point we need to arrange to call SymCleanup */
-@@ -590,6 +599,7 @@ static bool EnsureSymInitialized() {
+@@ -566,6 +577,7 @@ static bool EnsureSymInitialized() {
    return retStat;
  }
  
@@ -555,7 +545,7 @@ index 2a42defec7d2..d4274e3c3397 100644
  MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                       MozCodeAddressDetails* aDetails) {
    aDetails->library[0] = '\0';
-@@ -653,6 +663,7 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
+@@ -629,6 +641,7 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
    LeaveCriticalSection(&gDbgHelpCS);  // release our lock
    return true;
  }
@@ -564,10 +554,10 @@ index 2a42defec7d2..d4274e3c3397 100644
  // i386 or PPC Linux stackwalking code
  #elif HAVE_DLADDR &&                                           \
 diff --git a/mozglue/misc/TimeStamp_windows.cpp b/mozglue/misc/TimeStamp_windows.cpp
-index 3e4552d7a30a..b3e6f3dd1127 100644
+index ae617e7802..b573962f8e 100644
 --- a/mozglue/misc/TimeStamp_windows.cpp
 +++ b/mozglue/misc/TimeStamp_windows.cpp
-@@ -170,8 +170,10 @@ static inline ULONGLONG PerformanceCounter() {
+@@ -171,8 +171,10 @@ static inline ULONGLONG PerformanceCounter() {
  static void InitThresholds() {
    DWORD timeAdjustment = 0, timeIncrement = 0;
    BOOL timeAdjustmentDisabled;
@@ -579,7 +569,7 @@ index 3e4552d7a30a..b3e6f3dd1127 100644
    LOG(("TimeStamp: timeIncrement=%d [100ns]", timeIncrement));
  
 diff --git a/mozglue/misc/WindowsMapRemoteView.cpp b/mozglue/misc/WindowsMapRemoteView.cpp
-index 4cd60ba7f1e0..7f39e7859377 100644
+index 4cd60ba7f1..8e67c4ef86 100644
 --- a/mozglue/misc/WindowsMapRemoteView.cpp
 +++ b/mozglue/misc/WindowsMapRemoteView.cpp
 @@ -29,6 +29,7 @@ WINBASEAPI BOOL WINAPI UnmapViewOfFile2(HANDLE aProcess, PVOID aBaseAddress,
@@ -608,11 +598,12 @@ index 4cd60ba7f1e0..7f39e7859377 100644
    static const StaticDynamicallyLinkedFunctionPtr<decltype(&MapViewOfFileNuma2)>
        pMapViewOfFileNuma2(L"Api-ms-win-core-memory-l1-1-5.dll",
                            "MapViewOfFileNuma2");
-@@ -97,9 +102,13 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
+@@ -96,10 +101,14 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
+   }
  
    ::SetLastError(GetWin32ErrorCode(ntStatus));
-   return nullptr;
 +#endif
+   return nullptr;
  }
  
  MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
@@ -628,13 +619,13 @@ index 4cd60ba7f1e0..7f39e7859377 100644
    return NT_SUCCESS(ntStatus);
 +#endif
  }
-
+ 
  }  // namespace mozilla
 diff --git a/mozglue/misc/WindowsUnicode.cpp b/mozglue/misc/WindowsUnicode.cpp
-index 3e4552d7a30a..b3e6f3dd1127 100644
+index 464380b6da..8317d5b137 100644
 --- a/mozglue/misc/WindowsUnicode.cpp
 +++ b/mozglue/misc/WindowsUnicode.cpp
-@@ -7,8 +7,10 @@
+@@ -7,14 +7,17 @@
  #include "WindowsUnicode.h"
  
  #include <windows.h>
@@ -645,24 +636,39 @@ index 3e4552d7a30a..b3e6f3dd1127 100644
  
  #include <string.h>
  
-@@ -48,6 +49,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr) {
+ namespace mozilla {
+ namespace glue {
+ 
++#ifndef JS_ENABLE_UWP
+ mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr,
+                                       const size_t aStrLenExclNul) {
+   int numConv = ::WideCharToMultiByte(CP_UTF8, 0, aStr, aStrLenExclNul, nullptr,
+@@ -38,6 +41,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr,
+ 
+   return buf;
+ }
++#endif
+ 
+ mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr) {
+   return WideToUTF8(aStr, wcslen(aStr));
+@@ -51,6 +51,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr) {
    return WideToUTF8(aStr.data(), aStr.length());
  }
- 
+
 +#ifndef JS_ENABLE_UWP
  mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
    if (!aStr) {
      return nullptr;
-@@ -55,6 +57,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
- 
+@@ -58,7 +59,8 @@ mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
+
    return WideToUTF8(aStr->Buffer, aStr->Length / sizeof(WCHAR));
  }
 +#endif
- 
+
  }  // namespace glue
  }  // namespace mozilla
-diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
-index 3e4552d7a30a..b3e6f3dd1127 100644
+ diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
+index 77fc376b92..dcf7938393 100644
 --- a/mozglue/misc/WindowsUnicode.h
 +++ b/mozglue/misc/WindowsUnicode.h
 @@ -11,7 +11,9 @@

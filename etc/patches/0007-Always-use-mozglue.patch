@@ -9,20 +9,20 @@ index dc58a97e135c..111dbde8c531 100644
 --- a/js/src/build/moz.build
 +++ b/js/src/build/moz.build
 @@ -11,8 +11,7 @@ CONFIGURE_SUBST_FILES += [
- 
- LIBRARY_DEFINES['EXPORT_JS_API'] = True
 
--if not CONFIG['JS_STANDALONE']:
--    LIBRARY_DEFINES['MOZ_HAS_MOZGLUE'] = True
-+LIBRARY_DEFINES['MOZ_HAS_MOZGLUE'] = True
- 
+ LIBRARY_DEFINES["EXPORT_JS_API"] = True
+
+-if not CONFIG["JS_STANDALONE"]:
+-    LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
++LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
+
  # JavaScript must be built shared, even for static builds, as it is used by
  # other modules which are always built shared. Failure to do so results in
-@@ -34,6 +34,7 @@ if CONFIG['JS_SHARED_LIBRARY']:
-         SYMBOLS_FILE = '!symverscript'
+@@ -34,6 +34,7 @@ if CONFIG["JS_SHARED_LIBRARY"]:
+         SYMBOLS_FILE = "!symverscript"
  else:
-     Library('js')
-+    USE_LIBS += ['mozglue']
- 
+     Library("js")
++    USE_LIBS += ["mozglue"]
+
  FORCE_STATIC_LIB = True
- STATIC_LIBRARY_NAME = 'js_static'
+ STATIC_LIBRARY_NAME = "js_static"

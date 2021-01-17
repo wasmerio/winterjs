@@ -1,19 +1,12 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Anthony Ramine <nox@nox.paris>
-Date: Fri, 24 Jan 2020 16:47:59 +0100
-Subject: [PATCH] Disable spidermonkey style checks
-
-This fails because we removed cranelift from the tree.
-
 diff --git a/js/src/build/moz.build b/js/src/build/moz.build
-index 111dbde8c531..736d5bd474bf 100644
+index 3f5dce5f73..9e149581ac 100644
 --- a/js/src/build/moz.build
 +++ b/js/src/build/moz.build
-@@ -86,7 +86,6 @@ GeneratedFile(
-     'spidermonkey_checks', script='/config/run_spidermonkey_checks.py',
+@@ -91,7 +91,6 @@ GeneratedFile(
+     script="/config/run_spidermonkey_checks.py",
      inputs=[
-         '!%sjs_static.%s' % (CONFIG['LIB_PREFIX'], CONFIG['LIB_SUFFIX']),
--        '/config/check_spidermonkey_style.py',
-         '/config/check_macroassembler_style.py',
-         '/config/check_js_opcode.py'
-         ])
+         "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
+-        "/config/check_spidermonkey_style.py",
+         "/config/check_macroassembler_style.py",
+         "/config/check_js_opcode.py",
+     ],

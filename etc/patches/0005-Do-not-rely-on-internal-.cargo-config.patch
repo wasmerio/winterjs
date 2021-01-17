@@ -19,7 +19,7 @@ index 4188e9e2136d..21984e7f808a 100644
 -# prior to Make running. So we also set it as a dependency of pre-export, which
 -# ensures it exists before recursing the rust targets and the export targets
 -# that run cbindgen, tricking Make into keeping them early.
--$(rust_targets) gfx/webrender_bindings/export layout/style/export xpcom/base/export: $(DEPTH)/.cargo/config
+-$(rust_targets): $(DEPTH)/.cargo/config
 -ifndef TEST_MOZBUILD
 -pre-export:: $(DEPTH)/.cargo/config
 -endif
@@ -31,12 +31,12 @@ diff --git a/moz.build b/moz.build
 index 94419df73ada..487b8b4dbabd 100644
 --- a/moz.build
 +++ b/moz.build
-@@ -163,8 +163,6 @@ if CONFIG['MOZ_BUILD_APP']:
+@@ -163,6 +163,4 @@ if CONFIG['MOZ_BUILD_APP']:
  else:
-     include('/toolkit/toolkit.mozbuild')
+     include("/toolkit/toolkit.mozbuild")
  
--OBJDIR_PP_FILES['.cargo'] += ['.cargo/config.in']
+-OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
 -
- DEFINES['top_srcdir'] = TOPSRCDIR
- 
- include('build/templates.mozbuild')
+ DEFINES["top_srcdir"] = TOPSRCDIR
+
+ SPHINX_TREES["contributing"] = "docs/contributing"

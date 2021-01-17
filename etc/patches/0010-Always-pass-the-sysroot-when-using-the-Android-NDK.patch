@@ -1,19 +1,13 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Anthony Ramine <nox@nox.paris>
-Date: Tue, 7 Jan 2020 12:44:46 +0100
-Subject: [PATCH] Always pass the sysroot when using the Android NDK
-
-
 diff --git a/build/moz.configure/android-ndk.configure b/build/moz.configure/android-ndk.configure
-index c5f21367ab85..5659e46872fe 100644
+index b6d198b149..66dc42ef7d 100644
 --- a/build/moz.configure/android-ndk.configure
 +++ b/build/moz.configure/android-ndk.configure
-@@ -332,6 +332,8 @@ def extra_toolchain_flags(android_system, android_sysroot, toolchain_dir,
-              android_system,
-              '-isystem',
-              os.path.join(android_sysroot, 'usr', 'include'),
-+             '--sysroot',
-+             android_sysroot,
-              '-gcc-toolchain',
-              toolchain_dir,
-              '-D__ANDROID_API__=%d' % android_version]
+@@ -319,6 +319,8 @@ def extra_toolchain_flags(
+         android_system,
+         "-isystem",
+         os.path.join(android_sysroot, "usr", "include"),
++        "--sysroot",
++        android_sysroot,
+         "-gcc-toolchain",
+         toolchain_dir,
+         "-D__ANDROID_API__=%d" % android_version,

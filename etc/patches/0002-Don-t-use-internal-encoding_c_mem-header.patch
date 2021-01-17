@@ -10,12 +10,12 @@ index 62a8c0d991a9..1342c4322b98 100644
 +++ b/mfbt/moz.build
 @@ -9,10 +9,6 @@ with Files("**"):
  
- Library('mfbt')
+ Library("mfbt")
  
 -EXPORTS += [
--    '../third_party/rust/encoding_c_mem/include/encoding_rs_mem.h',
+-    "../third_party/rust/encoding_c_mem/include/encoding_rs_mem.h",
 -]
 -
  EXPORTS.mozilla = [
-     'Algorithm.h',
-     'Alignment.h',
+     "Algorithm.h",
+     "Alignment.h",
