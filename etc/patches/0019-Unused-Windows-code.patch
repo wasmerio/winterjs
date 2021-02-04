@@ -1,0 +1,26 @@
+commit 500754d844368b01d51e26e05691370bc5aaa632
+Author: Josh Matthews <josh@joshmatthews.net>
+Date:   Wed Feb 3 23:42:28 2021 -0500
+
+    remove unused windows code
+
+diff --git a/mozglue/misc/moz.build b/mozglue/misc/moz.build
+index d3136755f5..7ab9fe2567 100644
+--- a/mozglue/misc/moz.build
++++ b/mozglue/misc/moz.build
+@@ -25,7 +25,6 @@ EXPORTS.mozilla.glue += [
+ 
+ if CONFIG["OS_ARCH"] == "WINNT":
+     EXPORTS.mozilla += [
+-        "PreXULSkeletonUI.h",
+         "StackWalk_windows.h",
+         "TimeStamp_windows.h",
+         "WindowsDpiAwareness.h",
+@@ -59,7 +58,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
+         "WindowsUnicode.h",
+     ]
+     SOURCES += [
+-        "PreXULSkeletonUI.cpp",
+         "TimeStamp_windows.cpp",
+         "WindowsMapRemoteView.cpp",
+         "WindowsProcessMitigations.cpp",
