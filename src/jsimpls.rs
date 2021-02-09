@@ -21,9 +21,6 @@ use jsgc::RootKind;
 use jsid::JSID_VOID;
 use jsval::UndefinedValue;
 
-#[cfg(feature = "debugmozjs")]
-use jsapi::mozilla::detail::GuardObjectNotificationReceiver;
-
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
@@ -164,34 +161,30 @@ impl JSAutoRealm {
         JSAutoRealm {
             cx_: cx,
             oldRealm_: unsafe { JS::EnterRealm(cx, target) },
-            #[cfg(feature = "debugmozjs")]
-            _mCheckNotUsedAsTemporary: GuardObjectNotificationReceiver {
-                mStatementDone: false,
-            }
         }
     }
 }
 
 impl JS::AutoGCRooter {
-    pub fn new_unrooted(tag: JS::AutoGCRooter_Tag) -> JS::AutoGCRooter {
+    pub fn new_unrooted(kind: JS::AutoGCRooterKind) -> JS::AutoGCRooter {
         JS::AutoGCRooter {
             down: ptr::null_mut(),
-            tag_: tag,
+            kind_: kind,
             stackTop: ptr::null_mut(),
         }
     }
 
     pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
         #[allow(non_snake_case)]
-        let autoGCRooters: &mut _ = {
+        let autoGCRooters: *mut _ = {
             let rooting_cx = cx as *mut JS::RootingContext;
-            &mut (*rooting_cx).autoGCRooters_
+            &mut (*rooting_cx).autoGCRooters_[self.kind_ as usize]
         };
-        self.stackTop = autoGCRooters;
-        self.down = *autoGCRooters;
+        self.stackTop = autoGCRooters as *mut *mut _;
+        self.down = *autoGCRooters as *mut _;
 
         assert!(*self.stackTop != self);
-        *autoGCRooters = self;
+        *autoGCRooters = self as *mut _ as _;
     }
 
     pub unsafe fn remove_from_root_stack(&mut self) {
@@ -365,7 +358,7 @@ impl JSFunctionSpec {
 impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
         name: JSPropertySpec_Name { string_: ptr::null() },
-        flags: 0,
+        flags_: 0,
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
                 getter: ::jsapi::JSPropertySpec_Accessor {
@@ -380,7 +373,7 @@ impl JSPropertySpec {
 
     pub fn is_zeroed(&self) -> bool {
         (unsafe { self.name.string_.is_null() }) &&
-            self.flags == 0 &&
+            self.flags_ == 0 &&
             unsafe { self.u.accessors.getter.native.is_zeroed() } &&
             unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
