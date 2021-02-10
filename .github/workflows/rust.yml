@@ -23,7 +23,7 @@ jobs:
     - name: Install deps osx on linux
       if: startsWith(matrix.os, 'ubuntu')
       run: |
-        sudo apt install autoconf2.13 gcc-7 g++-7 -y
+        sudo apt install autoconf2.13 gcc-7 g++-7 ccache -y
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
@@ -34,9 +34,9 @@ jobs:
       with:
         path: .ccache
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - run: cache -z
+    - run: ccache -z
     - name: Build
       run: ccache cargo build --verbose --features "${{ matrix.features }}"
     - name: Run tests
       run: ccache cargo test --verbose
-    - run: cache -s
+    - run: ccache -s
