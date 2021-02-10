@@ -23,7 +23,7 @@ jobs:
     - name: Install deps osx on linux
       if: startsWith(matrix.os, 'ubuntu')
       run: |
-        sudo apt install autoconf2.13 gcc-7 g++-7 ccache -y
+        sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
