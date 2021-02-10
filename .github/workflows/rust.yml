@@ -1,0 +1,42 @@
+name: Rust
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  Build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        rust: [beta, stable]
+        features: ["debugmozjs", ""]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install deps on osx
+      if: startsWith(matrix.os, 'macOS')
+      run: |
+        brew install python autoconf@2.13 ccache llvm yasm
+    - name: Install deps osx on linux
+      if: startsWith(matrix.os, 'ubuntu')
+      run: |
+        sudo apt install autoconf2.13 gcc-7 g++-7 -y
+    - uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+    - name: ccache cache files
+      uses: actions/cache@v1.1.0
+      with:
+        path: .ccache
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - run: cache -z
+    - name: Build
+      run: ccache cargo build --verbose --features "${{ matrix.features }}"
+    - name: Run tests
+      run: ccache cargo test --verbose
+    - run: cache -s
