@@ -10,15 +10,18 @@
 #include "js/Class.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
+#include "vm/GeneratorResumeKind.h"  // GeneratorResumeKind
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/Stack.h"
 
 namespace js {
 
-extern const JSClass GeneratorFunctionClass;
+namespace frontend {
+class ParserAtom;
+}  // namespace frontend
 
-enum class GeneratorResumeKind { Next, Throw, Return };
+extern const JSClass GeneratorFunctionClass;
 
 class AbstractGeneratorObject : public NativeObject {
  public:
@@ -30,49 +33,31 @@ class AbstractGeneratorObject : public NativeObject {
     CALLEE_SLOT = 0,
     ENV_CHAIN_SLOT,
     ARGS_OBJ_SLOT,
-    EXPRESSION_STACK_SLOT,
+    STACK_STORAGE_SLOT,
     RESUME_INDEX_SLOT,
     RESERVED_SLOTS
   };
 
- private:
-  static bool suspend(JSContext* cx, HandleObject obj, AbstractFramePtr frame,
-                      jsbytecode* pc, Value* vp, unsigned nvalues);
+  // Maximum number of fixed stack slots in a generator or async function
+  // script. If a script would have more, we instead store some variables in
+  // heap EnvironmentObjects.
+  //
+  // This limit is a performance heuristic. Stack slots reduce allocations,
+  // and `Local` opcodes are a bit faster than `AliasedVar` ones; but at each
+  // `yield` or `await` the stack slots must be memcpy'd into a
+  // GeneratorObject. At some point the memcpy is too much. The limit is
+  // plenty for typical human-authored code.
+  static constexpr uint32_t FixedSlotLimit = 256;
 
  public:
-  static GeneratorResumeKind getResumeKind(jsbytecode* pc) {
-    MOZ_ASSERT(*pc == JSOP_RESUME);
-    unsigned arg = GET_UINT8(pc);
-    MOZ_ASSERT(arg <= unsigned(GeneratorResumeKind::Return));
-    return static_cast<GeneratorResumeKind>(arg);
-  }
-
-  static GeneratorResumeKind getResumeKind(JSContext* cx, JSAtom* atom) {
-    if (atom == cx->names().next) {
-      return GeneratorResumeKind::Next;
-    }
-    if (atom == cx->names().throw_) {
-      return GeneratorResumeKind::Throw;
-    }
-    MOZ_ASSERT(atom == cx->names().return_);
-    return GeneratorResumeKind::Return;
-  }
-
   static JSObject* create(JSContext* cx, AbstractFramePtr frame);
 
   static bool resume(JSContext* cx, InterpreterActivation& activation,
-                     Handle<AbstractGeneratorObject*> genObj, HandleValue arg);
+                     Handle<AbstractGeneratorObject*> genObj, HandleValue arg,
+                     HandleValue resumeKind);
 
-  static bool initialSuspend(JSContext* cx, HandleObject obj,
-                             AbstractFramePtr frame, jsbytecode* pc) {
-    return suspend(cx, obj, frame, pc, nullptr, 0);
-  }
-
-  static bool normalSuspend(JSContext* cx, HandleObject obj,
-                            AbstractFramePtr frame, jsbytecode* pc, Value* vp,
-                            unsigned nvalues) {
-    return suspend(cx, obj, frame, pc, vp, nvalues);
-  }
+  static bool suspend(JSContext* cx, HandleObject obj, AbstractFramePtr frame,
+                      jsbytecode* pc, unsigned nvalues);
 
   static void finalSuspend(HandleObject obj);
 
@@ -98,21 +83,19 @@ class AbstractGeneratorObject : public NativeObject {
     setFixedSlot(ARGS_OBJ_SLOT, ObjectValue(argsObj));
   }
 
-  bool hasExpressionStack() const {
-    return getFixedSlot(EXPRESSION_STACK_SLOT).isObject();
+  bool hasStackStorage() const {
+    return getFixedSlot(STACK_STORAGE_SLOT).isObject();
   }
-  bool isExpressionStackEmpty() const {
-    return expressionStack().getDenseInitializedLength() == 0;
+  bool isStackStorageEmpty() const {
+    return stackStorage().getDenseInitializedLength() == 0;
   }
-  ArrayObject& expressionStack() const {
-    return getFixedSlot(EXPRESSION_STACK_SLOT).toObject().as<ArrayObject>();
+  ArrayObject& stackStorage() const {
+    return getFixedSlot(STACK_STORAGE_SLOT).toObject().as<ArrayObject>();
   }
-  void setExpressionStack(ArrayObject& expressionStack) {
-    setFixedSlot(EXPRESSION_STACK_SLOT, ObjectValue(expressionStack));
+  void setStackStorage(ArrayObject& stackStorage) {
+    setFixedSlot(STACK_STORAGE_SLOT, ObjectValue(stackStorage));
   }
-  void clearExpressionStack() {
-    setFixedSlot(EXPRESSION_STACK_SLOT, NullValue());
-  }
+  void clearStackStorage() { setFixedSlot(STACK_STORAGE_SLOT, NullValue()); }
 
   // The resumeIndex slot is abused for a few purposes.  It's undefined if
   // it hasn't been set yet (before the initial yield), and null if the
@@ -120,9 +103,9 @@ class AbstractGeneratorObject : public NativeObject {
   // RESUME_INDEX_RUNNING.
   //
   // If the generator is suspended, it's the resumeIndex (stored as
-  // JSOP_INITIALYIELD/JSOP_YIELD/JSOP_AWAIT operand) of the yield instruction
-  // that suspended the generator. The resumeIndex can be mapped to the
-  // bytecode offset (interpreter) or to the native code offset (JIT).
+  // JSOp::InitialYield/JSOp::Yield/JSOp::Await operand) of the yield
+  // instruction that suspended the generator. The resumeIndex can be mapped to
+  // the bytecode offset (interpreter) or to the native code offset (JIT).
 
   bool isBeforeInitialYield() const {
     return getFixedSlot(RESUME_INDEX_SLOT).isUndefined();
@@ -142,12 +125,12 @@ class AbstractGeneratorObject : public NativeObject {
     setFixedSlot(RESUME_INDEX_SLOT, Int32Value(RESUME_INDEX_RUNNING));
   }
   void setResumeIndex(jsbytecode* pc) {
-    MOZ_ASSERT(*pc == JSOP_INITIALYIELD || *pc == JSOP_YIELD ||
-               *pc == JSOP_AWAIT);
+    MOZ_ASSERT(JSOp(*pc) == JSOp::InitialYield || JSOp(*pc) == JSOp::Yield ||
+               JSOp(*pc) == JSOp::Await);
 
-    MOZ_ASSERT_IF(JSOp(*pc) == JSOP_INITIALYIELD,
+    MOZ_ASSERT_IF(JSOp(*pc) == JSOp::InitialYield,
                   getFixedSlot(RESUME_INDEX_SLOT).isUndefined());
-    MOZ_ASSERT_IF(JSOp(*pc) != JSOP_INITIALYIELD, isRunning());
+    MOZ_ASSERT_IF(JSOp(*pc) != JSOp::InitialYield, isRunning());
 
     uint32_t resumeIndex = GET_UINT24(pc);
     MOZ_ASSERT(resumeIndex < uint32_t(RESUME_INDEX_RUNNING));
@@ -167,7 +150,7 @@ class AbstractGeneratorObject : public NativeObject {
     setFixedSlot(CALLEE_SLOT, NullValue());
     setFixedSlot(ENV_CHAIN_SLOT, NullValue());
     setFixedSlot(ARGS_OBJ_SLOT, NullValue());
-    setFixedSlot(EXPRESSION_STACK_SLOT, NullValue());
+    setFixedSlot(STACK_STORAGE_SLOT, NullValue());
     setFixedSlot(RESUME_INDEX_SLOT, NullValue());
   }
 
@@ -190,9 +173,13 @@ class AbstractGeneratorObject : public NativeObject {
   static size_t offsetOfResumeIndexSlot() {
     return getFixedSlotOffset(RESUME_INDEX_SLOT);
   }
-  static size_t offsetOfExpressionStackSlot() {
-    return getFixedSlotOffset(EXPRESSION_STACK_SLOT);
+  static size_t offsetOfStackStorageSlot() {
+    return getFixedSlotOffset(STACK_STORAGE_SLOT);
   }
+
+#ifdef DEBUG
+  void dump() const;
+#endif
 };
 
 class GeneratorObject : public AbstractGeneratorObject {
@@ -218,7 +205,7 @@ bool GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
  * - While a generator call evaluates default argument values and performs
  *   destructuring, which occurs before the generator object is created.
  *
- * - Between the `GENERATOR` instruction and the `SETALIASEDVAR .generator`
+ * - Between the `Generator` instruction and the `SetAliasedVar .generator`
  *   instruction, at which point the generator object does exist, but is held
  *   only on the stack, and not the `.generator` pseudo-variable this function
  *   consults.
@@ -226,7 +213,19 @@ bool GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
 AbstractGeneratorObject* GetGeneratorObjectForFrame(JSContext* cx,
                                                     AbstractFramePtr frame);
 
-void SetGeneratorClosed(JSContext* cx, AbstractFramePtr frame);
+inline GeneratorResumeKind IntToResumeKind(int32_t value) {
+  MOZ_ASSERT(uint32_t(value) <= uint32_t(GeneratorResumeKind::Return));
+  return static_cast<GeneratorResumeKind>(value);
+}
+
+inline GeneratorResumeKind ResumeKindFromPC(jsbytecode* pc) {
+  MOZ_ASSERT(JSOp(*pc) == JSOp::ResumeKind);
+  return IntToResumeKind(GET_UINT8(pc));
+}
+
+GeneratorResumeKind ParserAtomToResumeKind(JSContext* cx,
+                                           const frontend::ParserAtom* atom);
+JSAtom* ResumeKindToAtom(JSContext* cx, GeneratorResumeKind kind);
 
 }  // namespace js
 

@@ -12,6 +12,7 @@
 #include "js/GCHashTable.h"
 #include "js/UbiNode.h"
 #include "js/Wrapper.h"
+#include "vm/NativeObject.h"
 
 namespace js {
 
@@ -52,6 +53,7 @@ class SavedFrame : public NativeObject {
   JSAtom* getAsyncCause();
   SavedFrame* getParent() const;
   JSPrincipals* getPrincipals();
+  bool getMutedErrors();
   bool isSelfHosted(JSContext* cx);
   bool isWasm();
 
@@ -122,8 +124,9 @@ class SavedFrame : public NativeObject {
   void initFunctionDisplayName(JSAtom* maybeName);
   void initAsyncCause(JSAtom* maybeCause);
   void initParent(SavedFrame* maybeParent);
-  void initPrincipalsAlreadyHeld(JSPrincipals* principals);
-  void initPrincipals(JSPrincipals* principals);
+  void initPrincipalsAlreadyHeldAndMutedErrors(JSPrincipals* principals,
+                                               bool mutedErrors);
+  void initPrincipalsAndMutedErrors(JSPrincipals* principals, bool mutedErrors);
 
   enum {
     // The reserved slots in the SavedFrame class.
@@ -142,16 +145,16 @@ class SavedFrame : public NativeObject {
 };
 
 struct SavedFrame::HashPolicy {
-  typedef SavedFrame::Lookup Lookup;
-  typedef MovableCellHasher<SavedFrame*> SavedFramePtrHasher;
-  typedef PointerHasher<JSPrincipals*> JSPrincipalsPtrHasher;
+  using Lookup = SavedFrame::Lookup;
+  using SavedFramePtrHasher = MovableCellHasher<SavedFrame*>;
+  using JSPrincipalsPtrHasher = PointerHasher<JSPrincipals*>;
 
   static bool hasHash(const Lookup& l);
   static bool ensureHash(const Lookup& l);
   static HashNumber hash(const Lookup& lookup);
   static bool match(SavedFrame* existing, const Lookup& lookup);
 
-  typedef WeakHeapPtr<SavedFrame*> Key;
+  using Key = WeakHeapPtr<SavedFrame*>;
   static void rekey(Key& key, const Key& newKey);
 };
 

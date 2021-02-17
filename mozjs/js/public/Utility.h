@@ -11,16 +11,17 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Compiler.h"
-#include "mozilla/Move.h"
 #include "mozilla/TemplateLib.h"
 #include "mozilla/UniquePtr.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <type_traits>
+#include <utility>
 
 #include "jstypes.h"
-
 #include "mozmemory.h"
+#include "js/TypeDecls.h"
 
 /* The public JS engine namespace. */
 namespace JS {}
@@ -30,10 +31,6 @@ namespace mozilla {}
 
 /* The private JS engine namespace. */
 namespace js {}
-
-#define JS_STATIC_ASSERT(cond) static_assert(cond, "JS_STATIC_ASSERT")
-#define JS_STATIC_ASSERT_IF(cond, expr) \
-  MOZ_STATIC_ASSERT_IF(cond, expr, "JS_STATIC_ASSERT_IF")
 
 extern MOZ_NORETURN MOZ_COLD JS_PUBLIC_API void JS_Assert(const char* s,
                                                           const char* file,
@@ -79,6 +76,7 @@ enum ThreadType {
 struct RunnableTask {
   virtual ThreadType threadType() = 0;
   virtual void runTask() = 0;
+  virtual ~RunnableTask() = default;
 };
 
 namespace oom {
@@ -332,7 +330,8 @@ struct MOZ_RAII JS_PUBLIC_DATA AutoEnterOOMUnsafeRegion {
   MOZ_NORETURN MOZ_COLD void crash(size_t size, const char* reason);
 
   using AnnotateOOMAllocationSizeCallback = void (*)(size_t);
-  static AnnotateOOMAllocationSizeCallback annotateOOMSizeCallback;
+  static mozilla::Atomic<AnnotateOOMAllocationSizeCallback, mozilla::Relaxed>
+      annotateOOMSizeCallback;
   static void setAnnotateOOMAllocationSizeCallback(
       AnnotateOOMAllocationSizeCallback callback) {
     annotateOOMSizeCallback = callback;
@@ -636,13 +635,12 @@ namespace JS {
 
 template <typename T>
 struct DeletePolicy {
-  constexpr DeletePolicy() {}
+  constexpr DeletePolicy() = default;
 
   template <typename U>
   MOZ_IMPLICIT DeletePolicy(
       DeletePolicy<U> other,
-      typename mozilla::EnableIf<mozilla::IsConvertible<U*, T*>::value,
-                                 int>::Type dummy = 0) {}
+      std::enable_if_t<std::is_convertible_v<U*, T*>, int> dummy = 0) {}
 
   void operator()(const T* ptr) { js_delete(const_cast<T*>(ptr)); }
 };
@@ -653,6 +651,7 @@ struct FreePolicy {
 
 typedef mozilla::UniquePtr<char[], JS::FreePolicy> UniqueChars;
 typedef mozilla::UniquePtr<char16_t[], JS::FreePolicy> UniqueTwoByteChars;
+typedef mozilla::UniquePtr<JS::Latin1Char[], JS::FreePolicy> UniqueLatin1Chars;
 
 }  // namespace JS
 

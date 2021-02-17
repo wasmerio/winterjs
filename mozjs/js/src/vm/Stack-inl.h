@@ -12,9 +12,11 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 
+#include "builtin/Array.h"  // js::NewDenseEmptyArray
 #include "jit/BaselineFrame.h"
 #include "jit/RematerializedFrame.h"
 #include "js/Debug.h"
+#include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "vm/EnvironmentObject.h"
 #include "vm/FrameIter.h"  // js::FrameIter
 #include "vm/JSContext.h"
@@ -36,10 +38,6 @@ inline GlobalObject& InterpreterFrame::global() const {
   return script()->global();
 }
 
-inline JSObject& InterpreterFrame::varObj() const {
-  return GetVariablesObject(environmentChain());
-}
-
 inline LexicalEnvironmentObject&
 InterpreterFrame::extensibleLexicalEnvironment() const {
   return NearestEnclosingExtensibleLexicalEnvironment(environmentChain());
@@ -51,7 +49,7 @@ inline void InterpreterFrame::initCallFrame(InterpreterFrame* prev,
                                             JSScript* script, Value* argv,
                                             uint32_t nactual,
                                             MaybeConstruct constructing) {
-  MOZ_ASSERT(callee.nonLazyScript() == script);
+  MOZ_ASSERT(callee.baseScript() == script);
 
   /* Initialize stack frame members. */
   flags_ = 0;
@@ -189,6 +187,19 @@ inline void InterpreterFrame::unsetIsDebuggee() {
   flags_ &= ~DEBUGGEE;
 }
 
+inline bool InterpreterFrame::saveGeneratorSlots(JSContext* cx, unsigned nslots,
+                                                 ArrayObject* dest) const {
+  return dest->initDenseElementsFromRange(cx, slots(), slots() + nslots);
+}
+
+inline void InterpreterFrame::restoreGeneratorSlots(ArrayObject* src) {
+  MOZ_ASSERT(script()->nfixed() <= src->length());
+  MOZ_ASSERT(src->length() <= script()->nslots());
+  MOZ_ASSERT(src->getDenseInitializedLength() == src->length());
+  const Value* srcElements = src->getDenseElements();
+  mozilla::PodCopy(slots(), srcElements, src->length());
+}
+
 /*****************************************************************************/
 
 inline void InterpreterStack::purge(JSRuntime* rt) {
@@ -223,7 +234,7 @@ MOZ_ALWAYS_INLINE InterpreterFrame* InterpreterStack::getCallFrame(
     MaybeConstruct constructing, Value** pargv) {
   JSFunction* fun = &args.callee().as<JSFunction>();
 
-  MOZ_ASSERT(fun->nonLazyScript() == script);
+  MOZ_ASSERT(fun->baseScript() == script);
   unsigned nformal = fun->nargs();
   unsigned nvals = script->nslots();
 
@@ -265,7 +276,7 @@ MOZ_ALWAYS_INLINE bool InterpreterStack::pushInlineFrame(
     HandleScript script, MaybeConstruct constructing) {
   RootedFunction callee(cx, &args.callee().as<JSFunction>());
   MOZ_ASSERT(regs.sp == args.end());
-  MOZ_ASSERT(callee->nonLazyScript() == script);
+  MOZ_ASSERT(callee->baseScript() == script);
 
   InterpreterFrame* prev = regs.fp();
   jsbytecode* prevpc = regs.pc;
@@ -664,26 +675,14 @@ inline bool AbstractFramePtr::isGeneratorFrame() const {
   return s->isGenerator() || s->isAsync();
 }
 
-inline bool AbstractFramePtr::isNonStrictDirectEvalFrame() const {
+inline bool AbstractFramePtr::saveGeneratorSlots(JSContext* cx, unsigned nslots,
+                                                 ArrayObject* dest) const {
+  MOZ_ASSERT(isGeneratorFrame());
   if (isInterpreterFrame()) {
-    return asInterpreterFrame()->isNonStrictDirectEvalFrame();
+    return asInterpreterFrame()->saveGeneratorSlots(cx, nslots, dest);
   }
-  if (isBaselineFrame()) {
-    return asBaselineFrame()->isNonStrictDirectEvalFrame();
-  }
-  MOZ_ASSERT(isRematerializedFrame());
-  return false;
-}
-
-inline bool AbstractFramePtr::isStrictEvalFrame() const {
-  if (isInterpreterFrame()) {
-    return asInterpreterFrame()->isStrictEvalFrame();
-  }
-  if (isBaselineFrame()) {
-    return asBaselineFrame()->isStrictEvalFrame();
-  }
-  MOZ_ASSERT(isRematerializedFrame());
-  return false;
+  MOZ_ASSERT(isBaselineFrame(), "unexpected generator frame in Ion");
+  return asBaselineFrame()->saveGeneratorSlots(cx, nslots, dest);
 }
 
 inline Value* AbstractFramePtr::argv() const {

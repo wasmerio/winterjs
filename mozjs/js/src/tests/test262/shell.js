@@ -98,6 +98,10 @@ assert.throws = function (expectedErrorConstructor, func, message) {
 
 assert._toString = function (value) {
   try {
+    if (value === 0 && 1 / value === -Infinity) {
+      return '-0';
+    }
+
     return String(value);
   } catch (err) {
     if (err.name === 'TypeError') {
@@ -141,11 +145,13 @@ compareArray.format = function(array) {
   return `[${array.map(String).join(', ')}]`;
 };
 
-assert.compareArray = function(actual, expected, message) {
+assert.compareArray = function(actual, expected, message = '') {
+  assert(actual != null, `First argument shouldn't be nullish. ${message}`);
+  assert(expected != null, `Second argument shouldn't be nullish. ${message}`);
   var format = compareArray.format;
   assert(
     compareArray(actual, expected),
-    `Expected ${format(actual)} and ${format(expected)} to have the same contents. ${(message || '')}`
+    `Expected ${format(actual)} and ${format(expected)} to have the same contents. ${message}`
   );
 };
 
@@ -291,8 +297,12 @@ function isSameValue(a, b) {
   return a === b;
 }
 
+var __isArray = Array.isArray;
 function isWritable(obj, name, verifyProp, value) {
-  var newValue = value || "unlikelyValue";
+  var unlikelyValue = __isArray(obj) && name === "length" ?
+    Math.pow(2, 32) - 1 :
+    "unlikelyValue";
+  var newValue = value || unlikelyValue;
   var hadValue = Object.prototype.hasOwnProperty.call(obj, name);
   var oldValue = obj[name];
   var writeSucceeded;
@@ -401,10 +411,11 @@ Test262Error.prototype.toString = function () {
   return "Test262Error: " + this.message;
 };
 
-var $ERROR;
-$ERROR = function $ERROR(message) {
-  throw new Test262Error(message);
+Test262Error.thrower = (...args) => {
+  throw new Test262Error(...args);
 };
+
+var $ERROR = Test262Error.thrower;
 
 function $DONOTEVALUATE() {
   throw "Test262: This statement should not be evaluated.";
@@ -415,7 +426,7 @@ function $DONOTEVALUATE() {
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// https://github.com/tc39/test262/blob/master/INTERPRETING.md#host-defined-functions
+// https://github.com/tc39/test262/blob/main/INTERPRETING.md#host-defined-functions
 ;(function createHostObject(global) {
     "use strict";
 
@@ -434,6 +445,7 @@ function $DONOTEVALUATE() {
     var evalInWorker = global.evalInWorker;
     var monotonicNow = global.monotonicNow;
     var gc = global.gc;
+    var clearKeptObjects = global.clearKeptObjects;
 
     var hasCreateIsHTMLDDA = "createIsHTMLDDA" in global;
     var hasThreads = ("helperThreadCount" in global ? global.helperThreadCount() > 0 : true);
@@ -467,6 +479,9 @@ function $DONOTEVALUATE() {
         IsHTMLDDA,
         gc() {
             gc();
+        },
+        clearKeptObjects() {
+            clearKeptObjects();
         },
         agent: (function () {
 

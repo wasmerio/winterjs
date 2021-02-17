@@ -7,6 +7,7 @@ from __future__ import absolute_import, print_function
 import sys
 
 from mozwebidlcodegen import BuildSystemWebIDL
+from mozbuild.action.util import log_build_task
 
 
 def main(argv):
@@ -15,5 +16,5 @@ def main(argv):
     manager.generate_build_files()
 
 
-if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+if __name__ == "__main__":
+    sys.exit(log_build_task(main, sys.argv[1:]))

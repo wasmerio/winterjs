@@ -5,25 +5,25 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 DIRS += [
-  'interface',
-  'registry',
+    "interface",
+    "registry",
 ]
 
-if not CONFIG['JS_STANDALONE']:
-  DIRS += [
-    'common',
-    'faulty',
-    'messagemanager',
-    'shmem',
-    'ipc',
-  ]
+if not CONFIG["JS_STANDALONE"]:
+    DIRS += [
+        "common",
+        "faulty",
+        "messagemanager",
+        "shmem",
+        "ipc",
+    ]
 
-if not CONFIG['JS_STANDALONE'] and CONFIG['FUZZING_INTERFACES']:
-  DIRS += [
-    'rust',
-  ]
+    if CONFIG["LIBFUZZER"]:
+        DIRS += [
+            "rust",
+        ]
 
-if CONFIG['LIBFUZZER']:
-  DIRS += [
-    'libfuzzer',
-  ]
+if CONFIG["LIBFUZZER"]:
+    DIRS += [
+        "libfuzzer",
+    ]

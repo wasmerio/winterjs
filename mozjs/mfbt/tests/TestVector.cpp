@@ -4,10 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Move.h"
+#include <utility>
+
+#include "mozilla/IntegerRange.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 
+using mozilla::IntegerRange;
 using mozilla::MakeUnique;
 using mozilla::UniquePtr;
 using mozilla::Vector;
@@ -23,7 +26,8 @@ struct mozilla::detail::VectorTesting {
   static void testReplaceRawBuffer();
   static void testInsert();
   static void testErase();
-  static void testPodResizeToFit();
+  static void testShrinkStorageToFit();
+  static void testAppend();
 };
 
 void mozilla::detail::VectorTesting::testReserved() {
@@ -531,30 +535,154 @@ void mozilla::detail::VectorTesting::testErase() {
   MOZ_RELEASE_ASSERT(S::destructCount == 4);
 }
 
-void mozilla::detail::VectorTesting::testPodResizeToFit() {
+void mozilla::detail::VectorTesting::testShrinkStorageToFit() {
   // Vectors not using inline storage realloc capacity to exact length.
-  Vector<int, 0> v1;
-  MOZ_RELEASE_ASSERT(v1.reserve(10));
-  v1.infallibleAppend(1);
-  MOZ_ASSERT(v1.length() == 1);
-  MOZ_ASSERT(v1.reserved() == 10);
-  MOZ_ASSERT(v1.capacity() >= 10);
-  v1.podResizeToFit();
-  MOZ_ASSERT(v1.length() == 1);
-  MOZ_ASSERT(v1.reserved() == 1);
-  MOZ_ASSERT(v1.capacity() == 1);
+  {
+    Vector<int, 0> v1;
+    MOZ_RELEASE_ASSERT(v1.reserve(10));
+    v1.infallibleAppend(1);
+    MOZ_ASSERT(v1.length() == 1);
+    MOZ_ASSERT(v1.reserved() == 10);
+    MOZ_ASSERT(v1.capacity() >= 10);
+    v1.shrinkStorageToFit();
+    MOZ_ASSERT(v1.length() == 1);
+    MOZ_ASSERT(v1.reserved() == 1);
+    MOZ_ASSERT(v1.capacity() == 1);
+  }
 
   // Vectors using inline storage do nothing.
-  Vector<int, 2> v2;
-  MOZ_RELEASE_ASSERT(v2.reserve(2));
-  v2.infallibleAppend(1);
-  MOZ_ASSERT(v2.length() == 1);
-  MOZ_ASSERT(v2.reserved() == 2);
-  MOZ_ASSERT(v2.capacity() == 2);
-  v2.podResizeToFit();
-  MOZ_ASSERT(v2.length() == 1);
-  MOZ_ASSERT(v2.reserved() == 2);
-  MOZ_ASSERT(v2.capacity() == 2);
+  {
+    Vector<int, 2> v2;
+    MOZ_RELEASE_ASSERT(v2.reserve(2));
+    v2.infallibleAppend(1);
+    MOZ_ASSERT(v2.length() == 1);
+    MOZ_ASSERT(v2.reserved() == 2);
+    MOZ_ASSERT(v2.capacity() == 2);
+    v2.shrinkStorageToFit();
+    MOZ_ASSERT(v2.length() == 1);
+    MOZ_ASSERT(v2.reserved() == 2);
+    MOZ_ASSERT(v2.capacity() == 2);
+  }
+
+  // shrinkStorageToFit uses inline storage if possible.
+  {
+    Vector<int, 2> v;
+    MOZ_RELEASE_ASSERT(v.reserve(4));
+    v.infallibleAppend(1);
+    MOZ_ASSERT(v.length() == 1);
+    MOZ_ASSERT(v.reserved() == 4);
+    MOZ_ASSERT(v.capacity() >= 4);
+    v.shrinkStorageToFit();
+    MOZ_ASSERT(v.length() == 1);
+    MOZ_ASSERT(v.reserved() == 1);
+    MOZ_ASSERT(v.capacity() == 2);
+  }
+
+  // Non-pod shrinking to non-inline storage.
+  {
+    static size_t sConstructCounter = 0;
+    static size_t sCopyCounter = 0;
+    static size_t sMoveCounter = 0;
+    static size_t sDestroyCounter = 0;
+    struct NonPod {
+      int mSomething = 10;
+
+      NonPod() { sConstructCounter++; }
+
+      NonPod(const NonPod& aOther) : mSomething(aOther.mSomething) {
+        sCopyCounter++;
+      }
+      NonPod(NonPod&& aOther) : mSomething(aOther.mSomething) {
+        sMoveCounter++;
+      }
+      ~NonPod() { sDestroyCounter++; }
+    };
+
+    Vector<NonPod, 5> v;
+    MOZ_RELEASE_ASSERT(v.reserve(10));
+    for (size_t i = 0; i < 8; ++i) {
+      v.infallibleEmplaceBack();
+    }
+    MOZ_RELEASE_ASSERT(sConstructCounter == 8);
+    MOZ_RELEASE_ASSERT(sCopyCounter == 0);
+    MOZ_RELEASE_ASSERT(sMoveCounter == 0);
+    MOZ_RELEASE_ASSERT(sDestroyCounter == 0);
+    MOZ_RELEASE_ASSERT(v.length() == 8);
+    MOZ_ASSERT(v.reserved() == 10);
+    MOZ_RELEASE_ASSERT(v.capacity() >= 10);
+    MOZ_RELEASE_ASSERT(v.shrinkStorageToFit());
+
+    MOZ_RELEASE_ASSERT(sConstructCounter == 8);
+    MOZ_RELEASE_ASSERT(sCopyCounter == 0);
+    MOZ_RELEASE_ASSERT(sMoveCounter == 8);
+    MOZ_RELEASE_ASSERT(sDestroyCounter == 8);
+    MOZ_RELEASE_ASSERT(v.length() == 8);
+    MOZ_ASSERT(v.reserved() == 8);
+    MOZ_RELEASE_ASSERT(v.capacity() == 8);
+  }
+
+  // Non-POD shrinking to inline storage.
+  {
+    static size_t sConstructCounter = 0;
+    static size_t sCopyCounter = 0;
+    static size_t sMoveCounter = 0;
+    static size_t sDestroyCounter = 0;
+    struct NonPod {
+      int mSomething = 10;
+
+      NonPod() { sConstructCounter++; }
+
+      NonPod(const NonPod& aOther) : mSomething(aOther.mSomething) {
+        sCopyCounter++;
+      }
+      NonPod(NonPod&& aOther) : mSomething(aOther.mSomething) {
+        sMoveCounter++;
+      }
+      ~NonPod() { sDestroyCounter++; }
+    };
+
+    Vector<NonPod, 5> v;
+    MOZ_RELEASE_ASSERT(v.reserve(10));
+    for (size_t i = 0; i < 3; ++i) {
+      v.infallibleEmplaceBack();
+    }
+    MOZ_RELEASE_ASSERT(sConstructCounter == 3);
+    MOZ_RELEASE_ASSERT(sCopyCounter == 0);
+    MOZ_RELEASE_ASSERT(sMoveCounter == 0);
+    MOZ_RELEASE_ASSERT(sDestroyCounter == 0);
+    MOZ_RELEASE_ASSERT(v.length() == 3);
+    MOZ_ASSERT(v.reserved() == 10);
+    MOZ_RELEASE_ASSERT(v.capacity() >= 10);
+    MOZ_RELEASE_ASSERT(v.shrinkStorageToFit());
+
+    MOZ_RELEASE_ASSERT(sConstructCounter == 3);
+    MOZ_RELEASE_ASSERT(sCopyCounter == 0);
+    MOZ_RELEASE_ASSERT(sMoveCounter == 3);
+    MOZ_RELEASE_ASSERT(sDestroyCounter == 3);
+    MOZ_RELEASE_ASSERT(v.length() == 3);
+    MOZ_ASSERT(v.reserved() == 3);
+    MOZ_RELEASE_ASSERT(v.capacity() == 5);
+  }
+}
+
+void mozilla::detail::VectorTesting::testAppend() {
+  // Test moving append/appendAll with a move-only type
+  Vector<UniquePtr<int>> bv;
+  for (const int val : IntegerRange<int>(0, 3)) {
+    MOZ_RELEASE_ASSERT(bv.append(MakeUnique<int>(val)));
+  }
+
+  Vector<UniquePtr<int>> otherbv;
+  for (const int val : IntegerRange<int>(3, 8)) {
+    MOZ_RELEASE_ASSERT(otherbv.append(MakeUnique<int>(val)));
+  }
+  MOZ_RELEASE_ASSERT(bv.appendAll(std::move(otherbv)));
+
+  MOZ_RELEASE_ASSERT(otherbv.length() == 0);
+  MOZ_RELEASE_ASSERT(bv.length() == 8);
+  for (const int val : IntegerRange<int>(0, 8)) {
+    MOZ_RELEASE_ASSERT(*bv[val] == val);
+  }
 }
 
 // Declare but leave (permanently) incomplete.
@@ -671,6 +799,7 @@ int main() {
   VectorTesting::testReplaceRawBuffer();
   VectorTesting::testInsert();
   VectorTesting::testErase();
-  VectorTesting::testPodResizeToFit();
+  VectorTesting::testShrinkStorageToFit();
+  VectorTesting::testAppend();
   TestVectorBeginNonNull();
 }

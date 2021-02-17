@@ -7,13 +7,14 @@
 #ifndef vm_BigIntType_h
 #define vm_BigIntType_h
 
+#include "mozilla/Assertions.h"
 #include "mozilla/Range.h"
 #include "mozilla/Span.h"
 
 #include "jstypes.h"
 #include "gc/Barrier.h"
 #include "gc/GC.h"
-#include "gc/Heap.h"
+#include "gc/Nursery.h"
 #include "js/AllocPolicy.h"
 #include "js/GCHashTable.h"
 #include "js/Result.h"
@@ -38,22 +39,23 @@ XDRResult XDRBigInt(XDRState<mode>* xdr, MutableHandle<JS::BigInt*> bi);
 
 namespace JS {
 
-class BigInt final
-    : public js::gc::CellWithLengthAndFlags<js::gc::TenuredCell> {
-  using Base = js::gc::CellWithLengthAndFlags<js::gc::TenuredCell>;
-
+class BigInt final : public js::gc::CellWithLengthAndFlags {
  public:
   using Digit = uintptr_t;
 
  private:
-  // The low NumFlagBitsReservedForGC flag bits are reserved.
-  static constexpr uintptr_t SignBit = js::Bit(Base::NumFlagBitsReservedForGC);
+  // The low CellFlagBitsReservedForGC flag bits are reserved.
+  static constexpr uintptr_t SignBit =
+      js::Bit(js::gc::CellFlagBitsReservedForGC);
+
   static constexpr size_t InlineDigitsLength =
-      (js::gc::MinCellSize - sizeof(Base)) / sizeof(Digit);
+      (js::gc::MinCellSize - sizeof(CellWithLengthAndFlags)) / sizeof(Digit);
 
-  // Note: 32-bit length and flags fields are inherited from
-  // CellWithLengthAndFlags.
+ public:
+  // The number of digits and the flags are stored in the cell header.
+  size_t digitLength() const { return headerLengthField(); }
 
+ private:
   // The digit storage starts with the least significant digit (little-endian
   // digit order).  Byte order within a digit is of course native endian.
   union {
@@ -61,14 +63,20 @@ class BigInt final
     Digit inlineDigits_[InlineDigitsLength];
   };
 
+  void setLengthAndFlags(uint32_t len, uint32_t flags) {
+    setHeaderLengthAndFlags(len, flags);
+  }
+
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::BigInt;
 
-  size_t digitLength() const { return lengthField(); }
+  void fixupAfterMovingGC() {}
+
+  js::gc::AllocKind getAllocKind() const { return js::gc::AllocKind::BIGINT; }
 
   // Offset for direct access from JIT code.
   static constexpr size_t offsetOfDigitLength() {
-    return Base::offsetOfLength();
+    return offsetOfHeaderLength();
   }
 
   bool hasInlineDigits() const { return digitLength() <= InlineDigitsLength; }
@@ -79,31 +87,48 @@ class BigInt final
     return Digits(hasInlineDigits() ? inlineDigits_ : heapDigits_,
                   digitLength());
   }
-  Digit digit(size_t idx) { return digits()[idx]; }
+  using ConstDigits = mozilla::Span<const Digit>;
+  ConstDigits digits() const {
+    return ConstDigits(hasInlineDigits() ? inlineDigits_ : heapDigits_,
+                       digitLength());
+  }
+  Digit digit(size_t idx) const { return digits()[idx]; }
   void setDigit(size_t idx, Digit digit) { digits()[idx] = digit; }
 
   bool isZero() const { return digitLength() == 0; }
-  bool isNegative() const { return flagsField() & SignBit; }
+  bool isNegative() const { return headerFlagsField() & SignBit; }
 
   void initializeDigitsToZero();
 
   void traceChildren(JSTracer* trc);
-  void finalize(JSFreeOp* fop);
-  js::HashNumber hash();
-  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
-  static BigInt* createUninitialized(JSContext* cx, size_t digitLength,
-                                     bool isNegative);
+  static MOZ_ALWAYS_INLINE void postWriteBarrier(void* cellp, BigInt* prev,
+                                                 BigInt* next) {
+    js::gc::PostWriteBarrierImpl<BigInt>(cellp, prev, next);
+  }
+
+  void finalize(JSFreeOp* fop);
+  js::HashNumber hash() const;
+  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+  size_t sizeOfExcludingThisInNursery(mozilla::MallocSizeOf mallocSizeOf) const;
+
+  static BigInt* createUninitialized(
+      JSContext* cx, size_t digitLength, bool isNegative,
+      js::gc::InitialHeap heap = js::gc::DefaultHeap);
   static BigInt* createFromDouble(JSContext* cx, double d);
   static BigInt* createFromUint64(JSContext* cx, uint64_t n);
   static BigInt* createFromInt64(JSContext* cx, int64_t n);
   static BigInt* createFromDigit(JSContext* cx, Digit d, bool isNegative);
+  static BigInt* createFromNonZeroRawUint64(JSContext* cx, uint64_t n,
+                                            bool isNegative);
   // FIXME: Cache these values.
-  static BigInt* zero(JSContext* cx);
+  static BigInt* zero(JSContext* cx,
+                      js::gc::InitialHeap heap = js::gc::DefaultHeap);
   static BigInt* one(JSContext* cx);
   static BigInt* negativeOne(JSContext* cx);
 
-  static BigInt* copy(JSContext* cx, Handle<BigInt*> x);
+  static BigInt* copy(JSContext* cx, Handle<BigInt*> x,
+                      js::gc::InitialHeap heap = js::gc::DefaultHeap);
   static BigInt* add(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* sub(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* mul(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
@@ -135,36 +160,36 @@ class BigInt final
   // must be called with at least one BigInt operand. Binary
   // operations will throw a TypeError if one of the operands is not a
   // BigInt value.
-  static bool add(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool sub(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool mul(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool div(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool mod(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool pow(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool neg(JSContext* cx, Handle<Value> operand,
-                  MutableHandle<Value> res);
-  static bool inc(JSContext* cx, Handle<Value> operand,
-                  MutableHandle<Value> res);
-  static bool dec(JSContext* cx, Handle<Value> operand,
-                  MutableHandle<Value> res);
-  static bool lsh(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool rsh(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                  MutableHandle<Value> res);
-  static bool bitAnd(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                     MutableHandle<Value> res);
-  static bool bitXor(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                     MutableHandle<Value> res);
-  static bool bitOr(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
-                    MutableHandle<Value> res);
-  static bool bitNot(JSContext* cx, Handle<Value> operand,
-                     MutableHandle<Value> res);
+  static bool addValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool subValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool mulValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool divValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool modValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool powValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool negValue(JSContext* cx, Handle<Value> operand,
+                       MutableHandle<Value> res);
+  static bool incValue(JSContext* cx, Handle<Value> operand,
+                       MutableHandle<Value> res);
+  static bool decValue(JSContext* cx, Handle<Value> operand,
+                       MutableHandle<Value> res);
+  static bool lshValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool rshValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                       MutableHandle<Value> res);
+  static bool bitAndValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                          MutableHandle<Value> res);
+  static bool bitXorValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                          MutableHandle<Value> res);
+  static bool bitOrValue(JSContext* cx, Handle<Value> lhs, Handle<Value> rhs,
+                         MutableHandle<Value> res);
+  static bool bitNotValue(JSContext* cx, Handle<Value> operand,
+                          MutableHandle<Value> res);
 
   static double numberValue(BigInt* x);
 
@@ -176,10 +201,10 @@ class BigInt final
                               const mozilla::Range<const CharT> chars,
                               bool* haveParseError);
   template <typename CharT>
-  static BigInt* parseLiteralDigits(JSContext* cx,
-                                    const mozilla::Range<const CharT> chars,
-                                    unsigned radix, bool isNegative,
-                                    bool* haveParseError);
+  static BigInt* parseLiteralDigits(
+      JSContext* cx, const mozilla::Range<const CharT> chars, unsigned radix,
+      bool isNegative, bool* haveParseError,
+      js::gc::InitialHeap heap = js::gc::DefaultHeap);
 
   template <typename CharT>
   static bool literalIsZero(const mozilla::Range<const CharT> chars);
@@ -210,8 +235,8 @@ class BigInt final
                        mozilla::Maybe<bool>& res);
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
-  void dump();  // Debugger-friendly stderr dump.
-  void dump(js::GenericPrinter& out);
+  void dump() const;  // Debugger-friendly stderr dump.
+  void dump(js::GenericPrinter& out) const;
 #endif
 
  private:
@@ -362,9 +387,19 @@ class BigInt final
   static JSLinearString* toStringGeneric(JSContext* cx, Handle<BigInt*>,
                                          unsigned radix);
 
-  static BigInt* trimHighZeroDigits(JSContext* cx, Handle<BigInt*> x);
-  static BigInt* destructivelyTrimHighZeroDigits(JSContext* cx,
-                                                 Handle<BigInt*> x);
+  static BigInt* destructivelyTrimHighZeroDigits(JSContext* cx, BigInt* x);
+
+  bool absFitsInUint64() const { return digitLength() <= 64 / DigitBits; }
+
+  uint64_t uint64FromAbsNonZero() const {
+    MOZ_ASSERT(!isZero());
+
+    uint64_t val = digit(0);
+    if (DigitBits == 32 && digitLength() > 1) {
+      val |= static_cast<uint64_t>(digit(1)) << 32;
+    }
+    return val;
+  }
 
   friend struct ::JSStructuredCloneReader;
   friend struct ::JSStructuredCloneWriter;
@@ -381,9 +416,8 @@ class BigInt final
   // call the methods below.
   friend class js::jit::MacroAssembler;
 
-  // Make offset accessors accessible to the MacroAssembler.
-  using Base::offsetOfFlags;
-  using Base::offsetOfLength;
+  static constexpr size_t offsetOfFlags() { return offsetOfHeaderFlags(); }
+  static constexpr size_t offsetOfLength() { return offsetOfHeaderLength(); }
 
   static size_t offsetOfInlineDigits() {
     return offsetof(BigInt, inlineDigits_);
@@ -394,6 +428,9 @@ class BigInt final
   static constexpr size_t inlineDigitsLength() { return InlineDigitsLength; }
 
   static constexpr size_t signBitMask() { return SignBit; }
+
+ private:
+  friend class js::TenuringTracer;
 };
 
 static_assert(
@@ -415,7 +452,7 @@ extern JS::BigInt* NumberToBigInt(JSContext* cx, double d);
 
 // Parse a BigInt from a string, using the method specified for StringToBigInt.
 // Used by the BigInt constructor among other places.
-extern JS::Result<JS::BigInt*, JS::OOM&> StringToBigInt(
+extern JS::Result<JS::BigInt*, JS::OOM> StringToBigInt(
     JSContext* cx, JS::Handle<JSString*> str);
 
 // Parse a BigInt from an already-validated numeric literal.  Used by the

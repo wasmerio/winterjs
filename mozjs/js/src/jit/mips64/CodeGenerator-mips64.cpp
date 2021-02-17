@@ -9,8 +9,6 @@
 #include "mozilla/MathAlgorithms.h"
 
 #include "jit/CodeGenerator.h"
-#include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "js/Conversions.h"
@@ -41,15 +39,38 @@ void CodeGenerator::visitBox(LBox* box) {
 void CodeGenerator::visitUnbox(LUnbox* unbox) {
   MUnbox* mir = unbox->mir();
 
+  Register result = ToRegister(unbox->output());
+
   if (mir->fallible()) {
     const ValueOperand value = ToValue(unbox, LUnbox::Input);
-    masm.splitTag(value, SecondScratchReg);
-    bailoutCmp32(Assembler::NotEqual, SecondScratchReg,
-                 Imm32(MIRTypeToTag(mir->type())), unbox->snapshot());
+    Label bail;
+    switch (mir->type()) {
+      case MIRType::Int32:
+        masm.fallibleUnboxInt32(value, result, &bail);
+        break;
+      case MIRType::Boolean:
+        masm.fallibleUnboxBoolean(value, result, &bail);
+        break;
+      case MIRType::Object:
+        masm.fallibleUnboxObject(value, result, &bail);
+        break;
+      case MIRType::String:
+        masm.fallibleUnboxString(value, result, &bail);
+        break;
+      case MIRType::Symbol:
+        masm.fallibleUnboxSymbol(value, result, &bail);
+        break;
+      case MIRType::BigInt:
+        masm.fallibleUnboxBigInt(value, result, &bail);
+        break;
+      default:
+        MOZ_CRASH("Given MIRType cannot be unboxed.");
+    }
+    bailoutFrom(&bail, unbox->snapshot());
+    return;
   }
 
   LAllocation* input = unbox->getOperand(LUnbox::Input);
-  Register result = ToRegister(unbox->output());
   if (input->isRegister()) {
     Register inputReg = ToRegister(input);
     switch (mir->type()) {
@@ -114,7 +135,7 @@ void CodeGenerator::visitCompareB(LCompareB* lir) {
   const LAllocation* rhs = lir->rhs();
   const Register output = ToRegister(lir->output());
 
-  MOZ_ASSERT(mir->jsop() == JSOP_STRICTEQ || mir->jsop() == JSOP_STRICTNE);
+  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
   Assembler::Condition cond = JSOpToCondition(mir->compareType(), mir->jsop());
 
   // Load boxed boolean in ScratchRegister.
@@ -134,7 +155,7 @@ void CodeGenerator::visitCompareBAndBranch(LCompareBAndBranch* lir) {
   const ValueOperand lhs = ToValue(lir, LCompareBAndBranch::Lhs);
   const LAllocation* rhs = lir->rhs();
 
-  MOZ_ASSERT(mir->jsop() == JSOP_STRICTEQ || mir->jsop() == JSOP_STRICTNE);
+  MOZ_ASSERT(mir->jsop() == JSOp::StrictEq || mir->jsop() == JSOp::StrictNe);
 
   // Load boxed boolean in ScratchRegister.
   if (rhs->isConstant()) {
@@ -169,8 +190,8 @@ void CodeGenerator::visitCompareBitwiseAndBranch(
   const ValueOperand lhs = ToValue(lir, LCompareBitwiseAndBranch::LhsInput);
   const ValueOperand rhs = ToValue(lir, LCompareBitwiseAndBranch::RhsInput);
 
-  MOZ_ASSERT(mir->jsop() == JSOP_EQ || mir->jsop() == JSOP_STRICTEQ ||
-             mir->jsop() == JSOP_NE || mir->jsop() == JSOP_STRICTNE);
+  MOZ_ASSERT(mir->jsop() == JSOp::Eq || mir->jsop() == JSOp::StrictEq ||
+             mir->jsop() == JSOp::Ne || mir->jsop() == JSOp::StrictNe);
 
   emitBranch(lhs.valueReg(), rhs.valueReg(), cond, lir->ifTrue(),
              lir->ifFalse());

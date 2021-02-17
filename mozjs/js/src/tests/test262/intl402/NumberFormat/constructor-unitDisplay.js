@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.NumberFormat-unified is not released yet
 // Copyright 2019 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -30,6 +29,40 @@ for (const [value, expected = value] of values) {
   const resolvedOptions = nf.resolvedOptions();
   assert.sameValue("unitDisplay" in resolvedOptions, true);
   assert.sameValue(resolvedOptions.unitDisplay, expected);
+}
+
+for (const [value, expected = value] of values) {
+  const nf = new Intl.NumberFormat([], {
+    style: "unit",
+    unitDisplay: value,
+    unit: "percent",
+  });
+  const resolvedOptions = nf.resolvedOptions();
+  assert.sameValue("unitDisplay" in resolvedOptions, true);
+  assert.sameValue(resolvedOptions.unitDisplay, expected);
+}
+
+for (const [value] of values) {
+  const nf = new Intl.NumberFormat([], {
+    style: "percent",
+    unitDisplay: value,
+  });
+  const resolvedOptions = nf.resolvedOptions();
+  assert.sameValue("unitDisplay" in resolvedOptions, false);
+  assert.sameValue(resolvedOptions.unitDisplay, undefined);
+}
+
+const invalidValues = [
+  "",
+  "Short",
+  "s",
+  "\u017Fhort",
+];
+
+for (const unitDisplay of invalidValues) {
+  assert.throws(RangeError, () => {
+    new Intl.NumberFormat([], { unitDisplay });
+  });
 }
 
 reportCompare(0, 0);

@@ -16,6 +16,7 @@ contain, you've come to the right place.
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import operator
 import os
 
 from collections import (
@@ -27,7 +28,6 @@ from mozbuild.util import (
     ImmutableStrictOrderingOnAppendList,
     KeyedDefaultDict,
     List,
-    ListWithAction,
     memoize,
     memoized_property,
     ReadOnlyKeyedDefaultDict,
@@ -41,7 +41,6 @@ from mozbuild.util import (
 from .. import schedules
 
 from ..testing import (
-    all_test_flavors,
     read_manifestparser_manifest,
     read_reftest_manifest,
 )
@@ -50,18 +49,20 @@ import mozpack.path as mozpath
 from types import FunctionType
 
 import itertools
+import six
 
 
 # The MOZ_HARDENING_CFLAGS and MOZ_HARDENING_LDFLAGS differ depending on whether
 # the context is under $TOPOBJDIR/js/src.
 def _context_under_js_src(context):
-    return mozpath.commonprefix([context.relsrcdir, 'js/src']) != ''
+    return mozpath.commonprefix([context.relsrcdir, "js/src"]) != ""
 
 
 class ContextDerivedValue(object):
     """Classes deriving from this one receive a special treatment in a
     Context. See Context documentation.
     """
+
     __slots__ = ()
 
 
@@ -149,7 +150,7 @@ class Context(KeyedDefaultDict):
     @property
     def error_is_fatal(self):
         """Returns True if the error function should be fatal."""
-        return self.config and getattr(self.config, 'error_is_fatal', True)
+        return self.config and getattr(self.config, "error_is_fatal", True)
 
     @property
     def all_paths(self):
@@ -161,16 +162,15 @@ class Context(KeyedDefaultDict):
         """Returns the current stack of pushed sources."""
         if not self.current_path:
             return []
-        return self._all_paths[self._all_paths.index(self.main_path):]
+        return self._all_paths[self._all_paths.index(self.main_path) :]
 
     @memoized_property
     def objdir(self):
-        return mozpath.join(self.config.topobjdir, self.relobjdir).rstrip('/')
+        return mozpath.join(self.config.topobjdir, self.relobjdir).rstrip("/")
 
     @memoize
     def _srcdir(self, path):
-        return mozpath.join(self.config.topsrcdir,
-                            self._relsrcdir(path)).rstrip('/')
+        return mozpath.join(self.config.topsrcdir, self._relsrcdir(path)).rstrip("/")
 
     @property
     def srcdir(self):
@@ -188,14 +188,13 @@ class Context(KeyedDefaultDict):
     @memoized_property
     def relobjdir(self):
         assert self.main_path
-        return mozpath.relpath(mozpath.dirname(self.main_path),
-                               self.config.topsrcdir)
+        return mozpath.relpath(mozpath.dirname(self.main_path), self.config.topsrcdir)
 
     def _factory(self, key):
         """Function called when requesting a missing key."""
         defaults = self._allowed_variables.get(key)
         if not defaults:
-            raise KeyError('global_ns', 'get_unknown', key)
+            raise KeyError("global_ns", "get_unknown", key)
 
         # If the default is specifically a lambda (or, rather, any function
         # --but not a class that can be called), then it is actually a rule to
@@ -210,11 +209,12 @@ class Context(KeyedDefaultDict):
         """Validates whether the key is allowed and if the value's type
         matches.
         """
-        stored_type, input_type, docs = \
-            self._allowed_variables.get(key, (None, None, None))
+        stored_type, input_type, docs = self._allowed_variables.get(
+            key, (None, None, None)
+        )
 
         if stored_type is None or not is_template and key in TEMPLATE_VARIABLES:
-            raise KeyError('global_ns', 'set_unknown', key, value)
+            raise KeyError("global_ns", "set_unknown", key, value)
 
         # If the incoming value is not the type we store, we try to convert
         # it to that type. This relies on proper coercion rules existing. This
@@ -222,7 +222,7 @@ class Context(KeyedDefaultDict):
         # not be in the allowed set if the constructor function for the stored
         # type does not accept an instance of that type.
         if not isinstance(value, (stored_type, input_type)):
-            raise ValueError('global_ns', 'set_type', key, value, input_type)
+            raise ValueError("global_ns", "set_type", key, value, input_type)
 
         return stored_type
 
@@ -280,8 +280,7 @@ class SubContext(Context, ContextDerivedValue):
     def __init__(self, parent):
         assert isinstance(parent, Context)
 
-        Context.__init__(self, allowed_variables=self.VARIABLES,
-                         config=parent.config)
+        Context.__init__(self, allowed_variables=self.VARIABLES, config=parent.config)
 
         # Copy state from parent.
         for p in parent.source_stack:
@@ -290,7 +289,7 @@ class SubContext(Context, ContextDerivedValue):
 
     def __enter__(self):
         if not self._sandbox or self._sandbox() is None:
-            raise Exception('a sandbox is required')
+            raise Exception("a sandbox is required")
 
         self._sandbox().push_subcontext(self)
 
@@ -301,10 +300,27 @@ class SubContext(Context, ContextDerivedValue):
 class InitializedDefines(ContextDerivedValue, OrderedDict):
     def __init__(self, context, value=None):
         OrderedDict.__init__(self)
-        for define in context.config.substs.get('MOZ_DEBUG_DEFINES', ()):
+        for define in context.config.substs.get("MOZ_DEBUG_DEFINES", ()):
             self[define] = 1
         if value:
+            if not isinstance(value, OrderedDict):
+                raise ValueError("Can only initialize with another OrderedDict")
             self.update(value)
+
+    def update(self, *other, **kwargs):
+        # Since iteration over non-ordered dicts is non-deterministic, this dict
+        # will be populated in an unpredictable order unless the argument to
+        # update() is also ordered. (It's important that we maintain this
+        # invariant so we can be sure that running `./mach build-backend` twice
+        # in a row without updating any files in the workspace generates exactly
+        # the same output.)
+        if kwargs:
+            raise ValueError("Cannot call update() with kwargs")
+        if other:
+            if not isinstance(other[0], OrderedDict):
+                raise ValueError("Can only call update() with another OrderedDict")
+            return super(InitializedDefines, self).update(*other, **kwargs)
+        raise ValueError("No arguments passed to update()")
 
 
 class BaseCompileFlags(ContextDerivedValue, dict):
@@ -313,12 +329,13 @@ class BaseCompileFlags(ContextDerivedValue, dict):
 
         klass_name = self.__class__.__name__
         for k, v, build_vars in self.flag_variables:
-            if not isinstance(k, unicode):
-                raise ValueError('Flag %s for %s is not a string'
-                                 % (k, klass_name))
+            if not isinstance(k, six.text_type):
+                raise ValueError("Flag %s for %s is not a string" % (k, klass_name))
             if not isinstance(build_vars, tuple):
-                raise ValueError('Build variables `%s` for %s in %s is not a tuple'
-                                 % (build_vars, k, klass_name))
+                raise ValueError(
+                    "Build variables `%s` for %s in %s is not a tuple"
+                    % (build_vars, k, klass_name)
+                )
 
         self._known_keys = set(k for k, v, _ in self.flag_variables)
 
@@ -326,10 +343,15 @@ class BaseCompileFlags(ContextDerivedValue, dict):
         # modifying COMPILE_FLAGS from the same moz.build, because the merge
         # done after the template runs can't tell which values coming from
         # a template were set and which were provided as defaults.
-        template_name = getattr(context, 'template', None)
-        if template_name in (None, 'Gyp'):
-            dict.__init__(self, ((k, v if v is None else TypedList(unicode)(v))
-                                 for k, v, _ in self.flag_variables))
+        template_name = getattr(context, "template", None)
+        if template_name in (None, "Gyp"):
+            dict.__init__(
+                self,
+                (
+                    (k, v if v is None else TypedList(six.text_type)(v))
+                    for k, v, _ in self.flag_variables
+                ),
+            )
         else:
             dict.__init__(self)
 
@@ -340,30 +362,45 @@ class HostCompileFlags(BaseCompileFlags):
         main_src_dir = mozpath.dirname(context.main_path)
 
         self.flag_variables = (
-            ('HOST_CXXFLAGS', context.config.substs.get('HOST_CXXFLAGS'),
-             ('HOST_CXXFLAGS', 'HOST_CXX_LDFLAGS')),
-            ('HOST_CFLAGS', context.config.substs.get('HOST_CFLAGS'),
-             ('HOST_CFLAGS', 'HOST_C_LDFLAGS')),
-            ('HOST_OPTIMIZE', self._optimize_flags(),
-             ('HOST_CFLAGS', 'HOST_CXXFLAGS', 'HOST_C_LDFLAGS', 'HOST_CXX_LDFLAGS')),
-            ('RTL', None, ('HOST_CFLAGS', 'HOST_C_LDFLAGS')),
-            ('HOST_DEFINES', None, ('HOST_CFLAGS', 'HOST_CXXFLAGS')),
-            ('MOZBUILD_HOST_CFLAGS', [], ('HOST_CFLAGS', 'HOST_C_LDFLAGS')),
-            ('MOZBUILD_HOST_CXXFLAGS', [], ('HOST_CXXFLAGS', 'HOST_CXX_LDFLAGS')),
-            ('BASE_INCLUDES', ['-I%s' % main_src_dir, '-I%s' % context.objdir],
-             ('HOST_CFLAGS', 'HOST_CXXFLAGS')),
-            ('LOCAL_INCLUDES', None, ('HOST_CFLAGS', 'HOST_CXXFLAGS')),
-            ('EXTRA_INCLUDES', ['-I%s/dist/include' % context.config.topobjdir],
-             ('HOST_CFLAGS', 'HOST_CXXFLAGS')),
+            (
+                "HOST_CXXFLAGS",
+                context.config.substs.get("HOST_CXXFLAGS"),
+                ("HOST_CXXFLAGS", "HOST_CXX_LDFLAGS"),
+            ),
+            (
+                "HOST_CFLAGS",
+                context.config.substs.get("HOST_CFLAGS"),
+                ("HOST_CFLAGS", "HOST_C_LDFLAGS"),
+            ),
+            (
+                "HOST_OPTIMIZE",
+                self._optimize_flags(),
+                ("HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_C_LDFLAGS", "HOST_CXX_LDFLAGS"),
+            ),
+            ("RTL", None, ("HOST_CFLAGS", "HOST_C_LDFLAGS")),
+            ("HOST_DEFINES", None, ("HOST_CFLAGS", "HOST_CXXFLAGS")),
+            ("MOZBUILD_HOST_CFLAGS", [], ("HOST_CFLAGS", "HOST_C_LDFLAGS")),
+            ("MOZBUILD_HOST_CXXFLAGS", [], ("HOST_CXXFLAGS", "HOST_CXX_LDFLAGS")),
+            (
+                "BASE_INCLUDES",
+                ["-I%s" % main_src_dir, "-I%s" % context.objdir],
+                ("HOST_CFLAGS", "HOST_CXXFLAGS"),
+            ),
+            ("LOCAL_INCLUDES", None, ("HOST_CFLAGS", "HOST_CXXFLAGS")),
+            (
+                "EXTRA_INCLUDES",
+                ["-I%s/dist/include" % context.config.topobjdir],
+                ("HOST_CFLAGS", "HOST_CXXFLAGS"),
+            ),
         )
         BaseCompileFlags.__init__(self, context)
 
     def _optimize_flags(self):
         optimize_flags = []
-        if self._context.config.substs.get('CROSS_COMPILE'):
-            optimize_flags += self._context.config.substs.get('HOST_OPTIMIZE_FLAGS')
-        elif self._context.config.substs.get('MOZ_OPTIMIZE'):
-            optimize_flags += self._context.config.substs.get('MOZ_OPTIMIZE_FLAGS')
+        if self._context.config.substs.get("CROSS_COMPILE"):
+            optimize_flags += self._context.config.substs.get("HOST_OPTIMIZE_FLAGS")
+        elif self._context.config.substs.get("MOZ_OPTIMIZE"):
+            optimize_flags += self._context.config.substs.get("MOZ_OPTIMIZE_FLAGS")
         return optimize_flags
 
 
@@ -371,36 +408,42 @@ class AsmFlags(BaseCompileFlags):
     def __init__(self, context):
         self._context = context
         self.flag_variables = (
-            ('DEFINES', None, ('SFLAGS',)),
-            ('LIBRARY_DEFINES', None, ('SFLAGS',)),
-            ('OS', context.config.substs.get('ASFLAGS'), ('ASFLAGS', 'SFLAGS')),
-            ('DEBUG', self._debug_flags(), ('ASFLAGS', 'SFLAGS')),
-            ('LOCAL_INCLUDES', None, ('SFLAGS',)),
-            ('MOZBUILD', None, ('ASFLAGS', 'SFLAGS')),
+            ("DEFINES", None, ("SFLAGS",)),
+            ("LIBRARY_DEFINES", None, ("SFLAGS",)),
+            ("OS", context.config.substs.get("ASFLAGS"), ("ASFLAGS", "SFLAGS")),
+            ("DEBUG", self._debug_flags(), ("ASFLAGS", "SFLAGS")),
+            ("LOCAL_INCLUDES", None, ("SFLAGS",)),
+            ("MOZBUILD", None, ("ASFLAGS", "SFLAGS")),
         )
         BaseCompileFlags.__init__(self, context)
 
     def _debug_flags(self):
         debug_flags = []
-        if (self._context.config.substs.get('MOZ_DEBUG') or
-            self._context.config.substs.get('MOZ_DEBUG_SYMBOLS')):
-            if self._context.get('USE_NASM'):
-                if self._context.config.substs.get('OS_ARCH') == 'WINNT':
-                    debug_flags += ['-F', 'cv8']
-                elif self._context.config.substs.get('OS_ARCH') != 'Darwin':
-                    debug_flags += ['-F', 'dwarf']
-            elif self._context.get('USE_YASM'):
-                if (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
-                    not self._context.config.substs.get('GNU_CC')):
-                    debug_flags += ['-g', 'cv8']
-                elif self._context.config.substs.get('OS_ARCH') != 'Darwin':
-                    debug_flags += ['-g', 'dwarf2']
-            elif (self._context.config.substs.get('OS_ARCH') == 'WINNT' and
-                  self._context.config.substs.get('CPU_ARCH') == 'aarch64'):
+        if self._context.config.substs.get(
+            "MOZ_DEBUG"
+        ) or self._context.config.substs.get("MOZ_DEBUG_SYMBOLS"):
+            if self._context.get("USE_NASM"):
+                if self._context.config.substs.get("OS_ARCH") == "WINNT":
+                    debug_flags += ["-F", "cv8"]
+                elif self._context.config.substs.get("OS_ARCH") != "Darwin":
+                    debug_flags += ["-F", "dwarf"]
+            elif self._context.get("USE_YASM"):
+                if self._context.config.substs.get(
+                    "OS_ARCH"
+                ) == "WINNT" and not self._context.config.substs.get("GNU_CC"):
+                    debug_flags += ["-g", "cv8"]
+                elif self._context.config.substs.get("OS_ARCH") != "Darwin":
+                    debug_flags += ["-g", "dwarf2"]
+            elif (
+                self._context.config.substs.get("OS_ARCH") == "WINNT"
+                and self._context.config.substs.get("CPU_ARCH") == "aarch64"
+            ):
                 # armasm64 accepts a paucity of options compared to ml/ml64.
                 pass
             else:
-                debug_flags += self._context.config.substs.get('MOZ_DEBUG_FLAGS', '').split()
+                debug_flags += self._context.config.substs.get(
+                    "MOZ_DEBUG_FLAGS", ""
+                ).split()
         return debug_flags
 
 
@@ -409,37 +452,55 @@ class LinkFlags(BaseCompileFlags):
         self._context = context
 
         self.flag_variables = (
-            ('OS', self._os_ldflags(), ('LDFLAGS',)),
-            ('MOZ_HARDENING_LDFLAGS',
-             (context.config.substs.get('MOZ_HARDENING_LDFLAGS_JS')
-              if _context_under_js_src(context) else
-              context.config.substs.get('MOZ_HARDENING_LDFLAGS')),
-             ('LDFLAGS',)),
-            ('DEFFILE', None, ('LDFLAGS',)),
-            ('MOZBUILD', None, ('LDFLAGS',)),
-            ('FIX_LINK_PATHS', context.config.substs.get('MOZ_FIX_LINK_PATHS'),
-             ('LDFLAGS',)),
-            ('OPTIMIZE', (context.config.substs.get('MOZ_OPTIMIZE_LDFLAGS', []) if
-                          context.config.substs.get('MOZ_OPTIMIZE') else []),
-             ('LDFLAGS',)),
+            ("OS", self._os_ldflags(), ("LDFLAGS",)),
+            (
+                "MOZ_HARDENING_LDFLAGS",
+                (
+                    context.config.substs.get("MOZ_HARDENING_LDFLAGS_JS")
+                    if _context_under_js_src(context)
+                    else context.config.substs.get("MOZ_HARDENING_LDFLAGS")
+                ),
+                ("LDFLAGS",),
+            ),
+            ("DEFFILE", None, ("LDFLAGS",)),
+            ("MOZBUILD", None, ("LDFLAGS",)),
+            (
+                "FIX_LINK_PATHS",
+                context.config.substs.get("MOZ_FIX_LINK_PATHS"),
+                ("LDFLAGS",),
+            ),
+            (
+                "OPTIMIZE",
+                (
+                    context.config.substs.get("MOZ_OPTIMIZE_LDFLAGS", [])
+                    if context.config.substs.get("MOZ_OPTIMIZE")
+                    else []
+                ),
+                ("LDFLAGS",),
+            ),
         )
         BaseCompileFlags.__init__(self, context)
 
     def _os_ldflags(self):
-        flags = self._context.config.substs.get('OS_LDFLAGS', [])[:]
+        flags = self._context.config.substs.get("OS_LDFLAGS", [])[:]
 
-        if (self._context.config.substs.get('MOZ_DEBUG') or
-            self._context.config.substs.get('MOZ_DEBUG_SYMBOLS')):
-            flags += self._context.config.substs.get('MOZ_DEBUG_LDFLAGS', [])
+        if self._context.config.substs.get(
+            "MOZ_DEBUG"
+        ) or self._context.config.substs.get("MOZ_DEBUG_SYMBOLS"):
+            flags += self._context.config.substs.get("MOZ_DEBUG_LDFLAGS", [])
 
         # TODO: This is pretty convoluted, and isn't really a per-context thing,
         # configure would be a better place to aggregate these.
-        if all([self._context.config.substs.get('OS_ARCH') == 'WINNT',
-                not self._context.config.substs.get('GNU_CC'),
-                not self._context.config.substs.get('MOZ_DEBUG')]):
+        if all(
+            [
+                self._context.config.substs.get("OS_ARCH") == "WINNT",
+                not self._context.config.substs.get("GNU_CC"),
+                not self._context.config.substs.get("MOZ_DEBUG"),
+            ]
+        ):
 
-            if self._context.config.substs.get('MOZ_OPTIMIZE'):
-                flags.append('-OPT:REF,ICF')
+            if self._context.config.substs.get("MOZ_OPTIMIZE"):
+                flags.append("-OPT:REF,ICF")
 
         return flags
 
@@ -450,45 +511,47 @@ class TargetCompileFlags(BaseCompileFlags):
     """
 
     def _debug_flags(self):
-        if (self._context.config.substs.get('MOZ_DEBUG') or
-            self._context.config.substs.get('MOZ_DEBUG_SYMBOLS')):
-            return (
-                self._context.config.substs.get('MOZ_DEBUG_FLAGS', '').split())
+        if self._context.config.substs.get(
+            "MOZ_DEBUG"
+        ) or self._context.config.substs.get("MOZ_DEBUG_SYMBOLS"):
+            return self._context.config.substs.get("MOZ_DEBUG_FLAGS", "").split()
         return []
 
     def _warnings_as_errors(self):
-        warnings_as_errors = self._context.config.substs.get(
-            'WARNINGS_AS_ERRORS')
+        warnings_as_errors = self._context.config.substs.get("WARNINGS_AS_ERRORS")
         if warnings_as_errors:
             return [warnings_as_errors]
 
     def _optimize_flags(self):
-        if not self._context.config.substs.get('MOZ_OPTIMIZE'):
+        if not self._context.config.substs.get("MOZ_OPTIMIZE"):
             return []
         optimize_flags = None
-        if self._context.config.substs.get('MOZ_PGO'):
-            optimize_flags = self._context.config.substs.get(
-                'MOZ_PGO_OPTIMIZE_FLAGS')
+        if self._context.config.substs.get("MOZ_PGO"):
+            optimize_flags = self._context.config.substs.get("MOZ_PGO_OPTIMIZE_FLAGS")
         if not optimize_flags:
             # If MOZ_PGO_OPTIMIZE_FLAGS is empty we fall back to
             # MOZ_OPTIMIZE_FLAGS. Presently this occurs on Windows.
-            optimize_flags = self._context.config.substs.get(
-                'MOZ_OPTIMIZE_FLAGS')
+            optimize_flags = self._context.config.substs.get("MOZ_OPTIMIZE_FLAGS")
         return optimize_flags
 
     def __setitem__(self, key, value):
         if key not in self._known_keys:
-            raise ValueError('Invalid value. `%s` is not a compile flags '
-                             'category.' % key)
+            raise ValueError(
+                "Invalid value. `%s` is not a compile flags " "category." % key
+            )
         if key in self and self[key] is None:
             raise ValueError(
-                '`%s` may not be set in COMPILE_FLAGS from moz.build, this '
-                'value is resolved from the emitter.' % key)
-        if (not (isinstance(value, list) and
-                 all(isinstance(v, basestring) for v in value))):
+                "`%s` may not be set in COMPILE_FLAGS from moz.build, this "
+                "value is resolved from the emitter." % key
+            )
+        if not (
+            isinstance(value, list)
+            and all(isinstance(v, six.string_types) for v in value)
+        ):
             raise ValueError(
-                'A list of strings must be provided as a value for a compile '
-                'flags category.')
+                "A list of strings must be provided as a value for a compile "
+                "flags category."
+            )
         dict.__setitem__(self, key, value)
 
 
@@ -498,55 +561,128 @@ class CompileFlags(TargetCompileFlags):
         self._context = context
 
         self.flag_variables = (
-            ('STL', context.config.substs.get('STL_FLAGS'), ('CXXFLAGS',)),
-            ('VISIBILITY', context.config.substs.get('VISIBILITY_FLAGS'),
-             ('CXXFLAGS', 'CFLAGS')),
-            ('MOZ_HARDENING_CFLAGS',
-             (context.config.substs.get('MOZ_HARDENING_CFLAGS_JS')
-              if _context_under_js_src(context) else
-              context.config.substs.get('MOZ_HARDENING_CFLAGS')),
-             ('CXXFLAGS', 'CFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('DEFINES', None, ('CXXFLAGS', 'CFLAGS')),
-            ('LIBRARY_DEFINES', None, ('CXXFLAGS', 'CFLAGS')),
-            ('BASE_INCLUDES', ['-I%s' % main_src_dir, '-I%s' % context.objdir],
-             ('CXXFLAGS', 'CFLAGS')),
-            ('LOCAL_INCLUDES', None, ('CXXFLAGS', 'CFLAGS')),
-            ('EXTRA_INCLUDES', ['-I%s/dist/include' % context.config.topobjdir],
-             ('CXXFLAGS', 'CFLAGS')),
-            ('OS_INCLUDES', list(itertools.chain(*(context.config.substs.get(v, []) for v in (
-                'NSPR_CFLAGS', 'NSS_CFLAGS', 'MOZ_JPEG_CFLAGS', 'MOZ_PNG_CFLAGS',
-                'MOZ_ZLIB_CFLAGS', 'MOZ_PIXMAN_CFLAGS')))),
-             ('CXXFLAGS', 'CFLAGS')),
-            ('DSO', context.config.substs.get('DSO_CFLAGS'),
-             ('CXXFLAGS', 'CFLAGS')),
-            ('DSO_PIC', context.config.substs.get('DSO_PIC_CFLAGS'),
-             ('CXXFLAGS', 'CFLAGS')),
-            ('RTL', None, ('CXXFLAGS', 'CFLAGS')),
-            ('OS_COMPILE_CFLAGS', context.config.substs.get('OS_COMPILE_CFLAGS'),
-             ('CFLAGS',)),
-            ('OS_COMPILE_CXXFLAGS', context.config.substs.get('OS_COMPILE_CXXFLAGS'),
-             ('CXXFLAGS',)),
-            ('OS_CPPFLAGS', context.config.substs.get('OS_CPPFLAGS'),
-             ('CXXFLAGS', 'CFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('OS_CFLAGS', context.config.substs.get('OS_CFLAGS'),
-             ('CFLAGS', 'C_LDFLAGS')),
-            ('OS_CXXFLAGS', context.config.substs.get('OS_CXXFLAGS'),
-             ('CXXFLAGS', 'CXX_LDFLAGS')),
-            ('DEBUG', self._debug_flags(),
-             ('CFLAGS', 'CXXFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('CLANG_PLUGIN', context.config.substs.get('CLANG_PLUGIN_FLAGS'),
-             ('CFLAGS', 'CXXFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('OPTIMIZE', self._optimize_flags(),
-             ('CFLAGS', 'CXXFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('FRAMEPTR', context.config.substs.get('MOZ_FRAMEPTR_FLAGS'),
-             ('CFLAGS', 'CXXFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('WARNINGS_AS_ERRORS', self._warnings_as_errors(),
-             ('CXXFLAGS', 'CFLAGS', 'CXX_LDFLAGS', 'C_LDFLAGS')),
-            ('WARNINGS_CFLAGS', context.config.substs.get('WARNINGS_CFLAGS'),
-             ('CFLAGS', 'C_LDFLAGS')),
-            ('MOZBUILD_CFLAGS', None, ('CFLAGS',)),
-            ('MOZBUILD_CXXFLAGS', None, ('CXXFLAGS',)),
-            ('COVERAGE', context.config.substs.get('COVERAGE_CFLAGS'), ('CXXFLAGS', 'CFLAGS')),
+            ("STL", context.config.substs.get("STL_FLAGS"), ("CXXFLAGS",)),
+            (
+                "VISIBILITY",
+                context.config.substs.get("VISIBILITY_FLAGS"),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            (
+                "MOZ_HARDENING_CFLAGS",
+                (
+                    context.config.substs.get("MOZ_HARDENING_CFLAGS_JS")
+                    if _context_under_js_src(context)
+                    else context.config.substs.get("MOZ_HARDENING_CFLAGS")
+                ),
+                ("CXXFLAGS", "CFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            ("DEFINES", None, ("CXXFLAGS", "CFLAGS")),
+            ("LIBRARY_DEFINES", None, ("CXXFLAGS", "CFLAGS")),
+            (
+                "BASE_INCLUDES",
+                ["-I%s" % main_src_dir, "-I%s" % context.objdir],
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            ("LOCAL_INCLUDES", None, ("CXXFLAGS", "CFLAGS")),
+            (
+                "EXTRA_INCLUDES",
+                ["-I%s/dist/include" % context.config.topobjdir],
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            (
+                "OS_INCLUDES",
+                list(
+                    itertools.chain(
+                        *(
+                            context.config.substs.get(v, [])
+                            for v in (
+                                "NSPR_CFLAGS",
+                                "NSS_CFLAGS",
+                                "MOZ_JPEG_CFLAGS",
+                                "MOZ_PNG_CFLAGS",
+                                "MOZ_ZLIB_CFLAGS",
+                                "MOZ_PIXMAN_CFLAGS",
+                                "MOZ_ICU_CFLAGS",
+                            )
+                        )
+                    )
+                ),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            ("DSO", context.config.substs.get("DSO_CFLAGS"), ("CXXFLAGS", "CFLAGS")),
+            (
+                "DSO_PIC",
+                context.config.substs.get("DSO_PIC_CFLAGS"),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            ("RTL", None, ("CXXFLAGS", "CFLAGS")),
+            (
+                "OS_COMPILE_CFLAGS",
+                context.config.substs.get("OS_COMPILE_CFLAGS"),
+                ("CFLAGS",),
+            ),
+            (
+                "OS_COMPILE_CXXFLAGS",
+                context.config.substs.get("OS_COMPILE_CXXFLAGS"),
+                ("CXXFLAGS",),
+            ),
+            (
+                "OS_CPPFLAGS",
+                context.config.substs.get("OS_CPPFLAGS"),
+                ("CXXFLAGS", "CFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "OS_CFLAGS",
+                context.config.substs.get("OS_CFLAGS"),
+                ("CFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "OS_CXXFLAGS",
+                context.config.substs.get("OS_CXXFLAGS"),
+                ("CXXFLAGS", "CXX_LDFLAGS"),
+            ),
+            (
+                "DEBUG",
+                self._debug_flags(),
+                ("CFLAGS", "CXXFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "CLANG_PLUGIN",
+                context.config.substs.get("CLANG_PLUGIN_FLAGS"),
+                ("CFLAGS", "CXXFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "OPTIMIZE",
+                self._optimize_flags(),
+                ("CFLAGS", "CXXFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "FRAMEPTR",
+                context.config.substs.get("MOZ_FRAMEPTR_FLAGS"),
+                ("CFLAGS", "CXXFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "WARNINGS_AS_ERRORS",
+                self._warnings_as_errors(),
+                ("CXXFLAGS", "CFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
+            ),
+            (
+                "WARNINGS_CFLAGS",
+                context.config.substs.get("WARNINGS_CFLAGS"),
+                ("CFLAGS", "C_LDFLAGS"),
+            ),
+            ("MOZBUILD_CFLAGS", None, ("CFLAGS",)),
+            ("MOZBUILD_CXXFLAGS", None, ("CXXFLAGS",)),
+            (
+                "COVERAGE",
+                context.config.substs.get("COVERAGE_CFLAGS"),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            (
+                "NEWPM",
+                context.config.substs.get("MOZ_NEW_PASS_MANAGER_FLAGS"),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
         )
 
         TargetCompileFlags.__init__(self, context)
@@ -558,70 +694,120 @@ class WasmFlags(TargetCompileFlags):
         self._context = context
 
         self.flag_variables = (
-            ('LIBRARY_DEFINES', None, ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('BASE_INCLUDES',
-             ['-I%s' % main_src_dir, '-I%s' % context.objdir],
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('LOCAL_INCLUDES', None, ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('EXTRA_INCLUDES',
-             ['-I%s/dist/include' % context.config.topobjdir],
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('OS_INCLUDES',
-             list(itertools.chain(*(
-                 context.config.substs.get(v, []) for v in (
-                     'NSPR_CFLAGS', 'NSS_CFLAGS', 'MOZ_JPEG_CFLAGS',
-                     'MOZ_PNG_CFLAGS', 'MOZ_ZLIB_CFLAGS',
-                     'MOZ_PIXMAN_CFLAGS')))),
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('DSO', context.config.substs.get('DSO_CFLAGS'),
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('DSO_PIC', context.config.substs.get('DSO_PIC_CFLAGS'),
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('RTL', None, ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('DEBUG', self._debug_flags(),
-             ('WASM_CFLAGS', 'WASM_CXXFLAGS', 'WASM_LDFLAGS')),
-            ('CLANG_PLUGIN',
-             context.config.substs.get('CLANG_PLUGIN_FLAGS'),
-             ('WASM_CFLAGS', 'WASM_CXXFLAGS', 'WASM_LDFLAGS')),
-            ('OPTIMIZE', self._optimize_flags(),
-             ('WASM_CFLAGS', 'WASM_CXXFLAGS', 'WASM_LDFLAGS')),
-            ('FRAMEPTR',
-             context.config.substs.get('MOZ_FRAMEPTR_FLAGS'),
-             ('WASM_CFLAGS', 'WASM_CXXFLAGS', 'WASM_LDFLAGS')),
-            ('WARNINGS_AS_ERRORS', self._warnings_as_errors(),
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS', 'WASM_LDFLAGS')),
-            ('WARNINGS_CFLAGS',
-             context.config.substs.get('WARNINGS_CFLAGS'),
-             ('WASM_CFLAGS', 'WASM_LDFLAGS')),
-            ('MOZBUILD_CFLAGS', None, ('WASM_CFLAGS',)),
-            ('MOZBUILD_CXXFLAGS', None, ('WASM_CXXFLAGS',)),
-            ('COVERAGE', context.config.substs.get('COVERAGE_CFLAGS'),
-             ('WASM_CXXFLAGS', 'WASM_CFLAGS')),
-            ('WASM_CFLAGS', context.config.substs.get('WASM_CFLAGS'),
-             ('WASM_CFLAGS',)),
-            ('WASM_CXXFLAGS', context.config.substs.get('WASM_CXXFLAGS'),
-             ('WASM_CXXFLAGS',)),
-            ('WASM_LDFLAGS', context.config.substs.get('WASM_LDFLAGS'),
-             ('WASM_LDFLAGS',)),
-            ('WASM_DEFINES', None, ('WASM_CFLAGS', 'WASM_CXXFLAGS')),
-            ('MOZBUILD_WASM_CFLAGS', None, ('WASM_CFLAGS',)),
-            ('MOZBUILD_WASM_CXXFLAGS', None, ('WASM_CXXFLAGS',)),
+            ("LIBRARY_DEFINES", None, ("WASM_CXXFLAGS", "WASM_CFLAGS")),
+            (
+                "BASE_INCLUDES",
+                ["-I%s" % main_src_dir, "-I%s" % context.objdir],
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
+            ),
+            ("LOCAL_INCLUDES", None, ("WASM_CXXFLAGS", "WASM_CFLAGS")),
+            (
+                "EXTRA_INCLUDES",
+                ["-I%s/dist/include" % context.config.topobjdir],
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
+            ),
+            (
+                "OS_INCLUDES",
+                list(
+                    itertools.chain(
+                        *(
+                            context.config.substs.get(v, [])
+                            for v in (
+                                "NSPR_CFLAGS",
+                                "NSS_CFLAGS",
+                                "MOZ_JPEG_CFLAGS",
+                                "MOZ_PNG_CFLAGS",
+                                "MOZ_ZLIB_CFLAGS",
+                                "MOZ_PIXMAN_CFLAGS",
+                            )
+                        )
+                    )
+                ),
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
+            ),
+            (
+                "DSO",
+                context.config.substs.get("DSO_CFLAGS"),
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
+            ),
+            (
+                "DSO_PIC",
+                context.config.substs.get("DSO_PIC_CFLAGS"),
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
+            ),
+            ("RTL", None, ("WASM_CXXFLAGS", "WASM_CFLAGS")),
+            (
+                "DEBUG",
+                self._debug_flags(),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
+            ),
+            (
+                "CLANG_PLUGIN",
+                context.config.substs.get("CLANG_PLUGIN_FLAGS"),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
+            ),
+            (
+                "OPTIMIZE",
+                self._optimize_flags(),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
+            ),
+            (
+                "FRAMEPTR",
+                context.config.substs.get("MOZ_FRAMEPTR_FLAGS"),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
+            ),
+            (
+                "WARNINGS_AS_ERRORS",
+                self._warnings_as_errors(),
+                ("WASM_CXXFLAGS", "WASM_CFLAGS", "WASM_LDFLAGS"),
+            ),
+            ("MOZBUILD_CFLAGS", None, ("WASM_CFLAGS",)),
+            ("MOZBUILD_CXXFLAGS", None, ("WASM_CXXFLAGS",)),
+            ("WASM_CFLAGS", context.config.substs.get("WASM_CFLAGS"), ("WASM_CFLAGS",)),
+            (
+                "WASM_CXXFLAGS",
+                context.config.substs.get("WASM_CXXFLAGS"),
+                ("WASM_CXXFLAGS",),
+            ),
+            (
+                "WASM_LDFLAGS",
+                context.config.substs.get("WASM_LDFLAGS"),
+                ("WASM_LDFLAGS",),
+            ),
+            ("WASM_DEFINES", None, ("WASM_CFLAGS", "WASM_CXXFLAGS")),
+            ("MOZBUILD_WASM_CFLAGS", None, ("WASM_CFLAGS",)),
+            ("MOZBUILD_WASM_CXXFLAGS", None, ("WASM_CXXFLAGS",)),
+            (
+                "NEWPM",
+                context.config.substs.get("MOZ_NEW_PASS_MANAGER_FLAGS"),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS"),
+            ),
         )
 
         TargetCompileFlags.__init__(self, context)
 
+    def _optimize_flags(self):
+        if not self._context.config.substs.get("MOZ_OPTIMIZE"):
+            return []
 
-class FinalTargetValue(ContextDerivedValue, unicode):
+        # We don't want `MOZ_{PGO_,}OPTIMIZE_FLAGS here because they may contain
+        # optimization flags that aren't suitable for wasm (e.g. -freorder-blocks).
+        # Just optimize for size in all cases; we may want to make this
+        # configurable.
+        return ["-Os"]
+
+
+class FinalTargetValue(ContextDerivedValue, six.text_type):
     def __new__(cls, context, value=""):
         if not value:
-            value = 'dist/'
-            if context['XPI_NAME']:
-                value += 'xpi-stage/' + context['XPI_NAME']
+            value = "dist/"
+            if context["XPI_NAME"]:
+                value += "xpi-stage/" + context["XPI_NAME"]
             else:
-                value += 'bin'
-            if context['DIST_SUBDIR']:
-                value += '/' + context['DIST_SUBDIR']
-        return unicode.__new__(cls, value)
+                value += "bin"
+            if context["DIST_SUBDIR"]:
+                value += "/" + context["DIST_SUBDIR"]
+        return six.text_type.__new__(cls, value)
 
 
 def Enum(*values):
@@ -634,23 +820,27 @@ def Enum(*values):
                 return default
             if value in values:
                 return value
-            raise ValueError('Invalid value. Allowed values are: %s'
-                             % ', '.join(repr(v) for v in values))
+            raise ValueError(
+                "Invalid value. Allowed values are: %s"
+                % ", ".join(repr(v) for v in values)
+            )
+
     return EnumClass
 
 
 class PathMeta(type):
     """Meta class for the Path family of classes.
 
-    It handles calling __new__ and __init__ with the right arguments
-    in cases where a Path is instantiated with another instance of
-    Path instead of having received a context.
+    It handles calling __new__ with the right arguments in cases where a Path
+    is instantiated with another instance of Path instead of having received a
+    context.
 
     It also makes Path(context, value) instantiate one of the
     subclasses depending on the value, allowing callers to do
     standard type checking (isinstance(path, ObjDirPath)) instead
     of checking the value itself (path.startswith('!')).
     """
+
     def __call__(cls, context, value=None):
         if isinstance(context, Path):
             assert value is None
@@ -661,16 +851,16 @@ class PathMeta(type):
             if isinstance(value, Path):
                 context = value.context
         if not issubclass(cls, (SourcePath, ObjDirPath, AbsolutePath)):
-            if value.startswith('!'):
+            if value.startswith("!"):
                 cls = ObjDirPath
-            elif value.startswith('%'):
+            elif value.startswith("%"):
                 cls = AbsolutePath
             else:
                 cls = SourcePath
         return super(PathMeta, cls).__call__(context, value)
 
 
-class Path(ContextDerivedValue, unicode):
+class Path(six.with_metaclass(PathMeta, ContextDerivedValue, six.text_type)):
     """Stores and resolves a source path relative to a given context
 
     This class is used as a backing type for some of the sandbox variables.
@@ -681,16 +871,12 @@ class Path(ContextDerivedValue, unicode):
       - '!objdir/relative/paths'
       - '%/filesystem/absolute/paths'
     """
-    __metaclass__ = PathMeta
 
     def __new__(cls, context, value=None):
-        return super(Path, cls).__new__(cls, value)
-
-    def __init__(self, context, value=None):
-        # Only subclasses should be instantiated.
-        assert self.__class__ != Path
+        self = super(Path, cls).__new__(cls, value)
         self.context = context
         self.srcdir = context.srcdir
+        return self
 
     def join(self, *p):
         """ContextDerived equivalent of mozpath.join(self, *p), returning a
@@ -699,32 +885,35 @@ class Path(ContextDerivedValue, unicode):
         return Path(self.context, mozpath.join(self, *p))
 
     def __cmp__(self, other):
-        if isinstance(other, Path) and self.srcdir != other.srcdir:
-            return cmp(self.full_path, other.full_path)
-        return cmp(unicode(self), other)
+        # We expect this function to never be called to avoid issues in the
+        # switch from Python 2 to 3.
+        raise AssertionError()
 
-    # __cmp__ is not enough because unicode has __eq__, __ne__, etc. defined
-    # and __cmp__ is only used for those when they don't exist.
+    def _cmp(self, other, op):
+        if isinstance(other, Path) and self.srcdir != other.srcdir:
+            return op(self.full_path, other.full_path)
+        return op(six.text_type(self), other)
+
     def __eq__(self, other):
-        return self.__cmp__(other) == 0
+        return self._cmp(other, operator.eq)
 
     def __ne__(self, other):
-        return self.__cmp__(other) != 0
+        return self._cmp(other, operator.ne)
 
     def __lt__(self, other):
-        return self.__cmp__(other) < 0
+        return self._cmp(other, operator.lt)
 
     def __gt__(self, other):
-        return self.__cmp__(other) > 0
+        return self._cmp(other, operator.gt)
 
     def __le__(self, other):
-        return self.__cmp__(other) <= 0
+        return self._cmp(other, operator.le)
 
     def __ge__(self, other):
-        return self.__cmp__(other) >= 0
+        return self._cmp(other, operator.ge)
 
     def __repr__(self):
-        return '<%s (%s)%s>' % (self.__class__.__name__, self.srcdir, self)
+        return "<%s (%s)%s>" % (self.__class__.__name__, self.srcdir, self)
 
     def __hash__(self):
         return hash(self.full_path)
@@ -737,26 +926,21 @@ class Path(ContextDerivedValue, unicode):
 class SourcePath(Path):
     """Like Path, but limited to paths in the source directory."""
 
-    def __init__(self, context, value):
-        if value.startswith('!'):
-            raise ValueError('Object directory paths are not allowed')
-        if value.startswith('%'):
-            raise ValueError('Filesystem absolute paths are not allowed')
-        super(SourcePath, self).__init__(context, value)
+    def __new__(cls, context, value=None):
+        if value.startswith("!"):
+            raise ValueError("Object directory paths are not allowed")
+        if value.startswith("%"):
+            raise ValueError("Filesystem absolute paths are not allowed")
+        self = super(SourcePath, cls).__new__(cls, context, value)
 
-        if value.startswith('/'):
+        if value.startswith("/"):
             path = None
-            # If the path starts with a '/' and is actually relative to an
-            # external source dir, use that as base instead of topsrcdir.
-            if context.config.external_source_dir:
-                path = mozpath.join(context.config.external_source_dir,
-                                    value[1:])
             if not path or not os.path.exists(path):
-                path = mozpath.join(context.config.topsrcdir,
-                                    value[1:])
+                path = mozpath.join(context.config.topsrcdir, value[1:])
         else:
             path = mozpath.join(self.srcdir, value)
         self.full_path = mozpath.normpath(path)
+        return self
 
     @memoized_property
     def translated(self):
@@ -766,7 +950,7 @@ class SourcePath(Path):
         path under topsrcdir and the external source dir end up mixed in the
         objdir (aka pseudo-rework), this is needed.
         """
-        return ObjDirPath(self.context, '!%s' % self).full_path
+        return ObjDirPath(self.context, "!%s" % self).full_path
 
 
 class RenamedSourcePath(SourcePath):
@@ -778,10 +962,12 @@ class RenamedSourcePath(SourcePath):
     and is not supported by the RecursiveMake backend.
     """
 
-    def __init__(self, context, value):
+    def __new__(cls, context, value):
         assert isinstance(value, tuple)
-        source, self._target_basename = value
-        super(RenamedSourcePath, self).__init__(context, source)
+        source, target_basename = value
+        self = super(RenamedSourcePath, cls).__new__(cls, context, source)
+        self._target_basename = target_basename
+        return self
 
     @property
     def target_basename(self):
@@ -791,35 +977,35 @@ class RenamedSourcePath(SourcePath):
 class ObjDirPath(Path):
     """Like Path, but limited to paths in the object directory."""
 
-    def __init__(self, context, value=None):
-        if not value.startswith('!'):
-            raise ValueError('Object directory paths must start with ! prefix')
-        super(ObjDirPath, self).__init__(context, value)
+    def __new__(cls, context, value=None):
+        if not value.startswith("!"):
+            raise ValueError("Object directory paths must start with ! prefix")
+        self = super(ObjDirPath, cls).__new__(cls, context, value)
 
-        if value.startswith('!/'):
+        if value.startswith("!/"):
             path = mozpath.join(context.config.topobjdir, value[2:])
         else:
             path = mozpath.join(context.objdir, value[1:])
         self.full_path = mozpath.normpath(path)
+        return self
 
 
 class AbsolutePath(Path):
     """Like Path, but allows arbitrary paths outside the source and object directories."""
 
-    def __init__(self, context, value=None):
-        if not value.startswith('%'):
-            raise ValueError('Absolute paths must start with % prefix')
+    def __new__(cls, context, value=None):
+        if not value.startswith("%"):
+            raise ValueError("Absolute paths must start with % prefix")
         if not os.path.isabs(value[1:]):
-            raise ValueError('Path \'%s\' is not absolute' % value[1:])
-        super(AbsolutePath, self).__init__(context, value)
-
+            raise ValueError("Path '%s' is not absolute" % value[1:])
+        self = super(AbsolutePath, cls).__new__(cls, context, value)
         self.full_path = mozpath.normpath(value[1:])
+        return self
 
 
 @memoize
 def ContextDerivedTypedList(klass, base_class=List):
-    """Specialized TypedList for use with ContextDerivedValue types.
-    """
+    """Specialized TypedList for use with ContextDerivedValue types."""
     assert issubclass(klass, ContextDerivedValue)
 
     class _TypedList(ContextDerivedValue, TypedList(klass, base_class)):
@@ -837,8 +1023,8 @@ def ContextDerivedTypedList(klass, base_class=List):
 
 @memoize
 def ContextDerivedTypedListWithItems(type, base_class=List):
-    """Specialized TypedList for use with ContextDerivedValue types.
-    """
+    """Specialized TypedList for use with ContextDerivedValue types."""
+
     class _TypedListWithItems(ContextDerivedTypedList(type, base_class)):
         def __getitem__(self, name):
             name = self.normalize(name)
@@ -890,7 +1076,8 @@ class Schedules(object):
      * VAR.exclusive can only be assigned to (no +=), and can only contain
        values from mozbuild.schedules.ALL_COMPONENTS
     """
-    __slots__ = ('_exclusive', '_inclusive')
+
+    __slots__ = ("_exclusive", "_inclusive")
 
     def __init__(self, inclusive=None, exclusive=None):
         if inclusive is None:
@@ -898,7 +1085,9 @@ class Schedules(object):
         else:
             self._inclusive = inclusive
         if exclusive is None:
-            self._exclusive = ImmutableStrictOrderingOnAppendList(schedules.EXCLUSIVE_COMPONENTS)
+            self._exclusive = ImmutableStrictOrderingOnAppendList(
+                schedules.EXCLUSIVE_COMPONENTS
+            )
         else:
             self._exclusive = exclusive
 
@@ -913,7 +1102,9 @@ class Schedules(object):
             raise AttributeError("Cannot assign to this value - use += instead")
         unexpected = [v for v in value if v not in schedules.INCLUSIVE_COMPONENTS]
         if unexpected:
-            raise Exception("unexpected inclusive component(s) " + ', '.join(unexpected))
+            raise Exception(
+                "unexpected inclusive component(s) " + ", ".join(unexpected)
+            )
 
     # exclusive is immutable but can be set (= only)
     @property
@@ -926,7 +1117,9 @@ class Schedules(object):
             raise Exception("expected a tuple or list")
         unexpected = [v for v in value if v not in schedules.ALL_COMPONENTS]
         if unexpected:
-            raise Exception("unexpected exclusive component(s) " + ', '.join(unexpected))
+            raise Exception(
+                "unexpected exclusive component(s) " + ", ".join(unexpected)
+            )
         self._exclusive = ImmutableStrictOrderingOnAppendList(sorted(value))
 
     # components provides a synthetic summary of all components
@@ -955,20 +1148,21 @@ class Schedules(object):
 def ContextDerivedTypedHierarchicalStringList(type):
     """Specialized HierarchicalStringList for use with ContextDerivedValue
     types."""
+
     class _TypedListWithItems(ContextDerivedValue, HierarchicalStringList):
-        __slots__ = ('_strings', '_children', '_context')
+        __slots__ = ("_strings", "_children", "_context")
 
         def __init__(self, context):
-            self._strings = ContextDerivedTypedList(
-                type, StrictOrderingOnAppendList)(context)
+            self._strings = ContextDerivedTypedList(type, StrictOrderingOnAppendList)(
+                context
+            )
             self._children = {}
             self._context = context
 
         def _get_exportvariable(self, name):
             child = self._children.get(name)
             if not child:
-                child = self._children[name] = _TypedListWithItems(
-                    self._context)
+                child = self._children[name] = _TypedListWithItems(self._context)
             return child
 
     return _TypedListWithItems
@@ -982,53 +1176,38 @@ def OrderedPathListWithAction(action):
     This used to extend moz.build reading to make more data available in
     filesystem-reading mode.
     """
-    class _OrderedListWithAction(ContextDerivedTypedList(SourcePath,
-                                                         StrictOrderingOnAppendListWithAction)):
+
+    class _OrderedListWithAction(
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendListWithAction)
+    ):
         def __init__(self, context, *args):
             def _action(item):
                 return item, action(context, item)
+
             super(_OrderedListWithAction, self).__init__(context, action=_action, *args)
 
     return _OrderedListWithAction
 
 
-def TypedListWithAction(typ, action):
-    """Returns a class which behaves as a TypedList with the provided type, but
-    invokes the given given callable with each input and a context as it is
-    read, storing a tuple including the result and the original item.
-
-    This used to extend moz.build reading to make more data available in
-    filesystem-reading mode.
-    """
-    class _TypedListWithAction(ContextDerivedValue, TypedList(typ), ListWithAction):
-        def __init__(self, context, *args):
-            def _action(item):
-                return item, action(context, item)
-            super(_TypedListWithAction, self).__init__(action=_action, *args)
-    return _TypedListWithAction
-
-
 ManifestparserManifestList = OrderedPathListWithAction(read_manifestparser_manifest)
 ReftestManifestList = OrderedPathListWithAction(read_reftest_manifest)
 
-OrderedSourceList = ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList)
-OrderedTestFlavorList = TypedList(Enum(*all_test_flavors()),
-                                  StrictOrderingOnAppendList)
-OrderedStringList = TypedList(unicode, StrictOrderingOnAppendList)
-DependentTestsEntry = ContextDerivedTypedRecord(('files', OrderedSourceList),
-                                                ('tags', OrderedStringList),
-                                                ('flavors', OrderedTestFlavorList))
-BugzillaComponent = TypedNamedTuple('BugzillaComponent',
-                                    [('product', unicode), ('component', unicode)])
+BugzillaComponent = TypedNamedTuple(
+    "BugzillaComponent", [("product", six.text_type), ("component", six.text_type)]
+)
 SchedulingComponents = ContextDerivedTypedRecord(
-        ('inclusive', TypedList(unicode, StrictOrderingOnAppendList)),
-        ('exclusive', TypedList(unicode, StrictOrderingOnAppendList)))
+    ("inclusive", TypedList(six.text_type, StrictOrderingOnAppendList)),
+    ("exclusive", TypedList(six.text_type, StrictOrderingOnAppendList)),
+)
 
-GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
-    'script': unicode,
-    'inputs': list,
-    'force': bool,
-    'flags': list, })
+GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory(
+    {
+        "script": six.text_type,
+        "inputs": list,
+        "force": bool,
+        "flags": list,
+    }
+)
 
 
 class Files(SubContext):
@@ -1078,15 +1257,19 @@ class Files(SubContext):
     """
 
     VARIABLES = {
-        'BUG_COMPONENT': (BugzillaComponent, tuple,
-                          """The bug component that tracks changes to these files.
+        "BUG_COMPONENT": (
+            BugzillaComponent,
+            tuple,
+            """The bug component that tracks changes to these files.
 
             Values are a 2-tuple of unicode describing the Bugzilla product and
             component. e.g. ``('Firefox Build System', 'General')``.
-            """),
-
-        'FINAL': (bool, bool,
-                  """Mark variable assignments as finalized.
+            """,
+        ),
+        "FINAL": (
+            bool,
+            bool,
+            """Mark variable assignments as finalized.
 
             During normal processing, values from newer Files contexts
             overwrite previously set values. Last write wins. This behavior is
@@ -1098,57 +1281,12 @@ class Files(SubContext):
             are ignored during metadata reading.
 
             See :ref:`mozbuild_files_metadata_finalizing` for more info.
-            """),
-        'IMPACTED_TESTS': (DependentTestsEntry, list,
-                           """File patterns, tags, and flavors for tests relevant to these files.
-
-            Maps source files to the tests potentially impacted by those files.
-            Tests can be specified by file pattern, tag, or flavor.
-
-            For example:
-
-            with Files('runtests.py'):
-               IMPACTED_TESTS.files += [
-                   '**',
-               ]
-
-            in testing/mochitest/moz.build will suggest that any of the tests
-            under testing/mochitest may be impacted by a change to runtests.py.
-
-            File patterns may be made relative to the topsrcdir with a leading
-            '/', so
-
-            with Files('httpd.js'):
-               IMPACTED_TESTS.files += [
-                   '/testing/mochitest/tests/Harness_sanity/**',
-               ]
-
-            in netwerk/test/httpserver/moz.build will suggest that any change to httpd.js
-            will be relevant to the mochitest sanity tests.
-
-            Tags and flavors are sorted string lists (flavors are limited to valid
-            values).
-
-            For example:
-
-            with Files('toolkit/devtools/*'):
-                IMPACTED_TESTS.tags += [
-                    'devtools',
-                ]
-
-            in the root moz.build would suggest that any test tagged 'devtools' would
-            potentially be impacted by a change to a file under toolkit/devtools, and
-
-            with Files('dom/base/nsGlobalWindow.cpp'):
-                IMPACTED_TESTS.flavors += [
-                    'mochitest',
-                ]
-
-            Would suggest that nsGlobalWindow.cpp is potentially relevant to
-            any plain mochitest.
-            """),
-        'SCHEDULES': (Schedules, list,
-                      """Maps source files to the CI tasks that should be scheduled when
+            """,
+        ),
+        "SCHEDULES": (
+            Schedules,
+            list,
+            """Maps source files to the CI tasks that should be scheduled when
             they change.  The tasks are grouped by named components, and those
             names appear again in the taskgraph configuration
             `($topsrcdir/taskgraph/).
@@ -1175,34 +1313,21 @@ class Files(SubContext):
 
             with Files('mobile/android/**'):
                 SCHEDULES.exclusive = ['android']
-            """),
+            """,
+        ),
     }
 
     def __init__(self, parent, *patterns):
         super(Files, self).__init__(parent)
         self.patterns = patterns
         self.finalized = set()
-        self.test_files = set()
-        self.test_tags = set()
-        self.test_flavors = set()
 
     def __iadd__(self, other):
         assert isinstance(other, Files)
 
-        self.test_files |= other.test_files
-        self.test_tags |= other.test_tags
-        self.test_flavors |= other.test_flavors
-
         for k, v in other.items():
-            if k == 'IMPACTED_TESTS':
-                self.test_files |= set(mozpath.relpath(e.full_path, e.context.config.topsrcdir)
-                                       for e in v.files)
-                self.test_tags |= set(v.tags)
-                self.test_flavors |= set(v.flavors)
-                continue
-
-            if k == 'SCHEDULES' and 'SCHEDULES' in self:
-                self['SCHEDULES'] = self['SCHEDULES'] | v
+            if k == "SCHEDULES" and "SCHEDULES" in self:
+                self["SCHEDULES"] = self["SCHEDULES"] | v
                 continue
 
             # Ignore updates to finalized flags.
@@ -1210,8 +1335,8 @@ class Files(SubContext):
                 continue
 
             # Only finalize variables defined in this instance.
-            if k == 'FINAL':
-                self.finalized |= set(other) - {'FINAL'}
+            if k == "FINAL":
+                self.finalized |= set(other) - {"FINAL"}
                 continue
 
             self[k] = v
@@ -1224,9 +1349,9 @@ class Files(SubContext):
         Call this to obtain an object suitable for serializing.
         """
         d = {}
-        if 'BUG_COMPONENT' in self:
-            bc = self['BUG_COMPONENT']
-            d['bug_component'] = (bc.product, bc.component)
+        if "BUG_COMPONENT" in self:
+            bc = self["BUG_COMPONENT"]
+            d["bug_component"] = (bc.product, bc.component)
 
         return d
 
@@ -1252,24 +1377,24 @@ class Files(SubContext):
         bug_components = Counter()
 
         for f in files.values():
-            bug_component = f.get('BUG_COMPONENT')
+            bug_component = f.get("BUG_COMPONENT")
             if bug_component:
                 bug_components[bug_component] += 1
 
-        d['bug_component_counts'] = []
+        d["bug_component_counts"] = []
         for c, count in bug_components.most_common():
             component = (c.product, c.component)
-            d['bug_component_counts'].append((c, count))
+            d["bug_component_counts"].append((c, count))
 
-            if 'recommended_bug_component' not in d:
-                d['recommended_bug_component'] = component
+            if "recommended_bug_component" not in d:
+                d["recommended_bug_component"] = component
                 recommended_count = count
             elif count == recommended_count:
                 # Don't recommend a component if it doesn't have a clear lead.
-                d['recommended_bug_component'] = None
+                d["recommended_bug_component"] = None
 
         # In case no bug components.
-        d.setdefault('recommended_bug_component', None)
+        d.setdefault("recommended_bug_component", None)
 
         return d
 
@@ -1288,10 +1413,10 @@ SUBCONTEXTS = [
 
 for cls in SUBCONTEXTS:
     if not issubclass(cls, SubContext):
-        raise ValueError('SUBCONTEXTS entry not a SubContext class: %s' % cls)
+        raise ValueError("SUBCONTEXTS entry not a SubContext class: %s" % cls)
 
-    if not hasattr(cls, 'VARIABLES'):
-        raise ValueError('SUBCONTEXTS entry does not have VARIABLES: %s' % cls)
+    if not hasattr(cls, "VARIABLES"):
+        raise ValueError("SUBCONTEXTS entry does not have VARIABLES: %s" % cls)
 
 SUBCONTEXTS = {cls.__name__: cls for cls in SUBCONTEXTS}
 
@@ -1303,89 +1428,85 @@ SUBCONTEXTS = {cls.__name__: cls for cls in SUBCONTEXTS}
 #   (storage_type, input_types, docs)
 
 VARIABLES = {
-    'SOURCES': (
+    "SOURCES": (
         ContextDerivedTypedListWithItems(
             Path,
-            StrictOrderingOnAppendListWithFlagsFactory(
-                {'no_pgo': bool, 'flags': List}
-                )
-            ),
+            StrictOrderingOnAppendListWithFlagsFactory({"no_pgo": bool, "flags": List}),
+        ),
         list,
         """Source code files.
 
         This variable contains a list of source code files to compile.
         Accepts assembler, C, C++, Objective C/C++.
-        """
-        ),
-
-    'FILES_PER_UNIFIED_FILE': (
+        """,
+    ),
+    "FILES_PER_UNIFIED_FILE": (
         int,
         int,
         """The number of source files to compile into each unified source file.
 
-        """
-        ),
-
-    'IS_RUST_LIBRARY': (
+        """,
+    ),
+    "IS_RUST_LIBRARY": (
         bool,
         bool,
         """Whether the current library defined by this moz.build is built by Rust.
 
         The library defined by this moz.build should have a build definition in
         a Cargo.toml file that exists in this moz.build's directory.
-        """
-        ),
+        """,
+    ),
+    "IS_GKRUST": (
+        bool,
+        bool,
+        """Whether the current library defined by this moz.build is gkrust.
 
-    'RUST_LIBRARY_FEATURES': (
+        Indicates whether the current library contains rust for libxul.
+        """,
+    ),
+    "RUST_LIBRARY_FEATURES": (
         List,
         list,
         """Cargo features to activate for this library.
 
         This variable should not be used directly; you should be using the
         RustLibrary template instead.
-        """
-        ),
-
-    'RUST_LIBRARY_TARGET_DIR': (
-        unicode,
-        unicode,
+        """,
+    ),
+    "RUST_LIBRARY_TARGET_DIR": (
+        six.text_type,
+        six.text_type,
         """Where CARGO_TARGET_DIR should point when compiling this library.  If
         not set, it defaults to the current objdir.  It should be a relative path
         to the current objdir; absolute paths should not be used.
 
         This variable should not be used directly; you should be using the
         RustLibrary template instead.
-        """
-        ),
-
-    'HOST_RUST_LIBRARY_FEATURES': (
+        """,
+    ),
+    "HOST_RUST_LIBRARY_FEATURES": (
         List,
         list,
         """Cargo features to activate for this host library.
 
         This variable should not be used directly; you should be using the
         HostRustLibrary template instead.
-        """
-        ),
-
-    'RUST_TESTS': (
-        TypedList(unicode),
+        """,
+    ),
+    "RUST_TESTS": (
+        TypedList(six.text_type),
         list,
         """Names of Rust tests to build and run via `cargo test`.
-        """),
-
-    'RUST_TEST_FEATURES': (
-        TypedList(unicode),
+        """,
+    ),
+    "RUST_TEST_FEATURES": (
+        TypedList(six.text_type),
         list,
         """Cargo features to activate for RUST_TESTS.
-        """
-        ),
-
-    'UNIFIED_SOURCES': (
-        ContextDerivedTypedList(
-            SourcePath,
-            StrictOrderingOnAppendList
-            ),
+        """,
+    ),
+    "UNIFIED_SOURCES": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
         list,
         """Source code files that can be compiled together.
 
@@ -1393,13 +1514,18 @@ VARIABLES = {
         that can be concatenated all together and built as a single source
         file. This can help make the build faster and reduce the debug info
         size.
-        """
-        ),
-
-    'GENERATED_FILES': (
+        """,
+    ),
+    "GENERATED_FILES": (
         GeneratedFilesList,
         list,
         """Generic generated files.
+
+        Unless you have a reason not to, use the GeneratedFile template rather
+        than referencing GENERATED_FILES directly. The GeneratedFile template
+        has all the same arguments as the attributes listed below (``script``,
+        ``inputs``, ``flags``, ``force``), plus an additional ``entry_point``
+        argument to specify a particular function to run in the given script.
 
         This variable contains a list of files for the build system to
         generate at export time. The generation method may be declared
@@ -1446,11 +1572,11 @@ VARIABLES = {
         When the ``force`` attribute is present, the file is generated every
         build, regardless of whether it is stale.  This is special to the
         RecursiveMake backend and intended for special situations only (e.g.,
-        localization).  Please consult a build peer before using ``force``.
-        """
-        ),
-
-    'DEFINES': (
+        localization).  Please consult a build peer (on the #build channel at
+        https://chat.mozilla.org) before using ``force``.
+        """,
+    ),
+    "DEFINES": (
         InitializedDefines,
         dict,
         """Dictionary of compiler defines to declare.
@@ -1470,28 +1596,23 @@ VARIABLES = {
 
         This will result in the compiler flags ``-DNS_NO_XPCOM``,
         ``-DMOZ_EXTENSIONS_DB_SCHEMA=15``, and ``-DDLL_SUFFIX='".so"'``,
-        respectively. These could also be combined into a single
-        update::
+        respectively.
 
-           DEFINES.update({
-               'NS_NO_XPCOM': True,
-               'MOZ_EXTENSIONS_DB_SCHEMA': 15,
-               'DLL_SUFFIX': '".so"',
-           })
-        """
-        ),
-
-    'DELAYLOAD_DLLS': (
+        Note that these entries are not necessarily passed to the assembler.
+        Whether they are depends on the type of assembly file. As an
+        alternative, you may add a ``-DKEY=value`` entry to ``ASFLAGS``.
+        """,
+    ),
+    "DELAYLOAD_DLLS": (
         List,
         list,
         """Delay-loaded DLLs.
 
         This variable contains a list of DLL files which the module being linked
         should load lazily.  This only has an effect when building with MSVC.
-        """
-        ),
-
-    'DIRS': (
+        """,
+    ),
+    "DIRS": (
         ContextDerivedTypedList(SourcePath),
         list,
         """Child directories to descend into looking for build frontend files.
@@ -1505,30 +1626,12 @@ VARIABLES = {
         Values are relative paths. They can be multiple directory levels
         above or below. Use ``..`` for parent directories and ``/`` for path
         delimiters.
-        """
-        ),
-
-    'HAS_MISC_RULE': (
-        bool,
-        bool,
-        """Whether this directory should be traversed in the ``misc`` tier.
-
-        Many ``libs`` rules still exist in Makefile.in files. We highly prefer
-        that these rules exist in the ``misc`` tier/target so that they can be
-        executed concurrently during tier traversal (the ``misc`` tier is
-        fully concurrent).
-
-        Presence of this variable indicates that this directory should be
-        traversed by the ``misc`` tier.
-
-        Please note that converting ``libs`` rules to the ``misc`` tier must
-        be done with care, as there are many implicit dependencies that can
-        break the build in subtle ways.
-        """
-        ),
-
-    'FINAL_TARGET_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                           """List of files to be installed into the application directory.
+        """,
+    ),
+    "FINAL_TARGET_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """List of files to be installed into the application directory.
 
         ``FINAL_TARGET_FILES`` will copy (or symlink, if the platform supports it)
         the contents of its files to the directory specified by
@@ -1540,14 +1643,18 @@ VARIABLES = {
 
            FINAL_TARGET_FILES += ['foo.png']
            FINAL_TARGET_FILES.images['do-not-use'] += ['bar.svg']
-        """),
-
-    'FINAL_TARGET_PP_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                              """Like ``FINAL_TARGET_FILES``, with preprocessing.
-        """),
-
-    'LOCALIZED_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                        """List of locale-dependent files to be installed into the application
+        """,
+    ),
+    "FINAL_TARGET_PP_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """Like ``FINAL_TARGET_FILES``, with preprocessing.
+        """,
+    ),
+    "LOCALIZED_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """List of locale-dependent files to be installed into the application
         directory.
 
         This functions similarly to ``FINAL_TARGET_FILES``, but the files are
@@ -1586,17 +1693,21 @@ VARIABLES = {
         en-US build, and in a build of a different locale (or a repack),
         it would copy ``$(LOCALE_SRCDIR)/toolkit/foo.js`` and
         ``$(LOCALE_SRCDIR)/toolkit/things/*.ini``.
-        """),
-
-    'LOCALIZED_PP_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                           """Like ``LOCALIZED_FILES``, with preprocessing.
+        """,
+    ),
+    "LOCALIZED_PP_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """Like ``LOCALIZED_FILES``, with preprocessing.
 
         Note that the ``AB_CD`` define is available and expands to the current
         locale being packaged, as with preprocessed entries in jar manifests.
-        """),
-
-    'LOCALIZED_GENERATED_FILES': (GeneratedFilesList, list,
-                                  """Like ``GENERATED_FILES``, but for files whose content varies based on the locale in use.
+        """,
+    ),
+    "LOCALIZED_GENERATED_FILES": (
+        GeneratedFilesList,
+        list,
+        """Like ``GENERATED_FILES``, but for files whose content varies based on the locale in use.
 
         For simple cases of text substitution, prefer ``LOCALIZED_PP_FILES``.
 
@@ -1617,31 +1728,39 @@ VARIABLES = {
         multi-locale builds and single-locale repacks and ``{AB_rCD}`` expands to an
         Android-specific encoding of the current locale.  Both expand to the empty string when the
         current locale is ``en-US``.
-        """),
-
-    'OBJDIR_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                     """List of files to be installed anywhere in the objdir. Use sparingly.
+        """,
+    ),
+    "OBJDIR_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """List of files to be installed anywhere in the objdir. Use sparingly.
 
         ``OBJDIR_FILES`` is similar to FINAL_TARGET_FILES, but it allows copying
         anywhere in the object directory. This is intended for various one-off
         cases, not for general use. If you wish to add entries to OBJDIR_FILES,
-        please consult a build peer.
-        """),
-
-    'OBJDIR_PP_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                        """Like ``OBJDIR_FILES``, with preprocessing. Use sparingly.
-        """),
-
-    'FINAL_LIBRARY': (unicode, unicode,
-                      """Library in which the objects of the current directory will be linked.
+        please consult a build peer (on the #build channel at https://chat.mozilla.org).
+        """,
+    ),
+    "OBJDIR_PP_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """Like ``OBJDIR_FILES``, with preprocessing. Use sparingly.
+        """,
+    ),
+    "FINAL_LIBRARY": (
+        six.text_type,
+        six.text_type,
+        """Library in which the objects of the current directory will be linked.
 
         This variable contains the name of a library, defined elsewhere with
         ``LIBRARY_NAME``, in which the objects of the current directory will be
         linked.
-        """),
-
-    'CPP_UNIT_TESTS': (StrictOrderingOnAppendList, list,
-                       """Compile a list of C++ unit test names.
+        """,
+    ),
+    "CPP_UNIT_TESTS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Compile a list of C++ unit test names.
 
         Each name in this variable corresponds to an executable built from the
         corresponding source file with the same base name.
@@ -1649,47 +1768,63 @@ VARIABLES = {
         If the configuration token ``BIN_SUFFIX`` is set, its value will be
         automatically appended to each name. If a name already ends with
         ``BIN_SUFFIX``, the name will remain unchanged.
-        """),
-
-    'FORCE_SHARED_LIB': (bool, bool,
-                         """Whether the library in this directory is a shared library.
-        """),
-
-    'FORCE_STATIC_LIB': (bool, bool,
-                         """Whether the library in this directory is a static library.
-        """),
-
-    'USE_STATIC_LIBS': (bool, bool,
-                        """Whether the code in this directory is a built against the static
+        """,
+    ),
+    "FORCE_SHARED_LIB": (
+        bool,
+        bool,
+        """Whether the library in this directory is a shared library.
+        """,
+    ),
+    "FORCE_STATIC_LIB": (
+        bool,
+        bool,
+        """Whether the library in this directory is a static library.
+        """,
+    ),
+    "USE_STATIC_LIBS": (
+        bool,
+        bool,
+        """Whether the code in this directory is a built against the static
         runtime library.
 
         This variable only has an effect when building with MSVC.
-        """),
-
-    'HOST_SOURCES': (ContextDerivedTypedList(Path, StrictOrderingOnAppendList), list,
-                     """Source code files to compile with the host compiler.
+        """,
+    ),
+    "HOST_SOURCES": (
+        ContextDerivedTypedList(Path, StrictOrderingOnAppendList),
+        list,
+        """Source code files to compile with the host compiler.
 
         This variable contains a list of source code files to compile.
         with the host compiler.
-        """),
-
-    'WASM_SOURCES': (ContextDerivedTypedList(Path, StrictOrderingOnAppendList), list,
-                     """Source code files to compile with the wasm compiler.
-        """),
-
-    'HOST_LIBRARY_NAME': (unicode, unicode,
-                          """Name of target library generated when cross compiling.
-        """),
-
-    'LIBRARY_DEFINES': (OrderedDict, dict,
-                        """Dictionary of compiler defines to declare for the entire library.
+        """,
+    ),
+    "WASM_SOURCES": (
+        ContextDerivedTypedList(Path, StrictOrderingOnAppendList),
+        list,
+        """Source code files to compile with the wasm compiler.
+        """,
+    ),
+    "HOST_LIBRARY_NAME": (
+        six.text_type,
+        six.text_type,
+        """Name of target library generated when cross compiling.
+        """,
+    ),
+    "LIBRARY_DEFINES": (
+        OrderedDict,
+        dict,
+        """Dictionary of compiler defines to declare for the entire library.
 
         This variable works like DEFINES, except that declarations apply to all
         libraries that link into this library via FINAL_LIBRARY.
-        """),
-
-    'LIBRARY_NAME': (unicode, unicode,
-                     """The code name of the library generated for a directory.
+        """,
+    ),
+    "LIBRARY_NAME": (
+        six.text_type,
+        six.text_type,
+        """The code name of the library generated for a directory.
 
         By default STATIC_LIBRARY_NAME and SHARED_LIBRARY_NAME take this name.
         In ``example/components/moz.build``,::
@@ -1698,107 +1833,135 @@ VARIABLES = {
 
         would generate ``example/components/libxpcomsample.so`` on Linux, or
         ``example/components/xpcomsample.lib`` on Windows.
-        """),
-
-    'SHARED_LIBRARY_NAME': (unicode, unicode,
-                            """The name of the static library generated for a directory, if it needs to
+        """,
+    ),
+    "SHARED_LIBRARY_NAME": (
+        six.text_type,
+        six.text_type,
+        """The name of the static library generated for a directory, if it needs to
         differ from the library code name.
 
         Implies FORCE_SHARED_LIB.
-        """),
-
-    'SANDBOXED_WASM_LIBRARY_NAME': (
-        unicode, unicode,
+        """,
+    ),
+    "SANDBOXED_WASM_LIBRARY_NAME": (
+        six.text_type,
+        six.text_type,
         """The name of the static sandboxed wasm library generated for a directory.
-        """),
-
-    'SHARED_LIBRARY_OUTPUT_CATEGORY': (unicode, unicode,
-                                       """The output category for this context's shared library. If set this will
+        """,
+    ),
+    "SHARED_LIBRARY_OUTPUT_CATEGORY": (
+        six.text_type,
+        six.text_type,
+        """The output category for this context's shared library. If set this will
         correspond to the build command that will build this shared library, and
         the library will not be built as part of the default build.
-        """),
-
-    'RUST_LIBRARY_OUTPUT_CATEGORY': (unicode, unicode,
-                                     """The output category for this context's rust library. If set this will
+        """,
+    ),
+    "RUST_LIBRARY_OUTPUT_CATEGORY": (
+        six.text_type,
+        six.text_type,
+        """The output category for this context's rust library. If set this will
         correspond to the build command that will build this rust library, and
         the library will not be built as part of the default build.
-        """),
-
-    'IS_FRAMEWORK': (bool, bool,
-                     """Whether the library to build should be built as a framework on OSX.
+        """,
+    ),
+    "IS_FRAMEWORK": (
+        bool,
+        bool,
+        """Whether the library to build should be built as a framework on OSX.
 
         This implies the name of the library won't be prefixed nor suffixed.
         Implies FORCE_SHARED_LIB.
-        """),
-
-    'STATIC_LIBRARY_NAME': (unicode, unicode,
-                            """The name of the static library generated for a directory, if it needs to
+        """,
+    ),
+    "STATIC_LIBRARY_NAME": (
+        six.text_type,
+        six.text_type,
+        """The name of the static library generated for a directory, if it needs to
         differ from the library code name.
 
         Implies FORCE_STATIC_LIB.
-        """),
-
-    'USE_LIBS': (StrictOrderingOnAppendList, list,
-                 """List of libraries to link to programs and libraries.
-        """),
-
-    'HOST_USE_LIBS': (StrictOrderingOnAppendList, list,
-                      """List of libraries to link to host programs and libraries.
-        """),
-
-    'HOST_OS_LIBS': (List, list,
-                     """List of system libraries for host programs and libraries.
-        """),
-
-    'LOCAL_INCLUDES': (ContextDerivedTypedList(Path, StrictOrderingOnAppendList), list,
-                       """Additional directories to be searched for include files by the compiler.
-        """),
-
-    'NO_PGO': (bool, bool,
-               """Whether profile-guided optimization is disable in this directory.
-        """),
-
-    'OS_LIBS': (List, list,
-                """System link libraries.
+        """,
+    ),
+    "USE_LIBS": (
+        StrictOrderingOnAppendList,
+        list,
+        """List of libraries to link to programs and libraries.
+        """,
+    ),
+    "HOST_USE_LIBS": (
+        StrictOrderingOnAppendList,
+        list,
+        """List of libraries to link to host programs and libraries.
+        """,
+    ),
+    "HOST_OS_LIBS": (
+        List,
+        list,
+        """List of system libraries for host programs and libraries.
+        """,
+    ),
+    "LOCAL_INCLUDES": (
+        ContextDerivedTypedList(Path, StrictOrderingOnAppendList),
+        list,
+        """Additional directories to be searched for include files by the compiler.
+        """,
+    ),
+    "NO_PGO": (
+        bool,
+        bool,
+        """Whether profile-guided optimization is disable in this directory.
+        """,
+    ),
+    "OS_LIBS": (
+        List,
+        list,
+        """System link libraries.
 
         This variable contains a list of system libaries to link against.
-        """),
-    'RCFILE': (Path, unicode,
-               """The program .rc file.
+        """,
+    ),
+    "RCFILE": (
+        Path,
+        six.text_type,
+        """The program .rc file.
 
         This variable can only be used on Windows.
-        """),
-
-    'RESFILE': (unicode, unicode,
-                """The program .res file.
-
-        This variable can only be used on Windows.
-        """),
-
-    'RCINCLUDE': (Path, unicode,
-                  """The resource script file to be included in the default .res file.
+        """,
+    ),
+    "RCINCLUDE": (
+        Path,
+        six.text_type,
+        """The resource script file to be included in the default .res file.
 
         This variable can only be used on Windows.
-        """),
-
-    'DEFFILE': (Path, unicode,
-                """The program .def (module definition) file.
+        """,
+    ),
+    "DEFFILE": (
+        Path,
+        six.text_type,
+        """The program .def (module definition) file.
 
         This variable can only be used on Windows.
-        """),
-
-    'SYMBOLS_FILE': (Path, unicode,
-                     """A file containing a list of symbols to export from a shared library.
+        """,
+    ),
+    "SYMBOLS_FILE": (
+        Path,
+        six.text_type,
+        """A file containing a list of symbols to export from a shared library.
 
         The given file contains a list of symbols to be exported, and is
         preprocessed.
         A special marker "@DATA@" must be added after a symbol name if it
         points to data instead of code, so that the Windows linker can treat
         them correctly.
-        """),
-
-    'SIMPLE_PROGRAMS': (StrictOrderingOnAppendList, list,
-                        """Compile a list of executable names.
+        """,
+    ),
+    "SIMPLE_PROGRAMS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Compile a list of executable names.
 
         Each name in this variable corresponds to an executable built from the
         corresponding source file with the same base name.
@@ -1806,18 +1969,22 @@ VARIABLES = {
         If the configuration token ``BIN_SUFFIX`` is set, its value will be
         automatically appended to each name. If a name already ends with
         ``BIN_SUFFIX``, the name will remain unchanged.
-        """),
-
-    'SONAME': (unicode, unicode,
-               """The soname of the shared object currently being linked
+        """,
+    ),
+    "SONAME": (
+        six.text_type,
+        six.text_type,
+        """The soname of the shared object currently being linked
 
         soname is the "logical name" of a shared object, often used to provide
         version backwards compatibility. This variable makes sense only for
         shared objects, and is supported only on some unix platforms.
-        """),
-
-    'HOST_SIMPLE_PROGRAMS': (StrictOrderingOnAppendList, list,
-                             """Compile a list of host executable names.
+        """,
+    ),
+    "HOST_SIMPLE_PROGRAMS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Compile a list of host executable names.
 
         Each name in this variable corresponds to a hosst executable built
         from the corresponding source file with the same base name.
@@ -1825,27 +1992,28 @@ VARIABLES = {
         If the configuration token ``HOST_BIN_SUFFIX`` is set, its value will
         be automatically appended to each name. If a name already ends with
         ``HOST_BIN_SUFFIX``, the name will remain unchanged.
-        """),
-
-    'RUST_PROGRAMS': (StrictOrderingOnAppendList, list,
-                      """Compile a list of Rust host executable names.
-
-        Each name in this variable corresponds to an executable built from
-        the Cargo.toml in the same directory.
-        """),
-
-    'HOST_RUST_PROGRAMS': (StrictOrderingOnAppendList, list,
-                           """Compile a list of Rust executable names.
+        """,
+    ),
+    "RUST_PROGRAMS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Compile a list of Rust host executable names.
 
         Each name in this variable corresponds to an executable built from
         the Cargo.toml in the same directory.
-        """),
+        """,
+    ),
+    "HOST_RUST_PROGRAMS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Compile a list of Rust executable names.
 
-    'CONFIGURE_SUBST_FILES': (
-        ContextDerivedTypedList(
-            SourcePath,
-            StrictOrderingOnAppendList
-            ),
+        Each name in this variable corresponds to an executable built from
+        the Cargo.toml in the same directory.
+        """,
+    ),
+    "CONFIGURE_SUBST_FILES": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
         list,
         """Output files that will be generated using configure-like substitution.
 
@@ -1854,25 +2022,22 @@ VARIABLES = {
         ``{path}.in``. The contents of this file will be read and variable
         patterns like ``@foo@`` will be substituted with the values of the
         ``AC_SUBST`` variables declared during configure.
-        """
-        ),
-
-    'CONFIGURE_DEFINE_FILES': (
-        ContextDerivedTypedList(
-            SourcePath,
-            StrictOrderingOnAppendList
-            ),
+        """,
+    ),
+    "CONFIGURE_DEFINE_FILES": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
         list,
         """Output files generated from configure/config.status.
 
         This is a substitute for ``AC_CONFIG_HEADER`` in autoconf. This is very
         similar to ``CONFIGURE_SUBST_FILES`` except the generation logic takes
         into account the values of ``AC_DEFINE`` instead of ``AC_SUBST``.
-        """
-        ),
-
-    'EXPORTS': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                """List of files to be exported, and in which subdirectories.
+        """,
+    ),
+    "EXPORTS": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """List of files to be exported, and in which subdirectories.
 
         ``EXPORTS`` is generally used to list the include files to be exported to
         ``dist/include``, but it can be used for other files as well. This variable
@@ -1888,26 +2053,32 @@ VARIABLES = {
         Entries in ``EXPORTS`` are paths, so objdir paths may be used, but
         any files listed from the objdir must also be listed in
         ``GENERATED_FILES``.
-        """),
-
-    'PROGRAM': (unicode, unicode,
-                """Compiled executable name.
+        """,
+    ),
+    "PROGRAM": (
+        six.text_type,
+        six.text_type,
+        """Compiled executable name.
 
         If the configuration token ``BIN_SUFFIX`` is set, its value will be
         automatically appended to ``PROGRAM``. If ``PROGRAM`` already ends with
         ``BIN_SUFFIX``, ``PROGRAM`` will remain unchanged.
-        """),
-
-    'HOST_PROGRAM': (unicode, unicode,
-                     """Compiled host executable name.
+        """,
+    ),
+    "HOST_PROGRAM": (
+        six.text_type,
+        six.text_type,
+        """Compiled host executable name.
 
         If the configuration token ``HOST_BIN_SUFFIX`` is set, its value will be
         automatically appended to ``HOST_PROGRAM``. If ``HOST_PROGRAM`` already
         ends with ``HOST_BIN_SUFFIX``, ``HOST_PROGRAM`` will remain unchanged.
-        """),
-
-    'DIST_INSTALL': (Enum(None, False, True), bool,
-                     """Whether to install certain files into the dist directory.
+        """,
+    ),
+    "DIST_INSTALL": (
+        Enum(None, False, True),
+        bool,
+        """Whether to install certain files into the dist directory.
 
         By default, some files types are installed in the dist directory, and
         some aren't. Set this variable to True to force the installation of
@@ -1917,224 +2088,282 @@ VARIABLES = {
 
         This is confusing for historical reasons, but eventually, the behavior
         will be made explicit.
-        """),
-
-    'JAR_MANIFESTS': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
-                      """JAR manifest files that should be processed as part of the build.
+        """,
+    ),
+    "JAR_MANIFESTS": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
+        list,
+        """JAR manifest files that should be processed as part of the build.
 
         JAR manifests are files in the tree that define how to package files
         into JARs and how chrome registration is performed. For more info,
         see :ref:`jar_manifests`.
-        """),
-
+        """,
+    ),
     # IDL Generation.
-    'XPIDL_SOURCES': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
-                      """XPCOM Interface Definition Files (xpidl).
+    "XPIDL_SOURCES": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
+        list,
+        """XPCOM Interface Definition Files (xpidl).
 
         This is a list of files that define XPCOM interface definitions.
         Entries must be files that exist. Entries are almost certainly ``.idl``
         files.
-        """),
-
-    'XPIDL_MODULE': (unicode, unicode,
-                     """XPCOM Interface Definition Module Name.
+        """,
+    ),
+    "XPIDL_MODULE": (
+        six.text_type,
+        six.text_type,
+        """XPCOM Interface Definition Module Name.
 
         This is the name of the ``.xpt`` file that is created by linking
         ``XPIDL_SOURCES`` together. If unspecified, it defaults to be the same
         as ``MODULE``.
-        """),
-
-    'XPCOM_MANIFESTS': (ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList), list,
-                        """XPCOM Component Manifest Files.
+        """,
+    ),
+    "XPCOM_MANIFESTS": (
+        ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),
+        list,
+        """XPCOM Component Manifest Files.
 
         This is a list of files that define XPCOM components to be added
         to the component registry.
-        """),
-
-    'PREPROCESSED_IPDL_SOURCES': (StrictOrderingOnAppendList, list,
-                                  """Preprocessed IPDL source files.
+        """,
+    ),
+    "PREPROCESSED_IPDL_SOURCES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Preprocessed IPDL source files.
 
         These files will be preprocessed, then parsed and converted to
         ``.cpp`` files.
-        """),
-
-    'IPDL_SOURCES': (StrictOrderingOnAppendList, list,
-                     """IPDL source files.
+        """,
+    ),
+    "IPDL_SOURCES": (
+        StrictOrderingOnAppendList,
+        list,
+        """IPDL source files.
 
         These are ``.ipdl`` files that will be parsed and converted to
         ``.cpp`` files.
-        """),
-
-    'WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                     """WebIDL source files.
-
-        These will be parsed and converted to ``.cpp`` and ``.h`` files.
-        """),
-
-    'GENERATED_EVENTS_WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                                      """WebIDL source files for generated events.
+        """,
+    ),
+    "WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """WebIDL source files.
 
         These will be parsed and converted to ``.cpp`` and ``.h`` files.
-        """),
+        """,
+    ),
+    "GENERATED_EVENTS_WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """WebIDL source files for generated events.
 
-    'TEST_WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                          """Test WebIDL source files.
+        These will be parsed and converted to ``.cpp`` and ``.h`` files.
+        """,
+    ),
+    "TEST_WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Test WebIDL source files.
 
          These will be parsed and converted to ``.cpp`` and ``.h`` files
          if tests are enabled.
-         """),
-
-    'GENERATED_WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                               """Generated WebIDL source files.
+         """,
+    ),
+    "GENERATED_WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Generated WebIDL source files.
 
          These will be generated from some other files.
-         """),
-
-    'PREPROCESSED_TEST_WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                                       """Preprocessed test WebIDL source files.
+         """,
+    ),
+    "PREPROCESSED_TEST_WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Preprocessed test WebIDL source files.
 
          These will be preprocessed, then parsed and converted to .cpp
          and ``.h`` files if tests are enabled.
-         """),
-
-    'PREPROCESSED_WEBIDL_FILES': (StrictOrderingOnAppendList, list,
-                                  """Preprocessed WebIDL source files.
+         """,
+    ),
+    "PREPROCESSED_WEBIDL_FILES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Preprocessed WebIDL source files.
 
          These will be preprocessed before being parsed and converted.
-         """),
-
-    'WEBIDL_EXAMPLE_INTERFACES': (StrictOrderingOnAppendList, list,
-                                  """Names of example WebIDL interfaces to build as part of the build.
+         """,
+    ),
+    "WEBIDL_EXAMPLE_INTERFACES": (
+        StrictOrderingOnAppendList,
+        list,
+        """Names of example WebIDL interfaces to build as part of the build.
 
         Names in this list correspond to WebIDL interface names defined in
         WebIDL files included in the build from one of the \*WEBIDL_FILES
         variables.
-        """),
-
+        """,
+    ),
     # Test declaration.
-    'A11Y_MANIFESTS': (ManifestparserManifestList, list,
-                       """List of manifest files defining a11y tests.
-        """),
-
-    'BROWSER_CHROME_MANIFESTS': (ManifestparserManifestList, list,
-                                 """List of manifest files defining browser chrome tests.
-        """),
-
-    'ANDROID_INSTRUMENTATION_MANIFESTS': (ManifestparserManifestList, list,
-                                          """List of manifest files defining Android instrumentation tests.
-        """),
-
-    'FIREFOX_UI_FUNCTIONAL_MANIFESTS': (ManifestparserManifestList, list,
-                                        """List of manifest files defining firefox-ui-functional tests.
-        """),
-
-    'PUPPETEER_FIREFOX_MANIFESTS': (ManifestparserManifestList, list,
-                                    """List of manifest files defining puppeteer unit tests for Firefox.
-        """),
-
-    'MARIONETTE_LAYOUT_MANIFESTS': (ManifestparserManifestList, list,
-                                    """List of manifest files defining marionette-layout tests.
-        """),
-
-    'MARIONETTE_GPU_MANIFESTS': (ManifestparserManifestList, list,
-                                 """List of manifest files defining marionette-gpu tests.
-        """),
-
-    'MARIONETTE_UNIT_MANIFESTS': (ManifestparserManifestList, list,
-                                  """List of manifest files defining marionette-unit tests.
-        """),
-
-    'METRO_CHROME_MANIFESTS': (ManifestparserManifestList, list,
-                               """List of manifest files defining metro browser chrome tests.
-        """),
-
-    'MOCHITEST_CHROME_MANIFESTS': (ManifestparserManifestList, list,
-                                   """List of manifest files defining mochitest chrome tests.
-        """),
-
-    'MARIONETTE_DOM_MEDIA_MANIFESTS': (ManifestparserManifestList, list,
-                                       """List of manifest files defining marionette-media tests.
-        """),
-
-    'MOCHITEST_MANIFESTS': (ManifestparserManifestList, list,
-                            """List of manifest files defining mochitest tests.
-        """),
-
-    'REFTEST_MANIFESTS': (ReftestManifestList, list,
-                          """List of manifest files defining reftests.
+    "A11Y_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining a11y tests.
+        """,
+    ),
+    "BROWSER_CHROME_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining browser chrome tests.
+        """,
+    ),
+    "ANDROID_INSTRUMENTATION_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining Android instrumentation tests.
+        """,
+    ),
+    "FIREFOX_UI_FUNCTIONAL_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining firefox-ui-functional tests.
+        """,
+    ),
+    "MARIONETTE_LAYOUT_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining marionette-layout tests.
+        """,
+    ),
+    "MARIONETTE_UNIT_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining marionette-unit tests.
+        """,
+    ),
+    "METRO_CHROME_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining metro browser chrome tests.
+        """,
+    ),
+    "MOCHITEST_CHROME_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining mochitest chrome tests.
+        """,
+    ),
+    "MOCHITEST_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining mochitest tests.
+        """,
+    ),
+    "REFTEST_MANIFESTS": (
+        ReftestManifestList,
+        list,
+        """List of manifest files defining reftests.
 
         These are commonly named reftest.list.
-        """),
-
-    'CRASHTEST_MANIFESTS': (ReftestManifestList, list,
-                            """List of manifest files defining crashtests.
+        """,
+    ),
+    "CRASHTEST_MANIFESTS": (
+        ReftestManifestList,
+        list,
+        """List of manifest files defining crashtests.
 
         These are commonly named crashtests.list.
-        """),
-
-    'WEBRTC_SIGNALLING_TEST_MANIFESTS': (ManifestparserManifestList, list,
-                                         """List of manifest files defining WebRTC signalling tests.
-        """),
-
-    'XPCSHELL_TESTS_MANIFESTS': (ManifestparserManifestList, list,
-                                 """List of manifest files defining xpcshell tests.
-        """),
-
-    'PYTHON_UNITTEST_MANIFESTS': (ManifestparserManifestList, list,
-                                  """List of manifest files defining python unit tests.
-        """),
-
-    'CRAMTEST_MANIFESTS': (ManifestparserManifestList, list,
-                           """List of manifest files defining cram unit tests.
-        """),
-
-    'TELEMETRY_TESTS_CLIENT_MANIFESTS': (ManifestparserManifestList, list,
-                                         """List of manifest files defining telemetry client tests.
-        """),
-
+        """,
+    ),
+    "XPCSHELL_TESTS_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining xpcshell tests.
+        """,
+    ),
+    "PYTHON_UNITTEST_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining python unit tests.
+        """,
+    ),
+    "PERFTESTS_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining MozPerftest performance tests.
+        """,
+    ),
+    "CRAMTEST_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining cram unit tests.
+        """,
+    ),
+    "TELEMETRY_TESTS_CLIENT_MANIFESTS": (
+        ManifestparserManifestList,
+        list,
+        """List of manifest files defining telemetry client tests.
+        """,
+    ),
     # The following variables are used to control the target of installed files.
-    'XPI_NAME': (unicode, unicode,
-                 """The name of an extension XPI to generate.
+    "XPI_NAME": (
+        six.text_type,
+        six.text_type,
+        """The name of an extension XPI to generate.
 
         When this variable is present, the results of this directory will end up
         being packaged into an extension instead of the main dist/bin results.
-        """),
-
-    'DIST_SUBDIR': (unicode, unicode,
-                    """The name of an alternate directory to install files to.
+        """,
+    ),
+    "DIST_SUBDIR": (
+        six.text_type,
+        six.text_type,
+        """The name of an alternate directory to install files to.
 
         When this variable is present, the results of this directory will end up
         being placed in the $(DIST_SUBDIR) subdirectory of where it would
         otherwise be placed.
-        """),
-
-    'FINAL_TARGET': (FinalTargetValue, unicode,
-                     """The name of the directory to install targets to.
+        """,
+    ),
+    "FINAL_TARGET": (
+        FinalTargetValue,
+        six.text_type,
+        """The name of the directory to install targets to.
 
         The directory is relative to the top of the object directory. The
         default value is dependent on the values of XPI_NAME and DIST_SUBDIR. If
         neither are present, the result is dist/bin. If XPI_NAME is present, the
         result is dist/xpi-stage/$(XPI_NAME). If DIST_SUBDIR is present, then
         the $(DIST_SUBDIR) directory of the otherwise default value is used.
-        """),
-
-    'USE_EXTENSION_MANIFEST': (bool, bool,
-                               """Controls the name of the manifest for JAR files.
+        """,
+    ),
+    "USE_EXTENSION_MANIFEST": (
+        bool,
+        bool,
+        """Controls the name of the manifest for JAR files.
 
         By default, the name of the manifest is ${JAR_MANIFEST}.manifest.
         Setting this variable to ``True`` changes the name of the manifest to
         chrome.manifest.
-        """),
-
-    'GYP_DIRS': (StrictOrderingOnAppendListWithFlagsFactory({
-            'variables': dict,
-            'input': unicode,
-            'sandbox_vars': dict,
-            'no_chromium': bool,
-            'no_unified': bool,
-            'non_unified_sources': StrictOrderingOnAppendList,
-            'action_overrides': dict,
-        }), list,
+        """,
+    ),
+    "GYP_DIRS": (
+        StrictOrderingOnAppendListWithFlagsFactory(
+            {
+                "variables": dict,
+                "input": six.text_type,
+                "sandbox_vars": dict,
+                "no_chromium": bool,
+                "no_unified": bool,
+                "non_unified_sources": StrictOrderingOnAppendList,
+                "action_overrides": dict,
+            }
+        ),
+        list,
         """Defines a list of object directories handled by gyp configurations.
 
         Elements of this list give the relative object directory. For each
@@ -2166,15 +2395,19 @@ VARIABLES = {
                 (...)
             }
             (...)
-        """),
-
-    'GN_DIRS': (StrictOrderingOnAppendListWithFlagsFactory({
-            'variables': dict,
-            'sandbox_vars': dict,
-            'non_unified_sources': StrictOrderingOnAppendList,
-            'mozilla_flags': list,
-            'gn_target': unicode,
-        }), list,
+        """,
+    ),
+    "GN_DIRS": (
+        StrictOrderingOnAppendListWithFlagsFactory(
+            {
+                "variables": dict,
+                "sandbox_vars": dict,
+                "non_unified_sources": StrictOrderingOnAppendList,
+                "mozilla_flags": list,
+                "gn_target": six.text_type,
+            }
+        ),
+        list,
         """List of dirs containing gn files describing targets to build. Attributes:
             - variables, a dictionary containing variables and values to pass
               to `gn gen`.
@@ -2186,164 +2419,208 @@ VARIABLES = {
             - mozilla_flags, a set of flags that if present in the gn config
               will be mirrored to the resulting mozbuild configuration.
             - gn_target, the name of the target to build.
-        """),
-
-    'SPHINX_TREES': (dict, dict,
-                     """Describes what the Sphinx documentation tree will look like.
+        """,
+    ),
+    "SPHINX_TREES": (
+        dict,
+        dict,
+        """Describes what the Sphinx documentation tree will look like.
 
         Keys are relative directories inside the final Sphinx documentation
         tree to install files into. Values are directories (relative to this
         file) whose content to copy into the Sphinx documentation tree.
-        """),
-
-    'SPHINX_PYTHON_PACKAGE_DIRS': (StrictOrderingOnAppendList, list,
-                                   """Directories containing Python packages that Sphinx documents.
-        """),
-
-    'COMPILE_FLAGS': (CompileFlags, dict,
-                      """Recipe for compile flags for this context. Not to be manipulated
+        """,
+    ),
+    "SPHINX_PYTHON_PACKAGE_DIRS": (
+        StrictOrderingOnAppendList,
+        list,
+        """Directories containing Python packages that Sphinx documents.
+        """,
+    ),
+    "COMPILE_FLAGS": (
+        CompileFlags,
+        dict,
+        """Recipe for compile flags for this context. Not to be manipulated
         directly.
-        """),
-
-    'LINK_FLAGS': (LinkFlags, dict,
-                   """Recipe for linker flags for this context. Not to be manipulated
+        """,
+    ),
+    "LINK_FLAGS": (
+        LinkFlags,
+        dict,
+        """Recipe for linker flags for this context. Not to be manipulated
         directly.
-        """),
-
-    'WASM_FLAGS': (WasmFlags, dict,
-                   """Recipe for wasm flags for this context. Not to be
+        """,
+    ),
+    "WASM_FLAGS": (
+        WasmFlags,
+        dict,
+        """Recipe for wasm flags for this context. Not to be
         manipulated directly.
-        """),
-
-    'ASM_FLAGS': (AsmFlags, dict,
-                  """Recipe for linker flags for this context. Not to be
+        """,
+    ),
+    "ASM_FLAGS": (
+        AsmFlags,
+        dict,
+        """Recipe for linker flags for this context. Not to be
         manipulated directly.
-        """),
-
-    'CFLAGS': (List, list,
-               """Flags passed to the C compiler for all of the C source files
+        """,
+    ),
+    "CFLAGS": (
+        List,
+        list,
+        """Flags passed to the C compiler for all of the C source files
            declared in this directory.
 
            Note that the ordering of flags matters here, these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'CXXFLAGS': (List, list,
-                 """Flags passed to the C++ compiler for all of the C++ source files
+        """,
+    ),
+    "CXXFLAGS": (
+        List,
+        list,
+        """Flags passed to the C++ compiler for all of the C++ source files
            declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'HOST_COMPILE_FLAGS': (HostCompileFlags, dict,
-                           """Recipe for host compile flags for this context. Not to be manipulated
+        """,
+    ),
+    "HOST_COMPILE_FLAGS": (
+        HostCompileFlags,
+        dict,
+        """Recipe for host compile flags for this context. Not to be manipulated
         directly.
-        """),
-
-    'HOST_DEFINES': (InitializedDefines, dict,
-                     """Dictionary of compiler defines to declare for host compilation.
+        """,
+    ),
+    "HOST_DEFINES": (
+        InitializedDefines,
+        dict,
+        """Dictionary of compiler defines to declare for host compilation.
         See ``DEFINES`` for specifics.
-        """),
-
-    'WASM_CFLAGS': (List, list,
-                    """Flags passed to the C-to-wasm compiler for all of the C
+        """,
+    ),
+    "WASM_CFLAGS": (
+        List,
+        list,
+        """Flags passed to the C-to-wasm compiler for all of the C
            source files declared in this directory.
 
            Note that the ordering of flags matters here, these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'WASM_CXXFLAGS': (List, list,
-                      """Flags passed to the C++-to-wasm compiler for all of the
+        """,
+    ),
+    "WASM_CXXFLAGS": (
+        List,
+        list,
+        """Flags passed to the C++-to-wasm compiler for all of the
            C++ source files declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'WASM_LDFLAGS': (List, list,
-                     """Flags passed to the linker when linking wasm modules
+        """,
+    ),
+    "WASM_LDFLAGS": (
+        List,
+        list,
+        """Flags passed to the linker when linking wasm modules
            declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'WASM_DEFINES': (InitializedDefines, dict,
-                     """Dictionary of compiler defines to declare for wasm compilation.
+        """,
+    ),
+    "WASM_DEFINES": (
+        InitializedDefines,
+        dict,
+        """Dictionary of compiler defines to declare for wasm compilation.
         See ``DEFINES`` for specifics.
-        """),
-
-    'CMFLAGS': (List, list,
-                """Flags passed to the Objective-C compiler for all of the Objective-C
+        """,
+    ),
+    "CMFLAGS": (
+        List,
+        list,
+        """Flags passed to the Objective-C compiler for all of the Objective-C
            source files declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'CMMFLAGS': (List, list,
-                 """Flags passed to the Objective-C++ compiler for all of the
+        """,
+    ),
+    "CMMFLAGS": (
+        List,
+        list,
+        """Flags passed to the Objective-C++ compiler for all of the
            Objective-C++ source files declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'ASFLAGS': (List, list,
-                """Flags passed to the assembler for all of the assembly source files
+        """,
+    ),
+    "ASFLAGS": (
+        List,
+        list,
+        """Flags passed to the assembler for all of the assembly source files
            declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the assembler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'HOST_CFLAGS': (List, list,
-                    """Flags passed to the host C compiler for all of the C source files
+        """,
+    ),
+    "HOST_CFLAGS": (
+        List,
+        list,
+        """Flags passed to the host C compiler for all of the C source files
            declared in this directory.
 
            Note that the ordering of flags matters here, these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'HOST_CXXFLAGS': (List, list,
-                      """Flags passed to the host C++ compiler for all of the C++ source files
+        """,
+    ),
+    "HOST_CXXFLAGS": (
+        List,
+        list,
+        """Flags passed to the host C++ compiler for all of the C++ source files
            declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'LDFLAGS': (List, list,
-                """Flags passed to the linker when linking all of the libraries and
+        """,
+    ),
+    "LDFLAGS": (
+        List,
+        list,
+        """Flags passed to the linker when linking all of the libraries and
            executables declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the linker's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'EXTRA_DSO_LDOPTS': (List, list,
-                         """Flags passed to the linker when linking a shared library.
+        """,
+    ),
+    "EXTRA_DSO_LDOPTS": (
+        List,
+        list,
+        """Flags passed to the linker when linking a shared library.
 
            Note that the ordering of flags matter here, these flags will be
            added to the linker's command line in the same order as they
            appear in the moz.build file.
-        """),
-
-    'WIN32_EXE_LDFLAGS': (List, list,
-                          """Flags passed to the linker when linking a Windows .exe executable
+        """,
+    ),
+    "WIN32_EXE_LDFLAGS": (
+        List,
+        list,
+        """Flags passed to the linker when linking a Windows .exe executable
            declared in this directory.
 
            Note that the ordering of flags matter here, these flags will be
@@ -2351,10 +2628,12 @@ VARIABLES = {
            appear in the moz.build file.
 
            This variable only has an effect on Windows.
-        """),
-
-    'TEST_HARNESS_FILES': (ContextDerivedTypedHierarchicalStringList(Path), list,
-                           """List of files to be installed for test harnesses.
+        """,
+    ),
+    "TEST_HARNESS_FILES": (
+        ContextDerivedTypedHierarchicalStringList(Path),
+        list,
+        """List of files to be installed for test harnesses.
 
         ``TEST_HARNESS_FILES`` can be used to install files to any directory
         under $objdir/_tests. Files can be appended to a field to indicate
@@ -2366,20 +2645,19 @@ VARIABLES = {
         Files from topsrcdir and the objdir can also be installed by prefixing
         the path(s) with a '/' character and a '!' character, respectively::
            TEST_HARNESS_FILES.path += ['/build/bar.py', '!quux.py']
-        """),
-
-    'NO_EXPAND_LIBS': (bool, bool,
-                       """Forces to build a real static library, and no corresponding fake
+        """,
+    ),
+    "NO_EXPAND_LIBS": (
+        bool,
+        bool,
+        """Forces to build a real static library, and no corresponding fake
            library.
-        """),
-
-    'NO_COMPONENTS_MANIFEST': (bool, bool,
-                               """Do not create a binary-component manifest entry for the
-        corresponding XPCOMBinaryComponent.
-        """),
-
-    'USE_NASM': (bool, bool,
-                 """Use the nasm assembler to assemble assembly files from SOURCES.
+        """,
+    ),
+    "USE_NASM": (
+        bool,
+        bool,
+        """Use the nasm assembler to assemble assembly files from SOURCES.
 
         By default, the build will use the toolchain assembler, $(AS), to
         assemble source files in assembly language (.s or .asm files). Setting
@@ -2387,10 +2665,12 @@ VARIABLES = {
 
         If nasm is not available on this system, or does not support the
         current target architecture, an error will be raised.
-        """),
-
-    'USE_YASM': (bool, bool,
-                 """Use the yasm assembler to assemble assembly files from SOURCES.
+        """,
+    ),
+    "USE_YASM": (
+        bool,
+        bool,
+        """Use the yasm assembler to assemble assembly files from SOURCES.
 
         By default, the build will use the toolchain assembler, $(AS), to
         assemble source files in assembly language (.s or .asm files). Setting
@@ -2398,43 +2678,45 @@ VARIABLES = {
 
         If yasm is not available on this system, or does not support the
         current target architecture, an error will be raised.
-        """),
-
-    'USE_INTEGRATED_CLANGCL_AS': (bool, bool,
-                                  """Use the integrated clang-cl assembler to assemble assembly files from SOURCES.
+        """,
+    ),
+    "USE_INTEGRATED_CLANGCL_AS": (
+        bool,
+        bool,
+        """Use the integrated clang-cl assembler to assemble assembly files from SOURCES.
 
         This allows using clang-cl to assemble assembly files which is useful
         on platforms like aarch64 where the alternative is to have to run a
         pre-processor to generate files with suitable syntax.
-        """),
+        """,
+    ),
 }
 
 # Sanity check: we don't want any variable above to have a list as storage type.
 for name, (storage_type, input_types, docs) in VARIABLES.items():
     if storage_type == list:
-        raise RuntimeError('%s has a "list" storage type. Use "List" instead.'
-                           % name)
+        raise RuntimeError('%s has a "list" storage type. Use "List" instead.' % name)
 
 # Set of variables that are only allowed in templates:
 TEMPLATE_VARIABLES = {
-    'CPP_UNIT_TESTS',
-    'FORCE_SHARED_LIB',
-    'HOST_PROGRAM',
-    'HOST_LIBRARY_NAME',
-    'HOST_SIMPLE_PROGRAMS',
-    'IS_FRAMEWORK',
-    'LIBRARY_NAME',
-    'PROGRAM',
-    'SIMPLE_PROGRAMS',
+    "CPP_UNIT_TESTS",
+    "FORCE_SHARED_LIB",
+    "HOST_PROGRAM",
+    "HOST_LIBRARY_NAME",
+    "HOST_SIMPLE_PROGRAMS",
+    "IS_FRAMEWORK",
+    "IS_GKRUST",
+    "LIBRARY_NAME",
+    "PROGRAM",
+    "SIMPLE_PROGRAMS",
 }
 
 # Add a note to template variable documentation.
 for name in TEMPLATE_VARIABLES:
     if name not in VARIABLES:
-        raise RuntimeError('%s is in TEMPLATE_VARIABLES but not in VARIABLES.'
-                           % name)
+        raise RuntimeError("%s is in TEMPLATE_VARIABLES but not in VARIABLES." % name)
     storage_type, input_types, docs = VARIABLES[name]
-    docs += 'This variable is only available in templates.\n'
+    docs += "This variable is only available in templates.\n"
     VARIABLES[name] = (storage_type, input_types, docs)
 
 
@@ -2448,8 +2730,10 @@ for name in TEMPLATE_VARIABLES:
 # The first element is an attribute on Sandbox that should be a function type.
 #
 FUNCTIONS = {
-    'include': (lambda self: self._include, (SourcePath,),
-                """Include another mozbuild file in the context of this one.
+    "include": (
+        lambda self: self._include,
+        (SourcePath,),
+        """Include another mozbuild file in the context of this one.
 
         This is similar to a ``#include`` in C languages. The filename passed to
         the function will be read and its contents will be evaluated within the
@@ -2473,10 +2757,12 @@ FUNCTIONS = {
         Include ``foo.build`` from a path within the top source directory::
 
            include('/elsewhere/foo.build')
-        """),
-
-    'export': (lambda self: self._export, (str,),
-               """Make the specified variable available to all child directories.
+        """,
+    ),
+    "export": (
+        lambda self: self._export,
+        (str,),
+        """Make the specified variable available to all child directories.
 
         The variable specified by the argument string is added to the
         environment of all directories specified in the DIRS and TEST_DIRS
@@ -2490,8 +2776,8 @@ FUNCTIONS = {
         This function is limited to the upper-case variables that have special
         meaning in moz.build files.
 
-        NOTE: Please consult with a build peer before adding a new use of this
-        function.
+        NOTE: Please consult with a build peer (on the #build channel at
+        https://chat.mozilla.org) before adding a new use of this function.
 
         Example usage
         ^^^^^^^^^^^^^
@@ -2500,24 +2786,30 @@ FUNCTIONS = {
 
           XPI_NAME = 'cool-extension'
           export('XPI_NAME')
-        """),
-
-    'warning': (lambda self: self._warning, (str,),
-                """Issue a warning.
+        """,
+    ),
+    "warning": (
+        lambda self: self._warning,
+        (str,),
+        """Issue a warning.
 
         Warnings are string messages that are printed during execution.
 
         Warnings are ignored during execution.
-        """),
-
-    'error': (lambda self: self._error, (str,),
-              """Issue a fatal error.
+        """,
+    ),
+    "error": (
+        lambda self: self._error,
+        (str,),
+        """Issue a fatal error.
 
         If this function is called, processing is aborted immediately.
-        """),
-
-    'template': (lambda self: self._template_decorator, (FunctionType,),
-                 """Decorator for template declarations.
+        """,
+    ),
+    "template": (
+        lambda self: self._template_decorator,
+        (FunctionType,),
+        """Decorator for template declarations.
 
         Templates are a special kind of functions that can be declared in
         mozbuild files. Uppercase variables assigned in the function scope
@@ -2561,7 +2853,8 @@ FUNCTIONS = {
            - ``USE_LIBS`` is ['mylib', 'mozglue', 'otherlib']
            - ``PROGRAM`` is 'myprog'
 
-        """),
+        """,
+    ),
 }
 
 
@@ -2575,45 +2868,58 @@ TestDirsPlaceHolder = List()
 #  (function returning the corresponding value from a given context, type, docs)
 #
 SPECIAL_VARIABLES = {
-    'TOPSRCDIR': (lambda context: context.config.topsrcdir, str,
-                  """Constant defining the top source directory.
+    "TOPSRCDIR": (
+        lambda context: context.config.topsrcdir,
+        str,
+        """Constant defining the top source directory.
 
         The top source directory is the parent directory containing the source
         code and all build files. It is typically the root directory of a
         cloned repository.
-        """),
-
-    'TOPOBJDIR': (lambda context: context.config.topobjdir, str,
-                  """Constant defining the top object directory.
+        """,
+    ),
+    "TOPOBJDIR": (
+        lambda context: context.config.topobjdir,
+        str,
+        """Constant defining the top object directory.
 
         The top object directory is the parent directory which will contain
         the output of the build. This is commonly referred to as "the object
         directory."
-        """),
-
-    'RELATIVEDIR': (lambda context: context.relsrcdir, str,
-                    """Constant defining the relative path of this file.
+        """,
+    ),
+    "RELATIVEDIR": (
+        lambda context: context.relsrcdir,
+        str,
+        """Constant defining the relative path of this file.
 
         The relative path is from ``TOPSRCDIR``. This is defined as relative
         to the main file being executed, regardless of whether additional
         files have been included using ``include()``.
-        """),
-
-    'SRCDIR': (lambda context: context.srcdir, str,
-               """Constant defining the source directory of this file.
+        """,
+    ),
+    "SRCDIR": (
+        lambda context: context.srcdir,
+        str,
+        """Constant defining the source directory of this file.
 
         This is the path inside ``TOPSRCDIR`` where this file is located. It
         is the same as ``TOPSRCDIR + RELATIVEDIR``.
-        """),
-
-    'OBJDIR': (lambda context: context.objdir, str,
-               """The path to the object directory for this file.
+        """,
+    ),
+    "OBJDIR": (
+        lambda context: context.objdir,
+        str,
+        """The path to the object directory for this file.
 
         Is is the same as ``TOPOBJDIR + RELATIVEDIR``.
-        """),
-
-    'CONFIG': (lambda context: ReadOnlyKeyedDefaultDict(
-            lambda key: context.config.substs.get(key)), dict,
+        """,
+    ),
+    "CONFIG": (
+        lambda context: ReadOnlyKeyedDefaultDict(
+            lambda key: context.config.substs.get(key)
+        ),
+        dict,
         """Dictionary containing the current configuration variables.
 
         All the variables defined by the configuration system are available
@@ -2623,43 +2929,45 @@ SPECIAL_VARIABLES = {
         will result in a run-time error.
 
         Access to an unknown variable will return None.
-        """),
-
-    'EXTRA_COMPONENTS': (lambda context: context['FINAL_TARGET_FILES'].components._strings, list,
-                         """Additional component files to distribute.
+        """,
+    ),
+    "EXTRA_COMPONENTS": (
+        lambda context: context["FINAL_TARGET_FILES"].components._strings,
+        list,
+        """Additional component files to distribute.
 
        This variable contains a list of files to copy into
        ``$(FINAL_TARGET)/components/``.
-        """),
-
-    'EXTRA_PP_COMPONENTS': (
-        lambda context: context['FINAL_TARGET_PP_FILES'].components._strings,
+        """,
+    ),
+    "EXTRA_PP_COMPONENTS": (
+        lambda context: context["FINAL_TARGET_PP_FILES"].components._strings,
         list,
         """Javascript XPCOM files.
 
        This variable contains a list of files to preprocess.  Generated
        files will be installed in the ``/components`` directory of the distribution.
-        """
-        ),
-
-    'JS_PREFERENCE_FILES': (
-        lambda context: context['FINAL_TARGET_FILES'].defaults.pref._strings,
+        """,
+    ),
+    "JS_PREFERENCE_FILES": (
+        lambda context: context["FINAL_TARGET_FILES"].defaults.pref._strings,
         list,
         """Exported JavaScript files.
 
         A list of files copied into the dist directory for packaging and installation.
         Path will be defined for gre or application prefs dir based on what is building.
-        """),
-
-    'JS_PREFERENCE_PP_FILES': (
-        lambda context: context['FINAL_TARGET_PP_FILES'].defaults.pref._strings,
+        """,
+    ),
+    "JS_PREFERENCE_PP_FILES": (
+        lambda context: context["FINAL_TARGET_PP_FILES"].defaults.pref._strings,
         list,
         """Like JS_PREFERENCE_FILES, preprocessed..
-        """
-        ),
-
-    'RESOURCE_FILES': (lambda context: context['FINAL_TARGET_FILES'].res, list,
-                       """List of resources to be exported, and in which subdirectories.
+        """,
+    ),
+    "RESOURCE_FILES": (
+        lambda context: context["FINAL_TARGET_FILES"].res,
+        list,
+        """List of resources to be exported, and in which subdirectories.
 
         ``RESOURCE_FILES`` is used to list the resource files to be exported to
         ``dist/bin/res``, but it can be used for other files as well. This variable
@@ -2671,35 +2979,40 @@ SPECIAL_VARIABLES = {
 
            RESOURCE_FILES += ['foo.res']
            RESOURCE_FILES.fonts += ['bar.res']
-        """),
-
-    'CONTENT_ACCESSIBLE_FILES': (
-        lambda context: context['FINAL_TARGET_FILES'].contentaccessible,
+        """,
+    ),
+    "CONTENT_ACCESSIBLE_FILES": (
+        lambda context: context["FINAL_TARGET_FILES"].contentaccessible,
         list,
         """List of files which can be accessed by web content through resource:// URIs.
 
         ``CONTENT_ACCESSIBLE_FILES`` is used to list the files to be exported
         to ``dist/bin/contentaccessible``. Files can also be appended to a
         field to indicate which subdirectory they should be exported to.
-        """
-        ),
-
-    'EXTRA_JS_MODULES': (lambda context: context['FINAL_TARGET_FILES'].modules, list,
-                         """Additional JavaScript files to distribute.
+        """,
+    ),
+    "EXTRA_JS_MODULES": (
+        lambda context: context["FINAL_TARGET_FILES"].modules,
+        list,
+        """Additional JavaScript files to distribute.
 
         This variable contains a list of files to copy into
         ``$(FINAL_TARGET)/modules.
-        """),
-
-    'EXTRA_PP_JS_MODULES': (lambda context: context['FINAL_TARGET_PP_FILES'].modules, list,
-                            """Additional JavaScript files to distribute.
+        """,
+    ),
+    "EXTRA_PP_JS_MODULES": (
+        lambda context: context["FINAL_TARGET_PP_FILES"].modules,
+        list,
+        """Additional JavaScript files to distribute.
 
         This variable contains a list of files to copy into
         ``$(FINAL_TARGET)/modules``, after preprocessing.
-        """),
-
-    'TESTING_JS_MODULES': (lambda context: context['TEST_HARNESS_FILES'].modules, list,
-                           """JavaScript modules to install in the test-only destination.
+        """,
+    ),
+    "TESTING_JS_MODULES": (
+        lambda context: context["TEST_HARNESS_FILES"].modules,
+        list,
+        """JavaScript modules to install in the test-only destination.
 
         Some JavaScript modules (JSMs) are test-only and not distributed
         with Firefox. This variable defines them.
@@ -2708,32 +3021,33 @@ SPECIAL_VARIABLES = {
         variable to control the final destination. e.g.
 
         ``TESTING_JS_MODULES.foo += ['module.jsm']``.
-        """),
-
-    'TEST_DIRS': (lambda context: context['DIRS'] if context.config.substs.get('ENABLE_TESTS')
-                  else TestDirsPlaceHolder, list,
-                  """Like DIRS but only for directories that contain test-only code.
+        """,
+    ),
+    "TEST_DIRS": (
+        lambda context: context["DIRS"]
+        if context.config.substs.get("ENABLE_TESTS")
+        else TestDirsPlaceHolder,
+        list,
+        """Like DIRS but only for directories that contain test-only code.
 
         If tests are not enabled, this variable will be ignored.
 
         This variable may go away once the transition away from Makefiles is
         complete.
-        """),
-
+        """,
+    ),
 }
 
 # Deprecation hints.
 DEPRECATION_HINTS = {
-
-    'ASM_FLAGS': '''
+    "ASM_FLAGS": """
         Please use
 
             ASFLAGS
 
         instead of manipulating ASM_FLAGS directly.
-        ''',
-
-    'CPP_UNIT_TESTS': '''
+        """,
+    "CPP_UNIT_TESTS": """
         Please use'
 
             CppUnitTests(['foo', 'bar'])
@@ -2741,9 +3055,8 @@ DEPRECATION_HINTS = {
         instead of
 
             CPP_UNIT_TESTS += ['foo', 'bar']
-        ''',
-
-    'DISABLE_STL_WRAPPING': '''
+        """,
+    "DISABLE_STL_WRAPPING": """
         Please use
 
             DisableStlWrapping()
@@ -2751,9 +3064,8 @@ DEPRECATION_HINTS = {
         instead of
 
             DISABLE_STL_WRAPPING = True
-        ''',
-
-    'HOST_PROGRAM': '''
+        """,
+    "HOST_PROGRAM": """
         Please use
 
             HostProgram('foo')
@@ -2761,9 +3073,8 @@ DEPRECATION_HINTS = {
         instead of
 
             HOST_PROGRAM = 'foo'
-        ''',
-
-    'HOST_LIBRARY_NAME': '''
+        """,
+    "HOST_LIBRARY_NAME": """
         Please use
 
             HostLibrary('foo')
@@ -2771,9 +3082,8 @@ DEPRECATION_HINTS = {
         instead of
 
             HOST_LIBRARY_NAME = 'foo'
-        ''',
-
-    'HOST_SIMPLE_PROGRAMS': '''
+        """,
+    "HOST_SIMPLE_PROGRAMS": """
         Please use
 
             HostSimplePrograms(['foo', 'bar'])
@@ -2781,9 +3091,8 @@ DEPRECATION_HINTS = {
         instead of
 
             HOST_SIMPLE_PROGRAMS += ['foo', 'bar']"
-        ''',
-
-    'LIBRARY_NAME': '''
+        """,
+    "LIBRARY_NAME": """
         Please use
 
             Library('foo')
@@ -2791,9 +3100,8 @@ DEPRECATION_HINTS = {
         instead of
 
             LIBRARY_NAME = 'foo'
-        ''',
-
-    'NO_VISIBILITY_FLAGS': '''
+        """,
+    "NO_VISIBILITY_FLAGS": """
         Please use
 
             NoVisibilityFlags()
@@ -2801,9 +3109,8 @@ DEPRECATION_HINTS = {
         instead of
 
             NO_VISIBILITY_FLAGS = True
-        ''',
-
-    'PROGRAM': '''
+        """,
+    "PROGRAM": """
         Please use
 
             Program('foo')
@@ -2811,9 +3118,8 @@ DEPRECATION_HINTS = {
         instead of
 
             PROGRAM = 'foo'"
-        ''',
-
-    'SIMPLE_PROGRAMS': '''
+        """,
+    "SIMPLE_PROGRAMS": """
         Please use
 
             SimplePrograms(['foo', 'bar'])
@@ -2821,9 +3127,8 @@ DEPRECATION_HINTS = {
         instead of
 
             SIMPLE_PROGRAMS += ['foo', 'bar']"
-        ''',
-
-    'ALLOW_COMPILER_WARNINGS': '''
+        """,
+    "ALLOW_COMPILER_WARNINGS": """
         Please use
 
             AllowCompilerWarnings()
@@ -2831,9 +3136,8 @@ DEPRECATION_HINTS = {
         instead of
 
             ALLOW_COMPILER_WARNINGS = True
-        ''',
-
-    'FORCE_SHARED_LIB': '''
+        """,
+    "FORCE_SHARED_LIB": """
         Please use
 
             SharedLibrary('foo')
@@ -2842,9 +3146,8 @@ DEPRECATION_HINTS = {
 
             Library('foo') [ or LIBRARY_NAME = 'foo' ]
             FORCE_SHARED_LIB = True
-        ''',
-
-    'IS_FRAMEWORK': '''
+        """,
+    "IS_FRAMEWORK": """
         Please use
 
             Framework('foo')
@@ -2853,15 +3156,21 @@ DEPRECATION_HINTS = {
 
             Library('foo') [ or LIBRARY_NAME = 'foo' ]
             IS_FRAMEWORK = True
-        ''',
+        """,
+    "IS_GKRUST": """
+        Please use
 
-    'TOOL_DIRS': 'Please use the DIRS variable instead.',
+            RustLibrary('gkrust', ... is_gkrust=True)
 
-    'TEST_TOOL_DIRS': 'Please use the TEST_DIRS variable instead.',
+        instead of
 
-    'PARALLEL_DIRS': 'Please use the DIRS variable instead.',
-
-    'NO_DIST_INSTALL': '''
+            RustLibrary('gkrust') [ or LIBRARY_NAME = 'gkrust' ]
+            IS_GKRUST = True
+        """,
+    "TOOL_DIRS": "Please use the DIRS variable instead.",
+    "TEST_TOOL_DIRS": "Please use the TEST_DIRS variable instead.",
+    "PARALLEL_DIRS": "Please use the DIRS variable instead.",
+    "NO_DIST_INSTALL": """
         Please use
 
             DIST_INSTALL = False
@@ -2869,9 +3178,8 @@ DEPRECATION_HINTS = {
         instead of
 
             NO_DIST_INSTALL = True
-    ''',
-
-    'GENERATED_SOURCES': '''
+    """,
+    "GENERATED_SOURCES": """
         Please use
 
             SOURCES += [ '!foo.cpp' ]
@@ -2879,9 +3187,8 @@ DEPRECATION_HINTS = {
         instead of
 
             GENERATED_SOURCES += [ 'foo.cpp']
-    ''',
-
-    'GENERATED_INCLUDES': '''
+    """,
+    "GENERATED_INCLUDES": """
         Please use
 
             LOCAL_INCLUDES += [ '!foo' ]
@@ -2889,9 +3196,8 @@ DEPRECATION_HINTS = {
         instead of
 
             GENERATED_INCLUDES += [ 'foo' ]
-    ''',
-
-    'DIST_FILES': '''
+    """,
+    "DIST_FILES": """
         Please use
 
             FINAL_TARGET_PP_FILES += [ 'foo' ]
@@ -2899,10 +3205,10 @@ DEPRECATION_HINTS = {
         instead of
 
             DIST_FILES += [ 'foo' ]
-    ''',
+    """,
 }
 
 # Make sure that all template variables have a deprecation hint.
 for name in TEMPLATE_VARIABLES:
     if name not in DEPRECATION_HINTS:
-        raise RuntimeError('Missing deprecation hint for %s' % name)
+        raise RuntimeError("Missing deprecation hint for %s" % name)

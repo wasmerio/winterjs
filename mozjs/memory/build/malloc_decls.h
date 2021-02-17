@@ -61,8 +61,12 @@ NOTHROW_MALLOC_DECL(valloc, void*, size_t)
 NOTHROW_MALLOC_DECL(malloc_usable_size, size_t, usable_ptr_t)
 MALLOC_DECL(malloc_good_size, size_t, size_t)
 #  endif
+
 #  if MALLOC_FUNCS & MALLOC_FUNCS_JEMALLOC
-MALLOC_DECL(jemalloc_stats, void, jemalloc_stats_t*)
+// The 2nd argument points to an optional array exactly JEMALLOC_MAX_STATS_BINS
+// long to be filled in (if non-null). Any unused bin has it's size set to zero.
+MALLOC_DECL(jemalloc_stats_internal, void, jemalloc_stats_t*,
+            jemalloc_bin_stats_t*)
 
 // On some operating systems (Mac), we use madvise(MADV_FREE) to hand pages
 // back to the operating system.  On Mac, the operating system doesn't take
@@ -112,7 +116,7 @@ MALLOC_DECL(moz_create_arena_with_params, arena_id_t, arena_params_t*)
 
 // Dispose of the given arena. Subsequent uses of the arena will crash.
 // Passing an invalid id (inexistent or already disposed) to this function
-// will crash.
+// will crash. The arena must be empty prior to calling this function.
 MALLOC_DECL(moz_dispose_arena, void, arena_id_t)
 #  endif
 

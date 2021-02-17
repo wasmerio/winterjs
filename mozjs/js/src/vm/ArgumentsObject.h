@@ -90,12 +90,25 @@ struct ArgumentsData {
   }
 };
 
-// Maximum supported value of arguments.length. This bounds the maximum
-// number of arguments that can be supplied to Function.prototype.apply.
-// This value also bounds the number of elements parsed in an array
-// initializer.
-// NB: keep this in sync with the copy in builtin/SelfHostingDefines.h.
+// Maximum supported value of arguments.length. This bounds the
+// maximum number of arguments that can be supplied to a spread call
+// or Function.prototype.apply.  This value also bounds the number of
+// elements parsed in an array initializer.  NB: keep this in sync
+// with the copy in builtin/SelfHostingDefines.h.
 static const unsigned ARGS_LENGTH_MAX = 500 * 1000;
+
+// Maximum number of arguments supported in jitcode. This bounds the
+// maximum number of arguments that can be supplied to a spread call
+// or Function.prototype.apply without entering the VM. We limit the
+// number of parameters we can handle to a number that does not risk
+// us allocating too much stack, notably on Windows where there is a
+// 4K guard page that has to be touched to extend the stack. The value
+// "3000" is the size of the guard page minus an arbitrary, but large,
+// safety margin. See bug 1351278.
+static const uint32_t JIT_ARGS_LENGTH_MAX = 3000 / sizeof(JS::Value);
+
+static_assert(JIT_ARGS_LENGTH_MAX <= ARGS_LENGTH_MAX,
+              "maximum jit arguments should be <= maximum arguments");
 
 /*
  * [SMDOC] ArgumentsObject
@@ -264,6 +277,11 @@ class ArgumentsObject : public NativeObject {
    */
   static bool reifyIterator(JSContext* cx, Handle<ArgumentsObject*> obj);
 
+  /*
+   * Return the arguments iterator function.
+   */
+  static bool getArgumentsIterator(JSContext* cx, MutableHandleValue val);
+
   /* True iff any element has been assigned or its attributes
    * changed. */
   bool hasOverriddenElement() const {
@@ -320,7 +338,7 @@ class ArgumentsObject : public NativeObject {
    *    forwarding when the value is the magic forwarding value;
    *  - VM argument access should use arg(i) which will assert that the
    *    value is not the magic forwarding value (since, if such forwarding was
-   *    needed, the frontend should have emitted JSOP_GETALIASEDVAR).
+   *    needed, the frontend should have emitted JSOp::GetAliasedVar).
    */
   const Value& element(uint32_t i) const;
 
@@ -338,6 +356,16 @@ class ArgumentsObject : public NativeObject {
     GCPtrValue& lhs = data()->args[i];
     MOZ_ASSERT(!lhs.isMagic());
     lhs = v;
+  }
+
+  /*
+   * Test if an argument is forwarded, i.e. its actual value is stored in the
+   * CallObject and can't be directly read from |ArgumentsData::args|.
+   */
+  bool argIsForwarded(unsigned i) const {
+    MOZ_ASSERT(i < data()->numArgs);
+    const Value& v = data()->args[i];
+    return IsMagicScopeSlotValue(v);
   }
 
   /*
@@ -393,11 +421,11 @@ class ArgumentsObject : public NativeObject {
     // normal magic values (those with a JSWhyMagic) and uint32 magic
     // values, we add the maximum JSWhyMagic value to the slot
     // number. This is safe as ARGS_LENGTH_MAX is well below UINT32_MAX.
-    JS_STATIC_ASSERT(UINT32_MAX - JS_WHY_MAGIC_COUNT > ARGS_LENGTH_MAX);
+    static_assert(UINT32_MAX - JS_WHY_MAGIC_COUNT > ARGS_LENGTH_MAX);
     return JS::MagicValueUint32(slot + JS_WHY_MAGIC_COUNT);
   }
   static uint32_t SlotFromMagicScopeSlotValue(const Value& v) {
-    JS_STATIC_ASSERT(UINT32_MAX - JS_WHY_MAGIC_COUNT > ARGS_LENGTH_MAX);
+    static_assert(UINT32_MAX - JS_WHY_MAGIC_COUNT > ARGS_LENGTH_MAX);
     return v.magicUint32() - JS_WHY_MAGIC_COUNT;
   }
   static bool IsMagicScopeSlotValue(const Value& v) {

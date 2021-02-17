@@ -19,11 +19,14 @@
 #include "builtin/streams/ReadableStreamDefaultControllerOperations.h"  // js::ReadableStreamControllerClearAlgorithms
 #include "builtin/streams/ReadableStreamInternals.h"  // js::ReadableStream{AddReadOrReadIntoRequest,CloseInternal,CreateReadResult,ErrorInternal,FulfillReadOrReadIntoRequest,GetNumReadRequests,HasDefaultReader}
 #include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStream{,Default}Reader, js::CreateReadableStreamDefaultReader, js::ReadableStreamReaderGeneric{Cancel,Initialize,Release}, js::ReadableStreamDefaultReaderRead
-#include "gc/Heap.h"
-#include "js/ArrayBuffer.h"  // JS::NewArrayBuffer
+#include "js/ArrayBuffer.h"                        // JS::NewArrayBuffer
+#include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewData, JS_NewUint8Array{,WithBuffer}
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
+#include "vm/PlainObject.h"  // js::PlainObject
+#include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
 #include "vm/SelfHosting.h"
 
 #include "builtin/streams/HandlerFunction-inl.h"  // js::NewHandler
@@ -316,8 +319,7 @@ MOZ_MUST_USE bool js::SetUpExternalReadableByteStreamController(
   // Step 14: Let startResult be the result of performing startAlgorithm.
   // (For external sources, this algorithm does nothing and returns undefined.)
   // Step 15: Let startPromise be a promise resolved with startResult.
-  RootedObject startPromise(
-      cx, PromiseObject::unforgeableResolve(cx, UndefinedHandleValue));
+  Rooted<PromiseObject*> startPromise(cx, PromiseResolvedWithUndefined(cx));
   if (!startPromise) {
     return false;
   }
@@ -367,17 +369,17 @@ static void ReadableByteStreamControllerFinalize(JSFreeOp* fop, JSObject* obj) {
 }
 
 static const JSClassOps ReadableByteStreamControllerClassOps = {
-    nullptr, /* addProperty */
-    nullptr, /* delProperty */
-    nullptr, /* enumerate */
-    nullptr, /* newEnumerate */
-    nullptr, /* resolve */
-    nullptr, /* mayResolve */
-    ReadableByteStreamControllerFinalize,
-    nullptr, /* call        */
-    nullptr, /* hasInstance */
-    nullptr, /* construct   */
-    nullptr, /* trace   */
+    nullptr,                               // addProperty
+    nullptr,                               // delProperty
+    nullptr,                               // enumerate
+    nullptr,                               // newEnumerate
+    nullptr,                               // resolve
+    nullptr,                               // mayResolve
+    ReadableByteStreamControllerFinalize,  // finalize
+    nullptr,                               // call
+    nullptr,                               // hasInstance
+    nullptr,                               // construct
+    nullptr,                               // trace
 };
 
 JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
@@ -394,7 +396,7 @@ static MOZ_MUST_USE bool ReadableByteStreamControllerHandleQueueDrain(
 /**
  * Streams spec, 3.11.5.2. [[PullSteps]] ( forAuthorCode )
  */
-static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
+static MOZ_MUST_USE PromiseObject* ReadableByteStreamControllerPullSteps(
     JSContext* cx, Handle<ReadableByteStreamController*> unwrappedController) {
   // Step 1: Let stream be this.[[controlledReadableByteStream]].
   Rooted<ReadableStream*> unwrappedStream(cx, unwrappedController->stream());
@@ -500,7 +502,7 @@ static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
     if (!unwrappedReader) {
       return nullptr;
     }
-    RootedObject readResult(
+    Rooted<PlainObject*> readResult(
         cx, ReadableStreamCreateReadResult(cx, val, false,
                                            unwrappedReader->forAuthorCode()));
     if (!readResult) {
@@ -508,7 +510,7 @@ static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
     }
     val.setObject(*readResult);
 
-    return PromiseObject::unforgeableResolve(cx, val);
+    return PromiseObject::unforgeableResolveWithNonPromise(cx, val);
   }
 
   // Step 4: Let autoAllocateChunkSize be this.[[autoAllocateChunkSize]].
@@ -557,7 +559,7 @@ static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
 
   // Step 6: Let promise be ! ReadableStreamAddReadRequest(stream,
   //                                                       forAuthorCode).
-  RootedObject promise(
+  Rooted<PromiseObject*> promise(
       cx, ReadableStreamAddReadOrReadIntoRequest(cx, unwrappedStream));
   if (!promise) {
     return nullptr;
@@ -579,7 +581,7 @@ static MOZ_MUST_USE JSObject* ReadableByteStreamControllerPullSteps(
  * and
  * Streams spec, 3.11.5.2. [[PullSteps]] ( forAuthorCode )
  */
-MOZ_MUST_USE JSObject* js::ReadableStreamControllerPullSteps(
+MOZ_MUST_USE PromiseObject* js::ReadableStreamControllerPullSteps(
     JSContext* cx, Handle<ReadableStreamController*> unwrappedController) {
   if (unwrappedController->is<ReadableStreamDefaultController>()) {
     Rooted<ReadableStreamDefaultController*> unwrappedDefaultController(

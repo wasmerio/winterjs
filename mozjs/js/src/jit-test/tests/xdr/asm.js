@@ -8,11 +8,12 @@ var test = (function () {
 	return g;
     };
   };
-  return f.toSource();
+  return f.toString();
 })();
 
 try {
   evalWithCache(test, {});
 } catch (x) {
-  assertEq(x.message.includes("Asm.js is not supported by XDR"), true);
+  assertEq(x.message.includes("Asm.js is not supported by XDR") ||
+           x.message.includes("XDR encoding failure"), true);
 }

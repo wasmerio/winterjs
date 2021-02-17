@@ -4,6 +4,8 @@
 
 import json
 
+import attr
+
 import mozunit
 import mozpack.path as mozpath
 import pytest
@@ -80,7 +82,7 @@ TEST-UNEXPECTED-WARNING | /fake/root/d/e/f.txt:4:2 | oh no bar (bar-not-allowed)
 
 @pytest.fixture
 def result(scope="module"):
-    result = ResultSummary('/fake/root')
+    result = ResultSummary("/fake/root")
     containers = (
         Issue(linter="foo", path="a/b/c.txt", message="oh no foo", lineno=1),
         Issue(
@@ -110,7 +112,7 @@ def result(scope="module"):
             diff="diff 1\n- hello\n+ hello2",
         ),
     )
-    result = ResultSummary('/fake/root')
+    result = ResultSummary("/fake/root")
     for c in containers:
         result.issues[c.path].append(c)
     return result
@@ -121,7 +123,7 @@ def test_formatters(result, name):
     opts = EXPECTED[name]
     fmt = formatters.get(name, **opts["kwargs"])
     # encoding to str bypasses a UnicodeEncodeError in pytest
-    assert fmt(result).encode("utf-8") == opts["format"].encode("utf-8")
+    assert fmt(result) == opts["format"]
 
 
 def test_json_formatter(result):
@@ -130,10 +132,10 @@ def test_json_formatter(result):
 
     assert set(formatted.keys()) == set(result.issues.keys())
 
-    slots = Issue.__slots__
+    attrs = attr.fields(Issue)
     for errors in formatted.values():
         for err in errors:
-            assert all(s in err for s in slots)
+            assert all(a.name in err for a in attrs)
 
 
 if __name__ == "__main__":

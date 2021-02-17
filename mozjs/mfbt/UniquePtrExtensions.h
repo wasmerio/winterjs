@@ -9,6 +9,9 @@
 #ifndef mozilla_UniquePtrExtensions_h
 #define mozilla_UniquePtrExtensions_h
 
+#include <type_traits>
+
+#include "mozilla/Attributes.h"
 #include "mozilla/fallible.h"
 #include "mozilla/UniquePtr.h"
 
@@ -31,12 +34,51 @@ typename detail::UniqueSelector<T>::SingleObject MakeUniqueFallible(
 template <typename T>
 typename detail::UniqueSelector<T>::UnknownBound MakeUniqueFallible(
     decltype(sizeof(int)) aN) {
-  typedef typename RemoveExtent<T>::Type ArrayType;
+  using ArrayType = std::remove_extent_t<T>;
   return UniquePtr<T>(new (fallible) ArrayType[aN]());
 }
 
 template <typename T, typename... Args>
 typename detail::UniqueSelector<T>::KnownBound MakeUniqueFallible(
+    Args&&... aArgs) = delete;
+
+/**
+ * MakeUniqueForOverwrite and MakeUniqueFallibleForOverwrite are like MakeUnique
+ * and MakeUniqueFallible except they use default-initialization. This is
+ * useful, for example, when you have a POD type array that will be overwritten
+ * directly after construction and so zero-initialization is a waste.
+ */
+template <typename T, typename... Args>
+typename detail::UniqueSelector<T>::SingleObject MakeUniqueForOverwrite() {
+  return UniquePtr<T>(new T);
+}
+
+template <typename T>
+typename detail::UniqueSelector<T>::UnknownBound MakeUniqueForOverwrite(
+    decltype(sizeof(int)) aN) {
+  using ArrayType = std::remove_extent_t<T>;
+  return UniquePtr<T>(new ArrayType[aN]);
+}
+
+template <typename T, typename... Args>
+typename detail::UniqueSelector<T>::KnownBound MakeUniqueForOverwrite(
+    Args&&... aArgs) = delete;
+
+template <typename T, typename... Args>
+typename detail::UniqueSelector<T>::SingleObject
+MakeUniqueForOverwriteFallible() {
+  return UniquePtr<T>(new (fallible) T);
+}
+
+template <typename T>
+typename detail::UniqueSelector<T>::UnknownBound MakeUniqueForOverwriteFallible(
+    decltype(sizeof(int)) aN) {
+  using ArrayType = std::remove_extent_t<T>;
+  return UniquePtr<T>(new (fallible) ArrayType[aN]);
+}
+
+template <typename T, typename... Args>
+typename detail::UniqueSelector<T>::KnownBound MakeUniqueForOverwriteFallible(
     Args&&... aArgs) = delete;
 
 namespace detail {
@@ -120,6 +162,32 @@ using UniqueFreePtr = UniquePtr<T, detail::FreePolicy<T>>;
 // objects: a file descriptor on Unix or a handle on Windows.
 using UniqueFileHandle =
     UniquePtr<detail::FileHandleType, detail::FileHandleDeleter>;
+
+// Helper for passing a UniquePtr to an old-style function that uses raw
+// pointers for out params. Example usage:
+//
+//   void AllocateFoo(Foo** out) { *out = new Foo(); }
+//   UniquePtr<Foo> foo;
+//   AllocateFoo(getter_Transfers(foo));
+template <typename T, typename D>
+auto getter_Transfers(UniquePtr<T, D>& up) {
+  class MOZ_TEMPORARY_CLASS UniquePtrGetterTransfers {
+   public:
+    using Ptr = UniquePtr<T, D>;
+    explicit UniquePtrGetterTransfers(Ptr& p) : mPtr(p) {}
+    ~UniquePtrGetterTransfers() { mPtr.reset(mRawPtr); }
+
+    operator typename Ptr::ElementType **() { return &mRawPtr; }
+    operator void**() { return reinterpret_cast<void**>(&mRawPtr); }
+    typename Ptr::ElementType*& operator*() { return mRawPtr; }
+
+   private:
+    Ptr& mPtr;
+    typename Ptr::Pointer mRawPtr = nullptr;
+  };
+
+  return UniquePtrGetterTransfers(up);
+}
 
 }  // namespace mozilla
 

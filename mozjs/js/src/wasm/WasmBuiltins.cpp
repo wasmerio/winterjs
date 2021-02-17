@@ -22,14 +22,20 @@
 
 #include "fdlibm.h"
 #include "jslibmath.h"
+#include "jsmath.h"
 
+#include "gc/Allocator.h"
 #include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
 #include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
 #include "threading/Mutex.h"
 #include "util/Memory.h"
 #include "util/Poison.h"
+#include "vm/BigIntType.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmTypes.h"
@@ -190,8 +196,14 @@ const SymbolicAddressSignature SASigTableSet = {SymbolicAddress::TableSet,
                                                 {_PTR, _I32, _RoN, _I32, _END}};
 const SymbolicAddressSignature SASigTableSize = {
     SymbolicAddress::TableSize, _I32, _Infallible, 2, {_PTR, _I32, _END}};
-const SymbolicAddressSignature SASigFuncRef = {
-    SymbolicAddress::FuncRef, _RoN, _FailOnInvalidRef, 2, {_PTR, _I32, _END}};
+const SymbolicAddressSignature SASigRefFunc = {
+    SymbolicAddress::RefFunc, _RoN, _FailOnInvalidRef, 2, {_PTR, _I32, _END}};
+const SymbolicAddressSignature SASigPreBarrierFiltering = {
+    SymbolicAddress::PreBarrierFiltering,
+    _VOID,
+    _Infallible,
+    2,
+    {_PTR, _PTR, _END}};
 const SymbolicAddressSignature SASigPostBarrier = {
     SymbolicAddress::PostBarrier, _VOID, _Infallible, 2, {_PTR, _PTR, _END}};
 const SymbolicAddressSignature SASigPostBarrierFiltering = {
@@ -206,8 +218,8 @@ const SymbolicAddressSignature SASigStructNarrow = {
     SymbolicAddress::StructNarrow,
     _RoN,
     _Infallible,
-    4,
-    {_PTR, _I32, _I32, _RoN, _END}};
+    3,
+    {_PTR, _I32, _RoN, _END}};
 
 }  // namespace wasm
 }  // namespace js
@@ -292,17 +304,17 @@ static bool WasmHandleDebugTrap() {
   JitActivation* activation = CallingActivation();
   JSContext* cx = activation->cx();
   Frame* fp = activation->wasmExitFP();
-  Instance* instance = fp->tls->instance;
+  Instance* instance = GetNearestEffectiveTls(fp)->instance;
   const Code& code = instance->code();
   MOZ_ASSERT(code.metadata().debugEnabled);
 
   // The debug trap stub is the innermost frame. It's return address is the
   // actual trap site.
-  const CallSite* site = code.lookupCallSite(fp->returnAddress);
+  const CallSite* site = code.lookupCallSite(fp->returnAddress());
   MOZ_ASSERT(site);
 
   // Advance to the actual trapping frame.
-  fp = fp->callerFP;
+  fp = fp->wasmCaller();
   DebugFrame* debugFrame = DebugFrame::from(fp);
 
   if (site->kind() == CallSite::EnterFrame) {
@@ -311,18 +323,21 @@ static bool WasmHandleDebugTrap() {
     }
     debugFrame->setIsDebuggee();
     debugFrame->observe(cx);
-    ResumeMode mode = DebugAPI::onEnterFrame(cx, debugFrame);
-    if (mode == ResumeMode::Return) {
-      // Ignoring forced return (ResumeMode::Return) -- changing code execution
-      // order is not yet implemented in the wasm baseline.
-      // TODO properly handle ResumeMode::Return and resume wasm execution.
-      JS_ReportErrorASCII(cx, "Unexpected resumption value from onEnterFrame");
+    if (!DebugAPI::onEnterFrame(cx, debugFrame)) {
+      if (cx->isPropagatingForcedReturn()) {
+        cx->clearPropagatingForcedReturn();
+        // Ignoring forced return because changing code execution order is
+        // not yet implemented in the wasm baseline.
+        // TODO properly handle forced return and resume wasm execution.
+        JS_ReportErrorASCII(cx,
+                            "Unexpected resumption value from onEnterFrame");
+      }
       return false;
     }
-    return mode == ResumeMode::Continue;
+    return true;
   }
   if (site->kind() == CallSite::LeaveFrame) {
-    if (!debugFrame->updateReturnJSValue()) {
+    if (!debugFrame->updateReturnJSValue(cx)) {
       return false;
     }
     bool ok = DebugAPI::onLeaveFrame(cx, debugFrame, nullptr, true);
@@ -333,27 +348,24 @@ static bool WasmHandleDebugTrap() {
   DebugState& debug = instance->debug();
   MOZ_ASSERT(debug.hasBreakpointTrapAtOffset(site->lineOrBytecode()));
   if (debug.stepModeEnabled(debugFrame->funcIndex())) {
-    RootedValue result(cx, UndefinedValue());
-    ResumeMode mode = DebugAPI::onSingleStep(cx, &result);
-    if (mode == ResumeMode::Return) {
-      // TODO properly handle ResumeMode::Return.
-      JS_ReportErrorASCII(cx, "Unexpected resumption value from onSingleStep");
-      return false;
-    }
-    if (mode != ResumeMode::Continue) {
+    if (!DebugAPI::onSingleStep(cx)) {
+      if (cx->isPropagatingForcedReturn()) {
+        cx->clearPropagatingForcedReturn();
+        // TODO properly handle forced return.
+        JS_ReportErrorASCII(cx,
+                            "Unexpected resumption value from onSingleStep");
+      }
       return false;
     }
   }
   if (debug.hasBreakpointSite(site->lineOrBytecode())) {
-    RootedValue result(cx, UndefinedValue());
-    ResumeMode mode = DebugAPI::onTrap(cx, &result);
-    if (mode == ResumeMode::Return) {
-      // TODO properly handle ResumeMode::Return.
-      JS_ReportErrorASCII(
-          cx, "Unexpected resumption value from breakpoint handler");
-      return false;
-    }
-    if (mode != ResumeMode::Continue) {
+    if (!DebugAPI::onTrap(cx)) {
+      if (cx->isPropagatingForcedReturn()) {
+        cx->clearPropagatingForcedReturn();
+        // TODO properly handle forced return.
+        JS_ReportErrorASCII(
+            cx, "Unexpected resumption value from breakpoint handler");
+      }
       return false;
     }
   }
@@ -403,13 +415,15 @@ void* wasm::HandleThrow(JSContext* cx, WasmFrameIter& iter) {
     // Assume ResumeMode::Terminate if no exception is pending --
     // no onExceptionUnwind handlers must be fired.
     if (cx->isExceptionPending()) {
-      ResumeMode mode = DebugAPI::onExceptionUnwind(cx, frame);
-      if (mode == ResumeMode::Return) {
-        // Unexpected trap return -- raising error since throw recovery
-        // is not yet implemented in the wasm baseline.
-        // TODO properly handle ResumeMode::Return and resume wasm execution.
-        JS_ReportErrorASCII(
-            cx, "Unexpected resumption value from onExceptionUnwind");
+      if (!DebugAPI::onExceptionUnwind(cx, frame)) {
+        if (cx->isPropagatingForcedReturn()) {
+          cx->clearPropagatingForcedReturn();
+          // Unexpected trap return -- raising error since throw recovery
+          // is not yet implemented in the wasm baseline.
+          // TODO properly handle forced return and resume wasm execution.
+          JS_ReportErrorASCII(
+              cx, "Unexpected resumption value from onExceptionUnwind");
+        }
       }
     }
 
@@ -495,7 +509,7 @@ static void* WasmHandleTrap() {
       if (!CheckRecursionLimit(cx)) {
         return nullptr;
       }
-      if (activation->wasmExitFP()->tls->isInterrupted()) {
+      if (activation->wasmExitTls()->isInterrupted()) {
         return CheckInterrupt(cx, activation);
       }
       return ReportError(cx, JSMSG_OVER_RECURSED);
@@ -509,10 +523,10 @@ static void* WasmHandleTrap() {
   MOZ_CRASH("unexpected trap");
 }
 
-static void WasmReportInt64JSCall() {
+static void WasmReportV128JSCall() {
   JSContext* cx = TlsContext.get();
   JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                           JSMSG_WASM_BAD_I64_TYPE);
+                           JSMSG_WASM_BAD_VAL_TYPE);
 }
 
 static int32_t CoerceInPlace_ToInt32(Value* rawVal) {
@@ -526,6 +540,20 @@ static int32_t CoerceInPlace_ToInt32(Value* rawVal) {
   }
 
   *rawVal = Int32Value(i32);
+  return true;
+}
+
+static int32_t CoerceInPlace_ToBigInt(Value* rawVal) {
+  JSContext* cx = TlsContext.get();
+
+  RootedValue val(cx, *rawVal);
+  BigInt* bi = ToBigInt(cx, val);
+  if (!bi) {
+    *rawVal = PoisonedObjectValue(0x43);
+    return false;
+  }
+
+  *rawVal = BigIntValue(bi);
   return true;
 }
 
@@ -563,13 +591,24 @@ static int32_t CoerceInPlace_JitEntry(int funcExportIndex, TlsData* tlsData,
 
   for (size_t i = 0; i < fe.funcType().args().length(); i++) {
     HandleValue arg = HandleValue::fromMarkedLocation(&argv[i]);
-    switch (fe.funcType().args()[i].code()) {
+    switch (fe.funcType().args()[i].kind()) {
       case ValType::I32: {
         int32_t i32;
         if (!ToInt32(cx, arg, &i32)) {
           return false;
         }
         argv[i] = Int32Value(i32);
+        break;
+      }
+      case ValType::I64: {
+        // In this case we store a BigInt value as there is no value type
+        // corresponding directly to an I64. The conversion to I64 happens
+        // in the JIT entry stub.
+        BigInt* bigint = ToBigInt(cx, arg);
+        if (!bigint) {
+          return false;
+        }
+        argv[i] = BigIntValue(bigint);
         break;
       }
       case ValType::F32:
@@ -583,17 +622,30 @@ static int32_t CoerceInPlace_JitEntry(int funcExportIndex, TlsData* tlsData,
         argv[i] = DoubleValue(dbl);
         break;
       }
-      case ValType::AnyRef: {
-        // Leave Object and Null alone, we will unbox inline.  All we need to do
-        // is convert other values to an Object representation.
-        if (!arg.isObjectOrNull()) {
-          RootedAnyRef result(cx, AnyRef::null());
-          if (!BoxAnyRef(cx, arg, &result)) {
-            return false;
-          }
-          argv[i].setObject(*result.get().asJSObject());
+      case ValType::Ref: {
+        switch (fe.funcType().args()[i].refTypeKind()) {
+          case RefType::Extern:
+            // Leave Object and Null alone, we will unbox inline.  All we need
+            // to do is convert other values to an Object representation.
+            if (!arg.isObjectOrNull()) {
+              RootedAnyRef result(cx, AnyRef::null());
+              if (!BoxAnyRef(cx, arg, &result)) {
+                return false;
+              }
+              argv[i].setObject(*result.get().asJSObject());
+            }
+            break;
+          case RefType::Func:
+          case RefType::Eq:
+          case RefType::TypeIndex:
+            // Guarded against by temporarilyUnsupportedReftypeForEntry()
+            MOZ_CRASH("unexpected input argument in CoerceInPlace_JitEntry");
         }
         break;
+      }
+      case ValType::V128: {
+        // Guarded against by hasV128ArgOrRet()
+        MOZ_CRASH("unexpected input argument in CoerceInPlace_JitEntry");
       }
       default: {
         MOZ_CRASH("unexpected input argument in CoerceInPlace_JitEntry");
@@ -602,6 +654,13 @@ static int32_t CoerceInPlace_JitEntry(int funcExportIndex, TlsData* tlsData,
   }
 
   return true;
+}
+
+// Allocate a BigInt without GC, corresponds to the similar VMFunction.
+static BigInt* AllocateBigIntTenuredNoGC() {
+  JSContext* cx = TlsContext.get();
+
+  return js::AllocateBigInt<NoGC>(cx, gc::TenuredHeap);
 }
 
 static int64_t DivI64(uint32_t x_hi, uint32_t x_lo, uint32_t y_hi,
@@ -738,42 +797,20 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
     case SymbolicAddress::HandleTrap:
       *abiType = Args_General0;
       return FuncCast(WasmHandleTrap, *abiType);
-    case SymbolicAddress::ReportInt64JSCall:
+    case SymbolicAddress::ReportV128JSCall:
       *abiType = Args_General0;
-      return FuncCast(WasmReportInt64JSCall, *abiType);
-    case SymbolicAddress::CallImport_Void:
+      return FuncCast(WasmReportV128JSCall, *abiType);
+    case SymbolicAddress::CallImport_General:
       *abiType = MakeABIFunctionType(
           ArgType_Int32,
           {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_void, *abiType);
-    case SymbolicAddress::CallImport_I32:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_i32, *abiType);
-    case SymbolicAddress::CallImport_I64:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_i64, *abiType);
-    case SymbolicAddress::CallImport_F64:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_f64, *abiType);
-    case SymbolicAddress::CallImport_FuncRef:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_funcref, *abiType);
-    case SymbolicAddress::CallImport_AnyRef:
-      *abiType = MakeABIFunctionType(
-          ArgType_Int32,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
-      return FuncCast(Instance::callImport_anyref, *abiType);
+      return FuncCast(Instance::callImport_general, *abiType);
     case SymbolicAddress::CoerceInPlace_ToInt32:
       *abiType = Args_General1;
       return FuncCast(CoerceInPlace_ToInt32, *abiType);
+    case SymbolicAddress::CoerceInPlace_ToBigInt:
+      *abiType = Args_General1;
+      return FuncCast(CoerceInPlace_ToBigInt, *abiType);
     case SymbolicAddress::CoerceInPlace_ToNumber:
       *abiType = Args_General1;
       return FuncCast(CoerceInPlace_ToNumber, *abiType);
@@ -786,6 +823,9 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
     case SymbolicAddress::BoxValue_Anyref:
       *abiType = Args_General1;
       return FuncCast(BoxValue_Anyref, *abiType);
+    case SymbolicAddress::AllocateBigInt:
+      *abiType = Args_General0;
+      return FuncCast(AllocateBigIntTenuredNoGC, *abiType);
     case SymbolicAddress::DivI64:
       *abiType = Args_General4;
       return FuncCast(DivI64, *abiType);
@@ -994,16 +1034,21 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
           MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
       MOZ_ASSERT(*abiType == ToABIType(SASigTableSize));
       return FuncCast(Instance::tableSize, *abiType);
-    case SymbolicAddress::FuncRef:
+    case SymbolicAddress::RefFunc:
       *abiType = MakeABIFunctionType(ArgType_General,
                                      {ArgType_General, ArgType_Int32});
-      MOZ_ASSERT(*abiType == ToABIType(SASigFuncRef));
-      return FuncCast(Instance::funcRef, *abiType);
+      MOZ_ASSERT(*abiType == ToABIType(SASigRefFunc));
+      return FuncCast(Instance::refFunc, *abiType);
     case SymbolicAddress::PostBarrier:
       *abiType = MakeABIFunctionType(ArgType_Int32,
                                      {ArgType_General, ArgType_General});
       MOZ_ASSERT(*abiType == ToABIType(SASigPostBarrier));
       return FuncCast(Instance::postBarrier, *abiType);
+    case SymbolicAddress::PreBarrierFiltering:
+      *abiType = MakeABIFunctionType(ArgType_Int32,
+                                     {ArgType_General, ArgType_General});
+      MOZ_ASSERT(*abiType == ToABIType(SASigPreBarrierFiltering));
+      return FuncCast(Instance::preBarrierFiltering, *abiType);
     case SymbolicAddress::PostBarrierFiltering:
       *abiType = MakeABIFunctionType(ArgType_Int32,
                                      {ArgType_General, ArgType_General});
@@ -1016,8 +1061,7 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
       return FuncCast(Instance::structNew, *abiType);
     case SymbolicAddress::StructNarrow:
       *abiType = MakeABIFunctionType(
-          ArgType_General,
-          {ArgType_General, ArgType_Int32, ArgType_Int32, ArgType_General});
+          ArgType_General, {ArgType_General, ArgType_Int32, ArgType_General});
       MOZ_ASSERT(*abiType == ToABIType(SASigStructNarrow));
       return FuncCast(Instance::structNarrow, *abiType);
 
@@ -1053,17 +1097,13 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
   // Some functions don't want to a thunk, because they already have one or
   // they don't have frame info.
   switch (sym) {
-    case SymbolicAddress::HandleDebugTrap:  // GenerateDebugTrapStub
-    case SymbolicAddress::HandleThrow:      // GenerateThrowStub
-    case SymbolicAddress::HandleTrap:       // GenerateTrapExit
-    case SymbolicAddress::CallImport_Void:  // GenerateImportInterpExit
-    case SymbolicAddress::CallImport_I32:
-    case SymbolicAddress::CallImport_I64:
-    case SymbolicAddress::CallImport_F64:
-    case SymbolicAddress::CallImport_FuncRef:
-    case SymbolicAddress::CallImport_AnyRef:
+    case SymbolicAddress::HandleDebugTrap:        // GenerateDebugTrapStub
+    case SymbolicAddress::HandleThrow:            // GenerateThrowStub
+    case SymbolicAddress::HandleTrap:             // GenerateTrapExit
+    case SymbolicAddress::CallImport_General:     // GenerateImportInterpExit
     case SymbolicAddress::CoerceInPlace_ToInt32:  // GenerateImportJitExit
     case SymbolicAddress::CoerceInPlace_ToNumber:
+    case SymbolicAddress::CoerceInPlace_ToBigInt:
     case SymbolicAddress::BoxValue_Anyref:
 #if defined(JS_CODEGEN_MIPS32)
     case SymbolicAddress::js_jit_gAtomic64Lock:
@@ -1093,6 +1133,7 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::aeabi_idivmod:
     case SymbolicAddress::aeabi_uidivmod:
 #endif
+    case SymbolicAddress::AllocateBigInt:
     case SymbolicAddress::ModD:
     case SymbolicAddress::SinD:
     case SymbolicAddress::CosD:
@@ -1118,7 +1159,7 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::WaitI64:
     case SymbolicAddress::Wake:
     case SymbolicAddress::CoerceInPlace_JitEntry:
-    case SymbolicAddress::ReportInt64JSCall:
+    case SymbolicAddress::ReportV128JSCall:
     case SymbolicAddress::MemCopy:
     case SymbolicAddress::MemCopyShared:
     case SymbolicAddress::DataDrop:
@@ -1133,7 +1174,8 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::TableInit:
     case SymbolicAddress::TableSet:
     case SymbolicAddress::TableSize:
-    case SymbolicAddress::FuncRef:
+    case SymbolicAddress::RefFunc:
+    case SymbolicAddress::PreBarrierFiltering:
     case SymbolicAddress::PostBarrier:
     case SymbolicAddress::PostBarrierFiltering:
     case SymbolicAddress::StructNew:
@@ -1207,7 +1249,7 @@ struct TypedNative {
   TypedNative(InlinableNative native, ABIFunctionType abiType)
       : native(native), abiType(abiType) {}
 
-  typedef TypedNative Lookup;
+  using Lookup = TypedNative;
   static HashNumber hash(const Lookup& l) {
     return HashGeneric(uint32_t(l.native), uint32_t(l.abiType));
   }
@@ -1385,8 +1427,9 @@ bool wasm::EnsureBuiltinThunksInitialized() {
   MOZ_ASSERT(masm.callSiteTargets().empty());
   MOZ_ASSERT(masm.trapSites().empty());
 
-  if (!ExecutableAllocator::makeExecutableAndFlushICache(thunks->codeBase,
-                                                         thunks->codeSize)) {
+  if (!ExecutableAllocator::makeExecutableAndFlushICache(
+          FlushICacheSpec::LocalThreadOnly, thunks->codeBase,
+          thunks->codeSize)) {
     return false;
   }
 
@@ -1420,12 +1463,14 @@ void* wasm::SymbolicAddressTarget(SymbolicAddress sym) {
 static Maybe<ABIFunctionType> ToBuiltinABIFunctionType(
     const FuncType& funcType) {
   const ValTypeVector& args = funcType.args();
-  if (!funcType.ret()) {
+  const ValTypeVector& results = funcType.results();
+
+  if (results.length() != 1) {
     return Nothing();
   }
 
   uint32_t abiType;
-  switch (funcType.ret().ref().code()) {
+  switch (results[0].kind()) {
     case ValType::F32:
       abiType = ArgType_Float32 << RetType_Shift;
       break;
@@ -1441,7 +1486,7 @@ static Maybe<ABIFunctionType> ToBuiltinABIFunctionType(
   }
 
   for (size_t i = 0; i < args.length(); i++) {
-    switch (args[i].code()) {
+    switch (args[i].kind()) {
       case ValType::F32:
         abiType |= (ArgType_Float32 << (ArgType_Shift * (i + 1)));
         break;

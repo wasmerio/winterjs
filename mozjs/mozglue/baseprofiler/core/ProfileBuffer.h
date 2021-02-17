@@ -8,36 +8,26 @@
 
 #include "ProfileBufferEntry.h"
 
-#include "mozilla/BlocksRingBuffer.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PowerOfTwo.h"
+#include "mozilla/ProfileBufferChunkManagerSingle.h"
+#include "mozilla/ProfileChunkedBuffer.h"
 
 namespace mozilla {
 namespace baseprofiler {
 
-// Class storing most profiling data in a BlocksRingBuffer.
+// Class storing most profiling data in a ProfileChunkedBuffer.
 //
 // This class is used as a queue of entries which, after construction, never
 // allocates. This makes it safe to use in the profiler's "critical section".
 class ProfileBuffer final {
  public:
-  // Opaque type containing a block index, which should not be modified outside
-  // of BlocksRingBuffer.
-  // TODO: Eventually, all uint64_t values should be replaced with BlockIndex,
-  // because external users should only store and compare them, but not do other
-  // arithmetic operations (that uint64_t supports).
-  using BlockIndex = BlocksRingBuffer::BlockIndex;
-
   // ProfileBuffer constructor
-  // @param aBuffer The empty BlocksRingBuffer to use as buffer manager.
-  // @param aCapacity The capacity of the buffer in memory.
-  ProfileBuffer(BlocksRingBuffer& aBuffer, PowerOfTwo32 aCapacity);
+  // @param aBuffer The in-session ProfileChunkedBuffer to use as buffer
+  // manager.
+  explicit ProfileBuffer(ProfileChunkedBuffer& aBuffer);
 
-  // ProfileBuffer constructor
-  // @param aBuffer The pre-filled BlocksRingBuffer to use as buffer manager.
-  explicit ProfileBuffer(BlocksRingBuffer& aBuffer);
-
-  ~ProfileBuffer();
+  ProfileChunkedBuffer& UnderlyingChunkedBuffer() const { return mEntries; }
 
   bool IsThreadSafe() const { return mEntries.IsThreadSafe(); }
 
@@ -61,10 +51,11 @@ class ProfileBuffer final {
   // Stream JSON for samples in the buffer to aWriter, using the supplied
   // UniqueStacks object.
   // Only streams samples for the given thread ID and which were taken at or
-  // after aSinceTime.
-  void StreamSamplesToJSON(SpliceableJSONWriter& aWriter, int aThreadId,
-                           double aSinceTime,
-                           UniqueStacks& aUniqueStacks) const;
+  // after aSinceTime. If ID is 0, ignore the stored thread ID; this should only
+  // be used when the buffer contains only one sample.
+  // Return the thread ID of the streamed sample(s), or 0.
+  int StreamSamplesToJSON(SpliceableJSONWriter& aWriter, int aThreadId,
+                          double aSinceTime, UniqueStacks& aUniqueStacks) const;
 
   void StreamMarkersToJSON(SpliceableJSONWriter& aWriter, int aThreadId,
                            const TimeStamp& aProcessStartTime,
@@ -98,21 +89,22 @@ class ProfileBuffer final {
   ProfilerBufferInfo GetProfilerBufferInfo() const;
 
  private:
-  // Add |aEntry| to the provider BlocksRingBuffer.
-  // `static` because it may be used to add an entry to a `BlocksRingBuffer`
+  // Add |aEntry| to the provider ProfileChunkedBuffer.
+  // `static` because it may be used to add an entry to a `ProfileChunkedBuffer`
   // that is not attached to a `ProfileBuffer`.
-  static BlockIndex AddEntry(BlocksRingBuffer& aBlocksRingBuffer,
-                             const ProfileBufferEntry& aEntry);
+  static ProfileBufferBlockIndex AddEntry(
+      ProfileChunkedBuffer& aProfileChunkedBuffer,
+      const ProfileBufferEntry& aEntry);
 
   // Add a sample start (ThreadId) entry for aThreadId to the provided
-  // BlocksRingBuffer. Returns the position of the entry.
-  // `static` because it may be used to add an entry to a `BlocksRingBuffer`
+  // ProfileChunkedBuffer. Returns the position of the entry.
+  // `static` because it may be used to add an entry to a `ProfileChunkedBuffer`
   // that is not attached to a `ProfileBuffer`.
-  static BlockIndex AddThreadIdEntry(BlocksRingBuffer& aBlocksRingBuffer,
-                                     int aThreadId);
+  static ProfileBufferBlockIndex AddThreadIdEntry(
+      ProfileChunkedBuffer& aProfileChunkedBuffer, int aThreadId);
 
-  // The circular-ring storage in which this ProfileBuffer stores its data.
-  BlocksRingBuffer& mEntries;
+  // The storage in which this ProfileBuffer stores its entries.
+  ProfileChunkedBuffer& mEntries;
 
  public:
   // `BufferRangeStart()` and `BufferRangeEnd()` return `uint64_t` values
@@ -128,16 +120,21 @@ class ProfileBuffer final {
   // - It is safe to try and read entries at any index strictly less than
   //   `BufferRangeEnd()` -- but note that these reads may fail by the time you
   //   request them, as old entries get overwritten by new ones.
-  uint64_t BufferRangeStart() const {
-    return mEntries.GetState().mRangeStart.ConvertToU64();
-  }
-  uint64_t BufferRangeEnd() const {
-    return mEntries.GetState().mRangeEnd.ConvertToU64();
-  }
+  uint64_t BufferRangeStart() const { return mEntries.GetState().mRangeStart; }
+  uint64_t BufferRangeEnd() const { return mEntries.GetState().mRangeEnd; }
 
  private:
-  // Used when duplicating sleeping stacks (to avoid spurious mallocs).
-  const UniquePtr<BlocksRingBuffer::Byte[]> mDuplicationBuffer;
+  // 65536 bytes should be plenty for a single backtrace.
+  static constexpr auto WorkerBufferBytes = MakePowerOfTwo32<65536>();
+
+  // Single pre-allocated chunk (to avoid spurious mallocs), used when:
+  // - Duplicating sleeping stacks.
+  // - Adding JIT info.
+  // - Streaming stacks to JSON.
+  // Mutable because it's accessed from non-multithreaded const methods.
+  mutable ProfileBufferChunkManagerSingle mWorkerChunkManager{
+      ProfileBufferChunk::Create(ProfileBufferChunk::SizeofChunkMetadata() +
+                                 WorkerBufferBytes.Value())};
 
   // Time from launch (ns) when first sampling was recorded.
   double mFirstSamplingTimeNs = 0.0;
@@ -165,9 +162,8 @@ class ProfileBuffer final {
  */
 class ProfileBufferCollector final : public ProfilerStackCollector {
  public:
-  ProfileBufferCollector(ProfileBuffer& aBuf, uint32_t aFeatures,
-                         uint64_t aSamplePos)
-      : mBuf(aBuf), mSamplePositionInBuffer(aSamplePos), mFeatures(aFeatures) {}
+  ProfileBufferCollector(ProfileBuffer& aBuf, uint64_t aSamplePos)
+      : mBuf(aBuf), mSamplePositionInBuffer(aSamplePos) {}
 
   Maybe<uint64_t> SamplePositionInBuffer() override {
     return Some(mSamplePositionInBuffer);
@@ -184,7 +180,6 @@ class ProfileBufferCollector final : public ProfilerStackCollector {
  private:
   ProfileBuffer& mBuf;
   uint64_t mSamplePositionInBuffer;
-  uint32_t mFeatures;
 };
 
 }  // namespace baseprofiler

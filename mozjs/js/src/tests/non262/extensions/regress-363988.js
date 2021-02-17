@@ -5,7 +5,7 @@
 
 //-----------------------------------------------------------------------------
 var BUGNUMBER = 363988;
-var summary = 'Do not crash at JS_GetPrivate with large script';
+var summary = 'Do not crash at JS::GetPrivate with large script';
 var actual = 'No Crash';
 var expect = 'No Crash';
 
@@ -27,7 +27,7 @@ function test()
       town[i] = [ si, "x" + si, "y" + si, "z" + si ];
     }
 
-    return "town=" + uneval(town) + ";function f() {}";
+    return "town=" + JSON.stringify(town) + ";function f() {}";
   }
 
   if (typeof document != "undefined")

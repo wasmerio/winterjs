@@ -9,10 +9,12 @@
 #include "jsapi.h"
 
 #include "js/CharacterEncoding.h"
-#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
-#include "vm/EqualityOperations.h"  // js::SameValue
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/PropertyDescriptor.h"    // JS::FromPropertyDescriptor
+#include "vm/EqualityOperations.h"    // js::SameValue
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
+#include "vm/PlainObject.h"  // js::PlainObject
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -790,7 +792,7 @@ static bool CreateFilteredListFromArrayLike(JSContext* cx, HandleValue v,
       return false;
     }
 
-    if (!ValueToId<CanGC>(cx, next, &id)) {
+    if (!PrimitiveValueToId<CanGC>(cx, next, &id)) {
       return false;
     }
 
@@ -905,7 +907,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 17.
   if (extensibleTarget && targetNonconfigurableKeys.empty()) {
-    return props.appendAll(trapResult);
+    return props.appendAll(std::move(trapResult));
   }
 
   // Step 19.
@@ -925,7 +927,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 20.
   if (extensibleTarget) {
-    return props.appendAll(trapResult);
+    return props.appendAll(std::move(trapResult));
   }
 
   // Step 21.
@@ -951,7 +953,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
   }
 
   // Step 23.
-  return props.appendAll(trapResult);
+  return props.appendAll(std::move(trapResult));
 }
 
 // ES8 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93
@@ -1464,12 +1466,8 @@ bool ScriptedProxyHandler::isConstructor(JSObject* obj) const {
 const char ScriptedProxyHandler::family = 0;
 const ScriptedProxyHandler ScriptedProxyHandler::singleton;
 
-bool IsRevokedScriptedProxy(JSObject* obj) {
-  obj = CheckedUnwrapStatic(obj);
-  return obj && IsScriptedProxy(obj) && !obj->as<ProxyObject>().target();
-}
-
-// ES8 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93
+// ES2021 rev c21b280a2c46e92decf3efeca9e9da35d5b9f622
+// Including the changes from: https://github.com/tc39/ecma262/pull/1814
 // 9.5.14 ProxyCreate.
 static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
   if (!args.requireAtLeast(cx, callerName, 2)) {
@@ -1484,27 +1482,13 @@ static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
   }
 
   // Step 2.
-  if (IsRevokedScriptedProxy(target)) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_PROXY_ARG_REVOKED, "1");
-    return false;
-  }
-
-  // Step 3.
   RootedObject handler(cx,
                        RequireObjectArg(cx, "`handler`", callerName, args[1]));
   if (!handler) {
     return false;
   }
 
-  // Step 4.
-  if (IsRevokedScriptedProxy(handler)) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_PROXY_ARG_REVOKED, "2");
-    return false;
-  }
-
-  // Steps 5-6, 8.
+  // Steps 3-4, 6.
   RootedValue priv(cx, ObjectValue(*target));
   JSObject* proxy_ = NewProxyObject(cx, &ScriptedProxyHandler::singleton, priv,
                                     TaggedProto::LazyProto);
@@ -1512,12 +1496,12 @@ static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
     return false;
   }
 
-  // Step 9 (reordered).
+  // Step 7 (reordered).
   Rooted<ProxyObject*> proxy(cx, &proxy_->as<ProxyObject>());
   proxy->setReservedSlot(ScriptedProxyHandler::HANDLER_EXTRA,
                          ObjectValue(*handler));
 
-  // Step 7.
+  // Step 5.
   uint32_t callable =
       target->isCallable() ? ScriptedProxyHandler::IS_CALLABLE : 0;
   uint32_t constructor =
@@ -1525,7 +1509,7 @@ static bool ProxyCreate(JSContext* cx, CallArgs& args, const char* callerName) {
   proxy->setReservedSlot(ScriptedProxyHandler::IS_CALLCONSTRUCT_EXTRA,
                          PrivateUint32Value(callable | constructor));
 
-  // Step 10.
+  // Step 8.
   args.rval().setObject(*proxy);
   return true;
 }

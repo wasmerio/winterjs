@@ -1,11 +1,11 @@
 function f() {
-    var msg = '';
+    var ex;
     try {
         var x = undefined;
         print(x.foo);
     } catch (e) {
-        msg = '' + e;
+        ex = e;
     }
-    assertEq(msg, "TypeError: x is undefined");
+    assertEq(/(x is|"foo" of) undefined/.test(ex.message), true);
 }
 f();

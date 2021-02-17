@@ -7,12 +7,14 @@
 #ifndef jit_none_MacroAssembler_none_h
 #define jit_none_MacroAssembler_none_h
 
-#include "jit/JitRealm.h"
 #include "jit/MoveResolver.h"
 #include "jit/shared/Assembler-shared.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
+
+class CompactBufferReader;
 
 static constexpr Register StackPointer{Registers::invalid_reg};
 static constexpr Register FramePointer{Registers::invalid_reg};
@@ -65,9 +67,10 @@ static constexpr Register RegExpMatcherStringReg{Registers::invalid_reg};
 static constexpr Register RegExpMatcherLastIndexReg{Registers::invalid_reg};
 static constexpr Register RegExpMatcherStickyReg{Registers::invalid_reg};
 
-static constexpr Register JSReturnReg_Type{Registers::invalid_reg};
-static constexpr Register JSReturnReg_Data{Registers::invalid_reg};
-static constexpr Register JSReturnReg{Registers::invalid_reg};
+// Uses |invalid_reg2| to avoid static_assert failures.
+static constexpr Register JSReturnReg_Type{Registers::invalid_reg2};
+static constexpr Register JSReturnReg_Data{Registers::invalid_reg2};
+static constexpr Register JSReturnReg{Registers::invalid_reg2};
 
 #if defined(JS_NUNBOX32)
 static constexpr ValueOperand JSReturnOperand(InvalidReg, InvalidReg);
@@ -99,7 +102,7 @@ static constexpr Register WasmTlsReg{Registers::invalid_reg};
 static constexpr Register WasmJitEntryReturnScratch{Registers::invalid_reg};
 
 static constexpr uint32_t ABIStackAlignment = 4;
-static constexpr uint32_t CodeAlignment = sizeof(void*);
+static constexpr uint32_t CodeAlignment = 16;
 static constexpr uint32_t JitStackAlignment = 8;
 static constexpr uint32_t JitStackValueAlignment =
     JitStackAlignment / sizeof(Value);
@@ -230,7 +233,6 @@ class MacroAssemblerNone : public Assembler {
   }
 
   static bool SupportsFloatingPoint() { return false; }
-  static bool SupportsSimd() { return false; }
   static bool SupportsUnalignedAccesses() { return false; }
   static bool SupportsFastUnalignedAccesses() { return false; }
 
@@ -382,6 +384,10 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
+  void load32Unaligned(T, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   void loadFloat32(T, FloatRegister) {
     MOZ_CRASH();
   }
@@ -406,11 +412,23 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
+  void load16UnalignedSignExtend(T, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   void load16ZeroExtend(T, Register) {
     MOZ_CRASH();
   }
   template <typename T>
+  void load16UnalignedZeroExtend(T, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   void load64(T, Register64) {
+    MOZ_CRASH();
+  }
+  template <typename T>
+  void load64Unaligned(T, Register64) {
     MOZ_CRASH();
   }
 
@@ -424,6 +442,10 @@ class MacroAssemblerNone : public Assembler {
   }
   template <typename T, typename S>
   void store32_NoSecondScratch(T, S) {
+    MOZ_CRASH();
+  }
+  template <typename T, typename S>
+  void store32Unaligned(T, S) {
     MOZ_CRASH();
   }
   template <typename T, typename S>
@@ -443,7 +465,15 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T, typename S>
+  void store16Unaligned(T, S) {
+    MOZ_CRASH();
+  }
+  template <typename T, typename S>
   void store64(T, S) {
+    MOZ_CRASH();
+  }
+  template <typename T, typename S>
+  void store64Unaligned(T, S) {
     MOZ_CRASH();
   }
 
@@ -495,7 +525,8 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   void unboxNonDouble(const Address&, Register, JSValueType) { MOZ_CRASH(); }
-  void unboxGCThingForPreBarrierTrampoline(const Address&, Register) {
+  template <typename T>
+  void unboxGCThingForGCBarrier(const T&, Register) {
     MOZ_CRASH();
   }
   template <typename T>
@@ -558,7 +589,7 @@ class MacroAssemblerNone : public Assembler {
   void convertUInt32ToFloat32(Register, FloatRegister) { MOZ_CRASH(); }
   void incrementInt32Value(Address) { MOZ_CRASH(); }
   void ensureDouble(ValueOperand, FloatRegister, Label*) { MOZ_CRASH(); }
-  void handleFailureWithHandlerTail(void*) { MOZ_CRASH(); }
+  void handleFailureWithHandlerTail(Label*) { MOZ_CRASH(); }
 
   void buildFakeExitFrame(Register, uint32_t*) { MOZ_CRASH(); }
   bool buildOOLFakeExitFrame(void*) { MOZ_CRASH(); }
@@ -569,7 +600,7 @@ class MacroAssemblerNone : public Assembler {
   Operand ToPayload(Operand base) { MOZ_CRASH(); }
   Address ToPayload(Address) { MOZ_CRASH(); }
 
-  static const Register getStackPointer() { MOZ_CRASH(); }
+  Register getStackPointer() const { MOZ_CRASH(); }
 
   // Instrumentation for entering and leaving the profiler.
   void profilerEnterFrame(Register, Register) { MOZ_CRASH(); }
@@ -588,6 +619,7 @@ class ABIArgGenerator {
   ABIArg next(MIRType) { MOZ_CRASH(); }
   ABIArg& current() { MOZ_CRASH(); }
   uint32_t stackBytesConsumedSoFar() const { MOZ_CRASH(); }
+  void increaseStackOffset(uint32_t) { MOZ_CRASH(); }
 };
 
 static inline bool GetTempRegForIntArg(uint32_t, uint32_t, Register*) {

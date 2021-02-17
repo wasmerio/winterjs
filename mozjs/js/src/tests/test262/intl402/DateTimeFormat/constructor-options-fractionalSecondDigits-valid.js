@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.DateTimeFormat-fractionalSecondDigits is not released yet
 // Copyright 2019 Google Inc. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -14,10 +13,7 @@ features: [Intl.DateTimeFormat-fractionalSecondDigits]
 
 
 const validOptions = [
-  [undefined, 0],
-  [-0, 0],
-  [0, 0],
-  ["0", 0],
+  [undefined, undefined],
   [1, 1],
   ["1", 1],
   [2, 2],
@@ -26,9 +22,8 @@ const validOptions = [
   ["3", 3],
   [2.9, 2],
   ["2.9", 2],
-  [0.00001, 0],
+  [1.00001, 1],
   [{ toString() { return "3"; } }, 3],
-  [{ valueOf() { return -0; }, toString: undefined }, 0],
 ];
 for (const [fractionalSecondDigits, expected] of validOptions) {
   const dtf = new Intl.DateTimeFormat("en", { fractionalSecondDigits });

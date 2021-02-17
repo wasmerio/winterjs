@@ -101,8 +101,8 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
   }
 
   ::SetLastError(GetWin32ErrorCode(ntStatus));
-  return nullptr;
 #endif
+  return nullptr;
 }
 
 MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {

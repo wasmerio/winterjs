@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// https://github.com/tc39/test262/blob/master/INTERPRETING.md#host-defined-functions
+// https://github.com/tc39/test262/blob/main/INTERPRETING.md#host-defined-functions
 ;(function createHostObject(global) {
     "use strict";
 
@@ -21,6 +21,7 @@
     var evalInWorker = global.evalInWorker;
     var monotonicNow = global.monotonicNow;
     var gc = global.gc;
+    var clearKeptObjects = global.clearKeptObjects;
 
     var hasCreateIsHTMLDDA = "createIsHTMLDDA" in global;
     var hasThreads = ("helperThreadCount" in global ? global.helperThreadCount() > 0 : true);
@@ -54,6 +55,9 @@
         IsHTMLDDA,
         gc() {
             gc();
+        },
+        clearKeptObjects() {
+            clearKeptObjects();
         },
         agent: (function () {
 

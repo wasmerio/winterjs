@@ -3,14 +3,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
+from __future__ import absolute_import, print_function, unicode_literals
 
 import json
 import os
+import six
 import tempfile
 import unittest
 
-from StringIO import StringIO
+from six import StringIO
 
 import mozunit
 
@@ -37,123 +38,167 @@ class TestBuildDict(unittest.TestCase, Base):
         """
 
         with self.assertRaises(Exception):
-            build_dict(self._config(substs=dict(OS_TARGET='foo')))
+            build_dict(self._config(substs=dict(OS_TARGET="foo")))
 
         with self.assertRaises(Exception):
-            build_dict(self._config(substs=dict(TARGET_CPU='foo')))
+            build_dict(self._config(substs=dict(TARGET_CPU="foo")))
 
         with self.assertRaises(Exception):
-            build_dict(self._config(substs=dict(MOZ_WIDGET_TOOLKIT='foo')))
+            build_dict(self._config(substs=dict(MOZ_WIDGET_TOOLKIT="foo")))
 
     def test_win(self):
-        d = build_dict(self._config(dict(
-            OS_TARGET='WINNT',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='windows',
-        )))
-        self.assertEqual('win', d['os'])
-        self.assertEqual('x86', d['processor'])
-        self.assertEqual('windows', d['toolkit'])
-        self.assertEqual(32, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="WINNT",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="windows",
+                )
+            )
+        )
+        self.assertEqual("win", d["os"])
+        self.assertEqual("x86", d["processor"])
+        self.assertEqual("windows", d["toolkit"])
+        self.assertEqual(32, d["bits"])
 
     def test_linux(self):
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual('linux', d['os'])
-        self.assertEqual('x86', d['processor'])
-        self.assertEqual('gtk', d['toolkit'])
-        self.assertEqual(32, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual("linux", d["os"])
+        self.assertEqual("x86", d["processor"])
+        self.assertEqual("gtk", d["toolkit"])
+        self.assertEqual(32, d["bits"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='x86_64',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual('linux', d['os'])
-        self.assertEqual('x86_64', d['processor'])
-        self.assertEqual('gtk', d['toolkit'])
-        self.assertEqual(64, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="x86_64",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual("linux", d["os"])
+        self.assertEqual("x86_64", d["processor"])
+        self.assertEqual("gtk", d["toolkit"])
+        self.assertEqual(64, d["bits"])
 
     def test_mac(self):
-        d = build_dict(self._config(dict(
-            OS_TARGET='Darwin',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='cocoa',
-        )))
-        self.assertEqual('mac', d['os'])
-        self.assertEqual('x86', d['processor'])
-        self.assertEqual('cocoa', d['toolkit'])
-        self.assertEqual(32, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Darwin",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="cocoa",
+                )
+            )
+        )
+        self.assertEqual("mac", d["os"])
+        self.assertEqual("x86", d["processor"])
+        self.assertEqual("cocoa", d["toolkit"])
+        self.assertEqual(32, d["bits"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='Darwin',
-            TARGET_CPU='x86_64',
-            MOZ_WIDGET_TOOLKIT='cocoa',
-        )))
-        self.assertEqual('mac', d['os'])
-        self.assertEqual('x86_64', d['processor'])
-        self.assertEqual('cocoa', d['toolkit'])
-        self.assertEqual(64, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Darwin",
+                    TARGET_CPU="x86_64",
+                    MOZ_WIDGET_TOOLKIT="cocoa",
+                )
+            )
+        )
+        self.assertEqual("mac", d["os"])
+        self.assertEqual("x86_64", d["processor"])
+        self.assertEqual("cocoa", d["toolkit"])
+        self.assertEqual(64, d["bits"])
 
     def test_android(self):
-        d = build_dict(self._config(dict(
-            OS_TARGET='Android',
-            TARGET_CPU='arm',
-            MOZ_WIDGET_TOOLKIT='android',
-        )))
-        self.assertEqual('android', d['os'])
-        self.assertEqual('arm', d['processor'])
-        self.assertEqual('android', d['toolkit'])
-        self.assertEqual(32, d['bits'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Android",
+                    TARGET_CPU="arm",
+                    MOZ_WIDGET_TOOLKIT="android",
+                )
+            )
+        )
+        self.assertEqual("android", d["os"])
+        self.assertEqual("arm", d["processor"])
+        self.assertEqual("android", d["toolkit"])
+        self.assertEqual(32, d["bits"])
 
     def test_x86(self):
         """
         Test that various i?86 values => x86.
         """
-        d = build_dict(self._config(dict(
-            OS_TARGET='WINNT',
-            TARGET_CPU='i486',
-            MOZ_WIDGET_TOOLKIT='windows',
-        )))
-        self.assertEqual('x86', d['processor'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="WINNT",
+                    TARGET_CPU="i486",
+                    MOZ_WIDGET_TOOLKIT="windows",
+                )
+            )
+        )
+        self.assertEqual("x86", d["processor"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='WINNT',
-            TARGET_CPU='i686',
-            MOZ_WIDGET_TOOLKIT='windows',
-        )))
-        self.assertEqual('x86', d['processor'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="WINNT",
+                    TARGET_CPU="i686",
+                    MOZ_WIDGET_TOOLKIT="windows",
+                )
+            )
+        )
+        self.assertEqual("x86", d["processor"])
 
     def test_arm(self):
         """
         Test that all arm CPU architectures => arm.
         """
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='arm',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual('arm', d['processor'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="arm",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual("arm", d["processor"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='armv7',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual('arm', d['processor'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="armv7",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual("arm", d["processor"])
 
     def test_unknown(self):
         """
         Test that unknown values pass through okay.
         """
-        d = build_dict(self._config(dict(
-            OS_TARGET='RandOS',
-            TARGET_CPU='cptwo',
-            MOZ_WIDGET_TOOLKIT='foobar',
-        )))
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="RandOS",
+                    TARGET_CPU="cptwo",
+                    MOZ_WIDGET_TOOLKIT="foobar",
+                )
+            )
+        )
         self.assertEqual("randos", d["os"])
         self.assertEqual("cptwo", d["processor"])
         self.assertEqual("foobar", d["toolkit"])
@@ -164,39 +209,55 @@ class TestBuildDict(unittest.TestCase, Base):
         """
         Test that debug values are properly detected.
         """
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual(False, d['debug'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual(False, d["debug"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='gtk',
-            MOZ_DEBUG='1',
-        )))
-        self.assertEqual(True, d['debug'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                    MOZ_DEBUG="1",
+                )
+            )
+        )
+        self.assertEqual(True, d["debug"])
 
     def test_crashreporter(self):
         """
         Test that crashreporter values are properly detected.
         """
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='gtk',
-        )))
-        self.assertEqual(False, d['crashreporter'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                )
+            )
+        )
+        self.assertEqual(False, d["crashreporter"])
 
-        d = build_dict(self._config(dict(
-            OS_TARGET='Linux',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='gtk',
-            MOZ_CRASHREPORTER='1',
-        )))
-        self.assertEqual(True, d['crashreporter'])
+        d = build_dict(
+            self._config(
+                dict(
+                    OS_TARGET="Linux",
+                    TARGET_CPU="i386",
+                    MOZ_WIDGET_TOOLKIT="gtk",
+                    MOZ_CRASHREPORTER="1",
+                )
+            )
+        )
+        self.assertEqual(True, d["crashreporter"])
 
 
 class TestWriteMozinfo(unittest.TestCase, Base):
@@ -205,7 +266,8 @@ class TestWriteMozinfo(unittest.TestCase, Base):
     """
 
     def setUp(self):
-        fd, self.f = tempfile.mkstemp()
+        fd, f = tempfile.mkstemp()
+        self.f = six.ensure_text(f)
         os.close(fd)
 
     def tearDown(self):
@@ -215,44 +277,50 @@ class TestWriteMozinfo(unittest.TestCase, Base):
         """
         Test that writing to a file produces correct output.
         """
-        c = self._config(dict(
-            OS_TARGET='WINNT',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='windows',
-        ))
+        c = self._config(
+            dict(
+                OS_TARGET="WINNT",
+                TARGET_CPU="i386",
+                MOZ_WIDGET_TOOLKIT="windows",
+            )
+        )
         tempdir = tempfile.tempdir
         c.topsrcdir = tempdir
-        with NamedTemporaryFile(dir=os.path.normpath(c.topsrcdir)) as mozconfig:
-            mozconfig.write('unused contents')
+        with NamedTemporaryFile(
+            dir=os.path.normpath(c.topsrcdir), mode="wt"
+        ) as mozconfig:
+            mozconfig.write("unused contents")
             mozconfig.flush()
             c.mozconfig = mozconfig.name
             write_mozinfo(self.f, c)
             with open(self.f) as f:
                 d = json.load(f)
-                self.assertEqual('win', d['os'])
-                self.assertEqual('x86', d['processor'])
-                self.assertEqual('windows', d['toolkit'])
-                self.assertEqual(tempdir, d['topsrcdir'])
-                self.assertEqual(mozconfig.name, d['mozconfig'])
-                self.assertEqual(32, d['bits'])
+                self.assertEqual("win", d["os"])
+                self.assertEqual("x86", d["processor"])
+                self.assertEqual("windows", d["toolkit"])
+                self.assertEqual(tempdir, d["topsrcdir"])
+                self.assertEqual(mozconfig.name, d["mozconfig"])
+                self.assertEqual(32, d["bits"])
 
     def test_fileobj(self):
         """
         Test that writing to a file-like object produces correct output.
         """
         s = StringIO()
-        c = self._config(dict(
-            OS_TARGET='WINNT',
-            TARGET_CPU='i386',
-            MOZ_WIDGET_TOOLKIT='windows',
-        ))
+        c = self._config(
+            dict(
+                OS_TARGET="WINNT",
+                TARGET_CPU="i386",
+                MOZ_WIDGET_TOOLKIT="windows",
+            )
+        )
         write_mozinfo(s, c)
         d = json.loads(s.getvalue())
-        self.assertEqual('win', d['os'])
-        self.assertEqual('x86', d['processor'])
-        self.assertEqual('windows', d['toolkit'])
-        self.assertEqual(32, d['bits'])
+        self.assertEqual("win", d["os"])
+        self.assertEqual("x86", d["processor"])
+        self.assertEqual("windows", d["toolkit"])
+        self.assertEqual(32, d["bits"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     mozunit.main()

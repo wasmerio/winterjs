@@ -30,6 +30,7 @@
 #include "jit/arm64/vixl/Constants-vixl.h"
 #include "jit/arm64/vixl/Instructions-vixl.h"
 
+#include "jit/Label.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/Disassembler-shared.h"
 #include "jit/shared/IonAssemblerBufferWithConstantPools.h"
@@ -39,6 +40,7 @@ namespace vixl {
 
 using js::jit::BufferOffset;
 using js::jit::DisassemblerSpew;
+using js::jit::Label;
 
 using LabelDoc = DisassemblerSpew::LabelDoc;
 using LiteralDoc = DisassemblerSpew::LiteralDoc;
@@ -108,7 +110,7 @@ class MozBaseAssembler : public js::jit::AssemblerShared {
   template <typename T>
   inline T GetLabelByteOffset(const js::jit::Label* label) {
     VIXL_ASSERT(label->bound());
-    JS_STATIC_ASSERT(sizeof(T) >= sizeof(uint32_t));
+    static_assert(sizeof(T) >= sizeof(uint32_t));
     return reinterpret_cast<T>(label->offset());
   }
 
@@ -225,7 +227,7 @@ class MozBaseAssembler : public js::jit::AssemblerShared {
 
   // Emit the instruction, returning its offset.
   BufferOffset Emit(Instr instruction, bool isBranch = false) {
-    JS_STATIC_ASSERT(sizeof(instruction) == kInstructionSize);
+    static_assert(sizeof(instruction) == kInstructionSize);
     // TODO: isBranch is obsolete and should be removed.
     (void)isBranch;
     BufferOffset offs = armbuffer_.putInt(*(uint32_t*)(&instruction));
@@ -247,7 +249,7 @@ class MozBaseAssembler : public js::jit::AssemblerShared {
  public:
   // Emit the instruction at |at|.
   static void Emit(Instruction* at, Instr instruction) {
-    JS_STATIC_ASSERT(sizeof(instruction) == kInstructionSize);
+    static_assert(sizeof(instruction) == kInstructionSize);
     memcpy(at, &instruction, sizeof(instruction));
   }
 

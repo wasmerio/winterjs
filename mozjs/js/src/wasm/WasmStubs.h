@@ -45,7 +45,7 @@ class ABIResult {
       return;
     }
     MOZ_ASSERT(inRegister());
-    switch (type_.code()) {
+    switch (type_.kind()) {
       case ValType::I32:
         MOZ_ASSERT(loc_ == Location::Gpr);
         break;
@@ -56,19 +56,18 @@ class ABIResult {
       case ValType::F64:
         MOZ_ASSERT(loc_ == Location::Fpr);
         break;
-      case ValType::AnyRef:
-      case ValType::FuncRef:
       case ValType::Ref:
         MOZ_ASSERT(loc_ == Location::Gpr);
         break;
-      default:
-        MOZ_CRASH("bad value type");
+      case ValType::V128:
+        MOZ_ASSERT(loc_ == Location::Fpr);
+        break;
     }
 #endif
   }
 
   friend class ABIResultIter;
-  ABIResult(){};
+  ABIResult() {}
 
  public:
   // Sizes of items in the stack area.
@@ -88,6 +87,9 @@ class ABIResult {
   static constexpr size_t StackSizeOfFloat = sizeof(double);
 #endif
   static constexpr size_t StackSizeOfDouble = sizeof(double);
+#ifdef ENABLE_WASM_SIMD
+  static constexpr size_t StackSizeOfV128 = sizeof(V128);
+#endif
 
   ABIResult(ValType type, Register gpr)
       : type_(type), loc_(Location::Gpr), gpr_(gpr) {
@@ -164,8 +166,6 @@ class ABIResultIter {
   void settleNext();
   void settlePrev();
 
-  static constexpr size_t RegisterResultCount = 1;
-
  public:
   explicit ABIResultIter(const ResultType& type)
       : type_(type), count_(type.length()) {
@@ -227,7 +227,7 @@ class ABIResultIter {
   uint32_t stackBytesConsumedSoFar() const { return nextStackOffset_; }
 
   static inline bool HasStackResults(const ResultType& type) {
-    return type.length() > RegisterResultCount;
+    return type.length() > MaxRegisterResults;
   }
 
   static uint32_t MeasureStackBytes(const ResultType& type) {

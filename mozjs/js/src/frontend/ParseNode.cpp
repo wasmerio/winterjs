@@ -6,20 +6,21 @@
 
 #include "frontend/ParseNode.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/FloatingPoint.h"
 
 #include "jsnum.h"
 
-#include "frontend/Parser.h"
+#include "frontend/FullParseHandler.h"
+#include "frontend/ParseContext.h"
+#include "frontend/ParserAtom.h"
+#include "frontend/SharedContext.h"
+#include "vm/BigIntType.h"
+#include "vm/Printer.h"
 #include "vm/RegExpObject.h"
-
-#include "vm/JSContext-inl.h"
 
 using namespace js;
 using namespace js::frontend;
 
-using mozilla::ArrayLength;
 using mozilla::IsFinite;
 
 #ifdef DEBUG
@@ -198,12 +199,23 @@ void RegExpLiteral::dumpImpl(GenericPrinter& out, int indent) {
   out.printf("(%s)", parseNodeNames[getKindAsIndex()]);
 }
 
+static void DumpCharsNoNewline(const ParserAtom* atom,
+                               js::GenericPrinter& out) {
+  if (atom->hasLatin1Chars()) {
+    out.put("[Latin 1]");
+    JSString::dumpChars(atom->latin1Chars(), atom->length(), out);
+  } else {
+    out.put("[2 byte]");
+    JSString::dumpChars(atom->twoByteChars(), atom->length(), out);
+  }
+}
+
 void LoopControlStatement::dumpImpl(GenericPrinter& out, int indent) {
   const char* name = parseNodeNames[getKindAsIndex()];
   out.printf("(%s", name);
   if (label()) {
     out.printf(" ");
-    label()->dumpCharsNoNewline(out);
+    DumpCharsNoNewline(label(), out);
   }
   out.printf(")");
 }
@@ -307,7 +319,7 @@ void NameNode::dumpImpl(GenericPrinter& out, int indent) {
     case ParseNodeKind::StringExpr:
     case ParseNodeKind::TemplateStringExpr:
     case ParseNodeKind::ObjectPropertyName:
-      atom()->dumpCharsNoNewline(out);
+      DumpCharsNoNewline(atom(), out);
       return;
 
     case ParseNodeKind::Name:
@@ -317,11 +329,10 @@ void NameNode::dumpImpl(GenericPrinter& out, int indent) {
       if (!atom()) {
         out.put("#<null name>");
       } else {
-        JS::AutoCheckCannotGC nogc;
         if (atom()->hasLatin1Chars()) {
-          DumpName(out, atom()->latin1Chars(nogc), atom()->length());
+          DumpName(out, atom()->latin1Chars(), atom()->length());
         } else {
-          DumpName(out, atom()->twoByteChars(nogc), atom()->length());
+          DumpName(out, atom()->twoByteChars(), atom()->length());
         }
       }
       return;
@@ -342,7 +353,7 @@ void NameNode::dumpImpl(GenericPrinter& out, int indent) {
 void LabeledStatement::dumpImpl(GenericPrinter& out, int indent) {
   const char* name = parseNodeNames[getKindAsIndex()];
   out.printf("(%s ", name);
-  atom()->dumpCharsNoNewline(out);
+  DumpCharsNoNewline(atom(), out);
   out.printf(" ");
   indent += strlen(name) + atom()->length() + 3;
   DumpParseTree(statement(), out, indent);
@@ -354,14 +365,13 @@ void LexicalScopeNode::dumpImpl(GenericPrinter& out, int indent) {
   out.printf("(%s [", name);
   int nameIndent = indent + strlen(name) + 3;
   if (!isEmptyScope()) {
-    LexicalScope::Data* bindings = scopeBindings();
+    ParserScopeData<LexicalScope>* bindings = scopeBindings();
     for (uint32_t i = 0; i < bindings->length; i++) {
-      JSAtom* name = bindings->trailingNames[i].name();
-      JS::AutoCheckCannotGC nogc;
+      const ParserAtom* name = bindings->trailingNames[i].name();
       if (name->hasLatin1Chars()) {
-        DumpName(out, name->latin1Chars(nogc), name->length());
+        DumpName(out, name->latin1Chars(), name->length());
       } else {
-        DumpName(out, name->twoByteChars(nogc), name->length());
+        DumpName(out, name->twoByteChars(), name->length());
       }
       if (i < bindings->length - 1) {
         IndentNewLine(out, nameIndent);
@@ -376,81 +386,40 @@ void LexicalScopeNode::dumpImpl(GenericPrinter& out, int indent) {
 }
 #endif
 
-TraceListNode::TraceListNode(js::gc::Cell* gcThing, TraceListNode* traceLink,
-                             NodeType type)
-    : gcThing(gcThing), traceLink(traceLink), type_(type) {
-  MOZ_ASSERT_IF(gcThing, gcThing->isTenured());
+BigInt* BigIntLiteral::create(JSContext* cx) {
+  return stencil_.bigIntData[index_].createBigInt(cx);
 }
 
-BigIntBox* TraceListNode::asBigIntBox() {
-  MOZ_ASSERT(isBigIntBox());
-  return static_cast<BigIntBox*>(this);
+bool BigIntLiteral::isZero() { return stencil_.bigIntData[index_].isZero(); }
+
+const ParserAtom* NumericLiteral::toAtom(JSContext* cx,
+                                         ParserAtomsTable& parserAtoms) const {
+  return NumberToParserAtom(cx, parserAtoms, value());
 }
 
-ObjectBox* TraceListNode::asObjectBox() {
-  MOZ_ASSERT(isObjectBox());
-  return static_cast<ObjectBox*>(this);
+RegExpObject* RegExpStencil::createRegExp(
+    JSContext* cx, CompilationAtomCache& atomCache) const {
+  RootedAtom atom(cx, atomCache.getExistingAtomAt(cx, atom_));
+  return RegExpObject::createSyntaxChecked(cx, atom, flags_, TenuredObject);
 }
 
-BigIntBox::BigIntBox(JS::BigInt* bi, TraceListNode* traceLink)
-    : TraceListNode(bi, traceLink, TraceListNode::NodeType::BigInt) {}
-
-ObjectBox::ObjectBox(JSObject* obj, TraceListNode* traceLink,
-                     TraceListNode::NodeType type)
-    : TraceListNode(obj, traceLink, type), emitLink(nullptr) {}
-
-bool BigIntLiteral::isZero() {
-  if (data_.is<BigIntBox*>()) {
-    return box()->value()->isZero();
+RegExpObject* RegExpStencil::createRegExpAndEnsureAtom(
+    JSContext* cx, CompilationAtomCache& atomCache,
+    CompilationStencil& stencil) const {
+  const ParserAtom* parserAtom = stencil.getParserAtomAt(cx, atom_);
+  MOZ_ASSERT(parserAtom);
+  RootedAtom atom(cx, parserAtom->toJSAtom(cx, atomCache));
+  if (!atom) {
+    return nullptr;
   }
-  return data_.as<BigIntCreationData>().isZero();
+  return RegExpObject::createSyntaxChecked(cx, atom, flags_, TenuredObject);
 }
 
-BigInt* BigIntLiteral::value() { return box()->value(); }
-
-RegExpObject* RegExpCreationData::createRegExp(JSContext* cx) const {
-  MOZ_ASSERT(buf_);
-  return RegExpObject::createSyntaxChecked(cx, buf_.get(), length_, flags_,
-                                           TenuredObject);
-}
-
-RegExpObject* RegExpLiteral::getOrCreate(JSContext* cx) const {
-  if (data_.is<ObjectBox*>()) {
-    return &objbox()->object()->as<RegExpObject>();
-  }
-  return data_.as<RegExpCreationData>().createRegExp(cx);
-}
-
-FunctionBox* ObjectBox::asFunctionBox() {
-  MOZ_ASSERT(isFunctionBox());
-
-  return static_cast<FunctionBox*>(this);
-}
-
-/* static */
-void TraceListNode::TraceList(JSTracer* trc, TraceListNode* listHead) {
-  for (TraceListNode* node = listHead; node; node = node->traceLink) {
-    node->trace(trc);
-  }
-}
-
-void TraceListNode::trace(JSTracer* trc) {
-  if (gcThing) {
-    TraceGenericPointerRoot(trc, &gcThing, "parser.traceListNode");
-  }
-}
-
-void FunctionBox::trace(JSTracer* trc) {
-  ObjectBox::trace(trc);
-  if (enclosingScope_) {
-    TraceRoot(trc, &enclosingScope_, "funbox-enclosingScope");
-  }
-  if (explicitName_) {
-    TraceRoot(trc, &explicitName_, "funbox-explicitName");
-  }
-  if (functionCreationData_) {
-    functionCreationData_->trace(trc);
-  }
+RegExpObject* RegExpLiteral::create(JSContext* cx,
+                                    CompilationAtomCache& atomCache,
+                                    CompilationStencil& stencil) const {
+  return stencil.regExpData[index_].createRegExpAndEnsureAtom(cx, atomCache,
+                                                              stencil);
 }
 
 bool js::frontend::IsAnonymousFunctionDefinition(ParseNode* pn) {

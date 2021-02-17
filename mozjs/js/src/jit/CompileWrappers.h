@@ -7,9 +7,38 @@
 #ifndef jit_CompileWrappers_h
 #define jit_CompileWrappers_h
 
-#include "vm/JSContext.h"
+#include <stdint.h>
+
+#include "js/TypeDecls.h"
+
+struct JSAtomState;
+
+namespace mozilla::non_crypto {
+class XorShift128PlusRNG;
+}
+
+namespace JS {
+enum class TraceKind;
+}
 
 namespace js {
+
+class GeckoProfilerRuntime;
+class GlobalObject;
+struct JSDOMCallbacks;
+class PropertyName;
+class StaticStrings;
+struct WellKnownSymbols;
+
+using DOMCallbacks = struct JSDOMCallbacks;
+
+namespace gc {
+
+enum class AllocKind : uint8_t;
+class FreeSpan;
+
+}  // namespace gc
+
 namespace jit {
 
 class JitRuntime;
@@ -42,6 +71,7 @@ class CompileRuntime {
   const PropertyName* emptyString();
   const StaticStrings& staticStrings();
   const WellKnownSymbols& wellKnownSymbols();
+  const JSClass* maybeWindowProxyClass();
 
   const void* mainContextPtr();
   uint32_t* addressOfTenuredAllocCount();
@@ -50,7 +80,7 @@ class CompileRuntime {
   const void* addressOfZone();
 
 #ifdef DEBUG
-  bool isInsideNursery(gc::Cell* cell);
+  const void* addressOfIonBailAfterCounter();
 #endif
 
   // DOM callbacks must be threadsafe (and will hopefully be removed soon).
@@ -60,29 +90,31 @@ class CompileRuntime {
 };
 
 class CompileZone {
-  Zone* zone();
+  friend class MacroAssembler;
+  JS::Zone* zone();
 
  public:
-  static CompileZone* get(Zone* zone);
+  static CompileZone* get(JS::Zone* zone);
 
   CompileRuntime* runtime();
   bool isAtomsZone();
-
-#ifdef DEBUG
-  const void* addressOfIonBailAfter();
-#endif
 
   const uint32_t* addressOfNeedsIncrementalBarrier();
   gc::FreeSpan** addressOfFreeList(gc::AllocKind allocKind);
   void* addressOfNurseryPosition();
   void* addressOfStringNurseryPosition();
+  void* addressOfBigIntNurseryPosition();
   const void* addressOfNurseryCurrentEnd();
   const void* addressOfStringNurseryCurrentEnd();
+  const void* addressOfBigIntNurseryCurrentEnd();
 
   uint32_t* addressOfNurseryAllocCount();
 
   bool canNurseryAllocateStrings();
+  bool canNurseryAllocateBigInts();
   void setMinorGCShouldCancelIonCompilations();
+
+  uintptr_t nurseryCellHeader(JS::TraceKind kind);
 };
 
 class JitRealm;
@@ -107,17 +139,12 @@ class CompileRealm {
   const uint32_t* addressOfGlobalWriteBarriered();
 
   bool hasAllocationMetadataBuilder();
-
-  // Mirror RealmOptions.
-  void setSingletonsAsValues();
 };
 
 class JitCompileOptions {
  public:
   JitCompileOptions();
   explicit JitCompileOptions(JSContext* cx);
-
-  bool cloneSingletons() const { return cloneSingletons_; }
 
   bool profilerSlowAssertionsEnabled() const {
     return profilerSlowAssertionsEnabled_;
@@ -127,10 +154,16 @@ class JitCompileOptions {
     return offThreadCompilationAvailable_;
   }
 
+#ifdef DEBUG
+  bool ionBailAfterEnabled() const { return ionBailAfterEnabled_; }
+#endif
+
  private:
-  bool cloneSingletons_;
   bool profilerSlowAssertionsEnabled_;
   bool offThreadCompilationAvailable_;
+#ifdef DEBUG
+  bool ionBailAfterEnabled_ = false;
+#endif
 };
 
 }  // namespace jit

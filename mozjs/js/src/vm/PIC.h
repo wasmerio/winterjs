@@ -8,6 +8,7 @@
 #define vm_PIC_h
 
 #include "vm/GlobalObject.h"
+#include "vm/NativeObject.h"
 
 namespace js {
 
@@ -24,8 +25,8 @@ class PICStub {
   friend class PICChain<Category>;
 
  private:
-  typedef typename Category::Stub CatStub;
-  typedef typename Category::Chain CatChain;
+  using CatStub = typename Category::Stub;
+  using CatChain = typename Category::Chain;
 
  protected:
   CatStub* next_;
@@ -51,8 +52,8 @@ class PICStub {
 template <typename Category>
 class PICChain {
  private:
-  typedef typename Category::Stub CatStub;
-  typedef typename Category::Chain CatChain;
+  using CatStub = typename Category::Stub;
+  using CatChain = typename Category::Chain;
 
  protected:
   CatStub* stubs_;
@@ -75,6 +76,12 @@ class PICChain {
   }
 };
 
+// Class for object that holds ForOfPIC chain.
+class ForOfPICObject : public NativeObject {
+ public:
+  static const JSClass class_;
+};
+
 /*
  *  ForOfPIC defines a PIC category for optimizing for-of operations.
  */
@@ -86,8 +93,8 @@ struct ForOfPIC {
   ForOfPIC() = delete;
   ForOfPIC(const ForOfPIC& other) = delete;
 
-  typedef PICStub<ForOfPIC> BaseStub;
-  typedef PICChain<ForOfPIC> BaseChain;
+  using BaseStub = PICStub<ForOfPIC>;
+  using BaseChain = PICChain<ForOfPIC>;
 
   /*
    * A ForOfPIC has only one kind of stub for now: one that holds the shape
@@ -214,14 +221,11 @@ struct ForOfPIC {
     void freeAllStubs(JSFreeOp* fop);
   };
 
-  // Class for object that holds ForOfPIC chain.
-  static const JSClass class_;
-
   static NativeObject* createForOfPICObject(JSContext* cx,
                                             Handle<GlobalObject*> global);
 
   static inline Chain* fromJSObject(NativeObject* obj) {
-    MOZ_ASSERT(obj->getClass() == &ForOfPIC::class_);
+    MOZ_ASSERT(obj->is<ForOfPICObject>());
     return (ForOfPIC::Chain*)obj->getPrivate();
   }
   static inline Chain* getOrCreate(JSContext* cx) {

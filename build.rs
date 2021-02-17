@@ -105,7 +105,7 @@ fn cc_flags() -> Vec<&'static str> {
     let target = env::var("TARGET").unwrap();
     if target.contains("windows") {
         result.extend(&[
-            "-std=c++14",
+            "-std=c++17",
             "-DWIN32",
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
@@ -114,7 +114,7 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     } else {
         result.extend(&[
-            "-std=gnu++14",
+            "-std=gnu++17",
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
@@ -209,6 +209,7 @@ fn build_jsglue(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
     if target.contains("windows") {
+        build.flag_if_supported("-std:c++17");
         build.flag("-FI");
     } else {
         build.flag("-include");
@@ -354,6 +355,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "js::.*",
     "JS_.*",
     ".*_TO_JSID",
+    "JS_DeprecatedStringHasLatin1Chars",
 ];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
@@ -392,6 +394,7 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::HandleVector",
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
+    "JS::RootedValueArray",
 ];
 
 /// Definitions for types that were blacklisted

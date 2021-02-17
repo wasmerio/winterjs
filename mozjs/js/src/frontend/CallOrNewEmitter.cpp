@@ -31,14 +31,14 @@ CallOrNewEmitter::CallOrNewEmitter(BytecodeEmitter* bce, JSOp op,
                                    ArgumentsKind argumentsKind,
                                    ValueUsage valueUsage)
     : bce_(bce), op_(op), argumentsKind_(argumentsKind) {
-  if (op_ == JSOP_CALL && valueUsage == ValueUsage::IgnoreValue) {
-    op_ = JSOP_CALL_IGNORES_RV;
+  if (op_ == JSOp::Call && valueUsage == ValueUsage::IgnoreValue) {
+    op_ = JSOp::CallIgnoresRv;
   }
 
   MOZ_ASSERT(isCall() || isNew() || isSuperCall());
 }
 
-bool CallOrNewEmitter::emitNameCallee(Handle<JSAtom*> name) {
+bool CallOrNewEmitter::emitNameCallee(const ParserAtom* name) {
   MOZ_ASSERT(state_ == State::Start);
 
   NameOpEmitter noe(
@@ -67,13 +67,14 @@ MOZ_MUST_USE PropOpEmitter& CallOrNewEmitter::prepareForPropCallee(
 }
 
 MOZ_MUST_USE ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
-    bool isSuperElem) {
+    bool isSuperElem, bool isPrivate) {
   MOZ_ASSERT(state_ == State::Start);
 
   eoe_.emplace(bce_,
                isCall() ? ElemOpEmitter::Kind::Call : ElemOpEmitter::Kind::Get,
                isSuperElem ? ElemOpEmitter::ObjKind::Super
-                           : ElemOpEmitter::ObjKind::Other);
+                           : ElemOpEmitter::ObjKind::Other,
+               isPrivate ? NameVisibility::Private : NameVisibility::Public);
 
   state_ = State::ElemCallee;
   return *eoe_;
@@ -105,11 +106,11 @@ bool CallOrNewEmitter::emitSuperCallee() {
     //              [stack] CALLEE
     return false;
   }
-  if (!bce_->emit1(JSOP_SUPERFUN)) {
+  if (!bce_->emit1(JSOp::SuperFun)) {
     //              [stack] CALLEE
     return false;
   }
-  if (!bce_->emit1(JSOP_IS_CONSTRUCTING)) {
+  if (!bce_->emit1(JSOp::IsConstructing)) {
     //              [stack] CALLEE THIS
     return false;
   }
@@ -162,12 +163,12 @@ bool CallOrNewEmitter::emitThis() {
   }
   if (needsThis) {
     if (isNew() || isSuperCall()) {
-      if (!bce_->emit1(JSOP_IS_CONSTRUCTING)) {
+      if (!bce_->emit1(JSOp::IsConstructing)) {
         //          [stack] CALLEE THIS
         return false;
       }
     } else {
-      if (!bce_->emit1(JSOP_UNDEFINED)) {
+      if (!bce_->emit1(JSOp::Undefined)) {
         //          [stack] CALLEE THIS
         return false;
       }
@@ -223,11 +224,11 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
     //              [stack] CALLEE THIS ARG0
 
     ifNotOptimizable_.emplace(bce_);
-    if (!bce_->emit1(JSOP_OPTIMIZE_SPREADCALL)) {
+    if (!bce_->emit1(JSOp::OptimizeSpreadCall)) {
       //            [stack] CALLEE THIS ARG0 OPTIMIZED
       return false;
     }
-    if (!bce_->emit1(JSOP_NOT)) {
+    if (!bce_->emit1(JSOp::Not)) {
       //            [stack] CALLEE THIS ARG0 !OPTIMIZED
       return false;
     }
@@ -235,7 +236,7 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
       //            [stack] CALLEE THIS ARG0
       return false;
     }
-    if (!bce_->emit1(JSOP_POP)) {
+    if (!bce_->emit1(JSOp::Pop)) {
       //            [stack] CALLEE THIS
       return false;
     }
@@ -258,7 +259,7 @@ bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
   }
   if (isNew() || isSuperCall()) {
     if (isSuperCall()) {
-      if (!bce_->emit1(JSOP_NEWTARGET)) {
+      if (!bce_->emit1(JSOp::NewTarget)) {
         //          [stack] CALLEE THIS ARG.. NEW.TARGET
         return false;
       }
@@ -293,7 +294,7 @@ bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
 
   if (isEval() && beginPos) {
     uint32_t lineNum = bce_->parser->errorReporter().lineAt(*beginPos);
-    if (!bce_->emitUint32Operand(JSOP_LINENO, lineNum)) {
+    if (!bce_->emitUint32Operand(JSOp::Lineno, lineNum)) {
       return false;
     }
   }

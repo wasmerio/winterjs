@@ -30,7 +30,7 @@ bool BranchEmitterBase::emitThenInternal() {
   }
 
   // Emit a branch-if-false around the then part.
-  if (!bce_->emitJump(JSOP_IFEQ, &jumpAroundThen_)) {
+  if (!bce_->emitJump(JSOp::IfEq, &jumpAroundThen_)) {
     return false;
   }
 
@@ -69,7 +69,7 @@ bool BranchEmitterBase::emitElseInternal() {
   // Emit a jump from the end of our then part around the else part. The
   // patchJumpsToTarget call at the bottom of this function will fix up
   // the offset with jumpsAroundElse value.
-  if (!bce_->emitJump(JSOP_GOTO, &jumpsAroundElse_)) {
+  if (!bce_->emitJump(JSOp::Goto, &jumpsAroundElse_)) {
     return false;
   }
 
@@ -136,8 +136,11 @@ bool IfEmitter::emitIf(const Maybe<uint32_t>& ifPos) {
 
 bool IfEmitter::emitThen() {
   MOZ_ASSERT(state_ == State::If || state_ == State::ElseIf);
-  MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
-  MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
+
+  if (kind_ == Kind::MayContainLexicalAccessInBranch) {
+    MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
+    MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
+  }
 
   if (!emitThenInternal()) {
     return false;
@@ -151,8 +154,11 @@ bool IfEmitter::emitThen() {
 
 bool IfEmitter::emitThenElse() {
   MOZ_ASSERT(state_ == State::If || state_ == State::ElseIf);
-  MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
-  MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
+
+  if (kind_ == Kind::MayContainLexicalAccessInBranch) {
+    MOZ_ASSERT_IF(state_ == State::ElseIf, tdzCache_.isSome());
+    MOZ_ASSERT_IF(state_ != State::ElseIf, tdzCache_.isNothing());
+  }
 
   if (!emitThenInternal()) {
     return false;

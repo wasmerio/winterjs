@@ -139,49 +139,54 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
       // overwritten later on.
       uint8_t optByte = (uint8_t)buf[currentIndex];
 
+      // Note that IonPlatformSupport() and CraneliftPlatformSupport() do not
+      // take into account whether those compilers support particular features
+      // that may have been enabled.
       bool enableWasmBaseline = ((optByte & 0xF0) == (1 << 7));
-      bool enableWasmIon = IonCanCompile() && ((optByte & 0xF0) == (1 << 6));
-      bool enableWasmCranelift = false;
+      bool enableWasmOptimizing = false;
 #ifdef ENABLE_WASM_CRANELIFT
-      enableWasmCranelift =
-          CraneliftCanCompile() && ((optByte & 0xF0) == (1 << 5));
+      enableWasmOptimizing =
+          CraneliftPlatformSupport() && ((optByte & 0xF0) == (1 << 5));
+#else
+      enableWasmOptimizing =
+          IonPlatformSupport() && ((optByte & 0xF0) == (1 << 6));
 #endif
-      bool enableWasmAwaitTier2 = (IonCanCompile()
+      bool enableWasmAwaitTier2 = (IonPlatformSupport()
 #ifdef ENABLE_WASM_CRANELIFT
-                                   || CraneliftCanCompile()
+                                   || CraneliftPlatformSupport()
 #endif
                                        ) &&
                                   ((optByte & 0xF) == (1 << 3));
 
-      if (!enableWasmBaseline && !enableWasmIon && !enableWasmCranelift) {
-        // If nothing is selected explicitly, select Ion to test
-        // more platform specific JIT code. However, on some platforms,
-        // e.g. ARM64, we do not have Ion available, so we need to switch
-        // to baseline instead.
-        if (IonCanCompile()) {
-          enableWasmIon = true;
+      if (!enableWasmBaseline && !enableWasmOptimizing) {
+        // If nothing is selected explicitly, enable an optimizing compiler to
+        // test more platform specific JIT code. However, on some platforms,
+        // e.g. ARM64 on Windows, we do not have Ion available, so we need to
+        // switch to baseline instead.
+        if (IonPlatformSupport() || CraneliftPlatformSupport()) {
+          enableWasmOptimizing = true;
         } else {
           enableWasmBaseline = true;
         }
       }
 
       if (enableWasmAwaitTier2) {
-        // Tier 2 needs Baseline + {Ion,Cranelift}
+        // Tier 2 needs Baseline + Optimizing
         enableWasmBaseline = true;
 
-        if (!enableWasmIon && !enableWasmCranelift) {
-          enableWasmIon = true;
+        if (!enableWasmOptimizing) {
+          enableWasmOptimizing = true;
         }
       }
 
       JS::ContextOptionsRef(gCx)
           .setWasmBaseline(enableWasmBaseline)
-          .setWasmIon(enableWasmIon)
-          .setTestWasmAwaitTier2(enableWasmAwaitTier2)
 #ifdef ENABLE_WASM_CRANELIFT
-          .setWasmCranelift(enableWasmCranelift)
+          .setWasmCranelift(enableWasmOptimizing)
+#else
+          .setWasmIon(enableWasmOptimizing)
 #endif
-          ;
+          .setTestWasmAwaitTier2(enableWasmAwaitTier2);
     }
 
     // Expected header for a valid WebAssembly module
@@ -401,7 +406,7 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
         if (propObj->is<WasmMemoryObject>()) {
           Rooted<WasmMemoryObject*> memory(gCx,
                                            &propObj->as<WasmMemoryObject>());
-          size_t byteLen = memory->volatileMemoryLength();
+          size_t byteLen = memory->volatileMemoryLength32();
           if (byteLen) {
             // Read the bounds of the buffer to ensure it is valid.
             // AddressSanitizer would detect any out-of-bounds here.
@@ -416,7 +421,7 @@ static int testWasmFuzz(const uint8_t* buf, size_t size) {
           Rooted<WasmGlobalObject*> global(gCx,
                                            &propObj->as<WasmGlobalObject>());
           if (global->type() != ValType::I64) {
-            lastReturnVal = global->value(gCx);
+            global->value(gCx, &lastReturnVal);
           }
         }
       }

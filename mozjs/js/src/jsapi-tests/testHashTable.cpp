@@ -3,12 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/HashFunctions.h"
-#include "mozilla/Move.h"
+
+#include <utility>
 
 #include "ds/OrderedHashTable.h"
 #include "js/HashTable.h"
 #include "js/Utility.h"
-
 #include "jsapi-tests/tests.h"
 
 //#define FUZZ
@@ -32,7 +32,7 @@ const size_t TestSize = 10000;
 const size_t TestIterations = 10;
 #endif
 
-JS_STATIC_ASSERT(TestSize <= 0x0000FFFF / 2);
+static_assert(TestSize <= 0x0000FFFF / 2);
 
 struct LowToHigh {
   static uint32_t rekey(uint32_t initial) {

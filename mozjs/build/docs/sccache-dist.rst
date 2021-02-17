@@ -77,7 +77,7 @@ must read::
   `this file <https://hg.mozilla.org/mozilla-central/file/tip/taskcluster/ci/toolchain/dist-toolchains.yml>`_.
   For instance, to specify 1.37.0 rather than the current stable, run
   ``rustup toolchain add 1.37.0`` and point to
-  ``~/.rustup/toolchains/1.37.0-x86_64-apple-darwin/bin/rustc`` in your
+  ``/path/to/home/.rustup/toolchains/1.37.0-x86_64-apple-darwin/bin/rustc`` in your
   client config.
 
   The build system currently requires an explicit target to be passed with
@@ -89,12 +89,12 @@ must read::
 * Compiling from a Windows client is supported but hasn't seen as much testing
   as other platforms. The following example mozconfig can be used as a guide::
 
-    ac_add_options CCACHE=~/.mozbuild/sccache/sccache.exe
+    ac_add_options CCACHE=/path/to/home/.mozbuild/sccache/sccache.exe
 
-    export CC="~/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
-    export CXX="~/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
-    export HOST_CC="~/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
-    export HOST_CXX="~/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
+    export CC="/path/to/home/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
+    export CXX="/path/to/home/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
+    export HOST_CC="/path/to/home/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
+    export HOST_CXX="/path/to/home/.mozbuild/clang/bin/clang-cl.exe --driver-mode=cl"
 
   The client config should be located at
   ``~/AppData/Roaming/Mozilla/sccache/config/config``, and as on macOS custom
@@ -115,7 +115,7 @@ must read::
 
 * Add the following to your mozconfig::
 
-    ac_add_options CCACHE=/path/to/sccache
+    ac_add_options CCACHE=/path/to/home/.mozbuild/sccache/sccache
 
   If you're compiling from a macOS client, you might need some additional configuration::
 
@@ -128,14 +128,19 @@ must read::
     # Specify the macOS SDK to use
     ac_add_options --with-macos-sdk=/path/to/MacOSX-SDKs/MacOSX10.11.sdk
 
-  You can get the right macOS SDK from the `MacOSX-SDKs repository <https://github.com/phracker/MacOSX-SDKs/>`_
-  or by downloading an old version of XCode from `developer.apple.com <https://developer.apple.com>`_ and unpacking the SKD from it.
+  You can get the right macOS SDK by downloading an old version of XCode from
+  `developer.apple.com <https://developer.apple.com>`_ and unpacking the SDK
+  from it.
 
 * When attempting to get your client running, the output of ``sccache -s`` should
   be consulted to confirm compilations are being distributed. To receive helpful
   logging from the local daemon in case they aren't, run
-  ``SCCACHE_NO_DAEMON=1 RUST_LOG=sccache=trace path/to/sccache --start-server``
-  in a terminal window separate from your build prior to building.
+  ``SCCACHE_NO_DAEMON=1 SCCACHE_LOG=sccache=trace path/to/sccache --start-server``
+  in a terminal window separate from your build prior to building. *NOTE* use
+  ``RUST_LOG`` instead of ``SCCACHE_LOG`` if your build of ``sccache`` does not
+  include `pull request 822
+  <https://github.com/mozilla/sccache/pull/822>`_. (``sccache`` binaries from
+  ``mach bootstrap`` do include this PR.)
 
 * Run ``./mach build -j<value>`` with an appropriately large ``<value>``.
   ``sccache --dist-status`` should provide the number of cores available to you
@@ -151,7 +156,7 @@ email (dev-builds), on slack in #sccache, or in #build on irc.
 Steps for setting up a server
 =============================
 
-Build servers must run linux and use bubblewrap 3.0+ for sandboxing of compile
+Build servers must run linux and use bubblewrap 0.3.0+ for sandboxing of compile
 processes. This requires a kernel 4.6 or greater, so Ubuntu 18+, RHEL 8, or
 similar.
 
@@ -178,9 +183,12 @@ similar.
 
   Extra logging may be helpful when setting up a server. To enable logging,
   run your server with
-  ``sudo env RUST_LOG=sccache=trace ~/.mozbuild/sccache/sccache-dist server --config ~/.config/sccache/server.conf``
+  ``sudo env SCCACHE_LOG=sccache=trace ~/.mozbuild/sccache/sccache-dist server --config ~/.config/sccache/server.conf``
   (or similar). *NOTE* ``sudo`` *must* come before setting environment variables
-  for this to work.
+  for this to work. *NOTE* use ``RUST_LOG`` instead of ``SCCACHE_LOG`` if your
+  build of ``sccache`` does not include `pull request 822
+  <https://github.com/mozilla/sccache/pull/822>`_. (``sccache`` binaries from
+  ``mach bootstrap`` do include this PR.)
 
   As when configuring a client, the scheduler url to use is:
   ``https://sccache1.corpdmz.<OFFICE>.mozilla.com``, where <OFFICE> is an
@@ -198,10 +206,13 @@ Common questions/considerations
   improvement should be observed.
 
 * My build output is incomprehensible due to a flood of warnings: clang will
-  treat some warnings differently when its fed preprocessed code in a separate
-  invocation (preprocessing occurs locally with sccache-dist). See the
-  following note about disabling problematic warnings:
-  https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Using_Icecream#I_get_build_failures_due_to_-Werror_when_building_remotely_but_not_when_building_locally
+  treat some warnings differently when it's fed preprocessed code in a separate
+  invocation (preprocessing occurs locally with sccache-dist). Adding
+  ``rewrite_includes_only = true`` to the ``dist`` section of your client config
+  will improve this; however, setting this will cause build failures with a
+  commonly deployed version of ``glibc``. This option will default to ``true``
+  once the fix is more widely available. Details of this fix can be found in
+  `this patch <https://sourceware.org/ml/libc-alpha/2019-11/msg00431.html>`_.
 
 * My build fails with a message about incompatible versions of rustc between
   dependent crates: if you're using a custom toolchain check that the version

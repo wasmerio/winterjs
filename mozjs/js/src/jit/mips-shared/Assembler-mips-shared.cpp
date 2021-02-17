@@ -11,7 +11,6 @@
 
 #include "gc/Marking.h"
 #include "jit/ExecutableAllocator.h"
-#include "jit/JitRealm.h"
 #include "vm/Realm.h"
 
 using mozilla::DebugOnly;
@@ -1045,6 +1044,21 @@ BufferOffset AssemblerMIPSShared::as_dclz(Register rd, Register rs) {
 #endif
 }
 
+BufferOffset AssemblerMIPSShared::as_wsbh(Register rd, Register rt) {
+  spew("wsbh   %3s,%3s", rd.name(), rt.name());
+  return writeInst(InstReg(op_special3, zero, rt, rd, 0x2, ff_bshfl).encode());
+}
+
+BufferOffset AssemblerMIPSShared::as_dsbh(Register rd, Register rt) {
+  spew("dsbh   %3s,%3s", rd.name(), rt.name());
+  return writeInst(InstReg(op_special3, zero, rt, rd, 0x2, ff_dbshfl).encode());
+}
+
+BufferOffset AssemblerMIPSShared::as_dshd(Register rd, Register rt) {
+  spew("dshd   %3s,%3s", rd.name(), rt.name());
+  return writeInst(InstReg(op_special3, zero, rt, rd, 0x5, ff_dbshfl).encode());
+}
+
 BufferOffset AssemblerMIPSShared::as_ins(Register rt, Register rs, uint16_t pos,
                                          uint16_t size) {
   MOZ_ASSERT(pos < 32 && size != 0 && size <= 32 && pos + size != 0 &&
@@ -1943,7 +1957,7 @@ Instruction* Instruction::next() { return this + 1; }
 InstImm AssemblerMIPSShared::invertBranch(InstImm branch,
                                           BOffImm16 skipOffset) {
   uint32_t rt = 0;
-  Opcode op = (Opcode)(branch.extractOpcode() << OpcodeShift);
+  OpcodeField op = (OpcodeField)(branch.extractOpcode() << OpcodeShift);
   switch (op) {
     case op_beq:
       branch.setBOffImm16(skipOffset);
@@ -2020,7 +2034,7 @@ void AssemblerMIPSShared::UpdateLuiOriValue(Instruction* inst0,
 
 #ifdef JS_JITSPEW
 void AssemblerMIPSShared::decodeBranchInstAndSpew(InstImm branch) {
-  Opcode op = (Opcode)(branch.extractOpcode() << OpcodeShift);
+  OpcodeField op = (OpcodeField)(branch.extractOpcode() << OpcodeShift);
   uint32_t rt_id;
   uint32_t rs_id;
   uint32_t immi = branch.extractImm16Value();

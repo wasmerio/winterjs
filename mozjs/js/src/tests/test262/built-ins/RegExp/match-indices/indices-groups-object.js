@@ -1,10 +1,10 @@
-// |reftest| skip -- regexp-named-groups,regexp-match-indices is not supported
+// |reftest| skip -- regexp-match-indices is not supported
 // Copyright 2019 Ron Buckton. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 description: The groups object of indices is created with CreateDataProperty
-includes: [compareArray.js, propertyHelper.js]
+includes: [propertyHelper.js, compareArray.js]
 esid: sec-makeindicesarray
 features: [regexp-named-groups, regexp-match-indices]
 info: |
@@ -15,7 +15,6 @@ info: |
       a. Let _groups_ be *undefined*.
     10. Perform ! CreateDataProperty(_A_, `"groups"`, _groups_).
 ---*/
-
 
 // `groups` is created with Define, not Set.
 let counter = 0;

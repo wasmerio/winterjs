@@ -22,18 +22,29 @@
 #include "js/JSON.h"
 #include "js/MemoryMetrics.h"
 #include "js/Modules.h"
+#include "js/Object.h"
 #include "js/Promise.h"
 #include "js/PropertySpec.h"
 #include "js/Proxy.h"
 #include "js/Realm.h"
 #include "js/RegExp.h"
 #include "js/SavedFrameAPI.h"
+#include "js/ScalarType.h"
 #include "js/SourceText.h"
 #include "js/Stream.h"
+#include "js/String.h"
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"
 #include "js/Utility.h"
 #include "js/Warnings.h"
+#include "js/WasmModule.h"
+#include "js/shadow/Object.h"
+#include "js/shadow/ObjectGroup.h"
+#include "js/friend/DOMProxy.h"
+#include "js/friend/ErrorMessages.h"
+#include "js/friend/WindowProxy.h"
+#include "js/experimental/JitInfo.h"
+#include "js/experimental/TypedData.h"
 
 // Reexport some functions that are marked inline.
 
@@ -43,7 +54,8 @@ bool JS_Init();
 
 JS::RealmOptions* JS_NewRealmOptions();
 void DeleteRealmOptions(JS::RealmOptions* options);
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
+JS::OwningCompileOptions* JS_NewOwningCompileOptions(JSContext* cx);
+void DeleteOwningCompileOptions(JS::OwningCompileOptions* optiosn);
 
 void JS_StackCapture_AllFrames(JS::StackCapture*);
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture*);
@@ -75,6 +87,10 @@ void JS_ValueSetNull(JS::Value* value);
 bool JS_ValueIsNull(const JS::Value* value);
 
 bool JS_ValueIsUndefined(const JS::Value* value);
+
+size_t GetLinearStringLength(JSLinearString* s);
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
+JSLinearString* AtomToLinearString(JSAtom* atom);
 
 }
 

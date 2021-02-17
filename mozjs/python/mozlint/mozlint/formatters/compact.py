@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import attr
+
 from ..result import Issue
 
 
@@ -11,6 +13,7 @@ class CompactFormatter(object):
     This formatter prints one error per line, mimicking the
     eslint 'compact' formatter.
     """
+
     # If modifying this format, please also update the vim errorformats in editor.py
     fmt = "{path}: line {lineno}{column}, {level} - {message} ({rule})"
 
@@ -25,12 +28,14 @@ class CompactFormatter(object):
             for err in errors:
                 assert isinstance(err, Issue)
 
-                d = {s: getattr(err, s) for s in err.__slots__}
+                d = attr.asdict(err)
                 d["column"] = ", col %s" % d["column"] if d["column"] else ""
-                d['level'] = d['level'].capitalize()
-                d['rule'] = d['rule'] or d['linter']
+                d["level"] = d["level"].capitalize()
+                d["rule"] = d["rule"] or d["linter"]
                 message.append(self.fmt.format(**d))
 
         if self.summary and num_problems:
-            message.append("\n{} problem{}".format(num_problems, '' if num_problems == 1 else 's'))
+            message.append(
+                "\n{} problem{}".format(num_problems, "" if num_problems == 1 else "s")
+            )
         return "\n".join(message)

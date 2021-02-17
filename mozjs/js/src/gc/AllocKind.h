@@ -60,20 +60,22 @@ namespace gc {
 
 #define FOR_EACH_NONOBJECT_NONNURSERY_ALLOCKIND(D) \
  /* AllocKind              TraceKind     TypeName           SizedType          BGFinal Nursery Compact */ \
-    D(SCRIPT,              Script,       JSScript,          JSScript,          false,  false,  true) \
-    D(LAZY_SCRIPT,         LazyScript,   js::LazyScript,    js::LazyScript,    true,   false,  true) \
+    D(SCRIPT,              Script,       js::BaseScript,    js::BaseScript,    false,  false,  true) \
     D(SHAPE,               Shape,        js::Shape,         js::Shape,         true,   false,  true) \
     D(ACCESSOR_SHAPE,      Shape,        js::AccessorShape, js::AccessorShape, true,   false,  true) \
     D(BASE_SHAPE,          BaseShape,    js::BaseShape,     js::BaseShape,     true,   false,  true) \
-    D(OBJECT_GROUP,        ObjectGroup,  js::ObjectGroup,   js::ObjectGroup,   true,   false,  false) \
+    D(OBJECT_GROUP,        ObjectGroup,  js::ObjectGroup,   js::ObjectGroup,   true,   false,  true) \
     D(EXTERNAL_STRING,     String,       JSExternalString,  JSExternalString,  true,   false,  true) \
     D(FAT_INLINE_ATOM,     String,       js::FatInlineAtom, js::FatInlineAtom, true,   false,  false) \
     D(ATOM,                String,       js::NormalAtom,    js::NormalAtom,    true,   false,  false) \
     D(SYMBOL,              Symbol,       JS::Symbol,        JS::Symbol,        true,   false,  false) \
-    D(BIGINT,              BigInt,       JS::BigInt,        JS::BigInt,        true,   false,  true) \
     D(JITCODE,             JitCode,      js::jit::JitCode,  js::jit::JitCode,  false,  false,  false) \
     D(SCOPE,               Scope,        js::Scope,         js::Scope,         true,   false,  true) \
     D(REGEXP_SHARED,       RegExpShared, js::RegExpShared,  js::RegExpShared,  true,   false,  true)
+
+#define FOR_EACH_NONOBJECT_NURSERY_ALLOCKIND(D) \
+ /* AllocKind              TraceKind     TypeName           SizedType          BGFinal Nursery Compact */ \
+    D(BIGINT,              BigInt,       JS::BigInt,        JS::BigInt,        true,   true,  true)
 
 #define FOR_EACH_NURSERY_STRING_ALLOCKIND(D) \
     D(FAT_INLINE_STRING,   String,        JSFatInlineString, JSFatInlineString, true,   true,  true) \
@@ -82,6 +84,7 @@ namespace gc {
 
 #define FOR_EACH_NONOBJECT_ALLOCKIND(D)      \
   FOR_EACH_NONOBJECT_NONNURSERY_ALLOCKIND(D) \
+  FOR_EACH_NONOBJECT_NURSERY_ALLOCKIND(D)    \
   FOR_EACH_NURSERY_STRING_ALLOCKIND(D)
 
 #define FOR_EACH_ALLOCKIND(D)  \
@@ -111,6 +114,8 @@ static_assert(int(AllocKind::FIRST) == 0,
               "Various places depend on AllocKind starting at 0");
 static_assert(int(AllocKind::OBJECT_FIRST) == 0,
               "OBJECT_FIRST must be defined as the first object kind");
+
+constexpr size_t AllocKindCount = size_t(AllocKind::LIMIT);
 
 inline bool IsAllocKind(AllocKind kind) {
   return kind >= AllocKind::FIRST && kind <= AllocKind::LIMIT;
@@ -173,17 +178,10 @@ static inline JS::TraceKind MapAllocToTraceKind(AllocKind kind) {
 #undef EXPAND_ELEMENT
   };
 
-  static_assert(mozilla::ArrayLength(map) == size_t(AllocKind::LIMIT),
+  static_assert(mozilla::ArrayLength(map) == AllocKindCount,
                 "AllocKind-to-TraceKind mapping must be in sync");
   return map[size_t(kind)];
 }
-
-/*
- * This must be an upper bound, but we do not need the least upper bound, so
- * we just exclude non-background objects.
- */
-static const size_t MAX_BACKGROUND_FINALIZE_KINDS =
-    size_t(AllocKind::LIMIT) - size_t(AllocKind::OBJECT_LIMIT) / 2;
 
 static inline bool IsNurseryAllocable(AllocKind kind) {
   MOZ_ASSERT(IsValidAllocKind(kind));
@@ -194,7 +192,7 @@ static inline bool IsNurseryAllocable(AllocKind kind) {
 #undef DEFINE_NURSERY_ALLOCABLE
   };
 
-  static_assert(mozilla::ArrayLength(map) == size_t(AllocKind::LIMIT),
+  static_assert(mozilla::ArrayLength(map) == AllocKindCount,
                 "IsNurseryAllocable sanity check");
   return map[size_t(kind)];
 }
@@ -208,7 +206,7 @@ static inline bool IsBackgroundFinalized(AllocKind kind) {
 #undef DEFINE_BACKGROUND_FINALIZED
   };
 
-  static_assert(mozilla::ArrayLength(map) == size_t(AllocKind::LIMIT),
+  static_assert(mozilla::ArrayLength(map) == AllocKindCount,
                 "IsBackgroundFinalized sanity check");
   return map[size_t(kind)];
 }
@@ -226,7 +224,7 @@ static inline bool IsCompactingKind(AllocKind kind) {
 #undef DEFINE_COMPACTING_KIND
   };
 
-  static_assert(mozilla::ArrayLength(map) == size_t(AllocKind::LIMIT),
+  static_assert(mozilla::ArrayLength(map) == AllocKindCount,
                 "IsCompactingKind sanity check");
   return map[size_t(kind)];
 }

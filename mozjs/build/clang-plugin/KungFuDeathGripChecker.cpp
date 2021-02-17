@@ -6,8 +6,7 @@
 #include "CustomMatchers.h"
 
 void KungFuDeathGripChecker::registerMatchers(MatchFinder *AstMatcher) {
-  AstMatcher->addMatcher(varDecl(allOf(hasType(isRefPtr()),
-                                       hasLocalStorage(),
+  AstMatcher->addMatcher(varDecl(allOf(hasType(isRefPtr()), hasLocalStorage(),
                                        hasInitializer(anything())))
                              .bind("decl"),
                          this);
@@ -46,6 +45,12 @@ void KungFuDeathGripChecker::check(const MatchFinder::MatchResult &Result) {
   // conversion constructors, we ignore it and continue to dig.
   while ((CE = dyn_cast<CXXConstructExpr>(E)) && CE->getNumArgs() == 1) {
     E = IgnoreTrivials(CE->getArg(0));
+  }
+
+  // If the argument expression is an xvalue, we are not taking a copy of
+  // anything.
+  if (E->isXValue()) {
+    return;
   }
 
   // It is possible that the QualType doesn't point to a type yet so we are

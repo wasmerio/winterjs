@@ -16,10 +16,10 @@
 #include "ds/Nestable.h"               // Nestable
 #include "frontend/BytecodeSection.h"  // BytecodeOffset
 #include "frontend/JumpList.h"         // JumpList, JumpTarget
+#include "frontend/ParserAtom.h"       // ParserAtom
 #include "frontend/SharedContext.h"  // StatementKind, StatementKindIsLoop, StatementKindIsUnlabeledBreakTarget
 #include "frontend/TDZCheckCache.h"  // TDZCheckCache
-#include "gc/Rooting.h"              // RootedAtom, HandleAtom
-#include "vm/StringType.h"           // JSAtom
+#include "vm/StencilEnums.h"         // TryNoteKind
 
 namespace js {
 namespace frontend {
@@ -70,15 +70,16 @@ inline bool NestableControl::is<BreakableControl>() const {
 }
 
 class LabelControl : public BreakableControl {
-  RootedAtom label_;
+  const ParserAtom* label_;
 
   // The code offset when this was pushed. Used for effectfulness checking.
   BytecodeOffset startOffset_;
 
  public:
-  LabelControl(BytecodeEmitter* bce, JSAtom* label, BytecodeOffset startOffset);
+  LabelControl(BytecodeEmitter* bce, const ParserAtom* label,
+               BytecodeOffset startOffset);
 
-  HandleAtom label() const { return label_; }
+  const ParserAtom* label() const { return label_; }
 
   BytecodeOffset startOffset() const { return startOffset_; }
 };
@@ -94,51 +95,26 @@ class LoopControl : public BreakableControl {
 
   // Here's the basic structure of a loop:
   //
-  //     # Entry jump
-  //     JSOP_GOTO entry
-  //
   //   head:
-  //     JSOP_LOOPHEAD
-  //     {loop body after branch}
+  //     JSOp::LoopHead
+  //     {loop condition/body}
   //
-  //   entry:
-  //     JSOP_ENTRY
-  //     {loop body before branch}
+  //   continueTarget:
+  //     {loop update if present}
   //
   //     # Loop end, backward jump
-  //     JSOP_GOTO/JSOP_IFNE head
+  //     JSOp::Goto/JSOp::IfNe head
   //
   //   breakTarget:
-  //
-  // `continueTarget` can be placed in arbitrary place by calling
-  // `setContinueTarget` or `emitContinueTarget` (see comment above them for
-  // more details).
 
-  // The offset of backward jump at the end of loop.
-  BytecodeOffset loopEndOffset_ = BytecodeOffset::invalidOffset();
-
-  // The jump into JSOP_LOOPENTRY.
-  JumpList entryJump_;
-
-  // The bytecode offset of JSOP_LOOPHEAD.
+  // The bytecode offset of JSOp::LoopHead.
   JumpTarget head_;
-
-  // The target of break statement jumps.
-  JumpTarget breakTarget_;
-
-  // The target of continue statement jumps, e.g., the update portion of a
-  // for(;;) loop.
-  JumpTarget continueTarget_;
 
   // Stack depth when this loop was pushed on the control stack.
   int32_t stackDepth_;
 
   // The loop nesting depth. Used as a hint to Ion.
   uint32_t loopDepth_;
-
-  // Can we OSR into Ion from here? True unless there is non-loop state on the
-  // stack.
-  bool canIonOsr_;
 
  public:
   // Offset of the last continue in the loop.
@@ -147,50 +123,17 @@ class LoopControl : public BreakableControl {
   LoopControl(BytecodeEmitter* bce, StatementKind loopKind);
 
   BytecodeOffset headOffset() const { return head_.offset; }
-  BytecodeOffset loopEndOffset() const { return loopEndOffset_; }
-  BytecodeOffset breakTargetOffset() const { return breakTarget_.offset; }
-  BytecodeOffset continueTargetOffset() const { return continueTarget_.offset; }
 
-  // The offset of the backward jump at the loop end from the loop's top, in
-  // case there was an entry jump.
-  BytecodeOffsetDiff loopEndOffsetFromEntryJump() const {
-    return loopEndOffset_ - entryJump_.offset;
-  }
-
-  // The offset of the backward jump at the loop end from the loop's top, in
-  // case there was no entry jump.
-  BytecodeOffsetDiff loopEndOffsetFromLoopHead() const {
-    return loopEndOffset_ - head_.offset;
-  }
-
-  // A continue target can be specified by the following 2 ways:
-  //   * Use the existing JUMPTARGET by calling `setContinueTarget` with
-  //     the offset of the JUMPTARGET
-  //   * Generate a new JUMPTARGETby calling `emitContinueTarget`
-  void setContinueTarget(BytecodeOffset offset) {
-    continueTarget_.offset = offset;
-  }
   MOZ_MUST_USE bool emitContinueTarget(BytecodeEmitter* bce);
 
-  // Emit a jump to break target from the top level of the loop.
-  MOZ_MUST_USE bool emitSpecialBreakForDone(BytecodeEmitter* bce);
-
-  MOZ_MUST_USE bool emitEntryJump(BytecodeEmitter* bce);
-
   // `nextPos` is the offset in the source code for the character that
-  // corresponds to the next instruction after JSOP_LOOPHEAD.
+  // corresponds to the next instruction after JSOp::LoopHead.
   // Can be Nothing() if not available.
   MOZ_MUST_USE bool emitLoopHead(BytecodeEmitter* bce,
                                  const mozilla::Maybe<uint32_t>& nextPos);
 
-  // `nextPos` is the offset in the source code for the character that
-  // corresponds to the next instruction after JSOP_LOOPENTRY.
-  // Can be Nothing() if not available.
-  MOZ_MUST_USE bool emitLoopEntry(BytecodeEmitter* bce,
-                                  const mozilla::Maybe<uint32_t>& nextPos);
-
-  MOZ_MUST_USE bool emitLoopEnd(BytecodeEmitter* bce, JSOp op);
-  MOZ_MUST_USE bool patchBreaksAndContinues(BytecodeEmitter* bce);
+  MOZ_MUST_USE bool emitLoopEnd(BytecodeEmitter* bce, JSOp op,
+                                TryNoteKind tryNoteKind);
 };
 template <>
 inline bool NestableControl::is<LoopControl>() const {

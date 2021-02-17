@@ -23,9 +23,13 @@ void DeleteRealmOptions(JS::RealmOptions* options) {
 	delete options;
 }
 
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx) {
-    JS::OwningCompileOptions result(cx);
+JS::OwningCompileOptions* JS_NewOwningCompileOptions(JSContext* cx) {
+    JS::OwningCompileOptions* result = new JS::OwningCompileOptions(cx);
     return result;
+}
+
+void DeleteOwningCompileOptions(JS::OwningCompileOptions* opts) {
+    delete opts;
 }
 
 JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
@@ -123,5 +127,17 @@ bool JS_ValueIsNull(const JS::Value* value) {
 
 bool JS_ValueIsUndefined(const JS::Value* value) {
     return value->isUndefined();
+}
+
+size_t GetLinearStringLength(JSLinearString* s) {
+    return JS::GetLinearStringLength(s);
+}
+
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
+    return JS::GetLinearStringCharAt(s, idx);
+}
+
+JSLinearString* AtomToLinearString(JSAtom* atom) {
+    return JS::AtomToLinearString(atom);
 }
 }

@@ -1,45 +1,12 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Anthony Ramine <nox@nox.paris>
-Date: Thu, 27 Feb 2020 15:08:15 +0100
-Subject: [PATCH] Don't include rust.configure anymore
-
-
 diff --git a/js/moz.configure b/js/moz.configure
-index 06724a97a..7acba82fc 100644
+index e65adafb73..d9590f1f8b 100644
 --- a/js/moz.configure
 +++ b/js/moz.configure
-@@ -18,8 +18,6 @@ def building_js(build_project):
- option(env='JS_STANDALONE', default=building_js,
-        help='Reserved for internal use')
+@@ -54,7 +54,6 @@ set_config("JS_ENABLE_SMOOSH", enable_smoosh)
+ set_define("JS_ENABLE_SMOOSH", enable_smoosh)
  
--include('../build/moz.configure/rust.configure',
--        when='--enable-compile-environment')
- include('../build/moz.configure/bindgen.configure',
-         when='--enable-compile-environment')
- include('../build/moz.configure/lto-pgo.configure',
-diff --git a/build/moz.configure/lto-pgo.configure b/build/moz.configure/lto-pgo.configure
-index ad8f31cdf..aa7b8dd28 100644
---- a/build/moz.configure/lto-pgo.configure
-+++ b/build/moz.configure/lto-pgo.configure
-@@ -116,8 +116,8 @@ set_config('PGO_JARLOG_PATH', depends_if('--with-pgo-jarlog')(lambda p: p))
+ include("../build/moz.configure/nspr.configure", when="--enable-compile-environment")
+-include("../build/moz.configure/rust.configure", when="--enable-compile-environment")
+ include("../build/moz.configure/bindgen.configure", when="--enable-compile-environment")
  
- 
- @depends('MOZ_PGO', '--enable-profile-use', '--enable-profile-generate',
--         c_compiler, rustc_info)
--def moz_pgo_rust(pgo, profile_use, profile_generate, c_compiler, rustc):
-+         c_compiler)
-+def moz_pgo_rust(pgo, profile_use, profile_generate, c_compiler):
-     if not pgo:
-         return
- 
-@@ -137,10 +137,6 @@ def moz_pgo_rust(pgo, profile_use, profile_generate, c_compiler, rustc):
-     if c_compiler.type == 'gcc':
-         die('Cannot use cross-language PGO with GCC.')
- 
--    # PGO is not stable prior to 1.37
--    if rustc.version < Version('1.37'):
--        die('Cannot use cross-language PGO with Rust version %s.' % rustc.version)
--
-     return True
- 
- set_config('MOZ_PGO_RUST', moz_pgo_rust)
+ set_config("JS_STANDALONE", js_standalone)

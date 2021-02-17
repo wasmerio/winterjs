@@ -18,6 +18,7 @@ use mozjs_sys::jsapi::JS_ShutDown;
 use mozjs_sys::jsapi::glue::JS_Init;
 use mozjs_sys::jsapi::glue::JS_NewRealmOptions;
 use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
+use mozjs_sys::jsapi::glue::DeleteOwningCompileOptions;
 
 use std::mem;
 use std::ptr;
@@ -86,8 +87,10 @@ fn main() {
             ownsUnits_: false,
             _phantom_0: std::marker::PhantomData,
         };
-        assert!(JS::Evaluate2(cx, &options._base, &mut source, rval_handle));
+        assert!(JS::Evaluate2(cx, &(*options)._base, &mut source, rval_handle));
         assert!(rval.to_int32() == 2);
+
+        DeleteOwningCompileOptions(options);
 
         // Shut everything down.
         JS::LeaveRealm(cx, realm);

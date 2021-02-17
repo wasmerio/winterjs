@@ -45,23 +45,6 @@ namespace frontend {
 class TokenStreamAnyChars;
 }
 
-// Temporary definitions until irregexp is updated from upstream.
-namespace irregexp {
-constexpr size_t JS_HOWMANY(size_t x, size_t y) { return (x + y - 1) / y; }
-
-constexpr size_t JS_ROUNDUP(size_t x, size_t y) { return JS_HOWMANY(x, y) * y; }
-
-template <class T>
-static constexpr inline T Min(T t1, T t2) {
-  return t1 < t2 ? t1 : t2;
-}
-
-template <class T>
-static constexpr inline T Max(T t1, T t2) {
-  return t1 > t2 ? t1 : t2;
-}
-}  // namespace irregexp
-
 extern RegExpObject* RegExpAlloc(JSContext* cx, NewObjectKind newKind,
                                  HandleObject proto = nullptr);
 
@@ -79,8 +62,8 @@ class RegExpObject : public NativeObject {
                               NewObjectKind newKind);
 
  public:
-  static const unsigned RESERVED_SLOTS = 3;
-  static const unsigned PRIVATE_SLOT = 3;
+  static const unsigned SHARED_SLOT = 3;
+  static const unsigned RESERVED_SLOTS = 4;
 
   static const JSClass class_;
   static const JSClass protoClass_;
@@ -95,10 +78,6 @@ class RegExpObject : public NativeObject {
 
   // This variant assumes that the characters have already previously been
   // syntax checked.
-  static RegExpObject* createSyntaxChecked(JSContext* cx, const char16_t* chars,
-                                           size_t length, JS::RegExpFlags flags,
-                                           NewObjectKind newKind);
-
   static RegExpObject* createSyntaxChecked(JSContext* cx, HandleAtom source,
                                            JS::RegExpFlags flags,
                                            NewObjectKind newKind);
@@ -172,6 +151,7 @@ class RegExpObject : public NativeObject {
   bool global() const { return getFlags().global(); }
   bool ignoreCase() const { return getFlags().ignoreCase(); }
   bool multiline() const { return getFlags().multiline(); }
+  bool dotAll() const { return getFlags().dotAll(); }
   bool unicode() const { return getFlags().unicode(); }
   bool sticky() const { return getFlags().sticky(); }
 
@@ -179,20 +159,18 @@ class RegExpObject : public NativeObject {
 
   static RegExpShared* getShared(JSContext* cx, Handle<RegExpObject*> regexp);
 
-  bool hasShared() { return !!sharedRef(); }
+  bool hasShared() const { return !getFixedSlot(SHARED_SLOT).isUndefined(); }
 
-  void setShared(RegExpShared& shared) {
-    MOZ_ASSERT(!hasShared());
-    sharedRef().init(&shared);
+  RegExpShared* getShared() const {
+    return static_cast<RegExpShared*>(getFixedSlot(SHARED_SLOT).toGCThing());
   }
 
-  HeapPtrRegExpShared& sharedRef() {
-    auto& ref = NativeObject::privateRef(PRIVATE_SLOT);
-    return reinterpret_cast<HeapPtrRegExpShared&>(ref);
+  void setShared(RegExpShared* shared) {
+    MOZ_ASSERT(shared);
+    setFixedSlot(SHARED_SLOT, PrivateGCThingValue(shared));
   }
 
-  static void trace(JSTracer* trc, JSObject* obj);
-  void trace(JSTracer* trc);
+  void clearShared() { setFixedSlot(SHARED_SLOT, UndefinedValue()); }
 
   void initIgnoringLastIndex(JSAtom* source, JS::RegExpFlags flags);
 
@@ -205,7 +183,6 @@ class RegExpObject : public NativeObject {
 #ifdef DEBUG
   static MOZ_MUST_USE bool dumpBytecode(JSContext* cx,
                                         Handle<RegExpObject*> regexp,
-                                        bool match_only,
                                         HandleLinearString input);
 #endif
 

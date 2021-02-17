@@ -126,9 +126,20 @@ AST_MATCHER(QualType, isFloat) { return Node->isRealFloatingType(); }
 /// This matcher will match locations in system headers.  This is adopted from
 /// isExpansionInSystemHeader in newer clangs, but modified in order to work
 /// with old clangs that we use on infra.
-AST_POLYMORPHIC_MATCHER(isInSystemHeader,                                      \
+AST_POLYMORPHIC_MATCHER(isInSystemHeader,
                         AST_POLYMORPHIC_SUPPORTED_TYPES(Decl, Stmt)) {
   return ASTIsInSystemHeader(Finder->getASTContext(), Node);
+}
+
+/// This matcher will match a file "gtest-port.h". The file contains
+/// known fopen usages that are OK.
+AST_MATCHER(CallExpr, isInWhitelistForFopenUsage) {
+  static const char Whitelist[] = "gtest-port.h";
+  SourceLocation Loc = Node.getBeginLoc();
+  StringRef FileName =
+      getFilename(Finder->getASTContext().getSourceManager(), Loc);
+
+  return llvm::sys::path::rbegin(FileName)->equals(Whitelist);
 }
 
 /// This matcher will match a list of files.  These files contain
@@ -142,6 +153,50 @@ AST_MATCHER(BinaryOperator, isInWhitelistForNaNExpr) {
   for (auto itr = std::begin(whitelist); itr != std::end(whitelist); itr++) {
     if (llvm::sys::path::rbegin(FileName)->equals(*itr)) {
       return true;
+    }
+  }
+
+  return false;
+}
+
+AST_MATCHER(CallExpr, isInWhiteListForPrincipalGetUri) {
+  const auto Whitelist = {"nsIPrincipal.h", "BasePrincipal.cpp",
+                          "ContentPrincipal.cpp"};
+  SourceLocation Loc = Node.getBeginLoc();
+  StringRef Filename =
+      getFilename(Finder->getASTContext().getSourceManager(), Loc);
+
+  for (auto Exclusion : Whitelist) {
+    if (Filename.find(Exclusion) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// This matcher will match a list of files which contain NS_NewNamedThread
+/// code or names of existing threads that we would like to ignore.
+AST_MATCHER(CallExpr, isInAllowlistForThreads) {
+
+  // Get the source location of the call
+  SourceLocation Loc = Node.getRParenLoc();
+  StringRef FileName =
+      getFilename(Finder->getASTContext().getSourceManager(), Loc);
+  for (auto thread_file : allow_thread_files) {
+    if (llvm::sys::path::rbegin(FileName)->equals(thread_file)) {
+      return true;
+    }
+  }
+
+  // Now we get the first arg (the name of the thread) and we check it.
+  const StringLiteral *nameArg =
+      dyn_cast<StringLiteral>(Node.getArg(0)->IgnoreImplicit());
+  if (nameArg) {
+    const StringRef name = nameArg->getString();
+    for (auto thread_name : allow_thread_names) {
+      if (name.equals(thread_name)) {
+        return true;
+      }
     }
   }
 
@@ -213,18 +268,17 @@ AST_MATCHER_P(Expr, ignoreTrivials, internal::Matcher<Expr>, InnerMatcher) {
   return InnerMatcher.matches(*IgnoreTrivials(&Node), Finder, Builder);
 }
 
-// Takes two matchers: the first one is a condition; the second is a matcher to be
-// applied once we are done unwrapping trivials.  While the condition does not match
-// and we're looking at a trivial, will keep unwrapping the trivial and trying again.
-// Once the condition matches, we will go ahead and unwrap all trivials and apply the
-// inner matcher to the result.
+// Takes two matchers: the first one is a condition; the second is a matcher to
+// be applied once we are done unwrapping trivials.  While the condition does
+// not match and we're looking at a trivial, will keep unwrapping the trivial
+// and trying again. Once the condition matches, we will go ahead and unwrap all
+// trivials and apply the inner matcher to the result.
 //
-// The expected use here is if we want to condition a match on some typecheck but
-// apply the match to only non-trivials, because there are trivials (e.g. casts) that
-// can change types.
-AST_MATCHER_P2(Expr, ignoreTrivialsConditional,
-               internal::Matcher<Expr>, Condition,
-               internal::Matcher<Expr>, InnerMatcher) {
+// The expected use here is if we want to condition a match on some typecheck
+// but apply the match to only non-trivials, because there are trivials (e.g.
+// casts) that can change types.
+AST_MATCHER_P2(Expr, ignoreTrivialsConditional, internal::Matcher<Expr>,
+               Condition, internal::Matcher<Expr>, InnerMatcher) {
   const Expr *node = &Node;
   while (true) {
     if (Condition.matches(*node, Finder, Builder)) {
@@ -306,6 +360,18 @@ AST_MATCHER(QualType, isSmartPtrToRefCounted) {
   return D && hasCustomAttribute<moz_is_smartptr_to_refcounted>(D);
 }
 
+AST_MATCHER(ClassTemplateSpecializationDecl, isSmartPtrToRefCountedDecl) {
+  auto *D = dyn_cast_or_null<CXXRecordDecl>(
+      Node.getSpecializedTemplate()->getTemplatedDecl());
+  if (!D) {
+    return false;
+  }
+
+  D = D->getCanonicalDecl();
+
+  return D && hasCustomAttribute<moz_is_smartptr_to_refcounted>(D);
+}
+
 AST_MATCHER(CXXRecordDecl, hasBaseClasses) {
   const CXXRecordDecl *Decl = Node.getCanonicalDecl();
 
@@ -325,7 +391,13 @@ AST_MATCHER(CXXMethodDecl, isNonVirtual) {
 
 AST_MATCHER(FunctionDecl, isMozMustReturnFromCaller) {
   const FunctionDecl *Decl = Node.getCanonicalDecl();
-  return Decl && hasCustomAttribute<moz_must_return_from_caller_if_this_is_arg>(Decl);
+  return Decl &&
+         hasCustomAttribute<moz_must_return_from_caller_if_this_is_arg>(Decl);
+}
+
+AST_MATCHER(FunctionDecl, isMozTemporaryLifetimeBound) {
+  const FunctionDecl *Decl = Node.getCanonicalDecl();
+  return Decl && hasCustomAttribute<moz_lifetime_bound>(Decl);
 }
 
 /// This matcher will select default args which have nullptr as the value.
@@ -333,6 +405,19 @@ AST_MATCHER(CXXDefaultArgExpr, isNullDefaultArg) {
   const Expr *Expr = Node.getExpr();
   return Expr && Expr->isNullPointerConstant(Finder->getASTContext(),
                                              Expr::NPC_NeverValueDependent);
+}
+
+AST_MATCHER(UsingDirectiveDecl, isUsingNamespaceMozillaJava) {
+  const NamespaceDecl *Namespace = Node.getNominatedNamespace();
+  const std::string &FQName = Namespace->getQualifiedNameAsString();
+
+  static const char NAMESPACE[] = "mozilla::java";
+  static const char PREFIX[] = "mozilla::java::";
+
+  // We match both the `mozilla::java` namespace itself as well as any other
+  // namespaces contained within the `mozilla::java` namespace.
+  return !FQName.compare(NAMESPACE) ||
+         !FQName.compare(0, sizeof(PREFIX) - 1, PREFIX);
 }
 
 } // namespace ast_matchers

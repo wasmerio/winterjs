@@ -11,7 +11,7 @@
 
 #include "jstypes.h"
 
-#include "jit/IonCode.h"
+#include "jit/JitCode.h"
 #include "jit/Snapshots.h"
 #include "js/ProfilingFrameIterator.h"
 #include "vm/JSFunction.h"
@@ -22,8 +22,6 @@ namespace js {
 class ArgumentsObject;
 
 namespace jit {
-
-typedef void* CalleeToken;
 
 enum class FrameType {
   // A JS frame is analogous to a js::InterpreterFrame, representing one
@@ -87,8 +85,9 @@ class JitFrameLayout;
 class ExitFrameLayout;
 
 class BaselineFrame;
-
 class JitActivation;
+class SafepointIndex;
+class OsiIndex;
 
 // Iterate over the JIT stack to assert that all invariants are respected.
 //  - Check that all entry frames are aligned on JitStackAlignment.
@@ -186,6 +185,7 @@ class JSJitFrameIter {
   JSFunction* maybeCallee() const;
   unsigned numActualArgs() const;
   JSScript* script() const;
+  JSScript* maybeForwardedScript() const;
   void baselineScriptAndPc(JSScript** scriptRes, jsbytecode** pcRes) const;
   Value* actualArgs() const;
 
@@ -719,7 +719,7 @@ class InlineFrameIterator {
       unsigned nformal = calleeTemplate()->nargs();
 
       // Get the non overflown arguments, which are taken from the inlined
-      // frame, because it will have the updated value when JSOP_SETARG is
+      // frame, because it will have the updated value when JSOp::SetArg is
       // done.
       if (behavior != ReadFrame_Overflown) {
         s.readFunctionFrameArgs(argOp, argsObj, thisv, 0, nformal, script(),

@@ -435,7 +435,7 @@ function ignoreContents(entry)
         /mozalloc_handle_oom/,
         /^NS_Log/, /log_print/, /LazyLogModule::operator/,
         /SprintfLiteral/, "PR_smprintf", "PR_smprintf_free",
-        /NS_DispatchToMainThread/, /NS_ReleaseOnMainThreadSystemGroup/,
+        /NS_DispatchToMainThread/, /NS_ReleaseOnMainThread/,
         /NS_NewRunnableFunction/, /NS_Atomize/,
         /nsCSSValue::BufferFromString/,
         /NS_xstrdup/,
@@ -462,9 +462,6 @@ function ignoreContents(entry)
         // These all create static strings in local storage, which is threadsafe
         // to do but not understood by the analysis yet.
         / EmptyString\(\)/,
-        /nsCSSProps::LookupPropertyValue/,
-        /nsCSSProps::ValueToKeyword/,
-        /nsCSSKeywords::GetStringValue/,
 
         // These could probably be handled by treating the scope of PSAutoLock
         // aka BaseAutoLock<PSMutex> as threadsafe.

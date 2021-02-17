@@ -7,6 +7,7 @@
 #ifndef jit_arm_SharedICHelpers_arm_inl_h
 #define jit_arm_SharedICHelpers_arm_inl_h
 
+#include "jit/BaselineFrame.h"
 #include "jit/SharedICHelpers.h"
 
 #include "jit/MacroAssembler-inl.h"
@@ -18,7 +19,7 @@ inline void EmitBaselineTailCallVM(TrampolinePtr target, MacroAssembler& masm,
                                    uint32_t argSize) {
   // We assume during this that R0 and R1 have been pushed, and that R2 is
   // unused.
-  MOZ_ASSERT(R2 == ValueOperand(r1, r0));
+  static_assert(R2 == ValueOperand(r1, r0));
 
   // Compute frame size.
   masm.movePtr(BaselineFrameReg, r0);
@@ -40,7 +41,7 @@ inline void EmitBaselineTailCallVM(TrampolinePtr target, MacroAssembler& masm,
   // ICTailCallReg (lr) already contains the return address (as we keep
   // it there through the stub calls), but the VMWrapper code being called
   // expects the return address to also be pushed on the stack.
-  MOZ_ASSERT(ICTailCallReg == lr);
+  static_assert(ICTailCallReg == lr);
   masm.makeFrameDescriptor(r0, FrameType::BaselineJS, ExitFrameLayout::Size());
   masm.push(r0);
   masm.push(lr);

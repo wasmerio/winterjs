@@ -2,13 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-'''A generic script to add entries to a file
+"""A generic script to add entries to a file
 if the entry does not already exist.
 
 Usage: buildlist.py <filename> <entry> [<entry> ...]
-'''
-from __future__ import absolute_import, print_function
+"""
+from __future__ import absolute_import, print_function, unicode_literals
 
+import io
 import sys
 import os
 
@@ -16,6 +17,7 @@ from mozbuild.util import (
     ensureParentDir,
     lock_file,
 )
+from mozbuild.action.util import log_build_task
 
 
 def addEntriesToListFile(listFile, entries):
@@ -26,7 +28,7 @@ def addEntriesToListFile(listFile, entries):
     lock = lock_file(listFile + ".lck")
     try:
         if os.path.exists(listFile):
-            f = open(listFile)
+            f = io.open(listFile)
             existing = set(x.strip() for x in f.readlines())
             f.close()
         else:
@@ -34,20 +36,19 @@ def addEntriesToListFile(listFile, entries):
         for e in entries:
             if e not in existing:
                 existing.add(e)
-        with open(listFile, 'wb') as f:
-            f.write("\n".join(sorted(existing))+"\n")
+        with io.open(listFile, "w", newline="\n") as f:
+            f.write("\n".join(sorted(existing)) + "\n")
     finally:
         del lock  # Explicitly release the lock_file to free it
 
 
 def main(args):
     if len(args) < 2:
-        print("Usage: buildlist.py <list file> <entry> [<entry> ...]",
-              file=sys.stderr)
+        print("Usage: buildlist.py <list file> <entry> [<entry> ...]", file=sys.stderr)
         return 1
 
     return addEntriesToListFile(args[0], args[1:])
 
 
-if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:]))
+if __name__ == "__main__":
+    sys.exit(log_build_task(main, sys.argv[1:]))

@@ -23,7 +23,10 @@
 #include <algorithm>
 
 #include "jit/CodeGenerator.h"
-
+#include "jit/CompileInfo.h"
+#include "jit/Ion.h"
+#include "jit/IonOptimizationLevels.h"
+#include "js/ScalarType.h"  // js::Scalar::Type
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmGC.h"
@@ -49,14 +52,14 @@ typedef Vector<MDefinition*, 8, SystemAllocPolicy> DefVector;
 
 struct IonCompilePolicy {
   // We store SSA definitions in the value stack.
-  typedef MDefinition* Value;
-  typedef DefVector ValueVector;
+  using Value = MDefinition*;
+  using ValueVector = DefVector;
 
   // We store loop headers and then/else blocks in the control flow stack.
-  typedef MBasicBlock* ControlItem;
+  using ControlItem = MBasicBlock*;
 };
 
-typedef OpIter<IonCompilePolicy> IonOpIter;
+using IonOpIter = OpIter<IonCompilePolicy>;
 
 class FunctionCompiler;
 
@@ -64,13 +67,17 @@ class FunctionCompiler;
 
 class CallCompileState {
   // A generator object that is passed each argument as it is compiled.
-  ABIArgGenerator abi_;
+  WasmABIArgGenerator abi_;
 
   // Accumulates the register arguments while compiling arguments.
   MWasmCall::Args regArgs_;
 
   // Reserved argument for passing Instance* to builtin instance method calls.
   ABIArg instanceArg_;
+
+  // The stack area in which the callee will write stack return values, or
+  // nullptr if no stack results.
+  MWasmStackResultArea* stackResultArea_ = nullptr;
 
   // Only FunctionCompiler should be directly manipulating CallCompileState.
   friend class FunctionCompiler;
@@ -91,7 +98,7 @@ class FunctionCompiler {
   typedef Vector<ControlFlowPatchVector, 0, SystemAllocPolicy>
       ControlFlowPatchsVector;
 
-  const ModuleEnvironment& env_;
+  const ModuleEnvironment& moduleEnv_;
   IonOpIter iter_;
   const FuncCompileInput& func_;
   const ValTypeVector& locals_;
@@ -111,42 +118,47 @@ class FunctionCompiler {
 
   // TLS pointer argument to the current function.
   MWasmParameter* tlsPointer_;
+  MWasmParameter* stackResultPointer_;
 
  public:
-  FunctionCompiler(const ModuleEnvironment& env, Decoder& decoder,
+  FunctionCompiler(const ModuleEnvironment& moduleEnv, Decoder& decoder,
                    const FuncCompileInput& func, const ValTypeVector& locals,
                    MIRGenerator& mirGen)
-      : env_(env),
-        iter_(env, decoder),
+      : moduleEnv_(moduleEnv),
+        iter_(moduleEnv, decoder),
         func_(func),
         locals_(locals),
         lastReadCallSite_(0),
         alloc_(mirGen.alloc()),
         graph_(mirGen.graph()),
-        info_(mirGen.info()),
+        info_(mirGen.outerInfo()),
         mirGen_(mirGen),
         curBlock_(nullptr),
         maxStackArgBytes_(0),
         loopDepth_(0),
         blockDepth_(0),
-        tlsPointer_(nullptr) {}
+        tlsPointer_(nullptr),
+        stackResultPointer_(nullptr) {}
 
-  const ModuleEnvironment& env() const { return env_; }
+  const ModuleEnvironment& moduleEnv() const { return moduleEnv_; }
+
   IonOpIter& iter() { return iter_; }
   TempAllocator& alloc() const { return alloc_; }
   // FIXME(1401675): Replace with BlockType.
   uint32_t funcIndex() const { return func_.index; }
-  const FuncType& funcType() const { return *env_.funcTypes[func_.index]; }
+  const FuncType& funcType() const {
+    return *moduleEnv_.funcTypes[func_.index];
+  }
 
   BytecodeOffset bytecodeOffset() const { return iter_.bytecodeOffset(); }
   BytecodeOffset bytecodeIfNotAsmJS() const {
-    return env_.isAsmJS() ? BytecodeOffset() : iter_.bytecodeOffset();
+    return moduleEnv_.isAsmJS() ? BytecodeOffset() : iter_.bytecodeOffset();
   }
 
   bool init() {
     // Prepare the entry block for MIR generation:
 
-    const ValTypeVector& args = funcType().args();
+    const ArgTypeVector args(funcType());
 
     if (!mirGen_.ensureBallast()) {
       return false;
@@ -155,11 +167,16 @@ class FunctionCompiler {
       return false;
     }
 
-    for (ABIArgIter<ValTypeVector> i(args); !i.done(); i++) {
-      MOZ_ASSERT(i.mirType() != MIRType::Pointer);
+    for (WasmABIArgIter i(args); !i.done(); i++) {
       MWasmParameter* ins = MWasmParameter::New(alloc(), *i, i.mirType());
       curBlock_->add(ins);
-      curBlock_->initSlot(info().localSlot(i.index()), ins);
+      if (args.isSyntheticStackResultPointerArg(i.index())) {
+        MOZ_ASSERT(stackResultPointer_ == nullptr);
+        stackResultPointer_ = ins;
+      } else {
+        curBlock_->initSlot(info().localSlot(args.naturalIndex(i.index())),
+                            ins);
+      }
       if (!mirGen_.ensureBallast()) {
         return false;
       }
@@ -173,15 +190,24 @@ class FunctionCompiler {
       return false;
     }
 
-    for (size_t i = args.length(); i < locals_.length(); i++) {
+    for (size_t i = args.lengthWithoutStackResults(); i < locals_.length();
+         i++) {
       MInstruction* ins = nullptr;
-      switch (locals_[i].code()) {
+      switch (locals_[i].kind()) {
         case ValType::I32:
           ins = MConstant::New(alloc(), Int32Value(0), MIRType::Int32);
           break;
         case ValType::I64:
           ins = MConstant::NewInt64(alloc(), 0);
           break;
+        case ValType::V128:
+#ifdef ENABLE_WASM_SIMD
+          ins =
+              MWasmFloatConstant::NewSimd128(alloc(), SimdConstant::SplatX4(0));
+          break;
+#else
+          return iter().fail("Ion has no SIMD support yet");
+#endif
         case ValType::F32:
           ins = MConstant::New(alloc(), Float32Value(0.f), MIRType::Float32);
           break;
@@ -189,12 +215,8 @@ class FunctionCompiler {
           ins = MConstant::New(alloc(), DoubleValue(0.0), MIRType::Double);
           break;
         case ValType::Ref:
-        case ValType::FuncRef:
-        case ValType::AnyRef:
           ins = MWasmNullConstant::New(alloc());
           break;
-        case ValType::NullRef:
-          MOZ_CRASH("NullRef not expressible");
       }
 
       curBlock_->add(ins);
@@ -275,6 +297,18 @@ class FunctionCompiler {
     return constant;
   }
 
+#ifdef ENABLE_WASM_SIMD
+  MDefinition* constant(V128 v) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+    MWasmFloatConstant* constant = MWasmFloatConstant::NewSimd128(
+        alloc(), SimdConstant::CreateSimd128((int8_t*)v.bytes));
+    curBlock_->add(constant);
+    return constant;
+  }
+#endif
+
   MDefinition* nullRefConstant() {
     if (inDeadCode()) {
       return nullptr;
@@ -333,8 +367,26 @@ class FunctionCompiler {
     return ins;
   }
 
+  MDefinition* ursh(MDefinition* lhs, MDefinition* rhs, MIRType type) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+    auto* ins = MUrsh::NewWasm(alloc(), lhs, rhs, type);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  MDefinition* add(MDefinition* lhs, MDefinition* rhs, MIRType type) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+    auto* ins = MAdd::NewWasm(alloc(), lhs, rhs, type);
+    curBlock_->add(ins);
+    return ins;
+  }
+
   bool mustPreserveNaN(MIRType type) {
-    return IsFloatingPointType(type) && !env().isAsmJS();
+    return IsFloatingPointType(type) && !moduleEnv().isAsmJS();
   }
 
   MDefinition* sub(MDefinition* lhs, MDefinition* rhs, MIRType type) {
@@ -343,7 +395,7 @@ class FunctionCompiler {
     }
 
     // wasm can't fold x - 0.0 because of NaN with custom payloads.
-    MSub* ins = MSub::New(alloc(), lhs, rhs, type, mustPreserveNaN(type));
+    MSub* ins = MSub::NewWasm(alloc(), lhs, rhs, type, mustPreserveNaN(type));
     curBlock_->add(ins);
     return ins;
   }
@@ -394,7 +446,7 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
-    bool trapOnError = !env().isAsmJS();
+    bool trapOnError = !moduleEnv().isAsmJS();
     if (!unsignd && type == MIRType::Int32) {
       // Enforce the signedness of the operation by coercing the operands
       // to signed.  Otherwise, operands that "look" unsigned to Ion but
@@ -404,20 +456,41 @@ class FunctionCompiler {
       // Do this for Int32 only since Int64 is not subject to the same
       // issues.
       //
-      // Note the offsets passed to MTruncateToInt32 are wrong here, but
-      // it doesn't matter: they're not codegen'd to calls since inputs
+      // Note the offsets passed to MWasmBuiltinTruncateToInt32 are wrong here,
+      // but it doesn't matter: they're not codegen'd to calls since inputs
       // already are int32.
-      auto* lhs2 = MTruncateToInt32::New(alloc(), lhs);
+      auto* lhs2 = createTruncateToInt32(lhs);
       curBlock_->add(lhs2);
       lhs = lhs2;
-      auto* rhs2 = MTruncateToInt32::New(alloc(), rhs);
+      auto* rhs2 = createTruncateToInt32(rhs);
       curBlock_->add(rhs2);
       rhs = rhs2;
     }
+
+    // For x86 and arm we implement i64 div via c++ builtin.
+    // A call to c++ builtin requires tls pointer.
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_ARM)
+    if (type == MIRType::Int64) {
+      auto* ins =
+          MWasmBuiltinDivI64::New(alloc(), lhs, rhs, tlsPointer_, unsignd,
+                                  trapOnError, bytecodeOffset());
+      curBlock_->add(ins);
+      return ins;
+    }
+#endif
+
     auto* ins = MDiv::New(alloc(), lhs, rhs, type, unsignd, trapOnError,
                           bytecodeOffset(), mustPreserveNaN(type));
     curBlock_->add(ins);
     return ins;
+  }
+
+  MInstruction* createTruncateToInt32(MDefinition* op) {
+    if (op->type() == MIRType::Double || op->type() == MIRType::Float32) {
+      return MWasmBuiltinTruncateToInt32::New(alloc(), op, tlsPointer_);
+    }
+
+    return MTruncateToInt32::New(alloc(), op);
   }
 
   MDefinition* mod(MDefinition* lhs, MDefinition* rhs, MIRType type,
@@ -425,16 +498,38 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
-    bool trapOnError = !env().isAsmJS();
+    bool trapOnError = !moduleEnv().isAsmJS();
     if (!unsignd && type == MIRType::Int32) {
       // See block comment in div().
-      auto* lhs2 = MTruncateToInt32::New(alloc(), lhs);
+      auto* lhs2 = createTruncateToInt32(lhs);
       curBlock_->add(lhs2);
       lhs = lhs2;
-      auto* rhs2 = MTruncateToInt32::New(alloc(), rhs);
+      auto* rhs2 = createTruncateToInt32(rhs);
       curBlock_->add(rhs2);
       rhs = rhs2;
     }
+
+    // For x86 and arm we implement i64 mod via c++ builtin.
+    // A call to c++ builtin requires tls pointer.
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_ARM)
+    if (type == MIRType::Int64) {
+      auto* ins =
+          MWasmBuiltinModI64::New(alloc(), lhs, rhs, tlsPointer_, unsignd,
+                                  trapOnError, bytecodeOffset());
+      curBlock_->add(ins);
+      return ins;
+    }
+#endif
+
+    // Should be handled separately because we call BuiltinThunk for this case
+    // and so, need to add the dependency from tlsPointer.
+    if (type == MIRType::Double) {
+      auto* ins = MWasmBuiltinModD::New(alloc(), lhs, rhs, tlsPointer_, type,
+                                        bytecodeOffset());
+      curBlock_->add(ins);
+      return ins;
+    }
+
     auto* ins = MMod::New(alloc(), lhs, rhs, type, unsignd, trapOnError,
                           bytecodeOffset());
     curBlock_->add(ins);
@@ -445,7 +540,7 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
-    auto* ins = MBitNot::NewInt32(alloc(), op);
+    auto* ins = MBitNot::New(alloc(), op);
     curBlock_->add(ins);
     return ins;
   }
@@ -522,8 +617,13 @@ class FunctionCompiler {
     if (inDeadCode()) {
       return nullptr;
     }
+#if defined(JS_CODEGEN_ARM)
+    auto* ins = MBuiltinInt64ToFloatingPoint::New(
+        alloc(), op, tlsPointer_, type, bytecodeOffset(), isUnsigned);
+#else
     auto* ins = MInt64ToFloatingPoint::New(alloc(), op, type, bytecodeOffset(),
                                            isUnsigned);
+#endif
     curBlock_->add(ins);
     return ins;
   }
@@ -548,6 +648,16 @@ class FunctionCompiler {
     return ins;
   }
 
+  MDefinition* truncateWithTls(MDefinition* op, TruncFlags flags) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+    auto* ins = MWasmBuiltinTruncateToInt64::New(alloc(), op, tlsPointer_,
+                                                 flags, bytecodeOffset());
+    curBlock_->add(ins);
+    return ins;
+  }
+
   MDefinition* compare(MDefinition* lhs, MDefinition* rhs, JSOp op,
                        MCompare::CompareType type) {
     if (inDeadCode()) {
@@ -565,11 +675,230 @@ class FunctionCompiler {
     curBlock_->setSlot(info().localSlot(slot), def);
   }
 
+#ifdef ENABLE_WASM_SIMD
+  // About Wasm SIMD as supported by Ion:
+  //
+  // The expectation is that Ion will only ever support SIMD on x86 and x64,
+  // since Cranelift will be the optimizing compiler for Arm64, ARMv7 will cease
+  // to be a tier-1 platform soon, and MIPS32 and MIPS64 will never implement
+  // SIMD.
+  //
+  // The division of the operations into MIR nodes reflects that expectation,
+  // and is a good fit for x86/x64.  Should the expectation change we'll
+  // possibly want to re-architect the SIMD support to be a little more general.
+  //
+  // Most SIMD operations map directly to a single MIR node that ultimately ends
+  // up being expanded in the macroassembler.
+  //
+  // Some SIMD operations that do have a complete macroassembler expansion are
+  // open-coded into multiple MIR nodes here; in some cases that's just
+  // convenience, in other cases it may also allow them to benefit from Ion
+  // optimizations.  The reason for the expansions will be documented by a
+  // comment.
+
+  // (v128,v128) -> v128 effect-free binary operations
+  MDefinition* binarySimd128(MDefinition* lhs, MDefinition* rhs,
+                             bool commutative, SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(lhs->type() == MIRType::Simd128 &&
+               rhs->type() == MIRType::Simd128);
+
+    auto* ins = MWasmBinarySimd128::New(alloc(), lhs, rhs, commutative, op);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (v128,i32) -> v128 effect-free shift operations
+  MDefinition* shiftSimd128(MDefinition* lhs, MDefinition* rhs, SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(lhs->type() == MIRType::Simd128 &&
+               rhs->type() == MIRType::Int32);
+
+    // Do something vector-based when the platform allows it.
+    if ((rhs->isConstant() && !MacroAssembler::MustScalarizeShiftSimd128(
+                                  op, Imm32(rhs->toConstant()->toInt32()))) ||
+        (!rhs->isConstant() &&
+         !MacroAssembler::MustScalarizeShiftSimd128(op))) {
+      int32_t maskBits;
+      if (!rhs->isConstant() &&
+          MacroAssembler::MustMaskShiftCountSimd128(op, &maskBits)) {
+        MConstant* mask = MConstant::New(alloc(), Int32Value(maskBits));
+        curBlock_->add(mask);
+        MBitAnd* maskedShift = MBitAnd::New(alloc(), rhs, mask, MIRType::Int32);
+        curBlock_->add(maskedShift);
+        rhs = maskedShift;
+      }
+
+      auto* ins = MWasmShiftSimd128::New(alloc(), lhs, rhs, op);
+      curBlock_->add(ins);
+      return ins;
+    }
+
+#  ifdef DEBUG
+    js::wasm::ReportSimdAnalysis("shift -> variable scalarized shift");
+#  endif
+
+    // Otherwise just scalarize using existing primitive operations.
+    auto* lane0 = reduceSimd128(lhs, SimdOp::I64x2ExtractLane, ValType::I64, 0);
+    auto* lane1 = reduceSimd128(lhs, SimdOp::I64x2ExtractLane, ValType::I64, 1);
+    auto* shiftCount = extendI32(rhs, /*isUnsigned=*/false);
+    auto* shifted0 = binary<MRsh>(lane0, shiftCount, MIRType::Int64);
+    auto* shifted1 = binary<MRsh>(lane1, shiftCount, MIRType::Int64);
+    V128 zero;
+    auto* res0 = constant(zero);
+    auto* res1 =
+        replaceLaneSimd128(res0, shifted0, 0, SimdOp::I64x2ReplaceLane);
+    auto* ins = replaceLaneSimd128(res1, shifted1, 1, SimdOp::I64x2ReplaceLane);
+    return ins;
+  }
+
+  // (v128,scalar,imm) -> v128
+  MDefinition* replaceLaneSimd128(MDefinition* lhs, MDefinition* rhs,
+                                  uint32_t laneIndex, SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(lhs->type() == MIRType::Simd128);
+
+    auto* ins = MWasmReplaceLaneSimd128::New(alloc(), lhs, rhs, laneIndex, op);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (scalar) -> v128 effect-free unary operations
+  MDefinition* scalarToSimd128(MDefinition* src, SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    auto* ins = MWasmScalarToSimd128::New(alloc(), src, op);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (v128) -> v128 effect-free unary operations
+  MDefinition* unarySimd128(MDefinition* src, SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(src->type() == MIRType::Simd128);
+    auto* ins = MWasmUnarySimd128::New(alloc(), src, op);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (v128, imm) -> scalar effect-free unary operations
+  MDefinition* reduceSimd128(MDefinition* src, SimdOp op, ValType outType,
+                             uint32_t imm = 0) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(src->type() == MIRType::Simd128);
+    auto* ins =
+        MWasmReduceSimd128::New(alloc(), src, op, ToMIRType(outType), imm);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (v128, v128, v128) -> v128 effect-free operations
+  MDefinition* bitselectSimd128(MDefinition* v1, MDefinition* v2,
+                                MDefinition* control) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(v1->type() == MIRType::Simd128);
+    MOZ_ASSERT(v2->type() == MIRType::Simd128);
+    MOZ_ASSERT(control->type() == MIRType::Simd128);
+    auto* ins = MWasmBitselectSimd128::New(alloc(), v1, v2, control);
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  // (v128, v128, imm_v128) -> v128 effect-free operations
+  MDefinition* shuffleSimd128(MDefinition* v1, MDefinition* v2, V128 control) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(v1->type() == MIRType::Simd128);
+    MOZ_ASSERT(v2->type() == MIRType::Simd128);
+    auto* ins = MWasmShuffleSimd128::New(
+        alloc(), v1, v2,
+        SimdConstant::CreateX16(reinterpret_cast<int8_t*>(control.bytes)));
+    curBlock_->add(ins);
+    return ins;
+  }
+
+  MDefinition* loadSplatSimd128(Scalar::Type viewType,
+                                const LinearMemoryAddress<MDefinition*>& addr,
+                                wasm::SimdOp splatOp) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(viewType, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+
+    // Generate better code (on x86)
+    if (viewType == Scalar::Float64) {
+      access.setSplatSimd128Load();
+      return load(addr.base, &access, ValType::V128);
+    }
+
+    ValType resultType = ValType::I32;
+    if (viewType == Scalar::Float32) {
+      resultType = ValType::F32;
+      splatOp = wasm::SimdOp::F32x4Splat;
+    }
+    auto* scalar = load(addr.base, &access, resultType);
+    if (!inDeadCode() && !scalar) {
+      return nullptr;
+    }
+    return scalarToSimd128(scalar, splatOp);
+  }
+
+  MDefinition* loadExtendSimd128(const LinearMemoryAddress<MDefinition*>& addr,
+                                 wasm::SimdOp op) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    // Generate better code (on x86) by loading as a double with an
+    // operation that sign extends directly.
+    MemoryAccessDesc access(Scalar::Float64, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    access.setWidenSimd128Load(op);
+    return load(addr.base, &access, ValType::V128);
+  }
+
+  MDefinition* loadZeroSimd128(Scalar::Type viewType, size_t numBytes,
+                               const LinearMemoryAddress<MDefinition*>& addr) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(viewType, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    access.setZeroExtendSimd128Load();
+    return load(addr.base, &access, ValType::V128);
+  }
+#endif  // ENABLE_WASM_SIMD
+
  private:
   MWasmLoadTls* maybeLoadMemoryBase() {
     MWasmLoadTls* load = nullptr;
 #ifdef JS_CODEGEN_X86
-    AliasSet aliases = env_.maxMemoryLength.isSome()
+    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     load = MWasmLoadTls::New(alloc(), tlsPointer_,
@@ -580,15 +909,15 @@ class FunctionCompiler {
     return load;
   }
 
-  MWasmLoadTls* maybeLoadBoundsCheckLimit() {
-    if (env_.hugeMemoryEnabled()) {
+  MWasmLoadTls* maybeLoadBoundsCheckLimit32() {
+    if (moduleEnv_.hugeMemoryEnabled()) {
       return nullptr;
     }
-    AliasSet aliases = env_.maxMemoryLength.isSome()
+    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     auto load = MWasmLoadTls::New(alloc(), tlsPointer_,
-                                  offsetof(wasm::TlsData, boundsCheckLimit),
+                                  offsetof(wasm::TlsData, boundsCheckLimit32),
                                   MIRType::Int32, aliases);
     curBlock_->add(load);
     return load;
@@ -597,7 +926,7 @@ class FunctionCompiler {
  public:
   MWasmHeapBase* memoryBase() {
     MWasmHeapBase* base = nullptr;
-    AliasSet aliases = env_.maxMemoryLength.isSome()
+    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     base = MWasmHeapBase::New(alloc(), tlsPointer_, aliases);
@@ -612,7 +941,7 @@ class FunctionCompiler {
     MOZ_ASSERT(!*mustAdd);
 
     // asm.js accesses are always aligned and need no checks.
-    if (env_.isAsmJS() || !access->isAtomic()) {
+    if (moduleEnv_.isAsmJS() || !access->isAtomic()) {
       return false;
     }
 
@@ -632,7 +961,8 @@ class FunctionCompiler {
                                         MDefinition** base) {
     MOZ_ASSERT(!inDeadCode());
 
-    uint32_t offsetGuardLimit = GetOffsetGuardLimit(env_.hugeMemoryEnabled());
+    uint32_t offsetGuardLimit =
+        GetOffsetGuardLimit(moduleEnv_.hugeMemoryEnabled());
 
     // Fold a constant base into the offset (so the base is 0 in which case
     // the codegen is optimized), if it doesn't wrap or trigger an
@@ -667,9 +997,9 @@ class FunctionCompiler {
           alloc(), *base, access->byteSize(), bytecodeOffset()));
     }
 
-    MWasmLoadTls* boundsCheckLimit = maybeLoadBoundsCheckLimit();
-    if (boundsCheckLimit) {
-      auto* ins = MWasmBoundsCheck::New(alloc(), *base, boundsCheckLimit,
+    MWasmLoadTls* boundsCheckLimit32 = maybeLoadBoundsCheckLimit32();
+    if (boundsCheckLimit32) {
+      auto* ins = MWasmBoundsCheck::New(alloc(), *base, boundsCheckLimit32,
                                         bytecodeOffset());
       curBlock_->add(ins);
       if (JitOptions.spectreIndexMasking) {
@@ -711,10 +1041,10 @@ class FunctionCompiler {
 
     MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
     MInstruction* load = nullptr;
-    if (env_.isAsmJS()) {
+    if (moduleEnv_.isAsmJS()) {
       MOZ_ASSERT(access->offset() == 0);
-      MWasmLoadTls* boundsCheckLimit = maybeLoadBoundsCheckLimit();
-      load = MAsmJSLoadHeap::New(alloc(), memoryBase, base, boundsCheckLimit,
+      MWasmLoadTls* boundsCheckLimit32 = maybeLoadBoundsCheckLimit32();
+      load = MAsmJSLoadHeap::New(alloc(), memoryBase, base, boundsCheckLimit32,
                                  access->type());
     } else {
       checkOffsetAndAlignmentAndBounds(access, &base);
@@ -735,11 +1065,11 @@ class FunctionCompiler {
 
     MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
     MInstruction* store = nullptr;
-    if (env_.isAsmJS()) {
+    if (moduleEnv_.isAsmJS()) {
       MOZ_ASSERT(access->offset() == 0);
-      MWasmLoadTls* boundsCheckLimit = maybeLoadBoundsCheckLimit();
-      store = MAsmJSStoreHeap::New(alloc(), memoryBase, base, boundsCheckLimit,
-                                   access->type(), v);
+      MWasmLoadTls* boundsCheckLimit32 = maybeLoadBoundsCheckLimit32();
+      store = MAsmJSStoreHeap::New(alloc(), memoryBase, base,
+                                   boundsCheckLimit32, access->type(), v);
     } else {
       checkOffsetAndAlignmentAndBounds(access, &base);
       store = MWasmStore::New(alloc(), memoryBase, base, *access, v);
@@ -1005,6 +1335,43 @@ class FunctionCompiler {
     return passArgWorker(argDef, ToMIRType(type), call);
   }
 
+  // If the call returns results on the stack, prepare a stack area to receive
+  // them, and pass the address of the stack area to the callee as an additional
+  // argument.
+  bool passStackResultAreaCallArg(const ResultType& resultType,
+                                  CallCompileState* call) {
+    if (inDeadCode()) {
+      return true;
+    }
+    ABIResultIter iter(resultType);
+    while (!iter.done() && iter.cur().inRegister()) {
+      iter.next();
+    }
+    if (iter.done()) {
+      // No stack results.
+      return true;
+    }
+
+    auto* stackResultArea = MWasmStackResultArea::New(alloc());
+    if (!stackResultArea) {
+      return false;
+    }
+    if (!stackResultArea->init(alloc(), iter.remaining())) {
+      return false;
+    }
+    for (uint32_t base = iter.index(); !iter.done(); iter.next()) {
+      MWasmStackResultArea::StackResult loc(iter.cur().stackOffset(),
+                                            ToMIRType(iter.cur().type()));
+      stackResultArea->initResult(iter.index() - base, loc);
+    }
+    curBlock_->add(stackResultArea);
+    if (!passArg(stackResultArea, MIRType::Pointer, call)) {
+      return false;
+    }
+    call->stackResultArea_ = stackResultArea;
+    return true;
+  }
+
   bool finishCall(CallCompileState* call) {
     if (inDeadCode()) {
       return true;
@@ -1023,48 +1390,153 @@ class FunctionCompiler {
 
   // Wrappers for creating various kinds of calls.
 
+  bool collectUnaryCallResult(MIRType type, MDefinition** result) {
+    MInstruction* def;
+    switch (type) {
+      case MIRType::Int32:
+        def = MWasmRegisterResult::New(alloc(), MIRType::Int32, ReturnReg);
+        break;
+      case MIRType::Int64:
+        def = MWasmRegister64Result::New(alloc(), ReturnReg64);
+        break;
+      case MIRType::Float32:
+        def = MWasmFloatRegisterResult::New(alloc(), type, ReturnFloat32Reg);
+        break;
+      case MIRType::Double:
+        def = MWasmFloatRegisterResult::New(alloc(), type, ReturnDoubleReg);
+        break;
+#ifdef ENABLE_WASM_SIMD
+      case MIRType::Simd128:
+        def = MWasmFloatRegisterResult::New(alloc(), type, ReturnSimd128Reg);
+        break;
+#endif
+      case MIRType::RefOrNull:
+        def = MWasmRegisterResult::New(alloc(), MIRType::RefOrNull, ReturnReg);
+        break;
+      default:
+        MOZ_CRASH("unexpected MIRType result for builtin call");
+    }
+
+    if (!def) {
+      return false;
+    }
+
+    curBlock_->add(def);
+    *result = def;
+
+    return true;
+  }
+
+  bool collectCallResults(const ResultType& type,
+                          MWasmStackResultArea* stackResultArea,
+                          DefVector* results) {
+    if (!results->reserve(type.length())) {
+      return false;
+    }
+
+    // The result iterator goes in the order in which results would be popped
+    // off; we want the order in which they would be pushed.
+    ABIResultIter iter(type);
+    uint32_t stackResultCount = 0;
+    while (!iter.done()) {
+      if (iter.cur().onStack()) {
+        stackResultCount++;
+      }
+      iter.next();
+    }
+
+    for (iter.switchToPrev(); !iter.done(); iter.prev()) {
+      const ABIResult& result = iter.cur();
+      MInstruction* def;
+      if (result.inRegister()) {
+        switch (result.type().kind()) {
+          case wasm::ValType::I32:
+            def =
+                MWasmRegisterResult::New(alloc(), MIRType::Int32, result.gpr());
+            break;
+          case wasm::ValType::I64:
+            def = MWasmRegister64Result::New(alloc(), result.gpr64());
+            break;
+          case wasm::ValType::F32:
+            def = MWasmFloatRegisterResult::New(alloc(), MIRType::Float32,
+                                                result.fpr());
+            break;
+          case wasm::ValType::F64:
+            def = MWasmFloatRegisterResult::New(alloc(), MIRType::Double,
+                                                result.fpr());
+            break;
+          case wasm::ValType::Ref:
+            def = MWasmRegisterResult::New(alloc(), MIRType::RefOrNull,
+                                           result.gpr());
+            break;
+          case wasm::ValType::V128:
+#ifdef ENABLE_WASM_SIMD
+            def = MWasmFloatRegisterResult::New(alloc(), MIRType::Simd128,
+                                                result.fpr());
+#else
+            return this->iter().fail("Ion has no SIMD support yet");
+#endif
+        }
+      } else {
+        MOZ_ASSERT(stackResultArea);
+        MOZ_ASSERT(stackResultCount);
+        uint32_t idx = --stackResultCount;
+        def = MWasmStackResult::New(alloc(), stackResultArea, idx);
+      }
+
+      if (!def) {
+        return false;
+      }
+      curBlock_->add(def);
+      results->infallibleAppend(def);
+    }
+
+    MOZ_ASSERT(results->length() == type.length());
+
+    return true;
+  }
+
   bool callDirect(const FuncType& funcType, uint32_t funcIndex,
                   uint32_t lineOrBytecode, const CallCompileState& call,
-                  MDefinition** def) {
+                  DefVector* results) {
     if (inDeadCode()) {
-      *def = nullptr;
       return true;
     }
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Func);
-    MIRType ret = ToMIRType(funcType.ret());
+    ResultType resultType = ResultType::Vector(funcType.results());
     auto callee = CalleeDesc::function(funcIndex);
-    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_, ret,
-                               StackArgAreaSizeUnaligned(funcType.args()));
+    ArgTypeVector args(funcType);
+    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
+                               StackArgAreaSizeUnaligned(args));
     if (!ins) {
       return false;
     }
 
     curBlock_->add(ins);
-    *def = ins;
-    return true;
+
+    return collectCallResults(resultType, call.stackResultArea_, results);
   }
 
   bool callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
                     MDefinition* index, uint32_t lineOrBytecode,
-                    const CallCompileState& call, MDefinition** def) {
+                    const CallCompileState& call, DefVector* results) {
     if (inDeadCode()) {
-      *def = nullptr;
       return true;
     }
 
-    const FuncTypeWithId& funcType = env_.types[funcTypeIndex].funcType();
+    const FuncTypeWithId& funcType = moduleEnv_.types[funcTypeIndex].funcType();
 
     CalleeDesc callee;
-    if (env_.isAsmJS()) {
+    if (moduleEnv_.isAsmJS()) {
       MOZ_ASSERT(tableIndex == 0);
       MOZ_ASSERT(funcType.id.kind() == FuncTypeIdDescKind::None);
       const TableDesc& table =
-          env_.tables[env_.asmJSSigToTableIndex[funcTypeIndex]];
-      MOZ_ASSERT(IsPowerOfTwo(table.limits.initial));
+          moduleEnv_.tables[moduleEnv_.asmJSSigToTableIndex[funcTypeIndex]];
+      MOZ_ASSERT(IsPowerOfTwo(table.initialLength));
 
       MConstant* mask =
-          MConstant::New(alloc(), Int32Value(table.limits.initial - 1));
+          MConstant::New(alloc(), Int32Value(table.initialLength - 1));
       curBlock_->add(mask);
       MBitAnd* maskedIndex = MBitAnd::New(alloc(), index, mask, MIRType::Int32);
       curBlock_->add(maskedIndex);
@@ -1073,43 +1545,44 @@ class FunctionCompiler {
       callee = CalleeDesc::asmJSTable(table);
     } else {
       MOZ_ASSERT(funcType.id.kind() != FuncTypeIdDescKind::None);
-      const TableDesc& table = env_.tables[tableIndex];
+      const TableDesc& table = moduleEnv_.tables[tableIndex];
       callee = CalleeDesc::wasmTable(table, funcType.id);
     }
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Dynamic);
-    auto* ins = MWasmCall::New(
-        alloc(), desc, callee, call.regArgs_, ToMIRType(funcType.ret()),
-        StackArgAreaSizeUnaligned(funcType.args()), index);
+    ArgTypeVector args(funcType);
+    ResultType resultType = ResultType::Vector(funcType.results());
+    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
+                               StackArgAreaSizeUnaligned(args), index);
     if (!ins) {
       return false;
     }
 
     curBlock_->add(ins);
-    *def = ins;
-    return true;
+
+    return collectCallResults(resultType, call.stackResultArea_, results);
   }
 
   bool callImport(unsigned globalDataOffset, uint32_t lineOrBytecode,
                   const CallCompileState& call, const FuncType& funcType,
-                  MDefinition** def) {
+                  DefVector* results) {
     if (inDeadCode()) {
-      *def = nullptr;
       return true;
     }
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Dynamic);
     auto callee = CalleeDesc::import(globalDataOffset);
+    ArgTypeVector args(funcType);
+    ResultType resultType = ResultType::Vector(funcType.results());
     auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
-                               ToMIRType(funcType.ret()),
-                               StackArgAreaSizeUnaligned(funcType.args()));
+                               StackArgAreaSizeUnaligned(args));
     if (!ins) {
       return false;
     }
 
     curBlock_->add(ins);
-    *def = ins;
-    return true;
+
+    return collectCallResults(resultType, call.stackResultArea_, results);
   }
 
   bool builtinCall(const SymbolicAddressSignature& builtin,
@@ -1124,16 +1597,15 @@ class FunctionCompiler {
 
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Symbolic);
     auto callee = CalleeDesc::builtin(builtin.identity);
-    auto* ins =
-        MWasmCall::New(alloc(), desc, callee, call.regArgs_, builtin.retType,
-                       StackArgAreaSizeUnaligned(builtin));
+    auto* ins = MWasmCall::New(alloc(), desc, callee, call.regArgs_,
+                               StackArgAreaSizeUnaligned(builtin));
     if (!ins) {
       return false;
     }
 
     curBlock_->add(ins);
-    *def = ins;
-    return true;
+
+    return collectUnaryCallResult(builtin.retType, def);
   }
 
   bool builtinInstanceMethodCall(const SymbolicAddressSignature& builtin,
@@ -1151,35 +1623,64 @@ class FunctionCompiler {
     CallSiteDesc desc(lineOrBytecode, CallSiteDesc::Symbolic);
     auto* ins = MWasmCall::NewBuiltinInstanceMethodCall(
         alloc(), desc, builtin.identity, builtin.failureMode, call.instanceArg_,
-        call.regArgs_, builtin.retType, StackArgAreaSizeUnaligned(builtin));
+        call.regArgs_, StackArgAreaSizeUnaligned(builtin));
     if (!ins) {
       return false;
     }
 
     curBlock_->add(ins);
-    if (def) {
-      *def = ins;
-    }
-    return true;
+
+    return def ? collectUnaryCallResult(builtin.retType, def) : true;
   }
 
   /*********************************************** Control flow generation */
 
   inline bool inDeadCode() const { return curBlock_ == nullptr; }
 
-  void returnValues(const DefVector& values) {
+  bool returnValues(const DefVector& values) {
     if (inDeadCode()) {
-      return;
+      return true;
     }
-
-    MOZ_ASSERT(values.length() <= 1, "until multi-return");
 
     if (values.empty()) {
-      curBlock_->end(MWasmReturnVoid::New(alloc()));
+      curBlock_->end(MWasmReturnVoid::New(alloc(), tlsPointer_));
     } else {
-      curBlock_->end(MWasmReturn::New(alloc(), values[0]));
+      ResultType resultType = ResultType::Vector(funcType().results());
+      ABIResultIter iter(resultType);
+      // Switch to iterate in FIFO order instead of the default LIFO.
+      while (!iter.done()) {
+        iter.next();
+      }
+      iter.switchToPrev();
+      for (uint32_t i = 0; !iter.done(); iter.prev(), i++) {
+        if (!mirGen().ensureBallast()) {
+          return false;
+        }
+        const ABIResult& result = iter.cur();
+        if (result.onStack()) {
+          MOZ_ASSERT(iter.remaining() > 1);
+          if (result.type().isReference()) {
+            auto* loc = MWasmDerivedPointer::New(alloc(), stackResultPointer_,
+                                                 result.stackOffset());
+            curBlock_->add(loc);
+            auto* store =
+                MWasmStoreRef::New(alloc(), tlsPointer_, loc, values[i],
+                                   AliasSet::WasmStackResult);
+            curBlock_->add(store);
+          } else {
+            auto* store = MWasmStoreStackResult::New(
+                alloc(), stackResultPointer_, result.stackOffset(), values[i]);
+            curBlock_->add(store);
+          }
+        } else {
+          MOZ_ASSERT(iter.remaining() == 1);
+          MOZ_ASSERT(i + 1 == values.length());
+          curBlock_->end(MWasmReturn::New(alloc(), values[i], tlsPointer_));
+        }
+      }
     }
     curBlock_ = nullptr;
+    return true;
   }
 
   void unreachableTrap() {
@@ -1729,11 +2230,13 @@ MDefinition* FunctionCompiler::unary<MToFloat32>(MDefinition* op) {
 }
 
 template <>
-MDefinition* FunctionCompiler::unary<MTruncateToInt32>(MDefinition* op) {
+MDefinition* FunctionCompiler::unary<MWasmBuiltinTruncateToInt32>(
+    MDefinition* op) {
   if (inDeadCode()) {
     return nullptr;
   }
-  auto* ins = MTruncateToInt32::New(alloc(), op, bytecodeOffset());
+  auto* ins = MWasmBuiltinTruncateToInt32::New(alloc(), op, tlsPointer_,
+                                               bytecodeOffset());
   curBlock_->add(ins);
   return ins;
 }
@@ -1880,7 +2383,9 @@ static bool EmitEnd(FunctionCompiler& f) {
       if (!f.finishBlock(&postJoinDefs)) {
         return false;
       }
-      f.returnValues(postJoinDefs);
+      if (!f.returnValues(postJoinDefs)) {
+        return false;
+      }
       return f.iter().readFunctionEnd(f.iter().end());
     case LabelKind::Block:
       if (!f.finishBlock(&postJoinDefs)) {
@@ -1979,8 +2484,7 @@ static bool EmitReturn(FunctionCompiler& f) {
     return false;
   }
 
-  f.returnValues(values);
-  return true;
+  return f.returnValues(values);
 }
 
 static bool EmitUnreachable(FunctionCompiler& f) {
@@ -2003,6 +2507,11 @@ static bool EmitCallArgs(FunctionCompiler& f, const FuncType& funcType,
     }
   }
 
+  ResultType resultType = ResultType::Vector(funcType.results());
+  if (!f.passStackResultAreaCallArg(resultType, call)) {
+    return false;
+  }
+
   return f.finishCall(call);
 }
 
@@ -2012,7 +2521,7 @@ static bool EmitCall(FunctionCompiler& f, bool asmJSFuncDef) {
   uint32_t funcIndex;
   DefVector args;
   if (asmJSFuncDef) {
-    if (!f.iter().readOldCallDirect(f.env().numFuncImports(), &funcIndex,
+    if (!f.iter().readOldCallDirect(f.moduleEnv().numFuncImports(), &funcIndex,
                                     &args)) {
       return false;
     }
@@ -2026,30 +2535,28 @@ static bool EmitCall(FunctionCompiler& f, bool asmJSFuncDef) {
     return true;
   }
 
-  const FuncType& funcType = *f.env().funcTypes[funcIndex];
+  const FuncType& funcType = *f.moduleEnv().funcTypes[funcIndex];
 
   CallCompileState call;
   if (!EmitCallArgs(f, funcType, args, &call)) {
     return false;
   }
 
-  MDefinition* def;
-  if (f.env().funcIsImport(funcIndex)) {
-    uint32_t globalDataOffset = f.env().funcImportGlobalDataOffsets[funcIndex];
-    if (!f.callImport(globalDataOffset, lineOrBytecode, call, funcType, &def)) {
+  DefVector results;
+  if (f.moduleEnv().funcIsImport(funcIndex)) {
+    uint32_t globalDataOffset =
+        f.moduleEnv().funcImportGlobalDataOffsets[funcIndex];
+    if (!f.callImport(globalDataOffset, lineOrBytecode, call, funcType,
+                      &results)) {
       return false;
     }
   } else {
-    if (!f.callDirect(funcType, funcIndex, lineOrBytecode, call, &def)) {
+    if (!f.callDirect(funcType, funcIndex, lineOrBytecode, call, &results)) {
       return false;
     }
   }
 
-  if (funcType.results().length() == 0) {
-    return true;
-  }
-
-  f.iter().setResult(def);
+  f.iter().setResults(results.length(), results);
   return true;
 }
 
@@ -2076,24 +2583,20 @@ static bool EmitCallIndirect(FunctionCompiler& f, bool oldStyle) {
     return true;
   }
 
-  const FuncType& funcType = f.env().types[funcTypeIndex].funcType();
+  const FuncType& funcType = f.moduleEnv().types[funcTypeIndex].funcType();
 
   CallCompileState call;
   if (!EmitCallArgs(f, funcType, args, &call)) {
     return false;
   }
 
-  MDefinition* def;
+  DefVector results;
   if (!f.callIndirect(funcTypeIndex, tableIndex, callee, lineOrBytecode, call,
-                      &def)) {
+                      &results)) {
     return false;
   }
 
-  if (funcType.results().length() == 0) {
-    return true;
-  }
-
-  f.iter().setResult(def);
+  f.iter().setResults(results.length(), results);
   return true;
 }
 
@@ -2135,7 +2638,7 @@ static bool EmitGetGlobal(FunctionCompiler& f) {
     return false;
   }
 
-  const GlobalDesc& global = f.env().globals[id];
+  const GlobalDesc& global = f.moduleEnv().globals[id];
   if (!global.isConstant()) {
     f.iter().setResult(f.loadGlobalVar(global.offset(), !global.isMutable(),
                                        global.isIndirect(),
@@ -2147,7 +2650,7 @@ static bool EmitGetGlobal(FunctionCompiler& f) {
   MIRType mirType = ToMIRType(value.type());
 
   MDefinition* result;
-  switch (value.type().code()) {
+  switch (value.type().kind()) {
     case ValType::I32:
       result = f.constant(Int32Value(value.i32()), mirType);
       break;
@@ -2160,10 +2663,24 @@ static bool EmitGetGlobal(FunctionCompiler& f) {
     case ValType::F64:
       result = f.constant(value.f64());
       break;
-    case ValType::FuncRef:
-    case ValType::AnyRef:
-      MOZ_ASSERT(value.ref().isNull());
-      result = f.nullRefConstant();
+    case ValType::V128:
+#ifdef ENABLE_WASM_SIMD
+      result = f.constant(value.v128());
+      break;
+#else
+      return f.iter().fail("Ion has no SIMD support yet");
+#endif
+    case ValType::Ref:
+      switch (value.type().refTypeKind()) {
+        case RefType::Func:
+        case RefType::Extern:
+        case RefType::Eq:
+          MOZ_ASSERT(value.ref().isNull());
+          result = f.nullRefConstant();
+          break;
+        case RefType::TypeIndex:
+          MOZ_CRASH("unexpected reference type in EmitGetGlobal");
+      }
       break;
     default:
       MOZ_CRASH("unexpected type in EmitGetGlobal");
@@ -2182,7 +2699,7 @@ static bool EmitSetGlobal(FunctionCompiler& f) {
     return false;
   }
 
-  const GlobalDesc& global = f.env().globals[id];
+  const GlobalDesc& global = f.moduleEnv().globals[id];
   MOZ_ASSERT(global.isMutable());
   MInstruction* barrierAddr =
       f.storeGlobalVar(global.offset(), global.isIndirect(), value);
@@ -2216,7 +2733,7 @@ static bool EmitTeeGlobal(FunctionCompiler& f) {
     return false;
   }
 
-  const GlobalDesc& global = f.env().globals[id];
+  const GlobalDesc& global = f.moduleEnv().globals[id];
   MOZ_ASSERT(global.isMutable());
 
   f.storeGlobalVar(global.offset(), global.isIndirect(), value);
@@ -2273,7 +2790,7 @@ static bool EmitConversionWithType(FunctionCompiler& f, ValType operandType,
 static bool EmitTruncate(FunctionCompiler& f, ValType operandType,
                          ValType resultType, bool isUnsigned,
                          bool isSaturating) {
-  MDefinition* input;
+  MDefinition* input = nullptr;
   if (!f.iter().readConversion(operandType, resultType, &input)) {
     return false;
   }
@@ -2286,15 +2803,24 @@ static bool EmitTruncate(FunctionCompiler& f, ValType operandType,
     flags |= TRUNC_SATURATING;
   }
   if (resultType == ValType::I32) {
-    if (f.env().isAsmJS()) {
-      f.iter().setResult(f.unary<MTruncateToInt32>(input));
+    if (f.moduleEnv().isAsmJS()) {
+      if (input && (input->type() == MIRType::Double ||
+                    input->type() == MIRType::Float32)) {
+        f.iter().setResult(f.unary<MWasmBuiltinTruncateToInt32>(input));
+      } else {
+        f.iter().setResult(f.unary<MTruncateToInt32>(input));
+      }
     } else {
       f.iter().setResult(f.truncate<MWasmTruncateToInt32>(input, flags));
     }
   } else {
     MOZ_ASSERT(resultType == ValType::I64);
-    MOZ_ASSERT(!f.env().isAsmJS());
+    MOZ_ASSERT(!f.moduleEnv().isAsmJS());
+#if defined(JS_CODEGEN_ARM)
+    f.iter().setResult(f.truncateWithTls(input, flags));
+#else
     f.iter().setResult(f.truncate<MWasmTruncateToInt64>(input, flags));
+#endif
   }
   return true;
 }
@@ -2351,7 +2877,7 @@ static bool EmitAdd(FunctionCompiler& f, ValType type, MIRType mirType) {
     return false;
   }
 
-  f.iter().setResult(f.binary<MAdd>(lhs, rhs, mirType));
+  f.iter().setResult(f.add(lhs, rhs, mirType));
   return true;
 }
 
@@ -2398,6 +2924,18 @@ static bool EmitBitwise(FunctionCompiler& f, ValType operandType,
   }
 
   f.iter().setResult(f.binary<MIRClass>(lhs, rhs, mirType));
+  return true;
+}
+
+static bool EmitUrsh(FunctionCompiler& f, ValType operandType,
+                     MIRType mirType) {
+  MDefinition* lhs;
+  MDefinition* rhs;
+  if (!f.iter().readBinary(operandType, &lhs, &rhs)) {
+    return false;
+  }
+
+  f.iter().setResult(f.ursh(lhs, rhs, mirType));
   return true;
 }
 
@@ -2905,7 +3443,7 @@ static bool EmitMemCopyCall(FunctionCompiler& f, MDefinition* dst,
   uint32_t lineOrBytecode = f.readCallSiteLineOrBytecode();
 
   const SymbolicAddressSignature& callee =
-      (f.env().usesSharedMemory() ? SASigMemCopyShared : SASigMemCopy);
+      (f.moduleEnv().usesSharedMemory() ? SASigMemCopyShared : SASigMemCopy);
   CallCompileState args;
   if (!f.passInstance(callee.argTypes[0], &args)) {
     return false;
@@ -3040,13 +3578,6 @@ static bool EmitMemCopyInline(FunctionCompiler& f, MDefinition* dst,
 }
 
 static bool EmitMemCopy(FunctionCompiler& f) {
-  // Bulk memory must be available if shared memory is enabled.
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  if (f.env().sharedMemoryEnabled == Shareable::False) {
-    return f.iter().fail("bulk memory ops disabled");
-  }
-#endif
-
   MDefinition *dst, *src, *len;
   uint32_t dstMemIndex;
   uint32_t srcMemIndex;
@@ -3068,13 +3599,6 @@ static bool EmitMemCopy(FunctionCompiler& f) {
 }
 
 static bool EmitTableCopy(FunctionCompiler& f) {
-  // Bulk memory must be available if shared memory is enabled.
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  if (f.env().sharedMemoryEnabled == Shareable::False) {
-    return f.iter().fail("bulk memory ops disabled");
-  }
-#endif
-
   MDefinition *dst, *src, *len;
   uint32_t dstTableIndex;
   uint32_t srcTableIndex;
@@ -3126,13 +3650,6 @@ static bool EmitTableCopy(FunctionCompiler& f) {
 }
 
 static bool EmitDataOrElemDrop(FunctionCompiler& f, bool isData) {
-  // Bulk memory must be available if shared memory is enabled.
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  if (f.env().sharedMemoryEnabled == Shareable::False) {
-    return f.iter().fail("bulk memory ops disabled");
-  }
-#endif
-
   uint32_t segIndexVal = 0;
   if (!f.iter().readDataOrElemDrop(isData, &segIndexVal)) {
     return false;
@@ -3169,7 +3686,7 @@ static bool EmitMemFillCall(FunctionCompiler& f, MDefinition* start,
   uint32_t lineOrBytecode = f.readCallSiteLineOrBytecode();
 
   const SymbolicAddressSignature& callee =
-      f.env().usesSharedMemory() ? SASigMemFillShared : SASigMemFill;
+      f.moduleEnv().usesSharedMemory() ? SASigMemFillShared : SASigMemFill;
   CallCompileState args;
   if (!f.passInstance(callee.argTypes[0], &args)) {
     return false;
@@ -3273,13 +3790,6 @@ static bool EmitMemFillInline(FunctionCompiler& f, MDefinition* start,
 }
 
 static bool EmitMemFill(FunctionCompiler& f) {
-  // Bulk memory must be available if shared memory is enabled.
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  if (f.env().sharedMemoryEnabled == Shareable::False) {
-    return f.iter().fail("bulk memory ops disabled");
-  }
-#endif
-
   MDefinition *start, *val, *len;
   if (!f.iter().readMemFill(&start, &val, &len)) {
     return false;
@@ -3299,13 +3809,6 @@ static bool EmitMemFill(FunctionCompiler& f) {
 }
 
 static bool EmitMemOrTableInit(FunctionCompiler& f, bool isMem) {
-  // Bulk memory must be available if shared memory is enabled.
-#ifndef ENABLE_WASM_BULKMEM_OPS
-  if (f.env().sharedMemoryEnabled == Shareable::False) {
-    return f.iter().fail("bulk memory ops disabled");
-  }
-#endif
-
   uint32_t segIndexVal = 0, dstTableIndex = 0;
   MDefinition *dstOff, *srcOff, *len;
   if (!f.iter().readMemOrTableInit(isMem, &segIndexVal, &dstTableIndex, &dstOff,
@@ -3586,9 +4089,7 @@ static bool EmitTableSize(FunctionCompiler& f) {
   f.iter().setResult(ret);
   return true;
 }
-#endif  // ENABLE_WASM_REFTYPES
 
-#ifdef ENABLE_WASM_REFTYPES
 static bool EmitRefFunc(FunctionCompiler& f) {
   uint32_t funcIndex;
   if (!f.iter().readRefFunc(&funcIndex)) {
@@ -3601,7 +4102,7 @@ static bool EmitRefFunc(FunctionCompiler& f) {
 
   uint32_t lineOrBytecode = f.readCallSiteLineOrBytecode();
 
-  const SymbolicAddressSignature& callee = SASigFuncRef;
+  const SymbolicAddressSignature& callee = SASigRefFunc;
   CallCompileState args;
   if (!f.passInstance(callee.argTypes[0], &args)) {
     return false;
@@ -3649,7 +4150,7 @@ static bool EmitRefNull(FunctionCompiler& f) {
 
 static bool EmitRefIsNull(FunctionCompiler& f) {
   MDefinition* input;
-  if (!f.iter().readConversion(ValType::AnyRef, ValType::I32, &input)) {
+  if (!f.iter().readRefIsNull(&input)) {
     return false;
   }
 
@@ -3662,7 +4163,153 @@ static bool EmitRefIsNull(FunctionCompiler& f) {
     return false;
   }
   f.iter().setResult(
-      f.compare(input, nullVal, JSOP_EQ, MCompare::Compare_RefOrNull));
+      f.compare(input, nullVal, JSOp::Eq, MCompare::Compare_RefOrNull));
+  return true;
+}
+#endif  // ENABLE_WASM_REFTYPES
+
+#ifdef ENABLE_WASM_SIMD
+static bool EmitConstSimd128(FunctionCompiler& f) {
+  V128 v128;
+  if (!f.iter().readV128Const(&v128)) {
+    return false;
+  }
+
+  f.iter().setResult(f.constant(v128));
+  return true;
+}
+
+static bool EmitBinarySimd128(FunctionCompiler& f, bool commutative,
+                              SimdOp op) {
+  MDefinition* lhs;
+  MDefinition* rhs;
+  if (!f.iter().readBinary(ValType::V128, &lhs, &rhs)) {
+    return false;
+  }
+
+  f.iter().setResult(f.binarySimd128(lhs, rhs, commutative, op));
+  return true;
+}
+
+static bool EmitShiftSimd128(FunctionCompiler& f, SimdOp op) {
+  MDefinition* lhs;
+  MDefinition* rhs;
+  if (!f.iter().readVectorShift(&lhs, &rhs)) {
+    return false;
+  }
+
+  f.iter().setResult(f.shiftSimd128(lhs, rhs, op));
+  return true;
+}
+
+static bool EmitSplatSimd128(FunctionCompiler& f, ValType inType, SimdOp op) {
+  MDefinition* src;
+  if (!f.iter().readConversion(inType, ValType::V128, &src)) {
+    return false;
+  }
+
+  f.iter().setResult(f.scalarToSimd128(src, op));
+  return true;
+}
+
+static bool EmitUnarySimd128(FunctionCompiler& f, SimdOp op) {
+  MDefinition* src;
+  if (!f.iter().readUnary(ValType::V128, &src)) {
+    return false;
+  }
+
+  f.iter().setResult(f.unarySimd128(src, op));
+  return true;
+}
+
+static bool EmitReduceSimd128(FunctionCompiler& f, SimdOp op) {
+  MDefinition* src;
+  if (!f.iter().readConversion(ValType::V128, ValType::I32, &src)) {
+    return false;
+  }
+
+  f.iter().setResult(f.reduceSimd128(src, op, ValType::I32));
+  return true;
+}
+
+static bool EmitExtractLaneSimd128(FunctionCompiler& f, ValType outType,
+                                   uint32_t laneLimit, SimdOp op) {
+  uint32_t laneIndex;
+  MDefinition* src;
+  if (!f.iter().readExtractLane(outType, laneLimit, &laneIndex, &src)) {
+    return false;
+  }
+
+  f.iter().setResult(f.reduceSimd128(src, op, outType, laneIndex));
+  return true;
+}
+
+static bool EmitReplaceLaneSimd128(FunctionCompiler& f, ValType laneType,
+                                   uint32_t laneLimit, SimdOp op) {
+  uint32_t laneIndex;
+  MDefinition* lhs;
+  MDefinition* rhs;
+  if (!f.iter().readReplaceLane(laneType, laneLimit, &laneIndex, &lhs, &rhs)) {
+    return false;
+  }
+
+  f.iter().setResult(f.replaceLaneSimd128(lhs, rhs, laneIndex, op));
+  return true;
+}
+
+static bool EmitBitselectSimd128(FunctionCompiler& f) {
+  MDefinition* v1;
+  MDefinition* v2;
+  MDefinition* control;
+  if (!f.iter().readVectorSelect(&v1, &v2, &control)) {
+    return false;
+  }
+
+  f.iter().setResult(f.bitselectSimd128(v1, v2, control));
+  return true;
+}
+
+static bool EmitShuffleSimd128(FunctionCompiler& f) {
+  MDefinition* v1;
+  MDefinition* v2;
+  V128 control;
+  if (!f.iter().readVectorShuffle(&v1, &v2, &control)) {
+    return false;
+  }
+
+  f.iter().setResult(f.shuffleSimd128(v1, v2, control));
+  return true;
+}
+
+static bool EmitLoadSplatSimd128(FunctionCompiler& f, Scalar::Type viewType,
+                                 wasm::SimdOp splatOp) {
+  LinearMemoryAddress<MDefinition*> addr;
+  if (!f.iter().readLoadSplat(Scalar::byteSize(viewType), &addr)) {
+    return false;
+  }
+
+  f.iter().setResult(f.loadSplatSimd128(viewType, addr, splatOp));
+  return true;
+}
+
+static bool EmitLoadExtendSimd128(FunctionCompiler& f, wasm::SimdOp op) {
+  LinearMemoryAddress<MDefinition*> addr;
+  if (!f.iter().readLoadExtend(&addr)) {
+    return false;
+  }
+
+  f.iter().setResult(f.loadExtendSimd128(addr, op));
+  return true;
+}
+
+static bool EmitLoadZeroSimd128(FunctionCompiler& f, Scalar::Type viewType,
+                                size_t numBytes) {
+  LinearMemoryAddress<MDefinition*> addr;
+  if (!f.iter().readLoadSplat(numBytes, &addr)) {
+    return false;
+  }
+
+  f.iter().setResult(f.loadZeroSimd128(viewType, numBytes, addr));
   return true;
 }
 #endif
@@ -3675,6 +4322,12 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 #define CHECK(c)          \
   if (!(c)) return false; \
   break
+
+#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
+#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
+#else
+#  define CHECK_SIMD_EXPERIMENTAL() return f.iter().unrecognizedOpcode(&op)
+#endif
 
   while (true) {
     if (!f.mirGen().ensureBallast()) {
@@ -3730,7 +4383,7 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
       case uint16_t(Op::SelectNumeric):
         CHECK(EmitSelect(f, /*typed*/ false));
       case uint16_t(Op::SelectTyped):
-        if (!f.env().refTypesEnabled()) {
+        if (!f.moduleEnv().refTypesEnabled()) {
           return f.iter().unrecognizedOpcode(&op);
         }
         CHECK(EmitSelect(f, /*typed*/ true));
@@ -3820,102 +4473,102 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
         CHECK(EmitConversion<MNot>(f, ValType::I32, ValType::I32));
       case uint16_t(Op::I32Eq):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_EQ, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Eq, MCompare::Compare_Int32));
       case uint16_t(Op::I32Ne):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_NE, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Ne, MCompare::Compare_Int32));
       case uint16_t(Op::I32LtS):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_LT, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Lt, MCompare::Compare_Int32));
       case uint16_t(Op::I32LtU):
-        CHECK(
-            EmitComparison(f, ValType::I32, JSOP_LT, MCompare::Compare_UInt32));
+        CHECK(EmitComparison(f, ValType::I32, JSOp::Lt,
+                             MCompare::Compare_UInt32));
       case uint16_t(Op::I32GtS):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_GT, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Gt, MCompare::Compare_Int32));
       case uint16_t(Op::I32GtU):
-        CHECK(
-            EmitComparison(f, ValType::I32, JSOP_GT, MCompare::Compare_UInt32));
+        CHECK(EmitComparison(f, ValType::I32, JSOp::Gt,
+                             MCompare::Compare_UInt32));
       case uint16_t(Op::I32LeS):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_LE, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Le, MCompare::Compare_Int32));
       case uint16_t(Op::I32LeU):
-        CHECK(
-            EmitComparison(f, ValType::I32, JSOP_LE, MCompare::Compare_UInt32));
+        CHECK(EmitComparison(f, ValType::I32, JSOp::Le,
+                             MCompare::Compare_UInt32));
       case uint16_t(Op::I32GeS):
         CHECK(
-            EmitComparison(f, ValType::I32, JSOP_GE, MCompare::Compare_Int32));
+            EmitComparison(f, ValType::I32, JSOp::Ge, MCompare::Compare_Int32));
       case uint16_t(Op::I32GeU):
-        CHECK(
-            EmitComparison(f, ValType::I32, JSOP_GE, MCompare::Compare_UInt32));
+        CHECK(EmitComparison(f, ValType::I32, JSOp::Ge,
+                             MCompare::Compare_UInt32));
       case uint16_t(Op::I64Eqz):
         CHECK(EmitConversion<MNot>(f, ValType::I64, ValType::I32));
       case uint16_t(Op::I64Eq):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_EQ, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Eq, MCompare::Compare_Int64));
       case uint16_t(Op::I64Ne):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_NE, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Ne, MCompare::Compare_Int64));
       case uint16_t(Op::I64LtS):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_LT, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Lt, MCompare::Compare_Int64));
       case uint16_t(Op::I64LtU):
-        CHECK(
-            EmitComparison(f, ValType::I64, JSOP_LT, MCompare::Compare_UInt64));
+        CHECK(EmitComparison(f, ValType::I64, JSOp::Lt,
+                             MCompare::Compare_UInt64));
       case uint16_t(Op::I64GtS):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_GT, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Gt, MCompare::Compare_Int64));
       case uint16_t(Op::I64GtU):
-        CHECK(
-            EmitComparison(f, ValType::I64, JSOP_GT, MCompare::Compare_UInt64));
+        CHECK(EmitComparison(f, ValType::I64, JSOp::Gt,
+                             MCompare::Compare_UInt64));
       case uint16_t(Op::I64LeS):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_LE, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Le, MCompare::Compare_Int64));
       case uint16_t(Op::I64LeU):
-        CHECK(
-            EmitComparison(f, ValType::I64, JSOP_LE, MCompare::Compare_UInt64));
+        CHECK(EmitComparison(f, ValType::I64, JSOp::Le,
+                             MCompare::Compare_UInt64));
       case uint16_t(Op::I64GeS):
         CHECK(
-            EmitComparison(f, ValType::I64, JSOP_GE, MCompare::Compare_Int64));
+            EmitComparison(f, ValType::I64, JSOp::Ge, MCompare::Compare_Int64));
       case uint16_t(Op::I64GeU):
-        CHECK(
-            EmitComparison(f, ValType::I64, JSOP_GE, MCompare::Compare_UInt64));
+        CHECK(EmitComparison(f, ValType::I64, JSOp::Ge,
+                             MCompare::Compare_UInt64));
       case uint16_t(Op::F32Eq):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_EQ,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Eq,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F32Ne):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_NE,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Ne,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F32Lt):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_LT,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Lt,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F32Gt):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_GT,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Gt,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F32Le):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_LE,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Le,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F32Ge):
-        CHECK(EmitComparison(f, ValType::F32, JSOP_GE,
+        CHECK(EmitComparison(f, ValType::F32, JSOp::Ge,
                              MCompare::Compare_Float32));
       case uint16_t(Op::F64Eq):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_EQ, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Eq,
+                             MCompare::Compare_Double));
       case uint16_t(Op::F64Ne):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_NE, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Ne,
+                             MCompare::Compare_Double));
       case uint16_t(Op::F64Lt):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_LT, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Lt,
+                             MCompare::Compare_Double));
       case uint16_t(Op::F64Gt):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_GT, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Gt,
+                             MCompare::Compare_Double));
       case uint16_t(Op::F64Le):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_LE, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Le,
+                             MCompare::Compare_Double));
       case uint16_t(Op::F64Ge):
-        CHECK(
-            EmitComparison(f, ValType::F64, JSOP_GE, MCompare::Compare_Double));
+        CHECK(EmitComparison(f, ValType::F64, JSOp::Ge,
+                             MCompare::Compare_Double));
 
       // Numeric operators
       case uint16_t(Op::I32Clz):
@@ -3949,7 +4602,7 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
       case uint16_t(Op::I32ShrS):
         CHECK(EmitBitwise<MRsh>(f, ValType::I32, MIRType::Int32));
       case uint16_t(Op::I32ShrU):
-        CHECK(EmitBitwise<MUrsh>(f, ValType::I32, MIRType::Int32));
+        CHECK(EmitUrsh(f, ValType::I32, MIRType::Int32));
       case uint16_t(Op::I32Rotl):
       case uint16_t(Op::I32Rotr):
         CHECK(EmitRotate(f, ValType::I32, Op(op.b0) == Op::I32Rotl));
@@ -3984,7 +4637,7 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
       case uint16_t(Op::I64ShrS):
         CHECK(EmitBitwise<MRsh>(f, ValType::I64, MIRType::Int64));
       case uint16_t(Op::I64ShrU):
-        CHECK(EmitBitwise<MUrsh>(f, ValType::I64, MIRType::Int64));
+        CHECK(EmitUrsh(f, ValType::I64, MIRType::Int64));
       case uint16_t(Op::I64Rotl):
       case uint16_t(Op::I64Rotr):
         CHECK(EmitRotate(f, ValType::I64, Op(op.b0) == Op::I64Rotl));
@@ -4104,10 +4757,10 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 
 #ifdef ENABLE_WASM_GC
       case uint16_t(Op::RefEq):
-        if (!f.env().gcTypesEnabled()) {
+        if (!f.moduleEnv().gcTypesEnabled()) {
           return f.iter().unrecognizedOpcode(&op);
         }
-        CHECK(EmitComparison(f, ValType::AnyRef, JSOP_EQ,
+        CHECK(EmitComparison(f, RefType::extern_(), JSOp::Eq,
                              MCompare::Compare_RefOrNull));
 #endif
 #ifdef ENABLE_WASM_REFTYPES
@@ -4130,6 +4783,263 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
         CHECK(EmitSignExtend(f, 2, 8));
       case uint16_t(Op::I64Extend32S):
         CHECK(EmitSignExtend(f, 4, 8));
+
+        // Gc operations
+#ifdef ENABLE_WASM_GC
+      case uint16_t(Op::GcPrefix): {
+        switch (op.b1) {
+          case uint32_t(GcOp::StructNew):
+          case uint32_t(GcOp::StructGet):
+          case uint32_t(GcOp::StructSet):
+          case uint32_t(GcOp::StructNarrow):
+            // Not yet supported
+            return f.iter().unrecognizedOpcode(&op);
+          default:
+            return f.iter().unrecognizedOpcode(&op);
+        }
+      }
+#endif
+
+      // SIMD operations
+#ifdef ENABLE_WASM_SIMD
+      case uint16_t(Op::SimdPrefix): {
+        if (!f.moduleEnv().v128Enabled()) {
+          return f.iter().unrecognizedOpcode(&op);
+        }
+        switch (op.b1) {
+          case uint32_t(SimdOp::V128Const):
+            CHECK(EmitConstSimd128(f));
+          case uint32_t(SimdOp::V128Load):
+            CHECK(EmitLoad(f, ValType::V128, Scalar::Simd128));
+          case uint32_t(SimdOp::V128Store):
+            CHECK(EmitStore(f, ValType::V128, Scalar::Simd128));
+          case uint32_t(SimdOp::V128And):
+          case uint32_t(SimdOp::V128Or):
+          case uint32_t(SimdOp::V128Xor):
+          case uint32_t(SimdOp::I8x16AvgrU):
+          case uint32_t(SimdOp::I16x8AvgrU):
+          case uint32_t(SimdOp::I8x16Add):
+          case uint32_t(SimdOp::I8x16AddSaturateS):
+          case uint32_t(SimdOp::I8x16AddSaturateU):
+          case uint32_t(SimdOp::I8x16MinS):
+          case uint32_t(SimdOp::I8x16MinU):
+          case uint32_t(SimdOp::I8x16MaxS):
+          case uint32_t(SimdOp::I8x16MaxU):
+          case uint32_t(SimdOp::I16x8Add):
+          case uint32_t(SimdOp::I16x8AddSaturateS):
+          case uint32_t(SimdOp::I16x8AddSaturateU):
+          case uint32_t(SimdOp::I16x8Mul):
+          case uint32_t(SimdOp::I16x8MinS):
+          case uint32_t(SimdOp::I16x8MinU):
+          case uint32_t(SimdOp::I16x8MaxS):
+          case uint32_t(SimdOp::I16x8MaxU):
+          case uint32_t(SimdOp::I32x4Add):
+          case uint32_t(SimdOp::I32x4Mul):
+          case uint32_t(SimdOp::I32x4MinS):
+          case uint32_t(SimdOp::I32x4MinU):
+          case uint32_t(SimdOp::I32x4MaxS):
+          case uint32_t(SimdOp::I32x4MaxU):
+          case uint32_t(SimdOp::I64x2Add):
+          case uint32_t(SimdOp::I64x2Mul):
+          case uint32_t(SimdOp::F32x4Add):
+          case uint32_t(SimdOp::F32x4Mul):
+          case uint32_t(SimdOp::F32x4Min):
+          case uint32_t(SimdOp::F32x4Max):
+          case uint32_t(SimdOp::F64x2Add):
+          case uint32_t(SimdOp::F64x2Mul):
+          case uint32_t(SimdOp::F64x2Min):
+          case uint32_t(SimdOp::F64x2Max):
+          case uint32_t(SimdOp::I8x16Eq):
+          case uint32_t(SimdOp::I8x16Ne):
+          case uint32_t(SimdOp::I16x8Eq):
+          case uint32_t(SimdOp::I16x8Ne):
+          case uint32_t(SimdOp::I32x4Eq):
+          case uint32_t(SimdOp::I32x4Ne):
+          case uint32_t(SimdOp::F32x4Eq):
+          case uint32_t(SimdOp::F32x4Ne):
+          case uint32_t(SimdOp::F64x2Eq):
+          case uint32_t(SimdOp::F64x2Ne):
+          case uint32_t(SimdOp::I32x4DotSI16x8):
+            CHECK(EmitBinarySimd128(f, /* commutative= */ true, SimdOp(op.b1)));
+          case uint32_t(SimdOp::V128AndNot):
+          case uint32_t(SimdOp::I8x16Sub):
+          case uint32_t(SimdOp::I8x16SubSaturateS):
+          case uint32_t(SimdOp::I8x16SubSaturateU):
+          case uint32_t(SimdOp::I16x8Sub):
+          case uint32_t(SimdOp::I16x8SubSaturateS):
+          case uint32_t(SimdOp::I16x8SubSaturateU):
+          case uint32_t(SimdOp::I32x4Sub):
+          case uint32_t(SimdOp::I64x2Sub):
+          case uint32_t(SimdOp::F32x4Sub):
+          case uint32_t(SimdOp::F32x4Div):
+          case uint32_t(SimdOp::F64x2Sub):
+          case uint32_t(SimdOp::F64x2Div):
+          case uint32_t(SimdOp::I8x16NarrowSI16x8):
+          case uint32_t(SimdOp::I8x16NarrowUI16x8):
+          case uint32_t(SimdOp::I16x8NarrowSI32x4):
+          case uint32_t(SimdOp::I16x8NarrowUI32x4):
+          case uint32_t(SimdOp::I8x16LtS):
+          case uint32_t(SimdOp::I8x16LtU):
+          case uint32_t(SimdOp::I8x16GtS):
+          case uint32_t(SimdOp::I8x16GtU):
+          case uint32_t(SimdOp::I8x16LeS):
+          case uint32_t(SimdOp::I8x16LeU):
+          case uint32_t(SimdOp::I8x16GeS):
+          case uint32_t(SimdOp::I8x16GeU):
+          case uint32_t(SimdOp::I16x8LtS):
+          case uint32_t(SimdOp::I16x8LtU):
+          case uint32_t(SimdOp::I16x8GtS):
+          case uint32_t(SimdOp::I16x8GtU):
+          case uint32_t(SimdOp::I16x8LeS):
+          case uint32_t(SimdOp::I16x8LeU):
+          case uint32_t(SimdOp::I16x8GeS):
+          case uint32_t(SimdOp::I16x8GeU):
+          case uint32_t(SimdOp::I32x4LtS):
+          case uint32_t(SimdOp::I32x4LtU):
+          case uint32_t(SimdOp::I32x4GtS):
+          case uint32_t(SimdOp::I32x4GtU):
+          case uint32_t(SimdOp::I32x4LeS):
+          case uint32_t(SimdOp::I32x4LeU):
+          case uint32_t(SimdOp::I32x4GeS):
+          case uint32_t(SimdOp::I32x4GeU):
+          case uint32_t(SimdOp::F32x4Lt):
+          case uint32_t(SimdOp::F32x4Gt):
+          case uint32_t(SimdOp::F32x4Le):
+          case uint32_t(SimdOp::F32x4Ge):
+          case uint32_t(SimdOp::F64x2Lt):
+          case uint32_t(SimdOp::F64x2Gt):
+          case uint32_t(SimdOp::F64x2Le):
+          case uint32_t(SimdOp::F64x2Ge):
+          case uint32_t(SimdOp::V8x16Swizzle):
+          case uint32_t(SimdOp::F32x4PMax):
+          case uint32_t(SimdOp::F32x4PMin):
+          case uint32_t(SimdOp::F64x2PMax):
+          case uint32_t(SimdOp::F64x2PMin):
+            CHECK(
+                EmitBinarySimd128(f, /* commutative= */ false, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16Splat):
+          case uint32_t(SimdOp::I16x8Splat):
+          case uint32_t(SimdOp::I32x4Splat):
+            CHECK(EmitSplatSimd128(f, ValType::I32, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I64x2Splat):
+            CHECK(EmitSplatSimd128(f, ValType::I64, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F32x4Splat):
+            CHECK(EmitSplatSimd128(f, ValType::F32, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F64x2Splat):
+            CHECK(EmitSplatSimd128(f, ValType::F64, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16Neg):
+          case uint32_t(SimdOp::I16x8Neg):
+          case uint32_t(SimdOp::I16x8WidenLowSI8x16):
+          case uint32_t(SimdOp::I16x8WidenHighSI8x16):
+          case uint32_t(SimdOp::I16x8WidenLowUI8x16):
+          case uint32_t(SimdOp::I16x8WidenHighUI8x16):
+          case uint32_t(SimdOp::I32x4Neg):
+          case uint32_t(SimdOp::I32x4WidenLowSI16x8):
+          case uint32_t(SimdOp::I32x4WidenHighSI16x8):
+          case uint32_t(SimdOp::I32x4WidenLowUI16x8):
+          case uint32_t(SimdOp::I32x4WidenHighUI16x8):
+          case uint32_t(SimdOp::I32x4TruncSSatF32x4):
+          case uint32_t(SimdOp::I32x4TruncUSatF32x4):
+          case uint32_t(SimdOp::I64x2Neg):
+          case uint32_t(SimdOp::F32x4Abs):
+          case uint32_t(SimdOp::F32x4Neg):
+          case uint32_t(SimdOp::F32x4Sqrt):
+          case uint32_t(SimdOp::F32x4ConvertSI32x4):
+          case uint32_t(SimdOp::F32x4ConvertUI32x4):
+          case uint32_t(SimdOp::F64x2Abs):
+          case uint32_t(SimdOp::F64x2Neg):
+          case uint32_t(SimdOp::F64x2Sqrt):
+          case uint32_t(SimdOp::V128Not):
+          case uint32_t(SimdOp::I8x16Abs):
+          case uint32_t(SimdOp::I16x8Abs):
+          case uint32_t(SimdOp::I32x4Abs):
+          case uint32_t(SimdOp::F32x4Ceil):
+          case uint32_t(SimdOp::F32x4Floor):
+          case uint32_t(SimdOp::F32x4Trunc):
+          case uint32_t(SimdOp::F32x4Nearest):
+          case uint32_t(SimdOp::F64x2Ceil):
+          case uint32_t(SimdOp::F64x2Floor):
+          case uint32_t(SimdOp::F64x2Trunc):
+          case uint32_t(SimdOp::F64x2Nearest):
+            CHECK(EmitUnarySimd128(f, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16AnyTrue):
+          case uint32_t(SimdOp::I16x8AnyTrue):
+          case uint32_t(SimdOp::I32x4AnyTrue):
+          case uint32_t(SimdOp::I8x16AllTrue):
+          case uint32_t(SimdOp::I16x8AllTrue):
+          case uint32_t(SimdOp::I32x4AllTrue):
+          case uint32_t(SimdOp::I8x16Bitmask):
+          case uint32_t(SimdOp::I16x8Bitmask):
+          case uint32_t(SimdOp::I32x4Bitmask):
+            CHECK(EmitReduceSimd128(f, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16Shl):
+          case uint32_t(SimdOp::I8x16ShrS):
+          case uint32_t(SimdOp::I8x16ShrU):
+          case uint32_t(SimdOp::I16x8Shl):
+          case uint32_t(SimdOp::I16x8ShrS):
+          case uint32_t(SimdOp::I16x8ShrU):
+          case uint32_t(SimdOp::I32x4Shl):
+          case uint32_t(SimdOp::I32x4ShrS):
+          case uint32_t(SimdOp::I32x4ShrU):
+          case uint32_t(SimdOp::I64x2Shl):
+          case uint32_t(SimdOp::I64x2ShrS):
+          case uint32_t(SimdOp::I64x2ShrU):
+            CHECK(EmitShiftSimd128(f, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16ExtractLaneS):
+          case uint32_t(SimdOp::I8x16ExtractLaneU):
+            CHECK(EmitExtractLaneSimd128(f, ValType::I32, 16, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I16x8ExtractLaneS):
+          case uint32_t(SimdOp::I16x8ExtractLaneU):
+            CHECK(EmitExtractLaneSimd128(f, ValType::I32, 8, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I32x4ExtractLane):
+            CHECK(EmitExtractLaneSimd128(f, ValType::I32, 4, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I64x2ExtractLane):
+            CHECK(EmitExtractLaneSimd128(f, ValType::I64, 2, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F32x4ExtractLane):
+            CHECK(EmitExtractLaneSimd128(f, ValType::F32, 4, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F64x2ExtractLane):
+            CHECK(EmitExtractLaneSimd128(f, ValType::F64, 2, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I8x16ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::I32, 16, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I16x8ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::I32, 8, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I32x4ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::I32, 4, SimdOp(op.b1)));
+          case uint32_t(SimdOp::I64x2ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::I64, 2, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F32x4ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::F32, 4, SimdOp(op.b1)));
+          case uint32_t(SimdOp::F64x2ReplaceLane):
+            CHECK(EmitReplaceLaneSimd128(f, ValType::F64, 2, SimdOp(op.b1)));
+          case uint32_t(SimdOp::V128Bitselect):
+            CHECK(EmitBitselectSimd128(f));
+          case uint32_t(SimdOp::V8x16Shuffle):
+            CHECK(EmitShuffleSimd128(f));
+          case uint32_t(SimdOp::V8x16LoadSplat):
+            CHECK(EmitLoadSplatSimd128(f, Scalar::Uint8, SimdOp::I8x16Splat));
+          case uint32_t(SimdOp::V16x8LoadSplat):
+            CHECK(EmitLoadSplatSimd128(f, Scalar::Uint16, SimdOp::I16x8Splat));
+          case uint32_t(SimdOp::V32x4LoadSplat):
+            CHECK(EmitLoadSplatSimd128(f, Scalar::Float32, SimdOp::I32x4Splat));
+          case uint32_t(SimdOp::V64x2LoadSplat):
+            CHECK(EmitLoadSplatSimd128(f, Scalar::Float64, SimdOp::I64x2Splat));
+          case uint32_t(SimdOp::I16x8LoadS8x8):
+          case uint32_t(SimdOp::I16x8LoadU8x8):
+          case uint32_t(SimdOp::I32x4LoadS16x4):
+          case uint32_t(SimdOp::I32x4LoadU16x4):
+          case uint32_t(SimdOp::I64x2LoadS32x2):
+          case uint32_t(SimdOp::I64x2LoadU32x2):
+            CHECK(EmitLoadExtendSimd128(f, SimdOp(op.b1)));
+          case uint32_t(SimdOp::V128Load32Zero):
+            CHECK(EmitLoadZeroSimd128(f, Scalar::Float32, 4));
+          case uint32_t(SimdOp::V128Load64Zero):
+            CHECK(EmitLoadZeroSimd128(f, Scalar::Float64, 8));
+          default:
+            return f.iter().unrecognizedOpcode(&op);
+        }  // switch (op.b1)
+        break;
+      }
+#endif
 
       // Miscellaneous operations
       case uint16_t(Op::MiscPrefix): {
@@ -4172,14 +5082,6 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
           case uint32_t(MiscOp::TableSize):
             CHECK(EmitTableSize(f));
 #endif
-#ifdef ENABLE_WASM_GC
-          case uint32_t(MiscOp::StructNew):
-          case uint32_t(MiscOp::StructGet):
-          case uint32_t(MiscOp::StructSet):
-          case uint32_t(MiscOp::StructNarrow):
-            // Not yet supported
-            return f.iter().unrecognizedOpcode(&op);
-#endif
           default:
             return f.iter().unrecognizedOpcode(&op);
         }
@@ -4188,6 +5090,9 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 
       // Thread operations
       case uint16_t(Op::ThreadPrefix): {
+        if (f.moduleEnv().sharedMemoryEnabled() == Shareable::False) {
+          return f.iter().unrecognizedOpcode(&op);
+        }
         switch (op.b1) {
           case uint32_t(ThreadOp::Wake):
             CHECK(EmitWake(f));
@@ -4377,7 +5282,7 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 
       // asm.js-specific operators
       case uint16_t(Op::MozPrefix): {
-        if (!f.env().isAsmJS()) {
+        if (!f.moduleEnv().isAsmJS()) {
           return f.iter().unrecognizedOpcode(&op);
         }
         switch (op.b1) {
@@ -4457,13 +5362,17 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
   MOZ_CRASH("unreachable");
 
 #undef CHECK
+#undef CHECK_SIMD_EXPERIMENTAL
 }
 
-bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
+bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
+                               const CompilerEnvironment& compilerEnv,
+                               LifoAlloc& lifo,
                                const FuncCompileInputVector& inputs,
                                CompiledCode* code, UniqueChars* error) {
-  MOZ_ASSERT(env.tier() == Tier::Optimized);
-  MOZ_ASSERT(env.optimizedBackend() == OptimizedBackend::Ion);
+  MOZ_ASSERT(compilerEnv.tier() == Tier::Optimized);
+  MOZ_ASSERT(compilerEnv.debug() == DebugEnabled::False);
+  MOZ_ASSERT(compilerEnv.optimizedBackend() == OptimizedBackend::Ion);
 
   TempAllocator alloc(&lifo);
   JitContext jitContext(&alloc);
@@ -4492,13 +5401,12 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
 
     // Build the local types vector.
 
-    const ValTypeVector& argTys = env.funcTypes[func.index]->args();
+    const FuncTypeWithId& funcType = *moduleEnv.funcTypes[func.index];
     ValTypeVector locals;
-    if (!locals.appendAll(argTys)) {
+    if (!locals.appendAll(funcType.args())) {
       return false;
     }
-    if (!DecodeLocalEntries(d, env.types, env.refTypesEnabled(),
-                            env.gcTypesEnabled(), &locals)) {
+    if (!DecodeLocalEntries(d, moduleEnv.types, moduleEnv.features, &locals)) {
       return false;
     }
 
@@ -4509,11 +5417,11 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
     CompileInfo compileInfo(locals.length());
     MIRGenerator mir(nullptr, options, &alloc, &graph, &compileInfo,
                      IonOptimizations.get(OptimizationLevel::Wasm));
-    mir.initMinWasmHeapLength(env.minMemoryLength);
+    mir.initMinWasmHeapLength(moduleEnv.minMemoryLength);
 
     // Build MIR graph
     {
-      FunctionCompiler f(env, d, func, locals, mir);
+      FunctionCompiler f(moduleEnv, d, func, locals, mir);
       if (!f.init()) {
         return false;
       }
@@ -4543,13 +5451,12 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
         return false;
       }
 
-      FuncTypeIdDesc funcTypeId = env.funcTypes[func.index]->id;
-
       CodeGenerator codegen(&mir, lir, &masm);
 
       BytecodeOffset prologueTrapOffset(func.lineOrBytecode);
       FuncOffsets offsets;
-      if (!codegen.generateWasm(funcTypeId, prologueTrapOffset, argTys,
+      ArgTypeVector args(funcType);
+      if (!codegen.generateWasm(funcType.id, prologueTrapOffset, args,
                                 trapExitLayout, trapExitLayoutNumWords,
                                 &offsets, &code->stackMaps)) {
         return false;
@@ -4576,7 +5483,7 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo,
   return code->swap(masm);
 }
 
-bool js::wasm::IonCanCompile() {
+bool js::wasm::IonPlatformSupport() {
 #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86) ||    \
     defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || \
     defined(JS_CODEGEN_MIPS64)

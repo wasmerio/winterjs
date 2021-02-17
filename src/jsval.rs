@@ -60,15 +60,15 @@ enum ValueTag {
 #[repr(u64)]
 #[allow(dead_code)]
 enum ValueShiftedTag {
-    MAX_DOUBLE = (((JSVAL_TAG_MAX_DOUBLE as u64) << JSVAL_TAG_SHIFT) | 0xFFFFFFFFu64),
-    INT32      = ((ValueTag::INT32 as u64)      << JSVAL_TAG_SHIFT),
-    UNDEFINED  = ((ValueTag::UNDEFINED as u64)  << JSVAL_TAG_SHIFT),
-    STRING     = ((ValueTag::STRING as u64)     << JSVAL_TAG_SHIFT),
-    SYMBOL     = ((ValueTag::SYMBOL as u64)     << JSVAL_TAG_SHIFT),
-    BOOLEAN    = ((ValueTag::BOOLEAN as u64)    << JSVAL_TAG_SHIFT),
-    MAGIC      = ((ValueTag::MAGIC as u64)      << JSVAL_TAG_SHIFT),
-    NULL       = ((ValueTag::NULL as u64)       << JSVAL_TAG_SHIFT),
-    OBJECT     = ((ValueTag::OBJECT as u64)     << JSVAL_TAG_SHIFT),
+    MAX_DOUBLE = ((JSVAL_TAG_MAX_DOUBLE as u64) << JSVAL_TAG_SHIFT) | 0xFFFFFFFFu64,
+    INT32      = (ValueTag::INT32 as u64)      << JSVAL_TAG_SHIFT,
+    UNDEFINED  = (ValueTag::UNDEFINED as u64)  << JSVAL_TAG_SHIFT,
+    STRING     = (ValueTag::STRING as u64)     << JSVAL_TAG_SHIFT,
+    SYMBOL     = (ValueTag::SYMBOL as u64)     << JSVAL_TAG_SHIFT,
+    BOOLEAN    = (ValueTag::BOOLEAN as u64)    << JSVAL_TAG_SHIFT,
+    MAGIC      = (ValueTag::MAGIC as u64)      << JSVAL_TAG_SHIFT,
+    NULL       = (ValueTag::NULL as u64)       << JSVAL_TAG_SHIFT,
+    OBJECT     = (ValueTag::OBJECT as u64)     << JSVAL_TAG_SHIFT,
 }
 
 

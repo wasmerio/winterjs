@@ -10,6 +10,8 @@
 
 #include "gc/Statistics.h"
 #include "vm/ArgumentsObject.h"
+#include "vm/JSContext.h"
+#include "vm/MutexIDs.h"
 #include "vm/Runtime.h"
 
 #include "gc/GC-inl.h"
@@ -17,8 +19,19 @@
 using namespace js;
 using namespace js::gc;
 
+JS_PUBLIC_API void js::gc::LockStoreBuffer(StoreBuffer* sb) {
+  MOZ_ASSERT(sb);
+  sb->lock();
+}
+
+JS_PUBLIC_API void js::gc::UnlockStoreBuffer(StoreBuffer* sb) {
+  MOZ_ASSERT(sb);
+  sb->unlock();
+}
+
 bool StoreBuffer::WholeCellBuffer::init() {
-  MOZ_ASSERT(!head_);
+  MOZ_ASSERT(!stringHead_);
+  MOZ_ASSERT(!nonStringHead_);
   if (!storage_) {
     storage_ = MakeUnique<LifoAlloc>(LifoAllocBlockSize);
     // This prevents LifoAlloc::Enum from crashing with a release
@@ -55,20 +68,25 @@ void StoreBuffer::GenericBuffer::trace(JSTracer* trc) {
 }
 
 StoreBuffer::StoreBuffer(JSRuntime* rt, const Nursery& nursery)
-    : bufferVal(this, JS::GCReason::FULL_VALUE_BUFFER),
+    : lock_(mutexid::StoreBuffer),
+      bufferVal(this, JS::GCReason::FULL_VALUE_BUFFER),
       bufStrCell(this, JS::GCReason::FULL_CELL_PTR_STR_BUFFER),
+      bufBigIntCell(this, JS::GCReason::FULL_CELL_PTR_BIGINT_BUFFER),
       bufObjCell(this, JS::GCReason::FULL_CELL_PTR_OBJ_BUFFER),
       bufferSlot(this, JS::GCReason::FULL_SLOT_BUFFER),
       bufferWholeCell(this),
       bufferGeneric(this),
-      cancelIonCompilations_(false),
       runtime_(rt),
       nursery_(nursery),
       aboutToOverflow_(false),
-      enabled_(false)
+      enabled_(false),
+      cancelIonCompilations_(false),
+      hasTypeSetPointers_(false),
+      mayHavePointersToDeadCells_(false)
 #ifdef DEBUG
       ,
-      mEntered(false)
+      mEntered(false),
+      markingNondeduplicatable(false)
 #endif
 {
 }
@@ -76,6 +94,7 @@ StoreBuffer::StoreBuffer(JSRuntime* rt, const Nursery& nursery)
 void StoreBuffer::checkEmpty() const {
   MOZ_ASSERT(bufferVal.isEmpty());
   MOZ_ASSERT(bufStrCell.isEmpty());
+  MOZ_ASSERT(bufBigIntCell.isEmpty());
   MOZ_ASSERT(bufObjCell.isEmpty());
   MOZ_ASSERT(bufferSlot.isEmpty());
   MOZ_ASSERT(bufferWholeCell.isEmpty());
@@ -116,9 +135,12 @@ void StoreBuffer::clear() {
 
   aboutToOverflow_ = false;
   cancelIonCompilations_ = false;
+  hasTypeSetPointers_ = false;
+  mayHavePointersToDeadCells_ = false;
 
   bufferVal.clear();
   bufStrCell.clear();
+  bufBigIntCell.clear();
   bufObjCell.clear();
   bufferSlot.clear();
   bufferWholeCell.clear();
@@ -137,6 +159,7 @@ void StoreBuffer::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                          JS::GCSizes* sizes) {
   sizes->storeBufferVals += bufferVal.sizeOfExcludingThis(mallocSizeOf);
   sizes->storeBufferCells += bufStrCell.sizeOfExcludingThis(mallocSizeOf) +
+                             bufBigIntCell.sizeOfExcludingThis(mallocSizeOf) +
                              bufObjCell.sizeOfExcludingThis(mallocSizeOf);
   sizes->storeBufferSlots += bufferSlot.sizeOfExcludingThis(mallocSizeOf);
   sizes->storeBufferWholeCells +=
@@ -166,14 +189,21 @@ ArenaCellSet* StoreBuffer::WholeCellBuffer::allocateCellSet(Arena* arena) {
     return nullptr;
   }
 
+  // Maintain separate lists for strings and non-strings, so that all buffered
+  // string whole cells will be processed before anything else (to prevent them
+  // from being deduplicated when their chars are used by a tenured string.)
+  bool isString =
+      MapAllocToTraceKind(arena->getAllocKind()) == JS::TraceKind::String;
+
   AutoEnterOOMUnsafeRegion oomUnsafe;
-  auto cells = storage_->new_<ArenaCellSet>(arena, head_);
+  ArenaCellSet*& head = isString ? stringHead_ : nonStringHead_;
+  auto cells = storage_->new_<ArenaCellSet>(arena, head);
   if (!cells) {
     oomUnsafe.crash("Failed to allocate ArenaCellSet");
   }
 
   arena->bufferedCells() = cells;
-  head_ = cells;
+  head = cells;
 
   if (isAboutToOverflow()) {
     rt->gc.storeBuffer().setAboutToOverflow(
@@ -184,10 +214,12 @@ ArenaCellSet* StoreBuffer::WholeCellBuffer::allocateCellSet(Arena* arena) {
 }
 
 void StoreBuffer::WholeCellBuffer::clear() {
-  for (ArenaCellSet* set = head_; set; set = set->next) {
-    set->arena->bufferedCells() = &ArenaCellSet::Empty;
+  for (auto** headPtr : {&stringHead_, &nonStringHead_}) {
+    for (auto* set = *headPtr; set; set = set->next) {
+      set->arena->bufferedCells() = &ArenaCellSet::Empty;
+    }
+    *headPtr = nullptr;
   }
-  head_ = nullptr;
 
   if (storage_) {
     storage_->used() ? storage_->releaseAll() : storage_->freeAll();
@@ -196,3 +228,16 @@ void StoreBuffer::WholeCellBuffer::clear() {
 
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::ValueEdge>;
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::SlotsEdge>;
+
+void js::gc::PostWriteBarrierCell(Cell* cell, Cell* prev, Cell* next) {
+  if (!next || !cell->isTenured()) {
+    return;
+  }
+
+  StoreBuffer* buffer = next->storeBuffer();
+  if (!buffer || (prev && prev->storeBuffer())) {
+    return;
+  }
+
+  buffer->putWholeCell(cell);
+}

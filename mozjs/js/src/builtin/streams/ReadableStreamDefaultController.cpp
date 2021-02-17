@@ -10,9 +10,8 @@
 #include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
 #include "jsapi.h"        // JS_ReportErrorNumberASCII
-#include "jsfriendapi.h"  // js::GetErrorMessage, JSMSG_*, js::AssertSameCompartment
+#include "jsfriendapi.h"  // js::AssertSameCompartment
 
-#include "builtin/Promise.h"                          // js::PromiseObject
 #include "builtin/streams/ClassSpecMacro.h"           // JS_STREAMS_CLASS_SPEC
 #include "builtin/streams/MiscellaneousOperations.h"  // js::IsMaybeWrapped
 #include "builtin/streams/PullIntoDescriptor.h"       // js::PullIntoDescriptor
@@ -25,12 +24,14 @@
 #include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStream{,Default}Reader
 #include "builtin/streams/StreamController.h"  // js::StreamController
 #include "builtin/streams/TeeState.h"          // js::TeeState
-#include "gc/Heap.h"
-#include "js/ArrayBuffer.h"  // JS::NewArrayBuffer
-#include "js/Class.h"        // js::ClassSpec
+#include "js/ArrayBuffer.h"                    // JS::NewArrayBuffer
+#include "js/Class.h"                          // js::ClassSpec
+#include "js/friend/ErrorMessages.h"           // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
+#include "vm/PlainObject.h"  // js::PlainObject
+#include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseResolvedWithUndefined
 #include "vm/SelfHosting.h"
 
 #include "builtin/streams/HandlerFunction-inl.h"  // js::TargetFromHandler
@@ -41,6 +42,7 @@
 #include "vm/Realm-inl.h"      // js::AutoRealm
 
 using js::ClassSpec;
+using js::PromiseObject;
 using js::ReadableStream;
 using js::ReadableStreamController;
 using js::ReadableStreamControllerCallPullIfNeeded;
@@ -394,7 +396,7 @@ MOZ_MUST_USE JSObject* js::ReadableStreamControllerCancelSteps(
                                         unwrappedController->cancelMethod());
     if (unwrappedCancelMethod.isUndefined()) {
       // CreateAlgorithmFromUnderlyingMethod step 7.
-      result = PromiseObject::unforgeableResolve(cx, UndefinedHandleValue);
+      result = PromiseResolvedWithUndefined(cx);
     } else {
       // CreateAlgorithmFromUnderlyingMethod steps 6.c.i-ii.
       {
@@ -434,7 +436,7 @@ MOZ_MUST_USE JSObject* js::ReadableStreamControllerCancelSteps(
  * Streams spec, 3.9.5.2.
  *     ReadableStreamDefaultController [[PullSteps]]( forAuthorCode )
  */
-JSObject* js::ReadableStreamDefaultControllerPullSteps(
+PromiseObject* js::ReadableStreamDefaultControllerPullSteps(
     JSContext* cx,
     Handle<ReadableStreamDefaultController*> unwrappedController) {
   // Step 1: Let stream be this.[[controlledReadableStream]].
@@ -483,19 +485,20 @@ JSObject* js::ReadableStreamDefaultControllerPullSteps(
     if (!unwrappedReader) {
       return nullptr;
     }
-    Rooted<JSObject*> readResultObj(
-        cx, ReadableStreamCreateReadResult(cx, chunk, false,
-                                           unwrappedReader->forAuthorCode()));
+
+    PlainObject* readResultObj = ReadableStreamCreateReadResult(
+        cx, chunk, false, unwrappedReader->forAuthorCode());
     if (!readResultObj) {
       return nullptr;
     }
+
     Rooted<Value> readResult(cx, ObjectValue(*readResultObj));
-    return PromiseObject::unforgeableResolve(cx, readResult);
+    return PromiseObject::unforgeableResolveWithNonPromise(cx, readResult);
   }
 
   // Step 3: Let pendingPromise be
   //         ! ReadableStreamAddReadRequest(stream, forAuthorCode).
-  Rooted<JSObject*> pendingPromise(
+  Rooted<PromiseObject*> pendingPromise(
       cx, ReadableStreamAddReadOrReadIntoRequest(cx, unwrappedStream));
   if (!pendingPromise) {
     return nullptr;

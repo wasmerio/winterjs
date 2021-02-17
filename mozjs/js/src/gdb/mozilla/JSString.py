@@ -7,6 +7,7 @@
 import gdb
 import mozilla.prettyprinters
 from mozilla.prettyprinters import ptr_pretty_printer
+from mozilla.CellHeader import get_header_length_and_flags
 
 try:
     chr(10000)  # UPPER RIGHT PENCIL
@@ -21,11 +22,11 @@ class JSStringTypeCache(object):
     # Cache information about the JSString type for this objfile.
     def __init__(self, cache):
         dummy = gdb.Value(0).cast(cache.JSString_ptr_t)
-        self.NON_ATOM_BIT = dummy['NON_ATOM_BIT']
-        self.LINEAR_BIT = dummy['LINEAR_BIT']
-        self.INLINE_CHARS_BIT = dummy['INLINE_CHARS_BIT']
-        self.TYPE_FLAGS_MASK = dummy['TYPE_FLAGS_MASK']
-        self.LATIN1_CHARS_BIT = dummy['LATIN1_CHARS_BIT']
+        self.ATOM_BIT = dummy["ATOM_BIT"]
+        self.LINEAR_BIT = dummy["LINEAR_BIT"]
+        self.INLINE_CHARS_BIT = dummy["INLINE_CHARS_BIT"]
+        self.TYPE_FLAGS_MASK = dummy["TYPE_FLAGS_MASK"]
+        self.LATIN1_CHARS_BIT = dummy["LATIN1_CHARS_BIT"]
 
 
 class Common(mozilla.prettyprinters.Pointer):
@@ -42,49 +43,42 @@ class JSStringPtr(Common):
         return "string"
 
     def chars(self):
-        d = self.value['d']
-        flags = self.value['flags_']
-        try:
-            length = self.value['length_']
-        except gdb.error:
-            # If we couldn't fetch the length directly, it must be stored
-            # within `flags`.
-            length = flags >> 32
-            flags = flags % 2**32
+        d = self.value["d"]
+        length, flags = get_header_length_and_flags(self.value, self.cache)
 
         corrupt = {
-            0x2f2f2f2f: 'JS_FRESH_NURSERY_PATTERN',
-            0x2b2b2b2b: 'JS_SWEPT_NURSERY_PATTERN',
-            0xe5e5e5e5: 'jemalloc freed memory',
-        }.get(flags & 0xffffffff)
+            0x2F2F2F2F: "JS_FRESH_NURSERY_PATTERN",
+            0x2B2B2B2B: "JS_SWEPT_NURSERY_PATTERN",
+            0xE5E5E5E5: "jemalloc freed memory",
+        }.get(flags & 0xFFFFFFFF)
         if corrupt:
             for ch in "<CORRUPT:%s>" % corrupt:
                 yield ch
             return
         is_rope = (flags & self.stc.LINEAR_BIT) == 0
         if is_rope:
-            for c in JSStringPtr(d['s']['u2']['left'], self.cache).chars():
+            for c in JSStringPtr(d["s"]["u2"]["left"], self.cache).chars():
                 yield c
-            for c in JSStringPtr(d['s']['u3']['right'], self.cache).chars():
+            for c in JSStringPtr(d["s"]["u3"]["right"], self.cache).chars():
                 yield c
         else:
             is_inline = (flags & self.stc.INLINE_CHARS_BIT) != 0
             is_latin1 = (flags & self.stc.LATIN1_CHARS_BIT) != 0
             if is_inline:
                 if is_latin1:
-                    chars = d['inlineStorageLatin1']
+                    chars = d["inlineStorageLatin1"]
                 else:
-                    chars = d['inlineStorageTwoByte']
+                    chars = d["inlineStorageTwoByte"]
             else:
                 if is_latin1:
-                    chars = d['s']['u2']['nonInlineCharsLatin1']
+                    chars = d["s"]["u2"]["nonInlineCharsLatin1"]
                 else:
-                    chars = d['s']['u2']['nonInlineCharsTwoByte']
+                    chars = d["s"]["u2"]["nonInlineCharsTwoByte"]
             for i in range(int(length)):
                 yield chars[i]
 
     def to_string(self, maxlen=200):
-        s = u''
+        s = ""
         invalid_chars_allowed = 2
         for c in self.chars():
             if len(s) >= maxlen:
@@ -100,7 +94,7 @@ class JSStringPtr(Common):
                     break
                 else:
                     invalid_chars_allowed -= 1
-                    s += "\\x%04x" % (c & 0xffff)
+                    s += "\\x%04x" % (c & 0xFFFF)
         return s
 
 

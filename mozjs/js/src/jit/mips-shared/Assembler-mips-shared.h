@@ -13,12 +13,12 @@
 #include "mozilla/Sprintf.h"
 
 #include "jit/CompactBuffer.h"
-#include "jit/IonCode.h"
-#include "jit/JitRealm.h"
+#include "jit/JitCode.h"
 #include "jit/JitSpewer.h"
 #include "jit/mips-shared/Architecture-mips-shared.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/IonAssemblerBuffer.h"
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -120,12 +120,6 @@ static constexpr Register RegExpTesterLastIndexReg = CallTempReg2;
 
 static constexpr uint32_t CodeAlignment = 8;
 
-// This boolean indicates whether we support SIMD instructions flavoured for
-// this architecture or not. Rather than a method in the LIRGenerator, it is
-// here such that it is accessible from the entire codebase. Once full support
-// for SIMD is reached on all tier-1 platforms, this constant can be deleted.
-static constexpr bool SupportsSimd = false;
-
 /* clang-format off */
 // MIPS instruction types
 //                +---------------------------------------------------------------+
@@ -221,7 +215,7 @@ Register toRD(Instruction& i);
 Register toR(Instruction& i);
 
 // MIPS enums for instruction fields
-enum Opcode {
+enum OpcodeField {
   op_special = 0 << OpcodeShift,
   op_regimm = 1 << OpcodeShift,
 
@@ -425,6 +419,7 @@ enum FunctionField {
   ff_dinsu = 6,
   ff_dins = 7,
   ff_bshfl = 32,
+  ff_dbshfl = 36,
   ff_sc = 38,
   ff_scd = 39,
   ff_ll = 54,
@@ -825,10 +820,6 @@ class AssemblerMIPSShared : public AssemblerShared {
   static Condition InvertCondition(Condition cond);
   static DoubleCondition InvertCondition(DoubleCondition cond);
 
-  void writeRelocation(BufferOffset src) {
-    jumpRelocations_.writeUnsigned(src.getOffset());
-  }
-
   // As opposed to x86/x64 version, the data relocation has to be executed
   // before to recover the pointer, and not after.
   void writeDataRelocation(ImmGCPtr ptr) {
@@ -892,7 +883,7 @@ class AssemblerMIPSShared : public AssemblerShared {
   }
 #endif
 
-  static const Register getStackPointer() { return StackPointer; }
+  Register getStackPointer() const { return StackPointer; }
 
  protected:
   bool isFinished;
@@ -1072,6 +1063,9 @@ class AssemblerMIPSShared : public AssemblerShared {
   // Bit twiddling.
   BufferOffset as_clz(Register rd, Register rs);
   BufferOffset as_dclz(Register rd, Register rs);
+  BufferOffset as_wsbh(Register rd, Register rt);
+  BufferOffset as_dsbh(Register rd, Register rt);
+  BufferOffset as_dshd(Register rd, Register rt);
   BufferOffset as_ins(Register rt, Register rs, uint16_t pos, uint16_t size);
   BufferOffset as_dins(Register rt, Register rs, uint16_t pos, uint16_t size);
   BufferOffset as_dinsm(Register rt, Register rs, uint16_t pos, uint16_t size);
@@ -1237,7 +1231,6 @@ class AssemblerMIPSShared : public AssemblerShared {
   }
   static bool SupportsUnalignedAccesses() { return true; }
   static bool SupportsFastUnalignedAccesses() { return false; }
-  static bool SupportsSimd() { return js::jit::SupportsSimd; }
 
   static bool HasRoundInstruction(RoundingMode mode) { return false; }
 
@@ -1246,7 +1239,7 @@ class AssemblerMIPSShared : public AssemblerShared {
   void addPendingJump(BufferOffset src, ImmPtr target, RelocationKind kind) {
     enoughMemory_ &= jumps_.append(RelativePatch(src, target.value, kind));
     if (kind == RelocationKind::JITCODE) {
-      writeRelocation(src);
+      jumpRelocations_.writeUnsigned(src.getOffset());
     }
   }
 
@@ -1325,8 +1318,8 @@ class Instruction {
     return extractBitField(OpcodeShift + OpcodeBits - 1, OpcodeShift);
   }
   // Return the fields at their original place in the instruction encoding.
-  Opcode OpcodeFieldRaw() const {
-    return static_cast<Opcode>(encode() & OpcodeMask);
+  OpcodeField OpcodeFieldRaw() const {
+    return static_cast<OpcodeField>(encode() & OpcodeMask);
   }
 
   // Get the next instruction in the instruction stream.
@@ -1351,41 +1344,42 @@ class InstNOP : public Instruction {
 // Class for register type instructions.
 class InstReg : public Instruction {
  public:
-  InstReg(Opcode op, Register rd, FunctionField ff)
+  InstReg(OpcodeField op, Register rd, FunctionField ff)
       : Instruction(op | RD(rd) | ff) {}
-  InstReg(Opcode op, Register rs, Register rt, FunctionField ff)
+  InstReg(OpcodeField op, Register rs, Register rt, FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | ff) {}
-  InstReg(Opcode op, Register rs, Register rt, Register rd, FunctionField ff)
+  InstReg(OpcodeField op, Register rs, Register rt, Register rd,
+          FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RD(rd) | ff) {}
-  InstReg(Opcode op, Register rs, Register rt, Register rd, uint32_t sa,
+  InstReg(OpcodeField op, Register rs, Register rt, Register rd, uint32_t sa,
           FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RD(rd) | SA(sa) | ff) {}
-  InstReg(Opcode op, RSField rs, Register rt, Register rd, uint32_t sa,
+  InstReg(OpcodeField op, RSField rs, Register rt, Register rd, uint32_t sa,
           FunctionField ff)
       : Instruction(op | rs | RT(rt) | RD(rd) | SA(sa) | ff) {}
-  InstReg(Opcode op, Register rs, RTField rt, Register rd, uint32_t sa,
+  InstReg(OpcodeField op, Register rs, RTField rt, Register rd, uint32_t sa,
           FunctionField ff)
       : Instruction(op | RS(rs) | rt | RD(rd) | SA(sa) | ff) {}
-  InstReg(Opcode op, Register rs, uint32_t cc, Register rd, uint32_t sa,
+  InstReg(OpcodeField op, Register rs, uint32_t cc, Register rd, uint32_t sa,
           FunctionField ff)
       : Instruction(op | RS(rs) | cc | RD(rd) | SA(sa) | ff) {}
-  InstReg(Opcode op, uint32_t code, FunctionField ff)
+  InstReg(OpcodeField op, uint32_t code, FunctionField ff)
       : Instruction(op | code | ff) {}
   // for float point
-  InstReg(Opcode op, RSField rs, Register rt, uint32_t fs)
+  InstReg(OpcodeField op, RSField rs, Register rt, uint32_t fs)
       : Instruction(op | rs | RT(rt) | FS(fs)) {}
-  InstReg(Opcode op, RSField rs, Register rt, FloatRegister rd)
+  InstReg(OpcodeField op, RSField rs, Register rt, FloatRegister rd)
       : Instruction(op | rs | RT(rt) | RD(rd)) {}
-  InstReg(Opcode op, RSField rs, Register rt, FloatRegister rd, uint32_t sa,
-          FunctionField ff)
+  InstReg(OpcodeField op, RSField rs, Register rt, FloatRegister rd,
+          uint32_t sa, FunctionField ff)
       : Instruction(op | rs | RT(rt) | RD(rd) | SA(sa) | ff) {}
-  InstReg(Opcode op, RSField rs, Register rt, FloatRegister fs,
+  InstReg(OpcodeField op, RSField rs, Register rt, FloatRegister fs,
           FloatRegister fd, FunctionField ff)
       : Instruction(op | rs | RT(rt) | RD(fs) | SA(fd) | ff) {}
-  InstReg(Opcode op, RSField rs, FloatRegister ft, FloatRegister fs,
+  InstReg(OpcodeField op, RSField rs, FloatRegister ft, FloatRegister fs,
           FloatRegister fd, FunctionField ff)
       : Instruction(op | rs | RT(ft) | RD(fs) | SA(fd) | ff) {}
-  InstReg(Opcode op, RSField rs, FloatRegister ft, FloatRegister fd,
+  InstReg(OpcodeField op, RSField rs, FloatRegister ft, FloatRegister fd,
           uint32_t sa, FunctionField ff)
       : Instruction(op | rs | RT(ft) | RD(fd) | SA(sa) | ff) {}
 
@@ -1411,23 +1405,23 @@ class InstImm : public Instruction {
  public:
   void extractImm16(BOffImm16* dest);
 
-  InstImm(Opcode op, Register rs, Register rt, BOffImm16 off)
+  InstImm(OpcodeField op, Register rs, Register rt, BOffImm16 off)
       : Instruction(op | RS(rs) | RT(rt) | off.encode()) {}
-  InstImm(Opcode op, Register rs, RTField rt, BOffImm16 off)
+  InstImm(OpcodeField op, Register rs, RTField rt, BOffImm16 off)
       : Instruction(op | RS(rs) | rt | off.encode()) {}
-  InstImm(Opcode op, RSField rs, uint32_t cc, BOffImm16 off)
+  InstImm(OpcodeField op, RSField rs, uint32_t cc, BOffImm16 off)
       : Instruction(op | rs | cc | off.encode()) {}
-  InstImm(Opcode op, Register rs, Register rt, Imm16 off)
+  InstImm(OpcodeField op, Register rs, Register rt, Imm16 off)
       : Instruction(op | RS(rs) | RT(rt) | off.encode()) {}
   InstImm(uint32_t raw) : Instruction(raw) {}
   // For floating-point loads and stores.
-  InstImm(Opcode op, Register rs, FloatRegister rt, Imm16 off)
+  InstImm(OpcodeField op, Register rs, FloatRegister rt, Imm16 off)
       : Instruction(op | RS(rs) | RT(rt) | off.encode()) {}
 
   uint32_t extractOpcode() {
     return extractBitField(OpcodeShift + OpcodeBits - 1, OpcodeShift);
   }
-  void setOpcode(Opcode op) { data = (data & ~OpcodeMask) | op; }
+  void setOpcode(OpcodeField op) { data = (data & ~OpcodeMask) | op; }
   uint32_t extractRS() {
     return extractBitField(RSShift + RSBits - 1, RSShift);
   }
@@ -1451,7 +1445,7 @@ class InstImm : public Instruction {
 // Class for Jump type instructions.
 class InstJump : public Instruction {
  public:
-  InstJump(Opcode op, JOffImm26 off) : Instruction(op | off.encode()) {}
+  InstJump(OpcodeField op, JOffImm26 off) : Instruction(op | off.encode()) {}
 
   uint32_t extractImm26Value() {
     return extractBitField(Imm26Shift + Imm26Bits - 1, Imm26Shift);
@@ -1462,22 +1456,23 @@ class InstJump : public Instruction {
 class InstGS : public Instruction {
  public:
   // For indexed loads and stores.
-  InstGS(Opcode op, Register rs, Register rt, Register rd, Imm8 off,
+  InstGS(OpcodeField op, Register rs, Register rt, Register rd, Imm8 off,
          FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RD(rd) | off.encode(3) | ff) {}
-  InstGS(Opcode op, Register rs, FloatRegister rt, Register rd, Imm8 off,
+  InstGS(OpcodeField op, Register rs, FloatRegister rt, Register rd, Imm8 off,
          FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RD(rd) | off.encode(3) | ff) {}
   // For quad-word loads and stores.
-  InstGS(Opcode op, Register rs, Register rt, Register rz, GSImm13 off,
+  InstGS(OpcodeField op, Register rs, Register rt, Register rz, GSImm13 off,
          FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RZ(rz) | off.encode(6) | ff) {}
-  InstGS(Opcode op, Register rs, FloatRegister rt, FloatRegister rz,
+  InstGS(OpcodeField op, Register rs, FloatRegister rt, FloatRegister rz,
          GSImm13 off, FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | RZ(rz) | off.encode(6) | ff) {}
   InstGS(uint32_t raw) : Instruction(raw) {}
   // For floating-point unaligned loads and stores.
-  InstGS(Opcode op, Register rs, FloatRegister rt, Imm8 off, FunctionField ff)
+  InstGS(OpcodeField op, Register rs, FloatRegister rt, Imm8 off,
+         FunctionField ff)
       : Instruction(op | RS(rs) | RT(rt) | off.encode(6) | ff) {}
 };
 

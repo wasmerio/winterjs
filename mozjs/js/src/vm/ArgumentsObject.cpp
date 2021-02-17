@@ -11,8 +11,8 @@
 #include <algorithm>
 
 #include "gc/FreeOp.h"
+#include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
-#include "js/StableStringChars.h"
 #include "util/BitArray.h"
 #include "vm/AsyncFunction.h"
 #include "vm/GlobalObject.h"
@@ -25,8 +25,6 @@
 #include "vm/Stack-inl.h"
 
 using namespace js;
-
-using JS::AutoStableStringChars;
 
 /* static */
 size_t RareArgumentsData::bytesRequired(size_t numActuals) {
@@ -463,10 +461,8 @@ bool ArgumentsObject::obj_mayResolve(const JSAtomState& names, jsid id,
     }
     return atom == names.length || atom == names.callee;
   }
-  if (JSID_IS_SYMBOL(id)) {
-    return JSID_TO_SYMBOL(id)->code() == JS::SymbolCode::iterator;
-  }
-  return true;
+
+  return id.isInt() || id.isWellKnownSymbol(JS::SymbolCode::iterator);
 }
 
 static bool MappedArgGetter(JSContext* cx, HandleObject obj, HandleId id,
@@ -543,18 +539,13 @@ static bool MappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
          NativeDefineDataProperty(cx, argsobj, id, v, attrs, result);
 }
 
-static bool DefineArgumentsIterator(JSContext* cx,
-                                    Handle<ArgumentsObject*> argsobj) {
-  RootedId iteratorId(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator));
+/* static */
+bool ArgumentsObject::getArgumentsIterator(JSContext* cx,
+                                           MutableHandleValue val) {
   HandlePropertyName shName = cx->names().ArrayValues;
   RootedAtom name(cx, cx->names().values);
-  RootedValue val(cx);
-  if (!GlobalObject::getSelfHostedFunction(cx, cx->global(), shName, name, 0,
-                                           &val)) {
-    return false;
-  }
-  return NativeDefineDataProperty(cx, argsobj, iteratorId, val,
-                                  JSPROP_RESOLVING);
+  return GlobalObject::getSelfHostedFunction(cx, cx->global(), shName, name, 0,
+                                             val);
 }
 
 /* static */
@@ -580,7 +571,12 @@ bool ArgumentsObject::reifyIterator(JSContext* cx,
     return true;
   }
 
-  if (!DefineArgumentsIterator(cx, obj)) {
+  RootedId iteratorId(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator));
+  RootedValue val(cx);
+  if (!ArgumentsObject::getArgumentsIterator(cx, &val)) {
+    return false;
+  }
+  if (!NativeDefineDataProperty(cx, obj, iteratorId, val, JSPROP_RESOLVING)) {
     return false;
   }
 
@@ -599,7 +595,7 @@ bool MappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
       return true;
     }
 
-    if (!DefineArgumentsIterator(cx, argsobj)) {
+    if (!reifyIterator(cx, argsobj)) {
       return false;
     }
     *resolvedp = true;
@@ -822,7 +818,7 @@ bool UnmappedArgumentsObject::obj_resolve(JSContext* cx, HandleObject obj,
       return true;
     }
 
-    if (!DefineArgumentsIterator(cx, argsobj)) {
+    if (!reifyIterator(cx, argsobj)) {
       return false;
     }
     *resolvedp = true;
@@ -942,7 +938,7 @@ size_t ArgumentsObject::objectMoved(JSObject* dst, JSObject* src) {
   size_t nbytesTotal = 0;
   uint32_t nDataBytes = ArgumentsData::bytesRequired(nsrc->data()->numArgs);
   if (!nursery.isInside(nsrc->data())) {
-    nursery.removeMallocedBuffer(nsrc->data());
+    nursery.removeMallocedBufferDuringMinorGC(nsrc->data());
   } else {
     AutoEnterOOMUnsafeRegion oomUnsafe;
     uint8_t* data = nsrc->zone()->pod_malloc<uint8_t>(nDataBytes);
@@ -962,7 +958,7 @@ size_t ArgumentsObject::objectMoved(JSObject* dst, JSObject* src) {
   if (RareArgumentsData* srcRareData = nsrc->maybeRareData()) {
     uint32_t nbytes = RareArgumentsData::bytesRequired(nsrc->initialLength());
     if (!nursery.isInside(srcRareData)) {
-      nursery.removeMallocedBuffer(srcRareData);
+      nursery.removeMallocedBufferDuringMinorGC(srcRareData);
     } else {
       AutoEnterOOMUnsafeRegion oomUnsafe;
       uint8_t* dstRareData = nsrc->zone()->pod_malloc<uint8_t>(nbytes);
@@ -990,25 +986,34 @@ size_t ArgumentsObject::objectMoved(JSObject* dst, JSObject* src) {
  * arguments object.
  */
 const JSClassOps MappedArgumentsObject::classOps_ = {
-    nullptr, /* addProperty */
-    ArgumentsObject::obj_delProperty,
-    MappedArgumentsObject::obj_enumerate,
-    nullptr, /* newEnumerate */
-    MappedArgumentsObject::obj_resolve,
-    ArgumentsObject::obj_mayResolve,
-    ArgumentsObject::finalize,
-    nullptr, /* call        */
-    nullptr, /* hasInstance */
-    nullptr, /* construct   */
-    ArgumentsObject::trace};
+    nullptr,                               // addProperty
+    ArgumentsObject::obj_delProperty,      // delProperty
+    MappedArgumentsObject::obj_enumerate,  // enumerate
+    nullptr,                               // newEnumerate
+    MappedArgumentsObject::obj_resolve,    // resolve
+    ArgumentsObject::obj_mayResolve,       // mayResolve
+    ArgumentsObject::finalize,             // finalize
+    nullptr,                               // call
+    nullptr,                               // hasInstance
+    nullptr,                               // construct
+    ArgumentsObject::trace,                // trace
+};
 
 const js::ClassExtension MappedArgumentsObject::classExt_ = {
-    ArgumentsObject::objectMoved /* objectMovedOp */
+    ArgumentsObject::objectMoved,  // objectMovedOp
 };
 
 const ObjectOps MappedArgumentsObject::objectOps_ = {
-    nullptr, /* lookupProperty */
-    MappedArgumentsObject::obj_defineProperty};
+    nullptr,                                    // lookupProperty
+    MappedArgumentsObject::obj_defineProperty,  // defineProperty
+    nullptr,                                    // hasProperty
+    nullptr,                                    // getProperty
+    nullptr,                                    // setProperty
+    nullptr,                                    // getOwnPropertyDescriptor
+    nullptr,                                    // deleteProperty
+    nullptr,                                    // getElements
+    nullptr,                                    // funToString
+};
 
 const JSClass MappedArgumentsObject::class_ = {
     "Arguments",
@@ -1026,20 +1031,21 @@ const JSClass MappedArgumentsObject::class_ = {
  * it is represented by a different class while sharing some functionality.
  */
 const JSClassOps UnmappedArgumentsObject::classOps_ = {
-    nullptr, /* addProperty */
-    ArgumentsObject::obj_delProperty,
-    UnmappedArgumentsObject::obj_enumerate,
-    nullptr, /* newEnumerate */
-    UnmappedArgumentsObject::obj_resolve,
-    ArgumentsObject::obj_mayResolve,
-    ArgumentsObject::finalize,
-    nullptr, /* call        */
-    nullptr, /* hasInstance */
-    nullptr, /* construct   */
-    ArgumentsObject::trace};
+    nullptr,                                 // addProperty
+    ArgumentsObject::obj_delProperty,        // delProperty
+    UnmappedArgumentsObject::obj_enumerate,  // enumerate
+    nullptr,                                 // newEnumerate
+    UnmappedArgumentsObject::obj_resolve,    // resolve
+    ArgumentsObject::obj_mayResolve,         // mayResolve
+    ArgumentsObject::finalize,               // finalize
+    nullptr,                                 // call
+    nullptr,                                 // hasInstance
+    nullptr,                                 // construct
+    ArgumentsObject::trace,                  // trace
+};
 
 const js::ClassExtension UnmappedArgumentsObject::classExt_ = {
-    ArgumentsObject::objectMoved /* objectMovedOp */
+    ArgumentsObject::objectMoved,  // objectMovedOp
 };
 
 const JSClass UnmappedArgumentsObject::class_ = {

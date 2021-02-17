@@ -18,11 +18,11 @@
 class JSLinearString;
 class JSRope;
 class JSTracer;
+struct JSClass;
 
 namespace js {
 class BaseShape;
 class GCMarker;
-class LazyScript;
 class NativeObject;
 class ObjectGroup;
 class Shape;
@@ -32,19 +32,10 @@ namespace jit {
 class JitCode;
 }  // namespace jit
 
-#ifdef DEBUG
-bool IsTracerKind(JSTracer* trc, JS::CallbackTracer::TracerKind kind);
-#endif
-
 namespace gc {
 
-class Arena;
 struct Cell;
 class TenuredCell;
-
-/*** Special Cases ***/
-
-void PushArena(GCMarker* gcmarker, Arena* arena);
 
 /*** Liveness ***/
 
@@ -59,14 +50,7 @@ void PushArena(GCMarker* gcmarker, Arena* arena);
 // separate implementations.
 
 template <typename T>
-bool IsMarkedInternal(JSRuntime* rt, T* thing);
-template <typename T>
 bool IsMarkedInternal(JSRuntime* rt, T** thing);
-
-template <typename T>
-bool IsMarkedBlackInternal(JSRuntime* rt, T* thing);
-template <typename T>
-bool IsMarkedBlackInternal(JSRuntime* rt, T** thing);
 
 template <typename T>
 bool IsAboutToBeFinalizedInternal(T* thingp);
@@ -85,22 +69,8 @@ inline bool IsMarkedUnbarriered(JSRuntime* rt, T* thingp) {
 // zones that are not currently being collected or are owned by another runtime
 // are always reported as being marked.
 template <typename T>
-inline bool IsMarked(JSRuntime* rt, WriteBarriered<T>* thingp) {
-  return IsMarkedInternal(rt,
-                          ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
-}
-
-// Report whether a GC thing has been marked black.
-template <typename T>
-inline bool IsMarkedBlackUnbarriered(JSRuntime* rt, T* thingp) {
-  return IsMarkedBlackInternal(rt, ConvertToBase(thingp));
-}
-
-// Report whether a GC thing has been marked black.
-template <typename T>
-inline bool IsMarkedBlack(JSRuntime* rt, WriteBarriered<T>* thingp) {
-  return IsMarkedBlackInternal(
-      rt, ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
+inline bool IsMarked(JSRuntime* rt, BarrieredBase<T>* thingp) {
+  return IsMarkedInternal(rt, ConvertToBase(thingp->unbarrieredAddress()));
 }
 
 template <typename T>
@@ -109,18 +79,10 @@ inline bool IsAboutToBeFinalizedUnbarriered(T* thingp) {
 }
 
 template <typename T>
-inline bool IsAboutToBeFinalized(const WriteBarriered<T>* thingp) {
+inline bool IsAboutToBeFinalized(const BarrieredBase<T>* thingp) {
   return IsAboutToBeFinalizedInternal(
-      ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
+      ConvertToBase(thingp->unbarrieredAddress()));
 }
-
-template <typename T>
-inline bool IsAboutToBeFinalized(ReadBarriered<T>* thingp) {
-  return IsAboutToBeFinalizedInternal(
-      ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
-}
-
-bool IsAboutToBeFinalizedDuringSweep(TenuredCell& tenured);
 
 inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell* cell);
 
@@ -132,6 +94,8 @@ inline Cell* ToMarkable(const Value& v) {
 }
 
 inline Cell* ToMarkable(Cell* cell) { return cell; }
+
+bool UnmarkGrayGCThingUnchecked(JSRuntime* rt, JS::GCCellPtr thing);
 
 } /* namespace gc */
 
@@ -162,7 +126,6 @@ namespace gc {
 
 template <typename T>
 inline bool IsForwarded(const T* t);
-inline bool IsForwarded(const JS::Value& value);
 
 template <typename T>
 inline T* Forwarded(const T* t);
@@ -171,6 +134,22 @@ inline Value Forwarded(const JS::Value& value);
 
 template <typename T>
 inline T MaybeForwarded(T t);
+
+// Helper functions for use in situations where the object's group might be
+// forwarded, for example while marking.
+
+inline const JSClass* MaybeForwardedObjectClass(const JSObject* obj);
+
+template <typename T>
+inline bool MaybeForwardedObjectIs(JSObject* obj);
+
+template <typename T>
+inline T& MaybeForwardedObjectAs(JSObject* obj);
+
+// Trace TypedObject trace lists with specialised paths for GCMarker and
+// TenuringTracer.
+void VisitTraceList(JSTracer* trc, JSObject* obj, const uint32_t* traceList,
+                    uint8_t* memory);
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 
@@ -182,8 +161,6 @@ inline void CheckGCThingAfterMovingGC(T* t);
 
 template <typename T>
 inline void CheckGCThingAfterMovingGC(const WeakHeapPtr<T*>& t);
-
-inline void CheckValueAfterMovingGC(const JS::Value& value);
 
 #endif  // JSGC_HASH_TABLE_CHECKS
 

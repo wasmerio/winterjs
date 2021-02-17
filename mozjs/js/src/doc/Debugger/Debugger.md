@@ -168,6 +168,11 @@ debugger evaluation associated with the debugger that has the `onNativeCall`
 hook.  Such evaluation methods include `Debugger.Object.executeInGlobal`,
 `Debugger.Frame.eval`, and associated methods.
 
+Separately, any Debugger hooks triggered during calls to
+`Debugger.Object.executeInGlobal`, `Debugger.Frame.eval`, and associated methods
+will only be triggered on Debugger objects owned by the Debugger performing
+the evaluation.
+
 ### `onExceptionUnwind(frame, value)`
 The exception <i>value</i> has been thrown, and has propagated to
 <i>frame</i>; <i>frame</i> is the youngest remaining stack frame, and is a
@@ -502,6 +507,12 @@ If `value` is a primitive value, return it unchanged. If `value` is a
 other kind of object, and hence not a proper debuggee value, throw a
 TypeError instead.
 
+### `adoptFrame(frame)`
+Given `frame` of type `Debugger.Frame` which is owned by an arbitrary
+`Debugger`, return an equivalent `Debugger.Frame` owned by this `Debugger`.
+If the `frame` is associated with a debuggee that is _not_ a debuggee of
+the adopting debugger, this method will throw.
+
 ### `adoptSource(source)`
 Given `source` of type `Debugger.Source` which is owned by an arbitrary
 `Debugger`, return an equivalent `Debugger.Source` owned by this `Debugger`.
@@ -516,12 +527,6 @@ The functions described below are not called with a `this` value.
     more lines. Otherwise return true. The intent is to support interactive
     compilation - accumulate lines in a buffer until isCompilableUnit is true,
     then pass it to the compiler.
-
-### `recordReplayProcessKind()`
-:   Return the kind of record/replay firefox process that is currently
-    running: the string "RecordingReplaying" if this is a recording or
-    replaying process, the string "Middleman" if this is a middleman
-    process, or undefined for normal firefox content or UI processes.
 
 [add]: #adddebuggee-global
 [source]: Debugger.Source.md

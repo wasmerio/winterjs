@@ -23,68 +23,107 @@ from mozilla_version.gecko import GeckoVersion
 
 @CommandProvider
 class MachCommands(MachCommandBase):
-
-    @Command('release', category="release",
-             description="Task that are part of the release process.")
+    @Command(
+        "release",
+        category="release",
+        description="Task that are part of the release process.",
+    )
     def release(self):
         """
         The release subcommands all relate to the release process.
         """
 
-    @SubCommand('release', 'buglist',
-                description="Generate list of bugs since the last release.")
-    @CommandArgument('--version',
-                     required=True,
-                     type=GeckoVersion.parse,
-                     help="The version being built.")
-    @CommandArgument('--product',
-                     required=True,
-                     help="The product being built.")
-    @CommandArgument('--repo',
-                     help="The repo being built.")
-    @CommandArgument('--revision',
-                     required=True,
-                     help="The revision being built.")
+    @SubCommand(
+        "release",
+        "buglist",
+        description="Generate list of bugs since the last release.",
+    )
+    @CommandArgument(
+        "--version",
+        required=True,
+        type=GeckoVersion.parse,
+        help="The version being built.",
+    )
+    @CommandArgument("--product", required=True, help="The product being built.")
+    @CommandArgument("--repo", help="The repo being built.")
+    @CommandArgument("--revision", required=True, help="The revision being built.")
     def buglist(self, version, product, revision, repo):
         self.setup_logging()
         from mozrelease.buglist_creator import create_bugs_url
-        print(create_bugs_url(
-            product=product,
-            current_version=version,
-            current_revision=revision,
-            repo=repo,
-        ))
 
-    @SubCommand('release', 'send-buglist-email',
-                description="Send an email with the bugs since the last release.")
-    @CommandArgument('--address',
-                     required=True,
-                     action='append',
-                     dest='addresses',
-                     help="The email address to send the bug list to "
-                          "(may be specified more than once.")
-    @CommandArgument('--version',
-                     type=GeckoVersion.parse,
-                     required=True,
-                     help="The version being built.")
-    @CommandArgument('--product',
-                     required=True,
-                     help="The product being built.")
-    @CommandArgument('--repo',
-                     required=True,
-                     help="The repo being built.")
-    @CommandArgument('--revision',
-                     required=True,
-                     help="The revision being built.")
-    @CommandArgument('--build-number',
-                     required=True,
-                     help="The build number")
-    @CommandArgument('--task-group-id',
-                     help="The task group of the build.")
+        print(
+            create_bugs_url(
+                product=product,
+                current_version=version,
+                current_revision=revision,
+                repo=repo,
+            )
+        )
+
+    @SubCommand(
+        "release",
+        "send-buglist-email",
+        description="Send an email with the bugs since the last release.",
+    )
+    @CommandArgument(
+        "--address",
+        required=True,
+        action="append",
+        dest="addresses",
+        help="The email address to send the bug list to "
+        "(may be specified more than once.",
+    )
+    @CommandArgument(
+        "--version",
+        type=GeckoVersion.parse,
+        required=True,
+        help="The version being built.",
+    )
+    @CommandArgument("--product", required=True, help="The product being built.")
+    @CommandArgument("--repo", required=True, help="The repo being built.")
+    @CommandArgument("--revision", required=True, help="The revision being built.")
+    @CommandArgument("--build-number", required=True, help="The build number")
+    @CommandArgument("--task-group-id", help="The task group of the build.")
     def buglist_email(self, **options):
         self.setup_logging()
         from mozrelease.buglist_creator import email_release_drivers
+
         email_release_drivers(**options)
+
+    @SubCommand(
+        "release",
+        "push-scriptworker-canary",
+        description="Push tasks to try, to test new scriptworker deployments.",
+    )
+    @CommandArgument(
+        "--address",
+        required=True,
+        action="append",
+        dest="addresses",
+        help="The email address to send notifications to "
+        "(may be specified more than once).",
+    )
+    @CommandArgument(
+        "--scriptworker",
+        required=True,
+        action="append",
+        dest="scriptworkers",
+        help="Scriptworker to run canary for (may be specified more than once).",
+    )
+    @CommandArgument(
+        "--ssh-key-secret",
+        required=False,
+        help="Taskcluster secret with ssh-key to use for hg.mozilla.org",
+    )
+    def push_scriptworker_canary(self, scriptworkers, addresses, ssh_key_secret):
+        self.setup_logging()
+        from mozrelease.scriptworker_canary import push_canary
+
+        push_canary(
+            scriptworkers=scriptworkers,
+            addresses=addresses,
+            ssh_key_secret=ssh_key_secret,
+        )
 
     def setup_logging(self, quiet=False, verbose=True):
         """
@@ -99,9 +138,11 @@ class MachCommands(MachCommandBase):
         if not quiet:
             level = logging.DEBUG if verbose else logging.INFO
             self.log_manager.add_terminal_logging(
-                fh=sys.stderr, level=level,
+                fh=sys.stderr,
+                level=level,
                 write_interval=old.formatter.write_interval,
-                write_times=old.formatter.write_times)
+                write_times=old.formatter.write_times,
+            )
 
         # all of the taskgraph logging is unstructured logging
         self.log_manager.enable_unstructured()

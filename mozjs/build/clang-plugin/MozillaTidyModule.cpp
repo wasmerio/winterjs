@@ -8,6 +8,10 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "ChecksIncludes.inc"
+#include "external/ExternalIncludes.inc"
+#ifdef MOZ_CLANG_PLUGIN_ALPHA
+#include "alpha/AlphaIncludes.inc"
+#endif
 
 using namespace clang::ast_matchers;
 
@@ -19,6 +23,10 @@ public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
 #define CHECK(cls, name) CheckFactories.registerCheck<cls>("mozilla-" name);
 #include "Checks.inc"
+#include "external/ExternalChecks.inc"
+#ifdef MOZ_CLANG_PLUGIN_ALPHA
+#include "alpha/AlphaChecks.inc"
+#endif
 #undef CHECK
   }
 };

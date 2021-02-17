@@ -9,13 +9,7 @@
 
 #include "gc/Zone.h"
 
-#ifdef DEBUG
-inline bool JS::Zone::requireGCTracer() const {
-  JSRuntime* rt = runtimeFromAnyThread();
-  return RuntimeHeapIsMajorCollecting() && !rt->gc.isHeapCompacting() &&
-         gcState_ != NoGC;
-}
-#endif
+#include "vm/Runtime.h"
 
 /* static */ inline js::HashNumber JS::Zone::UniqueIdToHash(uint64_t uid) {
   return mozilla::HashGeneric(uid);

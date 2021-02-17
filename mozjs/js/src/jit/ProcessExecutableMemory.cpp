@@ -531,9 +531,7 @@ class ProcessExecutableMemory {
 
   // pagesAllocated_ is an Atomic so that bytesAllocated does not have to
   // take the lock.
-  mozilla::Atomic<size_t, mozilla::ReleaseAcquire,
-                  mozilla::recordreplay::Behavior::DontPreserve>
-      pagesAllocated_;
+  mozilla::Atomic<size_t, mozilla::ReleaseAcquire> pagesAllocated_;
 
   // Page where we should try to allocate next.
   size_t cursor_;
@@ -592,6 +590,11 @@ class ProcessExecutableMemory {
     MOZ_RELEASE_ASSERT(p >= base_ &&
                        uintptr_t(p) + bytes <=
                            uintptr_t(base_) + MaxCodeBytesPerProcess);
+  }
+
+  bool containsAddress(const void* p) const {
+    return p >= base_ &&
+           uintptr_t(p) < uintptr_t(base_) + MaxCodeBytesPerProcess;
   }
 
   void* allocate(size_t bytes, ProtectionSetting protection,
@@ -748,13 +751,19 @@ bool js::jit::CanLikelyAllocateMoreExecutableMemory() {
   return execMemory.bytesAllocated() + BufferSize <= MaxCodeBytesPerProcess;
 }
 
+bool js::jit::AddressIsInExecutableMemory(const void* p) {
+  return execMemory.containsAddress(p);
+}
+
 bool js::jit::ReprotectRegion(void* start, size_t size,
                               ProtectionSetting protection,
                               MustFlushICache flushICache) {
   // Flush ICache when making code executable, before we modify |size|.
-  if (flushICache == MustFlushICache::Yes) {
+  if (flushICache == MustFlushICache::LocalThreadOnly ||
+      flushICache == MustFlushICache::AllThreads) {
     MOZ_ASSERT(protection == ProtectionSetting::Executable);
-    jit::FlushICache(start, size);
+    bool codeIsThreadLocal = flushICache == MustFlushICache::LocalThreadOnly;
+    jit::FlushICache(start, size, codeIsThreadLocal);
   }
 
   // Calculate the start of the page containing this region,

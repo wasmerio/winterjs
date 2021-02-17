@@ -6,6 +6,7 @@
 
 #include "mozilla/AutoProfilerLabel.h"
 
+#include "mozilla/Assertions.h"
 #include "mozilla/PlatformMutex.h"
 
 namespace mozilla {
@@ -37,9 +38,7 @@ class MOZ_RAII AutoProfilerLabelData {
   // Does not preserve behavior in JS record/replay.
   class Mutex : private mozilla::detail::MutexImpl {
    public:
-    Mutex()
-        : mozilla::detail::MutexImpl(
-              mozilla::recordreplay::Behavior::DontPreserve) {}
+    Mutex() : mozilla::detail::MutexImpl() {}
     void Lock() { mozilla::detail::MutexImpl::lock(); }
     void Unlock() { mozilla::detail::MutexImpl::unlock(); }
   };
@@ -97,11 +96,8 @@ void ProfilerLabelEnd(const ProfilerLabel& aLabel) {
   }
 }
 
-AutoProfilerLabel::AutoProfilerLabel(
-    const char* aLabel,
-    const char* aDynamicString MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
+AutoProfilerLabel::AutoProfilerLabel(const char* aLabel,
+                                     const char* aDynamicString) {
   Tie(mEntryContext, mGeneration) =
       ProfilerLabelBegin(aLabel, aDynamicString, this);
 }

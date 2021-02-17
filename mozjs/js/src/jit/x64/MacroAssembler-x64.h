@@ -7,11 +7,11 @@
 #ifndef jit_x64_MacroAssembler_x64_h
 #define jit_x64_MacroAssembler_x64_h
 
-#include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
 #include "vm/BigIntType.h"  // JS::BigInt
+#include "wasm/WasmTypes.h"
 
 namespace js {
 namespace jit {
@@ -69,12 +69,16 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
 
   void bindOffsets(const MacroAssemblerX86Shared::UsesVector&);
 
+  void vpRiprOpSimd128(const SimdConstant& v, FloatRegister reg,
+                       JmpSrc (X86Encoding::BaseAssemblerX64::*op)(
+                           X86Encoding::XMMRegisterID id));
+
  public:
   using MacroAssemblerX86Shared::load32;
   using MacroAssemblerX86Shared::store16;
   using MacroAssemblerX86Shared::store32;
 
-  MacroAssemblerX64() {}
+  MacroAssemblerX64() = default;
 
   // The buffer is about to be linked, make sure any constant pools or excess
   // bookkeeping has been flushed to the instruction stream.
@@ -119,17 +123,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                    address.offset + 4);
   }
 
-  uint32_t Upper32Of(JSValueShiftedTag tag) {
-    union {  // Implemented in this way to appease MSVC++.
-      uint64_t tag;
-      struct {
-        uint32_t lo32;
-        uint32_t hi32;
-      } s;
-    } e;
-    e.tag = tag;
-    return e.s.hi32;
-  }
+  uint32_t Upper32Of(JSValueShiftedTag tag) { return uint32_t(tag >> 32); }
 
   JSValueShiftedTag GetShiftedTag(JSValueType type) {
     return (JSValueShiftedTag)JSVAL_TYPE_TO_SHIFTED_TAG(type);
@@ -154,20 +148,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
       movl(Imm32(Upper32Of(GetShiftedTag(type))), ToUpper32(Operand(dest)));
     } else {
       ScratchRegisterScope scratch(asMasm());
-#ifdef NIGHTLY_BUILD
-      // Bug 1485209 - Diagnostic assert for constructing Values with
-      // nullptr or misaligned (eg poisoned) JSObject/JSString pointers.
-      if (type == JSVAL_TYPE_OBJECT || type == JSVAL_TYPE_STRING) {
-        Label crash, ok;
-        testPtr(reg, Imm32(js::gc::CellAlignMask));
-        j(Assembler::NonZero, &crash);
-        testPtr(reg, reg);
-        j(Assembler::NonZero, &ok);
-        bind(&crash);
-        breakpoint();
-        bind(&ok);
-      }
-#endif
       boxValue(type, reg, scratch);
       movq(scratch, Operand(dest));
     }
@@ -587,6 +567,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void load64(const BaseIndex& address, Register64 dest) {
     movq(Operand(address), dest.reg);
   }
+  template <typename S>
+  void load64Unaligned(const S& src, Register64 dest) {
+    load64(src, dest);
+  }
   template <typename T>
   void storePtr(ImmWord imm, T address) {
     if ((intptr_t)imm.value <= INT32_MAX && (intptr_t)imm.value >= INT32_MIN) {
@@ -653,6 +637,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
   void store64(Imm64 imm, const BaseIndex& address) {
     storePtr(ImmWord(imm.value), address);
+  }
+  template <typename S, typename T>
+  void store64Unaligned(const S& src, const T& dest) {
+    store64(src, dest);
   }
 
   void splitTag(Register src, Register dest) {
@@ -727,6 +715,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void unboxInt32(const Address& src, Register dest) {
     unboxInt32(Operand(src), dest);
   }
+  void unboxInt32(const BaseIndex& src, Register dest) {
+    unboxInt32(Operand(src), dest);
+  }
   template <typename T>
   void unboxDouble(const T& src, FloatRegister dest) {
     loadDouble(Operand(src), dest);
@@ -747,6 +738,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
   void unboxBoolean(const Operand& src, Register dest) { movl(src, dest); }
   void unboxBoolean(const Address& src, Register dest) {
+    unboxBoolean(Operand(src), dest);
+  }
+  void unboxBoolean(const BaseIndex& src, Register dest) {
     unboxBoolean(Operand(src), dest);
   }
 
@@ -828,6 +822,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void unboxBigInt(const Operand& src, Register dest) {
     unboxNonDouble(src, dest, JSVAL_TYPE_BIGINT);
   }
+  void unboxBigInt(const Address& src, Register dest) {
+    unboxNonDouble(src, dest, JSVAL_TYPE_BIGINT);
+  }
 
   void unboxObject(const ValueOperand& src, Register dest) {
     unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
@@ -850,14 +847,22 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     andq(scratch, dest);
   }
 
-  // This should only be used for the pre-barrier trampoline, to unbox a
-  // string/symbol/object Value. It's fine there because we don't depend on
-  // the actual Value type. In almost all other cases, this would be
+  // This should only be used for GC barrier code, to unbox a GC thing Value.
+  // It's fine there because we don't depend on the actual Value type (all Cells
+  // are treated the same way). In almost all other cases this would be
   // Spectre-unsafe - use unboxNonDouble and friends instead.
-  void unboxGCThingForPreBarrierTrampoline(const Address& src, Register dest) {
+  void unboxGCThingForGCBarrier(const Address& src, Register dest) {
     movq(ImmWord(JS::detail::ValueGCThingPayloadMask), dest);
     andq(Operand(src), dest);
   }
+  void unboxGCThingForGCBarrier(const ValueOperand& src, Register dest) {
+    MOZ_ASSERT(src.valueReg() != dest);
+    movq(ImmWord(JS::detail::ValueGCThingPayloadMask), dest);
+    andq(src.valueReg(), dest);
+  }
+
+  inline void fallibleUnboxPtrImpl(const Operand& src, Register dest,
+                                   JSValueType type, Label* fail);
 
   // Extended unboxing API. If the payload is already in a register, returns
   // that register. Otherwise, provides a move to the given scratch register,
@@ -928,6 +933,60 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
 
   void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
   void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
+  void vpaddbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpaddwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpadddSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpaddqSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubqSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmullwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmulldSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpaddsbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpaddusbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpaddswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpadduswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubsbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubusbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpsubuswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminsbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminubSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminuwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminsdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpminudSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxsbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxubSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxswSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxuwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxsdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpmaxudSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpandSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpxorSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vporSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vaddpsSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vaddpdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vsubpsSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vsubpdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vdivpsSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vdivpdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vmulpsSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vmulpdSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpacksswbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpackuswbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpackssdwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpackusdwSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vpshufbSimd128(const SimdConstant& v, FloatRegister srcDest);
+  void vptestSimd128(const SimdConstant& v, FloatRegister src);
+  void vpmaddwdSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpeqbSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpgtbSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpeqwSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpgtwSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpeqdSimd128(const SimdConstant& v, FloatRegister src);
+  void vpcmpgtdSimd128(const SimdConstant& v, FloatRegister src);
 
   void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
     loadPtr(Address(WasmTlsReg,
@@ -1022,14 +1081,14 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                            Label* failure);
 
  public:
-  void handleFailureWithHandlerTail(void* handler, Label* profilerExitTail);
+  void handleFailureWithHandlerTail(Label* profilerExitTail);
 
   // Instrumentation for entering and leaving the profiler.
   void profilerEnterFrame(Register framePtr, Register scratch);
   void profilerExitFrame();
 };
 
-typedef MacroAssemblerX64 MacroAssemblerSpecific;
+using MacroAssemblerSpecific = MacroAssemblerX64;
 
 }  // namespace jit
 }  // namespace js

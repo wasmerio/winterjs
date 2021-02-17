@@ -35,8 +35,7 @@ namespace js {
 
 // Memory protection occurs at non-deterministic points when
 // recording/replaying.
-static mozilla::Atomic<bool, mozilla::SequentiallyConsistent,
-                       mozilla::recordreplay::Behavior::DontPreserve>
+static mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
     sProtectedRegionsInit(false);
 
 /*
@@ -215,11 +214,13 @@ bool MemoryProtectionExceptionHandler::install() {
   if (MemoryProtectionExceptionHandler::isDisabled()) {
     return true;
   }
+
 #ifndef JS_ENABLE_UWP
   // Install our new exception handler.
   sVectoredExceptionHandler = AddVectoredExceptionHandler(
       /* FirstHandler = */ true, VectoredExceptionHandler);
 #endif
+
   sExceptionHandlerInstalled = sVectoredExceptionHandler != nullptr;
   return sExceptionHandlerInstalled;
 }
@@ -227,6 +228,7 @@ bool MemoryProtectionExceptionHandler::install() {
 void MemoryProtectionExceptionHandler::uninstall() {
   if (sExceptionHandlerInstalled) {
     MOZ_ASSERT(!sHandlingException);
+
 #ifndef JS_ENABLE_UWP
     // Restore the previous exception handler.
     MOZ_ALWAYS_TRUE(RemoveVectoredExceptionHandler(sVectoredExceptionHandler));

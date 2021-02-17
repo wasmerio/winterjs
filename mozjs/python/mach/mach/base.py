@@ -4,14 +4,26 @@
 
 from __future__ import absolute_import, unicode_literals
 
+from mach.telemetry import NoopTelemetry
+
 
 class CommandContext(object):
     """Holds run-time state so it can easily be passed to command providers."""
-    def __init__(self, cwd=None, settings=None, log_manager=None, commands=None, **kwargs):
+
+    def __init__(
+        self,
+        cwd=None,
+        settings=None,
+        log_manager=None,
+        commands=None,
+        telemetry=NoopTelemetry(False),
+        **kwargs
+    ):
         self.cwd = cwd
         self.settings = settings
         self.log_manager = log_manager
         self.commands = commands
+        self.telemetry = telemetry
         self.command_attrs = {}
 
         for k, v in kwargs.items():
@@ -24,6 +36,10 @@ class MachError(Exception):
 
 class NoCommandError(MachError):
     """No command was passed into mach."""
+
+    def __init__(self, namespace):
+        MachError.__init__(self)
+        self.namespace = namespace
 
 
 class UnknownCommandError(MachError):
@@ -56,7 +72,7 @@ class FailedCommandError(Exception):
     intended to communicate failure to mach.
     """
 
-    def __init__(self, message, exit_code=1, reason=''):
+    def __init__(self, message, exit_code=1, reason=""):
         Exception.__init__(self, message)
         self.exit_code = exit_code
         self.reason = reason

@@ -15,25 +15,28 @@ import mozpack.path as mozpath
 from mozbuild.repackaging.application_ini import get_application_ini_value
 from mozbuild.util import (
     ensureParentDir,
-    ensure_bytes,
+    ensure_subprocess_env,
 )
 
 
 _BCJ_OPTIONS = {
-    'x86': ['--x86'],
-    'x86_64': ['--x86'],
-    'aarch64': [],
+    "x86": ["--x86"],
+    "x86_64": ["--x86"],
+    "aarch64": [],
+    # macOS Universal Builds
+    "macos-x86_64-aarch64": [],
 }
 
 
-def repackage_mar(
-    topsrcdir, package, mar, output, mar_format="lzma", arch=None, mar_channel_id=None
-):
+def repackage_mar(topsrcdir, package, mar, output, arch=None, mar_channel_id=None):
     if not zipfile.is_zipfile(package) and not tarfile.is_tarfile(package):
         raise Exception("Package file %s is not a valid .zip or .tar file." % package)
     if arch and arch not in _BCJ_OPTIONS:
-        raise Exception("Unknown architecture {}, available architectures: {}".format(
-            arch, _BCJ_OPTIONS.keys()))
+        raise Exception(
+            "Unknown architecture {}, available architectures: {}".format(
+                arch, list(_BCJ_OPTIONS.keys())
+            )
+        )
 
     ensureParentDir(output)
     tmpdir = tempfile.mkdtemp()
@@ -50,41 +53,41 @@ def repackage_mar(
             z.close()
 
         toplevel_dirs = set([mozpath.split(f)[0] for f in filelist])
-        excluded_stuff = set([' ', '.background', '.DS_Store', '.VolumeIcon.icns'])
+        excluded_stuff = set([" ", ".background", ".DS_Store", ".VolumeIcon.icns"])
         toplevel_dirs = toplevel_dirs - excluded_stuff
         # Make sure the .zip file just contains a directory like 'firefox/' at
         # the top, and find out what it is called.
         if len(toplevel_dirs) != 1:
-            raise Exception("Package file is expected to have a single top-level directory"
-                            "(eg: 'firefox'), not: %s" % toplevel_dirs)
+            raise Exception(
+                "Package file is expected to have a single top-level directory"
+                "(eg: 'firefox'), not: %s" % toplevel_dirs
+            )
         ffxdir = mozpath.join(tmpdir, toplevel_dirs.pop())
 
-        make_full_update = mozpath.join(topsrcdir, 'tools/update-packaging/make_full_update.sh')
+        make_full_update = mozpath.join(
+            topsrcdir, "tools/update-packaging/make_full_update.sh"
+        )
 
         env = os.environ.copy()
-        env['MOZ_PRODUCT_VERSION'] = get_application_ini_value(tmpdir, 'App', 'Version')
-        env['MAR'] = mozpath.normpath(mar)
+        env["MOZ_PRODUCT_VERSION"] = get_application_ini_value(tmpdir, "App", "Version")
+        env["MAR"] = mozpath.normpath(mar)
         if arch:
-            env['BCJ_OPTIONS'] = ' '.join(_BCJ_OPTIONS[arch])
-        if mar_format == 'bz2':
-            env['MAR_OLD_FORMAT'] = '1'
+            env["BCJ_OPTIONS"] = " ".join(_BCJ_OPTIONS[arch])
         if mar_channel_id:
-            env['MAR_CHANNEL_ID'] = mar_channel_id
+            env["MAR_CHANNEL_ID"] = mar_channel_id
         # The Windows build systems have xz installed but it isn't in the path
         # like it is on Linux and Mac OS X so just use the XZ env var so the mar
         # generation scripts can find it.
-        xz_path = mozpath.join(topsrcdir, 'xz/xz.exe')
+        xz_path = mozpath.join(topsrcdir, "xz/xz.exe")
         if os.path.exists(xz_path):
-            env['XZ'] = mozpath.normpath(xz_path)
+            env["XZ"] = mozpath.normpath(xz_path)
 
         cmd = [make_full_update, output, ffxdir]
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             # make_full_update.sh is a bash script, and Windows needs to
             # explicitly call out the shell to execute the script from Python.
-            cmd.insert(0, env['MOZILLABUILD'] + '/msys/bin/bash.exe')
-        # in py2 env needs str not unicode.
-        env = {ensure_bytes(k): ensure_bytes(v) for k, v in env.iteritems()}
-        subprocess.check_call(cmd, env=env)
+            cmd.insert(0, env["MOZILLABUILD"] + "/msys/bin/bash.exe")
+        subprocess.check_call(cmd, env=ensure_subprocess_env(env))
 
     finally:
         shutil.rmtree(tmpdir)

@@ -41,7 +41,6 @@ class TemplateObject {
   inline bool isArgumentsObject() const;
   inline bool isTypedArrayObject() const;
   inline bool isRegExpObject() const;
-  inline bool isInlineTypedObject() const;
   inline bool isCallObject() const;
   inline bool isPlainObject() const;
 
@@ -49,11 +48,6 @@ class TemplateObject {
   // because they're never exposed to arbitrary script.
   inline gc::Cell* group() const;
   inline gc::Cell* shape() const;
-
-  // Some TypedObjec methods that can be called off-thread.
-  inline uint32_t getInlineTypedObjectSize() const;
-  inline uint8_t* getInlineTypedObjectMem(
-      const JS::AutoRequireNoGC& nogc) const;
 };
 
 class NativeTemplateObject : public TemplateObject {

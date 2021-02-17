@@ -14,20 +14,21 @@
 
 #include "jsnum.h"
 
+#include "gc/MaybeRooted.h"
 #include "vm/Runtime.h"
 #include "vm/StringType.h"
 
 namespace js {
 
 inline jsid AtomToId(JSAtom* atom) {
-  JS_STATIC_ASSERT(JSID_INT_MIN == 0);
+  static_assert(JSID_INT_MIN == 0);
 
   uint32_t index;
   if (atom->isIndex(&index) && index <= JSID_INT_MAX) {
     return INT_TO_JSID(int32_t(index));
   }
 
-  return JSID_FROM_BITS(size_t(atom) | JSID_TYPE_STRING);
+  return JS::PropertyKey::fromNonIntAtom(atom);
 }
 
 // Use the NameToId method instead!
@@ -71,9 +72,12 @@ inline bool ValueToIdPure(const Value& v, jsid* id) {
 }
 
 template <AllowGC allowGC>
-inline bool ValueToId(
+inline bool PrimitiveValueToId(
     JSContext* cx, typename MaybeRooted<Value, allowGC>::HandleType v,
     typename MaybeRooted<jsid, allowGC>::MutableHandleType idp) {
+  // Non-primitive values should call ToPropertyKey.
+  MOZ_ASSERT(v.isPrimitive());
+
   if (v.isString()) {
     if (v.toString()->isAtom()) {
       idp.set(AtomToId(&v.toString()->asAtom()));
@@ -158,19 +162,19 @@ static MOZ_ALWAYS_INLINE JSLinearString* IdToString(JSContext* cx, jsid id) {
 
 inline Handle<PropertyName*> TypeName(JSType type, const JSAtomState& names) {
   MOZ_ASSERT(type < JSTYPE_LIMIT);
-  JS_STATIC_ASSERT(offsetof(JSAtomState, undefined) +
-                       JSTYPE_LIMIT * sizeof(ImmutablePropertyNamePtr) <=
-                   sizeof(JSAtomState));
-  JS_STATIC_ASSERT(JSTYPE_UNDEFINED == 0);
+  static_assert(offsetof(JSAtomState, undefined) +
+                    JSTYPE_LIMIT * sizeof(ImmutablePropertyNamePtr) <=
+                sizeof(JSAtomState));
+  static_assert(JSTYPE_UNDEFINED == 0);
   return (&names.undefined)[type];
 }
 
 inline Handle<PropertyName*> ClassName(JSProtoKey key, JSAtomState& atomState) {
   MOZ_ASSERT(key < JSProto_LIMIT);
-  JS_STATIC_ASSERT(offsetof(JSAtomState, Null) +
-                       JSProto_LIMIT * sizeof(ImmutablePropertyNamePtr) <=
-                   sizeof(JSAtomState));
-  JS_STATIC_ASSERT(JSProto_Null == 0);
+  static_assert(offsetof(JSAtomState, Null) +
+                    JSProto_LIMIT * sizeof(ImmutablePropertyNamePtr) <=
+                sizeof(JSAtomState));
+  static_assert(JSProto_Null == 0);
   return (&atomState.Null)[key];
 }
 

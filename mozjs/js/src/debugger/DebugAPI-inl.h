@@ -10,6 +10,7 @@
 #include "debugger/DebugAPI.h"
 
 #include "vm/GeneratorObject.h"
+#include "vm/PromiseObject.h"  // js::PromiseObject
 
 #include "vm/Stack-inl.h"
 
@@ -28,22 +29,6 @@ bool DebugAPI::hasBreakpointsAt(JSScript* script, jsbytecode* pc) {
 /* static */
 bool DebugAPI::hasAnyBreakpointsOrStepMode(JSScript* script) {
   return script->hasDebugScript();
-}
-
-/* static */
-void DebugAPI::onNewScript(JSContext* cx, HandleScript script) {
-  // We early return in slowPathOnNewScript for self-hosted scripts, so we can
-  // ignore those in our assertion here.
-  MOZ_ASSERT_IF(!script->realm()->creationOptions().invisibleToDebugger() &&
-                    !script->selfHosted(),
-                script->realm()->firedOnNewGlobalObject);
-
-  // The script may not be ready to be interrogated by the debugger.
-  if (script->hideScriptFromDebugger()) {
-    return;
-  }
-
-  slowPathOnNewScript(cx, script);
 }
 
 /* static */
@@ -114,49 +99,50 @@ bool DebugAPI::checkNoExecute(JSContext* cx, HandleScript script) {
 }
 
 /* static */
-ResumeMode DebugAPI::onEnterFrame(JSContext* cx, AbstractFramePtr frame) {
+bool DebugAPI::onEnterFrame(JSContext* cx, AbstractFramePtr frame) {
   MOZ_ASSERT_IF(frame.hasScript() && frame.script()->isDebuggee(),
                 frame.isDebuggee());
-  if (!frame.isDebuggee()) {
-    return ResumeMode::Continue;
+  if (MOZ_UNLIKELY(frame.isDebuggee())) {
+    return slowPathOnEnterFrame(cx, frame);
   }
-  return slowPathOnEnterFrame(cx, frame);
+  return true;
 }
 
 /* static */
-ResumeMode DebugAPI::onResumeFrame(JSContext* cx, AbstractFramePtr frame) {
+bool DebugAPI::onResumeFrame(JSContext* cx, AbstractFramePtr frame) {
   MOZ_ASSERT_IF(frame.hasScript() && frame.script()->isDebuggee(),
                 frame.isDebuggee());
-  if (!frame.isDebuggee()) {
-    return ResumeMode::Continue;
+  if (MOZ_UNLIKELY(frame.isDebuggee())) {
+    return slowPathOnResumeFrame(cx, frame);
   }
-  return slowPathOnResumeFrame(cx, frame);
+  return true;
 }
 
 /* static */
-ResumeMode DebugAPI::onNativeCall(JSContext* cx, const CallArgs& args,
-                                  CallReason reason) {
-  if (!cx->realm()->isDebuggee()) {
-    return ResumeMode::Continue;
+NativeResumeMode DebugAPI::onNativeCall(JSContext* cx, const CallArgs& args,
+                                        CallReason reason) {
+  if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
+    return slowPathOnNativeCall(cx, args, reason);
   }
-  return slowPathOnNativeCall(cx, args, reason);
+
+  return NativeResumeMode::Continue;
 }
 
 /* static */
-ResumeMode DebugAPI::onDebuggerStatement(JSContext* cx,
-                                         AbstractFramePtr frame) {
-  if (!cx->realm()->isDebuggee()) {
-    return ResumeMode::Continue;
+bool DebugAPI::onDebuggerStatement(JSContext* cx, AbstractFramePtr frame) {
+  if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
+    return slowPathOnDebuggerStatement(cx, frame);
   }
-  return slowPathOnDebuggerStatement(cx, frame);
+
+  return true;
 }
 
 /* static */
-ResumeMode DebugAPI::onExceptionUnwind(JSContext* cx, AbstractFramePtr frame) {
-  if (!cx->realm()->isDebuggee()) {
-    return ResumeMode::Continue;
+bool DebugAPI::onExceptionUnwind(JSContext* cx, AbstractFramePtr frame) {
+  if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
+    return slowPathOnExceptionUnwind(cx, frame);
   }
-  return slowPathOnExceptionUnwind(cx, frame);
+  return true;
 }
 
 /* static */

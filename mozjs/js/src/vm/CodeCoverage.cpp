@@ -8,9 +8,9 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/Move.h"
 
 #include <stdio.h>
+#include <utility>
 #ifdef XP_WIN
 #  include <process.h>
 #  include <windows.h>
@@ -23,6 +23,7 @@
 #  include <unistd.h>
 #endif
 
+#include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "gc/Zone.h"
 #include "util/Text.h"
 #include "vm/BytecodeUtil.h"
@@ -142,7 +143,6 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
     const PCCounts* counts =
         sc->maybeGetPCCounts(script->pcToOffset(script->main()));
     outFNDA_.printf("FNDA:%" PRIu64 ",%s\n", counts->numExec(), scriptName);
-    outFNDA_.put("\n", 1);
 
     // Set the hit count of the pre-main code to 1, if the function ever got
     // visited.
@@ -150,9 +150,9 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
   }
 
   jsbytecode* snpc = script->code();
-  jssrcnote* sn = script->notes();
-  if (!SN_IS_TERMINATOR(sn)) {
-    snpc += SN_DELTA(sn);
+  const SrcNote* sn = script->notes();
+  if (!sn->isTerminator()) {
+    snpc += sn->delta();
   }
 
   size_t lineno = script->lineno();
@@ -162,8 +162,8 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
   for (jsbytecode* pc = script->code(); pc != end; pc = GetNextPc(pc)) {
     MOZ_ASSERT(script->code() <= pc && pc < end);
     JSOp op = JSOp(*pc);
-    bool jump = IsJumpOpcode(op) || op == JSOP_TABLESWITCH;
-    bool fallsthrough = BytecodeFallsThrough(op) && op != JSOP_GOSUB;
+    bool jump = IsJumpOpcode(op) || op == JSOp::TableSwitch;
+    bool fallsthrough = BytecodeFallsThrough(op) && op != JSOp::Gosub;
 
     // If the current script & pc has a hit-count report, then update the
     // current number of hits.
@@ -178,17 +178,19 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
     // current pc.
     if (snpc <= pc || !firstLineHasBeenWritten) {
       size_t oldLine = lineno;
-      while (!SN_IS_TERMINATOR(sn) && snpc <= pc) {
-        SrcNoteType type = SN_TYPE(sn);
-        if (type == SRC_SETLINE) {
-          lineno = size_t(GetSrcNoteOffset(sn, SrcNote::SetLine::Line));
-        } else if (type == SRC_NEWLINE) {
+      SrcNoteIterator iter(sn);
+      while (!iter.atEnd() && snpc <= pc) {
+        sn = *iter;
+        SrcNoteType type = sn->type();
+        if (type == SrcNoteType::SetLine) {
+          lineno = SrcNote::SetLine::getLine(sn, script->lineno());
+        } else if (type == SrcNoteType::NewLine) {
           lineno++;
         }
-
-        sn = SN_NEXT(sn);
-        snpc += SN_DELTA(sn);
+        ++iter;
+        snpc += (*iter)->delta();
       }
+      sn = *iter;
 
       if ((oldLine != lineno || !firstLineHasBeenWritten) &&
           pc >= script->main() && fallsthrough) {
@@ -261,7 +263,7 @@ void LCovSource::writeScript(JSScript* script, const char* scriptName) {
 
     // If the current pc corresponds to a pre-computed switch case, then
     // reports branch hits for each case statement.
-    if (jump && op == JSOP_TABLESWITCH) {
+    if (jump && op == JSOp::TableSwitch) {
       // Get the default pc.
       jsbytecode* defaultpc = pc + GET_JUMP_OFFSET(pc);
       MOZ_ASSERT(script->code() <= defaultpc && defaultpc < end);
@@ -400,38 +402,6 @@ LCovRealm::~LCovRealm() {
   }
 }
 
-void LCovRealm::collectCodeCoverageInfo(JSScript* script, const char* name) {
-  // Skip any operation if we already some out-of memory issues.
-  if (outTN_.hadOutOfMemory()) {
-    return;
-  }
-
-  if (script->isUncompleted()) {
-    return;
-  }
-
-  // Get the existing source LCov summary, or create a new one.
-  LCovSource* source = lookupOrAdd(name);
-  if (!source) {
-    return;
-  }
-
-  // Get the formatted name of script to use
-  const char* scriptName = getScriptName(script);
-  if (!scriptName) {
-    outTN_.reportOutOfMemory();
-    return;
-  }
-
-  // Write code coverage data into the LCovSource.
-  source->writeScript(script, scriptName);
-
-  // Propegate OOM from LCovSource.
-  if (source->hadOutOfMemory()) {
-    outTN_.reportOutOfMemory();
-  }
-}
-
 LCovSource* LCovRealm::lookupOrAdd(const char* name) {
   // Find existing source if it exists.
   for (LCovSource* source : sources_) {
@@ -504,8 +474,7 @@ void LCovRealm::writeRealmName(JS::Realm* realm) {
     {
       // Hazard analysis cannot tell that the callback does not GC.
       JS::AutoSuppressGCAnalysis nogc;
-      Rooted<Realm*> rootedRealm(cx, realm);
-      (*cx->runtime()->realmNameCallback)(cx, rootedRealm, name, sizeof(name));
+      (*cx->runtime()->realmNameCallback)(cx, realm, name, sizeof(name), nogc);
     }
     for (char* s = name; s < name + sizeof(name) && *s; s++) {
       if (('a' <= *s && *s <= 'z') || ('A' <= *s && *s <= 'Z') ||
@@ -631,7 +600,7 @@ void LCovRuntime::writeLCovResult(LCovRealm& realm) {
 
 bool InitScriptCoverage(JSContext* cx, JSScript* script) {
   MOZ_ASSERT(IsLCovEnabled());
-  MOZ_ASSERT(!script->isUncompleted(),
+  MOZ_ASSERT(script->hasBytecode(),
              "Only initialize coverage data for fully initialized scripts.");
 
   // Don't allocate LCovSource if we on helper thread since we will have our
@@ -676,6 +645,8 @@ bool InitScriptCoverage(JSContext* cx, JSScript* script) {
     return false;
   }
 
+  MOZ_ASSERT(script->hasBytecode());
+
   // Save source in map for when we collect coverage.
   if (!zone->scriptLCovMap->putNew(script,
                                    mozilla::MakeTuple(source, scriptName))) {
@@ -686,27 +657,33 @@ bool InitScriptCoverage(JSContext* cx, JSScript* script) {
   return true;
 }
 
-void CollectScriptCoverage(JSScript* script) {
+bool CollectScriptCoverage(JSScript* script, bool finalizing) {
   MOZ_ASSERT(IsLCovEnabled());
 
   ScriptLCovMap* map = script->zone()->scriptLCovMap.get();
   if (!map) {
-    return;
+    return false;
   }
 
   auto p = map->lookup(script);
   if (!p.found()) {
-    return;
+    return false;
   }
 
   LCovSource* source;
   const char* scriptName;
   mozilla::Tie(source, scriptName) = p->value();
 
-  if (!script->isUncompleted()) {
+  if (script->hasBytecode()) {
     source->writeScript(script, scriptName);
   }
-  map->remove(p);
+
+  if (finalizing) {
+    map->remove(p);
+  }
+
+  // Propagate the failure in case caller wants to terminate early.
+  return !source->hadOutOfMemory();
 }
 
 }  // namespace coverage

@@ -1,30 +1,25 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Josh Matthews <josh@joshmatthews.net>
-Date: Tue, 2 Jan 2020 10:50:27 2020 -0500
-Subject: [PATCH] Support profiling feature when building for UWP.
-
-
 diff --git a/js/moz.configure b/js/moz.configure
-index 5d99f7155a..e87080bf38 100644
+index e65adafb73..48ec64d925 100644
 --- a/js/moz.configure
 +++ b/js/moz.configure
-@@ -271,13 +271,13 @@ def profiling(value):
+@@ -290,14 +290,14 @@ with only_when("--enable-compile-environment"):
+     imply_option("--enable-frame-pointers", True, when=profiling)
  
- add_old_configure_assignment('MOZ_PROFILING', profiling)
  
 -@depends(profiling, target)
 -def imply_vtune(value, target):
 +@depends(profiling, target, js_enable_uwp)
 +def imply_vtune(value, target, uwp):
-     ok_cpu    = target.cpu in ['x86', 'x86_64']
-     ok_kernel = target.kernel == 'WINNT' or \
-                 (target.kernel == 'Linux' and target.os == 'GNU')
+     ok_cpu = target.cpu in ["x86", "x86_64"]
+     ok_kernel = target.kernel == "WINNT" or (
+         target.kernel == "Linux" and target.os == "GNU"
+     )
  
 -    if value and ok_cpu and ok_kernel:
 +    if value and ok_cpu and ok_kernel and not uwp:
          return True
  
- set_config('MOZ_PROFILING', profiling)
+ 
 diff --git a/js/src/builtin/Profilers.cpp b/js/src/builtin/Profilers.cpp
 index 53da01dba9..6b2f848510 100644
 --- a/js/src/builtin/Profilers.cpp

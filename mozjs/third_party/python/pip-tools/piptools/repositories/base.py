@@ -1,6 +1,5 @@
 # coding: utf-8
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 from abc import ABCMeta, abstractmethod
 from contextlib import contextmanager
@@ -10,7 +9,6 @@ from six import add_metaclass
 
 @add_metaclass(ABCMeta)
 class BaseRepository(object):
-
     def clear_caches(self):
         """Should clear any caches used by the implementation."""
 
@@ -27,7 +25,7 @@ class BaseRepository(object):
     @abstractmethod
     def get_dependencies(self, ireq):
         """
-        Given a pinned or an editable InstallRequirement, returns a set of
+        Given a pinned, URL, or editable InstallRequirement, returns a set of
         dependencies (also InstallRequirements, but not necessarily pinned).
         They indicate the secondary dependencies for the given requirement.
         """
@@ -45,4 +43,13 @@ class BaseRepository(object):
     def allow_all_wheels(self):
         """
         Monkey patches pip.Wheel to allow wheels from all platforms and Python versions.
+        """
+
+    @abstractmethod
+    def copy_ireq_dependencies(self, source, dest):
+        """
+        Notifies the repository that `dest` is a copy of `source`, and so it
+        has the same dependencies. Otherwise, once we prepare an ireq to assign
+        it its name, we would lose track of those dependencies on combining
+        that ireq with others.
         """

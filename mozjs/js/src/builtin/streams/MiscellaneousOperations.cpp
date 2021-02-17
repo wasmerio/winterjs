@@ -12,16 +12,16 @@
 #include "mozilla/Attributes.h"     // MOZ_MUST_USE
 #include "mozilla/FloatingPoint.h"  // mozilla::IsNaN
 
-#include "jsapi.h"        // JS_ReportErrorNumberASCII
-#include "jsfriendapi.h"  // js::GetErrorMessage
+#include "jsapi.h"  // JS_ReportErrorNumberASCII
 
-#include "builtin/Promise.h"      // js::PromiseObject
-#include "js/Conversions.h"       // JS::ToNumber
-#include "js/RootingAPI.h"        // JS::{,Mutable}Handle, JS::Rooted
-#include "vm/Interpreter.h"       // js::{Call,GetAndClearException}
-#include "vm/JSContext.h"         // JSContext
-#include "vm/ObjectOperations.h"  // js::GetProperty
-#include "vm/StringType.h"        // js::PropertyName
+#include "js/Conversions.h"           // JS::ToNumber
+#include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/RootingAPI.h"            // JS::{,Mutable}Handle, JS::Rooted
+#include "vm/Interpreter.h"           // js::{Call,GetAndClearException}
+#include "vm/JSContext.h"             // JSContext
+#include "vm/ObjectOperations.h"      // js::GetProperty
+#include "vm/PromiseObject.h"         // js::PromiseObject
+#include "vm/StringType.h"            // js::PropertyName
 
 #include "vm/JSContext-inl.h"  // JSContext::check
 #include "vm/JSObject-inl.h"   // js::IsCallable
@@ -31,7 +31,8 @@ using JS::MutableHandle;
 using JS::ToNumber;
 using JS::Value;
 
-MOZ_MUST_USE JSObject* js::PromiseRejectedWithPendingError(JSContext* cx) {
+MOZ_MUST_USE js::PromiseObject* js::PromiseRejectedWithPendingError(
+    JSContext* cx) {
   Rooted<Value> exn(cx);
   if (!cx->isExceptionPending() || !GetAndClearException(cx, &exn)) {
     // Uncatchable error. This happens when a slow script is killed or a

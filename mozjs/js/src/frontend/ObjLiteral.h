@@ -1,4 +1,4 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * vim: set ts=8 sw=2 et tw=0 ft=c:
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
@@ -12,6 +12,7 @@
 #include "mozilla/EnumSet.h"
 #include "mozilla/Span.h"
 
+#include "frontend/ParserAtom.h"
 #include "js/AllocPolicy.h"
 #include "js/GCPolicyAPI.h"
 #include "js/Value.h"
@@ -41,12 +42,12 @@
  * the time at which we *can* allocate objects.
  *
  * (The original intent was to allow for ObjLiteral instructions to actually be
- * invoked by a new JS opcode, JSOP_OBJLITERAL, thus replacing the more general
- * opcode sequences sometimes generated to fill in objects and removing the
- * need to attach actual objects to JSOP_OBJECT or JSOP_NEWOBJECT. However,
- * this was far too invasive and led to performance regressions, so currently
- * ObjLiteral only carries literals as far as the end of the parse pipeline,
- * when all GC things are allocated.)
+ * invoked by a new JS opcode, JSOp::ObjLiteral, thus replacing the more
+ * general opcode sequences sometimes generated to fill in objects and removing
+ * the need to attach actual objects to JSOp::Object or JSOp::NewObject.
+ * However, this was far too invasive and led to performance regressions, so
+ * currently ObjLiteral only carries literals as far as the end of the parse
+ * pipeline, when all GC things are allocated.)
  *
  * ObjLiteral data structures are used to represent object literals whenever
  * they are "compatible". See
@@ -60,25 +61,25 @@
  * - To build a template object, when we can support the properties but not the
  *   keys.
  * - To build the actual result object, when we support the properties and the
- *   keys and this is a JSOP_OBJECT case (see below).
+ *   keys and this is a JSOp::Object case (see below).
  *
  * Design and Performance Considerations
  * -------------------------------------
  *
  * As a brief overview, there are a number of opcodes that allocate objects:
  *
- * - JSOP_NEWINIT allocates a new empty `{}` object.
+ * - JSOp::NewInit allocates a new empty `{}` object.
  *
- * - JSOP_NEWOBJECT, with an object as an argument (held by the script data
+ * - JSOp::NewObject, with an object as an argument (held by the script data
  *   side-tables), allocates a new object with `undefined` property values but
  *   with a defined set of properties. The given object is used as a
  *   *template*.
  *
- * - JSOP_NEWOBJECT_WITHGROUP (added as part of this ObjLiteral work), same as
+ * - JSOp::NewObjectWithGroup (added as part of this ObjLiteral work), same as
  *   above but uses the ObjectGroup of the template object for the new object,
  *   rather than trying to apply a set of heuristics to choose a group.
  *
- * - JSOP_OBJECT, with an object as argument, instructs the runtime to
+ * - JSOp::Object, with an object as argument, instructs the runtime to
  *   literally return the object argument as the result. This is thus only an
  *   "allocation" in the sense that the object was originally allocated when
  *   the script data / bytecode was created. It is only used when we know for
@@ -103,14 +104,14 @@
  * construct the ObjLiteral and the bytecode using its result appropriately:
  *
  * - If in a singleton context, and if we support the values, we use
- *   JSOP_OBJECT and we build the ObjLiteral instructions with values.
+ *   JSOp::Object and we build the ObjLiteral instructions with values.
  * - Otherwise, if we support the keys but not the values, or if we are not
- *   in a singleton context, we use JSOP_NEWOBJECT or JSOP_NEWOBJECT_WITHGROUP,
+ *   in a singleton context, we use JSOp::NewObject or JSOp::NewObjectWithGroup,
  *   depending on the "inner singleton" status (see below). In this case, the
  *   initial opcode only creates an object with empty values, so
  *   BytecodeEmitter then generates bytecode to set the values
  *   appropriately.
- * - Otherwise, we generate JSOP_NEWINIT and bytecode to add properties one at
+ * - Otherwise, we generate JSOp::NewInit and bytecode to add properties one at
  *   a time. This will always work, but is the slowest and least
  *   memory-efficient option.
  *
@@ -138,6 +139,14 @@
  */
 
 namespace js {
+
+class JSONPrinter;
+
+namespace frontend {
+struct CompilationAtomCache;
+struct CompilationStencil;
+class StencilXDR;
+}  // namespace frontend
 
 // Object-literal instruction opcodes. An object literal is constructed by a
 // straight-line sequence of these ops, each adding one property to the
@@ -178,7 +187,7 @@ enum class ObjLiteralFlag : uint8_t {
   // This object is inside a top-level singleton, and so prior to ObjLiteral,
   // would have been allocated at parse time, but is now allocated in bytecode.
   // We do special things to get the right group on the template object; this
-  // flag indicates that if JSOP_NEWOBJECT copies the object, it should retain
+  // flag indicates that if JSOp::NewObject copies the object, it should retain
   // its group.
   IsInnerSingleton = 6,
 };
@@ -194,16 +203,30 @@ inline bool ObjLiteralOpcodeHasAtomArg(ObjLiteralOpcode op) {
 }
 
 struct ObjLiteralReaderBase;
-// or an integer index.
+
+// Property name (as an atom index) or an integer index.  Only used for
+// object-type literals; array literals do not require the index (the sequence
+// is always dense, with no holes, so the index is implicit). For the latter
+// case, we have a `None` placeholder.
 struct ObjLiteralKey {
  private:
   uint32_t value_;
-  bool isArrayIndex_;
+
+  enum ObjLiteralKeyType {
+    None,
+    AtomIndex,
+    ArrayIndex,
+  };
+
+  ObjLiteralKeyType type_;
+
+  ObjLiteralKey(uint32_t value, ObjLiteralKeyType ty)
+      : value_(value), type_(ty) {}
 
  public:
-  ObjLiteralKey() : value_(0), isArrayIndex_(true) {}
+  ObjLiteralKey() : ObjLiteralKey(0, None) {}
   ObjLiteralKey(uint32_t value, bool isArrayIndex)
-      : value_(value), isArrayIndex_(isArrayIndex) {}
+      : ObjLiteralKey(value, isArrayIndex ? ArrayIndex : AtomIndex) {}
   ObjLiteralKey(const ObjLiteralKey& other) = default;
 
   static ObjLiteralKey fromPropName(uint32_t atomIndex) {
@@ -212,9 +235,11 @@ struct ObjLiteralKey {
   static ObjLiteralKey fromArrayIndex(uint32_t index) {
     return ObjLiteralKey(index, true);
   }
+  static ObjLiteralKey none() { return ObjLiteralKey(); }
 
-  bool isAtomIndex() const { return !isArrayIndex_; }
-  bool isArrayIndex() const { return isArrayIndex_; }
+  bool isNone() const { return type_ == None; }
+  bool isAtomIndex() const { return type_ == AtomIndex; }
+  bool isArrayIndex() const { return type_ == ArrayIndex; }
 
   uint32_t getAtomIndex() const {
     MOZ_ASSERT(isAtomIndex());
@@ -236,17 +261,21 @@ struct ObjLiteralWriterBase {
   static const uint32_t INDEXED_PROP = 0x00800000;
   static const int OP_SHIFT = 24;
 
+ public:
+  using CodeVector = Vector<uint8_t, 64, js::SystemAllocPolicy>;
+
  protected:
-  Vector<uint8_t, 64> code_;
+  CodeVector code_;
 
  public:
-  explicit ObjLiteralWriterBase(JSContext* cx) : code_(cx) {}
+  ObjLiteralWriterBase() = default;
 
   uint32_t curOffset() const { return code_.length(); }
 
-  MOZ_MUST_USE bool prepareBytes(size_t len, uint8_t** p) {
+  MOZ_MUST_USE bool prepareBytes(JSContext* cx, size_t len, uint8_t** p) {
     size_t offset = code_.length();
     if (!code_.growByUninitialized(len)) {
+      js::ReportOutOfMemory(cx);
       return false;
     }
     *p = &code_[offset];
@@ -254,9 +283,9 @@ struct ObjLiteralWriterBase {
   }
 
   template <typename T>
-  MOZ_MUST_USE bool pushRawData(T data) {
+  MOZ_MUST_USE bool pushRawData(JSContext* cx, T data) {
     uint8_t* p = nullptr;
-    if (!prepareBytes(sizeof(T), &p)) {
+    if (!prepareBytes(cx, sizeof(T), &p)) {
       return false;
     }
     mozilla::NativeEndian::copyAndSwapToLittleEndian(reinterpret_cast<void*>(p),
@@ -264,22 +293,23 @@ struct ObjLiteralWriterBase {
     return true;
   }
 
-  MOZ_MUST_USE bool pushOpAndName(ObjLiteralOpcode op, ObjLiteralKey key) {
+  MOZ_MUST_USE bool pushOpAndName(JSContext* cx, ObjLiteralOpcode op,
+                                  ObjLiteralKey key) {
     uint32_t data = (key.rawIndex() & ATOM_INDEX_MASK) |
                     (key.isArrayIndex() ? INDEXED_PROP : 0) |
                     (static_cast<uint8_t>(op) << OP_SHIFT);
-    return pushRawData(data);
+    return pushRawData(cx, data);
   }
 
-  MOZ_MUST_USE bool pushValueArg(const JS::Value& value) {
+  MOZ_MUST_USE bool pushValueArg(JSContext* cx, const JS::Value& value) {
     MOZ_ASSERT(value.isNumber() || value.isNullOrUndefined() ||
                value.isBoolean());
     uint64_t data = value.asRawBits();
-    return pushRawData(data);
+    return pushRawData(cx, data);
   }
 
-  MOZ_MUST_USE bool pushAtomArg(uint32_t atomIndex) {
-    return pushRawData(atomIndex);
+  MOZ_MUST_USE bool pushAtomArg(JSContext* cx, uint32_t atomIndex) {
+    return pushRawData(cx, atomIndex);
   }
 };
 
@@ -290,49 +320,73 @@ struct ObjLiteralWriterBase {
 // within the writer.
 struct ObjLiteralWriter : private ObjLiteralWriterBase {
  public:
-  explicit ObjLiteralWriter(JSContext* cx)
-      : ObjLiteralWriterBase(cx), flags_() {}
+  ObjLiteralWriter() = default;
 
   void clear() { code_.clear(); }
+
+  // For XDR decoding.
+  using CodeVector = typename ObjLiteralWriterBase::CodeVector;
+  void initializeForXDR(CodeVector&& code, uint8_t flags) {
+    code_ = std::move(code);
+    flags_.deserialize(flags);
+  }
 
   mozilla::Span<const uint8_t> getCode() const { return code_; }
   ObjLiteralFlags getFlags() const { return flags_; }
 
   void beginObject(ObjLiteralFlags flags) { flags_ = flags; }
   void setPropName(uint32_t propName) {
+    // Only valid in object-mode.
+    MOZ_ASSERT(!flags_.contains(ObjLiteralFlag::Array));
     MOZ_ASSERT(propName <= ATOM_INDEX_MASK);
     nextKey_ = ObjLiteralKey::fromPropName(propName);
   }
   void setPropIndex(uint32_t propIndex) {
+    // Only valid in object-mode.
+    MOZ_ASSERT(!flags_.contains(ObjLiteralFlag::Array));
     MOZ_ASSERT(propIndex <= ATOM_INDEX_MASK);
     nextKey_ = ObjLiteralKey::fromArrayIndex(propIndex);
   }
+  void beginDenseArrayElements() {
+    // Only valid in array-mode.
+    MOZ_ASSERT(flags_.contains(ObjLiteralFlag::Array));
+    // Dense array element sequences do not use the keys; the indices are
+    // implicit.
+    nextKey_ = ObjLiteralKey::none();
+  }
 
-  MOZ_MUST_USE bool propWithConstNumericValue(const JS::Value& value) {
+  MOZ_MUST_USE bool propWithConstNumericValue(JSContext* cx,
+                                              const JS::Value& value) {
     MOZ_ASSERT(value.isNumber());
-    return pushOpAndName(ObjLiteralOpcode::ConstValue, nextKey_) &&
-           pushValueArg(value);
+    return pushOpAndName(cx, ObjLiteralOpcode::ConstValue, nextKey_) &&
+           pushValueArg(cx, value);
   }
-  MOZ_MUST_USE bool propWithAtomValue(uint32_t value) {
-    return pushOpAndName(ObjLiteralOpcode::ConstAtom, nextKey_) &&
-           pushAtomArg(value);
+  MOZ_MUST_USE bool propWithAtomValue(JSContext* cx, uint32_t value) {
+    return pushOpAndName(cx, ObjLiteralOpcode::ConstAtom, nextKey_) &&
+           pushAtomArg(cx, value);
   }
-  MOZ_MUST_USE bool propWithNullValue() {
-    return pushOpAndName(ObjLiteralOpcode::Null, nextKey_);
+  MOZ_MUST_USE bool propWithNullValue(JSContext* cx) {
+    return pushOpAndName(cx, ObjLiteralOpcode::Null, nextKey_);
   }
-  MOZ_MUST_USE bool propWithUndefinedValue() {
-    return pushOpAndName(ObjLiteralOpcode::Undefined, nextKey_);
+  MOZ_MUST_USE bool propWithUndefinedValue(JSContext* cx) {
+    return pushOpAndName(cx, ObjLiteralOpcode::Undefined, nextKey_);
   }
-  MOZ_MUST_USE bool propWithTrueValue() {
-    return pushOpAndName(ObjLiteralOpcode::True, nextKey_);
+  MOZ_MUST_USE bool propWithTrueValue(JSContext* cx) {
+    return pushOpAndName(cx, ObjLiteralOpcode::True, nextKey_);
   }
-  MOZ_MUST_USE bool propWithFalseValue() {
-    return pushOpAndName(ObjLiteralOpcode::False, nextKey_);
+  MOZ_MUST_USE bool propWithFalseValue(JSContext* cx) {
+    return pushOpAndName(cx, ObjLiteralOpcode::False, nextKey_);
   }
 
   static bool arrayIndexInRange(int32_t i) {
     return i >= 0 && static_cast<uint32_t>(i) <= ATOM_INDEX_MASK;
   }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json);
+  void dumpFields(JSONPrinter& json);
+#endif
 
  private:
   ObjLiteralFlags flags_;
@@ -509,45 +563,57 @@ struct ObjLiteralReader : private ObjLiteralReaderBase {
   }
 };
 
-typedef Vector<JSAtom*, 4> ObjLiteralAtomVector;
+using ObjLiteralAtomVector =
+    Vector<frontend::TaggedParserAtomIndex, 4, js::SystemAllocPolicy>;
 
-JSObject* InterpretObjLiteral(JSContext* cx, ObjLiteralAtomVector& atoms,
-                              mozilla::Span<const uint8_t> insns,
+JSObject* InterpretObjLiteral(JSContext* cx,
+                              frontend::CompilationAtomCache& atomCache,
+                              const ObjLiteralAtomVector& atoms,
+                              const mozilla::Span<const uint8_t> insns,
                               ObjLiteralFlags flags);
 
-inline JSObject* InterpretObjLiteral(JSContext* cx, ObjLiteralAtomVector& atoms,
+inline JSObject* InterpretObjLiteral(JSContext* cx,
+                                     frontend::CompilationAtomCache& atomCache,
+                                     const ObjLiteralAtomVector& atoms,
                                      const ObjLiteralWriter& writer) {
-  return InterpretObjLiteral(cx, atoms, writer.getCode(), writer.getFlags());
+  return InterpretObjLiteral(cx, atomCache, atoms, writer.getCode(),
+                             writer.getFlags());
 }
 
-class ObjLiteralCreationData {
- private:
+class ObjLiteralStencil {
+  friend class frontend::StencilXDR;
+
   ObjLiteralWriter writer_;
   ObjLiteralAtomVector atoms_;
 
  public:
-  explicit ObjLiteralCreationData(JSContext* cx) : writer_(cx), atoms_(cx) {}
+  ObjLiteralStencil() = default;
 
   ObjLiteralWriter& writer() { return writer_; }
 
-  bool addAtom(JSAtom* atom, uint32_t* index) {
+  bool addAtom(JSContext* cx, const frontend::ParserAtom* atom,
+               uint32_t* index) {
     *index = atoms_.length();
-    return atoms_.append(atom);
+    atom->markUsedByStencil();
+    if (!atoms_.append(atom->toIndex())) {
+      js::ReportOutOfMemory(cx);
+      return false;
+    }
+    return true;
   }
 
-  JSObject* create(JSContext* cx);
+  JSObject* create(JSContext* cx,
+                   frontend::CompilationAtomCache& atomCache) const;
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(JSONPrinter& json,
+            frontend::CompilationStencil* compilationStencil);
+  void dumpFields(JSONPrinter& json,
+                  frontend::CompilationStencil* compilationStencil);
+
+#endif
 };
 
 }  // namespace js
-
-namespace JS {
-// Ignore GC tracing for the ObjLiteralCreationData. It contains JSAtom
-// pointers, but these are already held and rooted by the parser. (We must
-// specify GC policy for the creation data because it is placed in the
-// GC-things vector.)
-template <>
-struct GCPolicy<js::ObjLiteralCreationData>
-    : JS::IgnoreGCPolicy<js::ObjLiteralCreationData> {};
-}  // namespace JS
-
 #endif  // frontend_ObjLiteral_h
