@@ -28,10 +28,6 @@ jobs:
       if: startsWith(matrix.os, 'ubuntu')
       run: |
         sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
-    - uses: actions/setup-python@v2
-      if: startsWith(matrix.os, 'windows')
-      with:
-        python-version: '2.x'
     - name: Install deps on windows
       if: startsWith(matrix.os, 'windows')
       run: |
@@ -39,7 +35,7 @@ jobs:
         .\MozillaBuildSetup.exe /S | Out-Null
         iwr -useb get.scoop.sh | iex
         scoop install llvm --global
-        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims;C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
@@ -69,6 +65,6 @@ jobs:
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
-        NATIVE_WIN32_PYTHON: 'C:\hostedtoolcache\windows\Python\2.7.18\x64\python.exe'
+        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
       run: |
         cargo test --verbose --verbose ${{ matrix.features }} --lib
