@@ -65,6 +65,7 @@ jobs:
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
+        NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
       run: |
         cargo test --verbose --verbose ${{ matrix.features }} --lib
