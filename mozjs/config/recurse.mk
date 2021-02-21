@@ -171,6 +171,11 @@ widget/android/export: mobile/android/base/export
 # android_apks is not built on artifact builds without this dependency.
 mobile/android/base/export: mobile/android/base/android_apks
 
+# This is required so that the pre-export tier sees the rules in mobile/android/base
+ifeq ($(MOZ_WIDGET_TOOLKIT),android)
+recurse_pre-export:: mobile/android/base/pre-export
+endif
+
 # CSS2Properties.webidl needs ServoCSSPropList.py from layout/style
 dom/bindings/export: layout/style/ServoCSSPropList.py
 
@@ -225,6 +230,18 @@ endif
 # Most things are built during compile (target/host), but some things happen during export
 # Those need to depend on config/export for system wrappers.
 $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export
+
+# Rust targets, and export targets that run cbindgen need
+# $topobjdir/.cargo/config to be preprocessed first. Ideally, we'd only set it
+# as a dependency of the rust targets, but unfortunately, that pushes Make to
+# execute them much later than we'd like them to be when the file doesn't exist
+# prior to Make running. So we also set it as a dependency of pre-export, which
+# ensures it exists before recursing the rust targets and the export targets
+# that run cbindgen, tricking Make into keeping them early.
+$(rust_targets): $(DEPTH)/.cargo/config
+ifndef TEST_MOZBUILD
+pre-export:: $(DEPTH)/.cargo/config
+endif
 
 # When building gtest as part of the build (LINK_GTEST_DURING_COMPILE),
 # force the build system to get to it first, so that it can be linked

@@ -21,13 +21,8 @@
 #  include "vm/Printer.h"
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
 #  else
 #    include <unistd.h>
 #  endif
@@ -128,7 +123,7 @@ class StructuredSpewer {
  public:
   StructuredSpewer()
       : outputInitializationAttempted_(false),
-        spewingEnabled_(false),
+        spewingEnabled_(0),
         json_(mozilla::Nothing()),
         selectedChannel_() {
     if (getenv("SPEW")) {
@@ -136,24 +131,20 @@ class StructuredSpewer {
     }
   }
 
-  ~StructuredSpewer() { disableSpewing(); }
-
-  void enableSpewing() { spewingEnabled_ = true; }
-
-  void disableSpewing() {
-    if (!spewingEnabled_) {
-      return;
-    }
-
+  ~StructuredSpewer() {
     if (json_.isSome()) {
       json_->endList();
       output_.flush();
       output_.finish();
       json_.reset();
     }
+  }
 
-    spewingEnabled_ = false;
-    outputInitializationAttempted_ = false;
+  void enableSpewing() { spewingEnabled_++; }
+
+  void disableSpewing() {
+    MOZ_ASSERT(spewingEnabled_ > 0);
+    spewingEnabled_--;
   }
 
   // Check if the spewer is enabled for a particular script, used to power
@@ -186,7 +177,9 @@ class StructuredSpewer {
   // attemped in the right place.
   bool outputInitializationAttempted_;
 
-  bool spewingEnabled_;
+  // Indicates the number of times spewing has been enabled. If
+  // spewingEnabled_ is greater than zero, then spewing is enabled.
+  size_t spewingEnabled_;
 
   Fprinter output_;
   mozilla::Maybe<JSONPrinter> json_;
@@ -216,7 +209,7 @@ class StructuredSpewer {
 
   // Returns true iff the channels is enabled
   bool enabled(SpewChannel channel) {
-    return (spewingEnabled_ && selectedChannel_.enabled(channel));
+    return (spewingEnabled_ > 0 && selectedChannel_.enabled(channel));
   }
 
   // Start a record

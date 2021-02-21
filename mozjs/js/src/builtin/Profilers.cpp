@@ -11,6 +11,7 @@
 #include "mozilla/Compiler.h"
 #include "mozilla/Sprintf.h"
 
+#include <iterator>
 #include <stdarg.h>
 
 #ifdef MOZ_CALLGRIND
@@ -24,13 +25,8 @@
 #endif
 
 #ifdef XP_WIN
-#  ifdef JS_ENABLE_UWP
-#    include <processthreadsapi.h>
-#    define getpid GetCurrentProcessId
-#  else
-#    include <process.h>
-#    define getpid _getpid
-#  endif
+#  include <process.h>
+#  define getpid _getpid
 #endif
 
 #include "js/CharacterEncoding.h"
@@ -42,8 +38,6 @@
 #include "vm/JSContext-inl.h"
 
 using namespace js;
-
-using mozilla::ArrayLength;
 
 /* Thread-unsafe error management */
 
@@ -507,7 +501,7 @@ bool js_StartPerf() {
                                  mainPidStr, "--output", outfile};
 
     Vector<const char*, 0, SystemAllocPolicy> args;
-    if (!args.append(defaultArgs, ArrayLength(defaultArgs))) {
+    if (!args.append(defaultArgs, std::size(defaultArgs))) {
       return false;
     }
 

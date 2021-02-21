@@ -90,12 +90,6 @@ parser/html/java/translator.jar
 # Local Gradle configuration properties.
 /local.properties
 
-# Python virtualenv artifacts.
-third_party/python/psutil/**/*.so
-third_party/python/psutil/**/*.pyd
-third_party/python/psutil/build/
-third_party/python/psutil/tmp/
-
 # Ignore chrome.manifest files from the devtools loader
 devtools/client/chrome.manifest
 devtools/shared/chrome.manifest
@@ -168,3 +162,9 @@ lextab.py
 .vscode/
 !.vscode/extensions.json
 !.vscode/tasks.json
+
+# Ignore various raptor performance framework files
+testing/raptor/.raptor-venv
+testing/raptor/raptor-venv
+testing/raptor/raptor/tests/json/
+testing/raptor/webext/raptor/auto_gen_test_config.js

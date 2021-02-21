@@ -19,7 +19,6 @@
 #include "wasm/WasmSignalHandlers.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/ThreadLocal.h"
 
 #include "threading/Thread.h"
@@ -693,9 +692,9 @@ static bool HandleUnalignedTrap(CONTEXT* context, uint8_t* pc,
 }
 #endif  // WASM_EMULATE_ARM_UNALIGNED_FP_ACCESS
 
-static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
-                                    bool isUnalignedSignal = false,
-                                    JSContext* assertCx = nullptr) {
+[[nodiscard]] static bool HandleTrap(CONTEXT* context,
+                                     bool isUnalignedSignal = false,
+                                     JSContext* assertCx = nullptr) {
   MOZ_ASSERT(sAlreadyHandlingTrap.get());
 
   uint8_t* pc = ContextToPC(context);
@@ -755,7 +754,6 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
 // Compiled in all user binaries, so should be stable over time.
 static const unsigned sThreadLocalArrayPointerIndex = 11;
 
-#ifndef JS_ENABLE_UWP
 static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
   // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
   if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
@@ -779,7 +777,6 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
 
   return EXCEPTION_CONTINUE_EXECUTION;
 }
-#endif
 
 #elif defined(XP_DARWIN)
 // On OSX we are forced to use the lower-level Mach exception mechanism instead
@@ -1039,13 +1036,11 @@ void wasm::EnsureEagerProcessSignalHandlers() {
   // such as MemoryProtectionExceptionHandler that assume we are crashing.
   const bool firstHandler = true;
 #  endif
-#  ifndef JS_ENABLE_UWP
   if (!AddVectoredExceptionHandler(firstHandler, WasmTrapHandler)) {
     // Windows has all sorts of random security knobs for disabling things
     // so make this a dynamic failure that disables wasm, not a MOZ_CRASH().
     return;
   }
-#  endif
 
 #elif defined(XP_DARWIN)
   // All the Mach setup in EnsureLazyProcessSignalHandlers.
@@ -1129,12 +1124,12 @@ static bool EnsureLazyProcessSignalHandlers() {
 }
 
 bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
-  if (cx->wasmTriedToInstallSignalHandlers) {
-    return cx->wasmHaveSignalHandlers;
+  if (cx->wasm().triedToInstallSignalHandlers) {
+    return cx->wasm().haveSignalHandlers;
   }
 
-  cx->wasmTriedToInstallSignalHandlers = true;
-  MOZ_RELEASE_ASSERT(!cx->wasmHaveSignalHandlers);
+  cx->wasm().triedToInstallSignalHandlers = true;
+  MOZ_RELEASE_ASSERT(!cx->wasm().haveSignalHandlers);
 
   {
     auto eagerInstallState = sEagerInstallState.lock();
@@ -1168,7 +1163,7 @@ bool wasm::EnsureFullSignalHandlers(JSContext* cx) {
   }
 #endif
 
-  cx->wasmHaveSignalHandlers = true;
+  cx->wasm().haveSignalHandlers = true;
   return true;
 }
 

@@ -46,8 +46,6 @@ def run():
     with mod.VersionedFindLoad() as finder:
         sys.meta_path.insert(0, finder)
         finder._register_distutils_finder()
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
-        print(sys.path)
         from virtualenv.__main__ import run as run_virtualenv
 
         run_virtualenv()

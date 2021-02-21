@@ -777,12 +777,18 @@ bool MarkPagesUnusedSoft(void* region, size_t length) {
 #if defined(XP_WIN)
   return VirtualAlloc(region, length, MEM_RESET,
                       DWORD(PageAccess::ReadWrite)) == region;
-#elif defined(XP_DARWIN)
-  return madvise(region, length, MADV_FREE_REUSABLE) == 0;
-#elif defined(XP_SOLARIS)
-  return posix_madvise(region, length, POSIX_MADV_DONTNEED) == 0;
 #else
-  return madvise(region, length, MADV_DONTNEED) == 0;
+  int status;
+  do {
+#  if defined(XP_DARWIN)
+    status = madvise(region, length, MADV_FREE_REUSABLE);
+#  elif defined(XP_SOLARIS)
+    status = posix_madvise(region, length, POSIX_MADV_DONTNEED);
+#  else
+    status = madvise(region, length, MADV_DONTNEED);
+#  endif
+  } while (status == -1 && errno == EAGAIN);
+  return status == 0;
 #endif
 }
 
@@ -804,6 +810,11 @@ bool MarkPagesUnusedHard(void* region, size_t length) {
 
 void MarkPagesInUseSoft(void* region, size_t length) {
   CheckDecommit(region, length);
+
+#if defined(XP_DARWIN)
+  while (madvise(region, length, MADV_FREE_REUSE) == -1 && errno == EAGAIN) {
+  }
+#endif
 
   MOZ_MAKE_MEM_UNDEFINED(region, length);
 }
@@ -887,15 +898,9 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
     }
     UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
     // If the offset or length are out of bounds, this call will fail.
-#ifdef JS_ENABLE_UWP
-    map = static_cast<uint8_t*>(
-        MapViewOfFileFromApp(hMap, FILE_MAP_COPY, ((ULONG64)offsetH << 32) | offsetL,
-                             alignedLength));
-#else
     map = static_cast<uint8_t*>(
         MapViewOfFileEx(hMap, FILE_MAP_COPY, offsetH, offsetL, alignedLength,
                         reinterpret_cast<void*>(region)));
-#endif
 
     // Retry if another thread mapped the address we were trying to use.
     if (map || GetLastError() != ERROR_INVALID_ADDRESS) {

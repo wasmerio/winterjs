@@ -47,11 +47,7 @@ class DynamicallyLinkedFunctionPtrBase {
 
   DynamicallyLinkedFunctionPtrBase(const wchar_t* aLibName,
                                    const char* aFuncName)
-#ifndef JS_ENABLE_UWP
       : mModule(::LoadLibraryW(aLibName)), mFunction(nullptr) {
-#else
-      : mModule(nullptr), mFunction(nullptr) {
-#endif
     if (!mModule) {
       return;
     }

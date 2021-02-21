@@ -10,6 +10,7 @@
 #include "mozilla/DynamicallyLinkedFunctionPtr.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Uptime.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -171,10 +172,8 @@ static inline ULONGLONG PerformanceCounter() {
 static void InitThresholds() {
   DWORD timeAdjustment = 0, timeIncrement = 0;
   BOOL timeAdjustmentDisabled;
-#ifndef JS_ENABLE_UWP
   GetSystemTimeAdjustment(&timeAdjustment, &timeIncrement,
                           &timeAdjustmentDisabled);
-#endif
 
   LOG(("TimeStamp: timeIncrement=%d [100ns]", timeIncrement));
 

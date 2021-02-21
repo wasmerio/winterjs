@@ -12,15 +12,8 @@
 #  include "mozilla/Sprintf.h"
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      define UNICODE
-#      include <Windows.h>
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
 #  else
 #    include <unistd.h>
 #  endif
@@ -343,12 +336,8 @@ AutoSpewEndFunction::~AutoSpewEndFunction() {
   mir_->graphSpewer().endFunction();
 }
 
-GenericPrinter& jit::JitSpewPrinter() {
-#ifdef JS_ENABLE_UWP
-  static UWPPrinter out;
-#else
+Fprinter& jit::JitSpewPrinter() {
   static Fprinter out;
-#endif
   return out;
 }
 
@@ -381,6 +370,7 @@ static void PrintHelpAndExit(int status = 0) {
       "  pools         Literal Pools (ARM only for now)\n"
       "  cacheflush    Instruction Cache flushes (ARM only for now)\n"
       "  range         Range Analysis\n"
+      "  wasmbce       Wasm Bounds Check Elimination\n"
       "  logs          JSON visualization logging\n"
       "  logs-sync     Same as logs, but flushes between each pass (sync. "
       "compiled functions only).\n"
@@ -418,18 +408,10 @@ void jit::CheckLogging() {
 
   LoggingChecked = true;
 
-#ifdef JS_ENABLE_UWP
-  wchar_t wideEnvBuf[1024] = { 0 };
-  GetEnvironmentVariable(L"IONFLAGS", wideEnvBuf, sizeof(wideEnvBuf));
-  char envBuf[1024] = { 0 };
-  wcstombs(envBuf, wideEnvBuf, sizeof(envBuf));
-  char* env = &envBuf[0];
-#else
   char* env = getenv("IONFLAGS");
   if (!env) {
     return;
   }
-#endif
 
   const char* found = strtok(env, ",");
   while (found) {
@@ -456,6 +438,8 @@ void jit::CheckLogging() {
       EnableChannel(JitSpew_GVN);
     } else if (IsFlag(found, "range")) {
       EnableChannel(JitSpew_Range);
+    } else if (IsFlag(found, "wasmbce")) {
+      EnableChannel(JitSpew_WasmBCE);
     } else if (IsFlag(found, "licm")) {
       EnableChannel(JitSpew_LICM);
     } else if (IsFlag(found, "flac")) {
@@ -534,7 +518,6 @@ void jit::CheckLogging() {
     found = strtok(nullptr, ",");
   }
 
-#ifndef JS_ENABLE_UWP
   FILE* spewfh = stderr;
   const char* filename = getenv("ION_SPEW_FILENAME");
   if (filename && *filename) {
@@ -544,8 +527,7 @@ void jit::CheckLogging() {
     MOZ_RELEASE_ASSERT(spewfh);
     setbuf(spewfh, nullptr);  // Make unbuffered
   }
-  ((Fprinter&)JitSpewPrinter()).init(spewfh);
-#endif
+  JitSpewPrinter().init(spewfh);
 }
 
 JitSpewIndent::JitSpewIndent(JitSpewChannel channel) : channel_(channel) {
@@ -560,7 +542,7 @@ void jit::JitSpewStartVA(JitSpewChannel channel, const char* fmt, va_list ap) {
   }
 
   JitSpewHeader(channel);
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.vprintf(fmt, ap);
 }
 
@@ -569,7 +551,7 @@ void jit::JitSpewContVA(JitSpewChannel channel, const char* fmt, va_list ap) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.vprintf(fmt, ap);
 }
 
@@ -578,7 +560,7 @@ void jit::JitSpewFin(JitSpewChannel channel) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.put("\n");
 }
 
@@ -601,7 +583,7 @@ void jit::JitSpewDef(JitSpewChannel channel, const char* str,
   }
 
   JitSpewHeader(channel);
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.put(str);
   def->dump(out);
   def->dumpLocation(out);
@@ -625,7 +607,7 @@ void jit::JitSpewHeader(JitSpewChannel channel) {
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.printf("[%s] ", ChannelNames[channel]);
   for (size_t i = ChannelIndentLevel[channel]; i != 0; i--) {
     out.put("  ");
