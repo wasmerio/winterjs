@@ -1,5 +1,5 @@
 diff --git a/config/external/icu/common/moz.build b/config/external/icu/common/moz.build
-index ce1b0d0574..7310aca3b9 100644
+index ce1b0d057..7310aca3b 100644
 --- a/config/external/icu/common/moz.build
 +++ b/config/external/icu/common/moz.build
 @@ -8,6 +8,8 @@ Library("icuuc")
@@ -12,7 +12,7 @@ index ce1b0d0574..7310aca3b9 100644
  LOCAL_INCLUDES += ["/intl/icu/source/i18n"]
  
 diff --git a/js/moz.configure b/js/moz.configure
-index e65adafb73..243bcc4063 100644
+index 6c7b4b6f2..fa88f7a6b 100644
 --- a/js/moz.configure
 +++ b/js/moz.configure
 @@ -78,6 +78,18 @@ set_define("JS_64BIT", depends(target)(lambda t: t.bitness == 64 or None))
@@ -35,10 +35,10 @@ index e65adafb73..243bcc4063 100644
  # SpiderMonkey as a shared library, and how its symbols are exported
  # ==================================================================
 diff --git a/js/src/builtin/TestingFunctions.cpp b/js/src/builtin/TestingFunctions.cpp
-index c9e0aced06..53c25564cd 100644
+index 98f12139e..ae2cfe266 100644
 --- a/js/src/builtin/TestingFunctions.cpp
 +++ b/js/src/builtin/TestingFunctions.cpp
-@@ -5514,7 +5514,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+@@ -5544,7 +5544,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    auto getTimeZone = [](std::time_t* now) -> const char* {
      std::tm local{};
  #if defined(_WIN32)
@@ -48,7 +48,7 @@ index c9e0aced06..53c25564cd 100644
      if (localtime_s(&local, now) == 0) {
        return _tzname[local.tm_isdst > 0];
      }
-@@ -5609,7 +5611,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
+@@ -5639,7 +5641,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    }
  
  #if defined(_WIN32)
@@ -59,7 +59,7 @@ index c9e0aced06..53c25564cd 100644
    tzset();
  #endif /* _WIN32 */
 diff --git a/js/src/ds/MemoryProtectionExceptionHandler.cpp b/js/src/ds/MemoryProtectionExceptionHandler.cpp
-index 3c4eb00c30..010316ff96 100644
+index 3c4eb00c3..010316ff9 100644
 --- a/js/src/ds/MemoryProtectionExceptionHandler.cpp
 +++ b/js/src/ds/MemoryProtectionExceptionHandler.cpp
 @@ -110,7 +110,7 @@ static bool sExceptionHandlerInstalled = false;
@@ -111,10 +111,10 @@ index 3c4eb00c30..010316ff96 100644
      sExceptionHandlerInstalled = false;
    }
 diff --git a/js/src/gc/Memory.cpp b/js/src/gc/Memory.cpp
-index 55e2fc2099..3d2801f837 100644
+index d59585f0c..c9f7dd7bc 100644
 --- a/js/src/gc/Memory.cpp
 +++ b/js/src/gc/Memory.cpp
-@@ -887,9 +887,15 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
+@@ -898,9 +898,15 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
      }
      UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
      // If the offset or length are out of bounds, this call will fail.
@@ -131,7 +131,7 @@ index 55e2fc2099..3d2801f837 100644
      // Retry if another thread mapped the address we were trying to use.
      if (map || GetLastError() != ERROR_INVALID_ADDRESS) {
 diff --git a/js/src/jit/ProcessExecutableMemory.cpp b/js/src/jit/ProcessExecutableMemory.cpp
-index a877189f6b..5db033fa34 100644
+index 9b0bdf047..47c201220 100644
 --- a/js/src/jit/ProcessExecutableMemory.cpp
 +++ b/js/src/jit/ProcessExecutableMemory.cpp
 @@ -145,6 +145,7 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
@@ -178,8 +178,8 @@ index a877189f6b..5db033fa34 100644
      }
 @@ -310,8 +322,17 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
  
- static MOZ_MUST_USE bool CommitPages(void* addr, size_t bytes,
-                                      ProtectionSetting protection) {
+ [[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
+                                       ProtectionSetting protection) {
 +#ifdef JS_ENABLE_UWP
 +  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
 +  if (p) {
@@ -207,7 +207,7 @@ index a877189f6b..5db033fa34 100644
    }
  #else
 diff --git a/js/src/js-config.h.in b/js/src/js-config.h.in
-index b54f1bc2cb..bcea2070dd 100644
+index b54f1bc2c..bcea2070d 100644
 --- a/js/src/js-config.h.in
 +++ b/js/src/js-config.h.in
 @@ -58,6 +58,9 @@
@@ -221,10 +221,10 @@ index b54f1bc2cb..bcea2070dd 100644
  #undef MOZJS_MAJOR_VERSION
  #undef MOZJS_MINOR_VERSION
 diff --git a/js/src/old-configure b/js/src/old-configure
-index 49feb33f14..e200f68260 100644
+index 20edd22ae..3ddca5ebb 100644
 --- a/js/src/old-configure
 +++ b/js/src/old-configure
-@@ -2009,8 +2009,8 @@ fi
+@@ -1979,8 +1979,8 @@ fi
  
  
  
@@ -236,10 +236,10 @@ index 49feb33f14..e200f68260 100644
  case "$target" in
  *-mingw*)
 diff --git a/js/src/old-configure.in b/js/src/old-configure.in
-index ab899d30cb..fac3161e2a 100644
+index bf7e10ec8..e20bb5b6d 100644
 --- a/js/src/old-configure.in
 +++ b/js/src/old-configure.in
-@@ -101,8 +101,8 @@ MOZ_TOOL_VARIABLES
+@@ -100,8 +100,8 @@ MOZ_TOOL_VARIABLES
  dnl Special win32 checks
  dnl ========================================================
  
@@ -251,7 +251,7 @@ index ab899d30cb..fac3161e2a 100644
  case "$target" in
  *-mingw*)
 diff --git a/js/src/vm/CodeCoverage.cpp b/js/src/vm/CodeCoverage.cpp
-index f96cfdff68..a4936e562d 100644
+index f96cfdff6..a4936e562 100644
 --- a/js/src/vm/CodeCoverage.cpp
 +++ b/js/src/vm/CodeCoverage.cpp
 @@ -13,8 +13,13 @@
@@ -269,7 +269,7 @@ index f96cfdff68..a4936e562d 100644
  #endif
  
 diff --git a/js/src/vm/Time.cpp b/js/src/vm/Time.cpp
-index 059710064c..6ffc8e55c5 100644
+index 059710064..6ffc8e55c 100644
 --- a/js/src/vm/Time.cpp
 +++ b/js/src/vm/Time.cpp
 @@ -21,6 +21,9 @@
@@ -317,10 +317,10 @@ index 059710064c..6ffc8e55c5 100644
  
  void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }
 diff --git a/js/src/wasm/WasmSignalHandlers.cpp b/js/src/wasm/WasmSignalHandlers.cpp
-index a74ce62e25..e1214fce32 100644
+index 6ab1a0c71..fc100c360 100644
 --- a/js/src/wasm/WasmSignalHandlers.cpp
 +++ b/js/src/wasm/WasmSignalHandlers.cpp
-@@ -755,6 +755,7 @@ static MOZ_MUST_USE bool HandleTrap(CONTEXT* context,
+@@ -754,6 +754,7 @@ static bool HandleUnalignedTrap(CONTEXT* context, uint8_t* pc,
  // Compiled in all user binaries, so should be stable over time.
  static const unsigned sThreadLocalArrayPointerIndex = 11;
  
@@ -328,7 +328,7 @@ index a74ce62e25..e1214fce32 100644
  static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
    // Make sure TLS is initialized before reading sAlreadyHandlingTrap.
    if (!NtCurrentTeb()->Reserved1[sThreadLocalArrayPointerIndex]) {
-@@ -778,6 +779,7 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
+@@ -777,6 +778,7 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
  
    return EXCEPTION_CONTINUE_EXECUTION;
  }
@@ -336,7 +336,7 @@ index a74ce62e25..e1214fce32 100644
  
  #elif defined(XP_DARWIN)
  // On OSX we are forced to use the lower-level Mach exception mechanism instead
-@@ -1037,11 +1039,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
+@@ -1036,11 +1038,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
    // such as MemoryProtectionExceptionHandler that assume we are crashing.
    const bool firstHandler = true;
  #  endif
@@ -351,7 +351,7 @@ index a74ce62e25..e1214fce32 100644
  #elif defined(XP_DARWIN)
    // All the Mach setup in EnsureLazyProcessSignalHandlers.
 diff --git a/mfbt/Poison.cpp b/mfbt/Poison.cpp
-index f5d5b49865..0963781890 100644
+index f5d5b4986..096378189 100644
 --- a/mfbt/Poison.cpp
 +++ b/mfbt/Poison.cpp
 @@ -14,6 +14,9 @@
@@ -377,7 +377,7 @@ index f5d5b49865..0963781890 100644
  
  static void ReleaseRegion(void* aRegion, uintptr_t aSize) {
 diff --git a/mfbt/RandomNum.cpp b/mfbt/RandomNum.cpp
-index c3bb9ecef4..7ea7d127df 100644
+index c3bb9ecef..7ea7d127d 100644
 --- a/mfbt/RandomNum.cpp
 +++ b/mfbt/RandomNum.cpp
 @@ -13,6 +13,7 @@
@@ -416,7 +416,7 @@ index c3bb9ecef4..7ea7d127df 100644
    return Some(result);
  
 diff --git a/mfbt/WindowsVersion.h b/mfbt/WindowsVersion.h
-index 054279f778..f641299327 100644
+index 502015382..085d1dbc9 100644
 --- a/mfbt/WindowsVersion.h
 +++ b/mfbt/WindowsVersion.h
 @@ -7,6 +7,8 @@
@@ -436,7 +436,7 @@ index 054279f778..f641299327 100644
 +
  #endif /* mozilla_WindowsVersion_h */
 diff --git a/mozglue/misc/DynamicallyLinkedFunctionPtr.h b/mozglue/misc/DynamicallyLinkedFunctionPtr.h
-index 4313974ec5..7b6cb42190 100644
+index 4313974ec..7b6cb4219 100644
 --- a/mozglue/misc/DynamicallyLinkedFunctionPtr.h
 +++ b/mozglue/misc/DynamicallyLinkedFunctionPtr.h
 @@ -47,7 +47,11 @@ class DynamicallyLinkedFunctionPtrBase {
@@ -452,7 +452,7 @@ index 4313974ec5..7b6cb42190 100644
        return;
      }
 diff --git a/mozglue/misc/StackWalk.cpp b/mozglue/misc/StackWalk.cpp
-index 24868ae5de..c6166b6a67 100644
+index 24868ae5d..c6166b6a6 100644
 --- a/mozglue/misc/StackWalk.cpp
 +++ b/mozglue/misc/StackWalk.cpp
 @@ -77,9 +77,11 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
@@ -554,10 +554,10 @@ index 24868ae5de..c6166b6a67 100644
  // i386 or PPC Linux stackwalking code
  #elif HAVE_DLADDR &&                                           \
 diff --git a/mozglue/misc/TimeStamp_windows.cpp b/mozglue/misc/TimeStamp_windows.cpp
-index ae617e7802..b573962f8e 100644
+index e4739ced2..40d04afaf 100644
 --- a/mozglue/misc/TimeStamp_windows.cpp
 +++ b/mozglue/misc/TimeStamp_windows.cpp
-@@ -171,8 +171,10 @@ static inline ULONGLONG PerformanceCounter() {
+@@ -172,8 +172,10 @@ static inline ULONGLONG PerformanceCounter() {
  static void InitThresholds() {
    DWORD timeAdjustment = 0, timeIncrement = 0;
    BOOL timeAdjustmentDisabled;
@@ -569,7 +569,7 @@ index ae617e7802..b573962f8e 100644
    LOG(("TimeStamp: timeIncrement=%d [100ns]", timeIncrement));
  
 diff --git a/mozglue/misc/WindowsMapRemoteView.cpp b/mozglue/misc/WindowsMapRemoteView.cpp
-index 4cd60ba7f1..8e67c4ef86 100644
+index 4cd60ba7f..8e67c4ef8 100644
 --- a/mozglue/misc/WindowsMapRemoteView.cpp
 +++ b/mozglue/misc/WindowsMapRemoteView.cpp
 @@ -29,6 +29,7 @@ WINBASEAPI BOOL WINAPI UnmapViewOfFile2(HANDLE aProcess, PVOID aBaseAddress,
@@ -622,7 +622,7 @@ index 4cd60ba7f1..8e67c4ef86 100644
  
  }  // namespace mozilla
 diff --git a/mozglue/misc/WindowsUnicode.cpp b/mozglue/misc/WindowsUnicode.cpp
-index 464380b6da..8317d5b137 100644
+index 464380b6d..a84e2860e 100644
 --- a/mozglue/misc/WindowsUnicode.cpp
 +++ b/mozglue/misc/WindowsUnicode.cpp
 @@ -7,14 +7,17 @@
@@ -651,24 +651,24 @@ index 464380b6da..8317d5b137 100644
  
  mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr) {
    return WideToUTF8(aStr, wcslen(aStr));
-@@ -51,6 +51,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr) {
+@@ -47,6 +51,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr) {
    return WideToUTF8(aStr.data(), aStr.length());
  }
-
+ 
 +#ifndef JS_ENABLE_UWP
  mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
    if (!aStr) {
      return nullptr;
-@@ -58,7 +59,8 @@ mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
-
+@@ -54,6 +59,7 @@ mozilla::UniquePtr<char[]> WideToUTF8(PCUNICODE_STRING aStr) {
+ 
    return WideToUTF8(aStr->Buffer, aStr->Length / sizeof(WCHAR));
  }
 +#endif
-
+ 
  }  // namespace glue
  }  // namespace mozilla
- diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
-index 77fc376b92..dcf7938393 100644
+diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
+index 77fc376b9..dcf793839 100644
 --- a/mozglue/misc/WindowsUnicode.h
 +++ b/mozglue/misc/WindowsUnicode.h
 @@ -11,7 +11,9 @@
