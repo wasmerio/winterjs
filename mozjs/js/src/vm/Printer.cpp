@@ -571,4 +571,21 @@ bool LSprinter::put(const char* s, size_t len) {
   return true;
 }
 
+#ifdef JS_ENABLE_UWP
+bool UWPPrinter::put(const char* s, size_t len)
+{
+    const char* end = (const char*)memchr(s, '\n', len);
+    if (end) {
+        if (!buffer_.append(s, end - s + 1) || !buffer_.append(0)) {
+            return false;
+        }
+        OutputDebugStringA((const char*)buffer_.begin());
+        buffer_.clear();
+    } else {
+        end = s + len;
+    }
+    return buffer_.append(s, end - s);
+}
+#endif
+
 }  // namespace js
