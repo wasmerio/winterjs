@@ -206,9 +206,8 @@ fn build_jsglue(build_dir: &Path) {
         build.flag_if_supported(flag);
     }
 
-    let target = env::var("TARGET").unwrap();
     let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
-    if target.contains("windows") {
+    if build.get_compiler().is_like_msvc() {
         build.flag_if_supported("-std:c++17");
         build.flag("-FI");
     } else {
