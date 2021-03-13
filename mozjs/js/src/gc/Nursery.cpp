@@ -38,8 +38,13 @@
 #include "vm/NativeObject-inl.h"
 
 #ifdef XP_WIN
-#  include <process.h>
-#  define getpid _getpid
+#  ifndef JS_ENABLE_UWP
+#    include <process.h>
+#    define getpid _getpid
+#  else
+#   include <windows.h>
+#   define getpid GetCurrentProcessId
+#  endif
 #else
 #  include <unistd.h>
 #endif

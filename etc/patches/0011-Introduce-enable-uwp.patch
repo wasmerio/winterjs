@@ -667,6 +667,27 @@ index 464380b6d..a84e2860e 100644
  
  }  // namespace glue
  }  // namespace mozilla
+diff --git a/js/src/gc/Nursery.cpp b/js/src/gc/Nursery.cpp
+index 37cf8ef62..568967532 100644
+--- a/js/src/gc/Nursery.cpp
++++ b/js/src/gc/Nursery.cpp
+@@ -38,8 +38,13 @@
+ #include "vm/NativeObject-inl.h"
+ 
+ #ifdef XP_WIN
+-#  include <process.h>
+-#  define getpid _getpid
++#  ifndef JS_ENABLE_UWP
++#    include <process.h>
++#    define getpid _getpid
++#  else
++#   include <windows.h>
++#   define getpid GetCurrentProcessId
++#  endif
+ #else
+ #  include <unistd.h>
+ #endif
+
 diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
 index 77fc376b9..dcf793839 100644
 --- a/mozglue/misc/WindowsUnicode.h
