@@ -125,8 +125,6 @@ bool ElemOpEmitter::emitGet() {
   JSOp op;
   if (isSuper()) {
     op = JSOp::GetElemSuper;
-  } else if (isCall()) {
-    op = JSOp::CallElem;
   } else {
     op = JSOp::GetElem;
   }
@@ -236,12 +234,11 @@ bool ElemOpEmitter::emitAssignment() {
 
   MOZ_ASSERT_IF(isPropInit(), !isSuper());
 
-  JSOp setOp = isPropInit()
-                   ? JSOp::InitElem
-                   : isSuper() ? bce_->sc->strict() ? JSOp::StrictSetElemSuper
-                                                    : JSOp::SetElemSuper
-                               : bce_->sc->strict() ? JSOp::StrictSetElem
-                                                    : JSOp::SetElem;
+  JSOp setOp = isPropInit() ? JSOp::InitElem
+               : isSuper()  ? bce_->sc->strict() ? JSOp::StrictSetElemSuper
+                                                 : JSOp::SetElemSuper
+               : bce_->sc->strict() ? JSOp::StrictSetElem
+                                    : JSOp::SetElem;
   if (!bce_->emitElemOpBase(setOp, ShouldInstrument::Yes)) {
     //              [stack] ELEM
     return false;

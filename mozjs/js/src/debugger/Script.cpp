@@ -48,6 +48,7 @@
 #include "vm/BytecodeUtil-inl.h"  // for BytecodeRangeWithPosition
 #include "vm/JSAtom-inl.h"        // for ValueToId
 #include "vm/JSObject-inl.h"  // for NewBuiltinClassInstance, NewObjectWithGivenProto, NewTenuredObjectWithGivenProto
+#include "vm/JSScript-inl.h"  // for JSScript::global
 #include "vm/ObjectOperations-inl.h"  // for GetProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 
@@ -1373,10 +1374,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::InitAliasedLexical:
     case JSOp::SetIntrinsic:
     case JSOp::InitGLexical:
-    case JSOp::DefVar:
-    case JSOp::DefLet:
-    case JSOp::DefConst:
-    case JSOp::DefFun:
+    case JSOp::GlobalOrEvalDeclInstantiation:
     case JSOp::SetFunName:
     case JSOp::MutateProto:
     case JSOp::DynamicImport:
@@ -1458,10 +1456,8 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::PopN:
     case JSOp::DupAt:
     case JSOp::NewArray:
-    case JSOp::NewArrayCopyOnWrite:
     case JSOp::NewInit:
     case JSOp::NewObject:
-    case JSOp::NewObjectWithGroup:
     case JSOp::InitElem:
     case JSOp::InitHiddenElem:
     case JSOp::InitLockedElem:
@@ -1508,8 +1504,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Int32:
     case JSOp::LoopHead:
     case JSOp::GetElem:
-    case JSOp::CallElem:
-    case JSOp::Length:
     case JSOp::Not:
     case JSOp::FunctionThis:
     case JSOp::GlobalThis:
@@ -1519,7 +1513,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::GetPropSuper:
     case JSOp::GetElemSuper:
     case JSOp::GetProp:
-    case JSOp::CallProp:
     case JSOp::RegExp:
     case JSOp::CallSiteObj:
     case JSOp::Object:
@@ -1528,7 +1521,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::TypeofExpr:
     case JSOp::ToAsyncIter:
     case JSOp::ToPropertyKey:
-    case JSOp::IterNext:
     case JSOp::Lambda:
     case JSOp::LambdaArrow:
     case JSOp::PushLexicalEnv:
@@ -1571,7 +1563,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::CheckThis:
     case JSOp::CheckReturn:
     case JSOp::CheckThisReinit:
-    case JSOp::CheckGlobalOrEvalDecl:
     case JSOp::SuperFun:
     case JSOp::SpreadSuperCall:
     case JSOp::SuperCall:
@@ -1584,7 +1575,8 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::CheckResumeKind:
     case JSOp::AfterYield:
     case JSOp::Await:
-    case JSOp::TrySkipAwait:
+    case JSOp::CanSkipAwait:
+    case JSOp::MaybeExtractAwaitValue:
     case JSOp::Generator:
     case JSOp::AsyncAwait:
     case JSOp::AsyncResolve:

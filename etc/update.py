@@ -16,7 +16,7 @@ def extract_tarball(tarball):
         raise Exception("Tarball not found at %s" % tarball)
 
     with tempfile.TemporaryDirectory() as directory:
-        subprocess.check_call(["tar", "-xjf", tarball, "-C", directory])
+        subprocess.check_call(["tar", "-xf", tarball, "-C", directory])
 
         contents = os.listdir(directory)
         if len(contents) != 1:

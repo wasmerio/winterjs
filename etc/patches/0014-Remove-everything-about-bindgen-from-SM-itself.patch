@@ -1,8 +1,8 @@
 diff --git a/build/moz.configure/bindgen.configure b/build/moz.configure/bindgen.configure
-index da8a5d57af..6949553d61 100644
+index e5e49d8df..706be1359 100644
 --- a/build/moz.configure/bindgen.configure
 +++ b/build/moz.configure/bindgen.configure
-@@ -89,278 +89,3 @@ rustfmt = check_prog(
+@@ -94,278 +94,3 @@ rustfmt = check_prog(
      input="RUSTFMT",
      allow_missing=True,
  )
@@ -24,13 +24,13 @@ index da8a5d57af..6949553d61 100644
 -    "--with-clang-path",
 -    c_compiler,
 -    cxx_compiler,
--    toolchain_search_path,
+-    clang_search_path,
 -    target,
 -    macos_sdk,
 -)
 -@checking("for clang for bindgen", lambda x: x.path if x else "not found")
 -def bindgen_clang_compiler(
--    clang_path, c_compiler, cxx_compiler, toolchain_search_path, target, macos_sdk
+-    clang_path, c_compiler, cxx_compiler, clang_search_path, target, macos_sdk
 -):
 -    # When the target compiler is clang, use that, including flags.
 -    if cxx_compiler.type == "clang":
@@ -60,7 +60,7 @@ index da8a5d57af..6949553d61 100644
 -            clang_path = [os.path.join(os.path.dirname(cxx_compiler.compiler), "clang")]
 -
 -    clang_path = find_program(
--        clang_path[0] if clang_path else "clang++", toolchain_search_path
+-        clang_path[0] if clang_path else "clang++", clang_search_path
 -    )
 -    if not clang_path:
 -        return
