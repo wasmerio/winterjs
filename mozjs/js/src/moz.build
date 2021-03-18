@@ -227,6 +227,7 @@ EXPORTS.js.experimental += [
     "../public/experimental/CTypes.h",
     "../public/experimental/Intl.h",
     "../public/experimental/JitInfo.h",
+    "../public/experimental/JSStencil.h",
     "../public/experimental/SourceHook.h",
     "../public/experimental/TypedData.h",
 ]
@@ -406,7 +407,6 @@ UNIFIED_SOURCES += [
     "vm/PromiseLookup.cpp",
     "vm/ProxyObject.cpp",
     "vm/Realm.cpp",
-    "vm/ReceiverGuard.cpp",
     "vm/RegExpObject.cpp",
     "vm/RegExpStatics.cpp",
     "vm/Runtime.cpp",
@@ -431,6 +431,7 @@ UNIFIED_SOURCES += [
     "vm/UsageStatistics.cpp",
     "vm/Value.cpp",
     "vm/Warnings.cpp",
+    "vm/WellKnownAtom.cpp",
     "vm/WindowProxy.cpp",
     "vm/Xdr.cpp",
 ]
@@ -534,7 +535,6 @@ selfhosted_inputs = [
     "builtin/AsyncFunction.js",
     "builtin/AsyncIteration.js",
     "builtin/BigInt.js",
-    "builtin/Classes.js",
     "builtin/Date.js",
     "builtin/Error.js",
     "builtin/Function.js",

@@ -336,7 +336,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock> {
 
   MIRGraph& graph() { return graph_; }
   const CompileInfo& info() const { return info_; }
-  jsbytecode* pc() const { return pc_; }
+  jsbytecode* pc() const { return trackedSite_->pc(); }
   uint32_t nslots() const { return slots_.length(); }
   uint32_t id() const { return id_; }
   uint32_t numPredecessors() const { return predecessors_.length(); }
@@ -576,20 +576,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock> {
     return hitCount_;
   }
 
-  // Track bailouts by storing the current pc in MIR instruction added at
-  // this cycle. This is also used for tracking calls and optimizations when
-  // profiling.
-  void updateTrackedSite(BytecodeSite* site) {
-    MOZ_ASSERT(site->tree() == trackedSite_->tree());
-    trackedSite_ = site;
-  }
   BytecodeSite* trackedSite() const { return trackedSite_; }
-  jsbytecode* trackedPc() const {
-    return trackedSite_ ? trackedSite_->pc() : nullptr;
-  }
-  InlineScriptTree* trackedTree() const {
-    return trackedSite_ ? trackedSite_->tree() : nullptr;
-  }
+  InlineScriptTree* trackedTree() const { return trackedSite_->tree(); }
 
  private:
   MIRGraph& graph_;
@@ -602,7 +590,6 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock> {
   uint32_t id_;
   uint32_t domIndex_;  // Index in the dominator tree.
   uint32_t numDominated_;
-  jsbytecode* pc_;
   LBlock* lir_;
 
   // Copy of a dominator block's outerResumePoint_ which holds the state of
@@ -635,6 +622,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock> {
   Vector<MBasicBlock*, 1, JitAllocPolicy> immediatelyDominated_;
   MBasicBlock* immediateDominator_;
 
+  // Track bailouts by storing the current pc in MIR instruction added at
+  // this cycle. This is also used for tracking calls and optimizations when
+  // profiling.
   BytecodeSite* trackedSite_;
 
   // Record the number of times a block got visited. Note, due to inlined
@@ -899,10 +889,9 @@ class MNodeIterator {
 
 void MBasicBlock::add(MInstruction* ins) {
   MOZ_ASSERT(!hasLastIns());
-  ins->setBlock(this);
+  ins->setInstructionBlock(this, trackedSite_);
   graph().allocDefinitionId(ins);
   instructions_.pushBack(ins);
-  ins->setTrackedSite(trackedSite_);
 }
 
 }  // namespace jit

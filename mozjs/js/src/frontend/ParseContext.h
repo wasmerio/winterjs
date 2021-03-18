@@ -9,17 +9,19 @@
 
 #include "ds/Nestable.h"
 #include "frontend/BytecodeCompiler.h"
-#include "frontend/CompilationInfo.h"
+#include "frontend/CompilationStencil.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/ModuleSharedContext.h"
-#include "frontend/NameAnalysisTypes.h"  // DeclaredNameInfo
+#include "frontend/NameAnalysisTypes.h"  // DeclaredNameInfo, FunctionBoxVector
 #include "frontend/NameCollections.h"
+#include "frontend/ParserAtom.h"   // TaggedParserAtomIndex
 #include "frontend/ScriptIndex.h"  // ScriptIndex
 #include "frontend/SharedContext.h"
 #include "frontend/UsedNameTracker.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/GeneratorObject.h"  // js::AbstractGeneratorObject::FixedSlotLimit
+#include "vm/WellKnownAtom.h"    // js_*_str
 
 namespace js {
 
@@ -74,13 +76,13 @@ class ParseContext : public Nestable<ParseContext> {
   };
 
   class LabelStatement : public Statement {
-    const ParserAtom* label_;
+    TaggedParserAtomIndex label_;
 
    public:
-    LabelStatement(ParseContext* pc, const ParserAtom* label)
+    LabelStatement(ParseContext* pc, TaggedParserAtomIndex label)
         : Statement(pc, StatementKind::Label), label_(label) {}
 
-    const ParserAtom* label() const { return label_; }
+    TaggedParserAtomIndex label() const { return label_; }
   };
 
   struct ClassStatement : public Statement {
@@ -107,7 +109,6 @@ class ParseContext : public Nestable<ParseContext> {
     // FunctionBoxes in this scope that need to be considered for Annex
     // B.3.3 semantics. This is checked on Scope exit, as by then we have
     // all the declared names and would know if Annex B.3.3 is applicable.
-    using FunctionBoxVector = Vector<FunctionBox*, 24, SystemAllocPolicy>;
     PooledVectorPtr<FunctionBoxVector> possibleAnnexBFunctionBoxes_;
 
     // Monotonically increasing id.
@@ -137,11 +138,11 @@ class ParseContext : public Nestable<ParseContext> {
     explicit inline Scope(JSContext* cx, ParseContext* pc,
                           UsedNameTracker& usedNames);
 
-    void dump(ParseContext* pc);
+    void dump(ParseContext* pc, ParserBase* parser);
 
     uint32_t id() const { return id_; }
 
-    MOZ_MUST_USE bool init(ParseContext* pc) {
+    [[nodiscard]] bool init(ParseContext* pc) {
       if (id_ == UINT32_MAX) {
         pc->errorReporter_.errorNoOffset(JSMSG_NEED_DIET, js_script_str);
         return false;
@@ -158,29 +159,30 @@ class ParseContext : public Nestable<ParseContext> {
       return uint32_t(count);
     }
 
-    DeclaredNamePtr lookupDeclaredName(const ParserAtom* name) {
+    DeclaredNamePtr lookupDeclaredName(TaggedParserAtomIndex name) {
       return declared_->lookup(name);
     }
 
-    AddDeclaredNamePtr lookupDeclaredNameForAdd(const ParserAtom* name) {
+    AddDeclaredNamePtr lookupDeclaredNameForAdd(TaggedParserAtomIndex name) {
       return declared_->lookupForAdd(name);
     }
 
-    MOZ_MUST_USE bool addDeclaredName(ParseContext* pc, AddDeclaredNamePtr& p,
-                                      const ParserAtom* name,
-                                      DeclarationKind kind, uint32_t pos,
-                                      ClosedOver closedOver = ClosedOver::No) {
+    [[nodiscard]] bool addDeclaredName(ParseContext* pc, AddDeclaredNamePtr& p,
+                                       TaggedParserAtomIndex name,
+                                       DeclarationKind kind, uint32_t pos,
+                                       ClosedOver closedOver = ClosedOver::No) {
       return maybeReportOOM(
           pc, declared_->add(p, name, DeclaredNameInfo(kind, pos, closedOver)));
     }
 
     // Add a FunctionBox as a possible candidate for Annex B.3.3 semantics.
-    MOZ_MUST_USE bool addPossibleAnnexBFunctionBox(ParseContext* pc,
-                                                   FunctionBox* funbox);
+    [[nodiscard]] bool addPossibleAnnexBFunctionBox(ParseContext* pc,
+                                                    FunctionBox* funbox);
 
     // Check if the candidate function boxes for Annex B.3.3 should in
     // fact get Annex B semantics. Checked on Scope exit.
-    MOZ_MUST_USE bool propagateAndMarkAnnexBFunctionBoxes(ParseContext* pc);
+    [[nodiscard]] bool propagateAndMarkAnnexBFunctionBoxes(ParseContext* pc,
+                                                           ParserBase* parser);
 
     // Add and remove catch parameter names. Used to implement the odd
     // semantics of catch bodies.
@@ -260,7 +262,7 @@ class ParseContext : public Nestable<ParseContext> {
 
       explicit operator bool() const { return !done(); }
 
-      const ParserAtom* name() {
+      TaggedParserAtomIndex name() {
         MOZ_ASSERT(!done());
         return declaredRange_.front().key();
       }
@@ -381,7 +383,7 @@ class ParseContext : public Nestable<ParseContext> {
                ErrorReporter& errorReporter, CompilationState& compilationState,
                Directives* newDirectives, bool isFull);
 
-  MOZ_MUST_USE bool init();
+  [[nodiscard]] bool init();
 
   SharedContext* sc() { return sc_; }
 
@@ -449,15 +451,15 @@ class ParseContext : public Nestable<ParseContext> {
 
   // Return Err(true) if we have encountered at least one loop,
   // Err(false) otherwise.
-  MOZ_MUST_USE inline JS::Result<Ok, BreakStatementError> checkBreakStatement(
-      const ParserName* label);
+  [[nodiscard]] inline JS::Result<Ok, BreakStatementError> checkBreakStatement(
+      TaggedParserAtomIndex label);
 
   enum class ContinueStatementError {
     NotInALoop,
     LabelNotFound,
   };
-  MOZ_MUST_USE inline JS::Result<Ok, ContinueStatementError>
-  checkContinueStatement(const ParserName* label);
+  [[nodiscard]] inline JS::Result<Ok, ContinueStatementError>
+  checkContinueStatement(TaggedParserAtomIndex label);
 
   // True if we are at the topmost level of a entire script or function body.
   // For example, while parsing this code we would encounter f1 and f2 at
@@ -498,6 +500,14 @@ class ParseContext : public Nestable<ParseContext> {
     //     await x.baz(); // do not mark as Top level await.
     //   }
     return sc_->isModuleContext() && sc_->isTopLevelContext();
+  }
+
+  // True if this is the outermost ParserContext for current compile. For
+  // delazification, this lets us identify if the lazy PrivateScriptData is for
+  // current parser context.
+  bool isOutermostOfCurrentCompile() const {
+    MOZ_ASSERT(!!enclosing() == !!scriptId());
+    return (scriptId() == 0);
   }
 
   void setSuperScopeNeedsHomeObject() {
@@ -551,16 +561,17 @@ class ParseContext : public Nestable<ParseContext> {
   uint32_t scriptId() const { return scriptId_; }
 
   bool computeAnnexBAppliesToLexicalFunctionInInnermostScope(
-      FunctionBox* funbox, bool* annexBApplies);
+      FunctionBox* funbox, ParserBase* parser, bool* annexBApplies);
 
-  bool tryDeclareVar(const ParserName* name, DeclarationKind kind,
-                     uint32_t beginPos,
+  bool tryDeclareVar(TaggedParserAtomIndex name, ParserBase* parser,
+                     DeclarationKind kind, uint32_t beginPos,
                      mozilla::Maybe<DeclarationKind>* redeclaredKind,
                      uint32_t* prevPos);
 
-  bool hasUsedName(const UsedNameTracker& usedNames, const ParserName* name);
+  bool hasUsedName(const UsedNameTracker& usedNames,
+                   TaggedParserAtomIndex name);
   bool hasUsedFunctionSpecialName(const UsedNameTracker& usedNames,
-                                  const ParserName* name);
+                                  TaggedParserAtomIndex name);
 
   bool declareFunctionThis(const UsedNameTracker& usedNames,
                            bool canSkipLazyClosedOverBindings);
@@ -570,18 +581,18 @@ class ParseContext : public Nestable<ParseContext> {
   bool declareTopLevelDotGeneratorName();
 
  private:
-  MOZ_MUST_USE bool isVarRedeclaredInInnermostScope(
-      const ParserName* name, DeclarationKind kind,
+  [[nodiscard]] bool isVarRedeclaredInInnermostScope(
+      TaggedParserAtomIndex name, ParserBase* parser, DeclarationKind kind,
       mozilla::Maybe<DeclarationKind>* out);
 
-  MOZ_MUST_USE bool isVarRedeclaredInEval(const ParserName* name,
-                                          DeclarationKind kind,
-                                          mozilla::Maybe<DeclarationKind>* out);
+  [[nodiscard]] bool isVarRedeclaredInEval(
+      TaggedParserAtomIndex name, ParserBase* parser, DeclarationKind kind,
+      mozilla::Maybe<DeclarationKind>* out);
 
   enum DryRunOption { NotDryRun, DryRunInnermostScopeOnly };
   template <DryRunOption dryRunOption>
-  bool tryDeclareVarHelper(const ParserName* name, DeclarationKind kind,
-                           uint32_t beginPos,
+  bool tryDeclareVarHelper(TaggedParserAtomIndex name, ParserBase* parser,
+                           DeclarationKind kind, uint32_t beginPos,
                            mozilla::Maybe<DeclarationKind>* redeclaredKind,
                            uint32_t* prevPos);
 };

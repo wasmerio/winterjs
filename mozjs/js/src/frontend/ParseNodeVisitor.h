@@ -8,7 +8,6 @@
 #define frontend_ParseNodeVisitor_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
 
 #include "jsfriendapi.h"
 
@@ -57,7 +56,7 @@ class ParseNodeVisitor {
 
   explicit ParseNodeVisitor(JSContext* cx) : cx_(cx) {}
 
-  MOZ_MUST_USE bool visit(ParseNode* pn) {
+  [[nodiscard]] bool visit(ParseNode* pn) {
     if (!CheckRecursionLimit(cx_)) {
       return false;
     }
@@ -74,9 +73,9 @@ class ParseNodeVisitor {
   }
 
   // using static_cast<Derived*> here allows plain visit() to be overridden.
-#define VISIT_METHOD(KIND, TYPE)                         \
-  MOZ_MUST_USE bool visit##KIND(TYPE* pn) { /* NOLINT */ \
-    return pn->accept(*static_cast<Derived*>(this));     \
+#define VISIT_METHOD(KIND, TYPE)                          \
+  [[nodiscard]] bool visit##KIND(TYPE* pn) { /* NOLINT */ \
+    return pn->accept(*static_cast<Derived*>(this));      \
   }
   FOR_EACH_PARSE_NODE_KIND(VISIT_METHOD)
 #undef VISIT_METHOD
@@ -101,7 +100,7 @@ class RewritingParseNodeVisitor {
 
   explicit RewritingParseNodeVisitor(JSContext* cx) : cx_(cx) {}
 
-  MOZ_MUST_USE bool visit(ParseNode*& pn) {
+  [[nodiscard]] bool visit(ParseNode*& pn) {
     if (!CheckRecursionLimit(cx_)) {
       return false;
     }
@@ -119,7 +118,7 @@ class RewritingParseNodeVisitor {
 
   // using static_cast<Derived*> here allows plain visit() to be overridden.
 #define VISIT_METHOD(KIND, TYPE)                                 \
-  MOZ_MUST_USE bool visit##KIND(ParseNode*& pn) {                \
+  [[nodiscard]] bool visit##KIND(ParseNode*& pn) {               \
     MOZ_ASSERT(pn->is<TYPE>(),                                   \
                "Node of kind " #KIND " was not of type " #TYPE); \
     return pn->as<TYPE>().accept(*static_cast<Derived*>(this));  \

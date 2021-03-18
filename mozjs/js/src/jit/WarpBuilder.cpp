@@ -1095,12 +1095,12 @@ bool WarpBuilder::build_StrictNe(BytecodeLocation loc) {
 // with the join point in the bytecode.
 static bool TestTrueTargetIsJoinPoint(JSOp op) {
   switch (op) {
-    case JSOp::IfNe:
+    case JSOp::JumpIfTrue:
     case JSOp::Or:
     case JSOp::Case:
       return true;
 
-    case JSOp::IfEq:
+    case JSOp::JumpIfFalse:
     case JSOp::And:
     case JSOp::Coalesce:
       return false;
@@ -1321,7 +1321,7 @@ bool WarpBuilder::build_LoopHead(BytecodeLocation loc) {
   //
   //    LoopHead
   //    ...
-  //    IfNe/Goto to LoopHead
+  //    JumpIfTrue/Goto to LoopHead
 
   if (hasTerminatedBlock()) {
     // The whole loop is unreachable.
@@ -1406,7 +1406,7 @@ bool WarpBuilder::buildTestOp(BytecodeLocation loc) {
 
 bool WarpBuilder::buildTestBackedge(BytecodeLocation loc) {
   JSOp op = loc.getOp();
-  MOZ_ASSERT(op == JSOp::IfNe);
+  MOZ_ASSERT(op == JSOp::JumpIfTrue);
   MOZ_ASSERT(loopDepth() > 0);
 
   MDefinition* value = current->pop();
@@ -1434,9 +1434,13 @@ bool WarpBuilder::buildTestBackedge(BytecodeLocation loc) {
   return buildBackedge();
 }
 
-bool WarpBuilder::build_IfEq(BytecodeLocation loc) { return buildTestOp(loc); }
+bool WarpBuilder::build_JumpIfFalse(BytecodeLocation loc) {
+  return buildTestOp(loc);
+}
 
-bool WarpBuilder::build_IfNe(BytecodeLocation loc) { return buildTestOp(loc); }
+bool WarpBuilder::build_JumpIfTrue(BytecodeLocation loc) {
+  return buildTestOp(loc);
+}
 
 bool WarpBuilder::build_And(BytecodeLocation loc) { return buildTestOp(loc); }
 
@@ -1599,23 +1603,6 @@ bool WarpBuilder::build_Callee(BytecodeLocation) {
   MDefinition* callee = getCallee();
   current->push(callee);
   return true;
-}
-
-bool WarpBuilder::build_ClassConstructor(BytecodeLocation loc) {
-  jsbytecode* pc = loc.toRawBytecode();
-  auto* constructor = MClassConstructor::New(alloc(), pc);
-  current->add(constructor);
-  current->push(constructor);
-  return resumeAfter(constructor, loc);
-}
-
-bool WarpBuilder::build_DerivedConstructor(BytecodeLocation loc) {
-  jsbytecode* pc = loc.toRawBytecode();
-  MDefinition* prototype = current->pop();
-  auto* constructor = MDerivedClassConstructor::New(alloc(), prototype, pc);
-  current->add(constructor);
-  current->push(constructor);
-  return resumeAfter(constructor, loc);
 }
 
 bool WarpBuilder::build_ToAsyncIter(BytecodeLocation loc) {

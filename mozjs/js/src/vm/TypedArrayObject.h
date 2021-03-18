@@ -7,7 +7,6 @@
 #ifndef vm_TypedArrayObject_h
 #define vm_TypedArrayObject_h
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TextUtils.h"
 
@@ -154,6 +153,8 @@ class TypedArrayObject : public ArrayBufferViewObject {
 
   static bool isOriginalByteOffsetGetter(Native native);
 
+  static bool isOriginalByteLengthGetter(Native native);
+
   static void finalize(JSFreeOp* fop, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
@@ -178,8 +179,8 @@ class TypedArrayObject : public ArrayBufferViewObject {
   static bool copyWithin_impl(JSContext* cx, const CallArgs& args);
 };
 
-MOZ_MUST_USE bool TypedArray_bufferGetter(JSContext* cx, unsigned argc,
-                                          Value* vp);
+[[nodiscard]] bool TypedArray_bufferGetter(JSContext* cx, unsigned argc,
+                                           Value* vp);
 
 extern TypedArrayObject* NewTypedArrayWithTemplateAndLength(
     JSContext* cx, HandleObject templateObj, int32_t len);
@@ -309,7 +310,7 @@ static inline constexpr unsigned TypedArrayShift(Scalar::Type viewType) {
   }
 }
 
-static inline unsigned TypedArrayElemSize(Scalar::Type viewType) {
+static inline constexpr unsigned TypedArrayElemSize(Scalar::Type viewType) {
   return 1u << TypedArrayShift(viewType);
 }
 

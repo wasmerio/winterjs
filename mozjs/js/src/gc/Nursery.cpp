@@ -38,13 +38,8 @@
 #include "vm/NativeObject-inl.h"
 
 #ifdef XP_WIN
-#  ifndef JS_ENABLE_UWP
-#    include <process.h>
-#    define getpid _getpid
-#  else
-#   include <windows.h>
-#   define getpid GetCurrentProcessId
-#  endif
+#  include <process.h>
+#  define getpid _getpid
 #else
 #  include <unistd.h>
 #endif
@@ -83,7 +78,7 @@ struct NurseryChunk : public ChunkBase {
   // The end of the range is always ChunkSize.
   void markPagesUnusedHard(size_t from);
   // The start of the range is always the beginning of the chunk.
-  MOZ_MUST_USE bool markPagesInUseHard(size_t to);
+  [[nodiscard]] bool markPagesInUseHard(size_t to);
 
   uintptr_t start() const { return uintptr_t(&data); }
   uintptr_t end() const { return uintptr_t(this) + ChunkSize; }
@@ -765,9 +760,7 @@ js::TenuringTracer::TenuringTracer(JSRuntime* rt, Nursery* nursery)
       objHead(nullptr),
       objTail(&objHead),
       stringHead(nullptr),
-      stringTail(&stringHead),
-      bigIntHead(nullptr),
-      bigIntTail(&bigIntHead) {}
+      stringTail(&stringHead) {}
 
 inline double js::Nursery::calcPromotionRate(bool* validForTenuring) const {
   double used = double(previousGC.nurseryUsedBytes);
@@ -989,13 +982,13 @@ inline bool js::Nursery::isNearlyFull() const {
   return belowBytesThreshold && belowFractionThreshold;
 }
 
-inline bool js::Nursery::isUnderused() const {
-  // If the nursery is above its minimum size, collect it at least this often if
-  // we have idle time. This allows the nursery to shrink when it's not being
-  // used. There are other heuristics we could use for this, but this is the
-  // simplest.
-  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
+// If the nursery is above its minimum size, collect it at least this often if
+// we have idle time. This allows the nursery to shrink when it's not being
+// used. There are other heuristics we could use for this, but this is the
+// simplest.
+static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
 
+inline bool js::Nursery::isUnderused() const {
   if (js::SupportDifferentialTesting() || !previousGC.endTime) {
     return false;
   }
@@ -1223,9 +1216,13 @@ js::Nursery::CollectionResult js::Nursery::doCollection(JS::GCReason reason) {
   // been moved to the major heap. If these objects have any outgoing pointers
   // to the nursery, then those nursery objects get moved as well, until no
   // objects are left to move. That is, we iterate to a fixed point.
-  startProfile(ProfileKey::CollectToFP);
-  collectToFixedPoint(mover);
-  endProfile(ProfileKey::CollectToFP);
+  startProfile(ProfileKey::CollectToObjFP);
+  collectToObjectFixedPoint(mover);
+  endProfile(ProfileKey::CollectToObjFP);
+
+  startProfile(ProfileKey::CollectToStrFP);
+  collectToStringFixedPoint(mover);
+  endProfile(ProfileKey::CollectToStrFP);
 
   // Sweep to update any pointers to nursery objects that have now been
   // tenured.
@@ -1578,12 +1575,6 @@ static inline double ClampDouble(double value, double min, double max) {
 }
 
 size_t js::Nursery::targetSize(JSGCInvocationKind kind, JS::GCReason reason) {
-  // If the nursery is above its minimum size, collect it at least this often if
-  // we have idle time. This allows the nursery to shrink when it's not being
-  // used. There are other heuristics we could use for this, but this is the
-  // simplest.
-  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
-
   // Shrink the nursery as much as possible if shrinking was requested or in low
   // memory situations.
   if (kind == GC_SHRINK || gc::IsOOMReason(reason) ||

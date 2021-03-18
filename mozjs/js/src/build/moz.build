@@ -11,6 +11,8 @@ CONFIGURE_SUBST_FILES += [
 
 LIBRARY_DEFINES["EXPORT_JS_API"] = True
 
+# Note: The static standalone js library is currently broken due
+# to static mozglue missing, see bug 1588340 for more information.
 LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
 
 # JavaScript must be built shared, even for static builds, as it is used by
@@ -37,7 +39,6 @@ if CONFIG["JS_SHARED_LIBRARY"]:
         SYMBOLS_FILE = "!symverscript"
 else:
     Library("js")
-    USE_LIBS += ["mozglue"]
 
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = "js_static"
@@ -91,6 +92,7 @@ GeneratedFile(
     script="/config/run_spidermonkey_checks.py",
     inputs=[
         "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
+        "/config/check_spidermonkey_style.py",
         "/config/check_macroassembler_style.py",
         "/config/check_js_opcode.py",
     ],

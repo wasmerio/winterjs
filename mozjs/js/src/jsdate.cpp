@@ -50,6 +50,7 @@
 #include "vm/JSObject.h"
 #include "vm/StringType.h"
 #include "vm/Time.h"
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/Compartment-inl.h"  // For js::UnwrapAndTypeCheckThis
 #include "vm/JSObject-inl.h"
@@ -1183,7 +1184,7 @@ static bool ParseDate(const CharT* s, size_t length, ClippedTime* result) {
         seenPlusMinus = true;
 
         /* offset */
-        if (n < 24) {
+        if (n < 24 && partLength <= 2) {
           n = n * 60; /* EG. "GMT-3" */
         } else {
           n = n % 100 + n / 100 * 60; /* eg "GMT-0430" */

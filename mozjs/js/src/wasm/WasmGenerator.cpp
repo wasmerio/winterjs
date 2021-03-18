@@ -40,8 +40,6 @@
 
 #include "jit/MacroAssembler-inl.h"
 
-#undef far
-
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
@@ -60,6 +58,9 @@ bool CompiledCode::swap(MacroAssembler& masm) {
   callSiteTargets.swap(masm.callSiteTargets());
   trapSites.swap(masm.trapSites());
   symbolicAccesses.swap(masm.symbolicAccesses());
+#ifdef ENABLE_WASM_EXCEPTIONS
+  tryNotes.swap(masm.tryNotes());
+#endif
   codeLabels.swap(masm.codeLabels());
   return true;
 }
@@ -168,11 +169,8 @@ bool ModuleGenerator::allocateGlobalBytes(uint32_t bytes, uint32_t align,
   return true;
 }
 
-bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata,
-                           JSTelemetrySender telemetrySender) {
+bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata) {
   // Perform fallible metadata, linkdata, assumption allocations.
-
-  telemetrySender_ = telemetrySender;
 
   MOZ_ASSERT(isAsmJS() == !!maybeAsmJSMetadata);
   if (maybeAsmJSMetadata) {
@@ -467,8 +465,7 @@ bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata,
   }
   for (size_t i = 0; i < numTasks; i++) {
     tasks_.infallibleEmplaceBack(*moduleEnv_, *compilerEnv_, taskState_,
-                                 COMPILATION_LIFO_DEFAULT_CHUNK_SIZE,
-                                 telemetrySender);
+                                 COMPILATION_LIFO_DEFAULT_CHUNK_SIZE);
   }
 
   if (!freeTasks_.reserve(numTasks)) {
@@ -755,17 +752,21 @@ bool ModuleGenerator::linkCompiledCode(CompiledCode& code) {
     }
   }
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  auto tryNoteOp = [=](uint32_t, WasmTryNote* tn) {
+    tn->offsetBy(offsetInModule);
+  };
+  if (!AppendForEach(&metadataTier_->tryNotes, code.tryNotes, tryNoteOp)) {
+    return false;
+  }
+#endif
+
   return true;
 }
 
 static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
   MOZ_ASSERT(task->lifo.isEmpty());
   MOZ_ASSERT(task->output.empty());
-
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-  int64_t startTime = PRMJ_Now();
-  int compileTimeTelemetryID;
-#endif
 
   switch (task->compilerEnv.tier()) {
     case Tier::Optimized:
@@ -776,9 +777,6 @@ static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
                                          &task->output, error)) {
             return false;
           }
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-          compileTimeTelemetryID = JS_TELEMETRY_WASM_COMPILE_TIME_CRANELIFT_US;
-#endif
           break;
         case OptimizedBackend::Ion:
           if (!IonCompileFunctions(task->moduleEnv, task->compilerEnv,
@@ -786,9 +784,6 @@ static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
                                    error)) {
             return false;
           }
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-          compileTimeTelemetryID = JS_TELEMETRY_WASM_COMPILE_TIME_ION_US;
-#endif
           break;
       }
       break;
@@ -798,18 +793,8 @@ static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
                                     error)) {
         return false;
       }
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-      compileTimeTelemetryID = JS_TELEMETRY_WASM_COMPILE_TIME_BASELINE_US;
-#endif
       break;
   }
-
-#ifdef ENABLE_SPIDERMONKEY_TELEMETRY
-  int64_t endTime = PRMJ_Now();
-  int64_t compileTimeMicros = endTime - startTime;
-
-  task->telemetrySender.addTelemetry(compileTimeTelemetryID, compileTimeMicros);
-#endif
 
   MOZ_ASSERT(task->lifo.isEmpty());
   MOZ_ASSERT(task->inputs.length() == task->output.codeRanges.length());
@@ -1013,6 +998,9 @@ bool ModuleGenerator::finishCodegen() {
   MOZ_ASSERT(masm_.callSiteTargets().empty());
   MOZ_ASSERT(masm_.trapSites().empty());
   MOZ_ASSERT(masm_.symbolicAccesses().empty());
+#ifdef ENABLE_WASM_EXCEPTIONS
+  MOZ_ASSERT(masm_.tryNotes().empty());
+#endif
   MOZ_ASSERT(masm_.codeLabels().empty());
 
   masm_.finish();
@@ -1023,6 +1011,11 @@ bool ModuleGenerator::finishMetadataTier() {
   // The stack maps aren't yet sorted.  Do so now, since we'll need to
   // binary-search them at GC time.
   metadataTier_->stackMaps.sort();
+
+  // The try notes also need to be sorted to simplify lookup.
+#ifdef ENABLE_WASM_EXCEPTIONS
+  std::sort(metadataTier_->tryNotes.begin(), metadataTier_->tryNotes.end());
+#endif
 
 #ifdef DEBUG
   // Check that the stack map contains no duplicates, since that could lead to
@@ -1062,6 +1055,17 @@ bool ModuleGenerator::finishMetadataTier() {
     MOZ_ASSERT(debugTrapFarJumpOffset >= last);
     last = debugTrapFarJumpOffset;
   }
+
+  // Try notes should be sorted so that the end of ranges are in rising order
+  // so that the innermost catch handler is chosen.
+#  ifdef ENABLE_WASM_EXCEPTIONS
+  last = 0;
+  for (const WasmTryNote& tryNote : metadataTier_->tryNotes) {
+    MOZ_ASSERT(tryNote.end >= last);
+    MOZ_ASSERT(tryNote.end > tryNote.begin);
+    last = tryNote.end;
+  }
+#  endif
 #endif
 
   // These Vectors can get large and the excess capacity can be significant,
@@ -1072,6 +1076,9 @@ bool ModuleGenerator::finishMetadataTier() {
   metadataTier_->callSites.shrinkStorageToFit();
   metadataTier_->trapSites.shrinkStorageToFit();
   metadataTier_->debugTrapFarJumpOffsets.shrinkStorageToFit();
+#ifdef ENABLE_WASM_EXCEPTIONS
+  metadataTier_->tryNotes.shrinkStorageToFit();
+#endif
   for (Trap trap : MakeEnumeratedRange(Trap::Limit)) {
     metadataTier_->trapSites[trap].shrinkStorageToFit();
   }
@@ -1159,7 +1166,6 @@ SharedMetadata ModuleGenerator::finishMetadata(const Bytes& bytecode) {
   metadata_->moduleName = moduleEnv_->moduleName;
   metadata_->funcNames = std::move(moduleEnv_->funcNames);
   metadata_->omitsBoundsChecks = moduleEnv_->hugeMemoryEnabled();
-  metadata_->v128Enabled = moduleEnv_->v128Enabled();
   metadata_->usesDuplicateImports = moduleEnv_->usesDuplicateImports;
 
   // Copy over additional debug information.
@@ -1309,8 +1315,7 @@ SharedModule ModuleGenerator::finishModule(
   }
 
   if (mode() == CompileMode::Tier1) {
-    module->startTier2(*compileArgs_, bytecode, maybeTier2Listener,
-                       telemetrySender_);
+    module->startTier2(*compileArgs_, bytecode, maybeTier2Listener);
   } else if (tier() == Tier::Serialized && maybeTier2Listener) {
     module->serialize(*linkData_, *maybeTier2Listener);
   }
@@ -1353,6 +1358,9 @@ size_t CompiledCode::sizeOfExcludingThis(
          callSites.sizeOfExcludingThis(mallocSizeOf) +
          callSiteTargets.sizeOfExcludingThis(mallocSizeOf) + trapSitesSize +
          symbolicAccesses.sizeOfExcludingThis(mallocSizeOf) +
+#ifdef ENABLE_WASM_EXCEPTIONS
+         tryNotes.sizeOfExcludingThis(mallocSizeOf) +
+#endif
          codeLabels.sizeOfExcludingThis(mallocSizeOf);
 }
 

@@ -11,8 +11,8 @@
 #include "jsapi.h"
 
 #include "debugger/DebugAPI.h"
-#include "frontend/ParserAtom.h"
-#include "js/Object.h"  // JS::GetReservedSlot
+#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
+#include "js/Object.h"            // JS::GetReservedSlot
 #include "proxy/DeadObjectProxy.h"
 
 #include "vm/JSObject-inl.h"
@@ -96,7 +96,8 @@ static bool StringToInstrumentationKind(JSContext* cx, HandleString str,
 }
 
 /* static */
-const frontend::ParserAtom* RealmInstrumentation::getInstrumentationKindName(
+frontend::TaggedParserAtomIndex
+RealmInstrumentation::getInstrumentationKindName(
     JSContext* cx, frontend::ParserAtomsTable& parserAtoms,
     InstrumentationKind kind) {
   for (size_t i = 0; i < std::size(instrumentationNames); i++) {

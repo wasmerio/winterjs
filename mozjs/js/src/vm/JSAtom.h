@@ -28,16 +28,6 @@ class PropertyName;
 
 } /* namespace js */
 
-/* Well-known predefined C strings. */
-#define DECLARE_PROTO_STR(name, clasp) extern const char js_##name##_str[];
-JS_FOR_EACH_PROTOTYPE(DECLARE_PROTO_STR)
-#undef DECLARE_PROTO_STR
-
-#define DECLARE_CONST_CHAR_STR(idpart, id, text) \
-  extern const char js_##idpart##_str[];
-FOR_EACH_COMMON_PROPERTYNAME(DECLARE_CONST_CHAR_STR)
-#undef DECLARE_CONST_CHAR_STR
-
 namespace js {
 
 class AutoAccessAtomsZone;
@@ -56,6 +46,9 @@ extern JSAtom* Atomize(
     JSContext* cx, const char* bytes, size_t length,
     js::PinningBehavior pin = js::DoNotPinAtom,
     const mozilla::Maybe<uint32_t>& indexValue = mozilla::Nothing());
+
+extern JSAtom* Atomize(JSContext* cx, HashNumber hash, const char* bytes,
+                       size_t length, PinningBehavior pin);
 
 template <typename CharT>
 extern JSAtom* AtomizeChars(JSContext* cx, const CharT* chars, size_t length,

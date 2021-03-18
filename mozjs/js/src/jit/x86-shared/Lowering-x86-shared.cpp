@@ -530,10 +530,11 @@ void LIRGeneratorX86Shared::lowerCompareExchangeTypedArrayElement(
   MOZ_ASSERT(ins->arrayType() != Scalar::Float64);
 
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   const LUse elements = useRegister(ins->elements());
-  const LAllocation index = useRegisterOrConstant(ins->index());
+  const LAllocation index =
+      useRegisterOrIndexConstant(ins->index(), ins->arrayType());
 
   // If the target is a floating register then we need a temp at the
   // lower level; that temp must be eax.
@@ -583,10 +584,11 @@ void LIRGeneratorX86Shared::lowerAtomicExchangeTypedArrayElement(
   MOZ_ASSERT(ins->arrayType() <= Scalar::Uint32);
 
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   const LUse elements = useRegister(ins->elements());
-  const LAllocation index = useRegisterOrConstant(ins->index());
+  const LAllocation index =
+      useRegisterOrIndexConstant(ins->index(), ins->arrayType());
   const LAllocation value = useRegister(ins->value());
 
   // The underlying instruction is XCHG, which can operate on any
@@ -622,17 +624,18 @@ void LIRGeneratorX86Shared::lowerAtomicTypedArrayElementBinop(
   MOZ_ASSERT(ins->arrayType() != Scalar::Float64);
 
   MOZ_ASSERT(ins->elements()->type() == MIRType::Elements);
-  MOZ_ASSERT(ins->index()->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->index()->type() == MIRType::IntPtr);
 
   const LUse elements = useRegister(ins->elements());
-  const LAllocation index = useRegisterOrConstant(ins->index());
+  const LAllocation index =
+      useRegisterOrIndexConstant(ins->index(), ins->arrayType());
 
   // Case 1: the result of the operation is not used.
   //
   // We'll emit a single instruction: LOCK ADD, LOCK SUB, LOCK AND,
   // LOCK OR, or LOCK XOR.  We can do this even for the Uint32 case.
 
-  if (!ins->hasUses()) {
+  if (ins->isForEffect()) {
     LAllocation value;
     if (useI386ByteRegisters && ins->isByteArray() &&
         !ins->value()->isConstant()) {
@@ -793,6 +796,9 @@ void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
   MOZ_ASSERT(rhs->type() == MIRType::Simd128);
   MOZ_ASSERT(ins->type() == MIRType::Simd128);
 
+  // Note MWasmBinarySimd128::foldsTo has already specialized operations that
+  // have a constant operand, so this takes care of more general cases of
+  // reordering, see ReorderCommutative.
   if (ins->isCommutative()) {
     ReorderCommutative(&lhs, &rhs, ins);
   }
@@ -1274,6 +1280,8 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
       reuseInput = true;
       break;
     case wasm::SimdOp::I32x4TruncUSatF32x4:
+    case wasm::SimdOp::I32x4TruncSatF64x2SZero:
+    case wasm::SimdOp::I32x4TruncSatF64x2UZero:
       tempReg = tempSimd128();
       // Prefer src == dest to avoid an unconditional src->dest move.
       useAtStart = true;
@@ -1287,6 +1295,10 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
     case wasm::SimdOp::I32x4WidenHighSI16x8:
     case wasm::SimdOp::I32x4WidenLowUI16x8:
     case wasm::SimdOp::I32x4WidenHighUI16x8:
+    case wasm::SimdOp::I64x2WidenLowSI32x4:
+    case wasm::SimdOp::I64x2WidenHighSI32x4:
+    case wasm::SimdOp::I64x2WidenLowUI32x4:
+    case wasm::SimdOp::I64x2WidenHighUI32x4:
     case wasm::SimdOp::F32x4ConvertSI32x4:
     case wasm::SimdOp::F32x4Ceil:
     case wasm::SimdOp::F32x4Floor:
@@ -1296,6 +1308,10 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
     case wasm::SimdOp::F64x2Floor:
     case wasm::SimdOp::F64x2Trunc:
     case wasm::SimdOp::F64x2Nearest:
+    case wasm::SimdOp::F32x4DemoteF64x2Zero:
+    case wasm::SimdOp::F64x2PromoteLowF32x4:
+    case wasm::SimdOp::F64x2ConvertLowI32x4S:
+    case wasm::SimdOp::F64x2ConvertLowI32x4U:
       // Prefer src == dest to exert the lowest register pressure on the
       // surrounding code.
       useAtStart = true;
@@ -1315,14 +1331,37 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
   }
 }
 
+void LIRGenerator::visitWasmLoadLaneSimd128(MWasmLoadLaneSimd128* ins) {
+  LUse base = useRegisterAtStart(ins->base());
+  LUse inputUse = useRegisterAtStart(ins->value());
+  LAllocation memoryBase = ins->hasMemoryBase()
+                               ? useRegisterAtStart(ins->memoryBase())
+                               : LAllocation();
+  LWasmLoadLaneSimd128* lir =
+      new (alloc()) LWasmLoadLaneSimd128(base, inputUse, memoryBase);
+  defineReuseInput(lir, ins, LWasmLoadLaneSimd128::Src);
+}
+
+void LIRGenerator::visitWasmStoreLaneSimd128(MWasmStoreLaneSimd128* ins) {
+  LUse base = useRegisterAtStart(ins->base());
+  LUse input = useRegisterAtStart(ins->value());
+  LAllocation memoryBase = ins->hasMemoryBase()
+                               ? useRegisterAtStart(ins->memoryBase())
+                               : LAllocation();
+  LWasmStoreLaneSimd128* lir =
+      new (alloc()) LWasmStoreLaneSimd128(base, input, memoryBase);
+  add(lir, ins);
+}
+
 bool LIRGeneratorX86Shared::canFoldReduceSimd128AndBranch(wasm::SimdOp op) {
   switch (op) {
-    case wasm::SimdOp::I8x16AnyTrue:
+    case wasm::SimdOp::V128AnyTrue:
     case wasm::SimdOp::I16x8AnyTrue:
     case wasm::SimdOp::I32x4AnyTrue:
     case wasm::SimdOp::I8x16AllTrue:
     case wasm::SimdOp::I16x8AllTrue:
     case wasm::SimdOp::I32x4AllTrue:
+    case wasm::SimdOp::I64x2AllTrue:
     case wasm::SimdOp::I16x8Bitmask:
       return true;
     default:

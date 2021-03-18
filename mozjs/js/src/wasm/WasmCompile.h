@@ -68,8 +68,8 @@ struct CompileArgs : ShareableBase<CompileArgs> {
   // You should use the first one in general, unless you have a very good
   // reason (i.e. no JSContext around and you know which flags have been used).
 
-  static SharedCompileArgs build(JSContext* cx,
-                                 ScriptedCaller&& scriptedCaller);
+  static SharedCompileArgs build(JSContext* cx, ScriptedCaller&& scriptedCaller,
+                                 const FeatureOptions& options);
 
   explicit CompileArgs(ScriptedCaller&& scriptedCaller)
       : scriptedCaller(std::move(scriptedCaller)),
@@ -91,17 +91,15 @@ double EstimateCompiledCodeSize(Tier tier, size_t bytecodeSize);
 //  - *error points to a string description of the error
 //  - *error is null and the caller should report out-of-memory.
 
-SharedModule CompileBuffer(
-    const CompileArgs& args, const ShareableBytes& bytecode, UniqueChars* error,
-    UniqueCharsVector* warnings,
-    JS::OptimizedEncodingListener* listener = nullptr,
-    JSTelemetrySender telemetrySender = JSTelemetrySender());
+SharedModule CompileBuffer(const CompileArgs& args,
+                           const ShareableBytes& bytecode, UniqueChars* error,
+                           UniqueCharsVector* warnings,
+                           JS::OptimizedEncodingListener* listener = nullptr);
 
 // Attempt to compile the second tier of the given wasm::Module.
 
 void CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                  const Module& module, Atomic<bool>* cancelled,
-                  JSTelemetrySender telemetrySender = JSTelemetrySender());
+                  const Module& module, Atomic<bool>* cancelled);
 
 // Compile the given WebAssembly module which has been broken into three
 // partitions:
@@ -132,12 +130,12 @@ struct StreamEndData {
 };
 using ExclusiveStreamEndData = ExclusiveWaitableData<StreamEndData>;
 
-SharedModule CompileStreaming(
-    const CompileArgs& args, const Bytes& envBytes, const Bytes& codeBytes,
-    const ExclusiveBytesPtr& codeBytesEnd,
-    const ExclusiveStreamEndData& streamEnd, const Atomic<bool>& cancelled,
-    UniqueChars* error, UniqueCharsVector* warnings,
-    JSTelemetrySender telemetrySender = JSTelemetrySender());
+SharedModule CompileStreaming(const CompileArgs& args, const Bytes& envBytes,
+                              const Bytes& codeBytes,
+                              const ExclusiveBytesPtr& codeBytesEnd,
+                              const ExclusiveStreamEndData& streamEnd,
+                              const Atomic<bool>& cancelled, UniqueChars* error,
+                              UniqueCharsVector* warnings);
 
 }  // namespace wasm
 }  // namespace js

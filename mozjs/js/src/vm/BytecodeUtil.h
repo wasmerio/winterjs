@@ -234,7 +234,7 @@ static inline void SetLoopHeadDepthHint(jsbytecode* pc, unsigned loopDepth) {
 static inline bool IsBackedgePC(jsbytecode* pc) {
   switch (JSOp(*pc)) {
     case JSOp::Goto:
-    case JSOp::IfNe:
+    case JSOp::JumpIfTrue:
       return GET_JUMP_OFFSET(pc) < 0;
     default:
       return false;
@@ -244,28 +244,6 @@ static inline bool IsBackedgePC(jsbytecode* pc) {
 static inline bool IsBackedgeForLoopHead(jsbytecode* pc, jsbytecode* loopHead) {
   MOZ_ASSERT(JSOp(*loopHead) == JSOp::LoopHead);
   return IsBackedgePC(pc) && pc + GET_JUMP_OFFSET(pc) == loopHead;
-}
-
-static inline void SetClassConstructorOperands(jsbytecode* pc,
-                                               js::GCThingIndex atomIndex,
-                                               uint32_t sourceStart,
-                                               uint32_t sourceEnd) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::ClassConstructor ||
-             JSOp(*pc) == JSOp::DerivedConstructor);
-  SET_GCTHING_INDEX(pc, atomIndex);
-  SET_UINT32(pc + 4, sourceStart);
-  SET_UINT32(pc + 8, sourceEnd);
-}
-
-static inline void GetClassConstructorOperands(jsbytecode* pc,
-                                               js::GCThingIndex* atomIndex,
-                                               uint32_t* sourceStart,
-                                               uint32_t* sourceEnd) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::ClassConstructor ||
-             JSOp(*pc) == JSOp::DerivedConstructor);
-  *atomIndex = GET_GCTHING_INDEX(pc);
-  *sourceStart = GET_UINT32(pc + 4);
-  *sourceEnd = GET_UINT32(pc + 8);
 }
 
 /*
@@ -707,7 +685,7 @@ enum class DisassembleSkeptically { No, Yes };
 /*
  * Disassemblers, for debugging only.
  */
-extern MOZ_MUST_USE bool Disassemble(
+[[nodiscard]] extern bool Disassemble(
     JSContext* cx, JS::Handle<JSScript*> script, bool lines, Sprinter* sp,
     DisassembleSkeptically skeptically = DisassembleSkeptically::No);
 
@@ -716,7 +694,7 @@ unsigned Disassemble1(JSContext* cx, JS::Handle<JSScript*> script,
 
 #endif
 
-extern MOZ_MUST_USE bool DumpRealmPCCounts(JSContext* cx);
+[[nodiscard]] extern bool DumpRealmPCCounts(JSContext* cx);
 
 }  // namespace js
 

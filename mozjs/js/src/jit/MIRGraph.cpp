@@ -49,12 +49,6 @@ mozilla::GenericErrorResult<AbortReason> MIRGenerator::abort(AbortReason r) {
       case AbortReason::Alloc:
         JitSpew(JitSpew_IonAbort, "AbortReason::Alloc");
         break;
-      case AbortReason::Inlining:
-        JitSpew(JitSpew_IonAbort, "AbortReason::Inlining");
-        break;
-      case AbortReason::PreliminaryObjects:
-        JitSpew(JitSpew_IonAbort, "AbortReason::PreliminaryObjects");
-        break;
       case AbortReason::Disable:
         JitSpew(JitSpew_IonAbort, "AbortReason::Disable");
         break;
@@ -156,6 +150,8 @@ MBasicBlock* MBasicBlock::New(MIRGraph& graph, size_t stackDepth,
 MBasicBlock* MBasicBlock::NewPopN(MIRGraph& graph, const CompileInfo& info,
                                   MBasicBlock* pred, BytecodeSite* site,
                                   Kind kind, uint32_t popped) {
+  MOZ_ASSERT(site->pc() != nullptr);
+
   MBasicBlock* block = new (graph.alloc()) MBasicBlock(graph, info, site, kind);
   if (!block->init()) {
     return nullptr;
@@ -336,7 +332,6 @@ MBasicBlock::MBasicBlock(MIRGraph& graph, const CompileInfo& info,
       id_(0),
       domIndex_(0),
       numDominated_(0),
-      pc_(site->pc()),
       lir_(nullptr),
       callerResumePoint_(nullptr),
       entryResumePoint_(nullptr),
@@ -357,6 +352,7 @@ MBasicBlock::MBasicBlock(MIRGraph& graph, const CompileInfo& info,
       columnIndex_(0u)
 #endif
 {
+  MOZ_ASSERT(trackedSite_, "trackedSite_ is non-nullptr");
 }
 
 bool MBasicBlock::init() { return slots_.init(graph_.alloc(), info_.nslots()); }
@@ -533,9 +529,8 @@ void MBasicBlock::moveBefore(MInstruction* at, MInstruction* ins) {
 
   // Insert into new block, which may be distinct.
   // Uses and operands are untouched.
-  ins->setBlock(at->block());
+  ins->setInstructionBlock(at->block(), at->trackedSite());
   at->block()->instructions_.insertBefore(at, ins);
-  ins->setTrackedSite(at->trackedSite());
 }
 
 MInstruction* MBasicBlock::safeInsertTop(MDefinition* ins, IgnoreTop ignore) {
@@ -681,18 +676,16 @@ void MBasicBlock::clear() {
 
 void MBasicBlock::insertBefore(MInstruction* at, MInstruction* ins) {
   MOZ_ASSERT(at->block() == this);
-  ins->setBlock(this);
+  ins->setInstructionBlock(this, at->trackedSite());
   graph().allocDefinitionId(ins);
   instructions_.insertBefore(at, ins);
-  ins->setTrackedSite(at->trackedSite());
 }
 
 void MBasicBlock::insertAfter(MInstruction* at, MInstruction* ins) {
   MOZ_ASSERT(at->block() == this);
-  ins->setBlock(this);
+  ins->setInstructionBlock(this, at->trackedSite());
   graph().allocDefinitionId(ins);
   instructions_.insertAfter(at, ins);
-  ins->setTrackedSite(at->trackedSite());
 }
 
 void MBasicBlock::insertAtEnd(MInstruction* ins) {
@@ -705,7 +698,7 @@ void MBasicBlock::insertAtEnd(MInstruction* ins) {
 
 void MBasicBlock::addPhi(MPhi* phi) {
   phis_.pushBack(phi);
-  phi->setBlock(this);
+  phi->setPhiBlock(this);
   graph().allocDefinitionId(phi);
 }
 

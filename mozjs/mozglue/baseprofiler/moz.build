@@ -70,10 +70,6 @@ if CONFIG["MOZ_GECKO_PROFILER"]:
 
     FINAL_LIBRARY = "mozglue"
 
-# Many of the headers in this directory are usable in non-MOZ_GECKO_PROFILER
-# builds.
-# BaseProfiler.h and BaseProfilerCounts.h only contain no-op macros in that
-# case.
 EXPORTS += [
     "public/BaseProfiler.h",
 ]
@@ -82,10 +78,12 @@ EXPORTS.mozilla += [
     "public/BaseProfileJSONWriter.h",
     "public/BaseProfilerCounts.h",
     "public/BaseProfilerDetail.h",
+    "public/BaseProfilerLabels.h",
     "public/BaseProfilerMarkers.h",
     "public/BaseProfilerMarkersDetail.h",
     "public/BaseProfilerMarkersPrerequisites.h",
     "public/BaseProfilerMarkerTypes.h",
+    "public/BaseProfilerState.h",
     "public/BlocksRingBuffer.h",
     "public/leb128iterator.h",
     "public/ModuloBuffer.h",

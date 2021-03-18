@@ -168,7 +168,9 @@ class ArgumentsObject : public NativeObject {
   static const uint32_t ITERATOR_OVERRIDDEN_BIT = 0x2;
   static const uint32_t ELEMENT_OVERRIDDEN_BIT = 0x4;
   static const uint32_t CALLEE_OVERRIDDEN_BIT = 0x8;
-  static const uint32_t PACKED_BITS_COUNT = 4;
+  static const uint32_t FORWARDED_ARGUMENTS_BIT = 0x10;
+  static const uint32_t PACKED_BITS_COUNT = 5;
+  static const uint32_t PACKED_BITS_MASK = (1 << PACKED_BITS_COUNT) - 1;
 
   static_assert(ARGS_LENGTH_MAX <= (UINT32_MAX >> PACKED_BITS_COUNT),
                 "Max arguments length must fit in available bits");
@@ -185,7 +187,7 @@ class ArgumentsObject : public NativeObject {
 
   RareArgumentsData* maybeRareData() const { return data()->rareData; }
 
-  MOZ_MUST_USE bool createRareData(JSContext* cx);
+  [[nodiscard]] bool createRareData(JSContext* cx);
 
   RareArgumentsData* getOrCreateRareData(JSContext* cx) {
     if (!data()->rareData && !createRareData(cx)) {
@@ -282,8 +284,9 @@ class ArgumentsObject : public NativeObject {
    */
   static bool getArgumentsIterator(JSContext* cx, MutableHandleValue val);
 
-  /* True iff any element has been assigned or its attributes
-   * changed. */
+  /* True iff any element has been assigned, deleted, or had its
+   * attributes changed.
+   */
   bool hasOverriddenElement() const {
     const Value& v = getFixedSlot(INITIAL_LENGTH_SLOT);
     return v.toInt32() & ELEMENT_OVERRIDDEN_BIT;
@@ -314,13 +317,17 @@ class ArgumentsObject : public NativeObject {
     if (i >= initialLength()) {
       return false;
     }
-    return maybeRareData() &&
-           maybeRareData()->isElementDeleted(initialLength(), i);
+    bool result = maybeRareData() &&
+                  maybeRareData()->isElementDeleted(initialLength(), i);
+    MOZ_ASSERT_IF(result, hasOverriddenElement());
+    return result;
   }
 
   bool isAnyElementDeleted() const {
-    return maybeRareData() &&
-           maybeRareData()->isAnyElementDeleted(initialLength());
+    bool result = maybeRareData() &&
+                  maybeRareData()->isAnyElementDeleted(initialLength());
+    MOZ_ASSERT_IF(result, hasOverriddenElement());
+    return result;
   }
 
   bool markElementDeleted(JSContext* cx, uint32_t i);
@@ -365,7 +372,19 @@ class ArgumentsObject : public NativeObject {
   bool argIsForwarded(unsigned i) const {
     MOZ_ASSERT(i < data()->numArgs);
     const Value& v = data()->args[i];
+    MOZ_ASSERT_IF(IsMagicScopeSlotValue(v), anyArgIsForwarded());
     return IsMagicScopeSlotValue(v);
+  }
+
+  bool anyArgIsForwarded() const {
+    const Value& v = getFixedSlot(INITIAL_LENGTH_SLOT);
+    return v.toInt32() & FORWARDED_ARGUMENTS_BIT;
+  }
+
+  void markArgumentForwarded() {
+    uint32_t v =
+        getFixedSlot(INITIAL_LENGTH_SLOT).toInt32() | FORWARDED_ARGUMENTS_BIT;
+    setFixedSlot(INITIAL_LENGTH_SLOT, Int32Value(v));
   }
 
   /*

@@ -259,7 +259,7 @@
 //
 //   CanSkipAwait                    # VALUE, CAN_SKIP
 //   MaybeExtractAwaitValue          # VALUE_OR_RVAL, CAN_SKIP
-//   IfNe END                        # VALUE
+//   JumpIfTrue END                  # VALUE
 //
 //   JumpTarget                      # VALUE
 //   GetAliasedVar ".generator"      # VALUE .generator
@@ -283,11 +283,11 @@ extern const JSClass AsyncFunctionClass;
 // Resume the async function when the `await` operand resolves.
 // Split into two functions depending on whether the awaited value was
 // fulfilled or rejected.
-MOZ_MUST_USE bool AsyncFunctionAwaitedFulfilled(
+[[nodiscard]] bool AsyncFunctionAwaitedFulfilled(
     JSContext* cx, Handle<AsyncFunctionGeneratorObject*> generator,
     HandleValue value);
 
-MOZ_MUST_USE bool AsyncFunctionAwaitedRejected(
+[[nodiscard]] bool AsyncFunctionAwaitedRejected(
     JSContext* cx, Handle<AsyncFunctionGeneratorObject*> generator,
     HandleValue reason);
 

@@ -2035,12 +2035,12 @@ bool BaselineCodeGen<Handler>::emitTest(bool branchIfTrue) {
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_IfEq() {
+bool BaselineCodeGen<Handler>::emit_JumpIfFalse() {
   return emitTest(false);
 }
 
 template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_IfNe() {
+bool BaselineCodeGen<Handler>::emit_JumpIfTrue() {
   return emitTest(true);
 }
 
@@ -6300,49 +6300,6 @@ bool BaselineCodeGen<Handler>::emit_FunWithProto() {
   using Fn =
       JSObject* (*)(JSContext*, HandleFunction, HandleObject, HandleObject);
   if (!callVM<Fn, js::FunWithProtoOperation>()) {
-    return false;
-  }
-
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
-  frame.push(R0);
-  return true;
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_ClassConstructor() {
-  frame.syncStack(0);
-
-  // Pass nullptr as prototype to MakeDefaultConstructor
-  prepareVMCall();
-  pushArg(ImmPtr(nullptr));
-  pushBytecodePCArg();
-  pushScriptArg();
-
-  using Fn =
-      JSFunction* (*)(JSContext*, HandleScript, jsbytecode*, HandleObject);
-  if (!callVM<Fn, js::MakeDefaultConstructor>()) {
-    return false;
-  }
-
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
-  frame.push(R0);
-  return true;
-}
-
-template <typename Handler>
-bool BaselineCodeGen<Handler>::emit_DerivedConstructor() {
-  frame.popRegsAndSync(1);
-
-  masm.unboxObject(R0, R0.scratchReg());
-
-  prepareVMCall();
-  pushArg(R0.scratchReg());
-  pushBytecodePCArg();
-  pushScriptArg();
-
-  using Fn =
-      JSFunction* (*)(JSContext*, HandleScript, jsbytecode*, HandleObject);
-  if (!callVM<Fn, js::MakeDefaultConstructor>()) {
     return false;
   }
 

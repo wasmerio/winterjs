@@ -17,7 +17,7 @@
 #include "jstypes.h"  // JS_PUBLIC_API
 
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
-#include "frontend/CompilationInfo.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
+#include "frontend/CompilationStencil.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
 #include "frontend/FullParseHandler.h"  // frontend::FullParseHandler
 #include "frontend/ParseContext.h"      // frontend::UsedNameTracker
 #include "frontend/Parser.h"            // frontend::Parser, frontend::ParseGoal
@@ -84,25 +84,25 @@ template <typename Unit>
 static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     SourceText<Unit>& srcBuf) {
-  ScopeKind scopeKind =
-      options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
-
   MOZ_ASSERT(!cx->zone()->isAtomsZone());
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
-    return nullptr;
-  }
-  if (!frontend::CompileGlobalScriptToStencil(cx, stencil.get(), srcBuf,
-                                              scopeKind)) {
+  ScopeKind scopeKind =
+      options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
+
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  UniquePtr<frontend::CompilationStencil> stencil =
+      frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
+                                             scopeKind);
+  if (!stencil) {
     return nullptr;
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, stencil.get(), gcOutput.get())) {
+  if (!frontend::InstantiateStencils(cx, input.get(), *stencil,
+                                     gcOutput.get())) {
     return nullptr;
   }
 
@@ -111,20 +111,16 @@ static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
     return nullptr;
   }
 
-  if (options.useStencilXDR) {
-    UniquePtr<XDRIncrementalEncoderBase> xdrEncoder;
+  MOZ_DIAGNOSTIC_ASSERT(options.useStencilXDR);
 
-    if (!stencil.get().input.source()->xdrEncodeInitialStencil(
-            cx, stencil.get(), xdrEncoder)) {
-      return nullptr;
-    }
+  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
 
-    script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
-  } else {
-    if (!script->scriptSource()->xdrEncodeTopLevel(cx, script)) {
-      return nullptr;
-    }
+  if (!stencil->source->xdrEncodeInitialStencil(cx, input.get(), *stencil,
+                                                xdrEncoder)) {
+    return nullptr;
   }
+
+  script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
 
   return script;
 }
@@ -198,21 +194,25 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   using frontend::Parser;
 
   CompileOptions options(cx);
-  Rooted<frontend::CompilationStencil> stencil(
-      cx, frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  if (!input.get().initForGlobal(cx)) {
+    return false;
+  }
+  frontend::CompilationStencil stencil(input.get());
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, input.get(),
+                                              stencil);
+  if (!compilationState.init(cx)) {
     return false;
   }
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, options,
-                                              stencil.get());
-
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   Parser<FullParseHandler, char16_t> parser(cx, options, chars.get(), length,
-                                            /* foldConstants = */ true,
-                                            stencil.get(), compilationState,
-                                            nullptr, nullptr);
+                                            /* foldConstants = */ true, stencil,
+                                            compilationState,
+                                            /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of source, we
     // return false so our caller knows to try to collect more buffered
@@ -244,8 +244,8 @@ class FunctionCompiler {
     MOZ_ASSERT(!cx->zone()->isAtomsZone());
   }
 
-  MOZ_MUST_USE bool init(const char* name, unsigned nargs,
-                         const char* const* argnames) {
+  [[nodiscard]] bool init(const char* name, unsigned nargs,
+                          const char* const* argnames) {
     if (!funStr_.ensureTwoByteChars()) {
       return false;
     }
@@ -295,7 +295,7 @@ class FunctionCompiler {
   }
 
   template <typename Unit>
-  inline MOZ_MUST_USE bool addFunctionBody(const SourceText<Unit>& srcBuf) {
+  [[nodiscard]] inline bool addFunctionBody(const SourceText<Unit>& srcBuf) {
     return funStr_.append(srcBuf.get(), srcBuf.length());
   }
 
@@ -319,10 +319,18 @@ class FunctionCompiler {
     }
 
     RootedObject enclosingEnv(cx_);
-    RootedScope enclosingScope(cx_);
-    if (!CreateNonSyntacticEnvironmentChain(cx_, envChain, &enclosingEnv,
-                                            &enclosingScope)) {
-      return nullptr;
+    ScopeKind kind;
+    if (envChain.empty()) {
+      // A compiled function has a burned-in environment chain, so if no exotic
+      // environment was requested, we can use the global lexical environment
+      // directly and not need to worry about any potential non-syntactic scope.
+      enclosingEnv.set(&cx_->global()->lexicalEnvironment());
+      kind = ScopeKind::Global;
+    } else {
+      if (!CreateNonSyntacticEnvironmentChain(cx_, envChain, &enclosingEnv)) {
+        return nullptr;
+      }
+      kind = ScopeKind::NonSyntactic;
     }
 
     cx_->check(enclosingEnv);
@@ -330,17 +338,28 @@ class FunctionCompiler {
     // Make sure the static scope chain matches up when we have a
     // non-syntactic scope.
     MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(enclosingEnv),
-                  enclosingScope->hasOnChain(ScopeKind::NonSyntactic));
+                  kind == ScopeKind::NonSyntactic);
 
     CompileOptions options(cx_, optionsArg);
-    options.setNonSyntacticScope(
-        enclosingScope->hasOnChain(ScopeKind::NonSyntactic));
+    options.setNonSyntacticScope(kind == ScopeKind::NonSyntactic);
 
     FunctionSyntaxKind syntaxKind = FunctionSyntaxKind::Statement;
-    RootedFunction fun(
-        cx_, js::frontend::CompileStandaloneFunction(
-                 cx_, options, newSrcBuf, mozilla::Some(parameterListEnd_),
-                 syntaxKind, enclosingScope));
+    RootedFunction fun(cx_);
+    if (kind == ScopeKind::NonSyntactic) {
+      RootedScope enclosingScope(
+          cx_, GlobalScope::createEmpty(cx_, ScopeKind::NonSyntactic));
+      if (!enclosingScope) {
+        return nullptr;
+      }
+
+      fun = js::frontend::CompileStandaloneFunctionInNonSyntacticScope(
+          cx_, options, newSrcBuf, mozilla::Some(parameterListEnd_), syntaxKind,
+          enclosingScope);
+    } else {
+      fun = js::frontend::CompileStandaloneFunction(
+          cx_, options, newSrcBuf, mozilla::Some(parameterListEnd_),
+          syntaxKind);
+    }
     if (!fun) {
       return nullptr;
     }
@@ -418,25 +437,19 @@ MOZ_NEVER_INLINE static bool ExecuteScript(JSContext* cx, HandleObject envChain,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(envChain, script);
-  MOZ_ASSERT_IF(!IsGlobalLexicalEnvironment(envChain),
-                script->hasNonSyntacticScope());
+
+  if (!IsGlobalLexicalEnvironment(envChain)) {
+    MOZ_RELEASE_ASSERT(script->hasNonSyntacticScope());
+  }
+
   return Execute(cx, script, envChain, rval);
 }
 
 static bool ExecuteScript(JSContext* cx, HandleObjectVector envChain,
-                          HandleScript scriptArg, MutableHandleValue rval) {
+                          HandleScript script, MutableHandleValue rval) {
   RootedObject env(cx);
-  RootedScope dummy(cx);
-  if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &dummy)) {
+  if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env)) {
     return false;
-  }
-
-  RootedScript script(cx, scriptArg);
-  if (!script->hasNonSyntacticScope() && !IsGlobalLexicalEnvironment(env)) {
-    script = CloneGlobalScript(cx, ScopeKind::NonSyntactic, script);
-    if (!script) {
-      return false;
-    }
   }
 
   return ExecuteScript(cx, env, script, rval);
@@ -475,7 +488,7 @@ JS_PUBLIC_API bool JS::CloneAndExecuteScript(JSContext* cx,
   RootedScript script(cx, scriptArg);
   RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
   if (script->realm() != cx->realm()) {
-    script = CloneGlobalScript(cx, ScopeKind::Global, script);
+    script = CloneGlobalScript(cx, script);
     if (!script) {
       return false;
     }
@@ -488,9 +501,10 @@ JS_PUBLIC_API bool JS::CloneAndExecuteScript(JSContext* cx,
                                              HandleScript scriptArg,
                                              JS::MutableHandleValue rval) {
   CHECK_THREAD(cx);
+  MOZ_RELEASE_ASSERT(scriptArg->hasNonSyntacticScope());
   RootedScript script(cx, scriptArg);
   if (script->realm() != cx->realm()) {
-    script = CloneGlobalScript(cx, ScopeKind::NonSyntactic, script);
+    script = CloneGlobalScript(cx, script);
     if (!script) {
       return false;
     }
@@ -547,12 +561,12 @@ JS_PUBLIC_API bool JS::Evaluate(JSContext* cx, HandleObjectVector envChain,
                                 SourceText<char16_t>& srcBuf,
                                 MutableHandleValue rval) {
   RootedObject env(cx);
-  RootedScope scope(cx);
-  if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env, &scope)) {
+  if (!CreateNonSyntacticEnvironmentChain(cx, envChain, &env)) {
     return false;
   }
 
-  return EvaluateSourceBuffer(cx, scope->kind(), env, options, srcBuf, rval);
+  return EvaluateSourceBuffer(cx, ScopeKind::NonSyntactic, env, options, srcBuf,
+                              rval);
 }
 
 JS_PUBLIC_API bool JS::EvaluateUtf8Path(

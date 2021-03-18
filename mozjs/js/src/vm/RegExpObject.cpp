@@ -31,6 +31,7 @@
 #ifdef DEBUG
 #  include "util/Unicode.h"
 #endif
+#include "vm/WellKnownAtom.h"  // js_*_str
 #include "vm/Xdr.h"
 
 #include "vm/JSObject-inl.h"
@@ -1058,7 +1059,7 @@ XDRResult js::XDRScriptRegExpObject(XDRState<mode>* xdr,
     RegExpObject* reobj = RegExpObject::create(
         xdr->cx(), source, RegExpFlags(flags), TenuredObject);
     if (!reobj) {
-      return xdr->fail(JS::TranscodeResult_Throw);
+      return xdr->fail(JS::TranscodeResult::Throw);
     }
 
     objp.set(reobj);

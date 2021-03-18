@@ -7,12 +7,13 @@
 #ifndef frontend_LabelEmitter_h
 #define frontend_LabelEmitter_h
 
-#include "mozilla/Attributes.h"  // MOZ_MUST_USE, MOZ_STACK_CLASS
+#include "mozilla/Attributes.h"  // MOZ_STACK_CLASS
 #include "mozilla/Maybe.h"       // Maybe
 
 #include "frontend/BytecodeControlStructures.h"  // LabelControl
 #include "frontend/BytecodeOffset.h"             // BytecodeOffset
 #include "frontend/JumpList.h"                   // JumpList
+#include "frontend/ParserAtom.h"                 // TaggedParserAtomIndex
 #include "js/TypeDecls.h"                        // JSAtom
 
 namespace js {
@@ -57,8 +58,8 @@ class MOZ_STACK_CLASS LabelEmitter {
  public:
   explicit LabelEmitter(BytecodeEmitter* bce) : bce_(bce) {}
 
-  void emitLabel(const ParserAtom* name);
-  MOZ_MUST_USE bool emitEnd();
+  void emitLabel(TaggedParserAtomIndex name);
+  [[nodiscard]] bool emitEnd();
 };
 
 } /* namespace frontend */

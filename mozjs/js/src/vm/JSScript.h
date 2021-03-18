@@ -73,7 +73,6 @@ class JitScript;
 
 class ModuleObject;
 class RegExpObject;
-class ScriptSourceHolder;
 class SourceCompressionTask;
 class Shape;
 class DebugScript;
@@ -365,7 +364,7 @@ struct SourceTypeTraits<char16_t> {
 };
 
 // Synchronously compress the source of |script|, for testing purposes.
-extern MOZ_MUST_USE bool SynchronouslyCompressSource(
+[[nodiscard]] extern bool SynchronouslyCompressSource(
     JSContext* cx, JS::Handle<BaseScript*> script);
 
 // Retrievable source can be retrieved using the source hook (and therefore
@@ -553,7 +552,7 @@ class ScriptSource {
   // function should be recorded before their first execution.
   // This value is logically owned by the canonical ScriptSourceObject, and
   // will be released in the canonical SSO's finalizer.
-  UniquePtr<XDRIncrementalEncoderBase> xdrEncoder_ = nullptr;
+  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder_ = nullptr;
 
   // A string indicating how this source code was introduced into the system.
   // This is a constant, statically allocated C string, so does not need memory
@@ -610,15 +609,15 @@ class ScriptSource {
   void finalizeGCData();
   ~ScriptSource();
 
-  void incref() { refs++; }
-  void decref() {
+  void AddRef() { refs++; }
+  void Release() {
     MOZ_ASSERT(refs != 0);
     if (--refs == 0) {
       js_delete(this);
     }
   }
-  MOZ_MUST_USE bool initFromOptions(JSContext* cx,
-                                    const JS::ReadOnlyCompileOptions& options);
+  [[nodiscard]] bool initFromOptions(JSContext* cx,
+                                     const JS::ReadOnlyCompileOptions& options);
 
   /**
    * The minimum script length (in code units) necessary for a script to be
@@ -643,9 +642,9 @@ class ScriptSource {
 
   // Assign source data from |srcBuf| to this recently-created |ScriptSource|.
   template <typename Unit>
-  MOZ_MUST_USE bool assignSource(JSContext* cx,
-                                 const JS::ReadOnlyCompileOptions& options,
-                                 JS::SourceText<Unit>& srcBuf);
+  [[nodiscard]] bool assignSource(JSContext* cx,
+                                  const JS::ReadOnlyCompileOptions& options,
+                                  JS::SourceText<Unit>& srcBuf);
 
   bool hasSourceText() const {
     return hasUncompressedSource() || hasCompressedSource();
@@ -851,8 +850,8 @@ class ScriptSource {
   JSLinearString* substringDontDeflate(JSContext* cx, size_t start,
                                        size_t stop);
 
-  MOZ_MUST_USE bool appendSubstring(JSContext* cx, js::StringBuffer& buf,
-                                    size_t start, size_t stop);
+  [[nodiscard]] bool appendSubstring(JSContext* cx, js::StringBuffer& buf,
+                                     size_t start, size_t stop);
 
   void setParameterListEnd(uint32_t parameterListEnd) {
     parameterListEnd_ = parameterListEnd;
@@ -871,24 +870,25 @@ class ScriptSource {
   // double-check their own understandings of the |data| state transition being
   // performed.
   template <typename Unit>
-  MOZ_MUST_USE bool setUncompressedSourceHelper(JSContext* cx,
-                                                EntryUnits<Unit>&& source,
-                                                size_t length,
-                                                SourceRetrievable retrievable);
+  [[nodiscard]] bool setUncompressedSourceHelper(JSContext* cx,
+                                                 EntryUnits<Unit>&& source,
+                                                 size_t length,
+                                                 SourceRetrievable retrievable);
 
  public:
   // Initialize a fresh |ScriptSource| with unretrievable, uncompressed source.
   template <typename Unit>
-  MOZ_MUST_USE bool initializeUnretrievableUncompressedSource(
+  [[nodiscard]] bool initializeUnretrievableUncompressedSource(
       JSContext* cx, EntryUnits<Unit>&& source, size_t length);
 
   // Set the retrieved source for a |ScriptSource| whose source was recorded as
   // missing but retrievable.
   template <typename Unit>
-  MOZ_MUST_USE bool setRetrievedSource(JSContext* cx, EntryUnits<Unit>&& source,
-                                       size_t length);
+  [[nodiscard]] bool setRetrievedSource(JSContext* cx,
+                                        EntryUnits<Unit>&& source,
+                                        size_t length);
 
-  MOZ_MUST_USE bool tryCompressOffThread(JSContext* cx);
+  [[nodiscard]] bool tryCompressOffThread(JSContext* cx);
 
   // *Trigger* the conversion of this ScriptSource from containing uncompressed
   // |Unit|-encoded source to containing compressed source.  Conversion may not
@@ -906,7 +906,7 @@ class ScriptSource {
   // Initialize a fresh ScriptSource as containing unretrievable compressed
   // source of the indicated original encoding.
   template <typename Unit>
-  MOZ_MUST_USE bool initializeWithUnretrievableCompressedSource(
+  [[nodiscard]] bool initializeWithUnretrievableCompressedSource(
       JSContext* cx, UniqueChars&& raw, size_t rawLength, size_t sourceLength);
 
  private:
@@ -964,22 +964,22 @@ class ScriptSource {
   // we'd need template function partial specialization to hold XDRMode
   // constant while varying Unit, so that idea's no dice.
   template <XDRMode mode>
-  MOZ_MUST_USE XDRResult xdrUnretrievableUncompressedSource(
+  [[nodiscard]] XDRResult xdrUnretrievableUncompressedSource(
       XDRState<mode>* xdr, uint8_t sourceCharSize, uint32_t uncompressedLength);
 
  public:
   const char* filename() const {
     return filename_ ? filename_.ref().chars() : nullptr;
   }
-  MOZ_MUST_USE bool setFilename(JSContext* cx, const char* filename);
-  MOZ_MUST_USE bool setFilename(JSContext* cx, UniqueChars&& filename);
+  [[nodiscard]] bool setFilename(JSContext* cx, const char* filename);
+  [[nodiscard]] bool setFilename(JSContext* cx, UniqueChars&& filename);
 
   const char* introducerFilename() const {
     return introducerFilename_ ? introducerFilename_.ref().chars() : filename();
   }
-  MOZ_MUST_USE bool setIntroducerFilename(JSContext* cx, const char* filename);
-  MOZ_MUST_USE bool setIntroducerFilename(JSContext* cx,
-                                          UniqueChars&& filename);
+  [[nodiscard]] bool setIntroducerFilename(JSContext* cx, const char* filename);
+  [[nodiscard]] bool setIntroducerFilename(JSContext* cx,
+                                           UniqueChars&& filename);
 
   bool hasIntroductionType() const { return introductionType_; }
   const char* introductionType() const {
@@ -990,14 +990,14 @@ class ScriptSource {
   uint32_t id() const { return id_; }
 
   // Display URLs
-  MOZ_MUST_USE bool setDisplayURL(JSContext* cx, const char16_t* url);
-  MOZ_MUST_USE bool setDisplayURL(JSContext* cx, UniqueTwoByteChars&& url);
+  [[nodiscard]] bool setDisplayURL(JSContext* cx, const char16_t* url);
+  [[nodiscard]] bool setDisplayURL(JSContext* cx, UniqueTwoByteChars&& url);
   bool hasDisplayURL() const { return displayURL_.isSome(); }
   const char16_t* displayURL() { return displayURL_.ref().chars(); }
 
   // Source maps
-  MOZ_MUST_USE bool setSourceMapURL(JSContext* cx, const char16_t* url);
-  MOZ_MUST_USE bool setSourceMapURL(JSContext* cx, UniqueTwoByteChars&& url);
+  [[nodiscard]] bool setSourceMapURL(JSContext* cx, const char16_t* url);
+  [[nodiscard]] bool setSourceMapURL(JSContext* cx, UniqueTwoByteChars&& url);
   bool hasSourceMapURL() const { return sourceMapURL_.isSome(); }
   const char16_t* sourceMapURL() { return sourceMapURL_.ref().chars(); }
 
@@ -1019,40 +1019,26 @@ class ScriptSource {
   // Return wether an XDR encoder is present or not.
   bool hasEncoder() const { return bool(xdrEncoder_); }
 
-  // Create a new XDR encoder, and encode the top-level JSScript. The result
-  // of the encoding would be available in the |buffer| provided as argument,
-  // as soon as |xdrFinalize| is called and all xdr function calls returned
-  // successfully.
-  bool xdrEncodeTopLevel(JSContext* cx, HandleScript script);
-
   // Create a new XDR encoder, and encode the stencil for the initial
   // compilation. The created XDR encoder isn't stored into `xdrEncoder_`
   // field. Caller is responsible for calling `setIncrementalEncoder` after
   // instantiating stencil (so, corresponding canonical ScriptSourceObject
   // gets created).
   bool xdrEncodeInitialStencil(
-      JSContext* cx, frontend::CompilationStencil& stencil,
-      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+      JSContext* cx, frontend::CompilationInput& input,
+      frontend::CompilationStencil& stencil,
+      UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
   // Create a new XDR encoder, and encode the stencils.
   // The created XDR encoder isn't stored into `xdrEncoder_` field.
   // Caller is responsible for calling `setIncrementalEncoder` after
   // instantiating stencil (so, corresponding canonical ScriptSourceObject
   // gets created).
-  bool xdrEncodeStencils(JSContext* cx,
-                         frontend::CompilationStencilSet& stencilSet,
-                         UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+  bool xdrEncodeStencils(JSContext* cx, frontend::CompilationInput& input,
+                         frontend::CompilationStencil& stencil,
+                         UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
-  void setIncrementalEncoder(XDRIncrementalEncoderBase* xdrEncoder);
-
-  // Encode a delazified JSFunction.  In case of errors, the XDR encoder is
-  // freed and the |buffer| provided as argument to |xdrEncodeTopLevel| is
-  // considered undefined.
-  //
-  // The |sourceObject| argument is the object holding the current
-  // ScriptSource.
-  bool xdrEncodeFunction(JSContext* cx, HandleFunction fun,
-                         HandleScriptSourceObject sourceObject);
+  void setIncrementalEncoder(XDRIncrementalStencilEncoder* xdrEncoder);
 
   // Encode a delazified function's stencil.  In case of errors, the XDR
   // encoder is freed.
@@ -1064,7 +1050,7 @@ class ScriptSource {
   // XDR encoder is freed.
   bool xdrEncodeFunctionStencilWith(
       JSContext* cx, frontend::BaseCompilationStencil& stencil,
-      UniquePtr<XDRIncrementalEncoderBase>& xdrEncoder);
+      UniquePtr<XDRIncrementalStencilEncoder>& xdrEncoder);
 
  public:
   // Linearize the encoded content in the |buffer| provided as argument to
@@ -1079,57 +1065,25 @@ class ScriptSource {
   static void codeRetrievable(ScriptSource* ss);
 
   template <typename Unit, XDRMode mode>
-  static MOZ_MUST_USE XDRResult codeUncompressedData(XDRState<mode>* const xdr,
-                                                     ScriptSource* const ss);
+  [[nodiscard]] static XDRResult codeUncompressedData(XDRState<mode>* const xdr,
+                                                      ScriptSource* const ss);
 
   template <typename Unit, XDRMode mode>
-  static MOZ_MUST_USE XDRResult codeCompressedData(XDRState<mode>* const xdr,
-                                                   ScriptSource* const ss);
+  [[nodiscard]] static XDRResult codeCompressedData(XDRState<mode>* const xdr,
+                                                    ScriptSource* const ss);
 
   template <typename Unit, XDRMode mode>
   static void codeRetrievableData(ScriptSource* ss);
 
   template <XDRMode mode>
-  static MOZ_MUST_USE XDRResult xdrData(XDRState<mode>* const xdr,
-                                        ScriptSource* const ss);
+  [[nodiscard]] static XDRResult xdrData(XDRState<mode>* const xdr,
+                                         ScriptSource* const ss);
 
  public:
   template <XDRMode mode>
-  static MOZ_MUST_USE XDRResult
-  XDR(XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
-      MutableHandle<ScriptSourceHolder> holder);
-
-  void trace(JSTracer* trc);
-};
-
-class ScriptSourceHolder {
-  ScriptSource* ss;
-
- public:
-  ScriptSourceHolder() : ss(nullptr) {}
-  explicit ScriptSourceHolder(ScriptSource* ss) : ss(ss) { ss->incref(); }
-  ~ScriptSourceHolder() {
-    if (ss) {
-      ss->decref();
-    }
-  }
-  void reset(ScriptSource* newss) {
-    // incref before decref just in case ss == newss.
-    if (newss) {
-      newss->incref();
-    }
-    if (ss) {
-      ss->decref();
-    }
-    ss = newss;
-  }
-  ScriptSource* get() const { return ss; }
-
-  void trace(JSTracer* trc) {
-    if (ss) {
-      ss->trace(trc);
-    }
-  }
+  [[nodiscard]] static XDRResult XDR(
+      XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
+      RefPtr<ScriptSource>& source);
 };
 
 // [SMDOC] ScriptSourceObject
@@ -1165,7 +1119,6 @@ class ScriptSourceObject : public NativeObject {
  public:
   static const JSClass class_;
 
-  static void trace(JSTracer* trc, JSObject* obj);
   static void finalize(JSFreeOp* fop, JSObject* obj);
 
   static ScriptSourceObject* create(JSContext* cx, ScriptSource* source);
@@ -1394,21 +1347,22 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
   static PrivateScriptData* new_(JSContext* cx, uint32_t ngcthings);
 
   template <XDRMode mode>
-  static MOZ_MUST_USE XDRResult XDR(js::XDRState<mode>* xdr,
-                                    js::HandleScript script,
-                                    js::HandleScriptSourceObject sourceObject,
-                                    js::HandleScope scriptEnclosingScope,
-                                    js::HandleObject funOrMod);
+  [[nodiscard]] static XDRResult XDR(js::XDRState<mode>* xdr,
+                                     js::HandleScript script,
+                                     js::HandleScriptSourceObject sourceObject,
+                                     js::HandleScope scriptEnclosingScope,
+                                     js::HandleObject funOrMod);
 
   // Clone src script data into dst script.
   static bool Clone(JSContext* cx, js::HandleScript src, js::HandleScript dst,
                     js::MutableHandle<JS::GCVector<js::Scope*>> scopes);
 
-  static bool InitFromStencil(JSContext* cx, js::HandleScript script,
-                              js::frontend::CompilationInput& input,
-                              js::frontend::BaseCompilationStencil& stencil,
-                              js::frontend::CompilationGCOutput& gcOutput,
-                              const js::frontend::ScriptIndex scriptIndex);
+  static bool InitFromStencil(
+      JSContext* cx, js::HandleScript script,
+      const js::frontend::CompilationInput& input,
+      const js::frontend::BaseCompilationStencil& stencil,
+      js::frontend::CompilationGCOutput& gcOutput,
+      const js::frontend::ScriptIndex scriptIndex);
 
   void trace(JSTracer* trc);
 
@@ -1563,6 +1517,17 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
     MOZ_ASSERT(extent_.toStringStart <= extent_.sourceStart);
     MOZ_ASSERT(extent_.sourceStart <= extent_.sourceEnd);
     MOZ_ASSERT(extent_.sourceEnd <= extent_.toStringEnd);
+
+    // The immutableFlags determine if the arguments-analysis will need to be
+    // run. We track if we need to run the analysis and the result of the
+    // analysis on the mutableFlags. The analysis is deterministic so we only
+    // need it once, even if we relazify, etc.
+    if (argumentsHasVarBinding()) {
+      setFlag(MutableFlags::NeedsArgsObj, alwaysNeedsArgsObj());
+      setFlag(MutableFlags::NeedsArgsAnalysis, !alwaysNeedsArgsObj());
+    } else {
+      MOZ_ASSERT(!alwaysNeedsArgsObj());
+    }
   }
 
   void setJitCodeRaw(uint8_t* code) { setHeaderPtr(code); }
@@ -1618,8 +1583,8 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   uint32_t toStringEnd() const { return extent_.toStringEnd; }
   SourceExtent extent() const { return extent_; }
 
-  MOZ_MUST_USE bool appendSourceDataForToString(JSContext* cx,
-                                                js::StringBuffer& buf);
+  [[nodiscard]] bool appendSourceDataForToString(JSContext* cx,
+                                                 js::StringBuffer& buf);
 
   uint32_t lineno() const { return extent_.lineno; }
   uint32_t column() const { return extent_.column; }
@@ -1628,12 +1593,12 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   ImmutableScriptFlags immutableFlags() const { return immutableFlags_; }
 
   // ImmutableFlags accessors.
-  MOZ_MUST_USE bool hasFlag(ImmutableFlags flag) const {
+  [[nodiscard]] bool hasFlag(ImmutableFlags flag) const {
     return immutableFlags_.hasFlag(flag);
   }
 
   // MutableFlags accessors.
-  MOZ_MUST_USE bool hasFlag(MutableFlags flag) const {
+  [[nodiscard]] bool hasFlag(MutableFlags flag) const {
     return mutableFlags_.hasFlag(flag);
   }
   void setFlag(MutableFlags flag, bool b = true) {
@@ -1679,7 +1644,8 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   IMMUTABLE_FLAG_GETTER(functionHasThisBinding, FunctionHasThisBinding)
   IMMUTABLE_FLAG_GETTER(needsHomeObject, NeedsHomeObject)
   IMMUTABLE_FLAG_GETTER(isDerivedClassConstructor, IsDerivedClassConstructor)
-  IMMUTABLE_FLAG_GETTER(isFieldInitializer, IsFieldInitializer)
+  IMMUTABLE_FLAG_GETTER(isSyntheticFunction, IsSyntheticFunction)
+  IMMUTABLE_FLAG_GETTER(useMemberInitializers, UseMemberInitializers)
   IMMUTABLE_FLAG_GETTER(hasRest, HasRest)
   IMMUTABLE_FLAG_GETTER(needsFunctionEnvironmentObjects,
                         NeedsFunctionEnvironmentObjects)
@@ -1770,6 +1736,7 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   }
 
   void setMemberInitializers(MemberInitializers memberInitializers) {
+    MOZ_ASSERT(useMemberInitializers());
     MOZ_ASSERT(data_);
     data_->setMemberInitializers(memberInitializers);
   }
@@ -1808,8 +1775,7 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   template <XDRMode mode>
   static XDRResult XDRLazyScriptData(XDRState<mode>* xdr,
                                      HandleScriptSourceObject sourceObject,
-                                     Handle<BaseScript*> lazy,
-                                     bool hasFieldInitializer);
+                                     Handle<BaseScript*> lazy);
 
   // JIT accessors
   static constexpr size_t offsetOfJitCodeRaw() { return offsetOfHeaderPtr(); }
@@ -1903,8 +1869,8 @@ class JSScript : public js::BaseScript {
 
   friend bool js::PrivateScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::CompilationInput& input,
-      js::frontend::BaseCompilationStencil& stencil,
+      const js::frontend::CompilationInput& input,
+      const js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput,
       const js::frontend::ScriptIndex scriptIndex);
 
@@ -1931,8 +1897,8 @@ class JSScript : public js::BaseScript {
 
  public:
   static bool fullyInitFromStencil(
-      JSContext* cx, js::frontend::CompilationInput& input,
-      js::frontend::BaseCompilationStencil& stencil,
+      JSContext* cx, const js::frontend::CompilationInput& input,
+      const js::frontend::BaseCompilationStencil& stencil,
       js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
       const js::frontend::ScriptIndex scriptIndex);
 
@@ -1940,9 +1906,9 @@ class JSScript : public js::BaseScript {
   // allocations within the stencil.
   static JSScript* fromStencil(JSContext* cx,
                                js::frontend::CompilationInput& input,
-                               js::frontend::CompilationStencil& stencil,
+                               const js::frontend::CompilationStencil& stencil,
                                js::frontend::CompilationGCOutput& gcOutput,
-                               const js::frontend::ScriptIndex scriptIndex);
+                               js::frontend::ScriptIndex scriptIndex);
 
 #ifdef DEBUG
  private:
@@ -2081,10 +2047,6 @@ class JSScript : public js::BaseScript {
   void setNeedsArgsObj(bool needsArgsObj);
   static void argumentsOptimizationFailed(JSContext* cx,
                                           js::HandleScript script);
-
-  // Update the the arguments analysis flags based on the frontend
-  // derived information.
-  void resetArgsUsageAnalysis();
 
   /*
    * Arguments access (via JSOp::*Arg* opcodes) must access the canonical
@@ -2361,6 +2323,7 @@ class JSScript : public js::BaseScript {
   }
 
   bool formalIsAliased(unsigned argSlot);
+  bool anyFormalIsAliased();
   bool formalLivesInArgumentsObject(unsigned argSlot);
 
   // See comment above 'debugMode' in Realm.h for explanation of
@@ -2476,11 +2439,9 @@ extern void DescribeScriptedCallerForDirectEval(
 
 JSScript* CloneScriptIntoFunction(JSContext* cx, HandleScope enclosingScope,
                                   HandleFunction fun, HandleScript src,
-                                  Handle<ScriptSourceObject*> sourceObject,
-                                  SourceExtent* maybeClassExtent = nullptr);
+                                  Handle<ScriptSourceObject*> sourceObject);
 
-JSScript* CloneGlobalScript(JSContext* cx, ScopeKind scopeKind,
-                            HandleScript src);
+JSScript* CloneGlobalScript(JSContext* cx, HandleScript src);
 
 bool CheckCompileOptionsMatch(const JS::ReadOnlyCompileOptions& options,
                               js::ImmutableScriptFlags flags,

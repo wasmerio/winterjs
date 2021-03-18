@@ -18,6 +18,7 @@ BEGIN_TEST(testParserAtom_empty) {
   using js::frontend::ParserAtom;
   using js::frontend::ParserAtomsTable;
   using js::frontend::ParserAtomVector;
+  using js::frontend::TaggedParserAtomIndex;
 
   js::LifoAlloc alloc(512);
   ParserAtomsTable atomTable(cx->runtime(), alloc);
@@ -31,20 +32,11 @@ BEGIN_TEST(testParserAtom_empty) {
   const js::LittleEndianChars leTwoByte(bytes);
 
   // Check that the well-known empty atom matches for different entry points.
-  const ParserAtom* ref = cx->parserNames().empty;
-  CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 0) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 0) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 0) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 0) == ref);
-
-  // Check concatenation works on empty atoms.
-  const ParserAtom* concat[] = {
-      cx->parserNames().empty,
-      cx->parserNames().empty,
-  };
-  mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  auto refIndex = TaggedParserAtomIndex::WellKnown::empty();
+  CHECK(atomTable.internAscii(cx, ascii, 0) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 0) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 0) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 0) == refIndex);
 
   return true;
 }
@@ -68,24 +60,17 @@ BEGIN_TEST(testParserAtom_tiny1) {
   const uint8_t bytes[] = {'a', 0};
   const js::LittleEndianChars leTwoByte(bytes);
 
-  const ParserAtom* ref = cx->parserNames().lookupTiny(&a, 1);
-  CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 1) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 1) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 1) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 1) == ref);
-
-  const ParserAtom* concat[] = {
-      ref,
-      cx->parserNames().empty,
-  };
-  mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  auto refIndex = cx->runtime()->commonParserNames->lookupTinyIndex(&a, 1);
+  CHECK(refIndex);
+  CHECK(atomTable.internAscii(cx, ascii, 1) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 1) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 1) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 1) == refIndex);
 
   // Note: If Latin1-Extended characters become supported, then UTF-8 behaviour
   // should be tested.
   char16_t ae = 0x00E6;
-  CHECK(cx->parserNames().lookupTiny(&ae, 1) == nullptr);
+  CHECK(!cx->runtime()->commonParserNames->lookupTinyIndex(&ae, 1));
 
   return true;
 }
@@ -109,92 +94,21 @@ BEGIN_TEST(testParserAtom_tiny2) {
   const uint8_t bytes[] = {'a', 0, '0', 0};
   const js::LittleEndianChars leTwoByte(bytes);
 
-  const ParserAtom* ref = cx->parserNames().lookupTiny(ascii, 2);
-  CHECK(ref);
-  CHECK(atomTable.internAscii(cx, ascii, 2) == ref);
-  CHECK(atomTable.internLatin1(cx, latin1, 2) == ref);
-  CHECK(atomTable.internUtf8(cx, utf8, 2) == ref);
-  CHECK(atomTable.internChar16(cx, char16, 2) == ref);
-
-  const ParserAtom* concat[] = {
-      cx->parserNames().lookupTiny(ascii + 0, 1),
-      cx->parserNames().lookupTiny(ascii + 1, 1),
-  };
-  mozilla::Range<const ParserAtom*> concatRange(concat, 2);
-  CHECK(atomTable.concatAtoms(cx, concatRange) == ref);
+  auto refIndex = cx->runtime()->commonParserNames->lookupTinyIndex(ascii, 2);
+  CHECK(refIndex);
+  CHECK(atomTable.internAscii(cx, ascii, 2) == refIndex);
+  CHECK(atomTable.internLatin1(cx, latin1, 2) == refIndex);
+  CHECK(atomTable.internUtf8(cx, utf8, 2) == refIndex);
+  CHECK(atomTable.internChar16(cx, char16, 2) == refIndex);
 
   // Note: If Latin1-Extended characters become supported, then UTF-8 behaviour
   // should be tested.
   char16_t ae0[] = {0x00E6, '0'};
-  CHECK(cx->parserNames().lookupTiny(ae0, 2) == nullptr);
+  CHECK(!cx->runtime()->commonParserNames->lookupTinyIndex(ae0, 2));
 
   return true;
 }
 END_TEST(testParserAtom_tiny2)
-
-BEGIN_TEST(testParserAtom_concat) {
-  using js::frontend::ParserAtom;
-  using js::frontend::ParserAtomsTable;
-  using js::frontend::ParserAtomVector;
-
-  js::LifoAlloc alloc(512);
-  ParserAtomsTable atomTable(cx->runtime(), alloc);
-
-  auto CheckConcat = [&](const char16_t* exp,
-                         std::initializer_list<const char16_t*> args) -> bool {
-    // Intern each argument literal
-    std::vector<const ParserAtom*> inputs;
-    for (const char16_t* arg : args) {
-      size_t len = std::char_traits<char16_t>::length(arg);
-      const ParserAtom* atom = atomTable.internChar16(cx, arg, len);
-      inputs.push_back(atom);
-    }
-
-    // Concatenate twice to test new vs existing pathways.
-    mozilla::Range<const ParserAtom*> range(inputs.data(), inputs.size());
-    const ParserAtom* once = atomTable.concatAtoms(cx, range);
-    const ParserAtom* twice = atomTable.concatAtoms(cx, range);
-
-    // Intern expected value literal _after_ the concat code to allow
-    // allocation pathways a chance to be tested.
-    size_t exp_len = std::char_traits<char16_t>::length(exp);
-    const ParserAtom* ref = atomTable.internChar16(cx, exp, exp_len);
-
-    return (once == ref) && (twice == ref);
-  };
-
-  // Checks empty strings
-  CHECK(CheckConcat(u"", {u"", u""}));
-  CHECK(CheckConcat(u"", {u"", u"", u"", u""}));
-  CHECK(CheckConcat(u"A", {u"", u"", u"A", u""}));
-  CHECK(CheckConcat(u"AAAA", {u"", u"", u"AAAA", u""}));
-
-  // Check WellKnown strings
-  CHECK(CheckConcat(u"function", {u"fun", u"ction"}));
-  CHECK(CheckConcat(u"object", {u"", u"object"}));
-  CHECK(CheckConcat(u"objectNOTAWELLKNOWN", {u"object", u"NOTAWELLKNOWN"}));
-
-  // Concat ASCII strings
-  CHECK(CheckConcat(u"AAAA", {u"AAAA", u""}));
-  CHECK(CheckConcat(u"AAAABBBB", {u"AAAA", u"BBBB"}));
-  CHECK(CheckConcat(
-      u"000000000011111111112222222222333333333344444444445555555555",
-      {u"0000000000", u"1111111111", u"2222222222", u"3333333333",
-       u"4444444444", u"5555555555"}));
-
-  // Concat Latin1 strings
-  CHECK(CheckConcat(u"\xE6_\xE6", {u"\xE6", u"_\xE6"}));
-  CHECK(CheckConcat(u"\xE6_ae", {u"\xE6", u"_ae"}));
-
-  // Concat char16 strings
-  CHECK(CheckConcat(u"\u03C0_\xE6_A", {u"\u03C0", u"_\xE6", u"_A"}));
-  CHECK(CheckConcat(u"\u03C0_\u03C0", {u"\u03C0", u"_\u03C0"}));
-  CHECK(CheckConcat(u"\u03C0_\xE6", {u"\u03C0", u"_\xE6"}));
-  CHECK(CheckConcat(u"\u03C0_A", {u"\u03C0", u"_A"}));
-
-  return true;
-}
-END_TEST(testParserAtom_concat)
 
 // "æ"    U+00E6
 // "π"    U+03C0

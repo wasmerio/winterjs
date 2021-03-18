@@ -504,7 +504,7 @@ void LInstruction::assignSnapshot(LSnapshot* snapshot) {
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
     JitSpewHeader(JitSpew_IonSnapshots);
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     out.printf("Assigning snapshot %p to instruction %p (", (void*)snapshot,
                (void*)this);
     printName(out);

@@ -115,8 +115,13 @@ void CodeGenerator::visitCompare(LCompare* comp) {
 
 #ifdef JS_CODEGEN_MIPS64
   if (mir->compareType() == MCompare::Compare_Object ||
-      mir->compareType() == MCompare::Compare_Symbol) {
-    if (right->isGeneralReg()) {
+      mir->compareType() == MCompare::Compare_Symbol ||
+      mir->compareType() == MCompare::Compare_UIntPtr) {
+    if (right->isConstant()) {
+      MOZ_ASSERT(type == MCompare::Compare_UIntPtr);
+      masm.cmpPtrSet(cond, ToRegister(left), Imm32(ToInt32(right)),
+                     ToRegister(def));
+    } else if (right->isGeneralReg()) {
       masm.cmpPtrSet(cond, ToRegister(left), ToRegister(right),
                      ToRegister(def));
     } else {
@@ -142,8 +147,13 @@ void CodeGenerator::visitCompareAndBranch(LCompareAndBranch* comp) {
 
 #ifdef JS_CODEGEN_MIPS64
   if (mir->compareType() == MCompare::Compare_Object ||
-      mir->compareType() == MCompare::Compare_Symbol) {
-    if (comp->right()->isGeneralReg()) {
+      mir->compareType() == MCompare::Compare_Symbol ||
+      mir->compareType() == MCompare::Compare_UIntPtr) {
+    if (comp->right()->isConstant()) {
+      MOZ_ASSERT(type == MCompare::Compare_UIntPtr);
+      emitBranch(ToRegister(comp->left()), Imm32(ToInt32(comp->right())), cond,
+                 comp->ifTrue(), comp->ifFalse());
+    } else if (comp->right()->isGeneralReg()) {
       emitBranch(ToRegister(comp->left()), ToRegister(comp->right()), cond,
                  comp->ifTrue(), comp->ifFalse());
     } else {
@@ -2054,7 +2064,7 @@ void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* lir) {
 
 void CodeGenerator::visitAtomicTypedArrayElementBinop(
     LAtomicTypedArrayElementBinop* lir) {
-  MOZ_ASSERT(lir->mir()->hasUses());
+  MOZ_ASSERT(!lir->mir()->isForEffect());
 
   AnyRegister output = ToAnyRegister(lir->output());
   Register elements = ToRegister(lir->elements());
@@ -2065,16 +2075,15 @@ void CodeGenerator::visitAtomicTypedArrayElementBinop(
   Register value = ToRegister(lir->value());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address mem(elements, ToInt32(lir->index()) * width);
+    Address mem = ToAddress(elements, lir->index(), arrayType);
     masm.atomicFetchOpJS(arrayType, Synchronization::Full(),
                          lir->mir()->operation(), value, mem, valueTemp,
                          offsetTemp, maskTemp, outTemp, output);
   } else {
     BaseIndex mem(elements, ToRegister(lir->index()),
-                  ScaleFromElemWidth(width));
+                  ScaleFromScalarType(arrayType));
     masm.atomicFetchOpJS(arrayType, Synchronization::Full(),
                          lir->mir()->operation(), value, mem, valueTemp,
                          offsetTemp, maskTemp, outTemp, output);
@@ -2083,7 +2092,7 @@ void CodeGenerator::visitAtomicTypedArrayElementBinop(
 
 void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect(
     LAtomicTypedArrayElementBinopForEffect* lir) {
-  MOZ_ASSERT(!lir->mir()->hasUses());
+  MOZ_ASSERT(lir->mir()->isForEffect());
 
   Register elements = ToRegister(lir->elements());
   Register valueTemp = ToTempRegisterOrInvalid(lir->valueTemp());
@@ -2091,16 +2100,15 @@ void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect(
   Register maskTemp = ToTempRegisterOrInvalid(lir->maskTemp());
   Register value = ToRegister(lir->value());
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address mem(elements, ToInt32(lir->index()) * width);
+    Address mem = ToAddress(elements, lir->index(), arrayType);
     masm.atomicEffectOpJS(arrayType, Synchronization::Full(),
                           lir->mir()->operation(), value, mem, valueTemp,
                           offsetTemp, maskTemp);
   } else {
     BaseIndex mem(elements, ToRegister(lir->index()),
-                  ScaleFromElemWidth(width));
+                  ScaleFromScalarType(arrayType));
     masm.atomicEffectOpJS(arrayType, Synchronization::Full(),
                           lir->mir()->operation(), value, mem, valueTemp,
                           offsetTemp, maskTemp);
@@ -2120,16 +2128,15 @@ void CodeGenerator::visitCompareExchangeTypedArrayElement(
   Register maskTemp = ToTempRegisterOrInvalid(lir->maskTemp());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address dest(elements, ToInt32(lir->index()) * width);
+    Address dest = ToAddress(elements, lir->index(), arrayType);
     masm.compareExchangeJS(arrayType, Synchronization::Full(), dest, oldval,
                            newval, valueTemp, offsetTemp, maskTemp, outTemp,
                            output);
   } else {
     BaseIndex dest(elements, ToRegister(lir->index()),
-                   ScaleFromElemWidth(width));
+                   ScaleFromScalarType(arrayType));
     masm.compareExchangeJS(arrayType, Synchronization::Full(), dest, oldval,
                            newval, valueTemp, offsetTemp, maskTemp, outTemp,
                            output);
@@ -2148,18 +2155,43 @@ void CodeGenerator::visitAtomicExchangeTypedArrayElement(
   Register maskTemp = ToTempRegisterOrInvalid(lir->maskTemp());
 
   Scalar::Type arrayType = lir->mir()->arrayType();
-  size_t width = Scalar::byteSize(arrayType);
 
   if (lir->index()->isConstant()) {
-    Address dest(elements, ToInt32(lir->index()) * width);
+    Address dest = ToAddress(elements, lir->index(), arrayType);
     masm.atomicExchangeJS(arrayType, Synchronization::Full(), dest, value,
                           valueTemp, offsetTemp, maskTemp, outTemp, output);
   } else {
     BaseIndex dest(elements, ToRegister(lir->index()),
-                   ScaleFromElemWidth(width));
+                   ScaleFromScalarType(arrayType));
     masm.atomicExchangeJS(arrayType, Synchronization::Full(), dest, value,
                           valueTemp, offsetTemp, maskTemp, outTemp, output);
   }
+}
+
+void CodeGenerator::visitAtomicLoad64(LAtomicLoad64* lir) { MOZ_CRASH("NYI"); }
+
+void CodeGenerator::visitAtomicStore64(LAtomicStore64* lir) {
+  MOZ_CRASH("NYI");
+}
+
+void CodeGenerator::visitCompareExchangeTypedArrayElement64(
+    LCompareExchangeTypedArrayElement64* lir) {
+  MOZ_CRASH("NYI");
+}
+
+void CodeGenerator::visitAtomicExchangeTypedArrayElement64(
+    LAtomicExchangeTypedArrayElement64* lir) {
+  MOZ_CRASH("NYI");
+}
+
+void CodeGenerator::visitAtomicTypedArrayElementBinop64(
+    LAtomicTypedArrayElementBinop64* lir) {
+  MOZ_CRASH("NYI");
+}
+
+void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect64(
+    LAtomicTypedArrayElementBinopForEffect64* lir) {
+  MOZ_CRASH("NYI");
 }
 
 void CodeGenerator::visitWasmCompareExchangeI64(LWasmCompareExchangeI64* lir) {
@@ -2270,5 +2302,13 @@ void CodeGenerator::visitWasmReduceAndBranchSimd128(
 
 void CodeGenerator::visitWasmReduceSimd128ToInt64(
     LWasmReduceSimd128ToInt64* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmLoadLaneSimd128(LWasmLoadLaneSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmStoreLaneSimd128(LWasmStoreLaneSimd128* ins) {
   MOZ_CRASH("No SIMD");
 }

@@ -7,8 +7,8 @@
 #ifndef frontend_UsedNameTracker_h
 #define frontend_UsedNameTracker_h
 
-#include "mozilla/Attributes.h"
-
+#include "frontend/ParserAtom.h"                   // TaggedParserAtomIndex
+#include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
 #include "frontend/Token.h"
 #include "js/AllocPolicy.h"
 #include "js/HashTable.h"
@@ -96,10 +96,10 @@ namespace frontend {
 // clang-format on
 
 struct UnboundPrivateName {
-  const ParserAtom* atom;
+  TaggedParserAtomIndex atom;
   TokenPos position;
 
-  UnboundPrivateName(const ParserAtom* atom, TokenPos position)
+  UnboundPrivateName(TaggedParserAtomIndex atom, TokenPos position)
       : atom(atom), position(position) {}
 };
 
@@ -165,8 +165,8 @@ class UsedNameTracker {
     mozilla::Maybe<TokenPos> pos() { return firstUsePos_; }
   };
 
-  using UsedNameMap = HashMap<const ParserAtom*, UsedNameInfo,
-                              DefaultHasher<const ParserAtom*>>;
+  using UsedNameMap =
+      HashMap<TaggedParserAtomIndex, UsedNameInfo, TaggedParserAtomIndexHasher>;
 
  private:
   // The map of names to chains of uses.
@@ -200,23 +200,23 @@ class UsedNameTracker {
     return scopeCounter_++;
   }
 
-  UsedNameMap::Ptr lookup(const ParserAtom* name) const {
+  UsedNameMap::Ptr lookup(TaggedParserAtomIndex name) const {
     return map_.lookup(name);
   }
 
-  MOZ_MUST_USE bool noteUse(
-      JSContext* cx, const ParserAtom* name, NameVisibility visibility,
+  [[nodiscard]] bool noteUse(
+      JSContext* cx, TaggedParserAtomIndex name, NameVisibility visibility,
       uint32_t scriptId, uint32_t scopeId,
       mozilla::Maybe<TokenPos> tokenPosition = mozilla::Nothing());
 
   // Fill maybeUnboundName with the first (source order) unbound name, or
   // Nothing() if there are no unbound names.
-  MOZ_MUST_USE bool hasUnboundPrivateNames(
+  [[nodiscard]] bool hasUnboundPrivateNames(
       JSContext* cx, mozilla::Maybe<UnboundPrivateName>& maybeUnboundName);
 
   // Return a list of unbound private names, sorted by increasing location in
   // the source.
-  MOZ_MUST_USE bool getUnboundPrivateNames(
+  [[nodiscard]] bool getUnboundPrivateNames(
       Vector<UnboundPrivateName, 8>& unboundPrivateNames);
 
   struct RewindToken {

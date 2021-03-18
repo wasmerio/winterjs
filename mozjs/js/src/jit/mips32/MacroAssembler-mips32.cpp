@@ -1769,6 +1769,7 @@ void MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(
   Label return_;
   Label bailout;
   Label wasm;
+  Label wasmCatch;
 
   // Already clobbered a0, so use it...
   load32(Address(StackPointer, offsetof(ResumeFromException, kind)), a0);
@@ -1785,6 +1786,8 @@ void MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(
                     Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
   asMasm().branch32(Assembler::Equal, a0,
                     Imm32(ResumeFromException::RESUME_WASM), &wasm);
+  asMasm().branch32(Assembler::Equal, a0,
+                    Imm32(ResumeFromException::RESUME_WASM_CATCH), &wasmCatch);
 
   breakpoint();  // Invalid kind.
 
@@ -1871,6 +1874,15 @@ void MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(
   loadPtr(Address(StackPointer, offsetof(ResumeFromException, stackPointer)),
           StackPointer);
   ret();
+
+  // Found a wasm catch handler, restore state and jump to it.
+  bind(&wasmCatch);
+  loadPtr(Address(sp, offsetof(ResumeFromException, target)), a1);
+  loadPtr(Address(StackPointer, offsetof(ResumeFromException, framePointer)),
+          FramePointer);
+  loadPtr(Address(StackPointer, offsetof(ResumeFromException, stackPointer)),
+          StackPointer);
+  jump(a1);
 }
 
 CodeOffset MacroAssemblerMIPSCompat::toggledJump(Label* label) {
@@ -2782,6 +2794,10 @@ void MacroAssembler::convertInt64ToDouble(Register64 src, FloatRegister dest) {
   mulDouble(ScratchDoubleReg, dest);
   convertUInt32ToDouble(src.low, ScratchDoubleReg);
   addDouble(ScratchDoubleReg, dest);
+}
+
+void MacroAssembler::convertIntPtrToDouble(Register src, FloatRegister dest) {
+  convertInt32ToDouble(src, dest);
 }
 
 //}}} check_macroassembler_style

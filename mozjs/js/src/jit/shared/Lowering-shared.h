@@ -166,6 +166,7 @@ class LIRGeneratorShared {
   // "Any" is architecture dependent, and will include registers and stack
   // slots on X86, and only registers on ARM.
   inline LAllocation useAny(MDefinition* mir);
+  inline LAllocation useAnyAtStart(MDefinition* mir);
   inline LAllocation useAnyOrConstant(MDefinition* mir);
   // "Storable" is architecture dependend, and will include registers and
   // constants on X86 and only registers on ARM.  This is a generic "things
@@ -179,6 +180,17 @@ class LIRGeneratorShared {
   inline LAllocation useRegisterOrZeroAtStart(MDefinition* mir);
   inline LAllocation useRegisterOrZero(MDefinition* mir);
   inline LAllocation useRegisterOrNonDoubleConstant(MDefinition* mir);
+
+  // These methods accept either an Int32 or IntPtr value. A constant is used if
+  // the value fits in an int32.
+  inline LAllocation useRegisterOrInt32Constant(MDefinition* mir);
+  inline LAllocation useAnyOrInt32Constant(MDefinition* mir);
+
+  // Like useRegisterOrInt32Constant, but uses a constant only if
+  // |int32val * Scalar::byteSize(type) + offsetAdjustment| doesn't overflow
+  // int32.
+  LAllocation useRegisterOrIndexConstant(MDefinition* mir, Scalar::Type type,
+                                         int32_t offsetAdjustment = 0);
 
   inline LUse useRegisterForTypedLoad(MDefinition* mir, MIRType type);
 

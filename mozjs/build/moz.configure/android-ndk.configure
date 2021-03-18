@@ -22,11 +22,11 @@ option(
     help="location where the Android NDK can be found{|}",
 )
 
-option("--with-android-ndk-version", nargs=1, help="android NDK version")
-
-option("--with-android-platform", nargs=1, help="location of the Android platform")
-
 option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
+
+option(
+    "--with-android-lldb-server", nargs=1, help="location of the Android LLDB server"
+)
 
 option(
     "--with-android-googlevr-sdk", nargs=1, help="location of the Android GoogleVR SDK"
@@ -93,19 +93,16 @@ set_config("ANDROID_NDK", ndk)
 add_old_configure_assignment("android_ndk", ndk)
 
 
-@depends("--with-android-ndk-version", ndk)
+@depends(ndk)
 @checking("for android ndk version")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="mozboot.android", _import="NDK_VERSION")
 @imports(_from="mozboot.android", _import="get_ndk_version")
 @imports(_from="mozboot.android", _import="GetNdkVersionError")
-def ndk_version(value, ndk):
+def ndk_version(ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
-
-    if value:
-        return value[0]
 
     try:
         major, minor, human = get_ndk_version(ndk)
@@ -128,15 +125,12 @@ set_config("ANDROID_NDK_MAJOR_VERSION", ndk_version.major)
 set_config("ANDROID_NDK_MINOR_VERSION", ndk_version.minor)
 
 
-@depends("--with-android-platform", target, android_version, ndk)
+@depends(target, android_version, ndk)
 @checking("for android platform directory")
 @imports(_from="os.path", _import="isdir")
-def android_platform(value, target, android_version, ndk):
+def android_platform(target, android_version, ndk):
     if target.os != "Android":
         return
-
-    if value:
-        return value[0]
 
     if "aarch64" == target.cpu:
         target_dir_name = "arm64"
@@ -258,6 +252,53 @@ def android_toolchain(target, host, ndk, toolchain):
 set_config("ANDROID_TOOLCHAIN", android_toolchain)
 
 
+@depends(target, host, ndk, "--with-android-lldb-server")
+@checking("for the Android LLDB server", lambda x: x or "not found")
+@imports(_from="os", _import="listdir")
+@imports(_from="os.path", _import="isdir")
+@imports(_from="os.path", _import="isfile")
+@imports(_from="mozbuild.shellutil", _import="quote")
+def android_lldb_server(target, host, ndk, lldb):
+    if not ndk:
+        return
+    if lldb:
+        return lldb[0]
+    else:
+        clang_format = "toolchains/llvm/prebuilt/%s-%s/lib64/clang"
+        llvm_lib = "lib/linux"
+
+        host_kernel = "windows" if host.kernel == "WINNT" else host.kernel.lower()
+        clang_path = os.path.join(ndk, clang_format % (host_kernel, host.cpu))
+        log.debug("Listing subdirectories of %s" % quote(clang_path))
+        clang_subdirs = [
+            x for x in listdir(clang_path) if isdir(os.path.join(clang_path, x))
+        ]
+        log.debug("Got %r" % clang_subdirs)
+        if len(clang_subdirs) != 1:
+            die(
+                "Could not resolve lldb-server in %s. Please specify --with-android-lldb-server=/path/to/android/lldb-server"
+                % quote(clang_path)
+            )
+        log.debug("Found version %s" % quote(clang_subdirs[0]))
+
+        if target.cpu == "x86":
+            target_cpu = "i386"
+        else:
+            target_cpu = target.cpu
+
+        full_path = os.path.join(
+            clang_path, clang_subdirs[0], llvm_lib, target_cpu, "lldb-server"
+        )
+        log.debug("Trying %s" % quote(full_path))
+
+        if isfile(full_path):
+            return full_path
+        die("Please specify --with-android-lldb-server=/path/to/android/lldb-server")
+
+
+set_config("ANDROID_LLDB_SERVER", android_lldb_server)
+
+
 @depends(target)
 def android_toolchain_prefix_base(target):
     if target.cpu == "x86":
@@ -278,7 +319,7 @@ option(
 @imports(_from="os.path", _import="isdir")
 def stlport_cppflags(value, ndk):
     if value and len(value):
-        return value[0].split()
+        return value.split()
     if not ndk:
         return
 
@@ -330,8 +371,6 @@ def extra_toolchain_flags(
         android_system,
         "-isystem",
         os.path.join(android_sysroot, "usr", "include"),
-        "--sysroot",
-        android_sysroot,
         "-gcc-toolchain",
         toolchain_dir,
         "-D__ANDROID_API__=%d" % android_version,

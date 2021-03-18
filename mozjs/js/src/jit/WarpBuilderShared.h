@@ -50,7 +50,8 @@ class MOZ_STACK_CLASS CallInfo {
   enum class ArgFormat {
     Standard,
     Array,
-    FunApplyArgs,
+    FunApplyMagicArgs,
+    FunApplyArgsObj,
   };
 
  private:

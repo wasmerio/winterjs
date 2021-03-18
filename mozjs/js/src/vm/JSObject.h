@@ -155,8 +155,6 @@ class JSObject
   }
   js::Shape* shape() const { return shape_; }
 
-  void traceShape(JSTracer* trc) { TraceEdge(trc, shapePtr(), "shape"); }
-
   static JSObject* fromShapeFieldPointer(uintptr_t p) {
     return reinterpret_cast<JSObject*>(p - JSObject::offsetOfShape());
   }
@@ -210,9 +208,7 @@ class JSObject
 
   // Objects with an uncacheable proto can have their prototype mutated
   // without inducing a shape change on the object. JIT inline caches should
-  // do an explicit group guard to guard against this. Singletons always
-  // generate a new shape when their prototype changes, regardless of this
-  // hasUncacheableProto flag.
+  // do an explicit group guard to guard against this.
   inline bool hasUncacheableProto() const;
   static bool setUncacheableProto(JSContext* cx, JS::HandleObject obj) {
     MOZ_ASSERT(obj->hasStaticPrototype(),
@@ -1025,11 +1021,11 @@ inline bool FreezeObject(JSContext* cx, HandleObject obj) {
 extern bool TestIntegrityLevel(JSContext* cx, HandleObject obj,
                                IntegrityLevel level, bool* resultp);
 
-extern MOZ_MUST_USE JSObject* SpeciesConstructor(
+[[nodiscard]] extern JSObject* SpeciesConstructor(
     JSContext* cx, HandleObject obj, HandleObject defaultCtor,
     bool (*isDefaultSpecies)(JSContext*, JSFunction*));
 
-extern MOZ_MUST_USE JSObject* SpeciesConstructor(
+[[nodiscard]] extern JSObject* SpeciesConstructor(
     JSContext* cx, HandleObject obj, JSProtoKey ctorKey,
     bool (*isDefaultSpecies)(JSContext*, JSFunction*));
 

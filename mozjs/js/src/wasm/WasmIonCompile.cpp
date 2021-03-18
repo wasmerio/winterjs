@@ -892,6 +892,48 @@ class FunctionCompiler {
     access.setZeroExtendSimd128Load();
     return load(addr.base, &access, ValType::V128);
   }
+
+  MDefinition* loadLaneSimd128(uint32_t laneSize,
+                               const LinearMemoryAddress<MDefinition*>& addr,
+                               uint32_t laneIndex, MDefinition* src) {
+    if (inDeadCode()) {
+      return nullptr;
+    }
+
+    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
+    MDefinition* base = addr.base;
+    MOZ_ASSERT(!moduleEnv_.isAsmJS());
+    checkOffsetAndAlignmentAndBounds(&access, &base);
+    MInstruction* load = MWasmLoadLaneSimd128::New(
+        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
+    if (!load) {
+      return nullptr;
+    }
+    curBlock_->add(load);
+    return load;
+  }
+
+  void storeLaneSimd128(uint32_t laneSize,
+                        const LinearMemoryAddress<MDefinition*>& addr,
+                        uint32_t laneIndex, MDefinition* src) {
+    if (inDeadCode()) {
+      return;
+    }
+    MemoryAccessDesc access(Scalar::Simd128, addr.align, addr.offset,
+                            bytecodeIfNotAsmJS());
+    MWasmLoadTls* memoryBase = maybeLoadMemoryBase();
+    MDefinition* base = addr.base;
+    MOZ_ASSERT(!moduleEnv_.isAsmJS());
+    checkOffsetAndAlignmentAndBounds(&access, &base);
+    MInstruction* store = MWasmStoreLaneSimd128::New(
+        alloc(), memoryBase, base, access, laneSize, laneIndex, src);
+    if (!store) {
+      return;
+    }
+    curBlock_->add(store);
+  }
 #endif  // ENABLE_WASM_SIMD
 
  private:
@@ -4325,12 +4367,7 @@ static bool EmitShuffleSimd128(FunctionCompiler& f) {
   }
 
 #  ifdef ENABLE_WASM_SIMD_WORMHOLE
-  static const uint8_t trigger[] = {31, 0, 30, 2,  29, 4,  28, 6,
-                                    27, 8, 26, 10, 25, 12, 24};
-  static_assert(sizeof(trigger) == 15);
-
-  if (f.moduleEnv().features.simdWormhole &&
-      memcmp(control.bytes, trigger, sizeof(trigger)) == 0) {
+  if (f.moduleEnv().simdWormholeEnabled() && IsWormholeTrigger(control)) {
     switch (control.bytes[15]) {
       case 0:
         f.iter().setResult(
@@ -4387,6 +4424,30 @@ static bool EmitLoadZeroSimd128(FunctionCompiler& f, Scalar::Type viewType,
   f.iter().setResult(f.loadZeroSimd128(viewType, numBytes, addr));
   return true;
 }
+
+static bool EmitLoadLaneSimd128(FunctionCompiler& f, uint32_t laneSize) {
+  uint32_t laneIndex;
+  MDefinition* src;
+  LinearMemoryAddress<MDefinition*> addr;
+  if (!f.iter().readLoadLane(laneSize, &addr, &laneIndex, &src)) {
+    return false;
+  }
+
+  f.iter().setResult(f.loadLaneSimd128(laneSize, addr, laneIndex, src));
+  return true;
+}
+
+static bool EmitStoreLaneSimd128(FunctionCompiler& f, uint32_t laneSize) {
+  uint32_t laneIndex;
+  MDefinition* src;
+  LinearMemoryAddress<MDefinition*> addr;
+  if (!f.iter().readStoreLane(laneSize, &addr, &laneIndex, &src)) {
+    return false;
+  }
+
+  f.storeLaneSimd128(laneSize, addr, laneIndex, src);
+  return true;
+}
 #endif
 
 static bool EmitBodyExprs(FunctionCompiler& f) {
@@ -4397,12 +4458,6 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
 #define CHECK(c)          \
   if (!(c)) return false; \
   break
-
-#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
-#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
-#else
-#  define CHECK_SIMD_EXPERIMENTAL() return f.iter().unrecognizedOpcode(&op)
-#endif
 
   while (true) {
     if (!f.mirGen().ensureBallast()) {
@@ -4947,11 +5002,26 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
           case uint32_t(SimdOp::I16x8Ne):
           case uint32_t(SimdOp::I32x4Eq):
           case uint32_t(SimdOp::I32x4Ne):
+          case uint32_t(SimdOp::I64x2Eq):
+          case uint32_t(SimdOp::I64x2Ne):
           case uint32_t(SimdOp::F32x4Eq):
           case uint32_t(SimdOp::F32x4Ne):
           case uint32_t(SimdOp::F64x2Eq):
           case uint32_t(SimdOp::F64x2Ne):
           case uint32_t(SimdOp::I32x4DotSI16x8):
+          case uint32_t(SimdOp::I16x8ExtMulLowSI8x16):
+          case uint32_t(SimdOp::I16x8ExtMulHighSI8x16):
+          case uint32_t(SimdOp::I16x8ExtMulLowUI8x16):
+          case uint32_t(SimdOp::I16x8ExtMulHighUI8x16):
+          case uint32_t(SimdOp::I32x4ExtMulLowSI16x8):
+          case uint32_t(SimdOp::I32x4ExtMulHighSI16x8):
+          case uint32_t(SimdOp::I32x4ExtMulLowUI16x8):
+          case uint32_t(SimdOp::I32x4ExtMulHighUI16x8):
+          case uint32_t(SimdOp::I64x2ExtMulLowSI32x4):
+          case uint32_t(SimdOp::I64x2ExtMulHighSI32x4):
+          case uint32_t(SimdOp::I64x2ExtMulLowUI32x4):
+          case uint32_t(SimdOp::I64x2ExtMulHighUI32x4):
+          case uint32_t(SimdOp::I16x8Q15MulrSatS):
             CHECK(EmitBinarySimd128(f, /* commutative= */ true, SimdOp(op.b1)));
           case uint32_t(SimdOp::V128AndNot):
           case uint32_t(SimdOp::I8x16Sub):
@@ -5033,6 +5103,10 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
           case uint32_t(SimdOp::I32x4TruncSSatF32x4):
           case uint32_t(SimdOp::I32x4TruncUSatF32x4):
           case uint32_t(SimdOp::I64x2Neg):
+          case uint32_t(SimdOp::I64x2WidenLowSI32x4):
+          case uint32_t(SimdOp::I64x2WidenHighSI32x4):
+          case uint32_t(SimdOp::I64x2WidenLowUI32x4):
+          case uint32_t(SimdOp::I64x2WidenHighUI32x4):
           case uint32_t(SimdOp::F32x4Abs):
           case uint32_t(SimdOp::F32x4Neg):
           case uint32_t(SimdOp::F32x4Sqrt):
@@ -5053,16 +5127,24 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
           case uint32_t(SimdOp::F64x2Floor):
           case uint32_t(SimdOp::F64x2Trunc):
           case uint32_t(SimdOp::F64x2Nearest):
+          case uint32_t(SimdOp::F32x4DemoteF64x2Zero):
+          case uint32_t(SimdOp::F64x2PromoteLowF32x4):
+          case uint32_t(SimdOp::F64x2ConvertLowI32x4S):
+          case uint32_t(SimdOp::F64x2ConvertLowI32x4U):
+          case uint32_t(SimdOp::I32x4TruncSatF64x2SZero):
+          case uint32_t(SimdOp::I32x4TruncSatF64x2UZero):
             CHECK(EmitUnarySimd128(f, SimdOp(op.b1)));
-          case uint32_t(SimdOp::I8x16AnyTrue):
+          case uint32_t(SimdOp::V128AnyTrue):
           case uint32_t(SimdOp::I16x8AnyTrue):
           case uint32_t(SimdOp::I32x4AnyTrue):
           case uint32_t(SimdOp::I8x16AllTrue):
           case uint32_t(SimdOp::I16x8AllTrue):
           case uint32_t(SimdOp::I32x4AllTrue):
+          case uint32_t(SimdOp::I64x2AllTrue):
           case uint32_t(SimdOp::I8x16Bitmask):
           case uint32_t(SimdOp::I16x8Bitmask):
           case uint32_t(SimdOp::I32x4Bitmask):
+          case uint32_t(SimdOp::I64x2Bitmask):
             CHECK(EmitReduceSimd128(f, SimdOp(op.b1)));
           case uint32_t(SimdOp::I8x16Shl):
           case uint32_t(SimdOp::I8x16ShrS):
@@ -5126,6 +5208,22 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
             CHECK(EmitLoadZeroSimd128(f, Scalar::Float32, 4));
           case uint32_t(SimdOp::V128Load64Zero):
             CHECK(EmitLoadZeroSimd128(f, Scalar::Float64, 8));
+          case uint32_t(SimdOp::V128Load8Lane):
+            CHECK(EmitLoadLaneSimd128(f, 1));
+          case uint32_t(SimdOp::V128Load16Lane):
+            CHECK(EmitLoadLaneSimd128(f, 2));
+          case uint32_t(SimdOp::V128Load32Lane):
+            CHECK(EmitLoadLaneSimd128(f, 4));
+          case uint32_t(SimdOp::V128Load64Lane):
+            CHECK(EmitLoadLaneSimd128(f, 8));
+          case uint32_t(SimdOp::V128Store8Lane):
+            CHECK(EmitStoreLaneSimd128(f, 1));
+          case uint32_t(SimdOp::V128Store16Lane):
+            CHECK(EmitStoreLaneSimd128(f, 2));
+          case uint32_t(SimdOp::V128Store32Lane):
+            CHECK(EmitStoreLaneSimd128(f, 4));
+          case uint32_t(SimdOp::V128Store64Lane):
+            CHECK(EmitStoreLaneSimd128(f, 8));
           default:
             return f.iter().unrecognizedOpcode(&op);
         }  // switch (op.b1)
@@ -5454,7 +5552,6 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
   MOZ_CRASH("unreachable");
 
 #undef CHECK
-#undef CHECK_SIMD_EXPERIMENTAL
 }
 
 bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,

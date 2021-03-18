@@ -44,7 +44,7 @@
 
 #else  // ndef MOZ_GECKO_PROFILER
 
-#  include "mozilla/ProfileChunkedBuffer.h"
+#  include "mozilla/BaseProfilerLabels.h"
 #  include "mozilla/TimeStamp.h"
 #  include "mozilla/Unused.h"
 
@@ -53,6 +53,10 @@
 #  include <utility>
 
 namespace mozilla::baseprofiler {
+
+// Forward-declaration. TODO: Move to more common header, see bug 1681416.
+MFBT_API bool profiler_capture_backtrace_into(
+    ProfileChunkedBuffer& aChunkedBuffer, StackCaptureOptions aCaptureOptions);
 
 // Add a marker to a given buffer. `AddMarker()` and related macros should be
 // used in most cases, see below for more information about them and the
@@ -64,6 +68,7 @@ ProfileBufferBlockIndex AddMarkerToBuffer(
     const MarkerCategory& aCategory, MarkerOptions&& aOptions,
     MarkerType aMarkerType, const PayloadArguments&... aPayloadArguments) {
   Unused << aMarkerType;  // Only the empty object type is useful.
+  AUTO_BASE_PROFILER_LABEL("baseprofiler::AddMarkerToBuffer", PROFILER);
   return base_profiler_markers_detail::AddMarkerToBuffer<MarkerType>(
       aBuffer, aName, aCategory, std::move(aOptions),
       ::mozilla::baseprofiler::profiler_capture_backtrace_into,

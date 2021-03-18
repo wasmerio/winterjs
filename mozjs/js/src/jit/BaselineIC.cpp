@@ -275,8 +275,8 @@ bool ICScript::initICEntries(JSContext* cx, JSScript* script) {
       case JSOp::Not:
       case JSOp::And:
       case JSOp::Or:
-      case JSOp::IfEq:
-      case JSOp::IfNe: {
+      case JSOp::JumpIfFalse:
+      case JSOp::JumpIfTrue: {
         auto* stub = alloc.newStub<ICToBool_Fallback>(Kind::ToBool);
         if (!addIC(loc, stub)) {
           return false;
@@ -689,11 +689,9 @@ void ICFallbackStub::unlinkStub(Zone* zone, ICCacheIRStub* prev,
 
   state_.trackUnlinkedStub();
 
-  if (zone->needsIncrementalBarrier()) {
-    // We are removing edges from ICStub to gcthings. Perform one final trace
-    // of the stub for incremental GC, as it must know about those edges.
-    stub->trace(zone->barrierTracer());
-  }
+  // We are removing edges from ICStub to gcthings. Perform a barrier to let the
+  // GC know about those edges.
+  PreWriteBarrier(zone, stub);
 
 #ifdef DEBUG
   // Poison stub code to ensure we don't call this stub again. However, if

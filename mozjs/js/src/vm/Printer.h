@@ -9,7 +9,6 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Range.h"
-#include "mozilla/Vector.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -20,12 +19,6 @@
 #include "js/Utility.h"
 
 namespace js {
-
-namespace frontend {
-
-class ParserAtom;
-
-}  // namespace frontend
 
 class LifoAlloc;
 
@@ -86,14 +79,14 @@ class Sprinter final : public GenericPrinter {
   size_t size;           // size of buffer allocated at base
   ptrdiff_t offset;      // offset of next free char in buffer
 
-  MOZ_MUST_USE bool realloc_(size_t newSize);
+  [[nodiscard]] bool realloc_(size_t newSize);
 
  public:
   explicit Sprinter(JSContext* cx, bool shouldReportOOM = true);
   ~Sprinter();
 
   // Initialize this sprinter, returns false on error.
-  MOZ_MUST_USE bool init();
+  [[nodiscard]] bool init();
 
   void checkInvariants() const;
 
@@ -120,7 +113,7 @@ class Sprinter final : public GenericPrinter {
   // Format the given format/arguments as if by JS_vsmprintf, then put it.
   // Return true on success, else return false and report an error (typically
   // OOM).
-  MOZ_MUST_USE bool jsprintf(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
+  [[nodiscard]] bool jsprintf(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
 
   bool putString(JSString* str);
 
@@ -131,18 +124,6 @@ class Sprinter final : public GenericPrinter {
   // Sprinter's outOfMemory flag; subsequent calls do nothing.
   virtual void reportOutOfMemory() override;
 };
-
-#ifdef JS_ENABLE_UWP
-class UWPPrinter : public GenericPrinter {
-   mozilla::Vector<uint8_t> buffer_;
- public:
-   explicit UWPPrinter() {}
-  // Puts |len| characters from |s| at the current position and
-  // return true on success, false on failure.
-  virtual bool put(const char* s, size_t len) override;
-  using GenericPrinter::put;  // pick up |inline bool put(const char* s);|
-};
-#endif
 
 // Fprinter, print a string directly into a file.
 class Fprinter final : public GenericPrinter {
@@ -160,7 +141,7 @@ class Fprinter final : public GenericPrinter {
 #endif
 
   // Initialize this printer, returns false on error.
-  MOZ_MUST_USE bool init(const char* path);
+  [[nodiscard]] bool init(const char* path);
   void init(FILE* fp);
   bool isInitialized() const { return file_ != nullptr; }
   void flush() override;
@@ -219,20 +200,11 @@ extern const char js_EscapeMap[];
 extern JS::UniqueChars QuoteString(JSContext* cx, JSString* str,
                                    char quote = '\0');
 
-// Same as above, except quote a parser atom.
-extern JS::UniqueChars QuoteString(JSContext* cx,
-                                   const frontend::ParserAtom* ent,
-                                   char quote = '\0');
-
 // Appends the quoted string to the given Sprinter. Follows the same semantics
 // as QuoteString from above.
 extern bool QuoteString(Sprinter* sp, JSString* str, char quote = '\0');
 
-// Appends the quoted parser atom to the given Sprinter. Follows the same
-// semantics as QuoteString from above.
-bool QuoteString(Sprinter* sp, const frontend::ParserAtom* ent,
-                 char quote = '\0');
-
+// Appends the quoted string to the given Sprinter. Follows the same
 // Appends the JSON quoted string to the given Sprinter.
 extern bool JSONQuoteString(Sprinter* sp, JSString* str);
 

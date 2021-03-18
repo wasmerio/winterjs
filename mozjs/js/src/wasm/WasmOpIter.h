@@ -182,6 +182,8 @@ enum class OpKind {
 #  ifdef ENABLE_WASM_SIMD
   ExtractLane,
   ReplaceLane,
+  LoadLane,
+  StoreLane,
   VectorShift,
   VectorSelect,
   VectorShuffle,
@@ -371,6 +373,10 @@ class MOZ_STACK_CLASS OpIter : private Policy {
 
   inline bool checkIsSubtypeOf(ValType lhs, ValType rhs);
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  [[nodiscard]] bool exceptionTypeHasRef(ResultType type);
+#endif
+
  public:
 #ifdef DEBUG
   explicit OpIter(const ModuleEnvironment& env, Decoder& decoder)
@@ -555,6 +561,12 @@ class MOZ_STACK_CLASS OpIter : private Policy {
   [[nodiscard]] bool readLoadSplat(uint32_t byteSize,
                                    LinearMemoryAddress<Value>* addr);
   [[nodiscard]] bool readLoadExtend(LinearMemoryAddress<Value>* addr);
+  [[nodiscard]] bool readLoadLane(uint32_t byteSize,
+                                  LinearMemoryAddress<Value>* addr,
+                                  uint32_t* laneIndex, Value* input);
+  [[nodiscard]] bool readStoreLane(uint32_t byteSize,
+                                   LinearMemoryAddress<Value>* addr,
+                                   uint32_t* laneIndex, Value* input);
 #endif
 
   // At a location where readOp is allowed, peek at the next opcode
@@ -1289,6 +1301,17 @@ inline bool OpIter<Policy>::readBrTable(Uint32Vector* depths,
 
 #ifdef ENABLE_WASM_EXCEPTIONS
 template <typename Policy>
+inline bool OpIter<Policy>::exceptionTypeHasRef(ResultType type) {
+  for (size_t i = 0; i < type.length(); i++) {
+    if (type[i].isReference()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+template <typename Policy>
 inline bool OpIter<Policy>::readTry(ResultType* paramType) {
   MOZ_ASSERT(Classify(op_) == OpKind::Try);
 
@@ -1313,6 +1336,9 @@ inline bool OpIter<Policy>::readCatch(LabelKind* kind, uint32_t* eventIndex,
   }
   if (*eventIndex >= env_.events.length()) {
     return fail("event index out of range");
+  }
+  if (exceptionTypeHasRef(env_.events[*eventIndex].resultType())) {
+    return fail("exception with reference types not supported");
   }
 
   Control& block = controlStack_.back();
@@ -1344,6 +1370,9 @@ inline bool OpIter<Policy>::readThrow(uint32_t* eventIndex,
   }
   if (*eventIndex >= env_.events.length()) {
     return fail("event index out of range");
+  }
+  if (exceptionTypeHasRef(env_.events[*eventIndex].resultType())) {
+    return fail("exception with reference types not supported.");
   }
 
   if (!popWithType(env_.events[*eventIndex].resultType(), argValues)) {
@@ -2805,6 +2834,52 @@ inline bool OpIter<Policy>::readLoadExtend(LinearMemoryAddress<Value>* addr) {
   }
 
   infalliblePush(ValType::V128);
+
+  return true;
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readLoadLane(uint32_t byteSize,
+                                         LinearMemoryAddress<Value>* addr,
+                                         uint32_t* laneIndex, Value* input) {
+  MOZ_ASSERT(Classify(op_) == OpKind::LoadLane);
+
+  if (!popWithType(ValType::V128, input)) {
+    return false;
+  }
+
+  if (!readLinearMemoryAddress(byteSize, addr)) {
+    return false;
+  }
+
+  uint32_t inputLanes = 16 / byteSize;
+  if (!readLaneIndex(inputLanes, laneIndex)) {
+    return fail("missing or invalid load_lane lane index");
+  }
+
+  infalliblePush(ValType::V128);
+
+  return true;
+}
+
+template <typename Policy>
+inline bool OpIter<Policy>::readStoreLane(uint32_t byteSize,
+                                          LinearMemoryAddress<Value>* addr,
+                                          uint32_t* laneIndex, Value* input) {
+  MOZ_ASSERT(Classify(op_) == OpKind::StoreLane);
+
+  if (!popWithType(ValType::V128, input)) {
+    return false;
+  }
+
+  if (!readLinearMemoryAddress(byteSize, addr)) {
+    return false;
+  }
+
+  uint32_t inputLanes = 16 / byteSize;
+  if (!readLaneIndex(inputLanes, laneIndex)) {
+    return fail("missing or invalid store_lane lane index");
+  }
 
   return true;
 }

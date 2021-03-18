@@ -88,6 +88,9 @@ typedef GCVector<WasmExceptionObject*, 0, SystemAllocPolicy>
     WasmExceptionObjectVector;
 using RootedWasmExceptionObject = Rooted<WasmExceptionObject*>;
 
+class WasmRuntimeExceptionObject;
+using RootedWasmRuntimeExceptionObject = Rooted<WasmRuntimeExceptionObject*>;
+
 namespace wasm {
 
 using mozilla::Atomic;
@@ -1032,6 +1035,21 @@ using SharedExceptionTag = RefPtr<ExceptionTag>;
 typedef Vector<SharedExceptionTag, 0, SystemAllocPolicy>
     SharedExceptionTagVector;
 
+// WasmJSExceptionObject wraps a JS Value in order to provide a uniform
+// method of handling JS thrown exceptions. Exceptions originating in Wasm
+// are WebAssemby.RuntimeException objects, whereas exceptions from JS are
+// wrapped as WasmJSExceptionObject objects.
+class WasmJSExceptionObject : public NativeObject {
+  static const unsigned VALUE_SLOT = 0;
+
+ public:
+  static const unsigned RESERVED_SLOTS = 1;
+  static const JSClass class_;
+  const Value& value() const { return getFixedSlot(VALUE_SLOT); }
+
+  static WasmJSExceptionObject* create(JSContext* cx, MutableHandleValue value);
+};
+
 // Code can be compiled either with the Baseline compiler or the Ion compiler,
 // and tier-variant data are tagged with the Tier value.
 //
@@ -1075,6 +1093,17 @@ enum ModuleKind { Wasm, AsmJS };
 
 enum class Shareable { False, True };
 
+// Describes per-compilation settings that are controlled by an options bag
+// passed to compilation and validation functions.  (Nonstandard extension
+// available under prefs.)
+
+struct FeatureOptions {
+  FeatureOptions() : simdWormhole(false) {}
+
+  // May be set if javascript.options.wasm_simd_wormhole==true.
+  bool simdWormhole;
+};
+
 // Describes the features that control wasm compilation.
 
 struct FeatureArgs {
@@ -1092,7 +1121,7 @@ struct FeatureArgs {
   FeatureArgs& operator=(const FeatureArgs&) = default;
   FeatureArgs(FeatureArgs&&) = default;
 
-  static FeatureArgs build(JSContext* cx);
+  static FeatureArgs build(JSContext* cx, const FeatureOptions& options);
 
   FeatureArgs withRefTypes(bool refTypes) const {
     FeatureArgs features = *this;
@@ -3103,6 +3132,36 @@ class CallSiteTarget {
 
 typedef Vector<CallSiteTarget, 0, SystemAllocPolicy> CallSiteTargetVector;
 
+// WasmTryNotes are stored in a vector that acts as an exception table for
+// wasm try-catch blocks. These represent the information needed to take
+// exception handling actions after a throw is executed.
+struct WasmTryNote {
+  explicit WasmTryNote(uint32_t begin = 0, uint32_t end = 0,
+                       uint32_t framePushed = 0)
+      : begin(begin), end(end), framePushed(framePushed) {}
+
+  uint32_t begin;        // Begin code offset of try instructions.
+  uint32_t end;          // End code offset of try instructions.
+  uint32_t entryPoint;   // The offset of the landing pad.
+  uint32_t framePushed;  // Track offset from frame of stack pointer.
+
+  void offsetBy(uint32_t offset) {
+    begin += offset;
+    end += offset;
+    entryPoint += offset;
+  }
+
+  bool operator<(const WasmTryNote& other) const {
+    if (end == other.end) {
+      return begin > other.begin;
+    } else {
+      return end < other.end;
+    }
+  }
+};
+
+WASM_DECLARE_POD_VECTOR(WasmTryNote, WasmTryNoteVector)
+
 // A wasm::SymbolicAddress represents a pointer to a well-known function that is
 // embedded in wasm code. Since wasm code is serialized and later deserialized
 // into a different address space, symbolic addresses must be used for *all*
@@ -3183,6 +3242,11 @@ enum class SymbolicAddress {
   PostBarrierFiltering,
   StructNew,
   StructNarrow,
+#if defined(ENABLE_WASM_EXCEPTIONS)
+  ExceptionNew,
+  ThrowException,
+  GetLocalExceptionIndex,
+#endif
 #if defined(JS_CODEGEN_MIPS32)
   js_jit_gAtomic64Lock,
 #endif
@@ -3954,6 +4018,11 @@ void DebugCodegen(DebugChannel channel, const char* fmt, ...)
     MOZ_FORMAT_PRINTF(2, 3);
 
 using PrintCallback = void (*)(const char*);
+
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+bool IsWormholeTrigger(const V128& shuffleMask);
+jit::SimdConstant WormholeSignature();
+#endif
 
 }  // namespace wasm
 

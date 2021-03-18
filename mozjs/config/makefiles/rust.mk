@@ -191,6 +191,12 @@ export LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH)
 export CLANG_PATH=$(MOZ_CLANG_PATH)
 export PKG_CONFIG
 export PKG_CONFIG_ALLOW_CROSS=1
+ifneq (,$(PKG_CONFIG_SYSROOT_DIR))
+export PKG_CONFIG_SYSROOT_DIR
+endif
+ifneq (,$(PKG_CONFIG_LIBDIR))
+export PKG_CONFIG_LIBDIR
+endif
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
 export PYTHON3
@@ -202,12 +208,27 @@ export COREAUDIO_SDK_PATH=$(MACOS_SDK_DIR)
 endif
 endif
 
+ifndef RUSTC_BOOTSTRAP
+ifeq (,$(filter 1.47.% 1.48.% 1.49.%,$(RUSTC_VERSION)))
+RUSTC_BOOTSTRAP := gkrust_shared,qcms
+ifdef MOZ_RUST_SIMD
+RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,packed_simd
+endif
+export RUSTC_BOOTSTRAP
+endif
+endif
+
 target_rust_ltoable := force-cargo-library-build
 target_rust_nonltoable := force-cargo-test-run force-cargo-library-check $(foreach b,build check,force-cargo-program-$(b))
 
 ifdef MOZ_PGO_RUST
 ifdef MOZ_PROFILE_GENERATE
-rust_pgo_flags := -C profile-generate=$(topobjdir)
+# Our top-level Cargo.toml sets panic to abort, so we technically don't need -C panic=abort,
+# but the autocfg crate takes RUSTFLAGS verbatim and runs its compiler tests without
+# -C panic=abort (because it doesn't know it's what cargo uses), which fail on Windows
+# because -C panic=unwind (the compiler default) is not compatible with -C profile-generate
+# (https://github.com/rust-lang/rust/issues/61002).
+rust_pgo_flags := -C panic=abort -C profile-generate=$(topobjdir)
 # The C compiler may be passed extra llvm flags for PGO that we also want to pass to rust as well.
 # In PROFILE_GEN_CFLAGS, they look like "-mllvm foo", and we want "-C llvm-args=foo", so first turn
 # "-mllvm foo" into "-mllvm:foo" so that it becomes a unique argument, that we can then filter for,

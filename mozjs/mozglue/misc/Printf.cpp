@@ -10,6 +10,7 @@
  * Author: Kipp E.B. Hickman
  */
 
+#include "double-conversion/double-conversion.h"
 #include "mozilla/AllocPolicy.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Printf.h"
@@ -25,6 +26,9 @@
 #if defined(XP_WIN)
 #  include <windows.h>
 #endif
+
+using double_conversion::DoubleToStringConverter;
+using DTSC = DoubleToStringConverter;
 
 /*
  * Note: on some platforms va_list is defined as an array,
@@ -46,9 +50,11 @@ struct NumArgState {
   va_list ap;  // point to the corresponding position on ap
 };
 
-typedef mozilla::Vector<NumArgState, 20, mozilla::MallocAllocPolicy>
-    NumArgStateVector;
+using NumArgStateVector =
+    mozilla::Vector<NumArgState, 20, mozilla::MallocAllocPolicy>;
 
+// For values up to and including TYPE_DOUBLE, the lowest bit indicates
+// whether the type is signed (0) or unsigned (1).
 #define TYPE_SHORT 0
 #define TYPE_USHORT 1
 #define TYPE_INTN 2
@@ -57,8 +63,8 @@ typedef mozilla::Vector<NumArgState, 20, mozilla::MallocAllocPolicy>
 #define TYPE_ULONG 5
 #define TYPE_LONGLONG 6
 #define TYPE_ULONGLONG 7
-#define TYPE_STRING 8
-#define TYPE_DOUBLE 9
+#define TYPE_DOUBLE 8
+#define TYPE_STRING 9
 #define TYPE_INTSTR 10
 #define TYPE_POINTER 11
 #if defined(XP_WIN)
@@ -82,18 +88,26 @@ bool mozilla::PrintfTarget::fill2(const char* src, int srclen, int width,
 
   width -= srclen;
   if (width > 0 && (flags & FLAG_LEFT) == 0) {  // Right adjusting
-    if (flags & FLAG_ZEROS) space = '0';
+    if (flags & FLAG_ZEROS) {
+      space = '0';
+    }
     while (--width >= 0) {
-      if (!emit(&space, 1)) return false;
+      if (!emit(&space, 1)) {
+        return false;
+      }
     }
   }
 
   // Copy out the source data
-  if (!emit(src, srclen)) return false;
+  if (!emit(src, srclen)) {
+    return false;
+  }
 
   if (width > 0 && (flags & FLAG_LEFT) != 0) {  // Left adjusting
     while (--width >= 0) {
-      if (!emit(&space, 1)) return false;
+      if (!emit(&space, 1)) {
+        return false;
+      }
     }
   }
   return true;
@@ -126,14 +140,14 @@ bool mozilla::PrintfTarget::fill_n(const char* src, int srclen, int width,
   }
   cvtwidth = signwidth + srclen;
 
-  if (prec > 0) {
+  if (prec > 0 && (type != TYPE_DOUBLE)) {
     if (prec > srclen) {
       precwidth = prec - srclen;  // Need zero filling
       cvtwidth += precwidth;
     }
   }
 
-  if ((flags & FLAG_ZEROS) && (prec < 0)) {
+  if ((flags & FLAG_ZEROS) && ((type == TYPE_DOUBLE) || (prec < 0))) {
     if (width > cvtwidth) {
       zerowidth = width - cvtwidth;  // Zero filling
       cvtwidth += zerowidth;
@@ -152,20 +166,32 @@ bool mozilla::PrintfTarget::fill_n(const char* src, int srclen, int width,
     }
   }
   while (--leftspaces >= 0) {
-    if (!emit(" ", 1)) return false;
+    if (!emit(" ", 1)) {
+      return false;
+    }
   }
   if (signwidth) {
-    if (!emit(&sign, 1)) return false;
+    if (!emit(&sign, 1)) {
+      return false;
+    }
   }
   while (--precwidth >= 0) {
-    if (!emit("0", 1)) return false;
+    if (!emit("0", 1)) {
+      return false;
+    }
   }
   while (--zerowidth >= 0) {
-    if (!emit("0", 1)) return false;
+    if (!emit("0", 1)) {
+      return false;
+    }
   }
-  if (!emit(src, uint32_t(srclen))) return false;
+  if (!emit(src, uint32_t(srclen))) {
+    return false;
+  }
   while (--rightspaces >= 0) {
-    if (!emit(" ", 1)) return false;
+    if (!emit(" ", 1)) {
+      return false;
+    }
   }
   return true;
 }
@@ -227,7 +253,9 @@ bool mozilla::PrintfTarget::cvt_l(long num, int width, int prec, int radix,
   int digits;
 
   // according to the man page this needs to happen
-  if ((prec == 0) && (num == 0)) return true;
+  if ((prec == 0) && (num == 0)) {
+    return fill_n("", 0, width, prec, type, flags);
+  }
 
   // Converting decimal is a little tricky. In the unsigned case we
   // need to stop when we hit 10 digits. In the signed case, we can
@@ -254,7 +282,9 @@ bool mozilla::PrintfTarget::cvt_l(long num, int width, int prec, int radix,
 bool mozilla::PrintfTarget::cvt_ll(int64_t num, int width, int prec, int radix,
                                    int type, int flags, const char* hexp) {
   // According to the man page, this needs to happen.
-  if (prec == 0 && num == 0) return true;
+  if (prec == 0 && num == 0) {
+    return fill_n("", 0, width, prec, type, flags);
+  }
 
   // Converting decimal is a little tricky. In the unsigned case we
   // need to stop when we hit 10 digits. In the signed case, we can
@@ -281,57 +311,80 @@ bool mozilla::PrintfTarget::cvt_ll(int64_t num, int width, int prec, int radix,
   return fill_n(cvt, digits, width, prec, type, flags);
 }
 
+template <size_t N>
+constexpr static size_t lengthof(const char (&)[N]) {
+  return N - 1;
+}
+
+// Longest possible output from ToFixed for positive numbers:
+// [0-9]{kMaxFixedDigitsBeforePoint}\.[0-9]{kMaxFixedDigitsAfterPoint}?
+constexpr int FIXED_MAX_CHARS =
+    DTSC::kMaxFixedDigitsBeforePoint + 1 + DTSC::kMaxFixedDigitsAfterPoint;
+
+// Longest possible output from ToExponential:
+// [1-9]\.[0-9]{kMaxExponentialDigits}e[+-][0-9]{1,3}
+// (std::numeric_limits<double>::max() has exponent 308).
+constexpr int EXPONENTIAL_MAX_CHARS =
+    lengthof("1.") + DTSC::kMaxExponentialDigits + lengthof("e+999");
+
+// Longest possible output from ToPrecise:
+// [0-9\.]{kMaxPrecisionDigits+1} or
+// [1-9]\.[0-9]{kMaxPrecisionDigits-1}e[+-][0-9]{1,3}
+constexpr int PRECISE_MAX_CHARS =
+    lengthof("1.") + DTSC::kMaxPrecisionDigits - 1 + lengthof("e+999");
+
+constexpr int DTSC_MAX_CHARS =
+    std::max({FIXED_MAX_CHARS, EXPONENTIAL_MAX_CHARS, PRECISE_MAX_CHARS});
+
 /*
  * Convert a double precision floating point number into its printable
  * form.
  */
-bool mozilla::PrintfTarget::cvt_f(double d, const char* fmt0,
-                                  const char* fmt1) {
-  char fin[20];
-  // The size is chosen such that we can print DBL_MAX.  See bug#1350097.
-  char fout[320];
-  int amount = fmt1 - fmt0;
-
-  MOZ_ASSERT((amount > 0) && (amount < (int)sizeof(fin)));
-  if (amount >= (int)sizeof(fin)) {
-    // Totally bogus % command to sprintf. Just ignore it
-    return true;
+bool mozilla::PrintfTarget::cvt_f(double d, char c, int width, int prec,
+                                  int flags) {
+  bool lower = islower(c);
+  const char* inf = lower ? "inf" : "INF";
+  const char* nan = lower ? "nan" : "NAN";
+  char e = lower ? 'e' : 'E';
+  DoubleToStringConverter converter(DTSC::UNIQUE_ZERO | DTSC::NO_TRAILING_ZERO |
+                                        DTSC::EMIT_POSITIVE_EXPONENT_SIGN,
+                                    inf, nan, e, 0, 0, 4, 0, 2);
+  // Longest of the above cases, plus space for a terminal nul character.
+  char buf[DTSC_MAX_CHARS + 1];
+  double_conversion::StringBuilder builder(buf, sizeof(buf));
+  bool success = false;
+  if (std::signbit(d)) {
+    d = std::abs(d);
+    flags |= FLAG_NEG;
   }
-  memcpy(fin, fmt0, (size_t)amount);
-  fin[amount] = 0;
-
-  // Convert floating point using the native snprintf code
-#ifdef DEBUG
-  {
-    const char* p = fin;
-    while (*p) {
-      MOZ_ASSERT(*p != 'L');
-      p++;
-    }
+  if (!std::isfinite(d)) {
+    flags &= ~FLAG_ZEROS;
   }
-#endif
-  size_t len = SprintfLiteral(fout, fin, d);
-  // Note that SprintfLiteral will always write a \0 at the end, so a
-  // "<=" check here would be incorrect -- the buffer size passed to
-  // snprintf includes the trailing \0, but the returned length does
-  // not.
-  if (MOZ_LIKELY(len < sizeof(fout))) {
-    return emit(fout, len);
+  // "If the precision is missing, it shall be taken as 6."
+  if (prec < 0) {
+    prec = 6;
   }
-
-  // Maybe the user used "%500.500f" or something like that.
-  size_t buf_size = len + 1;
-  UniqueFreePtr<char> buf((char*)malloc(buf_size));
-  if (!buf) {
+  switch (c) {
+    case 'e':
+    case 'E':
+      success = converter.ToExponential(d, prec, &builder);
+      break;
+    case 'f':
+    case 'F':
+      success = converter.ToFixed(d, prec, &builder);
+      break;
+    case 'g':
+    case 'G':
+      // "If an explicit precision is zero, it shall be taken as 1."
+      success = converter.ToPrecision(d, prec ? prec : 1, &builder);
+      break;
+  }
+  if (!success) {
     return false;
   }
-  len = snprintf(buf.get(), buf_size, fin, d);
-  // If this assert fails, then SprintfLiteral has a bug -- and in
-  // this case we would like to learn of it, which is why there is a
-  // release assert.
-  MOZ_RELEASE_ASSERT(len < buf_size);
-
-  return emit(buf.get(), len);
+  int len = builder.position();
+  char* cvt = builder.Finalize();
+  return fill_n(cvt, len, width, prec, TYPE_DOUBLE, flags);
 }
 
 /*
@@ -341,12 +394,18 @@ bool mozilla::PrintfTarget::cvt_f(double d, const char* fmt0,
  */
 bool mozilla::PrintfTarget::cvt_s(const char* s, int width, int prec,
                                   int flags) {
-  if (prec == 0) return true;
-  if (!s) s = "(null)";
+  if (prec == 0) {
+    return true;
+  }
+  if (!s) {
+    s = "(null)";
+  }
 
   // Limit string length by precision value
   int slen = int(strlen(s));
-  if (0 < prec && prec < slen) slen = prec;
+  if (0 < prec && prec < slen) {
+    slen = prec;
+  }
 
   // and away we go
   return fill2(s, slen, width, flags);
@@ -369,17 +428,24 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
   p = fmt;
   i = 0;
   while ((c = *p++) != 0) {
-    if (c != '%') continue;
-    if ((c = *p++) == '%')  // skip %% case
+    if (c != '%') {
       continue;
+    }
+    if ((c = *p++) == '%') {  // skip %% case
+      continue;
+    }
 
     while (c != 0) {
       if (c > '9' || c < '0') {
         if (c == '$') {  // numbered argument case
-          if (i > 0) MOZ_CRASH("Bad format string");
+          if (i > 0) {
+            MOZ_CRASH("Bad format string");
+          }
           number++;
         } else {  // non-numbered argument case
-          if (number > 0) MOZ_CRASH("Bad format string");
+          if (number > 0) {
+            MOZ_CRASH("Bad format string");
+          }
           i = 1;
         }
         break;
@@ -389,23 +455,33 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
     }
   }
 
-  if (number == 0) return true;
+  if (number == 0) {
+    return true;
+  }
 
   // Only allow a limited number of arguments.
   MOZ_RELEASE_ASSERT(number <= 20);
 
-  if (!nas.growByUninitialized(number)) return false;
+  if (!nas.growByUninitialized(number)) {
+    return false;
+  }
 
-  for (i = 0; i < number; i++) nas[i].type = TYPE_UNKNOWN;
+  for (i = 0; i < number; i++) {
+    nas[i].type = TYPE_UNKNOWN;
+  }
 
   // Second pass:
   // Set nas[].type.
 
   p = fmt;
   while ((c = *p++) != 0) {
-    if (c != '%') continue;
+    if (c != '%') {
+      continue;
+    }
     c = *p++;
-    if (c == '%') continue;
+    if (c == '%') {
+      continue;
+    }
 
     cn = 0;
     while (c && c != '$') {  // should improve error check later
@@ -413,11 +489,15 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
       c = *p++;
     }
 
-    if (!c || cn < 1 || cn > number) MOZ_CRASH("Bad format string");
+    if (!c || cn < 1 || cn > number) {
+      MOZ_CRASH("Bad format string");
+    }
 
     // nas[cn] starts from 0, and make sure nas[cn].type is not assigned.
     cn--;
-    if (nas[cn].type != TYPE_UNKNOWN) continue;
+    if (nas[cn].type != TYPE_UNKNOWN) {
+      continue;
+    }
 
     c = *p++;
 
@@ -473,6 +553,15 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
                      : sizeof(size_t) == sizeof(long) ? TYPE_LONG
                                                       : TYPE_LONGLONG;
       c = *p++;
+    } else if (c == 't') {
+      static_assert(sizeof(ptrdiff_t) == sizeof(int) ||
+                        sizeof(ptrdiff_t) == sizeof(long) ||
+                        sizeof(ptrdiff_t) == sizeof(long long),
+                    "ptrdiff_t is not one of the expected sizes");
+      nas[cn].type = sizeof(ptrdiff_t) == sizeof(int)    ? TYPE_INTN
+                     : sizeof(ptrdiff_t) == sizeof(long) ? TYPE_LONG
+                                                         : TYPE_LONGLONG;
+      c = *p++;
     }
 
     // format
@@ -491,8 +580,11 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
         break;
 
       case 'e':
+      case 'E':
       case 'f':
+      case 'F':
       case 'g':
+      case 'G':
         nas[cn].type = TYPE_DOUBLE;
         break;
 
@@ -532,7 +624,9 @@ static bool BuildArgArray(const char* fmt, va_list ap, NumArgStateVector& nas) {
     }
 
     // get a legal para.
-    if (nas[cn].type == TYPE_UNKNOWN) MOZ_CRASH("Bad format string");
+    if (nas[cn].type == TYPE_UNKNOWN) {
+      MOZ_CRASH("Bad format string");
+    }
   }
 
   // Third pass:
@@ -611,12 +705,9 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
 #if defined(XP_WIN)
     const wchar_t* ws;
 #endif
-  } u;
-  const char* fmt0;
+  } u{};
   const char* hexp;
   int i;
-  char pattern[20];
-  const char* dolPt = nullptr;  // in "%4$.2f", dolPt will point to '.'
 
   // Build an argument array, IF the fmt is numbered argument
   // list style, to contain the Numbered Argument list pointers.
@@ -629,11 +720,12 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
 
   while ((c = *fmt++) != 0) {
     if (c != '%') {
-      if (!emit(fmt - 1, 1)) return false;
+      if (!emit(fmt - 1, 1)) {
+        return false;
+      }
 
       continue;
     }
-    fmt0 = fmt - 1;
 
     // Gobble up the % format string. Hopefully we have handled all
     // of the strange cases!
@@ -641,7 +733,9 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
     c = *fmt++;
     if (c == '%') {
       // quoting a % with %%
-      if (!emit(fmt - 1, 1)) return false;
+      if (!emit(fmt - 1, 1)) {
+        return false;
+      }
 
       continue;
     }
@@ -654,10 +748,11 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
         c = *fmt++;
       }
 
-      if (nas[i - 1].type == TYPE_UNKNOWN) MOZ_CRASH("Bad format string");
+      if (nas[i - 1].type == TYPE_UNKNOWN) {
+        MOZ_CRASH("Bad format string");
+      }
 
       ap = nas[i - 1].ap;
-      dolPt = fmt;
       c = *fmt++;
     }
 
@@ -667,14 +762,26 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
     // the various sprintf() implementations are inconsistent
     // on this feature.
     while ((c == '-') || (c == '+') || (c == ' ') || (c == '0')) {
-      if (c == '-') flags |= FLAG_LEFT;
-      if (c == '+') flags |= FLAG_SIGNED;
-      if (c == ' ') flags |= FLAG_SPACED;
-      if (c == '0') flags |= FLAG_ZEROS;
+      if (c == '-') {
+        flags |= FLAG_LEFT;
+      }
+      if (c == '+') {
+        flags |= FLAG_SIGNED;
+      }
+      if (c == ' ') {
+        flags |= FLAG_SPACED;
+      }
+      if (c == '0') {
+        flags |= FLAG_ZEROS;
+      }
       c = *fmt++;
     }
-    if (flags & FLAG_SIGNED) flags &= ~FLAG_SPACED;
-    if (flags & FLAG_LEFT) flags &= ~FLAG_ZEROS;
+    if (flags & FLAG_SIGNED) {
+      flags &= ~FLAG_SPACED;
+    }
+    if (flags & FLAG_LEFT) {
+      flags &= ~FLAG_ZEROS;
+    }
 
     // width
     if (c == '*') {
@@ -732,6 +839,15 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
       type = sizeof(size_t) == sizeof(int)    ? TYPE_INTN
              : sizeof(size_t) == sizeof(long) ? TYPE_LONG
                                               : TYPE_LONGLONG;
+      c = *fmt++;
+    } else if (c == 't') {
+      static_assert(sizeof(ptrdiff_t) == sizeof(int) ||
+                        sizeof(ptrdiff_t) == sizeof(long) ||
+                        sizeof(ptrdiff_t) == sizeof(long long),
+                    "ptrdiff_t is not one of the expected sizes");
+      type = sizeof(ptrdiff_t) == sizeof(int)    ? TYPE_INTN
+             : sizeof(ptrdiff_t) == sizeof(long) ? TYPE_LONG
+                                                 : TYPE_LONGLONG;
       c = *fmt++;
     }
 
@@ -797,8 +913,9 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
           case TYPE_ULONG:
             u.l = (long)va_arg(ap, unsigned long);
           do_long:
-            if (!cvt_l(u.l, width, prec, radix, type, flags, hexp))
+            if (!cvt_l(u.l, width, prec, radix, type, flags, hexp)) {
               return false;
+            }
 
             break;
 
@@ -815,8 +932,9 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
           case TYPE_ULONGLONG:
             u.ll = va_arg(ap, unsigned long long);
           do_longlong:
-            if (!cvt_ll(u.ll, width, prec, radix, type, flags, hexp))
+            if (!cvt_ll(u.ll, width, prec, radix, type, flags, hexp)) {
               return false;
+            }
 
             break;
         }
@@ -825,17 +943,12 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
       case 'e':
       case 'E':
       case 'f':
+      case 'F':
       case 'g':
+      case 'G':
         u.d = va_arg(ap, double);
-        if (!nas.empty()) {
-          i = fmt - dolPt;
-          if (i < int(sizeof(pattern))) {
-            pattern[0] = '%';
-            memcpy(&pattern[1], dolPt, size_t(i));
-            if (!cvt_f(u.d, pattern, &pattern[i + 1])) return false;
-          }
-        } else {
-          if (!cvt_f(u.d, fmt0, fmt)) return false;
+        if (!cvt_f(u.d, c, width, prec, flags)) {
+          return false;
         }
 
         break;
@@ -843,19 +956,25 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
       case 'c':
         if ((flags & FLAG_LEFT) == 0) {
           while (width-- > 1) {
-            if (!emit(" ", 1)) return false;
+            if (!emit(" ", 1)) {
+              return false;
+            }
           }
         }
         switch (type) {
           case TYPE_SHORT:
           case TYPE_INTN:
             u.ch = va_arg(ap, int);
-            if (!emit(&u.ch, 1)) return false;
+            if (!emit(&u.ch, 1)) {
+              return false;
+            }
             break;
         }
         if (flags & FLAG_LEFT) {
           while (width-- > 1) {
-            if (!emit(" ", 1)) return false;
+            if (!emit(" ", 1)) {
+              return false;
+            }
           }
         }
         break;
@@ -868,7 +987,9 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
       case 's':
         if (type == TYPE_INTN) {
           u.s = va_arg(ap, const char*);
-          if (!cvt_s(u.s, width, prec, flags)) return false;
+          if (!cvt_s(u.s, width, prec, flags)) {
+            return false;
+          }
           break;
         }
         MOZ_ASSERT(type == TYPE_LONG);
@@ -911,8 +1032,12 @@ bool mozilla::PrintfTarget::vprint(const char* fmt, va_list ap) {
 
       default:
         // Not a % token after all... skip it
-        if (!emit("%", 1)) return false;
-        if (!emit(fmt - 1, 1)) return false;
+        if (!emit("%", 1)) {
+          return false;
+        }
+        if (!emit(fmt - 1, 1)) {
+          return false;
+        }
     }
   }
 

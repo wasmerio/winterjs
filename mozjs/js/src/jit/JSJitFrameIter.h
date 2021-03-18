@@ -467,7 +467,7 @@ class SnapshotIterator {
     return snapshot_.numAllocationsRead() < numAllocations();
   }
 
-  int32_t readOuterNumActualArgs() const;
+  JitFrameLayout* frame() { return fp_; };
 
   // Used by recover instruction to store the value back into the instruction
   // results array.
@@ -565,7 +565,7 @@ class SnapshotIterator {
     // Assumes that the common frame arguments have already been read.
     if (script->argumentsHasVarBinding()) {
       if (argsObj) {
-        Value v = read();
+        Value v = maybeRead(fallback);
         if (v.isObject()) {
           *argsObj = &v.toObject().as<ArgumentsObject>();
         }

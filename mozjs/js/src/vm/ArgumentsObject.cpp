@@ -17,6 +17,7 @@
 #include "vm/AsyncFunction.h"
 #include "vm/GlobalObject.h"
 #include "vm/Stack.h"
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "gc/Nursery-inl.h"
 #include "vm/FrameIter-inl.h"  // js::FrameIter::unaliasedForEachActual
@@ -58,6 +59,7 @@ bool ArgumentsObject::createRareData(JSContext* cx) {
   }
 
   data()->rareData = rareData;
+  markElementOverridden();
   return true;
 }
 
@@ -97,6 +99,7 @@ void ArgumentsObject::MaybeForwardToCallObject(AbstractFramePtr frame,
     for (PositionalFormalParameterIter fi(script); fi; fi++) {
       if (fi.closedOver()) {
         data->args[fi.argumentSlot()] = MagicEnvSlotValue(fi.location().slot());
+        obj->markArgumentForwarded();
       }
     }
   }
@@ -115,6 +118,7 @@ void ArgumentsObject::MaybeForwardToCallObject(jit::JitFrameLayout* frame,
     for (PositionalFormalParameterIter fi(script); fi; fi++) {
       if (fi.closedOver()) {
         data->args[fi.argumentSlot()] = MagicEnvSlotValue(fi.location().slot());
+        obj->markArgumentForwarded();
       }
     }
   }

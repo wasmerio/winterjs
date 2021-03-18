@@ -58,7 +58,8 @@
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
-#include "vm/ToSource.h"  // js::ValueToSource
+#include "vm/ToSource.h"       // js::ValueToSource
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/InlineCharBuffer-inl.h"
 #include "vm/Interpreter-inl.h"
@@ -1999,7 +2000,7 @@ class StringSegmentRange {
   explicit StringSegmentRange(JSContext* cx)
       : stack(cx, StackVector(cx)), cur(cx) {}
 
-  MOZ_MUST_USE bool init(JSString* str) {
+  [[nodiscard]] bool init(JSString* str) {
     MOZ_ASSERT(stack.empty());
     return settle(str);
   }
@@ -2011,7 +2012,7 @@ class StringSegmentRange {
     return cur;
   }
 
-  MOZ_MUST_USE bool popFront() {
+  [[nodiscard]] bool popFront() {
     MOZ_ASSERT(!empty());
     if (stack.empty()) {
       cur = nullptr;

@@ -21,6 +21,7 @@
 #include <algorithm>
 
 #include "jsmath.h"
+#include "jit/JitFrames.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/Printf.h"
 #include "util/Memory.h"
@@ -511,6 +512,23 @@ Value wasm::UnboxFuncRef(FuncRef val) {
   MOZ_ASSERT_IF(fn, fn->is<JSFunction>());
   result.setObjectOrNull(fn);
   return result;
+}
+
+const JSClass WasmJSExceptionObject::class_ = {
+    "WasmJSExnRefObject", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS)};
+
+WasmJSExceptionObject* WasmJSExceptionObject::create(JSContext* cx,
+                                                     MutableHandleValue value) {
+  WasmJSExceptionObject* obj =
+      NewObjectWithGivenProto<WasmJSExceptionObject>(cx, nullptr);
+
+  if (!obj) {
+    return nullptr;
+  }
+
+  obj->setFixedSlot(VALUE_SLOT, value);
+
+  return obj;
 }
 
 bool wasm::IsRoundingFunction(SymbolicAddress callee, jit::RoundingMode* mode) {
@@ -1552,3 +1570,23 @@ UniqueChars wasm::ToString(ValType type) {
 UniqueChars wasm::ToString(const Maybe<ValType>& type) {
   return type ? ToString(type.ref()) : JS_smprintf("%s", "void");
 }
+
+#ifdef ENABLE_WASM_SIMD_WORMHOLE
+static const int8_t WormholeTrigger[] = {31, 0, 30, 2,  29, 4,  28, 6,
+                                         27, 8, 26, 10, 25, 12, 24};
+static_assert(sizeof(WormholeTrigger) == 15);
+
+static const int8_t WormholeSignatureBytes[16] = {0xD, 0xE, 0xA, 0xD, 0xD, 0x0,
+                                                  0x0, 0xD, 0xC, 0xA, 0xF, 0xE,
+                                                  0xB, 0xA, 0xB, 0xE};
+static_assert(sizeof(WormholeSignatureBytes) == 16);
+
+bool wasm::IsWormholeTrigger(const V128& shuffleMask) {
+  return memcmp(shuffleMask.bytes, WormholeTrigger, sizeof(WormholeTrigger)) ==
+         0;
+}
+
+jit::SimdConstant wasm::WormholeSignature() {
+  return jit::SimdConstant::CreateX16(WormholeSignatureBytes);
+}
+#endif

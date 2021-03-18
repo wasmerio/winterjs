@@ -17,11 +17,11 @@
 using namespace js;
 using namespace js::frontend;
 
-NameOpEmitter::NameOpEmitter(BytecodeEmitter* bce, const ParserAtom* name,
+NameOpEmitter::NameOpEmitter(BytecodeEmitter* bce, TaggedParserAtomIndex name,
                              Kind kind)
     : bce_(bce), kind_(kind), name_(name), loc_(bce_->lookupName(name_)) {}
 
-NameOpEmitter::NameOpEmitter(BytecodeEmitter* bce, const ParserAtom* name,
+NameOpEmitter::NameOpEmitter(BytecodeEmitter* bce, TaggedParserAtomIndex name,
                              const NameLocation& loc, Kind kind)
     : bce_(bce), kind_(kind), name_(name), loc_(loc) {}
 

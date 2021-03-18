@@ -263,6 +263,8 @@ class alignas(ArenaSize) Arena {
     hasDelayedGrayMarking_ = 0;
     nextDelayedMarkingArena_ = 0;
     bufferedCells_ = nullptr;
+
+    MOZ_ASSERT(!allocated());
   }
 
   // Return an allocated arena to its unallocated state.
@@ -640,7 +642,7 @@ class TenuredChunk : public TenuredChunkBase {
   void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
   void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-  MOZ_MUST_USE bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
+  [[nodiscard]] bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
   void decommitAllArenas();
 
   // This will decommit each unused not-already decommitted arena. It performs a
@@ -652,6 +654,10 @@ class TenuredChunk : public TenuredChunkBase {
 
   /* Unlink and return the freeArenasHead. */
   Arena* fetchNextFreeArena(GCRuntime* gc);
+
+#ifdef DEBUG
+  void verify() const;
+#endif
 
  private:
   /* Search for a decommitted arena to allocate. */
