@@ -38,8 +38,13 @@
 #include "vm/NativeObject-inl.h"
 
 #ifdef XP_WIN
-#  include <process.h>
-#  define getpid _getpid
+#  ifndef JS_ENABLE_UWP
+#    include <process.h>
+#    define getpid _getpid
+#  else
+#   include <windows.h>
+#   define getpid GetCurrentProcessId
+#  endif
 #else
 #  include <unistd.h>
 #endif
@@ -982,13 +987,13 @@ inline bool js::Nursery::isNearlyFull() const {
   return belowBytesThreshold && belowFractionThreshold;
 }
 
-// If the nursery is above its minimum size, collect it at least this often if
-// we have idle time. This allows the nursery to shrink when it's not being
-// used. There are other heuristics we could use for this, but this is the
-// simplest.
-static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
-
 inline bool js::Nursery::isUnderused() const {
+  // If the nursery is above its minimum size, collect it at least this often if
+  // we have idle time. This allows the nursery to shrink when it's not being
+  // used. There are other heuristics we could use for this, but this is the
+  // simplest.
+  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
+
   if (js::SupportDifferentialTesting() || !previousGC.endTime) {
     return false;
   }
@@ -1575,6 +1580,12 @@ static inline double ClampDouble(double value, double min, double max) {
 }
 
 size_t js::Nursery::targetSize(JSGCInvocationKind kind, JS::GCReason reason) {
+  // If the nursery is above its minimum size, collect it at least this often if
+  // we have idle time. This allows the nursery to shrink when it's not being
+  // used. There are other heuristics we could use for this, but this is the
+  // simplest.
+  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
+
   // Shrink the nursery as much as possible if shrinking was requested or in low
   // memory situations.
   if (kind == GC_SHRINK || gc::IsOOMReason(reason) ||

@@ -13,7 +13,12 @@
 #include <utility>
 #ifdef XP_WIN
 #  include <process.h>
+#  include <windows.h>
+#ifndef JS_ENABLE_UWP
 #  define getpid _getpid
+#else
+#  define getpid GetCurrentProcessId
+#endif
 #else
 #  include <unistd.h>
 #endif

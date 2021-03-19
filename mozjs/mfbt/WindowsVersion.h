@@ -7,6 +7,8 @@
 #ifndef mozilla_WindowsVersion_h
 #define mozilla_WindowsVersion_h
 
+#ifndef JS_ENABLE_UWP
+
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include <stdint.h>
@@ -201,5 +203,7 @@ inline bool IsWin7AndPre2000Compatible() {
 }
 
 }  // namespace mozilla
+
+#endif
 
 #endif /* mozilla_WindowsVersion_h */

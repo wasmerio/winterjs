@@ -9,6 +9,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Range.h"
+#include "mozilla/Vector.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -124,6 +125,18 @@ class Sprinter final : public GenericPrinter {
   // Sprinter's outOfMemory flag; subsequent calls do nothing.
   virtual void reportOutOfMemory() override;
 };
+
+#ifdef JS_ENABLE_UWP
+class UWPPrinter : public GenericPrinter {
+   mozilla::Vector<uint8_t> buffer_;
+ public:
+   explicit UWPPrinter() {}
+  // Puts |len| characters from |s| at the current position and
+  // return true on success, false on failure.
+  virtual bool put(const char* s, size_t len) override;
+  using GenericPrinter::put;  // pick up |inline bool put(const char* s);|
+};
+#endif
 
 // Fprinter, print a string directly into a file.
 class Fprinter final : public GenericPrinter {
