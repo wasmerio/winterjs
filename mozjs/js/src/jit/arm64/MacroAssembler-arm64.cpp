@@ -184,6 +184,7 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
   Label return_;
   Label bailout;
   Label wasm;
+  Label wasmCatch;
 
   MOZ_ASSERT(
       GetStackPointer64().Is(x28));  // Lets the code below be a little cleaner.
@@ -202,6 +203,8 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
                     Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
   asMasm().branch32(Assembler::Equal, r0,
                     Imm32(ResumeFromException::RESUME_WASM), &wasm);
+  asMasm().branch32(Assembler::Equal, r0,
+                    Imm32(ResumeFromException::RESUME_WASM_CATCH), &wasmCatch);
 
   breakpoint();  // Invalid kind.
 
@@ -289,6 +292,14 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(
                       offsetof(ResumeFromException, stackPointer)));
   syncStackPtr();
   ret();
+
+  // Found a wasm catch handler, restore state and jump to it.
+  bind(&wasmCatch);
+  loadPtr(Address(r28, offsetof(ResumeFromException, target)), r0);
+  loadPtr(Address(r28, offsetof(ResumeFromException, framePointer)), r29);
+  loadPtr(Address(r28, offsetof(ResumeFromException, stackPointer)), r28);
+  syncStackPtr();
+  Br(x0);
 }
 
 void MacroAssemblerCompat::profilerEnterFrame(Register framePtr,
@@ -1779,6 +1790,10 @@ void MacroAssembler::convertInt64ToFloat32(Register64 src, FloatRegister dest) {
   Scvtf(ARMFPRegister(dest, 32), ARMRegister(src.reg, 64));
 }
 
+void MacroAssembler::convertIntPtrToDouble(Register src, FloatRegister dest) {
+  convertInt64ToDouble(Register64(src), dest);
+}
+
 // ========================================================================
 // Primitive atomic operations.
 
@@ -1953,6 +1968,8 @@ static void CompareExchange(MacroAssembler& masm,
                             Scalar::Type type, Width targetWidth,
                             const Synchronization& sync, const T& mem,
                             Register oldval, Register newval, Register output) {
+  MOZ_ASSERT(oldval != output && newval != output);
+
   Label again;
   Label done;
 
@@ -1985,6 +2002,8 @@ static void AtomicExchange(MacroAssembler& masm,
                            Scalar::Type type, Width targetWidth,
                            const Synchronization& sync, const T& mem,
                            Register value, Register output) {
+  MOZ_ASSERT(value != output);
+
   Label again;
 
   vixl::UseScratchRegisterScope temps(&masm);
@@ -2011,6 +2030,10 @@ static void AtomicFetchOp(MacroAssembler& masm,
                           const Synchronization& sync, AtomicOp op,
                           const T& mem, Register value, Register temp,
                           Register output) {
+  MOZ_ASSERT(value != output);
+  MOZ_ASSERT(value != temp);
+  MOZ_ASSERT_IF(wantResult, output != temp);
+
   Label again;
 
   vixl::UseScratchRegisterScope temps(&masm);
@@ -2073,8 +2096,22 @@ void MacroAssembler::compareExchange64(const Synchronization& sync,
                   expect.reg, replace.reg, output.reg);
 }
 
+void MacroAssembler::compareExchange64(const Synchronization& sync,
+                                       const BaseIndex& mem, Register64 expect,
+                                       Register64 replace, Register64 output) {
+  CompareExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
+                  expect.reg, replace.reg, output.reg);
+}
+
 void MacroAssembler::atomicExchange64(const Synchronization& sync,
                                       const Address& mem, Register64 value,
+                                      Register64 output) {
+  AtomicExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
+                 value.reg, output.reg);
+}
+
+void MacroAssembler::atomicExchange64(const Synchronization& sync,
+                                      const BaseIndex& mem, Register64 value,
                                       Register64 output) {
   AtomicExchange(*this, nullptr, Scalar::Int64, Width::_64, sync, mem,
                  value.reg, output.reg);
@@ -2085,6 +2122,27 @@ void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
                                      Register64 temp, Register64 output) {
   AtomicFetchOp<true>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
                       value.reg, temp.reg, output.reg);
+}
+
+void MacroAssembler::atomicFetchOp64(const Synchronization& sync, AtomicOp op,
+                                     Register64 value, const BaseIndex& mem,
+                                     Register64 temp, Register64 output) {
+  AtomicFetchOp<true>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
+                      value.reg, temp.reg, output.reg);
+}
+
+void MacroAssembler::atomicEffectOp64(const Synchronization& sync, AtomicOp op,
+                                      Register64 value, const Address& mem,
+                                      Register64 temp) {
+  AtomicFetchOp<false>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
+                       value.reg, temp.reg, temp.reg);
+}
+
+void MacroAssembler::atomicEffectOp64(const Synchronization& sync, AtomicOp op,
+                                      Register64 value, const BaseIndex& mem,
+                                      Register64 temp) {
+  AtomicFetchOp<false>(*this, nullptr, Scalar::Int64, Width::_64, sync, op, mem,
+                       value.reg, temp.reg, temp.reg);
 }
 
 void MacroAssembler::wasmCompareExchange(const wasm::MemoryAccessDesc& access,

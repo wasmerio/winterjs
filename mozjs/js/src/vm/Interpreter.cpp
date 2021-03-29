@@ -273,71 +273,6 @@ static bool SetPropertyOperation(JSContext* cx, JSOp op, HandleValue lval,
          result.checkStrictModeError(cx, obj, id, op == JSOp::StrictSetProp);
 }
 
-JSFunction* js::MakeDefaultConstructor(JSContext* cx, HandleScript script,
-                                       jsbytecode* pc, HandleObject proto) {
-  JSOp op = JSOp(*pc);
-  bool derived = op == JSOp::DerivedConstructor;
-  MOZ_ASSERT(derived == !!proto);
-
-  // Get class name and source offsets from bytecode.
-  GCThingIndex atomIndex;
-  uint32_t classStartOffset = 0, classEndOffset = 0;
-  GetClassConstructorOperands(pc, &atomIndex, &classStartOffset,
-                              &classEndOffset);
-  RootedAtom className(cx, script->getAtom(atomIndex));
-
-  // The empty atom is used as a sentinel to indicate no name is assigned. This
-  // happens when the name is computed by a dynamic SetFunctionName.
-  if (className == cx->names().empty) {
-    className = nullptr;
-  }
-
-  // Locate the self-hosted script that we will use as a template.
-  RootedPropertyName selfHostedName(
-      cx, derived ? cx->names().DefaultDerivedClassConstructor
-                  : cx->names().DefaultBaseClassConstructor);
-  RootedFunction sourceFun(
-      cx, cx->runtime()->getUnclonedSelfHostedFunction(selfHostedName.get()));
-  MOZ_ASSERT(sourceFun);
-  RootedScript sourceScript(cx, sourceFun->nonLazyScript());
-
-  // Create the new class constructor function.
-  RootedFunction ctor(
-      cx, NewScriptedFunction(cx, sourceFun->nargs(),
-                              FunctionFlags::INTERPRETED_CLASS_CTOR, className,
-                              proto, gc::AllocKind::FUNCTION, TenuredObject));
-  if (!ctor) {
-    return nullptr;
-  }
-
-  // Override the source span needs for toString. Calling toString on a class
-  // constructor should return the class declaration, not the source for the
-  // (self-hosted) constructor function.
-  unsigned column;
-  unsigned line = PCToLineNumber(script, pc, &column);
-  SourceExtent classExtent = SourceExtent::makeClassExtent(
-      classStartOffset, classEndOffset, line, column);
-
-  // Clone bytecode from template function.
-  MOZ_ASSERT(sourceFun->enclosingScope()->is<GlobalScope>());
-  RootedScope enclosingScope(cx, &cx->global()->emptyGlobalScope());
-  Rooted<ScriptSourceObject*> sourceObject(cx, script->sourceObject());
-  if (!CloneScriptIntoFunction(cx, enclosingScope, ctor, sourceScript,
-                               sourceObject, &classExtent)) {
-    return nullptr;
-  }
-  RootedScript ctorScript(cx, ctor->nonLazyScript());
-
-  // Even though the script was cloned from the self-hosted template, we cannot
-  // delazify back to a SelfHostedLazyScript. The script is no longer marked as
-  // SelfHosted either.
-  ctorScript->clearAllowRelazify();
-
-  DebugAPI::onNewScript(cx, ctorScript);
-
-  return ctor;
-}
-
 static JSObject* SuperFunOperation(JSObject* callee) {
   MOZ_ASSERT(callee->as<JSFunction>().isClassConstructor());
   MOZ_ASSERT(
@@ -454,9 +389,6 @@ bool js::RunScript(JSContext* cx, RunState& state) {
       mozilla::TimeDuration delta = ReallyNow() - startTime;
       cx->realm()->timers.executionTime += delta;
       cx->setIsMeasuringExecutionTime(false);
-
-      // JS_TELEMETRY_RUN_TIME_US reporting was done here, but is temporarily
-      // disabled due to the crash in 1670348.
     }
   });
 
@@ -576,12 +508,6 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
 
   /* Invoke native functions. */
   RootedFunction fun(cx, &args.callee().as<JSFunction>());
-  if (construct != CONSTRUCT && fun->isClassConstructor()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CALL_CLASS_CONSTRUCTOR);
-    return false;
-  }
-
   if (fun->isNative()) {
     MOZ_ASSERT_IF(construct, !fun->isConstructor());
     JSNative native = fun->native();
@@ -613,6 +539,13 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
   // ensure this object has the correct realm.
   AutoRealm ar(cx, state.script());
   if (construct && !MaybeCreateThisForConstructor(cx, args)) {
+    return false;
+  }
+
+  // Calling class constructors throws an error from the callee's realm.
+  if (construct != CONSTRUCT && fun->isClassConstructor()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_CANT_CALL_CLASS_CONSTRUCTOR);
     return false;
   }
 
@@ -1370,8 +1303,8 @@ again:
 static_assert(JSOpLength_SetName == JSOpLength_SetProp);
 
 /* See TRY_BRANCH_AFTER_COND. */
-static_assert(JSOpLength_IfNe == JSOpLength_IfEq);
-static_assert(uint8_t(JSOp::IfNe) == uint8_t(JSOp::IfEq) + 1);
+static_assert(JSOpLength_JumpIfTrue == JSOpLength_JumpIfFalse);
+static_assert(uint8_t(JSOp::JumpIfTrue) == uint8_t(JSOp::JumpIfFalse) + 1);
 
 /*
  * Compute the implicit |this| value used by a call expression with an
@@ -2383,23 +2316,23 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     CASE(Goto) { BRANCH(GET_JUMP_OFFSET(REGS.pc)); }
 
-    CASE(IfEq) {
+    CASE(JumpIfFalse) {
       bool cond = ToBoolean(REGS.stackHandleAt(-1));
       REGS.sp--;
       if (!cond) {
         BRANCH(GET_JUMP_OFFSET(REGS.pc));
       }
     }
-    END_CASE(IfEq)
+    END_CASE(JumpIfFalse)
 
-    CASE(IfNe) {
+    CASE(JumpIfTrue) {
       bool cond = ToBoolean(REGS.stackHandleAt(-1));
       REGS.sp--;
       if (cond) {
         BRANCH(GET_JUMP_OFFSET(REGS.pc));
       }
     }
-    END_CASE(IfNe)
+    END_CASE(JumpIfTrue)
 
     CASE(Or) {
       bool cond = ToBoolean(REGS.stackHandleAt(-1));
@@ -2431,18 +2364,19 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     if (!ToPropertyKey(cx, REGS.stackHandleAt(n), &(id))) goto error; \
   JS_END_MACRO
 
-#define TRY_BRANCH_AFTER_COND(cond, spdec)                                \
-  JS_BEGIN_MACRO                                                          \
-    MOZ_ASSERT(GetBytecodeLength(REGS.pc) == 1);                          \
-    unsigned diff_ = (unsigned)GET_UINT8(REGS.pc) - (unsigned)JSOp::IfEq; \
-    if (diff_ <= 1) {                                                     \
-      REGS.sp -= (spdec);                                                 \
-      if ((cond) == (diff_ != 0)) {                                       \
-        ++REGS.pc;                                                        \
-        BRANCH(GET_JUMP_OFFSET(REGS.pc));                                 \
-      }                                                                   \
-      ADVANCE_AND_DISPATCH(1 + JSOpLength_IfEq);                          \
-    }                                                                     \
+#define TRY_BRANCH_AFTER_COND(cond, spdec)                          \
+  JS_BEGIN_MACRO                                                    \
+    MOZ_ASSERT(GetBytecodeLength(REGS.pc) == 1);                    \
+    unsigned diff_ =                                                \
+        (unsigned)GET_UINT8(REGS.pc) - (unsigned)JSOp::JumpIfFalse; \
+    if (diff_ <= 1) {                                               \
+      REGS.sp -= (spdec);                                           \
+      if ((cond) == (diff_ != 0)) {                                 \
+        ++REGS.pc;                                                  \
+        BRANCH(GET_JUMP_OFFSET(REGS.pc));                           \
+      }                                                             \
+      ADVANCE_AND_DISPATCH(1 + JSOpLength_JumpIfFalse);             \
+    }                                                               \
   JS_END_MACRO
 
     CASE(In) {
@@ -4413,30 +4347,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(SuperFun)
 
-    CASE(DerivedConstructor) {
-      MOZ_ASSERT(REGS.sp[-1].isObject());
-      ReservedRooted<JSObject*> proto(&rootObject0, &REGS.sp[-1].toObject());
-
-      JSFunction* constructor =
-          MakeDefaultConstructor(cx, script, REGS.pc, proto);
-      if (!constructor) {
-        goto error;
-      }
-
-      REGS.sp[-1].setObject(*constructor);
-    }
-    END_CASE(DerivedConstructor)
-
-    CASE(ClassConstructor) {
-      JSFunction* constructor =
-          MakeDefaultConstructor(cx, script, REGS.pc, nullptr);
-      if (!constructor) {
-        goto error;
-      }
-      PUSH_OBJECT(*constructor);
-    }
-    END_CASE(ClassConstructor)
-
     CASE(CheckObjCoercible) {
       ReservedRooted<Value> checkVal(&rootValue0, REGS.sp[-1]);
       if (checkVal.isNullOrUndefined()) {
@@ -5039,15 +4949,9 @@ bool js::SpreadCallOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
                                constructing ? CONSTRUCT : NO_CONSTRUCT);
   }
 
-#ifdef DEBUG
   // The object must be an array with dense elements and no holes. Baseline's
   // optimized spread call stubs rely on this.
-  MOZ_ASSERT(!aobj->isIndexed());
-  MOZ_ASSERT(aobj->getDenseInitializedLength() == aobj->length());
-  for (size_t i = 0; i < aobj->length(); i++) {
-    MOZ_ASSERT(!aobj->getDenseElement(i).isMagic(JS_ELEMENTS_HOLE));
-  }
-#endif
+  MOZ_ASSERT(IsPackedArray(aobj));
 
   if (constructing) {
     if (!StackCheckIsConstructorCalleeNewTarget(cx, callee, newTarget)) {

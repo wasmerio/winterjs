@@ -15,6 +15,7 @@
 #include <type_traits>  // std::is_same
 
 #include "jsapi.h"
+#include "jstypes.h"  // js::Bit
 
 #include "gc/Allocator.h"
 #include "gc/Barrier.h"
@@ -47,9 +48,9 @@ namespace js {
 
 namespace frontend {
 
-class ParserAtom;
-class ParserAtomEntry;
-class WellKnownParserAtoms_ROM;
+class ParserAtomsTable;
+class TaggedParserAtomIndex;
+class WellKnownParserAtoms;
 struct CompilationAtomCache;
 
 }  // namespace frontend
@@ -726,7 +727,7 @@ class JSRope : public JSString {
   // fallible.
   //
   // Returns the same value as if this were a linear string being hashed.
-  MOZ_MUST_USE bool hash(uint32_t* outhHash) const;
+  [[nodiscard]] bool hash(uint32_t* outhHash) const;
 
   JSString* leftChild() const {
     MOZ_ASSERT(isRope());
@@ -863,9 +864,10 @@ class JSLinearString : public JSString {
 
   /*
    * Returns true if this string's characters store an unsigned 32-bit
-   * integer value, initializing *indexp to that value if so.  (Thus if
-   * calling isIndex returns true, js::IndexToString(cx, *indexp) will be a
-   * string equal to this string.)
+   * integer value, initializing *indexp to that value if so.
+   * Leading '0' isn't allowed except 0 itself.
+   * (Thus if calling isIndex returns true, js::IndexToString(cx, *indexp) will
+   * be a string equal to this string.)
    */
   bool isIndex(uint32_t* indexp) const {
     MOZ_ASSERT(JSString::isLinear());
@@ -1234,6 +1236,9 @@ MOZ_ALWAYS_INLINE JSAtom* JSLinearString::morphAtomizedStringIntoPermanentAtom(
 
 namespace js {
 
+// Returns true if the characters of `s` store an unsigned 32-bit integer value,
+// initializing `*indexp` to that value if so.
+// Leading '0' isn't allowed except 0 itself.
 template <typename CharT>
 bool CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp);
 
@@ -1260,16 +1265,25 @@ class LittleEndianChars {
 class StaticStrings {
   // NOTE: The WellKnownParserAtoms rely on these tables and may need to be
   //       update if these tables are changed.
-  friend class js::frontend::ParserAtomEntry;
-  friend class js::frontend::WellKnownParserAtoms_ROM;
+  friend class js::frontend::ParserAtomsTable;
+  friend class js::frontend::TaggedParserAtomIndex;
+  friend class js::frontend::WellKnownParserAtoms;
   friend struct js::frontend::CompilationAtomCache;
 
  private:
-  /* Bigger chars cannot be in a length-2 string. */
-  static const size_t SMALL_CHAR_LIMIT = 128U;
-  static const size_t NUM_SMALL_CHARS = 64U;
+  // Strings matches `[A-Za-z0-9$_]{2}` pattern.
+  // Store each character in 6 bits.
+  // See fromSmallChar/toSmallChar for the mapping.
+  static constexpr size_t SMALL_CHAR_BITS = 6;
+  static constexpr size_t SMALL_CHAR_MASK = js::BitMask(SMALL_CHAR_BITS);
 
-  JSAtom* length2StaticTable[NUM_SMALL_CHARS * NUM_SMALL_CHARS] = {};  // zeroes
+  // To optimize ASCII -> small char, allocate a table.
+  static constexpr size_t SMALL_CHAR_TABLE_SIZE = 128U;
+  static constexpr size_t NUM_SMALL_CHARS = js::Bit(SMALL_CHAR_BITS);
+  static constexpr size_t NUM_LENGTH2_ENTRIES =
+      NUM_SMALL_CHARS * NUM_SMALL_CHARS;
+
+  JSAtom* length2StaticTable[NUM_LENGTH2_ENTRIES] = {};  // zeroes
 
  public:
   /* We keep these public for the JITs. */
@@ -1377,8 +1391,8 @@ class StaticStrings {
  private:
   using SmallChar = uint8_t;
 
-  struct SmallCharArray {
-    SmallChar storage[SMALL_CHAR_LIMIT];
+  struct SmallCharTable {
+    SmallChar storage[SMALL_CHAR_TABLE_SIZE];
 
     constexpr SmallChar& operator[](size_t idx) { return storage[idx]; }
     constexpr const SmallChar& operator[](size_t idx) const {
@@ -1389,21 +1403,36 @@ class StaticStrings {
   static const SmallChar INVALID_SMALL_CHAR = -1;
 
   static bool fitsInSmallChar(char16_t c) {
-    return c < SMALL_CHAR_LIMIT && toSmallCharArray[c] != INVALID_SMALL_CHAR;
+    return c < SMALL_CHAR_TABLE_SIZE &&
+           toSmallCharTable[c] != INVALID_SMALL_CHAR;
   }
 
   static constexpr Latin1Char fromSmallChar(SmallChar c);
 
   static constexpr SmallChar toSmallChar(uint32_t c);
 
-  static constexpr SmallCharArray createSmallCharArray();
+  static constexpr SmallCharTable createSmallCharTable();
 
-  static const SmallCharArray toSmallCharArray;
+  static const SmallCharTable toSmallCharTable;
+
+  static constexpr Latin1Char firstCharOfLength2(size_t s) {
+    return fromSmallChar(s >> SMALL_CHAR_BITS);
+  }
+  static constexpr Latin1Char secondCharOfLength2(size_t s) {
+    return fromSmallChar(s & SMALL_CHAR_MASK);
+  }
 
   static MOZ_ALWAYS_INLINE size_t getLength2Index(char16_t c1, char16_t c2) {
     MOZ_ASSERT(fitsInSmallChar(c1));
     MOZ_ASSERT(fitsInSmallChar(c2));
-    return (size_t(toSmallCharArray[c1]) << 6) + toSmallCharArray[c2];
+    return (size_t(toSmallCharTable[c1]) << SMALL_CHAR_BITS) +
+           toSmallCharTable[c2];
+  }
+
+  // Same as getLength2Index, but withtout runtime assertion,
+  // this should be used only for known static string.
+  static constexpr size_t getLength2IndexStatic(char c1, char c2) {
+    return (size_t(toSmallChar(c1)) << SMALL_CHAR_BITS) + toSmallChar(c2);
   }
 
   MOZ_ALWAYS_INLINE JSAtom* getLength2FromIndex(size_t index) {
@@ -1504,9 +1533,6 @@ static inline UniqueChars StringToNewUTF8CharsZ(JSContext* maybecx,
           : JS::CharsToNewUTF8CharsZ(maybecx, linear->twoByteRange(nogc))
                 .c_str());
 }
-
-UniqueChars ParserAtomToNewUTF8CharsZ(JSContext* maybecx,
-                                      const js::frontend::ParserAtom* atom);
 
 /**
  * Allocate a string with the given contents.  If |allowGC == CanGC|, this may

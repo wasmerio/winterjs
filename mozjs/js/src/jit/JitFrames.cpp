@@ -564,9 +564,7 @@ static void* GetLastProfilingFrame(ResumeFromException* rfe) {
 void HandleExceptionWasm(JSContext* cx, wasm::WasmFrameIter* iter,
                          ResumeFromException* rfe) {
   MOZ_ASSERT(cx->activation()->asJit()->hasWasmExitFP());
-  rfe->kind = ResumeFromException::RESUME_WASM;
-  rfe->framePointer = (uint8_t*)wasm::FailFP;
-  rfe->stackPointer = (uint8_t*)wasm::HandleThrow(cx, *iter);
+  wasm::HandleThrow(cx, *iter, rfe);
   MOZ_ASSERT(iter->done());
 }
 
@@ -609,6 +607,11 @@ void HandleException(ResumeFromException* rfe) {
     if (iter.isWasm()) {
       prevJitFrame = nullptr;
       HandleExceptionWasm(cx, &iter.asWasm(), rfe);
+      // If a wasm try-catch handler is found, we can immediately jump to it
+      // and quit iterating through the stack.
+      if (rfe->kind == ResumeFromException::RESUME_WASM_CATCH) {
+        return;
+      }
       if (!iter.done()) {
         ++iter;
       }
@@ -879,11 +882,6 @@ static void TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame) {
                             "ion-gc-slot");
   }
 
-  while (safepoint.getValueSlot(&entry)) {
-    Value* v = (Value*)layout->slotRef(entry);
-    TraceRoot(trc, v, "ion-gc-slot");
-  }
-
   uintptr_t* spill = frame.spillBase();
   LiveGeneralRegisterSet gcRegs = safepoint.gcSpills();
   LiveGeneralRegisterSet valueRegs = safepoint.valueSpills();
@@ -898,7 +896,12 @@ static void TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame) {
     }
   }
 
-#ifdef JS_NUNBOX32
+#ifdef JS_PUNBOX64
+  while (safepoint.getValueSlot(&entry)) {
+    Value* v = (Value*)layout->slotRef(entry);
+    TraceRoot(trc, v, "ion-gc-slot");
+  }
+#else
   LAllocation type, payload;
   while (safepoint.getNunboxSlot(&type, &payload)) {
     JSValueTag tag = JSValueTag(ReadAllocation(frame, &type));
@@ -986,14 +989,16 @@ static void UpdateIonJSFrameForMinorGC(JSRuntime* rt,
 
   // Skip to the right place in the safepoint
   SafepointSlotEntry entry;
-  while (safepoint.getGcSlot(&entry))
-    ;
-  while (safepoint.getValueSlot(&entry))
-    ;
-#ifdef JS_NUNBOX32
+  while (safepoint.getGcSlot(&entry)) {
+  }
+
+#ifdef JS_PUNBOX64
+  while (safepoint.getValueSlot(&entry)) {
+  }
+#else
   LAllocation type, payload;
-  while (safepoint.getNunboxSlot(&type, &payload))
-    ;
+  while (safepoint.getNunboxSlot(&type, &payload)) {
+  }
 #endif
 
   while (safepoint.getSlotsOrElementsSlot(&entry)) {
@@ -1492,10 +1497,6 @@ SnapshotIterator::SnapshotIterator()
       machine_(nullptr),
       ionScript_(nullptr),
       instructionResults_(nullptr) {}
-
-int32_t SnapshotIterator::readOuterNumActualArgs() const {
-  return fp_->numActualArgs();
-}
 
 uintptr_t SnapshotIterator::fromStack(int32_t offset) const {
   return ReadFrameSlot(fp_, offset);

@@ -282,9 +282,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   // Accessors for immutable runtime data.
   JSAtomState& names() { return *runtime_->commonNames; }
-  js::frontend::WellKnownParserAtoms& parserNames() {
-    return *runtime_->commonParserNames;
-  }
   js::StaticStrings& staticStrings() { return *runtime_->staticStrings; }
   js::SharedImmutableStringsCache& sharedImmutableStrings() {
     return runtime_->sharedImmutableStrings();
@@ -794,8 +791,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
  public:
   bool isExceptionPending() const { return throwing; }
 
-  MOZ_MUST_USE
-  bool getPendingException(JS::MutableHandleValue rval);
+  [[nodiscard]] bool getPendingException(JS::MutableHandleValue rval);
 
   js::SavedFrame* getPendingExceptionStack();
 

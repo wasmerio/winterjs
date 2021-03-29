@@ -10,8 +10,8 @@
 option("--disable-optimize", nargs="?", help="Disable optimizations via compiler flags")
 
 
-@depends("--enable-optimize", "--help")
-def moz_optimize(option, _):
+@depends("--enable-optimize")
+def moz_optimize(option):
     flags = None
 
     if len(option):
@@ -131,8 +131,11 @@ with only_when(host_is_osx | target_is_osx):
     @imports(_from="os.path", _import="isdir")
     @imports("plistlib")
     def macos_sdk(sdk, host):
+        # When we change the SDK we build with, please update the manual SDK
+        # installation docs:
+        # https://firefox-source-docs.mozilla.org/setup/macos_build.html#macos-sdk-is-unsupported
         sdk_min_version = Version("10.12")
-        sdk_max_version = Version("11.3")
+        sdk_max_version = Version("11.1")
 
         if sdk:
             sdk = sdk[0]
@@ -168,17 +171,19 @@ with only_when(host_is_osx | target_is_osx):
                 % sdk
             )
         version = Version(obj["Version"])
+        sdk_installation_docs_url = "https://firefox-source-docs.mozilla.org/setup/macos_build.html#macos-sdk-is-unsupported"
         if version < sdk_min_version:
             die(
-                'SDK version "%s" is too old. Please upgrade to at least %s. '
-                "You may need to point to it using --with-macos-sdk=<path> in your "
-                "mozconfig." % (version, sdk_min_version)
+                'SDK version "%s" is too old. Please upgrade to at least %s. Try '
+                "updating your system Xcode. If that's not sufficient, see the manual "
+                "SDK installation docs: %s"
+                % (version, sdk_min_version, sdk_installation_docs_url)
             )
         if version > sdk_max_version:
             die(
                 'SDK version "%s" is unsupported. Please downgrade to version '
-                "%s. You may need to point to it using --with-macos-sdk=<path> in "
-                "your mozconfig." % (version, sdk_max_version)
+                "%s. See the manual SDK installation docs: %s"
+                % (version, sdk_max_version, sdk_installation_docs_url)
             )
         return sdk
 
@@ -587,7 +592,6 @@ option(
     "--with-visual-studio-version",
     when=host_is_windows,
 )
-@imports(_from="__builtin__", _import="sorted")
 @imports(_from="operator", _import="itemgetter")
 def vc_compiler_paths_for_version(
     host, vs_major_version, env, vc_path, vs_release_name
@@ -953,10 +957,46 @@ def provided_program(env_var, when=None):
     return provided
 
 
-def prepare_flags(host_or_target, macos_sdk):
-    if macos_sdk and host_or_target.os == "OSX":
-        return ["-isysroot", macos_sdk]
-    return []
+# We'll re-evaluate later, but for now, don't use the sysroot automatically
+# even if it exists, unless --enable-bootstrap was passed, or when building
+# on automation.
+@depends(
+    bootstrap_path("sysroot", context=target, when=target_is_linux),
+    bootstrap,
+    "MOZ_AUTOMATION",
+)
+def sysroot_path(path, bootstrap, automation):
+    if bootstrap or automation:
+        if path:
+            log.info("Using sysroot in %s", path)
+        return path
+
+
+@template
+def sysroot_flags(host_or_target):
+    @depends(
+        host_or_target, macos_sdk, sysroot_path if host_or_target is target else never
+    )
+    def sysroot_flags(host_or_target, macos_sdk, sysroot_path):
+        if macos_sdk and host_or_target.os == "OSX":
+            return ["-isysroot", macos_sdk]
+        if sysroot_path:
+            return ["--sysroot", sysroot_path]
+        return []
+
+    return sysroot_flags
+
+
+host_sysroot_flags = sysroot_flags(host)
+target_sysroot_flags = sysroot_flags(target)
+
+
+@depends(target, when=sysroot_path)
+def multiarch_dir(target):
+    if target.cpu == "x86":
+        # Turn e.g. i686-linux-gnu into i386-linux-gnu
+        return target.toolchain.replace(target.raw_cpu, "i386")
+    return target.toolchain
 
 
 def minimum_gcc_version():
@@ -994,6 +1034,11 @@ def compiler(
         target: "target",
     }[host_or_target]
 
+    sysroot_flags = {
+        host: host_sysroot_flags,
+        target: target_sysroot_flags,
+    }[host_or_target]
+
     var = {
         ("C", target): "CC",
         ("C++", target): "CXX",
@@ -1028,14 +1073,16 @@ def compiler(
         paths=clang_search_path,
     )
 
-    @depends(compiler, provided_compiler, compiler_wrapper, host_or_target, macos_sdk)
+    @depends(
+        compiler, provided_compiler, compiler_wrapper, host_or_target, sysroot_flags
+    )
     @checking("whether %s can be used" % what, lambda x: bool(x))
     @imports(_from="mozbuild.shellutil", _import="quote")
     def valid_compiler(
-        compiler, provided_compiler, compiler_wrapper, host_or_target, macos_sdk
+        compiler, provided_compiler, compiler_wrapper, host_or_target, sysroot_flags
     ):
         wrapper = list(compiler_wrapper or ())
-        flags = prepare_flags(host_or_target, macos_sdk)
+        flags = list(sysroot_flags or ())
         if provided_compiler:
             provided_wrapper = list(provided_compiler.wrapper)
             # When doing a subconfigure, the compiler is set by old-configure
@@ -1940,20 +1987,6 @@ def nasm_version(nasm):
     return Version(version)
 
 
-@depends_if(nasm_version)
-def nasm_major_version(nasm_version):
-    return str(nasm_version.major)
-
-
-@depends_if(nasm_version)
-def nasm_minor_version(nasm_version):
-    return str(nasm_version.minor)
-
-
-set_config("NASM_MAJOR_VERSION", nasm_major_version)
-set_config("NASM_MINOR_VERSION", nasm_minor_version)
-
-
 @depends(nasm, target)
 def nasm_asflags(nasm, target):
     if nasm:
@@ -1974,25 +2007,6 @@ def nasm_asflags(nasm, target):
 
 
 set_config("NASM_ASFLAGS", nasm_asflags)
-
-
-@depends(nasm_asflags)
-def have_nasm(value):
-    if value:
-        return True
-
-
-@depends(yasm_asflags)
-def have_yasm(yasm_asflags):
-    if yasm_asflags:
-        return True
-
-
-set_config("HAVE_NASM", have_nasm)
-
-set_config("HAVE_YASM", have_yasm)
-# Until the YASM variable is not necessary in old-configure.
-add_old_configure_assignment("YASM", have_yasm)
 
 
 # Code Coverage
@@ -2056,22 +2070,23 @@ set_config("RUSTFLAGS", depends("RUSTFLAGS")(lambda flags: flags))
 # Rust compiler flags
 # ==============================================================
 
+
+@depends(moz_optimize)
+def rustc_opt_level_default(moz_optimize):
+    return "2" if moz_optimize.optimize else "0"
+
+
 option(
     env="RUSTC_OPT_LEVEL",
+    default=rustc_opt_level_default,
     nargs=1,
     help="Rust compiler optimization level (-C opt-level=%s)",
 )
 
-# --enable-release kicks in full optimizations.
-imply_option("RUSTC_OPT_LEVEL", "2", when="--enable-release")
 
-
-@depends("RUSTC_OPT_LEVEL", moz_optimize)
-def rustc_opt_level(opt_level_option, moz_optimize):
-    if opt_level_option:
-        return opt_level_option[0]
-    else:
-        return "1" if moz_optimize.optimize else "0"
+@depends("RUSTC_OPT_LEVEL")
+def rustc_opt_level(opt_level_option):
+    return opt_level_option[0]
 
 
 @depends(
@@ -2344,25 +2359,28 @@ def select_linker(
         )
 
     result = try_linker(linker)
-    if result is None:
-        if linker:
-            die("Could not use {} as linker".format(linker))
-        die("Failed to find a linker")
+    if result is None and linker:
+        die("Could not use {} as linker".format(linker))
 
     if (
         linker is None
         and enable_gold.origin == "default"
         and developer_options
-        and result.KIND in ("bfd", "gold")
+        and (result is None or result.KIND in ("bfd", "gold"))
     ):
         # try and use lld if available.
         tried = try_linker("lld")
-        if result.KIND != "gold" and (tried is None or tried.KIND != "lld"):
+        if (result is None or result.KIND != "gold") and (
+            tried is None or tried.KIND != "lld"
+        ):
             tried = try_linker("gold")
             if tried is None or tried.KIND != "gold":
                 tried = None
         if tried:
             result = tried
+
+    if result is None:
+        die("Failed to find a linker")
 
     # If an explicit linker was given, error out if what we found is different.
     if linker and not linker.startswith(result.KIND):
@@ -2374,14 +2392,25 @@ def select_linker(
 set_config("LINKER_KIND", select_linker.KIND)
 
 
-@depends_if(select_linker, macos_sdk)
-def linker_ldflags(linker, macos_sdk):
+@depends_if(select_linker, macos_sdk, sysroot_path, multiarch_dir)
+def linker_ldflags(linker, macos_sdk, sysroot_path, multiarch_dir):
     flags = list((linker and linker.LINKER_FLAG) or [])
     if macos_sdk:
         if linker and linker.KIND == "ld64":
             flags.append("-Wl,-syslibroot,%s" % macos_sdk)
         else:
             flags.append("-Wl,--sysroot=%s" % macos_sdk)
+
+    if sysroot_path and multiarch_dir:
+        # Non-Debian-patched binutils linkers (both BFD and gold) don't lookup
+        # in multi-arch directories.
+        flags.append(
+            "-Wl,-rpath-link,%s" % os.path.join(sysroot_path, "lib", multiarch_dir)
+        )
+        flags.append(
+            "-Wl,-rpath-link,%s"
+            % os.path.join(sysroot_path, "usr", "lib", multiarch_dir)
+        )
 
     return flags
 

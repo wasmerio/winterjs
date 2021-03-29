@@ -7,8 +7,6 @@
 #ifndef builtin_intl_ListFormat_h
 #define builtin_intl_ListFormat_h
 
-#include "mozilla/Attributes.h"
-
 #include <stdint.h>
 
 #include "builtin/SelfHostingDefines.h"
@@ -62,8 +60,8 @@ class ListFormatObject : public NativeObject {
  *
  * Usage: formatted = intl_FormatList(listFormat, list, formatToParts)
  */
-extern MOZ_MUST_USE bool intl_FormatList(JSContext* cx, unsigned argc,
-                                         Value* vp);
+[[nodiscard]] extern bool intl_FormatList(JSContext* cx, unsigned argc,
+                                          Value* vp);
 
 }  // namespace js
 

@@ -106,6 +106,12 @@ class ValueTagOperandId : public OperandId {
   explicit ValueTagOperandId(uint16_t id) : OperandId(id) {}
 };
 
+class IntPtrOperandId : public OperandId {
+ public:
+  IntPtrOperandId() = default;
+  explicit IntPtrOperandId(uint16_t id) : OperandId(id) {}
+};
+
 class ObjOperandId : public OperandId {
  public:
   ObjOperandId() = default;
@@ -167,8 +173,12 @@ class TypedOperandId : public OperandId {
       : OperandId(id.id()), type_(JSVAL_TYPE_BOOLEAN) {}
   MOZ_IMPLICIT TypedOperandId(Int32OperandId id)
       : OperandId(id.id()), type_(JSVAL_TYPE_INT32) {}
+
   MOZ_IMPLICIT TypedOperandId(ValueTagOperandId val)
       : OperandId(val.id()), type_(JSVAL_TYPE_UNKNOWN) {}
+  MOZ_IMPLICIT TypedOperandId(IntPtrOperandId id)
+      : OperandId(id.id()), type_(JSVAL_TYPE_UNKNOWN) {}
+
   TypedOperandId(ValOperandId val, JSValueType type)
       : OperandId(val.id()), type_(type) {}
 
@@ -305,7 +315,8 @@ class CallFlags {
     Standard,
     Spread,
     FunCall,
-    FunApplyArgs,
+    FunApplyMagicArgs,
+    FunApplyArgsObj,
     FunApplyArray,
     LastArgFormat = FunApplyArray
   };
@@ -326,6 +337,7 @@ class CallFlags {
     return isConstructing_;
   }
   bool isSameRealm() const { return isSameRealm_; }
+  void setIsSameRealm() { isSameRealm_ = true; }
 
   bool needsUninitializedThis() const { return needsUninitializedThis_; }
   void setNeedsUninitializedThis() { needsUninitializedThis_ = true; }
@@ -452,7 +464,8 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
       break;
     case CallFlags::Unknown:
     case CallFlags::FunCall:
-    case CallFlags::FunApplyArgs:
+    case CallFlags::FunApplyMagicArgs:
+    case CallFlags::FunApplyArgsObj:
     case CallFlags::FunApplyArray:
       MOZ_CRASH("Currently unreachable");
       break;
@@ -832,11 +845,6 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     guardGroup(obj, group);
   }
 
-  void guardGroupForLayout(ObjOperandId obj, ObjectGroup* group) {
-    MOZ_ASSERT(IsTypedObjectClass(group->clasp()));
-    guardGroup(obj, group);
-  }
-
   static uint32_t encodeNargsAndFlags(JSFunction* fun) {
     static_assert(JSFunction::NArgsBits == 16);
     static_assert(sizeof(decltype(fun->flags().toRaw())) == sizeof(uint16_t));
@@ -892,6 +900,13 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
       return loadArgumentDynamicSlot_(argcId, slotIndex);
     }
     return loadArgumentFixedSlot_(slotIndex);
+  }
+
+  ObjOperandId loadSpreadArgs() {
+    ArgumentKind kind = ArgumentKind::Arg0;
+    uint32_t argc = 1;
+    CallFlags flags(CallFlags::Spread);
+    return ObjOperandId(loadArgumentFixedSlot(kind, argc, flags).id());
   }
 
   void callScriptedFunction(ObjOperandId callee, Int32OperandId argc,
@@ -1068,6 +1083,10 @@ class MOZ_RAII CacheIRReader {
     return ValueTagOperandId(buffer_.readByte());
   }
 
+  IntPtrOperandId intPtrOperandId() {
+    return IntPtrOperandId(buffer_.readByte());
+  }
+
   ObjOperandId objOperandId() { return ObjOperandId(buffer_.readByte()); }
   NumberOperandId numberOperandId() {
     return NumberOperandId(buffer_.readByte());
@@ -1137,8 +1156,8 @@ class MOZ_RAII CacheIRReader {
                          needsUninitializedThis);
       default:
         // The existing non-standard argument formats (FunCall and FunApply)
-        // can't be constructors and have no support for isSameRealm.
-        MOZ_ASSERT(!isConstructing && !isSameRealm);
+        // can't be constructors.
+        MOZ_ASSERT(!isConstructing);
         return CallFlags(format);
     }
   }
@@ -1225,6 +1244,9 @@ class MOZ_RAII IRGenerator {
   bool maybeGuardInt32Index(const Value& index, ValOperandId indexId,
                             uint32_t* int32Index, Int32OperandId* int32IndexId);
 
+  IntPtrOperandId guardToIntPtrIndex(const Value& index, ValOperandId indexId,
+                                     bool supportOOB);
+
   ObjOperandId guardDOMProxyExpandoObjectAndShape(JSObject* obj,
                                                   ObjOperandId objId,
                                                   const Value& expandoVal,
@@ -1255,8 +1277,15 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                  HandleId id, ValOperandId receiverId);
   AttachDecision tryAttachObjectLength(HandleObject obj, ObjOperandId objId,
                                        HandleId id);
-  AttachDecision tryAttachTypedArrayLength(HandleObject obj, ObjOperandId objId,
-                                           HandleId id);
+  AttachDecision tryAttachTypedArray(HandleObject obj, ObjOperandId objId,
+                                     HandleId id);
+  AttachDecision tryAttachDataView(HandleObject obj, ObjOperandId objId,
+                                   HandleId id);
+  AttachDecision tryAttachArrayBufferMaybeShared(HandleObject obj,
+                                                 ObjOperandId objId,
+                                                 HandleId id);
+  AttachDecision tryAttachRegExp(HandleObject obj, ObjOperandId objId,
+                                 HandleId id);
   AttachDecision tryAttachModuleNamespace(HandleObject obj, ObjOperandId objId,
                                           HandleId id);
   AttachDecision tryAttachWindowProxy(HandleObject obj, ObjOperandId objId,
@@ -1305,10 +1334,7 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
   AttachDecision tryAttachSparseElement(HandleObject obj, ObjOperandId objId,
                                         uint32_t index, Int32OperandId indexId);
   AttachDecision tryAttachTypedArrayElement(HandleObject obj,
-                                            ObjOperandId objId, uint32_t index,
-                                            Int32OperandId indexId);
-  AttachDecision tryAttachTypedArrayNonInt32Index(HandleObject obj,
-                                                  ObjOperandId objId);
+                                            ObjOperandId objId);
 
   AttachDecision tryAttachGenericElement(HandleObject obj, ObjOperandId objId,
                                          uint32_t index,
@@ -1434,12 +1460,7 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator {
                                           ValOperandId rhsId);
   AttachDecision tryAttachSetTypedArrayElement(HandleObject obj,
                                                ObjOperandId objId,
-                                               uint32_t index,
-                                               Int32OperandId indexId,
                                                ValOperandId rhsId);
-  AttachDecision tryAttachSetTypedArrayElementNonInt32Index(HandleObject obj,
-                                                            ObjOperandId objId,
-                                                            ValOperandId rhsId);
 
   AttachDecision tryAttachSetDenseElementHole(HandleObject obj,
                                               ObjOperandId objId,
@@ -1496,10 +1517,7 @@ class MOZ_RAII HasPropIRGenerator : public IRGenerator {
   AttachDecision tryAttachDenseHole(HandleObject obj, ObjOperandId objId,
                                     uint32_t index, Int32OperandId indexId);
   AttachDecision tryAttachTypedArray(HandleObject obj, ObjOperandId objId,
-                                     Int32OperandId indexId);
-  AttachDecision tryAttachTypedArrayNonInt32Index(HandleObject obj,
-                                                  ObjOperandId objId,
-                                                  ValOperandId keyId);
+                                     ValOperandId keyId);
   AttachDecision tryAttachSparse(HandleObject obj, ObjOperandId objId,
                                  Int32OperandId indexId);
   AttachDecision tryAttachNamedProp(HandleObject obj, ObjOperandId objId,
@@ -1623,8 +1641,8 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
 
   struct AtomicsReadWriteModifyOperands {
     ObjOperandId objId;
-    Int32OperandId int32IndexId;
-    Int32OperandId int32ValueId;
+    IntPtrOperandId intPtrIndexId;
+    OperandId numericValueId;
   };
 
   AtomicsReadWriteModifyOperands emitAtomicsReadWriteModifyOperands(
@@ -1691,11 +1709,12 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
                                        UnaryMathFunction fun);
   AttachDecision tryAttachMathPow(HandleFunction callee);
   AttachDecision tryAttachMathMinMax(HandleFunction callee, bool isMax);
+  AttachDecision tryAttachSpreadMathMinMax(HandleFunction callee, bool isMax);
   AttachDecision tryAttachIsTypedArray(HandleFunction callee,
                                        bool isPossiblyWrapped);
   AttachDecision tryAttachIsTypedArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachTypedArrayByteOffset(HandleFunction callee);
-  AttachDecision tryAttachTypedArrayElementShift(HandleFunction callee);
+  AttachDecision tryAttachTypedArrayElementSize(HandleFunction callee);
   AttachDecision tryAttachTypedArrayLength(HandleFunction callee,
                                            bool isPossiblyWrapped);
   AttachDecision tryAttachArrayBufferByteLength(HandleFunction callee,

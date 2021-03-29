@@ -117,6 +117,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether we verify that we don't recompile with the same CacheIR.
   SET_DEFAULT(disableBailoutLoopCheck, false);
 
+  // Whether we use scalar replacement instead of the old arguments analysis.
+  SET_DEFAULT(scalarReplaceArguments, false);
+
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
 
@@ -141,6 +144,9 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Whether Warp should use ICs instead of transpiling Baseline CacheIR.
   SET_DEFAULT(forceInlineCaches, false);
+
+  // Whether all ICs should be initialized as megamorphic ICs.
+  SET_DEFAULT(forceMegamorphicICs, false);
 
   // Toggles whether large scripts are rejected.
   SET_DEFAULT(limitScriptSize, true);

@@ -8,9 +8,9 @@
 #ifndef vm_Opcodes_h
 #define vm_Opcodes_h
 
-#include "mozilla/Attributes.h"
-
 #include <stddef.h>
+
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 // clang-format off
 /*
@@ -1609,47 +1609,6 @@
      */ \
     MACRO(FunWithProto, fun_with_proto, NULL, 5, 1, 1, JOF_OBJECT) \
     /*
-     * Create and push a default constructor for a base class.
-     *
-     * A default constructor behaves like `constructor() {}`.
-     *
-     * Implements: [ClassDefinitionEvaluation for *ClassTail*][1], steps
-     * 10.b. and 12-17.
-     *
-     * The `sourceStart`/`sourceEnd` offsets are the start/end offsets of the
-     * class definition in the source buffer, used for `toString()`. They must
-     * be valid offsets into the source buffer, measured in code units, such
-     * that `scriptSource->substring(cx, start, end)` is valid.
-     *
-     * [1]: https://tc39.es/ecma262/#sec-runtime-semantics-classdefinitionevaluation
-     *
-     *   Category: Functions
-     *   Type: Creating constructors
-     *   Operands: uint32_t nameIndex, uint32_t sourceStart, uint32_t sourceEnd
-     *   Stack: => constructor
-     */ \
-    MACRO(ClassConstructor, class_constructor, NULL, 13, 0, 1, JOF_CLASS_CTOR) \
-    /*
-     * Create and push a default constructor for a derived class.
-     *
-     * A default derived-class constructor behaves like
-     * `constructor(...args) { super(...args); }`.
-     *
-     * Implements: [ClassDefinitionEvaluation for *ClassTail*][1], steps
-     * 10.a. and 12-17.
-     *
-     * `sourceStart` and `sourceEnd` follow the same rules as for
-     * `JSOp::ClassConstructor`.
-     *
-     * [1]: https://tc39.es/ecma262/#sec-runtime-semantics-classdefinitionevaluation
-     *
-     *   Category: Functions
-     *   Type: Creating constructors
-     *   Operands: uint32_t nameIndex, uint32_t sourceStart, uint32_t sourceEnd
-     *   Stack: proto => constructor
-     */ \
-    MACRO(DerivedConstructor, derived_constructor, NULL, 13, 1, 1, JOF_CLASS_CTOR) \
-    /*
      * Pushes the current global's %BuiltinObject%.
      *
      * `kind` must be a valid `BuiltinObjectKind` (and must not be
@@ -2286,7 +2245,7 @@
      *   Operands: int32_t forwardOffset
      *   Stack: cond =>
      */ \
-    MACRO(IfEq, if_eq, NULL, 5, 1, 0, JOF_JUMP|JOF_IC) \
+    MACRO(JumpIfFalse, jump_if_false, NULL, 5, 1, 0, JOF_JUMP|JOF_IC) \
     /*
      * If ToBoolean(`cond`) is true, jump to a 32-bit offset from the current
      * instruction.
@@ -2299,7 +2258,7 @@
      *   Operands: int32_t offset
      *   Stack: cond =>
      */ \
-    MACRO(IfNe, if_ne, NULL, 5, 1, 0, JOF_JUMP|JOF_IC) \
+    MACRO(JumpIfTrue, jump_if_true, NULL, 5, 1, 0, JOF_JUMP|JOF_IC) \
     /*
      * Short-circuit for logical AND.
      *
@@ -2337,8 +2296,8 @@
      */ \
     MACRO(Coalesce, coalesce, NULL, 5, 1, 1, JOF_JUMP) \
      /*
-     * Like `JSOp::IfNe` ("jump if true"), but if the branch is taken,
-     * pop and discard an additional stack value.
+     * Like `JSOp::JumpIfTrue`, but if the branch is taken, pop and discard an
+     * additional stack value.
      *
      * This is used to implement `switch` statements when the
      * `JSOp::TableSwitch` optimization is not possible. The switch statement
@@ -2364,8 +2323,8 @@
      *
      * This opcode is weird: it's the only one whose ndefs varies depending on
      * which way a conditional branch goes. We could implement switch
-     * statements using `JSOp::IfNe` and `JSOp::Pop`, but that would also be
-     * awkward--putting the `JSOp::Pop` inside the `switch` body would
+     * statements using `JSOp::JumpIfTrue` and `JSOp::Pop`, but that would also
+     * be awkward--putting the `JSOp::Pop` inside the `switch` body would
      * complicate fallthrough.
      *
      *   Category: Control flow
@@ -3579,6 +3538,8 @@
  * a power of two.  Use this macro to do so.
  */
 #define FOR_EACH_TRAILING_UNUSED_OPCODE(MACRO) \
+  MACRO(228)                                   \
+  MACRO(229)                                   \
   MACRO(230)                                   \
   MACRO(231)                                   \
   MACRO(232)                                   \

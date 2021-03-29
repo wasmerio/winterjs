@@ -13,6 +13,7 @@
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
+#include "vm/ArgumentsObject.h"
 
 #include "vm/JSObject-inl.h"
 
@@ -1208,12 +1209,297 @@ void ArrayMemoryView::visitArrayLength(MArrayLength* ins) {
   discardInstruction(ins, elements);
 }
 
+static inline bool IsOptimizableArgumentsInstruction(MInstruction* ins) {
+  return ins->isCreateArgumentsObject();
+}
+
+// Returns false if the arguments object does not escape.
+static bool IsArgumentsObjectEscaped(MInstruction* ins) {
+  MOZ_ASSERT(ins->type() == MIRType::Object);
+
+  JitSpewDef(JitSpew_Escape, "Check arguments object\n", ins);
+  JitSpewIndent spewIndent(JitSpew_Escape);
+
+  // Check all uses to see whether they can be supported without
+  // allocating an ArgumentsObject.
+  for (MUseIterator i(ins->usesBegin()); i != ins->usesEnd(); i++) {
+    MNode* consumer = (*i)->consumer();
+
+    // If a resume point can observe this instruction, we can only optimize
+    // if it is recoverable.
+    if (consumer->isResumePoint()) {
+      if (!consumer->toResumePoint()->isRecoverableOperand(*i)) {
+        JitSpew(JitSpew_Escape, "Observable args object cannot be recovered");
+        return true;
+      }
+      continue;
+    }
+
+    MDefinition* def = consumer->toDefinition();
+    switch (def->op()) {
+      case MDefinition::Opcode::GuardToClass: {
+        MGuardToClass* guard = def->toGuardToClass();
+        if (!guard->isArgumentsObjectClass()) {
+          JitSpewDef(JitSpew_Escape, "has a non-matching class guard\n", guard);
+          return true;
+        }
+        if (IsArgumentsObjectEscaped(guard)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+          return true;
+        }
+        break;
+      }
+
+      case MDefinition::Opcode::GuardArgumentsObjectFlags: {
+        if (IsArgumentsObjectEscaped(def->toInstruction())) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+          return true;
+        }
+        break;
+      }
+
+      // This is a replaceable consumer.
+      case MDefinition::Opcode::ArgumentsObjectLength:
+      case MDefinition::Opcode::GetArgumentsObjectArg:
+      case MDefinition::Opcode::LoadArgumentsObjectArg:
+      case MDefinition::Opcode::ApplyArgsObj:
+        break;
+
+      // This instruction is a no-op used to test that scalar replacement
+      // is working as expected.
+      case MDefinition::Opcode::AssertRecoveredOnBailout:
+        break;
+
+      default:
+        JitSpewDef(JitSpew_Escape, "is escaped by\n", def);
+        return true;
+    }
+  }
+
+  JitSpew(JitSpew_Escape, "ArgumentsObject is not escaped");
+  return false;
+}
+
+class ArgumentsReplacer : public MDefinitionVisitorDefaultNoop {
+ private:
+  MIRGenerator* mir_;
+  MIRGraph& graph_;
+  MInstruction* args_;
+
+  TempAllocator& alloc() { return graph_.alloc(); }
+
+  void visitGuardToClass(MGuardToClass* ins);
+  void visitGuardArgumentsObjectFlags(MGuardArgumentsObjectFlags* ins);
+  void visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins);
+  void visitLoadArgumentsObjectArg(MLoadArgumentsObjectArg* ins);
+  void visitArgumentsObjectLength(MArgumentsObjectLength* ins);
+  void visitApplyArgsObj(MApplyArgsObj* ins);
+
+ public:
+  ArgumentsReplacer(MIRGenerator* mir, MIRGraph& graph, MInstruction* args)
+      : mir_(mir), graph_(graph), args_(args) {
+    MOZ_ASSERT(IsOptimizableArgumentsInstruction(args_));
+  }
+
+  bool run();
+  void assertSuccess();
+};
+
+// Replacing the arguments object is simpler than replacing an object
+// or array, because the arguments object does not change state.
+bool ArgumentsReplacer::run() {
+  MBasicBlock* startBlock = args_->block();
+
+  // Iterate over each basic block.
+  for (ReversePostorderIterator block = graph_.rpoBegin(startBlock);
+       block != graph_.rpoEnd(); block++) {
+    if (mir_->shouldCancel("Scalar replacement of Arguments Object")) {
+      return false;
+    }
+
+    // Iterates over phis and instructions.
+    // We do not have to visit resume points. Any resume points that capture
+    // the argument object will be handled by the Sink pass.
+    for (MNodeIterator iter(*block); iter;) {
+      // Increment the iterator before visiting the instruction, as the
+      // visit function might discard itself from the basic block.
+      MNode* ins = *iter++;
+      if (ins->isDefinition()) {
+        MDefinition* def = ins->toDefinition();
+        switch (def->op()) {
+#define MIR_OP(op)              \
+  case MDefinition::Opcode::op: \
+    visit##op(def->to##op());   \
+    break;
+          MIR_OPCODE_LIST(MIR_OP)
+#undef MIR_OP
+        }
+      }
+    }
+  }
+
+  assertSuccess();
+  return true;
+}
+
+void ArgumentsReplacer::assertSuccess() {
+  MOZ_ASSERT(args_->canRecoverOnBailout());
+  MOZ_ASSERT(!args_->hasLiveDefUses());
+}
+
+void ArgumentsReplacer::visitGuardToClass(MGuardToClass* ins) {
+  // Skip guards on other objects.
+  if (ins->object() != args_) {
+    return;
+  }
+  MOZ_ASSERT(ins->isArgumentsObjectClass());
+
+  // Replace the guard with the args object.
+  ins->replaceAllUsesWith(args_);
+
+  // Remove the guard.
+  ins->block()->discard(ins);
+}
+
+void ArgumentsReplacer::visitGuardArgumentsObjectFlags(
+    MGuardArgumentsObjectFlags* ins) {
+  // Skip other arguments objects.
+  if (ins->getArgsObject() != args_) {
+    return;
+  }
+
+#ifdef DEBUG
+  // Each *_OVERRIDDEN_BIT can only be set by setting or deleting a
+  // property of the args object. We have already determined that the
+  // args object doesn't escape, so its properties can't be mutated.
+  //
+  // FORWARDED_ARGUMENTS_BIT is set if any argument is closed over,
+  // which is an immutable property of the script. Because we are
+  // replacing the args object for a known script, we can check the
+  // flag once, which is done when we first attach the CacheIR, and
+  // rely on it.  (Note that this wouldn't be true if we didn't know
+  // the origin of args_, because it could be passed in from another
+  // function.)
+  uint32_t supportedBits = ArgumentsObject::LENGTH_OVERRIDDEN_BIT |
+                           ArgumentsObject::ITERATOR_OVERRIDDEN_BIT |
+                           ArgumentsObject::ELEMENT_OVERRIDDEN_BIT |
+                           ArgumentsObject::CALLEE_OVERRIDDEN_BIT |
+                           ArgumentsObject::FORWARDED_ARGUMENTS_BIT;
+
+  MOZ_ASSERT((ins->flags() & ~supportedBits) == 0);
+  MOZ_ASSERT_IF(ins->flags() & ArgumentsObject::FORWARDED_ARGUMENTS_BIT,
+                !args_->block()->info().anyFormalIsAliased());
+#endif
+
+  // Replace the guard with the args object.
+  ins->replaceAllUsesWith(args_);
+
+  // Remove the guard.
+  ins->block()->discard(ins);
+}
+
+void ArgumentsReplacer::visitGetArgumentsObjectArg(
+    MGetArgumentsObjectArg* ins) {
+  // Skip other arguments objects.
+  if (ins->getArgsObject() != args_) {
+    return;
+  }
+
+  // We don't support setting arguments in IsArgumentsObjectEscaped,
+  // so we can load the argument from the frame without worrying
+  // about it being stale.
+  auto* index = MConstant::New(alloc(), Int32Value(ins->argno()));
+  ins->block()->insertBefore(ins, index);
+
+  auto* loadArg = MGetFrameArgument::New(alloc(), index);
+  ins->block()->insertBefore(ins, loadArg);
+  ins->replaceAllUsesWith(loadArg);
+
+  // Remove original instruction.
+  ins->block()->discard(ins);
+}
+
+void ArgumentsReplacer::visitLoadArgumentsObjectArg(
+    MLoadArgumentsObjectArg* ins) {
+  // Skip other arguments objects.
+  if (ins->getArgsObject() != args_) {
+    return;
+  }
+
+  MDefinition* index = ins->index();
+
+  // Insert bounds check.
+  auto* length = MArgumentsLength::New(alloc());
+  ins->block()->insertBefore(ins, length);
+
+  MInstruction* check = MBoundsCheck::New(alloc(), index, length);
+  ins->block()->insertBefore(ins, check);
+
+  // TODO: Set special bailout kind?
+  check->setBailoutKind(ins->bailoutKind());
+
+  if (JitOptions.spectreIndexMasking) {
+    check = MSpectreMaskIndex::New(alloc(), check, length);
+    ins->block()->insertBefore(ins, check);
+  }
+
+  auto* loadArg = MGetFrameArgument::New(alloc(), check);
+  ins->block()->insertBefore(ins, loadArg);
+  ins->replaceAllUsesWith(loadArg);
+
+  // Remove original instruction.
+  ins->block()->discard(ins);
+}
+
+void ArgumentsReplacer::visitArgumentsObjectLength(
+    MArgumentsObjectLength* ins) {
+  // Skip other arguments objects.
+  if (ins->getArgsObject() != args_) {
+    return;
+  }
+
+  auto* length = MArgumentsLength::New(alloc());
+  ins->block()->insertBefore(ins, length);
+  ins->replaceAllUsesWith(length);
+
+  // Remove original instruction.
+  ins->block()->discard(ins);
+}
+
+void ArgumentsReplacer::visitApplyArgsObj(MApplyArgsObj* ins) {
+  // Skip other arguments objects.
+  if (ins->getArgsObj() != args_) {
+    return;
+  }
+
+  auto* numArgs = MArgumentsLength::New(alloc());
+  ins->block()->insertBefore(ins, numArgs);
+
+  // TODO: Should we rename MApplyArgs?
+  auto* apply = MApplyArgs::New(alloc(), ins->getSingleTarget(),
+                                ins->getFunction(), numArgs, ins->getThis());
+  if (!ins->maybeCrossRealm()) {
+    apply->setNotCrossRealm();
+  }
+  if (ins->ignoresReturnValue()) {
+    apply->setIgnoresReturnValue();
+  }
+
+  ins->block()->insertBefore(ins, apply);
+  ins->replaceAllUsesWith(apply);
+
+  apply->stealResumePoint(ins);
+  ins->block()->discard(ins);
+}
+
 bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
   JitSpew(JitSpew_Escape, "Begin (ScalarReplacement)");
 
   EmulateStateOf<ObjectMemoryView> replaceObject(mir, graph);
   EmulateStateOf<ArrayMemoryView> replaceArray(mir, graph);
   bool addedPhi = false;
+  bool shouldReplaceArguments =
+      JitOptions.scalarReplaceArguments && !graph.osrBlock();
 
   for (ReversePostorderIterator block = graph.rpoBegin();
        block != graph.rpoEnd(); block++) {
@@ -1240,6 +1526,15 @@ bool ScalarReplacement(MIRGenerator* mir, MIRGraph& graph) {
         }
         view.assertSuccess();
         addedPhi = true;
+        continue;
+      }
+
+      if (shouldReplaceArguments && IsOptimizableArgumentsInstruction(*ins) &&
+          !IsArgumentsObjectEscaped(*ins)) {
+        ArgumentsReplacer replaceArguments(mir, graph, *ins);
+        if (!replaceArguments.run()) {
+          return false;
+        }
         continue;
       }
     }

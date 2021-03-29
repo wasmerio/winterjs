@@ -328,8 +328,18 @@ class MozbuildObject(ProcessExecutionMixin):
                     *args, **kwargs
                 )
 
+        # This may be called recursively from configure itself for $reasons,
+        # so avoid logging to the same logger (configure uses "moz.configure")
+        logger = logging.getLogger("moz.configure.reduced")
+        handler = logging.StreamHandler(out)
+        logger.addHandler(handler)
+        # If this were true, logging would still propagate to "moz.configure".
+        logger.propagate = False
         sandbox = ReducedConfigureSandbox(
-            {}, environ=env, argv=["mach", "--help"], stdout=out, stderr=out
+            {},
+            environ=env,
+            argv=["mach", "--help"],
+            logger=logger,
         )
         base_dir = os.path.join(topsrcdir, "build", "moz.configure")
         try:

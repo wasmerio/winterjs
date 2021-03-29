@@ -25,7 +25,7 @@ from mozversioncontrol import (
     InvalidRepoPath,
 )
 
-from .errors import LintersNotConfigured
+from .errors import LintersNotConfigured, NoValidLinter
 from .parser import Parser
 from .pathutils import findobject
 from .result import ResultSummary
@@ -61,7 +61,17 @@ def _run_worker(config, paths, **lintargs):
     func = supported_types[config["type"]]
     start_time = time.time()
     try:
-        res = func(paths, config, **lintargs) or []
+        res = func(paths, config, **lintargs)
+        # Some linters support fixed operations
+        # dict returned - {"results":results,"fixed":fixed}
+        if isinstance(res, dict):
+            result.fixed += res["fixed"]
+            res = res["results"] or []
+        elif isinstance(res, list):
+            res = res or []
+        else:
+            print("Unexpected type received")
+            assert False
     except Exception:
         traceback.print_exc()
         res = 1
@@ -189,7 +199,7 @@ class LintRoller(object):
     def setup(self, virtualenv_manager=None):
         """Run setup for applicable linters"""
         if not self.linters:
-            raise LintersNotConfigured
+            raise NoValidLinter
 
         for linter in self.linters:
             if "setup" not in linter:

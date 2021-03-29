@@ -8,7 +8,6 @@
 #define frontend_BytecodeControlStructures_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
-#include "mozilla/Attributes.h"  // MOZ_MUST_USE
 #include "mozilla/Maybe.h"       // mozilla::Maybe
 
 #include <stdint.h>  // int32_t, uint32_t
@@ -16,7 +15,7 @@
 #include "ds/Nestable.h"               // Nestable
 #include "frontend/BytecodeSection.h"  // BytecodeOffset
 #include "frontend/JumpList.h"         // JumpList, JumpTarget
-#include "frontend/ParserAtom.h"       // ParserAtom
+#include "frontend/ParserAtom.h"       // TaggedParserAtomIndex
 #include "frontend/SharedContext.h"  // StatementKind, StatementKindIsLoop, StatementKindIsUnlabeledBreakTarget
 #include "frontend/TDZCheckCache.h"  // TDZCheckCache
 #include "vm/StencilEnums.h"         // TryNoteKind
@@ -61,7 +60,7 @@ class BreakableControl : public NestableControl {
 
   BreakableControl(BytecodeEmitter* bce, StatementKind kind);
 
-  MOZ_MUST_USE bool patchBreaks(BytecodeEmitter* bce);
+  [[nodiscard]] bool patchBreaks(BytecodeEmitter* bce);
 };
 template <>
 inline bool NestableControl::is<BreakableControl>() const {
@@ -70,16 +69,16 @@ inline bool NestableControl::is<BreakableControl>() const {
 }
 
 class LabelControl : public BreakableControl {
-  const ParserAtom* label_;
+  TaggedParserAtomIndex label_;
 
   // The code offset when this was pushed. Used for effectfulness checking.
   BytecodeOffset startOffset_;
 
  public:
-  LabelControl(BytecodeEmitter* bce, const ParserAtom* label,
+  LabelControl(BytecodeEmitter* bce, TaggedParserAtomIndex label,
                BytecodeOffset startOffset);
 
-  const ParserAtom* label() const { return label_; }
+  TaggedParserAtomIndex label() const { return label_; }
 
   BytecodeOffset startOffset() const { return startOffset_; }
 };
@@ -103,7 +102,7 @@ class LoopControl : public BreakableControl {
   //     {loop update if present}
   //
   //     # Loop end, backward jump
-  //     JSOp::Goto/JSOp::IfNe head
+  //     JSOp::Goto/JSOp::JumpIfTrue head
   //
   //   breakTarget:
 
@@ -124,16 +123,16 @@ class LoopControl : public BreakableControl {
 
   BytecodeOffset headOffset() const { return head_.offset; }
 
-  MOZ_MUST_USE bool emitContinueTarget(BytecodeEmitter* bce);
+  [[nodiscard]] bool emitContinueTarget(BytecodeEmitter* bce);
 
   // `nextPos` is the offset in the source code for the character that
   // corresponds to the next instruction after JSOp::LoopHead.
   // Can be Nothing() if not available.
-  MOZ_MUST_USE bool emitLoopHead(BytecodeEmitter* bce,
-                                 const mozilla::Maybe<uint32_t>& nextPos);
+  [[nodiscard]] bool emitLoopHead(BytecodeEmitter* bce,
+                                  const mozilla::Maybe<uint32_t>& nextPos);
 
-  MOZ_MUST_USE bool emitLoopEnd(BytecodeEmitter* bce, JSOp op,
-                                TryNoteKind tryNoteKind);
+  [[nodiscard]] bool emitLoopEnd(BytecodeEmitter* bce, JSOp op,
+                                 TryNoteKind tryNoteKind);
 };
 template <>
 inline bool NestableControl::is<LoopControl>() const {

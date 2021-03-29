@@ -65,7 +65,7 @@ class OutOfLineRegExpPrototypeOptimizable;
 class OutOfLineRegExpInstanceOptimizable;
 class OutOfLineNaNToZero;
 class OutOfLineZeroIfNaN;
-class OutOfLineTypedArrayIndexToInt32;
+class OutOfLineGuardNumberToIntPtrIndex;
 class OutOfLineBoxNonStrictThis;
 
 class CodeGenerator final : public CodeGeneratorSpecific {
@@ -151,8 +151,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void visitOutOfLineNewArray(OutOfLineNewArray* ool);
   void visitOutOfLineNewObject(OutOfLineNewObject* ool);
 
-  void visitOutOfLineTypedArrayIndexToInt32(
-      OutOfLineTypedArrayIndexToInt32* ool);
+  void visitOutOfLineGuardNumberToIntPtrIndex(
+      OutOfLineGuardNumberToIntPtrIndex* ool);
 
  private:
   void emitPostWriteBarrier(const LAllocation* obj);
@@ -178,9 +178,10 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                               Register copyreg, size_t argvSrcOffset,
                               size_t argvDstOffset);
   void emitPopArguments(Register extraStackSize);
-  void emitPushElementsAsArguments(Register tmpArgc, Register elementsAndArgc,
-                                   Register extraStackSpace);
+  void emitPushArrayAsArguments(Register tmpArgc, Register srcBaseAndArgc,
+                                Register scratch, size_t argvSrcOffset);
   void emitPushArguments(LApplyArgsGeneric* apply, Register extraStackSpace);
+  void emitPushArguments(LApplyArgsObj* apply, Register extraStackSpace);
   void emitPushArguments(LApplyArrayGeneric* apply, Register extraStackSpace);
   void emitPushArguments(LConstructArrayGeneric* construct,
                          Register extraStackSpace);
@@ -239,6 +240,9 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void emitLoadIteratorValues(Register result, Register temp, Register front);
 
   void emitStringToInt64(LInstruction* lir, Register input, Register64 output);
+
+  OutOfLineCode* createBigIntOutOfLine(LInstruction* lir, Scalar::Type type,
+                                       Register64 input, Register output);
 
   void emitCreateBigInt(LInstruction* lir, Scalar::Type type, Register64 input,
                         Register output, Register maybeTemp);
@@ -306,7 +310,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void emitStoreHoleCheck(Register elements, const LAllocation* index,
                           LSnapshot* snapshot);
 
-  void emitAssertRangeI(const Range* r, Register input);
+  void emitAssertRangeI(MIRType type, const Range* r, Register input);
   void emitAssertRangeD(const Range* r, FloatRegister input,
                         FloatRegister temp);
 

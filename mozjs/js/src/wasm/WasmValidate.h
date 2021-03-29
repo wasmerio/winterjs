@@ -183,6 +183,7 @@ struct ModuleEnvironment {
   bool gcTypesEnabled() const { return features.gcTypes; }
   bool multiValueEnabled() const { return features.multiValue; }
   bool v128Enabled() const { return features.v128; }
+  bool simdWormholeEnabled() const { return features.simdWormhole; }
   bool hugeMemoryEnabled() const { return !isAsmJS() && features.hugeMemory; }
   bool exceptionsEnabled() const { return features.exceptions; }
   bool usesMemory() const { return memoryUsage != MemoryUsage::None; }
@@ -952,7 +953,7 @@ void ConvertMemoryPagesToBytes(Limits* memory);
 //  - otherwise, there was a legitimate error described by *error
 
 [[nodiscard]] bool Validate(JSContext* cx, const ShareableBytes& bytecode,
-                            UniqueChars* error);
+                            const FeatureOptions& options, UniqueChars* error);
 
 }  // namespace wasm
 }  // namespace js

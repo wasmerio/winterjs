@@ -12,7 +12,6 @@
 #ifndef frontend_EitherParser_h
 #define frontend_EitherParser_h
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Tuple.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Variant.h"
@@ -150,14 +149,19 @@ class EitherParser : public BCEParserHandle {
     return parser.match(std::move(matcher));
   }
 
-  JSAtom* liftParserAtomToJSAtom(const ParserAtom* parserAtom) {
-    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
-    return base.liftParserAtomToJSAtom(parserAtom);
-  }
-
   CompilationStencil& getCompilationStencil() {
     ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
     return base.getCompilationStencil();
+  }
+
+  CompilationState& getCompilationState() {
+    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
+    return base.getCompilationState();
+  }
+
+  ParserAtomsTable& parserAtoms() {
+    ParserSharedBase& base = parser.match(detail::ParserSharedBaseMatcher());
+    return base.parserAtoms();
   }
 };
 

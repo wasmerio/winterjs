@@ -1,1 +1,0 @@
-|jit-test| --enable-large-buffers; --no-blinterp; skip-if: (getBuildConfiguration()["pointer-byte-size"] === 4)

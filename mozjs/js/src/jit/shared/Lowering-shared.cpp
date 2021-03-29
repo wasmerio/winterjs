@@ -9,6 +9,7 @@
 #include "jit/LIR.h"
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
+#include "jit/ScalarTypeUtils.h"
 
 #include "vm/SymbolType.h"
 
@@ -141,6 +142,20 @@ bool LRecoverInfo::OperandIter::canOptimizeOutIfUnused() {
   return true;
 }
 #endif
+
+LAllocation LIRGeneratorShared::useRegisterOrIndexConstant(
+    MDefinition* mir, Scalar::Type type, int32_t offsetAdjustment) {
+  if (CanUseInt32Constant(mir)) {
+    MConstant* cst = mir->toConstant();
+    int32_t val =
+        cst->type() == MIRType::Int32 ? cst->toInt32() : cst->toIntPtr();
+    int32_t offset;
+    if (ArrayOffsetFitsInInt32(val, type, offsetAdjustment, &offset)) {
+      return LAllocation(mir->toConstant());
+    }
+  }
+  return useRegister(mir);
+}
 
 #ifdef JS_NUNBOX32
 LSnapshot* LIRGeneratorShared::buildSnapshot(MResumePoint* rp,
@@ -490,15 +505,21 @@ static bool TryPermute32x4(SimdConstant* control) {
 // just lanes[0], and *control is unchanged.
 static bool TryRotateRight8x16(SimdConstant* control) {
   const SimdConstant::I8x16& lanes = control->asInt8x16();
-  // Look for the first run of consecutive bytes.
+  // Look for the end of the first run of consecutive bytes.
   int i = ScanIncreasingMasked(lanes, 0);
 
-  // If we reach the end of the vector, the vector must start at 0.
-  if (i == 16) {
-    return lanes[0] == 0;
+  // First run must start at a value s.t. we have a rotate if all remaining
+  // bytes are a run.
+  if (lanes[0] != 16 - i) {
+    return false;
   }
 
-  // Second run must start at source lane zero
+  // If we reached the end of the vector, we're done.
+  if (i == 16) {
+    return true;
+  }
+
+  // Second run must start at source lane zero.
   if (lanes[i] != 0) {
     return false;
   }

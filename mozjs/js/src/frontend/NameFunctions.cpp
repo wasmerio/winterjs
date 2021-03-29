@@ -13,7 +13,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
-#include "frontend/ParserAtom.h"
+#include "frontend/ParserAtom.h"  // ParserAtomsTable
 #include "frontend/SharedContext.h"
 #include "util/Poison.h"
 #include "util/StringBuffer.h"
@@ -30,7 +30,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
   static const size_t MaxParents = 100;
 
   ParserAtomsTable& parserAtoms_;
-  const ParserAtom* prefix_;
+  TaggedParserAtomIndex prefix_;
 
   // Number of nodes in the parents array.
   size_t nparents_;
@@ -59,13 +59,13 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
    * given code like a["b c"], the front end will produce a ParseNodeKind::Dot
    * with a ParseNodeKind::Name child whose name contains spaces.
    */
-  bool appendPropertyReference(const ParserAtom* name) {
-    if (IsIdentifier(name)) {
-      return buf_.append('.') && buf_.append(name);
+  bool appendPropertyReference(TaggedParserAtomIndex name) {
+    if (parserAtoms_.isIdentifier(name)) {
+      return buf_.append('.') && buf_.append(parserAtoms_, name);
     }
 
     /* Quote the string as needed. */
-    UniqueChars source = QuoteString(cx_, name, '"');
+    UniqueChars source = parserAtoms_.toQuotedString(cx_, name);
     return source && buf_.append('[') &&
            buf_.append(source.get(), strlen(source.get())) && buf_.append(']');
   }
@@ -102,9 +102,10 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
       }
 
       case ParseNodeKind::Name:
-      case ParseNodeKind::PrivateName:
+      case ParseNodeKind::PrivateName: {
         *foundName = true;
-        return buf_.append(n->as<NameNode>().atom());
+        return buf_.append(parserAtoms_, n->as<NameNode>().atom());
+      }
 
       case ParseNodeKind::ThisExpr:
         *foundName = true;
@@ -219,8 +220,8 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
    * listed, then it is skipped. Otherwise an intelligent name is guessed to
    * assign to the function's displayAtom field.
    */
-  MOZ_MUST_USE bool resolveFun(FunctionNode* funNode,
-                               const ParserAtom** retId) {
+  [[nodiscard]] bool resolveFun(FunctionNode* funNode,
+                                TaggedParserAtomIndex* retId) {
     MOZ_ASSERT(funNode != nullptr);
 
     FunctionBox* funbox = funNode->funbox();
@@ -228,7 +229,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
     MOZ_ASSERT(buf_.empty());
     auto resetBuf = mozilla::MakeScopeExit([&] { buf_.clear(); });
 
-    *retId = nullptr;
+    *retId = TaggedParserAtomIndex::null();
 
     // If the function already has a name, use that.
     if (funbox->displayAtom()) {
@@ -236,8 +237,8 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
         *retId = funbox->displayAtom();
         return true;
       }
-      if (!buf_.append(prefix_) || !buf_.append('/') ||
-          !buf_.append(funbox->displayAtom())) {
+      if (!buf_.append(parserAtoms_, prefix_) || !buf_.append('/') ||
+          !buf_.append(parserAtoms_, funbox->displayAtom())) {
         return false;
       }
       *retId = buf_.finishParserAtom(parserAtoms_);
@@ -246,7 +247,7 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
 
     // If a prefix is specified, then it is a form of namespace.
     if (prefix_) {
-      if (!buf_.append(prefix_) || !buf_.append('/')) {
+      if (!buf_.append(parserAtoms_, prefix_) || !buf_.append('/')) {
         return false;
       }
     }
@@ -339,9 +340,9 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
   }
 
  public:
-  MOZ_MUST_USE bool visitFunction(FunctionNode* pn) {
-    const ParserAtom* savedPrefix = prefix_;
-    const ParserAtom* newPrefix = nullptr;
+  [[nodiscard]] bool visitFunction(FunctionNode* pn) {
+    TaggedParserAtomIndex savedPrefix = prefix_;
+    TaggedParserAtomIndex newPrefix;
     if (!resolveFun(pn, &newPrefix)) {
       return false;
     }
@@ -361,14 +362,14 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
   }
 
   // Skip this type of node. It never contains functions.
-  MOZ_MUST_USE bool visitCallSiteObj(CallSiteNode* callSite) {
+  [[nodiscard]] bool visitCallSiteObj(CallSiteNode* callSite) {
     // This node only contains internal strings or undefined and an array -- no
     // user-controlled expressions.
     return true;
   }
 
   // Skip walking the list of string parts, which never contains functions.
-  MOZ_MUST_USE bool visitTaggedTemplateExpr(BinaryNode* taggedTemplate) {
+  [[nodiscard]] bool visitTaggedTemplateExpr(BinaryNode* taggedTemplate) {
     ParseNode* tag = taggedTemplate->left();
 
     // The leading expression, e.g. |tag| in |tag`foo`|,
@@ -409,9 +410,9 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
 
  private:
   // Speed hack: this type of node can't contain functions, so skip walking it.
-  MOZ_MUST_USE bool internalVisitSpecList(ListNode* pn) {
-    // Import/export spec lists contain import/export specs containing
-    // only pairs of names. Alternatively, an export spec list may
+  [[nodiscard]] bool internalVisitSpecList(ListNode* pn) {
+    // Import/export spec lists contain import/export specs containing only
+    // pairs of names or strings. Alternatively, an export spec list may
     // contain a single export batch specifier.
 #ifdef DEBUG
     bool isImport = pn->isKind(ParseNodeKind::ImportSpecList);
@@ -420,11 +421,22 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
       MOZ_ASSERT(item->is<NullaryNode>());
     } else {
       for (ParseNode* item : pn->contents()) {
-        BinaryNode* spec = &item->as<BinaryNode>();
-        MOZ_ASSERT(spec->isKind(isImport ? ParseNodeKind::ImportSpec
-                                         : ParseNodeKind::ExportSpec));
-        MOZ_ASSERT(spec->left()->isKind(ParseNodeKind::Name));
-        MOZ_ASSERT(spec->right()->isKind(ParseNodeKind::Name));
+        if (item->is<UnaryNode>()) {
+          auto* spec = &item->as<UnaryNode>();
+          MOZ_ASSERT(spec->isKind(isImport
+                                      ? ParseNodeKind::ImportNamespaceSpec
+                                      : ParseNodeKind::ExportNamespaceSpec));
+          MOZ_ASSERT(spec->kid()->isKind(ParseNodeKind::Name) ||
+                     spec->kid()->isKind(ParseNodeKind::StringExpr));
+        } else {
+          auto* spec = &item->as<BinaryNode>();
+          MOZ_ASSERT(spec->isKind(isImport ? ParseNodeKind::ImportSpec
+                                           : ParseNodeKind::ExportSpec));
+          MOZ_ASSERT(spec->left()->isKind(ParseNodeKind::Name) ||
+                     spec->left()->isKind(ParseNodeKind::StringExpr));
+          MOZ_ASSERT(spec->right()->isKind(ParseNodeKind::Name) ||
+                     spec->right()->isKind(ParseNodeKind::StringExpr));
+        }
       }
     }
 #endif
@@ -432,25 +444,24 @@ class NameResolver : public ParseNodeVisitor<NameResolver> {
   }
 
  public:
-  MOZ_MUST_USE bool visitImportSpecList(ListNode* pn) {
+  [[nodiscard]] bool visitImportSpecList(ListNode* pn) {
     return internalVisitSpecList(pn);
   }
 
-  MOZ_MUST_USE bool visitExportSpecList(ListNode* pn) {
+  [[nodiscard]] bool visitExportSpecList(ListNode* pn) {
     return internalVisitSpecList(pn);
   }
 
   explicit NameResolver(JSContext* cx, ParserAtomsTable& parserAtoms)
       : ParseNodeVisitor(cx),
         parserAtoms_(parserAtoms),
-        prefix_(nullptr),
         nparents_(0),
         buf_(cx) {}
 
   /*
    * Resolve names for all anonymous functions in the given ParseNode tree.
    */
-  MOZ_MUST_USE bool visit(ParseNode* pn) {
+  [[nodiscard]] bool visit(ParseNode* pn) {
     // Push pn to the parse node stack.
     if (nparents_ >= MaxParents) {
       // Silently skip very deeply nested functions.

@@ -204,7 +204,7 @@
 #include "jspubtd.h"
 
 #include "frontend/ErrorReporter.h"
-#include "frontend/ParserAtom.h"
+#include "frontend/ParserAtom.h"  // ParserAtom, ParserAtomsTable, TaggedParserAtomIndex
 #include "frontend/Token.h"
 #include "frontend/TokenKind.h"
 #include "js/CompileOptions.h"
@@ -236,10 +236,16 @@ namespace frontend {
 //  - WasmFrameIter::computeLine
 static constexpr uint32_t ColumnLimit = std::numeric_limits<int32_t>::max() / 2;
 
-extern TokenKind ReservedWordTokenKind(const ParserName* name);
+// If `name` is reserved word, returns the TokenKind of it.
+// TokenKind::Limit otherwise.
+extern TokenKind ReservedWordTokenKind(TaggedParserAtomIndex name);
 
-extern const char* ReservedWordToCharZ(const ParserName* name);
+// If `name` is reserved word, returns string representation of it.
+// nullptr otherwise.
+extern const char* ReservedWordToCharZ(TaggedParserAtomIndex name);
 
+// If `tt` is reserved word, returns string representation of it.
+// nullptr otherwise.
 extern const char* ReservedWordToCharZ(TokenKind tt);
 
 struct TokenStreamFlags {
@@ -416,8 +422,8 @@ class SourceCoords {
   SourceCoords(JSContext* cx, uint32_t initialLineNumber,
                uint32_t initialOffset);
 
-  MOZ_MUST_USE bool add(uint32_t lineNum, uint32_t lineStartOffset);
-  MOZ_MUST_USE bool fill(const SourceCoords& other);
+  [[nodiscard]] bool add(uint32_t lineNum, uint32_t lineStartOffset);
+  [[nodiscard]] bool fill(const SourceCoords& other);
 
   bool isOnThisLine(uint32_t offset, uint32_t lineNum, bool* onThisLine) const {
     uint32_t index = indexFromLineNumber(lineNum);
@@ -728,13 +734,13 @@ class TokenStreamAnyChars : public TokenStreamShared {
     return currentToken().type == type;
   }
 
-  MOZ_MUST_USE bool checkOptions();
+  [[nodiscard]] bool checkOptions();
 
  private:
-  const ParserName* reservedWordToPropertyName(TokenKind tt) const;
+  TaggedParserAtomIndex reservedWordToPropertyName(TokenKind tt) const;
 
  public:
-  const ParserName* currentName() const {
+  TaggedParserAtomIndex currentName() const {
     if (isCurrentTokenType(TokenKind::Name) ||
         isCurrentTokenType(TokenKind::PrivateName)) {
       return currentToken().name();
@@ -744,12 +750,11 @@ class TokenStreamAnyChars : public TokenStreamShared {
     return reservedWordToPropertyName(currentToken().type);
   }
 
-  bool currentNameHasEscapes() const {
+  bool currentNameHasEscapes(ParserAtomsTable& parserAtoms) const {
     if (isCurrentTokenType(TokenKind::Name) ||
         isCurrentTokenType(TokenKind::PrivateName)) {
       TokenPos pos = currentToken().pos;
-      const ParserAtom* name = currentToken().name();
-      return (pos.end - pos.begin) != name->length();
+      return (pos.end - pos.begin) != parserAtoms.length(currentToken().name());
     }
 
     MOZ_ASSERT(TokenKindIsPossibleIdentifierName(currentToken().type));
@@ -923,7 +928,7 @@ class TokenStreamAnyChars : public TokenStreamShared {
    * Update line/column information for the start of a new line at
    * |lineStartOffset|.
    */
-  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool internalUpdateLineInfoForEOL(
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool internalUpdateLineInfoForEOL(
       uint32_t lineStartOffset);
 
  public:
@@ -1521,22 +1526,22 @@ using CharBuffer = Vector<char16_t, 32>;
  * Append the provided code point (in the range [U+0000, U+10FFFF], surrogate
  * code points included) to the buffer.
  */
-extern MOZ_MUST_USE bool AppendCodePointToCharBuffer(CharBuffer& charBuffer,
-                                                     uint32_t codePoint);
+[[nodiscard]] extern bool AppendCodePointToCharBuffer(CharBuffer& charBuffer,
+                                                      uint32_t codePoint);
 
 /**
  * Accumulate the range of UTF-16 text (lone surrogates permitted, because JS
  * allows them in source text) into |charBuffer|.  Normalize '\r', '\n', and
  * "\r\n" into '\n'.
  */
-extern MOZ_MUST_USE bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(
+[[nodiscard]] extern bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(
     CharBuffer& charBuffer, const char16_t* cur, const char16_t* end);
 
 /**
  * Accumulate the range of previously-validated UTF-8 text into |charBuffer|.
  * Normalize '\r', '\n', and "\r\n" into '\n'.
  */
-extern MOZ_MUST_USE bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(
+[[nodiscard]] extern bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(
     CharBuffer& charBuffer, const mozilla::Utf8Unit* cur,
     const mozilla::Utf8Unit* end);
 
@@ -1558,7 +1563,7 @@ class TokenStreamCharsShared {
   explicit TokenStreamCharsShared(JSContext* cx, ParserAtomsTable* parserAtoms)
       : cx(cx), charBuffer(cx), parserAtoms(parserAtoms) {}
 
-  MOZ_MUST_USE bool copyCharBufferTo(
+  [[nodiscard]] bool copyCharBufferTo(
       JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination);
 
   /**
@@ -1566,19 +1571,15 @@ class TokenStreamCharsShared {
    * (The code point's exact value might not be used, however, if subsequent
    * code observes that |unit| is part of a LineTerminatorSequence.)
    */
-  static constexpr MOZ_ALWAYS_INLINE MOZ_MUST_USE bool isAsciiCodePoint(
+  [[nodiscard]] static constexpr MOZ_ALWAYS_INLINE bool isAsciiCodePoint(
       int32_t unit) {
     return mozilla::IsAscii(static_cast<char32_t>(unit));
   }
 
-  const ParserAtom* drainCharBufferIntoAtom() {
+  TaggedParserAtomIndex drainCharBufferIntoAtom() {
     // Add to parser atoms table.
-    const ParserAtom* atom = this->parserAtoms->internChar16(
-        cx, charBuffer.begin(), charBuffer.length());
-    if (!atom) {
-      return nullptr;
-    }
-
+    auto atom = this->parserAtoms->internChar16(cx, charBuffer.begin(),
+                                                charBuffer.length());
     charBuffer.clear();
     return atom;
   }
@@ -1641,8 +1642,8 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
     sourceUnits.ungetCodeUnit();
   }
 
-  MOZ_ALWAYS_INLINE const ParserAtom* atomizeSourceChars(
-      mozilla::Span<const Unit> units);
+  MOZ_ALWAYS_INLINE TaggedParserAtomIndex
+  atomizeSourceChars(mozilla::Span<const Unit> units);
 
   /**
    * Try to match a non-LineTerminator ASCII code point.  Return true iff it
@@ -1698,7 +1699,7 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
    * This function is quite internal, and you probably should be calling one
    * of its existing callers instead.
    */
-  MOZ_MUST_USE bool addLineOfContext(ErrorMetadata* err, uint32_t offset);
+  [[nodiscard]] bool addLineOfContext(ErrorMetadata* err, uint32_t offset);
 };
 
 template <>
@@ -1720,14 +1721,14 @@ inline void TokenStreamCharsBase<Unit>::consumeKnownCodeUnit(int32_t unit) {
 }
 
 template <>
-MOZ_ALWAYS_INLINE const ParserAtom*
+MOZ_ALWAYS_INLINE TaggedParserAtomIndex
 TokenStreamCharsBase<char16_t>::atomizeSourceChars(
     mozilla::Span<const char16_t> units) {
   return this->parserAtoms->internChar16(cx, units.data(), units.size());
 }
 
 template <>
-/* static */ MOZ_ALWAYS_INLINE const ParserAtom*
+/* static */ MOZ_ALWAYS_INLINE TaggedParserAtomIndex
 TokenStreamCharsBase<mozilla::Utf8Unit>::atomizeSourceChars(
     mozilla::Span<const mozilla::Utf8Unit> units) {
   return this->parserAtoms->internUtf8(cx, units.data(), units.size());
@@ -1989,7 +1990,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    * Return true if the caller can compute a line of context from the token
    * stream.  Otherwise return false.
    */
-  MOZ_MUST_USE bool fillExceptingContext(ErrorMetadata* err, uint32_t offset) {
+  [[nodiscard]] bool fillExceptingContext(ErrorMetadata* err, uint32_t offset) {
     if (anyCharsAccess().fillExceptingContext(err, offset)) {
       computeLineAndColumn(offset, &err->lineNumber, &err->columnNumber);
       return true;
@@ -2013,8 +2014,9 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     newToken(TokenKind::BigInt, start, modifier, out);
   }
 
-  void newAtomToken(TokenKind kind, const ParserAtom* atom, TokenStart start,
-                    TokenStreamShared::Modifier modifier, TokenKind* out) {
+  void newAtomToken(TokenKind kind, TaggedParserAtomIndex atom,
+                    TokenStart start, TokenStreamShared::Modifier modifier,
+                    TokenKind* out) {
     MOZ_ASSERT(kind == TokenKind::String || kind == TokenKind::TemplateHead ||
                kind == TokenKind::NoSubsTemplate);
 
@@ -2022,13 +2024,13 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     token->setAtom(atom);
   }
 
-  void newNameToken(const ParserName* name, TokenStart start,
+  void newNameToken(TaggedParserAtomIndex name, TokenStart start,
                     TokenStreamShared::Modifier modifier, TokenKind* out) {
     Token* token = newToken(TokenKind::Name, start, modifier, out);
     token->setName(name);
   }
 
-  void newPrivateNameToken(const ParserName* name, TokenStart start,
+  void newPrivateNameToken(TaggedParserAtomIndex name, TokenStart start,
                            TokenStreamShared::Modifier modifier,
                            TokenKind* out) {
     Token* token = newToken(TokenKind::PrivateName, start, modifier, out);
@@ -2079,7 +2081,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    *
    * This may change the current |sourceUnits| offset.
    */
-  MOZ_MUST_USE bool getFullAsciiCodePoint(int32_t lead, int32_t* codePoint) {
+  [[nodiscard]] bool getFullAsciiCodePoint(int32_t lead, int32_t* codePoint) {
     MOZ_ASSERT(isAsciiCodePoint(lead),
                "non-ASCII code units must be handled separately");
     MOZ_ASSERT(toUnit(lead) == this->sourceUnits.previousCodeUnit(),
@@ -2103,7 +2105,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     return ok;
   }
 
-  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool updateLineInfoForEOL() {
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool updateLineInfoForEOL() {
     return anyCharsAccess().internalUpdateLineInfoForEOL(
         this->sourceUnits.offset());
   }
@@ -2120,8 +2122,8 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    * its callers instead.  It basically exists only to make those callers
    * more readable.
    */
-  MOZ_MUST_USE bool internalComputeLineOfContext(ErrorMetadata* err,
-                                                 uint32_t offset) {
+  [[nodiscard]] bool internalComputeLineOfContext(ErrorMetadata* err,
+                                                  uint32_t offset) {
     // We only have line-start information for the current line.  If the error
     // is on a different line, we can't easily provide context.  (This means
     // any error in a multi-line token, e.g. an unterminated multiline string
@@ -2141,7 +2143,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    */
   void consumeOptionalHashbangComment();
 
-  const ParserAtom* getRawTemplateStringAtom() {
+  TaggedParserAtomIndex getRawTemplateStringAtom() {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
 
     MOZ_ASSERT(anyChars.currentToken().type == TokenKind::TemplateHead ||
@@ -2168,7 +2170,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     // https://tc39.github.io/ecma262/#sec-static-semantics-tv-and-trv
     if (!FillCharBufferFromSourceNormalizingAsciiLineBreaks(this->charBuffer,
                                                             cur, end)) {
-      return nullptr;
+      return TaggedParserAtomIndex::null();
     }
 
     return drainCharBufferIntoAtom();
@@ -2208,8 +2210,8 @@ class TokenStreamChars<char16_t, AnyCharsAccess>
    * complete non-ASCII code point.  Line/column updates are not performed,
    * and line breaks are returned as-is without normalization.
    */
-  MOZ_MUST_USE bool getNonAsciiCodePointDontNormalize(char16_t lead,
-                                                      char32_t* codePoint) {
+  [[nodiscard]] bool getNonAsciiCodePointDontNormalize(char16_t lead,
+                                                       char32_t* codePoint) {
     // There are no encoding errors in 16-bit JS, so implement this so that
     // the compiler knows it, too.
     *codePoint = infallibleGetNonAsciiCodePointDontNormalize(lead);
@@ -2227,7 +2229,7 @@ class TokenStreamChars<char16_t, AnyCharsAccess>
    *
    * This may change the current |sourceUnits| offset.
    */
-  MOZ_MUST_USE bool getNonAsciiCodePoint(int32_t lead, int32_t* codePoint);
+  [[nodiscard]] bool getNonAsciiCodePoint(int32_t lead, int32_t* codePoint);
 };
 
 template <class AnyCharsAccess>
@@ -2362,8 +2364,8 @@ class TokenStreamChars<mozilla::Utf8Unit, AnyCharsAccess>
    *
    * Report an error if an invalid code point is encountered.
    */
-  MOZ_MUST_USE bool getNonAsciiCodePointDontNormalize(mozilla::Utf8Unit lead,
-                                                      char32_t* codePoint);
+  [[nodiscard]] bool getNonAsciiCodePointDontNormalize(mozilla::Utf8Unit lead,
+                                                       char32_t* codePoint);
 
   /**
    * Given a just-consumed non-ASCII code unit |lead|, consume a full code
@@ -2375,7 +2377,7 @@ class TokenStreamChars<mozilla::Utf8Unit, AnyCharsAccess>
    *
    * This function will change the current |sourceUnits| offset.
    */
-  MOZ_MUST_USE bool getNonAsciiCodePoint(int32_t lead, int32_t* codePoint);
+  [[nodiscard]] bool getNonAsciiCodePoint(int32_t lead, int32_t* codePoint);
 };
 
 // TokenStream is the lexical scanner for JavaScript source text.
@@ -2497,7 +2499,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
    * and store the code point in |*cp|.  Return false and leave |*cp|
    * undefined on failure.
    */
-  MOZ_MUST_USE bool getCodePoint(int32_t* cp);
+  [[nodiscard]] bool getCodePoint(int32_t* cp);
 
   // If there is an invalid escape in a template, report it and return false,
   // otherwise return true.
@@ -2550,7 +2552,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 
   JSContext* getContext() const override { return anyCharsAccess().cx; }
 
-  MOZ_MUST_USE bool strictMode() const override {
+  [[nodiscard]] bool strictMode() const override {
     return anyCharsAccess().strictMode();
   }
 
@@ -2561,7 +2563,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return anyCharsAccess().options();
   }
 
-  MOZ_MUST_USE bool computeErrorMetadata(
+  [[nodiscard]] bool computeErrorMetadata(
       ErrorMetadata* err, const ErrorOffset& errorOffset) override;
 
  private:
@@ -2587,12 +2589,12 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 
   void reportIllegalCharacter(int32_t cp);
 
-  MOZ_MUST_USE bool putIdentInCharBuffer(const Unit* identStart);
+  [[nodiscard]] bool putIdentInCharBuffer(const Unit* identStart);
 
   using IsIntegerUnit = bool (*)(int32_t);
-  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool matchInteger(IsIntegerUnit isIntegerUnit,
-                                                   int32_t* nextUnit);
-  MOZ_MUST_USE MOZ_ALWAYS_INLINE bool matchIntegerAfterFirstDigit(
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool matchInteger(IsIntegerUnit isIntegerUnit,
+                                                    int32_t* nextUnit);
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool matchIntegerAfterFirstDigit(
       IsIntegerUnit isIntegerUnit, int32_t* nextUnit);
 
   /**
@@ -2633,24 +2635,24 @@ class MOZ_STACK_CLASS TokenStreamSpecific
    * hair merely reflects the intricacy of ECMAScript numeric literal syntax.
    * And incredibly, it *improves* on the goto-based horror that predated it.
    */
-  MOZ_MUST_USE bool decimalNumber(int32_t unit, TokenStart start,
-                                  const Unit* numStart, Modifier modifier,
-                                  TokenKind* out);
+  [[nodiscard]] bool decimalNumber(int32_t unit, TokenStart start,
+                                   const Unit* numStart, Modifier modifier,
+                                   TokenKind* out);
 
   /** Tokenize a regular expression literal beginning at |start|. */
-  MOZ_MUST_USE bool regexpLiteral(TokenStart start, TokenKind* out);
+  [[nodiscard]] bool regexpLiteral(TokenStart start, TokenKind* out);
 
   /**
    * Slurp characters between |start| and sourceUnits.current() into
    * charBuffer, to later parse into a bigint.
    */
-  MOZ_MUST_USE bool bigIntLiteral(TokenStart start, Modifier modifier,
-                                  TokenKind* out);
+  [[nodiscard]] bool bigIntLiteral(TokenStart start, Modifier modifier,
+                                   TokenKind* out);
 
  public:
   // Advance to the next token.  If the token stream encountered an error,
   // return false.  Otherwise return true and store the token kind in |*ttp|.
-  MOZ_MUST_USE bool getToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
+  [[nodiscard]] bool getToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     // Check for a pushed-back token resulting from mismatching lookahead.
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead != 0) {
@@ -2667,7 +2669,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return getTokenInternal(ttp, modifier);
   }
 
-  MOZ_MUST_USE bool peekToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
+  [[nodiscard]] bool peekToken(TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead > 0) {
       MOZ_ASSERT(!anyChars.flags.hadError);
@@ -2682,8 +2684,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  MOZ_MUST_USE bool peekTokenPos(TokenPos* posp,
-                                 Modifier modifier = SlashIsDiv) {
+  [[nodiscard]] bool peekTokenPos(TokenPos* posp,
+                                  Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     if (anyChars.lookahead == 0) {
       TokenKind tt;
@@ -2700,8 +2702,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  MOZ_MUST_USE bool peekOffset(uint32_t* offset,
-                               Modifier modifier = SlashIsDiv) {
+  [[nodiscard]] bool peekOffset(uint32_t* offset,
+                                Modifier modifier = SlashIsDiv) {
     TokenPos pos;
     if (!peekTokenPos(&pos, modifier)) {
       return false;
@@ -2716,7 +2718,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   // Eol is actually created, just a Eol TokenKind is returned, and
   // currentToken() shouldn't be consulted.  (This is the only place Eol
   // is produced.)
-  MOZ_ALWAYS_INLINE MOZ_MUST_USE bool peekTokenSameLine(
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool peekTokenSameLine(
       TokenKind* ttp, Modifier modifier = SlashIsDiv) {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
     const Token& curr = anyChars.currentToken();
@@ -2769,8 +2771,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   }
 
   // Get the next token from the stream if its kind is |tt|.
-  MOZ_MUST_USE bool matchToken(bool* matchedp, TokenKind tt,
-                               Modifier modifier = SlashIsDiv) {
+  [[nodiscard]] bool matchToken(bool* matchedp, TokenKind tt,
+                                Modifier modifier = SlashIsDiv) {
     TokenKind token;
     if (!getToken(&token, modifier)) {
       return false;
@@ -2791,7 +2793,7 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     MOZ_ALWAYS_TRUE(matched);
   }
 
-  MOZ_MUST_USE bool nextTokenEndsExpr(bool* endsExpr) {
+  [[nodiscard]] bool nextTokenEndsExpr(bool* endsExpr) {
     TokenKind tt;
     if (!peekToken(&tt)) {
       return false;
@@ -2808,11 +2810,11 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     return true;
   }
 
-  MOZ_MUST_USE bool advance(size_t position);
+  [[nodiscard]] bool advance(size_t position);
 
   void seekTo(const Position& pos);
-  MOZ_MUST_USE bool seekTo(const Position& pos,
-                           const TokenStreamAnyChars& other);
+  [[nodiscard]] bool seekTo(const Position& pos,
+                            const TokenStreamAnyChars& other);
 
   void rewind(const Position& pos) {
     MOZ_ASSERT(pos.buf <= this->sourceUnits.addressOfNextCodeUnit(),
@@ -2820,8 +2822,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     seekTo(pos);
   }
 
-  MOZ_MUST_USE bool rewind(const Position& pos,
-                           const TokenStreamAnyChars& other) {
+  [[nodiscard]] bool rewind(const Position& pos,
+                            const TokenStreamAnyChars& other) {
     MOZ_ASSERT(pos.buf <= this->sourceUnits.addressOfNextCodeUnit(),
                "should be rewinding here");
     return seekTo(pos, other);
@@ -2833,8 +2835,8 @@ class MOZ_STACK_CLASS TokenStreamSpecific
     seekTo(pos);
   }
 
-  MOZ_MUST_USE bool fastForward(const Position& pos,
-                                const TokenStreamAnyChars& other) {
+  [[nodiscard]] bool fastForward(const Position& pos,
+                                 const TokenStreamAnyChars& other) {
     MOZ_ASSERT(this->sourceUnits.addressOfNextCodeUnit() <= pos.buf,
                "should be moving forward here");
     return seekTo(pos, other);
@@ -2846,18 +2848,18 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 
   const Unit* rawLimit() const { return this->sourceUnits.limit(); }
 
-  MOZ_MUST_USE bool identifierName(TokenStart start, const Unit* identStart,
-                                   IdentifierEscapes escaping,
-                                   Modifier modifier, NameVisibility visibility,
-                                   TokenKind* out);
+  [[nodiscard]] bool identifierName(TokenStart start, const Unit* identStart,
+                                    IdentifierEscapes escaping,
+                                    Modifier modifier,
+                                    NameVisibility visibility, TokenKind* out);
 
-  MOZ_MUST_USE bool matchIdentifierStart(IdentifierEscapes* sawEscape);
+  [[nodiscard]] bool matchIdentifierStart(IdentifierEscapes* sawEscape);
 
-  MOZ_MUST_USE bool getTokenInternal(TokenKind* const ttp,
-                                     const Modifier modifier);
+  [[nodiscard]] bool getTokenInternal(TokenKind* const ttp,
+                                      const Modifier modifier);
 
-  MOZ_MUST_USE bool getStringOrTemplateToken(char untilChar, Modifier modifier,
-                                             TokenKind* out);
+  [[nodiscard]] bool getStringOrTemplateToken(char untilChar, Modifier modifier,
+                                              TokenKind* out);
 
   // Parse a TemplateMiddle or TemplateTail token (one of the string-like parts
   // of a template string) after already consuming the leading `RightCurly`.
@@ -2877,19 +2879,19 @@ class MOZ_STACK_CLASS TokenStreamSpecific
   // TemplateTail because both contain the end of the template, including the
   // closing quote mark. They're not treated differently, either in the parser
   // or in the tokenizer.
-  MOZ_MUST_USE bool getTemplateToken(TokenKind* ttp) {
+  [[nodiscard]] bool getTemplateToken(TokenKind* ttp) {
     MOZ_ASSERT(anyCharsAccess().currentToken().type == TokenKind::RightCurly);
     return getStringOrTemplateToken('`', SlashIsInvalid, ttp);
   }
 
-  MOZ_MUST_USE bool getDirectives(bool isMultiline, bool shouldWarnDeprecated);
-  MOZ_MUST_USE bool getDirective(
+  [[nodiscard]] bool getDirectives(bool isMultiline, bool shouldWarnDeprecated);
+  [[nodiscard]] bool getDirective(
       bool isMultiline, bool shouldWarnDeprecated, const char* directive,
       uint8_t directiveLength, const char* errorMsgPragma,
       UniquePtr<char16_t[], JS::FreePolicy>* destination);
-  MOZ_MUST_USE bool getDisplayURL(bool isMultiline, bool shouldWarnDeprecated);
-  MOZ_MUST_USE bool getSourceMappingURL(bool isMultiline,
-                                        bool shouldWarnDeprecated);
+  [[nodiscard]] bool getDisplayURL(bool isMultiline, bool shouldWarnDeprecated);
+  [[nodiscard]] bool getSourceMappingURL(bool isMultiline,
+                                         bool shouldWarnDeprecated);
 };
 
 // It's preferable to define this in TokenStream.cpp, but its template-ness

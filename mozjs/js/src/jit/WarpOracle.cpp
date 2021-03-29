@@ -652,8 +652,8 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::SetArg:
       case JSOp::JumpTarget:
       case JSOp::LoopHead:
-      case JSOp::IfEq:
-      case JSOp::IfNe:
+      case JSOp::JumpIfFalse:
+      case JSOp::JumpIfTrue:
       case JSOp::And:
       case JSOp::Or:
       case JSOp::Case:
@@ -668,8 +668,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::BindVar:
       case JSOp::MutateProto:
       case JSOp::Callee:
-      case JSOp::ClassConstructor:
-      case JSOp::DerivedConstructor:
       case JSOp::ToAsyncIter:
       case JSOp::ObjWithProto:
       case JSOp::GetAliasedVar:

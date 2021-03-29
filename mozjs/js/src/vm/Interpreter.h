@@ -579,9 +579,6 @@ bool DelElemOperation(JSContext* cx, HandleValue val, HandleValue index,
 
 JSObject* BindVarOperation(JSContext* cx, JSObject* envChain);
 
-JSObject* SingletonObjectLiteralOperation(JSContext* cx, HandleScript script,
-                                          jsbytecode* pc);
-
 JSObject* ImportMetaOperation(JSContext* cx, HandleScript script);
 
 JSObject* BuiltinObjectOperation(JSContext* cx, BuiltinObjectKind kind);
@@ -628,9 +625,9 @@ JSObject* CreateThisWithTemplate(JSContext* cx, HandleObject templateObject);
 ArrayObject* NewArrayOperation(JSContext* cx, uint32_t length,
                                NewObjectKind newKind = GenericObject);
 
-MOZ_MUST_USE bool GetImportOperation(JSContext* cx, HandleObject envChain,
-                                     HandleScript script, jsbytecode* pc,
-                                     MutableHandleValue vp);
+[[nodiscard]] bool GetImportOperation(JSContext* cx, HandleObject envChain,
+                                      HandleScript script, jsbytecode* pc,
+                                      MutableHandleValue vp);
 
 void ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,
                                HandleId id);
@@ -670,9 +667,6 @@ PlainObject* ObjectWithProtoOperation(JSContext* cx, HandleValue proto);
 
 JSObject* FunWithProtoOperation(JSContext* cx, HandleFunction fun,
                                 HandleObject parent, HandleObject proto);
-
-JSFunction* MakeDefaultConstructor(JSContext* cx, HandleScript script,
-                                   jsbytecode* pc, HandleObject proto);
 
 bool SetPropertySuper(JSContext* cx, HandleObject obj, HandleValue receiver,
                       HandlePropertyName id, HandleValue rval, bool strict);

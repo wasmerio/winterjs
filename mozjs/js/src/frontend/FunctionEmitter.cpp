@@ -46,11 +46,11 @@ bool FunctionEmitter::prepareForNonLazy() {
 
   MOZ_ASSERT(funbox_->isInterpreted());
   MOZ_ASSERT(funbox_->emitBytecode);
-  MOZ_ASSERT(!funbox_->wasEmitted());
+  MOZ_ASSERT(!funbox_->wasEmittedByEnclosingScript());
 
   //                [stack]
 
-  funbox_->setWasEmitted(true);
+  funbox_->setWasEmittedByEnclosingScript(true);
 
 #ifdef DEBUG
   state_ = State::NonLazy;
@@ -79,11 +79,11 @@ bool FunctionEmitter::emitLazy() {
 
   MOZ_ASSERT(funbox_->isInterpreted());
   MOZ_ASSERT(!funbox_->emitBytecode);
-  MOZ_ASSERT(!funbox_->wasEmitted());
+  MOZ_ASSERT(!funbox_->wasEmittedByEnclosingScript());
 
   //                [stack]
 
-  funbox_->setWasEmitted(true);
+  funbox_->setWasEmittedByEnclosingScript(true);
 
   // Prepare to update the inner lazy script now that it's parent is fully
   // compiled. These updates will be applied in UpdateEmittedInnerFunctions().
@@ -102,7 +102,7 @@ bool FunctionEmitter::emitLazy() {
 
 bool FunctionEmitter::emitAgain() {
   MOZ_ASSERT(state_ == State::Start);
-  MOZ_ASSERT(funbox_->wasEmitted());
+  MOZ_ASSERT(funbox_->wasEmittedByEnclosingScript());
 
   //                [stack]
 
@@ -171,12 +171,12 @@ bool FunctionEmitter::emitAgain() {
 bool FunctionEmitter::emitAsmJSModule() {
   MOZ_ASSERT(state_ == State::Start);
 
-  MOZ_ASSERT(!funbox_->wasEmitted());
+  MOZ_ASSERT(!funbox_->wasEmittedByEnclosingScript());
   MOZ_ASSERT(funbox_->isAsmJSModule());
 
   //                [stack]
 
-  funbox_->setWasEmitted(true);
+  funbox_->setWasEmittedByEnclosingScript(true);
 
   if (!emitFunction()) {
     //              [stack]
@@ -478,10 +478,9 @@ bool FunctionScriptEmitter::emitExtraBodyVarScope() {
   //
   //   function f(x, y = 42) { var y; }
   //
-  const ParserAtom* name = nullptr;
   for (ParserBindingIter bi(*funbox_->functionScopeBindings(), true); bi;
        bi++) {
-    name = bce_->compilationState.getParserAtomAt(bce_->cx, bi.name());
+    auto name = bi.name();
 
     // There may not be a var binding of the same name.
     if (!bce_->locationOfNameBoundInScope(name,
@@ -492,8 +491,8 @@ bool FunctionScriptEmitter::emitExtraBodyVarScope() {
     // The '.this' and '.generator' function special
     // bindings should never appear in the extra var
     // scope. 'arguments', however, may.
-    MOZ_ASSERT(name != bce_->cx->parserNames().dotThis &&
-               name != bce_->cx->parserNames().dotGenerator);
+    MOZ_ASSERT(name != TaggedParserAtomIndex::WellKnown::dotThis() &&
+               name != TaggedParserAtomIndex::WellKnown::dotGenerator());
 
     NameOpEmitter noe(bce_, name, NameOpEmitter::Kind::Initialize);
     if (!noe.prepareForRhs()) {
@@ -688,7 +687,7 @@ FunctionParamsEmitter::FunctionParamsEmitter(BytecodeEmitter* bce,
       funbox_(funbox),
       functionEmitterScope_(bce_->innermostEmitterScope()) {}
 
-bool FunctionParamsEmitter::emitSimple(const ParserAtom* paramName) {
+bool FunctionParamsEmitter::emitSimple(TaggedParserAtomIndex paramName) {
   MOZ_ASSERT(state_ == State::Start);
 
   //                [stack]
@@ -725,7 +724,7 @@ bool FunctionParamsEmitter::prepareForDefault() {
   return true;
 }
 
-bool FunctionParamsEmitter::emitDefaultEnd(const ParserAtom* paramName) {
+bool FunctionParamsEmitter::emitDefaultEnd(TaggedParserAtomIndex paramName) {
   MOZ_ASSERT(state_ == State::Default);
 
   //                [stack] DEFAULT
@@ -831,7 +830,7 @@ bool FunctionParamsEmitter::emitDestructuringDefaultEnd() {
   return true;
 }
 
-bool FunctionParamsEmitter::emitRest(const ParserAtom* paramName) {
+bool FunctionParamsEmitter::emitRest(TaggedParserAtomIndex paramName) {
   MOZ_ASSERT(state_ == State::Start);
 
   //                [stack]
@@ -922,7 +921,7 @@ bool FunctionParamsEmitter::emitRestArray() {
   return true;
 }
 
-bool FunctionParamsEmitter::emitAssignment(const ParserAtom* paramName) {
+bool FunctionParamsEmitter::emitAssignment(TaggedParserAtomIndex paramName) {
   //                [stack] ARG
 
   NameLocation paramLoc =

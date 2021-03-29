@@ -7,8 +7,6 @@
 #ifndef builtin_intl_DisplayNames_h
 #define builtin_intl_DisplayNames_h
 
-#include "mozilla/Attributes.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -85,8 +83,8 @@ class DisplayNamesObject : public NativeObject {
  * Usage: result = intl_ComputeDisplayName(displayNames, locale, calendar,
  *                                         style, fallback, type, code)
  */
-extern MOZ_MUST_USE bool intl_ComputeDisplayName(JSContext* cx, unsigned argc,
-                                                 Value* vp);
+[[nodiscard]] extern bool intl_ComputeDisplayName(JSContext* cx, unsigned argc,
+                                                  Value* vp);
 
 }  // namespace js
 

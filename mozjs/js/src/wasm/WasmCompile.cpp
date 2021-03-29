@@ -78,23 +78,28 @@ uint32_t wasm::ObservedCPUFeatures() {
 #endif
 }
 
-FeatureArgs FeatureArgs::build(JSContext* cx) {
+FeatureArgs FeatureArgs::build(JSContext* cx, const FeatureOptions& options) {
   FeatureArgs features;
+  // See comments in WasmConstants.h regarding the meaning of the wormhole
+  // options.
+  bool wormholeOverride =
+      wasm::SimdWormholeAvailable(cx) && options.simdWormhole;
   features.sharedMemory =
       wasm::ThreadsAvailable(cx) ? Shareable::True : Shareable::False;
   features.refTypes = wasm::ReftypesAvailable(cx);
   features.functionReferences = wasm::FunctionReferencesAvailable(cx);
   features.gcTypes = wasm::GcTypesAvailable(cx);
   features.multiValue = wasm::MultiValuesAvailable(cx);
-  features.v128 = wasm::SimdAvailable(cx);
+  features.v128 = wasm::SimdAvailable(cx) || wormholeOverride;
   features.hugeMemory = wasm::IsHugeMemoryEnabled();
-  features.simdWormhole = wasm::SimdWormholeAvailable(cx);
+  features.simdWormhole = wormholeOverride;
   features.exceptions = wasm::ExceptionsAvailable(cx);
   return features;
 }
 
 SharedCompileArgs CompileArgs::build(JSContext* cx,
-                                     ScriptedCaller&& scriptedCaller) {
+                                     ScriptedCaller&& scriptedCaller,
+                                     const FeatureOptions& options) {
   bool baseline = BaselineAvailable(cx);
   bool ion = IonAvailable(cx);
   bool cranelift = CraneliftAvailable(cx);
@@ -141,7 +146,7 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   target->craneliftEnabled = cranelift;
   target->debugEnabled = debug;
   target->forceTiering = forceTiering;
-  target->features = FeatureArgs::build(cx);
+  target->features = FeatureArgs::build(cx, options);
 
   Log(cx, "available wasm compilers: tier1=%s tier2=%s",
       baseline ? "baseline" : "none",
@@ -575,8 +580,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
                                  const ShareableBytes& bytecode,
                                  UniqueChars* error,
                                  UniqueCharsVector* warnings,
-                                 JS::OptimizedEncodingListener* listener,
-                                 JSTelemetrySender telemetrySender) {
+                                 JS::OptimizedEncodingListener* listener) {
   Decoder d(bytecode.bytes, 0, error, warnings);
 
   ModuleEnvironment moduleEnv(args.features);
@@ -587,7 +591,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   compilerEnv.computeParameters(d);
 
   ModuleGenerator mg(args, &moduleEnv, &compilerEnv, nullptr, error);
-  if (!mg.init(nullptr, telemetrySender)) {
+  if (!mg.init(nullptr)) {
     return nullptr;
   }
 
@@ -603,8 +607,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
 }
 
 void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                        const Module& module, Atomic<bool>* cancelled,
-                        JSTelemetrySender telemetrySender) {
+                        const Module& module, Atomic<bool>* cancelled) {
   UniqueChars error;
   Decoder d(bytecode, 0, &error);
 
@@ -621,7 +624,7 @@ void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
   compilerEnv.computeParameters(d);
 
   ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, &error);
-  if (!mg.init(nullptr, telemetrySender)) {
+  if (!mg.init(nullptr)) {
     return;
   }
 
@@ -721,7 +724,7 @@ SharedModule wasm::CompileStreaming(
     const ExclusiveBytesPtr& codeBytesEnd,
     const ExclusiveStreamEndData& exclusiveStreamEnd,
     const Atomic<bool>& cancelled, UniqueChars* error,
-    UniqueCharsVector* warnings, JSTelemetrySender telemetrySender) {
+    UniqueCharsVector* warnings) {
   CompilerEnvironment compilerEnv(args);
   ModuleEnvironment moduleEnv(args.features);
 
@@ -743,7 +746,7 @@ SharedModule wasm::CompileStreaming(
   }
 
   ModuleGenerator mg(args, &moduleEnv, &compilerEnv, &cancelled, error);
-  if (!mg.init(nullptr, telemetrySender)) {
+  if (!mg.init(nullptr)) {
     return nullptr;
   }
 

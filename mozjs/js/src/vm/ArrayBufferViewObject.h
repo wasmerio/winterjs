@@ -48,6 +48,9 @@ class ArrayBufferViewObject : public NativeObject {
   // need not be looked up on accesses.
   static constexpr size_t DATA_SLOT = 3;
 
+  static constexpr int bufferOffset() {
+    return NativeObject::getFixedSlotOffset(BUFFER_SLOT);
+  }
   static constexpr int lengthOffset() {
     return NativeObject::getFixedSlotOffset(LENGTH_SLOT);
   }
@@ -66,9 +69,9 @@ class ArrayBufferViewObject : public NativeObject {
   }
 
  public:
-  MOZ_MUST_USE bool init(JSContext* cx, ArrayBufferObjectMaybeShared* buffer,
-                         BufferSize byteOffset, BufferSize length,
-                         uint32_t bytesPerElement);
+  [[nodiscard]] bool init(JSContext* cx, ArrayBufferObjectMaybeShared* buffer,
+                          BufferSize byteOffset, BufferSize length,
+                          uint32_t bytesPerElement);
 
   static ArrayBufferObjectMaybeShared* bufferObject(
       JSContext* cx, Handle<ArrayBufferViewObject*> obj);

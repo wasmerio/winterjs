@@ -330,15 +330,17 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I64x2Splat:
         case SimdOp::F32x4Splat:
         case SimdOp::F64x2Splat:
-        case SimdOp::I8x16AnyTrue:
+        case SimdOp::V128AnyTrue:
         case SimdOp::I8x16AllTrue:
         case SimdOp::I16x8AnyTrue:
         case SimdOp::I16x8AllTrue:
         case SimdOp::I32x4AnyTrue:
         case SimdOp::I32x4AllTrue:
+        case SimdOp::I64x2AllTrue:
         case SimdOp::I8x16Bitmask:
         case SimdOp::I16x8Bitmask:
         case SimdOp::I32x4Bitmask:
+        case SimdOp::I64x2Bitmask:
           WASM_SIMD_OP(OpKind::Conversion);
         case SimdOp::I8x16ReplaceLane:
         case SimdOp::I16x8ReplaceLane:
@@ -377,6 +379,8 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4LeU:
         case SimdOp::I32x4GeS:
         case SimdOp::I32x4GeU:
+        case SimdOp::I64x2Eq:
+        case SimdOp::I64x2Ne:
         case SimdOp::F32x4Eq:
         case SimdOp::F32x4Ne:
         case SimdOp::F32x4Lt:
@@ -448,6 +452,19 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::F64x2PMin:
         case SimdOp::F64x2PMax:
         case SimdOp::I32x4DotSI16x8:
+        case SimdOp::I16x8ExtMulLowSI8x16:
+        case SimdOp::I16x8ExtMulHighSI8x16:
+        case SimdOp::I16x8ExtMulLowUI8x16:
+        case SimdOp::I16x8ExtMulHighUI8x16:
+        case SimdOp::I32x4ExtMulLowSI16x8:
+        case SimdOp::I32x4ExtMulHighSI16x8:
+        case SimdOp::I32x4ExtMulLowUI16x8:
+        case SimdOp::I32x4ExtMulHighUI16x8:
+        case SimdOp::I64x2ExtMulLowSI32x4:
+        case SimdOp::I64x2ExtMulHighSI32x4:
+        case SimdOp::I64x2ExtMulLowUI32x4:
+        case SimdOp::I64x2ExtMulHighUI32x4:
+        case SimdOp::I16x8Q15MulrSatS:
           WASM_SIMD_OP(OpKind::Binary);
         case SimdOp::I8x16Neg:
         case SimdOp::I16x8Neg:
@@ -463,6 +480,10 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::I32x4TruncSSatF32x4:
         case SimdOp::I32x4TruncUSatF32x4:
         case SimdOp::I64x2Neg:
+        case SimdOp::I64x2WidenLowSI32x4:
+        case SimdOp::I64x2WidenHighSI32x4:
+        case SimdOp::I64x2WidenLowUI32x4:
+        case SimdOp::I64x2WidenHighUI32x4:
         case SimdOp::F32x4Abs:
         case SimdOp::F32x4Neg:
         case SimdOp::F32x4Sqrt:
@@ -483,6 +504,12 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::F64x2Floor:
         case SimdOp::F64x2Trunc:
         case SimdOp::F64x2Nearest:
+        case SimdOp::F32x4DemoteF64x2Zero:
+        case SimdOp::F64x2PromoteLowF32x4:
+        case SimdOp::F64x2ConvertLowI32x4S:
+        case SimdOp::F64x2ConvertLowI32x4U:
+        case SimdOp::I32x4TruncSatF64x2SZero:
+        case SimdOp::I32x4TruncSatF64x2UZero:
           WASM_SIMD_OP(OpKind::Unary);
         case SimdOp::I8x16Shl:
         case SimdOp::I8x16ShrS:
@@ -519,6 +546,16 @@ OpKind wasm::Classify(OpBytes op) {
           WASM_SIMD_OP(OpKind::Load);
         case SimdOp::V128Store:
           WASM_SIMD_OP(OpKind::Store);
+        case SimdOp::V128Load8Lane:
+        case SimdOp::V128Load16Lane:
+        case SimdOp::V128Load32Lane:
+        case SimdOp::V128Load64Lane:
+          WASM_SIMD_OP(OpKind::LoadLane);
+        case SimdOp::V128Store8Lane:
+        case SimdOp::V128Store16Lane:
+        case SimdOp::V128Store32Lane:
+        case SimdOp::V128Store64Lane:
+          WASM_SIMD_OP(OpKind::StoreLane);
 #  ifdef ENABLE_WASM_SIMD_WORMHOLE
         case SimdOp::MozWHSELFTEST:
         case SimdOp::MozWHPMADDUBSW:

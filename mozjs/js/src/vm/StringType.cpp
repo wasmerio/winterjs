@@ -1197,6 +1197,7 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
   uint32_t c = 0;
 
   if (index != 0) {
+    /* Consume remaining characters only if the first character isn't '0'. */
     while (cp < end && IsAsciiDigit(*cp)) {
       oldIndex = index;
       c = AsciiDigitToNumber(*cp);
@@ -1205,7 +1206,7 @@ bool js::CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp) {
     }
   }
 
-  /* It's not an element if there are characters after the number. */
+  /* It's not an integer index if there are characters after the number. */
   if (cp != end) {
     return false;
   }
@@ -1241,16 +1242,16 @@ template bool JSLinearString::isIndexSlow(const Latin1Char* s, size_t length,
 template bool JSLinearString::isIndexSlow(const char16_t* s, size_t length,
                                           uint32_t* indexp);
 
-constexpr StaticStrings::SmallCharArray StaticStrings::createSmallCharArray() {
-  SmallCharArray array{};
-  for (size_t i = 0; i < SMALL_CHAR_LIMIT; i++) {
+constexpr StaticStrings::SmallCharTable StaticStrings::createSmallCharTable() {
+  SmallCharTable array{};
+  for (size_t i = 0; i < SMALL_CHAR_TABLE_SIZE; i++) {
     array[i] = toSmallChar(i);
   }
   return array;
 }
 
-const StaticStrings::SmallCharArray StaticStrings::toSmallCharArray =
-    createSmallCharArray();
+const StaticStrings::SmallCharTable StaticStrings::toSmallCharTable =
+    createSmallCharTable();
 
 bool StaticStrings::init(JSContext* cx) {
   AutoAllocInAtomsZone az(cx);
@@ -1271,8 +1272,8 @@ bool StaticStrings::init(JSContext* cx) {
     unitStaticTable[i] = s->morphAtomizedStringIntoPermanentAtom(hash);
   }
 
-  for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++) {
-    Latin1Char buffer[] = {fromSmallChar(i >> 6), fromSmallChar(i & 0x3F)};
+  for (uint32_t i = 0; i < NUM_LENGTH2_ENTRIES; i++) {
+    Latin1Char buffer[] = {firstCharOfLength2(i), secondCharOfLength2(i)};
     JSLinearString* s =
         NewInlineString<NoGC>(cx, Latin1Range(buffer, 2), gc::TenuredHeap);
     if (!s) {
@@ -1286,8 +1287,8 @@ bool StaticStrings::init(JSContext* cx) {
     if (i < 10) {
       intStaticTable[i] = unitStaticTable[i + '0'];
     } else if (i < 100) {
-      size_t index = ((size_t)toSmallChar((i / 10) + '0') << 6) +
-                     toSmallChar((i % 10) + '0');
+      auto index =
+          getLength2IndexStatic(char(i / 10) + '0', char(i % 10) + '0');
       intStaticTable[i] = length2StaticTable[index];
     } else {
       Latin1Char buffer[] = {Latin1Char('0' + (i / 100)),
@@ -1318,17 +1319,17 @@ inline void TraceStaticString(JSTracer* trc, JSAtom* atom, const char* name) {
 void StaticStrings::trace(JSTracer* trc) {
   /* These strings never change, so barriers are not needed. */
 
-  for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++) {
-    TraceStaticString(trc, unitStaticTable[i], "unit-static-string");
+  for (auto& s : unitStaticTable) {
+    TraceStaticString(trc, s, "unit-static-string");
   }
 
-  for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++) {
-    TraceStaticString(trc, length2StaticTable[i], "length2-static-string");
+  for (auto& s : length2StaticTable) {
+    TraceStaticString(trc, s, "length2-static-string");
   }
 
   /* This may mark some strings more than once, but so be it. */
-  for (uint32_t i = 0; i < INT_STATIC_LIMIT; i++) {
-    TraceStaticString(trc, intStaticTable[i], "int-static-string");
+  for (auto& s : intStaticTable) {
+    TraceStaticString(trc, s, "int-static-string");
   }
 }
 
@@ -1477,14 +1478,6 @@ bool AutoStableStringChars::copyTwoByteChars(JSContext* cx,
   twoByteChars_ = chars;
   s_ = linearString;
   return true;
-}
-
-UniqueChars js::ParserAtomToNewUTF8CharsZ(
-    JSContext* maybecx, const js::frontend::ParserAtom* atom) {
-  return UniqueChars(
-      atom->hasLatin1Chars()
-          ? JS::CharsToNewUTF8CharsZ(maybecx, atom->latin1Range()).c_str()
-          : JS::CharsToNewUTF8CharsZ(maybecx, atom->twoByteRange()).c_str());
 }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)

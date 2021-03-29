@@ -11,6 +11,8 @@ CONFIGURE_SUBST_FILES += [
 
 LIBRARY_DEFINES["EXPORT_JS_API"] = True
 
+# Note: The static standalone js library is currently broken due
+# to static mozglue missing, see bug 1588340 for more information.
 LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
 
 # JavaScript must be built shared, even for static builds, as it is used by

@@ -73,7 +73,7 @@
 #include "frontend/BytecodeCompilation.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
-#include "frontend/CompilationInfo.h"
+#include "frontend/CompilationStencil.h"
 #ifdef JS_ENABLE_SMOOSH
 #  include "frontend/Frontend2.h"
 #endif
@@ -286,7 +286,8 @@ class js::shell::OffThreadJob {
  public:
   using Source = mozilla::Variant<JS::UniqueTwoByteChars, JS::TranscodeBuffer>;
 
-  OffThreadJob(ShellContext* sc, ScriptKind kind, Source&& source);
+  OffThreadJob(ShellContext* sc, ScriptKind kind, bool useOffThreadParseGlobal,
+               Source&& source);
   ~OffThreadJob();
 
   void cancel();
@@ -299,6 +300,7 @@ class js::shell::OffThreadJob {
  public:
   const int32_t id;
   const ScriptKind kind;
+  const bool useOffThreadParseGlobal;
 
  private:
   js::Monitor& monitor;
@@ -308,10 +310,11 @@ class js::shell::OffThreadJob {
 };
 
 static OffThreadJob* NewOffThreadJob(JSContext* cx, ScriptKind kind,
+                                     CompileOptions& options,
                                      OffThreadJob::Source&& source) {
   ShellContext* sc = GetShellContext(cx);
-  UniquePtr<OffThreadJob> job(
-      cx->new_<OffThreadJob>(sc, kind, std::move(source)));
+  UniquePtr<OffThreadJob> job(cx->new_<OffThreadJob>(
+      sc, kind, options.useOffThreadParseGlobal, std::move(source)));
   if (!job) {
     return nullptr;
   }
@@ -441,9 +444,11 @@ static void CancelOffThreadJobsForRuntime(JSContext* cx) {
 
 mozilla::Atomic<int32_t> gOffThreadJobSerial(1);
 
-OffThreadJob::OffThreadJob(ShellContext* sc, ScriptKind kind, Source&& source)
+OffThreadJob::OffThreadJob(ShellContext* sc, ScriptKind kind,
+                           bool useOffThreadParseGlobal, Source&& source)
     : id(gOffThreadJobSerial++),
       kind(kind),
+      useOffThreadParseGlobal(useOffThreadParseGlobal),
       monitor(sc->offThreadMonitor),
       state(RUNNING),
       token(nullptr),
@@ -595,7 +600,7 @@ JSObject* NewShellWindowProxy(JSContext* cx, JS::HandleObject global) {
 
   JSAutoRealm ar(cx, global);
   JSObject* obj =
-      js::Wrapper::NewSingleton(cx, global, &js::Wrapper::singleton, options);
+      js::Wrapper::New(cx, global, &js::Wrapper::singleton, options);
   MOZ_ASSERT_IF(obj, js::IsWindowProxy(obj));
   return obj;
 }
@@ -921,9 +926,9 @@ enum class CompileUtf8 {
   DontInflate,
 };
 
-static MOZ_MUST_USE bool RunFile(JSContext* cx, const char* filename,
-                                 FILE* file, CompileUtf8 compileMethod,
-                                 bool compileOnly) {
+[[nodiscard]] static bool RunFile(JSContext* cx, const char* filename,
+                                  FILE* file, CompileUtf8 compileMethod,
+                                  bool compileOnly) {
   SkipUTF8BOM(file);
 
   int64_t t1 = PRMJ_Now();
@@ -992,8 +997,8 @@ static MOZ_MUST_USE bool RunFile(JSContext* cx, const char* filename,
   return true;
 }
 
-static MOZ_MUST_USE bool RunModule(JSContext* cx, const char* filename,
-                                   bool compileOnly) {
+[[nodiscard]] static bool RunModule(JSContext* cx, const char* filename,
+                                    bool compileOnly) {
   ShellContext* sc = GetShellContext(cx);
 
   RootedString path(cx, JS_NewStringCopyZ(cx, filename));
@@ -1405,9 +1410,9 @@ static bool AddIntlExtras(JSContext* cx, unsigned argc, Value* vp) {
 }
 #endif  // JS_HAS_INTL_API
 
-static MOZ_MUST_USE bool EvalUtf8AndPrint(JSContext* cx, const char* bytes,
-                                          size_t length, int lineno,
-                                          bool compileOnly) {
+[[nodiscard]] static bool EvalUtf8AndPrint(JSContext* cx, const char* bytes,
+                                           size_t length, int lineno,
+                                           bool compileOnly) {
   // Eval.
   JS::CompileOptions options(cx);
   options.setIntroductionType("js shell interactive")
@@ -1447,8 +1452,8 @@ static MOZ_MUST_USE bool EvalUtf8AndPrint(JSContext* cx, const char* bytes,
   return true;
 }
 
-static MOZ_MUST_USE bool ReadEvalPrintLoop(JSContext* cx, FILE* in,
-                                           bool compileOnly) {
+[[nodiscard]] static bool ReadEvalPrintLoop(JSContext* cx, FILE* in,
+                                            bool compileOnly) {
   ShellContext* sc = GetShellContext(cx);
   int lineno = 1;
   bool hitEOF = false;
@@ -1554,8 +1559,8 @@ static void ReportCantOpenErrorUnknownEncoding(JSContext* cx,
                              filename, strerror(errno));
 }
 
-static MOZ_MUST_USE bool Process(JSContext* cx, const char* filename,
-                                 bool forceTTY, FileKind kind) {
+[[nodiscard]] static bool Process(JSContext* cx, const char* filename,
+                                  bool forceTTY, FileKind kind) {
   FILE* file;
   if (forceTTY || !filename || strcmp(filename, "-") == 0) {
     file = stdin;
@@ -1606,6 +1611,47 @@ static MOZ_MUST_USE bool Process(JSContext* cx, const char* filename,
 #else
 #  define GET_FD_FROM_FILE(a) fileno(a)
 #endif
+
+static void freeExternalCallback(void* contents, void* userData) {
+  MOZ_ASSERT(!userData);
+  js_free(contents);
+}
+
+static bool CreateExternalArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (args.length() != 1) {
+    JS_ReportErrorNumberASCII(
+        cx, my_GetErrorMessage, nullptr,
+        args.length() < 1 ? JSSMSG_NOT_ENOUGH_ARGS : JSSMSG_TOO_MANY_ARGS,
+        "createExternalArrayBuffer");
+    return false;
+  }
+
+  int32_t bytes = 0;
+  if (!ToInt32(cx, args[0], &bytes)) {
+    return false;
+  }
+
+  if (bytes <= 0) {
+    JS_ReportErrorASCII(cx, "Size must be positive");
+    return false;
+  }
+
+  void* buffer = js_malloc(bytes);
+  if (!buffer) {
+    JS_ReportOutOfMemory(cx);
+    return false;
+  }
+
+  RootedObject arrayBuffer(
+      cx, JS::NewExternalArrayBuffer(cx, bytes, buffer, &freeExternalCallback));
+  if (!arrayBuffer) {
+    return false;
+  }
+
+  args.rval().setObject(*arrayBuffer);
+  return true;
+}
 
 static bool CreateMappedArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1871,7 +1917,7 @@ static bool LoadScriptRelativeToScript(JSContext* cx, unsigned argc,
 // need to convert a filename to a C string, let fileNameBytes own the
 // bytes.
 static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
-                                HandleObject opts, UniqueChars& fileNameBytes) {
+                                HandleObject opts, UniqueChars* fileNameBytes) {
   RootedValue v(cx);
   RootedString s(cx);
 
@@ -1899,11 +1945,13 @@ static bool ParseCompileOptions(JSContext* cx, CompileOptions& options,
     if (!s) {
       return false;
     }
-    fileNameBytes = JS_EncodeStringToLatin1(cx, s);
-    if (!fileNameBytes) {
-      return false;
+    if (fileNameBytes) {
+      *fileNameBytes = JS_EncodeStringToLatin1(cx, s);
+      if (!*fileNameBytes) {
+        return false;
+      }
+      options.setFile(fileNameBytes->get());
     }
-    options.setFile(fileNameBytes.get());
   }
 
   if (!JS_GetProperty(cx, opts, "skipFileNameValidation", &v)) {
@@ -2093,43 +2141,43 @@ static bool CacheEntry_setBytecode(JSContext* cx, HandleObject cache,
 static bool ConvertTranscodeResultToJSException(JSContext* cx,
                                                 JS::TranscodeResult rv) {
   switch (rv) {
-    case JS::TranscodeResult_Ok:
+    case JS::TranscodeResult::Ok:
       return true;
 
     default:
       [[fallthrough]];
-    case JS::TranscodeResult_Failure:
+    case JS::TranscodeResult::Failure:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "generic warning");
       return false;
-    case JS::TranscodeResult_Failure_BadBuildId:
+    case JS::TranscodeResult::Failure_BadBuildId:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "the build-id does not match");
       return false;
-    case JS::TranscodeResult_Failure_RunOnceNotSupported:
+    case JS::TranscodeResult::Failure_RunOnceNotSupported:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "run-once script are not supported by XDR");
       return false;
-    case JS::TranscodeResult_Failure_AsmJSNotSupported:
+    case JS::TranscodeResult::Failure_AsmJSNotSupported:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "Asm.js is not supported by XDR");
       return false;
-    case JS::TranscodeResult_Failure_BadDecode:
+    case JS::TranscodeResult::Failure_BadDecode:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx, "XDR data corruption");
       return false;
-    case JS::TranscodeResult_Failure_WrongCompileOption:
+    case JS::TranscodeResult::Failure_WrongCompileOption:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(
           cx, "Compile options differs from Compile options of the encoding");
       return false;
-    case JS::TranscodeResult_Failure_NotInterpretedFun:
+    case JS::TranscodeResult::Failure_NotInterpretedFun:
       MOZ_ASSERT(!cx->isExceptionPending());
       JS_ReportErrorASCII(cx,
                           "Only interepreted functions are supported by XDR");
       return false;
 
-    case JS::TranscodeResult_Throw:
+    case JS::TranscodeResult::Throw:
       MOZ_ASSERT(cx->isExceptionPending());
       return false;
   }
@@ -2174,6 +2222,7 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
   bool loadBytecode = false;
   bool saveBytecode = false;
   bool saveIncrementalBytecode = false;
+  bool transcodeOnly = false;
   bool assertEqBytecode = false;
   JS::RootedObjectVector envChain(cx);
   RootedObject callerGlobal(cx, cx->global());
@@ -2188,7 +2237,7 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
     RootedObject opts(cx, &args[1].toObject());
     RootedValue v(cx);
 
-    if (!ParseCompileOptions(cx, options, opts, fileNameBytes)) {
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
       return false;
     }
 
@@ -2259,6 +2308,13 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       saveIncrementalBytecode = ToBoolean(v);
     }
 
+    if (!JS_GetProperty(cx, opts, "transcodeOnly", &v)) {
+      return false;
+    }
+    if (!v.isUndefined()) {
+      transcodeOnly = ToBoolean(v);
+    }
+
     if (!JS_GetProperty(cx, opts, "assertEqBytecode", &v)) {
       return false;
     }
@@ -2305,6 +2361,11 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
             cx,
             "saveIncrementalBytecode and saveBytecode cannot be used"
             " at the same time.");
+        return false;
+      }
+      if (saveIncrementalBytecode && js::UseOffThreadParseGlobal()) {
+        JS_ReportErrorASCII(
+            cx, "saveIncrementalBytecode cannot be used with legacy XDR.");
         return false;
       }
     }
@@ -2430,17 +2491,21 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
       }
     }
 
-    if (!JS_ExecuteScript(cx, envChain, script, args.rval())) {
-      if (catchTermination && !JS_IsExceptionPending(cx)) {
-        JSAutoRealm ar1(cx, callerGlobal);
-        JSString* str = JS_NewStringCopyZ(cx, "terminated");
-        if (!str) {
-          return false;
+    if (!transcodeOnly) {
+      if (!(envChain.empty()
+                ? JS_ExecuteScript(cx, script, args.rval())
+                : JS_ExecuteScript(cx, envChain, script, args.rval()))) {
+        if (catchTermination && !JS_IsExceptionPending(cx)) {
+          JSAutoRealm ar1(cx, callerGlobal);
+          JSString* str = JS_NewStringCopyZ(cx, "terminated");
+          if (!str) {
+            return false;
+          }
+          args.rval().setString(str);
+          return true;
         }
-        args.rval().setString(str);
-        return true;
+        return false;
       }
-      return false;
     }
 
     // Encode the bytecode after the execution of the script.
@@ -3104,8 +3169,8 @@ static bool PCToLine(JSContext* cx, unsigned argc, Value* vp) {
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
 
-static MOZ_MUST_USE bool SrcNotes(JSContext* cx, HandleScript script,
-                                  Sprinter* sp) {
+[[nodiscard]] static bool SrcNotes(JSContext* cx, HandleScript script,
+                                   Sprinter* sp) {
   if (!sp->put("\nSource notes:\n") ||
       !sp->jsprintf("%4s %4s %6s %5s %6s %-10s %s\n", "ofs", "line", "column",
                     "pc", "delta", "desc", "args") ||
@@ -3217,8 +3282,8 @@ static const char* TryNoteName(TryNoteKind kind) {
   MOZ_CRASH("Bad TryNoteKind");
 }
 
-static MOZ_MUST_USE bool TryNotes(JSContext* cx, HandleScript script,
-                                  Sprinter* sp) {
+[[nodiscard]] static bool TryNotes(JSContext* cx, HandleScript script,
+                                   Sprinter* sp) {
   if (!sp->put(
           "\nException table:\nkind               stack    start      end\n")) {
     return false;
@@ -3233,8 +3298,8 @@ static MOZ_MUST_USE bool TryNotes(JSContext* cx, HandleScript script,
   return true;
 }
 
-static MOZ_MUST_USE bool ScopeNotes(JSContext* cx, HandleScript script,
-                                    Sprinter* sp) {
+[[nodiscard]] static bool ScopeNotes(JSContext* cx, HandleScript script,
+                                     Sprinter* sp) {
   if (!sp->put("\nScope notes:\n   index   parent    start      end\n")) {
     return false;
   }
@@ -3265,8 +3330,8 @@ static MOZ_MUST_USE bool ScopeNotes(JSContext* cx, HandleScript script,
   return true;
 }
 
-static MOZ_MUST_USE bool GCThings(JSContext* cx, HandleScript script,
-                                  Sprinter* sp) {
+[[nodiscard]] static bool GCThings(JSContext* cx, HandleScript script,
+                                   Sprinter* sp) {
   if (!sp->put("\nGC things:\n   index   type       value\n")) {
     return false;
   }
@@ -3382,10 +3447,10 @@ static MOZ_MUST_USE bool GCThings(JSContext* cx, HandleScript script,
   return true;
 }
 
-static MOZ_MUST_USE bool DisassembleScript(JSContext* cx, HandleScript script,
-                                           HandleFunction fun, bool lines,
-                                           bool recursive, bool sourceNotes,
-                                           bool gcThings, Sprinter* sp) {
+[[nodiscard]] static bool DisassembleScript(JSContext* cx, HandleScript script,
+                                            HandleFunction fun, bool lines,
+                                            bool recursive, bool sourceNotes,
+                                            bool gcThings, Sprinter* sp) {
   if (fun) {
     if (!sp->put("flags:")) {
       return false;
@@ -4065,9 +4130,9 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
       .setIteratorHelpersEnabled(enableIteratorHelpers);
 }
 
-static MOZ_MUST_USE bool CheckRealmOptions(JSContext* cx,
-                                           JS::RealmOptions& options,
-                                           JSPrincipals* principals) {
+[[nodiscard]] static bool CheckRealmOptions(JSContext* cx,
+                                            JS::RealmOptions& options,
+                                            JSPrincipals* principals) {
   JS::RealmCreationOptions& creationOptions = options.creationOptions();
   if (creationOptions.compartmentSpecifier() !=
       JS::CompartmentSpecifier::ExistingCompartment) {
@@ -5024,7 +5089,7 @@ static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   RootedObject global(cx, JS::CurrentGlobalOrNull(cx));
-  JSString* scriptContents = args[0].toString();
+  RootedString scriptContents(cx, args[0].toString());
 
   AutoStableStringChars stableChars(cx);
   if (!stableChars.initTwoByte(cx, scriptContents)) {
@@ -5036,6 +5101,19 @@ static bool Compile(JSContext* cx, unsigned argc, Value* vp) {
       .setFileAndLine("<string>", 1)
       .setIsRunOnce(true)
       .setNoScriptRval(true);
+
+  if (args.length() >= 2) {
+    if (args[1].isPrimitive()) {
+      JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr,
+                                JSSMSG_INVALID_ARGS, "compile");
+      return false;
+    }
+
+    RootedObject opts(cx, &args[1].toObject());
+    if (!ParseCompileOptions(cx, options, opts, nullptr)) {
+      return false;
+    }
+  }
 
   JS::SourceText<char16_t> srcBuf;
   if (!srcBuf.init(cx, stableChars.twoByteRange().begin().get(),
@@ -5128,8 +5206,8 @@ class XDRBufferObject : public NativeObject {
   static const JSClassOps classOps_;
   static const JSClass class_;
 
-  inline static MOZ_MUST_USE XDRBufferObject* create(JSContext* cx,
-                                                     JS::TranscodeBuffer&& buf);
+  [[nodiscard]] inline static XDRBufferObject* create(
+      JSContext* cx, JS::TranscodeBuffer&& buf);
 
   JS::TranscodeBuffer* data() const {
     Value value = getReservedSlot(VECTOR_SLOT);
@@ -5302,9 +5380,10 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
                     js::frontend::ParseGoal goal) {
   using namespace js::frontend;
 
-  Parser<FullParseHandler, Unit> parser(cx, options, units, length, false,
-                                        stencil, compilationState, nullptr,
-                                        nullptr);
+  Parser<FullParseHandler, Unit> parser(cx, options, units, length,
+                                        /* foldConstants = */ false, stencil,
+                                        compilationState,
+                                        /* syntaxParser = */ nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5332,7 +5411,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     ModuleBuilder builder(cx, &parser);
 
     SourceExtent extent = SourceExtent::makeGlobalExtent(length);
-    ModuleSharedContext modulesc(cx, stencil, builder, extent);
+    ModuleSharedContext modulesc(cx, options, builder, extent);
     pn = parser.moduleBody(&modulesc);
   }
 
@@ -5342,7 +5421,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
 
 #if defined(DEBUG)
   js::Fprinter out(stderr);
-  DumpParseTree(pn, out);
+  DumpParseTree(&parser, pn, out);
 #endif
 
   return true;
@@ -5353,7 +5432,9 @@ static bool DumpStencil(JSContext* cx,
                         const JS::ReadOnlyCompileOptions& options,
                         const Unit* units, size_t length,
                         js::frontend::ParseGoal goal) {
-  Rooted<UniquePtr<frontend::CompilationStencil>> stencil(cx);
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  UniquePtr<frontend::CompilationStencil> stencil;
 
   JS::SourceText<Unit> srcBuf;
   if (!srcBuf.init(cx, units, length, JS::SourceOwnership::Borrowed)) {
@@ -5361,10 +5442,10 @@ static bool DumpStencil(JSContext* cx,
   }
 
   if (goal == frontend::ParseGoal::Script) {
-    stencil = frontend::CompileGlobalScriptToStencil(cx, options, srcBuf,
+    stencil = frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
                                                      ScopeKind::Global);
   } else {
-    stencil = frontend::ParseModuleToStencil(cx, options, srcBuf);
+    stencil = frontend::ParseModuleToStencil(cx, input.get(), srcBuf);
   }
 
   if (!stencil) {
@@ -5397,7 +5478,12 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
 #ifdef JS_ENABLE_SMOOSH
   bool smoosh = false;
 #endif
-  bool forceFullParse = false;
+
+  CompileOptions options(cx);
+  options.setIntroductionType("js shell parse")
+      .setFileAndLine("<string>", 1)
+      .setIsRunOnce(true)
+      .setNoScriptRval(true);
 
   if (args.length() >= 2) {
     if (!args[1].isObject()) {
@@ -5424,14 +5510,8 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
       return false;
     }
 
-    RootedValue forceFullParseValue(cx);
-    if (!JS_GetProperty(cx, objOptions, "forceFullParse",
-                        &forceFullParseValue)) {
+    if (!ParseCompileOptions(cx, options, objOptions, nullptr)) {
       return false;
-    }
-
-    if (forceFullParseValue.isBoolean() && forceFullParseValue.toBoolean()) {
-      forceFullParse = true;
     }
 
 #ifdef JS_ENABLE_SMOOSH
@@ -5512,16 +5592,6 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
   }
 #endif  // JS_ENABLE_SMOOSH
 
-  CompileOptions options(cx);
-  options.setIntroductionType("js shell parse")
-      .setFileAndLine("<string>", 1)
-      .setIsRunOnce(true)
-      .setNoScriptRval(true);
-
-  if (forceFullParse) {
-    options.setForceFullParse();
-  }
-
   if (goal == frontend::ParseGoal::Module) {
     // See frontend::CompileModule.
     options.setForceStrictMode();
@@ -5540,11 +5610,15 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
             return false;
           }
 
-          bool unimplemented;
-          Rooted<UniquePtr<frontend::CompilationStencil>> stencil(
-              cx, Smoosh::compileGlobalScriptToStencil(cx, options, srcBuf,
-                                                       &unimplemented));
+          Rooted<frontend::CompilationInput> input(
+              cx, frontend::CompilationInput(options));
+          UniquePtr<frontend::CompilationStencil> stencil;
+          if (!Smoosh::tryCompileGlobalScriptToStencil(cx, input.get(), srcBuf,
+                                                       stencil)) {
+            return false;
+          }
           if (!stencil) {
+            JS_ReportErrorASCII(cx, "SmooshMonkey failed to parse");
             return false;
           }
 
@@ -5583,33 +5657,37 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
     return true;
   }
 
-  js::Rooted<frontend::CompilationStencil> stencil(
-      cx, js::frontend::CompilationStencil(cx, options));
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
   if (goal == frontend::ParseGoal::Script) {
-    if (!stencil.get().input.initForGlobal(cx)) {
+    if (!input.get().initForGlobal(cx)) {
       return false;
     }
   } else {
-    if (!stencil.get().input.initForModule(cx)) {
+    if (!input.get().initForModule(cx)) {
       return false;
     }
   }
+  frontend::CompilationStencil stencil(input.get());
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, options,
-                                              stencil.get());
+  frontend::CompilationState compilationState(cx, allocScope, input.get(),
+                                              stencil);
+  if (!compilationState.init(cx)) {
+    return false;
+  }
 
   if (isAscii) {
     const Latin1Char* latin1 = stableChars.latin1Range().begin().get();
     auto utf8 = reinterpret_cast<const mozilla::Utf8Unit*>(latin1);
-    if (!DumpAST<mozilla::Utf8Unit>(cx, options, utf8, length, stencil.get(),
+    if (!DumpAST<mozilla::Utf8Unit>(cx, options, utf8, length, stencil,
                                     compilationState, goal)) {
       return false;
     }
   } else {
     MOZ_ASSERT(stableChars.isTwoByte());
     const char16_t* chars = stableChars.twoByteRange().begin().get();
-    if (!DumpAST<char16_t>(cx, options, chars, length, stencil.get(),
+    if (!DumpAST<char16_t>(cx, options, chars, length, stencil,
                            compilationState, goal)) {
       return false;
     }
@@ -5662,19 +5740,24 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
   const char16_t* chars = stableChars.twoByteRange().begin().get();
   size_t length = scriptContents->length();
 
-  js::Rooted<frontend::CompilationStencil> stencil(
-      cx, js::frontend::CompilationStencil(cx, options));
-  if (!stencil.get().input.initForGlobal(cx)) {
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  if (!input.get().initForGlobal(cx)) {
+    return false;
+  }
+  frontend::CompilationStencil stencil(input.get());
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, input.get(),
+                                              stencil);
+  if (!compilationState.init(cx)) {
     return false;
   }
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, options,
-                                              stencil.get());
-
   Parser<frontend::SyntaxParseHandler, char16_t> parser(
-      cx, options, chars, length, false, stencil.get(), compilationState,
-      nullptr, nullptr);
+      cx, options, chars, length,
+      /* foldConstants = */ false, stencil, compilationState,
+      /* syntaxParser = */ nullptr);
   if (!parser.checkOptions()) {
     return false;
   }
@@ -5732,7 +5815,7 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     RootedObject opts(cx, &args[1].toObject());
-    if (!ParseCompileOptions(cx, options, opts, fileNameBytes)) {
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
       return false;
     }
   }
@@ -5772,8 +5855,9 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  OffThreadJob* job = NewOffThreadJob(
-      cx, ScriptKind::Script, OffThreadJob::Source(std::move(ownedChars)));
+  OffThreadJob* job =
+      NewOffThreadJob(cx, ScriptKind::Script, options,
+                      OffThreadJob::Source(std::move(ownedChars)));
   if (!job) {
     return false;
   }
@@ -5795,14 +5879,15 @@ static bool OffThreadCompileScript(JSContext* cx, unsigned argc, Value* vp) {
 static bool runOffThreadScript(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (OffThreadParsingMustWaitForGC(cx->runtime())) {
-    gc::FinishGC(cx);
-  }
-
   OffThreadJob* job =
       LookupOffThreadJobForArgs(cx, ScriptKind::Script, args, 0);
   if (!job) {
     return false;
+  }
+
+  if (job->useOffThreadParseGlobal &&
+      OffThreadParsingMustWaitForGC(cx->runtime())) {
+    gc::FinishGC(cx);
   }
 
   JS::OffThreadToken* token = job->waitUntilDone(cx);
@@ -5861,8 +5946,9 @@ static bool OffThreadCompileModule(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  OffThreadJob* job = NewOffThreadJob(
-      cx, ScriptKind::Module, OffThreadJob::Source(std::move(ownedChars)));
+  OffThreadJob* job =
+      NewOffThreadJob(cx, ScriptKind::Module, options,
+                      OffThreadJob::Source(std::move(ownedChars)));
   if (!job) {
     return false;
   }
@@ -5884,14 +5970,15 @@ static bool OffThreadCompileModule(JSContext* cx, unsigned argc, Value* vp) {
 static bool FinishOffThreadModule(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (OffThreadParsingMustWaitForGC(cx->runtime())) {
-    gc::FinishGC(cx);
-  }
-
   OffThreadJob* job =
       LookupOffThreadJobForArgs(cx, ScriptKind::Module, args, 0);
   if (!job) {
     return false;
+  }
+
+  if (job->useOffThreadParseGlobal &&
+      OffThreadParsingMustWaitForGC(cx->runtime())) {
+    gc::FinishGC(cx);
   }
 
   JS::OffThreadToken* token = job->waitUntilDone(cx);
@@ -5937,6 +6024,14 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
   options.useStencilXDR =
       CacheEntry_getKind(cx, cacheEntry) == BytecodeCacheKind::Stencil;
 
+  // In browser, we always use off-thread parse global for decode task, for
+  // performance reason.
+  // (see ScriptLoader::AttemptAsyncScriptCompile)
+  //
+  // This code should be removed, and the above code should be used, once
+  // bug 1687973 gets fixed.
+  options.useOffThreadParseGlobal = true;
+
   if (args.length() >= 2) {
     if (args[1].isPrimitive()) {
       JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr,
@@ -5945,7 +6040,7 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     RootedObject opts(cx, &args[1].toObject());
-    if (!ParseCompileOptions(cx, options, opts, fileNameBytes)) {
+    if (!ParseCompileOptions(cx, options, opts, &fileNameBytes)) {
       return false;
     }
   }
@@ -5976,7 +6071,7 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   OffThreadJob* job =
-      NewOffThreadJob(cx, ScriptKind::DecodeScript,
+      NewOffThreadJob(cx, ScriptKind::DecodeScript, options,
                       OffThreadJob::Source(std::move(loadBuffer)));
   if (!job) {
     return false;
@@ -5996,14 +6091,15 @@ static bool OffThreadDecodeScript(JSContext* cx, unsigned argc, Value* vp) {
 static bool runOffThreadDecodedScript(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  if (OffThreadParsingMustWaitForGC(cx->runtime())) {
-    gc::FinishGC(cx);
-  }
-
   OffThreadJob* job =
       LookupOffThreadJobForArgs(cx, ScriptKind::DecodeScript, args, 0);
   if (!job) {
     return false;
+  }
+
+  if (job->useOffThreadParseGlobal &&
+      OffThreadParsingMustWaitForGC(cx->runtime())) {
+    gc::FinishGC(cx);
   }
 
   JS::OffThreadToken* token = job->waitUntilDone(cx);
@@ -8339,7 +8435,9 @@ static bool WasmLoop(JSContext* cx, unsigned argc, Value* vp) {
 
     Rooted<TypedArrayObject*> typedArray(cx, &ret->as<TypedArrayObject>());
     RootedWasmInstanceObject instanceObj(cx);
-    if (!wasm::Eval(cx, typedArray, importObj, &instanceObj)) {
+    // No additional compile options here, we don't need them for this use case.
+    RootedValue maybeOptions(cx);
+    if (!wasm::Eval(cx, typedArray, importObj, maybeOptions, &instanceObj)) {
       // Clear any pending exceptions, we don't care about them
       cx->clearPendingException();
     }
@@ -8708,6 +8806,7 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "         If both loadBytecode and saveIncrementalBytecode are set,\n"
 "         and --off-thread-parse-global is not used, the input bytecode's\n"
 "         kind should be 'stencil'."
+"      transcodeOnly: if true, do not execute the script.\n"
 "      assertEqBytecode: if true, and if both loadBytecode and either\n"
 "         saveBytecode or saveIncrementalBytecode is true, then the loaded\n"
 "         bytecode and the encoded bytecode are compared.\n"
@@ -8873,8 +8972,10 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "  Sleep for dt seconds."),
 
     JS_FN_HELP("compile", Compile, 1, 0,
-"compile(code)",
-"  Compiles a string to bytecode, potentially throwing."),
+"compile(code, [options])",
+"  Compiles a string to bytecode, potentially throwing.\n"
+"  If present, |options| may have CompileOptions-related properties of\n"
+"  evaluate function"),
 
     JS_FN_HELP("parseModule", ParseModule, 1, 0,
 "parseModule(code)",
@@ -8898,15 +8999,21 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("dumpStencil", DumpStencil, 1, 0,
 "dumpStencil(code, [options])",
 "  Parses a string and returns string that represents stencil.\n"
-"  See parse function's help for options"),
+"  If present, |options| may have properties saying how the code should be\n"
+"  compiled:\n"
+"      module: if present and true, compile the source as module.\n"
+"      smoosh: if present and true, use SmooshMonkey.\n"
+"  CompileOptions-related properties of evaluate function's option can also\n"
+"  be used."),
 
     JS_FN_HELP("parse", Parse, 1, 0,
 "parse(code, [options])",
 "  Parses a string, potentially throwing. If present, |options| may\n"
 "  have properties saying how the code should be compiled:\n"
 "      module: if present and true, compile the source as module.\n"
-"      forceFullParse: if present and true, disable syntax-parse.\n"
-"      smoosh: if present and true, use SmooshMonkey."),
+"      smoosh: if present and true, use SmooshMonkey.\n"
+"  CompileOptions-related properties of evaluate function's option can also\n"
+"  be used. except forceFullParse. This function always use full parse."),
 
     JS_FN_HELP("syntaxParse", SyntaxParse, 1, 0,
 "syntaxParse(code)",
@@ -9084,6 +9191,10 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("wrapWithProto", WrapWithProto, 2, 0,
 "wrapWithProto(obj)",
 "  Wrap an object into a noop wrapper with prototype semantics."),
+
+    JS_FN_HELP("createExternalArrayBuffer", CreateExternalArrayBuffer, 1, 0,
+"createExternalArrayBuffer(size)",
+"  Create an array buffer that has external data of size."),
 
     JS_FN_HELP("createMappedArrayBuffer", CreateMappedArrayBuffer, 1, 0,
 "createMappedArrayBuffer(filename, [offset, [size]])",
@@ -10268,7 +10379,7 @@ static bool OptionFailure(const char* option, const char* str) {
   return false;
 }
 
-static MOZ_MUST_USE bool ProcessArgs(JSContext* cx, OptionParser* op) {
+[[nodiscard]] static bool ProcessArgs(JSContext* cx, OptionParser* op) {
   ShellContext* sc = GetShellContext(cx);
 
 #ifdef JS_ENABLE_SMOOSH
@@ -10829,12 +10940,16 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
     }
   }
 
-  if (op.getBoolOption("enable-large-buffers")) {
-    ArrayBufferObject::supportLargeBuffers = true;
+  if (op.getBoolOption("large-arraybuffers")) {
+    JS::SetLargeArrayBuffersEnabled(true);
   }
 
   if (op.getBoolOption("disable-bailout-loop-check")) {
     jit::JitOptions.disableBailoutLoopCheck = true;
+  }
+
+  if (op.getBoolOption("scalar-replace-arguments")) {
+    jit::JitOptions.scalarReplaceArguments = true;
   }
 
 #if defined(JS_CODEGEN_ARM)
@@ -10947,7 +11062,7 @@ static void SetWorkerContextOptions(JSContext* cx) {
   JS_SetNativeStackQuota(cx, gMaxStackSize);
 }
 
-static MOZ_MUST_USE bool PrintUnhandledRejection(
+[[nodiscard]] static bool PrintUnhandledRejection(
     JSContext* cx, Handle<PromiseObject*> promise) {
   RootedValue reason(cx, promise->reason());
   RootedObject site(cx, promise->resolutionSite());
@@ -10987,7 +11102,7 @@ static MOZ_MUST_USE bool PrintUnhandledRejection(
   return true;
 }
 
-static MOZ_MUST_USE bool ReportUnhandledRejections(JSContext* cx) {
+[[nodiscard]] static bool ReportUnhandledRejections(JSContext* cx) {
   ShellContext* sc = GetShellContext(cx);
   if (!sc->trackUnhandledRejections) {
     return true;
@@ -11454,8 +11569,6 @@ int main(int argc, char** argv, char** envp) {
                         "Trace regexp interpreter") ||
       !op.addBoolOption('\0', "trace-regexp-peephole",
                         "Trace regexp peephole optimization") ||
-      !op.addBoolOption('\0', "no-unboxed-objects",
-                        "Disable creating unboxed plain objects") ||
       !op.addBoolOption('\0', "enable-streams",
                         "Enable WHATWG Streams (default)") ||
       !op.addBoolOption('\0', "no-streams", "Disable WHATWG Streams") ||
@@ -11485,7 +11598,7 @@ int main(int argc, char** argv, char** envp) {
                         "Enable top-level await") ||
       !op.addBoolOption('\0', "off-thread-parse-global",
                         "Use parseGlobal in all off-thread compilation") ||
-      !op.addBoolOption('\0', "enable-large-buffers",
+      !op.addBoolOption('\0', "large-arraybuffers",
                         "Allow creating ArrayBuffers larger than 2 GB on "
                         "64-bit platforms (experimental!)") ||
       !op.addStringOption('\0', "shared-memory", "on/off",
@@ -11542,6 +11655,8 @@ int main(int argc, char** argv, char** envp) {
           "On-Stack Replacement (default: on, off to disable)") ||
       !op.addBoolOption('\0', "disable-bailout-loop-check",
                         "Turn off bailout loop check") ||
+      !op.addBoolOption('\0', "scalar-replace-arguments",
+                        "Use scalar replacement to optimize ArgumentsObject") ||
       !op.addStringOption(
           '\0', "ion-limit-script-size", "on/off",
           "Don't compile very large scripts (default: on, off to disable)") ||

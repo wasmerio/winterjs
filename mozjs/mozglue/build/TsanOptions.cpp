@@ -183,10 +183,10 @@ extern "C" const char* __tsan_default_suppressions() {
          //
          // Probably a false-positive from crossbeam's deque not being
          // understood by tsan.
-         "race:crossbeam_deque::Worker*::resize\n"
-         "race:crossbeam_deque::Worker*::push\n"
-         "race:crossbeam_deque::Buffer*::write\n"
-         "race:crossbeam_deque::Buffer*::read\n"
+         "race:crossbeam_deque*::resize\n"
+         "race:crossbeam_deque*::push\n"
+         "race:crossbeam_deque*::write\n"
+         "race:crossbeam_deque*::read\n"
 
 
 
@@ -249,11 +249,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1652530
          "mutex:XErrorTrap\n"
 
-         // Bug 1671572
-         "race:IdentifyTextureHost\n"
-         "race:GetCompositorBackendType\n"
-         "race:SupportsTextureDirectMapping\n"
-
          // Bug 1671601
          "race:CamerasParent::ActorDestroy\n"
          "race:CamerasParent::DispatchToVideoCaptureThread\n"
@@ -267,10 +262,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1674776
          "race:DocumentTimeline::GetCurrentTimeAsDuration\n"
 
-         // Bug 1674835
-         "race:nsHttpTransaction::ReadSegments\n"
-         "race:nsHttpTransaction::SecurityInfo\n"
-
          // Bug 1680285
          "race:style::traversal::note_children\n"
          "race:style::matching::MatchMethods::apply_selector_flags\n"
@@ -278,10 +269,6 @@ extern "C" const char* __tsan_default_suppressions() {
          // Bug 1607588
          "race:nssToken_Destroy\n"
          "race:nssSlot_GetToken\n"
-
-         // Bug 1683439
-         "race:AudioCallbackDriver::MixerCallback\n"
-         "race:AudioCallbackDriver::Init\n"
 
          // Bug 1683417
          "race:DataChannelConnection::SetSignals\n"

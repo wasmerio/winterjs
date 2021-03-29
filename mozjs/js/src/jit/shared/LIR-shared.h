@@ -838,14 +838,13 @@ class LArgumentsObjectLength : public LInstructionHelper<1, 1, 0> {
   const LAllocation* getArgsObject() { return getOperand(0); }
 };
 
-// Guard that the arguments object has no overridden iterator.
-class LGuardArgumentsObjectNotOverriddenIterator
-    : public LInstructionHelper<0, 1, 1> {
+// Guard that the given flags are not set on the arguments object.
+class LGuardArgumentsObjectFlags : public LInstructionHelper<0, 1, 1> {
  public:
-  LIR_HEADER(GuardArgumentsObjectNotOverriddenIterator)
+  LIR_HEADER(GuardArgumentsObjectFlags)
 
-  explicit LGuardArgumentsObjectNotOverriddenIterator(
-      const LAllocation& argsObj, const LDefinition& temp)
+  explicit LGuardArgumentsObjectFlags(const LAllocation& argsObj,
+                                      const LDefinition& temp)
       : LInstructionHelper(classOpcode) {
     setOperand(0, argsObj);
     setTemp(0, temp);
@@ -853,6 +852,10 @@ class LGuardArgumentsObjectNotOverriddenIterator
 
   const LAllocation* getArgsObject() { return getOperand(0); }
   const LDefinition* temp() { return this->getTemp(0); }
+
+  MGuardArgumentsObjectFlags* mir() const {
+    return mir_->toGuardArgumentsObjectFlags();
+  }
 };
 
 // If the Value is an Object, return unbox(Value).
@@ -1249,6 +1252,38 @@ class LApplyArgsGeneric
   const LDefinition* getTempStackCounter() { return getTemp(1); }
 };
 
+class LApplyArgsObj
+    : public LCallInstructionHelper<BOX_PIECES, BOX_PIECES + 2, 2> {
+ public:
+  LIR_HEADER(ApplyArgsObj)
+
+  LApplyArgsObj(const LAllocation& func, const LAllocation& argsObj,
+                const LBoxAllocation& thisv, const LDefinition& tmpObjReg,
+                const LDefinition& tmpCopy)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, func);
+    setOperand(1, argsObj);
+    setBoxOperand(ThisIndex, thisv);
+    setTemp(0, tmpObjReg);
+    setTemp(1, tmpCopy);
+  }
+
+  MApplyArgsObj* mir() const { return mir_->toApplyArgsObj(); }
+
+  bool hasSingleTarget() const { return getSingleTarget() != nullptr; }
+  WrappedFunction* getSingleTarget() const { return mir()->getSingleTarget(); }
+
+  const LAllocation* getFunction() { return getOperand(0); }
+  const LAllocation* getArgsObj() { return getOperand(1); }
+  // All registers are calltemps. argc is mapped to the same register as
+  // ArgsObj. argc becomes live as ArgsObj is dying.
+  const LAllocation* getArgc() { return getOperand(1); }
+  static const size_t ThisIndex = 2;
+
+  const LDefinition* getTempObject() { return getTemp(0); }
+  const LDefinition* getTempStackCounter() { return getTemp(1); }
+};
+
 class LApplyArrayGeneric
     : public LCallInstructionHelper<BOX_PIECES, BOX_PIECES + 2, 2> {
  public:
@@ -1355,7 +1390,7 @@ class LTestI64AndBranch : public LControlInstructionHelper<2, INT64_PIECES, 0> {
   MBasicBlock* ifFalse() const { return getSuccessor(1); }
 };
 
-// Takes in either an integer or boolean input and tests it for truthiness.
+// Takes in a double input and tests it for truthiness.
 class LTestDAndBranch : public LControlInstructionHelper<2, 1, 0> {
  public:
   LIR_HEADER(TestDAndBranch)
@@ -1372,7 +1407,7 @@ class LTestDAndBranch : public LControlInstructionHelper<2, 1, 0> {
   MBasicBlock* ifFalse() const { return getSuccessor(1); }
 };
 
-// Takes in either an integer or boolean input and tests it for truthiness.
+// Takes in a float32 input and tests it for truthiness.
 class LTestFAndBranch : public LControlInstructionHelper<2, 1, 0> {
  public:
   LIR_HEADER(TestFAndBranch)
@@ -1387,6 +1422,23 @@ class LTestFAndBranch : public LControlInstructionHelper<2, 1, 0> {
 
   MBasicBlock* ifTrue() const { return getSuccessor(0); }
   MBasicBlock* ifFalse() const { return getSuccessor(1); }
+};
+
+// Takes in a bigint input and tests it for truthiness.
+class LTestBIAndBranch : public LControlInstructionHelper<2, 1, 0> {
+ public:
+  LIR_HEADER(TestBIAndBranch)
+
+  LTestBIAndBranch(const LAllocation& in, MBasicBlock* ifTrue,
+                   MBasicBlock* ifFalse)
+      : LControlInstructionHelper(classOpcode) {
+    setOperand(0, in);
+    setSuccessor(0, ifTrue);
+    setSuccessor(1, ifFalse);
+  }
+
+  MBasicBlock* ifTrue() { return getSuccessor(0); }
+  MBasicBlock* ifFalse() { return getSuccessor(1); }
 };
 
 // Takes an object and tests it for truthiness.  An object is falsy iff it
@@ -1884,6 +1936,18 @@ class LNotF : public LInstructionHelper<1, 1, 0> {
   MNot* mir() { return mir_->toNot(); }
 };
 
+// Not operation on a BigInt.
+class LNotBI : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(NotBI)
+
+  explicit LNotBI(const LAllocation& input) : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  MNot* mir() { return mir_->toNot(); }
+};
+
 // Boolean complement operation on an object.
 class LNotO : public LInstructionHelper<1, 1, 0> {
  public:
@@ -2106,6 +2170,46 @@ class LMinMaxF : public LMinMaxBase {
   LIR_HEADER(MinMaxF)
   LMinMaxF(const LAllocation& first, const LAllocation& second)
       : LMinMaxBase(classOpcode, first, second) {}
+};
+
+class LMinMaxArrayI : public LInstructionHelper<1, 1, 3> {
+ public:
+  LIR_HEADER(MinMaxArrayI);
+  LMinMaxArrayI(const LAllocation& array, const LDefinition& temp0,
+                const LDefinition& temp1, const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, array);
+    setTemp(0, temp0);
+    setTemp(1, temp1);
+    setTemp(2, temp2);
+  }
+
+  const LAllocation* array() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+  const LDefinition* temp3() { return getTemp(2); }
+
+  bool isMax() const { return mir_->toMinMaxArray()->isMax(); }
+};
+
+class LMinMaxArrayD : public LInstructionHelper<1, 1, 3> {
+ public:
+  LIR_HEADER(MinMaxArrayD);
+  LMinMaxArrayD(const LAllocation& array, const LDefinition& floatTemp,
+                const LDefinition& temp1, const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, array);
+    setTemp(0, floatTemp);
+    setTemp(1, temp1);
+    setTemp(2, temp2);
+  }
+
+  const LAllocation* array() { return getOperand(0); }
+  const LDefinition* floatTemp() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(1); }
+  const LDefinition* temp2() { return getTemp(2); }
+
+  bool isMax() const { return mir_->toMinMaxArray()->isMax(); }
 };
 
 // Negative of an integer
@@ -3707,31 +3811,6 @@ class LUnaryCache : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 0> {
   static const size_t Input = 0;
 };
 
-class LClassConstructor : public LCallInstructionHelper<1, 0, 0> {
- public:
-  LIR_HEADER(ClassConstructor)
-
-  const MClassConstructor* mir() const { return mir_->toClassConstructor(); }
-
-  LClassConstructor() : LCallInstructionHelper(classOpcode) {}
-};
-
-class LDerivedClassConstructor : public LCallInstructionHelper<1, 1, 0> {
- public:
-  LIR_HEADER(DerivedClassConstructor)
-
-  explicit LDerivedClassConstructor(const LAllocation& prototype)
-      : LCallInstructionHelper(classOpcode) {
-    setOperand(0, prototype);
-  }
-
-  const LAllocation* prototype() { return getOperand(0); }
-
-  const MDerivedClassConstructor* mir() const {
-    return mir_->toDerivedClassConstructor();
-  }
-};
-
 class LModuleMetadata : public LCallInstructionHelper<1, 0, 0> {
  public:
   LIR_HEADER(ModuleMetadata)
@@ -3970,11 +4049,11 @@ class LGetNextEntryForIterator : public LInstructionHelper<1, 2, 3> {
   const LDefinition* temp2() { return getTemp(2); }
 };
 
-class LArrayBufferByteLengthInt32 : public LInstructionHelper<1, 1, 0> {
+class LArrayBufferByteLength : public LInstructionHelper<1, 1, 0> {
  public:
-  LIR_HEADER(ArrayBufferByteLengthInt32)
+  LIR_HEADER(ArrayBufferByteLength)
 
-  explicit LArrayBufferByteLengthInt32(const LAllocation& obj)
+  explicit LArrayBufferByteLength(const LAllocation& obj)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
   }
@@ -3993,6 +4072,10 @@ class LArrayBufferViewLength : public LInstructionHelper<1, 1, 0> {
   }
 
   const LAllocation* object() { return getOperand(0); }
+
+  const MArrayBufferViewLength* mir() const {
+    return mir_->toArrayBufferViewLength();
+  }
 };
 
 // Read the byteOffset of an array buffer view.
@@ -4020,12 +4103,12 @@ class LArrayBufferViewElements : public LInstructionHelper<1, 1, 0> {
   const LAllocation* object() { return getOperand(0); }
 };
 
-// Return the element shift of a typed array.
-class LTypedArrayElementShift : public LInstructionHelper<1, 1, 0> {
+// Return the element size of a typed array.
+class LTypedArrayElementSize : public LInstructionHelper<1, 1, 0> {
  public:
-  LIR_HEADER(TypedArrayElementShift)
+  LIR_HEADER(TypedArrayElementSize)
 
-  explicit LTypedArrayElementShift(const LAllocation& obj)
+  explicit LTypedArrayElementSize(const LAllocation& obj)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
   }
@@ -4033,21 +4116,35 @@ class LTypedArrayElementShift : public LInstructionHelper<1, 1, 0> {
   const LAllocation* object() { return getOperand(0); }
 };
 
-// Double to Int32, eligible for accessing into a TypedArray. If the index isn't
-// exactly representable as an Int32, produce any Int32 which is equivalent to
-// an OOB access into a TypedArray.
-class LTypedArrayIndexToInt32 : public LInstructionHelper<1, 1, 0> {
+class LGuardHasAttachedArrayBuffer : public LInstructionHelper<0, 1, 1> {
  public:
-  LIR_HEADER(TypedArrayIndexToInt32)
+  LIR_HEADER(GuardHasAttachedArrayBuffer)
 
-  explicit LTypedArrayIndexToInt32(const LAllocation& obj)
+  LGuardHasAttachedArrayBuffer(const LAllocation& obj, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+// Double to IntPtr, eligible for accessing into a TypedArray or DataView. If
+// the index isn't exactly representable as an IntPtr, depending on the
+// supportOOB flag on the MIR instruction, either bail out or produce an IntPtr
+// which is equivalent to an OOB access.
+class LGuardNumberToIntPtrIndex : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(GuardNumberToIntPtrIndex)
+
+  explicit LGuardNumberToIntPtrIndex(const LAllocation& obj)
       : LInstructionHelper(classOpcode) {
     setOperand(0, obj);
   }
 
-  const LAllocation* index() { return getOperand(0); }
-  const MTypedArrayIndexToInt32* mir() const {
-    return mir_->toTypedArrayIndexToInt32();
+  const MGuardNumberToIntPtrIndex* mir() const {
+    return mir_->toGuardNumberToIntPtrIndex();
   }
 };
 
@@ -4107,6 +4204,8 @@ class LSpectreMaskIndex : public LInstructionHelper<1, 2, 0> {
   }
   const LAllocation* index() { return getOperand(0); }
   const LAllocation* length() { return getOperand(1); }
+
+  const MSpectreMaskIndex* mir() const { return mir_->toSpectreMaskIndex(); }
 };
 
 // Load a value from a dense array's elements vector. Bail out if it's the hole
@@ -4820,6 +4919,317 @@ class LAtomicTypedArrayElementBinopForEffect
   const LDefinition* valueTemp() { return getTemp(1); }
   const LDefinition* offsetTemp() { return getTemp(2); }
   const LDefinition* maskTemp() { return getTemp(3); }
+
+  const MAtomicTypedArrayElementBinop* mir() const {
+    return mir_->toAtomicTypedArrayElementBinop();
+  }
+};
+
+class LAtomicLoad64 : public LInstructionHelper<1, 2, 1 + INT64_PIECES> {
+ public:
+  LIR_HEADER(AtomicLoad64)
+
+  LAtomicLoad64(const LAllocation& elements, const LAllocation& index,
+                const LDefinition& temp, const LInt64Definition& temp64)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setTemp(0, temp);
+    setInt64Temp(1, temp64);
+  }
+  const MLoadUnboxedScalar* mir() const { return mir_->toLoadUnboxedScalar(); }
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LDefinition* temp() { return getTemp(0); }
+  LInt64Definition temp64() { return getInt64Temp(1); }
+};
+
+class LAtomicStore64 : public LInstructionHelper<0, 3, 2 * INT64_PIECES + 1> {
+ public:
+  LIR_HEADER(AtomicStore64)
+
+  // x64, ARM64
+  LAtomicStore64(const LAllocation& elements, const LAllocation& index,
+                 const LAllocation& value, const LInt64Definition& temp1)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(2 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  // ARM32
+  LAtomicStore64(const LAllocation& elements, const LAllocation& index,
+                 const LAllocation& value, const LInt64Definition& temp1,
+                 const LInt64Definition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setTemp(2 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  // x86
+  LAtomicStore64(const LAllocation& elements, const LAllocation& index,
+                 const LAllocation& value, const LInt64Definition& temp1,
+                 const LDefinition& tempLow)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(2 * INT64_PIECES, tempLow);
+  }
+
+  const MStoreUnboxedScalar* mir() const {
+    return mir_->toStoreUnboxedScalar();
+  }
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LAllocation* value() { return getOperand(2); }
+  LInt64Definition temp1() { return getInt64Temp(0); }
+  LInt64Definition temp2() { return getInt64Temp(INT64_PIECES); }
+  const LDefinition* tempLow() { return getTemp(2 * INT64_PIECES); }
+};
+
+class LCompareExchangeTypedArrayElement64
+    : public LInstructionHelper<1, 4, 3 * INT64_PIECES + 1> {
+ public:
+  LIR_HEADER(CompareExchangeTypedArrayElement64)
+
+  // x64, ARM64
+  LCompareExchangeTypedArrayElement64(const LAllocation& elements,
+                                      const LAllocation& index,
+                                      const LAllocation& oldval,
+                                      const LAllocation& newval,
+                                      const LInt64Definition& temp1,
+                                      const LInt64Definition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, oldval);
+    setOperand(3, newval);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setInt64Temp(2 * INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(3 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  // x86
+  LCompareExchangeTypedArrayElement64(const LAllocation& elements,
+                                      const LAllocation& index,
+                                      const LAllocation& oldval,
+                                      const LAllocation& newval,
+                                      const LDefinition& tempLow)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, oldval);
+    setOperand(3, newval);
+    setInt64Temp(0, LInt64Definition::BogusTemp());
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setInt64Temp(2 * INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(3 * INT64_PIECES, tempLow);
+  }
+
+  // ARM
+  LCompareExchangeTypedArrayElement64(const LAllocation& elements,
+                                      const LAllocation& index,
+                                      const LAllocation& oldval,
+                                      const LAllocation& newval,
+                                      const LInt64Definition& temp1,
+                                      const LInt64Definition& temp2,
+                                      const LInt64Definition& temp3)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, oldval);
+    setOperand(3, newval);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setInt64Temp(2 * INT64_PIECES, temp3);
+    setTemp(3 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  const MCompareExchangeTypedArrayElement* mir() const {
+    return mir_->toCompareExchangeTypedArrayElement();
+  }
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LAllocation* oldval() { return getOperand(2); }
+  const LAllocation* newval() { return getOperand(3); }
+  LInt64Definition temp1() { return getInt64Temp(0); }
+  LInt64Definition temp2() { return getInt64Temp(INT64_PIECES); }
+  LInt64Definition temp3() { return getInt64Temp(2 * INT64_PIECES); }
+  const LDefinition* tempLow() { return getTemp(3 * INT64_PIECES); }
+};
+
+class LAtomicExchangeTypedArrayElement64
+    : public LInstructionHelper<1, 3, INT64_PIECES + 1> {
+ public:
+  LIR_HEADER(AtomicExchangeTypedArrayElement64)
+
+  // ARM, ARM64, x64
+  LAtomicExchangeTypedArrayElement64(const LAllocation& elements,
+                                     const LAllocation& index,
+                                     const LAllocation& value,
+                                     const LInt64Definition& temp1,
+                                     const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setTemp(INT64_PIECES, temp2);
+  }
+
+  // x86
+  LAtomicExchangeTypedArrayElement64(const LAllocation& elements,
+                                     const LAllocation& index,
+                                     const LAllocation& value,
+                                     const LInt64Definition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp);
+    setTemp(INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LAllocation* value() { return getOperand(2); }
+  LInt64Definition temp1() { return getInt64Temp(0); }
+  const LDefinition* temp2() { return getTemp(INT64_PIECES); }
+
+  const MAtomicExchangeTypedArrayElement* mir() const {
+    return mir_->toAtomicExchangeTypedArrayElement();
+  }
+};
+
+class LAtomicTypedArrayElementBinop64
+    : public LInstructionHelper<1, 3, 3 * INT64_PIECES> {
+ public:
+  LIR_HEADER(AtomicTypedArrayElementBinop64)
+
+  // x86
+  LAtomicTypedArrayElementBinop64(const LAllocation& elements,
+                                  const LAllocation& index,
+                                  const LAllocation& value,
+                                  const LInt64Definition& temp1)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setInt64Temp(2 * INT64_PIECES, LInt64Definition::BogusTemp());
+  }
+
+  // ARM64, x64
+  LAtomicTypedArrayElementBinop64(const LAllocation& elements,
+                                  const LAllocation& index,
+                                  const LAllocation& value,
+                                  const LInt64Definition& temp1,
+                                  const LInt64Definition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setInt64Temp(2 * INT64_PIECES, LInt64Definition::BogusTemp());
+  }
+
+  // ARM
+  LAtomicTypedArrayElementBinop64(const LAllocation& elements,
+                                  const LAllocation& index,
+                                  const LAllocation& value,
+                                  const LInt64Definition& temp1,
+                                  const LInt64Definition& temp2,
+                                  const LInt64Definition& temp3)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setInt64Temp(2 * INT64_PIECES, temp3);
+  }
+
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LAllocation* value() { return getOperand(2); }
+  LInt64Definition temp1() { return getInt64Temp(0); }
+  LInt64Definition temp2() { return getInt64Temp(INT64_PIECES); }
+  LInt64Definition temp3() { return getInt64Temp(2 * INT64_PIECES); }
+
+  const MAtomicTypedArrayElementBinop* mir() const {
+    return mir_->toAtomicTypedArrayElementBinop();
+  }
+};
+
+// Atomic binary operation where the result is discarded.
+class LAtomicTypedArrayElementBinopForEffect64
+    : public LInstructionHelper<0, 3, 2 * INT64_PIECES + 1> {
+ public:
+  LIR_HEADER(AtomicTypedArrayElementBinopForEffect64)
+
+  // x86
+  LAtomicTypedArrayElementBinopForEffect64(const LAllocation& elements,
+                                           const LAllocation& index,
+                                           const LAllocation& value,
+                                           const LInt64Definition& temp,
+                                           const LDefinition& tempLow)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp);
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(2 * INT64_PIECES, tempLow);
+  }
+
+  // x64
+  LAtomicTypedArrayElementBinopForEffect64(const LAllocation& elements,
+                                           const LAllocation& index,
+                                           const LAllocation& value,
+                                           const LInt64Definition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp);
+    setInt64Temp(INT64_PIECES, LInt64Definition::BogusTemp());
+    setTemp(2 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  // ARM64
+  LAtomicTypedArrayElementBinopForEffect64(const LAllocation& elements,
+                                           const LAllocation& index,
+                                           const LAllocation& value,
+                                           const LInt64Definition& temp1,
+                                           const LInt64Definition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, elements);
+    setOperand(1, index);
+    setOperand(2, value);
+    setInt64Temp(0, temp1);
+    setInt64Temp(INT64_PIECES, temp2);
+    setTemp(2 * INT64_PIECES, LDefinition::BogusTemp());
+  }
+
+  const LAllocation* elements() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LAllocation* value() { return getOperand(2); }
+  LInt64Definition temp1() { return getInt64Temp(0); }
+  LInt64Definition temp2() { return getInt64Temp(INT64_PIECES); }
+  const LDefinition* tempLow() { return getTemp(2 * INT64_PIECES); }
 
   const MAtomicTypedArrayElementBinop* mir() const {
     return mir_->toAtomicTypedArrayElementBinop();
@@ -5559,6 +5969,52 @@ class LRest : public LCallInstructionHelper<1, 1, 3> {
   }
   const LAllocation* numActuals() { return getOperand(0); }
   MRest* mir() const { return mir_->toRest(); }
+};
+
+class LInt32ToIntPtr : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(Int32ToIntPtr)
+
+  explicit LInt32ToIntPtr(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  MInt32ToIntPtr* mir() const { return mir_->toInt32ToIntPtr(); }
+};
+
+class LNonNegativeIntPtrToInt32 : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(NonNegativeIntPtrToInt32)
+
+  explicit LNonNegativeIntPtrToInt32(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+};
+
+class LIntPtrToDouble : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(IntPtrToDouble)
+
+  explicit LIntPtrToDouble(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+};
+
+class LAdjustDataViewLength : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(AdjustDataViewLength)
+
+  explicit LAdjustDataViewLength(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  const MAdjustDataViewLength* mir() const {
+    return mir_->toAdjustDataViewLength();
+  }
 };
 
 // Convert a Boolean to an Int64, following ToBigInt.
@@ -8868,6 +9324,58 @@ class LWasmReduceSimd128ToInt64
   const LAllocation* src() { return getOperand(Src); }
   uint32_t imm() const { return mir_->toWasmReduceSimd128()->imm(); }
   wasm::SimdOp simdOp() const { return mir_->toWasmReduceSimd128()->simdOp(); }
+};
+
+class LWasmLoadLaneSimd128 : public LInstructionHelper<1, 3, 0> {
+ public:
+  LIR_HEADER(WasmLoadLaneSimd128);
+
+  static constexpr uint32_t Src = 2;
+
+  explicit LWasmLoadLaneSimd128(const LAllocation& ptr, const LAllocation& src,
+                                const LAllocation& memoryBase = LAllocation())
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, ptr);
+    setOperand(1, memoryBase);
+    setOperand(Src, src);
+  }
+
+  const LAllocation* ptr() { return getOperand(0); }
+  const LAllocation* memoryBase() { return getOperand(1); }
+  const LAllocation* src() { return getOperand(Src); }
+  MWasmLoadLaneSimd128* mir() const { return mir_->toWasmLoadLaneSimd128(); }
+  uint32_t laneSize() const {
+    return mir_->toWasmLoadLaneSimd128()->laneSize();
+  }
+  uint32_t laneIndex() const {
+    return mir_->toWasmLoadLaneSimd128()->laneIndex();
+  }
+};
+
+class LWasmStoreLaneSimd128 : public LInstructionHelper<1, 3, 0> {
+ public:
+  LIR_HEADER(WasmStoreLaneSimd128);
+
+  static constexpr uint32_t Src = 2;
+
+  explicit LWasmStoreLaneSimd128(const LAllocation& ptr, const LAllocation& src,
+                                 const LAllocation& memoryBase = LAllocation())
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, ptr);
+    setOperand(1, memoryBase);
+    setOperand(Src, src);
+  }
+
+  const LAllocation* ptr() { return getOperand(0); }
+  const LAllocation* memoryBase() { return getOperand(1); }
+  const LAllocation* src() { return getOperand(Src); }
+  MWasmStoreLaneSimd128* mir() const { return mir_->toWasmStoreLaneSimd128(); }
+  uint32_t laneSize() const {
+    return mir_->toWasmStoreLaneSimd128()->laneSize();
+  }
+  uint32_t laneIndex() const {
+    return mir_->toWasmStoreLaneSimd128()->laneIndex();
+  }
 };
 
 // End Wasm SIMD

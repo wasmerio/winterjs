@@ -77,7 +77,10 @@ struct CopyablePtr {
   T mPtr;
 
   template <typename U>
-  explicit CopyablePtr(U aPtr) : mPtr{std::move(aPtr)} {}
+  explicit CopyablePtr(U&& aPtr) : mPtr{std::forward<U>(aPtr)} {}
+
+  template <typename U>
+  explicit CopyablePtr(CopyablePtr<U> aPtr) : mPtr{std::move(aPtr.mPtr)} {}
 };
 }  // namespace detail
 
@@ -293,10 +296,10 @@ class MOZ_NON_AUTOABLE MovingNotNull {
  public:
   MovingNotNull() = delete;
 
-  MOZ_IMPLICIT MovingNotNull(const NotNull<T>& aSrc) : mBasePtr(aSrc) {}
+  MOZ_IMPLICIT MovingNotNull(const NotNull<T>& aSrc) : mBasePtr(aSrc.get()) {}
 
   template <typename U>
-  MOZ_IMPLICIT MovingNotNull(const NotNull<U>& aSrc) : mBasePtr(aSrc) {}
+  MOZ_IMPLICIT MovingNotNull(const NotNull<U>& aSrc) : mBasePtr(aSrc.get()) {}
 
   template <typename U>
   MOZ_IMPLICIT MovingNotNull(MovingNotNull<U>&& aSrc)

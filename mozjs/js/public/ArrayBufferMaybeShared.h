@@ -63,7 +63,7 @@ extern JS_PUBLIC_API JSObject* UnwrapArrayBufferMaybeShared(JSObject* obj);
  * |*data| will be set to a pointer to the bytes in the buffer.
  */
 extern JS_PUBLIC_API void GetArrayBufferMaybeSharedLengthAndData(
-    JSObject* obj, uint32_t* length, bool* isSharedMemory, uint8_t** data);
+    JSObject* obj, size_t* length, bool* isSharedMemory, uint8_t** data);
 
 /**
  * Return a pointer to the start of the array buffer's data, and indicate
@@ -88,6 +88,14 @@ extern JS_PUBLIC_API void GetArrayBufferMaybeSharedLengthAndData(
  */
 extern JS_PUBLIC_API uint8_t* GetArrayBufferMaybeSharedData(
     JSObject* obj, bool* isSharedMemory, const AutoRequireNoGC&);
+
+/**
+ * Returns whether the passed array buffer is 'large': its byteLength >= 2 GB.
+ * See also SetLargeArrayBuffersEnabled.
+ *
+ * |obj| must pass a JS::IsArrayBufferObjectMaybeShared test.
+ */
+extern JS_FRIEND_API bool IsLargeArrayBufferMaybeShared(JSObject* obj);
 
 }  // namespace JS
 

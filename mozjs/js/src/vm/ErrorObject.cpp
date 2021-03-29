@@ -52,7 +52,8 @@
 #include "vm/Shape.h"
 #include "vm/Stack.h"
 #include "vm/StringType.h"
-#include "vm/ToSource.h"  // js::ValueToSource
+#include "vm/ToSource.h"       // js::ValueToSource
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/ArrayObject-inl.h"
 #include "vm/JSContext-inl.h"
@@ -483,6 +484,7 @@ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
     obj->initSlot(MESSAGE_SLOT, StringValue(message));
   }
   obj->initReservedSlot(SOURCEID_SLOT, Int32Value(sourceId));
+  obj->initReservedSlot(WASM_TRAP_SLOT, BooleanValue(false));
 
   return true;
 }
@@ -687,6 +689,10 @@ bool js::ErrorObject::setStack_impl(JSContext* cx, const CallArgs& args) {
   RootedValue val(cx, args[0]);
 
   return DefineDataProperty(cx, thisObj, cx->names().stack, val);
+}
+
+void js::ErrorObject::setFromWasmTrap() {
+  setReservedSlot(WASM_TRAP_SLOT, BooleanValue(true));
 }
 
 JSString* js::ErrorToSource(JSContext* cx, HandleObject obj) {

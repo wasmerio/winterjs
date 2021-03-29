@@ -20,17 +20,32 @@ rev = "4af6c367603869a30fddb5ffb0aba2b9477ba92e"
 [source."https://github.com/msirringhaus/minidump_writer_linux.git"]
 git = "https://github.com/msirringhaus/minidump_writer_linux.git"
 replace-with = "vendored-sources"
-rev = "4ea371049a9cca212cc13c19b7952c1c014085c6"
+rev = "9191af36343846b2c7ada65b9602b481b717c4d8"
 
 [source."https://github.com/mozilla/neqo"]
 git = "https://github.com/mozilla/neqo"
 replace-with = "vendored-sources"
-tag = "v0.4.19"
+tag = "v0.4.21"
 
 [source."https://github.com/mozilla/mp4parse-rust"]
 git = "https://github.com/mozilla/mp4parse-rust"
 replace-with = "vendored-sources"
-rev = "3d9efdc868ce8c5767cea28708fa6512c0ab6d17"
+rev = "3011a2b923c8b0f1b392bcdd008cd8b95ffd846b"
+
+[source."https://github.com/mozilla/cubeb-pulse-rs"]
+git = "https://github.com/mozilla/cubeb-pulse-rs"
+replace-with = "vendored-sources"
+rev = "c87b50aebfa088c1ad30c74819d4e9829f88b2e3"
+
+[source."https://github.com/mozilla/cubeb-coreaudio-rs"]
+git = "https://github.com/mozilla/cubeb-coreaudio-rs"
+replace-with = "vendored-sources"
+rev = "3d071d733d13bde0af033e7973e53938b2ab53e6"
+
+[source."https://github.com/mozilla/audioipc-2"]
+git = "https://github.com/mozilla/audioipc-2"
+replace-with = "vendored-sources"
+rev = "8fb5ff19fba7b09e8e66598122421e68a5c573ac"
 
 [source."https://github.com/mozilla/application-services"]
 git = "https://github.com/mozilla/application-services"
@@ -40,7 +55,7 @@ rev = "8a576fbe79199fa8664f64285524017f74ebcc5f"
 [source."https://github.com/mozilla-spidermonkey/wasmtime"]
 git = "https://github.com/mozilla-spidermonkey/wasmtime"
 replace-with = "vendored-sources"
-rev = "3334d92350da40b90d2529c147db3ea44918b558"
+rev = "a25399760e9f12b679aa267dd2af7cfedc72bb71"
 
 [source."https://github.com/mozilla-spidermonkey/wasm-tools"]
 git = "https://github.com/mozilla-spidermonkey/wasm-tools"
@@ -55,7 +70,7 @@ rev = "fc5d1d33317b0fbd36725757f80a95127eff5109"
 [source."https://github.com/mozilla-spidermonkey/jsparagus"]
 git = "https://github.com/mozilla-spidermonkey/jsparagus"
 replace-with = "vendored-sources"
-rev = "d910c7a0f2f836cc70ed14bb92b8d0437b4e4a24"
+rev = "d5d8c00ebd3281d12e0be5dfddbb69f791f836f1"
 
 [source."https://github.com/kvark/spirv_cross"]
 branch = "wgpu4"
@@ -97,11 +112,6 @@ git = "https://github.com/gfx-rs/gfx"
 replace-with = "vendored-sources"
 rev = "1d14789011cb892f4c1a205d3f8a87d479c2e354"
 
-[source."https://github.com/djg/cubeb-pulse-rs"]
-git = "https://github.com/djg/cubeb-pulse-rs"
-replace-with = "vendored-sources"
-rev = "bf31534d08b2c16fb5e4c5834944ae3271efbd63"
-
 [source."https://github.com/badboy/failure"]
 git = "https://github.com/badboy/failure"
 replace-with = "vendored-sources"
@@ -116,11 +126,6 @@ rev = "f3cace4fb8b53db0849c62af4fa62bade5a620f7"
 git = "https://github.com/PLSysSec/lucet_sandbox_compiler"
 replace-with = "vendored-sources"
 rev = "cd07861d1c92147b35b538e6f94fde7d1986f9ad"
-
-[source."https://github.com/ChunMinChang/cubeb-coreaudio-rs"]
-git = "https://github.com/ChunMinChang/cubeb-coreaudio-rs"
-replace-with = "vendored-sources"
-rev = "1e1222d6213e28eabd7f4302d00765ae1153a31e"
 
 [source.crates-io]
 replace-with = "vendored-sources"

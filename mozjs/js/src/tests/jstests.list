@@ -208,9 +208,6 @@ skip script test262/language/expressions/logical-assignment/lgcl-nullish-assignm
 skip script test262/language/expressions/logical-assignment/lgcl-and-assignment-operator-lhs-before-rhs.js
 skip script test262/language/expressions/logical-assignment/lgcl-or-assignment-operator-lhs-before-rhs.js
 
-# https://bugzilla.mozilla.org/show_bug.cgi?id=944846
-skip script test262/built-ins/Number/prototype/toExponential/return-values.js
-
 # https://bugzilla.mozilla.org/show_bug.cgi?id=605515
 skip script test262/language/identifier-resolution/assign-to-global-undefined-strict.js
 skip script test262/language/expressions/postfix-decrement/operator-x-postfix-decrement-calls-putvalue-lhs-newvalue-.js
@@ -664,9 +661,11 @@ skip script test262/intl402/DisplayNames/locales-length-poison-throws.js
 # Tests not yet updated for https://github.com/tc39/ecma262/pull/2210
 skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/tonumber-value-detached-buffer.js
 skip script test262/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/tonumber-value-detached-buffer.js
-skip script test262/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/index-prop-desc.js
-skip script test262/built-ins/TypedArray/prototype/filter/BigInt/callbackfn-detachbuffer.js
-skip script test262/built-ins/TypedArray/prototype/findIndex/BigInt/predicate-may-detach-buffer.js
+
+# Tests not yet updated for https://github.com/tc39/ecma262/pull/2216
+skip script test262/language/statements/class/constructor-inferred-observable-iteration.js
+skip script test262/language/statements/class/subclass/default-constructor-spread-override.js
+skip script test262/built-ins/Function/internals/Call/class-ctor-realm.js
 
 
 ##############################################

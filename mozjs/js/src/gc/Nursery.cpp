@@ -83,7 +83,7 @@ struct NurseryChunk : public ChunkBase {
   // The end of the range is always ChunkSize.
   void markPagesUnusedHard(size_t from);
   // The start of the range is always the beginning of the chunk.
-  MOZ_MUST_USE bool markPagesInUseHard(size_t to);
+  [[nodiscard]] bool markPagesInUseHard(size_t to);
 
   uintptr_t start() const { return uintptr_t(&data); }
   uintptr_t end() const { return uintptr_t(this) + ChunkSize; }
@@ -765,9 +765,7 @@ js::TenuringTracer::TenuringTracer(JSRuntime* rt, Nursery* nursery)
       objHead(nullptr),
       objTail(&objHead),
       stringHead(nullptr),
-      stringTail(&stringHead),
-      bigIntHead(nullptr),
-      bigIntTail(&bigIntHead) {}
+      stringTail(&stringHead) {}
 
 inline double js::Nursery::calcPromotionRate(bool* validForTenuring) const {
   double used = double(previousGC.nurseryUsedBytes);
@@ -1223,9 +1221,13 @@ js::Nursery::CollectionResult js::Nursery::doCollection(JS::GCReason reason) {
   // been moved to the major heap. If these objects have any outgoing pointers
   // to the nursery, then those nursery objects get moved as well, until no
   // objects are left to move. That is, we iterate to a fixed point.
-  startProfile(ProfileKey::CollectToFP);
-  collectToFixedPoint(mover);
-  endProfile(ProfileKey::CollectToFP);
+  startProfile(ProfileKey::CollectToObjFP);
+  collectToObjectFixedPoint(mover);
+  endProfile(ProfileKey::CollectToObjFP);
+
+  startProfile(ProfileKey::CollectToStrFP);
+  collectToStringFixedPoint(mover);
+  endProfile(ProfileKey::CollectToStrFP);
 
   // Sweep to update any pointers to nursery objects that have now been
   // tenured.

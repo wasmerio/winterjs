@@ -465,6 +465,7 @@ enum class MIRType : uint8_t {
   Boolean,
   Int32,
   Int64,
+  IntPtr,
   Double,
   Float32,
   // Types above have trivial conversion to a number.
@@ -588,6 +589,8 @@ static inline const char* StringFromMIRType(MIRType type) {
       return "Int32";
     case MIRType::Int64:
       return "Int64";
+    case MIRType::IntPtr:
+      return "IntPtr";
     case MIRType::Double:
       return "Double";
     case MIRType::Float32:
@@ -903,21 +906,6 @@ static constexpr ABIFunctionType MakeABIFunctionType(
     ABIArgType ret, std::initializer_list<ABIArgType> args) {
   return ABIFunctionType(detail::MakeABIFunctionType(ret, args));
 }
-
-enum class BarrierKind : uint32_t {
-  // No barrier is needed.
-  NoBarrier,
-
-  // The barrier only has to check the value's type tag is in the TypeSet.
-  // Specific object types don't have to be checked.
-  TypeTagOnly,
-
-  // Check if the value is in the TypeSet, including the object type if it's
-  // an object.
-  TypeSet
-};
-
-enum ReprotectCode { Reprotect = true, DontReprotect = false };
 
 // Rounding modes for round instructions.
 enum class RoundingMode { Down, Up, NearestTiesToEven, TowardsZero };

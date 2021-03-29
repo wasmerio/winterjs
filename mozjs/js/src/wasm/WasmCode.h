@@ -328,7 +328,6 @@ struct MetadataCacheablePod {
   Maybe<uint32_t> startFuncIndex;
   Maybe<uint32_t> nameCustomSectionIndex;
   bool filenameIsURL;
-  bool v128Enabled;
   bool omitsBoundsChecks;
   bool usesDuplicateImports;
 
@@ -338,7 +337,6 @@ struct MetadataCacheablePod {
         minMemoryLength(0),
         globalDataLength(0),
         filenameIsURL(false),
-        v128Enabled(false),
         omitsBoundsChecks(false),
         usesDuplicateImports(false) {}
 };
@@ -436,6 +434,9 @@ struct MetadataTier {
   FuncImportVector funcImports;
   FuncExportVector funcExports;
   StackMaps stackMaps;
+#ifdef ENABLE_WASM_EXCEPTIONS
+  WasmTryNoteVector tryNotes;
+#endif
 
   // Debug information, not serialized.
   Uint32Vector debugTrapFarJumpOffsets;
@@ -600,6 +601,9 @@ class CodeTier {
   }
 
   const CodeRange* lookupRange(const void* pc) const;
+#ifdef ENABLE_WASM_EXCEPTIONS
+  const WasmTryNote* lookupWasmTryNote(const void* pc) const;
+#endif
 
   size_t serializedSize() const;
   uint8_t* serialize(uint8_t* cursor, const LinkData& linkData) const;
@@ -732,6 +736,9 @@ class Code : public ShareableBase<Code> {
   const CallSite* lookupCallSite(void* returnAddress) const;
   const CodeRange* lookupFuncRange(void* pc) const;
   const StackMap* lookupStackMap(uint8_t* nextPC) const;
+#ifdef ENABLE_WASM_EXCEPTIONS
+  const WasmTryNote* lookupWasmTryNote(void* pc, Tier* tier) const;
+#endif
   bool containsCodePC(const void* pc) const;
   bool lookupTrap(void* pc, Trap* trap, BytecodeOffset* bytecode) const;
 

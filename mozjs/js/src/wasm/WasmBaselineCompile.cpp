@@ -1853,9 +1853,9 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
   using LocalVector = Vector<Local, 16, SystemAllocPolicy>;
 
   // Initialize `localInfo` based on the types of `locals` and `args`.
-  MOZ_MUST_USE bool setupLocals(const ValTypeVector& locals,
-                                const ArgTypeVector& args, bool debugEnabled,
-                                LocalVector* localInfo) {
+  [[nodiscard]] bool setupLocals(const ValTypeVector& locals,
+                                 const ArgTypeVector& args, bool debugEnabled,
+                                 LocalVector* localInfo) {
     if (!localInfo->reserve(locals.length())) {
       return false;
     }
@@ -3114,6 +3114,18 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   using BCESet = uint64_t;
 
+  // Information stored in the control node for generating exception handling
+  // landing pads.
+
+  struct CatchInfo {
+    uint32_t eventIndex;      // Index for the associated exception.
+    NonAssertingLabel label;  // The entry label for the handler.
+
+    explicit CatchInfo(uint32_t eventIndex_) : eventIndex(eventIndex_) {}
+  };
+
+  using CatchInfoVector = Vector<CatchInfo, 0, SystemAllocPolicy>;
+
   // Control node, representing labels and stack heights at join points.
 
   struct Control {
@@ -3125,6 +3137,8 @@ class BaseCompiler final : public BaseCompilerInterface {
     BCESet bceSafeOnExit;          // Bounds check info flowing out of the item
     bool deadOnArrival;            // deadCode_ was set on entry to the region
     bool deadThenBranch;           // deadCode_ was set on exit from "then"
+    size_t tryNoteIndex;           // For tracking try branch code ranges.
+    CatchInfoVector catchInfos;    // Used for try-catch handlers.
 
     Control()
         : stackHeight(StackHeight::Invalid()),
@@ -4919,7 +4933,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     return Stk::StackResult(result.type(), offs);
   }
 
-  MOZ_MUST_USE bool pushResults(ResultType type, StackHeight resultsBase) {
+  [[nodiscard]] bool pushResults(ResultType type, StackHeight resultsBase) {
     if (type.empty()) {
       return true;
     }
@@ -4981,7 +4995,7 @@ class BaseCompiler final : public BaseCompilerInterface {
     return true;
   }
 
-  MOZ_MUST_USE bool pushBlockResults(ResultType type) {
+  [[nodiscard]] bool pushBlockResults(ResultType type) {
     return pushResults(type, controlItem().stackHeight);
   }
 
@@ -4989,7 +5003,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   // block with a control-flow join (loops) or split (if) to shuffle the
   // fallthrough block parameters into the locations expected by the
   // continuation.
-  MOZ_MUST_USE bool topBlockParams(ResultType type) {
+  [[nodiscard]] bool topBlockParams(ResultType type) {
     // This function should only be called when entering a block with a
     // control-flow join at the entry, where there are no live temporaries in
     // the current block.
@@ -5004,7 +5018,7 @@ class BaseCompiler final : public BaseCompilerInterface {
   // is taken, the stack results will be shuffled down into place.  For br_if
   // that has fallthrough, the parameters for the untaken branch flow through to
   // the continuation.
-  MOZ_MUST_USE bool topBranchParams(ResultType type, StackHeight* height) {
+  [[nodiscard]] bool topBranchParams(ResultType type, StackHeight* height) {
     if (type.empty()) {
       *height = fr.stackHeight();
       return true;
@@ -5953,8 +5967,8 @@ class BaseCompiler final : public BaseCompilerInterface {
         desc, instanceArg, builtin.identity, builtin.failureMode);
   }
 
-  MOZ_MUST_USE bool pushCallResults(const FunctionCall& call, ResultType type,
-                                    const StackResultsLoc& loc) {
+  [[nodiscard]] bool pushCallResults(const FunctionCall& call, ResultType type,
+                                     const StackResultsLoc& loc) {
 #if defined(JS_CODEGEN_ARM)
     // pushResults currently bypasses special case code in captureReturnedFxx()
     // that converts GPR results to FPR results for systemABI+softFP.  If we
@@ -7820,6 +7834,23 @@ class BaseCompiler final : public BaseCompilerInterface {
 
   void trap(Trap t) const { masm.wasmTrap(t, bytecodeOffset()); }
 
+#ifdef ENABLE_WASM_EXCEPTIONS
+  // Abstracted helper for throwing, used for throw, rethrow, and rethrowing
+  // at the end of a series of catch blocks (if none matched the exception).
+  [[nodiscard]] bool throwFrom(RegPtr exn, uint32_t lineOrBytecode) {
+    pushRef(exn);
+
+    // ThrowException invokes a trap, and the rest is dead code.
+    if (!emitInstanceCall(lineOrBytecode, SASigThrowException)) {
+      return false;
+    }
+    freeRef(popRef());
+    deadCode_ = true;
+
+    return true;
+  }
+#endif
+
   ////////////////////////////////////////////////////////////
   //
   // Object support.
@@ -8022,8 +8053,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   // Lhs "when applicable".
 
   template <typename Cond, typename Lhs, typename Rhs>
-  MOZ_MUST_USE bool jumpConditionalWithResults(BranchState* b, Cond cond,
-                                               Lhs lhs, Rhs rhs) {
+  [[nodiscard]] bool jumpConditionalWithResults(BranchState* b, Cond cond,
+                                                Lhs lhs, Rhs rhs) {
     if (b->hasBlockResults()) {
       StackHeight resultsBase(0);
       if (!topBranchParams(b->resultType, &resultsBase)) {
@@ -8055,11 +8086,11 @@ class BaseCompiler final : public BaseCompilerInterface {
   // then the compiler MUST instead call resetLatentOp() to reset the state.
 
   template <typename Cond>
-  MOZ_MUST_USE bool sniffConditionalControlCmp(Cond compareOp,
-                                               ValType operandType);
-  MOZ_MUST_USE bool sniffConditionalControlEqz(ValType operandType);
+  [[nodiscard]] bool sniffConditionalControlCmp(Cond compareOp,
+                                                ValType operandType);
+  [[nodiscard]] bool sniffConditionalControlEqz(ValType operandType);
   void emitBranchSetup(BranchState* b);
-  MOZ_MUST_USE bool emitBranchPerform(BranchState* b);
+  [[nodiscard]] bool emitBranchPerform(BranchState* b);
 
   //////////////////////////////////////////////////////////////////////
 
@@ -8069,6 +8100,10 @@ class BaseCompiler final : public BaseCompilerInterface {
   [[nodiscard]] bool emitIf();
   [[nodiscard]] bool emitElse();
 #ifdef ENABLE_WASM_EXCEPTIONS
+  // Used for common setup for catch and catch_all.
+  void emitCatchSetup(LabelKind kind, Control& tryCatch,
+                      const ResultType& resultType);
+
   [[nodiscard]] bool emitTry();
   [[nodiscard]] bool emitCatch();
   [[nodiscard]] bool emitThrow();
@@ -8119,15 +8154,18 @@ class BaseCompiler final : public BaseCompilerInterface {
   template <bool isSetLocal>
   [[nodiscard]] bool emitSetOrTeeLocal(uint32_t slot);
 
-  MOZ_MUST_USE bool endBlock(ResultType type);
-  MOZ_MUST_USE bool endIfThen(ResultType type);
-  MOZ_MUST_USE bool endIfThenElse(ResultType type);
+  [[nodiscard]] bool endBlock(ResultType type);
+  [[nodiscard]] bool endIfThen(ResultType type);
+  [[nodiscard]] bool endIfThenElse(ResultType type);
+#ifdef ENABLE_WASM_EXCEPTIONS
+  [[nodiscard]] bool endTryCatch(ResultType type);
+#endif
 
   void doReturn(ContinuationKind kind);
   void pushReturnValueOfCall(const FunctionCall& call, MIRType type);
 
-  MOZ_MUST_USE bool pushStackResultsForCall(const ResultType& type, RegPtr temp,
-                                            StackResultsLoc* loc);
+  [[nodiscard]] bool pushStackResultsForCall(const ResultType& type,
+                                             RegPtr temp, StackResultsLoc* loc);
   void popStackResultsAfterCall(const StackResultsLoc& results,
                                 uint32_t stackArgBytes);
 
@@ -8336,6 +8374,8 @@ class BaseCompiler final : public BaseCompilerInterface {
   [[nodiscard]] bool emitLoadSplat(Scalar::Type viewType);
   [[nodiscard]] bool emitLoadZero(Scalar::Type viewType);
   [[nodiscard]] bool emitLoadExtend(Scalar::Type viewType);
+  [[nodiscard]] bool emitLoadLane(uint32_t laneSize);
+  [[nodiscard]] bool emitStoreLane(uint32_t laneSize);
   [[nodiscard]] bool emitBitselect();
   [[nodiscard]] bool emitVectorShuffle();
   [[nodiscard]] bool emitVectorShiftRightI64x2(bool isUnsigned);
@@ -9994,10 +10034,12 @@ bool BaseCompiler::emitEnd() {
       break;
 #ifdef ENABLE_WASM_EXCEPTIONS
     case LabelKind::Try:
-      MOZ_CRASH("NYI");
+      MOZ_CRASH("Try-catch block cannot end without catch.");
       break;
     case LabelKind::Catch:
-      MOZ_CRASH("NYI");
+      if (!endTryCatch(type)) {
+        return false;
+      }
       break;
 #endif
   }
@@ -10191,11 +10233,61 @@ bool BaseCompiler::emitTry() {
     return false;
   }
 
-  if (deadCode_) {
-    return true;
+  if (!deadCode_) {
+    // Simplifies jumping out, but it is also necessary so that control
+    // can re-enter the catch handler without restoring registers.
+    sync();
   }
 
-  MOZ_CRASH("NYI");
+  initControl(controlItem(), params);
+
+  if (!deadCode_) {
+    // Be conservative for BCE due to complex control flow in try blocks.
+    controlItem().bceSafeOnExit = 0;
+    // Mark the beginning of the try block, the rest is filled in by catch.
+    controlItem().tryNoteIndex = masm.wasmStartTry();
+  }
+
+  return true;
+}
+
+void BaseCompiler::emitCatchSetup(LabelKind kind, Control& tryCatch,
+                                  const ResultType& resultType) {
+  // Catch ends the try or last catch, so we finish this like endIfThen.
+  if (deadCode_) {
+    fr.resetStackHeight(tryCatch.stackHeight, resultType);
+    popValueStackTo(tryCatch.stackSize);
+  } else {
+    MOZ_ASSERT(stk_.length() == tryCatch.stackSize + resultType.length());
+    // Try jumps to the end of the try-catch block unless a throw is done.
+    popBlockResults(resultType, tryCatch.stackHeight, ContinuationKind::Jump);
+    freeResultRegisters(resultType);
+    MOZ_ASSERT(!tryCatch.deadOnArrival);
+  }
+
+  // Reset to this "catch" branch.
+  deadCode_ = tryCatch.deadOnArrival;
+
+  // We use the empty result type here because catch does *not* take the
+  // try-catch block parameters.
+  fr.resetStackHeight(tryCatch.stackHeight, ResultType::Empty());
+
+  if (deadCode_) {
+    return;
+  }
+
+  bceSafe_ = 0;
+
+  // The end of the previous try/catch jumps to the join point.
+  masm.jump(&tryCatch.label);
+
+  // Note end of try block for finding the catch block target. This needs
+  // to happen after the stack is reset to the correct height.
+  if (kind == LabelKind::Try) {
+    WasmTryNoteVector& tryNotes = masm.tryNotes();
+    WasmTryNote& tryNote = tryNotes[controlItem().tryNoteIndex];
+    tryNote.end = masm.currentOffset();
+  }
 }
 
 bool BaseCompiler::emitCatch() {
@@ -10209,14 +10301,181 @@ bool BaseCompiler::emitCatch() {
     return false;
   }
 
+  Control& tryCatch = controlItem();
+
+  emitCatchSetup(kind, tryCatch, resultType);
+
   if (deadCode_) {
     return true;
   }
 
-  MOZ_CRASH("NYI");
+  // Construct info used for the exception landing pad.
+  CatchInfo catchInfo(eventIndex);
+  if (!tryCatch.catchInfos.emplaceBack(catchInfo)) {
+    return false;
+  }
+
+  masm.bind(&tryCatch.catchInfos.back().label);
+
+  // Extract the arguments in the exception package and push them.
+  const ResultType params = moduleEnv_.events[eventIndex].resultType();
+
+  const uint32_t dataOffset =
+      NativeObject::getFixedSlotOffset(ArrayBufferObject::DATA_SLOT);
+
+  // The code in the landing pad guarantees us that the exception reference
+  // is live in this register.
+  RegPtr exn = RegPtr(WasmExceptionReg);
+  needRef(exn);
+  RegPtr scratch = needRef();
+
+  masm.unboxObject(Address(exn, WasmRuntimeExceptionObject::offsetOfValues()),
+                   scratch);
+  freeRef(exn);
+
+  masm.loadPtr(Address(scratch, dataOffset), scratch);
+  size_t argOffset = 0;
+  for (uint32_t i = 0; i < params.length(); i++) {
+    switch (params[i].kind()) {
+      case ValType::I32: {
+        RegI32 reg = needI32();
+        masm.load32(Address(scratch, argOffset), reg);
+        pushI32(reg);
+        break;
+      }
+      case ValType::I64: {
+        RegI64 reg = needI64();
+        masm.load64(Address(scratch, argOffset), reg);
+        pushI64(reg);
+        break;
+      }
+      case ValType::F32: {
+        RegF32 reg = needF32();
+        masm.loadFloat32(Address(scratch, argOffset), reg);
+        pushF32(reg);
+        break;
+      }
+      case ValType::F64: {
+        RegF64 reg = needF64();
+        masm.loadDouble(Address(scratch, argOffset), reg);
+        pushF64(reg);
+        break;
+      }
+      case ValType::V128: {
+#  ifdef ENABLE_WASM_SIMD
+        RegV128 reg = needV128();
+        masm.loadUnalignedSimd128(Address(scratch, argOffset), reg);
+        pushV128(reg);
+        break;
+#  else
+        MOZ_CRASH("No SIMD support");
+#  endif
+      }
+      case ValType::Ref:
+        MOZ_CRASH("NYI - no reftype support");
+    }
+    argOffset += SizeOf(params[i]);
+  }
+  freeRef(scratch);
+
+  return true;
+}
+
+bool BaseCompiler::endTryCatch(ResultType type) {
+  uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
+
+  Control& tryCatch = controlItem();
+
+  if (deadCode_) {
+    fr.resetStackHeight(tryCatch.stackHeight, type);
+    popValueStackTo(tryCatch.stackSize);
+  } else {
+    MOZ_ASSERT(stk_.length() == tryCatch.stackSize + type.length());
+    // Assume we have a control join, so place results in block result
+    // allocations and also handle the implicit exception reference.
+    popBlockResults(type, tryCatch.stackHeight, ContinuationKind::Jump);
+    // Since we will emit a landing pad after this and jump over it to get to
+    // the control join, we free these here and re-capture at the join.
+    freeResultRegisters(type);
+    masm.jump(&tryCatch.label);
+    MOZ_ASSERT(!tryCatch.bceSafeOnExit);
+    MOZ_ASSERT(!tryCatch.deadOnArrival);
+  }
+
+  deadCode_ = tryCatch.deadOnArrival;
+
+  if (deadCode_) {
+    return true;
+  }
+
+  // Create landing pad for all catch handlers in this block.
+  masm.bind(&tryCatch.otherLabel);
+
+  // The stack height also needs to be set not for a block result, but for the
+  // entry to the exception handlers. This is reset again below for the join.
+  StackHeight prePadHeight = fr.stackHeight();
+  fr.setStackHeight(tryCatch.stackHeight);
+
+  WasmTryNoteVector& tryNotes = masm.tryNotes();
+  WasmTryNote& tryNote = tryNotes[controlItem().tryNoteIndex];
+  tryNote.entryPoint = masm.currentOffset();
+  tryNote.framePushed = masm.framePushed();
+
+  RegPtr exn = RegPtr(WasmExceptionReg);
+  needRef(exn);
+
+  // Explicitly restore the tls data in case the throw was across instances.
+  fr.loadTlsPtr(WasmTlsReg);
+  masm.loadWasmPinnedRegsFromTls();
+  RegPtr scratch = needRef();
+  RegPtr scratch2 = needRef();
+  masm.switchToWasmTlsRealm(scratch, scratch2);
+  freeRef(scratch2);
+
+  // Make sure that the exception pointer is saved across the call.
+  masm.movePtr(exn, scratch);
+  pushRef(exn);
+  pushRef(scratch);
+
+  if (!emitInstanceCall(lineOrBytecode, SASigGetLocalExceptionIndex)) {
+    return false;
+  }
+
+  // Prevent conflict with exn register when popping this result.
+  needRef(exn);
+  RegI32 index = popI32();
+  freeRef(exn);
+
+  // Ensure that the exception is materialized before branching.
+  exn = popRef(RegPtr(WasmExceptionReg));
+
+  for (CatchInfo& info : tryCatch.catchInfos) {
+    masm.branch32(Assembler::Equal, index, Imm32(info.eventIndex), &info.label);
+  }
+  freeI32(index);
+
+  // If none of the tag checks succeed, then we rethrow the exception.
+  if (!throwFrom(exn, lineOrBytecode)) {
+    return false;
+  }
+
+  // Reset stack height for join.
+  fr.setStackHeight(prePadHeight);
+
+  // Create join point.
+  if (tryCatch.label.used()) {
+    masm.bind(&tryCatch.label);
+  }
+
+  captureResultRegisters(type);
+  deadCode_ = tryCatch.deadOnArrival;
+  bceSafe_ = tryCatch.bceSafeOnExit;
+
+  return pushBlockResults(type);
 }
 
 bool BaseCompiler::emitThrow() {
+  uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
   uint32_t exnIndex;
   NothingVector unused_argValues;
 
@@ -10228,7 +10487,76 @@ bool BaseCompiler::emitThrow() {
     return true;
   }
 
-  MOZ_CRASH("NYI");
+  const ResultType& params = moduleEnv_.events[exnIndex].resultType();
+
+  // Measure space we need for all the args to put in the exception.
+  uint32_t exnBytes = 0;
+  for (size_t i = 0; i < params.length(); i++) {
+    exnBytes += SizeOf(params[i]);
+  }
+
+  // Create the new exception object that we will throw.
+  pushI32(exnIndex);
+  pushI32(exnBytes);
+  if (!emitInstanceCall(lineOrBytecode, SASigExceptionNew)) {
+    return false;
+  }
+
+  RegPtr exn = popRef();
+  // Create scratch register, to store the exception package values.
+  RegPtr scratch = needRef();
+  const uint32_t dataOffset =
+      NativeObject::getFixedSlotOffset(ArrayBufferObject::DATA_SLOT);
+
+  masm.unboxObject(Address(exn, WasmRuntimeExceptionObject::offsetOfValues()),
+                   scratch);
+  masm.loadPtr(Address(scratch, dataOffset), scratch);
+
+  size_t argOffset = exnBytes;
+  for (int32_t i = params.length() - 1; i >= 0; i--) {
+    argOffset -= SizeOf(params[i]);
+    switch (params[i].kind()) {
+      case ValType::I32: {
+        RegI32 reg = popI32();
+        masm.store32(reg, Address(scratch, argOffset));
+        freeI32(reg);
+        break;
+      }
+      case ValType::I64: {
+        RegI64 reg = popI64();
+        masm.store64(reg, Address(scratch, argOffset));
+        freeI64(reg);
+        break;
+      }
+      case ValType::F32: {
+        RegF32 reg = popF32();
+        masm.storeFloat32(reg, Address(scratch, argOffset));
+        freeF32(reg);
+        break;
+      }
+      case ValType::F64: {
+        RegF64 reg = popF64();
+        masm.storeDouble(reg, Address(scratch, argOffset));
+        freeF64(reg);
+        break;
+      }
+      case ValType::V128: {
+#  ifdef ENABLE_WASM_SIMD
+        RegV128 reg = popV128();
+        masm.storeUnalignedSimd128(reg, Address(scratch, argOffset));
+        freeV128(reg);
+        break;
+#  else
+        MOZ_CRASH("No SIMD support");
+#  endif
+      }
+      case ValType::Ref:
+        MOZ_CRASH("NYI - no reftype support");
+    }
+  }
+  freeRef(scratch);
+
+  return throwFrom(exn, lineOrBytecode);
 }
 #endif
 
@@ -13250,6 +13578,58 @@ static void DotI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.widenDotInt16x8(rs, rsd);
 }
 
+static void ExtMulLowI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulLowInt8x16(rs, rsd);
+}
+
+static void ExtMulHighI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulHighInt8x16(rs, rsd);
+}
+
+static void ExtMulLowUI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulLowInt8x16(rs, rsd);
+}
+
+static void ExtMulHighUI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulHighInt8x16(rs, rsd);
+}
+
+static void ExtMulLowI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulLowInt16x8(rs, rsd);
+}
+
+static void ExtMulHighI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulHighInt16x8(rs, rsd);
+}
+
+static void ExtMulLowUI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulLowInt16x8(rs, rsd);
+}
+
+static void ExtMulHighUI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulHighInt16x8(rs, rsd);
+}
+
+static void ExtMulLowI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulLowInt32x4(rs, rsd);
+}
+
+static void ExtMulHighI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.extMulHighInt32x4(rs, rsd);
+}
+
+static void ExtMulLowUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulLowInt32x4(rs, rsd);
+}
+
+static void ExtMulHighUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.unsignedExtMulHighInt32x4(rs, rsd);
+}
+
+static void Q15MulrSatS(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
+  masm.q15MulrSatInt16x8(rs, rsd);
+}
+
 static void CmpI8x16(MacroAssembler& masm, Assembler::Condition cond,
                      RegV128 rs, RegV128 rsd) {
   masm.compareInt8x16(cond, rs, rsd);
@@ -13263,6 +13643,11 @@ static void CmpI16x8(MacroAssembler& masm, Assembler::Condition cond,
 static void CmpI32x4(MacroAssembler& masm, Assembler::Condition cond,
                      RegV128 rs, RegV128 rsd) {
   masm.compareInt32x4(cond, rs, rsd);
+}
+
+static void CmpI64x2(MacroAssembler& masm, Assembler::Condition cond,
+                     RegV128 rs, RegV128 rsd) {
+  masm.compareInt64x2(cond, rs, rsd);
 }
 
 #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
@@ -13590,6 +13975,22 @@ static void WidenHighUI16x8(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.unsignedWidenHighInt16x8(rs, rd);
 }
 
+static void WidenLowI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.widenLowInt32x4(rs, rd);
+}
+
+static void WidenHighI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.widenHighInt32x4(rs, rd);
+}
+
+static void WidenLowUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.unsignedWidenLowInt32x4(rs, rd);
+}
+
+static void WidenHighUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.unsignedWidenHighInt32x4(rs, rd);
+}
+
 static void AbsI8x16(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
   masm.absInt8x16(rs, rd);
 }
@@ -13713,6 +14114,10 @@ static void AllTrueI32x4(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
   masm.allTrueInt32x4(rs, rd);
 }
 
+static void AllTrueI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.allTrueInt64x2(rs, rd);
+}
+
 #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
 static void BitmaskI8x16(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
   masm.bitmaskInt8x16(rs, rd);
@@ -13724,6 +14129,10 @@ static void BitmaskI16x8(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
 
 static void BitmaskI32x4(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
   masm.bitmaskInt32x4(rs, rd);
+}
+
+static void BitmaskI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd) {
+  masm.bitmaskInt64x2(rs, rd);
 }
 
 static void Swizzle(MacroAssembler& masm, RegV128 rs, RegV128 rsd,
@@ -13746,6 +14155,11 @@ static void BitmaskI32x4(MacroAssembler& masm, RegV128 rs, RegI32 rd,
   masm.bitmaskInt32x4(rs, rd, temp);
 }
 
+static void BitmaskI64x2(MacroAssembler& masm, RegV128 rs, RegI32 rd,
+                         RegV128 temp) {
+  masm.bitmaskInt64x2(rs, rd, temp);
+}
+
 static void Swizzle(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
   masm.swizzleInt8x16(rs, rsd);
 }
@@ -13766,6 +14180,32 @@ static void ConvertF32x4ToI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
 static void ConvertF32x4ToUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd,
                                  RegV128 temp) {
   masm.unsignedTruncSatFloat32x4ToInt32x4(rs, rd, temp);
+}
+
+static void ConvertI32x4ToF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.convertInt32x4ToFloat64x2(rs, rd);
+}
+
+static void ConvertUI32x4ToF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.unsignedConvertInt32x4ToFloat64x2(rs, rd);
+}
+
+static void ConvertF64x2ToI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd,
+                                RegV128 temp) {
+  masm.truncSatFloat64x2ToInt32x4(rs, rd, temp);
+}
+
+static void ConvertF64x2ToUI32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd,
+                                 RegV128 temp) {
+  masm.unsignedTruncSatFloat64x2ToInt32x4(rs, rd, temp);
+}
+
+static void DemoteF64x2ToF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.convertFloat64x2ToFloat32x4(rs, rd);
+}
+
+static void PromoteF32x4ToF64x2(MacroAssembler& masm, RegV128 rs, RegV128 rd) {
+  masm.convertFloat32x4ToFloat64x2(rs, rd);
 }
 
 template <typename SourceType, typename DestType>
@@ -14002,6 +14442,123 @@ bool BaseCompiler::emitLoadExtend(Scalar::Type viewType) {
   return true;
 }
 
+bool BaseCompiler::emitLoadLane(uint32_t laneSize) {
+  Nothing nothing;
+  LinearMemoryAddress<Nothing> addr;
+  uint32_t laneIndex;
+  if (!iter_.readLoadLane(laneSize, &addr, &laneIndex, &nothing)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  RegV128 rsd = popV128();
+
+  Scalar::Type viewType;
+  ValType type;
+  switch (laneSize) {
+    case 1:
+      viewType = Scalar::Uint8;
+      type = ValType::I32;
+      break;
+    case 2:
+      viewType = Scalar::Uint16;
+      type = ValType::I32;
+      break;
+    case 4:
+      viewType = Scalar::Int32;
+      type = ValType::I32;
+      break;
+    case 8:
+      viewType = Scalar::Int64;
+      type = ValType::I64;
+      break;
+    default:
+      MOZ_CRASH("unsupported laneSize");
+  }
+
+  MemoryAccessDesc access(viewType, addr.align, addr.offset, bytecodeOffset());
+  if (!loadCommon(&access, AccessCheck(), type)) {
+    return false;
+  }
+
+  if (type == ValType::I32) {
+    RegI32 rs = popI32();
+    switch (laneSize) {
+      case 1:
+        masm.replaceLaneInt8x16(laneIndex, rs, rsd);
+        break;
+      case 2:
+        masm.replaceLaneInt16x8(laneIndex, rs, rsd);
+        break;
+      case 4:
+        masm.replaceLaneInt32x4(laneIndex, rs, rsd);
+        break;
+    }
+    freeI32(rs);
+  } else {
+    MOZ_ASSERT(type == ValType::I64);
+    RegI64 rs = popI64();
+    masm.replaceLaneInt64x2(laneIndex, rs, rsd);
+    freeI64(rs);
+  }
+
+  pushV128(rsd);
+
+  return true;
+}
+
+bool BaseCompiler::emitStoreLane(uint32_t laneSize) {
+  Nothing nothing;
+  LinearMemoryAddress<Nothing> addr;
+  uint32_t laneIndex;
+  if (!iter_.readStoreLane(laneSize, &addr, &laneIndex, &nothing)) {
+    return false;
+  }
+
+  if (deadCode_) {
+    return true;
+  }
+
+  RegV128 rs = popV128();
+  Scalar::Type viewType;
+  ValType type;
+  if (laneSize <= 4) {
+    RegI32 tmp = needI32();
+    switch (laneSize) {
+      case 1:
+        viewType = Scalar::Uint8;
+        masm.extractLaneInt8x16(laneIndex, rs, tmp);
+        break;
+      case 2:
+        viewType = Scalar::Uint16;
+        masm.extractLaneInt16x8(laneIndex, rs, tmp);
+        break;
+      case 4:
+        viewType = Scalar::Int32;
+        masm.extractLaneInt32x4(laneIndex, rs, tmp);
+        break;
+      default:
+        MOZ_CRASH("unsupported laneSize");
+    }
+    pushI32(tmp);
+    type = ValType::I32;
+  } else {
+    MOZ_ASSERT(laneSize == 8);
+    RegI64 tmp = needI64();
+    masm.extractLaneInt64x2(laneIndex, rs, tmp);
+    pushI64(tmp);
+    type = ValType::I64;
+    viewType = Scalar::Int64;
+  }
+  freeV128(rs);
+
+  MemoryAccessDesc access(viewType, addr.align, addr.offset, bytecodeOffset());
+  return storeCommon(&access, AccessCheck(), type);
+}
+
 bool BaseCompiler::emitBitselect() {
   Nothing unused_a, unused_b, unused_c;
 
@@ -14053,7 +14610,34 @@ bool BaseCompiler::emitVectorShuffle() {
 
   RegV128 rd, rs;
   pop2xV128(&rd, &rs);
-  masm.shuffleInt8x16(shuffleMask.bytes, rs, rd);
+
+  bool emitShuffle = true;
+
+#  ifdef ENABLE_WASM_SIMD_WORMHOLE
+  if (moduleEnv_.simdWormholeEnabled() && IsWormholeTrigger(shuffleMask)) {
+    emitShuffle = false;
+    switch (shuffleMask.bytes[15]) {
+      case 0:
+        masm.loadConstantSimd128(WormholeSignature(), rd);
+        break;
+#    if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+      case 1:
+        masm.vpmaddubsw(rs, rd, rd);
+        break;
+      case 2:
+        masm.vpmaddwd(Operand(rs), rd, rd);
+        break;
+#    endif
+      default:
+        return iter_.fail("Unrecognized wormhole opcode");
+    }
+  }
+#  endif
+
+  if (emitShuffle) {
+    masm.shuffleInt8x16(shuffleMask.bytes, rs, rd);
+  }
+
   freeV128(rs);
   pushV128(rd);
 
@@ -14244,12 +14828,6 @@ bool BaseCompiler::emitBody() {
 #  define CHECK_POINTER_COUNT \
     do {                      \
     } while (0)
-#endif
-
-#ifdef ENABLE_WASM_SIMD_EXPERIMENTAL
-#  define CHECK_SIMD_EXPERIMENTAL() (void)(0)
-#else
-#  define CHECK_SIMD_EXPERIMENTAL() break
 #endif
 
 #define CHECK(E) \
@@ -14971,7 +15549,7 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchSplat(SplatF32x4, ValType::F32));
           case uint32_t(SimdOp::F64x2Splat):
             CHECK_NEXT(dispatchSplat(SplatF64x2, ValType::F64));
-          case uint32_t(SimdOp::I8x16AnyTrue):
+          case uint32_t(SimdOp::V128AnyTrue):
           case uint32_t(SimdOp::I16x8AnyTrue):
           case uint32_t(SimdOp::I32x4AnyTrue):
             CHECK_NEXT(dispatchVectorReduction(AnyTrue));
@@ -14981,12 +15559,16 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorReduction(AllTrueI16x8));
           case uint32_t(SimdOp::I32x4AllTrue):
             CHECK_NEXT(dispatchVectorReduction(AllTrueI32x4));
+          case uint32_t(SimdOp::I64x2AllTrue):
+            CHECK_NEXT(dispatchVectorReduction(AllTrueI64x2));
           case uint32_t(SimdOp::I8x16Bitmask):
             CHECK_NEXT(dispatchVectorReduction(BitmaskI8x16));
           case uint32_t(SimdOp::I16x8Bitmask):
             CHECK_NEXT(dispatchVectorReduction(BitmaskI16x8));
           case uint32_t(SimdOp::I32x4Bitmask):
             CHECK_NEXT(dispatchVectorReduction(BitmaskI32x4));
+          case uint32_t(SimdOp::I64x2Bitmask):
+            CHECK_NEXT(dispatchVectorReduction(BitmaskI64x2));
           case uint32_t(SimdOp::I8x16ReplaceLane):
             CHECK_NEXT(dispatchReplaceLane(ReplaceLaneI8x16, ValType::I32, 16));
           case uint32_t(SimdOp::I16x8ReplaceLane):
@@ -15074,6 +15656,10 @@ bool BaseCompiler::emitBody() {
           case uint32_t(SimdOp::I32x4GeU):
             CHECK_NEXT(
                 dispatchVectorComparison(CmpUI32x4, Assembler::AboveOrEqual));
+          case uint32_t(SimdOp::I64x2Eq):
+            CHECK_NEXT(dispatchVectorComparison(CmpI64x2, Assembler::Equal));
+          case uint32_t(SimdOp::I64x2Ne):
+            CHECK_NEXT(dispatchVectorComparison(CmpI64x2, Assembler::NotEqual));
           case uint32_t(SimdOp::F32x4Eq):
             CHECK_NEXT(dispatchVectorComparison(CmpF32x4, Assembler::Equal));
           case uint32_t(SimdOp::F32x4Ne):
@@ -15222,6 +15808,32 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorBinary(PMinF64x2));
           case uint32_t(SimdOp::I32x4DotSI16x8):
             CHECK_NEXT(dispatchVectorBinary(DotI16x8));
+          case uint32_t(SimdOp::I16x8ExtMulLowSI8x16):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowI8x16));
+          case uint32_t(SimdOp::I16x8ExtMulHighSI8x16):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighI8x16));
+          case uint32_t(SimdOp::I16x8ExtMulLowUI8x16):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowUI8x16));
+          case uint32_t(SimdOp::I16x8ExtMulHighUI8x16):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighUI8x16));
+          case uint32_t(SimdOp::I32x4ExtMulLowSI16x8):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowI16x8));
+          case uint32_t(SimdOp::I32x4ExtMulHighSI16x8):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighI16x8));
+          case uint32_t(SimdOp::I32x4ExtMulLowUI16x8):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowUI16x8));
+          case uint32_t(SimdOp::I32x4ExtMulHighUI16x8):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighUI16x8));
+          case uint32_t(SimdOp::I64x2ExtMulLowSI32x4):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowI32x4));
+          case uint32_t(SimdOp::I64x2ExtMulHighSI32x4):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighI32x4));
+          case uint32_t(SimdOp::I64x2ExtMulLowUI32x4):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulLowUI32x4));
+          case uint32_t(SimdOp::I64x2ExtMulHighUI32x4):
+            CHECK_NEXT(dispatchVectorBinary(ExtMulHighUI32x4));
+          case uint32_t(SimdOp::I16x8Q15MulrSatS):
+            CHECK_NEXT(dispatchVectorBinary(Q15MulrSatS));
           case uint32_t(SimdOp::I8x16Neg):
             CHECK_NEXT(dispatchVectorUnary(NegI8x16));
           case uint32_t(SimdOp::I16x8Neg):
@@ -15250,6 +15862,14 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorUnary(ConvertF32x4ToUI32x4));
           case uint32_t(SimdOp::I64x2Neg):
             CHECK_NEXT(dispatchVectorUnary(NegI64x2));
+          case uint32_t(SimdOp::I64x2WidenLowSI32x4):
+            CHECK_NEXT(dispatchVectorUnary(WidenLowI32x4));
+          case uint32_t(SimdOp::I64x2WidenHighSI32x4):
+            CHECK_NEXT(dispatchVectorUnary(WidenHighI32x4));
+          case uint32_t(SimdOp::I64x2WidenLowUI32x4):
+            CHECK_NEXT(dispatchVectorUnary(WidenLowUI32x4));
+          case uint32_t(SimdOp::I64x2WidenHighUI32x4):
+            CHECK_NEXT(dispatchVectorUnary(WidenHighUI32x4));
           case uint32_t(SimdOp::F32x4Abs):
             CHECK_NEXT(dispatchVectorUnary(AbsF32x4));
           case uint32_t(SimdOp::F32x4Neg):
@@ -15260,6 +15880,18 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(dispatchVectorUnary(ConvertI32x4ToF32x4));
           case uint32_t(SimdOp::F32x4ConvertUI32x4):
             CHECK_NEXT(dispatchVectorUnary(ConvertUI32x4ToF32x4));
+          case uint32_t(SimdOp::F32x4DemoteF64x2Zero):
+            CHECK_NEXT(dispatchVectorUnary(DemoteF64x2ToF32x4));
+          case uint32_t(SimdOp::F64x2PromoteLowF32x4):
+            CHECK_NEXT(dispatchVectorUnary(PromoteF32x4ToF64x2));
+          case uint32_t(SimdOp::F64x2ConvertLowI32x4S):
+            CHECK_NEXT(dispatchVectorUnary(ConvertI32x4ToF64x2));
+          case uint32_t(SimdOp::F64x2ConvertLowI32x4U):
+            CHECK_NEXT(dispatchVectorUnary(ConvertUI32x4ToF64x2));
+          case uint32_t(SimdOp::I32x4TruncSatF64x2SZero):
+            CHECK_NEXT(dispatchVectorUnary(ConvertF64x2ToI32x4));
+          case uint32_t(SimdOp::I32x4TruncSatF64x2UZero):
+            CHECK_NEXT(dispatchVectorUnary(ConvertF64x2ToUI32x4));
           case uint32_t(SimdOp::F64x2Abs):
             CHECK_NEXT(dispatchVectorUnary(AbsF64x2));
           case uint32_t(SimdOp::F64x2Neg):
@@ -15354,6 +15986,22 @@ bool BaseCompiler::emitBody() {
             CHECK_NEXT(emitLoadZero(Scalar::Float64));
           case uint32_t(SimdOp::V128Store):
             CHECK_NEXT(emitStore(ValType::V128, Scalar::Simd128));
+          case uint32_t(SimdOp::V128Load8Lane):
+            CHECK_NEXT(emitLoadLane(1));
+          case uint32_t(SimdOp::V128Load16Lane):
+            CHECK_NEXT(emitLoadLane(2));
+          case uint32_t(SimdOp::V128Load32Lane):
+            CHECK_NEXT(emitLoadLane(4));
+          case uint32_t(SimdOp::V128Load64Lane):
+            CHECK_NEXT(emitLoadLane(8));
+          case uint32_t(SimdOp::V128Store8Lane):
+            CHECK_NEXT(emitStoreLane(1));
+          case uint32_t(SimdOp::V128Store16Lane):
+            CHECK_NEXT(emitStoreLane(2));
+          case uint32_t(SimdOp::V128Store32Lane):
+            CHECK_NEXT(emitStoreLane(4));
+          case uint32_t(SimdOp::V128Store64Lane):
+            CHECK_NEXT(emitStoreLane(8));
           default:
             break;
         }  // switch (op.b1)
@@ -15656,7 +16304,6 @@ bool BaseCompiler::emitBody() {
 #undef NEXT
 #undef CHECK_NEXT
 #undef CHECK_POINTER_COUNT
-#undef CHECK_SIMD_EXPERIMENTAL
 #undef dispatchBinary
 #undef dispatchUnary
 #undef dispatchComparison

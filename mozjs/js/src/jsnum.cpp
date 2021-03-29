@@ -26,7 +26,7 @@
 #include "jstypes.h"
 
 #include "double-conversion/double-conversion.h"
-#include "frontend/ParserAtom.h"  // frontend::ParserAtom, frontend::ParserAtomsTable
+#include "frontend/ParserAtom.h"  // frontend::{ParserAtomsTable, TaggedParserAtomIndex}
 #include "jit/InlinableNatives.h"
 #include "js/CharacterEncoding.h"
 #include "js/Conversions.h"
@@ -43,6 +43,7 @@
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/Compartment-inl.h"  // For js::UnwrapAndTypeCheckThis
 #include "vm/NativeObject-inl.h"
@@ -861,7 +862,7 @@ JSAtom* js::Int32ToAtom(JSContext* cx, int32_t si) {
   return atom;
 }
 
-const frontend::ParserAtom* js::Int32ToParserAtom(
+frontend::TaggedParserAtomIndex js::Int32ToParserAtom(
     JSContext* cx, frontend::ParserAtomsTable& parserAtoms, int32_t si) {
   char buffer[JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1];
   size_t length;
@@ -1120,31 +1121,33 @@ static bool ComputePrecisionInRange(JSContext* cx, int minPrecision,
   return false;
 }
 
-static bool DToStrResult(JSContext* cx, double d, JSDToStrMode mode,
-                         int precision, const CallArgs& args) {
-  if (!EnsureDtoaState(cx)) {
-    return false;
-  }
+static constexpr size_t DoubleToStrResultBufSize = 128;
 
-  char buf[DTOSTR_VARIABLE_BUFFER_SIZE(MAX_PRECISION + 1)];
-  char* numStr = js_dtostr(cx->dtoaState, buf, sizeof buf, mode, precision, d);
-  if (!numStr) {
-    JS_ReportOutOfMemory(cx);
-    return false;
-  }
+template <typename Op>
+[[nodiscard]] static bool DoubleToStrResult(JSContext* cx, const CallArgs& args,
+                                            Op op) {
+  char buf[DoubleToStrResultBufSize];
+
+  const auto& converter =
+      double_conversion::DoubleToStringConverter::EcmaScriptConverter();
+  double_conversion::StringBuilder builder(buf, sizeof(buf));
+
+  bool ok = op(converter, builder);
+  MOZ_RELEASE_ASSERT(ok);
+
+  const char* numStr = builder.Finalize();
+  MOZ_ASSERT(numStr == buf);
+
   JSString* str = NewStringCopyZ<CanGC>(cx, numStr);
   if (!str) {
     return false;
   }
+
   args.rval().setString(str);
   return true;
 }
 
-/*
- * In the following three implementations, we allow a larger range of precision
- * than ECMA requires; this is permitted by ECMA-262.
- */
-// ES 2017 draft rev f8a9be8ea4bd97237d176907a1e3080dce20c68f 20.1.3.3.
+// ES 2021 draft 21.1.3.3.
 static bool num_toFixed(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1154,7 +1157,7 @@ static bool num_toFixed(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Steps 2-3.
+  // Steps 2-5.
   int precision;
   if (args.length() == 0) {
     precision = 0;
@@ -1169,13 +1172,11 @@ static bool num_toFixed(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  // Step 4.
+  // Step 6.
   if (mozilla::IsNaN(d)) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-
-  // Steps 5-7, 9 (optimized path for Infinity).
   if (mozilla::IsInfinite(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
@@ -1186,11 +1187,41 @@ static bool num_toFixed(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
 
-  // Steps 5-9.
-  return DToStrResult(cx, d, DTOSTR_FIXED, precision, args);
+  // Steps 7-10 for very large numbers.
+  if (d <= -1e21 || d >= 1e+21) {
+    JSString* s = NumberToString<CanGC>(cx, d);
+    if (!s) {
+      return false;
+    }
+
+    args.rval().setString(s);
+    return true;
+  }
+
+  // Steps 7-12.
+
+  // DoubleToStringConverter::ToFixed is documented as requiring a buffer size
+  // of:
+  //
+  //   1 + kMaxFixedDigitsBeforePoint + 1 + kMaxFixedDigitsAfterPoint + 1
+  //   (one additional character for the sign, one for the decimal point,
+  //      and one for the null terminator)
+  //
+  // We already ensured there are at most 21 digits before the point, and
+  // MAX_PRECISION digits after the point.
+  static_assert(1 + 21 + 1 + MAX_PRECISION + 1 <= DoubleToStrResultBufSize);
+
+  // The double-conversion library by default has a kMaxFixedDigitsAfterPoint of
+  // 60. Assert our modified version supports at least MAX_PRECISION (100).
+  using DToSConverter = double_conversion::DoubleToStringConverter;
+  static_assert(DToSConverter::kMaxFixedDigitsAfterPoint >= MAX_PRECISION);
+
+  return DoubleToStrResult(cx, args, [&](auto& converter, auto& builder) {
+    return converter.ToFixed(d, precision, &builder);
+  });
 }
 
-// ES 2017 draft rev f8a9be8ea4bd97237d176907a1e3080dce20c68f 20.1.3.2.
+// ES 2021 draft 21.1.3.2.
 static bool num_toExponential(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1202,9 +1233,7 @@ static bool num_toExponential(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 2.
   double prec = 0;
-  JSDToStrMode mode = DTOSTR_STANDARD_EXPONENTIAL;
   if (args.hasDefined(0)) {
-    mode = DTOSTR_EXPONENTIAL;
     if (!ToInteger(cx, args[0], &prec)) {
       return false;
     }
@@ -1218,8 +1247,6 @@ static bool num_toExponential(JSContext* cx, unsigned argc, Value* vp) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-
-  // Steps 5-7.
   if (mozilla::IsInfinite(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
@@ -1230,18 +1257,28 @@ static bool num_toExponential(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
 
-  // Steps 5-6, 8-15.
+  // Step 5.
   int precision = 0;
-  if (mode == DTOSTR_EXPONENTIAL) {
-    if (!ComputePrecisionInRange(cx, 0, MAX_PRECISION, prec, &precision)) {
-      return false;
-    }
+  if (!ComputePrecisionInRange(cx, 0, MAX_PRECISION, prec, &precision)) {
+    return false;
   }
 
-  return DToStrResult(cx, d, mode, precision + 1, args);
+  // Steps 6-15.
+
+  // DoubleToStringConverter::ToExponential is documented as adding at most 8
+  // characters on top of the requested digits: "the sign, the digit before the
+  // decimal point, the decimal point, the exponent character, the exponent's
+  // sign, and at most 3 exponent digits". In addition, the buffer must be able
+  // to hold the trailing '\0' character.
+  static_assert(MAX_PRECISION + 8 + 1 <= DoubleToStrResultBufSize);
+
+  return DoubleToStrResult(cx, args, [&](auto& converter, auto& builder) {
+    int requestedDigits = args.hasDefined(0) ? precision : -1;
+    return converter.ToExponential(d, requestedDigits, &builder);
+  });
 }
 
-// ES 2017 draft rev f8a9be8ea4bd97237d176907a1e3080dce20c68f 20.1.3.5.
+// ES 2021 draft 21.1.3.5.
 static bool num_toPrecision(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1273,8 +1310,6 @@ static bool num_toPrecision(JSContext* cx, unsigned argc, Value* vp) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-
-  // Steps 5-7.
   if (mozilla::IsInfinite(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
@@ -1285,13 +1320,24 @@ static bool num_toPrecision(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
 
-  // Steps 5-6, 8-14.
+  // Step 5.
   int precision = 0;
   if (!ComputePrecisionInRange(cx, 1, MAX_PRECISION, prec, &precision)) {
     return false;
   }
 
-  return DToStrResult(cx, d, DTOSTR_PRECISION, precision, args);
+  // Steps 6-14.
+
+  // DoubleToStringConverter::ToPrecision is documented as adding at most 7
+  // characters on top of the requested digits: "the sign, the decimal point,
+  // the exponent character, the exponent's sign, and at most 3 exponent
+  // digits". In addition, the buffer must be able to hold the trailing '\0'
+  // character.
+  static_assert(MAX_PRECISION + 7 + 1 <= DoubleToStrResultBufSize);
+
+  return DoubleToStrResult(cx, args, [&](auto& converter, auto& builder) {
+    return converter.ToPrecision(d, precision, &builder);
+  });
 }
 
 static const JSFunctionSpec number_methods[] = {
@@ -1669,7 +1715,7 @@ JSAtom* js::NumberToAtom(JSContext* cx, double d) {
   return atom;
 }
 
-const frontend::ParserAtom* js::NumberToParserAtom(
+frontend::TaggedParserAtomIndex js::NumberToParserAtom(
     JSContext* cx, frontend::ParserAtomsTable& parserAtoms, double d) {
   int32_t si;
   if (NumberEqualsInt32(d, &si)) {
@@ -1680,7 +1726,7 @@ const frontend::ParserAtom* js::NumberToParserAtom(
   char* numStr = FracNumberToCString(cx, &cbuf, d);
   if (!numStr) {
     ReportOutOfMemory(cx);
-    return nullptr;
+    return frontend::TaggedParserAtomIndex::null();
   }
   MOZ_ASSERT(!cbuf.dbuf && numStr >= cbuf.sbuf &&
              numStr < cbuf.sbuf + cbuf.sbufSize);

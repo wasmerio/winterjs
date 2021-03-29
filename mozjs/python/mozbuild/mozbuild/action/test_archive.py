@@ -54,7 +54,6 @@ TEST_HARNESS_BINS = [
 TEST_HARNESS_DLLS = ["crashinjectdll", "mozglue"]
 
 GMP_TEST_PLUGIN_DIRS = [
-    "gmp-clearkey/**",
     "gmp-fake/**",
     "gmp-fakeopenh264/**",
 ]
@@ -606,6 +605,7 @@ ARCHIVE_FILES = {
                 "node-http2/**",
                 "node-ip/**",
                 "dns-packet/**",
+                "odoh-wasm/**",
                 "remotexpcshelltests.py",
                 "runxpcshelltests.py",
                 "selftest.py",

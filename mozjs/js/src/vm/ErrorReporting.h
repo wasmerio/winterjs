@@ -96,11 +96,11 @@ extern void ReportCompileErrorUTF8(JSContext* cx, ErrorMetadata&& metadata,
  * script.  Returns true if the warning was successfully reported, false if an
  * error occurred.
  */
-extern MOZ_MUST_USE bool ReportCompileWarning(JSContext* cx,
-                                              ErrorMetadata&& metadata,
-                                              UniquePtr<JSErrorNotes> notes,
-                                              unsigned errorNumber,
-                                              va_list* args);
+[[nodiscard]] extern bool ReportCompileWarning(JSContext* cx,
+                                               ErrorMetadata&& metadata,
+                                               UniquePtr<JSErrorNotes> notes,
+                                               unsigned errorNumber,
+                                               va_list* args);
 
 class GlobalObject;
 
@@ -170,6 +170,14 @@ extern bool ExpandErrorArgumentsVA(JSContext* cx, JSErrorCallback callback,
                                    const char16_t** messageArgs,
                                    ErrorArgumentsType argumentsType,
                                    JSErrorNotes::Note* notep, va_list ap);
+
+/*
+ * If there is a pending exception, print it to stderr and clear it. Otherwise
+ * do nothing.
+ *
+ * For reporting bugs or unexpected errors in testing functions.
+ */
+extern void MaybePrintAndClearPendingException(JSContext* cx);
 
 }  // namespace js
 
