@@ -26,10 +26,12 @@
 
 #include "jstypes.h"
 
+#include "js/GCAnnotations.h"
 #include "js/HeapAPI.h"
 #include "js/RootingAPI.h"
+#include "js/TraceKind.h"
+#include "js/TracingAPI.h"
 #include "js/TypeDecls.h"
-#include "js/Utility.h"
 
 // All jsids with the low bit set are integer ids. This means the other type
 // tags must all be even.
@@ -150,6 +152,17 @@ struct PropertyKey {
     MOZ_ASSERT(PropertyKey::isNonIntAtom(str));
     return PropertyKey::fromRawBits(size_t(str) | JSID_TYPE_STRING);
   }
+
+  // Internal API!
+  // All string PropertyKeys are actually atomized.
+  MOZ_ALWAYS_INLINE bool isAtom() const { return isString(); }
+
+  MOZ_ALWAYS_INLINE bool isAtom(JSAtom* atom) const {
+    MOZ_ASSERT(PropertyKey::isNonIntAtom(atom));
+    return isAtom() && toAtom() == atom;
+  }
+
+  MOZ_ALWAYS_INLINE JSAtom* toAtom() const { return (JSAtom*)toString(); }
 
  private:
   static bool isNonIntAtom(JSAtom* atom);
@@ -321,6 +334,11 @@ class WrappedPtrOperations<JS::PropertyKey, Wrapper> {
   bool isWellKnownSymbol(JS::SymbolCode code) const {
     return id().isWellKnownSymbol(code);
   }
+
+  // Internal API
+  bool isAtom() const { return id().isAtom(); }
+  bool isAtom(JSAtom* atom) const { return id().isAtom(atom); }
+  JSAtom* toAtom() const { return id().toAtom(); }
 };
 
 }  // namespace js

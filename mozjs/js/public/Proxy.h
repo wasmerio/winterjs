@@ -9,13 +9,18 @@
 
 #include "mozilla/Maybe.h"
 
-#include "jsfriendapi.h"
+#include "jstypes.h"  // for JS_FRIEND_API, JS_FRIEND_DATA
 
 #include "js/Array.h"  // JS::IsArrayAnswer
 #include "js/CallNonGenericMethod.h"
 #include "js/Class.h"
+#include "js/HeapAPI.h"        // for ObjectIsMarkedBlack
+#include "js/Id.h"             // for jsid
 #include "js/Object.h"         // JS::GetClass
+#include "js/RootingAPI.h"     // for Handle, MutableHandle (ptr only)
 #include "js/shadow/Object.h"  // JS::shadow::Object
+#include "js/TypeDecls.h"  // for HandleObject, HandleId, HandleValue, MutableHandleIdVector, MutableHandleValue, MutableHand...
+#include "js/Value.h"  // for Value, AssertValueIsNotGray, UndefinedValue, ObjectOrNullValue
 
 namespace js {
 
@@ -371,7 +376,7 @@ class JS_FRIEND_API BaseProxyHandler {
 extern JS_FRIEND_DATA const JSClass ProxyClass;
 
 inline bool IsProxy(const JSObject* obj) {
-  return JS::GetClass(obj)->isProxy();
+  return JS::GetClass(obj)->isProxyObject();
 }
 
 namespace detail {
@@ -464,7 +469,11 @@ struct ProxyDataLayout {
   }
 };
 
-const uint32_t ProxyDataOffset = 2 * sizeof(void*);
+#ifdef JS_64BIT
+constexpr uint32_t ProxyDataOffset = 1 * sizeof(void*);
+#else
+constexpr uint32_t ProxyDataOffset = 2 * sizeof(void*);
+#endif
 
 inline ProxyDataLayout* GetProxyDataLayout(JSObject* obj) {
   MOZ_ASSERT(IsProxy(obj));

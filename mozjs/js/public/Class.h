@@ -218,11 +218,20 @@ class PropertyResult {
     size_t typedArrayIndex_;
   };
   Kind kind_ = Kind::NotFound;
+  bool ignoreProtoChain_ = false;
 
  public:
   PropertyResult() = default;
 
-  explicit operator bool() const { return isFound(); }
+  // When a property is not found, we may additionally indicate that the
+  // prototype chain should be ignored. This occurs for:
+  //  - An out-of-range numeric property on a TypedArrayObject.
+  //  - A resolve hook recursively calling itself as it sets the property.
+  bool isNotFound() const { return kind_ == Kind::NotFound; }
+  bool shouldIgnoreProtoChain() const {
+    MOZ_ASSERT(isNotFound());
+    return ignoreProtoChain_;
+  }
 
   bool isFound() const { return kind_ != Kind::NotFound; }
   bool isNonNativeProperty() const { return kind_ == Kind::NonNativeProperty; }
@@ -252,7 +261,8 @@ class PropertyResult {
     shape_ = propertyShape;
   }
 
-  void setNonNativeProperty() { kind_ = Kind::NonNativeProperty; }
+  void setTypedObjectProperty() { kind_ = Kind::NonNativeProperty; }
+  void setProxyProperty() { kind_ = Kind::NonNativeProperty; }
 
   void setDenseElement(uint32_t index) {
     kind_ = Kind::DenseElement;
@@ -262,6 +272,15 @@ class PropertyResult {
   void setTypedArrayElement(size_t index) {
     kind_ = Kind::TypedArrayElement;
     typedArrayIndex_ = index;
+  }
+
+  void setTypedArrayOutOfRange() {
+    kind_ = Kind::NotFound;
+    ignoreProtoChain_ = true;
+  }
+  void setRecursiveResolve() {
+    kind_ = Kind::NotFound;
+    ignoreProtoChain_ = true;
   }
 
   void trace(JSTracer* trc);
@@ -278,8 +297,8 @@ class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
   }
 
  public:
+  bool isNotFound() const { return value().isNotFound(); }
   bool isFound() const { return value().isFound(); }
-  explicit operator bool() const { return bool(value()); }
   js::Shape* shape() const { return value().shape(); }
   uint32_t denseElementIndex() const { return value().denseElementIndex(); }
   size_t typedArrayElementIndex() const {
@@ -289,6 +308,10 @@ class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
   bool isNonNativeProperty() const { return value().isNonNativeProperty(); }
   bool isDenseElement() const { return value().isDenseElement(); }
   bool isTypedArrayElement() const { return value().isTypedArrayElement(); }
+
+  bool shouldIgnoreProtoChain() const {
+    return value().shouldIgnoreProtoChain();
+  }
 };
 
 template <class Wrapper>
@@ -299,11 +322,14 @@ class MutableWrappedPtrOperations<JS::PropertyResult, Wrapper>
  public:
   void setNotFound() { value().setNotFound(); }
   void setNativeProperty(js::Shape* shape) { value().setNativeProperty(shape); }
-  void setNonNativeProperty() { value().setNonNativeProperty(); }
+  void setTypedObjectProperty() { value().setTypedObjectProperty(); }
+  void setProxyProperty() { value().setProxyProperty(); }
   void setDenseElement(uint32_t index) { value().setDenseElement(index); }
   void setTypedArrayElement(size_t index) {
     value().setTypedArrayElement(index);
   }
+  void setTypedArrayOutOfRange() { value().setTypedArrayOutOfRange(); }
+  void setRecursiveResolve() { value().setRecursiveResolve(); }
 };
 
 }  // namespace js
@@ -692,7 +718,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 28;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 29;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |
@@ -790,7 +816,19 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
    */
   static const uint32_t NON_NATIVE = JSCLASS_INTERNAL_FLAG2;
 
-  bool isNative() const { return !(flags & NON_NATIVE); }
+  // A JSObject created from a JSClass extends from one of:
+  //  - js::NativeObject
+  //  - js::ProxyObject
+  //
+  // While it is possible to introduce new families of objects, it is strongly
+  // discouraged. The JITs would be entirely unable to optimize them and testing
+  // coverage is low. The existing NativeObject and ProxyObject are extremely
+  // flexible and are able to represent the entire Gecko embedding requirements.
+  //
+  // NOTE: Internal to SpiderMonkey, there is an experimental js::TypedObject
+  //       object family for future WASM features.
+  bool isNativeObject() const { return !(flags & NON_NATIVE); }
+  bool isProxyObject() const { return flags & JSCLASS_IS_PROXY; }
 
   bool hasPrivate() const { return !!(flags & JSCLASS_HAS_PRIVATE); }
 
@@ -799,13 +837,11 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
   bool isJSFunction() const { return this == js::FunctionClassPtr; }
 
   bool nonProxyCallable() const {
-    MOZ_ASSERT(!isProxy());
+    MOZ_ASSERT(!isProxyObject());
     return isJSFunction() || getCall();
   }
 
   bool isGlobal() const { return flags & JSCLASS_IS_GLOBAL; }
-
-  bool isProxy() const { return flags & JSCLASS_IS_PROXY; }
 
   bool isDOMClass() const { return flags & JSCLASS_IS_DOMJSCLASS; }
 

@@ -166,11 +166,7 @@ void* TestMapAlignedPagesLastDitch(size_t length, size_t alignment) {
   return MapAlignedPagesLastDitch(length, alignment);
 }
 
-/*
- * We can only decommit unused pages if the hardcoded Arena
- * size matches the page size for the running process.
- */
-static inline bool DecommitEnabled() { return pageSize == ArenaSize; }
+bool DecommitEnabled() { return SystemPageSize() <= ArenaSize; }
 
 /* Returns the offset from the nearest aligned address at or below |region|. */
 static inline size_t OffsetFromAligned(void* region, size_t alignment) {
@@ -758,21 +754,15 @@ static void CheckDecommit(void* region, size_t length) {
   MOZ_ASSERT(OffsetFromAligned(region, ArenaSize) == 0);
   MOZ_ASSERT(length % ArenaSize == 0);
 
-  if (DecommitEnabled()) {
-    // We can't decommit part of a page.
-    MOZ_RELEASE_ASSERT(OffsetFromAligned(region, pageSize) == 0);
-    MOZ_RELEASE_ASSERT(length % pageSize == 0);
-  }
+  MOZ_RELEASE_ASSERT(OffsetFromAligned(region, pageSize) == 0);
+  MOZ_RELEASE_ASSERT(length % pageSize == 0);
 }
 
 bool MarkPagesUnusedSoft(void* region, size_t length) {
+  MOZ_ASSERT(DecommitEnabled());
   CheckDecommit(region, length);
 
   MOZ_MAKE_MEM_NOACCESS(region, length);
-
-  if (!DecommitEnabled()) {
-    return true;
-  }
 
 #if defined(XP_WIN)
   return VirtualAlloc(region, length, MEM_RESET,
@@ -809,6 +799,7 @@ bool MarkPagesUnusedHard(void* region, size_t length) {
 }
 
 void MarkPagesInUseSoft(void* region, size_t length) {
+  MOZ_ASSERT(DecommitEnabled());
   CheckDecommit(region, length);
 
 #if defined(XP_DARWIN)
@@ -898,15 +889,9 @@ void* AllocateMappedContent(int fd, size_t offset, size_t length,
     }
     UnmapInternal(reinterpret_cast<void*>(region), mappedLength);
     // If the offset or length are out of bounds, this call will fail.
-#ifdef JS_ENABLE_UWP
-    map = static_cast<uint8_t*>(
-        MapViewOfFileFromApp(hMap, FILE_MAP_COPY, ((ULONG64)offsetH << 32) | offsetL,
-                             alignedLength));
-#else
     map = static_cast<uint8_t*>(
         MapViewOfFileEx(hMap, FILE_MAP_COPY, offsetH, offsetL, alignedLength,
                         reinterpret_cast<void*>(region)));
-#endif
 
     // Retry if another thread mapped the address we were trying to use.
     if (map || GetLastError() != ERROR_INVALID_ADDRESS) {

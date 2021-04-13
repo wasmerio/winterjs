@@ -6,10 +6,13 @@ function wasmValid(mod) {
   assertEq(WebAssembly.validate(mod), true);
 }
 
-// Note: the pattern variable is ignored until compilation is implemented
-// for exception instructions, which allows checking error messages.
 function wasmInvalid(mod, pattern) {
   assertEq(WebAssembly.validate(mod), false);
+  assertErrorMessage(
+    () => new WebAssembly.Module(mod),
+    WebAssembly.CompileError,
+    pattern
+  );
 }
 
 const emptyType = { args: [], ret: VoidCode };
@@ -334,37 +337,8 @@ function testValidateExnPayload() {
   wasmInvalid(invalid1, /event index out of range/);
 }
 
-// Exception types with reference types are not supported yet.
-function testValidateExnWithRef() {
-  invalid0 = `(module
-                (event $exn (param externref))
-                (func try nop catch $exn drop end))`;
-  error0 = /exception with reference types not supported/;
-
-  invalid1 = `(module
-                (event $exn (param externref))
-                (func (param externref) (local.get 0) (throw $exn)))`;
-  error1 = /exception with reference types not supported/;
-
-  invalid2 = `(module
-                (event $exn (param funcref))
-                (func try nop catch $exn drop end))`;
-  error2 = /exception with reference types not supported/;
-
-  invalid3 = `(module
-                (event $exn (param funcref))
-                (func (param funcref) (local.get 0) (throw $exn)))`;
-  error3 = /exception with reference types not supported/;
-
-  wasmFailValidateText(invalid0, error0);
-  wasmFailValidateText(invalid1, error1);
-  wasmFailValidateText(invalid2, error2);
-  wasmFailValidateText(invalid3, error3);
-}
-
 testValidateDecode();
 testValidateThrow();
 testValidateTryCatch();
 testValidateCatch();
 testValidateExnPayload();
-testValidateExnWithRef();

@@ -195,8 +195,11 @@ ArrayObject* js::GetFunctionParameterNamesArray(JSContext* cx,
     for (size_t i = 0; i < fun->nargs(); i++, fi++) {
       MOZ_ASSERT(fi.argumentSlot() == i);
       if (JSAtom* atom = fi.name()) {
-        cx->markAtom(atom);
-        names[i].setString(atom);
+        // Skip any internal, non-identifier names, like for example ".args".
+        if (IsIdentifier(atom)) {
+          cx->markAtom(atom);
+          names[i].setString(atom);
+        }
       }
     }
   }
@@ -1253,7 +1256,7 @@ bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
 
         AutoRealm ar(cx, frameObj);
 
-        if (!frameObj->setGeneratorInfo(cx, genObj)) {
+        if (!DebuggerFrame::setGeneratorInfo(cx, frameObj, genObj)) {
           // This leaves `genObj` and `frameObj` unassociated. It's OK
           // because we won't pause again with this generator on the stack:
           // the caller will immediately discard `genObj` and unwind `frame`.
@@ -6036,11 +6039,9 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   if (!input.get().initForGlobal(cx)) {
     return false;
   }
-  frontend::CompilationStencil stencil(input.get());
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, input.get(),
-                                              stencil);
+  frontend::CompilationState compilationState(cx, allocScope, input.get());
   if (!compilationState.init(cx)) {
     return false;
   }
@@ -6048,7 +6049,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, stencil, compilationState,
+      /* foldConstants = */ true, compilationState,
       /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report

@@ -13,13 +13,8 @@
 #  include <algorithm>
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
 #  else
 #    include <unistd.h>
 #  endif
@@ -411,7 +406,7 @@ void CacheIRSpewer::valueProperty(const char* name, const Value& v) {
     }
 
     if (NativeObject* nobj =
-            object.isNative() ? &object.as<NativeObject>() : nullptr) {
+            object.is<NativeObject>() ? &object.as<NativeObject>() : nullptr) {
       j.beginListProperty("flags");
       {
         if (nobj->isIndexed()) {

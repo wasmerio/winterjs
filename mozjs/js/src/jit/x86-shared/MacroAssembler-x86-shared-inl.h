@@ -1331,11 +1331,8 @@ void MacroAssembler::interleaveLowInt8x16(FloatRegister rhs,
 
 void MacroAssembler::permuteInt8x16(const uint8_t lanes[16], FloatRegister src,
                                     FloatRegister dest) {
-  ScratchSimd128Scope scratch(*this);
-  loadConstantSimd128Int(SimdConstant::CreateX16((const int8_t*)lanes),
-                         scratch);
   moveSimd128Int(src, dest);
-  vpshufb(scratch, dest, dest);
+  vpshufbSimd128(SimdConstant::CreateX16((const int8_t*)lanes), dest);
 }
 
 void MacroAssembler::permuteLowInt16x8(const uint16_t lanes[4],
@@ -1389,8 +1386,7 @@ void MacroAssembler::allTrueInt8x16(FloatRegister src, Register dest) {
   vpmovmskb(xtmp, dest);
   // Now set dest to 1 if it is zero, otherwise to zero.
   testl(dest, dest);
-  setCC(Zero, dest);
-  movzbl(dest, dest);
+  emitSetRegisterIfZero(dest);
 }
 
 void MacroAssembler::allTrueInt16x8(FloatRegister src, Register dest) {
@@ -1404,8 +1400,7 @@ void MacroAssembler::allTrueInt16x8(FloatRegister src, Register dest) {
   vpmovmskb(xtmp, dest);
   // Now set dest to 1 if it is zero, otherwise to zero.
   testl(dest, dest);
-  setCC(Zero, dest);
-  movzbl(dest, dest);
+  emitSetRegisterIfZero(dest);
 }
 
 void MacroAssembler::allTrueInt32x4(FloatRegister src, Register dest) {
@@ -1419,8 +1414,7 @@ void MacroAssembler::allTrueInt32x4(FloatRegister src, Register dest) {
   vpmovmskb(xtmp, dest);
   // Now set dest to 1 if it is zero, otherwise to zero.
   testl(dest, dest);
-  setCC(Zero, dest);
-  movzbl(dest, dest);
+  emitSetRegisterIfZero(dest);
 }
 
 void MacroAssembler::allTrueInt64x2(FloatRegister src, Register dest) {
@@ -1434,8 +1428,7 @@ void MacroAssembler::allTrueInt64x2(FloatRegister src, Register dest) {
   vpmovmskb(xtmp, dest);
   // Now set dest to 1 if it is zero, otherwise to zero.
   testl(dest, dest);
-  setCC(Zero, dest);
-  movzbl(dest, dest);
+  emitSetRegisterIfZero(dest);
 }
 
 // Bitmask
@@ -2004,6 +1997,15 @@ void MacroAssembler::absInt32x4(FloatRegister src, FloatRegister dest) {
   vpabsd(Operand(src), dest);
 }
 
+void MacroAssembler::absInt64x2(FloatRegister src, FloatRegister dest) {
+  ScratchSimd128Scope scratch(*this);
+  vpshufd(ComputeShuffleMask(1, 1, 3, 3), src, scratch);
+  moveSimd128(src, dest);
+  vpsrad(Imm32(31), scratch, scratch);
+  vpxor(Operand(scratch), dest, dest);
+  vpsubq(Operand(scratch), dest, dest);
+}
+
 // Left shift by scalar
 
 void MacroAssembler::leftShiftInt8x16(Register rhs, FloatRegister lhsDest,
@@ -2206,6 +2208,13 @@ void MacroAssembler::bitwiseSelectSimd128(FloatRegister mask,
   MacroAssemblerX86Shared::selectSimd128(mask, onTrue, onFalse, temp, dest);
 }
 
+// Population count
+
+void MacroAssembler::popcntInt8x16(FloatRegister src, FloatRegister dest,
+                                   FloatRegister temp) {
+  MacroAssemblerX86Shared::popcntInt8x16(src, temp, dest);
+}
+
 // Comparisons (integer and floating-point)
 
 void MacroAssembler::compareInt8x16(Assembler::Condition cond,
@@ -2274,11 +2283,20 @@ void MacroAssembler::unsignedCompareInt32x4(Assembler::Condition cond,
                                                   lhsDest, temp1, temp2);
 }
 
-void MacroAssembler::compareInt64x2(Assembler::Condition cond,
-                                    FloatRegister rhs, FloatRegister lhsDest) {
-  MOZ_ASSERT(cond == Assembler::Condition::Equal ||
-             cond == Assembler::Condition::NotEqual);
-  MacroAssemblerX86Shared::compareInt64x2(lhsDest, Operand(rhs), cond, lhsDest);
+void MacroAssembler::compareForEqualityInt64x2(Assembler::Condition cond,
+                                               FloatRegister rhs,
+                                               FloatRegister lhsDest) {
+  MacroAssemblerX86Shared::compareForEqualityInt64x2(lhsDest, Operand(rhs),
+                                                     cond, lhsDest);
+}
+
+void MacroAssembler::compareForOrderingInt64x2(Assembler::Condition cond,
+                                               FloatRegister rhs,
+                                               FloatRegister lhsDest,
+                                               FloatRegister temp1,
+                                               FloatRegister temp2) {
+  MacroAssemblerX86Shared::compareForOrderingInt64x2(
+      lhsDest, Operand(rhs), cond, temp1, temp2, lhsDest);
 }
 
 void MacroAssembler::compareFloat32x4(Assembler::Condition cond,
@@ -2580,6 +2598,47 @@ void MacroAssembler::mulFloat64x2(const SimdConstant& rhs,
                                   FloatRegister lhsDest) {
   binarySimd128(rhs, lhsDest, &MacroAssembler::vmulpd,
                 &MacroAssembler::vmulpdSimd128);
+}
+
+// Pairwise add
+
+void MacroAssembler::extAddPairwiseInt8x16(FloatRegister src,
+                                           FloatRegister dest) {
+  ScratchSimd128Scope scratch(*this);
+  if (dest == src) {
+    moveSimd128(src, scratch);
+    src = scratch;
+  }
+  loadConstantSimd128Int(SimdConstant::SplatX16(1), dest);
+  vpmaddubsw(src, dest, dest);
+}
+
+void MacroAssembler::unsignedExtAddPairwiseInt8x16(FloatRegister src,
+                                                   FloatRegister dest) {
+  ScratchSimd128Scope scratch(*this);
+  moveSimd128(src, dest);
+  loadConstantSimd128Int(SimdConstant::SplatX16(1), scratch);
+  vpmaddubsw(scratch, dest, dest);
+}
+
+void MacroAssembler::extAddPairwiseInt16x8(FloatRegister src,
+                                           FloatRegister dest) {
+  ScratchSimd128Scope scratch(*this);
+  moveSimd128(src, dest);
+  loadConstantSimd128Int(SimdConstant::SplatX8(1), scratch);
+  vpmaddwd(Operand(scratch), dest, dest);
+}
+
+void MacroAssembler::unsignedExtAddPairwiseInt16x8(FloatRegister src,
+                                                   FloatRegister dest) {
+  ScratchSimd128Scope scratch(*this);
+  moveSimd128(src, dest);
+  loadConstantSimd128Int(SimdConstant::SplatX8(0x8000), scratch);
+  vpxor(scratch, dest, dest);
+  loadConstantSimd128Int(SimdConstant::SplatX8(1), scratch);
+  vpmaddwd(Operand(scratch), dest, dest);
+  loadConstantSimd128Int(SimdConstant::SplatX4(0x00010000), scratch);
+  vpaddd(Operand(scratch), dest, dest);
 }
 
 // Floating square root

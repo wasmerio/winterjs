@@ -23,72 +23,64 @@ class TypedProto : public NativeObject {
   static TypedProto* create(JSContext* cx);
 };
 
-class TypeDescr : public NativeObject {
+class TypedObject;
+
+class RttValue : public NativeObject {
  public:
   static const JSClass class_;
 
   enum Slot {
-    Handle = 0,     // Type handle index
-    Size = 1,       // Size of type in bytes
-    Proto = 2,      // Prototype for instances, if any
-    TraceList = 3,  // List of references for use in tracing
+    Handle = 0,  // Type handle index
+    Kind = 1,    // Kind of type
+    Size = 2,    // Size of struct, or size of array element
+    Proto = 3,   // Prototype for instances, if any
+    Parent = 4,  // Parent rtt for runtime casting
     // Maximum number of slots
-    SlotCount = 4,
+    SlotCount = 5,
   };
 
-  static TypeDescr* createFromHandle(JSContext* cx, wasm::TypeHandle handle);
+  static RttValue* createFromHandle(JSContext* cx, wasm::TypeHandle handle);
+  static RttValue* createFromParent(JSContext* cx,
+                                    js::Handle<RttValue*> parent);
+
+  wasm::TypeHandle handle() const {
+    return wasm::TypeHandle(uint32_t(getReservedSlot(Slot::Handle).toInt32()));
+  }
+
+  wasm::TypeDefKind kind() const {
+    return wasm::TypeDefKind(getReservedSlot(Slot::Kind).toInt32());
+  }
+
+  size_t size() const { return getReservedSlot(Slot::Size).toInt32(); }
 
   TypedProto& typedProto() const {
     return getReservedSlot(Slot::Proto).toObject().as<TypedProto>();
   }
 
-  size_t size() const { return getReservedSlot(Slot::Size).toInt32(); }
+  RttValue* parent() const {
+    return (RttValue*)getReservedSlot(Slot::Parent).toObjectOrNull();
+  }
 
   const wasm::TypeDef& getType(JSContext* cx) const;
 
-  [[nodiscard]] bool lookupProperty(JSContext* cx, jsid id, uint32_t* offset,
-                                    wasm::ValType* type);
-  [[nodiscard]] bool hasProperty(JSContext* cx, jsid id) {
+  [[nodiscard]] bool lookupProperty(JSContext* cx,
+                                    js::Handle<TypedObject*> object, jsid id,
+                                    uint32_t* offset, wasm::FieldType* type);
+  [[nodiscard]] bool hasProperty(JSContext* cx, js::Handle<TypedObject*> object,
+                                 jsid id) {
     uint32_t offset;
-    wasm::ValType type;
-    return lookupProperty(cx, id, &offset, &type);
+    wasm::FieldType type;
+    return lookupProperty(cx, object, id, &offset, &type);
   }
-  uint32_t propertyCount(JSContext* cx);
-
-  // Type descriptors may contain a list of their references for use during
-  // scanning. Typed object trace hooks can use this to call an optimized
-  // marking path that doesn't need to dispatch on the tracer kind for each
-  // edge. This list is only specified when (a) the descriptor is short enough
-  // that it can fit in an InlineTypedObject, and (b) the descriptor contains at
-  // least one reference. Otherwise its value is undefined.
-  //
-  // The list is three consecutive arrays of uint32_t offsets, preceded by a
-  // header consisting of the length of each array. The arrays store offsets of
-  // string, object/anyref, and value references in the descriptor, in that
-  // order.
-  // TODO/AnyRef-boxing: once anyref has a more complicated structure, we must
-  // revisit this.
-  [[nodiscard]] bool hasTraceList() const {
-    return !getFixedSlot(Slot::TraceList).isUndefined();
-  }
-  const uint32_t* traceList() const {
-    MOZ_ASSERT(hasTraceList());
-    return reinterpret_cast<uint32_t*>(
-        getFixedSlot(Slot::TraceList).toPrivate());
-  }
-
-  void initInstance(JSContext* cx, uint8_t* mem);
-  void traceInstance(JSTracer* trace, uint8_t* mem);
-
-  static void finalize(JSFreeOp* fop, JSObject* obj);
 };
 
-using HandleTypeDescr = Handle<TypeDescr*>;
+using HandleRttValue = Handle<RttValue*>;
+using RootedRttValue = Rooted<RttValue*>;
 
 /* Base type for typed objects. */
 class TypedObject : public JSObject {
  protected:
-  GCPtr<TypeDescr*> typeDescr_;
+  GCPtr<RttValue*> rttValue_;
 
   static const ObjectOps objectOps_;
 
@@ -121,110 +113,95 @@ class TypedObject : public JSObject {
                                                HandleId id,
                                                ObjectOpResult& result);
 
-  bool loadValue(JSContext* cx, size_t offset, wasm::ValType type,
+  bool loadValue(JSContext* cx, size_t offset, wasm::FieldType type,
                  MutableHandleValue vp);
 
   uint8_t* typedMem() const;
-  uint8_t* typedMemBase() const;
+
+  template <typename V>
+  void visitReferences(JSContext* cx, V& visitor);
+
+  void initDefault();
 
  public:
-  [[nodiscard]] static bool obj_newEnumerate(JSContext* cx, HandleObject obj,
-                                             MutableHandleIdVector properties,
-                                             bool enumerableOnly);
+  // Creates a new struct typed object initialized to zero.
+  static TypedObject* createStruct(JSContext* cx, HandleRttValue rtt,
+                                   gc::InitialHeap heap = gc::DefaultHeap);
+
+  // Creates a new array typed object initialized to zero of specified length.
+  static TypedObject* createArray(JSContext* cx, HandleRttValue rtt,
+                                  uint32_t length,
+                                  gc::InitialHeap heap = gc::DefaultHeap);
+
+  // Internal create used by JSObject
+  static JS::Result<TypedObject*, JS::OOM> create(JSContext* cx,
+                                                  js::gc::AllocKind kind,
+                                                  js::gc::InitialHeap heap,
+                                                  js::HandleShape shape);
 
   TypedProto& typedProto() const {
     // Typed objects' prototypes can't be modified.
     return staticPrototype()->as<TypedProto>();
   }
-  TypeDescr& typeDescr() const {
-    MOZ_ASSERT(typeDescr_);
-    return *typeDescr_;
+  RttValue& rttValue() const {
+    MOZ_ASSERT(rttValue_);
+    return *rttValue_;
   }
 
-  static JS::Result<TypedObject*, JS::OOM> create(JSContext* cx,
-                                                  js::gc::AllocKind kind,
-                                                  js::gc::InitialHeap heap,
-                                                  js::HandleShape shape,
-                                                  js::HandleObjectGroup group);
+  [[nodiscard]] bool isRuntimeSubtype(js::Handle<RttValue*> rtt) const;
 
-  uint32_t offset() const;
-  uint32_t size() const { return typeDescr().size(); }
-  uint8_t* typedMem(const JS::AutoRequireNoGC&) const { return typedMem(); }
-  uint8_t* typedMem(size_t offset, const JS::AutoRequireNoGC& nogc) const {
-    // It seems a bit surprising that one might request an offset
-    // == size(), but it can happen when taking the "address of" a
-    // 0-sized value. (In other words, we maintain the invariant
-    // that `offset + size <= size()` -- this is always checked in
-    // the caller's side.)
-    MOZ_ASSERT(offset <= (size_t)size());
-    return typedMem(nogc) + offset;
+  static constexpr size_t offsetOfRttValue() {
+    return offsetof(TypedObject, rttValue_);
   }
 
-  // Creates a new typed object whose memory is freshly allocated and
-  // initialized with zeroes (or, in the case of references, an appropriate
-  // default value).
-  static TypedObject* createZeroed(JSContext* cx, HandleTypeDescr typeObj,
-                                   gc::InitialHeap heap = gc::DefaultHeap);
-
-  static constexpr size_t offsetOfTypeDescr() {
-    return offsetof(TypedObject, typeDescr_);
-  }
+  [[nodiscard]] static bool obj_newEnumerate(JSContext* cx, HandleObject obj,
+                                             MutableHandleIdVector properties,
+                                             bool enumerableOnly);
 };
 
 using HandleTypedObject = Handle<TypedObject*>;
+using RootedTypedObject = Rooted<TypedObject*>;
 
 class OutlineTypedObject : public TypedObject {
-  // The object which owns the data this object points to. Because this
-  // pointer is managed in tandem with |data|, this is not a GCPtr and
-  // barriers are managed directly.
-  JSObject* owner_;
-
-  // Data pointer to some offset in the owner's contents.
+  // Owned data pointer
   uint8_t* data_;
 
-  void setOwnerAndData(JSObject* owner, uint8_t* data);
+  static OutlineTypedObject* create(JSContext* cx, HandleRttValue rtt,
+                                    size_t byteLength,
+                                    gc::InitialHeap heap = gc::DefaultHeap);
 
-  void setData(uint8_t* data) { data_ = data; }
+  void setArrayLength(uint32_t length) { *(uint32_t*)(data_) = length; }
 
  public:
-  static constexpr gc::AllocKind allocKind = gc::AllocKind::OBJECT2;
+  static const JSClass class_;
+
+  static OutlineTypedObject* createStruct(JSContext* cx, HandleRttValue rtt,
+                                          gc::InitialHeap heap);
+  static OutlineTypedObject* createArray(JSContext* cx, HandleRttValue rtt,
+                                         uint32_t length, gc::InitialHeap heap);
 
   // JIT accessors.
   static size_t offsetOfData() { return offsetof(OutlineTypedObject, data_); }
-  static size_t offsetOfOwner() { return offsetof(OutlineTypedObject, owner_); }
 
-  static const JSClass class_;
-
-  JSObject& owner() const {
-    MOZ_ASSERT(owner_);
-    return *owner_;
-  }
+  static constexpr size_t offsetOfArrayLength() { return 0; }
+  using ArrayLength = uint32_t;
 
   uint8_t* outOfLineTypedMem() const { return data_; }
 
- private:
-  // Creates an unattached typed object or handle (depending on the
-  // type parameter T). Note that it is only legal for unattached
-  // handles to escape to the end user; for non-handles, the caller
-  // should always invoke one of the `attach()` methods below.
-  //
-  // Arguments:
-  // - type: type object for resulting object
-  static OutlineTypedObject* createUnattached(
-      JSContext* cx, HandleTypeDescr type,
-      gc::InitialHeap heap = gc::DefaultHeap);
+  ArrayLength arrayLength() const {
+    return *(ArrayLength*)(data_ + offsetOfArrayLength());
+  }
 
- public:
-  static OutlineTypedObject* createZeroed(JSContext* cx, HandleTypeDescr descr,
-                                          gc::InitialHeap heap);
+  static gc::AllocKind allocKind();
 
- private:
-  // This method should only be used when `buffer` is the owner of the memory.
-  void attach(ArrayBufferObject& buffer);
-
- public:
-  static void obj_trace(JSTracer* trace, JSObject* object);
+  static void obj_trace(JSTracer* trc, JSObject* object);
+  static void obj_finalize(JSFreeOp* fop, JSObject* object);
 };
+
+// Helper to mark all locations that assume the type of the array length header
+// for a typed object.
+#define STATIC_ASSERT_ARRAYLENGTH_IS_U32 \
+  static_assert(1, "ArrayLength is uint32_t")
 
 // Class for a typed object whose data is allocated inline.
 class InlineTypedObject : public TypedObject {
@@ -243,27 +220,29 @@ class InlineTypedObject : public TypedObject {
   uint8_t* inlineTypedMem() const { return (uint8_t*)&data_; }
 
  public:
-  static inline gc::AllocKind allocKindForTypeDescriptor(TypeDescr* descr);
+  static inline gc::AllocKind allocKindForRttValue(RttValue* rtt);
+
+  static bool canAccommodateType(HandleRttValue rtt) {
+    return rtt->kind() == wasm::TypeDefKind::Struct &&
+           rtt->size() <= MaxInlineBytes;
+  }
 
   static bool canAccommodateSize(size_t size) { return size <= MaxInlineBytes; }
-
-  static bool canAccommodateType(TypeDescr* type) {
-    return type->size() <= MaxInlineBytes;
-  }
 
   uint8_t* inlineTypedMem(const JS::AutoRequireNoGC&) const {
     return inlineTypedMem();
   }
 
-  static void obj_trace(JSTracer* trace, JSObject* object);
+  static void obj_trace(JSTracer* trc, JSObject* object);
   static size_t obj_moved(JSObject* dst, JSObject* src);
 
   static size_t offsetOfDataStart() {
     return offsetof(InlineTypedObject, data_);
   }
 
-  static InlineTypedObject* create(JSContext* cx, HandleTypeDescr descr,
-                                   gc::InitialHeap heap = gc::DefaultHeap);
+  static InlineTypedObject* createStruct(
+      JSContext* cx, HandleRttValue rtt,
+      gc::InitialHeap heap = gc::DefaultHeap);
 };
 
 inline bool IsTypedObjectClass(const JSClass* class_) {

@@ -565,10 +565,12 @@ class LWasmReinterpret : public LWasmReinterpretBase<1, 1> {
 
 class LWasmReinterpretFromI64 : public LWasmReinterpretBase<1, INT64_PIECES> {
  public:
+  static const size_t Input = 0;
+
   LIR_HEADER(WasmReinterpretFromI64);
   explicit LWasmReinterpretFromI64(const LInt64Allocation& input)
       : LWasmReinterpretBase(classOpcode) {
-    setInt64Operand(0, input);
+    setInt64Operand(Input, input);
   }
 };
 
@@ -765,6 +767,52 @@ class LCreateArgumentsObject : public LCallInstructionHelper<1, 1, 3> {
   MCreateArgumentsObject* mir() const {
     return mir_->toCreateArgumentsObject();
   }
+};
+
+// Allocate a new arguments object for an inlined frame.
+class LCreateInlinedArgumentsObject : public LVariadicInstruction<1, 1> {
+ public:
+  LIR_HEADER(CreateInlinedArgumentsObject)
+
+  static const size_t CallObj = 0;
+  static const size_t Callee = 1;
+  static const size_t NumNonArgumentOperands = 2;
+  static size_t ArgIndex(size_t i) {
+    return NumNonArgumentOperands + BOX_PIECES * i;
+  }
+
+  LCreateInlinedArgumentsObject(uint32_t numOperands, const LDefinition& temp)
+      : LVariadicInstruction(classOpcode, numOperands) {
+    setIsCall();
+    setTemp(0, temp);
+  }
+
+  const LAllocation* getCallObject() { return getOperand(CallObj); }
+  const LAllocation* getCallee() { return getOperand(Callee); }
+
+  const LDefinition* temp() { return getTemp(0); }
+
+  MCreateInlinedArgumentsObject* mir() const {
+    return mir_->toCreateInlinedArgumentsObject();
+  }
+};
+
+class LGetInlinedArgument : public LVariadicInstruction<BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(GetInlinedArgument)
+
+  static const size_t Index = 0;
+  static const size_t NumNonArgumentOperands = 1;
+  static size_t ArgIndex(size_t i) {
+    return NumNonArgumentOperands + BOX_PIECES * i;
+  }
+
+  explicit LGetInlinedArgument(uint32_t numOperands)
+      : LVariadicInstruction(classOpcode, numOperands) {}
+
+  const LAllocation* getIndex() { return getOperand(Index); }
+
+  MGetInlinedArgument* mir() const { return mir_->toGetInlinedArgument(); }
 };
 
 // Get argument from arguments object.
@@ -6726,19 +6774,6 @@ class LGuardIsTypedArray : public LInstructionHelper<0, 1, 1> {
 
   const LAllocation* object() { return getOperand(0); }
   const LDefinition* temp() { return getTemp(0); }
-};
-
-class LGuardObjectGroup : public LInstructionHelper<1, 1, 1> {
- public:
-  LIR_HEADER(GuardObjectGroup)
-
-  LGuardObjectGroup(const LAllocation& in, const LDefinition& temp)
-      : LInstructionHelper(classOpcode) {
-    setOperand(0, in);
-    setTemp(0, temp);
-  }
-  const LDefinition* temp() { return getTemp(0); }
-  const MGuardObjectGroup* mir() const { return mir_->toGuardObjectGroup(); }
 };
 
 class LGuardNoDenseElements : public LInstructionHelper<0, 1, 1> {

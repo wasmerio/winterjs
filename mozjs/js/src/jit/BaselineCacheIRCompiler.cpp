@@ -217,37 +217,6 @@ bool BaselineCacheIRCompiler::emitGuardShape(ObjOperandId objId,
   return true;
 }
 
-bool BaselineCacheIRCompiler::emitGuardGroup(ObjOperandId objId,
-                                             uint32_t groupOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch1(allocator, masm);
-
-  bool needSpectreMitigations = objectGuardNeedsSpectreMitigations(objId);
-
-  Maybe<AutoScratchRegister> maybeScratch2;
-  if (needSpectreMitigations) {
-    maybeScratch2.emplace(allocator, masm);
-  }
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  Address addr(stubAddress(groupOffset));
-  masm.loadPtr(addr, scratch1);
-  if (needSpectreMitigations) {
-    masm.branchTestObjGroup(Assembler::NotEqual, obj, scratch1, *maybeScratch2,
-                            obj, failure->label());
-  } else {
-    masm.branchTestObjGroupNoSpectreMitigations(Assembler::NotEqual, obj,
-                                                scratch1, failure->label());
-  }
-
-  return true;
-}
-
 bool BaselineCacheIRCompiler::emitGuardProto(ObjOperandId objId,
                                              uint32_t protoOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -262,27 +231,6 @@ bool BaselineCacheIRCompiler::emitGuardProto(ObjOperandId objId,
   Address addr(stubAddress(protoOffset));
   masm.loadObjProto(obj, scratch);
   masm.branchPtr(Assembler::NotEqual, addr, scratch, failure->label());
-  return true;
-}
-
-bool BaselineCacheIRCompiler::emitGuardTypeDescr(ObjOperandId objId,
-                                                 uint32_t descrOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  Address addr(stubAddress(descrOffset));
-  masm.loadPtr(addr, scratch1);
-  masm.branchTestObjTypeDescr(Assembler::NotEqual, obj, scratch1, scratch2, obj,
-                              failure->label());
-
   return true;
 }
 

@@ -62,6 +62,9 @@ enum class TypeCode {
   F64 = 0x7c,   // SLEB128(-0x04)
   V128 = 0x7b,  // SLEB128(-0x05)
 
+  I8 = 0x7a,   // SLEB128(-0x06)
+  I16 = 0x79,  // SLEB128(-0x07)
+
   // A function pointer with any signature
   FuncRef = 0x70,  // SLEB128(-0x10)
 
@@ -77,11 +80,17 @@ enum class TypeCode {
   // Type constructor for non-nullable reference types.
   Ref = 0x6b,  // SLEB128(-0x15)
 
+  // Type constructor for rtt types.
+  Rtt = 0x69,  // SLEB128(-0x17)
+
   // Type constructor for function types
   Func = 0x60,  // SLEB128(-0x20)
 
-  // Type constructor for structure types - unofficial
+  // Type constructor for structure types - gc proposal
   Struct = 0x5f,  // SLEB128(-0x21)
+
+  // Type constructor for array types - gc proposal
+  Array = 0x5e,  // SLEB128(-0x22)
 
   // The 'empty' case of blocktype.
   BlockVoid = 0x40,  // SLEB128(-0x40)
@@ -93,7 +102,7 @@ enum class TypeCode {
 // UnpackTypeCodeTypeAbstracted().  If primitive typecodes are added below any
 // reference typecode then the logic in that function MUST change.
 
-static constexpr TypeCode LowestPrimitiveTypeCode = TypeCode::V128;
+static constexpr TypeCode LowestPrimitiveTypeCode = TypeCode::I16;
 
 // An arbitrary reference type used as the result of
 // UnpackTypeCodeTypeAbstracted() when a value type is a reference.
@@ -133,6 +142,8 @@ enum class Trap {
   IndirectCallBadSig,
   // Dereference null pointer in operation on (Ref T)
   NullPointerDereference,
+  // Failed to cast a (Ref T) in a ref.cast instruction
+  BadCast,
 
   // The internal stack space was exhausted. For compatibility, this throws
   // the same over-recursed error as JS.
@@ -431,10 +442,30 @@ inline bool IsPrefixByte(uint8_t b) { return b >= uint8_t(Op::FirstPrefix); }
 // Opcodes in the GC opcode space.
 enum class GcOp {
   // Structure operations
-  StructNew = 0x00,
+  StructNewWithRtt = 0x1,
+  StructNewDefaultWithRtt = 0x2,
   StructGet = 0x03,
+  StructGetS = 0x04,
+  StructGetU = 0x05,
   StructSet = 0x06,
-  StructNarrow = 0x07,
+
+  // Array operations
+  ArrayNewWithRtt = 0x11,
+  ArrayNewDefaultWithRtt = 0x12,
+  ArrayGet = 0x13,
+  ArrayGetS = 0x14,
+  ArrayGetU = 0x15,
+  ArraySet = 0x16,
+  ArrayLen = 0x17,
+
+  // Rtt operations
+  RttCanon = 0x30,
+  RttSub = 0x31,
+
+  // Ref operations
+  RefTest = 0x40,
+  RefCast = 0x41,
+  BrOnCast = 0x42,
 
   Limit
 };
@@ -529,30 +560,30 @@ enum class SimdOp {
   V128Or = 0x50,
   V128Xor = 0x51,
   V128Bitselect = 0x52,
-  F64x2ConvertLowI32x4S = 0x53,
-  F64x2ConvertLowI32x4U = 0x54,
-  I32x4TruncSatF64x2SZero = 0x55,
-  I32x4TruncSatF64x2UZero = 0x56,
-  F32x4DemoteF64x2Zero = 0x57,
-  V128Load8Lane = 0x58,
-  V128Load16Lane = 0x59,
-  V128Load32Lane = 0x5a,
-  V128Load64Lane = 0x5b,
-  V128Store8Lane = 0x5c,
-  V128Store16Lane = 0x5d,
-  V128Store32Lane = 0x5e,
-  V128Store64Lane = 0x5f,
+  V128AnyTrue = 0x53,
+  V128Load8Lane = 0x54,
+  V128Load16Lane = 0x55,
+  V128Load32Lane = 0x56,
+  V128Load64Lane = 0x57,
+  V128Store8Lane = 0x58,
+  V128Store16Lane = 0x59,
+  V128Store32Lane = 0x5a,
+  V128Store64Lane = 0x5b,
+  V128Load32Zero = 0x5c,
+  V128Load64Zero = 0x5d,
+  F32x4DemoteF64x2Zero = 0x5e,
+  F64x2PromoteLowF32x4 = 0x5f,
   I8x16Abs = 0x60,
   I8x16Neg = 0x61,
-  V128AnyTrue = 0x62,  // Used to be I8x16AnyTrue
+  I8x16Popcnt = 0x62,
   I8x16AllTrue = 0x63,
   I8x16Bitmask = 0x64,
   I8x16NarrowSI16x8 = 0x65,
   I8x16NarrowUI16x8 = 0x66,
-  // Widen = 0x67
-  // Widen = 0x68
-  F64x2PromoteLowF32x4 = 0x69,
-  // Widen = 0x6a
+  F32x4Ceil = 0x67,
+  F32x4Floor = 0x68,
+  F32x4Trunc = 0x69,
+  F32x4Nearest = 0x6a,
   I8x16Shl = 0x6b,
   I8x16ShrS = 0x6c,
   I8x16ShrU = 0x6d,
@@ -562,21 +593,21 @@ enum class SimdOp {
   I8x16Sub = 0x71,
   I8x16SubSaturateS = 0x72,
   I8x16SubSaturateU = 0x73,
-  // Dot = 0x74
-  // Mul = 0x75
+  F64x2Ceil = 0x74,
+  F64x2Floor = 0x75,
   I8x16MinS = 0x76,
   I8x16MinU = 0x77,
   I8x16MaxS = 0x78,
   I8x16MaxU = 0x79,
-  // AvgrS = 0x7a
+  F64x2Trunc = 0x7a,
   I8x16AvgrU = 0x7b,
-  // Unused = 0x7c
-  // Unused = 0x7d
-  // Unused = 0x7e
-  // Unused = 0x7f
+  I16x8ExtAddPairwiseI8x16S = 0x7c,
+  I16x8ExtAddPairwiseI8x16U = 0x7d,
+  I32x4ExtAddPairwiseI16x8S = 0x7e,
+  I32x4ExtAddPairwiseI16x8U = 0x7f,
   I16x8Abs = 0x80,
   I16x8Neg = 0x81,
-  I16x8AnyTrue = 0x82,  // OBSOLETE, but keeping it for now
+  I16x8Q15MulrSatS = 0x82,
   I16x8AllTrue = 0x83,
   I16x8Bitmask = 0x84,
   I16x8NarrowSI32x4 = 0x85,
@@ -594,21 +625,21 @@ enum class SimdOp {
   I16x8Sub = 0x91,
   I16x8SubSaturateS = 0x92,
   I16x8SubSaturateU = 0x93,
-  // Dot = 0x94
+  F64x2Nearest = 0x94,
   I16x8Mul = 0x95,
   I16x8MinS = 0x96,
   I16x8MinU = 0x97,
   I16x8MaxS = 0x98,
   I16x8MaxU = 0x99,
-  I16x8ExtMulLowSI8x16 = 0x9a,
+  // Unused = 0x9a
   I16x8AvgrU = 0x9b,
-  I16x8Q15MulrSatS = 0x9c,
+  I16x8ExtMulLowSI8x16 = 0x9c,
   I16x8ExtMulHighSI8x16 = 0x9d,
   I16x8ExtMulLowUI8x16 = 0x9e,
   I16x8ExtMulHighUI8x16 = 0x9f,
   I32x4Abs = 0xa0,
   I32x4Neg = 0xa1,
-  I32x4AnyTrue = 0xa2,  // OBSOLETE, but keeping it for now
+  // Narrow = 0xa2
   I32x4AllTrue = 0xa3,
   I32x4Bitmask = 0xa4,
   // Narrow = 0xa5
@@ -633,15 +664,15 @@ enum class SimdOp {
   I32x4MaxS = 0xb8,
   I32x4MaxU = 0xb9,
   I32x4DotSI16x8 = 0xba,
-  I32x4ExtMulLowSI16x8 = 0xbb,
-  // Unused = 0xbc
+  // Unused = 0xbb
+  I32x4ExtMulLowSI16x8 = 0xbc,
   I32x4ExtMulHighSI16x8 = 0xbd,
   I32x4ExtMulLowUI16x8 = 0xbe,
   I32x4ExtMulHighUI16x8 = 0xbf,
-  I64x2Eq = 0xc0,
+  I64x2Abs = 0xc0,
   I64x2Neg = 0xc1,
   // AnyTrue = 0xc2
-  // AllTrue = 0xc3
+  I64x2AllTrue = 0xc3,
   I64x2Bitmask = 0xc4,
   // Narrow = 0xc5
   // Narrow = 0xc6
@@ -653,23 +684,23 @@ enum class SimdOp {
   I64x2ShrS = 0xcc,
   I64x2ShrU = 0xcd,
   I64x2Add = 0xce,
-  I64x2AllTrue = 0xcf,
-  I64x2Ne = 0xd0,
+  // Unused = 0xcf
+  // Unused = 0xd0
   I64x2Sub = 0xd1,
-  I64x2ExtMulLowSI32x4 = 0xd2,
-  I64x2ExtMulHighSI32x4 = 0xd3,
+  // Unused = 0xd2
+  // Unused = 0xd3
   // Dot = 0xd4
   I64x2Mul = 0xd5,
-  I64x2ExtMulLowUI32x4 = 0xd6,
-  I64x2ExtMulHighUI32x4 = 0xd7,
-  F32x4Ceil = 0xd8,
-  F32x4Floor = 0xd9,
-  F32x4Trunc = 0xda,
-  F32x4Nearest = 0xdb,
-  F64x2Ceil = 0xdc,
-  F64x2Floor = 0xdd,
-  F64x2Trunc = 0xde,
-  F64x2Nearest = 0xdf,
+  I64x2Eq = 0xd6,
+  I64x2Ne = 0xd7,
+  I64x2LtS = 0xd8,
+  I64x2GtS = 0xd9,
+  I64x2LeS = 0xda,
+  I64x2GeS = 0xdb,
+  I64x2ExtMulLowSI32x4 = 0xdc,
+  I64x2ExtMulHighSI32x4 = 0xdd,
+  I64x2ExtMulLowUI32x4 = 0xde,
+  I64x2ExtMulHighUI32x4 = 0xdf,
   F32x4Abs = 0xe0,
   F32x4Neg = 0xe1,
   // Round = 0xe2
@@ -698,9 +729,11 @@ enum class SimdOp {
   I32x4TruncUSatF32x4 = 0xf9,
   F32x4ConvertSI32x4 = 0xfa,
   F32x4ConvertUI32x4 = 0xfb,
-  V128Load32Zero = 0xfc,
-  V128Load64Zero = 0xfd,
-// Unused = 0xfe and up
+  I32x4TruncSatF64x2SZero = 0xfc,
+  I32x4TruncSatF64x2UZero = 0xfd,
+  F64x2ConvertLowI32x4S = 0xfe,
+  F64x2ConvertLowI32x4U = 0xff,
+// Unused = 0x100 and up
 
 // Mozilla extensions, highly experimental and platform-specific
 #ifdef ENABLE_WASM_SIMD_WORMHOLE
@@ -945,6 +978,8 @@ enum class NameType { Module = 0, Function = 1, Local = 2 };
 
 enum class FieldFlags { Mutable = 0x01, AllowedMask = 0x01 };
 
+enum class FieldExtension { None, Signed, Unsigned };
+
 // The WebAssembly spec hard-codes the virtual page size to be 64KiB and
 // requires the size of linear memory to always be a multiple of 64KiB.
 
@@ -957,6 +992,12 @@ static const unsigned PageMask = ((1u << PageBits) - 1);
 // These limits are agreed upon with other engines for consistency.
 
 static const unsigned MaxTypes = 1000000;
+#ifdef JS_64BIT
+static const unsigned MaxTypeIndex = 1000000;
+#else
+static const unsigned MaxTypeIndex = 15000;
+#endif
+static const unsigned MaxRttDepth = 127;
 static const unsigned MaxFuncs = 1000000;
 static const unsigned MaxTables = 100000;
 static const unsigned MaxImports = 100000;
@@ -979,15 +1020,6 @@ static const unsigned MaxParams = 1000;
 static const unsigned MaxResults = 1000;
 static const unsigned MaxStructFields = 1000;
 static const unsigned MaxMemory32LimitField = 65536;
-#ifdef JS_64BIT
-// FIXME (large ArrayBuffer): This should be upped to UINT32_MAX / PageSize
-// initially, then to (size_t(UINT32_MAX) + 1) / PageSize subsequently, see the
-// companion FIXME in WasmMemoryObject::grow() for additional information.
-static const unsigned MaxMemory32Pages = INT32_MAX / PageSize;
-#else
-static const unsigned MaxMemory32Pages = INT32_MAX / PageSize;
-#endif
-static const size_t MaxMemory32Bytes = size_t(MaxMemory32Pages) * PageSize;
 static const unsigned MaxStringBytes = 100000;
 static const unsigned MaxModuleBytes = 1024 * 1024 * 1024;
 static const unsigned MaxFunctionBytes = 7654321;

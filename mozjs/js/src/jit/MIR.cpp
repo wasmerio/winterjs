@@ -3039,13 +3039,6 @@ MDefinition* MTypeOf::foldsTo(TempAllocator& alloc) {
         AssertKnownClass(alloc, this, unboxed);
         break;
       }
-
-      if (!inputMaybeCallableOrEmulatesUndefined()) {
-        // Object is not callable and does not emulate undefined, so it's
-        // safe to fold to "object".
-        type = JSTYPE_OBJECT;
-        break;
-      }
       [[fallthrough]];
     }
     default:
@@ -3584,13 +3577,7 @@ bool MCompare::tryFoldTypeOf(bool* result) {
   }
 
   const JSAtomState& names = GetJitContext()->runtime->names();
-  if (constant->toString() == TypeName(JSTYPE_UNDEFINED, names)) {
-    if (!typeOf->input()->mightBeType(MIRType::Undefined) &&
-        !typeOf->inputMaybeCallableOrEmulatesUndefined()) {
-      *result = (jsop() == JSOp::StrictNe || jsop() == JSOp::Ne);
-      return true;
-    }
-  } else if (constant->toString() == TypeName(JSTYPE_BOOLEAN, names)) {
+  if (constant->toString() == TypeName(JSTYPE_BOOLEAN, names)) {
     if (!typeOf->input()->mightBeType(MIRType::Boolean)) {
       *result = (jsop() == JSOp::StrictNe || jsop() == JSOp::Ne);
       return true;
@@ -3620,11 +3607,6 @@ bool MCompare::tryFoldTypeOf(bool* result) {
   } else if (constant->toString() == TypeName(JSTYPE_OBJECT, names)) {
     if (!typeOf->input()->mightBeType(MIRType::Object) &&
         !typeOf->input()->mightBeType(MIRType::Null)) {
-      *result = (jsop() == JSOp::StrictNe || jsop() == JSOp::Ne);
-      return true;
-    }
-  } else if (constant->toString() == TypeName(JSTYPE_FUNCTION, names)) {
-    if (!typeOf->inputMaybeCallableOrEmulatesUndefined()) {
       *result = (jsop() == JSOp::StrictNe || jsop() == JSOp::Ne);
       return true;
     }
@@ -4222,8 +4204,7 @@ MDefinition::AliasType MAsmJSLoadHeap::mightAlias(
       return AliasType::MayAlias;
     }
     const MConstant* otherBase = store->base()->toConstant();
-    if (base()->toConstant()->equals(otherBase) &&
-        offset() == store->offset()) {
+    if (base()->toConstant()->equals(otherBase)) {
       return AliasType::MayAlias;
     }
     return AliasType::NoAlias;
@@ -4236,8 +4217,7 @@ bool MAsmJSLoadHeap::congruentTo(const MDefinition* ins) const {
     return false;
   }
   const MAsmJSLoadHeap* load = ins->toAsmJSLoadHeap();
-  return load->accessType() == accessType() && load->offset() == offset() &&
-         congruentIfOperandsEqual(load);
+  return load->accessType() == accessType() && congruentIfOperandsEqual(load);
 }
 
 MDefinition::AliasType MWasmLoadGlobalVar::mightAlias(
@@ -4460,8 +4440,6 @@ MDefinition* MWasmReduceSimd128::foldsTo(TempAllocator& alloc) {
     int32_t i32Result = 0;
     switch (simdOp()) {
       case wasm::SimdOp::V128AnyTrue:
-      case wasm::SimdOp::I16x8AnyTrue:
-      case wasm::SimdOp::I32x4AnyTrue:
         i32Result = !c.isZeroBits();
         break;
       case wasm::SimdOp::I8x16AllTrue:
@@ -5016,10 +4994,6 @@ static MDefinition* SkipObjectGuards(MDefinition* ins) {
       ins = ins->toGuardShape()->object();
       continue;
     }
-    if (ins->isGuardObjectGroup()) {
-      ins = ins->toGuardObjectGroup()->object();
-      continue;
-    }
     if (ins->isGuardNullProto()) {
       ins = ins->toGuardNullProto()->object();
       continue;
@@ -5223,7 +5197,7 @@ MDefinition* MGuardIsNotProxy::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
-  MOZ_ASSERT(!GetObjectKnownJSClass(object())->isProxy());
+  MOZ_ASSERT(!GetObjectKnownJSClass(object())->isProxyObject());
   AssertKnownClass(alloc, this, object());
   return object();
 }
@@ -5435,3 +5409,64 @@ bool MIonToWasmCall::isConsistentFloat32Use(MUse* use) const {
          wasm::ValType::F32;
 }
 #endif
+
+MCreateInlinedArgumentsObject* MCreateInlinedArgumentsObject::New(
+    TempAllocator& alloc, MDefinition* callObj, MDefinition* callee,
+    MDefinitionVector& args) {
+  MCreateInlinedArgumentsObject* ins =
+      new (alloc) MCreateInlinedArgumentsObject();
+
+  uint32_t argc = args.length();
+  MOZ_ASSERT(argc <= ArgumentsObject::MaxInlinedArgs);
+
+  if (!ins->init(alloc, argc + NumNonArgumentOperands)) {
+    return nullptr;
+  }
+
+  ins->initOperand(0, callObj);
+  ins->initOperand(1, callee);
+  for (uint32_t i = 0; i < argc; i++) {
+    ins->initOperand(i + NumNonArgumentOperands, args[i]);
+  }
+
+  return ins;
+}
+
+MGetInlinedArgument* MGetInlinedArgument::New(
+    TempAllocator& alloc, MDefinition* index,
+    MCreateInlinedArgumentsObject* args) {
+  MGetInlinedArgument* ins = new (alloc) MGetInlinedArgument();
+
+  uint32_t argc = args->numActuals();
+  MOZ_ASSERT(argc <= ArgumentsObject::MaxInlinedArgs);
+
+  if (!ins->init(alloc, argc + NumNonArgumentOperands)) {
+    return nullptr;
+  }
+
+  ins->initOperand(0, index);
+  for (uint32_t i = 0; i < argc; i++) {
+    ins->initOperand(i + NumNonArgumentOperands, args->getArg(i));
+  }
+
+  return ins;
+}
+
+MDefinition* MGetInlinedArgument::foldsTo(TempAllocator& alloc) {
+  MDefinition* indexDef = SkipUninterestingInstructions(index());
+  if (!indexDef->isConstant() || indexDef->type() != MIRType::Int32) {
+    return this;
+  }
+
+  int32_t indexConst = indexDef->toConstant()->toInt32();
+  if (indexConst < 0 || uint32_t(indexConst) >= numActuals()) {
+    return this;
+  }
+
+  MDefinition* arg = getArg(indexConst);
+  if (arg->type() != MIRType::Value) {
+    arg = MBox::New(alloc, arg);
+  }
+
+  return arg;
+}

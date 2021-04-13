@@ -9,8 +9,6 @@
 
 #include "js/shadow/Realm.h"  // JS::shadow::Realm
 
-#include "jspubtd.h"
-#include "js/GCAPI.h"
 #include "js/GCPolicyAPI.h"
 #include "js/TypeDecls.h"  // forward-declaration of JS::Realm
 
@@ -23,6 +21,7 @@ JS_PUBLIC_API bool RealmNeedsSweep(JS::Realm* realm);
 }  // namespace js
 
 namespace JS {
+class JS_PUBLIC_API AutoRequireNoGC;
 
 // Each Realm holds a strong reference to its GlobalObject, and vice versa.
 template <>
@@ -102,6 +101,10 @@ extern JS_PUBLIC_API JSObject* GetRealmArrayPrototype(JSContext* cx);
 extern JS_PUBLIC_API JSObject* GetRealmErrorPrototype(JSContext* cx);
 
 extern JS_PUBLIC_API JSObject* GetRealmIteratorPrototype(JSContext* cx);
+
+// Returns a key for cross-origin realm weak map.
+// See the consumer in `MaybeCrossOriginObjectMixins::EnsureHolder` for details.
+extern JS_PUBLIC_API JSObject* GetRealmWeakMapKey(JSContext* cx);
 
 // Implements https://tc39.github.io/ecma262/#sec-getfunctionrealm
 // 7.3.22 GetFunctionRealm ( obj )

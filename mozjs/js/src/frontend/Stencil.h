@@ -12,6 +12,7 @@
 #include "mozilla/MemoryReporting.h"  // mozilla::MallocSizeOf
 #include "mozilla/Range.h"            // mozilla::Range
 #include "mozilla/Span.h"             // mozilla::Span
+#include "mozilla/Unused.h"           // mozilla::Unused
 #include "mozilla/Variant.h"          // mozilla::Variant
 
 #include <stddef.h>  // size_t
@@ -24,6 +25,7 @@
 #include "frontend/ScriptIndex.h"         // ScriptIndex
 #include "frontend/TypedIndex.h"          // TypedIndex
 #include "js/AllocPolicy.h"               // SystemAllocPolicy
+#include "js/RefCounted.h"                // AtomicRefCounted
 #include "js/RegExpFlags.h"               // JS::RegExpFlags
 #include "js/RootingAPI.h"                // Handle
 #include "js/TypeDecls.h"                 // JSContext
@@ -41,6 +43,7 @@
 
 namespace js {
 
+class LifoAlloc;
 class JSONPrinter;
 class RegExpObject;
 
@@ -48,8 +51,8 @@ namespace frontend {
 
 struct CompilationStencil;
 struct CompilationAtomCache;
-struct BaseCompilationStencil;
 struct CompilationGCOutput;
+struct CompilationStencilMerger;
 class RegExpStencil;
 class BigIntStencil;
 class StencilXDR;
@@ -116,34 +119,11 @@ using ParserBindingIter = AbstractBindingIter<TaggedParserAtomIndex>;
 // we then package up into the `CompilationStencil` type. This contains a series
 // of vectors segregated by stencil type for fast processing. Delazifying a
 // function will generate its bytecode but some fields remain unchanged from the
-// initial lazy parse. We use a base class to capture fields that are meaningful
-// for both the initial lazy and delazification parse.
-//
-//  struct BaseCompilationStencil {
-//      FunctionKey                     functionKey;
-//      Span<ScriptStencil>             scriptData;
-//      Span<ScopeStencil>              scopeData;
-//      ...
-//  }
-//
-//  struct StencilDelazificationSet {
-//      Span<BaseCompilationStencil>    delazifications;
-//      ...
-//  }
-//
-//  struct CompilationStencil : BaseCompilationStencil {
-//      LifoAlloc                       alloc;
-//      CompilationInput                input;
-//      Span<ScriptStencilExtra>        scriptExtra;
-//      StencilDelazifcationSet*        delazificationSet;
-//      ...
-//  }
+// initial lazy parse.
 //
 // When we delazify a function that was lazily parsed, we generate a new Stencil
-// at the point too. These delazifications can be cached as well. When loading
-// back from a cache we group these together in a `StencilDelazificationSet`
-// structure that hangs off the `CompilationStencil`. This delazification data
-// is only meaningful if we also have the initial parse stencil.
+// at the point too. These delazifications can be merged into the Stencil of
+// the initial parse.
 //
 //
 // CompilationGCOutput
@@ -164,7 +144,7 @@ using RegExpIndex = TypedIndex<RegExpStencil>;
 using BigIntIndex = TypedIndex<BigIntStencil>;
 using ObjLiteralIndex = TypedIndex<ObjLiteralStencil>;
 
-// Index into {CompilationState,BaseCompilationStencil}.gcThingData.
+// Index into {ExtensibleCompilationStencil,CompilationStencil}.gcThingData.
 class CompilationGCThingType {};
 using CompilationGCThingIndex = TypedIndex<CompilationGCThingType>;
 
@@ -182,6 +162,8 @@ class RegExpStencil {
   // Use uint32_t to make this struct fully-packed.
   uint32_t flags_;
 
+  friend struct CompilationStencilMerger;
+
  public:
   RegExpStencil() = default;
 
@@ -194,16 +176,15 @@ class RegExpStencil {
                              const CompilationAtomCache& atomCache) const;
 
   // This is used by `Reflect.parse` when we need the RegExpObject but are not
-  // doing a complete instantiation of the BaseCompilationStencil.
+  // doing a complete instantiation of the CompilationStencil.
   RegExpObject* createRegExpAndEnsureAtom(
       JSContext* cx, ParserAtomsTable& parserAtoms,
       CompilationAtomCache& atomCache) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
-  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
-  void dumpFields(JSONPrinter& json,
-                  const BaseCompilationStencil* stencil) const;
+  void dump(JSONPrinter& json, const CompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json, const CompilationStencil* stencil) const;
 #endif
 };
 
@@ -221,7 +202,7 @@ class BigIntStencil {
   BigIntStencil() = default;
 
   [[nodiscard]] bool init(JSContext* cx, LifoAlloc& alloc,
-                          const Vector<char16_t, 32>& buf);
+                          const mozilla::Span<const char16_t> buf);
 
   BigInt* createBigInt(JSContext* cx) const {
     mozilla::Range<const char16_t> source(source_.data(), source_.size());
@@ -233,6 +214,12 @@ class BigIntStencil {
     return js::BigIntLiteralIsZero(source);
   }
 
+  mozilla::Span<const char16_t> source() const { return source_; }
+
+#ifdef DEBUG
+  bool isContainedIn(const LifoAlloc& alloc) const;
+#endif
+
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
   void dump(JSONPrinter& json) const;
@@ -242,6 +229,7 @@ class BigIntStencil {
 
 class ScopeStencil {
   friend class StencilXDR;
+  friend struct CompilationStencilMerger;
 
   // The enclosing scope. Valid only if HasEnclosing flag is set.
   // compilation applies.
@@ -309,45 +297,42 @@ class ScopeStencil {
 
  public:
   static bool createForFunctionScope(
-      JSContext* cx, CompilationStencil& stencil,
-      CompilationState& compilationState, FunctionScope::ParserData* dataArg,
-      bool hasParameterExprs, bool needsEnvironment, ScriptIndex functionIndex,
-      bool isArrow, mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
+      JSContext* cx, CompilationState& compilationState,
+      FunctionScope::ParserData* dataArg, bool hasParameterExprs,
+      bool needsEnvironment, ScriptIndex functionIndex, bool isArrow,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
-  static bool createForLexicalScope(JSContext* cx, CompilationStencil& stencil,
-                                    CompilationState& compilationState,
-                                    ScopeKind kind,
-                                    LexicalScope::ParserData* dataArg,
-                                    uint32_t firstFrameSlot,
-                                    mozilla::Maybe<ScopeIndex> enclosing,
-                                    ScopeIndex* index);
+  static bool createForLexicalScope(
+      JSContext* cx, CompilationState& compilationState, ScopeKind kind,
+      LexicalScope::ParserData* dataArg, uint32_t firstFrameSlot,
+      mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
-  static bool createForVarScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForVarScope(JSContext* cx,
                                 CompilationState& compilationState,
                                 ScopeKind kind, VarScope::ParserData* dataArg,
                                 uint32_t firstFrameSlot, bool needsEnvironment,
                                 mozilla::Maybe<ScopeIndex> enclosing,
                                 ScopeIndex* index);
 
-  static bool createForGlobalScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForGlobalScope(JSContext* cx,
                                    CompilationState& compilationState,
                                    ScopeKind kind,
                                    GlobalScope::ParserData* dataArg,
                                    ScopeIndex* index);
 
-  static bool createForEvalScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForEvalScope(JSContext* cx,
                                  CompilationState& compilationState,
                                  ScopeKind kind, EvalScope::ParserData* dataArg,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
 
-  static bool createForModuleScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForModuleScope(JSContext* cx,
                                    CompilationState& compilationState,
                                    ModuleScope::ParserData* dataArg,
                                    mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index);
 
-  static bool createForWithScope(JSContext* cx, CompilationStencil& stencil,
+  static bool createForWithScope(JSContext* cx,
                                  CompilationState& compilationState,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
@@ -398,9 +383,9 @@ class ScopeStencil {
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
   void dump(JSONPrinter& json, const BaseParserScopeData* baseScopeData,
-            const BaseCompilationStencil* stencil) const;
+            const CompilationStencil* stencil) const;
   void dumpFields(JSONPrinter& json, const BaseParserScopeData* baseScopeData,
-                  const BaseCompilationStencil* stencil) const;
+                  const CompilationStencil* stencil) const;
 #endif
 
  private:
@@ -578,7 +563,8 @@ class StencilModuleEntry {
 };
 
 // Metadata generated by parsing module scripts, including import/export tables.
-class StencilModuleMetadata {
+class StencilModuleMetadata
+    : public js::AtomicRefCounted<StencilModuleMetadata> {
  public:
   using EntryVector = Vector<StencilModuleEntry, 0, js::SystemAllocPolicy>;
 
@@ -608,9 +594,8 @@ class StencilModuleMetadata {
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
-  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
-  void dumpFields(JSONPrinter& json,
-                  const BaseCompilationStencil* stencil) const;
+  void dump(JSONPrinter& json, const CompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json, const CompilationStencil* stencil) const;
 #endif
 };
 
@@ -747,6 +732,8 @@ class TaggedScriptThingIndex {
 
 // Data generated by frontend that will be used to create a js::BaseScript.
 class ScriptStencil {
+  friend struct CompilationStencilMerger;
+
  public:
   // Fields for BaseScript.
   // Used by:
@@ -757,8 +744,8 @@ class ScriptStencil {
   //   * lazy Function (cannot be asm.js module)
 
   // GCThings are stored into
-  // {CompilationState,BaseCompilationStencil}.gcThingData, in [gcThingsOffset,
-  // gcThingsOffset + gcThingsLength) range.
+  // {ExtensibleCompilationStencil,CompilationStencil}.gcThingData,
+  // in [gcThingsOffset, gcThingsOffset + gcThingsLength) range.
   CompilationGCThingIndex gcThingsOffset;
   uint32_t gcThingsLength = 0;
 
@@ -795,7 +782,7 @@ class ScriptStencil {
   static constexpr uint16_t AllowRelazifyFlag = 1 << 1;
 
   // Set if this is non-lazy script and shared data is created.
-  // The shared data is stored into BaseCompilationStencil.sharedData.
+  // The shared data is stored into CompilationStencil.sharedData.
   static constexpr uint16_t HasSharedDataFlag = 1 << 2;
 
   // True if this script is lazy function and has enclosing scope.
@@ -818,7 +805,7 @@ class ScriptStencil {
   bool hasGCThings() const { return gcThingsLength; }
 
   mozilla::Span<TaggedScriptThingIndex> gcthings(
-      const BaseCompilationStencil& stencil) const;
+      const CompilationStencil& stencil) const;
 
   bool wasEmittedByEnclosingScript() const {
     return flags_ & WasEmittedByEnclosingScriptFlag;
@@ -851,6 +838,11 @@ class ScriptStencil {
     setHasLazyFunctionEnclosingScopeIndex();
   }
 
+  void resetHasLazyFunctionEnclosingScopeIndexAfterStencilMerge() {
+    flags_ &= ~HasLazyFunctionEnclosingScopeIndexFlag;
+    lazyFunctionEnclosingScopeIndex_ = ScopeIndex::invalid();
+  }
+
   ScopeIndex lazyFunctionEnclosingScopeIndex() const {
     MOZ_ASSERT(hasLazyFunctionEnclosingScopeIndex());
     return lazyFunctionEnclosingScopeIndex_;
@@ -858,9 +850,8 @@ class ScriptStencil {
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
-  void dump(JSONPrinter& json, const BaseCompilationStencil* stencil) const;
-  void dumpFields(JSONPrinter& json,
-                  const BaseCompilationStencil* stencil) const;
+  void dump(JSONPrinter& json, const CompilationStencil* stencil) const;
+  void dumpFields(JSONPrinter& json, const CompilationStencil* stencil) const;
 #endif
 };
 
@@ -914,11 +905,11 @@ class ScriptStencilExtra {
 #if defined(DEBUG) || defined(JS_JITSPEW)
 void DumpTaggedParserAtomIndex(js::JSONPrinter& json,
                                TaggedParserAtomIndex taggedIndex,
-                               const BaseCompilationStencil* stencil);
+                               const CompilationStencil* stencil);
 
 void DumpTaggedParserAtomIndexNoQuote(GenericPrinter& out,
                                       TaggedParserAtomIndex taggedIndex,
-                                      const BaseCompilationStencil* stencil);
+                                      const CompilationStencil* stencil);
 #endif
 
 } /* namespace frontend */

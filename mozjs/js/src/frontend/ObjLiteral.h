@@ -106,11 +106,12 @@
 
 namespace js {
 
+class LifoAlloc;
 class JSONPrinter;
 
 namespace frontend {
 struct CompilationAtomCache;
-struct BaseCompilationStencil;
+struct CompilationStencil;
 class StencilXDR;
 }  // namespace frontend
 
@@ -379,9 +380,9 @@ struct ObjLiteralWriter : private ObjLiteralWriterBase {
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
   void dump(JSONPrinter& json,
-            const frontend::BaseCompilationStencil* stencil) const;
+            const frontend::CompilationStencil* stencil) const;
   void dumpFields(JSONPrinter& json,
-                  const frontend::BaseCompilationStencil* stencil) const;
+                  const frontend::CompilationStencil* stencil) const;
 #endif
 
  private:
@@ -475,6 +476,8 @@ struct ObjLiteralReaderBase {
   [[nodiscard]] bool readAtomArg(frontend::TaggedParserAtomIndex* atomIndex) {
     return readRawData(atomIndex->rawDataRef());
   }
+
+  size_t cursor() const { return cursor_; }
 };
 
 // A single object-literal instruction, creating one property on an object.
@@ -588,6 +591,71 @@ struct ObjLiteralReader : private ObjLiteralReaderBase {
   }
 };
 
+// A class to modify the code, while keeping the structure.
+struct ObjLiteralModifier : private ObjLiteralReaderBase {
+  mozilla::Span<uint8_t> mutableData_;
+
+ public:
+  explicit ObjLiteralModifier(mozilla::Span<uint8_t> data)
+      : ObjLiteralReaderBase(data), mutableData_(data) {}
+
+ private:
+  // Map `atom` with `map`, and write to `atomCursor` of `mutableData_`.
+  template <typename MapT>
+  void mapOneAtom(MapT map, frontend::TaggedParserAtomIndex atom,
+                  size_t atomCursor) {
+    auto atomIndex = map(atom);
+    mozilla::NativeEndian::copyAndSwapToLittleEndian(
+        reinterpret_cast<void*>(mutableData_.data() + atomCursor),
+        atomIndex.rawDataRef(), 1);
+  }
+
+  // Map atoms in single instruction.
+  // Return true if it successfully maps.
+  // Return false if there's no more instruction.
+  template <typename MapT>
+  bool mapInsnAtom(MapT map) {
+    ObjLiteralOpcode op;
+    ObjLiteralKey key;
+
+    size_t opCursor = cursor();
+    if (!readOpAndKey(&op, &key)) {
+      return false;
+    }
+    if (key.isAtomIndex()) {
+      static constexpr size_t OpLength = 1;
+      size_t atomCursor = opCursor + OpLength;
+      mapOneAtom(map, key.getAtomIndex(), atomCursor);
+    }
+
+    if (ObjLiteralOpcodeHasValueArg(op)) {
+      JS::Value value;
+      if (!readValueArg(&value)) {
+        return false;
+      }
+    } else if (ObjLiteralOpcodeHasAtomArg(op)) {
+      size_t atomCursor = cursor();
+
+      frontend::TaggedParserAtomIndex atomIndex;
+      if (!readAtomArg(&atomIndex)) {
+        return false;
+      }
+
+      mapOneAtom(map, atomIndex, atomCursor);
+    }
+
+    return true;
+  }
+
+ public:
+  // Map TaggedParserAtomIndex inside the code in place, with given function.
+  template <typename MapT>
+  void mapAtom(MapT map) {
+    while (mapInsnAtom(map)) {
+    }
+  }
+};
+
 class ObjLiteralStencil {
   friend class frontend::StencilXDR;
 
@@ -607,12 +675,20 @@ class ObjLiteralStencil {
   JSObject* create(JSContext* cx,
                    const frontend::CompilationAtomCache& atomCache) const;
 
+  mozilla::Span<const uint8_t> code() const { return code_; }
+  ObjLiteralFlags flags() const { return flags_; }
+  uint32_t propertyCount() const { return propertyCount_; }
+
+#ifdef DEBUG
+  bool isContainedIn(const LifoAlloc& alloc) const;
+#endif
+
 #if defined(DEBUG) || defined(JS_JITSPEW)
   void dump() const;
   void dump(JSONPrinter& json,
-            const frontend::BaseCompilationStencil* stencil) const;
+            const frontend::CompilationStencil* stencil) const;
   void dumpFields(JSONPrinter& json,
-                  const frontend::BaseCompilationStencil* stencil) const;
+                  const frontend::CompilationStencil* stencil) const;
 
 #endif
 };

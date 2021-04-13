@@ -25,13 +25,8 @@
 #endif
 
 #ifdef XP_WIN
-#  ifdef JS_ENABLE_UWP
-#    include <processthreadsapi.h>
-#    define getpid GetCurrentProcessId
-#  else
-#    include <process.h>
-#    define getpid _getpid
-#  endif
+#  include <process.h>
+#  define getpid _getpid
 #endif
 
 #include "js/CharacterEncoding.h"

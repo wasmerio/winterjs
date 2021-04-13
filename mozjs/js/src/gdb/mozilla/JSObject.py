@@ -16,16 +16,14 @@ prettyprinters.clear_module_printers(__name__)
 
 class JSObjectTypeCache(object):
     def __init__(self, value, cache):
-        baseshape_flags = gdb.lookup_type("js::BaseShape::Flag")
-        self.flag_DELEGATE = prettyprinters.enum_value(
-            baseshape_flags, "js::BaseShape::DELEGATE"
+        object_flag = gdb.lookup_type("js::ObjectFlag")
+        self.objectflag_IsUsedAsPrototype = prettyprinters.enum_value(
+            object_flag, "js::ObjectFlag::IsUsedAsPrototype"
         )
         self.func_ptr_type = gdb.lookup_type("JSFunction").pointer()
         self.class_NON_NATIVE = gdb.parse_and_eval("JSClass::NON_NATIVE")
-        self.NativeObject_ptr_t = gdb.lookup_type("js::NativeObject").pointer()
         self.BaseShape_ptr_t = gdb.lookup_type("js::BaseShape").pointer()
         self.Shape_ptr_t = gdb.lookup_type("js::Shape").pointer()
-        self.ObjectGroup_ptr_t = gdb.lookup_type("js::ObjectGroup").pointer()
         self.JSClass_ptr_t = gdb.lookup_type("JSClass").pointer()
 
 
@@ -46,8 +44,9 @@ class JSObjectPtrOrRef(prettyprinters.Pointer):
         self.otc = cache.mod_JSObject
 
     def summary(self):
-        group = get_header_ptr(self.value, self.otc.ObjectGroup_ptr_t)
-        classp = get_header_ptr(group, self.otc.JSClass_ptr_t)
+        shape = get_header_ptr(self.value, self.otc.Shape_ptr_t)
+        baseshape = get_header_ptr(shape, self.otc.BaseShape_ptr_t)
+        classp = get_header_ptr(baseshape, self.otc.JSClass_ptr_t)
         non_native = classp["flags"] & self.otc.class_NON_NATIVE
 
         # Use GDB to format the class name, but then strip off the address
@@ -60,11 +59,8 @@ class JSObjectPtrOrRef(prettyprinters.Pointer):
         if non_native:
             return "[object {}]".format(class_name)
         else:
-            native = self.value.cast(self.otc.NativeObject_ptr_t)
-            shape = deref(native["shape_"])
-            baseshape = get_header_ptr(shape, self.otc.BaseShape_ptr_t)
-            flags = baseshape["flags"]
-            is_delegate = bool(flags & self.otc.flag_DELEGATE)
+            flags = shape["objectFlags_"]["flags_"]
+            used_as_prototype = bool(flags & self.otc.objectflag_IsUsedAsPrototype)
             name = None
             if class_name == "Function":
                 function = self.value
@@ -77,7 +73,7 @@ class JSObjectPtrOrRef(prettyprinters.Pointer):
             return "[object {}{}]{}".format(
                 class_name,
                 " " + name if name else "",
-                " delegate" if is_delegate else "",
+                " used_as_prototype" if used_as_prototype else "",
             )
 
 

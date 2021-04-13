@@ -13,6 +13,7 @@ import sys
 import subprocess
 import time
 from distutils.version import LooseVersion
+from mozboot.util import get_mach_virtualenv_binary
 from mozfile import which
 
 # NOTE: This script is intended to be run with a vanilla Python install.  We
@@ -39,7 +40,7 @@ from mozboot.opensuse import OpenSUSEBootstrapper
 from mozboot.debian import DebianBootstrapper
 from mozboot.freebsd import FreeBSDBootstrapper
 from mozboot.gentoo import GentooBootstrapper
-from mozboot.osx import OSXBootstrapper
+from mozboot.osx import OSXBootstrapper, OSXBootstrapperLight
 from mozboot.openbsd import OpenBSDBootstrapper
 from mozboot.archlinux import ArchlinuxBootstrapper
 from mozboot.solus import SolusBootstrapper
@@ -255,8 +256,10 @@ class Bootstrapper(object):
         elif sys.platform.startswith("darwin"):
             # TODO Support Darwin platforms that aren't OS X.
             osx_version = platform.mac_ver()[0]
-
-            cls = OSXBootstrapper
+            if platform.machine() == "arm64":
+                cls = OSXBootstrapperLight
+            else:
+                cls = OSXBootstrapper
             args["version"] = osx_version
 
         elif sys.platform.startswith("openbsd"):
@@ -332,9 +335,19 @@ class Bootstrapper(object):
         # We can't prompt the user.
         if self.instance.no_interactive:
             return False
+        mach_python = get_mach_virtualenv_binary()
+        proc = subprocess.run(
+            [mach_python, "-c", "import glean"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # If we couldn't install glean in the mach environment, we can't
+        # enable telemetry.
+        if proc.returncode != 0:
+            return False
         choice = self.instance.prompt_yesno(prompt=TELEMETRY_OPT_IN_PROMPT)
         if choice:
-            cfg_file = os.path.join(state_dir, "machrc")
+            cfg_file = os.environ.get("MACHRC", os.path.join(state_dir, "machrc"))
             if update_or_create_build_telemetry_config(cfg_file):
                 print(
                     "\nThanks for enabling build telemetry! You can change this setting at "
@@ -344,6 +357,11 @@ class Bootstrapper(object):
 
     def check_code_submission(self, checkout_root):
         if self.instance.no_interactive or which("moz-phab"):
+            return
+
+        # Skip moz-phab install until bug 1696357 is fixed and makes it to a moz-phab
+        # release.
+        if sys.platform.startswith("darwin") and platform.machine() == "arm64":
             return
 
         if not self.instance.prompt_yesno("Will you be submitting commits to Mozilla?"):
@@ -365,11 +383,13 @@ class Bootstrapper(object):
             labels = [
                 "%s. %s" % (i, name) for i, name in enumerate(APPLICATIONS.keys(), 1)
             ]
-            prompt = APPLICATION_CHOICE % "\n".join(
-                "  {}".format(label) for label in labels
-            )
+            choices = ["  {} [default]".format(labels[0])]
+            choices += ["  {}".format(label) for label in labels[1:]]
+            prompt = APPLICATION_CHOICE % "\n".join(choices)
             prompt_choice = self.instance.prompt_int(
-                prompt=prompt, low=1, high=len(APPLICATIONS)
+                prompt=prompt,
+                low=1,
+                high=len(APPLICATIONS),
             )
             name, application = list(APPLICATIONS.items())[prompt_choice - 1]
         elif self.choice in APPLICATIONS.keys():
@@ -428,7 +448,6 @@ class Bootstrapper(object):
         # Possibly configure Mercurial, but not if the current checkout or repo
         # type is Git.
         if hg_installed and checkout_type == "hg":
-            configure_hg = False
             if not self.instance.no_interactive:
                 configure_hg = self.instance.prompt_yesno(prompt=CONFIGURE_MERCURIAL)
             else:
@@ -650,7 +669,7 @@ def current_firefox_checkout(env, hg=None):
     )
 
 
-def update_git_tools(git, root_state_dir, top_src_dir):
+def update_git_tools(git, root_state_dir):
     """Update git tools, hooks and extensions"""
     # Ensure git-cinnabar is up to date.
     cinnabar_dir = os.path.join(root_state_dir, "git-cinnabar")
@@ -716,7 +735,7 @@ def configure_git(git, cinnabar, root_state_dir, top_src_dir):
             [git, "config", "core.untrackedCache", "true"], cwd=top_src_dir
         )
 
-    cinnabar_dir = update_git_tools(git, root_state_dir, top_src_dir)
+    cinnabar_dir = update_git_tools(git, root_state_dir)
 
     if not cinnabar:
         print(ADD_GIT_CINNABAR_PATH.format(cinnabar_dir))

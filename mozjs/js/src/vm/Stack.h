@@ -33,9 +33,10 @@ class InterpreterRegs;
 class CallObject;
 class FrameIter;
 class EnvironmentObject;
+class BlockLexicalEnvironmentObject;
+class ExtensibleLexicalEnvironmentObject;
 class GeckoProfilerRuntime;
 class InterpreterFrame;
-class LexicalEnvironmentObject;
 class EnvironmentIter;
 class EnvironmentCoordinate;
 
@@ -516,13 +517,14 @@ class InterpreterFrame {
   inline EnvironmentObject& aliasedEnvironment(EnvironmentCoordinate ec) const;
   inline GlobalObject& global() const;
   inline CallObject& callObj() const;
-  inline LexicalEnvironmentObject& extensibleLexicalEnvironment() const;
+  inline ExtensibleLexicalEnvironmentObject& extensibleLexicalEnvironment()
+      const;
 
   template <typename SpecificEnvironment>
   inline void pushOnEnvironmentChain(SpecificEnvironment& env);
   template <typename SpecificEnvironment>
   inline void popOffEnvironmentChain();
-  inline void replaceInnermostEnvironment(EnvironmentObject& env);
+  inline void replaceInnermostEnvironment(BlockLexicalEnvironmentObject& env);
 
   // Push a VarEnvironmentObject for function frames of functions that have
   // parameter expressions with closed over var bindings.

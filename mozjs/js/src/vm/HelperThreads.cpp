@@ -15,9 +15,9 @@
 #include <algorithm>
 
 #include "frontend/BytecodeCompilation.h"
-#include "frontend/CompilationStencil.h"  // frontend::CompilationStencil, frontend::CompilationGCOutput
-#include "frontend/ParserAtom.h"  // frontend::ParserAtomsTable
-#include "gc/GC.h"                // gc::MergeRealms
+#include "frontend/CompilationStencil.h"  // frontend::{CompilationStencil, ExtensibleCompilationStencil, CompilationInput, CompilationGCOutput, BorrowingCompilationStencil}
+#include "frontend/ParserAtom.h"          // frontend::ParserAtomsTable
+#include "gc/GC.h"                        // gc::MergeRealms
 #include "jit/IonCompileTask.h"
 #include "jit/JitRuntime.h"
 #include "js/ContextOptions.h"      // JS::ContextOptions
@@ -587,7 +587,6 @@ void ParseTask::trace(JSTracer* trc) {
   }
 
   gcOutput_.trace(trc);
-  gcOutputForDelazification_.trace(trc);
 }
 
 size_t ParseTask::sizeOfExcludingThis(
@@ -596,6 +595,9 @@ size_t ParseTask::sizeOfExcludingThis(
       stencilInput_ ? stencilInput_->sizeOfIncludingThis(mallocSizeOf) : 0;
   size_t stencilSize =
       stencil_ ? stencil_->sizeOfIncludingThis(mallocSizeOf) : 0;
+  size_t extensibleStencilSize =
+      extensibleStencil_ ? extensibleStencil_->sizeOfIncludingThis(mallocSizeOf)
+                         : 0;
 
   // TODO: 'errors' requires adding support to `CompileError`. They are not
   // common though.
@@ -603,8 +605,8 @@ size_t ParseTask::sizeOfExcludingThis(
   return options.sizeOfExcludingThis(mallocSizeOf) +
          scripts.sizeOfExcludingThis(mallocSizeOf) +
          sourceObjects.sizeOfExcludingThis(mallocSizeOf) + stencilInputSize +
-         stencilSize + gcOutput_.sizeOfExcludingThis(mallocSizeOf) +
-         gcOutputForDelazification_.sizeOfExcludingThis(mallocSizeOf);
+         stencilSize + extensibleStencilSize +
+         gcOutput_.sizeOfExcludingThis(mallocSizeOf);
 }
 
 void ParseTask::runHelperThreadTask(AutoLockHelperThreadState& locked) {
@@ -693,14 +695,15 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
   stencilInput_ = cx->make_unique<frontend::CompilationInput>(options);
 
   if (stencilInput_) {
-    stencil_ = frontend::CompileGlobalScriptToStencil(cx, *stencilInput_, data,
-                                                      scopeKind);
+    extensibleStencil_ = frontend::CompileGlobalScriptToExtensibleStencil(
+        cx, *stencilInput_, data, scopeKind);
   }
 
-  if (stencil_) {
-    if (!frontend::PrepareForInstantiate(cx, *stencilInput_, *stencil_,
+  if (extensibleStencil_) {
+    frontend::BorrowingCompilationStencil borrowingStencil(*extensibleStencil_);
+    if (!frontend::PrepareForInstantiate(cx, *stencilInput_, borrowingStencil,
                                          gcOutput_)) {
-      stencil_ = nullptr;
+      extensibleStencil_ = nullptr;
     }
   }
 
@@ -710,12 +713,19 @@ void ScriptParseTask<Unit>::parse(JSContext* cx) {
 }
 
 bool ParseTask::instantiateStencils(JSContext* cx) {
-  if (!stencil_) {
+  if (!stencil_ && !extensibleStencil_) {
     return false;
   }
 
-  bool result = frontend::InstantiateStencils(
-      cx, *stencilInput_, *stencil_, gcOutput_, &gcOutputForDelazification_);
+  bool result;
+  if (stencil_) {
+    result =
+        frontend::InstantiateStencils(cx, *stencilInput_, *stencil_, gcOutput_);
+  } else {
+    frontend::BorrowingCompilationStencil borrowingStencil(*extensibleStencil_);
+    result = frontend::InstantiateStencils(cx, *stencilInput_, borrowingStencil,
+                                           gcOutput_);
+  }
 
   // Whatever happens to the top-level script compilation (even if it fails),
   // we must finish initializing the SSO.  This is because there may be valid
@@ -761,13 +771,15 @@ void ModuleParseTask<Unit>::parse(JSContext* cx) {
   stencilInput_ = cx->make_unique<frontend::CompilationInput>(options);
 
   if (stencilInput_) {
-    stencil_ = frontend::ParseModuleToStencil(cx, *stencilInput_, data);
+    extensibleStencil_ =
+        frontend::ParseModuleToExtensibleStencil(cx, *stencilInput_, data);
   }
 
-  if (stencil_) {
-    if (!frontend::PrepareForInstantiate(cx, *stencilInput_, *stencil_,
+  if (extensibleStencil_) {
+    frontend::BorrowingCompilationStencil borrowingStencil(*extensibleStencil_);
+    if (!frontend::PrepareForInstantiate(cx, *stencilInput_, borrowingStencil,
                                          gcOutput_)) {
-      stencil_ = nullptr;
+      extensibleStencil_ = nullptr;
     }
   }
 
@@ -802,21 +814,21 @@ void ScriptDecodeTask::parse(JSContext* cx) {
       return;
     }
 
-    stencil_ = cx->make_unique<frontend::CompilationStencil>(*stencilInput_);
+    stencil_ =
+        cx->make_unique<frontend::CompilationStencil>(stencilInput_->source);
     if (!stencil_) {
       return;
     }
 
-    XDRStencilDecoder decoder(cx, &options, range);
-    XDRResult res = decoder.codeStencils(*stencilInput_, *stencil_);
+    XDRStencilDecoder decoder(cx, range);
+    XDRResult res = decoder.codeStencil(*stencilInput_, *stencil_);
     if (!res.isOk()) {
       stencil_.reset();
       return;
     }
 
     if (!frontend::PrepareForInstantiate(cx, *stencilInput_, *stencil_,
-                                         gcOutput_,
-                                         &gcOutputForDelazification_)) {
+                                         gcOutput_)) {
       stencil_.reset();
     }
 
@@ -828,10 +840,9 @@ void ScriptDecodeTask::parse(JSContext* cx) {
   }
 
   // The buffer contains JSScript.
-  Rooted<UniquePtr<XDROffThreadDecoder>> decoder(
-      cx, js::MakeUnique<XDROffThreadDecoder>(
-              cx, &options, XDROffThreadDecoder::Type::Single,
-              /* sourceObjectOut = */ &sourceObject.get(), range));
+  auto decoder = js::MakeUnique<XDROffThreadDecoder>(
+      cx, &options, XDROffThreadDecoder::Type::Single,
+      /* sourceObjectOut = */ &sourceObject.get(), range);
   if (!decoder) {
     ReportOutOfMemory(cx);
     return;
@@ -871,10 +882,9 @@ void MultiScriptsDecodeTask::parse(JSContext* cx) {
     RootedScript resultScript(cx);
     Rooted<ScriptSourceObject*> sourceObject(cx);
 
-    Rooted<UniquePtr<XDROffThreadDecoder>> decoder(
-        cx, js::MakeUnique<XDROffThreadDecoder>(
-                cx, &opts, XDROffThreadDecoder::Type::Multi,
-                &sourceObject.get(), source.range));
+    auto decoder = js::MakeUnique<XDROffThreadDecoder>(
+        cx, &opts, XDROffThreadDecoder::Type::Multi, &sourceObject.get(),
+        source.range);
     if (!decoder) {
       ReportOutOfMemory(cx);
       return;
@@ -1001,9 +1011,9 @@ static bool EnsureConstructor(JSContext* cx, Handle<GlobalObject*> global,
     return false;
   }
 
-  MOZ_ASSERT(global->getPrototype(key).toObject().isDelegate(),
-             "standard class prototype wasn't a delegate from birth");
-  return true;
+  // Set the used-as-prototype flag here because we can't GC in mergeRealms.
+  RootedObject proto(cx, &global->getPrototype(key).toObject());
+  return JSObject::setIsUsedAsPrototype(cx, proto);
 }
 
 // Initialize all classes potentially created during parsing for use in parser
@@ -2094,7 +2104,8 @@ JSScript* GlobalHelperThreadState::finishSingleParseTask(
       DebugAPI::onNewScript(cx, script);
     }
   } else {
-    MOZ_ASSERT(parseTask->stencil_.get());
+    MOZ_ASSERT(parseTask->stencil_.get() ||
+               parseTask->extensibleStencil_.get());
 
     if (!parseTask->instantiateStencils(cx)) {
       return nullptr;
@@ -2108,17 +2119,28 @@ JSScript* GlobalHelperThreadState::finishSingleParseTask(
   if (startEncoding == StartEncoding::Yes) {
     MOZ_DIAGNOSTIC_ASSERT(parseTask->options.useStencilXDR);
 
-    UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
-
     if (parseTask->stencil_) {
-      auto* stencil = parseTask->stencil_.get();
-      if (!stencil->source->xdrEncodeStencils(cx, *parseTask->stencilInput_,
-                                              *stencil, xdrEncoder)) {
+      auto initial = js::MakeUnique<frontend::ExtensibleCompilationStencil>(
+          cx, *parseTask->stencilInput_);
+      if (!initial) {
+        ReportOutOfMemory(cx);
+        return nullptr;
+      }
+      if (!initial->steal(cx, std::move(*parseTask->stencil_))) {
+        return nullptr;
+      }
+
+      if (!script->scriptSource()->startIncrementalEncoding(
+              cx, parseTask->options, std::move(initial))) {
+        return nullptr;
+      }
+    } else if (parseTask->extensibleStencil_) {
+      if (!script->scriptSource()->startIncrementalEncoding(
+              cx, parseTask->options,
+              std::move(parseTask->extensibleStencil_))) {
         return nullptr;
       }
     }
-
-    script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
   }
 
   return script;

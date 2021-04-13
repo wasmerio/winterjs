@@ -7,12 +7,19 @@
 #ifndef frontend_StencilXdr_h
 #define frontend_StencilXdr_h
 
-#include "frontend/ObjLiteral.h"  // ObjLiteralStencil
-#include "frontend/Stencil.h"     // *Stencil
-#include "vm/Scope.h"             // Scope, ScopeKindString
-#include "vm/Xdr.h"               // XDRMode, XDRResult, XDREncoder
+#include "mozilla/RefPtr.h"  // RefPtr
+
+#include "frontend/CompilationStencil.h"  // SharedDataContainer
+#include "frontend/ObjLiteral.h"          // ObjLiteralStencil
+#include "frontend/ParserAtom.h"          // ParserAtom, ParserAtomSpan
+#include "frontend/Stencil.h"  // BitIntStencil, ScopeStencil, BaseParserScopeData
+#include "vm/SharedStencil.h"  // SharedImmutableScriptData
+#include "vm/Xdr.h"            // XDRMode, XDRResult, XDRState
 
 namespace js {
+
+class LifoAlloc;
+
 namespace frontend {
 
 // Check that we can copy data to disk and restore it in another instance of
@@ -41,22 +48,44 @@ struct CanCopyDataToDisk {
 class StencilXDR {
  public:
   template <XDRMode mode>
-  static XDRResult ScopeData(XDRState<mode>* xdr, ScopeStencil& stencil,
-                             BaseParserScopeData*& baseScopeData);
-
-  template <XDRMode mode, typename ScopeT>
-  static XDRResult ScopeSpecificData(XDRState<mode>* xdr,
-                                     BaseParserScopeData*& baseScopeData);
+  static XDRResult codeBigInt(XDRState<mode>* xdr, BigIntStencil& stencil);
 
   template <XDRMode mode>
-  static XDRResult ObjLiteral(XDRState<mode>* xdr, ObjLiteralStencil& stencil);
+  static XDRResult codeObjLiteral(XDRState<mode>* xdr,
+                                  ObjLiteralStencil& stencil);
 
   template <XDRMode mode>
-  static XDRResult BigInt(XDRState<mode>* xdr, BigIntStencil& stencil);
+  static XDRResult codeScopeData(XDRState<mode>* xdr, ScopeStencil& stencil,
+                                 BaseParserScopeData*& baseScopeData);
 
   template <XDRMode mode>
-  static XDRResult SharedData(js::XDRState<mode>* xdr,
-                              RefPtr<SharedImmutableScriptData>& sisd);
+  static XDRResult codeSharedData(XDRState<mode>* xdr,
+                                  RefPtr<SharedImmutableScriptData>& sisd);
+
+  template <XDRMode mode>
+  static XDRResult codeSharedDataContainer(XDRState<mode>* xdr,
+                                           SharedDataContainer& sharedData);
+
+  template <XDRMode mode>
+  static XDRResult codeParserAtom(XDRState<mode>* xdr, ParserAtom** atomp);
+
+  template <XDRMode mode>
+  static XDRResult codeParserAtomSpan(XDRState<mode>* xdr, LifoAlloc& alloc,
+                                      ParserAtomSpan& parserAtomData);
+
+  template <XDRMode mode>
+  static XDRResult codeModuleMetadata(XDRState<mode>* xdr,
+                                      StencilModuleMetadata& stencil);
+
+  static XDRResult checkCompilationStencil(XDRStencilEncoder* encoder,
+                                           const CompilationStencil& stencil);
+
+  static XDRResult checkCompilationStencil(
+      const ExtensibleCompilationStencil& stencil);
+
+  template <XDRMode mode>
+  static XDRResult codeCompilationStencil(XDRState<mode>* xdr,
+                                          CompilationStencil& stencil);
 };
 
 } /* namespace frontend */

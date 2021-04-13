@@ -396,6 +396,22 @@ typedef enum JSGCParamKey {
    * A number that is incremented on every minor GC.
    */
   JSGC_MINOR_GC_NUMBER = 45,
+
+  /**
+   * JS::RunIdleTimeGCTask will collect the nursery if it hasn't been collected
+   * in this many milliseconds.
+   *
+   * Default: 5000
+   * Pref: None
+   */
+  JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS = 46,
+
+  /**
+   * The system page size in KB.
+   *
+   * This parameter is read-only.
+   */
+  JSGC_SYSTEM_PAGE_SIZE_KB = 47,
 } JSGCParamKey;
 
 /*

@@ -22,10 +22,6 @@ option(
     help="location where the Android NDK can be found{|}",
 )
 
-option("--with-android-ndk-version", nargs=1, help="android NDK version")
-
-option("--with-android-platform", nargs=1, help="location of the Android platform")
-
 option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
 
 option(
@@ -97,19 +93,16 @@ set_config("ANDROID_NDK", ndk)
 add_old_configure_assignment("android_ndk", ndk)
 
 
-@depends("--with-android-ndk-version", ndk)
+@depends(ndk)
 @checking("for android ndk version")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="mozboot.android", _import="NDK_VERSION")
 @imports(_from="mozboot.android", _import="get_ndk_version")
 @imports(_from="mozboot.android", _import="GetNdkVersionError")
-def ndk_version(value, ndk):
+def ndk_version(ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
-
-    if value:
-        return value[0]
 
     try:
         major, minor, human = get_ndk_version(ndk)
@@ -132,15 +125,12 @@ set_config("ANDROID_NDK_MAJOR_VERSION", ndk_version.major)
 set_config("ANDROID_NDK_MINOR_VERSION", ndk_version.minor)
 
 
-@depends("--with-android-platform", target, android_version, ndk)
+@depends(target, android_version, ndk)
 @checking("for android platform directory")
 @imports(_from="os.path", _import="isdir")
-def android_platform(value, target, android_version, ndk):
+def android_platform(target, android_version, ndk):
     if target.os != "Android":
         return
-
-    if value:
-        return value[0]
 
     if "aarch64" == target.cpu:
         target_dir_name = "arm64"
@@ -329,7 +319,7 @@ option(
 @imports(_from="os.path", _import="isdir")
 def stlport_cppflags(value, ndk):
     if value and len(value):
-        return value[0].split()
+        return value.split()
     if not ndk:
         return
 
@@ -381,8 +371,6 @@ def extra_toolchain_flags(
         android_system,
         "-isystem",
         os.path.join(android_sysroot, "usr", "include"),
-        "--sysroot",
-        android_sysroot,
         "-gcc-toolchain",
         toolchain_dir,
         "-D__ANDROID_API__=%d" % android_version,

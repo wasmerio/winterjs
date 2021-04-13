@@ -16,10 +16,10 @@
 #include "gc/ZoneAllocator.h"
 #include "js/ArrayBuffer.h"
 #include "js/GCHashTable.h"
+#include "vm/BufferSize.h"
 #include "vm/JSObject.h"
 #include "vm/Runtime.h"
 #include "vm/SharedMem.h"
-#include "wasm/WasmTypes.h"
 
 namespace js {
 
@@ -108,16 +108,6 @@ class ArrayBufferObjectMaybeShared;
 mozilla::Maybe<uint64_t> WasmArrayBufferMaxSize(
     const ArrayBufferObjectMaybeShared* buf);
 size_t WasmArrayBufferMappedSize(const ArrayBufferObjectMaybeShared* buf);
-
-// Class wrapping an ArrayBuffer or ArrayBufferView byte offset or length.
-class BufferSize {
-  size_t size_ = 0;
-
- public:
-  explicit BufferSize(size_t size) : size_(size) {}
-
-  size_t get() const { return size_; }
-};
 
 class ArrayBufferObjectMaybeShared : public NativeObject {
  public:
@@ -235,9 +225,6 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
     DETACHED = 0b1000,
 
-    // Views of this buffer include only typed objects.
-    TYPED_OBJECT_VIEWS = 0b1'0000,
-
     // This MALLOCED, MAPPED, or EXTERNAL buffer has been prepared for asm.js
     // and cannot henceforth be transferred/detached.  (WASM, USER_OWNED, and
     // INLINE_DATA buffers can't be prepared for asm.js -- although if an
@@ -351,9 +338,6 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static ArrayBufferObject* createZeroed(JSContext* cx, BufferSize nbytes,
                                          HandleObject proto = nullptr);
 
-  static ArrayBufferObject* createForTypedObject(JSContext* cx,
-                                                 BufferSize nbytes);
-
   // Create an ArrayBufferObject that is safely finalizable and can later be
   // initialize()d to become a real, content-visible ArrayBufferObject.
   static ArrayBufferObject* createEmpty(JSContext* cx);
@@ -466,8 +450,6 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static BufferContents createMappedContents(int fd, size_t offset,
                                              size_t length);
 
-  bool hasTypedObjectViews() const { return flags() & TYPED_OBJECT_VIEWS; }
-
  protected:
   void setDataPointer(BufferContents contents);
   void setByteLength(BufferSize length);
@@ -476,8 +458,6 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   uint32_t flags() const;
   void setFlags(uint32_t flags);
-
-  void setHasTypedObjectViews() { setFlags(flags() | TYPED_OBJECT_VIEWS); }
 
   void setIsDetached() { setFlags(flags() | DETACHED); }
   void setIsPreparedForAsmJS() {
@@ -506,9 +486,13 @@ using RootedArrayBufferObject = Rooted<ArrayBufferObject*>;
 using HandleArrayBufferObject = Handle<ArrayBufferObject*>;
 using MutableHandleArrayBufferObject = MutableHandle<ArrayBufferObject*>;
 
-bool CreateWasmBuffer(JSContext* cx, wasm::MemoryKind memKind,
-                      const wasm::Limits& memory,
-                      MutableHandleArrayBufferObjectMaybeShared buffer);
+// Create a buffer for a 32-bit wasm memory.  Arguments of the Limits structure
+// are broken out in order to avoid having this file depending on WasmTypes.h,
+// as that creates a circularity through WasmJS.h.
+bool CreateWasmBuffer32(JSContext* cx, uint64_t initialSize,
+                        const mozilla::Maybe<uint64_t>& maxSize,
+                        bool sharedMemory,
+                        MutableHandleArrayBufferObjectMaybeShared buffer);
 
 // Per-compartment table that manages the relationship between array buffers
 // and the views that use their storage.

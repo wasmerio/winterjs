@@ -55,12 +55,12 @@ extern const SymbolicAddressSignature SASigMemorySize;
 extern const SymbolicAddressSignature SASigWaitI32;
 extern const SymbolicAddressSignature SASigWaitI64;
 extern const SymbolicAddressSignature SASigWake;
-extern const SymbolicAddressSignature SASigMemCopy;
-extern const SymbolicAddressSignature SASigMemCopyShared;
+extern const SymbolicAddressSignature SASigMemCopy32;
+extern const SymbolicAddressSignature SASigMemCopyShared32;
 extern const SymbolicAddressSignature SASigDataDrop;
-extern const SymbolicAddressSignature SASigMemFill;
-extern const SymbolicAddressSignature SASigMemFillShared;
-extern const SymbolicAddressSignature SASigMemInit;
+extern const SymbolicAddressSignature SASigMemFill32;
+extern const SymbolicAddressSignature SASigMemFillShared32;
+extern const SymbolicAddressSignature SASigMemInit32;
 extern const SymbolicAddressSignature SASigTableCopy;
 extern const SymbolicAddressSignature SASigElemDrop;
 extern const SymbolicAddressSignature SASigTableFill;
@@ -74,12 +74,15 @@ extern const SymbolicAddressSignature SASigPreBarrierFiltering;
 extern const SymbolicAddressSignature SASigPostBarrier;
 extern const SymbolicAddressSignature SASigPostBarrierFiltering;
 extern const SymbolicAddressSignature SASigStructNew;
-extern const SymbolicAddressSignature SASigStructNarrow;
 #ifdef ENABLE_WASM_EXCEPTIONS
 extern const SymbolicAddressSignature SASigExceptionNew;
 extern const SymbolicAddressSignature SASigThrowException;
 extern const SymbolicAddressSignature SASigGetLocalExceptionIndex;
+extern const SymbolicAddressSignature SASigPushRefIntoExn;
 #endif
+extern const SymbolicAddressSignature SASigArrayNew;
+extern const SymbolicAddressSignature SASigRefTest;
+extern const SymbolicAddressSignature SASigRttSub;
 
 // A SymbolicAddress that NeedsBuiltinThunk() will call through a thunk to the
 // C++ function. This will be true for all normal calls from normal wasm
@@ -107,7 +110,7 @@ bool HandleThrow(JSContext* cx, WasmFrameIter& iter,
 
 void* SymbolicAddressTarget(SymbolicAddress sym);
 
-void* ProvisionalJitEntryStub();
+void* ProvisionalLazyJitEntryStub();
 
 void* MaybeGetBuiltinThunk(JSFunction* f, const FuncType& funcType);
 

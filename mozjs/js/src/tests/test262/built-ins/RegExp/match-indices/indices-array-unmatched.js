@@ -1,4 +1,3 @@
-// |reftest| skip -- regexp-match-indices is not supported
 // Copyright 2019 Ron Buckton. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -23,7 +22,7 @@ info: |
 ---*/
 
 let input = "abd";
-let match = /b(c)?/.exec(input);
+let match = /b(c)?/d.exec(input);
 let indices = match.indices;
 
 // `indices` has the same length as match

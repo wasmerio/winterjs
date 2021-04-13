@@ -38,7 +38,7 @@ using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
 
-typedef Vector<jit::MIRType, 8, SystemAllocPolicy> MIRTypeVector;
+using MIRTypeVector = Vector<jit::MIRType, 8, SystemAllocPolicy>;
 using ABIArgMIRTypeIter = jit::ABIArgIter<MIRTypeVector>;
 
 /*****************************************************************************/
@@ -65,6 +65,28 @@ static uint32_t ResultStackSize(ValType type) {
   }
 }
 
+uint32_t js::wasm::MIRTypeToABIResultSize(jit::MIRType type) {
+  switch (type) {
+    case MIRType::Int32:
+      return ABIResult::StackSizeOfInt32;
+    case MIRType::Int64:
+      return ABIResult::StackSizeOfInt64;
+    case MIRType::Float32:
+      return ABIResult::StackSizeOfFloat;
+    case MIRType::Double:
+      return ABIResult::StackSizeOfDouble;
+#ifdef ENABLE_WASM_SIMD
+    case MIRType::Simd128:
+      return ABIResult::StackSizeOfV128;
+#endif
+    case MIRType::Pointer:
+    case MIRType::RefOrNull:
+      return ABIResult::StackSizeOfPtr;
+    default:
+      MOZ_CRASH("MIRTypeToABIResultSize - unhandled case");
+  }
+}
+
 uint32_t ABIResult::size() const { return ResultStackSize(type()); }
 
 void ABIResultIter::settleRegister(ValType type) {
@@ -86,6 +108,7 @@ void ABIResultIter::settleRegister(ValType type) {
     case ValType::F64:
       cur_ = ABIResult(type, ReturnDoubleReg);
       break;
+    case ValType::Rtt:
     case ValType::Ref:
       cur_ = ABIResult(type, ReturnReg);
       break;
@@ -428,7 +451,7 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             MOZ_CRASH("V128 not supported in SetupABIArguments");
 #endif
           default:
-            MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("unexpected FPU type");
+            MOZ_CRASH("unexpected FPU type");
             break;
         }
         break;
@@ -483,8 +506,7 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             break;
           }
           default:
-            MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE(
-                "unexpected stack arg type");
+            MOZ_CRASH("unexpected stack arg type");
         }
         break;
       case ABIArg::Uninitialized:
@@ -524,6 +546,7 @@ static void StoreRegisterResult(MacroAssembler& masm, const FuncExport& fe,
           masm.canonicalizeDouble(result.fpr());
           masm.storeDouble(result.fpr(), Address(loc, 0));
           break;
+        case ValType::Rtt:
         case ValType::Ref:
           masm.storePtr(result.gpr(), Address(loc, 0));
           break;
@@ -586,9 +609,16 @@ static const unsigned WasmPushSize = sizeof(void*);
 static const unsigned FramePushedBeforeAlign =
     NonVolatileRegsPushSize + NumExtraPushed * WasmPushSize;
 
-static void AssertExpectedSP(const MacroAssembler& masm) {
+static void AssertExpectedSP(MacroAssembler& masm) {
 #ifdef JS_CODEGEN_ARM64
   MOZ_ASSERT(sp.Is(masm.GetStackPointer64()));
+#  ifdef DEBUG
+  // Since we're asserting that SP is the currently active stack pointer,
+  // let's also in effect assert that PSP is dead -- by setting it to 1, so as
+  // to cause to cause any attempts to use it to segfault in an easily
+  // identifiable way.
+  masm.asVIXL().Mov(PseudoStackPointer64, 1);
+#  endif
 #endif
 }
 
@@ -623,6 +653,7 @@ static void MoveSPForJitABI(MacroAssembler& masm) {
 static void CallFuncExport(MacroAssembler& masm, const FuncExport& fe,
                            const Maybe<ImmPtr>& funcPtr) {
   MOZ_ASSERT(fe.hasEagerStubs() == !funcPtr);
+  MoveSPForJitABI(masm);
   if (funcPtr) {
     masm.call(*funcPtr);
   } else {
@@ -1353,6 +1384,7 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
         masm.setFramePushed(0);
         break;
       }
+      case ValType::Rtt:
       case ValType::V128: {
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
       }
@@ -1381,8 +1413,13 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
 
   MOZ_ASSERT(masm.framePushed() == 0);
 #ifdef JS_CODEGEN_ARM64
+  AssertExpectedSP(masm);
   masm.loadPtr(Address(sp, 0), lr);
   masm.addToStackPtr(Imm32(8));
+  // Copy SP into PSP to enforce return-point invariants (SP == PSP).
+  // `addToStackPtr` won't sync them because SP is the active pointer here.
+  // For the same reason, we can't use initPseudoStackPtr to do the sync, so
+  // we have to do it "by hand".  Omitting this causes many tests to segfault.
   masm.moveStackPtrTo(PseudoStackPointer);
   masm.abiret();
 #else
@@ -1616,9 +1653,10 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
   void* callee = codeTier.segment().base() + codeRange.funcUncheckedCallEntry();
 
   masm.assertStackAlignment(WasmStackAlignment);
+  MoveSPForJitABI(masm);
   masm.callJit(ImmPtr(callee));
 #ifdef JS_CODEGEN_ARM64
-  // WASM does not use the emulated stack pointer, so reinitialize it as it
+  // WASM does not always keep PSP in sync with SP.  So reinitialize it as it
   // might be clobbered either by WASM or by any C++ calls within.
   masm.initPseudoStackPtr();
 #endif
@@ -1674,6 +1712,7 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
             MOZ_CRASH("unexpected return type when calling from ion to wasm");
         }
         break;
+      case wasm::ValType::Rtt:
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
     }
@@ -2156,8 +2195,9 @@ static bool GenerateImportInterpExit(MacroAssembler& masm, const FuncImport& fi,
                   funcImportIndex);
         GenPrintI64(DebugChannel::Import, masm, ReturnReg64);
         break;
+      case ValType::Rtt:
       case ValType::V128:
-        // Note, CallImport_V128 currently always throws, so we should never
+        // Note, CallImport_Rtt/V128 currently always throws, so we should never
         // reach this point.
         masm.breakpoint();
         break;
@@ -2319,10 +2359,14 @@ static bool GenerateImportJitExit(MacroAssembler& masm, const FuncImport& fi,
   AssertStackAlignment(masm, JitStackAlignment,
                        sizeOfRetAddr + frameAlignExtra);
 #ifdef JS_CODEGEN_ARM64
-  // Conform to JIT ABI.
+  AssertExpectedSP(masm);
+  // Conform to JIT ABI.  Note this doesn't update PSP since SP is the active
+  // pointer.
   masm.addToStackPtr(Imm32(8));
+  // Manually resync PSP.  Omitting this causes eg tests/wasm/import-export.js
+  // to segfault.
+  masm.moveStackPtrTo(PseudoStackPointer);
 #endif
-  MoveSPForJitABI(masm);
   masm.callJitNoProfiler(callee);
 #ifdef JS_CODEGEN_ARM64
   // Conform to platform conventions - align the SP.
@@ -2392,6 +2436,7 @@ static bool GenerateImportJitExit(MacroAssembler& masm, const FuncImport& fi,
         // No fastpath for now, go immediately to ool case
         masm.jump(&oolConvert);
         break;
+      case ValType::Rtt:
       case ValType::V128:
         // Unreachable as callImport should not call the stub.
         masm.breakpoint();
@@ -2668,7 +2713,7 @@ static const LiveRegisterSet RegsToPreserve(
 // PushRegsInMask and lengty comment in Architecture-arm64.h.
 static const LiveRegisterSet RegsToPreserve(
     GeneralRegisterSet(Registers::AllMask &
-                       ~((Registers::SetType(1) << Registers::StackPointer) |
+                       ~((Registers::SetType(1) << RealStackPointer.code()) |
                          (Registers::SetType(1) << Registers::lr))),
     FloatRegisterSet(FloatRegisters::AllDoubleMask));
 #elif defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
@@ -2831,8 +2876,8 @@ static bool GenerateThrowStub(MacroAssembler& masm, Label* throwLabel,
   masm.bind(&resumeCatch);
   masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, framePointer)),
                FramePointer);
-  masm.loadStackPtr(
-      Address(ReturnReg, offsetof(ResumeFromException, stackPointer)));
+  // Defer reloading stackPointer until just before the jump, so as to
+  // protect other live data on the stack.
 
   // When there is a catch handler, HandleThrow passes it the Value needed for
   // the handler's argument as well.
@@ -2846,6 +2891,11 @@ static bool GenerateThrowStub(MacroAssembler& masm, Label* throwLabel,
   Register obj = masm.extractObject(val, scratch2);
   masm.loadPtr(Address(ReturnReg, offsetof(ResumeFromException, target)),
                scratch);
+  // Now it's safe to reload stackPointer.
+  masm.loadStackPtr(
+      Address(ReturnReg, offsetof(ResumeFromException, stackPointer)));
+  // This move must come after the SP is reloaded because WasmExceptionReg may
+  // alias ReturnReg.
   masm.movePtr(obj, WasmExceptionReg);
   masm.jump(scratch);
 
@@ -2964,8 +3014,8 @@ bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
   return true;
 }
 
-bool wasm::GenerateProvisionalJitEntryStub(MacroAssembler& masm,
-                                           Offsets* offsets) {
+bool wasm::GenerateProvisionalLazyJitEntryStub(MacroAssembler& masm,
+                                               Offsets* offsets) {
   AssertExpectedSP(masm);
   masm.setFramePushed(0);
   offsets->begin = masm.currentOffset();
@@ -2999,10 +3049,7 @@ bool wasm::GenerateProvisionalJitEntryStub(MacroAssembler& masm,
   masm.SetStackPointer64(sp);
 #endif
 
-  if (!FinishOffsets(masm, offsets)) {
-    return false;
-  }
-  return true;
+  return FinishOffsets(masm, offsets);
 }
 
 bool wasm::GenerateStubs(const ModuleEnvironment& env,

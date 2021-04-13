@@ -329,7 +329,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
  public:
   inline void enterRealmOf(JSObject* target);
   inline void enterRealmOf(JSScript* target);
-  inline void enterRealmOf(js::ObjectGroup* target);
+  inline void enterRealmOf(js::Shape* target);
   inline void enterNullRealm();
 
   inline void setRealmForJitExceptionHandler(JS::Realm* realm);
@@ -584,6 +584,10 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 #if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
   // We are currently running a simulated OOM test.
   js::ContextData<bool> runningOOMTest;
+#endif
+
+#ifdef DEBUG
+  js::ContextData<bool> disableCompartmentCheckTracer;
 #endif
 
   /*

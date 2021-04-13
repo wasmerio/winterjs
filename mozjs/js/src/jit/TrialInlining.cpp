@@ -398,8 +398,40 @@ Maybe<InlinableSetterData> FindInlinableSetterData(ICCacheIRStub* stub) {
   return data;
 }
 
+// Return the number of actual arguments that will be passed to the
+// target function.
+static uint32_t GetCalleeNumActuals(BytecodeLocation loc) {
+  switch (loc.getOp()) {
+    case JSOp::GetProp:
+      // Getters do not pass arguments.
+      return 0;
+
+    case JSOp::SetProp:
+    case JSOp::StrictSetProp:
+      // Setters pass 1 argument.
+      return 1;
+
+    case JSOp::FunCall: {
+      // If FunCall is passed arguments, one of them will become |this|.
+      uint32_t callArgc = loc.getCallArgc();
+      return callArgc > 0 ? callArgc - 1 : 0;
+    }
+
+    case JSOp::Call:
+    case JSOp::CallIgnoresRv:
+    case JSOp::CallIter:
+    case JSOp::New:
+    case JSOp::SuperCall:
+      return loc.getCallArgc();
+
+    default:
+      MOZ_CRASH("Unsupported op");
+  }
+}
+
 /*static*/
-bool TrialInliner::canInline(JSFunction* target, HandleScript caller) {
+bool TrialInliner::canInline(JSFunction* target, HandleScript caller,
+                             BytecodeLocation loc) {
   if (!target->hasJitScript()) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: no JIT script");
     return false;
@@ -417,10 +449,6 @@ bool TrialInliner::canInline(JSFunction* target, HandleScript caller) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: can't ion-compile");
     return false;
   }
-  if (script->needsArgsObj()) {
-    JitSpew(JitSpew_WarpTrialInlining, "SKIP: needs args obj");
-    return false;
-  }
   if (script->isDebuggee()) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: is debuggee");
     return false;
@@ -430,6 +458,28 @@ bool TrialInliner::canInline(JSFunction* target, HandleScript caller) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: cross-realm call");
     return false;
   }
+
+  uint32_t calleeNumActuals = GetCalleeNumActuals(loc);
+  if (script->argumentsHasVarBinding() &&
+      calleeNumActuals > ArgumentsObject::MaxInlinedArgs) {
+    JitSpew(JitSpew_WarpTrialInlining,
+            "SKIP: needs arguments object with %u actual args (maximum %u)",
+            calleeNumActuals, ArgumentsObject::MaxInlinedArgs);
+    return false;
+  }
+
+  if (TooManyFormalArguments(target->nargs())) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: Too many formal arguments: %u",
+            unsigned(target->nargs()));
+    return false;
+  }
+
+  if (TooManyFormalArguments(calleeNumActuals)) {
+    JitSpew(JitSpew_WarpTrialInlining, "SKIP: argc too large: %u",
+            unsigned(loc.getCallArgc()));
+    return false;
+  }
+
   return true;
 }
 
@@ -446,7 +496,7 @@ bool TrialInliner::shouldInline(JSFunction* target, ICCacheIRStub* stub,
           baseScript ? baseScript->column() : 0);
 #endif
 
-  if (!canInline(target, script_)) {
+  if (!canInline(target, script_, loc)) {
     return false;
   }
 
@@ -490,18 +540,6 @@ bool TrialInliner::shouldInline(JSFunction* target, ICCacheIRStub* stub,
     JitSpew(JitSpew_WarpTrialInlining,
             "INFO: Ignored length (%u) of InlinableLargeFunction",
             unsigned(targetScript->length()));
-  }
-
-  if (TooManyFormalArguments(target->nargs())) {
-    JitSpew(JitSpew_WarpTrialInlining, "SKIP: Too many formal arguments: %u",
-            unsigned(target->nargs()));
-    return false;
-  }
-
-  if (loc.isInvokeOp() && TooManyFormalArguments(loc.getCallArgc())) {
-    JitSpew(JitSpew_WarpTrialInlining, "SKIP: argc too large: %u",
-            unsigned(loc.getCallArgc()));
-    return false;
   }
 
   return true;
@@ -731,13 +769,6 @@ bool TrialInliner::tryInlining() {
 
 bool InliningRoot::addInlinedScript(UniquePtr<ICScript> icScript) {
   return inlinedScripts_.append(std::move(icScript));
-}
-
-void InliningRoot::removeInlinedScript(ICScript* icScript) {
-  inlinedScripts_.eraseIf(
-      [icScript](const UniquePtr<ICScript>& script) -> bool {
-        return script.get() == icScript;
-      });
 }
 
 void InliningRoot::trace(JSTracer* trc) {

@@ -410,6 +410,9 @@ static const uint32_t NurseryFreeThresholdForIdleCollection = ChunkSize / 4;
 /* JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT */
 static const double NurseryFreeThresholdForIdleCollectionFraction = 0.25;
 
+/* JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS */
+static const uint32_t NurseryTimeoutForIdleCollectionMS = 5000;
+
 /* JSGC_PRETENURE_THRESHOLD */
 static const double PretenureThreshold = 0.6;
 
@@ -541,6 +544,9 @@ class GCSchedulingTunables {
   UnprotectedData<uint32_t> nurseryFreeThresholdForIdleCollection_;
   UnprotectedData<double> nurseryFreeThresholdForIdleCollectionFraction_;
 
+  /* See JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS. */
+  MainThreadData<mozilla::TimeDuration> nurseryTimeoutForIdleCollection_;
+
   /*
    * JSGC_PRETENURE_THRESHOLD
    *
@@ -633,6 +639,9 @@ class GCSchedulingTunables {
   }
   double nurseryFreeThresholdForIdleCollectionFraction() const {
     return nurseryFreeThresholdForIdleCollectionFraction_;
+  }
+  mozilla::TimeDuration nurseryTimeoutForIdleCollection() const {
+    return nurseryTimeoutForIdleCollection_;
   }
 
   bool attemptPretenuring() const { return pretenureThreshold_ < 1.0; }

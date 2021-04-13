@@ -172,7 +172,8 @@ inline void TraceRoot(JSTracer* trc, T* thingp, const char* name) {
 }
 
 template <typename T>
-inline void TraceRoot(JSTracer* trc, WeakHeapPtr<T>* thingp, const char* name) {
+inline void TraceRoot(JSTracer* trc, const HeapPtr<T>* thingp,
+                      const char* name) {
   TraceRoot(trc, thingp->unbarrieredAddress(), name);
 }
 
@@ -250,6 +251,18 @@ void TraceCrossCompartmentEdge(JSTracer* trc, JSObject* src,
       trc, src, gc::ConvertToBase(dst->unbarrieredAddress()), name);
 }
 
+// Trace an edge that's guaranteed to be same-zone but may cross a compartment
+// boundary. This should NOT be used for object => object edges, as those have
+// to be in the cross-compartment wrapper map.
+//
+// WARNING: because this turns off certain compartment checks, you most likely
+// don't want to use this! If you still think you need this function, talk to a
+// GC peer first.
+template <typename T>
+void TraceSameZoneCrossCompartmentEdge(JSTracer* trc,
+                                       const WriteBarriered<T>* dst,
+                                       const char* name);
+
 // Trace a weak map key. For debugger weak maps these may be cross compartment,
 // but the compartment must always be within the current sweep group.
 template <typename T>
@@ -287,7 +300,6 @@ namespace gc {
 // Trace through a shape or group iteratively during cycle collection to avoid
 // deep or infinite recursion.
 void TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape);
-void TraceCycleCollectorChildren(JS::CallbackTracer* trc, ObjectGroup* group);
 
 /**
  * Trace every value within |compartments| that is wrapped by a
@@ -320,10 +332,6 @@ inline js::BaseScript* DispatchToOnEdge(GenericTracer* trc,
 }
 inline js::Shape* DispatchToOnEdge(GenericTracer* trc, js::Shape* shape) {
   return trc->onShapeEdge(shape);
-}
-inline js::ObjectGroup* DispatchToOnEdge(GenericTracer* trc,
-                                         js::ObjectGroup* group) {
-  return trc->onObjectGroupEdge(group);
 }
 inline js::BaseShape* DispatchToOnEdge(GenericTracer* trc,
                                        js::BaseShape* base) {

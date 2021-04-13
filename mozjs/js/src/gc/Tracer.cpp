@@ -96,8 +96,7 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 // simplicity and performance of FireFox's embedding of this engine.
 void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
   do {
-    MOZ_ASSERT(shape->base());
-    shape->base()->assertConsistency();
+    shape->base()->traceChildren(trc);
 
     // Don't trace the propid because the CC doesn't care about jsid.
 
@@ -115,13 +114,6 @@ void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
 
     shape = shape->previous();
   } while (shape);
-}
-
-void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc,
-                                     ObjectGroup* group) {
-  MOZ_ASSERT(trc->isCallbackTracer());
-
-  group->traceChildren(trc);
 }
 
 /*** Traced Edge Printer ****************************************************/
@@ -194,10 +186,6 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
       name = static_cast<JSObject*>(thing)->getClass()->name;
       break;
     }
-
-    case JS::TraceKind::ObjectGroup:
-      name = "object_group";
-      break;
 
     case JS::TraceKind::RegExpShared:
       name = "reg_exp_shared";

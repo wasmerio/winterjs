@@ -60,6 +60,7 @@
 #include "vm/JSScript.h"
 #include "vm/ModuleBuilder.h"  // js::ModuleBuilder
 #include "vm/RegExpObject.h"
+#include "vm/Scope.h"  // GetScopeDataTrailingNames
 #include "vm/SelfHosting.h"
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
@@ -147,12 +148,11 @@ bool GeneralParser<ParseHandler, Unit>::mustMatchTokenInternal(
   return true;
 }
 
-ParserSharedBase::ParserSharedBase(JSContext* cx, CompilationStencil& stencil,
+ParserSharedBase::ParserSharedBase(JSContext* cx,
                                    CompilationState& compilationState,
                                    Kind kind)
     : cx_(cx),
       alloc_(compilationState.allocScope.alloc()),
-      stencil_(stencil),
       compilationState_(compilationState),
       pc_(nullptr),
       usedNames_(compilationState.usedNames) {
@@ -170,10 +170,8 @@ void ParserSharedBase::dumpAtom(TaggedParserAtomIndex index) const {
 #endif
 
 ParserBase::ParserBase(JSContext* cx, const ReadOnlyCompileOptions& options,
-                       bool foldConstants, CompilationStencil& stencil,
-                       CompilationState& compilationState)
-    : ParserSharedBase(cx, stencil, compilationState,
-                       ParserSharedBase::Kind::Parser),
+                       bool foldConstants, CompilationState& compilationState)
+    : ParserSharedBase(cx, compilationState, ParserSharedBase::Kind::Parser),
       anyChars(cx, options, this),
       ss(nullptr),
       foldConstants_(foldConstants),
@@ -198,21 +196,21 @@ ParserBase::~ParserBase() { MOZ_ASSERT(checkOptionsCalled_); }
 template <class ParseHandler>
 PerHandlerParser<ParseHandler>::PerHandlerParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, bool foldConstants,
-    CompilationStencil& stencil, CompilationState& compilationState,
-    void* internalSyntaxParser)
-    : ParserBase(cx, options, foldConstants, stencil, compilationState),
+    CompilationState& compilationState, void* internalSyntaxParser)
+    : ParserBase(cx, options, foldConstants, compilationState),
       handler_(cx, compilationState.allocScope.alloc(),
                compilationState.input.lazy),
       internalSyntaxParser_(internalSyntaxParser) {
-  MOZ_ASSERT(stencil.isInitialStencil() == !compilationState.input.lazy);
+  MOZ_ASSERT(compilationState.isInitialStencil() ==
+             !compilationState.input.lazy);
 }
 
 template <class ParseHandler, typename Unit>
 GeneralParser<ParseHandler, Unit>::GeneralParser(
     JSContext* cx, const ReadOnlyCompileOptions& options, const Unit* units,
-    size_t length, bool foldConstants, CompilationStencil& stencil,
-    CompilationState& compilationState, SyntaxParser* syntaxParser)
-    : Base(cx, options, foldConstants, stencil, compilationState, syntaxParser),
+    size_t length, bool foldConstants, CompilationState& compilationState,
+    SyntaxParser* syntaxParser)
+    : Base(cx, options, foldConstants, compilationState, syntaxParser),
       tokenStream(cx, &compilationState.parserAtoms, options, units, length) {}
 
 template <typename Unit>
@@ -269,19 +267,11 @@ FunctionBox* PerHandlerParser<ParseHandler>::newFunctionBox(
     ReportAllocationOverflow(cx_);
     return nullptr;
   }
-  if (!compilationState_.scriptData.emplaceBack()) {
-    js::ReportOutOfMemory(cx_);
+  if (!compilationState_.appendScriptStencilAndData(cx_)) {
     return nullptr;
   }
 
-  bool isInitialStencil = this->stencil_.isInitialStencil();
-
-  if (isInitialStencil) {
-    if (!compilationState_.scriptExtra.emplaceBack()) {
-      js::ReportOutOfMemory(cx_);
-      return nullptr;
-    }
-  }
+  bool isInitialStencil = compilationState_.isInitialStencil();
 
   // This source extent will be further filled in during the remainder of parse.
   SourceExtent extent;
@@ -997,21 +987,22 @@ static MOZ_ALWAYS_INLINE ParserBindingName* InitializeIndexedBindings(
 
 }  // namespace detail
 
-// Initialize |data->trailingNames| bindings, then set |data->slotInfo.length|
-// to the count of bindings added (which must equal |count|).
+// Initialize the trailing name bindings of |data|, then set |data->length| to
+// the count of bindings added (which must equal |count|).
 //
-// First, |firstBindings| are added to |data->trailingNames|.  Then any "steps"
-// present are performed first to last.  Each step is 1) a pointer to a member
-// of |data| to be set to the current number of bindings added, and 2) a vector
-// of |ParserBindingName|s to then copy into |data->trailingNames|.  (Thus each
-// |data| member field indicates where the corresponding vector's names start.)
+// First, |firstBindings| are added to the trailing names.  Then any
+// "steps" present are performed first to last.  Each step is 1) a pointer to a
+// member of |data| to be set to the current number of bindings added, and 2) a
+// vector of |ParserBindingName|s to then copy into |data->trailingNames|.
+// (Thus each |data| member field indicates where the corresponding vector's
+//  names start.)
 template <class Data, typename... Step>
 static MOZ_ALWAYS_INLINE void InitializeBindingData(
     Data* data, uint32_t count, const ParserBindingNameVector& firstBindings,
     Step&&... step) {
-  MOZ_ASSERT(data->slotInfo.length == 0, "data shouldn't be filled yet");
+  MOZ_ASSERT(data->length == 0, "data shouldn't be filled yet");
 
-  ParserBindingName* start = data->trailingNames.start();
+  ParserBindingName* start = GetScopeDataTrailingNamesPointer(data);
   ParserBindingName* cursor = std::uninitialized_copy(
       firstBindings.begin(), firstBindings.end(), start);
 
@@ -1022,7 +1013,7 @@ static MOZ_ALWAYS_INLINE void InitializeBindingData(
                                         std::forward<Step>(step)...);
 
   MOZ_ASSERT(PointerRangeSize(start, end) == count);
-  data->slotInfo.length = count;
+  data->length = count;
 }
 
 Maybe<GlobalScope::ParserData*> NewGlobalScopeData(JSContext* cx,
@@ -1162,14 +1153,17 @@ Maybe<EvalScope::ParserData*> NewEvalScopeData(JSContext* cx,
                                                ParseContext* pc) {
   ParserBindingNameVector vars(cx);
 
+  // Treat all bindings as closed over in non-strict eval.
+  bool allBindingsClosedOver =
+      !pc->sc()->strict() || pc->sc()->allBindingsClosedOver();
   for (BindingIter bi = scope.bindings(pc); bi; bi++) {
-    // Eval scopes only contain 'var' bindings. Make all bindings aliased
-    // for now.
+    // Eval scopes only contain 'var' bindings.
     MOZ_ASSERT(bi.kind() == BindingKind::Var);
     bool isTopLevelFunction =
         bi.declarationKind() == DeclarationKind::BodyLevelFunction;
+    bool closedOver = allBindingsClosedOver || bi.closedOver();
 
-    ParserBindingName binding(bi.name(), true, isTopLevelFunction);
+    ParserBindingName binding(bi.name(), closedOver, isTopLevelFunction);
     if (!vars.append(binding)) {
       return Nothing();
     }
@@ -1483,7 +1477,7 @@ LexicalScopeNode* PerHandlerParser<FullParseHandler>::finishLexicalScope(
 template <class ParseHandler>
 bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     EvalSharedContext* evalSc) {
-  if (!this->stencil_.isInitialStencil()) {
+  if (!this->compilationState_.isInitialStencil()) {
     // We're delazifying -- so we already checked private names during first
     // parse.
     return true;
@@ -1614,11 +1608,18 @@ LexicalScopeNode* Parser<FullParseHandler, Unit>::evalBody(
     return nullptr;
   }
 
-  // For eval scripts, since all bindings are automatically considered
-  // closed over, we don't need to call propagateFreeNamesAndMarkClosed-
-  // OverBindings. However, Annex B.3.3 functions still need to be marked.
-  if (!varScope.propagateAndMarkAnnexBFunctionBoxes(pc_, this)) {
-    return nullptr;
+  if (pc_->sc()->strict()) {
+    if (!propagateFreeNamesAndMarkClosedOverBindings(varScope)) {
+      return nullptr;
+    }
+  } else {
+    // For non-strict eval scripts, since all bindings are automatically
+    // considered closed over, we don't need to call propagateFreeNames-
+    // AndMarkClosedOverBindings. However, Annex B.3.3 functions still need to
+    // be marked.
+    if (!varScope.propagateAndMarkAnnexBFunctionBoxes(pc_, this)) {
+      return nullptr;
+    }
   }
 
   Maybe<EvalScope::ParserData*> bindings = newEvalScopeData(pc_->varScope());
@@ -1696,9 +1697,9 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
     ModuleSharedContext* modulesc) {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  this->stencil_.moduleMetadata = MakeUnique<StencilModuleMetadata>();
-  if (!this->stencil_.moduleMetadata) {
-    js::ReportOutOfMemory(cx_);
+  this->compilationState_.moduleMetadata =
+      cx_->template new_<StencilModuleMetadata>();
+  if (!this->compilationState_.moduleMetadata) {
     return null();
   }
 
@@ -1749,16 +1750,17 @@ ModuleNode* Parser<FullParseHandler, Unit>::moduleBody(
   // Set the module to async if an await keyword was found at the top level.
   if (pc_->isAsync()) {
     pc_->sc()->asModuleContext()->builder.noteAsync(
-        *this->stencil_.moduleMetadata);
+        *this->compilationState_.moduleMetadata);
   }
 
-  // Generate the Import/Export tables and store in CompilationStencil.
-  if (!modulesc->builder.buildTables(*this->stencil_.moduleMetadata)) {
+  // Generate the Import/Export tables and store in CompilationState.
+  if (!modulesc->builder.buildTables(*this->compilationState_.moduleMetadata)) {
     return null();
   }
 
   // Check exported local bindings exist and mark them as closed over.
-  StencilModuleMetadata& moduleMetadata = *this->stencil_.moduleMetadata;
+  StencilModuleMetadata& moduleMetadata =
+      *this->compilationState_.moduleMetadata;
   for (auto entry : moduleMetadata.localExportEntries) {
     DeclaredNamePtr p = modulepc.varScope().lookupDeclaredName(entry.localName);
     if (!p) {
@@ -1947,7 +1949,7 @@ bool PerHandlerParser<FullParseHandler>::finishFunction(
   funbox->finishScriptFlags();
   funbox->copyFunctionFields(script);
 
-  if (this->stencil_.isInitialStencil()) {
+  if (this->compilationState_.isInitialStencil()) {
     ScriptStencilExtra& scriptExtra = funbox->functionExtraStencil();
     funbox->copyFunctionExtraFields(scriptExtra);
     funbox->copyScriptExtraFields(scriptExtra);
@@ -3817,13 +3819,62 @@ bool GeneralParser<ParseHandler, Unit>::maybeParseDirective(
     // had "use strict";
     pc_->sc()->setExplicitUseStrict();
     if (!pc_->sc()->strict()) {
-      // We keep track of the possible strict violations that could occur in
-      // the directive prologue -- deprecated octal syntax -- and
-      // complain now.
-      if (anyChars.sawDeprecatedOctal()) {
-        error(JSMSG_DEPRECATED_OCTAL);
-        return false;
+      // Some strict mode violations can appear before a Use Strict Directive
+      // is applied.  (See the |DeprecatedContent| enum initializers.)  These
+      // violations can manifest in two ways.
+      //
+      // First, the violation can appear *before* the Use Strict Directive.
+      // Numeric literals (and therefore octal literals) can only precede a
+      // Use Strict Directive if this function's parameter list is not simple,
+      // but we reported an error for non-simple parameter lists above, so
+      // octal literals present no issue.  But octal escapes and \8 and \9 can
+      // appear in the directive prologue before a Use Strict Directive:
+      //
+      //   function f()
+      //   {
+      //     "hell\157 world";  // octal escape
+      //     "\8"; "\9";        // NonOctalDecimalEscape
+      //     "use strict";      // retroactively makes all the above errors
+      //   }
+      //
+      // Second, the violation can appear *after* the Use Strict Directive but
+      // *before* the directive is recognized as terminated.  This only
+      // happens when a directive is terminated by ASI, and the next token
+      // contains a violation:
+      //
+      //   function a()
+      //   {
+      //     "use strict"  // ASI
+      //     0755;
+      //   }
+      //   function b()
+      //   {
+      //     "use strict"  // ASI
+      //     "hell\157 world";
+      //   }
+      //   function c()
+      //   {
+      //     "use strict"  // ASI
+      //     "\8";
+      //   }
+      //
+      // We note such violations when tokenizing.  Then, if a violation has
+      // been observed at the time a "use strict" is applied, we report the
+      // error.
+      switch (anyChars.sawDeprecatedContent()) {
+        case DeprecatedContent::None:
+          break;
+        case DeprecatedContent::OctalLiteral:
+          error(JSMSG_DEPRECATED_OCTAL_LITERAL);
+          return false;
+        case DeprecatedContent::OctalEscape:
+          error(JSMSG_DEPRECATED_OCTAL_ESCAPE);
+          return false;
+        case DeprecatedContent::EightOrNineEscape:
+          error(JSMSG_DEPRECATED_EIGHT_OR_NINE_ESCAPE);
+          return false;
       }
+
       pc_->sc()->setStrictScript();
     }
   } else if (IsUseAsmDirective(directivePos, directive)) {
@@ -3849,7 +3900,9 @@ GeneralParser<ParseHandler, Unit>::statementList(YieldHandling yieldHandling) {
 
   bool canHaveDirectives = pc_->atBodyLevel();
   if (canHaveDirectives) {
-    anyChars.clearSawDeprecatedOctal();
+    // Clear flags for deprecated content that might have been seen in an
+    // enclosing context.
+    anyChars.clearSawDeprecatedContent();
   }
 
   bool canHaveHashbangComment = pc_->atTopLevel();
@@ -7930,11 +7983,11 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructorBody(
   if (hasHeritage == HasHeritage::Yes) {
     // Synthesize the equivalent to `function f(...args)`
     funbox->setHasRest();
-    if (!notePositionalFormalParameter(funNode,
-                                       TaggedParserAtomIndex::WellKnown::args(),
-                                       synthesizedBodyPos.begin,
-                                       /* disallowDuplicateParams = */ false,
-                                       /* duplicatedParam = */ nullptr)) {
+    if (!notePositionalFormalParameter(
+            funNode, TaggedParserAtomIndex::WellKnown::dotArgs(),
+            synthesizedBodyPos.begin,
+            /* disallowDuplicateParams = */ false,
+            /* duplicatedParam = */ nullptr)) {
       return null();
     }
     funbox->setArgCount(1);
@@ -7979,12 +8032,12 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructorBody(
       return null();
     }
 
-    NameNodeType argsNameNode =
-        newName(TaggedParserAtomIndex::WellKnown::args(), synthesizedBodyPos);
+    NameNodeType argsNameNode = newName(
+        TaggedParserAtomIndex::WellKnown::dotArgs(), synthesizedBodyPos);
     if (!argsNameNode) {
       return null();
     }
-    if (!noteUsedName(TaggedParserAtomIndex::WellKnown::args())) {
+    if (!noteUsedName(TaggedParserAtomIndex::WellKnown::dotArgs())) {
       return null();
     }
 
@@ -9321,7 +9374,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
   if (isArrow) {
     // Rewind to reparse as an arrow function.
     //
-    // Note: We do not call CompilationStencil::rewind here because parsing
+    // Note: We do not call CompilationState::rewind here because parsing
     // during delazification will see the same rewind and need the same sequence
     // of inner functions to skip over.
     tokenStream.rewind(start);
@@ -9495,10 +9548,10 @@ const char* PerHandlerParser<ParseHandler>::nameIsArgumentsOrEval(Node node) {
   MOZ_ASSERT(handler_.isName(node),
              "must only call this function on known names");
 
-  if (handler_.isEvalName(node, cx_)) {
+  if (handler_.isEvalName(node)) {
     return js_eval_str;
   }
-  if (handler_.isArgumentsName(node, cx_)) {
+  if (handler_.isArgumentsName(node)) {
     return js_arguments_str;
   }
   return nullptr;
@@ -10234,7 +10287,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberCall(
     }
   } else if (tt == TokenKind::LeftParen &&
              optionalKind == OptionalKind::NonOptional) {
-    if (handler_.isAsyncKeyword(lhs, cx_)) {
+    if (handler_.isAsyncKeyword(lhs)) {
       // |async (| can be the start of an async arrow
       // function, so we need to defer reporting possible
       // errors from destructuring syntax. To give better
@@ -10242,7 +10295,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberCall(
       // part of the CoverCallExpressionAndAsyncArrowHead
       // syntax when the initial name is "async".
       maybeAsyncArrow = true;
-    } else if (handler_.isEvalName(lhs, cx_)) {
+    } else if (handler_.isEvalName(lhs)) {
       // Select the right Eval op and flag pc_ as having a
       // direct eval.
       op = pc_->sc()->strict() ? JSOp::StrictEval : JSOp::Eval;
@@ -10615,7 +10668,7 @@ BigIntLiteral* Parser<FullParseHandler, Unit>::newBigInt() {
   bool isZero = this->compilationState_.bigIntData[index].isZero();
 
   // Should the operations below fail, the buffer held by data will
-  // be cleaned up by the CompilationStencil destructor.
+  // be cleaned up by the CompilationState destructor.
   return handler_.newBigInt(index, isZero, pos());
 }
 
@@ -10702,7 +10755,7 @@ void GeneralParser<ParseHandler, Unit>::checkDestructuringAssignmentName(
   }
 
   if (pc_->sc()->strict()) {
-    if (handler_.isArgumentsName(name, cx_)) {
+    if (handler_.isArgumentsName(name)) {
       if (pc_->sc()->strict()) {
         possibleError->setPendingDestructuringErrorAt(
             namePos, JSMSG_BAD_STRICT_ASSIGN_ARGUMENTS);
@@ -10713,7 +10766,7 @@ void GeneralParser<ParseHandler, Unit>::checkDestructuringAssignmentName(
       return;
     }
 
-    if (handler_.isEvalName(name, cx_)) {
+    if (handler_.isEvalName(name)) {
       if (pc_->sc()->strict()) {
         possibleError->setPendingDestructuringErrorAt(
             namePos, JSMSG_BAD_STRICT_ASSIGN_EVAL);

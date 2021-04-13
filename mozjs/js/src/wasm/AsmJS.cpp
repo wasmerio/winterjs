@@ -162,7 +162,7 @@ struct LitValPOD {
   }
 
   LitVal asLitVal() const {
-    switch (UnpackTypeCodeType(valType_)) {
+    switch (valType_.typeCode()) {
       case TypeCode::I32:
         return LitVal(u.u32_);
       case TypeCode::I64:
@@ -269,7 +269,7 @@ class AsmJSGlobal {
   }
 };
 
-typedef Vector<AsmJSGlobal, 0, SystemAllocPolicy> AsmJSGlobalVector;
+using AsmJSGlobalVector = Vector<AsmJSGlobal, 0, SystemAllocPolicy>;
 
 // An AsmJSImport is slightly different than an asm.js FFI function: a single
 // asm.js FFI function can be called with many different signatures. When
@@ -284,7 +284,7 @@ class AsmJSImport {
   uint32_t ffiIndex() const { return ffiIndex_; }
 };
 
-typedef Vector<AsmJSImport, 0, SystemAllocPolicy> AsmJSImportVector;
+using AsmJSImportVector = Vector<AsmJSImport, 0, SystemAllocPolicy>;
 
 // An AsmJSExport logically extends Export with the extra information needed for
 // an asm.js exported function, viz., the offsets in module's source chars in
@@ -308,7 +308,7 @@ class AsmJSExport {
   uint32_t endOffsetInModule() const { return endOffsetInModule_; }
 };
 
-typedef Vector<AsmJSExport, 0, SystemAllocPolicy> AsmJSExportVector;
+using AsmJSExportVector = Vector<AsmJSExport, 0, SystemAllocPolicy>;
 
 // Holds the immutable guts of an AsmJSModule.
 //
@@ -894,7 +894,7 @@ class Type {
       case Void:
         return isVoid();
     }
-    MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("unexpected rhs type");
+    MOZ_CRASH("unexpected rhs type");
   }
 
   bool isFixnum() const { return which_ == Fixnum; }
@@ -1938,11 +1938,7 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
                              !parser_.pc_->sc()->hasExplicitUseStrict();
     asmJSMetadata_->source = do_AddRef(parser_.ss);
 
-    if (!addStandardLibraryMathInfo()) {
-      return false;
-    }
-
-    return true;
+    return addStandardLibraryMathInfo();
   }
 
   AsmJSParser<Unit>& parser() const { return parser_; }
@@ -2300,7 +2296,7 @@ static inline bool IsLiteralInt(const NumLit& lit, uint32_t* u32) {
     case NumLit::OutOfRangeInt:
       return false;
   }
-  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Bad literal type");
+  MOZ_CRASH("Bad literal type");
 }
 
 static inline bool IsLiteralInt(ModuleValidatorShared& m, ParseNode* pn,
@@ -3334,7 +3330,7 @@ static bool CheckVariables(FunctionValidatorShared& f, ParseNode** stmtIter) {
 }
 
 template <typename Unit>
-static bool CheckExpr(FunctionValidator<Unit>& f, ParseNode* op, Type* type);
+static bool CheckExpr(FunctionValidator<Unit>& f, ParseNode* expr, Type* type);
 
 template <typename Unit>
 static bool CheckNumericLiteral(FunctionValidator<Unit>& f, ParseNode* num,
@@ -3562,11 +3558,7 @@ static bool CheckLoadArray(FunctionValidator<Unit>& f, ParseNode* elem,
       MOZ_CRASH("Unexpected array type");
   }
 
-  if (!WriteArrayAccessFlags(f, viewType)) {
-    return false;
-  }
-
-  return true;
+  return WriteArrayAccessFlags(f, viewType);
 }
 
 template <typename Unit>
@@ -4777,7 +4769,7 @@ static bool IsValidIntMultiplyConstant(ModuleValidator<Unit>& m,
       return false;
   }
 
-  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Bad literal");
+  MOZ_CRASH("Bad literal");
 }
 
 template <typename Unit>
@@ -4932,9 +4924,8 @@ static bool CheckDivOrMod(FunctionValidator<Unit>& f, ParseNode* expr,
     *type = Type::Floatish;
     if (expr->isKind(ParseNodeKind::DivExpr)) {
       return f.encoder().writeOp(Op::F32Div);
-    } else {
-      return f.fail(expr, "modulo cannot receive float arguments");
     }
+    return f.fail(expr, "modulo cannot receive float arguments");
   }
 
   if (lhsType.isSigned() && rhsType.isSigned()) {
@@ -5857,10 +5848,7 @@ static bool CheckSwitch(FunctionValidator<Unit>& f, ParseNode* switchStmt) {
   }
 
   // Close the wrapping block.
-  if (!f.popBreakableBlock()) {
-    return false;
-  }
-  return true;
+  return f.popBreakableBlock();
 }
 
 static bool CheckReturnType(FunctionValidatorShared& f, ParseNode* usepn,
@@ -5903,11 +5891,7 @@ static bool CheckReturn(FunctionValidator<Unit>& f, ParseNode* returnStmt) {
     }
   }
 
-  if (!f.encoder().writeOp(Op::Return)) {
-    return false;
-  }
-
-  return true;
+  return f.encoder().writeOp(Op::Return);
 }
 
 template <typename Unit>
@@ -5925,10 +5909,7 @@ static bool CheckStatementList(FunctionValidator<Unit>& f, ParseNode* stmtList,
     }
   }
 
-  if (!f.popUnbreakableBlock(labels)) {
-    return false;
-  }
-  return true;
+  return f.popUnbreakableBlock(labels);
 }
 
 template <typename Unit>
@@ -6508,14 +6489,11 @@ static bool HasPureCoercion(JSContext* cx, HandleValue v) {
   // are not observable and coercion via ToNumber/ToInt32 definitely produces
   // NaN/0. We should remove this special case later once most apps have been
   // built with newer Emscripten.
-  if (v.toObject().is<JSFunction>() &&
-      HasNoToPrimitiveMethodPure(&v.toObject(), cx) &&
-      HasObjectValueOfMethodPure(&v.toObject(), cx) &&
-      HasNativeMethodPure(&v.toObject(), cx->names().toString, fun_toString,
-                          cx)) {
-    return true;
-  }
-  return false;
+  return v.toObject().is<JSFunction>() &&
+         HasNoToPrimitiveMethodPure(&v.toObject(), cx) &&
+         HasObjectValueOfMethodPure(&v.toObject(), cx) &&
+         HasNativeMethodPure(&v.toObject(), cx->names().toString, fun_toString,
+                             cx);
 }
 
 static bool ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global,
@@ -6549,6 +6527,8 @@ static bool ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global,
           MOZ_CRASH("int64");
         case ValType::V128:
           MOZ_CRASH("v128");
+        case ValType::Rtt:
+          MOZ_CRASH("rtt");
         case ValType::F32: {
           float f;
           if (!RoundFloat32(cx, v, &f)) {
@@ -6749,8 +6729,6 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
 
   buffer.set(&bufferObj->as<ArrayBufferObject>());
 
-  // Do not assume the buffer's length fits within the wasm heap limit, so do
-  // not call ByteLength32().
   size_t memoryLength = buffer->byteLength().get();
 
   if (!IsValidAsmJSHeapLength(memoryLength)) {
@@ -6777,6 +6755,21 @@ static bool CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata,
                                 "by const heap accesses).",
                                 uint64_t(memoryLength),
                                 metadata.minMemoryLength));
+    if (!msg) {
+      return false;
+    }
+    return LinkFail(cx, msg.get());
+  }
+
+  // ArrayBuffer lengths in SpiderMonkey used to be restricted to <= INT32_MAX,
+  // but that has since been relaxed for the benefit of wasm.  We keep the old
+  // limit for asm.js so as to avoid having to worry about whether the asm.js
+  // implementation is safe for larger heaps.
+  if (memoryLength >= INT32_MAX) {
+    UniqueChars msg(
+        JS_smprintf("ArrayBuffer byteLength 0x%" PRIx64
+                    " is too large for asm.js (implementation limit).",
+                    uint64_t(memoryLength)));
     if (!msg) {
       return false;
     }
@@ -7021,6 +7014,13 @@ static bool TypeFailureWarning(frontend::ParserBase& parser, const char* str) {
 // asm.js requires Ion to be available on the current hardware/OS and to be
 // enabled for wasm, since asm.js compilation goes via wasm.
 static bool IsAsmJSCompilerAvailable(JSContext* cx) {
+#ifdef JS_CODEGEN_ARM64
+  // Disable asm.js-via-Ion on arm64 until such time as that pathway, along
+  // with the associated compiler-option logic, is better tested.  asm.js will
+  // still be available on arm64, but will be forced along the JS pathway,
+  // with the associated performance lossage.  See bugs 1699379 and 1697560.
+  return false;
+#endif
   return HasPlatformSupport(cx) && IonAvailable(cx);
 }
 
@@ -7277,7 +7277,7 @@ bool js::IsValidAsmJSHeapLength(size_t length) {
   }
 
   // The heap length is limited by what wasm can handle.
-  if (length > MaxMemory32Bytes) {
+  if (length > MaxMemory32Bytes()) {
     return false;
   }
 

@@ -426,8 +426,13 @@ static void GenerateCallablePrologue(MacroAssembler& masm, uint32_t* entry) {
   }
 #elif defined(JS_CODEGEN_ARM64)
   {
-    // We do not use the PseudoStackPointer.
-    MOZ_ASSERT(masm.GetStackPointer64().code() == sp.code());
+    // We do not use the PseudoStackPointer.  However, we may be called in a
+    // context -- compilation using Ion -- in which the PseudoStackPointer is
+    // in use.  Rather than risk confusion in the uses of `masm` here, let's
+    // just switch in the real SP, do what we need to do, and restore the
+    // existing setting afterwards.
+    const vixl::Register stashedSPreg = masm.GetStackPointer64();
+    masm.SetStackPointer64(vixl::sp);
 
     AutoForbidPoolsAndNops afp(&masm,
                                /* number of instructions in scope = */ 4);
@@ -442,6 +447,9 @@ static void GenerateCallablePrologue(MacroAssembler& masm, uint32_t* entry) {
     MOZ_ASSERT_IF(!masm.oom(), PushedFP == masm.currentOffset() - *entry);
     masm.Mov(ARMRegister(FramePointer, 64), sp);
     MOZ_ASSERT_IF(!masm.oom(), SetFP == masm.currentOffset() - *entry);
+
+    // And restore the SP-reg setting, per comment above.
+    masm.SetStackPointer64(stashedSPreg);
   }
 #else
   {
@@ -491,10 +499,11 @@ static void GenerateCallableEpilogue(MacroAssembler& masm, unsigned framePushed,
 
 #elif defined(JS_CODEGEN_ARM64)
 
-  // We do not use the PseudoStackPointer.
-  MOZ_ASSERT(masm.GetStackPointer64().code() == sp.code());
+  // See comment at equivalent place in |GenerateCallablePrologue| above.
+  const vixl::Register stashedSPreg = masm.GetStackPointer64();
+  masm.SetStackPointer64(vixl::sp);
 
-  AutoForbidPoolsAndNops afp(&masm, /* number of instructions in scope = */ 4);
+  AutoForbidPoolsAndNops afp(&masm, /* number of instructions in scope = */ 5);
 
   masm.Ldr(ARMRegister(FramePointer, 64),
            MemOperand(sp, Frame::callerFPOffset()));
@@ -504,7 +513,17 @@ static void GenerateCallableEpilogue(MacroAssembler& masm, unsigned framePushed,
   *ret = masm.currentOffset();
 
   masm.Add(sp, sp, sizeof(Frame));
+
+  // Reinitialise PSP from SP. This is less than elegant because the prologue
+  // operates on the raw stack pointer SP and does not keep the PSP in sync.
+  // We can't use initPseudoStackPtr here because we just set up masm to not
+  // use it.  Hence we have to do it "by hand".
+  masm.Mov(PseudoStackPointer64, vixl::sp);
+
   masm.Ret(ARMRegister(lr, 64));
+
+  // See comment at equivalent place in |GenerateCallablePrologue| above.
+  masm.SetStackPointer64(stashedSPreg);
 
 #else
   // Forbid pools for the same reason as described in GenerateCallablePrologue.
@@ -615,20 +634,16 @@ void wasm::GenerateFunctionPrologue(MacroAssembler& masm,
   masm.nopAlign(CodeAlignment);
   GenerateCallablePrologue(masm, &offsets->uncheckedCallEntry);
   masm.bind(&functionBody);
+#ifdef JS_CODEGEN_ARM64
+  // GenerateCallablePrologue creates a prologue which operates on the raw
+  // stack pointer and does not keep the PSP in sync.  So we have to resync it
+  // here.  But we can't use initPseudoStackPtr here because masm may not be
+  // set up to use it, depending on which compiler is in use.  Hence do it
+  // "manually".
+  masm.Mov(PseudoStackPointer64, vixl::sp);
+#endif
 
-  // Tiering works as follows.  The Code owns a jumpTable, which has one
-  // pointer-sized element for each function up to the largest funcIndex in
-  // the module.  Each table element is an address into the Tier-1 or the
-  // Tier-2 function at that index; the elements are updated when Tier-2 code
-  // becomes available.  The Tier-1 function will unconditionally jump to this
-  // address.  The table elements are written racily but without tearing when
-  // Tier-2 compilation is finished.
-  //
-  // The address in the table is either to the instruction following the jump
-  // in Tier-1 code, or into the function prologue after the standard setup in
-  // Tier-2 code.  Effectively, Tier-1 code performs standard frame setup on
-  // behalf of whatever code it jumps to, and the target code allocates its
-  // own frame in whatever way it wants.
+  // See comment block in WasmCompile.cpp for an explanation tiering.
   if (tier1FuncIndex) {
     Register scratch = ABINonArgReg0;
     masm.loadPtr(Address(WasmTlsReg, offsetof(TlsData, jumpTable)), scratch);
@@ -1422,15 +1437,15 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
       return "out-of-line coercion for jit entry arguments (in wasm)";
     case SymbolicAddress::ReportV128JSCall:
       return "jit call to v128 wasm function";
-    case SymbolicAddress::MemCopy:
-    case SymbolicAddress::MemCopyShared:
+    case SymbolicAddress::MemCopy32:
+    case SymbolicAddress::MemCopyShared32:
       return "call to native memory.copy function";
     case SymbolicAddress::DataDrop:
       return "call to native data.drop function";
-    case SymbolicAddress::MemFill:
-    case SymbolicAddress::MemFillShared:
+    case SymbolicAddress::MemFill32:
+    case SymbolicAddress::MemFillShared32:
       return "call to native memory.fill function";
-    case SymbolicAddress::MemInit:
+    case SymbolicAddress::MemInit32:
       return "call to native memory.init function";
     case SymbolicAddress::TableCopy:
       return "call to native table.copy function";
@@ -1458,8 +1473,6 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
       return "call to native filtering GC postbarrier (in wasm)";
     case SymbolicAddress::StructNew:
       return "call to native struct.new (in wasm)";
-    case SymbolicAddress::StructNarrow:
-      return "call to native struct.narrow (in wasm)";
 #if defined(ENABLE_WASM_EXCEPTIONS)
     case SymbolicAddress::ExceptionNew:
       return "call to native exception new (in wasm)";
@@ -1467,7 +1480,17 @@ static const char* ThunkedNativeToDescription(SymbolicAddress func) {
       return "call to native throw exception (in wasm)";
     case SymbolicAddress::GetLocalExceptionIndex:
       return "call to native get the local index of an exn's tag (in wasm)";
+    case SymbolicAddress::PushRefIntoExn:
+      return "call to native that pushes a ref value into an exn (in wasm)";
 #endif
+    case SymbolicAddress::ArrayNew:
+      return "call to native array.new (in wasm)";
+    case SymbolicAddress::RefTest:
+      return "call to native ref.test (in wasm)";
+    case SymbolicAddress::RttSub:
+      return "call to native rtt.sub (in wasm)";
+    case SymbolicAddress::InlineTypedObjectClass:
+      MOZ_CRASH();
 #if defined(JS_CODEGEN_MIPS32)
     case SymbolicAddress::js_jit_gAtomic64Lock:
       MOZ_CRASH();

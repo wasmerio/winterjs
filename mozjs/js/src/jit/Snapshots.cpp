@@ -468,7 +468,7 @@ void SnapshotReader::spewBailingFrom() const {
 #  ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonBailouts)) {
     JitSpewHeader(JitSpew_IonBailouts);
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     out.printf(" bailing from bytecode: %s, MIR: ", CodeName(JSOp(pcOpcode_)));
     MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
     out.printf(" [%u], LIR: ", mirId_);
@@ -598,7 +598,7 @@ bool SnapshotWriter::add(const RValueAllocation& alloc) {
 
   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
     JitSpewHeader(JitSpew_IonSnapshots);
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     out.printf("    slot %u (%u): ", allocWritten_, offset);
     alloc.dump(out);
     out.printf("\n");

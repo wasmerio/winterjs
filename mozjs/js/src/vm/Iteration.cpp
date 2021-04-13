@@ -482,14 +482,14 @@ static bool Snapshot(JSContext* cx, HandleObject pobj_, unsigned flags,
         return false;
       }
 
-      if (pobj->isNative()) {
+      if (pobj->is<NativeObject>()) {
         if (!EnumerateNativeProperties(cx, pobj.as<NativeObject>(), flags,
                                        &visited, props, true)) {
           return false;
         }
       }
 
-    } else if (pobj->isNative()) {
+    } else if (pobj->is<NativeObject>()) {
       // Give the object a chance to resolve all lazy properties
       if (JSEnumerateOp enumerate = pobj->getClass()->getEnumerate()) {
         if (!enumerate(cx, pobj.as<NativeObject>())) {
@@ -583,17 +583,10 @@ static inline void RegisterEnumerator(ObjectRealm& realm, NativeIterator* ni) {
 }
 
 static PropertyIteratorObject* NewPropertyIteratorObject(JSContext* cx) {
-  RootedObjectGroup group(
-      cx, ObjectGroup::defaultNewGroup(cx, &PropertyIteratorObject::class_,
-                                       TaggedProto(nullptr)));
-  if (!group) {
-    return nullptr;
-  }
-
   const JSClass* clasp = &PropertyIteratorObject::class_;
-  RootedShape shape(cx,
-                    EmptyShape::getInitialShape(cx, clasp, TaggedProto(nullptr),
-                                                ITERATOR_FINALIZE_KIND));
+  RootedShape shape(cx, EmptyShape::getInitialShape(cx, clasp, cx->realm(),
+                                                    TaggedProto(nullptr),
+                                                    ITERATOR_FINALIZE_KIND));
   if (!shape) {
     return nullptr;
   }
@@ -602,7 +595,7 @@ static PropertyIteratorObject* NewPropertyIteratorObject(JSContext* cx) {
   JS_TRY_VAR_OR_RETURN_NULL(
       cx, obj,
       NativeObject::create(cx, ITERATOR_FINALIZE_KIND,
-                           GetInitialHeap(GenericObject, group), shape, group));
+                           GetInitialHeap(GenericObject, clasp), shape));
 
   PropertyIteratorObject* res = &obj->as<PropertyIteratorObject>();
 
@@ -800,7 +793,7 @@ bool IteratorHashPolicy::match(PropertyIteratorObject* obj,
 }
 
 static inline bool CanCompareIterableObjectToCache(JSObject* obj) {
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     return obj->as<NativeObject>().getDenseInitializedLength() == 0;
   }
   return false;
@@ -852,8 +845,6 @@ static MOZ_ALWAYS_INLINE PropertyIteratorObject* LookupInIteratorCache(
 
 static bool CanStoreInIteratorCache(JSObject* obj) {
   do {
-    MOZ_ASSERT(obj->isNative());
-
     MOZ_ASSERT(obj->as<NativeObject>().getDenseInitializedLength() == 0);
 
     // Typed arrays have indexed properties not captured by the Shape guard.

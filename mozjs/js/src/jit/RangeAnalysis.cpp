@@ -123,7 +123,7 @@ static inline void SpewRange(MDefinition* def) {
   if (JitSpewEnabled(JitSpew_Range) && def->type() != MIRType::None &&
       def->range()) {
     JitSpewHeader(JitSpew_Range);
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     out.printf("  ");
     def->printName(out);
     out.printf(" has range ");
@@ -153,7 +153,7 @@ static inline void SpewTruncate(MDefinition* def, TruncateKind kind,
                                 bool shouldClone) {
   if (JitSpewEnabled(JitSpew_Range)) {
     JitSpewHeader(JitSpew_Range);
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     out.printf("  ");
     out.printf("truncating ");
     def->printName(out);
@@ -344,7 +344,7 @@ bool RangeAnalysis::addBetaNodes() {
 
     if (JitSpewEnabled(JitSpew_Range)) {
       JitSpewHeader(JitSpew_Range);
-      GenericPrinter& out = JitSpewPrinter();
+      Fprinter& out = JitSpewPrinter();
       out.printf("  Adding beta node for %u with range ", val->id());
       comp.dump(out);
       out.printf("\n");

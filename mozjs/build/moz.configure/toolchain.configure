@@ -32,48 +32,6 @@ set_config("MOZ_OPTIMIZE", moz_optimize.optimize)
 add_old_configure_assignment("MOZ_OPTIMIZE", moz_optimize.optimize)
 add_old_configure_assignment("MOZ_CONFIGURE_OPTIMIZE_FLAGS", moz_optimize.flags)
 
-# yasm detection
-# ==============================================================
-yasm = check_prog("YASM", ["yasm"], allow_missing=True)
-
-
-@depends_if(yasm)
-@checking("yasm version")
-def yasm_version(yasm):
-    version = (
-        check_cmd_output(
-            yasm, "--version", onerror=lambda: die("Failed to get yasm version.")
-        )
-        .splitlines()[0]
-        .split()[1]
-    )
-    return Version(version)
-
-
-@depends(yasm, target)
-def yasm_asflags(yasm, target):
-    if yasm:
-        asflags = {
-            ("OSX", "x86"): ["-f", "macho32"],
-            ("OSX", "x86_64"): ["-f", "macho64"],
-            ("WINNT", "x86"): ["-f", "win32"],
-            ("WINNT", "x86_64"): ["-f", "x64"],
-        }.get((target.os, target.cpu), None)
-        if asflags is None:
-            # We're assuming every x86 platform we support that's
-            # not Windows or Mac is ELF.
-            if target.cpu == "x86":
-                asflags = ["-f", "elf32"]
-            elif target.cpu == "x86_64":
-                asflags = ["-f", "elf64"]
-        if asflags:
-            asflags += ["-rnasm", "-pnasm"]
-        return asflags
-
-
-set_config("YASM_ASFLAGS", yasm_asflags)
-
-
 # Android NDK
 # ==============================================================
 
@@ -658,13 +616,17 @@ def vc_toolchain_search_path(vc_compiler_path, original_path):
     return result
 
 
-clang_search_path = bootstrap_search_path("clang", "bin")
+clang_search_path = bootstrap_search_path("clang/bin")
 
 
-@depends(bootstrap_search_path("rustc", "bin", when="MOZ_AUTOMATION"), original_path)
+@depends(
+    bootstrap_search_path("rustc/bin", when="MOZ_AUTOMATION"),
+    bootstrap_search_path_order,
+    original_path,
+)
 @imports("os")
 @imports(_from="os", _import="environ")
-def rust_search_path(rust_path, original_path):
+def rust_search_path(rust_path, search_order, original_path):
     result = list(rust_path or original_path)
     # Also add the rustup install directory for cargo/rustc.
     cargo_home = environ.get("CARGO_HOME", "")
@@ -673,7 +635,10 @@ def rust_search_path(rust_path, original_path):
     else:
         cargo_home = os.path.expanduser(os.path.join("~", ".cargo"))
     rustup_path = os.path.join(cargo_home, "bin")
-    result.append(rustup_path)
+    if search_order == "prepend":
+        result.insert(0, rustup_path)
+    else:
+        result.append(rustup_path)
     return result
 
 
@@ -719,7 +684,9 @@ ccache = check_prog(
     "CCACHE",
     progs=(),
     input=ccache,
-    paths=bootstrap_search_path("sccache"),
+    paths=bootstrap_search_path(
+        "sccache", when=depends("CCACHE")(lambda c: len(c) and c[0] == "sccache")
+    ),
     allow_missing=True,
 )
 
@@ -957,16 +924,34 @@ def provided_program(env_var, when=None):
     return provided
 
 
+option(
+    "--with-sysroot",
+    env="SYSROOT",
+    nargs=1,
+    when=target_is_linux,
+    help="Build using the given sysroot directory",
+)
+
+sysroot_input = depends("--with-sysroot", when=target_is_linux)(lambda x: x)
+bootstrap_sysroot = depends(target_is_linux, sysroot_input)(
+    lambda linux, input: linux and not input and input.origin == "default"
+)
+
 # We'll re-evaluate later, but for now, don't use the sysroot automatically
 # even if it exists, unless --enable-bootstrap was passed, or when building
 # on automation.
 @depends(
-    bootstrap_path("sysroot", context=target, when=target_is_linux),
-    bootstrap,
+    sysroot_input,
+    bootstrap_path("sysroot", context=target, when=bootstrap_sysroot),
+    "--enable-bootstrap",
     "MOZ_AUTOMATION",
 )
-def sysroot_path(path, bootstrap, automation):
-    if bootstrap or automation:
+def sysroot_path(sysroot_input, path, bootstrap, automation):
+    if sysroot_input:
+        path = sysroot_input[0]
+    elif sysroot_input is not None and sysroot_input.origin != "default":
+        return
+    if sysroot_input or bootstrap or automation:
         if path:
             log.info("Using sysroot in %s", path)
         return path
@@ -1968,47 +1953,6 @@ def frame_pointer_flags(enable, flags):
 set_config("MOZ_FRAMEPTR_FLAGS", frame_pointer_flags)
 
 
-# nasm detection
-# ==============================================================
-nasm = check_prog(
-    "NASM", ["nasm"], allow_missing=True, paths=bootstrap_search_path("nasm")
-)
-
-
-@depends_if(nasm)
-@checking("nasm version")
-def nasm_version(nasm):
-    (retcode, stdout, _) = get_cmd_output(nasm, "-v")
-    if retcode:
-        # mac stub binary
-        return None
-
-    version = stdout.splitlines()[0].split()[2]
-    return Version(version)
-
-
-@depends(nasm, target)
-def nasm_asflags(nasm, target):
-    if nasm:
-        asflags = {
-            ("OSX", "x86"): ["-f", "macho32"],
-            ("OSX", "x86_64"): ["-f", "macho64"],
-            ("WINNT", "x86"): ["-f", "win32"],
-            ("WINNT", "x86_64"): ["-f", "win64"],
-        }.get((target.os, target.cpu), None)
-        if asflags is None:
-            # We're assuming every x86 platform we support that's
-            # not Windows or Mac is ELF.
-            if target.cpu == "x86":
-                asflags = ["-f", "elf32"]
-            elif target.cpu == "x86_64":
-                asflags = ["-f", "elf64"]
-        return asflags
-
-
-set_config("NASM_ASFLAGS", nasm_asflags)
-
-
 # Code Coverage
 # ==============================================================
 
@@ -2025,11 +1969,11 @@ set_config("MOZ_CODE_COVERAGE", code_coverage)
 set_define("MOZ_CODE_COVERAGE", code_coverage)
 
 
-@depends(target, c_compiler, vc_path, check_build_environment, when=code_coverage)
+@depends(target, c_compiler, check_build_environment, when=code_coverage)
 @imports("os")
 @imports("re")
 @imports(_from="__builtin__", _import="open")
-def coverage_cflags(target, c_compiler, vc_path, build_env):
+def coverage_cflags(target, c_compiler, build_env):
     cflags = ["--coverage"]
 
     # clang 11 no longer accepts this flag (its behavior became the default)
@@ -2039,16 +1983,25 @@ def coverage_cflags(target, c_compiler, vc_path, build_env):
             "-coverage-no-function-names-in-data",
         ]
 
+    exclude = []
     if target.os == "WINNT" and c_compiler.type == "clang-cl":
-        # The Visual Studio directory is the parent of the Visual C++ directory.
-        vs_path = os.path.dirname(vc_path)
+        # VS files
+        exclude.append("^.*[vV][sS]20[0-9]{2}.*$")
+        # Files in fetches directory.
+        exclude.append("^.*[\\\\/]fetches[\\\\/].*$")
+    elif target.os == "OSX":
+        # Files in fetches directory.
+        exclude.append("^.*/fetches/.*$")
+    elif target.os == "GNU":
+        # Files in fetches directory.
+        exclude.append("^.*/fetches/.*$")
+        # Files in /usr/
+        exclude.append("^/usr/.*$")
 
-        # We need to get the real path of Visual Studio, which can be in a
-        # symlinked directory (for example, on automation).
-        vs_path = os.path.realpath(vs_path)
-
+    if exclude:
+        exclude = ";".join(exclude)
         cflags += [
-            "-fprofile-exclude-files=^{}.*$".format(re.escape(vs_path)),
+            f"-fprofile-exclude-files={exclude}",
         ]
 
     response_file_path = os.path.join(build_env.topobjdir, "code_coverage_cflags")
@@ -2657,8 +2610,26 @@ add_gcc_flag(
 option("--enable-fuzzing", help="Enable fuzzing support")
 
 
+@depends(build_project)
+def js_build(build_project):
+    return build_project == "js"
+
+
+option(
+    "--enable-js-fuzzilli",
+    when=js_build,
+    help="Enable fuzzilli support for the JS engine",
+)
+
+
 @depends("--enable-fuzzing")
 def enable_fuzzing(value):
+    if value:
+        return True
+
+
+@depends("--enable-js-fuzzilli", when=js_build)
+def enable_js_fuzzilli(value):
     if value:
         return True
 
@@ -2679,9 +2650,9 @@ def enable_libfuzzer(fuzzing, afl, c_compiler, target):
         return True
 
 
-@depends(enable_fuzzing, enable_aflfuzzer, enable_libfuzzer)
-def enable_fuzzing_interfaces(fuzzing, afl, libfuzzer):
-    if fuzzing and (afl or libfuzzer):
+@depends(enable_fuzzing, enable_aflfuzzer, enable_libfuzzer, enable_js_fuzzilli)
+def enable_fuzzing_interfaces(fuzzing, afl, libfuzzer, enable_js_fuzzilli):
+    if fuzzing and (afl or libfuzzer) and not enable_js_fuzzilli:
         return True
 
 
@@ -2696,6 +2667,9 @@ set_config("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 set_define("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 add_old_configure_assignment("FUZZING_INTERFACES", enable_fuzzing_interfaces)
 
+set_config("FUZZING_JS_FUZZILLI", enable_js_fuzzilli)
+set_define("FUZZING_JS_FUZZILLI", enable_js_fuzzilli)
+
 
 @depends(
     c_compiler.try_compile(
@@ -2704,8 +2678,9 @@ add_old_configure_assignment("FUZZING_INTERFACES", enable_fuzzing_interfaces)
         check_msg="whether the C compiler supports -fsanitize=fuzzer-no-link",
     ),
     tsan,
+    enable_js_fuzzilli,
 )
-def libfuzzer_flags(value, tsan):
+def libfuzzer_flags(value, tsan, enable_js_fuzzilli):
     if tsan:
         # With ThreadSanitizer, we should not use any libFuzzer instrumentation because
         # it is incompatible (e.g. there are races on global sanitizer coverage counters).
@@ -2718,7 +2693,11 @@ def libfuzzer_flags(value, tsan):
         #   - dom/media/webrtc/transport/third_party/nICEr/nicer.gyp
         return namespace(no_link_flag_supported=False, use_flags=[])
 
-    if value:
+    if enable_js_fuzzilli:
+        # Fuzzilli comes with its own trace-pc interceptors and flag requirements.
+        no_link_flag_supported = False
+        use_flags = ["-fsanitize-coverage=trace-pc-guard", "-g"]
+    elif value:
         no_link_flag_supported = True
         # recommended for (and only supported by) clang >= 6
         use_flags = ["-fsanitize=fuzzer-no-link"]
@@ -2781,7 +2760,7 @@ def make_shared_library(target, compiler):
 
     cc = ["$(CC)", "$(COMPUTED_C_LDFLAGS)"]
     cxx = ["$(CXX)", "$(COMPUTED_CXX_LDFLAGS)"]
-    flags = ["$(PGO_CFLAGS)", "$(DSO_PIC_CFLAGS)", "$(DSO_LDOPTS)"]
+    flags = ["$(PGO_CFLAGS)", "$(DSO_LDOPTS)"]
     output = ["-o", "$@"]
 
     if target.kernel == "Darwin":

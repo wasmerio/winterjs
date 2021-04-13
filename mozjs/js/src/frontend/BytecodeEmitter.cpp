@@ -72,6 +72,7 @@
 #include "vm/JSFunction.h"          // JSFunction,
 #include "vm/JSScript.h"  // JSScript, ScriptSourceObject, MemberInitializers, BaseScript
 #include "vm/Opcodes.h"        // JSOp, JSOpLength_*
+#include "vm/Scope.h"          // GetScopeDataTrailingNames
 #include "vm/SharedStencil.h"  // ScopeNote
 #include "vm/ThrowMsgKind.h"   // ThrowMsgKind
 #include "vm/WellKnownAtom.h"  // js_*_str
@@ -136,7 +137,6 @@ static bool ShouldSuppressBreakpointsAndSourceNotes(
 }
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
     : sc(sc),
@@ -144,7 +144,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
       parent(parent),
       bytecodeSection_(cx, sc->extent().lineno, sc->extent().column),
       perScriptData_(cx, compilationState),
-      stencil(stencil),
       compilationState(compilationState),
       suppressBreakpointsAndSourceNotes(
           ShouldSuppressBreakpointsAndSourceNotes(sc, emitterMode)),
@@ -152,20 +151,18 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc,
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  BCEParserHandle* handle, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, stencil, compilationState, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   parser = handle;
   instrumentationKinds = parser->options().instrumentationKinds;
 }
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  const EitherParser& parser, SharedContext* sc,
-                                 CompilationStencil& stencil,
                                  CompilationState& compilationState,
                                  EmitterMode emitterMode)
-    : BytecodeEmitter(parent, sc, stencil, compilationState, emitterMode) {
+    : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   ep_.emplace(parser);
   this->parser = ep_.ptr();
   instrumentationKinds = this->parser->options().instrumentationKinds;
@@ -178,7 +175,7 @@ void BytecodeEmitter::initFromBodyPosition(TokenPos bodyPosition) {
 
 bool BytecodeEmitter::init() {
   if (!parent) {
-    if (!stencil.prepareStorageFor(cx, compilationState)) {
+    if (!compilationState.prepareSharedDataStorage(cx)) {
       return false;
     }
   }
@@ -1629,12 +1626,7 @@ bool BytecodeEmitter::emitThisEnvironmentCallee() {
       ENVCOORD_HOPS_LIMIT - 1 <= UINT8_MAX,
       "JSOp::EnvCallee operand size should match ENVCOORD_HOPS_LIMIT");
 
-  // Note: we need to check numHops here because we don't call
-  // checkEnvironmentChainLength in all cases (like 'eval').
-  if (numHops >= ENVCOORD_HOPS_LIMIT - 1) {
-    reportError(nullptr, JSMSG_TOO_DEEP, js_function_str);
-    return false;
-  }
+  MOZ_ASSERT(numHops < ENVCOORD_HOPS_LIMIT - 1);
 
   return emit2(JSOp::EnvCallee, numHops);
 }
@@ -1690,7 +1682,7 @@ bool BytecodeEmitter::addObjLiteralData(ObjLiteralWriter& writer,
   }
 
   size_t len = writer.getCode().size();
-  auto* code = stencil.alloc.newArrayUninitialized<uint8_t>(len);
+  auto* code = compilationState.alloc.newArrayUninitialized<uint8_t>(len);
   if (!code) {
     js::ReportOutOfMemory(cx);
     return false;
@@ -1774,11 +1766,14 @@ bool BytecodeEmitter::emitGetPrivateName(NameNode* name) {
 }
 
 bool BytecodeEmitter::emitGetPrivateName(TaggedParserAtomIndex nameAtom) {
-  // The parser ensures the private name is present on the environment chain.
+  // The parser ensures the private name is present on the environment chain,
+  // but its location can be Dynamic or Global when emitting debugger
+  // eval-in-frame code.
   NameLocation location = lookupName(nameAtom);
   MOZ_ASSERT(location.kind() == NameLocation::Kind::FrameSlot ||
              location.kind() == NameLocation::Kind::EnvironmentCoordinate ||
-             location.kind() == NameLocation::Kind::Dynamic);
+             location.kind() == NameLocation::Kind::Dynamic ||
+             location.kind() == NameLocation::Kind::Global);
 
   return emitGetNameAtLocation(nameAtom, location);
 }
@@ -2601,7 +2596,7 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
     }
 
     if (!emitTree(body)) {
-      // [stack]
+      //            [stack]
       return false;
     }
 
@@ -5878,8 +5873,7 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitFunction(
       return false;
     }
 
-    BytecodeEmitter bce2(this, parser, funbox, stencil, compilationState,
-                         emitterMode);
+    BytecodeEmitter bce2(this, parser, funbox, compilationState, emitterMode);
     if (!bce2.init(funNode->pn_pos)) {
       return false;
     }
@@ -8920,12 +8914,12 @@ bool BytecodeEmitter::emitPropertyList(ListNode* obj, PropertyEmitter& pe,
     }
     if (key->is<NameNode>()) {
       if (!emitGetPrivateName(&key->as<NameNode>())) {
-        //            [stack] CTOR? OBJ CTOR? KEY
+        //          [stack] CTOR? OBJ CTOR? KEY
         return false;
       }
     } else {
       if (!emitTree(key->as<UnaryNode>().kid())) {
-        //            [stack] CTOR? OBJ CTOR? KEY
+        //          [stack] CTOR? OBJ CTOR? KEY
         return false;
       }
     }
@@ -9357,9 +9351,9 @@ bool BytecodeEmitter::emitPrivateMethodInitializers(ClassEmitter& ce,
     }
 
     if (!ce.prepareForMemberInitializer()) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY
+      //            [stack] HOMEOBJ HERITAGE? ARRAY
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY
+      //            [stack] CTOR HOMEOBJ ARRAY
       return false;
     }
 
@@ -9394,45 +9388,45 @@ bool BytecodeEmitter::emitPrivateMethodInitializers(ClassEmitter& ce,
 
     // Emit the private method body and store it as a lexical var.
     if (!emitFunction(&propdef->as<ClassMethod>().method())) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY METHOD
+      //            [stack] HOMEOBJ HERITAGE? ARRAY METHOD
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY METHOD
+      //            [stack] CTOR HOMEOBJ ARRAY METHOD
       return false;
     }
     // The private method body needs to access the home object,
     // and the CE knows where that is on the stack.
     if (!ce.emitMemberInitializerHomeObject(false)) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY METHOD
+      //            [stack] HOMEOBJ HERITAGE? ARRAY METHOD
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY METHOD
+      //            [stack] CTOR HOMEOBJ ARRAY METHOD
       return false;
     }
     if (!emitLexicalInitialization(storedMethodAtom)) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY METHOD
+      //            [stack] HOMEOBJ HERITAGE? ARRAY METHOD
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY METHOD
+      //            [stack] CTOR HOMEOBJ ARRAY METHOD
       return false;
     }
     if (!emit1(JSOp::Pop)) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY
+      //            [stack] HOMEOBJ HERITAGE? ARRAY
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY
+      //            [stack] CTOR HOMEOBJ ARRAY
       return false;
     }
 
     if (!emitPrivateMethodInitializer(ce, propdef, propName, storedMethodAtom,
                                       accessorType)) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY
+      //            [stack] HOMEOBJ HERITAGE? ARRAY
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY
+      //            [stack] CTOR HOMEOBJ ARRAY
       return false;
     }
 
     // Store the emitted initializer function into the .initializers array.
     if (!ce.emitStoreMemberInitializer()) {
-      //              [stack] HOMEOBJ HERITAGE? ARRAY
+      //            [stack] HOMEOBJ HERITAGE? ARRAY
       // or:
-      //              [stack] CTOR HOMEOBJ ARRAY
+      //            [stack] CTOR HOMEOBJ ARRAY
       return false;
     }
   }
@@ -9454,8 +9448,7 @@ bool BytecodeEmitter::emitPrivateMethodInitializer(
     return false;
   }
 
-  BytecodeEmitter bce2(this, parser, funbox, stencil, compilationState,
-                       emitterMode);
+  BytecodeEmitter bce2(this, parser, funbox, compilationState, emitterMode);
   if (!bce2.init(funNode->pn_pos)) {
     return false;
   }
@@ -9807,21 +9800,21 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitObject(ListNode* objNode) {
     // or 2) or template-without-values (case 3) object can be allocated and
     // the bytecode can be patched to refer to it.
     if (!emitPropertyListObjLiteral(objNode, flags, useObjLiteralValues)) {
-      //              [stack] OBJ
+      //            [stack] OBJ
       return false;
     }
     // Put the ObjectEmitter in the right state. This tells it that there will
     // already be an object on the stack as a result of the (eventual)
     // NewObject or Object op, and prepares it to emit values if needed.
     if (!oe.emitObjectWithTemplateOnStack()) {
-      //              [stack] OBJ
+      //            [stack] OBJ
       return false;
     }
     if (!useObjLiteralValues) {
       // Case 2 or 3 above: we still need to emit bytecode to fill in the
       // object's property values.
       if (!emitPropertyList(objNode, oe, ObjectLiteral)) {
-        //              [stack] OBJ
+        //          [stack] OBJ
         return false;
       }
     }
@@ -9829,11 +9822,11 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitObject(ListNode* objNode) {
     // Case 4 above: no ObjLiteral use, just bytecode to build the object from
     // scratch.
     if (!oe.emitObject(objNode->count())) {
-      //              [stack] OBJ
+      //            [stack] OBJ
       return false;
     }
     if (!emitPropertyList(objNode, oe, ObjectLiteral)) {
-      //              [stack] OBJ
+      //            [stack] OBJ
       return false;
     }
   }
@@ -10272,36 +10265,36 @@ bool BytecodeEmitter::emitNewPrivateNames(ListNode* classMembers) {
     // TODO: Add a new bytecode to create private names.
     if (!emitAtomOp(JSOp::GetIntrinsic,
                     TaggedParserAtomIndex::WellKnown::NewPrivateName())) {
-      //          [stack] HERITAGE NEWPRIVATENAME
+      //            [stack] HERITAGE NEWPRIVATENAME
       return false;
     }
 
     // Push `undefined` as `this` parameter for call.
     if (!emit1(JSOp::Undefined)) {
-      //          [stack] HERITAGE NEWPRIVATENAME UNDEFINED
+      //            [stack] HERITAGE NEWPRIVATENAME UNDEFINED
       return false;
     }
 
     if (!emitAtomOp(JSOp::String, privateName)) {
-      //          [stack] HERITAGE NEWPRIVATENAME UNDEFINED NAME
+      //            [stack] HERITAGE NEWPRIVATENAME UNDEFINED NAME
       return false;
     }
 
     int argc = 1;
     if (!emitCall(JSOp::Call, argc)) {
-      //          [stack] HERITAGE PRIVATENAME
+      //            [stack] HERITAGE PRIVATENAME
       return false;
     }
 
     // Add a binding for #name => privatename
     if (!emitLexicalInitialization(privateName)) {
-      //          [stack] HERITAGE PRIVATENAME
+      //            [stack] HERITAGE PRIVATENAME
       return false;
     }
 
     // Pop Private name off the stack.
     if (!emit1(JSOp::Pop)) {
-      //          [stack] HERITAGE
+      //            [stack] HERITAGE
       return false;
     }
   }
@@ -10406,8 +10399,9 @@ bool BytecodeEmitter::emitClass(
 
     // The constructor scope should only contain the |.initializers| binding.
     MOZ_ASSERT(!constructorScope->isEmptyScope());
-    MOZ_ASSERT(constructorScope->scopeBindings()->slotInfo.length == 1);
-    MOZ_ASSERT(constructorScope->scopeBindings()->trailingNames[0].name() ==
+    MOZ_ASSERT(constructorScope->scopeBindings()->length == 1);
+    MOZ_ASSERT(GetScopeDataTrailingNames(constructorScope->scopeBindings())[0]
+                   .name() ==
                TaggedParserAtomIndex::WellKnown::dotInitializers());
 
     auto needsInitializer = [](ParseNode* propdef) {
@@ -10449,7 +10443,7 @@ bool BytecodeEmitter::emitClass(
     }
   }
   if (!emitFunction(ctor, isDerived)) {
-    //            [stack] HOMEOBJ CTOR
+    //              [stack] HOMEOBJ CTOR
     return false;
   }
   if (lse.isSome()) {
@@ -10459,7 +10453,7 @@ bool BytecodeEmitter::emitClass(
     lse.reset();
   }
   if (!ce.emitInitConstructor(needsHomeObject)) {
-    //            [stack] CTOR HOMEOBJ
+    //              [stack] CTOR HOMEOBJ
     return false;
   }
 
@@ -10554,24 +10548,24 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
   if (!emit1(JSOp::InstrumentationActive)) {
     return false;
   }
-  //            [stack] ACTIVE
+  //                [stack] ACTIVE
 
   if (!ifEmitter.emitThen()) {
     return false;
   }
-  //            [stack]
+  //                [stack]
 
   // Push the instrumentation callback for the current realm as the callee.
   if (!emit1(JSOp::InstrumentationCallback)) {
     return false;
   }
-  //            [stack] CALLBACK
+  //                [stack] CALLBACK
 
   // Push undefined for the call's |this| value.
   if (!emit1(JSOp::Undefined)) {
     return false;
   }
-  //            [stack] CALLBACK UNDEFINED
+  //                [stack] CALLBACK UNDEFINED
 
   auto atom =
       RealmInstrumentation::getInstrumentationKindName(cx, parserAtoms(), kind);
@@ -10582,37 +10576,37 @@ MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
   if (!emitAtomOp(JSOp::String, atom)) {
     return false;
   }
-  //            [stack] CALLBACK UNDEFINED KIND
+  //                [stack] CALLBACK UNDEFINED KIND
 
   if (!emit1(JSOp::InstrumentationScriptId)) {
     return false;
   }
-  //            [stack] CALLBACK UNDEFINED KIND SCRIPT
+  //                [stack] CALLBACK UNDEFINED KIND SCRIPT
 
   // Push the offset of the bytecode location following the instrumentation.
   BytecodeOffset updateOffset;
   if (!emitN(JSOp::Int32, 4, &updateOffset)) {
     return false;
   }
-  //            [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET
+  //                [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET
 
   unsigned numPushed = bytecodeSection().stackDepth() - initialDepth;
 
   if (pushOperandsCallback && !pushOperandsCallback(numPushed)) {
     return false;
   }
-  //            [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET ...EXTRA_ARGS
+  //                [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET ...EXTRA_ARGS
 
   unsigned argc = bytecodeSection().stackDepth() - initialDepth - 2;
   if (!emitCall(JSOp::CallIgnoresRv, argc)) {
     return false;
   }
-  //            [stack] RV
+  //                [stack] RV
 
   if (!emit1(JSOp::Pop)) {
     return false;
   }
-  //            [stack]
+  //                [stack]
 
   if (!ifEmitter.emitEnd()) {
     return false;
@@ -11351,7 +11345,7 @@ bool BytecodeEmitter::intoScriptStencil(ScriptIndex scriptIndex) {
   }
 
   // De-duplicate the bytecode within the runtime.
-  if (!stencil.sharedData.addAndShare(cx, scriptIndex, sharedData)) {
+  if (!compilationState.sharedData.addAndShare(cx, scriptIndex, sharedData)) {
     return false;
   }
 

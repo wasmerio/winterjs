@@ -11,9 +11,9 @@
 
 #include "NamespaceImports.h"  // ValueVector
 
-#include "builtin/Array.h"                // NewDenseCopiedArray
-#include "frontend/CompilationStencil.h"  // frontend::CompilationAtomCache
-#include "frontend/ParserAtom.h"          // frontend::ParserAtomTable
+#include "builtin/Array.h"  // NewDenseCopiedArray
+#include "frontend/CompilationStencil.h"  // frontend::{CompilationStencil, CompilationAtomCache}
+#include "frontend/ParserAtom.h"                   // frontend::ParserAtomTable
 #include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
 #include "gc/AllocKind.h"                          // gc::AllocKind
 #include "gc/Rooting.h"                            // RootedPlainObject
@@ -151,7 +151,7 @@ bool InterpretObjLiteralObj(JSContext* cx, HandlePlainObject obj,
     }
 
     if (kind == PropertySetKind::UniqueNames) {
-      if (!AddDataPropertyNonDelegate(cx, obj, propId, propVal)) {
+      if (!AddDataPropertyNonPrototype(cx, obj, propId, propVal)) {
         return false;
       }
     } else {
@@ -168,7 +168,16 @@ static JSObject* InterpretObjLiteralObj(
     JSContext* cx, const frontend::CompilationAtomCache& atomCache,
     const mozilla::Span<const uint8_t> literalInsns, ObjLiteralFlags flags,
     uint32_t propertyCount) {
-  gc::AllocKind allocKind = gc::GetGCObjectKind(propertyCount);
+  // Use NewObjectGCKind for empty object literals to reserve some fixed slots
+  // for new properties. This improves performance for common patterns such as
+  // |Object.assign({}, ...)|.
+  gc::AllocKind allocKind;
+  if (propertyCount == 0) {
+    allocKind = NewObjectGCKind();
+  } else {
+    allocKind = gc::GetGCObjectKind(propertyCount);
+  }
+
   RootedPlainObject obj(
       cx, NewBuiltinClassInstance<PlainObject>(cx, allocKind, TenuredObject));
   if (!obj) {
@@ -230,6 +239,12 @@ JSObject* ObjLiteralStencil::create(
   return InterpretObjLiteral(cx, atomCache, code_, flags_, propertyCount_);
 }
 
+#ifdef DEBUG
+bool ObjLiteralStencil::isContainedIn(const LifoAlloc& alloc) const {
+  return alloc.contains(code_.data());
+}
+#endif
+
 #if defined(DEBUG) || defined(JS_JITSPEW)
 
 static void DumpObjLiteralFlagsItems(js::JSONPrinter& json,
@@ -253,7 +268,7 @@ static void DumpObjLiteralFlagsItems(js::JSONPrinter& json,
 }
 
 static void DumpObjLiteral(js::JSONPrinter& json,
-                           const frontend::BaseCompilationStencil* stencil,
+                           const frontend::CompilationStencil* stencil,
                            mozilla::Span<const uint8_t> code,
                            const ObjLiteralFlags& flags,
                            uint32_t propertyCount) {
@@ -322,17 +337,15 @@ void ObjLiteralWriter::dump() const {
   dump(json, nullptr);
 }
 
-void ObjLiteralWriter::dump(
-    js::JSONPrinter& json,
-    const frontend::BaseCompilationStencil* stencil) const {
+void ObjLiteralWriter::dump(js::JSONPrinter& json,
+                            const frontend::CompilationStencil* stencil) const {
   json.beginObject();
   dumpFields(json, stencil);
   json.endObject();
 }
 
 void ObjLiteralWriter::dumpFields(
-    js::JSONPrinter& json,
-    const frontend::BaseCompilationStencil* stencil) const {
+    js::JSONPrinter& json, const frontend::CompilationStencil* stencil) const {
   DumpObjLiteral(json, stencil, getCode(), flags_, propertyCount_);
 }
 
@@ -343,16 +356,14 @@ void ObjLiteralStencil::dump() const {
 }
 
 void ObjLiteralStencil::dump(
-    js::JSONPrinter& json,
-    const frontend::BaseCompilationStencil* stencil) const {
+    js::JSONPrinter& json, const frontend::CompilationStencil* stencil) const {
   json.beginObject();
   dumpFields(json, stencil);
   json.endObject();
 }
 
 void ObjLiteralStencil::dumpFields(
-    js::JSONPrinter& json,
-    const frontend::BaseCompilationStencil* stencil) const {
+    js::JSONPrinter& json, const frontend::CompilationStencil* stencil) const {
   DumpObjLiteral(json, stencil, code_, flags_, propertyCount_);
 }
 

@@ -2427,6 +2427,10 @@ void MacroAssembler::absInt32x4(FloatRegister src, FloatRegister dest) {
   Abs(Simd4S(dest), Simd4S(src));
 }
 
+void MacroAssembler::absInt64x2(FloatRegister src, FloatRegister dest) {
+  Abs(Simd2D(dest), Simd2D(src));
+}
+
 // Left shift by variable scalar
 
 void MacroAssembler::leftShiftInt8x16(Register rhs, FloatRegister lhsDest) {
@@ -2542,6 +2546,12 @@ void MacroAssembler::bitwiseSelectSimd128(FloatRegister onTrue,
                                           FloatRegister onFalse,
                                           FloatRegister maskDest) {
   Bsl(Simd16B(maskDest), Simd16B(onTrue), Simd16B(onFalse));
+}
+
+// Population count
+
+void MacroAssembler::popcntInt8x16(FloatRegister src, FloatRegister dest) {
+  Cnt(Simd16B(dest), Simd16B(src));
 }
 
 // Any lane true, ie, any bit set
@@ -2692,11 +2702,21 @@ void MacroAssembler::loadUnalignedSimd128(const Address& src,
   Ldr(ARMFPRegister(dest, 128), toMemOperand(src));
 }
 
+void MacroAssembler::loadUnalignedSimd128(const BaseIndex& address,
+                                          FloatRegister dest) {
+  doBaseIndex(ARMFPRegister(dest, 128), address, vixl::LDR_q);
+}
+
 // Store
 
 void MacroAssembler::storeUnalignedSimd128(FloatRegister src,
                                            const Address& dest) {
   Str(ARMFPRegister(src, 128), toMemOperand(dest));
+}
+
+void MacroAssembler::storeUnalignedSimd128(FloatRegister src,
+                                           const BaseIndex& dest) {
+  doBaseIndex(ARMFPRegister(src, 128), dest, vixl::STR_q);
 }
 
 // Floating point negation
@@ -2777,6 +2797,28 @@ void MacroAssembler::mulFloat32x4(FloatRegister rhs, FloatRegister lhsDest) {
 
 void MacroAssembler::mulFloat64x2(FloatRegister rhs, FloatRegister lhsDest) {
   Fmul(Simd2D(lhsDest), Simd2D(lhsDest), Simd2D(rhs));
+}
+
+// Pairwise add
+
+void MacroAssembler::extAddPairwiseInt8x16(FloatRegister src,
+                                           FloatRegister dest) {
+  Saddlp(Simd8H(dest), Simd16B(src));
+}
+
+void MacroAssembler::unsignedExtAddPairwiseInt8x16(FloatRegister src,
+                                                   FloatRegister dest) {
+  Uaddlp(Simd8H(dest), Simd16B(src));
+}
+
+void MacroAssembler::extAddPairwiseInt16x8(FloatRegister src,
+                                           FloatRegister dest) {
+  Saddlp(Simd4S(dest), Simd8H(src));
+}
+
+void MacroAssembler::unsignedExtAddPairwiseInt16x8(FloatRegister src,
+                                                   FloatRegister dest) {
+  Uaddlp(Simd4S(dest), Simd8H(src));
 }
 
 // Floating square root
@@ -3047,10 +3089,15 @@ void MacroAssembler::nearestFloat64x2(FloatRegister src, FloatRegister dest) {
 
 void MacroAssemblerCompat::addToStackPtr(Register src) {
   Add(GetStackPointer64(), GetStackPointer64(), ARMRegister(src, 64));
+  // Given that required invariant SP <= PSP, this is probably pointless,
+  // since it gives PSP a larger value.
+  syncStackPtr();
 }
 
 void MacroAssemblerCompat::addToStackPtr(Imm32 imm) {
   Add(GetStackPointer64(), GetStackPointer64(), Operand(imm.value));
+  // As above, probably pointless.
+  syncStackPtr();
 }
 
 void MacroAssemblerCompat::addToStackPtr(const Address& src) {
@@ -3058,6 +3105,8 @@ void MacroAssemblerCompat::addToStackPtr(const Address& src) {
   const ARMRegister scratch = temps.AcquireX();
   Ldr(scratch, toMemOperand(src));
   Add(GetStackPointer64(), GetStackPointer64(), scratch);
+  // As above, probably pointless.
+  syncStackPtr();
 }
 
 void MacroAssemblerCompat::addStackPtrTo(Register dest) {
@@ -3089,10 +3138,6 @@ void MacroAssemblerCompat::andToStackPtr(Imm32 imm) {
     And(GetStackPointer64(), GetStackPointer64(), Operand(imm.value));
     syncStackPtr();
   }
-}
-
-void MacroAssemblerCompat::andStackPtrTo(Register dest) {
-  And(ARMRegister(dest, 64), ARMRegister(dest, 64), GetStackPointer64());
 }
 
 void MacroAssemblerCompat::moveToStackPtr(Register src) {

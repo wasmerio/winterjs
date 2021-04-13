@@ -10,6 +10,7 @@
 
 #include "jsnum.h"
 
+#include "frontend/CompilationStencil.h"  // ExtensibleCompilationStencil
 #include "frontend/FullParseHandler.h"
 #include "frontend/ParseContext.h"
 #include "frontend/Parser.h"      // ParserBase
@@ -18,6 +19,7 @@
 #include "vm/BigIntType.h"
 #include "vm/Printer.h"
 #include "vm/RegExpObject.h"
+#include "vm/Scope.h"  // GetScopeDataTrailingNames
 
 using namespace js;
 using namespace js::frontend;
@@ -363,8 +365,9 @@ void LexicalScopeNode::dumpImpl(ParserBase* parser, GenericPrinter& out,
   int nameIndent = indent + strlen(name) + 3;
   if (!isEmptyScope()) {
     LexicalScope::ParserData* bindings = scopeBindings();
-    for (uint32_t i = 0; i < bindings->slotInfo.length; i++) {
-      auto index = bindings->trailingNames[i].name();
+    auto names = GetScopeDataTrailingNames(bindings);
+    for (uint32_t i = 0; i < names.size(); i++) {
+      auto index = names[i].name();
       if (parser) {
         if (index == TaggedParserAtomIndex::WellKnown::empty()) {
           out.put("#<zero-length name>");
@@ -374,7 +377,7 @@ void LexicalScopeNode::dumpImpl(ParserBase* parser, GenericPrinter& out,
       } else {
         DumpTaggedParserAtomIndexNoQuote(out, index, nullptr);
       }
-      if (i < bindings->slotInfo.length - 1) {
+      if (i < names.size() - 1) {
         IndentNewLine(out, nameIndent);
       }
     }
@@ -392,10 +395,10 @@ TaggedParserAtomIndex NumericLiteral::toAtom(
   return NumberToParserAtom(cx, parserAtoms, value());
 }
 
-RegExpObject* RegExpLiteral::create(JSContext* cx,
-                                    ParserAtomsTable& parserAtoms,
-                                    CompilationAtomCache& atomCache,
-                                    BaseCompilationStencil& stencil) const {
+RegExpObject* RegExpLiteral::create(
+    JSContext* cx, ParserAtomsTable& parserAtoms,
+    CompilationAtomCache& atomCache,
+    ExtensibleCompilationStencil& stencil) const {
   return stencil.regExpData[index_].createRegExpAndEnsureAtom(cx, parserAtoms,
                                                               atomCache);
 }

@@ -21,8 +21,10 @@ namespace js {
 
 class ArgumentsObject;
 class CallObject;
+class GlobalLexicalEnvironmentObject;
 class LexicalEnvironmentObject;
 class ModuleEnvironmentObject;
+class NamedLambdaObject;
 
 namespace jit {
 
@@ -422,7 +424,7 @@ class WarpNewArray : public WarpOpSnapshot {
 #endif
 };
 
-// Template object for JSOp::NewObject, JSOp::NewInit, JSOp::NewObjectWithGroup.
+// Template object for JSOp::NewObject or JSOp::NewInit.
 class WarpNewObject : public WarpOpSnapshot {
   WarpGCPtr<JSObject*> templateObject_;
 
@@ -464,11 +466,11 @@ struct NoEnvironment {};
 using ConstantObjectEnvironment = WarpGCPtr<JSObject*>;
 struct FunctionEnvironment {
   WarpGCPtr<CallObject*> callObjectTemplate;
-  WarpGCPtr<LexicalEnvironmentObject*> namedLambdaTemplate;
+  WarpGCPtr<NamedLambdaObject*> namedLambdaTemplate;
 
  public:
   FunctionEnvironment(CallObject* callObjectTemplate,
-                      LexicalEnvironmentObject* namedLambdaTemplate)
+                      NamedLambdaObject* namedLambdaTemplate)
       : callObjectTemplate(callObjectTemplate),
         namedLambdaTemplate(namedLambdaTemplate) {}
 };
@@ -567,7 +569,7 @@ class WarpSnapshot : public TempObject {
 
   // The global lexical environment and its thisObject(). We don't inline
   // cross-realm calls so this can be stored once per snapshot.
-  WarpGCPtr<LexicalEnvironmentObject*> globalLexicalEnv_;
+  WarpGCPtr<GlobalLexicalEnvironmentObject*> globalLexicalEnv_;
   WarpGCPtr<JSObject*> globalLexicalEnvThis_;
 
   const WarpBailoutInfo bailoutInfo_;
@@ -596,7 +598,7 @@ class WarpSnapshot : public TempObject {
   WarpScriptSnapshot* rootScript() { return scriptSnapshots_.getFirst(); }
   const WarpScriptSnapshotList& scripts() const { return scriptSnapshots_; }
 
-  LexicalEnvironmentObject* globalLexicalEnv() const {
+  GlobalLexicalEnvironmentObject* globalLexicalEnv() const {
     return globalLexicalEnv_;
   }
   JSObject* globalLexicalEnvThis() const { return globalLexicalEnvThis_; }

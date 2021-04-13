@@ -508,7 +508,7 @@ bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
 
   /* Invoke native functions. */
   RootedFunction fun(cx, &args.callee().as<JSFunction>());
-  if (fun->isNative()) {
+  if (fun->isNativeFun()) {
     MOZ_ASSERT_IF(construct, !fun->isConstructor());
     JSNative native = fun->native();
     if (!construct && args.ignoresReturnValue() && fun->hasJitInfo()) {
@@ -566,7 +566,7 @@ static bool InternalCall(JSContext* cx, const AnyInvokeArgs& args,
     // |this| already.  But don't do that if fval is a DOM function.
     HandleValue fval = args.calleev();
     if (!fval.isObject() || !fval.toObject().is<JSFunction>() ||
-        !fval.toObject().as<JSFunction>().isNative() ||
+        !fval.toObject().as<JSFunction>().isNativeFun() ||
         !fval.toObject().as<JSFunction>().hasJitInfo() ||
         fval.toObject()
             .as<JSFunction>()
@@ -620,7 +620,7 @@ static bool InternalConstruct(JSContext* cx, const AnyConstructArgs& args) {
   if (callee.is<JSFunction>()) {
     RootedFunction fun(cx, &callee.as<JSFunction>());
 
-    if (fun->isNative()) {
+    if (fun->isNativeFun()) {
       return CallJSNativeConstructor(cx, fun->native(), args);
     }
 
@@ -963,7 +963,8 @@ static void PopEnvironment(JSContext* cx, EnvironmentIter& ei) {
         DebugEnvironments::onPopLexical(cx, ei);
       }
       if (ei.scope().hasEnvironment()) {
-        ei.initialFrame().popOffEnvironmentChain<LexicalEnvironmentObject>();
+        ei.initialFrame()
+            .popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
       }
       break;
     case ScopeKind::With:
@@ -1790,7 +1791,7 @@ static MOZ_ALWAYS_INLINE bool SetObjectElementOperation(
   // used to do more eager dictionary-mode conversion for objects that are
   // used as hashmaps. Set this flag only for objects with many properties,
   // to avoid unnecessary Shape changes.
-  if (obj->isNative() && JSID_IS_ATOM(id) &&
+  if (obj->is<NativeObject>() && JSID_IS_ATOM(id) &&
       !obj->as<NativeObject>().inDictionaryMode() &&
       !obj->as<NativeObject>().hadElementsAccess() &&
       obj->as<NativeObject>().slotSpan() >
@@ -3604,7 +3605,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(InitAliasedLexical)
 
     CASE(InitGLexical) {
-      LexicalEnvironmentObject* lexicalEnv;
+      ExtensibleLexicalEnvironmentObject* lexicalEnv;
       if (script->hasNonSyntacticScope()) {
         lexicalEnv = &REGS.fp()->extensibleLexicalEnvironment();
       } else {
@@ -4049,7 +4050,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
 
       // Pop block from scope chain.
-      REGS.fp()->popOffEnvironmentChain<LexicalEnvironmentObject>();
+      REGS.fp()->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
     }
     END_CASE(PopLexicalEnv)
 
@@ -4562,7 +4563,7 @@ JSObject* js::Lambda(JSContext* cx, HandleFunction fun, HandleObject parent) {
   MOZ_ASSERT(!fun->isArrow());
 
   JSFunction* clone;
-  if (fun->isNative()) {
+  if (fun->isNativeFun()) {
     MOZ_ASSERT(IsAsmJSModule(fun));
     clone = CloneAsmJSModuleFunction(cx, fun);
   } else {

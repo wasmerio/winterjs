@@ -104,6 +104,15 @@ template void LIRGeneratorX86Shared::lowerForShiftInt64(
     LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 1>* ins,
     MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
 
+void LIRGeneratorX86Shared::lowerForCompareI64AndBranch(
+    MTest* mir, MCompare* comp, JSOp op, MDefinition* left, MDefinition* right,
+    MBasicBlock* ifTrue, MBasicBlock* ifFalse) {
+  auto* lir = new (alloc())
+      LCompareI64AndBranch(comp, op, useInt64Register(left),
+                           useInt64OrConstant(right), ifTrue, ifFalse);
+  add(lir, mir);
+}
+
 void LIRGeneratorX86Shared::lowerForALU(LInstructionHelper<1, 1, 0>* ins,
                                         MDefinition* mir, MDefinition* input) {
   ins->setOperand(0, useRegisterAtStart(input));
@@ -905,6 +914,10 @@ void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
     case wasm::SimdOp::I32x4GtU:
     case wasm::SimdOp::I32x4LeU:
     case wasm::SimdOp::I32x4GeU:
+    case wasm::SimdOp::I64x2LtS:
+    case wasm::SimdOp::I64x2GtS:
+    case wasm::SimdOp::I64x2LeS:
+    case wasm::SimdOp::I64x2GeS:
       tempReg0 = tempSimd128();
       tempReg1 = tempSimd128();
       break;
@@ -1273,8 +1286,13 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
     case wasm::SimdOp::I8x16Abs:
     case wasm::SimdOp::I16x8Abs:
     case wasm::SimdOp::I32x4Abs:
+    case wasm::SimdOp::I64x2Abs:
     case wasm::SimdOp::I32x4TruncSSatF32x4:
     case wasm::SimdOp::F32x4ConvertUI32x4:
+    case wasm::SimdOp::I16x8ExtAddPairwiseI8x16S:
+    case wasm::SimdOp::I16x8ExtAddPairwiseI8x16U:
+    case wasm::SimdOp::I32x4ExtAddPairwiseI16x8S:
+    case wasm::SimdOp::I32x4ExtAddPairwiseI16x8U:
       // Prefer src == dest to avoid an unconditional src->dest move.
       useAtStart = true;
       reuseInput = true;
@@ -1282,6 +1300,7 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
     case wasm::SimdOp::I32x4TruncUSatF32x4:
     case wasm::SimdOp::I32x4TruncSatF64x2SZero:
     case wasm::SimdOp::I32x4TruncSatF64x2UZero:
+    case wasm::SimdOp::I8x16Popcnt:
       tempReg = tempSimd128();
       // Prefer src == dest to avoid an unconditional src->dest move.
       useAtStart = true;
@@ -1356,8 +1375,6 @@ void LIRGenerator::visitWasmStoreLaneSimd128(MWasmStoreLaneSimd128* ins) {
 bool LIRGeneratorX86Shared::canFoldReduceSimd128AndBranch(wasm::SimdOp op) {
   switch (op) {
     case wasm::SimdOp::V128AnyTrue:
-    case wasm::SimdOp::I16x8AnyTrue:
-    case wasm::SimdOp::I32x4AnyTrue:
     case wasm::SimdOp::I8x16AllTrue:
     case wasm::SimdOp::I16x8AllTrue:
     case wasm::SimdOp::I32x4AllTrue:

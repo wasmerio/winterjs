@@ -325,9 +325,9 @@ bool WarpBuilder::buildInline() {
   return true;
 }
 
-MInstruction* WarpBuilder::buildNamedLambdaEnv(
-    MDefinition* callee, MDefinition* env,
-    LexicalEnvironmentObject* templateObj) {
+MInstruction* WarpBuilder::buildNamedLambdaEnv(MDefinition* callee,
+                                               MDefinition* env,
+                                               NamedLambdaObject* templateObj) {
   MOZ_ASSERT(!templateObj->hasDynamicSlots());
 
   MInstruction* namedLambda = MNewNamedLambdaObject::New(alloc(), templateObj);
@@ -420,7 +420,7 @@ bool WarpBuilder::buildEnvironmentChain() {
         MDefinition* callee = getCallee();
         MInstruction* envDef = MFunctionEnvironment::New(alloc(), callee);
         current->add(envDef);
-        if (LexicalEnvironmentObject* obj = env.namedLambdaTemplate) {
+        if (NamedLambdaObject* obj = env.namedLambdaTemplate) {
           envDef = buildNamedLambdaEnv(callee, envDef, obj);
         }
         if (CallObject* obj = env.callObjectTemplate) {
@@ -534,10 +534,6 @@ bool WarpBuilder::buildInlinePrologue() {
   // Initialize |this| slot.
   current->initSlot(info().thisSlot(), inlineCallInfo()->thisArg());
 
-  // We do not inline functions which need the arguments object.
-  // This means we can use `argSlot` below instead of `argSlotUnchecked`.
-  MOZ_ASSERT(!info().needsArgsObj());
-
   uint32_t callerArgs = inlineCallInfo()->argc();
   uint32_t actualArgs = info().nargs();
   uint32_t passedArgs = std::min<uint32_t>(callerArgs, actualArgs);
@@ -545,12 +541,12 @@ bool WarpBuilder::buildInlinePrologue() {
   // Initialize actually set arguments.
   for (uint32_t i = 0; i < passedArgs; i++) {
     MDefinition* arg = inlineCallInfo()->getArg(i);
-    current->initSlot(info().argSlot(i), arg);
+    current->initSlot(info().argSlotUnchecked(i), arg);
   }
 
   // Pass undefined for missing arguments.
   for (uint32_t i = passedArgs; i < actualArgs; i++) {
-    current->initSlot(info().argSlot(i), undef);
+    current->initSlot(info().argSlotUnchecked(i), undef);
   }
 
   // Initialize local slots.
@@ -1639,10 +1635,18 @@ bool WarpBuilder::build_Arguments(BytecodeLocation loc) {
 
   ArgumentsObject* templateObj = snapshot->templateObj();
   MDefinition* env = current->environmentChain();
-  auto* argsObj = MCreateArgumentsObject::New(alloc(), env, templateObj);
+
+  MInstruction* argsObj;
+  if (inlineCallInfo()) {
+    argsObj = MCreateInlinedArgumentsObject::New(alloc(), env, getCallee(),
+                                                 inlineCallInfo()->argv());
+  } else {
+    argsObj = MCreateArgumentsObject::New(alloc(), env, templateObj);
+  }
   current->add(argsObj);
   current->setArgumentsObject(argsObj);
   current->push(argsObj);
+
   return true;
 }
 
@@ -1767,8 +1771,7 @@ bool WarpBuilder::buildCallOp(BytecodeLocation loc) {
   bool constructing = IsConstructOp(op);
   bool ignoresReturnValue = (op == JSOp::CallIgnoresRv || loc.resultIsPopped());
 
-  CallInfo callInfo(alloc(), loc.toRawBytecode(), constructing,
-                    ignoresReturnValue);
+  CallInfo callInfo(alloc(), constructing, ignoresReturnValue);
   if (!callInfo.init(current, argc)) {
     return false;
   }
@@ -2823,8 +2826,7 @@ bool WarpBuilder::build_FunWithProto(BytecodeLocation loc) {
 
 bool WarpBuilder::build_SpreadCall(BytecodeLocation loc) {
   bool constructing = false;
-  CallInfo callInfo(alloc(), loc.toRawBytecode(), constructing,
-                    loc.resultIsPopped());
+  CallInfo callInfo(alloc(), constructing, loc.resultIsPopped());
   callInfo.initForSpreadCall(current);
 
   if (auto* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc)) {
@@ -3114,9 +3116,8 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
 
   if (const auto* inliningSnapshot = getOpSnapshot<WarpInlinedCall>(loc)) {
     // The CallInfo will be initialized by the transpiler.
-    jsbytecode* pc = loc.toRawBytecode();
-    bool ignoresRval = BytecodeIsPopped(pc);
-    CallInfo callInfo(alloc(), pc, /*constructing =*/false, ignoresRval);
+    bool ignoresRval = BytecodeIsPopped(loc.toRawBytecode());
+    CallInfo callInfo(alloc(), /*constructing =*/false, ignoresRval);
     callInfo.markAsInlined();
 
     if (!TranspileCacheIRToMIR(this, loc, inliningSnapshot->cacheIRSnapshot(),

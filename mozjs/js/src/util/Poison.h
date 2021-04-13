@@ -15,6 +15,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/MemoryChecking.h"
 
+#include <algorithm>  // std::min
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -24,9 +25,13 @@
 #include "js/Value.h"
 #include "util/DiagnosticAssertions.h"
 
-/* Enable poisoning in crash-diagnostics and zeal builds. */
+/*
+ * Allow extra GC poisoning to be enabled in crash-diagnostics and zeal
+ * builds. Except in debug builds, this must be enabled by setting the
+ * JSGC_EXTRA_POISONING environment variable.
+ */
 #if defined(JS_CRASH_DIAGNOSTICS) || defined(JS_GC_ZEAL)
-#  define JS_GC_POISONING 1
+#  define JS_GC_ALLOW_EXTRA_POISONING 1
 #endif
 
 namespace mozilla {
@@ -125,6 +130,10 @@ static inline void PoisonImpl(void* ptr, uint8_t value, size_t num) {
   // Unfortunately, this adds about 2% more overhead, so we can only enable
   // it in debug.
 #if defined(DEBUG)
+  if (!num) {
+    return;
+  }
+
   uintptr_t poison;
   memset(&poison, value, sizeof(poison));
 #  if defined(JS_PUNBOX64)
@@ -133,13 +142,25 @@ static inline void PoisonImpl(void* ptr, uint8_t value, size_t num) {
   JS::Value v = js::PoisonedObjectValue(poison);
 
 #  if defined(JS_NUNBOX32)
-  // On 32-bit arch, ptr may not be JS::Value-size aligned.
-  uintptr_t begin_count = uintptr_t(ptr) % sizeof(JS::Value);
+  // On 32-bit arch, `ptr` is 4 bytes aligned, and it's less than
+  // `sizeof(JS::Value)` == 8 bytes.
+  //
+  // `mozilla::PodSet` with `v` requires the pointer to be 8 bytes aligned if
+  // `value_count > 0`.
+  //
+  // If the pointer isn't 8 bytes aligned, fill the leading 1-4 bytes
+  // separately here, so that either the pointer is 8 bytes aligned, or
+  // we have no more bytes to fill.
+  uintptr_t begin_count = std::min(num, uintptr_t(ptr) % sizeof(JS::Value));
   if (begin_count) {
     uint8_t* begin = static_cast<uint8_t*>(ptr);
     mozilla::PodSet(begin, value, begin_count);
     ptr = begin + begin_count;
     num -= begin_count;
+
+    if (!num) {
+      return;
+    }
   }
 #  endif
 
@@ -165,16 +186,17 @@ static inline void AlwaysPoison(void* ptr, uint8_t value, size_t num,
   SetMemCheckKind(ptr, num, kind);
 }
 
-// JSGC_DISABLE_POISONING environment variable
-extern bool gDisablePoisoning;
+#if defined(JS_GC_ALLOW_EXTRA_POISONING)
+extern bool gExtraPoisoningEnabled;
+#endif
 
-// Poison a region of memory in debug and nightly builds (plus builds where GC
-// zeal is configured). Can be disabled by setting the JSGC_DISABLE_POISONING
-// environment variable.
+// Conditionally poison a region of memory in debug builds and nightly builds
+// when enabled by setting the JSGC_EXTRA_POISONING environment variable. Used
+// by the GC in places where poisoning has a performance impact.
 static inline void Poison(void* ptr, uint8_t value, size_t num,
                           MemCheckKind kind) {
-#if defined(JS_GC_POISONING)
-  if (!js::gDisablePoisoning) {
+#if defined(JS_GC_ALLOW_EXTRA_POISONING)
+  if (js::gExtraPoisoningEnabled) {
     PoisonImpl(ptr, value, num);
   }
 #endif
@@ -182,7 +204,7 @@ static inline void Poison(void* ptr, uint8_t value, size_t num,
 }
 
 // Poison a region of memory in debug builds. Can be disabled by setting the
-// JSGC_DISABLE_POISONING environment variable.
+// JSGC_EXTRA_POISONING environment variable.
 static inline void DebugOnlyPoison(void* ptr, uint8_t value, size_t num,
                                    MemCheckKind kind) {
 #if defined(DEBUG)

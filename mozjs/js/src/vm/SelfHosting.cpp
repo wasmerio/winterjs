@@ -1951,12 +1951,21 @@ static bool intrinsic_IsTopLevelAwaitEnabled(JSContext* cx, unsigned argc,
   return true;
 }
 
-static bool intrinsic_GetAsyncCycleRoot(JSContext* cx, unsigned argc,
-                                        Value* vp) {
+static bool intrinsic_SetCycleRoot(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+  RootedModuleObject cycleRoot(cx, &args[1].toObject().as<ModuleObject>());
+  module->setCycleRoot(cycleRoot);
+  args.rval().setUndefined();
+  return true;
+}
+
+static bool intrinsic_GetCycleRoot(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
   RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
-  JSObject* result = js::GetAsyncCycleRoot(module);
+  JSObject* result = module->getCycleRoot();
   if (!result) {
     return false;
   }
@@ -2076,7 +2085,7 @@ static bool intrinsic_CopyDataPropertiesOrGetOwnKeys(JSContext* cx,
   RootedObject from(cx, &args[1].toObject());
   RootedObject excludedItems(cx, args[2].toObjectOrNull());
 
-  if (from->isNative() && target->is<PlainObject>() &&
+  if (from->is<NativeObject>() && target->is<PlainObject>() &&
       (!excludedItems || excludedItems->is<PlainObject>())) {
     bool optimized;
     if (!CopyDataPropertiesNative(
@@ -2597,7 +2606,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
           intrinsic_InstantiateModuleFunctionDeclarations, 1, 0),
     JS_FN("ExecuteModule", intrinsic_ExecuteModule, 1, 0),
     JS_FN("IsTopLevelAwaitEnabled", intrinsic_IsTopLevelAwaitEnabled, 0, 0),
-    JS_FN("GetAsyncCycleRoot", intrinsic_GetAsyncCycleRoot, 1, 0),
+    JS_FN("SetCycleRoot", intrinsic_SetCycleRoot, 2, 0),
+    JS_FN("GetCycleRoot", intrinsic_GetCycleRoot, 1, 0),
     JS_FN("AppendAsyncParentModule", intrinsic_AppendAsyncParentModule, 2, 0),
     JS_FN("CreateTopLevelCapability", intrinsic_CreateTopLevelCapability, 1, 0),
     JS_FN("ModuleTopLevelCapabilityResolve",
@@ -2773,6 +2783,38 @@ static bool VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg) {
   return true;
 }
 
+[[nodiscard]] bool InitSelfHostingFromStencil(
+    JSContext* cx, Handle<GlobalObject*> shg, frontend::CompilationInput& input,
+    const frontend::CompilationStencil& stencil) {
+  // Instantiate the stencil and run the script.
+  // NOTE: Use a block here so the GC roots are dropped before freezing the Zone
+  //       below.
+  {
+    Rooted<frontend::CompilationGCOutput> output(cx);
+    if (!frontend::CompilationStencil::instantiateStencils(cx, input, stencil,
+                                                           output.get())) {
+      return false;
+    }
+
+    // Run the script
+    RootedScript script(cx, output.get().script);
+    RootedValue rval(cx);
+    if (!JS_ExecuteScript(cx, script, &rval)) {
+      return false;
+    }
+  }
+
+  if (!VerifyGlobalNames(cx, shg)) {
+    return false;
+  }
+
+  // Garbage collect the self hosting zone once when it is created. It should
+  // not be modified after this point.
+  cx->runtime()->gc.freezeSelfHostingZone();
+
+  return true;
+}
+
 bool JSRuntime::initSelfHosting(JSContext* cx) {
   MOZ_ASSERT(!selfHostingGlobal_);
 
@@ -2802,95 +2844,67 @@ bool JSRuntime::initSelfHosting(JSContext* cx) {
   CompileOptions options(cx);
   FillSelfHostingCompileOptions(options);
 
-  Rooted<frontend::CompilationInput> input(cx,
-                                           frontend::CompilationInput(options));
-  UniquePtr<frontend::CompilationStencil> stencil;
-
   // Try initializing from Stencil XDR.
   bool decodeOk = false;
+  Rooted<frontend::CompilationGCOutput> output(cx);
   if (selfHostedXDR.length() > 0) {
+    Rooted<frontend::CompilationInput> input(
+        cx, frontend::CompilationInput(options));
     if (!input.get().initForSelfHostingGlobal(cx)) {
       return false;
     }
 
-    stencil = cx->make_unique<frontend::CompilationStencil>(input.get());
-    if (!stencil) {
+    frontend::CompilationStencil stencil(input.get().source);
+    if (!stencil.deserializeStencils(cx, input.get(), selfHostedXDR,
+                                     &decodeOk)) {
       return false;
     }
 
-    if (!stencil->deserializeStencils(cx, input.get(), selfHostedXDR,
-                                      &decodeOk)) {
-      return false;
+    if (decodeOk) {
+      return InitSelfHostingFromStencil(cx, shg, input.get(), stencil);
     }
   }
 
   // If script wasn't generated, it means XDR was either not provided or that it
   // failed the decoding phase. Parse from text as before.
-  if (!decodeOk) {
-    uint32_t srcLen = GetRawScriptsSize();
-    const unsigned char* compressed = compressedSources;
-    uint32_t compressedLen = GetCompressedSize();
-    auto src = cx->make_pod_array<char>(srcLen);
-    if (!src) {
-      return false;
-    }
-    if (!DecompressString(compressed, compressedLen,
-                          reinterpret_cast<unsigned char*>(src.get()),
-                          srcLen)) {
-      return false;
-    }
-
-    JS::SourceText<mozilla::Utf8Unit> srcBuf;
-    if (!srcBuf.init(cx, std::move(src), srcLen)) {
-      return false;
-    }
-
-    stencil = frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
-                                                     ScopeKind::Global);
-    if (!stencil) {
-      return false;
-    }
-
-    // Serialize the stencil to XDR.
-    if (selfHostedXDRWriter) {
-      JS::TranscodeBuffer xdrBuffer;
-      if (!stencil->serializeStencils(cx, input.get(), xdrBuffer)) {
-        return false;
-      }
-
-      if (!selfHostedXDRWriter(cx, xdrBuffer)) {
-        return false;
-      }
-    }
+  uint32_t srcLen = GetRawScriptsSize();
+  const unsigned char* compressed = compressedSources;
+  uint32_t compressedLen = GetCompressedSize();
+  auto src = cx->make_pod_array<char>(srcLen);
+  if (!src) {
+    return false;
   }
-
-  // Instantiate the stencil and run the script.
-  // NOTE: Use a block here so the GC roots are dropped before freezing the Zone
-  //       below.
-  {
-    Rooted<frontend::CompilationGCOutput> output(cx);
-    if (!frontend::CompilationStencil::instantiateStencils(
-            cx, input.get(), *stencil, output.get())) {
-      return false;
-    }
-
-    // Run the script
-    RootedScript script(cx, output.get().script);
-    RootedValue rval(cx);
-    if (!JS_ExecuteScript(cx, script, &rval)) {
-      return false;
-    }
-  }
-
-  if (!VerifyGlobalNames(cx, shg)) {
+  if (!DecompressString(compressed, compressedLen,
+                        reinterpret_cast<unsigned char*>(src.get()), srcLen)) {
     return false;
   }
 
-  // Garbage collect the self hosting zone once when it is created. It should
-  // not be modified after this point.
-  cx->runtime()->gc.freezeSelfHostingZone();
+  JS::SourceText<mozilla::Utf8Unit> srcBuf;
+  if (!srcBuf.init(cx, std::move(src), srcLen)) {
+    return false;
+  }
 
-  return true;
+  Rooted<frontend::CompilationInput> input(cx,
+                                           frontend::CompilationInput(options));
+  auto stencil = frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
+                                                        ScopeKind::Global);
+  if (!stencil) {
+    return false;
+  }
+
+  // Serialize the stencil to XDR.
+  if (selfHostedXDRWriter) {
+    JS::TranscodeBuffer xdrBuffer;
+    if (!stencil->serializeStencils(cx, input.get(), xdrBuffer)) {
+      return false;
+    }
+
+    if (!selfHostedXDRWriter(cx, xdrBuffer)) {
+      return false;
+    }
+  }
+
+  return InitSelfHostingFromStencil(cx, shg, input.get(), *stencil);
 }
 
 void JSRuntime::finishSelfHosting() { selfHostingGlobal_ = nullptr; }
@@ -3084,7 +3098,7 @@ static JSObject* CloneObject(JSContext* cx,
                                        : selfHostedFunction->getAllocKind();
 
       Handle<GlobalObject*> global = cx->global();
-      Rooted<LexicalEnvironmentObject*> globalLexical(
+      Rooted<GlobalLexicalEnvironmentObject*> globalLexical(
           cx, &global->lexicalEnvironment());
       RootedScope emptyGlobalScope(cx, &global->emptyGlobalScope());
       Rooted<ScriptSourceObject*> sourceObject(
@@ -3138,7 +3152,7 @@ static JSObject* CloneObject(JSContext* cx,
   } else if (selfHostedObject->is<ArrayObject>()) {
     clone = NewTenuredDenseEmptyArray(cx, nullptr);
   } else {
-    MOZ_ASSERT(selfHostedObject->isNative());
+    MOZ_ASSERT(selfHostedObject->is<NativeObject>());
     clone = NewObjectWithGivenProto(
         cx, selfHostedObject->getClass(), nullptr,
         selfHostedObject->asTenured().getAllocKind(), TenuredObject);

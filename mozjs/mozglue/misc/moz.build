@@ -10,10 +10,12 @@ EXPORTS.mozilla += [
     "AutoProfilerLabel.h",
     "decimal/Decimal.h",
     "decimal/DoubleConversion.h",
+    "IntegerPrintfMacros.h",
     "MmapFaultHandler.h",
     "PlatformConditionVariable.h",
     "PlatformMutex.h",
     "Printf.h",
+    "Sprintf.h",
     "StackWalk.h",
     "TimeStamp.h",
     "Uptime.h",
@@ -26,6 +28,7 @@ EXPORTS.mozilla.glue += [
 
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
+        "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
         "TimeStamp_windows.h",
         "WindowsDpiAwareness.h",
@@ -60,6 +63,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.h",
     ]
     SOURCES += [
+        "PreXULSkeletonUI.cpp",
         "TimeStamp_windows.cpp",
         "WindowsMapRemoteView.cpp",
         "WindowsProcessMitigations.cpp",

@@ -513,7 +513,7 @@ bool GlobalObject::resolveOffThreadConstructor(JSContext* cx,
   }
 
   if (key == JSProto_Object &&
-      !JSObject::setFlags(cx, placeholder, BaseShape::IMMUTABLE_PROTOTYPE)) {
+      !JSObject::setFlag(cx, placeholder, ObjectFlag::ImmutablePrototype)) {
     return false;
   }
 
@@ -646,8 +646,8 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx,
     global->setPrivate(nullptr);
   }
 
-  Rooted<LexicalEnvironmentObject*> lexical(
-      cx, LexicalEnvironmentObject::createGlobal(cx, global));
+  Rooted<GlobalLexicalEnvironmentObject*> lexical(
+      cx, GlobalLexicalEnvironmentObject::create(cx, global));
   if (!lexical) {
     return nullptr;
   }
@@ -663,9 +663,6 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx,
   cx->realm()->initGlobal(*global, *lexical);
 
   if (!JSObject::setQualifiedVarObj(cx, global)) {
-    return nullptr;
-  }
-  if (!JSObject::setDelegate(cx, global)) {
     return nullptr;
   }
 
@@ -712,7 +709,7 @@ GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
   return global;
 }
 
-LexicalEnvironmentObject& GlobalObject::lexicalEnvironment() const {
+GlobalLexicalEnvironmentObject& GlobalObject::lexicalEnvironment() const {
   // The lexical environment is marked when marking the global, so we don't need
   // a read barrier here because we know the global is live.
   return *realm()->unbarrieredLexicalEnvironment();
@@ -889,7 +886,7 @@ static NativeObject* CreateBlankProto(JSContext* cx, const JSClass* clasp,
   MOZ_ASSERT(clasp != &JSFunction::class_);
 
   RootedObject blankProto(cx, NewTenuredObjectWithGivenProto(cx, clasp, proto));
-  if (!blankProto || !JSObject::setDelegate(cx, blankProto)) {
+  if (!blankProto) {
     return nullptr;
   }
 
@@ -963,6 +960,24 @@ NativeObject* GlobalObject::getOrCreateForOfPICObject(
   }
   global->setReservedSlot(FOR_OF_PIC_CHAIN, ObjectValue(*forOfPIC));
   return forOfPIC;
+}
+
+/* static */
+JSObject* GlobalObject::getOrCreateRealmWeakMapKey(
+    JSContext* cx, Handle<GlobalObject*> global) {
+  cx->check(global);
+  Value v = global->getReservedSlot(REALM_WEAK_MAP_KEY);
+  if (v.isObject()) {
+    return &v.toObject();
+  }
+
+  PlainObject* key = NewBuiltinClassInstance<PlainObject>(cx);
+  if (!key) {
+    return nullptr;
+  }
+
+  global->setReservedSlot(REALM_WEAK_MAP_KEY, ObjectValue(*key));
+  return key;
 }
 
 /* static */
@@ -1079,10 +1094,11 @@ bool GlobalObject::addIntrinsicValue(JSContext* cx,
 
   uint32_t slot = holder->slotSpan();
   RootedShape last(cx, holder->lastProperty());
-  Rooted<UnownedBaseShape*> base(cx, last->base()->unowned());
+  Rooted<BaseShape*> base(cx, last->base());
 
   RootedId id(cx, NameToId(name));
-  Rooted<StackShape> child(cx, StackShape(base, id, slot, 0));
+  Rooted<StackShape> child(cx,
+                           StackShape(base, last->objectFlags(), id, slot, 0));
   Shape* shape = cx->zone()->propertyTree().getChild(cx, last, child);
   if (!shape) {
     return false;

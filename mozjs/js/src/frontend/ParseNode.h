@@ -60,7 +60,7 @@ namespace frontend {
 class ParserBase;
 class ParseContext;
 class ParserAtomsTable;
-struct BaseCompilationStencil;
+struct ExtensibleCompilationStencil;
 class ParserSharedBase;
 class FullParseHandler;
 
@@ -1323,10 +1323,6 @@ class ListNode : public ParseNode {
 
   void append(ParseNode* item) {
     MOZ_ASSERT(item->pn_pos.begin >= pn_pos.begin);
-    appendWithoutOrderAssumption(item);
-  }
-
-  void appendWithoutOrderAssumption(ParseNode* item) {
     pn_pos.end = item->pn_pos.end;
     *tail_ = item;
     tail_ = &item->pn_next;
@@ -1900,7 +1896,7 @@ class RegExpLiteral : public ParseNode {
   // Create a RegExp object of this RegExp literal.
   RegExpObject* create(JSContext* cx, ParserAtomsTable& parserAtoms,
                        CompilationAtomCache& atomCache,
-                       BaseCompilationStencil& stencil) const;
+                       ExtensibleCompilationStencil& stencil) const;
 
 #ifdef DEBUG
   void dumpImpl(ParserBase* parser, GenericPrinter& out, int indent);

@@ -110,17 +110,6 @@ JS_FRIEND_API JSFunction* JS_GetObjectFunction(JSObject* obj) {
   return nullptr;
 }
 
-JS_FRIEND_API bool JS_SplicePrototype(JSContext* cx, HandleObject global,
-                                      HandleObject proto) {
-  CHECK_THREAD(cx);
-  cx->check(global, proto);
-
-  MOZ_ASSERT(global->is<GlobalObject>());
-
-  Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
-  return GlobalObject::splicePrototype(cx, global.as<GlobalObject>(), tagged);
-}
-
 JS_FRIEND_API JSObject* JS_NewObjectWithoutMetadata(
     JSContext* cx, const JSClass* clasp, JS::Handle<JSObject*> proto) {
   cx->check(proto);
@@ -182,12 +171,6 @@ JS_FRIEND_API void JS_TraceShapeCycleCollectorChildren(JS::CallbackTracer* trc,
                                                        JS::GCCellPtr shape) {
   MOZ_ASSERT(shape.is<Shape>());
   TraceCycleCollectorChildren(trc, &shape.as<Shape>());
-}
-
-JS_FRIEND_API void JS_TraceObjectGroupCycleCollectorChildren(
-    JS::CallbackTracer* trc, JS::GCCellPtr group) {
-  MOZ_ASSERT(group.is<ObjectGroup>());
-  TraceCycleCollectorChildren(trc, &group.as<ObjectGroup>());
 }
 
 static bool DefineHelpProperty(JSContext* cx, HandleObject obj,
@@ -411,20 +394,20 @@ JS_FRIEND_API JSFunction* js::NewFunctionByIdWithReserved(
 
 JS_FRIEND_API const Value& js::GetFunctionNativeReserved(JSObject* fun,
                                                          size_t which) {
-  MOZ_ASSERT(fun->as<JSFunction>().isNative());
+  MOZ_ASSERT(fun->as<JSFunction>().isNativeFun());
   return fun->as<JSFunction>().getExtendedSlot(which);
 }
 
 JS_FRIEND_API void js::SetFunctionNativeReserved(JSObject* fun, size_t which,
                                                  const Value& val) {
-  MOZ_ASSERT(fun->as<JSFunction>().isNative());
+  MOZ_ASSERT(fun->as<JSFunction>().isNativeFun());
   MOZ_ASSERT_IF(val.isObject(),
                 val.toObject().compartment() == fun->compartment());
   fun->as<JSFunction>().setExtendedSlot(which, val);
 }
 
 JS_FRIEND_API bool js::FunctionHasNativeReserved(JSObject* fun) {
-  MOZ_ASSERT(fun->as<JSFunction>().isNative());
+  MOZ_ASSERT(fun->as<JSFunction>().isNativeFun());
   return fun->as<JSFunction>().isExtended();
 }
 
@@ -432,12 +415,11 @@ bool js::GetObjectProto(JSContext* cx, JS::Handle<JSObject*> obj,
                         JS::MutableHandle<JSObject*> proto) {
   cx->check(obj);
 
-  if (IsProxy(obj)) {
+  if (obj->is<ProxyObject>()) {
     return JS_GetPrototype(cx, obj, proto);
   }
 
-  proto.set(
-      reinterpret_cast<const JS::shadow::Object*>(obj.get())->group->proto);
+  proto.set(obj->staticPrototype());
   return true;
 }
 
@@ -453,7 +435,7 @@ JS_FRIEND_API bool js::GetRealmOriginalEval(JSContext* cx,
 
 void JS::detail::SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
                                             const Value& value) {
-  if (IsProxy(obj)) {
+  if (obj->is<ProxyObject>()) {
     obj->as<ProxyObject>().setReservedSlot(slot, value);
   } else {
     obj->as<NativeObject>().setSlot(slot, value);
@@ -557,14 +539,14 @@ JS_FRIEND_API JSObject* JS_CloneObject(JSContext* cx, HandleObject obj,
   // |obj| might be in a different compartment.
   cx->check(proto);
 
-  if (!obj->isNative() && !obj->is<ProxyObject>()) {
+  if (!obj->is<NativeObject>() && !obj->is<ProxyObject>()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_CANT_CLONE_OBJECT);
     return nullptr;
   }
 
   RootedObject clone(cx);
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     // JS_CloneObject is used to create the target object for JSObject::swap().
     // swap() requires its arguments are tenured, so ensure tenure allocation.
     clone = NewTenuredObjectWithGivenProto(cx, obj->getClass(), proto);
@@ -630,8 +612,8 @@ extern JS_FRIEND_API bool JS::ForceLexicalInitialization(JSContext* cx,
 }
 
 extern JS_FRIEND_API int JS::IsGCPoisoning() {
-#ifdef JS_GC_POISONING
-  return !js::gDisablePoisoning;
+#ifdef JS_GC_ALLOW_EXTRA_POISONING
+  return js::gExtraPoisoningEnabled;
 #else
   return false;
 #endif

@@ -32,35 +32,18 @@ namespace jit {
 
 class Requirement {
  public:
-  enum Kind { NONE, REGISTER, FIXED, MUST_REUSE_INPUT };
+  enum Kind { NONE, REGISTER, FIXED };
 
   Requirement() : kind_(NONE) {}
 
   explicit Requirement(Kind kind) : kind_(kind) {
-    // These have dedicated constructors.
-    MOZ_ASSERT(kind != FIXED && kind != MUST_REUSE_INPUT);
-  }
-
-  Requirement(Kind kind, CodePosition at) : kind_(kind), position_(at) {
-    // These have dedicated constructors.
-    MOZ_ASSERT(kind != FIXED && kind != MUST_REUSE_INPUT);
+    // FIXED has a dedicated constructor.
+    MOZ_ASSERT(kind != FIXED);
   }
 
   explicit Requirement(LAllocation fixed) : kind_(FIXED), allocation_(fixed) {
     MOZ_ASSERT(!fixed.isBogus() && !fixed.isUse());
   }
-
-  // Only useful as a hint, encodes where the fixed requirement is used to
-  // avoid allocating a fixed register too early.
-  Requirement(LAllocation fixed, CodePosition at)
-      : kind_(FIXED), allocation_(fixed), position_(at) {
-    MOZ_ASSERT(!fixed.isBogus() && !fixed.isUse());
-  }
-
-  Requirement(uint32_t vreg, CodePosition at)
-      : kind_(MUST_REUSE_INPUT),
-        allocation_(LUse(vreg, LUse::ANY)),
-        position_(at) {}
 
   Kind kind() const { return kind_; }
 
@@ -69,18 +52,9 @@ class Requirement {
     return allocation_;
   }
 
-  uint32_t virtualRegister() const {
-    MOZ_ASSERT(allocation_.isUse());
-    MOZ_ASSERT(kind() == MUST_REUSE_INPUT);
-    return allocation_.toUse()->virtualRegister();
-  }
-
-  CodePosition pos() const { return position_; }
-
   [[nodiscard]] bool merge(const Requirement& newRequirement) {
     // Merge newRequirement with any existing requirement, returning false
     // if the new and old requirements conflict.
-    MOZ_ASSERT(newRequirement.kind() != Requirement::MUST_REUSE_INPUT);
 
     if (newRequirement.kind() == Requirement::FIXED) {
       if (kind() == Requirement::FIXED) {
@@ -102,7 +76,6 @@ class Requirement {
  private:
   Kind kind_;
   LAllocation allocation_;
-  CodePosition position_;
 };
 
 struct UsePosition : public TempObject,

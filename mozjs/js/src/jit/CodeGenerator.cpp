@@ -2455,7 +2455,7 @@ static void CreateMatchResultFallback(MacroAssembler& masm, Register object,
   masm.move32(Imm32(int32_t(templateObject.getAllocKind())), temp1);
   masm.passABIArg(temp1);
   masm.move32(
-      Imm32(int32_t(templateObject.asNativeTemplateObject().numDynamicSlots())),
+      Imm32(int32_t(templateObject.asTemplateNativeObject().numDynamicSlots())),
       temp2);
   masm.passABIArg(temp2);
   masm.callWithABI<Fn, CreateMatchResultFallbackFunc>();
@@ -2499,8 +2499,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     return nullptr;
   }
   TemplateObject templateObj(templateObject);
-  const NativeTemplateObject& nativeTemplateObj =
-      templateObj.asNativeTemplateObject();
+  const TemplateNativeObject& nativeTemplateObj =
+      templateObj.asTemplateNativeObject();
 
   // The template object should have enough space for the maximum number of
   // pairs this stub can handle.
@@ -2532,6 +2532,11 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   masm.branchPtr(Assembler::NotEqual,
                  Address(shared, RegExpShared::offsetOfGroupsTemplate()),
                  ImmWord(0), &oolEntry);
+
+  // Similarly, if the |hasIndices| flag is set, fall back to the OOL stub.
+  masm.branchTest32(Assembler::NonZero,
+                    Address(shared, RegExpShared::offsetOfFlags()),
+                    Imm32(int32_t(JS::RegExpFlag::HasIndices)), &oolEntry);
 
   // Construct the result.
   Register object = temp1;
@@ -3960,9 +3965,10 @@ void CodeGenerator::visitNewLexicalEnvironmentObject(
   pushArg(ToRegister(lir->enclosing()));
   pushArg(ImmGCPtr(lir->mir()->scope()));
 
-  using Fn = LexicalEnvironmentObject* (*)(JSContext*, Handle<LexicalScope*>,
-                                           HandleObject, gc::InitialHeap);
-  callVM<Fn, LexicalEnvironmentObject::create>(lir);
+  using Fn =
+      BlockLexicalEnvironmentObject* (*)(JSContext*, Handle<LexicalScope*>,
+                                         HandleObject, gc::InitialHeap);
+  callVM<Fn, BlockLexicalEnvironmentObject::create>(lir);
 }
 
 void CodeGenerator::visitCopyLexicalEnvironmentObject(
@@ -4291,16 +4297,6 @@ void CodeGenerator::visitGuardIsTypedArray(LGuardIsTypedArray* guard) {
   Label bail;
   masm.loadObjClassUnsafe(obj, temp);
   masm.branchIfClassIsNotTypedArray(temp, &bail);
-  bailoutFrom(&bail, guard->snapshot());
-}
-
-void CodeGenerator::visitGuardObjectGroup(LGuardObjectGroup* guard) {
-  Register obj = ToRegister(guard->input());
-  Register temp = ToTempRegisterOrInvalid(guard->temp());
-  Assembler::Condition cond =
-      guard->mir()->bailOnEquality() ? Assembler::Equal : Assembler::NotEqual;
-  Label bail;
-  masm.branchTestObjGroup(cond, obj, guard->mir()->group(), temp, obj, &bail);
   bailoutFrom(&bail, guard->snapshot());
 }
 
@@ -6622,11 +6618,11 @@ void CodeGenerator::visitNewArrayCallVM(LNewArray* lir) {
   JSObject* templateObject = lir->mir()->templateObject();
 
   if (templateObject) {
-    pushArg(ImmGCPtr(templateObject->group()));
+    pushArg(ImmGCPtr(templateObject->shape()));
     pushArg(Imm32(lir->mir()->length()));
 
-    using Fn = ArrayObject* (*)(JSContext*, uint32_t, HandleObjectGroup);
-    callVM<Fn, NewArrayWithGroup>(lir);
+    using Fn = ArrayObject* (*)(JSContext*, uint32_t, HandleShape);
+    callVM<Fn, NewArrayWithShape>(lir);
   } else {
     pushArg(Imm32(GenericObject));
     pushArg(Imm32(lir->mir()->length()));
@@ -6936,10 +6932,10 @@ void CodeGenerator::visitNewObjectVMCall(LNewObject* lir) {
 }
 
 static bool ShouldInitFixedSlots(LInstruction* lir, const TemplateObject& obj) {
-  if (!obj.isNative()) {
+  if (!obj.isNativeObject()) {
     return true;
   }
-  const NativeTemplateObject& templateObj = obj.asNativeTemplateObject();
+  const TemplateNativeObject& templateObj = obj.asTemplateNativeObject();
 
   // Look for StoreFixedSlot instructions following an object allocation
   // that write to this object before a GC is triggered or this object is
@@ -7080,11 +7076,9 @@ void CodeGenerator::visitNewCallObject(LNewCallObject* lir) {
 
   CallObject* templateObj = lir->mir()->templateObject();
 
-  using Fn = JSObject* (*)(JSContext*, HandleShape, HandleObjectGroup);
+  using Fn = JSObject* (*)(JSContext*, HandleShape);
   OutOfLineCode* ool = oolCallVM<Fn, NewCallObject>(
-      lir,
-      ArgList(ImmGCPtr(templateObj->lastProperty()),
-              ImmGCPtr(templateObj->group())),
+      lir, ArgList(ImmGCPtr(templateObj->lastProperty())),
       StoreRegisterTo(objReg));
 
   // Inline call object creation, using the OOL path only for tricky cases.
@@ -7256,6 +7250,75 @@ void CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir) {
   using Fn = ArgumentsObject* (*)(JSContext*, JitFrameLayout*, HandleObject);
   callVM<Fn, ArgumentsObject::createForIon>(lir);
 
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitCreateInlinedArgumentsObject(
+    LCreateInlinedArgumentsObject* lir) {
+  Register callObj = ToRegister(lir->getCallObject());
+  Register callee = ToRegister(lir->getCallee());
+  Register argsAddress = ToRegister(lir->temp());
+
+  // TODO: Do we have to worry about alignment here?
+
+  // Create a contiguous array of values for ArgumentsObject::create
+  // by pushing the arguments onto the stack in reverse order.
+  uint32_t argc = lir->mir()->numActuals();
+  for (uint32_t i = 0; i < argc; i++) {
+    uint32_t argNum = argc - i - 1;
+    uint32_t index = LCreateInlinedArgumentsObject::ArgIndex(argNum);
+    ConstantOrRegister arg =
+        toConstantOrRegister(lir, index, lir->mir()->getArg(argNum)->type());
+    masm.Push(arg);
+  }
+  masm.moveStackPtrTo(argsAddress);
+
+  pushArg(Imm32(argc));
+  pushArg(callObj);
+  pushArg(callee);
+  pushArg(argsAddress);
+
+  using Fn = ArgumentsObject* (*)(JSContext*, Value*, HandleFunction,
+                                  HandleObject, uint32_t);
+  callVM<Fn, ArgumentsObject::createForInlinedIon>(lir);
+
+  // Discard the array of values.
+  masm.freeStack(argc * sizeof(Value));
+}
+
+void CodeGenerator::visitGetInlinedArgument(LGetInlinedArgument* lir) {
+  Register index = ToRegister(lir->getIndex());
+  ValueOperand output = ToOutValue(lir);
+
+  uint32_t numActuals = lir->mir()->numActuals();
+  MOZ_ASSERT(numActuals > 0 && numActuals <= ArgumentsObject::MaxInlinedArgs);
+
+  // Check the first n-1 possible indices.
+  Label done;
+  for (uint32_t i = 0; i < numActuals - 1; i++) {
+    Label skip;
+    ConstantOrRegister arg = toConstantOrRegister(
+        lir, LGetInlinedArgument::ArgIndex(i), lir->mir()->getArg(i)->type());
+    masm.branch32(Assembler::NotEqual, index, Imm32(i), &skip);
+    masm.moveValue(arg, output);
+
+    masm.jump(&done);
+    masm.bind(&skip);
+  }
+
+#ifdef DEBUG
+  Label skip;
+  masm.branch32(Assembler::Equal, index, Imm32(numActuals - 1), &skip);
+  masm.assumeUnreachable("LGetInlinedArgument: invalid index");
+  masm.bind(&skip);
+#endif
+
+  // The index has already been bounds-checked, so load the last argument.
+  uint32_t lastIdx = numActuals - 1;
+  ConstantOrRegister arg =
+      toConstantOrRegister(lir, LGetInlinedArgument::ArgIndex(lastIdx),
+                           lir->mir()->getArg(lastIdx)->type());
+  masm.moveValue(arg, output);
   masm.bind(&done);
 }
 
@@ -12230,22 +12293,11 @@ void CodeGenerator::visitTypeOfV(LTypeOfV* lir) {
   const JSAtomState& names = gen->runtime->names();
   Label done;
 
-  OutOfLineTypeOfV* ool = nullptr;
-  if (lir->mir()->inputMaybeCallableOrEmulatesUndefined()) {
-    // The input may be a callable object (result is "function") or may
-    // emulate undefined (result is "undefined"). Use an OOL path.
-    ool = new (alloc()) OutOfLineTypeOfV(lir);
-    addOutOfLineCode(ool, lir->mir());
-    masm.branchTestObject(Assembler::Equal, tag, ool->entry());
-  } else {
-    // Input is not callable and does not emulate undefined, so if
-    // it's an object the result is always "object".
-    Label notObject;
-    masm.branchTestObject(Assembler::NotEqual, tag, &notObject);
-    masm.movePtr(ImmGCPtr(names.object), output);
-    masm.jump(&done);
-    masm.bind(&notObject);
-  }
+  // The input may be a callable object (result is "function") or may
+  // emulate undefined (result is "undefined"). Use an OOL path.
+  auto* ool = new (alloc()) OutOfLineTypeOfV(lir);
+  addOutOfLineCode(ool, lir->mir());
+  masm.branchTestObject(Assembler::Equal, tag, ool->entry());
 
   Label notNumber;
   masm.branchTestNumber(Assembler::NotEqual, tag, &notNumber);
@@ -15146,6 +15198,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
       case wasm::ValType::F64:
         argMir = ToMIRType(sig.args()[i]);
         break;
+      case wasm::ValType::Rtt:
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected argument type when calling from ion to wasm");
       case wasm::ValType::Ref:
@@ -15217,6 +15270,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
         MOZ_ASSERT(lir->mir()->type() == MIRType::Double);
         MOZ_ASSERT(ToFloatRegister(lir->output()) == ReturnDoubleReg);
         break;
+      case wasm::ValType::Rtt:
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
       case wasm::ValType::Ref:

@@ -361,43 +361,6 @@
 #endif
 
 /**
- * MOZ_MUST_USE tells the compiler to emit a warning if a function's
- * return value is not used by the caller.
- *
- * Place this attribute at the very beginning of a function declaration. For
- * example, write
- *
- *   MOZ_MUST_USE int foo();
- * or
- *   MOZ_MUST_USE int foo() { return 42; }
- *
- * MOZ_MUST_USE is most appropriate for functions where the return value is
- * some kind of success/failure indicator -- often |nsresult|, |bool| or |int|
- * -- because these functions are most commonly the ones that have missing
- * checks. There are three cases of note.
- *
- * - Fallible functions whose return values should always be checked. For
- *   example, a function that opens a file should always be checked because any
- *   subsequent operations on the file will fail if opening it fails. Such
- *   functions should be given a MOZ_MUST_USE annotation.
- *
- * - Fallible functions whose return value need not always be checked. For
- *   example, a function that closes a file might not be checked because it's
- *   common that no further operations would be performed on the file. Such
- *   functions do not need a MOZ_MUST_USE annotation.
- *
- * - Infallible functions, i.e. ones that always return a value indicating
- *   success. These do not need a MOZ_MUST_USE annotation. Ideally, they would
- *   be converted to not return a success/failure indicator, though sometimes
- *   interface constraints prevent this.
- */
-#if defined(__GNUC__) || defined(__clang__)
-#  define MOZ_MUST_USE __attribute__((warn_unused_result))
-#else
-#  define MOZ_MUST_USE
-#endif
-
-/**
  * MOZ_MAYBE_UNUSED suppresses compiler warnings about functions that are
  * never called (in this build configuration, at least).
  *
@@ -807,6 +770,7 @@
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN \
       __attribute__((annotate("moz_may_call_after_must_return")))
 #    define MOZ_LIFETIME_BOUND __attribute__((annotate("moz_lifetime_bound")))
+#    define MOZ_KNOWN_LIVE __attribute__((annotate("moz_known_live")))
 
 /*
  * It turns out that clang doesn't like void func() __attribute__ {} without a
@@ -860,6 +824,7 @@
 #    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG      /* nothing */
 #    define MOZ_MAY_CALL_AFTER_MUST_RETURN                  /* nothing */
 #    define MOZ_LIFETIME_BOUND                              /* nothing */
+#    define MOZ_KNOWN_LIVE                                  /* nothing */
 #  endif /* defined(MOZ_CLANG_PLUGIN) || defined(XGILL_PLUGIN) */
 
 #  define MOZ_RAII MOZ_NON_TEMPORARY_CLASS MOZ_STACK_CLASS
