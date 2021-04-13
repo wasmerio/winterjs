@@ -358,7 +358,8 @@ impl JSFunctionSpec {
 impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
         name: JSPropertySpec_Name { string_: ptr::null() },
-        flags_: 0,
+        attributes_: 0,
+        isAccessor_: true,
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
                 getter: ::jsapi::JSPropertySpec_Accessor {
@@ -373,7 +374,8 @@ impl JSPropertySpec {
 
     pub fn is_zeroed(&self) -> bool {
         (unsafe { self.name.string_.is_null() }) &&
-            self.flags_ == 0 &&
+            self.attributes_ == 0 &&
+            self.isAccessor_ &&
             unsafe { self.u.accessors.getter.native.is_zeroed() } &&
             unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
