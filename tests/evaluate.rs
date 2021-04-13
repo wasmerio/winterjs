@@ -4,21 +4,21 @@
 
 extern crate mozjs_sys;
 
-use mozjs_sys::jsapi::JS;
-use mozjs_sys::jsapi::JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
-use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
+use mozjs_sys::jsapi::glue::DeleteOwningCompileOptions;
+use mozjs_sys::jsapi::glue::JS_Init;
+use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
+use mozjs_sys::jsapi::glue::JS_NewRealmOptions;
 use mozjs_sys::jsapi::JSClass;
 use mozjs_sys::jsapi::JSClassOps;
 use mozjs_sys::jsapi::JSContext;
 use mozjs_sys::jsapi::JS_DestroyContext;
 use mozjs_sys::jsapi::JS_GlobalObjectTraceHook;
-use mozjs_sys::jsapi::JS_NewGlobalObject;
 use mozjs_sys::jsapi::JS_NewContext;
+use mozjs_sys::jsapi::JS_NewGlobalObject;
 use mozjs_sys::jsapi::JS_ShutDown;
-use mozjs_sys::jsapi::glue::JS_Init;
-use mozjs_sys::jsapi::glue::JS_NewRealmOptions;
-use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;
-use mozjs_sys::jsapi::glue::DeleteOwningCompileOptions;
+use mozjs_sys::jsapi::JS;
+use mozjs_sys::jsapi::JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
+use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
 
 use std::mem;
 use std::ptr;
@@ -41,7 +41,7 @@ static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
 // The class of the global object.
 static GLOBAL_CLASS: JSClass = JSClass {
     name: "global\0" as *const str as *const i8,
-    flags:  JSCLASS_GLOBAL_FLAGS,
+    flags: JSCLASS_GLOBAL_FLAGS,
     cOps: &GLOBAL_CLASS_OPS,
     spec: ptr::null(),
     ext: ptr::null(),
@@ -65,13 +65,7 @@ fn main() {
         // Create the global object and a new compartment.
         // THIS IS DANGEROUS since the global isn't rooted.
         let options = JS_NewRealmOptions();
-        let global = JS_NewGlobalObject(
-            cx,
-            &GLOBAL_CLASS,
-            ptr::null_mut(),
-            FireOnNewGlobalHook,
-            options
-        );
+        let global = JS_NewGlobalObject(cx, &GLOBAL_CLASS, ptr::null_mut(), FireOnNewGlobalHook, options);
         let realm = JS::EnterRealm(cx, global);
 
         let options = JS_NewOwningCompileOptions(cx);

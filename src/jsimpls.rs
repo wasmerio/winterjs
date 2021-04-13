@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::JS;
+use jsapi::glue::JS_ForOfIteratorInit;
+use jsapi::glue::JS_ForOfIteratorNext;
+use jsapi::jsid;
 use jsapi::JSAutoRealm;
 use jsapi::JSContext;
 use jsapi::JSErrNum;
@@ -14,9 +16,7 @@ use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
 use jsapi::JSPropertySpec;
 use jsapi::JSPropertySpec_Name;
-use jsapi::glue::JS_ForOfIteratorInit;
-use jsapi::glue::JS_ForOfIteratorNext;
-use jsapi::jsid;
+use jsapi::JS;
 use jsgc::RootKind;
 use jsid::JSID_VOID;
 use jsval::UndefinedValue;
@@ -49,65 +49,57 @@ impl<T> DerefMut for JS::MutableHandle<T> {
 }
 
 impl Default for jsid {
-    fn default() -> Self { JSID_VOID }
+    fn default() -> Self {
+        JSID_VOID
+    }
 }
 
 impl Default for JS::PropertyDescriptor {
     fn default() -> Self {
-        JS::PropertyDescriptor {
-            obj: ptr::null_mut(),
-            attrs: 0,
-            getter: None,
-            setter: None,
-            value: UndefinedValue()
-        }
+        JS::PropertyDescriptor { obj: ptr::null_mut(), attrs: 0, getter: None, setter: None, value: UndefinedValue() }
     }
 }
 
 impl Drop for JSAutoRealm {
     fn drop(&mut self) {
-        unsafe { JS::LeaveRealm(self.cx_, self.oldRealm_); }
+        unsafe {
+            JS::LeaveRealm(self.cx_, self.oldRealm_);
+        }
     }
 }
 
-
 impl<T> JS::Handle<T> {
     pub fn get(&self) -> T
-        where T: Copy
+    where
+        T: Copy,
     {
         unsafe { *self.ptr }
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> JS::Handle<T> {
-        JS::Handle {
-            ptr: ptr as *mut T,
-            _phantom_0: ::std::marker::PhantomData,
-        }
+        JS::Handle { ptr: ptr as *mut T, _phantom_0: ::std::marker::PhantomData }
     }
 }
 
 impl<T> JS::MutableHandle<T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> JS::MutableHandle<T> {
-        JS::MutableHandle {
-            ptr: ptr,
-            _phantom_0: ::std::marker::PhantomData,
-        }
+        JS::MutableHandle { ptr: ptr, _phantom_0: ::std::marker::PhantomData }
     }
 
     pub fn handle(&self) -> JS::Handle<T> {
-        unsafe {
-            JS::Handle::from_marked_location(self.ptr as *const _)
-        }
+        unsafe { JS::Handle::from_marked_location(self.ptr as *const _) }
     }
 
     pub fn get(&self) -> T
-        where T: Copy
+    where
+        T: Copy,
     {
         unsafe { *self.ptr }
     }
 
     pub fn set(&self, v: T)
-        where T: Copy
+    where
+        T: Copy,
     {
         unsafe { *self.ptr = v }
     }
@@ -115,31 +107,21 @@ impl<T> JS::MutableHandle<T> {
 
 impl JS::HandleValue {
     pub fn null() -> JS::HandleValue {
-        unsafe {
-            JS::NullHandleValue
-        }
+        unsafe { JS::NullHandleValue }
     }
 
     pub fn undefined() -> JS::HandleValue {
-        unsafe {
-            JS::UndefinedHandleValue
-        }
+        unsafe { JS::UndefinedHandleValue }
     }
 }
 
 impl JS::HandleValueArray {
     pub fn new() -> JS::HandleValueArray {
-        JS::HandleValueArray {
-            length_: 0,
-            elements_: ptr::null(),
-        }
+        JS::HandleValueArray { length_: 0, elements_: ptr::null() }
     }
 
     pub unsafe fn from_rooted_slice(values: &[JS::Value]) -> JS::HandleValueArray {
-        JS::HandleValueArray {
-            length_: values.len(),
-            elements_: values.as_ptr()
-        }
+        JS::HandleValueArray { length_: values.len(), elements_: values.as_ptr() }
     }
 }
 
@@ -147,9 +129,7 @@ const NULL_OBJECT: *mut JSObject = 0 as *mut JSObject;
 
 impl JS::HandleObject {
     pub fn null() -> JS::HandleObject {
-        unsafe {
-            JS::HandleObject::from_marked_location(&NULL_OBJECT)
-        }
+        unsafe { JS::HandleObject::from_marked_location(&NULL_OBJECT) }
     }
 }
 
@@ -158,20 +138,13 @@ impl JS::HandleObject {
 
 impl JSAutoRealm {
     pub fn new(cx: *mut JSContext, target: *mut JSObject) -> JSAutoRealm {
-        JSAutoRealm {
-            cx_: cx,
-            oldRealm_: unsafe { JS::EnterRealm(cx, target) },
-        }
+        JSAutoRealm { cx_: cx, oldRealm_: unsafe { JS::EnterRealm(cx, target) } }
     }
 }
 
 impl JS::AutoGCRooter {
     pub fn new_unrooted(kind: JS::AutoGCRooterKind) -> JS::AutoGCRooter {
-        JS::AutoGCRooter {
-            down: ptr::null_mut(),
-            kind_: kind,
-            stackTop: ptr::null_mut(),
-        }
+        JS::AutoGCRooter { down: ptr::null_mut(), kind_: kind, stackTop: ptr::null_mut() }
     }
 
     pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
@@ -214,24 +187,18 @@ impl JSJitMethodCallArgs {
     #[inline]
     pub fn index(&self, i: u32) -> JS::HandleValue {
         assert!(i < self.argc_);
-        unsafe {
-            JS::HandleValue::from_marked_location(self.argv_.offset(i as isize))
-        }
+        unsafe { JS::HandleValue::from_marked_location(self.argv_.offset(i as isize)) }
     }
 
     #[inline]
     pub fn index_mut(&self, i: u32) -> JS::MutableHandleValue {
         assert!(i < self.argc_);
-        unsafe {
-            JS::MutableHandleValue::from_marked_location(self.argv_.offset(i as isize))
-        }
+        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(i as isize)) }
     }
 
     #[inline]
     pub fn rval(&self) -> JS::MutableHandleValue {
-        unsafe {
-            JS::MutableHandleValue::from_marked_location(self.argv_.offset(-2))
-        }
+        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(-2)) }
     }
 }
 
@@ -252,35 +219,26 @@ impl JS::CallArgs {
         // produces a SEGV caused by the vp being overwritten by the argc.
         // TODO: debug this!
         JS::CallArgs {
-            _bitfield_1: JS::CallArgs::new_bitfield_1(
-                (*vp.offset(1)).is_magic(),
-                false
-            ),
+            _bitfield_1: JS::CallArgs::new_bitfield_1((*vp.offset(1)).is_magic(), false),
             argc_: argc,
             argv_: vp.offset(2),
             #[cfg(not(feature = "debugmozjs"))]
             __bindgen_padding_0: [0, 0, 0],
             #[cfg(feature = "debugmozjs")]
-            wantUsedRval_: JS::detail::IncludeUsedRval {
-                usedRval_: false,
-            },
+            wantUsedRval_: JS::detail::IncludeUsedRval { usedRval_: false },
         }
     }
 
     #[inline]
     pub fn index(&self, i: u32) -> JS::HandleValue {
         assert!(i < self.argc_);
-        unsafe {
-            JS::HandleValue::from_marked_location(self.argv_.offset(i as isize))
-        }
+        unsafe { JS::HandleValue::from_marked_location(self.argv_.offset(i as isize)) }
     }
 
     #[inline]
     pub fn index_mut(&self, i: u32) -> JS::MutableHandleValue {
         assert!(i < self.argc_);
-        unsafe {
-            JS::MutableHandleValue::from_marked_location(self.argv_.offset(i as isize))
-        }
+        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(i as isize)) }
     }
 
     #[inline]
@@ -296,23 +254,17 @@ impl JS::CallArgs {
 
     #[inline]
     pub fn rval(&self) -> JS::MutableHandleValue {
-        unsafe {
-            JS::MutableHandleValue::from_marked_location(self.argv_.offset(-2))
-        }
+        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(-2)) }
     }
 
     #[inline]
     pub fn thisv(&self) -> JS::HandleValue {
-        unsafe {
-            JS::HandleValue::from_marked_location(self.argv_.offset(-1))
-        }
+        unsafe { JS::HandleValue::from_marked_location(self.argv_.offset(-1)) }
     }
 
     #[inline]
     pub fn calleev(&self) -> JS::HandleValue {
-        unsafe {
-            JS::HandleValue::from_marked_location(self.argv_.offset(-2))
-        }
+        unsafe { JS::HandleValue::from_marked_location(self.argv_.offset(-2)) }
     }
 
     #[inline]
@@ -323,9 +275,7 @@ impl JS::CallArgs {
     #[inline]
     pub fn new_target(&self) -> JS::MutableHandleValue {
         assert!(self.constructing_());
-        unsafe {
-            JS::MutableHandleValue::from_marked_location(self.argv_.offset(self.argc_ as isize))
-        }
+        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(self.argc_ as isize)) }
     }
 }
 
@@ -347,11 +297,7 @@ impl JSFunctionSpec {
     };
 
     pub fn is_zeroed(&self) -> bool {
-        (unsafe { self.name.string_.is_null() }) &&
-            self.selfHostedName.is_null() &&
-            self.flags == 0 &&
-            self.nargs == 0 &&
-            self.call.is_zeroed()
+        (unsafe { self.name.string_.is_null() }) && self.selfHostedName.is_null() && self.flags == 0 && self.nargs == 0 && self.call.is_zeroed()
     }
 }
 
@@ -362,34 +308,22 @@ impl JSPropertySpec {
         isAccessor_: true,
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
-                getter: ::jsapi::JSPropertySpec_Accessor {
-                    native: JSNativeWrapper::ZERO,
-                },
-                setter: ::jsapi::JSPropertySpec_Accessor {
-                    native: JSNativeWrapper::ZERO,
-                },
+                getter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
+                setter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
             },
         },
     };
 
     pub fn is_zeroed(&self) -> bool {
-        (unsafe { self.name.string_.is_null() }) &&
-            self.attributes_ == 0 &&
-            self.isAccessor_ &&
-            unsafe { self.u.accessors.getter.native.is_zeroed() } &&
-            unsafe { self.u.accessors.setter.native.is_zeroed() }
+        (unsafe { self.name.string_.is_null() }) && self.attributes_ == 0 && self.isAccessor_ && unsafe { self.u.accessors.getter.native.is_zeroed() } && unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
 }
 
 impl JSNativeWrapper {
-    pub const ZERO: Self = JSNativeWrapper {
-        info: 0 as *const _,
-        op: None,
-    };
+    pub const ZERO: Self = JSNativeWrapper { info: 0 as *const _, op: None };
 
     pub fn is_zeroed(&self) -> bool {
-        self.op.is_none() &&
-            self.info.is_null()
+        self.op.is_none() && self.info.is_null()
     }
 }
 
@@ -407,7 +341,8 @@ impl<T> JS::Rooted<T> {
     }
 
     unsafe fn get_root_stack(cx: *mut JSContext) -> *mut *mut JS::Rooted<*mut c_void>
-        where T: RootKind
+    where
+        T: RootKind,
     {
         let kind = T::rootKind() as usize;
         let rooting_cx = Self::get_rooting_context(cx);
@@ -415,7 +350,8 @@ impl<T> JS::Rooted<T> {
     }
 
     pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext)
-        where T: RootKind
+    where
+        T: RootKind,
     {
         let stack = Self::get_root_stack(cx);
         self.stack = stack;
