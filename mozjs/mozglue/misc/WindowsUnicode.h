@@ -11,7 +11,9 @@
 
 #include <string>
 
+#ifndef JS_ENABLE_UWP
 struct _UNICODE_STRING;
+#endif
 
 namespace mozilla {
 namespace glue {
@@ -21,7 +23,9 @@ mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr,
 
 mozilla::UniquePtr<char[]> WideToUTF8(const wchar_t* aStr);
 mozilla::UniquePtr<char[]> WideToUTF8(const std::wstring& aStr);
+#ifndef JS_ENABLE_UWP
 mozilla::UniquePtr<char[]> WideToUTF8(const _UNICODE_STRING* aStr);
+#endif
 
 #if defined(bstr_t)
 inline mozilla::UniquePtr<char[]> WideToUTF8(const _bstr_t& aStr) {
