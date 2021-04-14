@@ -39,6 +39,7 @@
 #include "js/Warnings.h"
 #include "js/WasmModule.h"
 #include "js/shadow/Object.h"
+#include "js/shadow/Shape.h"
 #include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
 #include "js/friend/WindowProxy.h"
