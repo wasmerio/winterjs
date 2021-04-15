@@ -14,9 +14,30 @@ use std::process::Command;
 use std::str;
 use walkdir::WalkDir;
 
-const ENV_VARS: &'static [&'static str] = &["AR", "AS", "CC", "CFLAGS", "CLANGFLAGS", "CPP", "CPPFLAGS", "CXX", "CXXFLAGS", "MAKE", "MOZ_TOOLS", "MOZJS_FORCE_RERUN", "MOZTOOLS_PATH", "PYTHON", "STLPORT_LIBS"];
+const ENV_VARS: &'static [&'static str] = &[
+    "AR",
+    "AS",
+    "CC",
+    "CFLAGS",
+    "CLANGFLAGS",
+    "CPP",
+    "CPPFLAGS",
+    "CXX",
+    "CXXFLAGS",
+    "MAKE",
+    "MOZ_TOOLS",
+    "MOZJS_FORCE_RERUN",
+    "MOZTOOLS_PATH",
+    "PYTHON",
+    "STLPORT_LIBS",
+];
 
-const EXTRA_FILES: &'static [&'static str] = &["makefile.cargo", "rustfmt.toml", "src/jsglue.hpp", "src/jsglue.cpp"];
+const EXTRA_FILES: &'static [&'static str] = &[
+    "makefile.cargo",
+    "rustfmt.toml",
+    "src/jsglue.hpp",
+    "src/jsglue.cpp",
+];
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113
@@ -85,7 +106,13 @@ fn cc_flags() -> Vec<&'static str> {
             "-D_CRT_USE_BUILTIN_OFFSETOF",
         ]);
     } else {
-        result.extend(&["-std=gnu++17", "-fno-sized-deallocation", "-Wno-unused-parameter", "-Wno-invalid-offsetof", "-Wno-unused-private-field"]);
+        result.extend(&[
+            "-std=gnu++17",
+            "-fno-sized-deallocation",
+            "-Wno-unused-parameter",
+            "-Wno-invalid-offsetof",
+            "-Wno-unused-private-field",
+        ]);
     }
 
     let is_apple = target.contains("apple");
@@ -117,7 +144,9 @@ fn build_jsapi(build_dir: &Path) {
 
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from("-I");
-    cppflags.push(OsString::from(encoding_c_mem_include_dir.replace("\\", "/")));
+    cppflags.push(OsString::from(
+        encoding_c_mem_include_dir.replace("\\", "/"),
+    ));
     cppflags.push(" ");
     cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
@@ -132,13 +161,26 @@ fn build_jsapi(build_dir: &Path) {
 
     let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
 
-    let result = cmd.args(&["-R", "-f"]).arg(cargo_manifest_dir.join("makefile.cargo")).current_dir(&build_dir).env("SRC_DIR", &cargo_manifest_dir.join("mozjs")).env("NO_RUST_PANIC_HOOK", "1").status().expect("Failed to run `make`");
+    let result = cmd
+        .args(&["-R", "-f"])
+        .arg(cargo_manifest_dir.join("makefile.cargo"))
+        .current_dir(&build_dir)
+        .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
+        .env("NO_RUST_PANIC_HOOK", "1")
+        .status()
+        .expect("Failed to run `make`");
     assert!(result.success());
 
-    println!("cargo:rustc-link-search=native={}/js/src/build", build_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}/js/src/build",
+        build_dir.display()
+    );
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
-        println!("cargo:rustc-link-search=native={}/dist/bin", build_dir.display());
+        println!(
+            "cargo:rustc-link-search=native={}/dist/bin",
+            build_dir.display()
+        );
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
@@ -171,7 +213,13 @@ fn build_jsglue(build_dir: &Path) {
     } else {
         build.flag("-include");
     }
-    build.flag(&config).file("src/jsglue.cpp").include(build_dir.join("dist/include")).include(build_dir.join("js/src")).out_dir(build_dir.join("glue")).compile("jsglue");
+    build
+        .flag(&config)
+        .file("src/jsglue.cpp")
+        .include(build_dir.join("dist/include"))
+        .include(build_dir.join("js/src"))
+        .out_dir(build_dir.join("glue"))
+        .compile("jsglue");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -231,9 +279,18 @@ fn build_jsapi_bindings(build_dir: &Path) {
     }
 
     builder = builder.clang_arg("-include");
-    builder = builder.clang_arg(build_dir.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
+    builder = builder.clang_arg(
+        build_dir
+            .join("js/src/js-confdefs.h")
+            .to_str()
+            .expect("UTF-8"),
+    );
 
-    println!("Generting bindings {:?} {}.", builder.command_line_flags(), bindgen::clang_version().full);
+    println!(
+        "Generting bindings {:?} {}.",
+        builder.command_line_flags(),
+        bindgen::clang_version().full
+    );
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
         builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
@@ -263,23 +320,52 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.module_raw_line(module, raw_line);
     }
 
-    let bindings = builder.generate().expect("Should generate JSAPI bindings OK");
+    let bindings = builder
+        .generate()
+        .expect("Should generate JSAPI bindings OK");
 
-    bindings.write_to_file(build_dir.join("jsapi.rs")).expect("Should write bindings to file OK");
+    bindings
+        .write_to_file(build_dir.join("jsapi.rs"))
+        .expect("Should write bindings to file OK");
 }
 
 /// JSAPI types for which we should implement `Sync`.
-const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &["JSClass", "JSFunctionSpec", "JSNativeWrapper", "JSPropertySpec", "JSTypedMethodJitInfo"];
+const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &[
+    "JSClass",
+    "JSFunctionSpec",
+    "JSNativeWrapper",
+    "JSPropertySpec",
+    "JSTypedMethodJitInfo",
+];
 
 /// Types which we want to generate bindings for (and every other type they
 /// transitively use).
 const WHITELIST_TYPES: &'static [&'static str] = &["JS.*", "js::.*", "mozilla::.*"];
 
 /// Global variables we want to generate bindings to.
-const WHITELIST_VARS: &'static [&'static str] = &["JS::NullHandleValue", "JS::TrueHandleValue", "JS::UndefinedHandleValue", "JSCLASS_.*", "JSFUN_.*", "JSITER_.*", "JSPROP_.*", "JSREG_.*", "JS_.*", "js::Proxy.*"];
+const WHITELIST_VARS: &'static [&'static str] = &[
+    "JS::NullHandleValue",
+    "JS::TrueHandleValue",
+    "JS::UndefinedHandleValue",
+    "JSCLASS_.*",
+    "JSFUN_.*",
+    "JSITER_.*",
+    "JSPROP_.*",
+    "JSREG_.*",
+    "JS_.*",
+    "js::Proxy.*",
+];
 
 /// Functions we want to generate bindings to.
-const WHITELIST_FUNCTIONS: &'static [&'static str] = &["ExceptionStackOrNull", "glue::.*", "JS::.*", "js::.*", "JS_.*", ".*_TO_JSID", "JS_DeprecatedStringHasLatin1Chars"];
+const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
+    "ExceptionStackOrNull",
+    "glue::.*",
+    "JS::.*",
+    "js::.*",
+    "JS_.*",
+    ".*_TO_JSID",
+    "JS_DeprecatedStringHasLatin1Chars",
+];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
 /// up within a whitelisted type.
@@ -287,7 +373,20 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &["ExceptionStackOrNull", "
 /// These are types which are too tricky for bindgen to handle, and/or use C++
 /// features that don't have an equivalent in rust, such as partial template
 /// specialization.
-const OPAQUE_TYPES: &'static [&'static str] = &["JS::Auto.*Impl", "JS::StackGCVector.*", "JS::PersistentRooted.*", "JS::detail::CallArgsBase.*", "js::detail::UniqueSelector.*", "mozilla::BufferList", "mozilla::Maybe.*", "mozilla::UniquePtr.*", "mozilla::Variant", "mozilla::Hash.*", "mozilla::detail::Hash.*", "RefPtr_Proxy.*"];
+const OPAQUE_TYPES: &'static [&'static str] = &[
+    "JS::Auto.*Impl",
+    "JS::StackGCVector.*",
+    "JS::PersistentRooted.*",
+    "JS::detail::CallArgsBase.*",
+    "js::detail::UniqueSelector.*",
+    "mozilla::BufferList",
+    "mozilla::Maybe.*",
+    "mozilla::UniquePtr.*",
+    "mozilla::Variant",
+    "mozilla::Hash.*",
+    "mozilla::detail::Hash.*",
+    "RefPtr_Proxy.*",
+];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
 /// a type or function signature that we are generating bindings for.
@@ -308,7 +407,11 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
 ];
 
 /// Definitions for types that were blacklisted
-const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[("root", "pub type FILE = ::libc::FILE;"), ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"), ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;")];
+const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
+    ("root", "pub type FILE = ::libc::FILE;"),
+    ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
+    ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
+];
 
 /// Rerun this build script if files under mozjs/ changed, unless this returns true.
 /// Keep this in sync with .gitignore
@@ -322,5 +425,9 @@ fn ignore(path: &Path) -> bool {
 
     let ignored_extensions = ["pyc", "o", "so", "dll", "dylib"];
 
-    path.extension().map_or(false, |extension| ignored_extensions.iter().any(|&ignored| extension == ignored))
+    path.extension().map_or(false, |extension| {
+        ignored_extensions
+            .iter()
+            .any(|&ignored| extension == ignored)
+    })
 }

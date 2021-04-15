@@ -65,7 +65,13 @@ fn main() {
         // Create the global object and a new compartment.
         // THIS IS DANGEROUS since the global isn't rooted.
         let options = JS_NewRealmOptions();
-        let global = JS_NewGlobalObject(cx, &GLOBAL_CLASS, ptr::null_mut(), FireOnNewGlobalHook, options);
+        let global = JS_NewGlobalObject(
+            cx,
+            &GLOBAL_CLASS,
+            ptr::null_mut(),
+            FireOnNewGlobalHook,
+            options,
+        );
         let realm = JS::EnterRealm(cx, global);
 
         let options = JS_NewOwningCompileOptions(cx);
@@ -81,7 +87,12 @@ fn main() {
             ownsUnits_: false,
             _phantom_0: std::marker::PhantomData,
         };
-        assert!(JS::Evaluate2(cx, &(*options)._base, &mut source, rval_handle));
+        assert!(JS::Evaluate2(
+            cx,
+            &(*options)._base,
+            &mut source,
+            rval_handle
+        ));
         assert!(rval.to_int32() == 2);
 
         DeleteOwningCompileOptions(options);
