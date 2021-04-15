@@ -416,8 +416,8 @@ JSObject* js::Nursery::allocateObject(JSContext* cx, size_t size,
   MOZ_ASSERT(size >= sizeof(RelocationOverlay));
 
   // Sanity check the finalizer.
-  MOZ_ASSERT_IF(clasp->hasFinalize(),
-                CanNurseryAllocateFinalizedClass(clasp) || clasp->isProxy());
+  MOZ_ASSERT_IF(clasp->hasFinalize(), CanNurseryAllocateFinalizedClass(clasp) ||
+                                          clasp->isProxyObject());
 
   auto* obj = reinterpret_cast<JSObject*>(
       allocateCell(cx->zone(), size, JS::TraceKind::Object));
@@ -428,7 +428,7 @@ JSObject* js::Nursery::allocateObject(JSContext* cx, size_t size,
   // If we want external slots, add them.
   ObjectSlots* slotsHeader = nullptr;
   if (nDynamicSlots) {
-    MOZ_ASSERT(clasp->isNative());
+    MOZ_ASSERT(clasp->isNativeObject());
     void* allocation =
         allocateBuffer(cx->zone(), ObjectSlots::allocSize(nDynamicSlots));
     if (!allocation) {
@@ -988,12 +988,6 @@ inline bool js::Nursery::isNearlyFull() const {
 }
 
 inline bool js::Nursery::isUnderused() const {
-  // If the nursery is above its minimum size, collect it at least this often if
-  // we have idle time. This allows the nursery to shrink when it's not being
-  // used. There are other heuristics we could use for this, but this is the
-  // simplest.
-  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
-
   if (js::SupportDifferentialTesting() || !previousGC.endTime) {
     return false;
   }
@@ -1002,8 +996,12 @@ inline bool js::Nursery::isUnderused() const {
     return false;
   }
 
+  // If the nursery is above its minimum size, collect it every so often if we
+  // have idle time. This allows the nursery to shrink when it's not being
+  // used. There are other heuristics we could use for this, but this is the
+  // simplest.
   TimeDuration timeSinceLastCollection = ReallyNow() - previousGC.endTime;
-  return timeSinceLastCollection > UnderuseTimeout;
+  return timeSinceLastCollection > tunables().nurseryTimeoutForIdleCollection();
 }
 
 // typeReason is the gcReason for specified type, for example,
@@ -1580,12 +1578,6 @@ static inline double ClampDouble(double value, double min, double max) {
 }
 
 size_t js::Nursery::targetSize(JSGCInvocationKind kind, JS::GCReason reason) {
-  // If the nursery is above its minimum size, collect it at least this often if
-  // we have idle time. This allows the nursery to shrink when it's not being
-  // used. There are other heuristics we could use for this, but this is the
-  // simplest.
-  static const TimeDuration UnderuseTimeout = TimeDuration::FromSeconds(2.0);
-
   // Shrink the nursery as much as possible if shrinking was requested or in low
   // memory situations.
   if (kind == GC_SHRINK || gc::IsOOMReason(reason) ||
@@ -1604,7 +1596,8 @@ size_t js::Nursery::targetSize(JSGCInvocationKind kind, JS::GCReason reason) {
 
   // If the nursery is completely unused then minimise it.
   if (hasRecentGrowthData && previousGC.nurseryUsedBytes == 0 &&
-      now - lastCollectionEndTime() > UnderuseTimeout &&
+      now - lastCollectionEndTime() >
+          tunables().nurseryTimeoutForIdleCollection() &&
       !js::SupportDifferentialTesting()) {
     clearRecentGrowthData();
     return 0;

@@ -9,8 +9,8 @@ use jsapi::JSContext;
 use jsapi::JSObject;
 use jsapi::JSString;
 use jsapi::JSValueType;
-use jsapi::JS::Value;
 use jsapi::JS::TraceKind;
+use jsapi::JS::Value;
 
 use libc::c_void;
 use std::default::Default;
@@ -31,29 +31,29 @@ const JSVAL_TAG_CLEAR: u32 = 0xFFFFFF80;
 #[repr(u32)]
 #[allow(dead_code)]
 enum ValueTag {
-    INT32     = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_INT32 as u32),
+    INT32 = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_INT32 as u32),
     UNDEFINED = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
-    STRING    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_STRING as u32),
-    SYMBOL    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
-    BOOLEAN   = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
-    MAGIC     = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_MAGIC as u32),
-    NULL      = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_NULL as u32),
-    OBJECT    = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_OBJECT as u32),
+    STRING = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_STRING as u32),
+    SYMBOL = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
+    BOOLEAN = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
+    MAGIC = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_MAGIC as u32),
+    NULL = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_NULL as u32),
+    OBJECT = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_OBJECT as u32),
 }
 
 #[cfg(target_pointer_width = "32")]
 #[repr(u32)]
 #[allow(dead_code)]
 enum ValueTag {
-    PRIVATE   = 0,
-    INT32     = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_INT32 as u32),
+    PRIVATE = 0,
+    INT32 = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_INT32 as u32),
     UNDEFINED = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
-    STRING    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_STRING as u32),
-    SYMBOL    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
-    BOOLEAN   = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
-    MAGIC     = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_MAGIC as u32),
-    NULL      = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_NULL as u32),
-    OBJECT    = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_OBJECT as u32),
+    STRING = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_STRING as u32),
+    SYMBOL = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
+    BOOLEAN = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
+    MAGIC = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_MAGIC as u32),
+    NULL = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_NULL as u32),
+    OBJECT = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_OBJECT as u32),
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -61,25 +61,22 @@ enum ValueTag {
 #[allow(dead_code)]
 enum ValueShiftedTag {
     MAX_DOUBLE = ((JSVAL_TAG_MAX_DOUBLE as u64) << JSVAL_TAG_SHIFT) | 0xFFFFFFFFu64,
-    INT32      = (ValueTag::INT32 as u64)      << JSVAL_TAG_SHIFT,
-    UNDEFINED  = (ValueTag::UNDEFINED as u64)  << JSVAL_TAG_SHIFT,
-    STRING     = (ValueTag::STRING as u64)     << JSVAL_TAG_SHIFT,
-    SYMBOL     = (ValueTag::SYMBOL as u64)     << JSVAL_TAG_SHIFT,
-    BOOLEAN    = (ValueTag::BOOLEAN as u64)    << JSVAL_TAG_SHIFT,
-    MAGIC      = (ValueTag::MAGIC as u64)      << JSVAL_TAG_SHIFT,
-    NULL       = (ValueTag::NULL as u64)       << JSVAL_TAG_SHIFT,
-    OBJECT     = (ValueTag::OBJECT as u64)     << JSVAL_TAG_SHIFT,
+    INT32 = (ValueTag::INT32 as u64) << JSVAL_TAG_SHIFT,
+    UNDEFINED = (ValueTag::UNDEFINED as u64) << JSVAL_TAG_SHIFT,
+    STRING = (ValueTag::STRING as u64) << JSVAL_TAG_SHIFT,
+    SYMBOL = (ValueTag::SYMBOL as u64) << JSVAL_TAG_SHIFT,
+    BOOLEAN = (ValueTag::BOOLEAN as u64) << JSVAL_TAG_SHIFT,
+    MAGIC = (ValueTag::MAGIC as u64) << JSVAL_TAG_SHIFT,
+    NULL = (ValueTag::NULL as u64) << JSVAL_TAG_SHIFT,
+    OBJECT = (ValueTag::OBJECT as u64) << JSVAL_TAG_SHIFT,
 }
-
 
 #[cfg(target_pointer_width = "64")]
 const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 
 #[inline(always)]
 fn AsJSVal(val: u64) -> JSVal {
-    JSVal {
-        asBits_: val,
-    }
+    JSVal { asBits_: val }
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -481,7 +478,9 @@ impl JSVal {
 }
 
 impl Default for JSVal {
-    fn default() ->JSVal { UndefinedValue() }
+    fn default() -> JSVal {
+        UndefinedValue()
+    }
 }
 
 #[inline(always)]
@@ -504,19 +503,27 @@ fn test_representation_agreement() {
     let mut val1 = UndefinedValue();
     let mut val2;
 
-    unsafe { JS_ValueSetBoolean(&mut val1, true); }
+    unsafe {
+        JS_ValueSetBoolean(&mut val1, true);
+    }
     val2 = BooleanValue(true);
     assert_agreement(val1, val2);
 
-    unsafe { JS_ValueSetDouble(&mut val1, 3.14159); }
+    unsafe {
+        JS_ValueSetDouble(&mut val1, 3.14159);
+    }
     val2 = DoubleValue(3.14159);
     assert_agreement(val1, val2);
 
-    unsafe { JS_ValueSetInt32(&mut val1, 37); }
+    unsafe {
+        JS_ValueSetInt32(&mut val1, 37);
+    }
     val2 = Int32Value(37);
     assert_agreement(val1, val2);
 
-    unsafe { JS_ValueSetNull(&mut val1); }
+    unsafe {
+        JS_ValueSetNull(&mut val1);
+    }
     val2 = NullValue();
     assert_agreement(val1, val2);
 }
@@ -550,5 +557,4 @@ fn assert_agreement(val1: JSVal, val2: JSVal) {
     assert_eq!(unsafe { JS_ValueIsNull(&val1) }, val2.is_null());
 
     assert_eq!(unsafe { JS_ValueIsUndefined(&val1) }, val2.is_undefined());
-
 }

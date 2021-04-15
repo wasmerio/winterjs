@@ -28,7 +28,6 @@
 #include "threading/LockGuard.h"
 #include "vm/HelperThreadState.h"  // Tier2GeneratorTask
 #include "vm/PlainObject.h"        // js::PlainObject
-#include "wasm/TypedObject.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmInstance.h"
@@ -125,6 +124,8 @@ bool Module::finishTier2(const LinkData& linkData2,
   // extant tier1 lazy stubs (otherwise, tiering would break the assumption
   // that any extant exported wasm function has had a lazy entry stub already
   // compiled for it).
+  //
+  // Also see doc block for stubs in WasmJS.cpp.
   {
     // We need to prevent new tier1 stubs generation until we've committed
     // the newer tier2 stubs, otherwise we might not generate one tier2
@@ -166,7 +167,9 @@ bool Module::finishTier2(const LinkData& linkData2,
     stubs2->setJitEntries(stub2Index, code());
   }
 
-  // And we update the jump vector.
+  // And we update the jump vectors with pointers to tier-2 functions and eager
+  // stubs.  Callers will continue to invoke tier-1 code until, suddenly, they
+  // will invoke tier-2 code.  This is benign.
 
   uint8_t* base = code().segment(Tier::Optimized).base();
   for (const CodeRange& cr : metadata(Tier::Optimized).codeRanges) {
@@ -565,7 +568,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   }
 
   if (memoryObj) {
-    uint32_t memoryLength = memoryObj->volatileMemoryLength32();
+    size_t memoryLength = memoryObj->volatileMemoryLength().get();
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -645,8 +648,8 @@ bool Module::instantiateFunctions(JSContext* cx,
 
 template <typename T>
 static bool CheckLimits(JSContext* cx, T declaredMin,
-                        const Maybe<T>& declaredMax, T actualLength,
-                        const Maybe<T>& actualMax, bool isAsmJS,
+                        const Maybe<T>& declaredMax, T defaultMax,
+                        T actualLength, const Maybe<T>& actualMax, bool isAsmJS,
                         const char* kind) {
   if (isAsmJS) {
     MOZ_ASSERT(actualLength >= declaredMin);
@@ -656,7 +659,7 @@ static bool CheckLimits(JSContext* cx, T declaredMin,
   }
 
   if (actualLength < declaredMin ||
-      actualLength > declaredMax.valueOr(UINT32_MAX)) {
+      actualLength > declaredMax.valueOr(defaultMax)) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_IMP_SIZE, kind);
     return false;
@@ -715,7 +718,9 @@ bool Module::instantiateMemory(JSContext* cx,
     MOZ_ASSERT_IF(!metadata().isAsmJS(), memory->buffer().isWasm());
 
     if (!CheckLimits(cx, declaredMin, declaredMax,
-                     uint64_t(memory->volatileMemoryLength32()),
+                     /* defaultMax */ uint64_t(MaxMemory32Bytes()),
+                     /* actualLength */
+                     uint64_t(memory->volatileMemoryLength().get()),
                      memory->buffer().wasmMaxSize(), metadata().isAsmJS(),
                      "Memory")) {
       return false;
@@ -727,16 +732,15 @@ bool Module::instantiateMemory(JSContext* cx,
   } else {
     MOZ_ASSERT(!metadata().isAsmJS());
 
-    if (declaredMin / PageSize > MaxMemory32Pages) {
+    if (declaredMin > MaxMemory32Bytes()) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_WASM_MEM_IMP_LIMIT);
       return false;
     }
 
     RootedArrayBufferObjectMaybeShared buffer(cx);
-    Limits l(declaredMin, declaredMax,
-             declaredShared ? Shareable::True : Shareable::False);
-    if (!CreateWasmBuffer(cx, MemoryKind::Memory32, l, &buffer)) {
+    if (!CreateWasmBuffer32(cx, declaredMin, declaredMax, declaredShared,
+                            &buffer)) {
       return false;
     }
 
@@ -843,8 +847,10 @@ bool Module::instantiateImportedTable(JSContext* cx, const TableDesc& td,
   MOZ_ASSERT(!metadata().isAsmJS());
 
   Table& table = tableObj->table();
-  if (!CheckLimits(cx, td.initialLength, td.maximumLength, table.length(),
-                   table.maximum(), metadata().isAsmJS(), "Table")) {
+  if (!CheckLimits(cx, td.initialLength, td.maximumLength,
+                   /* declaredMin */ MaxTableLimitField,
+                   /* actualLength */ table.length(), table.maximum(),
+                   metadata().isAsmJS(), "Table")) {
     return false;
   }
 

@@ -78,7 +78,7 @@ static inline bool IsUninitializedLexical(const Value& val) {
 
 static inline bool IsUninitializedLexicalSlot(HandleObject obj,
                                               Handle<PropertyResult> prop) {
-  MOZ_ASSERT(prop);
+  MOZ_ASSERT(prop.isFound());
   if (obj->is<WithEnvironmentObject>()) {
     return false;
   }
@@ -140,7 +140,7 @@ template <GetNameMode mode>
 inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
                       HandlePropertyName name, Handle<PropertyResult> prop,
                       MutableHandleValue vp) {
-  if (!prop) {
+  if (prop.isNotFound()) {
     switch (mode) {
       case GetNameMode::Normal:
         ReportIsNotDefined(cx, name);
@@ -152,7 +152,7 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
   }
 
   /* Take the slow path if shape was not found in a native object. */
-  if (!receiver->isNative() || !holder->isNative()) {
+  if (!receiver->is<NativeObject>() || !holder->is<NativeObject>()) {
     Rooted<jsid> id(cx, NameToId(name));
     if (!GetProperty(cx, receiver, receiver, id, vp)) {
       return false;
@@ -184,8 +184,8 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
   return CheckUninitializedLexical(cx, name, vp);
 }
 
-inline bool FetchNameNoGC(JSObject* pobj, PropertyResult prop, Value* vp) {
-  if (!prop || !pobj->isNative()) {
+inline bool FetchNameNoGC(NativeObject* pobj, PropertyResult prop, Value* vp) {
+  if (prop.isNotFound()) {
     return false;
   }
 
@@ -194,7 +194,7 @@ inline bool FetchNameNoGC(JSObject* pobj, PropertyResult prop, Value* vp) {
     return false;
   }
 
-  *vp = pobj->as<NativeObject>().getSlot(shape->slot());
+  *vp = pobj->getSlot(shape->slot());
   return !IsUninitializedLexical(*vp);
 }
 
@@ -204,7 +204,7 @@ inline bool GetEnvironmentName(JSContext* cx, HandleObject envChain,
   {
     PropertyResult prop;
     JSObject* obj = nullptr;
-    JSObject* pobj = nullptr;
+    NativeObject* pobj = nullptr;
     if (LookupNameNoGC(cx, name, envChain, &obj, &pobj, &prop)) {
       if (FetchNameNoGC(pobj, prop, vp.address())) {
         return true;
@@ -230,8 +230,9 @@ inline bool HasOwnProperty(JSContext* cx, HandleValue val, HandleValue idValue,
       PrimitiveValueToId<NoGC>(cx, idValue, &id)) {
     JSObject* obj = &val.toObject();
     PropertyResult prop;
-    if (obj->isNative() && NativeLookupOwnProperty<NoGC>(
-                               cx, &obj->as<NativeObject>(), id, &prop)) {
+    if (obj->is<NativeObject>() &&
+        NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id,
+                                      &prop)) {
       *result = prop.isFound();
       return true;
     }
@@ -310,10 +311,9 @@ inline bool SetNameOperation(JSContext* cx, JSScript* script, jsbytecode* pc,
   return ok && result.checkStrictModeError(cx, env, id, strict);
 }
 
-inline void InitGlobalLexicalOperation(JSContext* cx,
-                                       LexicalEnvironmentObject* lexicalEnv,
-                                       JSScript* script, jsbytecode* pc,
-                                       HandleValue value) {
+inline void InitGlobalLexicalOperation(
+    JSContext* cx, ExtensibleLexicalEnvironmentObject* lexicalEnv,
+    JSScript* script, jsbytecode* pc, HandleValue value) {
   MOZ_ASSERT_IF(!script->hasNonSyntacticScope(),
                 lexicalEnv == &cx->global()->lexicalEnvironment());
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitGLexical);

@@ -2951,7 +2951,6 @@ static bool IsResumableMIRType(MIRType type) {
     case MIRType::Elements:
     case MIRType::Pointer:
     case MIRType::Shape:
-    case MIRType::ObjectGroup:
     case MIRType::Int64:
     case MIRType::RefOrNull:
     case MIRType::StackResults:
@@ -3170,7 +3169,7 @@ static MathSpace ExtractMathSpace(MDefinition* ins) {
     case TruncateKind::Truncate:
       return MathSpace::Modulo;
   }
-  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Unknown TruncateKind");
+  MOZ_CRASH("Unknown TruncateKind");
 }
 
 static bool MonotoneAdd(int32_t lhs, int32_t rhs) {

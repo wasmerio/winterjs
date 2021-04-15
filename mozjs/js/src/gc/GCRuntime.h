@@ -255,6 +255,31 @@ class WeakCacheSweepIterator {
   void settle();
 };
 
+class BarrierTracer final : public GenericTracer {
+ public:
+  static BarrierTracer* fromTracer(JSTracer* trc);
+
+  explicit BarrierTracer(JSRuntime* rt);
+
+  JSObject* onObjectEdge(JSObject* obj) override;
+  Shape* onShapeEdge(Shape* shape) override;
+  JSString* onStringEdge(JSString* string) override;
+  js::BaseScript* onScriptEdge(js::BaseScript* script) override;
+  BaseShape* onBaseShapeEdge(BaseShape* base) override;
+  Scope* onScopeEdge(Scope* scope) override;
+  RegExpShared* onRegExpSharedEdge(RegExpShared* shared) override;
+  BigInt* onBigIntEdge(BigInt* bi) override;
+  JS::Symbol* onSymbolEdge(JS::Symbol* sym) override;
+  jit::JitCode* onJitCodeEdge(jit::JitCode* jit) override;
+
+  void performBarrier(JS::GCCellPtr cell);
+
+ private:
+  void handleBufferFull(JS::GCCellPtr cell);
+
+  GCMarker& marker;
+};
+
 class GCRuntime {
   friend GCMarker::MarkQueueProgress GCMarker::processMarkQueue();
 
@@ -385,6 +410,7 @@ class GCRuntime {
   bool isHeapCompacting() const { return state() == State::Compact; }
   bool isForegroundSweeping() const { return state() == State::Sweep; }
   bool isBackgroundSweeping() const { return sweepTask.wasStarted(); }
+  bool isBackgroundMarking() const { return markTask.wasStarted(); }
   void waitBackgroundSweepEnd();
   void waitBackgroundAllocEnd() { allocTask.cancelAndWait(); }
   void waitBackgroundFreeEnd();
@@ -793,7 +819,7 @@ class GCRuntime {
   [[nodiscard]] bool relocateArenas(Zone* zone, JS::GCReason reason,
                                     Arena*& relocatedListOut,
                                     SliceBudget& sliceBudget);
-  void updateTypeDescrObjects(MovingTracer* trc, Zone* zone);
+  void updateRttValueObjects(MovingTracer* trc, Zone* zone);
   void updateCellPointers(Zone* zone, AllocKinds kinds);
   void updateAllCellPointers(MovingTracer* trc, Zone* zone);
   void updateZonePointersToRelocatedCells(Zone* zone);
@@ -874,6 +900,7 @@ class GCRuntime {
   js::StringStats stringStats;
 
   GCMarker marker;
+  BarrierTracer barrierTracer;
 
   Vector<JS::GCCellPtr, 0, SystemAllocPolicy> unmarkGrayStack;
 

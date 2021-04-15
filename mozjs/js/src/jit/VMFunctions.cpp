@@ -97,7 +97,7 @@ struct TypeToDataType<NamedLambdaObject*> {
   static const DataType result = Type_Object;
 };
 template <>
-struct TypeToDataType<LexicalEnvironmentObject*> {
+struct TypeToDataType<BlockLexicalEnvironmentObject*> {
   static const DataType result = Type_Object;
 };
 template <>
@@ -320,11 +320,6 @@ struct TypeToArgProperties<HandleShape> {
       TypeToArgProperties<Shape*>::result | VMFunctionData::ByRef;
 };
 template <>
-struct TypeToArgProperties<HandleObjectGroup> {
-  static const uint32_t result =
-      TypeToArgProperties<ObjectGroup*>::result | VMFunctionData::ByRef;
-};
-template <>
 struct TypeToArgProperties<HandleBigInt> {
   static const uint32_t result =
       TypeToArgProperties<BigInt*>::result | VMFunctionData::ByRef;
@@ -376,10 +371,6 @@ struct TypeToRootType<HandleId> {
 };
 template <>
 struct TypeToRootType<HandleShape> {
-  static const uint32_t result = VMFunctionData::RootCell;
-};
-template <>
-struct TypeToRootType<HandleObjectGroup> {
   static const uint32_t result = VMFunctionData::RootCell;
 };
 template <>
@@ -1003,9 +994,8 @@ bool InterruptCheck(JSContext* cx) {
   return CheckForInterrupt(cx);
 }
 
-JSObject* NewCallObject(JSContext* cx, HandleShape shape,
-                        HandleObjectGroup group) {
-  JSObject* obj = CallObject::create(cx, shape, group);
+JSObject* NewCallObject(JSContext* cx, HandleShape shape) {
+  JSObject* obj = CallObject::create(cx, shape);
   if (!obj) {
     return nullptr;
   }
@@ -1366,14 +1356,14 @@ bool NewArgumentsObject(JSContext* cx, BaselineFrame* frame,
 
 JSObject* CopyLexicalEnvironmentObject(JSContext* cx, HandleObject env,
                                        bool copySlots) {
-  Handle<LexicalEnvironmentObject*> lexicalEnv =
-      env.as<LexicalEnvironmentObject>();
+  Handle<BlockLexicalEnvironmentObject*> lexicalEnv =
+      env.as<BlockLexicalEnvironmentObject>();
 
   if (copySlots) {
-    return LexicalEnvironmentObject::clone(cx, lexicalEnv);
+    return BlockLexicalEnvironmentObject::clone(cx, lexicalEnv);
   }
 
-  return LexicalEnvironmentObject::recreate(cx, lexicalEnv);
+  return BlockLexicalEnvironmentObject::recreate(cx, lexicalEnv);
 }
 
 JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
@@ -1382,7 +1372,7 @@ JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
     Rooted<ArrayObject*> arrRes(cx, &objRes->as<ArrayObject>());
 
     MOZ_ASSERT(!arrRes->getDenseInitializedLength());
-    MOZ_ASSERT(arrRes->group() == templateObj->group());
+    MOZ_ASSERT(arrRes->shape() == templateObj->shape());
 
     // Fast path: we managed to allocate the array inline; initialize the
     // slots.
@@ -1465,14 +1455,14 @@ bool PushLexicalEnv(JSContext* cx, BaselineFrame* frame,
 }
 
 bool PopLexicalEnv(JSContext* cx, BaselineFrame* frame) {
-  frame->popOffEnvironmentChain<LexicalEnvironmentObject>();
+  frame->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
   return true;
 }
 
 bool DebugLeaveThenPopLexicalEnv(JSContext* cx, BaselineFrame* frame,
                                  jsbytecode* pc) {
   MOZ_ALWAYS_TRUE(DebugLeaveLexicalEnv(cx, frame, pc));
-  frame->popOffEnvironmentChain<LexicalEnvironmentObject>();
+  frame->popOffEnvironmentChain<BlockLexicalEnvironmentObject>();
   return true;
 }
 
@@ -1568,7 +1558,6 @@ void AssertValidObjectPtr(JSContext* cx, JSObject* obj) {
   MOZ_ASSERT(obj->compartment() == cx->compartment());
   MOZ_ASSERT(obj->zoneFromAnyThread() == cx->zone());
   MOZ_ASSERT(obj->runtimeFromMainThread() == cx->runtime());
-  MOZ_ASSERT(obj->group()->clasp() == obj->shape()->getObjectClass());
 
   if (obj->isTenured()) {
     MOZ_ASSERT(obj->isAligned());
@@ -1681,12 +1670,6 @@ void JitShapePreWriteBarrier(JSRuntime* rt, Shape** shapep) {
   gc::PreWriteBarrier(*shapep);
 }
 
-void JitObjectGroupPreWriteBarrier(JSRuntime* rt, ObjectGroup** groupp) {
-  AutoUnsafeCallWithABI unsafe;
-  MOZ_ASSERT(!(*groupp)->isMarkedBlack());
-  gc::PreWriteBarrier(*groupp);
-}
-
 bool ThrowRuntimeLexicalError(JSContext* cx, unsigned errorNumber) {
   ScriptFrameIter iter(cx);
   RootedScript script(cx, iter.script());
@@ -1718,7 +1701,7 @@ bool CallNativeGetter(JSContext* cx, HandleFunction callee,
                       HandleValue receiver, MutableHandleValue result) {
   AutoRealm ar(cx, callee);
 
-  MOZ_ASSERT(callee->isNative());
+  MOZ_ASSERT(callee->isNativeFun());
   JSNative natfun = callee->native();
 
   JS::RootedValueArray<2> vp(cx);
@@ -1736,7 +1719,7 @@ bool CallNativeGetter(JSContext* cx, HandleFunction callee,
 bool CallDOMGetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
                    MutableHandleValue result) {
   MOZ_ASSERT(info->type() == JSJitInfo::Getter);
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(obj->getClass()->isDOMClass());
 
 #ifdef DEBUG
@@ -1755,7 +1738,7 @@ bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
                       HandleValue rhs) {
   AutoRealm ar(cx, callee);
 
-  MOZ_ASSERT(callee->isNative());
+  MOZ_ASSERT(callee->isNativeFun());
   JSNative natfun = callee->native();
 
   JS::RootedValueArray<3> vp(cx);
@@ -1769,7 +1752,7 @@ bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
 bool CallDOMSetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
                    HandleValue value) {
   MOZ_ASSERT(info->type() == JSJitInfo::Setter);
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(obj->getClass()->isDOMClass());
 
 #ifdef DEBUG
@@ -1859,7 +1842,7 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
       return true;
     }
 
-    if (!proto->isNative()) {
+    if (!proto->is<NativeObject>()) {
       return false;
     }
     obj = &proto->as<NativeObject>();
@@ -1869,7 +1852,7 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
 bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* vp) {
   // Condition checked by caller.
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   return GetNativeDataPropertyPure(cx, &obj->as<NativeObject>(), NameToId(name),
                                    vp);
 }
@@ -1911,7 +1894,7 @@ bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
   // Condition checked by caller.
-  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
 
   // vp[0] contains the id, result will be stored in vp[1].
   Value idVal = vp[0];
@@ -1928,7 +1911,7 @@ bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
                                Value* val) {
   AutoUnsafeCallWithABI unsafe;
 
-  if (MOZ_UNLIKELY(!obj->isNative())) {
+  if (MOZ_UNLIKELY(!obj->is<NativeObject>())) {
     return false;
   }
 
@@ -1950,7 +1933,7 @@ bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg,
 
   // Window objects may require outerizing (passing the WindowProxy to the
   // getter/setter), so we don't support them here.
-  if (MOZ_UNLIKELY(!objArg->isNative() || IsWindow(objArg))) {
+  if (MOZ_UNLIKELY(!objArg->is<NativeObject>() || IsWindow(objArg))) {
     return false;
   }
 
@@ -1981,7 +1964,7 @@ bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg,
       return false;
     }
 
-    if (!proto->isNative()) {
+    if (!proto->is<NativeObject>()) {
       return false;
     }
     nobj = &proto->as<NativeObject>();
@@ -2000,7 +1983,7 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp) {
   }
 
   do {
-    if (obj->isNative()) {
+    if (obj->is<NativeObject>()) {
       if (obj->as<NativeObject>().lastProperty()->search(cx, id)) {
         vp[1].setBoolean(true);
         return true;
@@ -2023,7 +2006,8 @@ bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp) {
         }
       }
     } else if (obj->is<TypedObject>()) {
-      if (obj->as<TypedObject>().typeDescr().hasProperty(cx, id)) {
+      RootedTypedObject typedObj(cx, &obj->as<TypedObject>());
+      if (typedObj->rttValue().hasProperty(cx, typedObj, id)) {
         vp[1].setBoolean(true);
         return true;
       }
@@ -2056,7 +2040,7 @@ bool HasNativeElementPure(JSContext* cx, NativeObject* obj, int32_t index,
                           Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
-  MOZ_ASSERT(obj->getClass()->isNative());
+  MOZ_ASSERT(obj->is<NativeObject>());
   MOZ_ASSERT(!obj->getOpsHasProperty());
   MOZ_ASSERT(!obj->getOpsLookupProperty());
   MOZ_ASSERT(!obj->getOpsGetOwnPropertyDescriptor());

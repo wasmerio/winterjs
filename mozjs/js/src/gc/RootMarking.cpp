@@ -246,6 +246,8 @@ void StackShape::trace(JSTracer* trc) {
   }
 }
 
+void StackBaseShape::trace(JSTracer* trc) { proto.trace(trc); }
+
 void PropertyDescriptor::trace(JSTracer* trc) {
   if (obj) {
     TraceRoot(trc, &obj, "Descriptor::obj");
@@ -449,9 +451,10 @@ class AssertNoRootsTracer final : public JS::CallbackTracer {
   }
 
  public:
+  // This skips tracking WeakMap entries because they are not roots.
   explicit AssertNoRootsTracer(JSRuntime* rt)
       : JS::CallbackTracer(rt, JS::TracerKind::Callback,
-                           JS::WeakMapTraceAction::TraceKeysAndValues) {}
+                           JS::WeakMapTraceAction::Skip) {}
 };
 #endif  // DEBUG
 
@@ -510,10 +513,6 @@ class BufferGrayRootsTracer final : public GenericTracer {
   JS::BigInt* onBigIntEdge(JS::BigInt* bi) override { return bufferRoot(bi); }
 
   js::Shape* onShapeEdge(js::Shape* shape) override {
-    unsupportedEdge();
-    return nullptr;
-  }
-  js::ObjectGroup* onObjectGroupEdge(js::ObjectGroup* group) override {
     unsupportedEdge();
     return nullptr;
   }

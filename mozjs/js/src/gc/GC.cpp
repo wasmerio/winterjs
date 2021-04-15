@@ -258,6 +258,7 @@
 #include "vm/Time.h"
 #include "vm/TraceLogging.h"
 #include "vm/WrapperObject.h"
+#include "wasm/TypedObject.h"
 
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
@@ -401,8 +402,7 @@ static constexpr FinalizePhase BackgroundFinalizePhases[] = {
       AllocKind::EXTERNAL_STRING, AllocKind::FAT_INLINE_ATOM, AllocKind::ATOM,
       AllocKind::SYMBOL, AllocKind::BIGINT}},
     {gcstats::PhaseKind::SWEEP_SHAPE,
-     {AllocKind::SHAPE, AllocKind::ACCESSOR_SHAPE, AllocKind::BASE_SHAPE,
-      AllocKind::OBJECT_GROUP}}};
+     {AllocKind::SHAPE, AllocKind::ACCESSOR_SHAPE, AllocKind::BASE_SHAPE}}};
 
 void Arena::unmarkAll() {
   MarkBitmapWord* arenaBits = chunk()->markBits.arenaBits(this);
@@ -874,6 +874,7 @@ void TenuredChunk::releaseArena(GCRuntime* gc, Arena* arena,
 }
 
 bool TenuredChunk::decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock) {
+  MOZ_ASSERT(DecommitEnabled());
   MOZ_ASSERT(info.numArenasFreeCommitted > 0);
   Arena* arena = fetchNextFreeArena(gc);
   updateChunkListAfterAlloc(gc, lock);
@@ -895,6 +896,7 @@ bool TenuredChunk::decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock) {
 }
 
 void TenuredChunk::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
+  MOZ_ASSERT(DecommitEnabled());
   info.freeArenasHead = nullptr;
   Arena** freeCursor = &info.freeArenasHead;
 
@@ -962,6 +964,7 @@ GCRuntime::GCRuntime(JSRuntime* rt)
       heapState_(JS::HeapState::Idle),
       stats_(this),
       marker(rt),
+      barrierTracer(rt),
       heapSize(nullptr),
       helperThreadRatio(TuningDefaults::HelperThreadRatio),
       maxHelperThreads(TuningDefaults::MaxHelperThreads),
@@ -1611,6 +1614,8 @@ uint32_t GCRuntime::getParameter(JSGCParamKey key, const AutoLockGC& lock) {
     case JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION_PERCENT:
       return uint32_t(tunables.nurseryFreeThresholdForIdleCollectionFraction() *
                       100.0f);
+    case JSGC_NURSERY_TIMEOUT_FOR_IDLE_COLLECTION_MS:
+      return tunables.nurseryTimeoutForIdleCollection().ToMilliseconds();
     case JSGC_PRETENURE_THRESHOLD:
       return uint32_t(tunables.pretenureThreshold() * 100);
     case JSGC_PRETENURE_GROUP_THRESHOLD:
@@ -1637,6 +1642,8 @@ uint32_t GCRuntime::getParameter(JSGCParamKey key, const AutoLockGC& lock) {
       return maxHelperThreads;
     case JSGC_HELPER_THREAD_COUNT:
       return helperThreadCount;
+    case JSGC_SYSTEM_PAGE_SIZE_KB:
+      return SystemPageSize() / 1024;
     default:
       MOZ_CRASH("Unknown parameter key");
   }
@@ -2051,7 +2058,7 @@ static void RelocateCell(Zone* zone, TenuredCell* src, AllocKind thingKind,
     auto* srcObj = static_cast<JSObject*>(static_cast<Cell*>(src));
     auto* dstObj = static_cast<JSObject*>(static_cast<Cell*>(dst));
 
-    if (srcObj->isNative()) {
+    if (srcObj->is<NativeObject>()) {
       NativeObject* srcNative = &srcObj->as<NativeObject>();
       NativeObject* dstNative = &dstObj->as<NativeObject>();
 
@@ -2073,7 +2080,7 @@ static void RelocateCell(Zone* zone, TenuredCell* src, AllocKind thingKind,
     }
 
     MOZ_ASSERT_IF(
-        dstObj->isNative(),
+        dstObj->is<NativeObject>(),
         !PtrIsInRange(
             (const Value*)dstObj->as<NativeObject>().getDenseElements(), src,
             thingSize));
@@ -2090,7 +2097,7 @@ static void RelocateCell(Zone* zone, TenuredCell* src, AllocKind thingKind,
   JSObject* srcObj = IsObjectAllocKind(thingKind)
                          ? static_cast<JSObject*>(static_cast<Cell*>(src))
                          : nullptr;
-  if (!srcObj || !srcObj->isNative() ||
+  if (!srcObj || !srcObj->is<NativeObject>() ||
       !srcObj->as<NativeObject>().hasFixedElements()) {
     AlwaysPoison(reinterpret_cast<uint8_t*>(src) + sizeof(uintptr_t),
                  JS_MOVED_TENURED_PATTERN, thingSize - sizeof(uintptr_t),
@@ -2305,9 +2312,6 @@ RegExpShared* MovingTracer::onRegExpSharedEdge(RegExpShared* shared) {
   return onEdge(shared);
 }
 BigInt* MovingTracer::onBigIntEdge(BigInt* bi) { return onEdge(bi); }
-ObjectGroup* MovingTracer::onObjectGroupEdge(ObjectGroup* group) {
-  return onEdge(group);
-}
 JS::Symbol* MovingTracer::onSymbolEdge(JS::Symbol* sym) {
   MOZ_ASSERT(!sym->isForwarded());
   return sym;
@@ -2520,21 +2524,18 @@ static AllocKinds ForegroundUpdateKinds(AllocKinds kinds) {
   return result;
 }
 
-void GCRuntime::updateTypeDescrObjects(MovingTracer* trc, Zone* zone) {
+void GCRuntime::updateRttValueObjects(MovingTracer* trc, Zone* zone) {
   // We need to update each type descriptor object and any objects stored in
   // its reserved slots, since some of these contain array objects that also
   // need to be updated. Do not update any non-reserved slots, since they might
   // point back to unprocessed descriptor objects.
 
-  zone->typeDescrObjects().sweep(nullptr);
+  zone->rttValueObjects().sweep(nullptr);
 
-  for (auto r = zone->typeDescrObjects().all(); !r.empty(); r.popFront()) {
-    MOZ_ASSERT(MaybeForwardedObjectClass(r.front())->isNative());
-    NativeObject* obj = static_cast<NativeObject*>(r.front());
+  for (auto r = zone->rttValueObjects().all(); !r.empty(); r.popFront()) {
+    RttValue* obj = &MaybeForwardedObjectAs<RttValue>(r.front());
     UpdateCellPointers(trc, obj);
-    MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(MaybeForwardedObjectClass(obj)) ==
-               TypeDescr::SlotCount);
-    for (size_t i = 0; i < TypeDescr::SlotCount; i++) {
+    for (size_t i = 0; i < RttValue::SlotCount; i++) {
       Value value = obj->getSlot(i);
       if (value.isObject()) {
         UpdateCellPointers(trc, &value.toObject());
@@ -2594,9 +2595,9 @@ void GCRuntime::updateCellPointers(Zone* zone, AllocKinds kinds) {
 // arbitrary phases.
 
 static constexpr AllocKinds UpdatePhaseOne{
-    AllocKind::SCRIPT,         AllocKind::BASE_SHAPE,    AllocKind::SHAPE,
-    AllocKind::ACCESSOR_SHAPE, AllocKind::OBJECT_GROUP,  AllocKind::STRING,
-    AllocKind::JITCODE,        AllocKind::REGEXP_SHARED, AllocKind::SCOPE};
+    AllocKind::SCRIPT,         AllocKind::BASE_SHAPE, AllocKind::SHAPE,
+    AllocKind::ACCESSOR_SHAPE, AllocKind::STRING,     AllocKind::JITCODE,
+    AllocKind::REGEXP_SHARED,  AllocKind::SCOPE};
 
 // UpdatePhaseTwo is typed object descriptor objects.
 
@@ -2622,9 +2623,9 @@ static constexpr AllocKinds UpdatePhaseThree{AllocKind::FUNCTION,
 void GCRuntime::updateAllCellPointers(MovingTracer* trc, Zone* zone) {
   updateCellPointers(zone, UpdatePhaseOne);
 
-  // UpdatePhaseTwo: Update TypeDescrs before all other objects as typed
+  // UpdatePhaseTwo: Update RttValues before all other objects as typed
   // objects access these objects when we trace them.
-  updateTypeDescrObjects(trc, zone);
+  updateRttValueObjects(trc, zone);
 
   updateCellPointers(zone, UpdatePhaseThree);
 }
@@ -3337,7 +3338,9 @@ void js::gc::BackgroundDecommitTask::run(AutoLockHelperThreadState& lock) {
       // available chunks list so that we allocate into more-used chunks first.
       gc->availableChunks(gcLock).sort();
 
-      gc->decommitFreeArenas(cancel_, gcLock);
+      if (DecommitEnabled()) {
+        gc->decommitFreeArenas(cancel_, gcLock);
+      }
 
       emptyChunksToFree = gc->expireEmptyChunkPool(gcLock);
     }
@@ -3351,6 +3354,8 @@ void js::gc::BackgroundDecommitTask::run(AutoLockHelperThreadState& lock) {
 // Called from a background thread to decommit free arenas. Releases the GC
 // lock.
 void GCRuntime::decommitFreeArenas(const bool& cancel, AutoLockGC& lock) {
+  MOZ_ASSERT(DecommitEnabled());
+
   // Since we release the GC lock while doing the decommit syscall below,
   // it is dangerous to iterate the available list directly, as the active
   // thread could modify it concurrently. Instead, we build and pass an
@@ -3382,6 +3387,7 @@ void GCRuntime::decommitFreeArenas(const bool& cancel, AutoLockGC& lock) {
 // Do all possible decommit immediately from the current thread without
 // releasing the GC lock or allocating any memory.
 void GCRuntime::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
+  MOZ_ASSERT(DecommitEnabled());
   for (ChunkPool::Iter chunk(availableChunks(lock)); !chunk.done();
        chunk.next()) {
     chunk->decommitFreeArenasWithoutUnlocking(lock);
@@ -3749,7 +3755,7 @@ void GCRuntime::sweepZones(JSFreeOp* fop, bool destroyingRuntime) {
         zone->arenas.checkEmptyFreeLists();
         zone->sweepCompartments(fop, false, destroyingRuntime);
         MOZ_ASSERT(zone->compartments().empty());
-        MOZ_ASSERT(zone->typeDescrObjects().empty());
+        MOZ_ASSERT(zone->rttValueObjects().empty());
         zone->destroy(fop);
         continue;
       }
@@ -3914,6 +3920,7 @@ void CompartmentCheckTracer::onChild(const JS::GCCellPtr& thing) {
   if (comp && compartment) {
     MOZ_ASSERT(
         comp == compartment ||
+        runtime()->mainContextFromOwnThread()->disableCompartmentCheckTracer ||
         (srcKind == JS::TraceKind::Object &&
          InCrossCompartmentMap(runtime(), static_cast<JSObject*>(src), thing)));
   } else {
@@ -4075,9 +4082,13 @@ void GCRuntime::purgeShapeCachesForShrinkingGC() {
     if (!canRelocateZone(zone) || zone->keepShapeCaches()) {
       continue;
     }
-    for (auto baseShape = zone->cellIterUnsafe<BaseShape>(); !baseShape.done();
-         baseShape.next()) {
-      baseShape->maybePurgeCache(rt->defaultFreeOp());
+    for (auto shape = zone->cellIterUnsafe<Shape>(); !shape.done();
+         shape.next()) {
+      shape->maybePurgeCache(rt->defaultFreeOp());
+    }
+    for (auto shape = zone->cellIterUnsafe<AccessorShape>(); !shape.done();
+         shape.next()) {
+      shape->maybePurgeCache(rt->defaultFreeOp());
     }
   }
 }
@@ -4328,8 +4339,8 @@ void GCRuntime::beginMarkPhase(AutoGCSession& session) {
   incMajorGcNumber();
 
   marker.start();
-  GCMarker* gcmarker = &marker;
-  gcmarker->clearMarkCount();
+  marker.clearMarkCount();
+  MOZ_ASSERT(marker.isDrained());
 
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
     // Incremental marking barriers are enabled at this point.
@@ -4339,7 +4350,7 @@ void GCRuntime::beginMarkPhase(AutoGCSession& session) {
   if (rt->isBeingDestroyed()) {
     checkNoRuntimeRoots(session);
   } else {
-    traceRuntimeForMajorGC(gcmarker, session);
+    traceRuntimeForMajorGC(&marker, session);
   }
 
   if (isIncremental) {
@@ -6805,6 +6816,7 @@ void GCRuntime::incrementalSlice(SliceBudget& budget,
 
   switch (incrementalState) {
     case State::NotActive:
+      MOZ_ASSERT(marker.isDrained());
       invocationKind = gckind.valueOr(GC_NORMAL);
       initialReason = reason;
       cleanUpEverything = ShouldCleanUpEverything(reason, invocationKind);
@@ -7726,7 +7738,9 @@ void GCRuntime::onOutOfMallocMemory(const AutoLockGC& lock) {
   // Immediately decommit as many arenas as possible in the hopes that this
   // might let the OS scrape together enough pages to satisfy the failing
   // malloc request.
-  decommitFreeArenasWithoutUnlocking(lock);
+  if (DecommitEnabled()) {
+    decommitFreeArenasWithoutUnlocking(lock);
+  }
 }
 
 void GCRuntime::minorGC(JS::GCReason reason, gcstats::PhaseKind phase) {
@@ -8024,22 +8038,22 @@ void GCRuntime::mergeRealms(Realm* source, Realm* target) {
   MOZ_ASSERT(global);
   AssertTargetIsNotGray(global);
 
-  for (auto group = source->zone()->cellIterUnsafe<ObjectGroup>();
-       !group.done(); group.next()) {
+  for (auto baseShape = source->zone()->cellIterUnsafe<BaseShape>();
+       !baseShape.done(); baseShape.next()) {
+    baseShape->setRealmForMergeRealms(target);
+
     // Replace placeholder object prototypes with the correct prototype in
     // the target realm.
-    TaggedProto proto(group->proto());
+    TaggedProto proto = baseShape->proto();
     if (proto.isObject()) {
       JSObject* obj = proto.toObject();
       if (GlobalObject::isOffThreadPrototypePlaceholder(obj)) {
         JSObject* targetProto =
             global->getPrototypeForOffThreadPlaceholder(obj);
-        MOZ_ASSERT(targetProto->isDelegate());
-        group->setProtoUnchecked(TaggedProto(targetProto));
+        MOZ_ASSERT(targetProto->isUsedAsPrototype());
+        baseShape->setProtoForMergeRealms(TaggedProto(targetProto));
       }
     }
-
-    group->realm_ = target;
   }
 
   // Fixup zone pointers in source's zone to refer to target's zone.
@@ -8383,16 +8397,20 @@ void GCRuntime::checkHashTablesAfterMovingGC() {
     zone->checkScriptMapsAfterMovingGC();
 
     JS::AutoCheckCannotGC nogc;
-    for (auto baseShape = zone->cellIterUnsafe<BaseShape>(); !baseShape.done();
-         baseShape.next()) {
-      ShapeCachePtr p = baseShape->getCache(nogc);
+    for (auto shape = zone->cellIterUnsafe<Shape>(); !shape.done();
+         shape.next()) {
+      ShapeCachePtr p = shape->getCache(nogc);
+      p.checkAfterMovingGC();
+    }
+    for (auto shape = zone->cellIterUnsafe<AccessorShape>(); !shape.done();
+         shape.next()) {
+      ShapeCachePtr p = shape->getCache(nogc);
       p.checkAfterMovingGC();
     }
   }
 
   for (CompartmentsIter c(this); !c.done(); c.next()) {
     for (RealmsInCompartmentIter r(c); !r.done(); r.next()) {
-      r->checkObjectGroupTablesAfterMovingGC();
       r->dtoaCache.checkCacheAfterMovingGC();
       if (r->debugEnvs()) {
         r->debugEnvs()->checkHashTablesAfterMovingGC();
@@ -9055,10 +9073,6 @@ js::BaseScript* js::gc::ClearEdgesTracer::onScriptEdge(js::BaseScript* script) {
 }
 js::Shape* js::gc::ClearEdgesTracer::onShapeEdge(js::Shape* shape) {
   return onEdge(shape);
-}
-js::ObjectGroup* js::gc::ClearEdgesTracer::onObjectGroupEdge(
-    js::ObjectGroup* group) {
-  return onEdge(group);
 }
 js::BaseShape* js::gc::ClearEdgesTracer::onBaseShapeEdge(js::BaseShape* base) {
   return onEdge(base);

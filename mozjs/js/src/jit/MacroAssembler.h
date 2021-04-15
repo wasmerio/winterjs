@@ -201,11 +201,13 @@
 #define PER_SHARED_ARCH DEFINED_ON(ALL_SHARED_ARCH)
 #define OOL_IN_HEADER
 
+constexpr int32_t Imm32_16Adj(uint32_t x) {
 #if MOZ_LITTLE_ENDIAN()
-#  define IMM32_16ADJ(X) (X) << 16
+  return x << 16;
 #else
-#  define IMM32_16ADJ(X) (X)
+  return x;
 #endif
+}
 
 namespace JS {
 struct ExpandoAndGeneration;
@@ -214,7 +216,6 @@ struct ExpandoAndGeneration;
 namespace js {
 
 class TypedArrayObject;
-class TypeDescr;
 
 namespace wasm {
 class CalleeDesc;
@@ -237,7 +238,7 @@ enum class ExitFrameType : uint8_t;
 
 class AutoSaveLiveRegisters;
 class CompileZone;
-class NativeTemplateObject;
+class TemplateNativeObject;
 class TemplateObject;
 
 enum class CheckUnsafeCallWithABI {
@@ -271,57 +272,7 @@ constexpr uint32_t WasmCalleeTLSOffsetBeforeCall =
 // use cx->lifoAlloc, so take care not to interleave masm use with other
 // lifoAlloc use if one will be destroyed before the other.
 class MacroAssembler : public MacroAssemblerSpecific {
-  MacroAssembler* thisFromCtor() { return this; }
-
  public:
-  /*
-   * Base class for creating a branch.
-   */
-  class Branch {
-    bool init_;
-    Condition cond_;
-    Label* jump_;
-    Register reg_;
-
-   public:
-    Branch()
-        : init_(false),
-          cond_(Equal),
-          jump_(nullptr),
-          reg_(Register::FromCode(0))  // Quell compiler warnings.
-    {}
-
-    Branch(Condition cond, Register reg, Label* jump)
-        : init_(true), cond_(cond), jump_(jump), reg_(reg) {}
-
-    bool isInitialized() const { return init_; }
-
-    Condition cond() const { return cond_; }
-
-    Label* jump() const { return jump_; }
-
-    Register reg() const { return reg_; }
-
-    void invertCondition() { cond_ = InvertCondition(cond_); }
-
-    void relink(Label* jump) { jump_ = jump; }
-  };
-
-  /*
-   * Creates a branch based on a GCPtr.
-   */
-  class BranchGCPtr : public Branch {
-    ImmGCPtr ptr_;
-
-   public:
-    BranchGCPtr() : Branch(), ptr_(ImmGCPtr(nullptr)) {}
-
-    BranchGCPtr(Condition cond, Register reg, ImmGCPtr ptr, Label* jump)
-        : Branch(cond, reg, jump), ptr_(ptr) {}
-
-    void emit(MacroAssembler& masm);
-  };
-
   mozilla::Maybe<JitContext> jitContext_;
   mozilla::Maybe<AutoJitContextAlloc> alloc_;
 
@@ -334,7 +285,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   MacroAssembler();
 
   // This constructor should only be used when there is no JitContext active
-  // (for example, Trampoline-$(ARCH).cpp and IonCaches.cpp).
+  // (for example when generating string and regexp stubs).
   explicit MacroAssembler(JSContext* cx);
 
   // wasm compilation handles its own JitContext-pushing
@@ -451,7 +402,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void Push(const Value& val);
   void Push(JSValueType type, Register reg);
   void Push(const Register64 reg);
-  void PushValue(const Address& addr);
   void PushEmptyRooted(VMFunctionData::RootType rootType);
   inline CodeOffset PushWithPatch(ImmWord word);
   inline CodeOffset PushWithPatch(ImmPtr imm);
@@ -1553,6 +1503,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                                      Register scratch,
                                                      Label* label);
 
+  inline void branchTestObjClass(Condition cond, Register obj, Register clasp,
+                                 Register scratch, Register spectreRegToZero,
+                                 Label* label);
+
   inline void branchTestObjShape(Condition cond, Register obj,
                                  const Shape* shape, Register scratch,
                                  Register spectreRegToZero, Label* label);
@@ -1569,41 +1523,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                                      Register shape,
                                                      Label* label);
 
-  inline void branchTestObjGroup(Condition cond, Register obj,
-                                 const ObjectGroup* group, Register scratch,
-                                 Register spectreRegToZero, Label* label);
-  inline void branchTestObjGroupNoSpectreMitigations(Condition cond,
-                                                     Register obj,
-                                                     const ObjectGroup* group,
-                                                     Label* label);
-
-  inline void branchTestObjGroup(Condition cond, Register obj, Register group,
-                                 Register scratch, Register spectreRegToZero,
-                                 Label* label);
-  inline void branchTestObjGroupNoSpectreMitigations(Condition cond,
-                                                     Register obj,
-                                                     Register group,
-                                                     Label* label);
-
-  void branchTestObjGroup(Condition cond, Register obj, const Address& group,
-                          Register scratch, Register spectreRegToZero,
-                          Label* label);
-  void branchTestObjGroupNoSpectreMitigations(Condition cond, Register obj,
-                                              const Address& group,
-                                              Register scratch, Label* label);
-
   // TODO: audit/fix callers to be Spectre safe.
   inline void branchTestObjShapeUnsafe(Condition cond, Register obj,
                                        Register shape, Label* label);
-  inline void branchTestObjGroupUnsafe(Condition cond, Register obj,
-                                       const ObjectGroup* group, Label* label);
-
-  void branchTestObjTypeDescr(Condition cond, Register obj, Register descr,
-                              Register scratch, Register spectreRegToZero,
-                              Label* label);
-  void branchTestObjTypeDescr(Condition cond, Register obj, TypeDescr* descr,
-                              Register scratch, Register spectreRegToZero,
-                              Label* label);
 
   void branchTestObjCompartment(Condition cond, Register obj,
                                 const Address& compartment, Register scratch,
@@ -2465,6 +2387,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void absInt32x4(FloatRegister src, FloatRegister dest)
       DEFINED_ON(x86_shared, arm64);
 
+  inline void absInt64x2(FloatRegister src, FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
   // Left shift by scalar.  Immediates must have been masked; shifts of zero
   // will work but may or may not generate code.
 
@@ -2617,6 +2542,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
   inline void bitwiseSelectSimd128(FloatRegister onTrue, FloatRegister onFalse,
                                    FloatRegister maskDest) DEFINED_ON(arm64);
 
+  // Population count
+
+  inline void popcntInt8x16(FloatRegister src, FloatRegister dest,
+                            FloatRegister temp) DEFINED_ON(x86_shared);
+
+  inline void popcntInt8x16(FloatRegister src, FloatRegister dest)
+      DEFINED_ON(arm64);
+
   // Any lane true, ie, any bit set
 
   inline void anyTrueSimd128(FloatRegister src, Register dest)
@@ -2703,10 +2636,17 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                      FloatRegister temp1, FloatRegister temp2)
       DEFINED_ON(x86_shared);
 
-  // On x86_shared, limited to !=, ==
+  inline void compareForEqualityInt64x2(Assembler::Condition cond,
+                                        FloatRegister rhs,
+                                        FloatRegister lhsDest)
+      DEFINED_ON(x86_shared);
+
+  inline void compareForOrderingInt64x2(
+      Assembler::Condition cond, FloatRegister rhs, FloatRegister lhsDest,
+      FloatRegister temp1, FloatRegister temp2) DEFINED_ON(x86_shared);
+
   inline void compareInt64x2(Assembler::Condition cond, FloatRegister rhs,
-                             FloatRegister lhsDest)
-      DEFINED_ON(x86_shared, arm64);
+                             FloatRegister lhsDest) DEFINED_ON(arm64);
 
   inline void compareFloat32x4(Assembler::Condition cond, FloatRegister rhs,
                                FloatRegister lhsDest)
@@ -2735,7 +2675,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
       DEFINED_ON(x86_shared, arm64);
 
   inline void loadUnalignedSimd128(const BaseIndex& src, FloatRegister dest)
-      DEFINED_ON(x86_shared);
+      DEFINED_ON(x86_shared, arm64);
 
   // Store
 
@@ -2743,7 +2683,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
       DEFINED_ON(x86_shared, arm64);
 
   inline void storeUnalignedSimd128(FloatRegister src, const BaseIndex& dest)
-      DEFINED_ON(x86_shared);
+      DEFINED_ON(x86_shared, arm64);
 
   // Floating point negation
 
@@ -2848,6 +2788,22 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   inline void mulFloat64x2(const SimdConstant& rhs, FloatRegister lhsDest)
       DEFINED_ON(x86_shared);
+
+  // Pairwise add
+
+  inline void extAddPairwiseInt8x16(FloatRegister src, FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void unsignedExtAddPairwiseInt8x16(FloatRegister src,
+                                            FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void extAddPairwiseInt16x8(FloatRegister src, FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
+
+  inline void unsignedExtAddPairwiseInt16x8(FloatRegister src,
+                                            FloatRegister dest)
+      DEFINED_ON(x86_shared, arm64);
 
   // Floating square root
 
@@ -3816,13 +3772,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
   //}}} check_macroassembler_decl_style
  public:
   // Unsafe here means the caller is responsible for Spectre mitigations if
-  // needed. Prefer branchTestObjGroup or one of the other masm helpers!
-  void loadObjGroupUnsafe(Register obj, Register dest) {
-    loadPtr(Address(obj, JSObject::offsetOfGroup()), dest);
-  }
+  // needed. Prefer branchTestObjClass or one of the other masm helpers!
   void loadObjClassUnsafe(Register obj, Register dest) {
-    loadPtr(Address(obj, JSObject::offsetOfGroup()), dest);
-    loadPtr(Address(dest, ObjectGroup::offsetOfClasp()), dest);
+    loadPtr(Address(obj, JSObject::offsetOfShape()), dest);
+    loadPtr(Address(dest, Shape::offsetOfBaseShape()), dest);
+    loadPtr(Address(dest, BaseShape::offsetOfClasp()), dest);
   }
 
   template <typename EmitPreBarrier>
@@ -3840,8 +3794,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   }
 
   void loadObjProto(Register obj, Register dest) {
-    loadPtr(Address(obj, JSObject::offsetOfGroup()), dest);
-    loadPtr(Address(dest, ObjectGroup::offsetOfProto()), dest);
+    loadPtr(Address(obj, JSObject::offsetOfShape()), dest);
+    loadPtr(Address(dest, Shape::offsetOfBaseShape()), dest);
+    loadPtr(Address(dest, BaseShape::offsetOfProto()), dest);
   }
 
   void loadStringLength(Register str, Register dest) {
@@ -4008,22 +3963,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   }
 
   template <typename T>
-  void loadElementTypedOrValue(const T& src, TypedOrValueRegister dest,
-                               bool holeCheck, Label* hole) {
-    if (dest.hasValue()) {
-      loadValue(src, dest.valueReg());
-      if (holeCheck) {
-        branchTestMagic(Assembler::Equal, dest.valueReg(), hole);
-      }
-    } else {
-      if (holeCheck) {
-        branchTestMagic(Assembler::Equal, src, hole);
-      }
-      loadUnboxedValue(src, dest.type(), dest.typedReg());
-    }
-  }
-
-  template <typename T>
   void storeTypedOrValue(TypedOrValueRegister src, const T& dest) {
     if (src.hasValue()) {
       storeValue(src.valueReg(), dest);
@@ -4040,9 +3979,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
       storeValue(ValueTypeFromMIRType(src.type()), src.typedReg().gpr(), dest);
     }
   }
-
-  template <typename T>
-  inline void storeObjectOrNull(Register src, const T& dest);
 
   template <typename T>
   void storeConstantOrRegister(const ConstantOrRegister& src, const T& dest) {
@@ -4121,6 +4057,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
     call(preBarrier);
     Pop(PreBarrierReg);
+    // On arm64, SP may be < PSP now (that's OK).
+    // eg testcase: tests/auto-regress/bug702915.js
     bind(&done);
   }
 
@@ -4276,10 +4214,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void allocateString(Register result, Register temp, gc::AllocKind allocKind,
                       gc::InitialHeap initialHeap, Label* fail);
   void nurseryAllocateBigInt(Register result, Register temp, Label* fail);
-  void allocateNonObject(Register result, Register temp,
-                         gc::AllocKind allocKind, Label* fail);
   void copySlotsFromTemplate(Register obj,
-                             const NativeTemplateObject& templateObj,
+                             const TemplateNativeObject& templateObj,
                              uint32_t start, uint32_t end);
   void fillSlotsWithConstantValue(Address addr, Register temp, uint32_t start,
                                   uint32_t end, const Value& v);
@@ -4289,7 +4225,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                   uint32_t end);
 
   void initGCSlots(Register obj, Register temp,
-                   const NativeTemplateObject& templateObj, bool initContents);
+                   const TemplateNativeObject& templateObj, bool initContents);
 
  public:
   void callFreeStub(Register slots);
@@ -4380,10 +4316,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
   template <typename T>
   void andToStackPtr(T t) {
     andPtr(t, getStackPointer());
-  }
-  template <typename T>
-  void andStackPtrTo(T t) {
-    andPtr(getStackPointer(), t);
   }
 
   template <typename T>
@@ -4492,9 +4424,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void assumeUnreachable(const char* output);
 
-  template <typename T>
-  void assertTestInt32(Condition cond, const T& value, const char* output);
-
   void printf(const char* output);
   void printf(const char* output, Register value);
 
@@ -4540,8 +4469,6 @@ class MacroAssembler : public MacroAssemblerSpecific {
                              bool widenFloatToDouble, bool compilingWasm,
                              wasm::BytecodeOffset callOffset);
 
-  void convertInt32ValueToDouble(const Address& address, Register scratch,
-                                 Label* done);
   void convertInt32ValueToDouble(ValueOperand val);
 
   void convertValueToDouble(ValueOperand value, FloatRegister output,

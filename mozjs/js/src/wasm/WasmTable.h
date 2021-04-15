@@ -38,7 +38,7 @@ namespace wasm {
 // the most appropriate representation for Cell::anyref.
 STATIC_ASSERT_ANYREF_IS_JSOBJECT;
 
-typedef GCVector<HeapPtr<JSObject*>, 0, SystemAllocPolicy> TableAnyRefVector;
+using TableAnyRefVector = GCVector<HeapPtr<JSObject*>, 0, SystemAllocPolicy>;
 
 class Table : public ShareableBase<Table> {
   using InstanceSet =
@@ -58,9 +58,9 @@ class Table : public ShareableBase<Table> {
 
   template <class>
   friend struct js::MallocProvider;
-  Table(JSContext* cx, const TableDesc& td, HandleWasmTableObject maybeObject,
+  Table(JSContext* cx, const TableDesc& desc, HandleWasmTableObject maybeObject,
         UniqueFuncRefArray functions);
-  Table(JSContext* cx, const TableDesc& td, HandleWasmTableObject maybeObject,
+  Table(JSContext* cx, const TableDesc& desc, HandleWasmTableObject maybeObject,
         TableAnyRefVector&& objects);
 
   void tracePrivate(JSTracer* trc);
@@ -118,7 +118,7 @@ class Table : public ShareableBase<Table> {
 };
 
 using SharedTable = RefPtr<Table>;
-typedef Vector<SharedTable, 0, SystemAllocPolicy> SharedTableVector;
+using SharedTableVector = Vector<SharedTable, 0, SystemAllocPolicy>;
 
 }  // namespace wasm
 }  // namespace js

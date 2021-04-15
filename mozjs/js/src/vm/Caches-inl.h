@@ -50,11 +50,9 @@ inline NativeObject* NewObjectCache::newObjectFromHit(JSContext* cx,
   NativeObject* templateObj =
       reinterpret_cast<NativeObject*>(&entry->templateObject);
 
-  ObjectGroup* group = templateObj->group();
-
-  // If we did the lookup based on the proto we might have a group/object from a
+  // If we did the lookup based on the proto we might have a shape/object from a
   // different (same-compartment) realm, so we have to do a realm check.
-  if (group->realm() != cx->realm()) {
+  if (templateObj->shape()->realm() != cx->realm()) {
     return nullptr;
   }
 
@@ -62,15 +60,16 @@ inline NativeObject* NewObjectCache::newObjectFromHit(JSContext* cx,
     return nullptr;
   }
 
+  const JSClass* clasp = templateObj->getClass();
   NativeObject* obj = static_cast<NativeObject*>(AllocateObject<NoGC>(
-      cx, entry->kind, /* nDynamicSlots = */ 0, heap, group->clasp()));
+      cx, entry->kind, /* nDynamicSlots = */ 0, heap, clasp));
   if (!obj) {
     return nullptr;
   }
 
   copyCachedToObject(obj, templateObj, entry->kind);
 
-  if (group->clasp()->shouldDelayMetadataBuilder()) {
+  if (clasp->shouldDelayMetadataBuilder()) {
     cx->realm()->setObjectPendingMetadata(cx, obj);
   } else {
     obj = static_cast<NativeObject*>(SetNewObjectMetadata(cx, obj));

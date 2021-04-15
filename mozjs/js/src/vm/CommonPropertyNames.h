@@ -27,7 +27,6 @@
   MACRO_(anonymous, anonymous, "anonymous")                                    \
   MACRO_(Any, Any, "Any")                                                      \
   MACRO_(apply, apply, "apply")                                                \
-  MACRO_(args, args, "args")                                                   \
   MACRO_(arguments, arguments, "arguments")                                    \
   MACRO_(ArrayBufferSpecies, ArrayBufferSpecies, "$ArrayBufferSpecies")        \
   MACRO_(ArrayIterator, ArrayIterator, "Array Iterator")                       \
@@ -123,6 +122,7 @@
   MACRO_(domNode, domNode, "domNode")                                          \
   MACRO_(done, done, "done")                                                   \
   MACRO_(dotAll, dotAll, "dotAll")                                             \
+  MACRO_(dotArgs, dotArgs, ".args")                                            \
   MACRO_(dotGenerator, dotGenerator, ".generator")                             \
   MACRO_(dotThis, dotThis, ".this")                                            \
   MACRO_(dotInitializers, dotInitializers, ".initializers")                    \
@@ -214,6 +214,7 @@
   MACRO_(Handle, Handle, "Handle")                                             \
   MACRO_(has, has, "has")                                                      \
   MACRO_(hashConstructor, hashConstructor, "#constructor")                     \
+  MACRO_(hasIndices, hasIndices, "hasIndices")                                 \
   MACRO_(hasOwn, hasOwn, "hasOwn")                                             \
   MACRO_(hasOwnProperty, hasOwnProperty, "hasOwnProperty")                     \
   MACRO_(highWaterMark, highWaterMark, "highWaterMark")                        \
@@ -228,6 +229,7 @@
   MACRO_(includes, includes, "includes")                                       \
   MACRO_(incumbentGlobal, incumbentGlobal, "incumbentGlobal")                  \
   MACRO_(index, index, "index")                                                \
+  MACRO_(indices, indices, "indices")                                          \
   MACRO_(infinity, infinity, "infinity")                                       \
   MACRO_(Infinity, Infinity, "Infinity")                                       \
   MACRO_(initial, initial, "initial")                                          \

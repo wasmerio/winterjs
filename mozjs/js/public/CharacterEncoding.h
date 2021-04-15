@@ -9,12 +9,15 @@
 
 #include "mozilla/Range.h"
 #include "mozilla/Span.h"
-#include "mozilla/Utf8.h"
 
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
 class JSLinearString;
+
+namespace mozilla {
+union Utf8Unit;
+}
 
 namespace JS {
 
@@ -95,24 +98,6 @@ class UTF8Chars : public mozilla::Range<unsigned char> {
       : UTF8Chars(reinterpret_cast<char*>(aUnits), aLength) {}
   UTF8Chars(const mozilla::Utf8Unit* aUnits, size_t aLength)
       : UTF8Chars(reinterpret_cast<const char*>(aUnits), aLength) {}
-};
-
-/*
- * Similar to UTF8Chars, but contains WTF-8.
- * https://simonsapin.github.io/wtf-8/
- */
-class WTF8Chars : public mozilla::Range<unsigned char> {
-  typedef mozilla::Range<unsigned char> Base;
-
- public:
-  using CharT = unsigned char;
-
-  WTF8Chars() = default;
-  WTF8Chars(char* aBytes, size_t aLength)
-      : Base(reinterpret_cast<unsigned char*>(aBytes), aLength) {}
-  WTF8Chars(const char* aBytes, size_t aLength)
-      : Base(reinterpret_cast<unsigned char*>(const_cast<char*>(aBytes)),
-             aLength) {}
 };
 
 /*
@@ -251,7 +236,7 @@ inline Latin1CharsZ LossyTwoByteCharsToNewLatin1CharsZ(JSContext* cx,
 }
 
 template <typename CharT>
-extern UTF8CharsZ CharsToNewUTF8CharsZ(JSContext* maybeCx,
+extern UTF8CharsZ CharsToNewUTF8CharsZ(JSContext* cx,
                                        const mozilla::Range<CharT> chars);
 
 JS_PUBLIC_API uint32_t Utf8ToOneUcs4Char(const uint8_t* utf8Buffer,
@@ -265,13 +250,6 @@ JS_PUBLIC_API uint32_t Utf8ToOneUcs4Char(const uint8_t* utf8Buffer,
  */
 extern JS_PUBLIC_API TwoByteCharsZ
 UTF8CharsToNewTwoByteCharsZ(JSContext* cx, const UTF8Chars utf8, size_t* outlen,
-                            arena_id_t destArenaId);
-
-/*
- * Like UTF8CharsToNewTwoByteCharsZ, but for WTF8Chars.
- */
-extern JS_PUBLIC_API TwoByteCharsZ
-WTF8CharsToNewTwoByteCharsZ(JSContext* cx, const WTF8Chars wtf8, size_t* outlen,
                             arena_id_t destArenaId);
 
 /*

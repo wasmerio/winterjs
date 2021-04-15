@@ -45,16 +45,15 @@ using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::RangedPtr;
 
-template <typename CharT, typename InputCharsT>
-extern void InflateUTF8CharsToBufferAndTerminate(const InputCharsT src,
+template <typename CharT>
+extern void InflateUTF8CharsToBufferAndTerminate(const JS::UTF8Chars src,
                                                  CharT* dst, size_t dstLen,
                                                  JS::SmallestEncoding encoding);
 
-template <typename CharT, typename CharsT>
-extern bool UTF8OrWTF8EqualsChars(const CharsT utf8, const CharT* chars);
+template <typename CharT>
+extern bool UTF8EqualsChars(const JS::UTF8Chars utf8, const CharT* chars);
 
-template <typename InputCharsT>
-extern bool GetUTF8AtomizationData(JSContext* cx, const InputCharsT utf8,
+extern bool GetUTF8AtomizationData(JSContext* cx, const JS::UTF8Chars utf8,
                                    size_t* outlen,
                                    JS::SmallestEncoding* encoding,
                                    HashNumber* hashNum);
@@ -66,7 +65,7 @@ struct js::AtomHasher::Lookup {
     LittleEndianChars littleEndianChars;
     const char* utf8Bytes;
   };
-  enum { TwoByteChar, LittleEndianTwoByte, Latin1, UTF8, WTF8 } type;
+  enum { TwoByteChar, LittleEndianTwoByte, Latin1, UTF8 } type;
   size_t length;
   size_t byteLength;
   const JSAtom* atom; /* Optional. */
@@ -172,11 +171,7 @@ MOZ_ALWAYS_INLINE bool js::AtomHasher::match(const AtomStateEntry& entry,
         return EqualsLittleEndianChars(keyChars);
       case Lookup::UTF8: {
         JS::UTF8Chars utf8(lookup.utf8Bytes, lookup.byteLength);
-        return UTF8OrWTF8EqualsChars(utf8, keyChars);
-      }
-      case Lookup::WTF8: {
-        JS::WTF8Chars wtf8(lookup.utf8Bytes, lookup.byteLength);
-        return UTF8OrWTF8EqualsChars(wtf8, keyChars);
+        return UTF8EqualsChars(utf8, keyChars);
       }
     }
   }
@@ -191,11 +186,7 @@ MOZ_ALWAYS_INLINE bool js::AtomHasher::match(const AtomStateEntry& entry,
       return EqualsLittleEndianChars(keyChars);
     case Lookup::UTF8: {
       JS::UTF8Chars utf8(lookup.utf8Bytes, lookup.byteLength);
-      return UTF8OrWTF8EqualsChars(utf8, keyChars);
-    }
-    case Lookup::WTF8: {
-      JS::WTF8Chars wtf8(lookup.utf8Bytes, lookup.byteLength);
-      return UTF8OrWTF8EqualsChars(wtf8, keyChars);
+      return UTF8EqualsChars(utf8, keyChars);
     }
   }
 
@@ -875,13 +866,12 @@ static MOZ_NEVER_INLINE JSAtom* PermanentlyAtomizeAndCopyChars(
   return atom;
 }
 
-template <typename CharsT>
-struct AtomizeUTF8OrWTF8CharsWrapper {
-  CharsT utf8;
+struct AtomizeUTF8CharsWrapper {
+  JS::UTF8Chars utf8;
   JS::SmallestEncoding encoding;
 
-  AtomizeUTF8OrWTF8CharsWrapper(const CharsT& chars,
-                                JS::SmallestEncoding minEncode)
+  AtomizeUTF8CharsWrapper(const JS::UTF8Chars& chars,
+                          JS::SmallestEncoding minEncode)
       : utf8(chars), encoding(minEncode) {}
 };
 
@@ -900,9 +890,9 @@ static MOZ_ALWAYS_INLINE JSLinearString* MakeLinearStringForAtomization(
   return NewStringFromLittleEndianNoGC(cx, chars, length, gc::TenuredHeap);
 }
 
-template <typename CharT, typename WrapperT>
+template <typename CharT>
 static MOZ_ALWAYS_INLINE JSLinearString* MakeUTF8AtomHelper(
-    JSContext* cx, const WrapperT* chars, size_t length) {
+    JSContext* cx, const AtomizeUTF8CharsWrapper* chars, size_t length) {
   if (JSInlineString::lengthFits<CharT>(length)) {
     CharT* storage;
     JSInlineString* str =
@@ -934,11 +924,8 @@ static MOZ_ALWAYS_INLINE JSLinearString* MakeUTF8AtomHelper(
 }
 
 // Another 2 variants of MakeLinearStringForAtomization.
-// This is used by AtomizeUTF8OrWTF8CharsWrapper with UTF8Chars or WTF8Chars.
-template <typename InputCharsT>
-/* static */ MOZ_ALWAYS_INLINE JSLinearString* MakeLinearStringForAtomization(
-    JSContext* cx, const AtomizeUTF8OrWTF8CharsWrapper<InputCharsT>* chars,
-    size_t length) {
+static MOZ_ALWAYS_INLINE JSLinearString* MakeLinearStringForAtomization(
+    JSContext* cx, const AtomizeUTF8CharsWrapper* chars, size_t length) {
   if (length == 0) {
     return cx->emptyString();
   }
@@ -1113,9 +1100,8 @@ template JSAtom* js::AtomizeChars(JSContext* cx, HashNumber hash,
 template JSAtom* js::AtomizeChars(JSContext* cx, HashNumber hash,
                                   const char16_t* chars, size_t length);
 
-template <typename CharsT>
-JSAtom* AtomizeUTF8OrWTF8Chars(JSContext* cx, const char* utf8Chars,
-                               size_t utf8ByteLength) {
+JSAtom* js::AtomizeUTF8Chars(JSContext* cx, const char* utf8Chars,
+                             size_t utf8ByteLength) {
   {
     // Permanent atoms,|JSRuntime::atoms_|, and  static strings are disjoint
     // sets.  |AtomizeAndCopyCharsFromLookup| only consults the first two sets,
@@ -1156,28 +1142,15 @@ JSAtom* AtomizeUTF8OrWTF8Chars(JSContext* cx, const char* utf8Chars,
   size_t length;
   HashNumber hash;
   JS::SmallestEncoding forCopy;
-  CharsT utf8(utf8Chars, utf8ByteLength);
+  JS::UTF8Chars utf8(utf8Chars, utf8ByteLength);
   if (!GetUTF8AtomizationData(cx, utf8, &length, &forCopy, &hash)) {
     return nullptr;
   }
 
-  AtomizeUTF8OrWTF8CharsWrapper<CharsT> chars(utf8, forCopy);
+  AtomizeUTF8CharsWrapper chars(utf8, forCopy);
   AtomHasher::Lookup lookup(utf8Chars, utf8ByteLength, length, hash);
-  if (std::is_same_v<CharsT, JS::WTF8Chars>) {
-    lookup.type = AtomHasher::Lookup::WTF8;
-  }
   return AtomizeAndCopyCharsFromLookup(cx, &chars, length, lookup, DoNotPinAtom,
                                        Nothing());
-}
-
-JSAtom* js::AtomizeUTF8Chars(JSContext* cx, const char* utf8Chars,
-                             size_t utf8ByteLength) {
-  return AtomizeUTF8OrWTF8Chars<JS::UTF8Chars>(cx, utf8Chars, utf8ByteLength);
-}
-
-JSAtom* js::AtomizeWTF8Chars(JSContext* cx, const char* wtf8Chars,
-                             size_t wtf8ByteLength) {
-  return AtomizeUTF8OrWTF8Chars<JS::WTF8Chars>(cx, wtf8Chars, wtf8ByteLength);
 }
 
 bool js::IndexToIdSlow(JSContext* cx, uint32_t index, MutableHandleId idp) {
@@ -1326,37 +1299,7 @@ template XDRResult js::XDRAtomOrNull(XDRState<XDR_ENCODE>* xdr,
                                      MutableHandleAtom atomp);
 
 template <XDRMode mode>
-static XDRResult XDRAtomIndex(XDRState<mode>* xdr, uint32_t* index) {
-  return xdr->codeUint32(index);
-}
-
-template <XDRMode mode>
 XDRResult js::XDRAtom(XDRState<mode>* xdr, MutableHandleAtom atomp) {
-  if (!xdr->hasAtomTable()) {
-    return XDRAtomData(xdr, atomp);
-  }
-
-  MOZ_ASSERT(mode == XDR_DECODE);
-
-  uint32_t atomIndex;
-  MOZ_TRY(XDRAtomIndex(xdr, &atomIndex));
-  if (atomIndex >= xdr->atomTable().length()) {
-    return xdr->fail(JS::TranscodeResult::Failure_BadDecode);
-  }
-  JSAtom* atom = xdr->atomTable()[atomIndex];
-
-  atomp.set(atom);
-  return Ok();
-}
-
-template XDRResult js::XDRAtom(XDRState<XDR_DECODE>* xdr,
-                               MutableHandleAtom atomp);
-
-template XDRResult js::XDRAtom(XDRState<XDR_ENCODE>* xdr,
-                               MutableHandleAtom atomp);
-
-template <XDRMode mode>
-XDRResult js::XDRAtomData(XDRState<mode>* xdr, MutableHandleAtom atomp) {
   bool latin1 = false;
   uint32_t length = 0;
   uint32_t lengthAndEncoding = 0;
@@ -1410,11 +1353,11 @@ XDRResult js::XDRAtomData(XDRState<mode>* xdr, MutableHandleAtom atomp) {
   return Ok();
 }
 
-template XDRResult js::XDRAtomData(XDRState<XDR_ENCODE>* xdr,
-                                   MutableHandleAtom atomp);
+template XDRResult js::XDRAtom(XDRState<XDR_DECODE>* xdr,
+                               MutableHandleAtom atomp);
 
-template XDRResult js::XDRAtomData(XDRState<XDR_DECODE>* xdr,
-                                   MutableHandleAtom atomp);
+template XDRResult js::XDRAtom(XDRState<XDR_ENCODE>* xdr,
+                               MutableHandleAtom atomp);
 
 Handle<PropertyName*> js::ClassName(JSProtoKey key, JSContext* cx) {
   return ClassName(key, cx->names());

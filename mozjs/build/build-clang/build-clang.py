@@ -337,11 +337,13 @@ def build_one_stage(
         if libtool is not None:
             cmake_args += ["-DCMAKE_LIBTOOL=%s" % slashify_path(libtool)]
         if osx_cross_compile:
+            arch = "arm64" if os.environ.get("OSX_ARCH") == "arm64" else "x86_64"
+            target_cpu = (
+                "aarch64" if os.environ.get("OSX_ARCH") == "arm64" else "x86_64"
+            )
             cmake_args += [
                 "-DCMAKE_SYSTEM_NAME=Darwin",
-                "-DCMAKE_SYSTEM_VERSION=10.10",
-                # Xray requires a OSX 10.12 SDK (https://bugs.llvm.org/show_bug.cgi?id=38959)
-                "-DCOMPILER_RT_BUILD_XRAY=OFF",
+                "-DCMAKE_SYSTEM_VERSION=%s" % os.environ["MACOSX_DEPLOYMENT_TARGET"],
                 "-DLIBCXXABI_LIBCXX_INCLUDES=%s" % libcxx_include_dir,
                 "-DCMAKE_OSX_SYSROOT=%s" % slashify_path(os.getenv("CROSS_SYSROOT")),
                 "-DCMAKE_FIND_ROOT_PATH=%s" % slashify_path(os.getenv("CROSS_SYSROOT")),
@@ -349,18 +351,22 @@ def build_one_stage(
                 "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY",
                 "-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY",
                 "-DCMAKE_MACOSX_RPATH=ON",
-                "-DCMAKE_OSX_ARCHITECTURES=x86_64",
-                "-DDARWIN_osx_ARCHS=x86_64",
+                "-DCMAKE_OSX_ARCHITECTURES=%s" % arch,
+                "-DDARWIN_osx_ARCHS=%s" % arch,
                 "-DDARWIN_osx_SYSROOT=%s" % slashify_path(os.getenv("CROSS_SYSROOT")),
-                "-DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-apple-darwin",
+                "-DLLVM_DEFAULT_TARGET_TRIPLE=%s-apple-darwin" % target_cpu,
             ]
+            if os.environ.get("OSX_ARCH") == "arm64":
+                cmake_args += [
+                    "-DDARWIN_osx_BUILTIN_ARCHS=arm64",
+                ]
             # Starting in LLVM 11 (which requires SDK 10.12) the build tries to
             # detect the SDK version by calling xcrun. Cross-compiles don't have
             # an xcrun, so we have to set the version explicitly.
-            if "MacOSX10.12.sdk" in os.getenv("CROSS_SYSROOT"):
-                cmake_args += [
-                    "-DDARWIN_macosx_OVERRIDE_SDK_VERSION=10.12",
-                ]
+            cmake_args += [
+                "-DDARWIN_macosx_OVERRIDE_SDK_VERSION=%s"
+                % os.environ["MACOSX_DEPLOYMENT_TARGET"],
+            ]
         if pgo_phase == "gen":
             # Per https://releases.llvm.org/10.0.0/docs/HowToBuildWithPGO.html
             cmake_args += [
@@ -569,7 +575,13 @@ def prune_final_dir_for_clang_tidy(final_dir, osx_cross_compile):
         if not os.path.isdir(f):
             raise Exception("Expected %s to be a directory" % f)
 
-    kept_binaries = ["clang-apply-replacements", "clang-format", "clang-tidy", "clangd"]
+    kept_binaries = [
+        "clang-apply-replacements",
+        "clang-format",
+        "clang-tidy",
+        "clangd",
+        "clang-query",
+    ]
     re_clang_tidy = re.compile(r"^(" + "|".join(kept_binaries) + r")(\.exe)?$", re.I)
     for f in glob.glob("%s/bin/*" % final_dir):
         if re_clang_tidy.search(os.path.basename(f)) is None:
@@ -774,7 +786,9 @@ if __name__ == "__main__":
         raise ValueError("Config file needs to set gcc_dir")
 
     if is_darwin() or osx_cross_compile:
-        os.environ["MACOSX_DEPLOYMENT_TARGET"] = "10.12"
+        os.environ["MACOSX_DEPLOYMENT_TARGET"] = (
+            "11.0" if os.environ.get("OSX_ARCH") == "arm64" else "10.12"
+        )
 
     cc = get_tool(config, "cc")
     cxx = get_tool(config, "cxx")

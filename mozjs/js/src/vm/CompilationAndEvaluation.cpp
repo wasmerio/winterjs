@@ -17,10 +17,10 @@
 #include "jstypes.h"  // JS_PUBLIC_API
 
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
-#include "frontend/CompilationStencil.h"  // for frontened::CompilationStencil, frontened::CompilationGCOutput
-#include "frontend/FullParseHandler.h"  // frontend::FullParseHandler
-#include "frontend/ParseContext.h"      // frontend::UsedNameTracker
-#include "frontend/Parser.h"            // frontend::Parser, frontend::ParseGoal
+#include "frontend/CompilationStencil.h"  // for frontened::{CompilationStencil, BorrowingCompilationStencil, CompilationGCOutput}
+#include "frontend/FullParseHandler.h"    // frontend::FullParseHandler
+#include "frontend/ParseContext.h"        // frontend::UsedNameTracker
+#include "frontend/Parser.h"       // frontend::Parser, frontend::ParseGoal
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, JS::UTF8CharsToNewTwoByteCharsZ
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/RootingAPI.h"            // JS::Rooted
@@ -93,34 +93,33 @@ static JSScript* CompileSourceBufferAndStartIncrementalEncoding(
 
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  UniquePtr<frontend::CompilationStencil> stencil =
-      frontend::CompileGlobalScriptToStencil(cx, input.get(), srcBuf,
-                                             scopeKind);
+  auto stencil = frontend::CompileGlobalScriptToExtensibleStencil(
+      cx, input.get(), srcBuf, scopeKind);
   if (!stencil) {
     return nullptr;
   }
 
-  Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  if (!frontend::InstantiateStencils(cx, input.get(), *stencil,
-                                     gcOutput.get())) {
-    return nullptr;
-  }
+  RootedScript script(cx);
+  {
+    frontend::BorrowingCompilationStencil borrowingStencil(*stencil);
 
-  RootedScript script(cx, gcOutput.get().script);
-  if (!script) {
-    return nullptr;
+    Rooted<frontend::CompilationGCOutput> gcOutput(cx);
+    if (!frontend::InstantiateStencils(cx, input.get(), borrowingStencil,
+                                       gcOutput.get())) {
+      return nullptr;
+    }
+
+    script = gcOutput.get().script;
+    if (!script) {
+      return nullptr;
+    }
   }
 
   MOZ_DIAGNOSTIC_ASSERT(options.useStencilXDR);
-
-  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
-
-  if (!stencil->source->xdrEncodeInitialStencil(cx, input.get(), *stencil,
-                                                xdrEncoder)) {
+  if (!script->scriptSource()->startIncrementalEncoding(cx, options,
+                                                        std::move(stencil))) {
     return nullptr;
   }
-
-  script->scriptSource()->setIncrementalEncoder(xdrEncoder.release());
 
   return script;
 }
@@ -199,18 +198,16 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   if (!input.get().initForGlobal(cx)) {
     return false;
   }
-  frontend::CompilationStencil stencil(input.get());
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, input.get(),
-                                              stencil);
+  frontend::CompilationState compilationState(cx, allocScope, input.get());
   if (!compilationState.init(cx)) {
     return false;
   }
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   Parser<FullParseHandler, char16_t> parser(cx, options, chars.get(), length,
-                                            /* foldConstants = */ true, stencil,
+                                            /* foldConstants = */ true,
                                             compilationState,
                                             /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {

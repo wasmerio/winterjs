@@ -54,7 +54,8 @@ namespace js {
 
 namespace wasm {
 class FuncExport;
-}
+extern uint32_t MIRTypeToABIResultSize(jit::MIRType);
+}  // namespace wasm
 
 class GenericPrinter;
 class StringObject;
@@ -81,15 +82,6 @@ class MDefinitionVisitorDefaultNoop {
 
 class CompactBufferWriter;
 class Range;
-
-template <typename T>
-struct ResultWithOOM {
-  T value;
-  bool oom;
-
-  static ResultWithOOM<T> ok(T val) { return {val, false}; }
-  static ResultWithOOM<T> fail() { return {T(), true}; }
-};
 
 static inline MIRType MIRTypeFromValue(const js::Value& vp) {
   if (vp.isDouble()) {
@@ -963,7 +955,6 @@ using CompilerFunction = CompilerGCPointer<JSFunction*>;
 using CompilerBaseScript = CompilerGCPointer<BaseScript*>;
 using CompilerPropertyName = CompilerGCPointer<PropertyName*>;
 using CompilerShape = CompilerGCPointer<Shape*>;
-using CompilerObjectGroup = CompilerGCPointer<ObjectGroup*>;
 
 // An instruction is an SSA name that is inserted into a basic block's IR
 // stream.
@@ -3118,6 +3109,65 @@ class MCreateArgumentsObject : public MUnaryInstruction,
   bool canRecoverOnBailout() const override { return true; }
 };
 
+// Eager initialization of arguments object for inlined function
+class MCreateInlinedArgumentsObject : public MVariadicInstruction,
+                                      public NoFloatPolicyAfter<0>::Data {
+  MCreateInlinedArgumentsObject() : MVariadicInstruction(classOpcode) {
+    setResultType(MIRType::Object);
+  }
+
+  static const size_t NumNonArgumentOperands = 2;
+
+ public:
+  INSTRUCTION_HEADER(CreateInlinedArgumentsObject)
+  static MCreateInlinedArgumentsObject* New(TempAllocator& alloc,
+                                            MDefinition* callObj,
+                                            MDefinition* callee,
+                                            MDefinitionVector& args);
+  NAMED_OPERANDS((0, getCallObject), (1, getCallee))
+
+  MDefinition* getArg(uint32_t idx) const {
+    return getOperand(idx + NumNonArgumentOperands);
+  }
+  uint32_t numActuals() const { return numOperands() - NumNonArgumentOperands; }
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  bool possiblyCalls() const override { return true; }
+
+  [[nodiscard]] bool writeRecoverData(
+      CompactBufferWriter& writer) const override;
+  bool canRecoverOnBailout() const override { return true; }
+};
+
+class MGetInlinedArgument
+    : public MVariadicInstruction,
+      public MixPolicy<UnboxedInt32Policy<0>, NoFloatPolicyAfter<1>>::Data {
+  MGetInlinedArgument() : MVariadicInstruction(classOpcode) {
+    setResultType(MIRType::Value);
+  }
+
+  static const size_t NumNonArgumentOperands = 1;
+
+ public:
+  INSTRUCTION_HEADER(GetInlinedArgument)
+  static MGetInlinedArgument* New(TempAllocator& alloc, MDefinition* index,
+                                  MCreateInlinedArgumentsObject* args);
+  NAMED_OPERANDS((0, index))
+
+  MDefinition* getArg(uint32_t idx) const {
+    return getOperand(idx + NumNonArgumentOperands);
+  }
+  uint32_t numActuals() const { return numOperands() - NumNonArgumentOperands; }
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return congruentIfOperandsEqual(ins);
+  }
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+  MDefinition* foldsTo(TempAllocator& alloc) override;
+};
+
 class MGetArgumentsObjectArg : public MUnaryInstruction,
                                public ObjectPolicy<0>::Data {
   size_t argno_;
@@ -4229,11 +4279,7 @@ class MBitNot : public MUnaryInstruction, public BitwisePolicy::Data {
 
 class MTypeOf : public MUnaryInstruction,
                 public BoxExceptPolicy<0, MIRType::Object>::Data {
-  bool inputMaybeCallableOrEmulatesUndefined_;
-
-  explicit MTypeOf(MDefinition* def)
-      : MUnaryInstruction(classOpcode, def),
-        inputMaybeCallableOrEmulatesUndefined_(true) {
+  explicit MTypeOf(MDefinition* def) : MUnaryInstruction(classOpcode, def) {
     setResultType(MIRType::String);
     setMovable();
   }
@@ -4243,25 +4289,10 @@ class MTypeOf : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
-  void cacheInputMaybeCallableOrEmulatesUndefined();
-
-  bool inputMaybeCallableOrEmulatesUndefined() const {
-    return inputMaybeCallableOrEmulatesUndefined_;
-  }
-  void markInputNotCallableOrEmulatesUndefined() {
-    inputMaybeCallableOrEmulatesUndefined_ = false;
-  }
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
   bool congruentTo(const MDefinition* ins) const override {
-    if (!ins->isTypeOf()) {
-      return false;
-    }
-    if (inputMaybeCallableOrEmulatesUndefined() !=
-        ins->toTypeOf()->inputMaybeCallableOrEmulatesUndefined()) {
-      return false;
-    }
     return congruentIfOperandsEqual(ins);
   }
 
@@ -6230,7 +6261,6 @@ class MBoxNonStrictThis : public MUnaryInstruction, public BoxPolicy<0>::Data {
   MBoxNonStrictThis(MDefinition* def, JSObject* globalThis)
       : MUnaryInstruction(classOpcode, def), globalThis_(globalThis) {
     setResultType(MIRType::Object);
-    setMovable();
   }
 
  public:
@@ -9392,52 +9422,6 @@ class MGuardFunctionScript : public MUnaryInstruction,
   }
 };
 
-// Guard on an object's group, inclusively or exclusively.
-class MGuardObjectGroup : public MUnaryInstruction,
-                          public SingleObjectPolicy::Data {
-  CompilerObjectGroup group_;
-  bool bailOnEquality_;
-
-  MGuardObjectGroup(MDefinition* obj, ObjectGroup* group, bool bailOnEquality)
-      : MUnaryInstruction(classOpcode, obj),
-        group_(group),
-        bailOnEquality_(bailOnEquality) {
-    setGuard();
-    setMovable();
-    setResultType(MIRType::Object);
-  }
-
- public:
-  INSTRUCTION_HEADER(GuardObjectGroup)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, object))
-
-  const ObjectGroup* group() const { return group_; }
-  bool bailOnEquality() const { return bailOnEquality_; }
-  bool congruentTo(const MDefinition* ins) const override {
-    if (!ins->isGuardObjectGroup()) {
-      return false;
-    }
-    if (group() != ins->toGuardObjectGroup()->group()) {
-      return false;
-    }
-    if (bailOnEquality() != ins->toGuardObjectGroup()->bailOnEquality()) {
-      return false;
-    }
-    return congruentIfOperandsEqual(ins);
-  }
-  AliasSet getAliasSet() const override {
-    return AliasSet::Load(AliasSet::ObjectFields);
-  }
-  AliasType mightAlias(const MDefinition* def) const override {
-    // These instructions don't modify the group only the shape.
-    if (def->isAddAndStoreSlot() || def->isAllocateAndStoreSlot()) {
-      return AliasType::NoAlias;
-    }
-    return AliasType::MayAlias;
-  };
-};
-
 // Guard on an object's identity, inclusively or exclusively.
 class MGuardObjectIdentity : public MBinaryInstruction,
                              public SingleObjectPolicy::Data {
@@ -9753,7 +9737,7 @@ class MFunctionEnvironment : public MUnaryInstruction,
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
-// Allocate a new LexicalEnvironmentObject.
+// Allocate a new BlockLexicalEnvironmentObject.
 class MNewLexicalEnvironmentObject : public MUnaryInstruction,
                                      public SingleObjectPolicy::Data {
   CompilerGCPointer<LexicalScope*> scope_;
@@ -9773,7 +9757,7 @@ class MNewLexicalEnvironmentObject : public MUnaryInstruction,
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
-// Allocate a new LexicalEnvironmentObject from existing one
+// Allocate a new BlockLexicalEnvironmentObject from an existing one.
 class MCopyLexicalEnvironmentObject : public MUnaryInstruction,
                                       public SingleObjectPolicy::Data {
   bool copySlots_;
@@ -10905,9 +10889,9 @@ class MPostWriteElementBarrier
 };
 
 class MNewNamedLambdaObject : public MNullaryInstruction {
-  CompilerGCPointer<LexicalEnvironmentObject*> templateObj_;
+  CompilerGCPointer<NamedLambdaObject*> templateObj_;
 
-  explicit MNewNamedLambdaObject(LexicalEnvironmentObject* templateObj)
+  explicit MNewNamedLambdaObject(NamedLambdaObject* templateObj)
       : MNullaryInstruction(classOpcode), templateObj_(templateObj) {
     setResultType(MIRType::Object);
   }
@@ -10916,7 +10900,7 @@ class MNewNamedLambdaObject : public MNullaryInstruction {
   INSTRUCTION_HEADER(NewNamedLambdaObject)
   TRIVIAL_NEW_WRAPPERS
 
-  LexicalEnvironmentObject* templateObj() { return templateObj_; }
+  NamedLambdaObject* templateObj() { return templateObj_; }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
@@ -12493,29 +12477,25 @@ class MWasmStore : public MVariadicInstruction, public NoTypePolicy::Data {
 };
 
 class MAsmJSMemoryAccess {
-  uint32_t offset_;
   Scalar::Type accessType_;
   bool needsBoundsCheck_;
 
  public:
   explicit MAsmJSMemoryAccess(Scalar::Type accessType)
-      : offset_(0), accessType_(accessType), needsBoundsCheck_(true) {
+      : accessType_(accessType), needsBoundsCheck_(true) {
     MOZ_ASSERT(accessType != Scalar::Uint8Clamped);
   }
 
-  uint32_t offset() const { return offset_; }
-  uint32_t endOffset() const { return offset() + byteSize(); }
   Scalar::Type accessType() const { return accessType_; }
   unsigned byteSize() const { return TypedArrayElemSize(accessType()); }
   bool needsBoundsCheck() const { return needsBoundsCheck_; }
 
   wasm::MemoryAccessDesc access() const {
-    return wasm::MemoryAccessDesc(accessType_, Scalar::byteSize(accessType_),
-                                  offset_, wasm::BytecodeOffset());
+    return wasm::MemoryAccessDesc(accessType_, Scalar::byteSize(accessType_), 0,
+                                  wasm::BytecodeOffset());
   }
 
   void removeBoundsCheck() { needsBoundsCheck_ = false; }
-  void setOffset(uint32_t o) { offset_ = o; }
 };
 
 class MAsmJSLoadHeap
@@ -13066,7 +13046,9 @@ class MWasmStackResultArea : public MNullaryInstruction {
       MOZ_ASSERT(initialized());
       return type_;
     }
-    uint32_t endOffset() const { return offset() + MIRTypeToSize(type()); }
+    uint32_t endOffset() const {
+      return offset() + wasm::MIRTypeToABIResultSize(type());
+    }
   };
 
  private:

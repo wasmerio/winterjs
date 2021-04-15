@@ -7,9 +7,9 @@ extern crate cc;
 extern crate walkdir;
 
 use std::env;
-use std::path::{Path, PathBuf};
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
 use walkdir::WalkDir;
@@ -89,17 +89,10 @@ fn find_make() -> OsString {
 }
 
 fn cc_flags() -> Vec<&'static str> {
-    let mut result = vec![
-        "-DRUST_BINDGEN",
-        "-DSTATIC_JS_API",
-    ];
+    let mut result = vec!["-DRUST_BINDGEN", "-DSTATIC_JS_API"];
 
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-        result.extend(&[
-            "-DJS_GC_ZEAL",
-            "-DDEBUG",
-            "-DJS_DEBUG",
-        ]);
+        result.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
     }
 
     let target = env::var("TARGET").unwrap();
@@ -151,7 +144,9 @@ fn build_jsapi(build_dir: &Path) {
 
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from("-I");
-    cppflags.push(OsString::from(encoding_c_mem_include_dir.replace("\\", "/")));
+    cppflags.push(OsString::from(
+        encoding_c_mem_include_dir.replace("\\", "/"),
+    ));
     cppflags.push(" ");
     cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
@@ -176,10 +171,16 @@ fn build_jsapi(build_dir: &Path) {
         .expect("Failed to run `make`");
     assert!(result.success());
 
-    println!("cargo:rustc-link-search=native={}/js/src/build", build_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}/js/src/build",
+        build_dir.display()
+    );
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
-        println!("cargo:rustc-link-search=native={}/dist/bin", build_dir.display());
+        println!(
+            "cargo:rustc-link-search=native={}/dist/bin",
+            build_dir.display()
+        );
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
@@ -196,7 +197,6 @@ fn build_jsapi(build_dir: &Path) {
         println!("cargo:rustc-link-lib=stdc++");
     }
 }
-
 
 fn build_jsglue(build_dir: &Path) {
     let mut build = cc::Build::new();
@@ -250,9 +250,12 @@ fn build_jsapi_bindings(build_dir: &Path) {
         .with_codegen_config(config)
         .rustfmt_bindings(true)
         .rustfmt_configuration_file(rustfmt_config)
-        .clang_arg("-I").clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
-        .clang_arg("-I").clang_arg(build_dir.join("js/src").to_str().expect("UTF-8"))
-        .clang_arg("-x").clang_arg("c++");
+        .clang_arg("-I")
+        .clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
+        .clang_arg("-I")
+        .clang_arg(build_dir.join("js/src").to_str().expect("UTF-8"))
+        .clang_arg("-x")
+        .clang_arg("c++");
 
     let target = env::var("TARGET").unwrap();
     if target.contains("windows") {
@@ -276,9 +279,18 @@ fn build_jsapi_bindings(build_dir: &Path) {
     }
 
     builder = builder.clang_arg("-include");
-    builder = builder.clang_arg(build_dir.join("js/src/js-confdefs.h").to_str().expect("UTF-8"));
+    builder = builder.clang_arg(
+        build_dir
+            .join("js/src/js-confdefs.h")
+            .to_str()
+            .expect("UTF-8"),
+    );
 
-    println!("Generting bindings {:?} {}.", builder.command_line_flags(), bindgen::clang_version().full);
+    println!(
+        "Generting bindings {:?} {}.",
+        builder.command_line_flags(),
+        bindgen::clang_version().full
+    );
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
         builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
@@ -308,10 +320,12 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.module_raw_line(module, raw_line);
     }
 
-    let bindings = builder.generate()
+    let bindings = builder
+        .generate()
         .expect("Should generate JSAPI bindings OK");
 
-    bindings.write_to_file(build_dir.join("jsapi.rs"))
+    bindings
+        .write_to_file(build_dir.join("jsapi.rs"))
         .expect("Should write bindings to file OK");
 }
 
@@ -326,11 +340,7 @@ const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &[
 
 /// Types which we want to generate bindings for (and every other type they
 /// transitively use).
-const WHITELIST_TYPES: &'static [&'static str] = &[
-    "JS.*",
-    "js::.*",
-    "mozilla::.*",
-];
+const WHITELIST_TYPES: &'static [&'static str] = &["JS.*", "js::.*", "mozilla::.*"];
 
 /// Global variables we want to generate bindings to.
 const WHITELIST_VARS: &'static [&'static str] = &[
@@ -348,7 +358,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
 
 /// Functions we want to generate bindings to.
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
-   "ExceptionStackOrNull",
+    "ExceptionStackOrNull",
     "glue::.*",
     "JS::.*",
     "js::.*",
@@ -416,6 +426,8 @@ fn ignore(path: &Path) -> bool {
     let ignored_extensions = ["pyc", "o", "so", "dll", "dylib"];
 
     path.extension().map_or(false, |extension| {
-        ignored_extensions.iter().any(|&ignored| extension == ignored)
+        ignored_extensions
+            .iter()
+            .any(|&ignored| extension == ignored)
     })
 }

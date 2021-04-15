@@ -25,6 +25,7 @@
 
 #include "jsnum.h"
 
+#include "jit/Disassemble.h"
 #include "jit/ExecutableAllocator.h"
 #ifdef JS_ION_PERF
 #  include "jit/PerfSpewer.h"
@@ -747,8 +748,9 @@ bool LazyStubTier::createMany(const Uint32Vector& funcExportIndices,
   size_t interpRangeIndex;
   uint8_t* codePtr = nullptr;
   if (!segment->addStubs(codeLength, funcExportIndices, funcExports, codeRanges,
-                         &codePtr, &interpRangeIndex))
+                         &codePtr, &interpRangeIndex)) {
     return false;
+  }
 
   masm.executableCopy(codePtr);
   PatchDebugSymbolicAccesses(codePtr, masm);
@@ -808,8 +810,9 @@ bool LazyStubTier::createOne(uint32_t funcExportIndex,
     return false;
   }
 
-  // This happens on the executing thread (called via GetInterpEntry), so no
-  // need to flush the icaches on all the threads.
+  // This happens on the executing thread (when createOne is called from
+  // GetInterpEntryAndEnsureStubs), so no need to flush the icaches on all the
+  // threads.
   bool flushAllThreadIcaches = false;
 
   size_t stubSegmentIndex;
@@ -1149,10 +1152,9 @@ const wasm::WasmTryNote* CodeTier::lookupWasmTryNote(const void* pc) const {
 
   // We find the first hit (there may be multiple) to obtain the innermost
   // handler, which is why we cannot binary search here.
-  for (size_t i = 0; i < tryNotes.length(); i++) {
-    const WasmTryNote& tn = tryNotes[i];
-    if (target >= tn.begin && target < tn.end) {
-      return &tryNotes[i];
+  for (const auto& tryNote : tryNotes) {
+    if (target >= tryNote.begin && target < tryNote.end) {
+      return &tryNote;
     }
   }
 
@@ -1323,8 +1325,9 @@ const CallSite* Code::lookupCallSite(void* returnAddress) const {
 
     size_t match;
     if (BinarySearch(CallSiteRetAddrOffset(metadata(t).callSites), lowerBound,
-                     upperBound, target, &match))
+                     upperBound, target, &match)) {
       return &metadata(t).callSites[match];
+    }
   }
 
   return nullptr;
@@ -1534,6 +1537,65 @@ uint8_t* Code::serialize(uint8_t* cursor, const LinkData& linkData) const {
 
   *out = code;
   return cursor;
+}
+
+void Code::disassemble(JSContext* cx, Tier tier, int kindSelection,
+                       PrintCallback printString) const {
+  const MetadataTier& metadataTier = metadata(tier);
+  const CodeTier& codeTier = this->codeTier(tier);
+  const ModuleSegment& segment = codeTier.segment();
+
+  for (const CodeRange& range : metadataTier.codeRanges) {
+    if (kindSelection & (1 << range.kind())) {
+      MOZ_ASSERT(range.begin() < segment.length());
+      MOZ_ASSERT(range.end() < segment.length());
+
+      const char* kind;
+      char kindbuf[128];
+      switch (range.kind()) {
+        case CodeRange::Function:
+          kind = "Function";
+          break;
+        case CodeRange::InterpEntry:
+          kind = "InterpEntry";
+          break;
+        case CodeRange::JitEntry:
+          kind = "JitEntry";
+          break;
+        case CodeRange::ImportInterpExit:
+          kind = "ImportInterpExit";
+          break;
+        case CodeRange::ImportJitExit:
+          kind = "ImportJitExit";
+          break;
+        default:
+          SprintfLiteral(kindbuf, "CodeRange::Kind(%d)", range.kind());
+          kind = kindbuf;
+          break;
+      }
+      const char* separator =
+          "\n--------------------------------------------------\n";
+      // The buffer is quite large in order to accomodate mangled C++ names;
+      // lengths over 3500 have been observed in the wild.
+      char buf[4096];
+      if (range.hasFuncIndex()) {
+        const char* funcName = "(unknown)";
+        UTF8Bytes namebuf;
+        if (metadata().getFuncNameStandalone(range.funcIndex(), &namebuf) &&
+            namebuf.append('\0')) {
+          funcName = namebuf.begin();
+        }
+        SprintfLiteral(buf, "%sKind = %s, index = %d, name = %s:\n", separator,
+                       kind, range.funcIndex(), funcName);
+      } else {
+        SprintfLiteral(buf, "%sKind = %s\n", separator, kind);
+      }
+      printString(buf);
+
+      uint8_t* theCode = segment.base() + range.begin();
+      jit::Disassemble(theCode, range.end() - range.begin(), printString);
+    }
+  }
 }
 
 void wasm::PatchDebugSymbolicAccesses(uint8_t* codeBase, MacroAssembler& masm) {

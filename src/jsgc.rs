@@ -2,13 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::JS;
 use jsapi::jsid;
 use jsapi::JSFunction;
 use jsapi::JSObject;
 use jsapi::JSScript;
 use jsapi::JSString;
 use jsapi::JSTracer;
+use jsapi::JS;
 use jsid::JSID_VOID;
 
 use std::cell::UnsafeCell;
@@ -25,42 +25,58 @@ pub trait RootKind {
 
 impl RootKind for *mut JSObject {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Object }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Object
+    }
 }
 
 impl RootKind for *mut JSFunction {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Object }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Object
+    }
 }
 
 impl RootKind for *mut JSString {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::String }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::String
+    }
 }
 
 impl RootKind for *mut JS::Symbol {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Symbol }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Symbol
+    }
 }
 
 impl RootKind for *mut JSScript {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Script }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Script
+    }
 }
 
 impl RootKind for jsid {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Id }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Id
+    }
 }
 
 impl RootKind for JS::Value {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Value }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Value
+    }
 }
 
 impl RootKind for JS::PropertyDescriptor {
     #[inline(always)]
-    fn rootKind() -> JS::RootKind { JS::RootKind::Traceable }
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Traceable
+    }
 }
 
 // Annoyingly, bindgen can't cope with SM's use of templates, so we have to roll our own.
@@ -84,50 +100,62 @@ pub trait GCMethods {
 }
 
 impl GCMethods for jsid {
-    unsafe fn initial() -> jsid { JSID_VOID }
+    unsafe fn initial() -> jsid {
+        JSID_VOID
+    }
     unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
 
 impl GCMethods for *mut JSObject {
-    unsafe fn initial() -> *mut JSObject { ptr::null_mut() }
-    unsafe fn post_barrier(v: *mut *mut JSObject,
-                           prev: *mut JSObject, next: *mut JSObject) {
+    unsafe fn initial() -> *mut JSObject {
+        ptr::null_mut()
+    }
+    unsafe fn post_barrier(v: *mut *mut JSObject, prev: *mut JSObject, next: *mut JSObject) {
         JS::HeapObjectWriteBarriers(v, prev, next);
     }
 }
 
 impl GCMethods for *mut JSString {
-    unsafe fn initial() -> *mut JSString { ptr::null_mut() }
+    unsafe fn initial() -> *mut JSString {
+        ptr::null_mut()
+    }
     unsafe fn post_barrier(v: *mut *mut JSString, prev: *mut JSString, next: *mut JSString) {
         JS::HeapStringWriteBarriers(v, prev, next);
     }
 }
 
 impl GCMethods for *mut JSScript {
-    unsafe fn initial() -> *mut JSScript { ptr::null_mut() }
+    unsafe fn initial() -> *mut JSScript {
+        ptr::null_mut()
+    }
     unsafe fn post_barrier(v: *mut *mut JSScript, prev: *mut JSScript, next: *mut JSScript) {
         JS::HeapScriptWriteBarriers(v, prev, next);
     }
 }
 
 impl GCMethods for *mut JSFunction {
-    unsafe fn initial() -> *mut JSFunction { ptr::null_mut() }
-    unsafe fn post_barrier(v: *mut *mut JSFunction,
-                           prev: *mut JSFunction, next: *mut JSFunction) {
+    unsafe fn initial() -> *mut JSFunction {
+        ptr::null_mut()
+    }
+    unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
         JS::HeapObjectWriteBarriers(mem::transmute(v), mem::transmute(prev), mem::transmute(next));
     }
 }
 
 impl GCMethods for JS::Value {
-    unsafe fn initial() -> JS::Value { JS::Value::default() }
+    unsafe fn initial() -> JS::Value {
+        JS::Value::default()
+    }
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValueWriteBarriers(v, &prev, &next);
     }
 }
 
 impl GCMethods for JS::PropertyDescriptor {
-    unsafe fn initial() -> JS::PropertyDescriptor { JS::PropertyDescriptor::default() }
-    unsafe fn post_barrier(_ : *mut JS::PropertyDescriptor, _ : JS::PropertyDescriptor, _ : JS::PropertyDescriptor) {}
+    unsafe fn initial() -> JS::PropertyDescriptor {
+        JS::PropertyDescriptor::default()
+    }
+    unsafe fn post_barrier(_: *mut JS::PropertyDescriptor, _: JS::PropertyDescriptor, _: JS::PropertyDescriptor) {}
 }
 
 /// Heap values encapsulate GC concerns of an on-heap reference to a JS
@@ -159,7 +187,8 @@ impl<T: GCMethods + Copy> Heap<T> {
     /// Using boxed Heap value guarantees that the underlying Heap value will
     /// not be moved when constructed.
     pub fn boxed(v: T) -> Box<Heap<T>>
-        where Heap<T>: Default
+    where
+        Heap<T>: Default,
     {
         let boxed = Box::new(Heap::default());
         boxed.set(v);
@@ -202,20 +231,17 @@ impl<T: GCMethods + Copy> Heap<T> {
 }
 
 impl<T> Default for Heap<*mut T>
-    where *mut T: GCMethods + Copy
+where
+    *mut T: GCMethods + Copy,
 {
     fn default() -> Heap<*mut T> {
-        Heap {
-            ptr: UnsafeCell::new(ptr::null_mut())
-        }
+        Heap { ptr: UnsafeCell::new(ptr::null_mut()) }
     }
 }
 
 impl Default for Heap<JS::Value> {
     fn default() -> Heap<JS::Value> {
-        Heap {
-            ptr: UnsafeCell::new(JS::Value::default())
-        }
+        Heap { ptr: UnsafeCell::new(JS::Value::default()) }
     }
 }
 
@@ -270,7 +296,7 @@ pub struct CustomAutoRooterVFTable {
     pub padding: [usize; 1],
     #[cfg(not(windows))]
     pub padding: [usize; 2],
-    pub trace: unsafe extern "C" fn (this: *mut c_void, trc: *mut JSTracer),
+    pub trace: unsafe extern "C" fn(this: *mut c_void, trc: *mut JSTracer),
 }
 
 impl CustomAutoRooterVFTable {

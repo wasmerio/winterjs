@@ -17,11 +17,11 @@
 #include "js/Class.h"
 #include "js/ErrorReport.h"
 #include "js/Exception.h"
+#include "js/GCAPI.h"
 #include "js/HeapAPI.h"
-#include "js/Object.h"              // JS::GetClass
-#include "js/shadow/Function.h"     // JS::shadow::Function
-#include "js/shadow/Object.h"       // JS::shadow::Object
-#include "js/shadow/ObjectGroup.h"  // JS::shadow::ObjectGroup
+#include "js/Object.h"           // JS::GetClass
+#include "js/shadow/Function.h"  // JS::shadow::Function
+#include "js/shadow/Object.h"    // JS::shadow::Object
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
 
@@ -42,21 +42,6 @@ extern JS_FRIEND_API JSObject* JS_FindCompilationScope(JSContext* cx,
                                                        JS::HandleObject obj);
 
 extern JS_FRIEND_API JSFunction* JS_GetObjectFunction(JSObject* obj);
-
-/**
- * Initialize the prototype of a global object which hasn't been used anywhere.
- *
- * For other objects the correct prototype is typically passed when the object
- * is allocated, but that doesn't work for the global object because the global
- * is created before other objects are allocated. JS_SplicePrototype is a way to
- * break this cycle.
- *
- * This is more efficient than JS_SetPrototype because it does not set the
- * uncacheable-proto flag on the shape.
- */
-extern JS_FRIEND_API bool JS_SplicePrototype(JSContext* cx,
-                                             JS::HandleObject global,
-                                             JS::HandleObject proto);
 
 /**
  * Allocate an object in exactly the same way as JS_NewObjectWithGivenProto, but
@@ -167,8 +152,8 @@ extern JS_FRIEND_API bool ForceLexicalInitialization(JSContext* cx,
 
 /**
  * Whether we are poisoning unused/released data for error detection. Governed
- * by the JS_GC_POISONING #ifdef as well as the $JSGC_DISABLE_POISONING
- * environment variable.
+ * by the JS_GC_ALLOW_EXTRA_POISONING #ifdef as well as the
+ * $JSGC_EXTRA_POISONING environment variable.
  */
 extern JS_FRIEND_API int IsGCPoisoning();
 
@@ -364,7 +349,7 @@ JS_FRIEND_API bool UninlinedIsCrossCompartmentWrapper(const JSObject* obj);
 // getting a wrapper's realm usually doesn't make sense.
 static MOZ_ALWAYS_INLINE JS::Realm* GetNonCCWObjectRealm(JSObject* obj) {
   MOZ_ASSERT(!js::UninlinedIsCrossCompartmentWrapper(obj));
-  return reinterpret_cast<JS::shadow::Object*>(obj)->group->realm;
+  return reinterpret_cast<JS::shadow::Object*>(obj)->shape->base->realm;
 }
 
 JS_FRIEND_API void AssertSameCompartment(JSContext* cx, JSObject* obj);
@@ -594,17 +579,13 @@ static MOZ_ALWAYS_INLINE void SET_JITINFO(JSFunction* func,
 
 // All strings stored in jsids are atomized, but are not necessarily property
 // names.
-static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id) {
-  return JSID_IS_STRING(id);
-}
+static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id) { return id.isAtom(); }
 
 static MOZ_ALWAYS_INLINE bool JSID_IS_ATOM(jsid id, JSAtom* atom) {
-  return id == JS::PropertyKey::fromNonIntAtom(atom);
+  return id.isAtom(atom);
 }
 
-static MOZ_ALWAYS_INLINE JSAtom* JSID_TO_ATOM(jsid id) {
-  return (JSAtom*)JSID_TO_STRING(id);
-}
+static MOZ_ALWAYS_INLINE JSAtom* JSID_TO_ATOM(jsid id) { return id.toAtom(); }
 
 static_assert(sizeof(jsid) == sizeof(void*));
 

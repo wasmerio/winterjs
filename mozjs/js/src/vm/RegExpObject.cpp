@@ -49,6 +49,8 @@ using mozilla::PodCopy;
 
 using JS::AutoCheckCannotGC;
 
+static_assert(RegExpFlag::HasIndices == REGEXP_HASINDICES_FLAG,
+              "self-hosted JS and /d flag bits must agree");
 static_assert(RegExpFlag::Global == REGEXP_GLOBAL_FLAG,
               "self-hosted JS and /g flag bits must agree");
 static_assert(RegExpFlag::IgnoreCase == REGEXP_IGNORECASE_FLAG,
@@ -120,6 +122,10 @@ RegExpShared* RegExpObject::getShared(JSContext* cx,
 
 /* static */
 bool RegExpObject::isOriginalFlagGetter(JSNative native, RegExpFlags* mask) {
+  if (native == regexp_hasIndices) {
+    *mask = RegExpFlag::HasIndices;
+    return true;
+  }
   if (native == regexp_global) {
     *mask = RegExpFlag::Global;
     return true;
@@ -465,6 +471,9 @@ JSLinearString* RegExpObject::toString(JSContext* cx,
   sb.infallibleAppend('/');
 
   // Steps 5-7.
+  if (obj->hasIndices() && !sb.append('d')) {
+    return nullptr;
+  }
   if (obj->global() && !sb.append('g')) {
     return nullptr;
   }
@@ -591,10 +600,14 @@ bool RegExpShared::compileIfNecessary(JSContext* cx,
     // We start by interpreting regexps, then compile them once they are
     // sufficiently hot. For very long input strings, we tier up eagerly.
     codeKind = RegExpShared::CodeKind::Bytecode;
-    if (IsNativeRegExpEnabled() &&
-        (re->markedForTierUp() || input->length() > 1000)) {
+    if (re->markedForTierUp() || input->length() > 1000) {
       codeKind = RegExpShared::CodeKind::Jitcode;
     }
+  }
+
+  // Fall back to bytecode if native codegen is not available.
+  if (!IsNativeRegExpEnabled() && codeKind == RegExpShared::CodeKind::Jitcode) {
+    codeKind = RegExpShared::CodeKind::Bytecode;
   }
 
   bool needsCompile = false;
@@ -669,6 +682,14 @@ RegExpRunStatus RegExpShared::execute(JSContext* cx,
           return RegExpRunStatus_Error;
         }
         if (interruptRetries++ < maxInterruptRetries) {
+          // The initial execution may have been interpreted, or the
+          // interrupt may have triggered a GC that discarded jitcode.
+          // To maximize the chance of succeeding before being
+          // interrupted again, we want to ensure we are compiled.
+          if (!compileIfNecessary(cx, re, input,
+                                  RegExpShared::CodeKind::Jitcode)) {
+            return RegExpRunStatus_Error;
+          }
           continue;
         }
       }
@@ -837,12 +858,16 @@ size_t RegExpShared::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
 /* RegExpRealm */
 
 RegExpRealm::RegExpRealm()
-    : matchResultTemplateObject_(nullptr),
-      optimizableRegExpPrototypeShape_(nullptr),
-      optimizableRegExpInstanceShape_(nullptr) {}
+    : optimizableRegExpPrototypeShape_(nullptr),
+      optimizableRegExpInstanceShape_(nullptr) {
+  for (auto& templateObj : matchResultTemplateObjects_) {
+    templateObj = nullptr;
+  }
+}
 
-ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
-  MOZ_ASSERT(!matchResultTemplateObject_);
+ArrayObject* RegExpRealm::createMatchResultTemplateObject(
+    JSContext* cx, ResultTemplateKind kind) {
+  MOZ_ASSERT(!matchResultTemplateObjects_[kind]);
 
   /* Create template array object */
   RootedArrayObject templateObject(
@@ -852,12 +877,27 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
     return nullptr;
   }
 
+  if (kind == ResultTemplateKind::Indices) {
+    /* The |indices| array only has a |groups| property. */
+    RootedValue groupsVal(cx, UndefinedValue());
+    if (!NativeDefineDataProperty(cx, templateObject, cx->names().groups,
+                                  groupsVal, JSPROP_ENUMERATE)) {
+      return nullptr;
+    }
+    MOZ_ASSERT(templateObject->lastProperty()->slot() == IndicesGroupsSlot);
+
+    matchResultTemplateObjects_[kind].set(templateObject);
+    return matchResultTemplateObjects_[kind];
+  }
+
   /* Set dummy index property */
   RootedValue index(cx, Int32Value(0));
   if (!NativeDefineDataProperty(cx, templateObject, cx->names().index, index,
                                 JSPROP_ENUMERATE)) {
     return nullptr;
   }
+  MOZ_ASSERT(templateObject->lastProperty()->slot() ==
+             MatchResultObjectIndexSlot);
 
   /* Set dummy input property */
   RootedValue inputVal(cx, StringValue(cx->runtime()->emptyString));
@@ -865,6 +905,8 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
                                 JSPROP_ENUMERATE)) {
     return nullptr;
   }
+  MOZ_ASSERT(templateObject->lastProperty()->slot() ==
+             MatchResultObjectInputSlot);
 
   /* Set dummy groups property */
   RootedValue groupsVal(cx, UndefinedValue());
@@ -872,29 +914,31 @@ ArrayObject* RegExpRealm::createMatchResultTemplateObject(JSContext* cx) {
                                 groupsVal, JSPROP_ENUMERATE)) {
     return nullptr;
   }
+  MOZ_ASSERT(templateObject->lastProperty()->slot() ==
+             MatchResultObjectGroupsSlot);
 
-  // Make sure that the properties are in the right slots.
-#ifdef DEBUG
-  Shape* groupsShape = templateObject->lastProperty();
-  MOZ_ASSERT(groupsShape->slot() == MatchResultObjectGroupsSlot &&
-             groupsShape->propidRef() == NameToId(cx->names().groups));
-  Shape* inputShape = groupsShape->previous().get();
-  MOZ_ASSERT(inputShape->slot() == MatchResultObjectInputSlot &&
-             inputShape->propidRef() == NameToId(cx->names().input));
-  Shape* indexShape = inputShape->previous().get();
-  MOZ_ASSERT(indexShape->slot() == MatchResultObjectIndexSlot &&
-             indexShape->propidRef() == NameToId(cx->names().index));
-#endif
+  if (kind == ResultTemplateKind::WithIndices) {
+    /* Set dummy indices property */
+    RootedValue indicesVal(cx, UndefinedValue());
+    if (!NativeDefineDataProperty(cx, templateObject, cx->names().indices,
+                                  indicesVal, JSPROP_ENUMERATE)) {
+      return nullptr;
+    }
+    MOZ_ASSERT(templateObject->lastProperty()->slot() ==
+               MatchResultObjectIndicesSlot);
+  }
 
-  matchResultTemplateObject_.set(templateObject);
+  matchResultTemplateObjects_[kind].set(templateObject);
 
-  return matchResultTemplateObject_;
+  return matchResultTemplateObjects_[kind];
 }
 
 void RegExpRealm::traceWeak(JSTracer* trc) {
-  if (matchResultTemplateObject_) {
-    TraceWeakEdge(trc, &matchResultTemplateObject_,
-                  "RegExpRealm::matchResultTemplateObject_");
+  for (auto& templateObject : matchResultTemplateObjects_) {
+    if (templateObject) {
+      TraceWeakEdge(trc, &templateObject,
+                    "RegExpRealm::matchResultTemplateObject_");
+    }
   }
 
   if (optimizableRegExpPrototypeShape_) {
@@ -940,9 +984,9 @@ RegExpZone::RegExpZone(Zone* zone) : set_(zone, zone) {}
 
 JSObject* js::CloneRegExpObject(JSContext* cx, Handle<RegExpObject*> regex) {
   // Unlike RegExpAlloc, all clones must use |regex|'s group.
-  RootedObjectGroup group(cx, regex->group());
+  Rooted<TaggedProto> proto(cx, regex->staticPrototype());
   Rooted<RegExpObject*> clone(
-      cx, NewObjectWithGroup<RegExpObject>(cx, group, GenericObject));
+      cx, NewObjectWithGivenTaggedProto<RegExpObject>(cx, proto));
   if (!clone) {
     return nullptr;
   }
@@ -972,6 +1016,9 @@ static bool ParseRegExpFlags(const CharT* chars, size_t length,
   for (size_t i = 0; i < length; i++) {
     uint8_t flag;
     switch (chars[i]) {
+      case 'd':
+        flag = RegExpFlag::HasIndices;
+        break;
       case 'g':
         flag = RegExpFlag::Global;
         break;

@@ -206,10 +206,6 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for Shape");
   shapePreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::Shape);
 
-  JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for ObjectGroup");
-  objectGroupPreBarrierOffset_ =
-      generatePreBarrier(cx, masm, MIRType::ObjectGroup);
-
   JitSpew(JitSpew_Codegen, "# Emitting free stub");
   generateFreeStub(masm);
 
@@ -1206,22 +1202,21 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
   }
 
-  if (mir->optimizationInfo().licmEnabled()) {
+  // LICM can hoist instructions from conditional branches and
+  // trigger bailouts. Disable it if bailing out of a hoisted
+  // instruction has previously invalidated this script.
+  if (mir->optimizationInfo().licmEnabled() &&
+      !mir->outerInfo().hadLICMInvalidation()) {
     AutoTraceLog log(logger, TraceLogger_LICM);
-    // LICM can hoist instructions from conditional branches and
-    // trigger bailouts. Disable it if bailing out of a hoisted
-    // instruction has previously invalidated this script.
-    if (!mir->outerInfo().hadLICMInvalidation()) {
-      JitSpewCont(JitSpew_LICM, "\n");
-      if (!LICM(mir, graph)) {
-        return false;
-      }
-      gs.spewPass("LICM");
-      AssertExtendedGraphCoherency(graph);
+    JitSpewCont(JitSpew_LICM, "\n");
+    if (!LICM(mir, graph)) {
+      return false;
+    }
+    gs.spewPass("LICM");
+    AssertExtendedGraphCoherency(graph);
 
-      if (mir->shouldCancel("LICM")) {
-        return false;
-      }
+    if (mir->shouldCancel("LICM")) {
+      return false;
     }
   }
 
@@ -1382,7 +1377,8 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
   }
 
-  if (mir->optimizationInfo().instructionReorderingEnabled()) {
+  if (mir->optimizationInfo().instructionReorderingEnabled() &&
+      !mir->outerInfo().hadReorderingBailout()) {
     AutoTraceLog log(logger, TraceLogger_ReorderInstructions);
     if (!ReorderInstructions(graph)) {
       return false;
@@ -1586,36 +1582,6 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
   return GenerateCode(mir, lir);
 }
 
-static void TrackIonAbort(JSContext* cx, JSScript* script, jsbytecode* pc,
-                          const char* message) {
-  if (!cx->runtime()->jitRuntime()->isOptimizationTrackingEnabled(
-          cx->runtime())) {
-    return;
-  }
-
-  // Only bother tracking aborts of functions we're attempting to
-  // Ion-compile after successfully running in Baseline.
-  if (!script->hasBaselineScript()) {
-    return;
-  }
-
-  JitcodeGlobalTable* table =
-      cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-  void* ptr = script->baselineScript()->method()->raw();
-
-  // If the frame lookup fails, don't track the abort.
-  JitcodeGlobalEntry* entry = table->lookup(ptr);
-  if (entry) {
-    entry->baselineEntry().trackIonAbort(pc, message);
-  }
-}
-
-static void TrackAndSpewIonAbort(JSContext* cx, JSScript* script,
-                                 const char* message) {
-  JitSpew(JitSpew_IonAbort, "%s", message);
-  TrackIonAbort(cx, script, script->code(), message);
-}
-
 static AbortReasonOr<WarpSnapshot*> CreateWarpSnapshot(JSContext* cx,
                                                        MIRGenerator* mirGen,
                                                        HandleScript script) {
@@ -1768,12 +1734,12 @@ static bool CheckFrame(JSContext* cx, BaselineFrame* frame) {
   // This check is to not overrun the stack.
   if (frame->isFunctionFrame()) {
     if (TooManyActualArguments(frame->numActualArgs())) {
-      TrackAndSpewIonAbort(cx, frame->script(), "too many actual arguments");
+      JitSpew(JitSpew_IonAbort, "too many actual arguments");
       return false;
     }
 
     if (TooManyFormalArguments(frame->numFormalArgs())) {
-      TrackAndSpewIonAbort(cx, frame->script(), "too many arguments");
+      JitSpew(JitSpew_IonAbort, "too many arguments");
       return false;
     }
   }
@@ -1848,7 +1814,6 @@ static bool ScriptIsTooLarge(JSContext* cx, JSScript* script) {
             "Script too large (%zu bytes) (%zu locals/args) @ %s:%u:%u",
             script->length(), numLocalsAndArgs, script->filename(),
             script->lineno(), script->column());
-    TrackIonAbort(cx, script, script->code(), "too large");
     return true;
   }
 
@@ -1862,7 +1827,7 @@ bool CanIonCompileScript(JSContext* cx, JSScript* script) {
 
   const char* reason = nullptr;
   if (!CanIonCompileOrInlineScript(script, &reason)) {
-    TrackAndSpewIonAbort(cx, script, reason);
+    JitSpew(JitSpew_IonAbort, "%s", reason);
     return false;
   }
 
@@ -1901,7 +1866,7 @@ static MethodStatus Compile(JSContext* cx, HandleScript script,
       JS::ProfilingCategoryPair::JS_IonCompilation);
 
   if (script->isDebuggee() || (osrFrame && osrFrame->isDebuggee())) {
-    TrackAndSpewIonAbort(cx, script, "debugging");
+    JitSpew(JitSpew_IonAbort, "debugging");
     return Method_Skipped;
   }
 
@@ -1982,14 +1947,14 @@ MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {
     InvokeState& invoke = *state.asInvoke();
 
     if (TooManyActualArguments(invoke.args().length())) {
-      TrackAndSpewIonAbort(cx, script, "too many actual args");
+      JitSpew(JitSpew_IonAbort, "too many actual args");
       ForbidCompilation(cx, script);
       return Method_CantCompile;
     }
 
     if (TooManyFormalArguments(
             invoke.args().callee().as<JSFunction>().nargs())) {
-      TrackAndSpewIonAbort(cx, script, "too many args");
+      JitSpew(JitSpew_IonAbort, "too many args");
       ForbidCompilation(cx, script);
       return Method_CantCompile;
     }

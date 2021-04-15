@@ -2,6 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# mozprocess is typically used as an alternative to the python subprocess module.
+# It has been used in many Mozilla test harnesses with some success -- but also
+# with on-going concerns, especially regarding reliability and exception handling.
+#
+# New code should try to use the standard subprocess module, and only use
+# mozprocess if absolutely necessary.
+
 from __future__ import absolute_import, print_function, unicode_literals
 
 import codecs
@@ -1270,15 +1277,24 @@ class ProcessReader(object):
         # process remaining lines to read
         while not queue.empty():
             line, callback = queue.get(False)
-            callback(line.rstrip())
+            try:
+                callback(line.rstrip())
+            except Exception:
+                traceback.print_exc()
         if timed_out:
-            self.timeout_callback()
+            try:
+                self.timeout_callback()
+            except Exception:
+                traceback.print_exc()
         if stdout_reader:
             stdout_reader.join()
         if stderr_reader:
             stderr_reader.join()
         if not timed_out:
-            self.finished_callback()
+            try:
+                self.finished_callback()
+            except Exception:
+                traceback.print_exc()
         self.debug("_read exited")
 
     def is_alive(self):

@@ -1249,14 +1249,7 @@ extern JS_PUBLIC_API bool JS_HasExtensibleLexicalEnvironment(JSObject* obj) {
 }
 
 extern JS_PUBLIC_API JSObject* JS_ExtensibleLexicalEnvironment(JSObject* obj) {
-  JSObject* lexical = nullptr;
-  if (obj->is<GlobalObject>()) {
-    lexical = JS_GlobalLexicalEnvironment(obj);
-  } else {
-    lexical = ObjectRealm::get(obj).getNonSyntacticLexicalEnvironment(obj);
-  }
-  MOZ_ASSERT(lexical);
-  return lexical;
+  return ExtensibleLexicalEnvironmentObject::forVarEnvironment(obj);
 }
 
 JS_PUBLIC_API JSObject* JS::CurrentGlobalOrNull(JSContext* cx) {
@@ -1959,7 +1952,9 @@ JS_PUBLIC_API JSObject* JS_NewObjectForConstructor(JSContext* cx,
   return CreateThis(cx, clasp, newTarget);
 }
 
-JS_PUBLIC_API bool JS_IsNative(JSObject* obj) { return obj->isNative(); }
+JS_PUBLIC_API bool JS_IsNative(JSObject* obj) {
+  return obj->is<NativeObject>();
+}
 
 JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
   JSRuntime* rt = obj->compartment()->runtimeFromAnyThread();
@@ -2919,13 +2914,13 @@ JS_PUBLIC_API bool JS_AlreadyHasOwnPropertyById(JSContext* cx, HandleObject obj,
   CHECK_THREAD(cx);
   cx->check(obj, id);
 
-  if (!obj->isNative()) {
+  if (!obj->is<NativeObject>()) {
     return js::HasOwnProperty(cx, obj, id, foundp);
   }
 
-  RootedNativeObject nativeObj(cx, &obj->as<NativeObject>());
-  Rooted<PropertyResult> prop(cx);
-  if (!NativeLookupOwnPropertyNoResolve(cx, nativeObj, id, &prop)) {
+  PropertyResult prop;
+  if (!NativeLookupOwnPropertyNoResolve(cx, &obj->as<NativeObject>(), id,
+                                        &prop)) {
     return false;
   }
   *foundp = prop.isFound();
@@ -2999,7 +2994,7 @@ JS_PUBLIC_API bool JS_DeepFreezeObject(JSContext* cx, HandleObject obj) {
   }
 
   // Walk slots in obj and if any value is a non-null object, seal it.
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     RootedNativeObject nobj(cx, &obj->as<NativeObject>());
     for (uint32_t i = 0, n = nobj->slotSpan(); i < n; ++i) {
       if (!DeepFreezeSlot(cx, nobj->getSlot(i))) {
@@ -3087,20 +3082,26 @@ JS_PUBLIC_API bool JSPropertySpec::getValue(JSContext* cx,
                                             MutableHandleValue vp) const {
   MOZ_ASSERT(!isAccessor());
 
-  if (u.value.type == JSVAL_TYPE_STRING) {
-    RootedAtom atom(cx, Atomize(cx, u.value.string, strlen(u.value.string)));
-    if (!atom) {
-      return false;
+  switch (u.value.type) {
+    case ValueWrapper::Type::String: {
+      RootedAtom atom(cx, Atomize(cx, u.value.string, strlen(u.value.string)));
+      if (!atom) {
+        return false;
+      }
+      vp.setString(atom);
+      return true;
     }
-    vp.setString(atom);
-  } else if (u.value.type == JSVAL_TYPE_DOUBLE) {
-    vp.setDouble(u.value.double_);
-  } else {
-    MOZ_ASSERT(u.value.type == JSVAL_TYPE_INT32);
-    vp.setInt32(u.value.int32);
+
+    case ValueWrapper::Type::Int32:
+      vp.setInt32(u.value.int32);
+      return true;
+
+    case ValueWrapper::Type::Double:
+      vp.setDouble(u.value.double_);
+      return true;
   }
 
-  return true;
+  MOZ_CRASH("Unexpected type");
 }
 
 bool PropertySpecNameToId(JSContext* cx, JSPropertySpec::Name name,
@@ -3181,7 +3182,7 @@ JS_PUBLIC_API bool JS::ObjectToCompletePropertyDescriptor(
 }
 
 JS_PUBLIC_API void JS_SetAllNonReservedSlotsToUndefined(JS::HandleObject obj) {
-  if (!obj->isNative()) {
+  if (!obj->is<NativeObject>()) {
     return;
   }
 
@@ -3413,7 +3414,7 @@ JS_PUBLIC_API bool JS_IsNativeFunction(JSObject* funobj, JSNative call) {
     return false;
   }
   JSFunction* fun = &funobj->as<JSFunction>();
-  return fun->isNative() && fun->native() == call;
+  return fun->isNativeFun() && fun->native() == call;
 }
 
 extern JS_PUBLIC_API bool JS_IsConstructor(JSFunction* fun) {
@@ -3599,8 +3600,7 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
   forceStrictMode_ = cx->options().strictMode();
 
   // Certain modes of operation disallow syntax parsing in general.
-  forceFullParse_ = cx->realm()->behaviors().disableLazyParsing() ||
-                    coverage::IsLCovEnabled();
+  forceFullParse_ = coverage::IsLCovEnabled();
 
   // If instrumentation is enabled in the realm, the compiler should insert the
   // requested kinds of instrumentation into all scripts.
@@ -3643,7 +3643,7 @@ JS_PUBLIC_API unsigned JS_GetScriptBaseLineNumber(JSContext* cx,
 
 JS_PUBLIC_API JSScript* JS_GetFunctionScript(JSContext* cx,
                                              HandleFunction fun) {
-  if (fun->isNative()) {
+  if (fun->isNativeFun()) {
     return nullptr;
   }
 
@@ -3723,32 +3723,6 @@ JS_PUBLIC_API void JS::SetWaitCallback(JSRuntime* rt,
   MOZ_RELEASE_ASSERT((beforeWait == nullptr) == (afterWait == nullptr));
   rt->beforeWaitCallback = beforeWait;
   rt->afterWaitCallback = afterWait;
-}
-
-JS_PUBLIC_API JSObject* JS_New(JSContext* cx, HandleObject ctor,
-                               const JS::HandleValueArray& inputArgs) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(ctor, inputArgs);
-
-  RootedValue ctorVal(cx, ObjectValue(*ctor));
-  if (!IsConstructor(ctorVal)) {
-    ReportValueError(cx, JSMSG_NOT_CONSTRUCTOR, JSDVG_IGNORE_STACK, ctorVal,
-                     nullptr);
-    return nullptr;
-  }
-
-  ConstructArgs args(cx);
-  if (!FillArgumentsFromArraylike(cx, args, inputArgs)) {
-    return nullptr;
-  }
-
-  RootedObject obj(cx);
-  if (!js::Construct(cx, ctorVal, args, ctorVal, &obj)) {
-    return nullptr;
-  }
-
-  return obj;
 }
 
 JS_PUBLIC_API bool JS_CheckForInterrupt(JSContext* cx) {
@@ -5319,11 +5293,8 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
     case JSJITCOMPILER_SPECTRE_INDEX_MASKING:
       jit::JitOptions.spectreIndexMasking = !!value;
       break;
-    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_BARRIERS:
-      jit::JitOptions.spectreObjectMitigationsBarriers = !!value;
-      break;
-    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS_MISC:
-      jit::JitOptions.spectreObjectMitigationsMisc = !!value;
+    case JSJITCOMPILER_SPECTRE_OBJECT_MITIGATIONS:
+      jit::JitOptions.spectreObjectMitigations = !!value;
       break;
     case JSJITCOMPILER_SPECTRE_STRING_MITIGATIONS:
       jit::JitOptions.spectreStringMitigations = !!value;
@@ -5733,8 +5704,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     TranscodeBuffer& buffer, JS::MutableHandleScript scriptp,
     size_t cursorIndex) {
-  Rooted<UniquePtr<XDRDecoder>> decoder(
-      cx, js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex));
+  auto decoder = js::MakeUnique<XDRDecoder>(cx, &options, buffer, cursorIndex);
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult::Throw;
@@ -5752,13 +5722,13 @@ static JS::TranscodeResult DecodeStencil(JSContext* cx,
                                          frontend::CompilationInput& input,
                                          frontend::CompilationStencil& stencil,
                                          size_t cursorIndex) {
-  XDRStencilDecoder decoder(cx, &input.options, buffer, cursorIndex);
+  XDRStencilDecoder decoder(cx, buffer, cursorIndex);
 
   if (!input.initForGlobal(cx)) {
     return JS::TranscodeResult::Throw;
   }
 
-  XDRResult res = decoder.codeStencils(input, stencil);
+  XDRResult res = decoder.codeStencil(input, stencil);
   if (res.isErr()) {
     return res.unwrapErr();
   }
@@ -5782,7 +5752,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
 
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  frontend::CompilationStencil stencil(input.get());
+  frontend::CompilationStencil stencil(nullptr);
 
   JS::TranscodeResult res =
       DecodeStencil(cx, buffer, input.get(), stencil, cursorIndex);
@@ -5791,9 +5761,8 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
   }
 
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
-  if (!frontend::InstantiateStencils(cx, input.get(), stencil, gcOutput.get(),
-                                     gcOutputForDelazification.address())) {
+  if (!frontend::InstantiateStencils(cx, input.get(), stencil,
+                                     gcOutput.get())) {
     return JS::TranscodeResult::Throw;
   }
 
@@ -5806,8 +5775,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptMaybeStencil(
 JS_PUBLIC_API JS::TranscodeResult JS::DecodeScript(
     JSContext* cx, const ReadOnlyCompileOptions& options,
     const TranscodeRange& range, JS::MutableHandleScript scriptp) {
-  Rooted<UniquePtr<XDRDecoder>> decoder(
-      cx, js::MakeUnique<XDRDecoder>(cx, &options, range));
+  auto decoder = js::MakeUnique<XDRDecoder>(cx, &options, range);
   if (!decoder) {
     ReportOutOfMemory(cx);
     return JS::TranscodeResult::Throw;
@@ -5828,7 +5796,7 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
 
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  frontend::CompilationStencil stencil(input.get());
+  frontend::CompilationStencil stencil(nullptr);
 
   JS::TranscodeResult res =
       DecodeStencil(cx, buffer, input.get(), stencil, cursorIndex);
@@ -5836,22 +5804,28 @@ JS_PUBLIC_API JS::TranscodeResult JS::DecodeScriptAndStartIncrementalEncoding(
     return res;
   }
 
-  UniquePtr<XDRIncrementalStencilEncoder> xdrEncoder;
-  if (!stencil.source->xdrEncodeStencils(cx, input.get(), stencil,
-                                         xdrEncoder)) {
-    return JS::TranscodeResult::Throw;
-  }
-
   Rooted<frontend::CompilationGCOutput> gcOutput(cx);
-  Rooted<frontend::CompilationGCOutput> gcOutputForDelazification(cx);
-  if (!frontend::InstantiateStencils(cx, input.get(), stencil, gcOutput.get(),
-                                     gcOutputForDelazification.address())) {
+  if (!frontend::InstantiateStencils(cx, input.get(), stencil,
+                                     gcOutput.get())) {
     return JS::TranscodeResult::Throw;
   }
 
   MOZ_ASSERT(gcOutput.get().script);
-  gcOutput.get().script->scriptSource()->setIncrementalEncoder(
-      xdrEncoder.release());
+
+  auto initial =
+      js::MakeUnique<frontend::ExtensibleCompilationStencil>(cx, input.get());
+  if (!initial) {
+    ReportOutOfMemory(cx);
+    return JS::TranscodeResult::Throw;
+  }
+  if (!initial->steal(cx, std::move(stencil))) {
+    return JS::TranscodeResult::Throw;
+  }
+
+  if (!gcOutput.get().script->scriptSource()->startIncrementalEncoding(
+          cx, options, std::move(initial))) {
+    return JS::TranscodeResult::Throw;
+  }
 
   scriptp.set(gcOutput.get().script);
 

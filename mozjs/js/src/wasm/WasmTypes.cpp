@@ -27,6 +27,7 @@
 #include "util/Memory.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/Warnings.h"  // js:WarnNumberASCII
+#include "wasm/TypedObject.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmJS.h"
@@ -61,8 +62,14 @@ static_assert((MaxMemoryAccessSize & (MaxMemoryAccessSize - 1)) == 0,
               "MaxMemoryAccessSize is not a power of two");
 
 #if defined(WASM_SUPPORTS_HUGE_MEMORY)
-static_assert(HugeMappedSize > MaxMemory32Bytes,
-              "Normal array buffer could be confused with huge memory");
+// TODO: We want this static_assert back, but it reqires MaxMemory32Bytes to be
+// a constant or constexpr function, not a regular function as now.
+//
+// The assert is also present in WasmMemoryObject::isHuge and
+// WasmMemoryObject::grow, so it's OK to comment out here for now.
+
+// static_assert(MaxMemory32Bytes < HugeMappedSize(),
+//               "Normal array buffer could be confused with huge memory");
 #endif
 
 Val::Val(const LitVal& val) {
@@ -83,6 +90,7 @@ Val::Val(const LitVal& val) {
     case ValType::V128:
       cell_.v128_ = val.v128();
       return;
+    case ValType::Rtt:
     case ValType::Ref:
       cell_.ref_ = val.ref();
       return;
@@ -205,6 +213,20 @@ class wasm::DebugCodegenVal {
 };
 
 template bool wasm::ToWebAssemblyValue<NoDebug>(JSContext* cx, HandleValue val,
+                                                FieldType type, void* loc,
+                                                bool mustWrite64);
+template bool wasm::ToWebAssemblyValue<DebugCodegenVal>(JSContext* cx,
+                                                        HandleValue val,
+                                                        FieldType type,
+                                                        void* loc,
+                                                        bool mustWrite64);
+template bool wasm::ToJSValue<NoDebug>(JSContext* cx, const void* src,
+                                       FieldType type, MutableHandleValue dst);
+template bool wasm::ToJSValue<DebugCodegenVal>(JSContext* cx, const void* src,
+                                               FieldType type,
+                                               MutableHandleValue dst);
+
+template bool wasm::ToWebAssemblyValue<NoDebug>(JSContext* cx, HandleValue val,
                                                 ValType type, void* loc,
                                                 bool mustWrite64);
 template bool wasm::ToWebAssemblyValue<DebugCodegenVal>(JSContext* cx,
@@ -217,6 +239,18 @@ template bool wasm::ToJSValue<DebugCodegenVal>(JSContext* cx, const void* src,
                                                ValType type,
                                                MutableHandleValue dst);
 
+template <typename Debug = NoDebug>
+bool ToWebAssemblyValue_i8(JSContext* cx, HandleValue val, int8_t* loc) {
+  bool ok = ToInt8(cx, val, loc);
+  Debug::print(*loc);
+  return ok;
+}
+template <typename Debug = NoDebug>
+bool ToWebAssemblyValue_i16(JSContext* cx, HandleValue val, int16_t* loc) {
+  bool ok = ToInt16(cx, val, loc);
+  Debug::print(*loc);
+  return ok;
+}
 template <typename Debug = NoDebug>
 bool ToWebAssemblyValue_i32(JSContext* cx, HandleValue val, int32_t* loc,
                             bool mustWrite64) {
@@ -307,20 +341,26 @@ bool ToWebAssemblyValue_funcref(JSContext* cx, HandleValue val, void** loc,
 }
 
 template <typename Debug>
-bool wasm::ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
+bool wasm::ToWebAssemblyValue(JSContext* cx, HandleValue val, FieldType type,
                               void* loc, bool mustWrite64) {
   switch (type.kind()) {
-    case ValType::I32:
+    case FieldType::I8:
+      return ToWebAssemblyValue_i8<Debug>(cx, val, (int8_t*)loc);
+    case FieldType::I16:
+      return ToWebAssemblyValue_i16<Debug>(cx, val, (int16_t*)loc);
+    case FieldType::I32:
       return ToWebAssemblyValue_i32<Debug>(cx, val, (int32_t*)loc, mustWrite64);
-    case ValType::I64:
+    case FieldType::I64:
       return ToWebAssemblyValue_i64<Debug>(cx, val, (int64_t*)loc, mustWrite64);
-    case ValType::F32:
+    case FieldType::F32:
       return ToWebAssemblyValue_f32<Debug>(cx, val, (float*)loc, mustWrite64);
-    case ValType::F64:
+    case FieldType::F64:
       return ToWebAssemblyValue_f64<Debug>(cx, val, (double*)loc, mustWrite64);
-    case ValType::V128:
+    case FieldType::V128:
       break;
-    case ValType::Ref:
+    case FieldType::Rtt:
+      break;
+    case FieldType::Ref:
 #ifdef ENABLE_WASM_FUNCTION_REFERENCES
       if (!type.isNullable() && val.isNull()) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
@@ -349,7 +389,25 @@ bool wasm::ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
                            JSMSG_WASM_BAD_VAL_TYPE);
   return false;
 }
+template <typename Debug>
+bool wasm::ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
+                              void* loc, bool mustWrite64) {
+  return wasm::ToWebAssemblyValue(cx, val, FieldType(type.packed()), loc,
+                                  mustWrite64);
+}
 
+template <typename Debug = NoDebug>
+bool ToJSValue_i8(JSContext* cx, int8_t src, MutableHandleValue dst) {
+  dst.set(Int32Value(src));
+  Debug::print(src);
+  return true;
+}
+template <typename Debug = NoDebug>
+bool ToJSValue_i16(JSContext* cx, int16_t src, MutableHandleValue dst) {
+  dst.set(Int32Value(src));
+  Debug::print(src);
+  return true;
+}
 template <typename Debug = NoDebug>
 bool ToJSValue_i32(JSContext* cx, int32_t src, MutableHandleValue dst) {
   dst.set(Int32Value(src));
@@ -394,24 +452,32 @@ bool ToJSValue_anyref(JSContext* cx, void* src, MutableHandleValue dst) {
 }
 
 template <typename Debug>
-bool wasm::ToJSValue(JSContext* cx, const void* src, ValType type,
+bool wasm::ToJSValue(JSContext* cx, const void* src, FieldType type,
                      MutableHandleValue dst) {
   switch (type.kind()) {
-    case ValType::I32:
+    case FieldType::I8:
+      return ToJSValue_i8<Debug>(cx, *reinterpret_cast<const int8_t*>(src),
+                                 dst);
+    case FieldType::I16:
+      return ToJSValue_i16<Debug>(cx, *reinterpret_cast<const int16_t*>(src),
+                                  dst);
+    case FieldType::I32:
       return ToJSValue_i32<Debug>(cx, *reinterpret_cast<const int32_t*>(src),
                                   dst);
-    case ValType::I64:
+    case FieldType::I64:
       return ToJSValue_i64<Debug>(cx, *reinterpret_cast<const int64_t*>(src),
                                   dst);
-    case ValType::F32:
+    case FieldType::F32:
       return ToJSValue_f32<Debug>(cx, *reinterpret_cast<const float*>(src),
                                   dst);
-    case ValType::F64:
+    case FieldType::F64:
       return ToJSValue_f64<Debug>(cx, *reinterpret_cast<const double*>(src),
                                   dst);
-    case ValType::V128:
+    case FieldType::V128:
       break;
-    case ValType::Ref:
+    case FieldType::Rtt:
+      break;
+    case FieldType::Ref:
       switch (type.refTypeKind()) {
         case RefType::Func:
           return ToJSValue_funcref<Debug>(
@@ -430,6 +496,11 @@ bool wasm::ToJSValue(JSContext* cx, const void* src, ValType type,
   Debug::print(nullptr);
   dst.setUndefined();
   return true;
+}
+template <typename Debug>
+bool wasm::ToJSValue(JSContext* cx, const void* src, ValType type,
+                     MutableHandleValue dst) {
+  return wasm::ToJSValue(cx, src, FieldType(type.packed()), dst);
 }
 
 void AnyRef::trace(JSTracer* trc) {
@@ -450,9 +521,9 @@ WasmValueBox* WasmValueBox::create(JSContext* cx, HandleValue val) {
   return obj;
 }
 
-bool wasm::BoxAnyRef(JSContext* cx, HandleValue val, MutableHandleAnyRef addr) {
+bool wasm::BoxAnyRef(JSContext* cx, HandleValue val, MutableHandleAnyRef result) {
   if (val.isNull()) {
-    addr.set(AnyRef::null());
+    result.set(AnyRef::null());
     return true;
   }
 
@@ -460,13 +531,13 @@ bool wasm::BoxAnyRef(JSContext* cx, HandleValue val, MutableHandleAnyRef addr) {
     JSObject* obj = &val.toObject();
     MOZ_ASSERT(!obj->is<WasmValueBox>());
     MOZ_ASSERT(obj->compartment() == cx->compartment());
-    addr.set(AnyRef::fromJSObject(obj));
+    result.set(AnyRef::fromJSObject(obj));
     return true;
   }
 
   WasmValueBox* box = WasmValueBox::create(cx, val);
   if (!box) return false;
-  addr.set(AnyRef::fromJSObject(box));
+  result.set(AnyRef::fromJSObject(box));
   return true;
 }
 
@@ -603,6 +674,8 @@ static bool IsImmediateType(ValType vt) {
           return false;
       }
       break;
+    case ValType::Rtt:
+      return false;
   }
   MOZ_CRASH("bad ValType");
 }
@@ -631,6 +704,8 @@ static unsigned EncodeImmediateType(ValType vt) {
         case RefType::TypeIndex:
           break;
       }
+      break;
+    case ValType::Rtt:
       break;
   }
   MOZ_CRASH("bad ValType");
@@ -710,17 +785,17 @@ TypeIdDesc TypeIdDesc::immediate(const TypeDef& type) {
 }
 
 size_t TypeDef::serializedSize() const {
-  size_t size = sizeof(tag_);
-  switch (tag_) {
-    case TypeDef::IsStructType: {
+  size_t size = sizeof(kind_);
+  switch (kind_) {
+    case TypeDefKind::Struct: {
       size += sizeof(structType_);
       break;
     }
-    case TypeDef::IsFuncType: {
+    case TypeDefKind::Func: {
       size += sizeof(funcType_);
       break;
     }
-    case TypeDef::IsNone: {
+    case TypeDefKind::None: {
       break;
     }
     default:
@@ -730,17 +805,17 @@ size_t TypeDef::serializedSize() const {
 }
 
 uint8_t* TypeDef::serialize(uint8_t* cursor) const {
-  cursor = WriteBytes(cursor, &tag_, sizeof(tag_));
-  switch (tag_) {
-    case TypeDef::IsStructType: {
+  cursor = WriteBytes(cursor, &kind_, sizeof(kind_));
+  switch (kind_) {
+    case TypeDefKind::Struct: {
       cursor = structType_.serialize(cursor);
       break;
     }
-    case TypeDef::IsFuncType: {
+    case TypeDefKind::Func: {
       cursor = funcType_.serialize(cursor);
       break;
     }
-    case TypeDef::IsNone: {
+    case TypeDefKind::None: {
       break;
     }
     default:
@@ -750,17 +825,17 @@ uint8_t* TypeDef::serialize(uint8_t* cursor) const {
 }
 
 const uint8_t* TypeDef::deserialize(const uint8_t* cursor) {
-  cursor = ReadBytes(cursor, &tag_, sizeof(tag_));
-  switch (tag_) {
-    case TypeDef::IsStructType: {
+  cursor = ReadBytes(cursor, &kind_, sizeof(kind_));
+  switch (kind_) {
+    case TypeDefKind::Struct: {
       cursor = structType_.deserialize(cursor);
       break;
     }
-    case TypeDef::IsFuncType: {
+    case TypeDefKind::Func: {
       cursor = funcType_.deserialize(cursor);
       break;
     }
-    case TypeDef::IsNone: {
+    case TypeDefKind::None: {
       break;
     }
     default:
@@ -770,14 +845,14 @@ const uint8_t* TypeDef::deserialize(const uint8_t* cursor) {
 }
 
 size_t TypeDef::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
-  switch (tag_) {
-    case TypeDef::IsStructType: {
+  switch (kind_) {
+    case TypeDefKind::Struct: {
       return structType_.sizeOfExcludingThis(mallocSizeOf);
     }
-    case TypeDef::IsFuncType: {
+    case TypeDefKind::Func: {
       return funcType_.sizeOfExcludingThis(mallocSizeOf);
     }
-    case TypeDef::IsNone: {
+    case TypeDefKind::None: {
       return 0;
     }
     default:
@@ -833,7 +908,7 @@ class StructLayout {
 
  public:
   // The field adders return the offset of the the field.
-  CheckedInt32 addField(ValType type) {
+  CheckedInt32 addField(FieldType type) {
     uint32_t fieldSize = type.size();
     uint32_t fieldAlignment = type.alignmentInStruct();
 
@@ -877,53 +952,311 @@ bool StructType::computeLayout() {
     return false;
   }
   size_ = size.value();
-  isInline_ = InlineTypedObject::canAccommodateSize(size_);
 
-  return true;
-}
-
-uint32_t StructType::objectBaseFieldOffset(uint32_t fieldIndex) const {
-  return fields_[fieldIndex].offset +
-         (isInline_ ? InlineTypedObject::offsetOfDataStart() : 0);
-}
-
-// A simple notion of prefix: types and mutability must match exactly.
-
-bool StructType::hasPrefix(const StructType& other) const {
-  if (fields_.length() < other.fields_.length()) {
-    return false;
-  }
-  uint32_t limit = other.fields_.length();
-  for (uint32_t i = 0; i < limit; i++) {
-    if (fields_[i].type != other.fields_[i].type ||
-        fields_[i].isMutable != other.fields_[i].isMutable) {
-      return false;
-    }
-  }
   return true;
 }
 
 size_t StructType::serializedSize() const {
-  return SerializedPodVectorSize(fields_) + sizeof(size_) + sizeof(isInline_);
+  return SerializedPodVectorSize(fields_) + sizeof(size_);
 }
 
 uint8_t* StructType::serialize(uint8_t* cursor) const {
   cursor = SerializePodVector(cursor, fields_);
   cursor = WriteBytes(cursor, &size_, sizeof(size_));
-  cursor = WriteBytes(cursor, &isInline_, sizeof(isInline_));
   return cursor;
 }
 
 const uint8_t* StructType::deserialize(const uint8_t* cursor) {
   (cursor = DeserializePodVector(cursor, &fields_)) &&
-      (cursor = ReadBytes(cursor, &size_, sizeof(size_))) &&
-      (cursor = ReadBytes(cursor, &isInline_, sizeof(isInline_)));
+      (cursor = ReadBytes(cursor, &size_, sizeof(size_)));
   return cursor;
 }
 
 size_t StructType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
   return fields_.sizeOfExcludingThis(mallocSizeOf);
 }
+
+TypeResult TypeContext::isRefEquivalent(RefType one, RefType two,
+                                        TypeCache* cache) const {
+  // Anything's equal to itself.
+  if (one == two) {
+    return TypeResult::True;
+  }
+
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+  if (features_.functionReferences) {
+    // Two references must have the same nullability to be equal
+    if (one.isNullable() != two.isNullable()) {
+      return TypeResult::False;
+    }
+
+    // Non type-index references are equal if they have the same kind
+    if (!one.isTypeIndex() && !two.isTypeIndex() && one.kind() == two.kind()) {
+      return TypeResult::True;
+    }
+
+    // Type-index references can be equal
+    if (one.isTypeIndex() && two.isTypeIndex()) {
+      return isTypeIndexEquivalent(one.typeIndex(), two.typeIndex(), cache);
+    }
+  }
+#endif
+  return TypeResult::False;
+}
+
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+TypeResult TypeContext::isTypeIndexEquivalent(uint32_t one, uint32_t two,
+                                              TypeCache* cache) const {
+  MOZ_ASSERT(features_.functionReferences);
+
+  // Anything's equal to itself.
+  if (one == two) {
+    return TypeResult::True;
+  }
+
+#  ifdef ENABLE_WASM_GC
+  if (features_.gcTypes) {
+    // A struct may be equal to a struct
+    if (isStructType(one) && isStructType(two)) {
+      return isStructEquivalent(one, two, cache);
+    }
+
+    // An array may be equal to an array
+    if (isArrayType(one) && isArrayType(two)) {
+      return isArrayEquivalent(one, two, cache);
+    }
+  }
+#  endif
+
+  return TypeResult::False;
+}
+#endif
+
+#ifdef ENABLE_WASM_GC
+TypeResult TypeContext::isStructEquivalent(uint32_t oneIndex, uint32_t twoIndex,
+                                           TypeCache* cache) const {
+  if (cache->isEquivalent(oneIndex, twoIndex)) {
+    return TypeResult::True;
+  }
+
+  const StructType& one = structType(oneIndex);
+  const StructType& two = structType(twoIndex);
+
+  // Structs must have the same number of fields to be equal
+  if (one.fields_.length() != two.fields_.length()) {
+    return TypeResult::False;
+  }
+
+  // Assume these structs are equal while checking fields. If any field is
+  // not equal then we remove the assumption.
+  if (!cache->markEquivalent(oneIndex, twoIndex)) {
+    return TypeResult::OOM;
+  }
+
+  for (uint32_t i = 0; i < two.fields_.length(); i++) {
+    TypeResult result =
+        isStructFieldEquivalent(one.fields_[i], two.fields_[i], cache);
+    if (result != TypeResult::True) {
+      cache->unmarkEquivalent(oneIndex, twoIndex);
+      return result;
+    }
+  }
+  return TypeResult::True;
+}
+
+TypeResult TypeContext::isStructFieldEquivalent(const StructField one,
+                                                const StructField two,
+                                                TypeCache* cache) const {
+  // Struct fields must share the same mutability to equal
+  if (one.isMutable != two.isMutable) {
+    return TypeResult::False;
+  }
+  // Struct field types must be equal
+  return isEquivalent(one.type, two.type, cache);
+}
+
+TypeResult TypeContext::isArrayEquivalent(uint32_t oneIndex, uint32_t twoIndex,
+                                          TypeCache* cache) const {
+  if (cache->isEquivalent(oneIndex, twoIndex)) {
+    return TypeResult::True;
+  }
+
+  const ArrayType& one = arrayType(oneIndex);
+  const ArrayType& two = arrayType(twoIndex);
+
+  // Assume these arrays are equal while checking fields. If the array
+  // element is not equal then we remove the assumption.
+  if (!cache->markEquivalent(oneIndex, twoIndex)) {
+    return TypeResult::OOM;
+  }
+
+  TypeResult result = isArrayElementEquivalent(one, two, cache);
+  if (result != TypeResult::True) {
+    cache->unmarkEquivalent(oneIndex, twoIndex);
+  }
+  return result;
+}
+
+TypeResult TypeContext::isArrayElementEquivalent(const ArrayType& one,
+                                                 const ArrayType& two,
+                                                 TypeCache* cache) const {
+  // Array elements must share the same mutability to be equal
+  if (one.isMutable_ != two.isMutable_) {
+    return TypeResult::False;
+  }
+  // Array elements must be equal
+  return isEquivalent(one.elementType_, two.elementType_, cache);
+}
+#endif
+
+TypeResult TypeContext::isRefSubtypeOf(RefType one, RefType two,
+                                       TypeCache* cache) const {
+  // Anything's a subtype of itself.
+  if (one == two) {
+    return TypeResult::True;
+  }
+
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+  if (features_.functionReferences) {
+    // A subtype must have the same nullability as the supertype or the
+    // supertype must be nullable.
+    if (!(one.isNullable() == two.isNullable() || two.isNullable())) {
+      return TypeResult::False;
+    }
+
+    // Non type-index references are subtypes if they have the same kind
+    if (!one.isTypeIndex() && !two.isTypeIndex() && one.kind() == two.kind()) {
+      return TypeResult::True;
+    }
+
+    // Structs are subtypes of eqref
+    if (isStructType(one) && two.isEq()) {
+      return TypeResult::True;
+    }
+
+    // Arrays are subtypes of eqref
+    if (isArrayType(one) && two.isEq()) {
+      return TypeResult::True;
+    }
+
+    // Type-index references can be subtypes
+    if (one.isTypeIndex() && two.isTypeIndex()) {
+      return isTypeIndexSubtypeOf(one.typeIndex(), two.typeIndex(), cache);
+    }
+  }
+#endif
+  return TypeResult::False;
+}
+
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+TypeResult TypeContext::isTypeIndexSubtypeOf(uint32_t one, uint32_t two,
+                                             TypeCache* cache) const {
+  MOZ_ASSERT(features_.functionReferences);
+
+  // Anything's a subtype of itself.
+  if (one == two) {
+    return TypeResult::True;
+  }
+
+#  ifdef ENABLE_WASM_GC
+  if (features_.gcTypes) {
+    // Structs may be subtypes of structs
+    if (isStructType(one) && isStructType(two)) {
+      return isStructSubtypeOf(one, two, cache);
+    }
+
+    // Arrays may be subtypes of arrays
+    if (isArrayType(one) && isArrayType(two)) {
+      return isArraySubtypeOf(one, two, cache);
+    }
+  }
+#  endif
+  return TypeResult::False;
+}
+#endif
+
+#ifdef ENABLE_WASM_GC
+TypeResult TypeContext::isStructSubtypeOf(uint32_t oneIndex, uint32_t twoIndex,
+                                          TypeCache* cache) const {
+  if (cache->isSubtypeOf(oneIndex, twoIndex)) {
+    return TypeResult::True;
+  }
+
+  const StructType& one = structType(oneIndex);
+  const StructType& two = structType(twoIndex);
+
+  // A subtype must have at least as many fields as its supertype
+  if (one.fields_.length() < two.fields_.length()) {
+    return TypeResult::False;
+  }
+
+  // Assume these structs are subtypes while checking fields. If any field
+  // fails a check then we remove the assumption.
+  if (!cache->markSubtypeOf(oneIndex, twoIndex)) {
+    return TypeResult::OOM;
+  }
+
+  for (uint32_t i = 0; i < two.fields_.length(); i++) {
+    TypeResult result =
+        isStructFieldSubtypeOf(one.fields_[i], two.fields_[i], cache);
+    if (result != TypeResult::True) {
+      cache->unmarkSubtypeOf(oneIndex, twoIndex);
+      return result;
+    }
+  }
+  return TypeResult::True;
+}
+
+TypeResult TypeContext::isStructFieldSubtypeOf(const StructField one,
+                                               const StructField two,
+                                               TypeCache* cache) const {
+  // Mutable fields are invariant w.r.t. field types
+  if (one.isMutable && two.isMutable) {
+    return isEquivalent(one.type, two.type, cache);
+  }
+  // Immutable fields are covariant w.r.t. field types
+  if (!one.isMutable && !two.isMutable) {
+    return isSubtypeOf(one.type, two.type, cache);
+  }
+  return TypeResult::False;
+}
+
+TypeResult TypeContext::isArraySubtypeOf(uint32_t oneIndex, uint32_t twoIndex,
+                                         TypeCache* cache) const {
+  if (cache->isSubtypeOf(oneIndex, twoIndex)) {
+    return TypeResult::True;
+  }
+
+  const ArrayType& one = arrayType(oneIndex);
+  const ArrayType& two = arrayType(twoIndex);
+
+  // Assume these arrays are subtypes while checking elements. If the elements
+  // fail the check then we remove the assumption.
+  if (!cache->markSubtypeOf(oneIndex, twoIndex)) {
+    return TypeResult::OOM;
+  }
+
+  TypeResult result = isArrayElementSubtypeOf(one, two, cache);
+  if (result != TypeResult::True) {
+    cache->unmarkSubtypeOf(oneIndex, twoIndex);
+  }
+  return result;
+}
+
+TypeResult TypeContext::isArrayElementSubtypeOf(const ArrayType& one,
+                                                const ArrayType& two,
+                                                TypeCache* cache) const {
+  // Mutable elements are invariant w.r.t. field types
+  if (one.isMutable_ && two.isMutable_) {
+    return isEquivalent(one.elementType_, two.elementType_, cache);
+  }
+  // Immutable elements are covariant w.r.t. field types
+  if (!one.isMutable_ && !two.isMutable_) {
+    return isSubtypeOf(one.elementType_, two.elementType_, cache);
+  }
+  return TypeResult::False;
+}
+#endif
 
 size_t Import::serializedSize() const {
   return module.serializedSize() + field.serializedSize() + sizeof(kind);
@@ -1563,6 +1896,8 @@ UniqueChars wasm::ToString(ValType type) {
                            heapType);
       }
       break;
+    case ValType::Rtt:
+      return JS_smprintf("(rtt %d %d)", type.rttDepth(), type.typeIndex());
   }
   return JS_smprintf("%s", literal);
 }

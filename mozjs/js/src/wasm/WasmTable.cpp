@@ -78,7 +78,7 @@ SharedTable Table::create(JSContext* cx, const TableDesc& desc,
           cx->new_<Table>(cx, desc, maybeObject, std::move(objects)));
     }
   }
-  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("switch is exhaustive");
+  MOZ_CRASH("switch is exhaustive");
 }
 
 void Table::tracePrivate(JSTracer* trc) {
@@ -348,13 +348,13 @@ uint32_t Table::grow(uint32_t delta) {
     }
   }
 
-  if (auto object = maybeObject_.unbarrieredGet()) {
+  if (auto* object = maybeObject_.unbarrieredGet()) {
     RemoveCellMemory(object, gcMallocBytes(), MemoryUse::WasmTableTable);
   }
 
   length_ = newLength.value();
 
-  if (auto object = maybeObject_.unbarrieredGet()) {
+  if (auto* object = maybeObject_.unbarrieredGet()) {
     AddCellMemory(object, gcMallocBytes(), MemoryUse::WasmTableTable);
   }
 

@@ -46,7 +46,7 @@ JSObject* js::AllocateObject(JSContext* cx, AllocKind kind,
       sizeof(JSObject_Slots0) >= MinCellSize,
       "All allocations must be at least the allocator-imposed minimum size.");
 
-  MOZ_ASSERT_IF(nDynamicSlots != 0, clasp->isNative());
+  MOZ_ASSERT_IF(nDynamicSlots != 0, clasp->isNativeObject());
 
   // We cannot trigger GC or make runtime assertions when nursery allocation
   // is suppressed, either explicitly or because we are off-thread.
@@ -743,7 +743,9 @@ Arena* TenuredChunk::fetchNextDecommittedArena() {
   decommittedArenas[offset] = false;
 
   Arena* arena = &arenas[offset];
-  MarkPagesInUseSoft(arena, ArenaSize);
+  if (DecommitEnabled()) {
+    MarkPagesInUseSoft(arena, ArenaSize);
+  }
   arena->setAsNotAllocated();
 
   return arena;
@@ -881,7 +883,9 @@ void TenuredChunk::init(GCRuntime* gc) {
 
 void TenuredChunk::decommitAllArenas() {
   decommittedArenas.SetAll();
-  MarkPagesUnusedSoft(&arenas[0], ArenasPerChunk * ArenaSize);
+  if (DecommitEnabled()) {
+    MarkPagesUnusedSoft(&arenas[0], ArenasPerChunk * ArenaSize);
+  }
 
   info.freeArenasHead = nullptr;
   info.lastDecommittedArenaOffset = 0;

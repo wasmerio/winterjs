@@ -37,6 +37,7 @@
 #include "util/Poison.h"
 #include "vm/BigIntType.h"
 #include "vm/ErrorObject.h"
+#include "wasm/TypedObject.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmTypes.h"
@@ -128,34 +129,34 @@ const SymbolicAddressSignature SASigWaitI64 = {SymbolicAddress::WaitI64,
                                                {_PTR, _I32, _I64, _I64, _END}};
 const SymbolicAddressSignature SASigWake = {
     SymbolicAddress::Wake, _I32, _FailOnNegI32, 3, {_PTR, _I32, _I32, _END}};
-const SymbolicAddressSignature SASigMemCopy = {
-    SymbolicAddress::MemCopy,
+const SymbolicAddressSignature SASigMemCopy32 = {
+    SymbolicAddress::MemCopy32,
     _VOID,
     _FailOnNegI32,
     5,
     {_PTR, _I32, _I32, _I32, _PTR, _END}};
-const SymbolicAddressSignature SASigMemCopyShared = {
-    SymbolicAddress::MemCopyShared,
+const SymbolicAddressSignature SASigMemCopyShared32 = {
+    SymbolicAddress::MemCopyShared32,
     _VOID,
     _FailOnNegI32,
     5,
     {_PTR, _I32, _I32, _I32, _PTR, _END}};
 const SymbolicAddressSignature SASigDataDrop = {
     SymbolicAddress::DataDrop, _VOID, _FailOnNegI32, 2, {_PTR, _I32, _END}};
-const SymbolicAddressSignature SASigMemFill = {
-    SymbolicAddress::MemFill,
+const SymbolicAddressSignature SASigMemFill32 = {
+    SymbolicAddress::MemFill32,
     _VOID,
     _FailOnNegI32,
     5,
     {_PTR, _I32, _I32, _I32, _PTR, _END}};
-const SymbolicAddressSignature SASigMemFillShared = {
-    SymbolicAddress::MemFillShared,
+const SymbolicAddressSignature SASigMemFillShared32 = {
+    SymbolicAddress::MemFillShared32,
     _VOID,
     _FailOnNegI32,
     5,
     {_PTR, _I32, _I32, _I32, _PTR, _END}};
-const SymbolicAddressSignature SASigMemInit = {
-    SymbolicAddress::MemInit,
+const SymbolicAddressSignature SASigMemInit32 = {
+    SymbolicAddress::MemInit32,
     _VOID,
     _FailOnNegI32,
     5,
@@ -216,12 +217,6 @@ const SymbolicAddressSignature SASigPostBarrierFiltering = {
     {_PTR, _PTR, _END}};
 const SymbolicAddressSignature SASigStructNew = {
     SymbolicAddress::StructNew, _RoN, _FailOnNullPtr, 2, {_PTR, _RoN, _END}};
-const SymbolicAddressSignature SASigStructNarrow = {
-    SymbolicAddress::StructNarrow,
-    _RoN,
-    _Infallible,
-    3,
-    {_PTR, _RoN, _RoN, _END}};
 #ifdef ENABLE_WASM_EXCEPTIONS
 const SymbolicAddressSignature SASigExceptionNew = {
     SymbolicAddress::ExceptionNew,
@@ -241,7 +236,22 @@ const SymbolicAddressSignature SASigGetLocalExceptionIndex = {
     _Infallible,
     2,
     {_PTR, _RoN, _END}};
+const SymbolicAddressSignature SASigPushRefIntoExn = {
+    SymbolicAddress::PushRefIntoExn,
+    _I32,
+    _FailOnNegI32,
+    3,
+    {_PTR, _RoN, _RoN, _END}};
 #endif
+const SymbolicAddressSignature SASigArrayNew = {SymbolicAddress::ArrayNew,
+                                                _RoN,
+                                                _FailOnNullPtr,
+                                                3,
+                                                {_PTR, _I32, _RoN, _END}};
+const SymbolicAddressSignature SASigRefTest = {
+    SymbolicAddress::RefTest, _I32, _Infallible, 3, {_PTR, _RoN, _RoN, _END}};
+const SymbolicAddressSignature SASigRttSub = {
+    SymbolicAddress::RttSub, _RoN, _FailOnNullPtr, 2, {_PTR, _RoN, _END}};
 
 }  // namespace wasm
 }  // namespace js
@@ -626,6 +636,8 @@ static void* WasmHandleTrap() {
       return ReportError(cx, JSMSG_WASM_IND_CALL_BAD_SIG);
     case Trap::NullPointerDereference:
       return ReportError(cx, JSMSG_WASM_DEREF_NULL);
+    case Trap::BadCast:
+      return ReportError(cx, JSMSG_WASM_BAD_CAST);
     case Trap::OutOfBounds:
       return ReportError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
     case Trap::UnalignedAccess:
@@ -1086,41 +1098,41 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32});
       MOZ_ASSERT(*abiType == ToABIType(SASigWake));
       return FuncCast(Instance::wake, *abiType);
-    case SymbolicAddress::MemCopy:
+    case SymbolicAddress::MemCopy32:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
                           ArgType_Int32, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigMemCopy));
-      return FuncCast(Instance::memCopy, *abiType);
-    case SymbolicAddress::MemCopyShared:
+      MOZ_ASSERT(*abiType == ToABIType(SASigMemCopy32));
+      return FuncCast(Instance::memCopy32, *abiType);
+    case SymbolicAddress::MemCopyShared32:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
                           ArgType_Int32, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigMemCopyShared));
-      return FuncCast(Instance::memCopyShared, *abiType);
+      MOZ_ASSERT(*abiType == ToABIType(SASigMemCopyShared32));
+      return FuncCast(Instance::memCopyShared32, *abiType);
     case SymbolicAddress::DataDrop:
       *abiType =
           MakeABIFunctionType(ArgType_Int32, {ArgType_General, ArgType_Int32});
       MOZ_ASSERT(*abiType == ToABIType(SASigDataDrop));
       return FuncCast(Instance::dataDrop, *abiType);
-    case SymbolicAddress::MemFill:
+    case SymbolicAddress::MemFill32:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
                           ArgType_Int32, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigMemFill));
-      return FuncCast(Instance::memFill, *abiType);
-    case SymbolicAddress::MemFillShared:
+      MOZ_ASSERT(*abiType == ToABIType(SASigMemFill32));
+      return FuncCast(Instance::memFill32, *abiType);
+    case SymbolicAddress::MemFillShared32:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
                           ArgType_Int32, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigMemFillShared));
-      return FuncCast(Instance::memFillShared, *abiType);
-    case SymbolicAddress::MemInit:
+      MOZ_ASSERT(*abiType == ToABIType(SASigMemFillShared32));
+      return FuncCast(Instance::memFillShared32, *abiType);
+    case SymbolicAddress::MemInit32:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
                           ArgType_Int32, ArgType_Int32});
-      MOZ_ASSERT(*abiType == ToABIType(SASigMemInit));
-      return FuncCast(Instance::memInit, *abiType);
+      MOZ_ASSERT(*abiType == ToABIType(SASigMemInit32));
+      return FuncCast(Instance::memInit32, *abiType);
     case SymbolicAddress::TableCopy:
       *abiType = MakeABIFunctionType(
           ArgType_Int32, {ArgType_General, ArgType_Int32, ArgType_Int32,
@@ -1191,11 +1203,23 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
                                      {ArgType_General, ArgType_General});
       MOZ_ASSERT(*abiType == ToABIType(SASigStructNew));
       return FuncCast(Instance::structNew, *abiType);
-    case SymbolicAddress::StructNarrow:
+    case SymbolicAddress::ArrayNew:
       *abiType = MakeABIFunctionType(
-          ArgType_General, {ArgType_General, ArgType_General, ArgType_General});
-      MOZ_ASSERT(*abiType == ToABIType(SASigStructNarrow));
-      return FuncCast(Instance::structNarrow, *abiType);
+          ArgType_General, {ArgType_General, ArgType_Int32, ArgType_General});
+      MOZ_ASSERT(*abiType == ToABIType(SASigArrayNew));
+      return FuncCast(Instance::arrayNew, *abiType);
+    case SymbolicAddress::RefTest:
+      *abiType = MakeABIFunctionType(
+          ArgType_Int32, {ArgType_General, ArgType_General, ArgType_General});
+      MOZ_ASSERT(*abiType == ToABIType(SASigRefTest));
+      return FuncCast(Instance::refTest, *abiType);
+    case SymbolicAddress::RttSub:
+      *abiType = MakeABIFunctionType(ArgType_General,
+                                     {ArgType_General, ArgType_General});
+      MOZ_ASSERT(*abiType == ToABIType(SASigRttSub));
+      return FuncCast(Instance::rttSub, *abiType);
+    case SymbolicAddress::InlineTypedObjectClass:
+      return (void*)&js::InlineTypedObject::class_;
 
 #if defined(ENABLE_WASM_EXCEPTIONS)
     case SymbolicAddress::ExceptionNew:
@@ -1213,6 +1237,11 @@ void* wasm::AddressOf(SymbolicAddress imm, ABIFunctionType* abiType) {
                                      {ArgType_General, ArgType_General});
       MOZ_ASSERT(*abiType == ToABIType(SASigGetLocalExceptionIndex));
       return FuncCast(Instance::getLocalExceptionIndex, *abiType);
+    case SymbolicAddress::PushRefIntoExn:
+      *abiType = MakeABIFunctionType(
+          ArgType_Int32, {ArgType_General, ArgType_General, ArgType_General});
+      MOZ_ASSERT(*abiType == ToABIType(SASigPushRefIntoExn));
+      return FuncCast(Instance::pushRefIntoExn, *abiType);
 #endif
 
 #if defined(JS_CODEGEN_MIPS32)
@@ -1255,6 +1284,7 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::CoerceInPlace_ToNumber:
     case SymbolicAddress::CoerceInPlace_ToBigInt:
     case SymbolicAddress::BoxValue_Anyref:
+    case SymbolicAddress::InlineTypedObjectClass:
 #if defined(JS_CODEGEN_MIPS32)
     case SymbolicAddress::js_jit_gAtomic64Lock:
 #endif
@@ -1310,12 +1340,12 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::Wake:
     case SymbolicAddress::CoerceInPlace_JitEntry:
     case SymbolicAddress::ReportV128JSCall:
-    case SymbolicAddress::MemCopy:
-    case SymbolicAddress::MemCopyShared:
+    case SymbolicAddress::MemCopy32:
+    case SymbolicAddress::MemCopyShared32:
     case SymbolicAddress::DataDrop:
-    case SymbolicAddress::MemFill:
-    case SymbolicAddress::MemFillShared:
-    case SymbolicAddress::MemInit:
+    case SymbolicAddress::MemFill32:
+    case SymbolicAddress::MemFillShared32:
+    case SymbolicAddress::MemInit32:
     case SymbolicAddress::TableCopy:
     case SymbolicAddress::ElemDrop:
     case SymbolicAddress::TableFill:
@@ -1329,12 +1359,15 @@ bool wasm::NeedsBuiltinThunk(SymbolicAddress sym) {
     case SymbolicAddress::PostBarrier:
     case SymbolicAddress::PostBarrierFiltering:
     case SymbolicAddress::StructNew:
-    case SymbolicAddress::StructNarrow:
 #ifdef ENABLE_WASM_EXCEPTIONS
     case SymbolicAddress::ExceptionNew:
     case SymbolicAddress::ThrowException:
     case SymbolicAddress::GetLocalExceptionIndex:
+    case SymbolicAddress::PushRefIntoExn:
 #endif
+    case SymbolicAddress::ArrayNew:
+    case SymbolicAddress::RefTest:
+    case SymbolicAddress::RttSub:
       return true;
     case SymbolicAddress::Limit:
       break;
@@ -1478,7 +1511,7 @@ struct BuiltinThunks {
   CodeRangeVector codeRanges;
   TypedNativeToCodeRangeMap typedNativeToCodeRange;
   SymbolicAddressToCodeRangeArray symbolicAddressToCodeRange;
-  uint32_t provisionalJitEntryOffset;
+  uint32_t provisionalLazyJitEntryOffset;
 
   BuiltinThunks() : codeBase(nullptr), codeSize(0) {}
 
@@ -1558,8 +1591,8 @@ bool wasm::EnsureBuiltinThunksInitialized() {
     }
   }
 
-  // Provisional JitEntry stub: This is a shared stub that can be installed in
-  // the jit-entry jump table.  It uses the JIT ABI and when invoked will
+  // Provisional lazy JitEntry stub: This is a shared stub that can be installed
+  // in the jit-entry jump table.  It uses the JIT ABI and when invoked will
   // retrieve (via TlsContext()) and invoke the context-appropriate
   // invoke-from-interpreter jit stub, thus serving as the initial, unoptimized
   // jit-entry stub for any exported wasm function that has a jit-entry.
@@ -1571,11 +1604,12 @@ bool wasm::EnsureBuiltinThunksInitialized() {
   bool oldFlag = jitContext.setIsCompilingWasm(false);
 #endif
 
-  Offsets provisionalJitEntryOffsets;
-  if (!GenerateProvisionalJitEntryStub(masm, &provisionalJitEntryOffsets)) {
+  Offsets provisionalLazyJitEntryOffsets;
+  if (!GenerateProvisionalLazyJitEntryStub(masm,
+                                           &provisionalLazyJitEntryOffsets)) {
     return false;
   }
-  thunks->provisionalJitEntryOffset = provisionalJitEntryOffsets.begin;
+  thunks->provisionalLazyJitEntryOffset = provisionalLazyJitEntryOffsets.begin;
 
 #ifdef DEBUG
   jitContext.setIsCompilingWasm(oldFlag);
@@ -1642,11 +1676,11 @@ void* wasm::SymbolicAddressTarget(SymbolicAddress sym) {
   return thunks.codeBase + thunks.codeRanges[codeRangeIndex].begin();
 }
 
-void* wasm::ProvisionalJitEntryStub() {
+void* wasm::ProvisionalLazyJitEntryStub() {
   MOZ_ASSERT(builtinThunks);
 
   const BuiltinThunks& thunks = *builtinThunks;
-  return thunks.codeBase + thunks.provisionalJitEntryOffset;
+  return thunks.codeBase + thunks.provisionalLazyJitEntryOffset;
 }
 
 static Maybe<ABIFunctionType> ToBuiltinABIFunctionType(
@@ -1693,7 +1727,7 @@ static Maybe<ABIFunctionType> ToBuiltinABIFunctionType(
 void* wasm::MaybeGetBuiltinThunk(JSFunction* f, const FuncType& funcType) {
   MOZ_ASSERT(builtinThunks);
 
-  if (!f->isNative() || !f->hasJitInfo() ||
+  if (!f->isNativeFun() || !f->hasJitInfo() ||
       f->jitInfo()->type() != JSJitInfo::InlinableNative) {
     return nullptr;
   }

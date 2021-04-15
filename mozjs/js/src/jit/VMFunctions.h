@@ -30,7 +30,6 @@ class GlobalObject;
 class InterpreterFrame;
 class LexicalScope;
 class NativeObject;
-class ObjectGroup;
 class PropertyName;
 class Shape;
 class TypedArrayObject;
@@ -391,8 +390,7 @@ JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint);
 
 [[nodiscard]] bool InterruptCheck(JSContext* cx);
 
-JSObject* NewCallObject(JSContext* cx, HandleShape shape,
-                        HandleObjectGroup group);
+JSObject* NewCallObject(JSContext* cx, HandleShape shape);
 JSObject* NewStringObject(JSContext* cx, HandleString str);
 
 bool OperatorIn(JSContext* cx, HandleValue key, HandleObject obj, bool* out);
@@ -515,7 +513,6 @@ void JitValuePreWriteBarrier(JSRuntime* rt, Value* vp);
 void JitStringPreWriteBarrier(JSRuntime* rt, JSString** stringp);
 void JitObjectPreWriteBarrier(JSRuntime* rt, JSObject** objp);
 void JitShapePreWriteBarrier(JSRuntime* rt, Shape** shapep);
-void JitObjectGroupPreWriteBarrier(JSRuntime* rt, ObjectGroup** groupp);
 
 bool ObjectIsCallable(JSObject* obj);
 bool ObjectIsConstructor(JSObject* obj);

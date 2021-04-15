@@ -16,18 +16,27 @@
 #include <string.h>
 #include <type_traits>
 
-#include "jspubtd.h"
+#include "jstypes.h"
 
 #include "js/AllocPolicy.h"
-#include "js/GCAPI.h"
 #include "js/HashTable.h"
-#include "js/TracingAPI.h"
+#include "js/TraceKind.h"
+#include "js/TypeDecls.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
 
 class nsISupports;  // Needed for ObjectPrivateVisitor.
 
+namespace js {
+class SystemAllocPolicy;
+}
+
+namespace mozilla {
+struct CStringHasher;
+}
+
 namespace JS {
+class JS_PUBLIC_API AutoRequireNoGC;
 
 struct TabSizes {
   TabSizes() = default;
@@ -537,17 +546,16 @@ struct RuntimeSizes {
 };
 
 struct UnusedGCThingSizes {
-#define FOR_EACH_SIZE(MACRO)              \
-  MACRO(Other, GCHeapUnused, object)      \
-  MACRO(Other, GCHeapUnused, script)      \
-  MACRO(Other, GCHeapUnused, shape)       \
-  MACRO(Other, GCHeapUnused, baseShape)   \
-  MACRO(Other, GCHeapUnused, objectGroup) \
-  MACRO(Other, GCHeapUnused, string)      \
-  MACRO(Other, GCHeapUnused, symbol)      \
-  MACRO(Other, GCHeapUnused, bigInt)      \
-  MACRO(Other, GCHeapUnused, jitcode)     \
-  MACRO(Other, GCHeapUnused, scope)       \
+#define FOR_EACH_SIZE(MACRO)            \
+  MACRO(Other, GCHeapUnused, object)    \
+  MACRO(Other, GCHeapUnused, script)    \
+  MACRO(Other, GCHeapUnused, shape)     \
+  MACRO(Other, GCHeapUnused, baseShape) \
+  MACRO(Other, GCHeapUnused, string)    \
+  MACRO(Other, GCHeapUnused, symbol)    \
+  MACRO(Other, GCHeapUnused, bigInt)    \
+  MACRO(Other, GCHeapUnused, jitcode)   \
+  MACRO(Other, GCHeapUnused, scope)     \
   MACRO(Other, GCHeapUnused, regExpShared)
 
   UnusedGCThingSizes() = default;
@@ -578,9 +586,6 @@ struct UnusedGCThingSizes {
         break;
       case JS::TraceKind::JitCode:
         jitcode += n;
-        break;
-      case JS::TraceKind::ObjectGroup:
-        objectGroup += n;
         break;
       case JS::TraceKind::Scope:
         scope += n;
@@ -623,7 +628,6 @@ struct ZoneStats {
   MACRO(Other, MallocHeap, bigIntsMallocHeap)              \
   MACRO(Other, GCHeapAdmin, gcHeapArenaAdmin)              \
   MACRO(Other, GCHeapUsed, jitCodesGCHeap)                 \
-  MACRO(Other, GCHeapUsed, objectGroupsGCHeap)             \
   MACRO(Other, GCHeapUsed, scopesGCHeap)                   \
   MACRO(Other, MallocHeap, scopesMallocHeap)               \
   MACRO(Other, GCHeapUsed, regExpSharedsGCHeap)            \

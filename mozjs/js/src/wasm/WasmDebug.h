@@ -45,11 +45,11 @@ struct ExprLoc {
       : lineno(lineno_), column(column_), offset(offset_) {}
 };
 
-typedef HashMap<uint32_t, uint32_t, DefaultHasher<uint32_t>, SystemAllocPolicy>
-    StepperCounters;
-typedef HashMap<uint32_t, WasmBreakpointSite*, DefaultHasher<uint32_t>,
-                SystemAllocPolicy>
-    WasmBreakpointSiteMap;
+using StepperCounters =
+    HashMap<uint32_t, uint32_t, DefaultHasher<uint32_t>, SystemAllocPolicy>;
+using WasmBreakpointSiteMap =
+    HashMap<uint32_t, WasmBreakpointSite*, DefaultHasher<uint32_t>,
+            SystemAllocPolicy>;
 
 class DebugState {
   const SharedCode code_;
@@ -99,7 +99,7 @@ class DebugState {
   bool hasBreakpointSite(uint32_t offset);
   void destroyBreakpointSite(JSFreeOp* fop, Instance* instance,
                              uint32_t offset);
-  void clearBreakpointsIn(JSFreeOp* fp, WasmInstanceObject* instance,
+  void clearBreakpointsIn(JSFreeOp* fop, WasmInstanceObject* instance,
                           js::Debugger* dbg, JSObject* handler);
 
   // When the Code is debug-enabled, single-stepping mode can be toggled on

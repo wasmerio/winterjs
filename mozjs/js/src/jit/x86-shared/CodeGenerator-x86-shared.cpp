@@ -292,8 +292,7 @@ void CodeGenerator::visitWasmStackArg(LWasmStackArg* ins) {
       default:
         break;
     }
-    MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE(
-        "unexpected mir type in WasmStackArg");
+    MOZ_CRASH("unexpected mir type in WasmStackArg");
   }
 }
 
@@ -443,7 +442,6 @@ void CodeGeneratorX86Shared::visitOutOfLineLoadTypedArrayOutOfBounds(
 
 void CodeGenerator::visitAsmJSStoreHeap(LAsmJSStoreHeap* ins) {
   const MAsmJSStoreHeap* mir = ins->mir();
-  MOZ_ASSERT(mir->offset() == 0);
 
   const LAllocation* ptr = ins->ptr();
   const LAllocation* value = ins->value();
@@ -2530,10 +2528,26 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
                                   temp2);
       break;
     case wasm::SimdOp::I64x2Eq:
-      masm.compareInt64x2(Assembler::Equal, rhs, lhsDest);
+      masm.compareForEqualityInt64x2(Assembler::Equal, rhs, lhsDest);
       break;
     case wasm::SimdOp::I64x2Ne:
-      masm.compareInt64x2(Assembler::NotEqual, rhs, lhsDest);
+      masm.compareForEqualityInt64x2(Assembler::NotEqual, rhs, lhsDest);
+      break;
+    case wasm::SimdOp::I64x2LtS:
+      masm.compareForOrderingInt64x2(Assembler::LessThan, rhs, lhsDest, temp1,
+                                     temp2);
+      break;
+    case wasm::SimdOp::I64x2GtS:
+      masm.compareForOrderingInt64x2(Assembler::GreaterThan, rhs, lhsDest,
+                                     temp1, temp2);
+      break;
+    case wasm::SimdOp::I64x2LeS:
+      masm.compareForOrderingInt64x2(Assembler::LessThanOrEqual, rhs, lhsDest,
+                                     temp1, temp2);
+      break;
+    case wasm::SimdOp::I64x2GeS:
+      masm.compareForOrderingInt64x2(Assembler::GreaterThanOrEqual, rhs,
+                                     lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::F32x4Eq:
       masm.compareFloat32x4(Assembler::Equal, rhs, lhsDest);
@@ -3343,6 +3357,9 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
     case wasm::SimdOp::V128Not:
       masm.bitwiseNotSimd128(src, dest);
       break;
+    case wasm::SimdOp::I8x16Popcnt:
+      masm.popcntInt8x16(src, dest, ToFloatRegister(ins->temp()));
+      break;
     case wasm::SimdOp::I8x16Abs:
       masm.absInt8x16(src, dest);
       break;
@@ -3351,6 +3368,9 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
       break;
     case wasm::SimdOp::I32x4Abs:
       masm.absInt32x4(src, dest);
+      break;
+    case wasm::SimdOp::I64x2Abs:
+      masm.absInt64x2(src, dest);
       break;
     case wasm::SimdOp::F32x4Ceil:
       masm.ceilFloat32x4(src, dest);
@@ -3395,6 +3415,18 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
       masm.unsignedTruncSatFloat64x2ToInt32x4(src, dest,
                                               ToFloatRegister(ins->temp()));
       break;
+    case wasm::SimdOp::I16x8ExtAddPairwiseI8x16S:
+      masm.extAddPairwiseInt8x16(src, dest);
+      break;
+    case wasm::SimdOp::I16x8ExtAddPairwiseI8x16U:
+      masm.unsignedExtAddPairwiseInt8x16(src, dest);
+      break;
+    case wasm::SimdOp::I32x4ExtAddPairwiseI16x8S:
+      masm.extAddPairwiseInt16x8(src, dest);
+      break;
+    case wasm::SimdOp::I32x4ExtAddPairwiseI16x8U:
+      masm.unsignedExtAddPairwiseInt16x8(src, dest);
+      break;
     default:
       MOZ_CRASH("Unary SimdOp not implemented");
   }
@@ -3407,8 +3439,6 @@ void CodeGenerator::visitWasmReduceSimd128(LWasmReduceSimd128* ins) {
 
   switch (ins->simdOp()) {
     case wasm::SimdOp::V128AnyTrue:
-    case wasm::SimdOp::I16x8AnyTrue:
-    case wasm::SimdOp::I32x4AnyTrue:
       masm.anyTrueSimd128(src, ToRegister(dest));
       break;
     case wasm::SimdOp::I8x16AllTrue:
@@ -3467,8 +3497,6 @@ void CodeGenerator::visitWasmReduceAndBranchSimd128(
 
   switch (ins->simdOp()) {
     case wasm::SimdOp::V128AnyTrue:
-    case wasm::SimdOp::I16x8AnyTrue:
-    case wasm::SimdOp::I32x4AnyTrue:
       // Set the zero flag if all of the lanes are zero, and branch on that.
       masm.vptest(src, src);
       emitBranch(Assembler::NotEqual, ins->ifTrue(), ins->ifFalse());

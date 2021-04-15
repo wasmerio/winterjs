@@ -270,9 +270,89 @@ ins.exports.i64_ne();
 assertSame(get(mem64, 0, 2), [0n, -1n]);
 
 
+// i64x2.lt, i64x2.gt, i64x2.le, and i64.ge
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "i64_lt_s")
+      (v128.store (i32.const 0)
+        (i64x2.lt_s (v128.load (i32.const 16)) (v128.load (i32.const 32))) ))
+    (func (export "i64_gt_s")
+      (v128.store (i32.const 0)
+        (i64x2.gt_s (v128.load (i32.const 16)) (v128.load (i32.const 32))) ))
+    (func (export "i64_le_s")
+      (v128.store (i32.const 0)
+        (i64x2.le_s (v128.load (i32.const 16)) (v128.load (i32.const 32))) ))
+    (func (export "i64_ge_s")
+      (v128.store (i32.const 0)
+        (i64x2.ge_s (v128.load (i32.const 16)) (v128.load (i32.const 32))) )) )`);
+
+var mem64 = new BigInt64Array(ins.exports.mem.buffer);
+
+set(mem64, 2, [0n, 1n, 1n, 0n]);
+ins.exports.i64_lt_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+ins.exports.i64_gt_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+ins.exports.i64_le_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+ins.exports.i64_ge_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+
+set(mem64, 2, [0n, -1n, -1n, 0n]);
+ins.exports.i64_lt_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+ins.exports.i64_gt_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+ins.exports.i64_le_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+ins.exports.i64_ge_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+
+set(mem64, 2, [-2n, 2n, -1n, 1n]);
+ins.exports.i64_lt_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+ins.exports.i64_gt_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+ins.exports.i64_le_s();
+assertSame(get(mem64, 0, 2), [-1n, 0n]);
+ins.exports.i64_ge_s();
+assertSame(get(mem64, 0, 2), [0n, -1n]);
+
+set(mem64, 2, [-2n, 1n, -2n, 1n]);
+ins.exports.i64_lt_s();
+assertSame(get(mem64, 0, 2), [0n, 0n]);
+ins.exports.i64_gt_s();
+assertSame(get(mem64, 0, 2), [0n, 0n]);
+ins.exports.i64_le_s();
+assertSame(get(mem64, 0, 2), [-1n, -1n]);
+ins.exports.i64_ge_s();
+assertSame(get(mem64, 0, 2), [-1n, -1n]);
+
+
 function wasmCompile(text) {
   return new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary(text)))
 }
+
+
+// i64x2.abs
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "i64_abs")
+      (v128.store (i32.const 0)
+        (i64x2.abs (v128.load (i32.const 16))) )) )`);
+
+var mem64 = new BigInt64Array(ins.exports.mem.buffer);
+
+set(mem64, 2, [-3n, 42n]);
+ins.exports.i64_abs();
+assertSame(get(mem64, 0, 2), [3n, 42n]);
+set(mem64, 2, [0n, -0x8000000000000000n]);
+ins.exports.i64_abs();
+assertSame(get(mem64, 0, 2), [0n, -0x8000000000000000n]);
 
 
 // Load lane
@@ -452,6 +532,22 @@ assertSame(get(mem32, 8, 8), [
 ]);
 
 
+// i8x16.popcnt
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "i8x16_popcnt")
+      (v128.store (i32.const 0) (i8x16.popcnt (v128.load (i32.const 16)) )))
+  )`);
+
+var mem8 = new Int8Array(ins.exports.mem.buffer);
+
+set(mem8, 16, [0, 1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 3, -1, 0xF0, 0x11, 0xFE, 0x0F, 0xE]);
+ins.exports.i8x16_popcnt();
+assertSame(get(mem8, 0, 16), [0,1,1,1,1,1,1,1,1,2,8,4,2,7,4,3]);
+
+
 /// Double-precision conversion instructions.
 /// f64x2.convert_low_i32x4_{u,s} / i32x4.trunc_sat_f64x2_{u,s}_zero
 /// f32x4.demote_f64x2_zero / f64x2.promote_low_f32x4
@@ -552,3 +648,49 @@ assertSame(get(memF64, 0, 2), [NaN, 0]);
 set(memF32, 4, [Infinity, -Infinity, 0, 0])
 ins.exports.f64x2_protomote_f32x4();
 assertSame(get(memF64, 0, 2), [Infinity, -Infinity]);
+
+
+// i16x8.extadd_pairwise_i8x16_{s,u} / i32x4.extadd_pairwise_i16x8_{s,u}
+
+var ins = wasmEvalText(`
+  (module
+    (memory (export "mem") 1 1)
+    (func (export "i16x8_extadd_pairwise_i8x16_s")
+      (v128.store (i32.const 0) (i16x8.extadd_pairwise_i8x16_s (v128.load (i32.const 16)) )))
+    (func (export "i16x8_extadd_pairwise_i8x16_u")
+      (v128.store (i32.const 0) (i16x8.extadd_pairwise_i8x16_u (v128.load (i32.const 16)) )))
+
+    (func (export "i32x4_extadd_pairwise_i16x8_s")
+      (v128.store (i32.const 0) (i32x4.extadd_pairwise_i16x8_s (v128.load (i32.const 16)) )))
+    (func (export "i32x4_extadd_pairwise_i16x8_u")
+      (v128.store (i32.const 0) (i32x4.extadd_pairwise_i16x8_u (v128.load (i32.const 16)) )))
+  )`);
+
+var mem8 = new Int8Array(ins.exports.mem.buffer);
+var memU8 = new Uint8Array(ins.exports.mem.buffer);
+var mem16 = new Int16Array(ins.exports.mem.buffer);
+var memU16 = new Uint16Array(ins.exports.mem.buffer);
+var mem32 = new Int32Array(ins.exports.mem.buffer);
+var memU32 = new Uint32Array(ins.exports.mem.buffer);
+
+set(mem8, 16, [0, 0, 1, 1, 2, -2, 0, 42, 1, -101, 101, -1, 127, 125, -1, -2]);
+ins.exports.i16x8_extadd_pairwise_i8x16_s();
+assertSame(get(mem16, 0, 8), [0, 2, 0, 42, -100, 100, 252, -3]);
+
+set(memU8, 16, [0, 0, 1, 1, 2, 255, 0, 42, 0, 255, 254, 0, 127, 125, 255, 255]);
+ins.exports.i16x8_extadd_pairwise_i8x16_u();
+assertSame(get(memU16, 0, 8), [0, 2, 257, 42, 255, 254, 252, 510]);
+
+set(mem16, 8, [0, 0, 1, 1, 2, -2, -1, -2]);
+ins.exports.i32x4_extadd_pairwise_i16x8_s();
+assertSame(get(mem32, 0, 4), [0, 2, 0, -3]);
+set(mem16, 8, [0, 42, 1, -32760, 32766, -1, 32761, 32762]);
+ins.exports.i32x4_extadd_pairwise_i16x8_s();
+assertSame(get(mem32, 0, 4), [42, -32759, 32765, 65523]);
+
+set(memU16, 8, [0, 0, 1, 1, 2, 65535, 65535, 65535]);
+ins.exports.i32x4_extadd_pairwise_i16x8_u();
+assertSame(get(memU32, 0, 4), [0, 2, 65537, 131070]);
+set(memU16, 8, [0, 42, 0, 65535, 65534, 0, 32768, 32765]);
+ins.exports.i32x4_extadd_pairwise_i16x8_u();
+assertSame(get(memU32, 0, 4), [42, 65535, 65534, 65533]);

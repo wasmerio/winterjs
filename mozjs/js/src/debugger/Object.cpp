@@ -2399,7 +2399,7 @@ bool DebuggerObject::forceLexicalInitializationByName(
   }
 
   result = false;
-  if (prop) {
+  if (prop.isFound()) {
     MOZ_ASSERT(prop.isNativeProperty());
     Shape* shape = prop.shape();
     Value v = globalLexical->as<NativeObject>().getSlot(shape->slot());
@@ -2469,7 +2469,7 @@ static JSFunction* EnsureNativeFunction(const Value& value,
   }
 
   JSFunction* fun = &value.toObject().as<JSFunction>();
-  if (!fun->isNative() || (fun->isExtended() && !allowExtended)) {
+  if (!fun->isNativeFun() || (fun->isExtended() && !allowExtended)) {
     return nullptr;
   }
 

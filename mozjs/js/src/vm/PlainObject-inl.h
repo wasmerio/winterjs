@@ -27,19 +27,18 @@
 /* static */ inline JS::Result<js::PlainObject*, JS::OOM>
 js::PlainObject::createWithTemplate(JSContext* cx,
                                     JS::Handle<PlainObject*> templateObject) {
-  JS::Rooted<ObjectGroup*> group(cx, templateObject->group());
-  MOZ_ASSERT(group->clasp() == &PlainObject::class_);
-
-  gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
-
   JS::Rooted<Shape*> shape(cx, templateObject->lastProperty());
+
+  MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, &PlainObject::class_);
 
   gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
   MOZ_ASSERT(gc::CanChangeToBackgroundAllocKind(kind, shape->getObjectClass()));
   kind = gc::ForegroundToBackgroundAllocKind(kind);
 
-  return NativeObject::create(cx, kind, heap, shape, group)
-      .map([](NativeObject* obj) { return &obj->as<PlainObject>(); });
+  return NativeObject::create(cx, kind, heap, shape).map([](NativeObject* obj) {
+    return &obj->as<PlainObject>();
+  });
 }
 
 inline js::gc::AllocKind js::PlainObject::allocKindForTenure() const {

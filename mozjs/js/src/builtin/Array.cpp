@@ -305,7 +305,7 @@ template <typename T>
 static bool HasAndGetElement(JSContext* cx, HandleObject obj,
                              HandleObject receiver, T index, bool* hole,
                              MutableHandleValue vp) {
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     NativeObject* nobj = &obj->as<NativeObject>();
     if (index < nobj->getDenseInitializedLength()) {
       vp.set(nobj->getDenseElement(size_t(index)));
@@ -475,7 +475,7 @@ bool js::GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
 
 static inline bool GetArrayElement(JSContext* cx, HandleObject obj,
                                    uint64_t index, MutableHandleValue vp) {
-  if (obj->isNative()) {
+  if (obj->is<NativeObject>()) {
     NativeObject* nobj = &obj->as<NativeObject>();
     if (index < nobj->getDenseInitializedLength()) {
       vp.set(nobj->getDenseElement(size_t(index)));
@@ -955,7 +955,7 @@ static bool array_addProperty(JSContext* cx, HandleObject obj, HandleId id,
 }
 
 static inline bool ObjectMayHaveExtraIndexedOwnProperties(JSObject* obj) {
-  if (!obj->isNative()) {
+  if (!obj->is<NativeObject>()) {
     return true;
   }
 
@@ -977,7 +977,7 @@ static inline bool ObjectMayHaveExtraIndexedOwnProperties(JSObject* obj) {
  * indexed properties or elements along its prototype chain.
  */
 bool js::ObjectMayHaveExtraIndexedProperties(JSObject* obj) {
-  MOZ_ASSERT_IF(obj->hasDynamicPrototype(), !obj->isNative());
+  MOZ_ASSERT_IF(obj->hasDynamicPrototype(), !obj->is<NativeObject>());
 
   if (ObjectMayHaveExtraIndexedOwnProperties(obj)) {
     return true;
@@ -1392,7 +1392,7 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
   // An optimized version of a special case of steps 5-8: when length==1 and
   // the 0th element is a string, ToString() of that element is a no-op and
   // so it can be immediately returned as the result.
-  if (length == 1 && obj->isNative()) {
+  if (length == 1 && obj->is<NativeObject>()) {
     NativeObject* nobj = &obj->as<NativeObject>();
     if (nobj->getDenseInitializedLength() == 1) {
       Value elem0 = nobj->getDenseElement(0);
@@ -2989,7 +2989,7 @@ static bool array_splice_impl(JSContext* cx, unsigned argc, Value* vp,
       MOZ_ASSERT(sourceIndex <= len && targetIndex <= len && len <= UINT32_MAX,
                  "sourceIndex and targetIndex are uint32 array indices");
       MOZ_ASSERT(finalLength < len, "finalLength is strictly less than len");
-      MOZ_ASSERT(obj->isNative());
+      MOZ_ASSERT(obj->is<NativeObject>());
 
       /* Steps 15.a-b. */
       HandleArrayObject arr = obj.as<ArrayObject>();
@@ -3199,7 +3199,7 @@ static bool GetIndexedPropertiesInRange(JSContext* cx, HandleObject obj,
   // properties.
   JSObject* pobj = obj;
   do {
-    if (!pobj->isNative() || pobj->getClass()->getResolve() ||
+    if (!pobj->is<NativeObject>() || pobj->getClass()->getResolve() ||
         pobj->getOpsLookupProperty()) {
       return true;
     }
@@ -3412,7 +3412,8 @@ static bool ArraySliceOrdinary(JSContext* cx, HandleObject obj, uint64_t begin,
     }
   }
 
-  if (obj->isNative() && obj->as<NativeObject>().isIndexed() && count > 1000) {
+  if (obj->is<NativeObject>() && obj->as<NativeObject>().isIndexed() &&
+      count > 1000) {
     if (!SliceSparse(cx, obj, begin, end, narr)) {
       return false;
     }
@@ -3809,16 +3810,9 @@ static JSObject* CreateArrayPrototype(JSContext* cx, JSProtoKey key) {
     return nullptr;
   }
 
-  RootedObjectGroup group(cx,
-                          ObjectGroup::defaultNewGroup(cx, &ArrayObject::class_,
-                                                       TaggedProto(proto)));
-  if (!group) {
-    return nullptr;
-  }
-
-  RootedShape shape(cx, EmptyShape::getInitialShape(cx, &ArrayObject::class_,
-                                                    TaggedProto(proto),
-                                                    gc::AllocKind::OBJECT0));
+  RootedShape shape(cx, EmptyShape::getInitialShape(
+                            cx, &ArrayObject::class_, cx->realm(),
+                            TaggedProto(proto), gc::AllocKind::OBJECT0));
   if (!shape) {
     return nullptr;
   }
@@ -3826,9 +3820,8 @@ static JSObject* CreateArrayPrototype(JSContext* cx, JSProtoKey key) {
   AutoSetNewObjectMetadata metadata(cx);
   RootedArrayObject arrayProto(
       cx, ArrayObject::createArray(cx, gc::AllocKind::OBJECT4, gc::TenuredHeap,
-                                   shape, group, 0, metadata));
-  if (!arrayProto || !JSObject::setDelegate(cx, arrayProto) ||
-      !AddLengthProperty(cx, arrayProto)) {
+                                   shape, 0, metadata));
+  if (!arrayProto || !AddLengthProperty(cx, arrayProto)) {
     return nullptr;
   }
 
@@ -3960,28 +3953,22 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
     }
   }
 
-  RootedObjectGroup group(cx,
-                          ObjectGroup::defaultNewGroup(cx, &ArrayObject::class_,
-                                                       TaggedProto(proto)));
-  if (!group) {
-    return nullptr;
-  }
-
   /*
    * Get a shape with zero fixed slots, regardless of the size class.
    * See JSObject::createArray.
    */
-  RootedShape shape(cx, EmptyShape::getInitialShape(cx, &ArrayObject::class_,
-                                                    TaggedProto(proto),
-                                                    gc::AllocKind::OBJECT0));
+  RootedShape shape(cx, EmptyShape::getInitialShape(
+                            cx, &ArrayObject::class_, cx->realm(),
+                            TaggedProto(proto), gc::AllocKind::OBJECT0));
   if (!shape) {
     return nullptr;
   }
 
   AutoSetNewObjectMetadata metadata(cx);
-  RootedArrayObject arr(cx, ArrayObject::createArray(
-                                cx, allocKind, GetInitialHeap(newKind, group),
-                                shape, group, length, metadata));
+  RootedArrayObject arr(
+      cx, ArrayObject::createArray(
+              cx, allocKind, GetInitialHeap(newKind, &ArrayObject::class_),
+              shape, length, metadata));
   if (!arr) {
     return nullptr;
   }
@@ -3991,7 +3978,7 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArray(JSContext* cx, uint32_t length,
       return nullptr;
     }
     shape = arr->lastProperty();
-    EmptyShape::insertInitialShape(cx, shape, proto);
+    EmptyShape::insertInitialShape(cx, shape);
   }
 
   if (isCachable) {
@@ -4066,13 +4053,12 @@ ArrayObject* js::NewDenseFullyAllocatedArrayWithTemplate(
   MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, &ArrayObject::class_));
   allocKind = ForegroundToBackgroundAllocKind(allocKind);
 
-  RootedObjectGroup group(cx, templateObject->group());
   RootedShape shape(cx, templateObject->lastProperty());
 
-  gc::InitialHeap heap = GetInitialHeap(GenericObject, group);
+  gc::InitialHeap heap = GetInitialHeap(GenericObject, &ArrayObject::class_);
   Rooted<ArrayObject*> arr(
-      cx, ArrayObject::createArray(cx, allocKind, heap, shape, group, length,
-                                   metadata));
+      cx,
+      ArrayObject::createArray(cx, allocKind, heap, shape, length, metadata));
   if (!arr) {
     return nullptr;
   }
@@ -4087,14 +4073,14 @@ ArrayObject* js::NewDenseFullyAllocatedArrayWithTemplate(
 }
 
 // TODO(no-TI): clean up.
-ArrayObject* js::NewArrayWithGroup(JSContext* cx, uint32_t length,
-                                   HandleObjectGroup group) {
-  // Ion can call this with a group from a different realm when calling
+ArrayObject* js::NewArrayWithShape(JSContext* cx, uint32_t length,
+                                   HandleShape shape) {
+  // Ion can call this with a shape from a different realm when calling
   // another realm's Array constructor.
   Maybe<AutoRealm> ar;
-  if (cx->realm() != group->realm()) {
-    MOZ_ASSERT(cx->compartment() == group->compartment());
-    ar.emplace(cx, group);
+  if (cx->realm() != shape->realm()) {
+    MOZ_ASSERT(cx->compartment() == shape->compartment());
+    ar.emplace(cx, shape);
   }
 
   return NewDenseFullyAllocatedArray(cx, length);

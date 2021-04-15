@@ -352,6 +352,13 @@ def main(argv):
         help="Ignore timeouts of tests listed in [FILE]",
     )
     op.add_argument(
+        "--retry-remote-timeouts",
+        dest="timeout_retry",
+        type=int,
+        default=1,
+        help="Number of time to retry timeout on remote devices",
+    )
+    op.add_argument(
         "--test-reflect-stringify",
         dest="test_reflect_stringify",
         help="instead of running tests, use them to test the "
@@ -510,9 +517,7 @@ def main(argv):
     )
     prologue = os.path.join(jittests.LIB_DIR, "prologue.js")
     if options.remote:
-        prologue = posixpath.join(
-            options.remote_test_root, "tests", "tests", "lib", "prologue.js"
-        )
+        prologue = posixpath.join(options.remote_test_root, "lib", "prologue.js")
 
     prefix += ["-f", prologue]
 

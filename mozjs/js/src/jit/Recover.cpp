@@ -1571,9 +1571,9 @@ RNewArray::RNewArray(CompactBufferReader& reader) {
 bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
   RootedObject templateObject(cx, &iter.read().toObject());
   RootedValue result(cx);
-  RootedObjectGroup group(cx, templateObject->group());
+  RootedShape shape(cx, templateObject->shape());
 
-  ArrayObject* resultObject = NewArrayWithGroup(cx, count_, group);
+  ArrayObject* resultObject = NewArrayWithShape(cx, count_, shape);
   if (!resultObject) {
     return false;
   }
@@ -1729,8 +1729,8 @@ bool RNewCallObject::recover(JSContext* cx, SnapshotIterator& iter) const {
   Rooted<CallObject*> templateObj(cx, &iter.read().toObject().as<CallObject>());
 
   RootedShape shape(cx, templateObj->lastProperty());
-  RootedObjectGroup group(cx, templateObj->group());
-  JSObject* resultObject = NewCallObject(cx, shape, group);
+
+  JSObject* resultObject = NewCallObject(cx, shape);
   if (!resultObject) {
     return false;
   }
@@ -1962,6 +1962,40 @@ bool RCreateArgumentsObject::recover(JSContext* cx,
   RootedObject callObject(cx, &iter.read().toObject());
   RootedObject result(
       cx, ArgumentsObject::createForIon(cx, iter.frame(), callObject));
+  if (!result) {
+    return false;
+  }
+
+  iter.storeInstructionResult(JS::ObjectValue(*result));
+  return true;
+}
+
+bool MCreateInlinedArgumentsObject::writeRecoverData(
+    CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(
+      uint32_t(RInstruction::Recover_CreateInlinedArgumentsObject));
+  writer.writeUnsigned(numActuals());
+  return true;
+}
+
+RCreateInlinedArgumentsObject::RCreateInlinedArgumentsObject(
+    CompactBufferReader& reader) {
+  numActuals_ = reader.readUnsigned();
+}
+
+bool RCreateInlinedArgumentsObject::recover(JSContext* cx,
+                                            SnapshotIterator& iter) const {
+  RootedObject callObject(cx, &iter.read().toObject());
+  RootedFunction callee(cx, &iter.read().toObject().as<JSFunction>());
+
+  JS::RootedValueArray<ArgumentsObject::MaxInlinedArgs> argsArray(cx);
+  for (uint32_t i = 0; i < numActuals_; i++) {
+    argsArray[i].set(iter.read());
+  }
+
+  RootedObject result(cx, ArgumentsObject::createFromValueArray(
+                              cx, argsArray, callee, callObject, numActuals_));
   if (!result) {
     return false;
   }

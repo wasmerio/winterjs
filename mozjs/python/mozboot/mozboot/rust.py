@@ -5,6 +5,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import os
+import platform as platform_mod
 import sys
 
 # Base url for pulling the rustup installer.
@@ -16,14 +17,15 @@ RUSTUP_URL_BASE = "https://static-rust-lang-org.s3.amazonaws.com/rustup"
 RUSTUP_MANIFEST = RUSTUP_URL_BASE + "/release-stable.toml"
 
 # We bake in a known version number so we can verify a checksum.
-RUSTUP_VERSION = "1.21.1"
+RUSTUP_VERSION = "1.23.1"
 
 # SHA-256 checksums of the installers, per platform.
 RUSTUP_HASHES = {
-    "x86_64-unknown-freebsd": "a6bfc71c58b7ac3dad0d6ea0937990ca72f3b636096244c0c9ba814a627cbcc1",
-    "x86_64-apple-darwin": "fd76f7093bd810f9ee9050786678c74155d6f5fcc3aac958d24c0783e435a994",
-    "x86_64-unknown-linux-gnu": "ad1f8b5199b3b9e231472ed7aa08d2e5d1d539198a15c5b1e53c746aad81d27b",
-    "x86_64-pc-windows-msvc": "9f9e33fa4759075ec60e4da13798d1d66a4c2f43c5500e08714399313409dcf5",
+    "x86_64-unknown-freebsd": "3fb56018ec6009c5a3e345f07d7ea2fbc67d4c6768e528c6d990c7ebe2388d09",
+    "aarch64-apple-darwin": "6d56735284181b2eb804ed7f57f76cf5ff924251e8ab69d9b5822c3be1ca1dc7",
+    "x86_64-apple-darwin": "39101feb178a7e3e4443b09b36338e794a9e00385e5f44a2f7789aefb91354a9",
+    "x86_64-unknown-linux-gnu": "ed7773edaf1d289656bdec2aacad12413b38ad0193fff54b2231f5140a4b07c5",
+    "x86_64-pc-windows-msvc": "a586cf9de3e4aa791fd5796b6a5f99ca05591ccef8bb94e53af5b69f0261fb03",
 }
 
 NO_PLATFORM = """
@@ -52,6 +54,8 @@ def rustup_hash(host):
 def platform():
     """Determine the appropriate rust platform string for the current host"""
     if sys.platform.startswith("darwin"):
+        if platform_mod.machine() == "arm64":
+            return "aarch64-apple-darwin"
         return "x86_64-apple-darwin"
     elif sys.platform.startswith(("win32", "msys")):
         # Bravely assume we'll be building 64-bit Firefox.
@@ -90,9 +94,9 @@ def unquote(s):
 
 def rustup_latest_version():
     """Query the latest version of the rustup installer."""
-    import urllib2
+    import requests
 
-    f = urllib2.urlopen(RUSTUP_MANIFEST)
+    r = requests.get(RUSTUP_MANIFEST)
     # The manifest is toml, but we might not have the toml4 python module
     # available, so use ad-hoc parsing to obtain the current release version.
     #
@@ -101,8 +105,9 @@ def rustup_latest_version():
     # schema-version = '1'
     # version = '0.6.5'
     #
-    for line in f:
-        key, value = map(str.strip, line.split(b"=", 2))
+    for line in r.iter_lines():
+        line = line.decode("utf-8")
+        key, value = map(str.strip, line.split("=", 2))
         if key == "schema-version":
             schema = int(unquote(value))
             if schema != 1:
@@ -128,9 +133,9 @@ def make_checksums(version, validate=False):
     hashes = []
     for platform in RUSTUP_HASHES.keys():
         if validate:
-            print("Checking %s... " % platform, end="")
+            print("Checking %s... " % platform, end="", flush=True)
         else:
-            print("Fetching %s... " % platform, end="")
+            print("Fetching %s... " % platform, end="", flush=True)
         checksum = http_download_and_hash(rustup_url(platform, version))
         if validate and checksum != rustup_hash(platform):
             print(
@@ -145,10 +150,6 @@ def make_checksums(version, validate=False):
 
 if __name__ == "__main__":
     """Allow invoking the module as a utility to update checksums."""
-
-    # Unbuffer stdout so our two-part 'Checking...' messages print correctly
-    # even if there's network delay.
-    sys.stdout = os.fdopen(sys.stdout.fileno(), "w", 0)
 
     # Hook the requests module from the greater source tree. We can't import
     # this at the module level since we might be imported into the bootstrap
@@ -166,7 +167,7 @@ if __name__ == "__main__":
             print(USAGE)
             sys.exit(1)
 
-    print("Checking latest installer version... ", end="")
+    print("Checking latest installer version... ", end="", flush=True)
     version = rustup_latest_version()
     if not version:
         print("ERROR: Could not query current rustup installer version.")

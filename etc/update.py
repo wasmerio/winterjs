@@ -40,14 +40,12 @@ def extract_tarball(tarball):
 
 def apply_patches():
     print("Applying patches.")
-
     patch_dir = os.path.abspath(os.path.join("etc", "patches"))
     patches = sorted(
         os.path.join(patch_dir, p)
         for p in os.listdir(patch_dir)
         if p.endswith(".patch")
     )
-
     for p in patches:
         print("  Applying patch: %s." % p)
         subprocess.check_call(["git", "apply", "--reject", "--directory=" + TARGET, p], stdout=subprocess.DEVNULL)

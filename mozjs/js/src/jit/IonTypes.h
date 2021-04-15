@@ -122,6 +122,12 @@ enum class BailoutKind : uint8_t {
   // mark the hadLICMInvalidation flag on the script.
   LICM,
 
+  // An instruction moved up by InstructionReordering.  If this
+  // instruction bails out, we will mark the ReorderingBailout flag on
+  // the script. If this happens too frequently, we will invalidate
+  // the script.
+  InstructionReordering,
+
   // An instruction created or hoisted by tryHoistBoundsCheck.
   // If this instruction bails out, we will invalidate the current Warp script
   // and mark the HoistBoundsCheckBailout flag on the script.
@@ -184,6 +190,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "TypePolicy";
     case BailoutKind::LICM:
       return "LICM";
+    case BailoutKind::InstructionReordering:
+      return "InstructionReordering";
     case BailoutKind::HoistBoundsCheck:
       return "HoistBoundsCheck";
     case BailoutKind::EagerTruncation:
@@ -489,8 +497,7 @@ enum class MIRType : uint8_t {
   RefOrNull,     // Wasm Ref/AnyRef/NullRef: a raw JSObject* or a raw (void*)0
   StackResults,  // Wasm multi-value stack result area, which may contain refs
   Shape,         // A Shape pointer.
-  ObjectGroup,   // An ObjectGroup pointer.
-  Last = ObjectGroup
+  Last = Shape
 };
 
 static inline MIRType MIRTypeFromValueType(JSValueType type) {
@@ -629,8 +636,6 @@ static inline const char* StringFromMIRType(MIRType type) {
       return "StackResults";
     case MIRType::Shape:
       return "Shape";
-    case MIRType::ObjectGroup:
-      return "ObjectGroup";
     case MIRType::Simd128:
       return "Simd128";
   }
@@ -891,6 +896,8 @@ enum ABIFunctionType : uint32_t {
                       ArgType_Int32, ArgType_Int32}),
   Args_Int32_GeneralGeneral = detail::MakeABIFunctionType(
       ArgType_Int32, {ArgType_General, ArgType_General}),
+  Args_Int32_GeneralGeneralGeneral = detail::MakeABIFunctionType(
+      ArgType_Int32, {ArgType_General, ArgType_General, ArgType_General}),
   Args_Int32_GeneralGeneralInt32Int32 = detail::MakeABIFunctionType(
       ArgType_Int32,
       {ArgType_General, ArgType_General, ArgType_Int32, ArgType_Int32}),

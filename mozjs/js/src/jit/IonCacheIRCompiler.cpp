@@ -659,54 +659,6 @@ bool IonCacheIRCompiler::emitGuardShape(ObjOperandId objId,
   return true;
 }
 
-bool IonCacheIRCompiler::emitGuardGroup(ObjOperandId objId,
-                                        uint32_t groupOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-  ObjectGroup* group = groupStubField(groupOffset);
-
-  bool needSpectreMitigations = objectGuardNeedsSpectreMitigations(objId);
-
-  Maybe<AutoScratchRegister> maybeScratch;
-  if (needSpectreMitigations) {
-    maybeScratch.emplace(allocator, masm);
-  }
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  if (needSpectreMitigations) {
-    masm.branchTestObjGroup(Assembler::NotEqual, obj, group, *maybeScratch, obj,
-                            failure->label());
-  } else {
-    masm.branchTestObjGroupNoSpectreMitigations(Assembler::NotEqual, obj, group,
-                                                failure->label());
-  }
-
-  return true;
-}
-
-bool IonCacheIRCompiler::emitGuardTypeDescr(ObjOperandId objId,
-                                            uint32_t descrOffset) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-
-  Register obj = allocator.useRegister(masm, objId);
-  AutoScratchRegister scratch(allocator, masm);
-
-  TypeDescr* descr = &objectStubField(descrOffset)->as<TypeDescr>();
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  masm.branchTestObjTypeDescr(Assembler::NotEqual, obj, descr, scratch, obj,
-                              failure->label());
-  return true;
-}
-
 bool IonCacheIRCompiler::emitGuardProto(ObjOperandId objId,
                                         uint32_t protoOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -971,7 +923,7 @@ bool IonCacheIRCompiler::emitCallNativeGetterResult(
   ValueOperand receiver = allocator.useValueRegister(masm, receiverId);
 
   JSFunction* target = &objectStubField(getterOffset)->as<JSFunction>();
-  MOZ_ASSERT(target->isNative());
+  MOZ_ASSERT(target->isNativeFun());
 
   AutoScratchRegisterMaybeOutput argJSContext(allocator, masm, output);
   AutoScratchRegister argUintN(allocator, masm);
@@ -1481,7 +1433,7 @@ bool IonCacheIRCompiler::emitCallNativeSetter(ObjOperandId receiverId,
 
   Register receiver = allocator.useRegister(masm, receiverId);
   JSFunction* target = &objectStubField(setterOffset)->as<JSFunction>();
-  MOZ_ASSERT(target->isNative());
+  MOZ_ASSERT(target->isNativeFun());
   ConstantOrRegister val = allocator.useConstantOrRegister(masm, rhsId);
 
   AutoScratchRegister argJSContext(allocator, masm);

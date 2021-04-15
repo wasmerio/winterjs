@@ -3359,7 +3359,7 @@ bool ASTSerializer::literal(ParseNode* pn, MutableHandleValue dst) {
       RegExpObject* re = pn->as<RegExpLiteral>().create(
           cx, parser->parserAtoms(),
           parser->getCompilationState().input.atomCache,
-          parser->getCompilationStencil());
+          parser->getCompilationState());
       if (!re) {
         return false;
       }
@@ -3860,24 +3860,18 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
       return false;
     }
   }
-  CompilationStencil stencil(input.get());
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, input.get(),
-                                              stencil);
+  frontend::CompilationState compilationState(cx, allocScope, input.get());
   if (!compilationState.init(cx)) {
     return false;
   }
 
   Parser<FullParseHandler, char16_t> parser(
       cx, options, chars.begin().get(), chars.length(),
-      /* foldConstants = */ false, stencil, compilationState,
+      /* foldConstants = */ false, compilationState,
       /* syntaxParser = */ nullptr);
   if (!parser.checkOptions()) {
-    return false;
-  }
-
-  if (!compilationState.finish(cx, stencil)) {
     return false;
   }
 
@@ -3906,10 +3900,6 @@ static bool reflect_parse(JSContext* cx, uint32_t argc, Value* vp) {
     }
 
     pn = pn->as<ModuleNode>().body();
-  }
-
-  if (!compilationState.finish(cx, stencil)) {
-    return false;
   }
 
   RootedValue val(cx);
