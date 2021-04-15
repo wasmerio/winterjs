@@ -297,15 +297,15 @@ fn build_jsapi_bindings(build_dir: &Path) {
     }
 
     for ty in WHITELIST_TYPES {
-        builder = builder.whitelist_type(ty);
+        builder = builder.allowlist_type(ty);
     }
 
     for var in WHITELIST_VARS {
-        builder = builder.whitelist_var(var);
+        builder = builder.allowlist_var(var);
     }
 
     for func in WHITELIST_FUNCTIONS {
-        builder = builder.whitelist_function(func);
+        builder = builder.allowlist_function(func);
     }
 
     for ty in OPAQUE_TYPES {
@@ -313,7 +313,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
     }
 
     for ty in BLACKLIST_TYPES {
-        builder = builder.blacklist_type(ty);
+        builder = builder.blocklist_type(ty);
     }
 
     for &(module, raw_line) in MODULE_RAW_LINES {
