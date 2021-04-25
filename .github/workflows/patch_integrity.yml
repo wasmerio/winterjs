@@ -1,0 +1,6 @@
+name: Patch Integrity
+
+on: 
+  push:
+  pull_request:
+  
