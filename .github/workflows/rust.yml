@@ -43,8 +43,8 @@ jobs:
       with:
           profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true,
-          default: true,
+          override: true
+          default: true
     - name: ccache cache files
       if: startsWith(matrix.os, 'windows') != true
       uses: actions/cache@v1.1.0
