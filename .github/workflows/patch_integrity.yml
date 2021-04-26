@@ -6,13 +6,10 @@ on:
   pull_request:
 
 jobs:
-  Build:
+  integrity:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Install deps on linux
-      run: |
-        sudo apt install jq -y
     - name: Get mozjs
       run: |
         ./get_mozjs.sh

@@ -1,6 +1,6 @@
 #!/bin/bash
 # get commit and appropriet mozjs tar
-COMMIT=$( cat $( dirname ${BASH_SOURCE[0]} )/COMMIT )
+COMMIT=$( cat ./etc/COMMIT )
 echo "Commit $COMMIT"
 job_id=$(curl "https://treeherder.mozilla.org/api/project/mozilla-release/push/?revision=$COMMIT" | jq '.results[0].id')
 echo "Job id $job_id"
