@@ -9,7 +9,7 @@ import tempfile
 
 TARGET = "mozjs"
 
-def extract_tarball(tarball):
+def extract_tarball(tarball, commit):
     print("Extracting tarball.")
 
     if not os.path.exists(tarball):
@@ -35,8 +35,9 @@ def extract_tarball(tarball):
             os.path.join(TARGET, ""),
         ])
 
-    subprocess.check_call(["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL)
-    subprocess.check_call(["git", "commit", "-m", "Update SpiderMonkey"], stdout=subprocess.DEVNULL)
+    if commit:
+        subprocess.check_call(["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL)
+        subprocess.check_call(["git", "commit", "-m", "Update SpiderMonkey"], stdout=subprocess.DEVNULL)
 
 def apply_patches():
     print("Applying patches.")
@@ -53,13 +54,16 @@ def apply_patches():
 def main(args):
     extract = None
     patch = True
+    commit = True
     for arg in args:
         if arg == "--no-patch":
             patch = False
+        elif arg == "--no-commit":
+            commit = False
         else:
             extract = arg
     if extract:
-        extract_tarball(os.path.abspath(extract))
+        extract_tarball(os.path.abspath(extract), commit)
     if patch:
         apply_patches()
 
