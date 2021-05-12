@@ -82,7 +82,13 @@ fn find_make() -> OsString {
         make
     } else {
         match Command::new("gmake").status() {
-            Ok(_) => OsStr::new("gmake").to_os_string(),
+            Ok(gmake) => {
+                if gmake.success() {
+                    OsStr::new("gmake").to_os_string()
+                } else {
+                    OsStr::new("make").to_os_string()
+                }
+            },
             Err(_) => OsStr::new("make").to_os_string(),
         }
     }
