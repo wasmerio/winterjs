@@ -1,4 +1,9 @@
 #!/bin/bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
 # get commit and appropriet mozjs tar
 COMMIT=$( cat ./etc/COMMIT )
 echo "Commit $COMMIT"
