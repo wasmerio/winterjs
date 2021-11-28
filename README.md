@@ -1,7 +1,7 @@
 This repository contains Rust bindings for [SpiderMonkey][sm] for use with
 [Servo][s].
 
-[sm]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey
+[sm]: https://spidermonkey.dev/
 [s]: https://servo.org/
 
 The bindings are to the raw SpiderMonkey API, higher-level bindings
