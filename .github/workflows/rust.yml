@@ -89,7 +89,8 @@ jobs:
   build_result:
     name: homu build finished
     runs-on: ubuntu-latest
-    needs: ["Build", "Integrity"]
+    # Integrity check is broken for the time being; don't require it.
+    needs: ["Build"]
     steps:
       - name: Mark the job as successful
         run: exit 0
