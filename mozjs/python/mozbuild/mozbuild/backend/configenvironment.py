@@ -9,7 +9,8 @@ import six
 import sys
 import json
 
-from collections import Iterable, OrderedDict
+from collections import OrderedDict
+from collections.abc import Iterable
 from types import ModuleType
 
 import mozpack.path as mozpath
