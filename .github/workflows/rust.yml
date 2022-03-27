@@ -38,9 +38,8 @@ jobs:
         .\MozillaBuildSetup.exe /S | Out-Null
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\install.ps1 -RunAsAdmin
-        scoop install llvm --global
+        scoop install llvm@13.0.1 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        dir "C:\Program Files\LLVM\lib\clang\13.0.1\lib\windows"
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
@@ -72,7 +71,7 @@ jobs:
         CXX: "clang-cl.exe"
         NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
-        LIBCLANG_PATH: 'C:\Program Files\LLVM\lib\clang\13.0.1\lib\windows'
+        LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
         cargo test --verbose --verbose ${{ matrix.features }} --lib
   Integrity:
