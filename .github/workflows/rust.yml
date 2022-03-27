@@ -43,8 +43,9 @@ jobs:
         dir "C:\ProgramData\scoop\apps\llvm\current\lib"
         dir "C:\ProgramData\scoop\apps\llvm\current\bin"
         dir "C:\Program Files\LLVM\lib\clang\13.0.1"
-        dir "C:\Program Files\LLVM\lib\clang\13.0.1\bin"
         dir "C:\Program Files\LLVM\lib\clang\13.0.1\lib"
+        dir "C:\Program Files\LLVM"
+        dir "C:\Program Files\LLVM\bin"
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
