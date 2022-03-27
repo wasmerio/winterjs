@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        rust: [beta, stable]
-        features: ["--features debugmozjs", ""]
+        os: [windows-latest]
+        rust: [stable]
+        features: [""]
         exclude:
           - os: windows-latest
             rust: beta
@@ -40,6 +40,11 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        dir "C:\ProgramData\scoop\apps\llvm\current\lib"
+        dir "C:\ProgramData\scoop\apps\llvm\current\bin"
+        dir "C:\Program Files\LLVM\lib\clang\13.0.1"
+        dir "C:\Program Files\LLVM\lib\clang\13.0.1\bin"
+        dir "C:\Program Files\LLVM\lib\clang\13.0.1\lib"
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
