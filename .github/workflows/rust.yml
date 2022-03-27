@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
-        rust: [stable]
-        features: [""]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        rust: [beta, stable]
+        features: ["--features debugmozjs", ""]
         exclude:
           - os: windows-latest
             rust: beta
