@@ -34,7 +34,7 @@ jobs:
     - name: Install deps on windows
       if: startsWith(matrix.os, 'windows')
       run: |
-        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe -Destination ./MozillaBuildSetup.exe
+        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
         .\MozillaBuildSetup.exe /S | Out-Null
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\install.ps1 -RunAsAdmin
