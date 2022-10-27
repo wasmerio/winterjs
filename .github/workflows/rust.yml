@@ -40,6 +40,16 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm@14.0.6 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    # TODO: Remove this step when the compatibility issue between mozjs and
+    #       Homebrew's Python 3.10 formula (servo/rust-mozjs#559) is truly fixed
+    - name: Select Python 3.9
+      if: startsWith(matrix.os, 'macOS')
+      run: |
+        brew install python@3.9
+        cd $(dirname $(which python3.9))
+        rm -f python3 pip3
+        ln -s python3.9 python3
+        ln -s pip3.9 pip3
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
