@@ -99,19 +99,21 @@ pub trait GCMethods {
     unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
 }
 
-impl GCMethods for jsid {
-    unsafe fn initial() -> jsid {
-        JSID_VOID
-    }
-    unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
-}
-
 impl GCMethods for *mut JSObject {
     unsafe fn initial() -> *mut JSObject {
         ptr::null_mut()
     }
     unsafe fn post_barrier(v: *mut *mut JSObject, prev: *mut JSObject, next: *mut JSObject) {
         JS::HeapObjectWriteBarriers(v, prev, next);
+    }
+}
+
+impl GCMethods for *mut JSFunction {
+    unsafe fn initial() -> *mut JSFunction {
+        ptr::null_mut()
+    }
+    unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
+        JS::HeapObjectWriteBarriers(mem::transmute(v), mem::transmute(prev), mem::transmute(next));
     }
 }
 
@@ -124,6 +126,13 @@ impl GCMethods for *mut JSString {
     }
 }
 
+impl GCMethods for *mut JS::Symbol {
+    unsafe fn initial() -> *mut JS::Symbol {
+        ptr::null_mut()
+    }
+    unsafe fn post_barrier(_: *mut *mut JS::Symbol, prev: *mut JS::Symbol, next: *mut JS::Symbol) {}
+}
+
 impl GCMethods for *mut JSScript {
     unsafe fn initial() -> *mut JSScript {
         ptr::null_mut()
@@ -133,13 +142,11 @@ impl GCMethods for *mut JSScript {
     }
 }
 
-impl GCMethods for *mut JSFunction {
-    unsafe fn initial() -> *mut JSFunction {
-        ptr::null_mut()
+impl GCMethods for jsid {
+    unsafe fn initial() -> jsid {
+        JSID_VOID
     }
-    unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
-        JS::HeapObjectWriteBarriers(mem::transmute(v), mem::transmute(prev), mem::transmute(next));
-    }
+    unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
 
 impl GCMethods for JS::Value {
