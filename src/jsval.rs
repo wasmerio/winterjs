@@ -9,6 +9,7 @@ use jsapi::JSContext;
 use jsapi::JSObject;
 use jsapi::JSString;
 use jsapi::JSValueType;
+use jsapi::JS::Symbol;
 use jsapi::JS::TraceKind;
 use jsapi::JS::Value;
 
@@ -176,6 +177,21 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
+#[inline(always)]
+pub fn SymbolValue(s: &Symbol) -> JSVal {
+    let bits = s as *const Symbol as usize as u64;
+    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
+    BuildJSVal(ValueTag::SYMBOL, bits)
+}
+
+#[cfg(target_pointer_width = "32")]
+#[inline(always)]
+pub fn SymbolValue(s: &Symbol) -> JSVal {
+    let bits = s as *const Symbol as usize as u64;
+    BuildJSVal(ValueTag::SYMBOL, bits)
+}
+
 #[inline(always)]
 pub fn PrivateValue(o: *const c_void) -> JSVal {
     let ptrBits = o as usize as u64;
@@ -310,6 +326,22 @@ impl JSVal {
 
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
+    pub fn is_object_or_null(&self) -> bool {
+        const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueShiftedTag::NULL as u64;
+        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::OBJECT as u64);
+        self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn is_object_or_null(&self) -> bool {
+        const JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueTag::NULL as u64;
+        assert!((self.asBits() >> 32) <= ValueTag::OBJECT as u64);
+        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn is_magic(&self) -> bool {
         (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::MAGIC as u64
     }
@@ -323,13 +355,27 @@ impl JSVal {
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
     pub fn is_symbol(&self) -> bool {
-        self.asBits() == ValueShiftedTag::SYMBOL as u64
+        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::SYMBOL as u64
     }
 
     #[inline(always)]
     #[cfg(target_pointer_width = "32")]
     pub fn is_symbol(&self) -> bool {
         (self.asBits() >> 32) == ValueTag::SYMBOL as u64
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
+    pub fn is_gcthing(&self) -> bool {
+        const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET: u64 = ValueShiftedTag::STRING as u64;
+        self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn is_gcthing(&self) -> bool {
+        const JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET: u64 = ValueTag::STRING as u64;
+        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET
     }
 
     #[inline(always)]
@@ -368,12 +414,6 @@ impl JSVal {
     }
 
     #[inline(always)]
-    pub fn to_object(&self) -> *mut JSObject {
-        assert!(self.is_object());
-        self.to_object_or_null()
-    }
-
-    #[inline(always)]
     #[cfg(target_pointer_width = "64")]
     pub fn to_string(&self) -> *mut JSString {
         assert!(self.is_string());
@@ -390,19 +430,9 @@ impl JSVal {
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_object_or_null(&self) -> bool {
-        const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueShiftedTag::NULL as u64;
-        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::OBJECT as u64);
-        self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_object_or_null(&self) -> bool {
-        const JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueTag::NULL as u64;
-        assert!((self.asBits() >> 32) <= ValueTag::OBJECT as u64);
-        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET
+    pub fn to_object(&self) -> *mut JSObject {
+        assert!(self.is_object());
+        self.to_object_or_null()
     }
 
     #[inline(always)]
@@ -423,25 +453,19 @@ impl JSVal {
     }
 
     #[inline(always)]
+    pub fn to_symbol(&self) -> *mut Symbol {
+        assert!(self.is_symbol());
+        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
+        assert!((ptrBits & 0x7) == 0);
+        ptrBits as usize as *mut Symbol
+    }
+
+    #[inline(always)]
     pub fn to_private(&self) -> *const c_void {
         assert!(self.is_double());
         #[cfg(target_pointer_width = "64")]
         assert_eq!(self.asBits() & 0xFFFF000000000000, 0);
         self.asBits() as usize as *const c_void
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_gcthing(&self) -> bool {
-        const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET: u64 = ValueShiftedTag::STRING as u64;
-        self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_gcthing(&self) -> bool {
-        const JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET: u64 = ValueTag::STRING as u64;
-        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET
     }
 
     #[inline(always)]
@@ -471,8 +495,10 @@ impl JSVal {
         assert!(self.is_markable());
         if self.is_object() {
             TraceKind::Object
-        } else {
+        } else if self.is_string() {
             TraceKind::String
+        } else {
+            TraceKind::Symbol
         }
     }
 }
