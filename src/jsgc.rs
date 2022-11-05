@@ -130,7 +130,7 @@ impl GCMethods for *mut JS::Symbol {
     unsafe fn initial() -> *mut JS::Symbol {
         ptr::null_mut()
     }
-    unsafe fn post_barrier(_: *mut *mut JS::Symbol, prev: *mut JS::Symbol, next: *mut JS::Symbol) {}
+    unsafe fn post_barrier(_: *mut *mut JS::Symbol, _: *mut JS::Symbol, _: *mut JS::Symbol) {}
 }
 
 impl GCMethods for *mut JSScript {

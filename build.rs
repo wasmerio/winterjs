@@ -88,7 +88,7 @@ fn find_make() -> OsString {
                 } else {
                     OsStr::new("make").to_os_string()
                 }
-            },
+            }
             Err(_) => OsStr::new("make").to_os_string(),
         }
     }
