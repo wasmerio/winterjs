@@ -89,12 +89,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Get mozjs
+      working-directory: ./mozjs
       run: |
         bash ./etc/get_mozjs.sh
     - name: Apply patch
+      working-directory: ./mozjs
       run: |
         python3 ./etc/update.py --no-commit mozjs.tar.xz
     - name: Check patch integrity
+      working-directory: ./mozjs
       run: |
         git diff --no-ext-diff --quiet --exit-code
   build_result:
