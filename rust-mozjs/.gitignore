@@ -1,0 +1,7 @@
+libmozjs.so
+*~
+vc*.pdb
+js
+/doc
+/target
+/Cargo.lock

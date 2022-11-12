@@ -1,0 +1,95 @@
+[workspace]
+
+# These are the "root" crates, which we build and test as top-level targets.
+# Their transitive dependencies and dev-dependencies are included automatically
+# and do not need to be listed here. Their external dependencies are vendored
+# into `third_party/rust` by `mach vendor rust`.
+members = [
+  "js/src/frontend/smoosh",
+  "js/src/rust",
+  "js/src/wasm/cranelift",
+]
+
+# Excluded crates may be built as dependencies, but won't be considered members
+# of the workspace and their dev-dependencies won't be included.
+exclude = [
+  # Excluded because it's for a toolchain task
+  "build/liblowercase",
+
+  # Exclude third-party code vendored into mozilla-central.
+  "servo",
+  "third_party/rust",
+
+  # Excluded because these crates have their own Cargo workspaces so they can't
+  # be included in the top-level one.
+  "gfx/wgpu",
+  "gfx/wr",
+
+  # Excluded because they are used only as dependencies, not top-level targets,
+  # so we don't need to vendor their dev-dependencies.
+  "gfx/webrender_bindings",
+  "media/mp4parse-rust/mp4parse",
+  "media/mp4parse-rust/mp4parse_capi",
+  "xpcom/rust/gkrust_utils",
+  "tools/lint/test/files/clippy",
+  "tools/fuzzing/rust",
+]
+
+# Explicitly specify what our profiles use.  The opt-level setting here is
+# a total fiction; see the setup of MOZ_RUST_DEFAULT_FLAGS for what the
+# opt-level setting will be as a result of various other configure flags.
+[profile.dev]
+opt-level = 1
+rpath = false
+lto = false
+debug-assertions = true
+panic = "abort"
+
+[profile.release]
+opt-level = 2
+rpath = false
+debug-assertions = false
+panic = "abort"
+
+# Optimize build dependencies, because bindgen and proc macros / style
+# compilation take more to run than to build otherwise.
+[profile.dev.build-override]
+opt-level = 1
+
+[profile.release.build-override]
+opt-level = 1
+
+# optimizing glsl more makes a big difference in swgl build times
+[profile.dev.package.glsl]
+opt-level = 2
+
+[profile.release.package.glsl]
+opt-level = 2
+
+[patch.crates-io]
+chardetng = { git = "https://github.com/hsivonen/chardetng", rev="fd4ed671ef495af4dcda4c4cba3ef8d426db8af1" }
+chardetng_c = { git = "https://github.com/hsivonen/chardetng_c", rev="ed8a4c6f900a90d4dbc1d64b856e61490a1c3570" }
+packed_simd = { git = "https://github.com/hsivonen/packed_simd", rev="0917fe780032a6bbb23d71be545f9c1834128d75" }
+rlbox_lucet_sandbox = { git = "https://github.com/PLSysSec/rlbox_lucet_sandbox/", rev="f3cace4fb8b53db0849c62af4fa62bade5a620f7" }
+nix = { git = "https://github.com/shravanrn/nix/", rev="4af6c367603869a30fddb5ffb0aba2b9477ba92e" }
+spirv_cross = { git = "https://github.com/kvark/spirv_cross", branch = "wgpu5" }
+# failure's backtrace feature might break our builds, see bug 1608157.
+failure = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
+failure_derive = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
+minidump_writer_linux = { git = "https://github.com/msirringhaus/minidump_writer_linux.git", rev = "01c7a0da8d34059f7dae8ab9e7512529ff16347a" }
+
+[patch.crates-io.cranelift-codegen]
+git = "https://github.com/mozilla-spidermonkey/wasmtime"
+rev = "a25399760e9f12b679aa267dd2af7cfedc72bb71"
+
+[patch.crates-io.cranelift-wasm]
+git = "https://github.com/mozilla-spidermonkey/wasmtime"
+rev = "a25399760e9f12b679aa267dd2af7cfedc72bb71"
+
+# Patch autocfg to hide rustc output. Workaround for https://github.com/cuviper/autocfg/issues/30
+[patch.crates-io.autocfg]
+path = "third_party/rust/autocfg"
+
+[patch.crates-io.autocfg01]
+path = "third_party/rust/autocfg-0.1.6"
+package = "autocfg"
