@@ -28,7 +28,7 @@ mod generated {
 }
 
 fn panic_hook(info: &std::panic::PanicInfo) {
-    panic!("{}", info);
+    eprint!("Panic from mozjs: {}", info);
 }
 
 /// Configure a panic hook to redirect rust panics to MFBT's MOZ_Crash.
