@@ -314,6 +314,10 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.allowlist_function(func);
     }
 
+    for func in BLACKLIST_FUNCTIONS {
+        builder = builder.blocklist_function(func);
+    }
+
     for ty in OPAQUE_TYPES {
         builder = builder.opaque_type(ty);
     }
@@ -371,6 +375,18 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_.*",
     ".*_TO_JSID",
     "JS_DeprecatedStringHasLatin1Chars",
+];
+
+/// Functions we do not want to generate bindings to.
+const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
+    "JS::FromPropertyDescriptor",
+    "JS_GetOwnPropertyDescriptorById",
+    "JS_GetOwnPropertyDescriptor",
+    "JS_GetOwnUCPropertyDescriptor",
+    "JS_GetPropertyDescriptorById",
+    "JS_GetPropertyDescriptor",
+    "JS_GetUCPropertyDescriptor",
+    "js::SetPropertyIgnoringNamedGetter"
 ];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
