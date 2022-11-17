@@ -1,12 +1,5 @@
-commit bf4607277fa7133825cb7899015374917cd06b8f
-Author: Mike Hommey <mhommey@mozilla.com>
-Date:   Tue Jan 26 19:46:13 2021 +0900
+commit af09fd65fcf24eee95dc62813ba9123414635428
+Author: Sean McBride <sean@rogue-research.com>
+Date:   Thu Jul 7 13:58:23 2022 -0400
 
-    Add a flag to make precision mode like printf's %g (#149)
-    
-    With this, %g can be emulated with:
-    ```
-    DoubleToStringConverter cvt(
-      UNIQUE_ZERO | NO_TRAILING_ZERO | EMIT_POSITIVE_EXPONENT_SIGN,
-      "inf", "nan", 'e', 0, 0, 4, 0, 2)
-    ```
+    Issue #184 : Fixed all -Wzero-as-null-pointer-constant warnings (#185)

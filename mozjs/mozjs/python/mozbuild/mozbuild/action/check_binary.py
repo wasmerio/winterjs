@@ -10,16 +10,12 @@ import re
 import subprocess
 import sys
 
-from distutils.version import StrictVersion as Version
+from packaging.version import Version
 
 import buildconfig
 from mozbuild.action.util import log_build_task
 from mozbuild.util import memoize
-from mozpack.executables import (
-    get_type,
-    ELF,
-    UNKNOWN,
-)
+from mozpack.executables import get_type, ELF, UNKNOWN
 
 
 STDCXX_MAX_VERSION = Version("3.4.19")
@@ -27,16 +23,11 @@ CXXABI_MAX_VERSION = Version("1.3.7")
 GLIBC_MAX_VERSION = Version("2.17")
 LIBGCC_MAX_VERSION = Version("4.8")
 
-HOST = {
-    "MOZ_LIBSTDCXX_VERSION": buildconfig.substs.get("MOZ_LIBSTDCXX_HOST_VERSION"),
-    "platform": buildconfig.substs["HOST_OS_ARCH"],
-    "readelf": "readelf",
-}
+HOST = {"platform": buildconfig.substs["HOST_OS_ARCH"], "readelf": "readelf"}
 
 TARGET = {
-    "MOZ_LIBSTDCXX_VERSION": buildconfig.substs.get("MOZ_LIBSTDCXX_TARGET_VERSION"),
     "platform": buildconfig.substs["OS_TARGET"],
-    "readelf": "{}readelf".format(buildconfig.substs.get("TOOLCHAIN_PREFIX", "")),
+    "readelf": buildconfig.substs.get("READELF", "readelf"),
 }
 
 ADDR_RE = re.compile(r"[0-9a-f]{8,16}")
@@ -82,7 +73,7 @@ def iter_elf_symbols(target, binary, all=False):
         ty = ELF
     assert ty == ELF
     for line in get_output(
-        target["readelf"], "--syms" if all else "--dyn-syms", binary
+        target["readelf"], "--wide", "--syms" if all else "--dyn-syms", binary
     ):
         data = line.split()
         if not (len(data) >= 8 and data[0].endswith(":") and data[0][:-1].isdigit()):
@@ -286,7 +277,7 @@ def checks(target, binary):
     if "clang-plugin" in binary:
         target = HOST
     checks = []
-    if target["MOZ_LIBSTDCXX_VERSION"]:
+    if buildconfig.substs.get("MOZ_STDCXX_COMPAT") and target["platform"] == "Linux":
         checks.append(check_binary_compat)
 
     # Disabled for local builds because of readelf performance: See bug 1472496

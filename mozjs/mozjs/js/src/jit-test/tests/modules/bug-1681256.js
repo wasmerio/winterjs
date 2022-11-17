@@ -1,4 +1,4 @@
-// |jit-test| --enable-top-level-await;--more-compartments;
+// |jit-test| --more-compartments;
 let lfCode = `
     var g = newGlobal();
     g.debuggeeGlobal = this;
@@ -14,7 +14,7 @@ async function loadFile(lfVarx) {
     try {
         try { evaluate(lfVarx); } catch(exc) {}
         let lfMod = parseModule(lfVarx);
-        lfMod.declarationInstantiation();
-        await lfMod.evaluation();
+        lfMomoduleLink(d);
+        await lfMomoduleEvaluate(d);
     } catch (lfVare) {}
 }

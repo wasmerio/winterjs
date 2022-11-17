@@ -16,8 +16,8 @@
 #include "mozilla/Maybe.h"
 
 #include <limits> /* for std::numeric_limits */
+#include <type_traits>
 
-#include "js-config.h"
 #include "jstypes.h"
 
 #include "js/HeapAPI.h"
@@ -53,6 +53,9 @@ enum JSValueType : uint8_t {
   JSVAL_TYPE_SYMBOL = 0x07,
   JSVAL_TYPE_PRIVATE_GCTHING = 0x08,
   JSVAL_TYPE_BIGINT = 0x09,
+#ifdef ENABLE_RECORD_TUPLE
+  JSVAL_TYPE_EXTENDED_PRIMITIVE = 0x0b,
+#endif
   JSVAL_TYPE_OBJECT = 0x0c,
 
   // This type never appears in a Value; it's only an out-of-band value.
@@ -71,9 +74,12 @@ enum class ValueType : uint8_t {
   Symbol = JSVAL_TYPE_SYMBOL,
   PrivateGCThing = JSVAL_TYPE_PRIVATE_GCTHING,
   BigInt = JSVAL_TYPE_BIGINT,
+#ifdef ENABLE_RECORD_TUPLE
+  ExtendedPrimitive = JSVAL_TYPE_EXTENDED_PRIMITIVE,
+#endif
   Object = JSVAL_TYPE_OBJECT,
 };
-}
+}  // namespace JS
 
 static_assert(sizeof(JSValueType) == 1,
               "compiler typed enum support is apparently buggy");
@@ -91,6 +97,10 @@ enum JSValueTag : uint32_t {
   JSVAL_TAG_SYMBOL = JSVAL_TAG_CLEAR | JSVAL_TYPE_SYMBOL,
   JSVAL_TAG_PRIVATE_GCTHING = JSVAL_TAG_CLEAR | JSVAL_TYPE_PRIVATE_GCTHING,
   JSVAL_TAG_BIGINT = JSVAL_TAG_CLEAR | JSVAL_TYPE_BIGINT,
+#  ifdef ENABLE_RECORD_TUPLE
+  JSVAL_TAG_EXTENDED_PRIMITIVE =
+      JSVAL_TAG_CLEAR | JSVAL_TYPE_EXTENDED_PRIMITIVE,
+#  endif
   JSVAL_TAG_OBJECT = JSVAL_TAG_CLEAR | JSVAL_TYPE_OBJECT
 };
 
@@ -110,6 +120,10 @@ enum JSValueTag : uint32_t {
   JSVAL_TAG_SYMBOL = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_SYMBOL,
   JSVAL_TAG_PRIVATE_GCTHING = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_PRIVATE_GCTHING,
   JSVAL_TAG_BIGINT = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_BIGINT,
+#  ifdef ENABLE_RECORD_TUPLE
+  JSVAL_TAG_EXTENDED_PRIMITIVE =
+      JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_EXTENDED_PRIMITIVE,
+#  endif
   JSVAL_TAG_OBJECT = JSVAL_TAG_MAX_DOUBLE | JSVAL_TYPE_OBJECT
 };
 
@@ -131,6 +145,10 @@ enum JSValueShiftedTag : uint64_t {
   JSVAL_SHIFTED_TAG_PRIVATE_GCTHING =
       (uint64_t(JSVAL_TAG_PRIVATE_GCTHING) << JSVAL_TAG_SHIFT),
   JSVAL_SHIFTED_TAG_BIGINT = (uint64_t(JSVAL_TAG_BIGINT) << JSVAL_TAG_SHIFT),
+#  ifdef ENABLE_RECORD_TUPLE
+  JSVAL_SHIFTED_TAG_EXTENDED_PRIMITIVE =
+      (uint64_t(JSVAL_TYPE_EXTENDED_PRIMITIVE) << JSVAL_TAG_SHIFT),
+#  endif
   JSVAL_SHIFTED_TAG_OBJECT = (uint64_t(JSVAL_TAG_OBJECT) << JSVAL_TAG_SHIFT)
 };
 
@@ -145,7 +163,8 @@ namespace detail {
 #if defined(JS_NUNBOX32)
 
 constexpr JSValueTag ValueTypeToTag(JSValueType type) {
-  return static_cast<JSValueTag>(JSVAL_TAG_CLEAR | type);
+  return static_cast<JSValueTag>(JSVAL_TAG_CLEAR |
+                                 std::underlying_type_t<JSValueType>(type));
 }
 
 constexpr bool ValueIsDouble(uint64_t bits) {
@@ -159,7 +178,8 @@ constexpr JSValueTag ValueLowerInclGCThingTag = JSVAL_TAG_STRING;
 #elif defined(JS_PUNBOX64)
 
 constexpr JSValueTag ValueTypeToTag(JSValueType type) {
-  return static_cast<JSValueTag>(JSVAL_TAG_MAX_DOUBLE | type);
+  return static_cast<JSValueTag>(JSVAL_TAG_MAX_DOUBLE |
+                                 std::underlying_type_t<JSValueType>(type));
 }
 
 constexpr bool ValueIsDouble(uint64_t bits) {
@@ -221,9 +241,6 @@ enum JSWhyMagic {
   /** an empty subnode in the AST serializer */
   JS_SERIALIZE_NO_NODE,
 
-  /** optimized-away 'arguments' value */
-  JS_OPTIMIZED_ARGUMENTS,
-
   /** magic value passed to natives to indicate construction */
   JS_IS_CONSTRUCTING,
 
@@ -242,35 +259,31 @@ enum JSWhyMagic {
   /** uninitialized lexical bindings that produce ReferenceError on touch. */
   JS_UNINITIALIZED_LEXICAL,
 
-  /** standard constructors are not created for off-thread parsing. */
-  JS_OFF_THREAD_CONSTRUCTOR,
+  /** arguments object can't be created because environment is dead. */
+  JS_MISSING_ARGUMENTS,
 
   /** for local use */
   JS_GENERIC_MAGIC,
 
   /**
-   * Write records queued up in WritableStreamDefaultController.[[queue]] in the
-   * spec are either "close" (a String) or Record { [[chunk]]: chunk }, where
-   * chunk is an arbitrary user-provided (and therefore non-magic) value.
-   * Represent "close" the String as this magic value; represent Record records
-   * as the |chunk| value within each of them.
+   * When an error object is created without the error cause argument, we set
+   * the error's cause slot to this magic value.
    */
-  JS_WRITABLESTREAM_CLOSE_RECORD,
-
-  /**
-   * The ReadableStream pipe-to operation concludes with a "finalize" operation
-   * that accepts an optional |error| argument.  In certain cases that optional
-   * |error| must be stored in a handler function, for use after a promise has
-   * settled.  We represent the argument not being provided, in those cases,
-   * using this magic value.
-   */
-  JS_READABLESTREAM_PIPETO_FINALIZE_WITHOUT_ERROR,
+  JS_ERROR_WITHOUT_CAUSE,
 
   JS_WHY_MAGIC_COUNT
 };
 
 namespace js {
 static inline JS::Value PoisonedObjectValue(uintptr_t poison);
+#ifdef ENABLE_RECORD_TUPLE
+// Re-defined in vm/RecordTupleBoxShared.h. We cannot include that
+// file because it circularly includes this one.
+bool IsExtendedPrimitive(const JSObject& obj);
+namespace gc {
+bool MaybeForwardedIsExtendedPrimitive(const JSObject& obj);
+}  // namespace gc
+#endif
 }  // namespace js
 
 namespace JS {
@@ -390,7 +403,6 @@ class alignas(8) Value {
 
  public:
   constexpr Value() : asBits_(bitsFromTagAndPayload(JSVAL_TAG_UNDEFINED, 0)) {}
-  Value(const Value& v) = default;
 
  private:
   explicit constexpr Value(uint64_t asBits) : asBits_(asBits) {}
@@ -487,9 +499,22 @@ class alignas(8) Value {
 
   void setObject(JSObject& obj) {
     MOZ_ASSERT(js::gc::IsCellPointerValid(&obj));
+#ifdef ENABLE_RECORD_TUPLE
+    MOZ_ASSERT(!js::gc::MaybeForwardedIsExtendedPrimitive(obj));
+#endif
     setObjectNoCheck(&obj);
     MOZ_ASSERT(&toObject() == &obj);
   }
+
+#ifdef ENABLE_RECORD_TUPLE
+  void setExtendedPrimitive(JSObject& obj) {
+    MOZ_ASSERT(js::gc::IsCellPointerValid(&obj));
+    MOZ_ASSERT(js::gc::MaybeForwardedIsExtendedPrimitive(obj));
+    asBits_ =
+        bitsFromTagAndPayload(JSVAL_TAG_EXTENDED_PRIMITIVE, PayloadType(&obj));
+    MOZ_ASSERT(&toExtendedPrimitive() == &obj);
+  }
+#endif
 
  private:
   void setObjectNoCheck(JSObject* obj) {
@@ -667,6 +692,16 @@ class alignas(8) Value {
 #endif
   }
 
+#ifdef ENABLE_RECORD_TUPLE
+  bool isExtendedPrimitive() const {
+    return toTag() == JSVAL_TAG_EXTENDED_PRIMITIVE;
+  }
+#endif
+
+  bool hasObjectPayload() const {
+    return isObject() || IF_RECORD_TUPLE(isExtendedPrimitive(), false);
+  }
+
   bool isPrimitive() const {
 #if defined(JS_NUNBOX32)
     return uint32_t(toTag()) < uint32_t(detail::ValueUpperExclPrimitiveTag);
@@ -721,6 +756,11 @@ class alignas(8) Value {
     if (MOZ_UNLIKELY(isPrivateGCThing())) {
       return JS::GCThingTraceKind(toGCThing());
     }
+#ifdef ENABLE_RECORD_TUPLE
+    if (isExtendedPrimitive()) {
+      return JS::TraceKind::Object;
+    }
+#endif
     return JS::TraceKind(toTag() & 0x03);
   }
 
@@ -796,6 +836,24 @@ class alignas(8) Value {
 #endif
   }
 
+#ifdef ENABLE_RECORD_TUPLE
+  JSObject& toExtendedPrimitive() const {
+    MOZ_ASSERT(isExtendedPrimitive());
+#  if defined(JS_PUNBOX64)
+    MOZ_ASSERT((asBits_ & detail::ValueGCThingPayloadMask) != 0);
+#  endif
+    return *unboxGCPointer<JSObject, JSVAL_TAG_EXTENDED_PRIMITIVE>();
+  }
+#endif
+
+  JSObject& getObjectPayload() const {
+#ifdef ENABLE_RECORD_TUPLE
+    return isExtendedPrimitive() ? toExtendedPrimitive() : toObject();
+#else
+    return toObject();
+#endif
+  }
+
   js::gc::Cell* toGCThing() const {
     MOZ_ASSERT(isGCThing());
 #if defined(JS_NUNBOX32)
@@ -816,11 +874,6 @@ class alignas(8) Value {
 #elif defined(JS_PUNBOX64)
     return bool(asBits_ & 0x1);
 #endif
-  }
-
-  uint32_t payloadAsRawUint32() const {
-    MOZ_ASSERT(!isDouble());
-    return uint32_t(asBits_);
   }
 
   constexpr uint64_t asRawBits() const { return asBits_; }
@@ -916,15 +969,6 @@ static_assert(sizeof(Value) == 8,
               "Value size must leave three tag bits, be a binary power, and "
               "is ubiquitously depended upon everywhere");
 
-inline bool IsOptimizedPlaceholderMagicValue(const Value& v) {
-  if (v.isMagic()) {
-    MOZ_ASSERT(v.whyMagic() == JS_OPTIMIZED_ARGUMENTS ||
-               v.whyMagic() == JS_OPTIMIZED_OUT);
-    return true;
-  }
-  return false;
-}
-
 static MOZ_ALWAYS_INLINE void ExposeValueToActiveJS(const Value& v) {
 #ifdef DEBUG
   Value tmp = v;
@@ -1013,6 +1057,14 @@ static inline Value ObjectValue(JSObject& obj) {
   return v;
 }
 
+#ifdef ENABLE_RECORD_TUPLE
+static inline Value ExtendedPrimitiveValue(JSObject& obj) {
+  Value v;
+  v.setExtendedPrimitive(obj);
+  return v;
+}
+#endif
+
 static inline Value MagicValue(JSWhyMagic why) {
   Value v;
   v.setMagic(why);
@@ -1088,9 +1140,10 @@ JS_PUBLIC_API void HeapValueWriteBarriers(Value* valuep, const Value& prev,
 template <>
 struct GCPolicy<JS::Value> {
   static void trace(JSTracer* trc, Value* v, const char* name) {
-    // It's not safe to trace unbarriered pointers except as part of root
-    // marking.
-    UnsafeTraceRoot(trc, v, name);
+    // This should only be called as part of root marking since that's the only
+    // time we should trace unbarriered GC thing pointers. This will assert if
+    // called at other times.
+    TraceRoot(trc, v, name);
   }
   static bool isTenured(const Value& thing) {
     return !thing.isGCThing() || !IsInsideNursery(thing.toGCThing());
@@ -1114,6 +1167,11 @@ struct BarrierMethods<JS::Value> {
     JS::HeapValuePostWriteBarrier(v, prev, next);
   }
   static void exposeToJS(const JS::Value& v) { JS::ExposeValueToActiveJS(v); }
+  static void readBarrier(const JS::Value& v) {
+    if (v.isGCThing()) {
+      js::gc::IncrementalReadBarrier(v.toGCCellPtr());
+    }
+  }
 };
 
 template <class Wrapper>
@@ -1145,9 +1203,14 @@ class WrappedPtrOperations<JS::Value, Wrapper> {
   bool isSymbol() const { return value().isSymbol(); }
   bool isBigInt() const { return value().isBigInt(); }
   bool isObject() const { return value().isObject(); }
+#ifdef ENABLE_RECORD_TUPLE
+  bool isExtendedPrimitive() const { return value().isExtendedPrimitive(); }
+#endif
+  bool hasObjectPayload() const { return value().hasObjectPayload(); }
   bool isMagic() const { return value().isMagic(); }
   bool isMagic(JSWhyMagic why) const { return value().isMagic(why); }
   bool isGCThing() const { return value().isGCThing(); }
+  bool isPrivateGCThing() const { return value().isPrivateGCThing(); }
   bool isPrimitive() const { return value().isPrimitive(); }
 
   bool isNullOrUndefined() const { return value().isNullOrUndefined(); }
@@ -1163,6 +1226,12 @@ class WrappedPtrOperations<JS::Value, Wrapper> {
   JS::BigInt* toBigInt() const { return value().toBigInt(); }
   JSObject& toObject() const { return value().toObject(); }
   JSObject* toObjectOrNull() const { return value().toObjectOrNull(); }
+#ifdef ENABLE_RECORD_TUPLE
+  JSObject& toExtendedPrimitive() const {
+    return value().toExtendedPrimitive();
+  }
+#endif
+  JSObject& getObjectPayload() const { return value().getObjectPayload(); }
   JS::GCCellPtr toGCCellPtr() const { return value().toGCCellPtr(); }
   gc::Cell* toGCThing() const { return value().toGCThing(); }
   JS::TraceKind traceKind() const { return value().traceKind(); }
@@ -1212,6 +1281,11 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
   void setBigInt(JS::BigInt* bi) { set(JS::BigIntValue(bi)); }
   void setObject(JSObject& obj) { set(JS::ObjectValue(obj)); }
   void setObjectOrNull(JSObject* arg) { set(JS::ObjectOrNullValue(arg)); }
+#ifdef ENABLE_RECORD_TUPLE
+  void setExtendedPrimitive(JSObject& obj) {
+    return set(JS::ExtendedPrimitiveValue(obj));
+  }
+#endif
   void setPrivate(void* ptr) { set(JS::PrivateValue(ptr)); }
   void setPrivateUint32(uint32_t ui) { set(JS::PrivateUint32Value(ui)); }
   void setPrivateGCThing(js::gc::Cell* cell) {
@@ -1224,7 +1298,7 @@ class MutableWrappedPtrOperations<JS::Value, Wrapper>
  * type-querying, value-extracting, and mutating operations.
  */
 template <typename Wrapper>
-class HeapBase<JS::Value, Wrapper>
+class HeapOperations<JS::Value, Wrapper>
     : public MutableWrappedPtrOperations<JS::Value, Wrapper> {};
 
 MOZ_HAVE_NORETURN MOZ_COLD MOZ_NEVER_INLINE void ReportBadValueTypeAndCrash(
@@ -1240,8 +1314,11 @@ auto MapGCThingTyped(const JS::Value& val, F&& f) {
       MOZ_ASSERT(gc::IsCellPointerValid(str));
       return mozilla::Some(f(str));
     }
+#ifdef ENABLE_RECORD_TUPLE
+    case JS::ValueType::ExtendedPrimitive:
+#endif
     case JS::ValueType::Object: {
-      JSObject* obj = &val.toObject();
+      JSObject* obj = &val.getObjectPayload();
       MOZ_ASSERT(gc::IsCellPointerValid(obj));
       return mozilla::Some(f(obj));
     }

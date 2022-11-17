@@ -6,13 +6,12 @@ info: The "length" property of the "setDate" is 1
 esid: sec-date.prototype.setdate
 description: The "length" property of the "setDate" is 1
 ---*/
+assert.sameValue(
+  Date.prototype.setDate.hasOwnProperty("length"),
+  true,
+  'Date.prototype.setDate.hasOwnProperty("length") must return true'
+);
 
-if (Date.prototype.setDate.hasOwnProperty("length") !== true) {
-  $ERROR('#1: The setDate has a "length" property');
-}
-
-if (Date.prototype.setDate.length !== 1) {
-  $ERROR('#2: The "length" property of the setDate is 1');
-}
+assert.sameValue(Date.prototype.setDate.length, 1, 'The value of Date.prototype.setDate.length is expected to be 1');
 
 reportCompare(0, 0);

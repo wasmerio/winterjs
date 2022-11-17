@@ -127,7 +127,10 @@ impl From<PrefReaderError> for RunnerError {
 #[derive(Debug)]
 pub struct FirefoxProcess {
     process: Child,
-    profile: Profile,
+    // The profile field is not directly used, but it is kept to avoid its
+    // Drop removing the (temporary) profile directory.
+    #[allow(dead_code)]
+    profile: Option<Profile>,
 }
 
 impl RunnerProcess for FirefoxProcess {
@@ -177,7 +180,7 @@ impl RunnerProcess for FirefoxProcess {
 #[derive(Debug)]
 pub struct FirefoxRunner {
     path: PathBuf,
-    profile: Profile,
+    profile: Option<Profile>,
     args: Vec<OsString>,
     envs: HashMap<OsString, OsString>,
     stdout: Option<Stdio>,
@@ -190,7 +193,7 @@ impl FirefoxRunner {
     /// On macOS, `path` can optionally point to an application bundle,
     /// i.e. _/Applications/Firefox.app_, as well as to an executable program
     /// such as _/Applications/Firefox.app/Content/MacOS/firefox-bin_.
-    pub fn new(path: &Path, profile: Profile) -> FirefoxRunner {
+    pub fn new(path: &Path, profile: Option<Profile>) -> FirefoxRunner {
         let mut envs: HashMap<OsString, OsString> = HashMap::new();
         envs.insert("MOZ_NO_REMOTE".into(), "1".into());
 
@@ -265,7 +268,9 @@ impl Runner for FirefoxRunner {
     }
 
     fn start(mut self) -> Result<FirefoxProcess, RunnerError> {
-        self.profile.user_prefs()?.write()?;
+        if let Some(ref mut profile) = self.profile {
+            profile.user_prefs()?.write()?;
+        }
 
         let stdout = self.stdout.unwrap_or_else(Stdio::inherit);
         let stderr = self.stderr.unwrap_or_else(Stdio::inherit);
@@ -285,17 +290,26 @@ impl Runner for FirefoxRunner {
                 Arg::Foreground => seen_foreground = true,
                 Arg::NoRemote => seen_no_remote = true,
                 Arg::Profile | Arg::NamedProfile | Arg::ProfileManager => seen_profile = true,
-                Arg::Other(_) | Arg::None => {}
+                Arg::Marionette
+                | Arg::None
+                | Arg::Other(_)
+                | Arg::RemoteAllowHosts
+                | Arg::RemoteAllowOrigins
+                | Arg::RemoteDebuggingPort => {}
             }
         }
-        if !seen_foreground {
+        // -foreground is only supported on Mac, and shouldn't be passed
+        // to Firefox on other platforms (bug 1720502).
+        if cfg!(target_os = "macos") && !seen_foreground {
             cmd.arg("-foreground");
         }
         if !seen_no_remote {
             cmd.arg("-no-remote");
         }
-        if !seen_profile {
-            cmd.arg("-profile").arg(&self.profile.path);
+        if let Some(ref profile) = self.profile {
+            if !seen_profile {
+                cmd.arg("-profile").arg(&profile.path);
+            }
         }
 
         info!("Running command: {:?}", cmd);
@@ -316,13 +330,85 @@ pub mod platform {
         path
     }
 
+    fn running_as_snap() -> bool {
+        std::env::var("SNAP_INSTANCE_NAME")
+            .or_else(|_| {
+                // Compatibility for snapd <= 2.35
+                std::env::var("SNAP_NAME")
+            })
+            .map(|name| !name.is_empty())
+            .unwrap_or(false)
+    }
+
     /// Searches the system path for `firefox`.
     pub fn firefox_default_path() -> Option<PathBuf> {
+        if running_as_snap() {
+            return Some(PathBuf::from("/snap/firefox/current/firefox.launcher"));
+        }
         find_binary("firefox")
     }
 
     pub fn arg_prefix_char(c: char) -> bool {
         c == '-'
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::firefox_default_path;
+        use std::env;
+        use std::ops::Drop;
+        use std::path::PathBuf;
+
+        static SNAP_KEY: &str = "SNAP_INSTANCE_NAME";
+        static SNAP_LEGACY_KEY: &str = "SNAP_NAME";
+
+        struct SnapEnvironment {
+            initial_environment: (Option<String>, Option<String>),
+        }
+
+        impl SnapEnvironment {
+            fn new() -> SnapEnvironment {
+                SnapEnvironment {
+                    initial_environment: (env::var(SNAP_KEY).ok(), env::var(SNAP_LEGACY_KEY).ok()),
+                }
+            }
+
+            fn set(&self, value: Option<String>, legacy_value: Option<String>) {
+                fn set_env(key: &str, value: Option<String>) {
+                    match value {
+                        Some(value) => env::set_var(key, value),
+                        None => env::remove_var(key),
+                    }
+                }
+                set_env(SNAP_KEY, value);
+                set_env(SNAP_LEGACY_KEY, legacy_value);
+            }
+        }
+
+        impl Drop for SnapEnvironment {
+            fn drop(&mut self) {
+                self.set(
+                    self.initial_environment.0.clone(),
+                    self.initial_environment.1.clone(),
+                )
+            }
+        }
+
+        #[test]
+        fn test_default_path() {
+            let snap_path = Some(PathBuf::from("/snap/firefox/current/firefox.launcher"));
+
+            let snap_env = SnapEnvironment::new();
+
+            snap_env.set(None, None);
+            assert_ne!(firefox_default_path(), snap_path);
+
+            snap_env.set(Some("value".into()), None);
+            assert_eq!(firefox_default_path(), snap_path);
+
+            snap_env.set(None, Some("value".into()));
+            assert_eq!(firefox_default_path(), snap_path);
+        }
     }
 }
 
@@ -343,12 +429,10 @@ pub mod platform {
             info_plist.push("Info.plist");
             if let Ok(plist) = Value::from_file(&info_plist) {
                 if let Some(dict) = plist.as_dictionary() {
-                    if let Some(binary_file) = dict.get("CFBundleExecutable") {
-                        if let Value::String(s) = binary_file {
-                            path.push("Contents");
-                            path.push("MacOS");
-                            path.push(s);
-                        }
+                    if let Some(Value::String(s)) = dict.get("CFBundleExecutable") {
+                        path.push("Contents");
+                        path.push("MacOS");
+                        path.push(s);
                     }
                 }
             }
@@ -384,7 +468,7 @@ pub mod platform {
         .iter()
         {
             let path = match (home.as_ref(), prefix_home) {
-                (Some(ref home_dir), true) => home_dir.join(trial_path),
+                (Some(home_dir), true) => home_dir.join(trial_path),
                 (None, true) => continue,
                 (_, false) => PathBuf::from(trial_path),
             };

@@ -11,18 +11,15 @@
 
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
-#include "vm/EnvironmentObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/Iteration.h"
 
 #include "vm/JSContext-inl.h"
 
-inline void JS::Realm::initGlobal(
-    js::GlobalObject& global, js::GlobalLexicalEnvironmentObject& lexicalEnv) {
+inline void JS::Realm::initGlobal(js::GlobalObject& global) {
   MOZ_ASSERT(global.realm() == this);
   MOZ_ASSERT(!global_);
   global_.set(&global);
-  lexicalEnv_.set(&lexicalEnv);
 }
 
 js::GlobalObject* JS::Realm::maybeGlobal() const {
@@ -30,25 +27,22 @@ js::GlobalObject* JS::Realm::maybeGlobal() const {
   return global_;
 }
 
-js::GlobalLexicalEnvironmentObject* JS::Realm::unbarrieredLexicalEnvironment()
-    const {
-  return lexicalEnv_.unbarrieredGet();
-}
-
-inline bool JS::Realm::globalIsAboutToBeFinalized() {
-  MOZ_ASSERT(zone_->isGCSweeping());
-  return global_ && js::gc::IsAboutToBeFinalized(&global_);
-}
-
 inline bool JS::Realm::hasLiveGlobal() const {
-  js::GlobalObject* global = unsafeUnbarrieredMaybeGlobal();
-  return global && !js::gc::IsAboutToBeFinalizedUnbarriered(&global);
+  // The global is swept by traceWeakGlobalEdge when we start sweeping a zone
+  // group.
+  MOZ_ASSERT_IF(global_, !js::gc::IsAboutToBeFinalized(global_));
+  return bool(global_);
 }
 
 inline bool JS::Realm::marked() const {
-  // Preserve this Realm if it has a live global or if it has been entered (to
-  // ensure we don't destroy the Realm while we're allocating its global).
-  return hasLiveGlobal() || hasBeenEnteredIgnoringJit();
+  // The Realm survives in the following cases:
+  //  - its global is live
+  //  - it has been entered (to ensure we don't destroy the Realm while we're
+  //    allocating its global)
+  //  - it was allocated after the start of an incremental GC (as there may be
+  //    pointers to it from other GC things)
+  return hasLiveGlobal() || hasBeenEnteredIgnoringJit() ||
+         allocatedDuringIncrementalGC_;
 }
 
 /* static */ inline js::ObjectRealm& js::ObjectRealm::get(const JSObject* obj) {
@@ -71,6 +65,18 @@ js::AutoRealm::AutoRealm(JSContext* cx, JS::Realm* target)
 }
 
 js::AutoRealm::~AutoRealm() { cx_->leaveRealm(origin_); }
+
+js::AutoFunctionOrCurrentRealm::AutoFunctionOrCurrentRealm(JSContext* cx,
+                                                           HandleObject fun) {
+  JS::Realm* realm = JS::GetFunctionRealm(cx, fun);
+  if (!realm) {
+    cx->clearPendingException();
+    return;
+  }
+
+  // Enter the function's realm.
+  ar_.emplace(cx, realm);
+}
 
 js::AutoAllocInAtomsZone::AutoAllocInAtomsZone(JSContext* cx)
     : cx_(cx), origin_(cx->realm()) {

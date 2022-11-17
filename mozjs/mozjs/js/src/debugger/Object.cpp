@@ -25,8 +25,6 @@
 #include "debugger/NoExecute.h"  // for LeaveDebuggeeNoExecute
 #include "debugger/Script.h"     // for DebuggerScript
 #include "debugger/Source.h"     // for DebuggerSource
-#include "gc/Barrier.h"          // for ImmutablePropertyNamePtr
-#include "gc/Rooting.h"          // for RootedDebuggerObject
 #include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CompilationAndEvaluation.h"  //  for Compile
 #include "js/Conversions.h"               // for ToObject
@@ -34,7 +32,8 @@
 #include "js/friend/WindowProxy.h"  // for IsWindow, IsWindowProxy, ToWindowIfWindowProxy
 #include "js/HeapAPI.h"             // for IsInsideNursery
 #include "js/Promise.h"             // for PromiseState
-#include "js/Proxy.h"               // for PropertyDescriptor
+#include "js/PropertyAndElement.h"       // for JS_GetProperty
+#include "js/Proxy.h"                    // for PropertyDescriptor
 #include "js/SourceText.h"               // for SourceText
 #include "js/StableStringChars.h"        // for AutoStableStringChars
 #include "js/String.h"                   // for JS::StringHasLatin1Chars
@@ -49,14 +48,13 @@
 #include "vm/ErrorObject.h"              // for JSObject::is, ErrorObject
 #include "vm/GeneratorObject.h"          // for AbstractGeneratorObject
 #include "vm/GlobalObject.h"             // for JSObject::is, GlobalObject
-#include "vm/Instrumentation.h"          // for RealmInstrumentation
 #include "vm/Interpreter.h"              // for Call
 #include "vm/JSAtom.h"                   // for Atomize
 #include "vm/JSContext.h"                // for JSContext, ReportValueError
 #include "vm/JSFunction.h"               // for JSFunction
+#include "vm/JSObject.h"                 // for GenericObject, NewObjectKind
 #include "vm/JSScript.h"                 // for JSScript
 #include "vm/NativeObject.h"             // for NativeObject, JSObject::is
-#include "vm/ObjectGroup.h"              // for GenericObject, NewObjectKind
 #include "vm/ObjectOperations.h"         // for DefineProperty
 #include "vm/PlainObject.h"              // for js::PlainObject
 #include "vm/PromiseObject.h"            // for js::PromiseObject
@@ -93,23 +91,20 @@ const JSClassOps DebuggerObject::classOps_ = {
     nullptr,                          // mayResolve
     nullptr,                          // finalize
     nullptr,                          // call
-    nullptr,                          // hasInstance
     nullptr,                          // construct
     CallTraceMethod<DebuggerObject>,  // trace
 };
 
 const JSClass DebuggerObject::class_ = {
-    "Object", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
-    &classOps_};
+    "Object", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
 
 void DebuggerObject::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
   // is okay.
-  if (JSObject* referent = (JSObject*)getPrivate()) {
-    TraceManuallyBarrieredCrossCompartmentEdge(
-        trc, static_cast<JSObject*>(this), &referent,
-        "Debugger.Object referent");
-    setPrivateUnbarriered(referent);
+  if (JSObject* referent = maybeReferent()) {
+    TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
+                                               "Debugger.Object referent");
+    setReservedSlotGCThingAsPrivateUnbarriered(OBJECT_SLOT, referent);
   }
 }
 
@@ -149,10 +144,10 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   JSContext* cx;
   const CallArgs& args;
 
-  HandleDebuggerObject object;
+  Handle<DebuggerObject*> object;
   RootedObject referent;
 
-  CallData(JSContext* cx, const CallArgs& args, HandleDebuggerObject obj)
+  CallData(JSContext* cx, const CallArgs& args, Handle<DebuggerObject*> obj)
       : cx(cx), args(args), object(obj), referent(cx, obj->referent()) {}
 
   // JSNative properties
@@ -199,7 +194,9 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   bool getPropertyMethod();
   bool setPropertyMethod();
   bool getOwnPropertyNamesMethod();
+  bool getOwnPropertyNamesLengthMethod();
   bool getOwnPropertySymbolsMethod();
+  bool getOwnPrivatePropertiesMethod();
   bool getOwnPropertyDescriptorMethod();
   bool preventExtensionsMethod();
   bool sealMethod();
@@ -219,8 +216,6 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   bool isSameNativeMethod();
   bool unsafeDereferenceMethod();
   bool unwrapMethod();
-  bool setInstrumentationMethod();
-  bool setInstrumentationActiveMethod();
   bool getPromiseReactionsMethod();
 
   using Method = bool (CallData::*)();
@@ -235,7 +230,7 @@ bool DebuggerObject::CallData::ToNative(JSContext* cx, unsigned argc,
                                         Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedDebuggerObject obj(cx, DebuggerObject_checkThis(cx, args));
+  Rooted<DebuggerObject*> obj(cx, DebuggerObject_checkThis(cx, args));
   if (!obj) {
     return false;
   }
@@ -300,7 +295,7 @@ bool DebuggerObject::CallData::isClassConstructorGetter() {
 }
 
 bool DebuggerObject::CallData::protoGetter() {
-  RootedDebuggerObject result(cx);
+  Rooted<DebuggerObject*> result(cx);
   if (!DebuggerObject::getPrototypeOf(cx, object, &result)) {
     return false;
   }
@@ -391,7 +386,7 @@ bool DebuggerObject::CallData::scriptGetter() {
     return true;
   }
 
-  RootedDebuggerScript scriptObject(cx, dbg->wrapScript(cx, script));
+  Rooted<DebuggerScript*> scriptObject(cx, dbg->wrapScript(cx, script));
   if (!scriptObject) {
     return false;
   }
@@ -440,7 +435,7 @@ bool DebuggerObject::CallData::boundTargetFunctionGetter() {
     return true;
   }
 
-  RootedDebuggerObject result(cx);
+  Rooted<DebuggerObject*> result(cx);
   if (!DebuggerObject::getBoundTargetFunction(cx, object, &result)) {
     return false;
   }
@@ -727,7 +722,7 @@ bool DebuggerObject::CallData::promiseDependentPromisesGetter() {
       return false;
     }
   }
-  RootedArrayObject promises(cx);
+  Rooted<ArrayObject*> promises(cx);
   if (values.length() == 0) {
     promises = NewDenseEmptyArray(cx);
   } else {
@@ -771,12 +766,12 @@ bool DebuggerObject::CallData::isFrozenMethod() {
 }
 
 bool DebuggerObject::CallData::getOwnPropertyNamesMethod() {
-  Rooted<IdVector> ids(cx, IdVector(cx));
+  RootedIdVector ids(cx);
   if (!DebuggerObject::getOwnPropertyNames(cx, object, &ids)) {
     return false;
   }
 
-  RootedObject obj(cx, IdVectorToArray(cx, ids));
+  JSObject* obj = IdVectorToArray(cx, ids);
   if (!obj) {
     return false;
   }
@@ -785,13 +780,39 @@ bool DebuggerObject::CallData::getOwnPropertyNamesMethod() {
   return true;
 }
 
+bool DebuggerObject::CallData::getOwnPropertyNamesLengthMethod() {
+  size_t ownPropertiesLength;
+  if (!DebuggerObject::getOwnPropertyNamesLength(cx, object,
+                                                 &ownPropertiesLength)) {
+    return false;
+  }
+
+  args.rval().setNumber(ownPropertiesLength);
+  return true;
+}
+
 bool DebuggerObject::CallData::getOwnPropertySymbolsMethod() {
-  Rooted<IdVector> ids(cx, IdVector(cx));
+  RootedIdVector ids(cx);
   if (!DebuggerObject::getOwnPropertySymbols(cx, object, &ids)) {
     return false;
   }
 
-  RootedObject obj(cx, IdVectorToArray(cx, ids));
+  JSObject* obj = IdVectorToArray(cx, ids);
+  if (!obj) {
+    return false;
+  }
+
+  args.rval().setObject(*obj);
+  return true;
+}
+
+bool DebuggerObject::CallData::getOwnPrivatePropertiesMethod() {
+  RootedIdVector ids(cx);
+  if (!DebuggerObject::getOwnPrivateProperties(cx, object, &ids)) {
+    return false;
+  }
+
+  JSObject* obj = IdVectorToArray(cx, ids);
   if (!obj) {
     return false;
   }
@@ -806,7 +827,7 @@ bool DebuggerObject::CallData::getOwnPropertyDescriptorMethod() {
     return false;
   }
 
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   if (!DebuggerObject::getOwnPropertyDescriptor(cx, object, id, &desc)) {
     return false;
   }
@@ -981,11 +1002,11 @@ bool DebuggerObject::CallData::applyMethod() {
 
     RootedObject argsobj(cx, &args[1].toObject());
 
-    unsigned argc = 0;
+    uint64_t argc = 0;
     if (!GetLengthProperty(cx, argsobj, &argc)) {
       return false;
     }
-    argc = unsigned(std::min(argc, ARGS_LENGTH_MAX));
+    argc = std::min(argc, uint64_t(ARGS_LENGTH_MAX));
 
     if (!nargs.growBy(argc) || !GetElements(cx, argsobj, argc, nargs.begin())) {
       return false;
@@ -1284,7 +1305,7 @@ bool DebuggerObject::CallData::createSource() {
     }
   }
 
-  RootedScriptSourceObject sso(cx, script->sourceObject());
+  Rooted<ScriptSourceObject*> sso(cx, script->sourceObject());
   RootedObject wrapped(cx, dbg->wrapSource(cx, sso));
   if (!wrapped) {
     return false;
@@ -1332,7 +1353,7 @@ bool DebuggerObject::CallData::unsafeDereferenceMethod() {
 }
 
 bool DebuggerObject::CallData::unwrapMethod() {
-  RootedDebuggerObject result(cx);
+  Rooted<DebuggerObject*> result(cx);
   if (!DebuggerObject::unwrap(cx, object, &result)) {
     return false;
   }
@@ -1341,103 +1362,17 @@ bool DebuggerObject::CallData::unwrapMethod() {
   return true;
 }
 
-bool DebuggerObject::CallData::setInstrumentationMethod() {
-  if (!args.requireAtLeast(cx, "Debugger.Object.prototype.setInstrumentation",
-                           2)) {
-    return false;
-  }
-
-  if (!DebuggerObject::requireGlobal(cx, object)) {
-    return false;
-  }
-  RootedGlobalObject global(cx, &object->referent()->as<GlobalObject>());
-
-  RootedValue v(cx, args[0]);
-  if (!object->owner()->unwrapDebuggeeValue(cx, &v)) {
-    return false;
-  }
-  if (!v.isObject()) {
-    JS_ReportErrorASCII(cx, "Instrumentation callback must be an object");
-    return false;
-  }
-  RootedObject callback(cx, &v.toObject());
-
-  if (!args[1].isObject()) {
-    JS_ReportErrorASCII(cx, "Instrumentation kinds must be an object");
-    return false;
-  }
-  RootedObject kindsObj(cx, &args[1].toObject());
-
-  unsigned length = 0;
-  if (!GetLengthProperty(cx, kindsObj, &length)) {
-    return false;
-  }
-
-  Rooted<ValueVector> values(cx, ValueVector(cx));
-  if (!values.growBy(length) ||
-      !GetElements(cx, kindsObj, length, values.begin())) {
-    return false;
-  }
-
-  Rooted<StringVector> kinds(cx, StringVector(cx));
-  for (size_t i = 0; i < values.length(); i++) {
-    if (!values[i].isString()) {
-      JS_ReportErrorASCII(cx, "Instrumentation kind must be a string");
-      return false;
-    }
-    if (!kinds.append(values[i].toString())) {
-      return false;
-    }
-  }
-
-  {
-    AutoRealm ar(cx, global);
-    RootedObject dbgObject(cx, object->owner()->toJSObject());
-    if (!RealmInstrumentation::install(cx, global, callback, dbgObject,
-                                       kinds)) {
-      return false;
-    }
-  }
-
-  args.rval().setUndefined();
-  return true;
-}
-
-bool DebuggerObject::CallData::setInstrumentationActiveMethod() {
-  if (!DebuggerObject::requireGlobal(cx, object)) {
-    return false;
-  }
-
-  if (!args.requireAtLeast(
-          cx, "Debugger.Object.prototype.setInstrumentationActive", 1)) {
-    return false;
-  }
-
-  RootedGlobalObject global(cx, &object->referent()->as<GlobalObject>());
-  bool active = ToBoolean(args[0]);
-
-  {
-    AutoRealm ar(cx, global);
-    if (!RealmInstrumentation::setActive(cx, global, object->owner(), active)) {
-      return false;
-    }
-  }
-
-  args.rval().setUndefined();
-  return true;
-}
-
 struct DebuggerObject::PromiseReactionRecordBuilder
     : js::PromiseReactionRecordBuilder {
   Debugger* dbg;
-  HandleArrayObject records;
+  Handle<ArrayObject*> records;
 
-  PromiseReactionRecordBuilder(Debugger* dbg, HandleArrayObject records)
+  PromiseReactionRecordBuilder(Debugger* dbg, Handle<ArrayObject*> records)
       : dbg(dbg), records(records) {}
 
   bool then(JSContext* cx, HandleObject resolve, HandleObject reject,
             HandleObject result) override {
-    RootedPlainObject record(cx, NewBuiltinClassInstance<PlainObject>(cx));
+    Rooted<PlainObject*> record(cx, NewPlainObject(cx));
     if (!record) {
       return false;
     }
@@ -1480,11 +1415,11 @@ struct DebuggerObject::PromiseReactionRecordBuilder
 
   bool pushGenerator(JSContext* cx,
                      Handle<AbstractGeneratorObject*> unwrappedGenerator) {
-    RootedDebuggerFrame frame(cx);
+    Rooted<DebuggerFrame*> frame(cx);
     return dbg->getFrame(cx, unwrappedGenerator, &frame) && push(cx, frame);
   }
 
-  bool setIfNotNull(JSContext* cx, HandlePlainObject obj,
+  bool setIfNotNull(JSContext* cx, Handle<PlainObject*> obj,
                     Handle<PropertyName*> name, HandleObject prop) {
     if (!prop) {
       return true;
@@ -1508,7 +1443,7 @@ bool DebuggerObject::CallData::getPromiseReactionsMethod() {
     return false;
   }
 
-  RootedArrayObject holder(cx, NewDenseEmptyArray(cx));
+  Rooted<ArrayObject*> holder(cx, NewDenseEmptyArray(cx));
   if (!holder) {
     return false;
   }
@@ -1570,7 +1505,10 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_DEBUG_FN("getProperty", getPropertyMethod, 0),
     JS_DEBUG_FN("setProperty", setPropertyMethod, 0),
     JS_DEBUG_FN("getOwnPropertyNames", getOwnPropertyNamesMethod, 0),
+    JS_DEBUG_FN("getOwnPropertyNamesLength", getOwnPropertyNamesLengthMethod,
+                0),
     JS_DEBUG_FN("getOwnPropertySymbols", getOwnPropertySymbolsMethod, 0),
+    JS_DEBUG_FN("getOwnPrivateProperties", getOwnPrivatePropertiesMethod, 0),
     JS_DEBUG_FN("getOwnPropertyDescriptor", getOwnPropertyDescriptorMethod, 1),
     JS_DEBUG_FN("preventExtensions", preventExtensionsMethod, 0),
     JS_DEBUG_FN("seal", sealMethod, 0),
@@ -1593,8 +1531,6 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_DEBUG_FN("isSameNative", isSameNativeMethod, 1),
     JS_DEBUG_FN("unsafeDereference", unsafeDereferenceMethod, 0),
     JS_DEBUG_FN("unwrap", unwrapMethod, 0),
-    JS_DEBUG_FN("setInstrumentation", setInstrumentationMethod, 2),
-    JS_DEBUG_FN("setInstrumentationActive", setInstrumentationActiveMethod, 1),
     JS_DEBUG_FN("getPromiseReactions", getPromiseReactionsMethod, 0),
     JS_FS_END};
 
@@ -1602,7 +1538,7 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
 NativeObject* DebuggerObject::initClass(JSContext* cx,
                                         Handle<GlobalObject*> global,
                                         HandleObject debugCtor) {
-  RootedNativeObject objectProto(
+  Rooted<NativeObject*> objectProto(
       cx, InitClass(cx, debugCtor, nullptr, &class_, construct, 0, properties_,
                     methods_, nullptr, nullptr));
 
@@ -1621,7 +1557,7 @@ NativeObject* DebuggerObject::initClass(JSContext* cx,
 /* static */
 DebuggerObject* DebuggerObject::create(JSContext* cx, HandleObject proto,
                                        HandleObject referent,
-                                       HandleNativeObject debugger) {
+                                       Handle<NativeObject*> debugger) {
   DebuggerObject* obj =
       IsInsideNursery(referent)
           ? NewObjectWithGivenProto<DebuggerObject>(cx, proto)
@@ -1630,7 +1566,7 @@ DebuggerObject* DebuggerObject::create(JSContext* cx, HandleObject proto,
     return nullptr;
   }
 
-  obj->setPrivateGCThing(referent);
+  obj->setReservedSlotGCThingAsPrivate(OBJECT_SLOT, referent);
   obj->setReservedSlot(OWNER_SLOT, ObjectValue(*debugger));
 
   return obj;
@@ -1648,7 +1584,7 @@ bool DebuggerObject::isDebuggeeFunction() const {
 bool DebuggerObject::isBoundFunction() const {
   MOZ_ASSERT(isDebuggeeFunction());
 
-  return referent()->isBoundFunction();
+  return referent()->as<JSFunction>().isBoundFunction();
 }
 
 bool DebuggerObject::isArrowFunction() const {
@@ -1710,7 +1646,7 @@ bool DebuggerObject::isError() const {
 }
 
 /* static */
-bool DebuggerObject::getClassName(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::getClassName(JSContext* cx, Handle<DebuggerObject*> object,
                                   MutableHandleString result) {
   RootedObject referent(cx, object->referent());
 
@@ -1764,8 +1700,8 @@ double DebuggerObject::promiseTimeToResolution() const {
 
 /* static */
 bool DebuggerObject::getBoundTargetFunction(
-    JSContext* cx, HandleDebuggerObject object,
-    MutableHandleDebuggerObject result) {
+    JSContext* cx, Handle<DebuggerObject*> object,
+    MutableHandle<DebuggerObject*> result) {
   MOZ_ASSERT(object->isBoundFunction());
 
   RootedFunction referent(cx, &object->referent()->as<JSFunction>());
@@ -1776,7 +1712,7 @@ bool DebuggerObject::getBoundTargetFunction(
 }
 
 /* static */
-bool DebuggerObject::getBoundThis(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::getBoundThis(JSContext* cx, Handle<DebuggerObject*> object,
                                   MutableHandleValue result) {
   MOZ_ASSERT(object->isBoundFunction());
 
@@ -1789,7 +1725,7 @@ bool DebuggerObject::getBoundThis(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::getBoundArguments(JSContext* cx,
-                                       HandleDebuggerObject object,
+                                       Handle<DebuggerObject*> object,
                                        MutableHandle<ValueVector> result) {
   MOZ_ASSERT(object->isBoundFunction());
 
@@ -1822,7 +1758,7 @@ SavedFrame* Debugger::getObjectAllocationSite(JSObject& obj) {
 
 /* static */
 bool DebuggerObject::getAllocationSite(JSContext* cx,
-                                       HandleDebuggerObject object,
+                                       Handle<DebuggerObject*> object,
                                        MutableHandleObject result) {
   RootedObject referent(cx, object->referent());
 
@@ -1860,7 +1796,7 @@ bool DebuggerObject::getErrorReport(JSContext* cx, HandleObject maybeError,
 
 /* static */
 bool DebuggerObject::getErrorMessageName(JSContext* cx,
-                                         HandleDebuggerObject object,
+                                         Handle<DebuggerObject*> object,
                                          MutableHandleString result) {
   RootedObject referent(cx, object->referent());
   JSErrorReport* report;
@@ -1882,7 +1818,8 @@ bool DebuggerObject::getErrorMessageName(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::getErrorNotes(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::getErrorNotes(JSContext* cx,
+                                   Handle<DebuggerObject*> object,
                                    MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
   JSErrorReport* report;
@@ -1909,7 +1846,7 @@ bool DebuggerObject::getErrorNotes(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::getErrorLineNumber(JSContext* cx,
-                                        HandleDebuggerObject object,
+                                        Handle<DebuggerObject*> object,
                                         MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
   JSErrorReport* report;
@@ -1928,7 +1865,7 @@ bool DebuggerObject::getErrorLineNumber(JSContext* cx,
 
 /* static */
 bool DebuggerObject::getErrorColumnNumber(JSContext* cx,
-                                          HandleDebuggerObject object,
+                                          Handle<DebuggerObject*> object,
                                           MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
   JSErrorReport* report;
@@ -1946,7 +1883,8 @@ bool DebuggerObject::getErrorColumnNumber(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::getPromiseValue(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::getPromiseValue(JSContext* cx,
+                                     Handle<DebuggerObject*> object,
                                      MutableHandleValue result) {
   MOZ_ASSERT(object->promiseState() == JS::PromiseState::Fulfilled);
 
@@ -1956,7 +1894,7 @@ bool DebuggerObject::getPromiseValue(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::getPromiseReason(JSContext* cx,
-                                      HandleDebuggerObject object,
+                                      Handle<DebuggerObject*> object,
                                       MutableHandleValue result) {
   MOZ_ASSERT(object->promiseState() == JS::PromiseState::Rejected);
 
@@ -1965,7 +1903,7 @@ bool DebuggerObject::getPromiseReason(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::isExtensible(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::isExtensible(JSContext* cx, Handle<DebuggerObject*> object,
                                   bool& result) {
   RootedObject referent(cx, object->referent());
 
@@ -1977,7 +1915,7 @@ bool DebuggerObject::isExtensible(JSContext* cx, HandleDebuggerObject object,
 }
 
 /* static */
-bool DebuggerObject::isSealed(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::isSealed(JSContext* cx, Handle<DebuggerObject*> object,
                               bool& result) {
   RootedObject referent(cx, object->referent());
 
@@ -1989,7 +1927,7 @@ bool DebuggerObject::isSealed(JSContext* cx, HandleDebuggerObject object,
 }
 
 /* static */
-bool DebuggerObject::isFrozen(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::isFrozen(JSContext* cx, Handle<DebuggerObject*> object,
                               bool& result) {
   RootedObject referent(cx, object->referent());
 
@@ -2001,8 +1939,9 @@ bool DebuggerObject::isFrozen(JSContext* cx, HandleDebuggerObject object,
 }
 
 /* static */
-bool DebuggerObject::getPrototypeOf(JSContext* cx, HandleDebuggerObject object,
-                                    MutableHandleDebuggerObject result) {
+bool DebuggerObject::getPrototypeOf(JSContext* cx,
+                                    Handle<DebuggerObject*> object,
+                                    MutableHandle<DebuggerObject*> result) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
@@ -2020,8 +1959,33 @@ bool DebuggerObject::getPrototypeOf(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::getOwnPropertyNames(JSContext* cx,
-                                         HandleDebuggerObject object,
-                                         MutableHandle<IdVector> result) {
+                                         Handle<DebuggerObject*> object,
+                                         MutableHandleIdVector result) {
+  MOZ_ASSERT(result.empty());
+
+  RootedObject referent(cx, object->referent());
+  {
+    Maybe<AutoRealm> ar;
+    EnterDebuggeeObjectRealm(cx, ar, referent);
+
+    ErrorCopier ec(ar);
+    if (!GetPropertyKeys(cx, referent, JSITER_OWNONLY | JSITER_HIDDEN,
+                         result)) {
+      return false;
+    }
+  }
+
+  for (size_t i = 0; i < result.length(); i++) {
+    cx->markId(result[i]);
+  }
+
+  return true;
+}
+
+/* static */
+bool DebuggerObject::getOwnPropertyNamesLength(JSContext* cx,
+                                               Handle<DebuggerObject*> object,
+                                               size_t* result) {
   RootedObject referent(cx, object->referent());
 
   RootedIdVector ids(cx);
@@ -2035,44 +1999,89 @@ bool DebuggerObject::getOwnPropertyNames(JSContext* cx,
     }
   }
 
-  for (size_t i = 0; i < ids.length(); i++) {
-    cx->markId(ids[i]);
-  }
-
-  return result.append(ids.begin(), ids.end());
+  *result = ids.length();
+  return true;
 }
 
-/* static */
-bool DebuggerObject::getOwnPropertySymbols(JSContext* cx,
-                                           HandleDebuggerObject object,
-                                           MutableHandle<IdVector> result) {
+static bool GetSymbolPropertyKeys(JSContext* cx, Handle<DebuggerObject*> object,
+                                  JS::MutableHandleIdVector props,
+                                  bool includePrivate) {
   RootedObject referent(cx, object->referent());
 
-  RootedIdVector ids(cx);
   {
     Maybe<AutoRealm> ar;
     EnterDebuggeeObjectRealm(cx, ar, referent);
 
     ErrorCopier ec(ar);
-    if (!GetPropertyKeys(cx, referent,
-                         JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS |
-                             JSITER_SYMBOLSONLY,
-                         &ids)) {
+
+    unsigned flags =
+        JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS | JSITER_SYMBOLSONLY;
+    if (includePrivate) {
+      flags = flags | JSITER_PRIVATE;
+    }
+    if (!GetPropertyKeys(cx, referent, flags, props)) {
       return false;
     }
   }
 
-  for (size_t i = 0; i < ids.length(); i++) {
-    cx->markId(ids[i]);
+  return true;
+}
+
+/* static */
+bool DebuggerObject::getOwnPropertySymbols(JSContext* cx,
+                                           Handle<DebuggerObject*> object,
+                                           MutableHandleIdVector result) {
+  MOZ_ASSERT(result.empty());
+
+  if (!GetSymbolPropertyKeys(cx, object, result, false)) {
+    return false;
   }
 
-  return result.append(ids.begin(), ids.end());
+  for (size_t i = 0; i < result.length(); i++) {
+    cx->markAtom(result[i].toSymbol());
+  }
+
+  return true;
+}
+
+/* static */
+bool DebuggerObject::getOwnPrivateProperties(JSContext* cx,
+                                             Handle<DebuggerObject*> object,
+                                             MutableHandleIdVector result) {
+  MOZ_ASSERT(result.empty());
+
+  if (!GetSymbolPropertyKeys(cx, object, result, true)) {
+    return false;
+  }
+
+  result.eraseIf([](PropertyKey key) {
+    if (!key.isPrivateName()) {
+      return true;
+    }
+    // Private *methods* create a Private Brand, a special private name
+    // stamped onto the symbol, to indicate it is possible to execute private
+    // methods from the class on this object. We don't want to return such
+    // items here, so we check if we're dealing with a private property, e.g.
+    // the Symbol description starts with a "#" character.
+    JSAtom* privateDescription = key.toSymbol()->description();
+    if (privateDescription->length() == 0) {
+      return true;
+    }
+    char16_t firstChar = privateDescription->latin1OrTwoByteChar(0);
+    return firstChar != '#';
+  });
+
+  for (size_t i = 0; i < result.length(); i++) {
+    cx->markAtom(result[i].toSymbol());
+  }
+
+  return true;
 }
 
 /* static */
 bool DebuggerObject::getOwnPropertyDescriptor(
-    JSContext* cx, HandleDebuggerObject object, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    JSContext* cx, Handle<DebuggerObject*> object, HandleId id,
+    MutableHandle<Maybe<PropertyDescriptor>> desc_) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
@@ -2084,35 +2093,36 @@ bool DebuggerObject::getOwnPropertyDescriptor(
     cx->markId(id);
 
     ErrorCopier ec(ar);
-    if (!GetOwnPropertyDescriptor(cx, referent, id, desc)) {
+    if (!GetOwnPropertyDescriptor(cx, referent, id, desc_)) {
       return false;
     }
   }
 
-  if (desc.object()) {
-    // Rewrap the debuggee values in desc for the debugger.
-    if (!dbg->wrapDebuggeeValue(cx, desc.value())) {
-      return false;
-    }
+  if (desc_.isSome()) {
+    Rooted<PropertyDescriptor> desc(cx, *desc_);
 
-    if (desc.hasGetterObject()) {
-      RootedValue get(cx, ObjectOrNullValue(desc.getterObject()));
+    if (desc.hasValue()) {
+      // Rewrap the debuggee values in desc for the debugger.
+      if (!dbg->wrapDebuggeeValue(cx, desc.value())) {
+        return false;
+      }
+    }
+    if (desc.hasGetter()) {
+      RootedValue get(cx, ObjectOrNullValue(desc.getter()));
       if (!dbg->wrapDebuggeeValue(cx, &get)) {
         return false;
       }
-      desc.setGetterObject(get.toObjectOrNull());
+      desc.setGetter(get.toObjectOrNull());
     }
-    if (desc.hasSetterObject()) {
-      RootedValue set(cx, ObjectOrNullValue(desc.setterObject()));
+    if (desc.hasSetter()) {
+      RootedValue set(cx, ObjectOrNullValue(desc.setter()));
       if (!dbg->wrapDebuggeeValue(cx, &set)) {
         return false;
       }
-      desc.setSetterObject(set.toObjectOrNull());
+      desc.setSetter(set.toObjectOrNull());
     }
 
-    // Avoid tripping same-compartment assertions in
-    // JS::FromPropertyDescriptor().
-    desc.object().set(object);
+    desc_.set(mozilla::Some(desc.get()));
   }
 
   return true;
@@ -2120,7 +2130,7 @@ bool DebuggerObject::getOwnPropertyDescriptor(
 
 /* static */
 bool DebuggerObject::preventExtensions(JSContext* cx,
-                                       HandleDebuggerObject object) {
+                                       Handle<DebuggerObject*> object) {
   RootedObject referent(cx, object->referent());
 
   Maybe<AutoRealm> ar;
@@ -2131,7 +2141,7 @@ bool DebuggerObject::preventExtensions(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::seal(JSContext* cx, HandleDebuggerObject object) {
+bool DebuggerObject::seal(JSContext* cx, Handle<DebuggerObject*> object) {
   RootedObject referent(cx, object->referent());
 
   Maybe<AutoRealm> ar;
@@ -2142,7 +2152,7 @@ bool DebuggerObject::seal(JSContext* cx, HandleDebuggerObject object) {
 }
 
 /* static */
-bool DebuggerObject::freeze(JSContext* cx, HandleDebuggerObject object) {
+bool DebuggerObject::freeze(JSContext* cx, Handle<DebuggerObject*> object) {
   RootedObject referent(cx, object->referent());
 
   Maybe<AutoRealm> ar;
@@ -2153,8 +2163,8 @@ bool DebuggerObject::freeze(JSContext* cx, HandleDebuggerObject object) {
 }
 
 /* static */
-bool DebuggerObject::defineProperty(JSContext* cx, HandleDebuggerObject object,
-                                    HandleId id,
+bool DebuggerObject::defineProperty(JSContext* cx,
+                                    Handle<DebuggerObject*> object, HandleId id,
                                     Handle<PropertyDescriptor> desc_) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
@@ -2179,7 +2189,7 @@ bool DebuggerObject::defineProperty(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::defineProperties(JSContext* cx,
-                                      HandleDebuggerObject object,
+                                      Handle<DebuggerObject*> object,
                                       Handle<IdVector> ids,
                                       Handle<PropertyDescriptorVector> descs_) {
   RootedObject referent(cx, object->referent());
@@ -2217,8 +2227,9 @@ bool DebuggerObject::defineProperties(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::deleteProperty(JSContext* cx, HandleDebuggerObject object,
-                                    HandleId id, ObjectOpResult& result) {
+bool DebuggerObject::deleteProperty(JSContext* cx,
+                                    Handle<DebuggerObject*> object, HandleId id,
+                                    ObjectOpResult& result) {
   RootedObject referent(cx, object->referent());
 
   Maybe<AutoRealm> ar;
@@ -2232,7 +2243,7 @@ bool DebuggerObject::deleteProperty(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 Result<Completion> DebuggerObject::getProperty(JSContext* cx,
-                                               HandleDebuggerObject object,
+                                               Handle<DebuggerObject*> object,
                                                HandleId id,
                                                HandleValue receiver_) {
   RootedObject referent(cx, object->referent());
@@ -2265,7 +2276,7 @@ Result<Completion> DebuggerObject::getProperty(JSContext* cx,
 
 /* static */
 Result<Completion> DebuggerObject::setProperty(JSContext* cx,
-                                               HandleDebuggerObject object,
+                                               Handle<DebuggerObject*> object,
                                                HandleId id, HandleValue value_,
                                                HandleValue receiver_) {
   RootedObject referent(cx, object->referent());
@@ -2302,7 +2313,7 @@ Result<Completion> DebuggerObject::setProperty(JSContext* cx,
 
 /* static */
 Maybe<Completion> DebuggerObject::call(JSContext* cx,
-                                       HandleDebuggerObject object,
+                                       Handle<DebuggerObject*> object,
                                        HandleValue thisv_,
                                        Handle<ValueVector> args) {
   RootedObject referent(cx, object->referent());
@@ -2373,8 +2384,8 @@ Maybe<Completion> DebuggerObject::call(JSContext* cx,
 
 /* static */
 bool DebuggerObject::forceLexicalInitializationByName(
-    JSContext* cx, HandleDebuggerObject object, HandleId id, bool& result) {
-  if (!JSID_IS_STRING(id)) {
+    JSContext* cx, Handle<DebuggerObject*> object, HandleId id, bool& result) {
+  if (!id.isString()) {
     JS_ReportErrorNumberASCII(
         cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
         "Debugger.Object.prototype.forceLexicalInitializationByName", "string",
@@ -2393,7 +2404,7 @@ bool DebuggerObject::forceLexicalInitializationByName(
 
   RootedObject globalLexical(cx, &referent->lexicalEnvironment());
   RootedObject pobj(cx);
-  Rooted<PropertyResult> prop(cx);
+  PropertyResult prop;
   if (!LookupProperty(cx, globalLexical, id, &pobj, &prop)) {
     return false;
   }
@@ -2401,11 +2412,11 @@ bool DebuggerObject::forceLexicalInitializationByName(
   result = false;
   if (prop.isFound()) {
     MOZ_ASSERT(prop.isNativeProperty());
-    Shape* shape = prop.shape();
-    Value v = globalLexical->as<NativeObject>().getSlot(shape->slot());
-    if (shape->isDataProperty() && v.isMagic() &&
+    PropertyInfo propInfo = prop.propertyInfo();
+    Value v = globalLexical->as<NativeObject>().getSlot(propInfo.slot());
+    if (propInfo.isDataProperty() && v.isMagic() &&
         v.whyMagic() == JS_UNINITIALIZED_LEXICAL) {
-      globalLexical->as<NativeObject>().setSlot(shape->slot(),
+      globalLexical->as<NativeObject>().setSlot(propInfo.slot(),
                                                 UndefinedValue());
       result = true;
     }
@@ -2416,7 +2427,7 @@ bool DebuggerObject::forceLexicalInitializationByName(
 
 /* static */
 Result<Completion> DebuggerObject::executeInGlobal(
-    JSContext* cx, HandleDebuggerObject object,
+    JSContext* cx, Handle<DebuggerObject*> object,
     mozilla::Range<const char16_t> chars, HandleObject bindings,
     const EvalOptions& options) {
   MOZ_ASSERT(object->isGlobal());
@@ -2431,7 +2442,7 @@ Result<Completion> DebuggerObject::executeInGlobal(
 
 /* static */
 bool DebuggerObject::makeDebuggeeValue(JSContext* cx,
-                                       HandleDebuggerObject object,
+                                       Handle<DebuggerObject*> object,
                                        HandleValue value_,
                                        MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
@@ -2478,7 +2489,7 @@ static JSFunction* EnsureNativeFunction(const Value& value,
 
 /* static */
 bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
-                                                HandleDebuggerObject object,
+                                                Handle<DebuggerObject*> object,
                                                 HandleValue value,
                                                 MutableHandleValue result) {
   RootedObject referent(cx, object->referent());
@@ -2498,7 +2509,7 @@ bool DebuggerObject::makeDebuggeeNativeFunction(JSContext* cx,
     EnterDebuggeeObjectRealm(cx, ar, referent);
 
     unsigned nargs = fun->nargs();
-    RootedAtom name(cx, fun->displayAtom());
+    Rooted<JSAtom*> name(cx, fun->displayAtom());
     if (name) {
       cx->markAtom(name);
     }
@@ -2534,7 +2545,7 @@ static JSAtom* MaybeGetSelfHostedFunctionName(const Value& v) {
 }
 
 /* static */
-bool DebuggerObject::isSameNative(JSContext* cx, HandleDebuggerObject object,
+bool DebuggerObject::isSameNative(JSContext* cx, Handle<DebuggerObject*> object,
                                   HandleValue value,
                                   MutableHandleValue result) {
   RootedValue referentValue(cx, ObjectValue(*object->referent()));
@@ -2545,7 +2556,8 @@ bool DebuggerObject::isSameNative(JSContext* cx, HandleDebuggerObject object,
 
   RootedFunction fun(cx, EnsureNativeFunction(nonCCWValue));
   if (!fun) {
-    RootedAtom selfHostedName(cx, MaybeGetSelfHostedFunctionName(nonCCWValue));
+    Rooted<JSAtom*> selfHostedName(cx,
+                                   MaybeGetSelfHostedFunctionName(nonCCWValue));
     if (!selfHostedName) {
       JS_ReportErrorASCII(cx, "Need native function");
       return false;
@@ -2563,7 +2575,7 @@ bool DebuggerObject::isSameNative(JSContext* cx, HandleDebuggerObject object,
 
 /* static */
 bool DebuggerObject::unsafeDereference(JSContext* cx,
-                                       HandleDebuggerObject object,
+                                       Handle<DebuggerObject*> object,
                                        MutableHandleObject result) {
   RootedObject referent(cx, object->referent());
 
@@ -2579,8 +2591,8 @@ bool DebuggerObject::unsafeDereference(JSContext* cx,
 }
 
 /* static */
-bool DebuggerObject::unwrap(JSContext* cx, HandleDebuggerObject object,
-                            MutableHandleDebuggerObject result) {
+bool DebuggerObject::unwrap(JSContext* cx, Handle<DebuggerObject*> object,
+                            MutableHandle<DebuggerObject*> result) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
@@ -2599,7 +2611,8 @@ bool DebuggerObject::unwrap(JSContext* cx, HandleDebuggerObject object,
 }
 
 /* static */
-bool DebuggerObject::requireGlobal(JSContext* cx, HandleDebuggerObject object) {
+bool DebuggerObject::requireGlobal(JSContext* cx,
+                                   Handle<DebuggerObject*> object) {
   if (!object->isGlobal()) {
     RootedObject referent(cx, object->referent());
 
@@ -2634,7 +2647,7 @@ bool DebuggerObject::requireGlobal(JSContext* cx, HandleDebuggerObject object) {
 
 /* static */
 bool DebuggerObject::requirePromise(JSContext* cx,
-                                    HandleDebuggerObject object) {
+                                    Handle<DebuggerObject*> object) {
   RootedObject referent(cx, object->referent());
 
   if (IsCrossCompartmentWrapper(referent)) {
@@ -2658,8 +2671,8 @@ bool DebuggerObject::requirePromise(JSContext* cx,
 
 /* static */
 bool DebuggerObject::getScriptedProxyTarget(
-    JSContext* cx, HandleDebuggerObject object,
-    MutableHandleDebuggerObject result) {
+    JSContext* cx, Handle<DebuggerObject*> object,
+    MutableHandle<DebuggerObject*> result) {
   MOZ_ASSERT(object->isScriptedProxy());
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
@@ -2670,8 +2683,8 @@ bool DebuggerObject::getScriptedProxyTarget(
 
 /* static */
 bool DebuggerObject::getScriptedProxyHandler(
-    JSContext* cx, HandleDebuggerObject object,
-    MutableHandleDebuggerObject result) {
+    JSContext* cx, Handle<DebuggerObject*> object,
+    MutableHandle<DebuggerObject*> result) {
   MOZ_ASSERT(object->isScriptedProxy());
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();

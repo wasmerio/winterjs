@@ -9,8 +9,9 @@ import six
 import sys
 import json
 
-from collections import OrderedDict
 from collections.abc import Iterable
+from collections import OrderedDict
+from pathlib import Path
 from types import ModuleType
 
 import mozpack.path as mozpath
@@ -63,10 +64,7 @@ class BuildConfig(object):
                     compile(source, path, "exec", dont_inherit=1),
                 )
 
-        g = {
-            "__builtins__": __builtins__,
-            "__file__": path,
-        }
+        g = {"__builtins__": __builtins__, "__file__": path}
         l = {}
         try:
             exec(code_cache[path][1], g, l)
@@ -149,6 +147,12 @@ class ConfigEnvironment(object):
         else:
             self.import_prefix = self.dll_prefix
             self.import_suffix = self.dll_suffix
+        if self.substs.get("HOST_IMPORT_LIB_SUFFIX"):
+            self.host_import_prefix = self.substs.get("HOST_LIB_PREFIX", "")
+            self.host_import_suffix = ".%s" % self.substs["HOST_IMPORT_LIB_SUFFIX"]
+        else:
+            self.host_import_prefix = self.host_dll_prefix
+            self.host_import_suffix = self.host_dll_suffix
         self.bin_suffix = self.substs.get("BIN_SUFFIX", "")
 
         global_defines = [name for name in self.defines]
@@ -239,10 +243,11 @@ class PartialConfigDict(object):
         self._dict = {}
 
         existing_files = self._load_config_track()
+        existing_files = {Path(f) for f in existing_files}
 
         new_files = set()
         for k, v in six.iteritems(values):
-            new_files.add(self._write_file(k, v))
+            new_files.add(Path(self._write_file(k, v)))
 
         for filename in existing_files - new_files:
             # We can't actually os.remove() here, since make would not see that the

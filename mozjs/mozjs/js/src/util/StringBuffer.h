@@ -7,15 +7,48 @@
 #ifndef util_StringBuffer_h
 #define util_StringBuffer_h
 
-#include "mozilla/DebugOnly.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/Utf8.h"
 
-#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Vector.h"
-#include "vm/JSContext.h"
+#include "vm/StringType.h"
 
 namespace js {
+
+class ErrorContext;
+
+namespace frontend {
+class ParserAtomsTable;
+class TaggedParserAtomIndex;
+}  // namespace frontend
+
+namespace detail {
+
+// GrowEltsAggressively will multiply the space by a factor of 8 on overflow, to
+// avoid very expensive memcpys for large strings (eg giant toJSON output for
+// sessionstore.js). Drop back to the normal expansion policy once the buffer
+// hits 128MB.
+static constexpr size_t AggressiveLimit = 128 << 20;
+
+template <size_t EltSize>
+inline size_t GrowEltsAggressively(size_t aOldElts, size_t aIncr) {
+  mozilla::CheckedInt<size_t> required =
+      mozilla::CheckedInt<size_t>(aOldElts) + aIncr;
+  if (!(required * 2).isValid()) {
+    return 0;
+  }
+  required = mozilla::RoundUpPow2(required.value());
+  required *= 8;
+  if (!(required * EltSize).isValid() || required.value() > AggressiveLimit) {
+    // Fall back to doubling behavior if the aggressive growth fails or gets too
+    // big.
+    return mozilla::detail::GrowEltsByDoubling<EltSize>(aOldElts, aIncr);
+  }
+  return required.value();
+};
+
+}  // namespace detail
 
 class StringBufferAllocPolicy {
   TempAllocPolicy impl_;
@@ -56,6 +89,12 @@ class StringBufferAllocPolicy {
   }
   void reportAllocOverflow() const { impl_.reportAllocOverflow(); }
   bool checkSimulatedOOM() const { return impl_.checkSimulatedOOM(); }
+
+  // See ComputeGrowth in mfbt/Vector.h.
+  template <size_t EltSize>
+  static size_t computeGrowth(size_t aOldElts, size_t aIncr) {
+    return detail::GrowEltsAggressively<EltSize>(aOldElts, aIncr);
+  }
 };
 
 /*
@@ -315,7 +354,7 @@ class StringBuffer {
   /* Identical to finishString() except that an atom is created. */
   JSAtom* finishAtom();
   frontend::TaggedParserAtomIndex finishParserAtom(
-      frontend::ParserAtomsTable& parserAtoms);
+      frontend::ParserAtomsTable& parserAtoms, ErrorContext* ec);
 
   /*
    * Creates a raw string from the characters in this buffer.  The string is

@@ -9,15 +9,9 @@ description: >
     throw a TypeError exception
 ---*/
 
-//CHECK#1
-
-try {
+assert.throws(TypeError, () => {
   new isFinite();
-  $ERROR('#1.1: new isFinite() throw TypeError. Actual: ' + (new isFinite()));
-} catch (e) {
-  if ((e instanceof TypeError) !== true) {
-    $ERROR('#1.2: new isFinite() throw TypeError. Actual: ' + (e));
-  }
-}
+  throw new Test262Error();
+});
 
 reportCompare(0, 0);

@@ -16,14 +16,7 @@
  */
 MFBT_API void mozalloc_handle_oom(size_t requestedSize);
 
-/**
- * Called by embedders (specifically Mozilla breakpad) which wants to be
- * notified of an intentional abort, to annotate any crash report with
- * the size of the allocation on which we aborted.
- */
-typedef void (*mozalloc_oom_abort_handler)(size_t size);
-MFBT_API void mozalloc_set_oom_abort_handler(
-    mozalloc_oom_abort_handler handler);
+extern MFBT_DATA size_t gOOMAllocationSize;
 
 /* TODO: functions to query system memory usage and register
  * critical-memory handlers. */

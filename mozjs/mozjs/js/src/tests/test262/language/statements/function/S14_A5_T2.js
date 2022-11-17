@@ -3,7 +3,7 @@
 
 /*---
 info: |
-    The Identifer within a FunctionDeclaration can be written in both letters
+    The Identifier within a FunctionDeclaration can be written in both letters
     and unicode
 es5id: 14_A5_T2
 description: >
@@ -14,7 +14,7 @@ description: >
 //////////////////////////////////////////////////////////////////////////////
 //CHECK#1
 if (__func() !== "unicode") {
-	$ERROR('#1: __func() === "unicode". Actual:  __func() ==='+ __func()  );
+	throw new Test262Error('#1: __func() === "unicode". Actual:  __func() ==='+ __func()  );
 }
 //
 //////////////////////////////////////////////////////////////////////////////

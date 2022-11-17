@@ -35,13 +35,11 @@ var alphabet = [-1, obj, 1, 2, Infinity, NaN, "X", "a", true, undefined];
 
 alphabetR.sort();
 
-//CHECK#0
 alphabetR.getClass = Object.prototype.toString;
 if (alphabetR.getClass() !== "[object " + "Object" + "]") {
-  $ERROR('#0: alphabetR.sort() is Object object, not Array object');
+  throw new Test262Error('#0: alphabetR.sort() is Object object, not Array object');
 }
 
-//CHECK#1
 var result = true;
 for (var i = 0; i < 10; i++) {
   if (!(isNaN(alphabetR[i]) && isNaN(alphabet[i]))) {
@@ -50,7 +48,7 @@ for (var i = 0; i < 10; i++) {
 }
 
 if (result !== true) {
-  $ERROR('#1: Check ToString operator');
+  throw new Test262Error('#1: Check ToString operator');
 }
 
 reportCompare(0, 0);

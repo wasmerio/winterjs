@@ -38,9 +38,12 @@ enum JSType {
   JSTYPE_STRING,    /* string */
   JSTYPE_NUMBER,    /* number */
   JSTYPE_BOOLEAN,   /* boolean */
-  JSTYPE_NULL,      /* null */
   JSTYPE_SYMBOL,    /* symbol */
   JSTYPE_BIGINT,    /* BigInt */
+#ifdef ENABLE_RECORD_TUPLE
+  JSTYPE_RECORD, /* record */
+  JSTYPE_TUPLE,  /* tuple */
+#endif
   JSTYPE_LIMIT
 };
 
@@ -79,17 +82,18 @@ inline JS::Zone* GetContextZone(const JSContext* cx);
 
 // Whether the current thread is permitted access to any part of the specified
 // runtime or zone.
-JS_FRIEND_API bool CurrentThreadCanAccessRuntime(const JSRuntime* rt);
+JS_PUBLIC_API bool CurrentThreadCanAccessRuntime(const JSRuntime* rt);
 
 #ifdef DEBUG
-JS_FRIEND_API bool CurrentThreadIsPerformingGC();
+JS_PUBLIC_API bool CurrentThreadIsMainThread();
+JS_PUBLIC_API bool CurrentThreadIsPerformingGC();
 #endif
 
 }  // namespace js
 
 namespace JS {
 
-struct JS_PUBLIC_API PropertyDescriptor;
+class JS_PUBLIC_API PropertyDescriptor;
 
 // Decorates the Unlinking phase of CycleCollection so that accidental use
 // of barriered accessors results in assertions instead of leaks.

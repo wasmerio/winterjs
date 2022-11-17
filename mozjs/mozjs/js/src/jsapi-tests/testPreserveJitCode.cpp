@@ -5,7 +5,9 @@
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
 #include "jit/Ion.h"                      // js::jit::IsIonEnabled
+#include "js/CallAndConstruct.h"          // JS::CallFunction
 #include "js/CompilationAndEvaluation.h"  // JS::CompileFunction
+#include "js/GlobalObject.h"              // JS_NewGlobalObject
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
 #include "util/Text.h"
@@ -80,10 +82,10 @@ bool testPreserveJitCode(bool preserveJitCode, unsigned remainingIonScripts) {
   CHECK_EQUAL(value.toInt32(), 45);
   CHECK_EQUAL(countIonScripts(global), 1u);
 
-  NonIncrementalGC(cx, GC_NORMAL, GCReason::API);
+  NonIncrementalGC(cx, JS::GCOptions::Normal, GCReason::API);
   CHECK_EQUAL(countIonScripts(global), remainingIonScripts);
 
-  NonIncrementalGC(cx, GC_SHRINK, GCReason::API);
+  NonIncrementalGC(cx, JS::GCOptions::Shrink, GCReason::API);
   CHECK_EQUAL(countIonScripts(global), 0u);
 
   return true;

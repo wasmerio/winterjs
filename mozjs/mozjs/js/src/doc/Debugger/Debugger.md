@@ -160,8 +160,9 @@ has one of the following values:
 `set`: The native is the setter for a property being written to.
 `call`: Any call not fitting into the above categories.
 
-This method should return a [resumption value][rv] specifying how the
-debuggee's execution should proceed.
+This method should return a [resumption value][rv] specifying how the debuggee's
+execution should proceed. If a return value is overridden for a constructor
+call, it must be an object.
 
 SpiderMonkey only calls `onNativeCall` hooks when execution is inside a
 debugger evaluation associated with the debugger that has the `onNativeCall`
@@ -516,6 +517,14 @@ the adopting debugger, this method will throw.
 ### `adoptSource(source)`
 Given `source` of type `Debugger.Source` which is owned by an arbitrary
 `Debugger`, return an equivalent `Debugger.Source` owned by this `Debugger`.
+
+### `enableAsyncStack(global)`
+Enable async stack capturing for the realm for the global object designated by
+<i>global</i>.
+
+### `disableAsyncStack(global)`
+Disable async stack capturing for the realm for the global object designated by
+<i>global</i>.
 
 ## Static methods of the Debugger Object
 

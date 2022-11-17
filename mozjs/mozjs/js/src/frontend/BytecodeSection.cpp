@@ -6,8 +6,7 @@
 
 #include "frontend/BytecodeSection.h"
 
-#include "mozilla/Assertions.h"       // MOZ_ASSERT
-#include "mozilla/ReverseIterator.h"  // mozilla::Reversed
+#include "mozilla/Assertions.h"  // MOZ_ASSERT
 
 #include "frontend/AbstractScopePtr.h"    // ScopeIndex
 #include "frontend/CompilationStencil.h"  // CompilationStencil
@@ -49,24 +48,27 @@ mozilla::Maybe<ScopeIndex> GCThingList::getScopeIndex(size_t index) const {
   return mozilla::Some(vector[index].toScope());
 }
 
+TaggedParserAtomIndex GCThingList::getAtom(size_t index) const {
+  const TaggedScriptThingIndex& elem = vector[index];
+  return elem.toAtom();
+}
+
 bool js::frontend::EmitScriptThingsVector(
-    JSContext* cx, const CompilationInput& input,
+    JSContext* cx, const CompilationAtomCache& atomCache,
     const CompilationStencil& stencil, CompilationGCOutput& gcOutput,
     mozilla::Span<const TaggedScriptThingIndex> things,
     mozilla::Span<JS::GCCellPtr> output) {
   MOZ_ASSERT(things.size() <= INDEX_LIMIT);
   MOZ_ASSERT(things.size() == output.size());
 
-  const auto& atomCache = input.atomCache;
-
   for (uint32_t i = 0; i < things.size(); i++) {
     const auto& thing = things[i];
     switch (thing.tag()) {
       case TaggedScriptThingIndex::Kind::ParserAtomIndex:
       case TaggedScriptThingIndex::Kind::WellKnown: {
-        JSAtom* atom = atomCache.getExistingAtomAt(cx, thing.toAtom());
-        MOZ_ASSERT(atom);
-        output[i] = JS::GCCellPtr(atom);
+        JSString* str = atomCache.getExistingStringAt(cx, thing.toAtom());
+        MOZ_ASSERT(str);
+        output[i] = JS::GCCellPtr(str);
         break;
       }
       case TaggedScriptThingIndex::Kind::Null:
@@ -84,11 +86,11 @@ bool js::frontend::EmitScriptThingsVector(
       case TaggedScriptThingIndex::Kind::ObjLiteral: {
         const ObjLiteralStencil& data =
             stencil.objLiteralData[thing.toObjLiteral()];
-        JSObject* obj = data.create(cx, atomCache);
-        if (!obj) {
+        JS::GCCellPtr ptr = data.create(cx, atomCache);
+        if (!ptr) {
           return false;
         }
-        output[i] = JS::GCCellPtr(obj);
+        output[i] = ptr;
         break;
       }
       case TaggedScriptThingIndex::Kind::RegExp: {
@@ -101,10 +103,10 @@ bool js::frontend::EmitScriptThingsVector(
         break;
       }
       case TaggedScriptThingIndex::Kind::Scope:
-        output[i] = JS::GCCellPtr(gcOutput.scopes[thing.toScope()]);
+        output[i] = JS::GCCellPtr(gcOutput.getScope(thing.toScope()));
         break;
       case TaggedScriptThingIndex::Kind::Function:
-        output[i] = JS::GCCellPtr(gcOutput.functions[thing.toFunction()]);
+        output[i] = JS::GCCellPtr(gcOutput.getFunction(thing.toFunction()));
         break;
       case TaggedScriptThingIndex::Kind::EmptyGlobalScope: {
         Scope* scope = &cx->global()->emptyGlobalScope();
@@ -187,4 +189,4 @@ PerScriptData::PerScriptData(JSContext* cx,
     : gcThingList_(cx, compilationState),
       atomIndices_(cx->frontendCollectionPool()) {}
 
-bool PerScriptData::init(JSContext* cx) { return atomIndices_.acquire(cx); }
+bool PerScriptData::init(ErrorContext* ec) { return atomIndices_.acquire(ec); }

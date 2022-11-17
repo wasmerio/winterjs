@@ -1,21 +1,21 @@
 #include "gdb-tests.h"
-#include "jsapi.h"
 
+#include "js/String.h"
 #include "js/Symbol.h"
 
 FRAGMENT(jsid, simple) {
-  JS::Rooted<JSString*> string(cx, JS_NewStringCopyZ(cx, "moon"));
-  JS::Rooted<JSString*> interned(cx, JS_AtomizeAndPinJSString(cx, string));
+  const char* chars = "moon";
+  JS::Rooted<JSString*> string(cx, JS_NewStringCopyZ(cx, chars));
+  JS::Rooted<JSString*> interned(cx, JS_AtomizeAndPinString(cx, chars));
   JS::Rooted<jsid> string_id(cx, JS::PropertyKey::fromPinnedString(interned));
-  JS::Rooted<jsid> int_id(cx, INT_TO_JSID(1729));
+  JS::Rooted<jsid> int_id(cx, JS::PropertyKey::Int(1729));
   JS::Rooted<jsid> unique_symbol_id(
-      cx, SYMBOL_TO_JSID(JS::NewSymbol(cx, interned)));
+      cx, JS::PropertyKey::Symbol(JS::NewSymbol(cx, interned)));
   JS::Rooted<jsid> registry_symbol_id(
-      cx, SYMBOL_TO_JSID(JS::GetSymbolFor(cx, interned)));
+      cx, JS::PropertyKey::Symbol(JS::GetSymbolFor(cx, interned)));
   JS::Rooted<jsid> well_known_symbol_id(
-      cx, SYMBOL_TO_JSID(JS::GetWellKnownSymbol(cx, JS::SymbolCode::iterator)));
-  jsid void_id = JSID_VOID;
-  jsid empty_id = JSID_EMPTY;
+      cx, JS::GetWellKnownSymbolKey(cx, JS::SymbolCode::iterator));
+  jsid void_id = JS::PropertyKey::Void();
 
   breakpoint();
 
@@ -25,7 +25,6 @@ FRAGMENT(jsid, simple) {
   use(registry_symbol_id);
   use(well_known_symbol_id);
   use(void_id);
-  use(empty_id);
 }
 
 void jsid_handles(JS::Handle<jsid> jsid_handle,
@@ -37,8 +36,9 @@ void jsid_handles(JS::Handle<jsid> jsid_handle,
 }
 
 FRAGMENT(jsid, handles) {
-  JS::Rooted<JSString*> string(cx, JS_NewStringCopyZ(cx, "shovel"));
-  JS::Rooted<JSString*> interned(cx, JS_AtomizeAndPinJSString(cx, string));
+  const char* chars = "shovel";
+  JS::Rooted<JSString*> string(cx, JS_NewStringCopyZ(cx, chars));
+  JS::Rooted<JSString*> interned(cx, JS_AtomizeAndPinString(cx, chars));
   JS::Rooted<jsid> string_id(cx, JS::PropertyKey::fromPinnedString(interned));
   jsid_handles(string_id, &string_id);
 }

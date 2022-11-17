@@ -17,11 +17,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from . import lint
 from . import parser
-from . import csharp
 from . import javascript
 from . import kotlin
 from . import markdown
 from . import metrics
+from . import rust
 from . import swift
 from . import util
 
@@ -52,12 +52,12 @@ class Outputter:
 
 
 OUTPUTTERS = {
-    "csharp": Outputter(csharp.output_csharp, ["*.cs"]),
     "javascript": Outputter(javascript.output_javascript, []),
     "typescript": Outputter(javascript.output_typescript, []),
     "kotlin": Outputter(kotlin.output_kotlin, ["*.kt"]),
     "markdown": Outputter(markdown.output_markdown, []),
     "swift": Outputter(swift.output_swift, ["*.swift"]),
+    "rust": Outputter(rust.output_rust, []),
 }
 
 
@@ -71,7 +71,9 @@ def transform_metrics(objects):
     """
     counters = {}
     numerators_by_denominator: Dict[str, Any] = {}
-    for category_val in objects.values():
+    for (category_name, category_val) in objects.items():
+        if category_name == "tags":
+            continue
         for metric in category_val.values():
             fqmn = metric.identifier()
             if getattr(metric, "type", None) == "counter":
@@ -80,18 +82,18 @@ def transform_metrics(objects):
             if denominator_name:
                 metric.type = "numerator"
                 numerators_by_denominator.setdefault(denominator_name, [])
-                numerators_by_denominator[denominator_name].append(fqmn)
+                numerators_by_denominator[denominator_name].append(metric)
 
-    for denominator_name, numerator_names in numerators_by_denominator.items():
+    for denominator_name, numerators in numerators_by_denominator.items():
         if denominator_name not in counters:
-            print(
+            raise ValueError(
                 f"No `counter` named {denominator_name} found to be used as"
-                "denominator for {numerator_names}",
+                "denominator for {numerators}",
                 file=sys.stderr,
             )
-            return 1
+        counters[denominator_name].__class__ = metrics.Denominator
         counters[denominator_name].type = "denominator"
-        counters[denominator_name].numerators = numerator_names
+        counters[denominator_name].numerators = numerators
 
 
 def translate_metrics(
@@ -136,6 +138,12 @@ def translate_metrics(
 
     input_filepaths = util.ensure_list(input_filepaths)
 
+    allow_missing_files = parser_config.get("allow_missing_files", False)
+    if not input_filepaths and not allow_missing_files:
+        print("❌ No metric files specified. ", end="")
+        print("Use `--allow-missing-files` to not treat this as an error.")
+        return 1
+
     if lint.glinter(input_filepaths, parser_config):
         return 1
 
@@ -147,6 +155,12 @@ def translate_metrics(
     # allow_reserved is also relevant to the translators, so copy it there
     if parser_config.get("allow_reserved"):
         options["allow_reserved"] = True
+
+    # We don't render tags anywhere yet.
+    all_objects.value.pop("tags", None)
+
+    # Apply additional general transformations to all metrics
+    transform_metrics(all_objects.value)
 
     # Write everything out to a temporary directory, and then move it to the
     # real directory, for transactional integrity.

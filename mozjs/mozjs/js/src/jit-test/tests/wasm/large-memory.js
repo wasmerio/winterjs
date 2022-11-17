@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !largeArrayBufferEnabled(); --large-arraybuffers; allow-oom
+// |jit-test| skip-if: !largeArrayBufferEnabled(); allow-oom
 
 var pagesz = PageSizeInBytes;
 var pages_limit = MaxPagesIn32BitMemory;
@@ -8,15 +8,15 @@ var pages_limit = MaxPagesIn32BitMemory;
 var pages_vanilla = 40000;
 
 for ( let [pages,maxpages] of [[pages_vanilla, pages_vanilla+100],
+                               [pages_limit - 3, pages_limit],
                                [pages_limit, pages_limit]] ) {
     assertEq(pages == maxpages || maxpages - pages >= 3, true)
-
     let ins = wasmEvalText(`
 (module
   (memory (export "mem") ${pages} ${maxpages})
 
   (data (i32.const ${(pages-5)*pagesz}) "yabbadabbado")
-  (data $flintstone passive "yabbadabbado")
+  (data $flintstone "yabbadabbado")
 
   (func (export "get_constaddr") (result i32)
     (i32.load (i32.const ${pages*pagesz-4})))
@@ -103,9 +103,11 @@ for ( let [pages,maxpages] of [[pages_vanilla, pages_vanilla+100],
     ins.exports.set_varaddr_small_offset((pages-1)*pagesz, 0xcafebab5);
     assertEq(buf[pages*pagesz/4-7], 0xcafebab5|0);
 
-    assertErrorMessage(() => ins.exports.get_varaddr(pages*pagesz),
-                       WebAssembly.RuntimeError,
-                       /index out of bounds/);
+    if (pages*pagesz < 0x1_0000_0000) {
+        assertErrorMessage(() => ins.exports.get_varaddr(pages*pagesz),
+                           WebAssembly.RuntimeError,
+                           /index out of bounds/);
+    }
 
     assertErrorMessage(() => ins.exports.get_varaddr_large_offset(pagesz*100+4),
                        WebAssembly.RuntimeError,
@@ -116,9 +118,11 @@ for ( let [pages,maxpages] of [[pages_vanilla, pages_vanilla+100],
                        /index out of bounds/);
 
     ins.exports.set_varaddr(pages*pagesz-4, 0); // Should work
-    assertErrorMessage(() => ins.exports.set_varaddr(pages*pagesz, 0),
-                       WebAssembly.RuntimeError,
-                       /index out of bounds/);
+    if (pages*pagesz < 0x1_0000_0000) {
+        assertErrorMessage(() => ins.exports.set_varaddr(pages*pagesz, 0),
+                           WebAssembly.RuntimeError,
+                           /index out of bounds/);
+    }
 
     ins.exports.set_varaddr_large_offset(pagesz*100+16, 0); // Should work
     assertErrorMessage(() => ins.exports.set_varaddr_large_offset(pagesz*100+20, 0),
@@ -171,10 +175,21 @@ for ( let [pages,maxpages] of [[pages_vanilla, pages_vanilla+100],
                        WebAssembly.RuntimeError,
                        /index out of bounds/);
 
+    done:
     if (pages < maxpages) {
-        assertEq(ins.exports.grow1(), pages);
-        assertEq(ins.exports.grow1(), pages+1);
-        assertEq(ins.exports.grow1(), pages+2);
+        let res = 0;
+
+        res = ins.exports.grow1();
+        if (res == -1) break done;
+        assertEq(res, pages);
+
+        res = ins.exports.grow1();
+        if (res == -1) break done;
+        assertEq(res, pages+1);
+
+        res = ins.exports.grow1();
+        if (res == -1) break done;
+        assertEq(res, pages+2);
 
         assertEq(ins.exports.get_varaddr((pages+2)*pagesz), 0);
 
@@ -182,7 +197,9 @@ for ( let [pages,maxpages] of [[pages_vanilla, pages_vanilla+100],
         while (ins.exports.grow1() != -1) {
             i++;
         }
-        assertEq(i, maxpages-pages-3);
+        // We can't assert equality because we might OOM before we get to the
+        // max, but we can assert we did not go beyond that.
+        assertEq(i <= maxpages-pages-3, true);
     }
 }
 
@@ -302,7 +319,7 @@ if (pages_limit < 65536) {
 }
 
 // Fail to instantiate when the minimum is larger than the max heap size
-{
+if (pages_limit < 65536) {
     assertErrorMessage(() => wasmEvalText(`
 (module (memory (export "mem") ${pages_limit+1} ${pages_limit+1}))
 `),

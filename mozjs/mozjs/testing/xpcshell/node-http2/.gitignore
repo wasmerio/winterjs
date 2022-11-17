@@ -1,7 +1,0 @@
-node_modules
-.idea
-coverage
-doc
-.vscode/.browse*
-npm-debug.log
-typings

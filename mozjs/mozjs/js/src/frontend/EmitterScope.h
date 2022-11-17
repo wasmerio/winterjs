@@ -15,20 +15,19 @@
 #include "frontend/AbstractScopePtr.h"
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/NameCollections.h"
-#include "frontend/ParseContext.h"
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
-#include "frontend/SharedContext.h"
-#include "js/TypeDecls.h"
-#include "vm/BytecodeUtil.h"   // JSOp
+#include "frontend/Stencil.h"
+#include "vm/Opcodes.h"        // JSOp
 #include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
-
-class Scope;
-
 namespace frontend {
 
 struct BytecodeEmitter;
+class EvalSharedContext;
+class FunctionBox;
+class GlobalSharedContext;
+class ModuleSharedContext;
+class TaggedParserAtomIndex;
 
 // A scope that introduces bindings.
 class EmitterScope : public Nestable<EmitterScope> {
@@ -113,6 +112,8 @@ class EmitterScope : public Nestable<EmitterScope> {
 
   [[nodiscard]] bool enterLexical(BytecodeEmitter* bce, ScopeKind kind,
                                   LexicalScope::ParserData* bindings);
+  [[nodiscard]] bool enterClassBody(BytecodeEmitter* bce, ScopeKind kind,
+                                    ClassBodyScope::ParserData* bindings);
   [[nodiscard]] bool enterNamedLambda(BytecodeEmitter* bce,
                                       FunctionBox* funbox);
   [[nodiscard]] bool enterFunction(BytecodeEmitter* bce, FunctionBox* funbox);
@@ -158,8 +159,49 @@ class EmitterScope : public Nestable<EmitterScope> {
 
   NameLocation lookup(BytecodeEmitter* bce, TaggedParserAtomIndex name);
 
+  // Find both the slot associated with a private name and the location of the
+  // corresponding `.privateBrand` binding.
+  //
+  // Simply doing two separate lookups, one for `name` and another for
+  // `.privateBrand`, would give the wrong answer in this case:
+  //
+  //     class Outer {
+  //       #outerMethod() { reutrn "ok"; }
+  //
+  //       test() {
+  //         class Inner {
+  //           #innerMethod() {}
+  //           test(outer) {
+  //             return outer.#outerMethod();
+  //           }
+  //         }
+  //         return new Inner().test(this);
+  //       }
+  //     }
+  //
+  //    new Outer().test();  // should return "ok"
+  //
+  // At the point in Inner.test where `#outerMethod` is called, we need to
+  // check for the private brand of `Outer`, not `Inner`; but both class bodies
+  // have `.privateBrand` bindings. In a normal `lookup`, the inner binding
+  // would shadow the outer one.
+  //
+  // This method instead sets `brandLoc` to the location of the `.privateBrand`
+  // binding in the same class body as the private name `name`, ignoring
+  // shadowing. If `name` refers to a name that is actually stamped onto the
+  // target object (anything other than a non-static private method), then
+  // `brandLoc` is set to Nothing.
+  void lookupPrivate(BytecodeEmitter* bce, TaggedParserAtomIndex name,
+                     NameLocation& loc, mozilla::Maybe<NameLocation>& brandLoc);
+
   mozilla::Maybe<NameLocation> locationBoundInScope(TaggedParserAtomIndex name,
                                                     EmitterScope* target);
+
+  // For a given emitter scope, return the number of enclosing environments in
+  // the current compilation (this excludes environments that could enclose the
+  // compilation, like would happen for an eval copmilation).
+  static uint32_t CountEnclosingCompilationEnvironments(
+      BytecodeEmitter* bce, EmitterScope* emitterScope);
 };
 
 } /* namespace frontend */

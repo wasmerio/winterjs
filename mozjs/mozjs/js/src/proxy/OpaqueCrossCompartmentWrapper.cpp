@@ -14,8 +14,8 @@ using namespace js;
 
 bool OpaqueCrossCompartmentWrapper::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject wrapper, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
-  desc.object().set(nullptr);
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
+  desc.reset();
   return true;
 }
 
@@ -132,14 +132,6 @@ bool OpaqueCrossCompartmentWrapper::getBuiltinClass(JSContext* cx,
 bool OpaqueCrossCompartmentWrapper::isArray(JSContext* cx, HandleObject obj,
                                             JS::IsArrayAnswer* answer) const {
   *answer = JS::IsArrayAnswer::NotArray;
-  return true;
-}
-
-bool OpaqueCrossCompartmentWrapper::hasInstance(JSContext* cx,
-                                                HandleObject wrapper,
-                                                MutableHandleValue v,
-                                                bool* bp) const {
-  *bp = false;
   return true;
 }
 

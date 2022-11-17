@@ -5,8 +5,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-@depends(target)
-def jemalloc_default(target):
+@depends(target, js_package)
+def jemalloc_default(target, js_package):
+    if js_package:
+        return False
     return target.kernel in ("Darwin", "Linux", "WINNT")
 
 
@@ -75,12 +77,11 @@ def phc_default(milestone, target, replace_malloc_default, replace_malloc):
         return False
     # Both Linux32 and Win32 have frequent crashes when stack tracing (for
     # unclear reasons), so PHC is enabled only on 64-bit only in both cases.
-    #
-    # XXX: PHC is implemented but not yet enabled on Mac. Bug 1576515 is about
-    #      enabling it on Mac, but it is blocked by bug 1035892.
     return (
-        target.os == "GNU" and target.kernel == "Linux" and target.bitness == 64
-    ) or (target.kernel == "WINNT" and target.bitness == 64)
+        (target.os == "GNU" and target.kernel == "Linux" and target.bitness == 64)
+        or (target.kernel == "WINNT" and target.bitness == 64)
+        or (target.os == "OSX")
+    )
 
 
 option(
@@ -96,3 +97,9 @@ imply_option("--enable-frame-pointers", True, when="--enable-phc")
 
 
 set_config("MOZ_PHC", True, when="--enable-phc")
+
+with only_when(depends(target.os)(lambda os: os != "WINNT")):
+    set_define("HAVE_STRNDUP", check_symbol("strndup"))
+    set_define("HAVE_POSIX_MEMALIGN", check_symbol("posix_memalign"))
+    set_define("HAVE_MEMALIGN", check_symbol("memalign"))
+    set_define("HAVE_MALLOC_USABLE_SIZE", check_symbol("malloc_usable_size"))

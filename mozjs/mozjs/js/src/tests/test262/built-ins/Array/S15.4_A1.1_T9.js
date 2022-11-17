@@ -9,7 +9,6 @@ es5id: 15.4_A1.1_T9
 description: If Type(value) is Object, evaluate ToPrimitive(value, String)
 ---*/
 
-//CHECK#1
 var x = [];
 var object = {
   valueOf: function() {
@@ -17,11 +16,8 @@ var object = {
   }
 };
 x[object] = 0;
-if (x["[object Object]"] !== 0) {
-  $ERROR('#1: x = []; var object = {valueOf: function() {return 1}}; x[object] = 0; x["[object Object]"] === 0. Actual: ' + (x["[object Object]"]));
-}
+assert.sameValue(x["[object Object]"], 0, 'The value of x["[object Object]"] is expected to be 0');
 
-//CHECK#2
 x = [];
 var object = {
   valueOf: function() {
@@ -32,11 +28,8 @@ var object = {
   }
 };
 x[object] = 0;
-if (x[0] !== 0) {
-  $ERROR('#2: x = []; var object = {valueOf: function() {return 1}, toString: function() {return 0}}; x[object] = 0; x[0] === 0. Actual: ' + (x[0]));
-}
+assert.sameValue(x[0], 0, 'The value of x[0] is expected to be 0');
 
-//CHECK#3
 x = [];
 var object = {
   valueOf: function() {
@@ -47,11 +40,8 @@ var object = {
   }
 };
 x[object] = 0;
-if (x[1] !== 0) {
-  $ERROR('#3: x = []; var object = {valueOf: function() {return 1}, toString: function() {return {}}}; x[object] = 0; x[1] === 0. Actual: ' + (x[1]));
-}
+assert.sameValue(x[1], 0, 'The value of x[1] is expected to be 0');
 
-//CHECK#4
 try {
   x = [];
   var object = {
@@ -63,19 +53,12 @@ try {
     }
   };
   x[object] = 0;
-  if (x[1] !== 0) {
-    $ERROR('#4.1: x = []; var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; x[object] = 0; x[1] === 1. Actual: ' + (x[1]));
-  }
+  assert.sameValue(x[1], 0, 'The value of x[1] is expected to be 0');
 }
 catch (e) {
-  if (e === "error") {
-    $ERROR('#4.2: x = []; var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; x[object] = 0; x[1] === 1. Actual: ' + ("error"));
-  } else {
-    $ERROR('#4.3: x = []; var object = {valueOf: function() {throw "error"}, toString: function() {return 1}}; x[object] = 0; x[1] === 1. Actual: ' + (e));
-  }
+  assert.notSameValue(e, "error", 'The value of e is not "error"');
 }
 
-//CHECK#5
 x = [];
 var object = {
   toString: function() {
@@ -83,11 +66,8 @@ var object = {
   }
 };
 x[object] = 0;
-if (x[1] !== 0) {
-  $ERROR('#5: x = []; var object = {toString: function() {return 1}}; x[object] = 0; x[1] === 0. Actual: ' + (x[1]));
-}
+assert.sameValue(x[1], 0, 'The value of x[1] is expected to be 0');
 
-//CHECK#6
 x = [];
 var object = {
   valueOf: function() {
@@ -98,11 +78,8 @@ var object = {
   }
 }
 x[object] = 0;
-if (x[1] !== 0) {
-  $ERROR('#6: x = []; var object = {valueOf: function() {return {}}, toString: function() {return 1}}; x[object] = 0; x[1] === 0. Actual: ' + (x[1]));
-}
+assert.sameValue(x[1], 0, 'The value of x[1] is expected to be 0');
 
-//CHECK#7
 try {
   x = [];
   var object = {
@@ -114,15 +91,12 @@ try {
     }
   };
   x[object];
-  $ERROR('#7.1: x = []; var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; x[object] throw "error". Actual: ' + (x[object]));
+  throw new Test262Error('#7.1: x = []; var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; x[object] throw "error". Actual: ' + (x[object]));
 }
 catch (e) {
-  if (e !== "error") {
-    $ERROR('#7.2: x = []; var object = {valueOf: function() {return 1}, toString: function() {throw "error"}}; x[object] throw "error". Actual: ' + (e));
-  }
+  assert.sameValue(e, "error", 'The value of e is expected to be "error"');
 }
 
-//CHECK#8
 try {
   x = [];
   var object = {
@@ -134,12 +108,14 @@ try {
     }
   };
   x[object];
-  $ERROR('#8.1: x = []; var object = {valueOf: function() {return {}}, toString: function() {return {}}}; x[object] throw TypeError. Actual: ' + (x[object]));
+  throw new Test262Error('#8.1: x = []; var object = {valueOf: function() {return {}}, toString: function() {return {}}}; x[object] throw TypeError. Actual: ' + (x[object]));
 }
 catch (e) {
-  if ((e instanceof TypeError) !== true) {
-    $ERROR('#8.2: x = []; var object = {valueOf: function() {return {}}, toString: function() {return {}}}; x[object] throw TypeError. Actual: ' + (e));
-  }
+  assert.sameValue(
+    e instanceof TypeError,
+    true,
+    'The result of evaluating (e instanceof TypeError) is expected to be true'
+  );
 }
 
 reportCompare(0, 0);

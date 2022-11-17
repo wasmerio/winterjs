@@ -8,23 +8,21 @@ description: >
     Checking if enumerating the Object.prototype.valueOf.length
     property fails
 ---*/
+assert(
+  !!Object.prototype.valueOf.hasOwnProperty('length'),
+  'The value of !!Object.prototype.valueOf.hasOwnProperty("length") is expected to be true'
+);
 
-//CHECK#0
-if (!(Object.prototype.valueOf.hasOwnProperty('length'))) {
-  $ERROR('#0: the Object.prototype.valueOf has length property.');
-}
+assert(
+  !Object.prototype.valueOf.propertyIsEnumerable('length'),
+  'The value of !Object.prototype.valueOf.propertyIsEnumerable("length") is expected to be true'
+);
 
-
-// CHECK#1
-if (Object.prototype.valueOf.propertyIsEnumerable('length')) {
-  $ERROR('#1: the Object.prototype.valueOf.length property has the attributes DontEnum');
-}
-
-// CHECK#2
 for (var p in Object.prototype.valueOf) {
-  if (p === "length")
-    $ERROR('#2: the Object.prototype.valueOf.length property has the attributes DontEnum');
+  assert.notSameValue(p, "length", 'The value of p is not "length"');
 }
 //
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

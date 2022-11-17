@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmSimdEnabled(); include:../tests/wasm/simd/ad-hack-preamble.js
+// |jit-test| skip-if: !wasmSimdEnabled()
 
 // Ad-hoc test cases used during development.  Generally these are ordered from
 // easier toward harder.
@@ -6,6 +6,9 @@
 // The test cases here are usually those that require some special processing.
 // Simple binary operators (v128 x v128 -> v128) and unary operators (v128 ->
 // v128) are tested in ad-hack-simple-binops*.js and ad-hack-simple-unops.js.
+
+// Do not include this in the preamble, it must be loaded after lib/wasm.js
+load(scriptdir + "ad-hack-preamble.js")
 
 // v128.store
 // oob store
@@ -815,27 +818,27 @@ ins.exports.narrow_i32x4_u();
 var cs = xs.concat(...ys).map((x) => unsigned_saturate(x, 16));
 assertSame(get(mem16u, 0, 8), cs);
 
-// Widen low/high
+// Extend low/high
 
 var ins = wasmEvalText(`
   (module
     (memory (export "mem") 1 1)
-    (func (export "widen_low_i8x16_s")
-      (v128.store (i32.const 0) (i16x8.widen_low_i8x16_s (v128.load (i32.const 16)))))
-    (func (export "widen_high_i8x16_s")
-      (v128.store (i32.const 0) (i16x8.widen_high_i8x16_s (v128.load (i32.const 16)))))
-    (func (export "widen_low_i8x16_u")
-      (v128.store (i32.const 0) (i16x8.widen_low_i8x16_u (v128.load (i32.const 16)))))
-    (func (export "widen_high_i8x16_u")
-      (v128.store (i32.const 0) (i16x8.widen_high_i8x16_u (v128.load (i32.const 16)))))
-    (func (export "widen_low_i16x8_s")
-      (v128.store (i32.const 0) (i32x4.widen_low_i16x8_s (v128.load (i32.const 16)))))
-    (func (export "widen_high_i16x8_s")
-      (v128.store (i32.const 0) (i32x4.widen_high_i16x8_s (v128.load (i32.const 16)))))
-    (func (export "widen_low_i16x8_u")
-      (v128.store (i32.const 0) (i32x4.widen_low_i16x8_u (v128.load (i32.const 16)))))
-    (func (export "widen_high_i16x8_u")
-      (v128.store (i32.const 0) (i32x4.widen_high_i16x8_u (v128.load (i32.const 16))))))`);
+    (func (export "extend_low_i8x16_s")
+      (v128.store (i32.const 0) (i16x8.extend_low_i8x16_s (v128.load (i32.const 16)))))
+    (func (export "extend_high_i8x16_s")
+      (v128.store (i32.const 0) (i16x8.extend_high_i8x16_s (v128.load (i32.const 16)))))
+    (func (export "extend_low_i8x16_u")
+      (v128.store (i32.const 0) (i16x8.extend_low_i8x16_u (v128.load (i32.const 16)))))
+    (func (export "extend_high_i8x16_u")
+      (v128.store (i32.const 0) (i16x8.extend_high_i8x16_u (v128.load (i32.const 16)))))
+    (func (export "extend_low_i16x8_s")
+      (v128.store (i32.const 0) (i32x4.extend_low_i16x8_s (v128.load (i32.const 16)))))
+    (func (export "extend_high_i16x8_s")
+      (v128.store (i32.const 0) (i32x4.extend_high_i16x8_s (v128.load (i32.const 16)))))
+    (func (export "extend_low_i16x8_u")
+      (v128.store (i32.const 0) (i32x4.extend_low_i16x8_u (v128.load (i32.const 16)))))
+    (func (export "extend_high_i16x8_u")
+      (v128.store (i32.const 0) (i32x4.extend_high_i16x8_u (v128.load (i32.const 16))))))`);
 
 var mem16 = new Int16Array(ins.exports.mem.buffer);
 var mem16u = new Uint16Array(ins.exports.mem.buffer);
@@ -844,16 +847,16 @@ var as = [0, 1, 192, 3, 205, 5, 6, 133, 8, 9, 129, 11, 201, 13, 14, 255];
 
 set(mem8, 16, as);
 
-ins.exports.widen_low_i8x16_s();
+ins.exports.extend_low_i8x16_s();
 assertSame(get(mem16, 0, 8), iota(8).map((n) => sign_extend(as[n], 8)));
 
-ins.exports.widen_high_i8x16_s();
+ins.exports.extend_high_i8x16_s();
 assertSame(get(mem16, 0, 8), iota(8).map((n) => sign_extend(as[n+8], 8)));
 
-ins.exports.widen_low_i8x16_u();
+ins.exports.extend_low_i8x16_u();
 assertSame(get(mem16u, 0, 8), iota(8).map((n) => zero_extend(as[n], 8)));
 
-ins.exports.widen_high_i8x16_u();
+ins.exports.extend_high_i8x16_u();
 assertSame(get(mem16u, 0, 8), iota(8).map((n) => zero_extend(as[n+8], 8)));
 
 var mem32 = new Int32Array(ins.exports.mem.buffer);
@@ -863,16 +866,16 @@ var as = [0, 1, 192, 3, 205, 5, 6, 133].map((x) => x << 8);
 
 set(mem16, 8, as);
 
-ins.exports.widen_low_i16x8_s();
+ins.exports.extend_low_i16x8_s();
 assertSame(get(mem32, 0, 4), iota(4).map((n) => sign_extend(as[n], 16)));
 
-ins.exports.widen_high_i16x8_s();
+ins.exports.extend_high_i16x8_s();
 assertSame(get(mem32, 0, 4), iota(4).map((n) => sign_extend(as[n+4], 16)));
 
-ins.exports.widen_low_i16x8_u();
+ins.exports.extend_low_i16x8_u();
 assertSame(get(mem32u, 0, 4), iota(4).map((n) => zero_extend(as[n], 16)));
 
-ins.exports.widen_high_i16x8_u();
+ins.exports.extend_high_i16x8_u();
 assertSame(get(mem32u, 0, 4), iota(4).map((n) => zero_extend(as[n+4], 16)));
 
 

@@ -11,15 +11,21 @@
 #include "mozilla/Range.h"
 #include "mozilla/Utf8.h"
 
+#include <limits>
+
 #include "NamespaceImports.h"
 
-#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 
 #include "vm/StringType.h"
 
 namespace js {
+
+namespace frontend {
+class ParserAtomsTable;
+class TaggedParserAtomIndex;
+}  // namespace frontend
 
 class GlobalObject;
 class StringBuffer;
@@ -29,13 +35,10 @@ class StringBuffer;
 // This is a no-op if built with JS_HAS_INTL_API.
 extern void FinishRuntimeNumberState(JSRuntime* rt);
 
-/* Initialize the Number class, returning its prototype object. */
-extern JSObject* InitNumberClass(JSContext* cx, Handle<GlobalObject*> global);
-
 /*
- * When base == 10, this function implements ToString() as specified by
- * ECMA-262-5 section 9.8.1; but note that it handles integers specially for
- * performance.  See also js::NumberToCString().
+ * This function implements ToString() as specified by ECMA-262-5 section 9.8.1;
+ * but note that it handles integers specially for performance.
+ * See also js::NumberToCString().
  */
 template <AllowGC allowGC>
 extern JSString* NumberToString(JSContext* cx, double d);
@@ -45,7 +48,7 @@ extern JSString* NumberToStringPure(JSContext* cx, double d);
 extern JSAtom* NumberToAtom(JSContext* cx, double d);
 
 frontend::TaggedParserAtomIndex NumberToParserAtom(
-    JSContext* cx, frontend::ParserAtomsTable& parserAtoms, double d);
+    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, double d);
 
 template <AllowGC allowGC>
 extern JSLinearString* Int32ToString(JSContext* cx, int32_t i);
@@ -55,49 +58,59 @@ extern JSLinearString* Int32ToStringPure(JSContext* cx, int32_t i);
 extern JSAtom* Int32ToAtom(JSContext* cx, int32_t si);
 
 frontend::TaggedParserAtomIndex Int32ToParserAtom(
-    JSContext* cx, frontend::ParserAtomsTable& parserAtoms, int32_t si);
+    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, int32_t si);
 
 // ES6 15.7.3.12
-extern bool IsInteger(const Value& val);
-
 extern bool IsInteger(double d);
 
 /*
  * Convert an integer or double (contained in the given value) to a string and
  * append to the given buffer.
  */
-[[nodiscard]] extern bool JS_FASTCALL
-NumberValueToStringBuffer(JSContext* cx, const Value& v, StringBuffer& sb);
+[[nodiscard]] extern bool NumberValueToStringBuffer(const Value& v,
+                                                    StringBuffer& sb);
 
 extern JSLinearString* IndexToString(JSContext* cx, uint32_t index);
 
-/*
- * Usually a small amount of static storage is enough, but sometimes we need
- * to dynamically allocate much more.  This struct encapsulates that.
- * Dynamically allocated memory will be freed when the object is destroyed.
- */
 struct ToCStringBuf {
-  /*
-   * The longest possible result that would need to fit in sbuf is
-   * (-0x80000000).toString(2), which has length 33.  Longer cases are
-   * possible, but they'll go in dbuf.
-   */
-  static const size_t sbufSize = 34;
-  char sbuf[sbufSize];
-  char* dbuf;
-
-  ToCStringBuf();
-  ~ToCStringBuf();
+  char sbuf[JS::MaximumNumberToStringLength] = {};
 };
 
-/*
- * Convert a number to a C string.  When base==10, this function implements
- * ToString() as specified by ECMA-262-5 section 9.8.1.  It handles integral
- * values cheaply.  Return nullptr if we ran out of memory.  See also
- * NumberToCString().
- */
-extern char* NumberToCString(JSContext* cx, ToCStringBuf* cbuf, double d,
-                             int base = 10);
+struct Int32ToCStringBuf {
+  // The amount of space large enough to store the null-terminated result of
+  // |ToString| on any int32.
+  //
+  // We use the same amount for uint32 (base 10 and base 16), even though uint32
+  // only need 11 characters (base 10) resp. 9 characters (base 16) instead of
+  // 12 characters for int32 in base 10.
+  static constexpr size_t MaximumInt32ToStringLength =
+      std::numeric_limits<int32_t>::digits10 +
+      1 +  // account for the largest possible int32 value
+      1 +  // sign for negative numbers
+      1    // null character
+      ;
+
+  char sbuf[MaximumInt32ToStringLength] = {};
+};
+
+// Convert a number to a C string.  This function implements ToString() as
+// specified by ECMA-262-5 section 9.8.1.  It handles integral values cheaply.
+// Infallible: always returns a non-nullptr string.
+// The optional `length` out-param is set to the string length of the result.
+extern char* NumberToCString(ToCStringBuf* cbuf, double d,
+                             size_t* length = nullptr);
+
+extern char* Int32ToCString(Int32ToCStringBuf* cbuf, int32_t value,
+                            size_t* length = nullptr);
+
+extern char* Uint32ToCString(Int32ToCStringBuf* cbuf, uint32_t value,
+                             size_t* length = nullptr);
+
+// Like NumberToCString, but accepts only unsigned integers and uses base 16.
+// Infallible: always returns a non-nullptr string.
+// The optional `length` out-param is set to the string length of the result.
+extern char* Uint32ToHexCString(Int32ToCStringBuf* cbuf, uint32_t value,
+                                size_t* length = nullptr);
 
 /*
  * The largest positive integer such that all positive integers less than it
@@ -181,13 +194,11 @@ template <typename CharT>
  * cf. ES2020, 11.8.3 Numeric Literals.
  */
 template <typename CharT>
-[[nodiscard]] extern bool GetDecimalNonInteger(JSContext* cx,
-                                               const CharT* start,
-                                               const CharT* end, double* dp);
+[[nodiscard]] extern bool GetDecimal(JSContext* cx, const CharT* start,
+                                     const CharT* end, double* dp);
 
 template <typename CharT>
-bool CharsToNumber(JSContext* cx, const CharT* chars, size_t length,
-                   double* result);
+double CharsToNumber(const CharT* chars, size_t length);
 
 [[nodiscard]] extern bool StringToNumber(JSContext* cx, JSString* str,
                                          double* result);
@@ -195,13 +206,8 @@ bool CharsToNumber(JSContext* cx, const CharT* chars, size_t length,
 [[nodiscard]] extern bool StringToNumberPure(JSContext* cx, JSString* str,
                                              double* result);
 
-/*
- * Return true and set |*result| to the parsed number value if |str| can be
- * parsed as a number using the same rules as in |StringToNumber|. Otherwise
- * return false and leave |*result| in an indeterminate state.
- */
-[[nodiscard]] extern bool MaybeStringToNumber(JSLinearString* str,
-                                              double* result);
+// Infallible version of StringToNumber for linear strings.
+extern double LinearStringToNumber(JSLinearString* str);
 
 /* ES5 9.3 ToNumber, overwriting *vp with the appropriate number value. */
 [[nodiscard]] MOZ_ALWAYS_INLINE bool ToNumber(JSContext* cx,
@@ -246,19 +252,15 @@ bool ToInt32OrBigIntSlow(JSContext* cx, JS::MutableHandleValue vp);
 /*
  * Similar to strtod except that it replaces overflows with infinities of the
  * correct sign, and underflows with zeros of the correct sign.  Guaranteed to
- * return the closest double number to the given input in dp.
+ * return the closest double number to the given input.
  *
  * Also allows inputs of the form [+|-]Infinity, which produce an infinity of
  * the appropriate sign.  The case of the "Infinity" string must match exactly.
- * If the string does not contain a number, set *dEnd to begin and return 0.0
- * in *d.
- *
- * Return false if out of memory.
+ * If the string does not contain a number, set *dEnd to begin and return 0.0.
  */
 template <typename CharT>
-[[nodiscard]] extern bool js_strtod(JSContext* cx, const CharT* begin,
-                                    const CharT* end, const CharT** dEnd,
-                                    double* d);
+[[nodiscard]] extern double js_strtod(const CharT* begin, const CharT* end,
+                                      const CharT** dEnd);
 
 namespace js {
 
@@ -267,14 +269,12 @@ namespace js {
  * (and so |dEnd| would be a value already known).
  */
 template <typename CharT>
-[[nodiscard]] extern bool FullStringToDouble(JSContext* cx, const CharT* begin,
-                                             const CharT* end, double* d) {
+[[nodiscard]] extern double FullStringToDouble(const CharT* begin,
+                                               const CharT* end) {
   decltype(ToRawChars(begin)) realEnd;
-  if (js_strtod(cx, ToRawChars(begin), ToRawChars(end), &realEnd, d)) {
-    MOZ_ASSERT(end == static_cast<const void*>(realEnd));
-    return true;
-  }
-  return false;
+  double d = js_strtod(ToRawChars(begin), ToRawChars(end), &realEnd);
+  MOZ_ASSERT(end == static_cast<const void*>(realEnd));
+  return d;
 }
 
 [[nodiscard]] extern bool ThisNumberValueForToLocaleString(JSContext* cx,

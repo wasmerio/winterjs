@@ -8,13 +8,17 @@ info: |
 esid: sec-date.prototype.setminutes
 description: Checking DontDelete attribute
 ---*/
+assert.sameValue(
+  delete Date.prototype.setMinutes.length,
+  true,
+  'The value of `delete Date.prototype.setMinutes.length` is expected to be true'
+);
 
-if (delete Date.prototype.setMinutes.length !== true) {
-  $ERROR('#1: The Date.prototype.setMinutes.length property does not have the attributes DontDelete');
-}
+assert(
+  !Date.prototype.setMinutes.hasOwnProperty('length'),
+  'The value of !Date.prototype.setMinutes.hasOwnProperty(\'length\') is expected to be true'
+);
 
-if (Date.prototype.setMinutes.hasOwnProperty('length')) {
-  $ERROR('#2: The Date.prototype.setMinutes.length property does not have the attributes DontDelete');
-}
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

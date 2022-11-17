@@ -7,6 +7,7 @@ from __future__ import absolute_import, print_function
 
 import unittest
 import json
+import os
 
 import mozunit
 
@@ -29,8 +30,10 @@ class TestGenerateManifest(unittest.TestCase):
             <em:contributor>Joe Smith</em:contributor>
             <em:contributor>Mary White</em:contributor>
         """
+        os.environ["MOZ_BUILD_DATE"] = "20210928100000"
         manifest = langpack_manifest.create_webmanifest(
             "fi",
+            "57.0.1",
             "57.0",
             "57.0.*",
             "Firefox",
@@ -41,10 +44,11 @@ class TestGenerateManifest(unittest.TestCase):
         )
 
         data = json.loads(manifest)
-        self.assertEquals(data["name"], "Finnish Language Pack")
-        self.assertEquals(
+        self.assertEqual(data["name"], "Finnish Language Pack")
+        self.assertEqual(
             data["author"], "Suomennosprojekti (contributors: Joe Smith, Mary White)"
         )
+        self.assertEqual(data["version"], "57.0.1buildid20210928.100000")
 
     def test_manifest_without_contributors(self):
         ctx = Context()
@@ -52,6 +56,7 @@ class TestGenerateManifest(unittest.TestCase):
         ctx["MOZ_LANGPACK_CREATOR"] = "Suomennosprojekti"
         manifest = langpack_manifest.create_webmanifest(
             "fi",
+            "57.0.1",
             "57.0",
             "57.0.*",
             "Firefox",
@@ -62,8 +67,8 @@ class TestGenerateManifest(unittest.TestCase):
         )
 
         data = json.loads(manifest)
-        self.assertEquals(data["name"], "Finnish Language Pack")
-        self.assertEquals(data["author"], "Suomennosprojekti")
+        self.assertEqual(data["name"], "Finnish Language Pack")
+        self.assertEqual(data["author"], "Suomennosprojekti")
 
 
 if __name__ == "__main__":

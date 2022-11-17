@@ -7,11 +7,15 @@
 #ifndef jit_CacheIRCompiler_h
 #define jit_CacheIRCompiler_h
 
+#include "mozilla/Casting.h"
 #include "mozilla/Maybe.h"
 
 #include "jit/CacheIR.h"
+#include "jit/CacheIRReader.h"
+#include "jit/CacheIRWriter.h"
 #include "jit/JitOptions.h"
 #include "jit/MacroAssembler.h"
+#include "jit/PerfSpewer.h"
 #include "jit/SharedICRegisters.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 
@@ -22,11 +26,14 @@ class BigInt;
 namespace js {
 
 class TypedArrayObject;
+enum class UnaryMathFunction : uint8_t;
 
 namespace jit {
 
 class BaselineCacheIRCompiler;
+class ICCacheIRStub;
 class IonCacheIRCompiler;
+class IonScript;
 
 enum class ICStubEngine : uint8_t;
 
@@ -358,6 +365,8 @@ class MOZ_RAII CacheRegisterAllocator {
 
   void popPayload(MacroAssembler& masm, OperandLocation* loc, Register dest);
   void popValue(MacroAssembler& masm, OperandLocation* loc, ValueOperand dest);
+  Address payloadAddress(MacroAssembler& masm,
+                         const OperandLocation* loc) const;
   Address valueAddress(MacroAssembler& masm, const OperandLocation* loc) const;
 
 #ifdef DEBUG
@@ -494,8 +503,6 @@ class MOZ_RAII CacheRegisterAllocator {
   // Returns the register for the given operand. If the operand is currently
   // not in a register, it will load it into one.
   ValueOperand useValueRegister(MacroAssembler& masm, ValOperandId val);
-  ValueOperand useFixedValueRegister(MacroAssembler& masm, ValOperandId valId,
-                                     ValueOperand reg);
   Register useRegister(MacroAssembler& masm, TypedOperandId typedId);
 
   ConstantOrRegister useConstantOrRegister(MacroAssembler& masm,
@@ -518,6 +525,8 @@ class MOZ_RAII CacheRegisterAllocator {
   // Does not change the allocator's state.
   void copyToScratchRegister(MacroAssembler& masm, TypedOperandId typedId,
                              Register dest) const;
+  void copyToScratchValueRegister(MacroAssembler& masm, ValOperandId valId,
+                                  ValueOperand dest) const;
 
   // Returns |val|'s JSValueType or JSVAL_TYPE_UNKNOWN.
   JSValueType knownType(ValOperandId val) const;
@@ -611,6 +620,33 @@ class MOZ_RAII AutoScratchRegister64 {
 #endif
 
   operator Register64() const { return get(); }
+};
+
+// Scratch ValueOperand. Implemented with a single AutoScratchRegister on 64-bit
+// platforms and two AutoScratchRegisters on 32-bit platforms.
+class MOZ_RAII AutoScratchValueRegister {
+  AutoScratchRegister reg1_;
+#if JS_BITS_PER_WORD == 32
+  AutoScratchRegister reg2_;
+#endif
+
+ public:
+  AutoScratchValueRegister(const AutoScratchValueRegister&) = delete;
+  void operator=(const AutoScratchValueRegister&) = delete;
+
+#if JS_BITS_PER_WORD == 32
+  AutoScratchValueRegister(CacheRegisterAllocator& alloc, MacroAssembler& masm)
+      : reg1_(alloc, masm), reg2_(alloc, masm) {}
+
+  ValueOperand get() const { return ValueOperand(reg1_, reg2_); }
+#else
+  AutoScratchValueRegister(CacheRegisterAllocator& alloc, MacroAssembler& masm)
+      : reg1_(alloc, masm) {}
+
+  ValueOperand get() const { return ValueOperand(reg1_); }
+#endif
+
+  operator ValueOperand() const { return get(); }
 };
 
 // The FailurePath class stores everything we need to generate a failure path
@@ -707,7 +743,7 @@ class MOZ_RAII CacheIRCompiler {
 
   enum class Mode { Baseline, Ion };
 
-  bool preparedForVMCall_;
+  bool enteredStubFrame_;
 
   bool isBaseline();
   bool isIon();
@@ -738,11 +774,13 @@ class MOZ_RAII CacheIRCompiler {
 
   StubFieldPolicy stubFieldPolicy_;
 
-  CacheIRCompiler(JSContext* cx, const CacheIRWriter& writer,
-                  uint32_t stubDataOffset, Mode mode, StubFieldPolicy policy)
-      : preparedForVMCall_(false),
+  CacheIRCompiler(JSContext* cx, TempAllocator& alloc,
+                  const CacheIRWriter& writer, uint32_t stubDataOffset,
+                  Mode mode, StubFieldPolicy policy)
+      : enteredStubFrame_(false),
         cx_(cx),
         writer_(writer),
+        masm(cx, alloc),
         allocator(writer_),
         liveFloatRegs_(FloatRegisterSet::All()),
         mode_(mode),
@@ -819,7 +857,7 @@ class MOZ_RAII CacheIRCompiler {
 
   using AtomicsReadWriteModify64Fn = JS::BigInt* (*)(JSContext*,
                                                      TypedArrayObject*, size_t,
-                                                     JS::BigInt*);
+                                                     const JS::BigInt*);
 
   template <AtomicsReadWriteModify64Fn fn>
   [[nodiscard]] bool emitAtomicsReadModifyWriteResult64(ObjOperandId objId,
@@ -830,6 +868,10 @@ class MOZ_RAII CacheIRCompiler {
 
   void emitLoadStubField(StubFieldOffset val, Register dest);
   void emitLoadStubFieldConstant(StubFieldOffset val, Register dest);
+
+  void emitLoadValueStubField(StubFieldOffset val, ValueOperand dest);
+  void emitLoadDoubleValueStubField(StubFieldOffset val, ValueOperand dest,
+                                    FloatRegister scratch);
 
   uintptr_t readStubWord(uint32_t offset, StubField::Type type) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
@@ -853,17 +895,23 @@ class MOZ_RAII CacheIRCompiler {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return (Shape*)readStubWord(offset, StubField::Type::Shape);
   }
+  GetterSetter* getterSetterStubField(uint32_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    return (GetterSetter*)readStubWord(offset, StubField::Type::GetterSetter);
+  }
   JSObject* objectStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return (JSObject*)readStubWord(offset, StubField::Type::JSObject);
   }
-  // This accessor is for cases where the stubField policy is
-  // being respected through other means, so we don't check the
-  // policy here. (see LoadNewObjectFromTemplateResult)
-  JSObject* objectStubFieldUnchecked(uint32_t offset) {
-    return (JSObject*)writer_
-        .readStubFieldForIon(offset, StubField::Type::JSObject)
-        .asWord();
+  Value valueStubField(uint32_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    uint64_t raw = readStubInt64(offset, StubField::Type::Value);
+    return Value::fromRawBits(raw);
+  }
+  double doubleStubField(uint32_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    uint64_t raw = readStubInt64(offset, StubField::Type::Double);
+    return mozilla::BitwiseCast<double>(raw);
   }
   JSString* stringStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
@@ -876,6 +924,10 @@ class MOZ_RAII CacheIRCompiler {
   JS::Compartment* compartmentStubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     return (JS::Compartment*)readStubWord(offset, StubField::Type::RawPointer);
+  }
+  BaseScript* baseScriptStubField(uint32_t offset) {
+    MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
+    return (BaseScript*)readStubWord(offset, StubField::Type::BaseScript);
   }
   const JSClass* classStubField(uintptr_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
@@ -898,7 +950,11 @@ class MOZ_RAII CacheIRCompiler {
   void assertFloatRegisterAvailable(FloatRegister reg);
 #endif
 
+  InlineCachePerfSpewer perfSpewer_;
+
  public:
+  InlineCachePerfSpewer& perfSpewer() { return perfSpewer_; }
+
   void callVMInternal(MacroAssembler& masm, VMFunctionId id);
   template <typename Fn, Fn fn>
   void callVM(MacroAssembler& masm);
@@ -958,7 +1014,7 @@ class MOZ_RAII AutoStubFrame {
 
   void enter(MacroAssembler& masm, Register scratch,
              CallCanGC canGC = CallCanGC::CanGC);
-  void leave(MacroAssembler& masm, bool calledIntoIon = false);
+  void leave(MacroAssembler& masm);
 
 #ifdef DEBUG
   ~AutoStubFrame();
@@ -997,6 +1053,11 @@ class MOZ_RAII AutoScratchRegisterMaybeOutput {
       scratchReg_ = scratch_.ref();
     }
   }
+  AutoScratchRegisterMaybeOutput(CacheRegisterAllocator& alloc,
+                                 MacroAssembler& masm) {
+    scratch_.emplace(alloc, masm);
+    scratchReg_ = scratch_.ref();
+  }
 
   Register get() const { return scratchReg_; }
   operator Register() const { return scratchReg_; }
@@ -1032,6 +1093,7 @@ class MOZ_RAII AutoScratchRegisterMaybeOutputType {
 
   void operator=(const AutoScratchRegisterMaybeOutputType&) = delete;
 
+  Register get() const { return scratchReg_; }
   operator Register() const { return scratchReg_; }
 };
 
@@ -1170,27 +1232,25 @@ class MOZ_RAII AutoAvailableFloatRegister {
 // See the 'Sharing Baseline stub code' comment in CacheIR.h for a description
 // of this class.
 class CacheIRStubInfo {
-  // These fields don't require 8 bits, but GCC complains if these fields are
-  // smaller than the size of the enums.
-  CacheKind kind_ : 8;
-  ICStubEngine engine_ : 8;
-  bool makesGCCalls_ : 1;
-  uint8_t stubDataOffset_;
-
   const uint8_t* code_;
-  uint32_t length_;
   const uint8_t* fieldTypes_;
+  uint32_t length_;
+
+  CacheKind kind_;
+  ICStubEngine engine_;
+  uint8_t stubDataOffset_;
+  bool makesGCCalls_;
 
   CacheIRStubInfo(CacheKind kind, ICStubEngine engine, bool makesGCCalls,
                   uint32_t stubDataOffset, const uint8_t* code,
                   uint32_t codeLength, const uint8_t* fieldTypes)
-      : kind_(kind),
-        engine_(engine),
-        makesGCCalls_(makesGCCalls),
-        stubDataOffset_(stubDataOffset),
-        code_(code),
+      : code_(code),
+        fieldTypes_(fieldTypes),
         length_(codeLength),
-        fieldTypes_(fieldTypes) {
+        kind_(kind),
+        engine_(engine),
+        stubDataOffset_(stubDataOffset),
+        makesGCCalls_(makesGCCalls) {
     MOZ_ASSERT(kind_ == kind, "Kind must fit in bitfield");
     MOZ_ASSERT(engine_ == engine, "Engine must fit in bitfield");
     MOZ_ASSERT(stubDataOffset_ == stubDataOffset,
@@ -1221,6 +1281,9 @@ class CacheIRStubInfo {
 
   template <class Stub, class T>
   js::GCPtr<T>& getStubField(Stub* stub, uint32_t offset) const;
+
+  template <class Stub, class T>
+  T* getPtrStubField(Stub* stub, uint32_t offset) const;
 
   template <class T>
   js::GCPtr<T>& getStubField(ICCacheIRStub* stub, uint32_t offset) const {

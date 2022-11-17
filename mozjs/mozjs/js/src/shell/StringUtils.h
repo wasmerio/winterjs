@@ -9,9 +9,8 @@
 #ifndef shell_StringUtils_h
 #define shell_StringUtils_h
 
-#include "jsapi.h"
-
 #include "js/StableStringChars.h"
+#include "js/String.h"
 
 namespace js {
 namespace shell {
@@ -62,7 +61,7 @@ bool StringEquals(JSLinearString* str,
   return str->length() == length && StringStartsWith(str, chars);
 }
 
-inline int32_t IndexOf(HandleLinearString str, char16_t target,
+inline int32_t IndexOf(Handle<JSLinearString*> str, char16_t target,
                        size_t start = 0) {
   int32_t length = str->length();
   for (int32_t i = start; i < length; i++) {
@@ -74,7 +73,7 @@ inline int32_t IndexOf(HandleLinearString str, char16_t target,
   return -1;
 }
 
-inline int32_t LastIndexOf(HandleLinearString str, char16_t target) {
+inline int32_t LastIndexOf(Handle<JSLinearString*> str, char16_t target) {
   int32_t length = str->length();
   for (int32_t i = length - 1; i >= 0; i--) {
     if (CharAt(str, i) == target) {
@@ -86,7 +85,7 @@ inline int32_t LastIndexOf(HandleLinearString str, char16_t target) {
 }
 
 inline JSLinearString* ReplaceCharGlobally(JSContext* cx,
-                                           HandleLinearString str,
+                                           Handle<JSLinearString*> str,
                                            char16_t target,
                                            char16_t replacement) {
   int32_t i = IndexOf(str, target);
@@ -120,7 +119,7 @@ inline JSLinearString* ReplaceCharGlobally(JSContext* cx,
 
 inline JSString* JoinStrings(JSContext* cx,
                              Handle<GCVector<JSLinearString*>> strings,
-                             HandleLinearString separator) {
+                             Handle<JSLinearString*> separator) {
   RootedString result(cx, JS_GetEmptyString(cx));
 
   for (size_t i = 0; i < strings.length(); i++) {

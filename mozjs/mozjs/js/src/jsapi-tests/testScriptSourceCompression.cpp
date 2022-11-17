@@ -6,6 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Assertions.h"  // MOZ_RELEASE_ASSERT
+#include "mozilla/RefPtr.h"      // RefPtr
 #include "mozilla/Utf8.h"        // mozilla::Utf8Unit
 
 #include <algorithm>  // std::all_of, std::equal, std::move, std::transform
@@ -19,21 +20,22 @@
 
 #include "gc/GC.h"                        // js::gc::FinishGC
 #include "js/CompilationAndEvaluation.h"  // JS::Evaluate
-#include "js/CompileOptions.h"            // JS::CompileOptions
-#include "js/Conversions.h"               // JS::ToString
-#include "js/MemoryFunctions.h"           // JS_malloc
-#include "js/OffThreadScriptCompilation.h"  // JS::CompileOffThread, JS::OffThreadToken, JS::FinishOffThreadScript
-#include "js/RootingAPI.h"  // JS::MutableHandle, JS::Rooted
+#include "js/CompileOptions.h"  // JS::CompileOptions, JS::InstantiateOptions
+#include "js/Conversions.h"     // JS::ToString
+#include "js/experimental/JSStencil.h"  // JS::Stencil, JS::CompileToStencilOffThread, JS::FinishCompileToStencilOffThread, JS::InstantiateGlobalStencil
+#include "js/MemoryFunctions.h"         // JS_malloc
+#include "js/OffThreadScriptCompilation.h"  // JS::OffThreadToken
+#include "js/RootingAPI.h"                  // JS::MutableHandle, JS::Rooted
 #include "js/SourceText.h"  // JS::SourceOwnership, JS::SourceText
 #include "js/String.h"  // JS::GetLatin1LinearStringChars, JS::GetTwoByteLinearStringChars, JS::StringHasLatin1Chars
 #include "js/UniquePtr.h"  // js::UniquePtr
 #include "js/Utility.h"    // JS::FreePolicy
 #include "js/Value.h"      // JS::NullValue, JS::ObjectValue, JS::Value
 #include "jsapi-tests/tests.h"
-#include "util/Text.h"             // js_strlen
-#include "vm/Compression.h"        // js::Compressor::CHUNK_SIZE
-#include "vm/HelperThreadState.h"  // js::RunPendingSourceCompressions
-#include "vm/JSFunction.h"         // JSFunction::getOrCreateScript
+#include "util/Text.h"         // js_strlen
+#include "vm/Compression.h"    // js::Compressor::CHUNK_SIZE
+#include "vm/HelperThreads.h"  // js::RunPendingSourceCompressions
+#include "vm/JSFunction.h"     // JSFunction::getOrCreateScript
 #include "vm/JSScript.h"  // JSScript, js::ScriptSource::MinimumCompressibleLength, js::SynchronouslyCompressSource
 #include "vm/Monitor.h"   // js::Monitor, js::AutoLockMonitor
 
@@ -504,14 +506,15 @@ BEGIN_TEST(testScriptSourceCompression_offThread) {
   JS::SourceText<char16_t> source;
   CHECK(source.init(cx, std::move(chars), len));
 
-  js::Monitor monitor(js::mutexid::ShellOffThreadState);
+  js::Monitor monitor MOZ_UNANNOTATED(js::mutexid::ShellOffThreadState);
   JS::CompileOptions options(cx);
   JS::OffThreadToken* token;
 
   // Force off-thread even though if this is a small file.
   options.forceAsync = true;
 
-  CHECK(token = JS::CompileOffThread(cx, options, source, callback, &monitor));
+  CHECK(token = JS::CompileToStencilOffThread(cx, options, source, callback,
+                                              &monitor));
 
   {
     // Finish any active GC in case it is blocking off-thread work.
@@ -521,7 +524,11 @@ BEGIN_TEST(testScriptSourceCompression_offThread) {
     lock.wait();
   }
 
-  JS::Rooted<JSScript*> script(cx, JS::FinishOffThreadScript(cx, token));
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
+  CHECK(stencil);
+  JS::InstantiateOptions instantiateOptions(options);
+  JS::Rooted<JSScript*> script(
+      cx, JS::InstantiateGlobalStencil(cx, instantiateOptions, stencil));
   CHECK(script);
 
   // Check that source compression was triggered by the compile. If the

@@ -7,7 +7,6 @@
 #ifndef jit_Snapshot_h
 #define jit_Snapshot_h
 
-#include "mozilla/Alignment.h"
 #include "mozilla/Attributes.h"
 
 #include "jit/CompactBuffer.h"
@@ -166,7 +165,9 @@ class RValueAllocation {
   static void writePayload(CompactBufferWriter& writer, PayloadType t,
                            Payload p);
   static void writePadding(CompactBufferWriter& writer);
+#ifdef JS_JITSPEW
   static void dumpPayload(GenericPrinter& out, PayloadType t, Payload p);
+#endif
   static bool equalPayloads(PayloadType t, Payload lhs, Payload rhs);
 
   RValueAllocation(Mode mode, Payload a1, Payload a2)
@@ -323,9 +324,10 @@ class RValueAllocation {
   }
 
  public:
+#ifdef JS_JITSPEW
   void dump(GenericPrinter& out) const;
+#endif
 
- public:
   bool operator==(const RValueAllocation& rhs) const {
     // Note, this equality compares the verbatim content of the payload,
     // which is made possible because we ensure that the payload content is
@@ -400,7 +402,7 @@ class RecoverWriter {
   uint32_t instructionsWritten_;
 
  public:
-  SnapshotOffset startRecover(uint32_t instructionCount, bool resumeAfter);
+  SnapshotOffset startRecover(uint32_t instructionCount);
 
   void writeInstruction(const MNode* rp);
 
@@ -494,10 +496,6 @@ class RecoverReader {
   // Number of instruction read.
   uint32_t numInstructionsRead_;
 
-  // True if we need to resume after the Resume Point instruction of the
-  // innermost frame.
-  bool resumeAfter_;
-
   // Space is reserved as part of the RecoverReader to avoid allocations of
   // data which is needed to decode the current instruction.
   RInstructionStorage rawData_;
@@ -523,8 +521,6 @@ class RecoverReader {
   const RInstruction* instruction() const {
     return reinterpret_cast<const RInstruction*>(rawData_.addr());
   }
-
-  bool resumeAfter() const { return resumeAfter_; }
 };
 
 }  // namespace jit

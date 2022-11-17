@@ -422,30 +422,36 @@ def GetPlatformSpecificDumper(**kwargs):
     ](**kwargs)
 
 
-def SourceIndex(fileStream, outputPath, vcs_root):
+def SourceIndex(fileStream, outputPath, vcs_root, s3_bucket):
     """Takes a list of files, writes info to a data block in a .stream file"""
     # Creates a .pdb.stream file in the mozilla\objdir to be used for source indexing
     # Create the srcsrv data block that indexes the pdb file
     result = True
     pdbStreamFile = open(outputPath, "w")
     pdbStreamFile.write(
-        "SRCSRV: ini ------------------------------------------------\r"
-        + "\nVERSION=2\r\nINDEXVERSION=2\r"
-        + "\nVERCTRL=http\r"
-        + "\nSRCSRV: variables ------------------------------------------\r"
-        + "\nHGSERVER="
+        "SRCSRV: ini ------------------------------------------------\r\n"
+        + "VERSION=2\r\n"
+        + "INDEXVERSION=2\r\n"
+        + "VERCTRL=http\r\n"
+        + "SRCSRV: variables ------------------------------------------\r\n"
+        + "SRCSRVVERCTRL=http\r\n"
+        + "RUST_GITHUB_TARGET=https://github.com/rust-lang/rust/raw/%var4%/%var3%\r\n"
     )
-    pdbStreamFile.write(vcs_root)
+    pdbStreamFile.write("HGSERVER=" + vcs_root + "\r\n")
+    pdbStreamFile.write("HG_TARGET=%hgserver%/raw-file/%var4%/%var3%\r\n")
+
+    if s3_bucket:
+        pdbStreamFile.write("S3_BUCKET=" + s3_bucket + "\r\n")
+        pdbStreamFile.write("S3_TARGET=https://%s3_bucket%.s3.amazonaws.com/%var3%\r\n")
+
+    # Allow each entry to choose its template via "var2".
+    # Possible values for var2 are: HG_TARGET / S3_TARGET / RUST_GITHUB_TARGET
+    pdbStreamFile.write("SRCSRVTRG=%fnvar%(%var2%)\r\n")
+
     pdbStreamFile.write(
-        "\r\nSRCSRVVERCTRL=http\r"
-        + "\nHTTP_EXTRACT_TARGET=%hgserver%/raw-file/%var3%/%var2%\r"
-        + "\nSRCSRVTRG=%http_extract_target%\r"
-        + "\nSRCSRV: source files ---------------------------------------\r\n"
-        ""
+        "SRCSRV: source files ---------------------------------------\r\n"
     )
     pdbStreamFile.write(fileStream)
-    # can't do string interpolation because the source server also uses this
-    # so there are % in the above
     pdbStreamFile.write(
         "SRCSRV: end ------------------------------------------------\r\n\n"
     )
@@ -520,11 +526,15 @@ class Dumper:
         return read_output("file", "-Lb", file)
 
     # This is a no-op except on Win32
-    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, vcs_root):
+    def SourceServerIndexing(
+        self, debug_file, guid, sourceFileStream, vcs_root, s3_bucket
+    ):
         return ""
 
     # subclasses override this if they want to support this
-    def CopyDebug(self, file, debug_file, guid, code_file, code_id):
+    def CopyExeAndDebugInfo(self, file, debug_file, guid, code_file, code_id):
+        """This function will copy a library or executable and the file holding the
+        debug information to |symbol_path|"""
         pass
 
     def Process(self, file_to_process, count_ctors=False):
@@ -553,7 +563,7 @@ class Dumper:
         Get the commandline used to invoke dump_syms.
         """
         # The Mac dumper overrides this.
-        return [self.dump_syms, file]
+        return [self.dump_syms, "--inlines", file]
 
     def ProcessFileWork(
         self, file, arch_num, arch, vcs_root, dsymbundle=None, count_ctors=False
@@ -567,20 +577,10 @@ class Dumper:
         try:
             cmd = self.dump_syms_cmdline(file, arch, dsymbundle=dsymbundle)
             print(" ".join(cmd), file=sys.stderr)
-            # We're interested in `stderr` in the case that something goes
-            # wrong with dump_syms, but we don't want to use
-            # `stderr=subprocess.PIPE` here, as that can land us in a
-            # deadlock when we try to read only from `stdout`, below.  The
-            # Python documentation recommends using `communicate()` in such
-            # cases, but `stderr` can be rather large, and we don't want to
-            # waste time accumulating all of it in the non-error case.  So we
-            # completely ignore `stderr` here and capture it separately,
-            # below.
             proc = subprocess.Popen(
                 cmd,
                 universal_newlines=True,
                 stdout=subprocess.PIPE,
-                stderr=open(os.devnull, "wb"),
             )
             try:
                 module_line = next(proc.stdout)
@@ -626,13 +626,19 @@ class Dumper:
                             if vcs_root is None:
                                 if rootname:
                                     vcs_root = rootname
-                        # gather up files with hg for indexing
-                        if filename.startswith("hg"):
-                            (ver, checkout, source_file, revision) = filename.split(
-                                ":", 3
-                            )
-                            sourceFileStream += sourcepath + "*" + source_file
+                        # Emit an entry for the file mapping for the srcsrv stream
+                        if filename.startswith("hg:"):
+                            (vcs, repo, source_file, revision) = filename.split(":", 3)
+                            sourceFileStream += sourcepath + "*HG_TARGET*" + source_file
                             sourceFileStream += "*" + revision + "\r\n"
+                        elif filename.startswith("s3:"):
+                            (vcs, bucket, source_file, nothing) = filename.split(":", 3)
+                            sourceFileStream += sourcepath + "*S3_TARGET*"
+                            sourceFileStream += source_file + "\r\n"
+                        elif filename.startswith("git:github.com/rust-lang/rust:"):
+                            (vcs, repo, source_file, revision) = filename.split(":", 3)
+                            sourceFileStream += sourcepath + "*RUST_GITHUB_TARGET*"
+                            sourceFileStream += source_file + "*" + revision + "\r\n"
                         f.write("FILE %s %s\n" % (index, filename))
                     elif line.startswith("INFO CODE_ID "):
                         # INFO CODE_ID code_id code_file
@@ -658,33 +664,31 @@ class Dumper:
                 f.close()
                 retcode = proc.wait()
                 if retcode != 0:
-                    raise RuntimeError("dump_syms failed with error code %d" % retcode)
+                    raise RuntimeError(
+                        "dump_syms failed with error code %d while processing %s\n"
+                        % (retcode, file)
+                    )
                 # we output relative paths so callers can get a list of what
                 # was generated
                 print(rel_path)
                 if self.srcsrv and vcs_root:
                     # add source server indexing to the pdb file
                     self.SourceServerIndexing(
-                        debug_file, guid, sourceFileStream, vcs_root
+                        debug_file, guid, sourceFileStream, vcs_root, self.s3_bucket
                     )
                 # only copy debug the first time if we have multiple architectures
                 if self.copy_debug and arch_num == 0:
-                    self.CopyDebug(file, debug_file, guid, code_file, code_id)
+                    self.CopyExeAndDebugInfo(file, debug_file, guid, code_file, code_id)
             else:
                 # For some reason, we didn't see the MODULE line as the first
-                # line of output.  It's very possible that the interesting error
-                # message(s) are on stderr, so let's re-execute the process and
-                # capture the entirety of stderr.
-                proc = subprocess.Popen(
-                    cmd, stdout=open(os.devnull, "wb"), stderr=subprocess.PIPE
-                )
-                (_, dumperr) = proc.communicate()
-                retcode = proc.returncode
+                # line of output, this is strictly required so fail irrespective
+                # of the process' return code.
+                retcode = proc.wait()
                 message = [
                     "dump_syms failed to produce the expected output",
+                    "file: %s" % file,
                     "return code: %d" % retcode,
                     "first line of output: %s" % module_line,
-                    "stderr: %s" % dumperr,
                 ]
                 raise RuntimeError("\n----------\n".join(message))
         except Exception as e:
@@ -764,12 +768,13 @@ class Dumper_Win32(Dumper):
                 return True
         return False
 
-    def CopyDebug(self, file, debug_file, guid, code_file, code_id):
-        file = locate_pdb(file)
+    def CopyExeAndDebugInfo(self, file, debug_file, guid, code_file, code_id):
+        """This function will copy the executable or dll and pdb files to |symbol_path|"""
+        pdb_file = locate_pdb(file)
 
         rel_path = os.path.join(debug_file, guid, debug_file).replace("\\", "/")
         full_path = os.path.normpath(os.path.join(self.symbol_path, rel_path))
-        shutil.copyfile(file, full_path)
+        shutil.copyfile(pdb_file, full_path)
         print(rel_path)
 
         # Copy the binary file as well
@@ -788,12 +793,14 @@ class Dumper_Win32(Dumper):
                 shutil.copyfile(full_code_path, full_path)
                 print(rel_path)
 
-    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, vcs_root):
+    def SourceServerIndexing(
+        self, debug_file, guid, sourceFileStream, vcs_root, s3_bucket
+    ):
         # Creates a .pdb.stream file in the mozilla\objdir to be used for source indexing
         streamFilename = debug_file + ".stream"
         stream_output_path = os.path.abspath(streamFilename)
         # Call SourceIndex to create the .stream file
-        result = SourceIndex(sourceFileStream, stream_output_path, vcs_root)
+        result = SourceIndex(sourceFileStream, stream_output_path, vcs_root, s3_bucket)
         if self.copy_debug:
             pdbstr = buildconfig.substs["PDBSTR"]
             wine = buildconfig.substs.get("WINE")
@@ -828,7 +835,7 @@ class Dumper_Linux(Dumper):
             return self.RunFileCommand(file).startswith("ELF")
         return False
 
-    def CopyDebug(self, file, debug_file, guid, code_file, code_id):
+    def CopyExeAndDebugInfo(self, file, debug_file, guid, code_file, code_id):
         # We want to strip out the debug info, and add a
         # .gnu_debuglink section to the object, so the debugger can
         # actually load our debug info later.
@@ -907,7 +914,7 @@ class Dumper_Mac(Dumper):
             return (
                 [self.dump_syms]
                 + arch.split()
-                + ["--type", "macho", "-j", "2", dsymbundle, file]
+                + ["--inlines", "-j", "2", dsymbundle, file]
             )
         return Dumper.dump_syms_cmdline(self, file, arch)
 
@@ -977,7 +984,7 @@ class Dumper_Mac(Dumper):
         print("Finished processing %s in %.2fs" % (file, elapsed), file=sys.stderr)
         return dsymbundle
 
-    def CopyDebug(self, file, debug_file, guid, code_file, code_id):
+    def CopyExeAndDebugInfo(self, file, debug_file, guid, code_file, code_id):
         """ProcessFile has already produced a dSYM bundle, so we should just
         copy that to the destination directory. However, we'll package it
         into a .tar because it's a bundle, so it's a directory. |file| here is

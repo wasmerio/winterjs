@@ -8,13 +8,17 @@ info: |
 esid: sec-date.prototype.totimestring
 description: Checking DontDelete attribute
 ---*/
+assert.sameValue(
+  delete Date.prototype.toTimeString.length,
+  true,
+  'The value of `delete Date.prototype.toTimeString.length` is expected to be true'
+);
 
-if (delete Date.prototype.toTimeString.length !== true) {
-  $ERROR('#1: The Date.prototype.toTimeString.length property does not have the attributes DontDelete');
-}
+assert(
+  !Date.prototype.toTimeString.hasOwnProperty('length'),
+  'The value of !Date.prototype.toTimeString.hasOwnProperty(\'length\') is expected to be true'
+);
 
-if (Date.prototype.toTimeString.hasOwnProperty('length')) {
-  $ERROR('#2: The Date.prototype.toTimeString.length property does not have the attributes DontDelete');
-}
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

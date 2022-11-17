@@ -12,10 +12,27 @@ from mozbuild.vendor.moz_yaml import load_moz_yaml, MozYamlVerifyError
 
 
 class TestManifest(unittest.TestCase):
+    def process_test_vectors(self, test_vectors):
+        index = 0
+        for vector in test_vectors:
+            print("Testing index", index)
+            expected, yaml = vector
+            with mozfile.NamedTemporaryFile() as tf:
+                tf.write(yaml)
+                tf.flush()
+                if expected == "exception":
+                    with self.assertRaises(MozYamlVerifyError):
+                        load_moz_yaml(tf.name, require_license_file=False)
+                else:
+                    self.assertDictEqual(
+                        load_moz_yaml(tf.name, require_license_file=False), expected
+                    )
+            index += 1
+
     # ===========================================================================================
     def test_simple(self):
         simple_dict = {
-            "schema": 1,
+            "schema": "1",
             "origin": {
                 "description": "2D Graphics Library",
                 "license": ["MPL-1.1", "LGPL-2.1"],
@@ -24,14 +41,14 @@ class TestManifest(unittest.TestCase):
                 "revision": "AA001122334455",
                 "url": "https://www.cairographics.org/",
             },
-            "bugzilla": {
-                "component": "Graphics",
-                "product": "Core",
-            },
+            "bugzilla": {"component": "Graphics", "product": "Core"},
         }
-        with mozfile.NamedTemporaryFile() as tf:
-            tf.write(
-                b"""
+
+        self.process_test_vectors(
+            [
+                (
+                    simple_dict,
+                    b"""
 ---
 schema: 1
 origin:
@@ -46,17 +63,11 @@ origin:
 bugzilla:
   product: Core
   component: Graphics
-            """.strip()
-            )
-            tf.flush()
-            self.assertDictEqual(
-                load_moz_yaml(tf.name, require_license_file=False), simple_dict
-            )
-
-        # as above, without the --- yaml prefix
-        with mozfile.NamedTemporaryFile() as tf:
-            tf.write(
-                b"""
+            """.strip(),
+                ),
+                (
+                    simple_dict,
+                    b"""
 schema: 1
 origin:
   name: cairo
@@ -70,37 +81,33 @@ origin:
 bugzilla:
   product: Core
   component: Graphics
-            """.strip()
-            )
-            tf.flush()
-            self.assertDictEqual(
-                load_moz_yaml(tf.name, require_license_file=False), simple_dict
-            )
+            """.strip(),
+                ),
+            ]
+        )
 
     # ===========================================================================================
     def test_updatebot(self):
-        test_vectors = [
-            (
-                {
-                    "schema": 1,
-                    "origin": {
-                        "description": "2D Graphics Library",
-                        "license": ["MPL-1.1", "LGPL-2.1"],
-                        "name": "cairo",
-                        "release": "version 1.6.4",
-                        "revision": "AA001122334455",
-                        "url": "https://www.cairographics.org/",
+        self.process_test_vectors(
+            [
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                        },
                     },
-                    "bugzilla": {
-                        "component": "Graphics",
-                        "product": "Core",
-                    },
-                    "updatebot": {
-                        "maintainer-phab": "tjr",
-                        "maintainer-bz": "a@example.com",
-                    },
-                },
-                b"""
+                    b"""
 ---
 schema: 1
 origin:
@@ -119,34 +126,71 @@ updatebot:
   maintainer-phab: tjr
   maintainer-bz: a@example.com
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                {
-                    "schema": 1,
-                    "origin": {
-                        "description": "2D Graphics Library",
-                        "license": ["MPL-1.1", "LGPL-2.1"],
-                        "name": "cairo",
-                        "release": "version 1.6.4",
-                        "revision": "AA001122334455",
-                        "url": "https://www.cairographics.org/",
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                        },
                     },
-                    "bugzilla": {
-                        "component": "Graphics",
-                        "product": "Core",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: 001122334455
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "source-hosting": "gitlab",
+                            "tracking": "commit",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "fuzzy-query": "!linux64",
+                            "tasks": [{"type": "commit-alert"}],
+                        },
                     },
-                    "vendoring": {
-                        "url": "https://example.com",
-                        "source-hosting": "gitlab",
-                    },
-                    "updatebot": {
-                        "maintainer-phab": "tjr",
-                        "maintainer-bz": "a@example.com",
-                        "tasks": [{"type": "commit-alert"}],
-                    },
-                },
-                b"""
+                    b"""
 ---
 schema: 1
 origin:
@@ -165,47 +209,39 @@ bugzilla:
   product: Core
   component: Graphics
 updatebot:
+  fuzzy-query: "!linux64"
   maintainer-phab: tjr
   maintainer-bz: a@example.com
   tasks:
     - type: commit-alert
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                {
-                    "schema": 1,
-                    "origin": {
-                        "description": "2D Graphics Library",
-                        "license": ["MPL-1.1", "LGPL-2.1"],
-                        "name": "cairo",
-                        "release": "version 1.6.4",
-                        "revision": "AA001122334455",
-                        "url": "https://www.cairographics.org/",
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "source-hosting": "gitlab",
+                            "tracking": "commit",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "fuzzy-paths": ["dir1/", "dir2"],
+                            "tasks": [{"type": "commit-alert"}],
+                        },
                     },
-                    "bugzilla": {
-                        "component": "Graphics",
-                        "product": "Core",
-                    },
-                    "vendoring": {
-                        "url": "https://example.com",
-                        "source-hosting": "gitlab",
-                    },
-                    "updatebot": {
-                        "maintainer-phab": "tjr",
-                        "maintainer-bz": "a@example.com",
-                        "tasks": [
-                            {"type": "commit-alert"},
-                            {
-                                "type": "vendoring",
-                                "branch": "foo",
-                                "enabled": False,
-                                "cc": ["b@example.com"],
-                            },
-                        ],
-                    },
-                },
-                b"""
+                    b"""
 ---
 schema: 1
 origin:
@@ -224,55 +260,249 @@ bugzilla:
   product: Core
   component: Graphics
 updatebot:
+  fuzzy-paths:
+    - dir1/
+    - dir2
   maintainer-phab: tjr
   maintainer-bz: a@example.com
   tasks:
     - type: commit-alert
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "source-hosting": "gitlab",
+                            "tracking": "commit",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "fuzzy-paths": ["dir1/"],
+                            "tasks": [{"type": "commit-alert"}],
+                        },
+                    },
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  fuzzy-paths: ['dir1/']
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: commit-alert
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "source-hosting": "gitlab",
+                            "tracking": "commit",
+                            "flavor": "rust",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "tasks": [
+                                {"type": "commit-alert", "frequency": "release"},
+                                {
+                                    "type": "vendoring",
+                                    "branch": "foo",
+                                    "enabled": False,
+                                    "cc": ["b@example.com"],
+                                    "needinfo": ["c@example.com"],
+                                    "frequency": "1 weeks",
+                                    "platform": "windows",
+                                },
+                            ],
+                        },
+                    },
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  tracking: commit
+  source-hosting: gitlab
+  flavor: rust
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: commit-alert
+      frequency: release
     - type: vendoring
       enabled: False
       branch: foo
       cc: ["b@example.com"]
+      needinfo: ["c@example.com"]
+      frequency: 1 weeks
+      platform: windows
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                {
-                    "schema": 1,
-                    "origin": {
-                        "description": "2D Graphics Library",
-                        "license": ["MPL-1.1", "LGPL-2.1"],
-                        "name": "cairo",
-                        "release": "version 1.6.4",
-                        "revision": "AA001122334455",
-                        "url": "https://www.cairographics.org/",
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "source-hosting": "gitlab",
+                            "tracking": "commit",
+                            "flavor": "rust",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "tasks": [
+                                {"type": "commit-alert", "frequency": "release"},
+                                {
+                                    "type": "vendoring",
+                                    "branch": "foo",
+                                    "enabled": False,
+                                    "cc": ["b@example.com"],
+                                    "needinfo": ["c@example.com"],
+                                    "frequency": "1 weeks, 4 commits",
+                                    "platform": "windows",
+                                },
+                            ],
+                        },
                     },
-                    "bugzilla": {
-                        "component": "Graphics",
-                        "product": "Core",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  tracking: commit
+  source-hosting: gitlab
+  flavor: rust
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: commit-alert
+      frequency: release
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc: ["b@example.com"]
+      needinfo: ["c@example.com"]
+      frequency: 1 weeks, 4 commits
+      platform: windows
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "tracking": "commit",
+                            "source-hosting": "gitlab",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "tasks": [
+                                {
+                                    "type": "vendoring",
+                                    "branch": "foo",
+                                    "enabled": False,
+                                    "cc": ["b@example.com", "c@example.com"],
+                                    "needinfo": ["d@example.com", "e@example.com"],
+                                    "frequency": "every",
+                                },
+                                {
+                                    "type": "commit-alert",
+                                    "filter": "none",
+                                    "source-extensions": [".c", ".cpp"],
+                                    "frequency": "2 weeks",
+                                    "platform": "linux",
+                                },
+                            ],
+                        },
                     },
-                    "vendoring": {
-                        "url": "https://example.com",
-                        "source-hosting": "gitlab",
-                    },
-                    "updatebot": {
-                        "maintainer-phab": "tjr",
-                        "maintainer-bz": "a@example.com",
-                        "tasks": [
-                            {
-                                "type": "vendoring",
-                                "branch": "foo",
-                                "enabled": False,
-                                "cc": ["b@example.com", "c@example.com"],
-                            },
-                            {
-                                "type": "commit-alert",
-                                "filter": "none",
-                                "source-extensions": [".c", ".cpp"],
-                            },
-                        ],
-                    },
-                },
-                b"""
+                    b"""
 ---
 schema: 1
 origin:
@@ -300,17 +530,499 @@ updatebot:
       cc:
         - b@example.com
         - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
     - type: commit-alert
       filter: none
+      frequency: 2 weeks
+      platform: linux
       source-extensions:
         - .c
         - .cpp
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "tracking": "commit",
+                            "source-hosting": "gitlab",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "tasks": [
+                                {
+                                    "type": "vendoring",
+                                    "branch": "foo",
+                                    "enabled": False,
+                                    "cc": ["b@example.com", "c@example.com"],
+                                    "needinfo": ["d@example.com", "e@example.com"],
+                                    "frequency": "every",
+                                },
+                                {
+                                    "type": "commit-alert",
+                                    "filter": "none",
+                                    "source-extensions": [".c", ".cpp"],
+                                    "frequency": "2 commits",
+                                    "platform": "linux",
+                                },
+                            ],
+                        },
+                    },
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 2 commits
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "AA001122334455",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                        "vendoring": {
+                            "url": "https://example.com",
+                            "tracking": "commit",
+                            "source-hosting": "gitlab",
+                        },
+                        "updatebot": {
+                            "maintainer-phab": "tjr",
+                            "maintainer-bz": "a@example.com",
+                            "tasks": [
+                                {
+                                    "type": "vendoring",
+                                    "branch": "foo",
+                                    "enabled": False,
+                                    "cc": ["b@example.com", "c@example.com"],
+                                    "needinfo": ["d@example.com", "e@example.com"],
+                                    "frequency": "every",
+                                    "blocking": "1234",
+                                },
+                                {
+                                    "type": "commit-alert",
+                                    "filter": "none",
+                                    "source-extensions": [".c", ".cpp"],
+                                    "frequency": "2 commits",
+                                    "platform": "linux",
+                                },
+                            ],
+                        },
+                    },
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+      blocking: 1234
+    - type: commit-alert
+      filter: none
+      frequency: 2 commits
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+      blocking: foo
+    - type: commit-alert
+      filter: none
+      frequency: 2 commits
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  fuzzy-paths: "must-be-array"
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 2 commits
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 2 commits, 4 weeks
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 4 weeks, 2 commits, 3 weeks
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+  flavor: chocolate
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 2 weeks
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+  flavor: chocolate
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 01 commits
+      platform: linux
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      needinfo:
+        - d@example.com
+        - e@example.com
+      frequency: every
+    - type: commit-alert
+      filter: none
+      frequency: 2 weeks
+      platform: mac
+      source-extensions:
+        - .c
+        - .cpp
+            """.strip(),
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -341,11 +1053,11 @@ updatebot:
         - .c
         - .cpp
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -378,11 +1090,11 @@ updatebot:
         - .c
         - .cpp
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -407,11 +1119,11 @@ updatebot:
     - type: vendoring
       filter: none
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -435,11 +1147,11 @@ updatebot:
   tasks:
     - type: foo
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -466,11 +1178,11 @@ updatebot:
         - .c
         - .cpp
             """.strip(),
-            ),
-            # -------------------------------------------------
-            (
-                "exception",
-                b"""
+                ),
+                # -------------------------------------------------
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -495,10 +1207,10 @@ updatebot:
     - type: commit-alert
       filter: hogwash
             """.strip(),
-            ),
-            (
-                "exception",
-                b"""
+                ),
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -532,10 +1244,10 @@ updatebot:
       source-extensions:
         - .c
         - .cpp""".strip(),
-            ),
-            (
-                "exception",
-                b"""
+                ),
+                (
+                    "exception",
+                    b"""
 ---
 schema: 1
 origin:
@@ -569,24 +1281,111 @@ updatebot:
       source-extensions:
         - .c
         - .cpp""".strip(),
-            ),
-        ]
-
-        indx = 0
-        for vector in test_vectors:
-            print("Testing index", indx)
-            expected, yaml = vector
-            with mozfile.NamedTemporaryFile() as tf:
-                tf.write(yaml)
-                tf.flush()
-                if expected == "exception":
-                    with self.assertRaises(MozYamlVerifyError):
-                        load_moz_yaml(tf.name, require_license_file=False)
-                else:
-                    self.assertDictEqual(
-                        load_moz_yaml(tf.name, require_license_file=False), expected
-                    )
-            indx += 1
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+bugzilla:
+  product: Core
+  component: Graphics
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+    - type: commit-alert
+      frequency: every-release
+      filter: none
+      source-extensions:
+        - .c
+        - .cpp""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+bugzilla:
+  product: Core
+  component: Graphics
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: vendoring
+      enabled: False
+      branch: foo
+      cc:
+        - b@example.com
+        - c@example.com
+      frequency: 2 months
+    - type: commit-alert
+      filter: none
+      source-extensions:
+        - .c
+        - .cpp""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+bugzilla:
+  product: Core
+  component: Graphics
+updatebot:
+  maintainer-phab: tjr
+  maintainer-bz: a@example.com
+  tasks:
+    - type: commit-alert
+      frequency: 0 weeks
+                  """.strip(),
+                ),
+            ]
+        )
 
     # ===========================================================================================
     def test_malformed(self):
@@ -596,7 +1395,7 @@ updatebot:
             with self.assertRaises(MozYamlVerifyError):
                 load_moz_yaml(tf.name, require_license_file=False)
 
-    def test_bad_schema(self):
+    def test_schema(self):
         with mozfile.NamedTemporaryFile() as tf:
             tf.write(b"schema: 99")
             tf.flush()
@@ -615,6 +1414,185 @@ updatebot:
             tf.flush()
             with self.assertRaises(MozYamlVerifyError):
                 load_moz_yaml(tf.name, require_license_file=False)
+
+    def test_revision(self):
+        self.process_test_vectors(
+            [
+                (
+                    {
+                        "schema": "1",
+                        "origin": {
+                            "description": "2D Graphics Library",
+                            "license": ["MPL-1.1", "LGPL-2.1"],
+                            "name": "cairo",
+                            "release": "version 1.6.4",
+                            "revision": "v1.6.37",
+                            "url": "https://www.cairographics.org/",
+                        },
+                        "bugzilla": {"component": "Graphics", "product": "Core"},
+                    },
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: v1.6.37
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: 4.0.0.
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: 4.^.0
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: " "
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: ???
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: ]
+bugzilla:
+  product: Core
+  component: Graphics""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+bugzilla:
+  product: Core
+  component: Graphics
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+  update-actions:
+    - action: run-script
+      cwd: '{cwd}'
+      script: 'script.py'
+      args: ['hi']
+      pattern: 'hi'
+""".strip(),
+                ),
+                (
+                    "exception",
+                    b"""
+---
+schema: 1
+origin:
+  name: cairo
+  description: 2D Graphics Library
+  url: https://www.cairographics.org/
+  release: version 1.6.4
+  license:
+    - MPL-1.1
+    - LGPL-2.1
+  revision: AA001122334455
+bugzilla:
+  product: Core
+  component: Graphics
+vendoring:
+  url: https://example.com
+  source-hosting: gitlab
+  update-actions:
+    - action: run-script
+      cwd: '{cwd}'
+      args: ['hi']
+""".strip(),
+                ),
+            ]
+        )
 
 
 if __name__ == "__main__":

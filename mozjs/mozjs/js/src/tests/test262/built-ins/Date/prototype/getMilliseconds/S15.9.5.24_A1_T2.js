@@ -7,13 +7,17 @@ info: The Date.prototype property "getMilliseconds" has { DontEnum } attributes
 es5id: 15.9.5.24_A1_T2
 description: Checking absence of DontDelete attribute
 ---*/
+assert.notSameValue(
+  delete Date.prototype.getMilliseconds,
+  false,
+  'The value of delete Date.prototype.getMilliseconds is not false'
+);
 
-if (delete Date.prototype.getMilliseconds === false) {
-  $ERROR('#1: The Date.prototype.getMilliseconds property has not the attributes DontDelete');
-}
+assert(
+  !Date.prototype.hasOwnProperty('getMilliseconds'),
+  'The value of !Date.prototype.hasOwnProperty(\'getMilliseconds\') is expected to be true'
+);
 
-if (Date.prototype.hasOwnProperty('getMilliseconds')) {
-  $ERROR('#2: The Date.prototype.getMilliseconds property has not the attributes DontDelete');
-}
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

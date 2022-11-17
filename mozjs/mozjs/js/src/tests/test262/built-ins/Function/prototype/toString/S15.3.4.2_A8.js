@@ -8,22 +8,21 @@ description: >
     Checking if enumerating the Function.prototype.toString.length
     property fails
 ---*/
+assert(
+  Function.prototype.toString.hasOwnProperty('length'),
+  'Function.prototype.toString.hasOwnProperty(\'length\') must return true'
+);
 
-//CHECK#0
-if (!(Function.prototype.toString.hasOwnProperty('length'))) {
-  $ERROR('#0: the Function.prototype.toString has length property.');
-}
-
-
-// CHECK#1
-if (Function.prototype.toString.propertyIsEnumerable('length')) {
-  $ERROR('#1: the Function.prototype.toString.length property has the attributes DontEnum');
-}
+assert(
+  !Function.prototype.toString.propertyIsEnumerable('length'),
+  'The value of !Function.prototype.toString.propertyIsEnumerable(\'length\') is expected to be true'
+);
 
 // CHECK#2
 for (var p in Function.prototype.toString){
-  if (p==="length")
-      $ERROR('#2: the Function.prototype.toString.length property has the attributes DontEnum');
+  assert.notSameValue(p, "length", 'The value of p is not "length"');
 }
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

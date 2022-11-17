@@ -20,24 +20,26 @@ var FACTORY = function() {
 
 var instance = new FACTORY;
 
-//CHECK#1
-if (typeof Object.prototype.hasOwnProperty !== "function") {
-  $ERROR('#1: hasOwnProperty method is defined');
-}
+assert.sameValue(
+  typeof Object.prototype.hasOwnProperty,
+  "function",
+  'The value of `typeof Object.prototype.hasOwnProperty` is expected to be "function"'
+);
 
-//CHECK#2
-if (typeof instance.hasOwnProperty !== "function") {
-  $ERROR('#2: hasOwnProperty method is accessed');
-}
+assert.sameValue(
+  typeof instance.hasOwnProperty,
+  "function",
+  'The value of `typeof instance.hasOwnProperty` is expected to be "function"'
+);
 
-//CHECK#3
-if (instance.hasOwnProperty("toString")) {
-  $ERROR('#3: hasOwnProperty method works properly');
-}
+assert(
+  !instance.hasOwnProperty("toString"),
+  'The value of !instance.hasOwnProperty("toString") is expected to be true'
+);
 
-//CHECK#4
-if (!(instance.hasOwnProperty("aproperty"))) {
-  $ERROR('#4: hasOwnProperty method works properly');
-}
+assert(
+  !!instance.hasOwnProperty("aproperty"),
+  'The value of !!instance.hasOwnProperty("aproperty") is expected to be true'
+);
 
 reportCompare(0, 0);

@@ -11,17 +11,11 @@ es5id: 15.4.5.1_A1.2_T2
 description: Checking an inherited property
 ---*/
 
-//CHECK#1
 Array.prototype[2] = -1;
 var x = [0, 1, 2];
-if (x[2] !== 2) {
-  $ERROR('#1: Array.prototype[2] = -1; x = [0,1,3]; x[2] === 2. Actual: ' + (x[2]));
-}
+assert.sameValue(x[2], 2, 'The value of x[2] is expected to be 2');
 
-//CHECK#2
 x.length = 2;
-if (x[2] !== -1) {
-  $ERROR('#2: Array.prototype[2] = -1; x = [0,1,3]; x.length = 2; x[2] === -1. Actual: ' + (x[2]));
-}
+assert.sameValue(x[2], -1, 'The value of x[2] is expected to be -1');
 
 reportCompare(0, 0);

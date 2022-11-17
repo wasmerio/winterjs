@@ -21,13 +21,8 @@
 #  include "vm/Printer.h"
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
 #  else
 #    include <unistd.h>
 #  endif
@@ -79,7 +74,7 @@ namespace js {
 #  define STRUCTURED_CHANNEL_LIST(_) \
     _(BaselineICStats)               \
     _(ScriptStats)                   \
-    _(RateMyCacheIR)
+    _(CacheIRHealthReport)
 
 // Structured spew channels
 enum class SpewChannel {

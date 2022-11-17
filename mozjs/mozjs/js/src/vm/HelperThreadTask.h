@@ -13,6 +13,8 @@ namespace js {
 
 class AutoLockHelperThreadState;
 struct ParseTask;
+struct DelazifyTask;
+struct FreeDelazifyTask;
 class SourceCompressionTask;
 
 namespace jit {
@@ -33,12 +35,22 @@ struct MapTypeToThreadType<jit::IonCompileTask> {
 
 template <>
 struct MapTypeToThreadType<wasm::Tier2GeneratorTask> {
-  static const ThreadType threadType = THREAD_TYPE_WASM_TIER2;
+  static const ThreadType threadType = THREAD_TYPE_WASM_GENERATOR_TIER2;
 };
 
 template <>
 struct MapTypeToThreadType<ParseTask> {
   static const ThreadType threadType = THREAD_TYPE_PARSE;
+};
+
+template <>
+struct MapTypeToThreadType<DelazifyTask> {
+  static const ThreadType threadType = THREAD_TYPE_DELAZIFY;
+};
+
+template <>
+struct MapTypeToThreadType<FreeDelazifyTask> {
+  static const ThreadType threadType = THREAD_TYPE_DELAZIFY_FREE;
 };
 
 template <>

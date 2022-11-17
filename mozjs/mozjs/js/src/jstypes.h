@@ -29,9 +29,6 @@
 
 // jstypes.h is (or should be!) included by every file in SpiderMonkey.
 // js-config.h also should be included by every file. So include it here.
-// XXX: including it in js/RequiredDefines.h should be a better option, since
-// that is by definition the header file that should be included in all
-// SpiderMonkey code.  However, Gecko doesn't do this!  See bug 909576.
 #include "js-config.h"
 
 /*
@@ -43,27 +40,12 @@
 #if defined(STATIC_JS_API)
 #  define JS_PUBLIC_API
 #  define JS_PUBLIC_DATA
-#  define JS_FRIEND_API
-#  define JS_FRIEND_DATA
 #elif defined(EXPORT_JS_API) || defined(STATIC_EXPORTABLE_JS_API)
 #  define JS_PUBLIC_API MOZ_EXPORT
 #  define JS_PUBLIC_DATA MOZ_EXPORT
-#  define JS_FRIEND_API MOZ_EXPORT
-#  define JS_FRIEND_DATA MOZ_EXPORT
 #else
 #  define JS_PUBLIC_API MOZ_IMPORT_API
 #  define JS_PUBLIC_DATA MOZ_IMPORT_DATA
-#  define JS_FRIEND_API MOZ_IMPORT_API
-#  define JS_FRIEND_DATA MOZ_IMPORT_DATA
-#endif
-
-#if defined(_MSC_VER) && defined(_M_IX86)
-#  define JS_FASTCALL __fastcall
-#elif defined(__GNUC__) && defined(__i386__)
-#  define JS_FASTCALL __attribute__((fastcall))
-#else
-#  define JS_FASTCALL
-#  define JS_NO_FASTCALL
 #endif
 
 /***********************************************************************

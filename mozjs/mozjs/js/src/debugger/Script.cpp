@@ -13,7 +13,6 @@
 #include <stddef.h>  // for ptrdiff_t
 #include <stdint.h>  // for uint32_t, SIZE_MAX, int32_t
 
-#include "jsapi.h"             // for CallArgs, Rooted, CallArgsFromVp
 #include "jsnum.h"             // for ToNumber
 #include "NamespaceImports.h"  // for CallArgs, RootedValue
 
@@ -21,21 +20,25 @@
 #include "debugger/Debugger.h"     // for DebuggerScriptReferent, Debugger
 #include "debugger/DebugScript.h"  // for DebugScript
 #include "debugger/Source.h"       // for DebuggerSource
-#include "gc/Barrier.h"            // for ImmutablePropertyNamePtr
 #include "gc/GC.h"                 // for MemoryUse, MemoryUse::Breakpoint
-#include "gc/Rooting.h"            // for RootedDebuggerScript
 #include "gc/Tracer.h"         // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "gc/Zone.h"           // for Zone
 #include "gc/ZoneAllocator.h"  // for AddCellMemory
+#include "js/CallArgs.h"       // for CallArgs, CallArgsFromVp
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
+#include "js/GCVariant.h"             // for GCVariant
 #include "js/HeapAPI.h"               // for GCCellPtr
+#include "js/RootingAPI.h"            // for Rooted
 #include "js/Wrapper.h"               // for UncheckedUnwrap
 #include "vm/ArrayObject.h"           // for ArrayObject
 #include "vm/BytecodeUtil.h"          // for GET_JUMP_OFFSET
+#include "vm/Compartment.h"           // for JS::Compartment
+#include "vm/EnvironmentObject.h"     // for EnvironmentCoordinateNameSlow
 #include "vm/GlobalObject.h"          // for GlobalObject
 #include "vm/JSContext.h"             // for JSContext, ReportValueError
 #include "vm/JSFunction.h"            // for JSFunction
 #include "vm/JSObject.h"              // for RequireObject, JSObject
+#include "vm/JSScript.h"              // for BaseScript
 #include "vm/ObjectOperations.h"      // for DefineDataProperty, HasOwnProperty
 #include "vm/PlainObject.h"           // for js::PlainObject
 #include "vm/Realm.h"                 // for AutoRealm
@@ -44,7 +47,7 @@
 #include "wasm/WasmDebug.h"           // for ExprLoc, DebugState
 #include "wasm/WasmInstance.h"        // for Instance
 #include "wasm/WasmJS.h"              // for WasmInstanceObject
-#include "wasm/WasmTypes.h"           // for Bytes
+#include "wasm/WasmTypeDecls.h"       // for Bytes
 
 #include "vm/BytecodeUtil-inl.h"  // for BytecodeRangeWithPosition
 #include "vm/JSAtom-inl.h"        // for ValueToId
@@ -67,31 +70,28 @@ const JSClassOps DebuggerScript::classOps_ = {
     nullptr,                          // mayResolve
     nullptr,                          // finalize
     nullptr,                          // call
-    nullptr,                          // hasInstance
     nullptr,                          // construct
     CallTraceMethod<DebuggerScript>,  // trace
 };
 
 const JSClass DebuggerScript::class_ = {
-    "Script", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
-    &classOps_};
+    "Script", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
 
 void DebuggerScript::trace(JSTracer* trc) {
-  JSObject* upcast = this;
   // This comes from a private pointer, so no barrier needed.
   gc::Cell* cell = getReferentCell();
   if (cell) {
     if (cell->is<BaseScript>()) {
       BaseScript* script = cell->as<BaseScript>();
       TraceManuallyBarrieredCrossCompartmentEdge(
-          trc, upcast, &script, "Debugger.Script script referent");
-      setPrivateUnbarriered(script);
+          trc, this, &script, "Debugger.Script script referent");
+      setReservedSlotGCThingAsPrivateUnbarriered(SCRIPT_SLOT, script);
     } else {
       JSObject* wasm = cell->as<JSObject>();
       TraceManuallyBarrieredCrossCompartmentEdge(
-          trc, upcast, &wasm, "Debugger.Script wasm referent");
+          trc, this, &wasm, "Debugger.Script wasm referent");
       MOZ_ASSERT(wasm->is<WasmInstanceObject>());
-      setPrivateUnbarriered(wasm);
+      setReservedSlotGCThingAsPrivateUnbarriered(SCRIPT_SLOT, wasm);
     }
   }
 }
@@ -107,7 +107,7 @@ NativeObject* DebuggerScript::initClass(JSContext* cx,
 /* static */
 DebuggerScript* DebuggerScript::create(JSContext* cx, HandleObject proto,
                                        Handle<DebuggerScriptReferent> referent,
-                                       HandleNativeObject debugger) {
+                                       Handle<NativeObject*> debugger) {
   DebuggerScript* scriptobj =
       NewTenuredObjectWithGivenProto<DebuggerScript>(cx, proto);
   if (!scriptobj) {
@@ -116,8 +116,9 @@ DebuggerScript* DebuggerScript::create(JSContext* cx, HandleObject proto,
 
   scriptobj->setReservedSlot(DebuggerScript::OWNER_SLOT,
                              ObjectValue(*debugger));
-  referent.get().match(
-      [&](auto& scriptHandle) { scriptobj->setPrivateGCThing(scriptHandle); });
+  referent.get().match([&](auto& scriptHandle) {
+    scriptobj->setReservedSlotGCThingAsPrivate(SCRIPT_SLOT, scriptHandle);
+  });
 
   return scriptobj;
 }
@@ -184,11 +185,11 @@ struct MOZ_STACK_CLASS DebuggerScript::CallData {
   JSContext* cx;
   const CallArgs& args;
 
-  HandleDebuggerScript obj;
+  Handle<DebuggerScript*> obj;
   Rooted<DebuggerScriptReferent> referent;
   RootedScript script;
 
-  CallData(JSContext* cx, const CallArgs& args, HandleDebuggerScript obj)
+  CallData(JSContext* cx, const CallArgs& args, Handle<DebuggerScript*> obj)
       : cx(cx),
         args(args),
         obj(obj),
@@ -246,7 +247,6 @@ struct MOZ_STACK_CLASS DebuggerScript::CallData {
   bool clearAllBreakpoints();
   bool isInCatchScope();
   bool getOffsetsCoverage();
-  bool setInstrumentationId();
 
   using Method = bool (CallData::*)();
 
@@ -260,7 +260,7 @@ bool DebuggerScript::CallData::ToNative(JSContext* cx, unsigned argc,
                                         Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedDebuggerScript obj(cx, DebuggerScript::check(cx, args.thisv()));
+  Rooted<DebuggerScript*> obj(cx, DebuggerScript::check(cx, args.thisv()));
   if (!obj) {
     return false;
   }
@@ -326,7 +326,7 @@ bool DebuggerScript::CallData::getDisplayName() {
 }
 
 bool DebuggerScript::CallData::getParameterNames() {
-  if (!ensureScriptMaybeLazy()) {
+  if (!ensureScript()) {
     return false;
   }
 
@@ -429,7 +429,7 @@ class DebuggerScript::GetSourceMatcher {
   using ReturnType = DebuggerSource*;
 
   ReturnType match(Handle<BaseScript*> script) {
-    RootedScriptSourceObject source(cx_, script->sourceObject());
+    Rooted<ScriptSourceObject*> source(cx_, script->sourceObject());
     return dbg_->wrapSource(cx_, source);
   }
   ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
@@ -441,7 +441,7 @@ bool DebuggerScript::CallData::getSource() {
   Debugger* dbg = obj->owner();
 
   GetSourceMatcher matcher(cx, dbg);
-  RootedDebuggerSource sourceObject(cx, referent.match(matcher));
+  Rooted<DebuggerSource*> sourceObject(cx, referent.match(matcher));
   if (!sourceObject) {
     return false;
   }
@@ -490,8 +490,8 @@ bool DebuggerScript::CallData::getGlobal() {
 
 bool DebuggerScript::CallData::getFormat() {
   args.rval().setString(referent.get().match(
-      [=](BaseScript*&) { return cx->names().js.get(); },
-      [=](WasmInstanceObject*&) { return cx->names().wasm.get(); }));
+      [this](BaseScript*&) { return cx->names().js.get(); },
+      [this](WasmInstanceObject*&) { return cx->names().wasm.get(); }));
   return true;
 }
 
@@ -503,6 +503,11 @@ static bool PushFunctionScript(JSContext* cx, Debugger* dbg, HandleFunction fun,
   }
 
   Rooted<BaseScript*> script(cx, fun->baseScript());
+  MOZ_ASSERT(script);
+  if (!script) {
+    // If the function doesn't have script, ignore it.
+    return true;
+  }
   RootedObject wrapped(cx, dbg->wrapScript(cx, script));
   if (!wrapped) {
     return false;
@@ -523,6 +528,12 @@ static bool PushInnerFunctions(JSContext* cx, Debugger* dbg, HandleObject array,
     JSObject* obj = &gcThing.as<JSObject>();
     if (obj->is<JSFunction>()) {
       fun = &obj->as<JSFunction>();
+
+      // Ignore any delazification placeholder functions. These should not be
+      // exposed to debugger in any way.
+      if (fun->isGhost()) {
+        continue;
+      }
 
       if (!PushFunctionScript(cx, dbg, fun, array)) {
         return false;
@@ -581,6 +592,35 @@ static bool EnsureScriptOffsetIsValid(JSContext* cx, JSScript* script,
   return false;
 }
 
+static bool IsGeneratorSlotInitialization(JSScript* script, size_t offset,
+                                          JSContext* cx) {
+  jsbytecode* pc = script->offsetToPC(offset);
+  if (JSOp(*pc) != JSOp::SetAliasedVar) {
+    return false;
+  }
+
+  PropertyName* name = EnvironmentCoordinateNameSlow(script, pc);
+  return name == cx->names().dotGenerator;
+}
+
+static bool EnsureBreakpointIsAllowed(JSContext* cx, JSScript* script,
+                                      size_t offset) {
+  // Disallow breakpoint for `JSOp::SetAliasedVar` after `JSOp::Generator`.
+  // Those 2 instructions are supposed to be atomic, and nothing should happen
+  // in between them.
+  //
+  // Hitting a breakpoint there breaks the assumption around the existence of
+  // the frame's `GeneratorInfo`.
+  // (see `DebugAPI::slowPathOnNewGenerator` and `DebuggerFrame::create`)
+  if (IsGeneratorSlotInitialization(script, offset, cx)) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_DEBUG_BREAKPOINT_NOT_ALLOWED);
+    return false;
+  }
+
+  return true;
+}
+
 template <bool OnlyOffsets>
 class DebuggerScript::GetPossibleBreakpointsMatcher {
   JSContext* cx_;
@@ -630,7 +670,7 @@ class DebuggerScript::GetPossibleBreakpointsMatcher {
       return true;
     }
 
-    RootedPlainObject entry(cx_, NewBuiltinClassInstance<PlainObject>(cx_));
+    Rooted<PlainObject*> entry(cx_, NewPlainObject(cx_));
     if (!entry) {
       return false;
     }
@@ -925,11 +965,11 @@ bool DebuggerScript::CallData::getPossibleBreakpointOffsets() {
 class DebuggerScript::GetOffsetMetadataMatcher {
   JSContext* cx_;
   size_t offset_;
-  MutableHandlePlainObject result_;
+  MutableHandle<PlainObject*> result_;
 
  public:
   explicit GetOffsetMetadataMatcher(JSContext* cx, size_t offset,
-                                    MutableHandlePlainObject result)
+                                    MutableHandle<PlainObject*> result)
       : cx_(cx), offset_(offset), result_(result) {}
   using ReturnType = bool;
   ReturnType match(Handle<BaseScript*> base) {
@@ -942,7 +982,7 @@ class DebuggerScript::GetOffsetMetadataMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -990,7 +1030,7 @@ class DebuggerScript::GetOffsetMetadataMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1028,7 +1068,7 @@ bool DebuggerScript::CallData::getOffsetMetadata() {
     return false;
   }
 
-  RootedPlainObject result(cx);
+  Rooted<PlainObject*> result(cx);
   GetOffsetMetadataMatcher matcher(cx, offset, &result);
   if (!referent.match(matcher)) {
     return false;
@@ -1208,11 +1248,11 @@ class FlowGraphSummary {
 class DebuggerScript::GetOffsetLocationMatcher {
   JSContext* cx_;
   size_t offset_;
-  MutableHandlePlainObject result_;
+  MutableHandle<PlainObject*> result_;
 
  public:
   explicit GetOffsetLocationMatcher(JSContext* cx, size_t offset,
-                                    MutableHandlePlainObject result)
+                                    MutableHandle<PlainObject*> result)
       : cx_(cx), offset_(offset), result_(result) {}
   using ReturnType = bool;
   ReturnType match(Handle<BaseScript*> base) {
@@ -1230,7 +1270,7 @@ class DebuggerScript::GetOffsetLocationMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1303,7 +1343,7 @@ class DebuggerScript::GetOffsetLocationMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1336,7 +1376,7 @@ bool DebuggerScript::CallData::getOffsetLocation() {
     return false;
   }
 
-  RootedPlainObject result(cx);
+  Rooted<PlainObject*> result(cx);
   GetOffsetLocationMatcher matcher(cx, offset, &result);
   if (!referent.match(matcher)) {
     return false;
@@ -1475,13 +1515,14 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::InitHiddenElemGetter:
     case JSOp::InitElemSetter:
     case JSOp::InitHiddenElemSetter:
-    case JSOp::FunCall:
-    case JSOp::FunApply:
     case JSOp::SpreadCall:
     case JSOp::Call:
+    case JSOp::CallContent:
     case JSOp::CallIgnoresRv:
     case JSOp::CallIter:
+    case JSOp::CallContentIter:
     case JSOp::New:
+    case JSOp::NewContent:
     case JSOp::Eval:
     case JSOp::StrictEval:
     case JSOp::Int8:
@@ -1499,15 +1540,16 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Swap:
     case JSOp::Pick:
     case JSOp::Unpick:
+    case JSOp::GetAliasedDebugVar:
     case JSOp::GetAliasedVar:
     case JSOp::Uint24:
-    case JSOp::ResumeIndex:
     case JSOp::Int32:
     case JSOp::LoopHead:
     case JSOp::GetElem:
     case JSOp::Not:
     case JSOp::FunctionThis:
     case JSOp::GlobalThis:
+    case JSOp::NonSyntacticGlobalThis:
     case JSOp::Callee:
     case JSOp::EnvCallee:
     case JSOp::SuperBase:
@@ -1522,23 +1564,25 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::ToAsyncIter:
     case JSOp::ToPropertyKey:
     case JSOp::Lambda:
-    case JSOp::LambdaArrow:
     case JSOp::PushLexicalEnv:
     case JSOp::PopLexicalEnv:
     case JSOp::FreshenLexicalEnv:
     case JSOp::RecreateLexicalEnv:
+    case JSOp::PushClassBodyEnv:
     case JSOp::Iter:
     case JSOp::MoreIter:
     case JSOp::IsNoIter:
     case JSOp::EndIter:
+    case JSOp::CloseIter:
+    case JSOp::IsNullOrUndefined:
     case JSOp::In:
     case JSOp::HasOwn:
     case JSOp::CheckPrivateField:
+    case JSOp::NewPrivateName:
     case JSOp::SetRval:
     case JSOp::Instanceof:
     case JSOp::DebugLeaveLexicalEnv:
     case JSOp::Debugger:
-    case JSOp::GImplicitThis:
     case JSOp::ImplicitThis:
     case JSOp::NewTarget:
     case JSOp::CheckIsObj:
@@ -1547,9 +1591,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::IsConstructing:
     case JSOp::OptimizeSpreadCall:
     case JSOp::ImportMeta:
-    case JSOp::InstrumentationActive:
-    case JSOp::InstrumentationCallback:
-    case JSOp::InstrumentationScriptId:
     case JSOp::EnterWith:
     case JSOp::LeaveWith:
     case JSOp::SpreadNew:
@@ -1581,10 +1622,17 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::AsyncResolve:
     case JSOp::Finally:
     case JSOp::GetRval:
-    case JSOp::Gosub:
-    case JSOp::Retsub:
     case JSOp::ThrowMsg:
     case JSOp::ForceInterpreter:
+#ifdef ENABLE_RECORD_TUPLE
+    case JSOp::InitRecord:
+    case JSOp::AddRecordProperty:
+    case JSOp::AddRecordSpread:
+    case JSOp::FinishRecord:
+    case JSOp::InitTuple:
+    case JSOp::AddTupleElement:
+    case JSOp::FinishTuple:
+#endif
       return false;
   }
 
@@ -1602,10 +1650,21 @@ bool DebuggerScript::CallData::getEffectfulOffsets() {
     return false;
   }
   for (BytecodeRange r(cx, script); !r.empty(); r.popFront()) {
-    if (BytecodeIsEffectful(r.frontOpcode())) {
-      if (!NewbornArrayPush(cx, result, NumberValue(r.frontOffset()))) {
-        return false;
-      }
+    if (!BytecodeIsEffectful(r.frontOpcode())) {
+      continue;
+    }
+
+    size_t offset = r.frontOffset();
+    if (IsGeneratorSlotInitialization(script, offset, cx)) {
+      // This is engine-internal operation and not visible outside the
+      // currently executing frame.
+      //
+      // Also this offset is not allowed for setting breakpoint.
+      continue;
+    }
+
+    if (!NewbornArrayPush(cx, result, NumberValue(offset))) {
+      return false;
     }
   }
 
@@ -1645,7 +1704,7 @@ bool DebuggerScript::CallData::getAllOffsets() {
       RootedObject offsets(cx);
       RootedValue offsetsv(cx);
 
-      RootedId id(cx, INT_TO_JSID(lineno));
+      RootedId id(cx, PropertyKey::Int(lineno));
 
       bool found;
       if (!HasOwnProperty(cx, result, id, &found)) {
@@ -1691,7 +1750,7 @@ class DebuggerScript::GetAllColumnOffsetsMatcher {
   MutableHandleObject result_;
 
   bool appendColumnOffsetEntry(size_t lineno, size_t column, size_t offset) {
-    RootedPlainObject entry(cx_, NewBuiltinClassInstance<PlainObject>(cx_));
+    Rooted<PlainObject*> entry(cx_, NewPlainObject(cx_));
     if (!entry) {
       return false;
     }
@@ -1943,6 +2002,10 @@ struct DebuggerScript::SetBreakpointMatcher {
       return false;
     }
 
+    if (!EnsureBreakpointIsAllowed(cx_, script, offset_)) {
+      return false;
+    }
+
     // Ensure observability *before* setting the breakpoint. If the script is
     // not already a debuggee, trying to ensure observability after setting
     // the breakpoint (and thus marking the script as a debuggee) will skip
@@ -1966,7 +2029,7 @@ struct DebuggerScript::SetBreakpointMatcher {
     }
 
     if (!cx_->zone()->new_<Breakpoint>(dbg_, debuggerObject_, site, handler_)) {
-      site->destroyIfEmpty(cx_->runtime()->defaultFreeOp());
+      site->destroyIfEmpty(cx_->runtime()->gcContext());
       return false;
     }
     AddCellMemory(script, sizeof(Breakpoint), MemoryUse::Breakpoint);
@@ -1995,7 +2058,7 @@ struct DebuggerScript::SetBreakpointMatcher {
     }
 
     if (!cx_->zone()->new_<Breakpoint>(dbg_, debuggerObject_, site, handler_)) {
-      site->destroyIfEmpty(cx_->runtime()->defaultFreeOp());
+      site->destroyIfEmpty(cx_->runtime()->gcContext());
       return false;
     }
     AddCellMemory(wasmInstance, sizeof(Breakpoint), MemoryUse::Breakpoint);
@@ -2100,8 +2163,8 @@ class DebuggerScript::ClearBreakpointMatcher {
       return false;
     }
 
-    DebugScript::clearBreakpointsIn(cx_->runtime()->defaultFreeOp(), script,
-                                    dbg_, handler_);
+    DebugScript::clearBreakpointsIn(cx_->runtime()->gcContext(), script, dbg_,
+                                    handler_);
     return true;
   }
   ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
@@ -2120,7 +2183,7 @@ class DebuggerScript::ClearBreakpointMatcher {
       return false;
     }
 
-    instance.debug().clearBreakpointsIn(cx_->runtime()->defaultFreeOp(),
+    instance.debug().clearBreakpointsIn(cx_->runtime()->gcContext(),
                                         instanceObj, dbg_, handler_);
     return true;
   }
@@ -2276,7 +2339,7 @@ bool DebuggerScript::CallData::getOffsetsCoverage() {
 
     // Create a new object with the offset, line number, column number, the
     // number of hit counts, and append it to the array.
-    item = NewObjectWithGivenProto<PlainObject>(cx, nullptr);
+    item = NewPlainObjectWithProto(cx, nullptr);
     if (!item || !DefineDataProperty(cx, item, offsetId, offsetValue) ||
         !DefineDataProperty(cx, item, lineNumberId, lineNumberValue) ||
         !DefineDataProperty(cx, item, columnNumberId, columnNumberValue) ||
@@ -2294,27 +2357,6 @@ bool DebuggerScript::CallData::getOffsetsCoverage() {
   }
 
   args.rval().setObject(*result);
-  return true;
-}
-
-bool DebuggerScript::CallData::setInstrumentationId() {
-  if (!ensureScriptMaybeLazy()) {
-    return false;
-  }
-
-  if (!obj->getInstrumentationId().isUndefined()) {
-    JS_ReportErrorASCII(cx, "Script instrumentation ID is already set");
-    return false;
-  }
-
-  if (!args.get(0).isNumber()) {
-    JS_ReportErrorASCII(cx, "Script instrumentation ID must be a number");
-    return false;
-  }
-
-  obj->setReservedSlot(INSTRUMENTATION_ID_SLOT, args.get(0));
-
-  args.rval().setUndefined();
   return true;
 }
 
@@ -2357,7 +2399,6 @@ const JSFunctionSpec DebuggerScript::methods_[] = {
     JS_DEBUG_FN("getOffsetMetadata", getOffsetMetadata, 1),
     JS_DEBUG_FN("getOffsetsCoverage", getOffsetsCoverage, 0),
     JS_DEBUG_FN("getEffectfulOffsets", getEffectfulOffsets, 1),
-    JS_DEBUG_FN("setInstrumentationId", setInstrumentationId, 1),
 
     // The following APIs are deprecated due to their reliance on the
     // under-defined 'entrypoint' concept. Make use of getPossibleBreakpoints,

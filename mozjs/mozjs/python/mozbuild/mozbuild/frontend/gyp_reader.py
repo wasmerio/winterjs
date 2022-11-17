@@ -14,16 +14,8 @@ import time
 import mozpack.path as mozpath
 from mozpack.files import FileFinder
 from .sandbox import alphabetical_sorted
-from .context import (
-    ObjDirPath,
-    SourcePath,
-    TemplateContext,
-    VARIABLES,
-)
-from mozbuild.util import (
-    ensure_subprocess_env,
-    expand_variables,
-)
+from .context import ObjDirPath, SourcePath, TemplateContext, VARIABLES
+from mozbuild.util import expand_variables
 
 # Define this module as gyp.generator.mozbuild so that gyp can use it
 # as a generator under the name "mozbuild".
@@ -211,6 +203,10 @@ def process_gyp_result(
         os_libs = []
         for l in libs:
             if l.startswith("-"):
+                if l.startswith("-l"):
+                    # Remove "-l" for consumption in OS_LIBS. Other flags
+                    # are passed through unchanged.
+                    l = l[2:]
                 if l not in os_libs:
                     os_libs.append(l)
             elif l.endswith(".lib"):
@@ -372,7 +368,6 @@ def process_gyp_result(
             context["LOCAL_INCLUDES"] += [
                 "!/ipc/ipdl/_ipdlheaders",
                 "/ipc/chromium/src",
-                "/ipc/glue",
             ]
             # These get set via VC project file settings for normal GYP builds.
             if config.substs["OS_TARGET"] == "WINNT":
@@ -436,12 +431,10 @@ class GypProcessor(object):
             # This isn't actually used anywhere in this generator, but it's needed
             # to override the registry detection of VC++ in gyp.
             os.environ.update(
-                ensure_subprocess_env(
-                    {
-                        "GYP_MSVS_OVERRIDE_PATH": "fake_path",
-                        "GYP_MSVS_VERSION": config.substs["MSVS_VERSION"],
-                    }
-                )
+                {
+                    "GYP_MSVS_OVERRIDE_PATH": "fake_path",
+                    "GYP_MSVS_VERSION": config.substs["MSVS_VERSION"],
+                }
             )
 
         params = {

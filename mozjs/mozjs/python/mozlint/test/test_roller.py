@@ -152,6 +152,28 @@ def test_roll_warnings(lint, linters, files):
     assert result.total_suppressed_warnings == 0
 
 
+def test_roll_code_review(monkeypatch, lint, linters, files):
+    monkeypatch.setenv("CODE_REVIEW", "1")
+    lint.lintargs["show_warnings"] = False
+    lint.read(linters("warning"))
+    result = lint.roll(files)
+    assert len(result.issues) == 1
+    assert result.total_issues == 2
+    assert len(result.suppressed_warnings) == 0
+    assert result.total_suppressed_warnings == 0
+
+
+def test_roll_code_review_warnings_disabled(monkeypatch, lint, linters, files):
+    monkeypatch.setenv("CODE_REVIEW", "1")
+    lint.lintargs["show_warnings"] = False
+    lint.read(linters("warning_no_code_review"))
+    result = lint.roll(files)
+    assert len(result.issues) == 0
+    assert result.total_issues == 0
+    assert len(result.suppressed_warnings) == 1
+    assert result.total_suppressed_warnings == 2
+
+
 def fake_run_worker(config, paths, **lintargs):
     result = ResultSummary(lintargs["root"])
     result.issues["count"].append(1)
@@ -240,7 +262,7 @@ def test_keyboard_interrupt():
     # quickly. The other (slow.yml) will run slowly.  This way the first worker
     # will be be stuck blocking on the ProcessPoolExecutor._call_queue when the
     # signal arrives and the other still be doing work.
-    cmd = [sys.executable, "runcli.py", "-l=string", "-l=slow"]
+    cmd = [sys.executable, "runcli.py", "-l=string", "-l=slow", "files/foobar.js"]
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(sys.path)
     proc = subprocess.Popen(

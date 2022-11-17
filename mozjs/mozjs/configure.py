@@ -13,17 +13,24 @@ import os
 import sys
 import textwrap
 
-
-try:
-    from collections.abc import Iterable
-except ImportError:
-    from collections import Iterable
-
+from collections.abc import Iterable
 
 base_dir = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(base_dir, "python", "mach"))
 sys.path.insert(0, os.path.join(base_dir, "python", "mozboot"))
 sys.path.insert(0, os.path.join(base_dir, "python", "mozbuild"))
+sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "packaging"))
+sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "pyparsing"))
 sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "six"))
+sys.path.insert(0, os.path.join(base_dir, "third_party", "python", "looseversion"))
+from mach.site import (
+    CommandSiteManager,
+    ExternalPythonSite,
+    MachSiteManager,
+    MozSiteMetadata,
+    SitePackagesSource,
+)
+from mach.requirements import MachEnvRequirements
 from mozbuild.configure import (
     ConfigureSandbox,
     TRACE,
@@ -36,12 +43,82 @@ import six
 
 
 def main(argv):
+    # Check for CRLF line endings.
+    with open(__file__, "r") as fh:
+        data = fh.read()
+        if "\r" in data:
+            print(
+                "\n ***\n"
+                " * The source tree appears to have Windows-style line endings.\n"
+                " *\n"
+                " * If using Git, Git is likely configured to use Windows-style\n"
+                " * line endings.\n"
+                " *\n"
+                " * To convert the working copy to UNIX-style line endings, run\n"
+                " * the following:\n"
+                " *\n"
+                " * $ git config core.autocrlf false\n"
+                " * $ git config core.eof lf\n"
+                " * $ git rm --cached -r .\n"
+                " * $ git reset --hard\n"
+                " *\n"
+                " * If not using Git, the tool you used to obtain the source\n"
+                " * code likely converted files to Windows line endings. See\n"
+                " * usage information for that tool for more.\n"
+                " ***",
+                file=sys.stderr,
+            )
+            return 1
+
     config = {}
 
     if "OLD_CONFIGURE" not in os.environ:
         os.environ["OLD_CONFIGURE"] = os.path.join(base_dir, "old-configure")
 
     sandbox = ConfigureSandbox(config, os.environ, argv)
+
+    if not sandbox._help:
+        # This limitation has mostly to do with GNU make. Since make can't represent
+        # variables with spaces without correct quoting and many paths are used
+        # without proper quoting, using paths with spaces commonly results in
+        # targets or dependencies being treated as multiple paths. This, of course,
+        # undermines the ability for make to perform up-to-date checks and makes
+        # the build system not work very efficiently. In theory, a non-make build
+        # backend will make this limitation go away. But there is likely a long tail
+        # of things that will need fixing due to e.g. lack of proper path quoting.
+        topsrcdir = os.path.realpath(os.path.dirname(__file__))
+        if len(topsrcdir.split()) > 1:
+            print(
+                "Source directory cannot be located in a path with spaces: %s"
+                % topsrcdir,
+                file=sys.stderr,
+            )
+            return 1
+        topobjdir = os.path.realpath(os.curdir)
+        if len(topobjdir.split()) > 1:
+            print(
+                "Object directory cannot be located in a path with spaces: %s"
+                % topobjdir,
+                file=sys.stderr,
+            )
+            return 1
+
+        # Do not allow topobjdir == topsrcdir
+        if os.path.samefile(topsrcdir, topobjdir):
+            print(
+                "  ***\n"
+                "  * Building directly in the main source directory is not allowed.\n"
+                "  *\n"
+                "  * To build, you must run configure from a separate directory\n"
+                "  * (referred to as an object directory).\n"
+                "  *\n"
+                "  * If you are building with a mozconfig, you will need to change your\n"
+                "  * mozconfig to point to a different object directory.\n"
+                "  ***",
+                file=sys.stderr,
+            )
+            return 1
+        _activate_build_virtualenv()
 
     clobber_file = "CLOBBER"
     if not os.path.exists(clobber_file):
@@ -194,8 +271,6 @@ def config_status(config, execute=True):
                 textwrap.dedent(
                     """
                 if __name__ == '__main__':
-                    from mozbuild.util import patch_main
-                    patch_main()
                     from mozbuild.config_status import config_status
                     args = dict([(name, globals()[name]) for name in __all__])
                     config_status(**args)
@@ -225,6 +300,50 @@ def config_status(config, execute=True):
 
         return config_status(args=[], **sanitized_config)
     return 0
+
+
+def _activate_build_virtualenv():
+    """Ensure that the build virtualenv is activated
+
+    configure.py may be executed through Mach, or via "./configure, make".
+    In the first case, the build virtualenv should already be activated.
+    In the second case, we're likely being executed with the system Python, and must
+    prepare the virtualenv and activate it ourselves.
+    """
+
+    version = ".".join(str(i) for i in sys.version_info[0:3])
+    print(f"Using Python {version} from {sys.executable}")
+
+    active_site = MozSiteMetadata.from_runtime()
+    if active_site and active_site.site_name == "build":
+        # We're already running within the "build" virtualenv, no additional work is
+        # needed.
+        return
+
+    # We're using the system python (or are nested within a non-build mach-managed
+    # virtualenv), so we should activate the build virtualenv as expected by the rest of
+    # configure.
+
+    topobjdir = os.path.realpath(".")
+    topsrcdir = os.path.realpath(os.path.dirname(__file__))
+
+    mach_site = MachSiteManager(
+        topsrcdir,
+        None,
+        MachEnvRequirements(),
+        ExternalPythonSite(sys.executable),
+        SitePackagesSource.NONE,
+    )
+    mach_site.activate()
+    build_site = CommandSiteManager.from_environment(
+        topsrcdir,
+        None,
+        "build",
+        os.path.join(topobjdir, "_virtualenvs"),
+    )
+    if not build_site.ensure():
+        print("Created Python 3 virtualenv")
+    build_site.activate()
 
 
 if __name__ == "__main__":

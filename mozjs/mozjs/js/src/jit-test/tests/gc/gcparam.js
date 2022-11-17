@@ -45,6 +45,8 @@ testChangeParam("largeHeapSizeMin");
 testChangeParam("highFrequencySmallHeapGrowth");
 testChangeParam("highFrequencyLargeHeapGrowth");
 testChangeParam("lowFrequencyHeapGrowth");
+testChangeParam("balancedHeapLimitsEnabled");
+testChangeParam("heapGrowthFactor");
 testChangeParam("allocationThreshold");
 testChangeParam("smallHeapIncrementalLimit");
 testChangeParam("largeHeapIncrementalLimit");
@@ -52,7 +54,7 @@ testChangeParam("minEmptyChunkCount");
 testChangeParam("maxEmptyChunkCount");
 testChangeParam("compactingEnabled");
 testChangeParam("mallocThresholdBase");
-testChangeParam("mallocGrowthFactor");
+testChangeParam("urgentThreshold");
 testChangeParam("nurseryTimeoutForIdleCollectionMS");
 
 testMBParamValue("smallHeapSizeMax");

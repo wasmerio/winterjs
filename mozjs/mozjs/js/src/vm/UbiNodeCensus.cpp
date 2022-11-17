@@ -7,15 +7,13 @@
 #include "js/UbiNodeCensus.h"
 
 #include "builtin/MapObject.h"
-#include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "util/Text.h"
+#include "vm/Compartment.h"
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/Printer.h"
-#include "vm/Realm.h"
 
-#include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
@@ -87,7 +85,7 @@ bool SimpleCount::report(JSContext* cx, CountBase& countBase,
                          MutableHandleValue report) {
   Count& count = static_cast<Count&>(countBase);
 
-  RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return false;
   }
@@ -156,7 +154,7 @@ bool BucketCount::report(JSContext* cx, CountBase& countBase,
   Count& count = static_cast<Count&>(countBase);
 
   size_t length = count.ids_.length();
-  RootedArrayObject arr(cx, NewDenseFullyAllocatedArray(cx, length));
+  Rooted<ArrayObject*> arr(cx, NewDenseFullyAllocatedArray(cx, length));
   if (!arr) {
     return false;
   }
@@ -274,7 +272,7 @@ bool ByCoarseType::report(JSContext* cx, CountBase& countBase,
                           MutableHandleValue report) {
   Count& count = static_cast<Count&>(countBase);
 
-  RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return false;
   }
@@ -364,7 +362,7 @@ static PlainObject* countMapToObject(JSContext* cx, Map& map, GetName getName) {
           compareEntries<typename Map::Entry>);
   }
 
-  RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return nullptr;
   }
@@ -414,7 +412,7 @@ static PlainObject* countMap16ToObject(JSContext* cx, Map& map,
           compareEntries<typename Map::Entry>);
   }
 
-  RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return nullptr;
   }
@@ -529,7 +527,7 @@ bool ByObjectClass::report(JSContext* cx, CountBase& countBase,
                            MutableHandleValue report) {
   Count& count = static_cast<Count&>(countBase);
 
-  RootedPlainObject obj(
+  Rooted<PlainObject*> obj(
       cx,
       countMapToObject(cx, count.table, [](const char* key) { return key; }));
   if (!obj) {
@@ -637,7 +635,7 @@ bool ByDomObjectClass::report(JSContext* cx, CountBase& countBase,
                               MutableHandleValue report) {
   Count& count = static_cast<Count&>(countBase);
 
-  RootedPlainObject obj(
+  Rooted<PlainObject*> obj(
       cx, countMap16ToObject(cx, count.table, [](const UniqueC16String& key) {
         return key.get();
       }));
@@ -736,7 +734,7 @@ bool ByUbinodeType::report(JSContext* cx, CountBase& countBase,
   }
 
   // Now build the result by iterating over the sorted vector.
-  RootedPlainObject obj(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return false;
   }
@@ -1065,7 +1063,7 @@ bool ByFilename::report(JSContext* cx, CountBase& countBase,
                         MutableHandleValue report) {
   Count& count = static_cast<Count&>(countBase);
 
-  RootedPlainObject obj(
+  Rooted<PlainObject*> obj(
       cx, countMapToObject(cx, count.table,
                            [](const UniqueCString& key) { return key.get(); }));
   if (!obj) {
@@ -1147,7 +1145,7 @@ JS_PUBLIC_API CountTypePtr ParseBreakdown(JSContext* cx,
   if (!byString) {
     return nullptr;
   }
-  RootedLinearString by(cx, byString->ensureLinear(cx));
+  Rooted<JSLinearString*> by(cx, byString->ensureLinear(cx));
   if (!by) {
     return nullptr;
   }

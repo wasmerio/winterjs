@@ -731,7 +731,6 @@ NS_CycleCollectorSuspect3
 ?RegisterGhostWindowsDistinguishedAmount@mozilla@@YA?AW4nsresult@@P6A_JXZ@Z
 ?Init@SVGElementFactory@dom@mozilla@@SAXXZ
 ?FromMessagesToSharedParent@SharedMessageBody@dom@mozilla@@SA_NAEAV?$nsTArray@VMessageData@dom@mozilla@@@@AEAV?$FallibleTArray@V?$RefPtr@VSharedMessageBody@dom@mozilla@@@@@@W4TransferringSupport@StructuredCloneHolder@23@@Z
-?SetProcessPrioritySupported@hal@mozilla@@YA_NXZ
 ?Get@LogModule@mozilla@@SAPEAV12@PEBD@Z
 ?SetProcessPriority@hal_impl@mozilla@@YAXHW4ProcessPriority@hal@2@@Z
 ?GetHalLog@hal@mozilla@@YAPEAVLogModule@2@XZ
@@ -2851,7 +2850,6 @@ nscstring_fallible_append_utf16_to_latin1_lossy_impl
 ??0gfxWindowsPlatform@@QEAA@XZ
 ??0gfxPlatform@@IEAA@XZ
 ??0GfxInfoCollectorBase@widget@mozilla@@QEAA@XZ
-?GetLayerDiagnosticTypes@gfxPlatform@@QEAA?AW4DiagnosticTypes@layers@mozilla@@XZ
 ?InitBackendPrefs@gfxPlatform@@IEAAX$$QEAUBackendPrefsData@@@Z
 ?ParseString@@YAXAEBV?$nsTSubstring@D@@DAEAV?$nsTArray@V?$nsTString@D@@@@@Z
 ?ManagerInit@VRManager@gfx@mozilla@@SAXXZ
@@ -2910,7 +2908,7 @@ moz_cairo_dwrite_set_cleartype_params
 ?DwmCompositionEnabled@gfxWindowsPlatform@@QEAA_NXZ
 ??_GgfxWindowsPlatform@@UEAAPEAXI@Z
 ??0Display@VsyncSource@gfx@mozilla@@QEAA@XZ
-??0RefreshTimerVsyncDispatcher@mozilla@@QEAA@PEAVDisplay@VsyncSource@gfx@1@@Z
+??0VsyncDispatcher@mozilla@@QEAA@PEAVDisplay@VsyncSource@gfx@1@@Z
 ?destroy_sandbox@?$rlbox_sandbox@Vrlbox_noop_sandbox@rlbox@@@rlbox@@QEAA?A?<auto>@@XZ
 ?Start@Thread@base@@QEAA_NXZ
 ?Run@MessagePumpDefault@base@@UEAAXPEAVDelegate@MessagePump@2@@Z
@@ -3998,12 +3996,12 @@ ZN5style7stylist7Stylist17append_stylesheet17he70cadcba5340a98E
 ?AccessKey@ApplicationAccessible@a11y@mozilla@@UEBA?AVKeyBinding@23@XZ
 ??8?$StyleGenericCrossFadeImage@U?$StyleGenericImage@U?$StyleGenericGradient@UStyleLineDirection@mozilla@@TStyleLengthPercentageUnion@2@UStyleCSSPixelLength@2@T32@U?$StyleGenericPosition@TStyleLengthPercentageUnion@mozilla@@T12@@2@UStyleAngle@2@UStyleAngleOrPercentage@2@U?$StyleGenericColor@UStyleRGBA@mozilla@@@2@@mozilla@@U?$StyleGenericMozImageRect@UStyleNumberOrPercentage@mozilla@@UStyleComputedUrl@2@@2@UStyleComputedUrl@2@U?$StyleGenericColor@UStyleRGBA@mozilla@@@2@UStylePercentage@2@@mozilla@@U?$StyleGenericColor@UStyleRGBA@mozilla@@@2@@mozilla@@QEBA_NAEBU01@@Z
 ?GetNextTickHint@nsRefreshDriver@@SA?AV?$Maybe@VTimeStamp@mozilla@@@mozilla@@XZ
-?GetRefreshTimerVsyncDispatcher@VsyncSource@gfx@mozilla@@QEAA?AV?$RefPtr@VRefreshTimerVsyncDispatcher@mozilla@@@@XZ
+?GetVsyncDispatcher@VsyncSource@gfx@mozilla@@QEAA?AV?$RefPtr@VVsyncDispatcher@mozilla@@@@XZ
 ?IsInLayoutAsapMode@gfxPlatform@@SA_NXZ
 ?GetRootPresContext@nsPresContext@@QEBAPEAVnsRootPresContext@@XZ
-?AddChildRefreshTimer@RefreshTimerVsyncDispatcher@mozilla@@QEAAXPEAVVsyncObserver@2@@Z
-?NotifyVsync@RefreshTimerVsyncDispatcher@mozilla@@QEAAXAEBUVsyncEvent@2@@Z
-?NotifyRefreshTimerVsyncStatus@Display@VsyncSource@gfx@mozilla@@QEAAX_N@Z
+?AddChildRefreshTimer@VsyncDispatcher@mozilla@@QEAAXPEAVVsyncObserver@2@@Z
+?NotifyVsync@VsyncDispatcher@mozilla@@QEAAXAEBUVsyncEvent@2@@Z
+?NotifyVsyncDispatcherVsyncStatus@Display@VsyncSource@gfx@mozilla@@QEAAX_N@Z
 ?GetVsyncRate@D3DVsyncDisplay@D3DVsyncSource@@UEAA?AV?$BaseTimeDuration@VTimeDurationValueCalculator@mozilla@@@mozilla@@XZ
 ?PostTask@MessageLoop@@QEAAXU?$already_AddRefed@VnsIRunnable@@@@@Z
 ??$_Insert_nohint@AEAU?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@std@@PEAU?$_Tree_node@U?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@std@@PEAX@2@@?$_Tree@V?$_Tmap_traits@HV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@U?$less@H@2@V?$allocator@U?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@std@@@2@$0A@@std@@@std@@IEAA?AU?$pair@V?$_Tree_iterator@V?$_Tree_val@U?$_Tree_simple_types@U?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@std@@@std@@@std@@@std@@_N@1@_NAEAU?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@1@PEAU?$_Tree_node@U?$pair@$$CBHV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@std@@PEAX@1@@Z
@@ -6466,7 +6464,6 @@ ZN11encoding_rs3mem17utf16_valid_up_to17h89dc8b8f218f8fa1E
 ?BroadcastStringBundle@ContentParent@dom@mozilla@@SAXAEBVStringBundleDescriptor@23@@Z
 ?Get@SharedStringMap@ipc@dom@mozilla@@QEAA_NAEBV?$nsTString@D@@AEAV?$nsTSubstring@_S@@@Z
 ?GetAndResetReleaseFence@RenderCompositor@wr@mozilla@@UEAA?AVFileDescriptor@ipc@3@XZ
-?RecvAudioSessionData@widget@mozilla@@YA?AW4nsresult@@AEBUnsID@@AEBV?$nsTString@_S@@1@Z
 ?Release@WakeLock@dom@mozilla@@UEAAKXZ
 ?GetInstance@PowerManagerService@power@dom@mozilla@@SA?AU?$already_AddRefed@VPowerManagerService@power@dom@mozilla@@@@XZ
 ?RegisterWakeLockObserver@hal@mozilla@@YAXPEAV?$Observer@VWakeLockInformation@hal@mozilla@@@2@@Z
@@ -6976,7 +6973,7 @@ nsEscape
 ?GetPromiseState@JS@@YA?AW4PromiseState@1@V?$Handle@PEAVJSObject@@@1@@Z
 ?DoomAlreadyRemoved@CacheEntry@net@mozilla@@QEAAXXZ
 ?Disconnect@nsRefreshDriver@@QEAAXXZ
-?RemoveChildRefreshTimer@RefreshTimerVsyncDispatcher@mozilla@@QEAAXPEAVVsyncObserver@2@@Z
+?RemoveChildRefreshTimer@VsyncDispatcher@mozilla@@QEAAXPEAVVsyncObserver@2@@Z
 ?DisableVsync@D3DVsyncDisplay@D3DVsyncSource@@UEAAXXZ
 ?CallTypeSniffers@HttpBaseChannel@net@mozilla@@KAXPEAXPEBEI@Z
 ?NS_SniffContent@@YAXPEBDPEAVnsIRequest@@PEBEIAEAV?$nsTSubstring@D@@@Z
@@ -10311,7 +10308,6 @@ ZN5style10properties19animated_properties14AnimationValue20from_computed_values1
 ?GetController@ClientSourceParent@dom@mozilla@@QEBAAEBV?$Maybe@VServiceWorkerDescriptor@dom@mozilla@@@3@XZ
 ?DoResolveOrReject@ThenValueBase@?$MozPromise@V?$Endpoint@VPRemoteDecoderManagerChild@mozilla@@@ipc@mozilla@@W4nsresult@@$00@mozilla@@IEAAXAEAVResolveOrRejectValue@23@@Z
 ?Initialize@ClientLayerManager@layers@mozilla@@QEAA_NPEAVPCompositorBridgeChild@23@_NPEAUTextureFactoryIdentifier@23@@Z
-?GetCompositorBackends@gfxPlatform@@QEAAX_NAEAV?$nsTArray@W4LayersBackend@layers@mozilla@@@@@Z
 ?AllocPLayerTransactionChild@CompositorBridgeChild@layers@mozilla@@AEAAPEAVPLayerTransactionChild@23@AEBV?$nsTArray@W4LayersBackend@layers@mozilla@@@@AEBULayersId@23@@Z
 ??0PLayerTransactionChild@layers@mozilla@@QEAA@XZ
 ?SendPLayerTransactionConstructor@PCompositorBridgeChild@layers@mozilla@@QEAAPEAVPLayerTransactionChild@23@PEAV423@AEBV?$nsTArray@W4LayersBackend@layers@mozilla@@@@AEBULayersId@23@@Z
@@ -10994,9 +10990,6 @@ Servo_StyleSet_HasStateDependency
 ?AddRect@nsRegion@@AEAAXAEBUnsRectAbsolute@@@Z
 ?Copy@nsRegion@@AEAAAEAV1@AEBV1@@Z
 ?GetOpenWindowInfo@XULFrameElement@dom@mozilla@@QEBAPEAVnsIOpenWindowInfo@@XZ
-?SendNotifyRegionInvalidated@CompositorBridgeChild@layers@mozilla@@QEAA_NAEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@@Z
-?SendNotifyRegionInvalidated@PCompositorBridgeChild@layers@mozilla@@QEAA_NAEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@@Z
-?Msg_NotifyRegionInvalidated@PCompositorBridge@layers@mozilla@@YAPEAVMessage@IPC@@H@Z
 ?Read@?$IPDLParamTraits@VInputStreamParams@ipc@mozilla@@@ipc@mozilla@@SA_NPEBVMessage@IPC@@PEAVPickleIterator@@PEAVIProtocol@23@PEAVInputStreamParams@23@@Z
 ?Write@?$RegionParamTraits@V?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@U?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@23@VRectIterator@?$BaseIntRegion@V?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@U?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@23@U?$IntPointTyped@UUnknownUnits@gfx@mozilla@@@23@U?$IntMarginTyped@UUnknownUnits@gfx@mozilla@@@23@@23@@IPC@@SAXPEAVMessage@2@AEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@@Z
 ?ProcessPendingUpdates@nsViewManager@@QEAAXXZ
@@ -11640,10 +11633,8 @@ ZN5style7stylist7Stylist17remove_stylesheet17h3ad60902102208fbE
 ?LayerUserDataDestroy@LayerManager@layers@mozilla@@SAXPEAX@Z
 ?IsInvalid@nsDisplayWrapList@@UEBA_NAEAUnsRect@@@Z
 ?SetInvalidRectToVisibleRegion@Layer@layers@mozilla@@QEAAXXZ
-?Add@?$TiledRegion@V?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@@gfx@mozilla@@QEAAXAEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@23@@Z
 ?SetClipRect@Layer@layers@mozilla@@QEAAXAEBV?$Maybe@U?$IntRectTyped@UParentLayerPixel@mozilla@@@gfx@mozilla@@@3@@Z
 ?SetAncestorMaskLayers@Layer@layers@mozilla@@QEAAXAEBV?$nsTArray@V?$RefPtr@VLayer@layers@mozilla@@@@@@@Z
-?ReturnDrawTarget@ContentClient@layers@mozilla@@QEAAXAEAPEAVDrawTarget@gfx@3@@Z
 ?UsesTiling@gfxPlatform@@UEBA_NXZ
 ?CreatedPaintedLayer@ShadowLayerForwarder@layers@mozilla@@QEAAXPEAVShadowableLayer@23@@Z
 ?AsLayer@ClientPaintedLayer@layers@mozilla@@UEAAPEAVLayer@23@XZ
@@ -11657,11 +11648,9 @@ ZN5style7stylist7Stylist17remove_stylesheet17h3ad60902102208fbE
 ??8EventRegions@layers@mozilla@@QEBA_NAEBU012@@Z
 ?SetScrollMetadata@Layer@layers@mozilla@@QEAAXAEBV?$nsTArray@UScrollMetadata@layers@mozilla@@@@@Z
 ?ClearPendingScrollInfoUpdate@LayerManager@layers@mozilla@@QEAA?AV?$unordered_set@_KU?$hash@_K@std@@U?$equal_to@_K@2@V?$allocator@_K@2@@std@@XZ
-?SetVisibleRegion@BasicColorLayer@layers@mozilla@@UEAAXAEBV?$IntRegionTyped@ULayerPixel@mozilla@@@gfx@3@@Z
 ?SetVisibleRegion@Layer@layers@mozilla@@UEAAXAEBV?$IntRegionTyped@ULayerPixel@mozilla@@@gfx@3@@Z
 ?GetCombinedClipRect@Layer@layers@mozilla@@QEBA?AV?$Maybe@U?$IntRectTyped@UParentLayerPixel@mozilla@@@gfx@mozilla@@@3@XZ
 ?GetType@PaintedLayer@layers@mozilla@@UEBA?AW4LayerType@Layer@23@XZ
-?GetTextureInfo@TiledContentClient@layers@mozilla@@UEBA?AUTextureInfo@23@XZ
 ?InsertAfter@ContainerLayer@layers@mozilla@@UEAA_NPEAVLayer@23@0@Z
 ?InsertAfter@ShadowLayerForwarder@layers@mozilla@@QEAAXPEAVShadowableLayer@23@00@Z
 ?GetRootMetadata@nsLayoutUtils@@SA?AV?$Maybe@UScrollMetadata@layers@mozilla@@@mozilla@@PEAVnsDisplayListBuilder@@PEAVLayerManager@layers@3@AEBUContainerLayerParameters@3@AEBV?$function@$$A6A_NAEA_K@Z@std@@@Z
@@ -11681,7 +11670,6 @@ ZN5style7stylist7Stylist17remove_stylesheet17h3ad60902102208fbE
 ?AllocateGeometry@nsDisplaySolidColorBase@@UEAAPEAVnsDisplayItemGeometry@@PEAVnsDisplayListBuilder@@@Z
 ??0nsDisplayItemBoundsGeometry@@QEAA@PEAVnsDisplayItem@@PEAVnsDisplayListBuilder@@@Z
 ?InvalidateRegion@BasicPaintedLayer@layers@mozilla@@UEAAXAEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@@Z
-?AddRect@TiledRegionImpl@gfx@mozilla@@QEAA_NAEBUpixman_box32@@@Z
 ??$moveConstruct@V?$Variant@UEmptyAttributes@gfx@mozilla@@UBlendAttributes@23@UMorphologyAttributes@23@UColorMatrixAttributes@23@UFloodAttributes@23@UTileAttributes@23@UComponentTransferAttributes@23@UOpacityAttributes@23@UConvolveMatrixAttributes@23@UOffsetAttributes@23@UDisplacementMapAttributes@23@UTurbulenceAttributes@23@UCompositeAttributes@23@UMergeAttributes@23@UImageAttributes@23@UGaussianBlurAttributes@23@UDropShadowAttributes@23@UDiffuseLightingAttributes@23@USpecularLightingAttributes@23@UToAlphaAttributes@23@@mozilla@@@?$VariantImplementation@E$0BC@USpecularLightingAttributes@gfx@mozilla@@UToAlphaAttributes@23@@detail@mozilla@@SAXPEAX$$QEAV?$Variant@UEmptyAttributes@gfx@mozilla@@UBlendAttributes@23@UMorphologyAttributes@23@UColorMatrixAttributes@23@UFloodAttributes@23@UTileAttributes@23@UComponentTransferAttributes@23@UOpacityAttributes@23@UConvolveMatrixAttributes@23@UOffsetAttributes@23@UDisplacementMapAttributes@23@UTurbulenceAttributes@23@UCompositeAttributes@23@UMergeAttributes@23@UImageAttributes@23@UGaussianBlurAttributes@23@UDropShadowAttributes@23@UDiffuseLightingAttributes@23@USpecularLightingAttributes@23@UToAlphaAttributes@23@@2@@Z
 ?IsInvisibleInRect@nsDisplayBorder@@UEBA_NAEBUnsRect@@@Z
 ?GetMostRecentGeometry@FrameLayerBuilder@mozilla@@SAPEAVnsDisplayItemGeometry@@PEAVnsDisplayItem@@@Z
@@ -11709,14 +11697,10 @@ ZN5style7stylist7Stylist17remove_stylesheet17h3ad60902102208fbE
 ?AddRef@ShadowLayerForwarder@layers@mozilla@@UEAAKXZ
 ?SetLayersObserverEpoch@ShadowLayerForwarder@layers@mozilla@@QEAAXULayersObserverEpoch@23@@Z
 ?InitIPDL@CompositableClient@layers@mozilla@@QEAAXAEBVCompositableHandle@23@@Z
-?GetTextureInfo@ContentClientDoubleBuffered@layers@mozilla@@UEBA?AUTextureInfo@23@XZ
 ?SendNewCompositable@PLayerTransactionChild@layers@mozilla@@QEAA_NAEBVCompositableHandle@23@AEBUTextureInfo@23@@Z
 ?Read@?$IPDLParamTraits@VGfxInfoFeatureStatus@gfx@mozilla@@@ipc@mozilla@@SA_NPEBVMessage@IPC@@PEAVPickleIterator@@PEAVIProtocol@23@PEAVGfxInfoFeatureStatus@gfx@3@@Z
 ?SendNewCompositable@PImageBridgeChild@layers@mozilla@@QEAA_NAEBVCompositableHandle@23@AEBUTextureInfo@23@AEBW4LayersBackend@23@@Z
 ?Attach@ShadowLayerForwarder@layers@mozilla@@QEAAXPEAVCompositableClient@23@PEAVShadowableLayer@23@@Z
-?MayResample@Layer@layers@mozilla@@QEAA_NXZ
-?DrawTo@ContentClientBasic@layers@mozilla@@QEAAXPEAVPaintedLayer@23@PEAVDrawTarget@gfx@3@MW4CompositionOp@63@PEAVSourceSurface@63@PEBV?$BaseMatrix@M@63@@Z
-?BeginPaint@ContentClient@layers@mozilla@@UEAA?AUPaintState@123@PEAVPaintedLayer@23@I@Z
 ?CanUseOpaqueSurface@Layer@layers@mozilla@@QEAA_NXZ
 ?EnsureValidRegionIsCurrent@PaintedLayer@layers@mozilla@@AEBAXXZ
 ??4nsRegion@@QEAAAEAV0@$$QEAV0@@Z
@@ -11761,13 +11745,11 @@ ARGBSetRow_X86
 ??_GShmemTextureReadLock@layers@mozilla@@UEAAPEAXI@Z
 ??4ReadLockDescriptor@layers@mozilla@@QEAAAEAV012@$$QEAV012@@Z
 ??1ReadLockDescriptor@layers@mozilla@@QEAA@XZ
-?HandleMemoryPressure@CompositorBridgeChild@layers@mozilla@@QEAAXXZ
 ?CreateIPDLActor@TextureClient@layers@mozilla@@SAPEAVPTextureChild@23@XZ
 ??0PTextureChild@layers@mozilla@@QEAA@XZ
 ?SendPTextureConstructor@PCompositorBridgeChild@layers@mozilla@@QEAAPEAVPTextureChild@23@PEAV423@AEBVSurfaceDescriptor@23@AEBVReadLockDescriptor@23@AEBW4LayersBackend@23@AEBW4TextureFlags@23@AEBULayersId@23@AEB_KAEBV?$Maybe@UExternalImageId@wr@mozilla@@@3@@Z
 ?Read@?$IPDLParamTraits@VReadLockDescriptor@layers@mozilla@@@ipc@mozilla@@SA_NPEBVMessage@IPC@@PEAVPickleIterator@@PEAVIProtocol@23@PEAVReadLockDescriptor@layers@3@@Z
 ?Write@?$IPDLParamTraits@PEAVPTextureChild@layers@mozilla@@@ipc@mozilla@@SAXPEAVMessage@IPC@@PEAVIProtocol@23@AEBQEAVPTextureChild@layers@3@@Z
-?SendMakeSnapshot@PCompositorBridgeChild@layers@mozilla@@QEAA_NAEBVSurfaceDescriptor@23@AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@@Z
 ?Write@?$IPDLParamTraits@VSurfaceDescriptor@layers@mozilla@@@ipc@mozilla@@SAXPEAVMessage@IPC@@PEAVIProtocol@23@AEBVSurfaceDescriptor@layers@3@@Z
 ??4IPCDataTransferData@dom@mozilla@@QEAAAEAV012@AEBVIPCBlob@12@@Z
 ?Write@?$IPDLParamTraits@VReadLockDescriptor@layers@mozilla@@@ipc@mozilla@@SAXPEAVMessage@IPC@@PEAVIProtocol@23@AEBVReadLockDescriptor@layers@3@@Z
@@ -11787,7 +11769,6 @@ ARGBSetRow_X86
 ?SubWith@nsRegion@@QEAAAEAV1@AEBV1@@Z
 ?GetLocalVisibleRegion@Layer@layers@mozilla@@QEAAAEBV?$IntRegionTyped@ULayerPixel@mozilla@@@gfx@3@XZ
 ?AndWith@nsRegion@@QEAAAEAV1@AEBV1@@Z
-?BorrowDrawTargetForPainting@ContentClient@layers@mozilla@@UEAAPEAVDrawTarget@gfx@3@AEAUPaintState@123@PEAUDrawIterator@RotatedBuffer@23@@Z
 ?BorrowDrawTargetForQuadrantUpdate@RotatedBuffer@layers@mozilla@@QEAAPEAVDrawTarget@gfx@3@AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@53@PEAUDrawIterator@123@@Z
 ?GetBackendType@DrawTargetSkia@gfx@mozilla@@UEBA?AW4BackendType@23@XZ
 ?SetAntialiasingFlags@layers@mozilla@@YAXPEAVLayer@12@PEAVDrawTarget@gfx@2@@Z
@@ -12249,7 +12230,6 @@ skcms_TransferFunction_invert
 ?MaybeDestroy@CompositableOperationDetail@layers@mozilla@@AEAA_NW4Type@123@@Z
 ??0CompositableOperationDetail@layers@mozilla@@QEAA@$$QEAVOpPaintTextureRegion@12@@Z
 ?Clear@?$nsTArray_Impl@U?$IntRectTyped@ULayoutDevicePixel@mozilla@@@gfx@mozilla@@UnsTArrayInfallibleAllocator@@@@QEAAXXZ
-?GetInvalidRegion@Layer@layers@mozilla@@UEAAAEBV?$TiledRegion@V?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@@gfx@3@XZ
 ?TileGenFuncEGL@gl@mozilla@@YA?AU?$already_AddRefed@VTextureImage@gl@mozilla@@@@PEAVGLContext@12@AEBU?$IntSizeTyped@UUnknownUnits@gfx@mozilla@@@gfx@2@W4gfxContentType@@W4Flags@TextureImage@12@W4SurfaceFormat@62@@Z
 ??1ReadbackProcessor@layers@mozilla@@QEAA@XZ
 ?StartPendingAnimations@AnimationInfo@layers@mozilla@@QEAA_NAEBVTimeStamp@3@@Z
@@ -12302,7 +12282,6 @@ skcms_TransferFunction_invert
 ?ClearInvalidRegion@PaintedLayer@layers@mozilla@@UEAAXXZ
 ?NotifySubDocInvalidation@nsPresContext@@SAXPEAVContainerLayer@layers@mozilla@@PEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@4@@Z
 ?GetLastTransactionId@ClientLayerManager@layers@mozilla@@UEAA?AU?$BaseTransactionId@VTransactionIdType@layers@mozilla@@@23@XZ
-?EndFrame@LayerScopeAutoFrame@layers@mozilla@@CAXXZ
 ??$TransformAndClipBounds@M@?$Matrix4x4TypedFlagged@UUnknownUnits@gfx@mozilla@@U123@@gfx@mozilla@@QEBA?AU?$RectTyped@UUnknownUnits@gfx@mozilla@@M@12@AEBU312@0@Z
 ??_GColorLayerProperties@layers@mozilla@@UEAAPEAXI@Z
 ?NotifyInvalidation@nsPresContext@@QEAAXU?$BaseTransactionId@VTransactionIdType@layers@mozilla@@@layers@mozilla@@AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@gfx@4@@Z
@@ -12407,7 +12386,6 @@ skcms_TransferFunction_invert
 ?Init@JSWindowActorChild@dom@mozilla@@QEAAXAEBV?$nsTSubstring@D@@PEAVWindowGlobalChild@23@@Z
 ??0MozJSActorCallbacks@dom@mozilla@@QEAA@XZ
 ?Init@MozJSActorCallbacks@dom@mozilla@@QEAA_NAEAVBindingCallContext@23@V?$Handle@VValue@JS@@@JS@@PEBD_N@Z
-?ContentChanged@LayerScope@layers@mozilla@@SAXPEAVTextureHost@23@@Z
 ?SetRoot@BasicLayerManager@layers@mozilla@@UEAAXPEAVLayer@23@@Z
 ?AddBlendModeEffect@LayerComposite@layers@mozilla@@QEAAXAEAUEffectChain@23@@Z
 ?Name@EffectNV12@layers@mozilla@@UEAAPEBDXZ
@@ -12584,7 +12562,6 @@ cairo_user_data_array_fini
 ??1DrawTargetCairo@gfx@mozilla@@UEAA@XZ
 cairo_path_fixed_fini
 ?GetMaskArea@SVGMaskFrame@mozilla@@QEAA?AU?$RectTyped@UUnknownUnits@gfx@mozilla@@N@gfx@2@PEAVnsIFrame@@@Z
-?Add@?$TiledRegion@V?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@@gfx@mozilla@@QEAAXAEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@23@@Z
 ?GetPostFilterInkOverflowRect@SVGUtils@mozilla@@SA?AUnsRect@@PEAVnsIFrame@@AEBU3@@Z
 ?GetAndObserveFilters@SVGObserverUtils@mozilla@@SA?AW4ReferenceState@12@PEAVnsIFrame@@PEAV?$nsTArray@PEAVSVGFilterFrame@mozilla@@@@@Z
 ?GetPostFilterBounds@FilterInstance@mozilla@@SA?AUnsRect@@PEAVnsIFrame@@PEBU?$RectTyped@UUnknownUnits@gfx@mozilla@@N@gfx@2@PEBU3@@Z
@@ -12642,8 +12619,6 @@ encoding_is_ascii_compatible
 ?GetFullyRenderedRegion@LayerComposite@layers@mozilla@@UEAA?AV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@XZ
 ??0CanvasLayerComposite@layers@mozilla@@QEAA@PEAVLayerManagerComposite@12@@Z
 ?RequestAllowFrameRecording@Compositor@layers@mozilla@@UEAAX_N@Z
-?BeginFrame@LayerScopeAutoFrame@layers@mozilla@@CAX_J@Z
-?CheckSendable@LayerScope@layers@mozilla@@SA_NXZ
 ??$DrawGeometry@U?$RectTyped@UUnknownUnits@gfx@mozilla@@M@gfx@mozilla@@@BasicCompositor@layers@mozilla@@AEAAXAEBU?$RectTyped@UUnknownUnits@gfx@mozilla@@M@gfx@2@0AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@42@AEBUEffectChain@12@MAEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@42@0_N@Z
 ?profiler_feature_active@@YA_NI@Z
 ?GetSrcTileRect@TextureImage@gl@mozilla@@MEAA?AU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@XZ
@@ -12781,7 +12756,6 @@ moz_pixman_region32_fini
 pixman_image_fini
 cairo_gstate_restore
 ?Unmap@DataSourceSurface@gfx@mozilla@@UEAAXXZ
-?DrawDiagnostics@Compositor@layers@mozilla@@QEAAXW4DiagnosticFlags@23@AEBV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@63@AEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@63@I@Z
 ?Unlock@BufferTextureHost@layers@mozilla@@UEAAXXZ
 ?MaybeGrabScreenshot@ScreenshotGrabber@layers@mozilla@@QEAAXAEAVWindow@profiler_screenshots@23@AEBU?$IntSizeTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@@Z
 ?EndFrame@Compositor@layers@mozilla@@UEAAXXZ
@@ -13286,8 +13260,6 @@ ZN5style10properties9longhands11caret_color16cascade_property17hc6f704988876f49c
 ?GetEffectiveOperator@layers@mozilla@@YA?AW4CompositionOp@gfx@2@PEAVLayer@12@@Z
 ?HasMultipleChildren@ContainerLayer@layers@mozilla@@QEAA_NXZ
 ?ComputeEffectiveTransformsForChildren@ContainerLayer@layers@mozilla@@IEAAXAEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@gfx@3@@Z
-??_GReadbackLayer@layers@mozilla@@UEAAPEAXI@Z
-??0ContentClientBasic@layers@mozilla@@QEAA@W4BackendType@gfx@2@@Z
 ?GetClipExtents@gfxContext@@QEBA?AU?$RectTyped@UUnknownUnits@gfx@mozilla@@N@gfx@mozilla@@W4ClipExtentsSpace@1@@Z
 ?GetRect@DrawTarget@gfx@mozilla@@UEBA?AU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@23@XZ
 ?ToOutsideIntRect@layers@mozilla@@YA?AU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@gfx@2@AEBU?$RectTyped@UUnknownUnits@gfx@mozilla@@N@42@@Z
@@ -13295,7 +13267,6 @@ ZN5style10properties9longhands11caret_color16cascade_property17hc6f704988876f49c
 ?GetEffectiveTransformForBuffer@Layer@layers@mozilla@@UEBAAEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@gfx@3@XZ
 ?EndEmptyTransaction@BasicLayerManager@layers@mozilla@@UEAA_NW4EndTransactionFlags@LayerManager@23@@Z
 ?TransposeTransform4D@?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@gfx@mozilla@@QEBA?AU?$Point4DTyped@UUnknownUnits@gfx@mozilla@@M@23@AEBU423@@Z
-?Clear@ContentClient@layers@mozilla@@UEAAXXZ
 ?ComputeVisibility@nsDisplayWrapList@@UEAA_NPEAVnsDisplayListBuilder@@PEAVnsRegion@@@Z
 ??$?DUUnknownUnits@gfx@mozilla@@@?$Matrix4x4TypedFlagged@UUnknownUnits@gfx@mozilla@@U123@@gfx@mozilla@@QEBA?AV012@AEBV012@@Z
 ?GetCSSPxToDevPxMatrix@SVGUtils@mozilla@@SA?AV?$BaseMatrix@N@gfx@2@PEAVnsIFrame@@@Z
@@ -15079,18 +15050,12 @@ rust_net_is_valid_scheme
 ?CalculateCompositionSizeForFrame@nsLayoutUtils@@SA?AUnsSize@@PEAVnsIFrame@@_NPEBU2@@Z
 ?GetActualScrollbarSizes@nsHTMLScrollFrame@@UEBA?AUnsMargin@@W4ScrollbarSizesOptions@nsIScrollableFrame@@@Z
 ?AddDisplayItem@nsIFrame@@QEAAXPEAVnsDisplayItemBase@@@Z
-?CreatedColorLayer@ShadowLayerForwarder@layers@mozilla@@QEAAXPEAVShadowableLayer@23@@Z
-?AsLayer@ClientColorLayer@layers@mozilla@@UEAAPEAVLayer@23@XZ
-?SetColor@ColorLayer@layers@mozilla@@UEAAXAEBUDeviceColor@gfx@3@@Z
-?AsHostLayer@ColorLayerComposite@layers@mozilla@@UEAAPEAVHostLayer@23@XZ
 ?GetPostYScale@Layer@layers@mozilla@@UEBAMXZ
 ?GetPostXScale@Layer@layers@mozilla@@UEBAMXZ
 ?ScaleToInsidePixels@nsRegion@@QEBA?AV?$IntRegionTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@MMH@Z
 ?RepositionChild@ContainerLayer@layers@mozilla@@UEAA_NPEAVLayer@23@0@Z
 ?RemoveChild@ContainerLayer@layers@mozilla@@UEAA_NPEAVLayer@23@@Z
 ?RemoveChild@ShadowLayerForwarder@layers@mozilla@@QEAAXPEAVShadowableLayer@23@0@Z
-?ComputeEffectiveTransforms@ColorLayer@layers@mozilla@@UEAAXAEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@gfx@3@@Z
-?GetColor@ColorLayer@layers@mozilla@@UEAAAEBUDeviceColor@gfx@3@XZ
 ??4SpecificLayerAttributes@layers@mozilla@@QEAAAEAV012@$$QEAVColorLayerAttributes@12@@Z
 ??4TimingFunction@layers@mozilla@@QEAAAEAV012@$$QEAV012@@Z
 ??1ShadowableLayer@layers@mozilla@@UEAA@XZ
@@ -15197,15 +15162,12 @@ ZN5style9rule_tree50_$LT$impl$u20$style..rule_tree..core..RuleTree$GT$20update_r
 ?IsFeatureAllowed@FeaturePolicyUtils@dom@mozilla@@SA_NPEAVDocument@23@AEBV?$nsTSubstring@_S@@@Z
 ?AllowsFeature@FeaturePolicy@dom@mozilla@@QEBA_NAEBV?$nsTSubstring@_S@@AEBV?$Optional@V?$nsTSubstring@_S@@@23@@Z
 ?GetMozbrowser@nsGenericHTMLFrameElement@@UEAA?AW4nsresult@@PEA_N@Z
-?RenderLayer@ColorLayerComposite@layers@mozilla@@UEAAXAEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@gfx@3@AEBV?$Maybe@V?$PolygonTyped@UUnknownUnits@gfx@mozilla@@@gfx@mozilla@@@3@@Z
 ??0AutoAddMaskEffect@LayerManagerComposite@layers@mozilla@@QEAA@PEAVLayer@23@AEAUEffectChain@23@@Z
-?GenEffectChain@ColorLayerComposite@layers@mozilla@@UEAAXAEAUEffectChain@23@@Z
 ?FillRectWithMask@layers@mozilla@@YAXPEAVDrawTarget@gfx@2@AEBU?$RectTyped@UUnknownUnits@gfx@mozilla@@M@42@AEBUDeviceColor@42@AEBUDrawOptions@42@PEAVSourceSurface@42@PEBV?$BaseMatrix@M@42@@Z
 moz_cairo_pattern_create_rgba
 cairo_pattern_create_solid
 pixman_implementation_fill
 ?SetLoadTriggeredFromExternal@LoadInfo@net@mozilla@@UEAA?AW4nsresult@@_N@Z
-?DrawDiagnostics@Compositor@layers@mozilla@@QEAAXW4DiagnosticFlags@23@AEBU?$RectTyped@UUnknownUnits@gfx@mozilla@@M@gfx@3@AEBU?$IntRectTyped@UUnknownUnits@gfx@mozilla@@@63@AEBV?$Matrix4x4Typed@UUnknownUnits@gfx@mozilla@@U123@M@63@I@Z
 ?SetOnload@nsGenericHTMLElement@@QEAAXPEAVEventHandlerNonNull@dom@mozilla@@@Z
 cairo_matrix_is_integer_translation
 moz_cairo_region_copy

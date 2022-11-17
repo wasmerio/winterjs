@@ -138,20 +138,33 @@ def install_package(virtualenv_manager, package, ignore_failure=False):
     """
     from pip._internal.req.constructors import install_req_from_line
 
+    # Ensure that we are looking in the right places for packages. This
+    # is required in CI because pip installs in an area that is not in
+    # the search path.
+    venv_site_lib = str(Path(virtualenv_manager.bin_path, "..", "lib").resolve())
+    venv_site_packages = str(
+        Path(
+            venv_site_lib,
+            f"python{sys.version_info.major}.{sys.version_info.minor}",
+            "site-packages",
+        )
+    )
+    if venv_site_packages not in sys.path and ON_TRY:
+        sys.path.insert(0, venv_site_packages)
+
     req = install_req_from_line(package)
     req.check_if_exists(use_user_site=False)
     # already installed, check if it's in our venv
     if req.satisfied_by is not None:
-        venv_site_lib = os.path.abspath(
-            os.path.join(virtualenv_manager.bin_path, "..", "lib")
-        )
         site_packages = os.path.abspath(req.satisfied_by.location)
         if site_packages.startswith(venv_site_lib):
             # already installed in this venv, we can skip
             return True
     with silence():
         try:
-            virtualenv_manager._run_pip(["install", package])
+            subprocess.check_call(
+                [virtualenv_manager.python_path, "-m", "pip", "install", package]
+            )
             return True
         except Exception:
             if not ignore_failure:
@@ -410,11 +423,12 @@ _URL = (
     "{0}/secrets/v1/secret/project"
     "{1}releng{1}gecko{1}build{1}level-{2}{1}conditioned-profiles"
 )
+_WPT_URL = "{0}/secrets/v1/secret/project/perftest/gecko/level-{1}/perftest-login"
 _DEFAULT_SERVER = "https://firefox-ci-tc.services.mozilla.com"
 
 
 @functools.lru_cache()
-def get_tc_secret():
+def get_tc_secret(wpt=False):
     """Returns the Taskcluster secret.
 
     Raises an OSError when not running on try
@@ -431,6 +445,25 @@ def get_tc_secret():
         "%2F",
         os.environ.get("MOZ_SCM_LEVEL", "1"),
     )
+    if wpt:
+        secrets_url = _WPT_URL.format(
+            os.environ.get("TASKCLUSTER_PROXY_URL", _DEFAULT_SERVER),
+            os.environ.get("MOZ_SCM_LEVEL", "1"),
+        )
     res = session.get(secrets_url, timeout=DOWNLOAD_TIMEOUT)
     res.raise_for_status()
     return res.json()["secret"]
+
+
+def get_output_dir(output, folder=None):
+    if output is None:
+        raise Exception("Output path was not provided.")
+
+    result_dir = Path(output)
+    if folder is not None:
+        result_dir = Path(result_dir, folder)
+
+    result_dir.mkdir(parents=True, exist_ok=True)
+    result_dir = result_dir.resolve()
+
+    return result_dir

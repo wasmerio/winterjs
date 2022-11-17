@@ -9,12 +9,12 @@ import subprocess
 import platform
 from distutils.version import StrictVersion
 
-from mozboot.util import get_state_dir
+from mozboot.util import get_tools_dir
 from mozfile import which
 from six import PY3
 
-NODE_MIN_VERSION = StrictVersion("10.23.1")
-NPM_MIN_VERSION = StrictVersion("6.14.10")
+NODE_MIN_VERSION = StrictVersion("12.22.12")
+NPM_MIN_VERSION = StrictVersion("6.14.16")
 
 
 def find_node_paths():
@@ -22,17 +22,12 @@ def find_node_paths():
 
     Returns a list of paths, which includes the build state directory.
     """
-    # Also add in the location to which `mach bootstrap` or
-    # `mach artifact toolchain` installs clang.
-    if "MOZ_FETCHES_DIR" in os.environ:
-        mozbuild_state_dir = os.environ["MOZ_FETCHES_DIR"]
-    else:
-        mozbuild_state_dir = get_state_dir()
+    mozbuild_tools_dir = get_tools_dir()
 
     if platform.system() == "Windows":
-        mozbuild_node_path = os.path.join(mozbuild_state_dir, "node")
+        mozbuild_node_path = os.path.join(mozbuild_tools_dir, "node")
     else:
-        mozbuild_node_path = os.path.join(mozbuild_state_dir, "node", "bin")
+        mozbuild_node_path = os.path.join(mozbuild_tools_dir, "node", "bin")
 
     # We still fallback to the PATH, since on OSes that don't have toolchain
     # artifacts available to download, Node may be coming from $PATH.
@@ -101,7 +96,7 @@ def find_node_executable(
     # "nodejs" is first in the tuple on the assumption that it's only likely to
     # exist on systems (probably linux distros) where there is a program in the path
     # called "node" that does something else.
-    return find_executable(["nodejs", "node"], min_version)
+    return find_executable("node", min_version)
 
 
 def find_npm_executable(min_version=NPM_MIN_VERSION):
@@ -111,30 +106,23 @@ def find_npm_executable(min_version=NPM_MIN_VERSION):
     version tuple. Both tuple entries will be None if a Node executable
     could not be resolved.
     """
-    return find_executable(["npm"], min_version, True)
+    return find_executable("npm", min_version, True)
 
 
-def find_executable(names, min_version, use_node_for_version_check=False):
+def find_executable(name, min_version, use_node_for_version_check=False):
     paths = find_node_paths()
+    exe = which(name, path=paths)
 
-    found_exe = None
-    for name in names:
-        exe = which(name, path=paths)
+    if not exe:
+        return None, None
 
-        if not exe:
-            continue
+    # Verify we can invoke the executable and its version is acceptable.
+    try:
+        version = check_executable_version(exe, use_node_for_version_check)
+    except (subprocess.CalledProcessError, ValueError):
+        return None, None
 
-        if not found_exe:
-            found_exe = exe
+    if version < min_version:
+        return None, None
 
-        # We always verify we can invoke the executable and its version is
-        # sane.
-        try:
-            version = check_executable_version(exe, use_node_for_version_check)
-        except (subprocess.CalledProcessError, ValueError):
-            continue
-
-        if version >= min_version:
-            return exe, version.version
-
-    return found_exe, None
+    return exe, version.version

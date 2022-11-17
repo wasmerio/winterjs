@@ -20,7 +20,6 @@
 #include "jit/SafepointIndex.h"
 #include "jit/Safepoints.h"
 #include "jit/Snapshots.h"
-#include "vm/TraceLoggingTypes.h"
 
 namespace js {
 namespace jit {
@@ -40,10 +39,9 @@ struct ReciprocalMulConstants {
 class CodeGeneratorShared : public LElementVisitor {
   js::Vector<OutOfLineCode*, 0, SystemAllocPolicy> outOfLineCode_;
 
-  MacroAssembler& ensureMasm(MacroAssembler* masm);
+  MacroAssembler& ensureMasm(MacroAssembler* masm, TempAllocator& alloc,
+                             CompileRealm* realm);
   mozilla::Maybe<IonHeapMacroAssembler> maybeMasm_;
-
-  bool useWasmStackArgumentAbi_;
 
  public:
   MacroAssembler& masm;
@@ -54,7 +52,6 @@ class CodeGeneratorShared : public LElementVisitor {
   LBlock* current;
   SnapshotWriter snapshots_;
   RecoverWriter recovers_;
-  mozilla::Maybe<TrampolinePtr> deoptTable_;
 #ifdef DEBUG
   uint32_t pushedArgs_;
 #endif
@@ -69,9 +66,6 @@ class CodeGeneratorShared : public LElementVisitor {
   js::Vector<CodegenSafepointIndex, 0, SystemAllocPolicy> safepointIndices_;
   js::Vector<OsiIndex, 0, SystemAllocPolicy> osiIndices_;
 
-  // Mapping from bailout table ID to an offset in the snapshot buffer.
-  js::Vector<SnapshotOffset, 0, SystemAllocPolicy> bailouts_;
-
   // Allocated data space needed at runtime.
   js::Vector<uint8_t, 0, SystemAllocPolicy> runtimeData_;
 
@@ -84,17 +78,6 @@ class CodeGeneratorShared : public LElementVisitor {
     CodeOffset icOffsetForPush;
   };
   js::Vector<CompileTimeICInfo, 0, SystemAllocPolicy> icInfo_;
-
-#ifdef JS_TRACE_LOGGING
-  struct PatchableTLEvent {
-    CodeOffset offset;
-    const char* event;
-    PatchableTLEvent(CodeOffset offset, const char* event)
-        : offset(offset), event(event) {}
-  };
-  js::Vector<PatchableTLEvent, 0, SystemAllocPolicy> patchableTLEvents_;
-  js::Vector<CodeOffset, 0, SystemAllocPolicy> patchableTLScripts_;
-#endif
 
  protected:
   js::Vector<NativeToBytecode, 0, SystemAllocPolicy> nativeToBytecodeList_;
@@ -110,9 +93,8 @@ class CodeGeneratorShared : public LElementVisitor {
     return gen->isProfilerInstrumentationEnabled();
   }
 
-  bool stringsCanBeInNursery() const { return gen->stringsCanBeInNursery(); }
-
-  bool bigIntsCanBeInNursery() const { return gen->bigIntsCanBeInNursery(); }
+  gc::InitialHeap initialStringHeap() const { return gen->initialStringHeap(); }
+  gc::InitialHeap initialBigIntHeap() const { return gen->initialBigIntHeap(); }
 
  protected:
   // The offset of the first instruction of the OSR entry block from the
@@ -142,48 +124,34 @@ class CodeGeneratorShared : public LElementVisitor {
   // The initial size of the frame in bytes. These are bytes beyond the
   // constant header present for every Ion frame, used for pre-determined
   // spills.
-  int32_t frameDepth_;
+  uint32_t frameDepth_;
 
-  // Frame class this frame's size falls into (see IonFrame.h).
-  FrameSizeClass frameClass_;
+  // Offset in bytes to the incoming arguments, relative to the frame pointer.
+  uint32_t offsetOfArgsFromFP_ = 0;
 
-  // For arguments to the current function.
-  inline int32_t ArgToStackOffset(int32_t slot) const;
-
-  inline int32_t SlotToStackOffset(int32_t slot) const;
-  inline int32_t StackOffsetToSlot(int32_t offset) const;
+  // Offset in bytes of the stack region reserved for passed argument Values.
+  uint32_t offsetOfPassedArgSlots_ = 0;
 
   // For argument construction for calls. Argslots are Value-sized.
-  inline int32_t StackOffsetOfPassedArg(int32_t slot) const;
+  inline Address AddressOfPassedArg(uint32_t slot) const;
+  inline uint32_t UnusedStackBytesForCall(uint32_t numArgSlots) const;
 
-  inline int32_t ToStackOffset(LAllocation a) const;
-  inline int32_t ToStackOffset(const LAllocation* a) const;
-
+  template <BaseRegForAddress Base = BaseRegForAddress::Default>
   inline Address ToAddress(const LAllocation& a) const;
+
+  template <BaseRegForAddress Base = BaseRegForAddress::Default>
   inline Address ToAddress(const LAllocation* a) const;
 
   static inline Address ToAddress(Register elements, const LAllocation* index,
                                   Scalar::Type type,
                                   int32_t offsetAdjustment = 0);
 
-  // Returns the offset from FP to address incoming stack arguments
-  // when we use wasm stack argument abi (useWasmStackArgumentAbi()).
-  inline int32_t ToFramePointerOffset(LAllocation a) const;
-  inline int32_t ToFramePointerOffset(const LAllocation* a) const;
-
-  uint32_t frameSize() const {
-    return frameClass_ == FrameSizeClass::None() ? frameDepth_
-                                                 : frameClass_.frameSize();
-  }
+  uint32_t frameSize() const { return frameDepth_; }
 
  protected:
   bool addNativeToBytecodeEntry(const BytecodeSite* site);
   void dumpNativeToBytecodeEntries();
   void dumpNativeToBytecodeEntry(uint32_t idx);
-
-  void setUseWasmStackArgumentAbi() { useWasmStackArgumentAbi_ = true; }
-
-  bool useWasmStackArgumentAbi() const { return useWasmStackArgumentAbi_; }
 
  public:
   MIRGenerator& mirGen() const { return *gen; }
@@ -238,11 +206,6 @@ class CodeGeneratorShared : public LElementVisitor {
   void encodeAllocation(LSnapshot* snapshot, MDefinition* def,
                         uint32_t* startIndex);
 
-  // Attempts to assign a BailoutId to a snapshot, if one isn't already set.
-  // If the bailout table is full, this returns false, which is not a fatal
-  // error (the code generator may use a slower bailout mechanism).
-  bool assignBailoutId(LSnapshot* snapshot);
-
   // Encode all encountered safepoints in CG-order, and resolve |indices| for
   // safepoint offsets.
   bool encodeSafepoints();
@@ -272,7 +235,7 @@ class CodeGeneratorShared : public LElementVisitor {
   OutOfLineCode* oolTruncateDouble(
       FloatRegister src, Register dest, MInstruction* mir,
       wasm::BytecodeOffset callOffset = wasm::BytecodeOffset(),
-      bool preserveTls = false);
+      bool preserveInstance = false);
   void emitTruncateDouble(FloatRegister src, Register dest, MInstruction* mir);
   void emitTruncateFloat32(FloatRegister src, Register dest, MInstruction* mir);
 
@@ -433,56 +396,7 @@ class CodeGeneratorShared : public LElementVisitor {
 
   bool omitOverRecursedCheck() const;
 
-#ifdef JS_TRACE_LOGGING
- protected:
-  void emitTracelogScript(bool isStart);
-  void emitTracelogTree(bool isStart, uint32_t textId);
-  void emitTracelogTree(bool isStart, const char* text,
-                        TraceLoggerTextId enabledTextId);
-#endif
-
  public:
-#ifdef JS_TRACE_LOGGING
-  void emitTracelogScriptStart() { emitTracelogScript(/* isStart =*/true); }
-  void emitTracelogScriptStop() { emitTracelogScript(/* isStart =*/false); }
-  void emitTracelogStartEvent(uint32_t textId) {
-    emitTracelogTree(/* isStart =*/true, textId);
-  }
-  void emitTracelogStopEvent(uint32_t textId) {
-    emitTracelogTree(/* isStart =*/false, textId);
-  }
-  // Log an arbitrary text. The TraceloggerTextId is used to toggle the
-  // logging on and off.
-  // Note: the text is not copied and need to be kept alive until linking.
-  void emitTracelogStartEvent(const char* text,
-                              TraceLoggerTextId enabledTextId) {
-    emitTracelogTree(/* isStart =*/true, text, enabledTextId);
-  }
-  void emitTracelogStopEvent(const char* text,
-                             TraceLoggerTextId enabledTextId) {
-    emitTracelogTree(/* isStart =*/false, text, enabledTextId);
-  }
-  void emitTracelogIonStart() {
-    emitTracelogScriptStart();
-    emitTracelogStartEvent(TraceLogger_IonMonkey);
-  }
-  void emitTracelogIonStop() {
-    emitTracelogStopEvent(TraceLogger_IonMonkey);
-    emitTracelogScriptStop();
-  }
-#else
-  void emitTracelogScriptStart() {}
-  void emitTracelogScriptStop() {}
-  void emitTracelogStartEvent(uint32_t textId) {}
-  void emitTracelogStopEvent(uint32_t textId) {}
-  void emitTracelogStartEvent(const char* text,
-                              TraceLoggerTextId enabledTextId) {}
-  void emitTracelogStopEvent(const char* text,
-                             TraceLoggerTextId enabledTextId) {}
-  void emitTracelogIonStart() {}
-  void emitTracelogIonStop() {}
-#endif
-
   bool isGlobalObject(JSObject* object);
 };
 

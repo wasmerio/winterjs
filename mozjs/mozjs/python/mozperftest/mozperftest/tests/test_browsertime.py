@@ -22,6 +22,32 @@ from mozperftest.utils import silence, temporary_env
 
 HERE = os.path.dirname(__file__)
 
+# Combine these dictionaries as required for mocking the
+# Browsertime installation related methods
+BTIME_PKG_DEP = {
+    "devDependencies": {"browsertime": "89771a1d6be54114db190427dbc281582cba3d47"}
+}
+BTIME_PKG_NO_INSTALL = {
+    "packages": {
+        "node_modules/browsertime": {
+            "resolved": (
+                "browsertime@https://github.com/sitespeedio/browsertime"
+                "/tarball/89771a1d6be54114db190427dbc281582cba3d47"
+            )
+        }
+    }
+}
+BTIME_PKG_REINSTALL = {
+    "packages": {
+        "node_modules/browsertime": {
+            "resolved": (
+                "browsertime@https://github.com/sitespeedio/browsertime"
+                "/tarball/98747854be54114db190427dbc281582cba3d47"
+            )
+        }
+    }
+}
+
 
 def fetch(self, url):
     return os.path.join(HERE, "fetched_artifact.zip")
@@ -127,21 +153,7 @@ def test_browsertime_no_reinstall():
 
     with mock.patch(
         "mozperftest.test.browsertime.runner.pathlib.Path.open",
-        build_mock_open(
-            [
-                {
-                    "devDependencies": {
-                        "browsertime": "89771a1d6be54114db190427dbc281582cba3d47"
-                    }
-                },
-                {
-                    "_from": (
-                        "browsertime@https://github.com/sitespeedio/browsertime"
-                        "/tarball/89771a1d6be54114db190427dbc281582cba3d47"
-                    )
-                },
-            ]
-        ),
+        build_mock_open([BTIME_PKG_DEP, BTIME_PKG_NO_INSTALL]),
     ), mock.patch("mozperftest.test.browsertime.runner.json.load", new=mocked_jsonload):
         browser = env.layers[TEST]
         btime_layer = browser.layers[0]
@@ -163,21 +175,7 @@ def test_browsertime_should_reinstall():
 
     with mock.patch(
         "mozperftest.test.browsertime.runner.pathlib.Path.open",
-        build_mock_open(
-            [
-                {
-                    "devDependencies": {
-                        "browsertime": "89771a1d6be54114db190427dbc281582cba3d47"
-                    }
-                },
-                {
-                    "_from": (
-                        "browsertime@https://github.com/sitespeedio/browsertime"
-                        "/tarball/98747854be54114db190427dbc281582cba3d47"
-                    )
-                },
-            ]
-        ),
+        build_mock_open([BTIME_PKG_DEP, BTIME_PKG_REINSTALL]),
     ), mock.patch("mozperftest.test.browsertime.runner.json.load", new=mocked_jsonload):
         browser = env.layers[TEST]
         btime_layer = browser.layers[0]
@@ -250,6 +248,43 @@ def test_browser_desktop(*mocked):
     cmd = " ".join(mach_cmd.run_process.call_args[0][0])
     # check that --firefox.binaryPath is set automatically
     assert "--firefox.binaryPath" in cmd
+
+
+@mock.patch("mozperftest.test.browsertime.runner.install_package")
+@mock.patch(
+    "mozperftest.test.noderunner.NodeRunner.verify_node_install", new=lambda x: True
+)
+@mock.patch("mozbuild.artifact_cache.ArtifactCache.fetch", new=fetch)
+@mock.patch(
+    "mozperftest.test.browsertime.runner.BrowsertimeRunner._setup_node_packages",
+    new=lambda x, y: None,
+)
+def test_existing_results(*mocked):
+    mach_cmd, metadata, env = get_running_env(
+        browsertime_existing_results="/some/path",
+        tests=[EXAMPLE_TEST],
+    )
+    browser = env.layers[TEST]
+    sys = env.layers[SYSTEM]
+
+    try:
+        with sys as s, browser as b, silence():
+            # just checking that the setup_helper property gets
+            # correctly initialized
+            browsertime = browser.layers[-1]
+            assert browsertime.setup_helper is not None
+            helper = browsertime.setup_helper
+            assert browsertime.setup_helper is helper
+
+            m = b(s(metadata))
+            results = m.get_results()
+            assert len(results) == 1
+            assert results[0]["results"] == "/some/path"
+            assert results[0]["name"] == "Example"
+    finally:
+        shutil.rmtree(mach_cmd._mach_context.state_dir)
+
+    assert mach_cmd.run_process.call_count == 0
 
 
 def test_add_options():

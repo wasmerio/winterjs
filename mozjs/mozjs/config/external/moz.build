@@ -9,9 +9,15 @@ external_dirs = []
 DIRS += [
     "lgpllibs",
     "rlbox",
-    "rlbox_lucet_sandbox",
     "sqlite",
 ]
+
+if CONFIG["MOZ_USING_WASM_SANDBOXING"]:
+    DIRS += [
+        "rlbox_wasm2c_sandbox",
+        "wasm2c_sandbox_compiler",
+    ]
+
 if not CONFIG["MOZ_SYSTEM_JPEG"]:
     external_dirs += ["media/libjpeg"]
 
@@ -20,6 +26,9 @@ DIRS += [
     "/third_party/msgpack",
     "/third_party/sipcc",
 ]
+
+if CONFIG["MOZ_ICU4X"]:
+    DIRS += ["icu4x"]
 
 # There's no "native" brotli or woff2 yet, but probably in the future...
 external_dirs += ["modules/brotli"]
@@ -32,9 +41,6 @@ if CONFIG["MOZ_VORBIS"]:
 
 if CONFIG["MOZ_TREMOR"]:
     external_dirs += ["media/libtremor"]
-
-if CONFIG["MOZ_WEBM_ENCODER"]:
-    external_dirs += ["media/libmkv"]
 
 if not CONFIG["MOZ_SYSTEM_LIBVPX"]:
     external_dirs += ["media/libvpx"]
@@ -55,9 +61,13 @@ if CONFIG["CPU_ARCH"] == "arm":
 if CONFIG["MOZ_FFVPX"]:
     external_dirs += ["media/ffvpx"]
 
+if CONFIG["MOZ_JXL"]:
+    external_dirs += ["media/libjxl", "media/highway"]
+
 external_dirs += [
     "media/kiss_fft",
     "media/libcubeb",
+    "media/libmkv",
     "media/libnestegg",
     "media/libogg",
     "media/libopus",

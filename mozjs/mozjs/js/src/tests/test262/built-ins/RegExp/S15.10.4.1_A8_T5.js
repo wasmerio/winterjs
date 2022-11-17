@@ -11,29 +11,10 @@ description: >
 
 var __re = new RegExp(new Object("abc{1}"), {toString:function(){return "";}});
 
-//CHECK#1
-if (__re.ignoreCase !== false) {
-	$ERROR('#1: __re = new RegExp(new Object("abc{1}"), {toString:function(){return ""; __re.ignoreCase === false. Actual: ' + (__re.ignoreCase));
-}
-
-//CHECK#2
-if (__re.multiline !== false) {
-	$ERROR('#2: __re = new RegExp(new Object("abc{1}"), {toString:function(){return ""; __re.multiline === false. Actual: ' + (__re.multiline));
-}
-
-//CHECK#3
-if (__re.global !== false) {
-	$ERROR('#3: __re = new RegExp(new Object("abc{1}"), {toString:function(){return ""; __re.global === false. Actual: ' + (__re.global));
-}
-
-//CHECK#4
-if (__re.lastIndex !== 0) {
-	$ERROR('#4: __re = new RegExp(new Object("abc{1}"), {toString:function(){return ""; __re.lastIndex === 0. Actual: ' + (__re.lastIndex));
-}
-
-//CHECK#5
-if (typeof __re.source === "undefined") {
-	$ERROR('#5: __re = new RegExp(new Object("abc{1}"), {toString:function(){return ""; typeof __re.source !== "undefined"');
-}
+assert.sameValue(__re.ignoreCase, false, 'The value of __re.ignoreCase is expected to be false');
+assert.sameValue(__re.multiline, false, 'The value of __re.multiline is expected to be false');
+assert.sameValue(__re.global, false, 'The value of __re.global is expected to be false');
+assert.sameValue(__re.lastIndex, 0, 'The value of __re.lastIndex is expected to be 0');
+assert.notSameValue(typeof __re.source, "undefined", 'The value of typeof __re.source is not "undefined"');
 
 reportCompare(0, 0);

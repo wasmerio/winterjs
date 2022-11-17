@@ -11,8 +11,9 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
-from mozbuild.util import ensure_subprocess_env
+from typing import Optional
 from mozprocess.processhandler import ProcessHandlerMixin
 
 from .logging import LoggingMixin
@@ -24,7 +25,11 @@ from .logging import LoggingMixin
 if "SHELL" in os.environ:
     _current_shell = os.environ["SHELL"]
 elif "MOZILLABUILD" in os.environ:
-    _current_shell = os.environ["MOZILLABUILD"] + "/msys/bin/sh.exe"
+    mozillabuild = os.environ["MOZILLABUILD"]
+    if (Path(mozillabuild) / "msys2").exists():
+        _current_shell = mozillabuild + "/msys2/usr/bin/sh.exe"
+    else:
+        _current_shell = mozillabuild + "/msys/bin/sh.exe"
 elif "COMSPEC" in os.environ:
     _current_shell = os.environ["COMSPEC"]
 elif sys.platform != "win32":
@@ -35,7 +40,10 @@ else:
 
 _in_msys = False
 
-if os.environ.get("MSYSTEM", None) in ("MINGW32", "MINGW64"):
+if (
+    os.environ.get("MSYSTEM", None) in ("MINGW32", "MINGW64")
+    or "MOZILLABUILD" in os.environ
+):
     _in_msys = True
 
     if not _current_shell.lower().endswith(".exe"):
@@ -48,7 +56,7 @@ class ProcessExecutionMixin(LoggingMixin):
     def run_process(
         self,
         args=None,
-        cwd=None,
+        cwd: Optional[str] = None,
         append_env=None,
         explicit_env=None,
         log_name=None,
@@ -127,7 +135,6 @@ class ProcessExecutionMixin(LoggingMixin):
 
         self.log(logging.DEBUG, "process", {"env": str(use_env)}, "Environment: {env}")
 
-        use_env = ensure_subprocess_env(use_env)
         if pass_thru:
             proc = subprocess.Popen(args, cwd=cwd, env=use_env, close_fds=False)
             status = None

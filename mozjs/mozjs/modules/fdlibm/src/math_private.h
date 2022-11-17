@@ -21,9 +21,18 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include "mozilla/EndianUtils.h"
+
 #include "fdlibm.h"
 
-#include "mozilla/EndianUtils.h"
+/*
+ * Emulate FreeBSD internal double types.
+ * Adapted from https://github.com/freebsd/freebsd-src/search?q=__double_t
+ */
+
+typedef double      __double_t;
+typedef __double_t  double_t;
+typedef float       __float_t;
 
 /*
  * The original fdlibm code used statements like:
@@ -85,11 +94,6 @@ typedef union
 } ieee_quad_shape_type;
 
 #endif
-
-/*
- * A union which permits us to convert between a double and two 32 bit
- * ints.
- */
 
 #if MOZ_BIG_ENDIAN()
 
@@ -473,7 +477,7 @@ do {								\
  * or by having |c| a few percent smaller than |a|.  Pre-normalization of
  * (a, b) may help.
  *
- * This is is a variant of an algorithm of Kahan (see Knuth (1981) 4.2.2
+ * This is a variant of an algorithm of Kahan (see Knuth (1981) 4.2.2
  * exercise 19).  We gain considerable efficiency by requiring the terms to
  * be sufficiently normalized and sufficiently increasing.
  */
@@ -591,6 +595,86 @@ CMPLXL(long double x, long double y)
 
 #endif /* _COMPLEX_H */
  
+/*
+ * The rnint() family rounds to the nearest integer for a restricted range
+ * range of args (up to about 2**MANT_DIG).  We assume that the current
+ * rounding mode is FE_TONEAREST so that this can be done efficiently.
+ * Extra precision causes more problems in practice, and we only centralize
+ * this here to reduce those problems, and have not solved the efficiency
+ * problems.  The exp2() family uses a more delicate version of this that
+ * requires extracting bits from the intermediate value, so it is not
+ * centralized here and should copy any solution of the efficiency problems.
+ */
+
+static inline double
+rnint(__double_t x)
+{
+	/*
+	 * This casts to double to kill any extra precision.  This depends
+	 * on the cast being applied to a double_t to avoid compiler bugs
+	 * (this is a cleaner version of STRICT_ASSIGN()).  This is
+	 * inefficient if there actually is extra precision, but is hard
+	 * to improve on.  We use double_t in the API to minimise conversions
+	 * for just calling here.  Note that we cannot easily change the
+	 * magic number to the one that works directly with double_t, since
+	 * the rounding precision is variable at runtime on x86 so the
+	 * magic number would need to be variable.  Assuming that the
+	 * rounding precision is always the default is too fragile.  This
+	 * and many other complications will move when the default is
+	 * changed to FP_PE.
+	 */
+	return ((double)(x + 0x1.8p52) - 0x1.8p52);
+}
+
+/*
+ * irint() and i64rint() give the same result as casting to their integer
+ * return type provided their arg is a floating point integer.  They can
+ * sometimes be more efficient because no rounding is required.
+ */
+#if defined(amd64) || defined(__i386__)
+#define	irint(x)						\
+    (sizeof(x) == sizeof(float) &&				\
+    sizeof(__float_t) == sizeof(long double) ? irintf(x) :	\
+    sizeof(x) == sizeof(double) &&				\
+    sizeof(__double_t) == sizeof(long double) ? irintd(x) :	\
+    sizeof(x) == sizeof(long double) ? irintl(x) : (int)(x))
+#else
+#define	irint(x)	((int)(x))
+#endif
+
+#define	i64rint(x)	((int64_t)(x))	/* only needed for ld128 so not opt. */
+
+#if defined(__i386__)
+static __inline int
+irintf(float x)
+{
+	int n;
+
+	__asm("fistl %0" : "=m" (n) : "t" (x));
+	return (n);
+}
+
+static __inline int
+irintd(double x)
+{
+	int n;
+
+	__asm("fistl %0" : "=m" (n) : "t" (x));
+	return (n);
+}
+#endif
+
+#if defined(__amd64__) || defined(__i386__)
+static __inline int
+irintl(long double x)
+{
+	int n;
+
+	__asm("fistl %0" : "=m" (n) : "t" (x));
+	return (n);
+}
+#endif
+
 #ifdef DEBUG
 #if defined(__amd64__) || defined(__i386__)
 #define	breakpoint()	asm("int $3")
@@ -790,6 +874,9 @@ CMPLXL(long double x, long double y)
 #define asin fdlibm::asin
 #define atan fdlibm::atan
 #define atan2 fdlibm::atan2
+#define cos fdlibm::cos
+#define sin fdlibm::sin
+#define tan fdlibm::tan
 #define cosh fdlibm::cosh
 #define sinh fdlibm::sinh
 #define tanh fdlibm::tanh

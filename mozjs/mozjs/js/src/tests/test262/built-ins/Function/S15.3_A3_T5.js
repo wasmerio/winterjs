@@ -14,28 +14,15 @@ description: >
 var f = Function.call(this, "return this.planet;");
 var g = Function.call(this, "return this.color;");
 
-//CHECK#1
-if (f() !== undefined) {
-  $ERROR('#2: ');
-}
+assert.sameValue(f(), undefined, 'f() returns undefined');
 
 var planet = "mars";
 
-//CHECK#2
-if (f() !== "mars") {
-  $ERROR('#2: ');
-}
-
-//CHECK#3
-if (g() !== undefined) {
-  $ERROR('#3: ');
-}
+assert.sameValue(f(), "mars", 'f() must return "mars"');
+assert.sameValue(g(), undefined, 'g() returns undefined');
 
 this.color = "red";
 
-//CHECK#4
-if (g() !== "red") {
-  $ERROR('#4: ');
-}
+assert.sameValue(g(), "red", 'g() must return "red"');
 
 reportCompare(0, 0);

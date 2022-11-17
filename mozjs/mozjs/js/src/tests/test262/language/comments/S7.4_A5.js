@@ -11,9 +11,6 @@ description: >
     characters
 ---*/
 
-//CHECK
-var errorCount = 0;
-var count = 0;
 var hex = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"];
 for (var i1 = 0; i1 < 16; i1++) {
   for (var i2 = 0; i2 < 16; i2++) {
@@ -27,27 +24,19 @@ for (var i1 = 0; i1 < 16; i1++) {
           eval("//var " + xx + "yy = -1");
           if (LineTerminators !== true) {
             if (yy !== 0) {
-              $ERROR('#' + uu + ' ');
-              errorCount++;
+              throw new Test262Error('#' + uu + ' ');
             }
           } else {
             if (yy !== -1) {
-              $ERROR('#' + uu + ' ');
-              errorCount++;
+              throw new Test262Error('#' + uu + ' ');
             }
           }
         } catch (e){
-          $ERROR('#' + uu + ' ');
-          errorCount++;
+          throw new Test262Error('#' + uu + ' ');
         }
-        count++;
       }
     }
   }
-}
-
-if (errorCount > 0) {
-  $ERROR('Total error: ' + errorCount + ' bad Unicode character in ' + count);
 }
 
 reportCompare(0, 0);

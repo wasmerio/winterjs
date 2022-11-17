@@ -8,11 +8,9 @@
 
 #include "jit/CompileInfo.h"
 #include "jit/InlineScriptTree.h"
-#include "jit/Ion.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
-#include "wasm/WasmTypes.h"
 
 using namespace js;
 using namespace js::jit;
@@ -192,6 +190,9 @@ MBasicBlock* MBasicBlock::NewSplitEdge(MIRGraph& graph, MBasicBlock* pred,
     if (!split) {
       return nullptr;
     }
+
+    // Insert the split edge block in-between.
+    split->end(MGoto::New(graph.alloc(), succ));
   } else {
     // The predecessor has a PC, this is a Warp compilation.
     MResumePoint* succEntry = succ->entryResumePoint();
@@ -221,11 +222,14 @@ MBasicBlock* MBasicBlock::NewSplitEdge(MIRGraph& graph, MBasicBlock* pred,
 
     // Create a resume point using our initial stack position.
     MResumePoint* splitEntry = new (graph.alloc())
-        MResumePoint(split, succEntry->pc(), MResumePoint::ResumeAt);
+        MResumePoint(split, succEntry->pc(), ResumeMode::ResumeAt);
     if (!splitEntry->init(graph.alloc())) {
       return nullptr;
     }
     split->entryResumePoint_ = splitEntry;
+
+    // Insert the split edge block in-between.
+    split->end(MGoto::New(graph.alloc(), succ));
 
     // The target entry resume point might have phi operands, keep the
     // operands of the phi coming from our edge.
@@ -235,9 +239,16 @@ MBasicBlock* MBasicBlock::NewSplitEdge(MIRGraph& graph, MBasicBlock* pred,
       MDefinition* def = succEntry->getOperand(i);
       // This early in the pipeline, we have no recover instructions in
       // any entry resume point.
-      MOZ_ASSERT_IF(def->block() == succ, def->isPhi());
       if (def->block() == succ) {
-        def = def->toPhi()->getOperand(succEdgeIdx);
+        if (def->isPhi()) {
+          def = def->toPhi()->getOperand(succEdgeIdx);
+        } else {
+          // The phi-operand may already have been optimized out.
+          MOZ_ASSERT(def->isConstant());
+          MOZ_ASSERT(def->type() == MIRType::MagicOptimizedOut);
+
+          def = split->optimizedOutConstant(graph.alloc());
+        }
       }
 
       splitEntry->initOperand(i, def);
@@ -251,9 +262,6 @@ MBasicBlock* MBasicBlock::NewSplitEdge(MIRGraph& graph, MBasicBlock* pred,
   }
 
   split->setLoopDepth(succ->loopDepth());
-
-  // Insert the split edge block in-between.
-  split->end(MGoto::New(graph.alloc(), succ));
 
   graph.insertBlockAfter(pred, split);
 
@@ -322,10 +330,74 @@ MBasicBlock* MBasicBlock::New(MIRGraph& graph, const CompileInfo& info,
   return block;
 }
 
+// Create an empty and unreachable block which jumps to |header|. Used
+// when the normal entry into a loop is removed (but the loop is still
+// reachable due to OSR) to preserve the invariant that every loop
+// header has two predecessors, which is needed for building the
+// dominator tree. The new block is inserted immediately before the
+// header, which preserves the graph ordering (post-order/RPO). These
+// blocks will all be removed before lowering.
+MBasicBlock* MBasicBlock::NewFakeLoopPredecessor(MIRGraph& graph,
+                                                 MBasicBlock* header) {
+  MOZ_ASSERT(graph.osrBlock());
+
+  MBasicBlock* backedge = header->backedge();
+  MBasicBlock* fake = MBasicBlock::New(graph, header->info(), nullptr,
+                                       MBasicBlock::FAKE_LOOP_PRED);
+  if (!fake) {
+    return nullptr;
+  }
+
+  graph.insertBlockBefore(header, fake);
+  fake->setUnreachable();
+
+  // Create fake defs to use as inputs for any phis in |header|.
+  for (MPhiIterator iter(header->phisBegin()), end(header->phisEnd());
+       iter != end; ++iter) {
+    MPhi* phi = *iter;
+    auto* fakeDef = MUnreachableResult::New(graph.alloc(), phi->type());
+    fake->add(fakeDef);
+    if (!phi->addInputSlow(fakeDef)) {
+      return nullptr;
+    }
+  }
+
+  fake->end(MGoto::New(graph.alloc(), header));
+
+  if (!header->addPredecessorWithoutPhis(fake)) {
+    return nullptr;
+  }
+
+  // The backedge is always the last predecessor, but we have added a
+  // new pred. Restore |backedge| as |header|'s loop backedge.
+  header->clearLoopHeader();
+  header->setLoopHeader(backedge);
+
+  return fake;
+}
+
+void MIRGraph::removeFakeLoopPredecessors() {
+  MOZ_ASSERT(osrBlock());
+  size_t id = 0;
+  for (ReversePostorderIterator it = rpoBegin(); it != rpoEnd();) {
+    MBasicBlock* block = *it++;
+    if (block->isFakeLoopPred()) {
+      MOZ_ASSERT(block->unreachable());
+      MBasicBlock* succ = block->getSingleSuccessor();
+      succ->removePredecessor(block);
+      removeBlock(block);
+    } else {
+      block->setId(id++);
+    }
+  }
+#ifdef DEBUG
+  canBuildDominators_ = false;
+#endif
+}
+
 MBasicBlock::MBasicBlock(MIRGraph& graph, const CompileInfo& info,
                          BytecodeSite* site, Kind kind)
-    : unreachable_(false),
-      graph_(graph),
+    : graph_(graph),
       info_(info),
       predecessors_(graph.alloc()),
       stackPosition_(info_.firstStackSlot()),
@@ -344,14 +416,8 @@ MBasicBlock::MBasicBlock(MIRGraph& graph, const CompileInfo& info,
       immediatelyDominated_(graph.alloc()),
       immediateDominator_(nullptr),
       trackedSite_(site),
-      hitCount_(0),
-      hitState_(HitState::NotDefined)
-#if defined(JS_ION_PERF) || defined(DEBUG)
-      ,
       lineno_(0u),
-      columnIndex_(0u)
-#endif
-{
+      columnIndex_(0u) {
   MOZ_ASSERT(trackedSite_, "trackedSite_ is non-nullptr");
 }
 
@@ -402,7 +468,7 @@ bool MBasicBlock::inherit(TempAllocator& alloc, size_t stackDepth,
 
   // Create a resume point using our initial stack state.
   entryResumePoint_ =
-      new (alloc) MResumePoint(this, pc(), MResumePoint::ResumeAt);
+      new (alloc) MResumePoint(this, pc(), ResumeMode::ResumeAt);
   if (!entryResumePoint_->init(alloc)) {
     return false;
   }
@@ -452,7 +518,7 @@ bool MBasicBlock::initEntrySlots(TempAllocator& alloc) {
 
   // Create a resume point using our initial stack state.
   entryResumePoint_ =
-      MResumePoint::New(alloc, this, pc(), MResumePoint::ResumeAt);
+      MResumePoint::New(alloc, this, pc(), ResumeMode::ResumeAt);
   if (!entryResumePoint_) {
     return false;
   }
@@ -556,6 +622,7 @@ void MBasicBlock::discardResumePoint(
   if (refType & RefType_DiscardOperands) {
     rp->releaseUses();
   }
+  rp->setDiscarded();
 #ifdef DEBUG
   MResumePointIterator iter = resumePointsBegin();
   while (*iter != rp) {
@@ -608,14 +675,6 @@ void MBasicBlock::discardIgnoreOperands(MInstruction* ins) {
 
   prepareForDiscard(ins, RefType_IgnoreOperands);
   instructions_.remove(ins);
-}
-
-void MBasicBlock::discardDef(MDefinition* at) {
-  if (at->isPhi()) {
-    at->block()->discardPhi(at->toPhi());
-  } else {
-    at->block()->discard(at->toInstruction());
-  }
 }
 
 void MBasicBlock::discardAllInstructions() {
@@ -736,13 +795,13 @@ void MBasicBlock::flagOperandsOfPrunedBranches(MInstruction* ins) {
   // SplitEdge blocks.  SplitEdge blocks only have a Goto instruction before
   // Range Analysis phase.  In adjustInputs, we are manipulating instructions
   // which have a TypePolicy.  So, as a Goto has no operand and no type
-  // policy, the entry resume point should exists.
+  // policy, the entry resume point should exist.
   MOZ_ASSERT(rp);
 
-  // Flag all operand as being potentially used.
+  // Flag all operands as being potentially used.
   while (rp) {
     for (size_t i = 0, end = rp->numOperands(); i < end; i++) {
-      rp->getOperand(i)->setUseRemovedUnchecked();
+      rp->getOperand(i)->setImplicitlyUsedUnchecked();
     }
     rp = rp->caller();
   }

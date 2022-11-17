@@ -1,4 +1,4 @@
-// |jit-test| --enable-private-fields; --enable-private-methods
+// |jit-test|
 
 // Test that the sourceStart/sourceEnd values of scripts match the current
 // expectations. These values are internal details and slightly arbitrary so
@@ -153,7 +153,6 @@ if (!isLcovEnabled()) {
                      `            ^--------------`);
     testSourceExtent(`let foo = (a = (b = c => 1) => 2) => 3;`,
                      `                    ^-----^            `,
-                     `                    ^-----^            `,
                      `               ^----------------^      `,
                      `          ^---------------------------^`);
 }
@@ -293,7 +292,6 @@ testSourceExtent(`class C { static #field = 1 }`,
 // NOTE: These generate both a field initializer lambda and a method script.
 testSourceExtent(` class C { #field() { } }`,
                  `                 ^-----^ `,
-                 `           ^-----------^ `,
                  ` ^-----------------------`);
 testSourceExtent(` class C { get #field() { } }`,
                  `                     ^-----^ `,
@@ -305,15 +303,12 @@ testSourceExtent(` class C { set #field(v) { } }`,
                  ` ^----------------------------`);
 testSourceExtent(` class C { * #field() { } }`,
                  `                   ^-----^ `,
-                 `           ^-------------^ `,
                  ` ^-------------------------`);
 testSourceExtent(` class C { async #field() { } }`,
                  `                       ^-----^ `,
-                 `           ^-----------------^ `,
                  ` ^-----------------------------`);
 testSourceExtent(` class C { async * #field() { } }`,
                  `                         ^-----^ `,
-                 `           ^-------------------^ `,
                  ` ^-------------------------------`);
 
 // Private static class methods.
@@ -335,3 +330,8 @@ testSourceExtent(` class C { static get #prop() { } }`,
 testSourceExtent(` class C { static set #prop(v) { } }`,
                  `                           ^------^ `,
                  ` ^----------------------------------`);
+
+// Static Class Blocks
+testSourceExtent(` class C { static { 10; } }`,
+                 `           ^-------------^ `,
+                 ` ^-------------------------`);

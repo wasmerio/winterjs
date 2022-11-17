@@ -7,6 +7,8 @@ from __future__ import absolute_import
 import os
 import re
 
+from geckoprocesstypes import process_types
+
 
 def _get_default_logger():
     from mozlog import get_default_logger
@@ -55,6 +57,7 @@ def process_single_leak_file(
     leakedObjectAnalysis = []
     leakedObjectNames = []
     recordLeakedObjects = False
+    header = []
     log.info("leakcheck | Processing leak log file %s" % leakLogFileName)
 
     with open(leakLogFileName, "r") as leaks:
@@ -65,16 +68,28 @@ def process_single_leak_file(
             if not matches:
                 # eg: the leak table header row
                 strippedLine = line.rstrip()
-                log.info(stackFixer(strippedLine) if stackFixer else strippedLine)
+                logLine = stackFixer(strippedLine) if stackFixer else strippedLine
+                if recordLeakedObjects:
+                    log.info(logLine)
+                else:
+                    header.append(logLine)
                 continue
             name = matches.group("name").rstrip()
             size = int(matches.group("size"))
             bytesLeaked = int(matches.group("bytesLeaked"))
             numLeaked = int(matches.group("numLeaked"))
-            # Output the raw line from the leak log table if it is the TOTAL row,
-            # or is for an object row that has been leaked.
-            if numLeaked != 0 or name == "TOTAL":
+            # Output the raw line from the leak log table if it is for an object
+            # row that has been leaked.
+            if numLeaked != 0:
+                # If this is the TOTAL line, first output the header lines.
+                if name == "TOTAL":
+                    for logLine in header:
+                        log.info(logLine)
                 log.info(line.rstrip())
+            # If this is the TOTAL line, we're done with the header lines,
+            # whether or not it leaked.
+            if name == "TOTAL":
+                header = []
             # Analyse the leak log, but output later or it will interrupt the
             # leak table
             if name == "TOTAL":
@@ -181,18 +196,11 @@ def process_leak_log(
     leakThresholds = leak_thresholds or {}
     ignoreMissingLeaks = ignore_missing_leaks or []
 
-    # This list is based on kGeckoProcessTypeString. ipdlunittest processes likely
+    # This list is based on XRE_GeckoProcessTypeToString. ipdlunittest processes likely
     # are not going to produce leak logs we will ever see.
+
     knownProcessTypes = [
-        "default",
-        "forkserver",
-        "gmplugin",
-        "gpu",
-        "plugin",
-        "rdd",
-        "socket",
-        "tab",
-        "vr",
+        p.string_name for p in process_types if p.string_name != "ipdlunittest"
     ]
 
     for processType in knownProcessTypes:

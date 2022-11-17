@@ -16,38 +16,40 @@
 
 #include "builtin/SelfHostingDefines.h"
 #include "gc/Barrier.h"
-#include "vm/Stack.h"
+#include "vm/NativeObject.h"
 
 namespace js {
 
+class ArrayObject;
 class PlainObject;
 class PropertyIteratorObject;
 
 struct NativeIterator {
  private:
-  // Object being iterated.  Non-null except in NativeIterator sentinels and
-  // empty property iterators created when |null| or |undefined| is iterated.
-  GCPtrObject objectBeingIterated_ = {};
+  // Object being iterated.  Non-null except in NativeIterator sentinels,
+  // the empty iterator singleton (for iterating |null| or |undefined|), and
+  // inactive iterators.
+  GCPtr<JSObject*> objectBeingIterated_ = {};
 
   // Internal iterator object.
-  const GCPtrObject iterObj_ = {};
+  const GCPtr<JSObject*> iterObj_ = {};
 
-  // The end of GCPtrShapes that appear directly after |this|, as part of an
+  // The end of GCPtr<Shape*>s that appear directly after |this|, as part of an
   // overall allocation that stores |*this|, shapes, and iterated strings.
   // Once this has been fully initialized, it also equals the start of iterated
   // strings.
-  GCPtrShape* shapesEnd_;  // initialized by constructor
+  GCPtr<Shape*>* shapesEnd_;  // initialized by constructor
 
   // The next property, pointing into an array of strings directly after any
-  // GCPtrShapes that appear directly after |*this|, as part of an overall
+  // GCPtr<Shape*>s that appear directly after |*this|, as part of an overall
   // allocation that stores |*this|, shapes, and iterated strings.
-  GCPtrLinearString* propertyCursor_;  // initialized by constructor
+  GCPtr<JSLinearString*>* propertyCursor_;  // initialized by constructor
 
   // The limit/end of properties to iterate (and, assuming no error occurred
   // while constructing this NativeIterator, the end of the full allocation
   // storing |*this|, shapes, and strings).  Beware!  This value may change as
   // properties are deleted from the observed object.
-  GCPtrLinearString* propertiesEnd_;  // initialized by constructor
+  GCPtr<JSLinearString*>* propertiesEnd_;  // initialized by constructor
 
   HashNumber shapesHash_;  // initialized by constructor
 
@@ -78,6 +80,10 @@ struct NativeIterator {
     // remove it.
     static constexpr uint32_t HasUnvisitedPropertyDeletion = 0x4;
 
+    // Whether this is the shared empty iterator object used for iterating over
+    // null/undefined.
+    static constexpr uint32_t IsEmptyIteratorSingleton = 0x8;
+
     // If any of these bits are set on a |NativeIterator|, it isn't
     // currently reusable.  (An active |NativeIterator| can't be stolen
     // *right now*; a |NativeIterator| that's had its properties mutated
@@ -87,7 +93,7 @@ struct NativeIterator {
   };
 
  private:
-  static constexpr uint32_t FlagsBits = 3;
+  static constexpr uint32_t FlagsBits = 4;
   static constexpr uint32_t FlagsMask = (1 << FlagsBits) - 1;
 
  public:
@@ -133,33 +139,43 @@ struct NativeIterator {
 
   JSObject* objectBeingIterated() const { return objectBeingIterated_; }
 
-  void changeObjectBeingIterated(JSObject& obj) { objectBeingIterated_ = &obj; }
-
-  GCPtrShape* shapesBegin() const {
-    static_assert(alignof(GCPtrShape) <= alignof(NativeIterator),
-                  "NativeIterator must be aligned to begin storing "
-                  "GCPtrShapes immediately after it with no required padding");
-    const NativeIterator* immediatelyAfter = this + 1;
-    auto* afterNonConst = const_cast<NativeIterator*>(immediatelyAfter);
-    return reinterpret_cast<GCPtrShape*>(afterNonConst);
+  void initObjectBeingIterated(JSObject& obj) {
+    MOZ_ASSERT(!objectBeingIterated_);
+    objectBeingIterated_.init(&obj);
+  }
+  void clearObjectBeingIterated() {
+    MOZ_ASSERT(objectBeingIterated_);
+    objectBeingIterated_ = nullptr;
   }
 
-  GCPtrShape* shapesEnd() const { return shapesEnd_; }
+  GCPtr<Shape*>* shapesBegin() const {
+    static_assert(
+        alignof(GCPtr<Shape*>) <= alignof(NativeIterator),
+        "NativeIterator must be aligned to begin storing "
+        "GCPtr<Shape*>s immediately after it with no required padding");
+    const NativeIterator* immediatelyAfter = this + 1;
+    auto* afterNonConst = const_cast<NativeIterator*>(immediatelyAfter);
+    return reinterpret_cast<GCPtr<Shape*>*>(afterNonConst);
+  }
+
+  GCPtr<Shape*>* shapesEnd() const { return shapesEnd_; }
 
   uint32_t shapeCount() const {
     return mozilla::PointerRangeSize(shapesBegin(), shapesEnd());
   }
 
-  GCPtrLinearString* propertiesBegin() const {
-    static_assert(alignof(GCPtrShape) >= alignof(GCPtrLinearString),
-                  "GCPtrLinearStrings for properties must be able to appear "
-                  "directly after any GCPtrShapes after this NativeIterator, "
-                  "with no padding space required for correct alignment");
-    static_assert(alignof(NativeIterator) >= alignof(GCPtrLinearString),
-                  "GCPtrLinearStrings for properties must be able to appear "
-                  "directly after this NativeIterator when no GCPtrShapes are "
-                  "present, with no padding space required for correct "
-                  "alignment");
+  GCPtr<JSLinearString*>* propertiesBegin() const {
+    static_assert(
+        alignof(GCPtr<Shape*>) >= alignof(GCPtr<JSLinearString*>),
+        "GCPtr<JSLinearString*>s for properties must be able to appear "
+        "directly after any GCPtr<Shape*>s after this NativeIterator, "
+        "with no padding space required for correct alignment");
+    static_assert(
+        alignof(NativeIterator) >= alignof(GCPtr<JSLinearString*>),
+        "GCPtr<JSLinearString*>s for properties must be able to appear "
+        "directly after this NativeIterator when no GCPtr<Shape*>s are "
+        "present, with no padding space required for correct "
+        "alignment");
 
     // We *could* just check the assertion below if we wanted, but the
     // incompletely-initialized NativeIterator case matters for so little
@@ -170,12 +186,12 @@ struct NativeIterator {
                "isn't necessarily the start of properties and instead "
                "|propertyCursor_| is");
 
-    return reinterpret_cast<GCPtrLinearString*>(shapesEnd_);
+    return reinterpret_cast<GCPtr<JSLinearString*>*>(shapesEnd_);
   }
 
-  GCPtrLinearString* propertiesEnd() const { return propertiesEnd_; }
+  GCPtr<JSLinearString*>* propertiesEnd() const { return propertiesEnd_; }
 
-  GCPtrLinearString* nextProperty() const { return propertyCursor_; }
+  GCPtr<JSLinearString*>* nextProperty() const { return propertyCursor_; }
 
   MOZ_ALWAYS_INLINE JS::Value nextIteratedValueAndAdvance() {
     if (propertyCursor_ >= propertiesEnd_) {
@@ -222,7 +238,7 @@ struct NativeIterator {
   }
 
   JSObject* iterObj() const { return iterObj_; }
-  GCPtrLinearString* currentProperty() const {
+  GCPtr<JSLinearString*>* currentProperty() const {
     MOZ_ASSERT(propertyCursor_ < propertiesEnd());
     return propertyCursor_;
   }
@@ -270,7 +286,29 @@ struct NativeIterator {
     setFlags(Flags::Initialized);
   }
 
+  bool isUnlinked() const { return !prev_ && !next_; }
+
  public:
+  // Whether this is the shared empty iterator object used for iterating over
+  // null/undefined.
+  bool isEmptyIteratorSingleton() const {
+    // Note: equivalent code is inlined in MacroAssembler::iteratorClose.
+    bool res = flags() & Flags::IsEmptyIteratorSingleton;
+    MOZ_ASSERT_IF(
+        res, flags() == (Flags::Initialized | Flags::IsEmptyIteratorSingleton));
+    MOZ_ASSERT_IF(res, !objectBeingIterated_);
+    MOZ_ASSERT_IF(res, initialPropertyCount() == 0);
+    MOZ_ASSERT_IF(res, shapeCount() == 0);
+    MOZ_ASSERT_IF(res, isUnlinked());
+    return res;
+  }
+  void markEmptyIteratorSingleton() {
+    flagsAndCount_ |= Flags::IsEmptyIteratorSingleton;
+
+    // isEmptyIteratorSingleton() has various debug assertions.
+    MOZ_ASSERT(isEmptyIteratorSingleton());
+  }
+
   bool isActive() const {
     MOZ_ASSERT(isInitialized());
 
@@ -279,12 +317,14 @@ struct NativeIterator {
 
   void markActive() {
     MOZ_ASSERT(isInitialized());
+    MOZ_ASSERT(!isEmptyIteratorSingleton());
 
     flagsAndCount_ |= Flags::Active;
   }
 
   void markInactive() {
     MOZ_ASSERT(isInitialized());
+    MOZ_ASSERT(!isEmptyIteratorSingleton());
 
     flagsAndCount_ &= ~Flags::Active;
   }
@@ -302,6 +342,7 @@ struct NativeIterator {
 
   void markHasUnvisitedPropertyDeletion() {
     MOZ_ASSERT(isInitialized());
+    MOZ_ASSERT(!isEmptyIteratorSingleton());
 
     flagsAndCount_ |= Flags::HasUnvisitedPropertyDeletion;
   }
@@ -312,8 +353,12 @@ struct NativeIterator {
     // initialized.
     MOZ_ASSERT(isInitialized());
 
-    /* A NativeIterator cannot appear in the enumerator list twice. */
-    MOZ_ASSERT(!next_ && !prev_);
+    // The shared iterator used for for-in with null/undefined is immutable and
+    // shouldn't be linked.
+    MOZ_ASSERT(!isEmptyIteratorSingleton());
+
+    // A NativeIterator cannot appear in the enumerator list twice.
+    MOZ_ASSERT(isUnlinked());
 
     this->next_ = other;
     this->prev_ = other->prev_;
@@ -322,6 +367,7 @@ struct NativeIterator {
   }
   void unlink() {
     MOZ_ASSERT(isInitialized());
+    MOZ_ASSERT(!isEmptyIteratorSingleton());
 
     next_->prev_ = prev_;
     prev_->next_ = next_;
@@ -365,23 +411,27 @@ struct NativeIterator {
 class PropertyIteratorObject : public NativeObject {
   static const JSClassOps classOps_;
 
+  enum { IteratorSlot, SlotCount };
+
  public:
   static const JSClass class_;
 
-  // We don't use the fixed slot but the JITs use this constant to load the
-  // private value (the NativeIterator*).
-  static const uint32_t NUM_FIXED_SLOTS = 1;
-
   NativeIterator* getNativeIterator() const {
-    return static_cast<js::NativeIterator*>(getPrivate());
+    return maybePtrFromReservedSlot<NativeIterator>(IteratorSlot);
   }
-  void setNativeIterator(js::NativeIterator* ni) { setPrivate(ni); }
+  void initNativeIterator(js::NativeIterator* ni) {
+    initReservedSlot(IteratorSlot, PrivateValue(ni));
+  }
 
   size_t sizeOfMisc(mozilla::MallocSizeOf mallocSizeOf) const;
 
+  static size_t offsetOfIteratorSlot() {
+    return getFixedSlotOffset(IteratorSlot);
+  }
+
  private:
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
 };
 
 class ArrayIteratorObject : public NativeObject {
@@ -498,6 +548,9 @@ class IteratorHelperObject : public NativeObject {
 };
 
 IteratorHelperObject* NewIteratorHelper(JSContext* cx);
+
+bool IterableToArray(JSContext* cx, HandleValue iterable,
+                     MutableHandle<ArrayObject*> array);
 
 } /* namespace js */
 

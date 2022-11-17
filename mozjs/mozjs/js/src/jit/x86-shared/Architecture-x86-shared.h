@@ -13,6 +13,7 @@
 
 #include "mozilla/MathAlgorithms.h"
 
+#include <algorithm>
 #include <string.h>
 
 #include "jit/shared/Architecture-shared.h"
@@ -23,28 +24,10 @@ namespace js {
 namespace jit {
 
 #if defined(JS_CODEGEN_X86)
-// In bytes: slots needed for potential memory->memory move spills.
-//   +8 for cycles
-//   +4 for gpr spills
-//   +8 for double spills
-static const uint32_t ION_FRAME_SLACK_SIZE = 20;
-
-#elif defined(JS_CODEGEN_X64)
-// In bytes: slots needed for potential memory->memory move spills.
-//   +8 for cycles
-//   +8 for gpr spills
-//   +8 for double spills
-static const uint32_t ION_FRAME_SLACK_SIZE = 24;
-#endif
-
-#if defined(JS_CODEGEN_X86)
 // These offsets are specific to nunboxing, and capture offsets into the
 // components of a js::Value.
 static const int32_t NUNBOX32_TYPE_OFFSET = 4;
 static const int32_t NUNBOX32_PAYLOAD_OFFSET = 0;
-
-// Size of each bailout table entry. On x86 this is a 5-byte relative call.
-static const uint32_t BAILOUT_TABLE_ENTRY_SIZE = 5;
 #endif
 
 #if defined(JS_CODEGEN_X64) && defined(_WIN64)
@@ -129,7 +112,8 @@ class Registers {
       (1 << X86Encoding::rax) | (1 << X86Encoding::rcx) |
       (1 << X86Encoding::rdx) | (1 << X86Encoding::rbx);
 
-  static const SetType NonAllocatableMask = (1 << X86Encoding::rsp);
+  static const SetType NonAllocatableMask =
+      (1 << X86Encoding::rsp) | (1 << X86Encoding::rbp);
 
   // Registers returned from a JS -> JS call.
   static const SetType JSCallMask =
@@ -155,7 +139,8 @@ class Registers {
   static const SetType SingleByteRegs = AllMask & ~(1 << X86Encoding::rsp);
 
   static const SetType NonAllocatableMask =
-      (1 << X86Encoding::rsp) | (1 << X86Encoding::r11);  // This is ScratchReg.
+      (1 << X86Encoding::rsp) | (1 << X86Encoding::rbp) |
+      (1 << X86Encoding::r11);  // This is ScratchReg.
 
   // Registers returned from a JS -> JS call.
   static const SetType JSCallMask = (1 << X86Encoding::rcx);
@@ -271,6 +256,10 @@ class FloatRegisters {
   static const SetType WrapperMask = VolatileMask;
   static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 };
+
+static const uint32_t SpillSlotSize =
+    std::max(sizeof(Registers::RegisterContent),
+             sizeof(FloatRegisters::RegisterContent));
 
 template <typename T>
 class TypedRegisterSet;

@@ -6,13 +6,16 @@ info: The "length" property of the "setUTCHours" is 4
 esid: sec-date.prototype.setutchours
 description: The "length" property of the "setUTCHours" is 4
 ---*/
+assert.sameValue(
+  Date.prototype.setUTCHours.hasOwnProperty("length"),
+  true,
+  'Date.prototype.setUTCHours.hasOwnProperty("length") must return true'
+);
 
-if (Date.prototype.setUTCHours.hasOwnProperty("length") !== true) {
-  $ERROR('#1: The setUTCHours has a "length" property');
-}
-
-if (Date.prototype.setUTCHours.length !== 4) {
-  $ERROR('#2: The "length" property of the setUTCHours is 4');
-}
+assert.sameValue(
+  Date.prototype.setUTCHours.length,
+  4,
+  'The value of Date.prototype.setUTCHours.length is expected to be 4'
+);
 
 reportCompare(0, 0);

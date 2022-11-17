@@ -9,23 +9,18 @@
 
 #include "vm/Stack.h"
 
-#include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 
-#include "builtin/Array.h"  // js::NewDenseEmptyArray
-#include "builtin/ModuleObject.h"
 #include "jit/BaselineFrame.h"
 #include "jit/RematerializedFrame.h"
-#include "js/Debug.h"
 #include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "vm/EnvironmentObject.h"
-#include "vm/FrameIter.h"  // js::FrameIter
+#include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/JSScript.h"
 
 #include "jit/BaselineFrame-inl.h"
 #include "jit/RematerializedFrame-inl.h"  // js::jit::RematerializedFrame::unsetIsDebuggee
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 
@@ -117,8 +112,8 @@ struct CopyTo {
 };
 
 struct CopyToHeap {
-  GCPtrValue* dst;
-  explicit CopyToHeap(GCPtrValue* dst) : dst(dst) {}
+  GCPtr<Value>* dst;
+  explicit CopyToHeap(GCPtr<Value>* dst) : dst(dst) {}
   void operator()(const Value& src) {
     dst->init(src);
     ++dst;
@@ -144,6 +139,22 @@ inline EnvironmentObject& InterpreterFrame::aliasedEnvironment(
     env = &env->as<EnvironmentObject>().enclosingEnvironment();
   }
   return env->as<EnvironmentObject>();
+}
+
+inline EnvironmentObject& InterpreterFrame::aliasedEnvironmentMaybeDebug(
+    EnvironmentCoordinate ec) const {
+  JSObject* env = environmentChain();
+  for (unsigned i = ec.hops(); i; i--) {
+    if (env->is<EnvironmentObject>()) {
+      env = &env->as<EnvironmentObject>().enclosingEnvironment();
+    } else {
+      MOZ_ASSERT(env->is<DebugEnvironmentProxy>());
+      env = &env->as<DebugEnvironmentProxy>().enclosingEnvironment();
+    }
+  }
+  return env->is<EnvironmentObject>()
+             ? env->as<EnvironmentObject>()
+             : env->as<DebugEnvironmentProxy>().environment();
 }
 
 template <typename SpecificEnvironment>
@@ -433,7 +444,7 @@ inline bool AbstractFramePtr::initFunctionEnvironmentObjects(JSContext* cx) {
 }
 
 inline bool AbstractFramePtr::pushVarEnvironment(JSContext* cx,
-                                                 HandleScope scope) {
+                                                 Handle<Scope*> scope) {
   return js::PushVarEnvironmentObject(cx, scope, *this);
 }
 
@@ -602,6 +613,19 @@ inline bool AbstractFramePtr::isConstructing() const {
     return asRematerializedFrame()->isConstructing();
   }
   MOZ_CRASH("Unexpected frame");
+}
+
+inline bool AbstractFramePtr::hasCachedSavedFrame() const {
+  if (isInterpreterFrame()) {
+    return asInterpreterFrame()->hasCachedSavedFrame();
+  }
+  if (isBaselineFrame()) {
+    return asBaselineFrame()->framePrefix()->hasCachedSavedFrame();
+  }
+  if (isWasmDebugFrame()) {
+    return asWasmDebugFrame()->hasCachedSavedFrame();
+  }
+  return asRematerializedFrame()->hasCachedSavedFrame();
 }
 
 inline bool AbstractFramePtr::hasArgs() const { return isFunctionFrame(); }
@@ -778,16 +802,6 @@ inline Value& AbstractFramePtr::thisArgument() const {
     return asBaselineFrame()->thisArgument();
   }
   return asRematerializedFrame()->thisArgument();
-}
-
-inline Value AbstractFramePtr::newTarget() const {
-  if (isInterpreterFrame()) {
-    return asInterpreterFrame()->newTarget();
-  }
-  if (isBaselineFrame()) {
-    return asBaselineFrame()->newTarget();
-  }
-  return asRematerializedFrame()->newTarget();
 }
 
 inline bool AbstractFramePtr::debuggerNeedsCheckPrimitiveReturn() const {

@@ -8,17 +8,17 @@ assertErrorMessage(() => wasmEvalText('(moduler'), SyntaxError, parsingError);
 assertErrorMessage(() => wasmEvalText('(module (func) (export "a'), SyntaxError, parsingError);
 assertErrorMessage(() => wasmEvalText('(module (func (local $a i32) (param $b f32)))'), SyntaxError, parsingError);
 
-assertErrorMessage(() => wasmEvalText('(module (func $a) (func) (export "a" (func $a)) (export "b" (func $b)))'), SyntaxError, /failed to find func/);
+assertErrorMessage(() => wasmEvalText('(module (func $a) (func) (export "a" (func $a)) (export "b" (func $b)))'), SyntaxError, /failed to find name/);
 assertErrorMessage(() => wasmEvalText('(module (import "a" "b" (func $foo)) (import "a" "b" (func $foo)))'), SyntaxError, /duplicate func identifier/);
 assertErrorMessage(() => wasmEvalText('(module (func $foo) (func $foo))'), SyntaxError, /duplicate func identifier/);
 assertErrorMessage(() => wasmEvalText('(module (func (param $a i32) (local $a i32)))'), SyntaxError, /duplicate local identifier/);
-assertErrorMessage(() => wasmEvalText('(module (func (local.get $a)))'), SyntaxError, /failed to find local/);
+assertErrorMessage(() => wasmEvalText('(module (func (local.get $a)))'), SyntaxError, /failed to find name/);
 assertErrorMessage(() => wasmEvalText('(module (type $a (func)) (type $a (func (param i32))))'), SyntaxError, /duplicate type identifier/);
-assertErrorMessage(() => wasmEvalText('(module (import "a" "" (func)) (func (call $abc)))'), SyntaxError, /failed to find func/);
-assertErrorMessage(() => wasmEvalText('(module (type $a (func)) (func (type $b) (i32.const 13)))'), SyntaxError, /failed to find type/);
-assertErrorMessage(() => wasmEvalText('(module (type $a (func)) (func (call_indirect (type $c) (i32.const 0) (local.get 0))))'), SyntaxError, /failed to find type/);
-assertErrorMessage(() => wasmEvalText('(module (func (br $a)))'), SyntaxError, /failed to find label/);
-assertErrorMessage(() => wasmEvalText('(module (func (block $a ) (br $a)))'), SyntaxError, /failed to find label/);
+assertErrorMessage(() => wasmEvalText('(module (import "a" "" (func)) (func (call $abc)))'), SyntaxError, /failed to find name/);
+assertErrorMessage(() => wasmEvalText('(module (type $a (func)) (func (type $b) (i32.const 13)))'), SyntaxError, /failed to find name/);
+assertErrorMessage(() => wasmEvalText('(module (type $a (func)) (func (call_indirect (type $c) (i32.const 0) (local.get 0))))'), SyntaxError, /failed to find name/);
+assertErrorMessage(() => wasmEvalText('(module (func (br $a)))'), SyntaxError, /failed to find name/);
+assertErrorMessage(() => wasmEvalText('(module (func (block $a ) (br $a)))'), SyntaxError, /failed to find name/);
 
 assertErrorMessage(() => wasmEvalText(`(module (func (call ${0xffffffff})))`), WebAssembly.CompileError, /(callee index out of range)|(function index out of bounds)/);
 assertErrorMessage(() => wasmEvalText(`(module (export "func" ${0xffffffff}))`), SyntaxError, parsingError);
@@ -49,7 +49,7 @@ wasmEvalText('(module (table $t funcref (elem)))');
 wasmEvalText('(module (func) (table $t funcref (elem 0 0 0)))');
 
 const { Table } = WebAssembly;
-const table = new Table({initial:1, element:"funcref"});
+const table = new Table({initial:1, element:"anyfunc"});
 assertErrorMessage(() => wasmEvalText('(module (table $t (import) 1 funcref))'), SyntaxError, parsingError);
 assertErrorMessage(() => wasmEvalText('(module (table $t (import "mod" "field") 1 funcref (elem 1 2 3)))'), SyntaxError, parsingError);
 wasmEvalText('(module (table $t (import "mod" "field") 1 funcref))', {mod: {field: table}});
@@ -93,7 +93,7 @@ assertErrorMessage(() => wasmEvalText(`
 // Globals.
 assertErrorMessage(() => wasmEvalText('(module (global $t (export)))'), SyntaxError, parsingError);
 assertErrorMessage(() => wasmEvalText('(module (global $t (export "g")))'), SyntaxError, parsingError);
-assertErrorMessage(() => wasmEvalText('(module (global $t (export "g") i32))'), WebAssembly.CompileError, /unexpected initializer expression/);
+assertErrorMessage(() => wasmEvalText('(module (global $t (export "g") i32))'), WebAssembly.CompileError, /popping value/);
 wasmEvalText('(module (global $t (export "g") i32 (i32.const 42)))');
 
 assertErrorMessage(() => wasmEvalText('(module (global $t (import) i32))'), SyntaxError, parsingError);

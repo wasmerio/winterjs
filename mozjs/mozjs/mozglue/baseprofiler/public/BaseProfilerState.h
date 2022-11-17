@@ -22,9 +22,18 @@
 // It is safe to include unconditionally, but uses of structs and functions must
 // be guarded by `#ifdef MOZ_GECKO_PROFILER`.
 
+#include "mozilla/BaseProfilerUtils.h"
+
 #ifndef MOZ_GECKO_PROFILER
 
 #  define AUTO_PROFILER_STATS(name)
+
+namespace mozilla::baseprofiler {
+
+[[nodiscard]] inline bool profiler_is_active() { return false; }
+[[nodiscard]] inline bool profiler_is_active_and_unpaused() { return false; }
+
+}  // namespace mozilla::baseprofiler
 
 #else  // !MOZ_GECKO_PROFILER
 
@@ -34,13 +43,15 @@
 #  include <stdint.h>
 #  include <string>
 
-namespace mozilla {
-
-namespace baseprofiler {
-
 // Uncomment the following line to display profiler runtime statistics at
 // shutdown.
 // #  define PROFILER_RUNTIME_STATS
+
+#  ifdef PROFILER_RUNTIME_STATS
+#    include "mozilla/TimeStamp.h"
+#  endif
+
+namespace mozilla::baseprofiler {
 
 #  ifdef PROFILER_RUNTIME_STATS
 // This class gathers durations and displays some basic stats when destroyed.
@@ -58,17 +69,17 @@ class StaticBaseProfilerStats {
       ULL sumNs = static_cast<ULL>(mSumDurationsNs);
       printf(
           "[%d] Profiler stats `%s`: %llu ns / %llu = %llu ns, max %llu ns\n",
-          profiler_current_process_id(), mName, sumNs, n, sumNs / n,
-          static_cast<ULL>(mLongestDurationNs));
+          int(profiler_current_process_id().ToNumber()), mName, sumNs, n,
+          sumNs / n, static_cast<ULL>(mLongestDurationNs));
     } else {
       printf("[%d] Profiler stats `%s`: (nothing)\n",
-             profiler_current_process_id(), mName);
+             int(profiler_current_process_id().ToNumber()), mName);
     }
   }
 
   void AddDurationFrom(TimeStamp aStart) {
     DurationNs duration = static_cast<DurationNs>(
-        (TimeStamp::NowUnfuzzed() - aStart).ToMicroseconds() * 1000 + 0.5);
+        (TimeStamp::Now() - aStart).ToMicroseconds() * 1000 + 0.5);
     mSumDurationsNs += duration;
     ++mNumberDurations;
     // Update mLongestDurationNs if this one is longer.
@@ -102,7 +113,7 @@ class StaticBaseProfilerStats {
 class MOZ_RAII AutoProfilerStats {
  public:
   explicit AutoProfilerStats(StaticBaseProfilerStats& aStats)
-      : mStats(aStats), mStart(TimeStamp::NowUnfuzzed()) {}
+      : mStats(aStats), mStart(TimeStamp::Now()) {}
 
   ~AutoProfilerStats() { mStats.AddDurationFrom(mStart); }
 
@@ -132,80 +143,111 @@ class MOZ_RAII AutoProfilerStats {
 // Profiler features
 //---------------------------------------------------------------------------
 
+#  if defined(__APPLE__) && defined(__aarch64__)
+#    define POWER_HELP "Sample per process power use"
+#  elif defined(__APPLE__) && defined(__x86_64__)
+#    define POWER_HELP \
+      "Record the power used by the entire system with each sample."
+#  elif defined(__linux__) && defined(__x86_64__)
+#    define POWER_HELP                                                \
+      "Record the power used by the entire system with each sample. " \
+      "Only available with Intel CPUs and requires setting "          \
+      "the sysctl kernel.perf_event_paranoid to 0."
+#  elif defined(_MSC_VER)
+#    define POWER_HELP                                                       \
+      "Record the value of every energy meter available on the system with " \
+      "each sample. Only available on Windows 11 with Intel CPUs."
+#  else
+#    define POWER_HELP "Not supported on this platform."
+#  endif
+
 // Higher-order macro containing all the feature info in one place. Define
 // |MACRO| appropriately to extract the relevant parts. Note that the number
 // values are used internally only and so can be changed without consequence.
 // Any changes to this list should also be applied to the feature list in
 // toolkit/components/extensions/schemas/geckoProfiler.json.
-#  define BASE_PROFILER_FOR_EACH_FEATURE(MACRO)                                \
-    MACRO(0, "java", Java, "Profile Java code, Android only")                  \
-                                                                               \
-    MACRO(1, "js", JS,                                                         \
-          "Get the JS engine to expose the JS stack to the profiler")          \
-                                                                               \
-    /* The DevTools profiler doesn't want the native addresses. */             \
-    MACRO(2, "leaf", Leaf, "Include the C++ leaf node if not stackwalking")    \
-                                                                               \
-    MACRO(3, "mainthreadio", MainThreadIO, "Add main thread file I/O")         \
-                                                                               \
-    MACRO(4, "fileio", FileIO,                                                 \
-          "Add file I/O from all profiled threads, implies mainthreadio")      \
-                                                                               \
-    MACRO(5, "fileioall", FileIOAll,                                           \
-          "Add file I/O from all threads, implies fileio")                     \
-                                                                               \
-    MACRO(6, "noiostacks", NoIOStacks,                                         \
-          "File I/O markers do not capture stacks, to reduce overhead")        \
-                                                                               \
-    MACRO(7, "screenshots", Screenshots,                                       \
-          "Take a snapshot of the window on every composition")                \
-                                                                               \
-    MACRO(8, "seqstyle", SequentialStyle,                                      \
-          "Disable parallel traversal in styling")                             \
-                                                                               \
-    MACRO(9, "stackwalk", StackWalk,                                           \
-          "Walk the C++ stack, not available on all platforms")                \
-                                                                               \
-    MACRO(10, "tasktracer", TaskTracer,                                        \
-          "Start profiling with feature TaskTracer")                           \
-                                                                               \
-    MACRO(11, "threads", Threads, "Profile the registered secondary threads")  \
-                                                                               \
-    MACRO(12, "jstracer", JSTracer, "Enable tracing of the JavaScript engine") \
-                                                                               \
-    MACRO(13, "jsallocations", JSAllocations,                                  \
-          "Have the JavaScript engine track allocations")                      \
-                                                                               \
-    MACRO(14, "nostacksampling", NoStackSampling,                              \
-          "Disable all stack sampling: Cancels \"js\", \"leaf\", "             \
-          "\"stackwalk\" and labels")                                          \
-                                                                               \
-    MACRO(15, "preferencereads", PreferenceReads,                              \
-          "Track when preferences are read")                                   \
-                                                                               \
-    MACRO(16, "nativeallocations", NativeAllocations,                          \
-          "Collect the stacks from a smaller subset of all native "            \
-          "allocations, biasing towards collecting larger allocations")        \
-                                                                               \
-    MACRO(17, "ipcmessages", IPCMessages,                                      \
-          "Have the IPC layer track cross-process messages")                   \
-                                                                               \
-    MACRO(18, "audiocallbacktracing", AudioCallbackTracing,                    \
-          "Audio callback tracing")                                            \
-                                                                               \
-    MACRO(19, "cpu", CPUUtilization, "CPU utilization")
+// *** Synchronize with lists in ProfilerState.h and geckoProfiler.json ***
+#  define BASE_PROFILER_FOR_EACH_FEATURE(MACRO)                              \
+    MACRO(0, "java", Java, "Profile Java code, Android only")                \
+                                                                             \
+    MACRO(1, "js", JS,                                                       \
+          "Get the JS engine to expose the JS stack to the profiler")        \
+                                                                             \
+    MACRO(2, "mainthreadio", MainThreadIO, "Add main thread file I/O")       \
+                                                                             \
+    MACRO(3, "fileio", FileIO,                                               \
+          "Add file I/O from all profiled threads, implies mainthreadio")    \
+                                                                             \
+    MACRO(4, "fileioall", FileIOAll,                                         \
+          "Add file I/O from all threads, implies fileio")                   \
+                                                                             \
+    MACRO(5, "noiostacks", NoIOStacks,                                       \
+          "File I/O markers do not capture stacks, to reduce overhead")      \
+                                                                             \
+    MACRO(6, "screenshots", Screenshots,                                     \
+          "Take a snapshot of the window on every composition")              \
+                                                                             \
+    MACRO(7, "seqstyle", SequentialStyle,                                    \
+          "Disable parallel traversal in styling")                           \
+                                                                             \
+    MACRO(8, "stackwalk", StackWalk,                                         \
+          "Walk the C++ stack, not available on all platforms")              \
+                                                                             \
+    MACRO(9, "jsallocations", JSAllocations,                                 \
+          "Have the JavaScript engine track allocations")                    \
+                                                                             \
+    MACRO(10, "nostacksampling", NoStackSampling,                            \
+          "Disable all stack sampling: Cancels \"js\", \"stackwalk\" and "   \
+          "labels")                                                          \
+                                                                             \
+    MACRO(11, "preferencereads", PreferenceReads,                            \
+          "Track when preferences are read")                                 \
+                                                                             \
+    MACRO(12, "nativeallocations", NativeAllocations,                        \
+          "Collect the stacks from a smaller subset of all native "          \
+          "allocations, biasing towards collecting larger allocations")      \
+                                                                             \
+    MACRO(13, "ipcmessages", IPCMessages,                                    \
+          "Have the IPC layer track cross-process messages")                 \
+                                                                             \
+    MACRO(14, "audiocallbacktracing", AudioCallbackTracing,                  \
+          "Audio callback tracing")                                          \
+                                                                             \
+    MACRO(15, "cpu", CPUUtilization, "CPU utilization")                      \
+                                                                             \
+    MACRO(16, "notimerresolutionchange", NoTimerResolutionChange,            \
+          "Do not adjust the timer resolution for fast sampling, so that "   \
+          "other Firefox timers do not get affected")                        \
+                                                                             \
+    MACRO(17, "cpuallthreads", CPUAllThreads,                                \
+          "Sample the CPU utilization of all registered threads")            \
+                                                                             \
+    MACRO(18, "samplingallthreads", SamplingAllThreads,                      \
+          "Sample the stacks of all registered threads")                     \
+                                                                             \
+    MACRO(19, "markersallthreads", MarkersAllThreads,                        \
+          "Record markers from all registered threads")                      \
+                                                                             \
+    MACRO(20, "unregisteredthreads", UnregisteredThreads,                    \
+          "Discover and profile unregistered threads -- beware: expensive!") \
+                                                                             \
+    MACRO(21, "processcpu", ProcessCPU,                                      \
+          "Sample the CPU utilization of each process")                      \
+                                                                             \
+    MACRO(22, "power", Power, POWER_HELP)
+// *** Synchronize with lists in ProfilerState.h and geckoProfiler.json ***
 
 struct ProfilerFeature {
-#  define DECLARE(n_, str_, Name_, desc_)                     \
-    static constexpr uint32_t Name_ = (1u << n_);             \
-    static constexpr bool Has##Name_(uint32_t aFeatures) {    \
-      return aFeatures & Name_;                               \
-    }                                                         \
-    static constexpr void Set##Name_(uint32_t& aFeatures) {   \
-      aFeatures |= Name_;                                     \
-    }                                                         \
-    static constexpr void Clear##Name_(uint32_t& aFeatures) { \
-      aFeatures &= ~Name_;                                    \
+#  define DECLARE(n_, str_, Name_, desc_)                                \
+    static constexpr uint32_t Name_ = (1u << n_);                        \
+    [[nodiscard]] static constexpr bool Has##Name_(uint32_t aFeatures) { \
+      return aFeatures & Name_;                                          \
+    }                                                                    \
+    static constexpr void Set##Name_(uint32_t& aFeatures) {              \
+      aFeatures |= Name_;                                                \
+    }                                                                    \
+    static constexpr void Clear##Name_(uint32_t& aFeatures) {            \
+      aFeatures &= ~Name_;                                               \
     }
 
   // Define a bitfield constant, a getter, and two setters for each feature.
@@ -238,17 +280,17 @@ class RacyFeatures {
 
   MFBT_API static void SetSamplingUnpaused();
 
-  MFBT_API static bool IsActive();
+  [[nodiscard]] MFBT_API static bool IsActive();
 
-  MFBT_API static bool IsActiveWithFeature(uint32_t aFeature);
+  [[nodiscard]] MFBT_API static bool IsActiveWithFeature(uint32_t aFeature);
 
   // True if profiler is active, and not fully paused.
   // Note that periodic sampling *could* be paused!
-  MFBT_API static bool IsActiveAndUnpaused();
+  [[nodiscard]] MFBT_API static bool IsActiveAndUnpaused();
 
   // True if profiler is active, and sampling is not paused (though generic
   // `SetPaused()` or specific `SetSamplingPaused()`).
-  MFBT_API static bool IsActiveAndSamplingUnpaused();
+  [[nodiscard]] MFBT_API static bool IsActiveAndSamplingUnpaused();
 
  private:
   static constexpr uint32_t Active = 1u << 31;
@@ -294,72 +336,50 @@ MFBT_API bool IsThreadBeingProfiled();
 // expensive data will end up being created but not used if another thread
 // stops the profiler between the CreateExpensiveData() and PROFILER_OPERATION
 // calls.
-inline bool profiler_is_active() {
+[[nodiscard]] inline bool profiler_is_active() {
   return baseprofiler::detail::RacyFeatures::IsActive();
 }
 
-// Same as profiler_is_active(), but with the same extra checks that determine
-// if the profiler would currently store markers. So this should be used before
-// doing some potentially-expensive work that's used in a marker. E.g.:
-//
-//   if (profiler_can_accept_markers()) {
-//     BASE_PROFILER_MARKER(name, OTHER, SomeMarkerType, expensivePayload);
-//   }
-inline bool profiler_can_accept_markers() {
+// Same as profiler_is_active(), but also checks if the profiler is not paused.
+[[nodiscard]] inline bool profiler_is_active_and_unpaused() {
   return baseprofiler::detail::RacyFeatures::IsActiveAndUnpaused();
 }
 
-// Is the profiler active, and is the current thread being profiled?
-// (Same caveats and recommented usage as profiler_is_active().)
-inline bool profiler_thread_is_being_profiled() {
-  return profiler_is_active() && baseprofiler::detail::IsThreadBeingProfiled();
+// Is the profiler active and unpaused, and is the current thread being
+// profiled? (Same caveats and recommented usage as profiler_is_active().)
+[[nodiscard]] inline bool profiler_thread_is_being_profiled() {
+  return baseprofiler::detail::RacyFeatures::IsActiveAndUnpaused() &&
+         baseprofiler::detail::IsThreadBeingProfiled();
 }
 
 // Is the profiler active and paused? Returns false if the profiler is inactive.
-MFBT_API bool profiler_is_paused();
+[[nodiscard]] MFBT_API bool profiler_is_paused();
 
 // Is the profiler active and sampling is paused? Returns false if the profiler
 // is inactive.
-MFBT_API bool profiler_is_sampling_paused();
+[[nodiscard]] MFBT_API bool profiler_is_sampling_paused();
 
 // Is the current thread sleeping?
-MFBT_API bool profiler_thread_is_sleeping();
+[[nodiscard]] MFBT_API bool profiler_thread_is_sleeping();
 
 // Get all the features supported by the profiler that are accepted by
 // profiler_start(). The result is the same whether the profiler is active or
 // not.
-MFBT_API uint32_t profiler_get_available_features();
+[[nodiscard]] MFBT_API uint32_t profiler_get_available_features();
 
 // Check if a profiler feature (specified via the ProfilerFeature type) is
 // active. Returns false if the profiler is inactive. Note: the return value
 // can become immediately out-of-date, much like the return value of
 // profiler_is_active().
-MFBT_API bool profiler_feature_active(uint32_t aFeature);
-
-// Get the current process's ID.
-MFBT_API int profiler_current_process_id();
-
-// Get the current thread's ID.
-MFBT_API int profiler_current_thread_id();
-
-// Statically initialized to 0, then set once from profiler_init(), which should
-// be called from the main thread before any other use of the profiler.
-extern MFBT_DATA int scProfilerMainThreadId;
-
-inline int profiler_main_thread_id() { return scProfilerMainThreadId; }
-
-inline bool profiler_is_main_thread() {
-  return profiler_current_thread_id() == profiler_main_thread_id();
-}
+[[nodiscard]] MFBT_API bool profiler_feature_active(uint32_t aFeature);
 
 // Returns true if any of the profiler mutexes are currently locked *on the
 // current thread*. This may be used by re-entrant code that may call profiler
 // functions while the same of a different profiler mutex is locked, which could
 // deadlock.
-bool profiler_is_locked_on_current_thread();
+[[nodiscard]] bool profiler_is_locked_on_current_thread();
 
-}  // namespace baseprofiler
-}  // namespace mozilla
+}  // namespace mozilla::baseprofiler
 
 #endif  // !MOZ_GECKO_PROFILER
 

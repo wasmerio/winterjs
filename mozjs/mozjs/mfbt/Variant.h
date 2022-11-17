@@ -112,11 +112,12 @@ struct VariantTag {
   static const size_t TypeCount = sizeof...(Ts);
 
  public:
-  using Type = std::conditional_t < TypeCount < 3, bool,
-        std::conditional_t<TypeCount<(1 << 8), uint_fast8_t,
-                                     size_t  // stop caring past a certain
-                                             // point :-)
-                                     >>;
+  using Type = std::conditional_t<
+      (TypeCount <= 2), bool,
+      std::conditional_t<(TypeCount <= size_t(UINT_FAST8_MAX)), uint_fast8_t,
+                         size_t  // stop caring past a certain
+                                 // point :-)
+                         >>;
 };
 
 // TagHelper gets the given sentinel tag value for the given type T. This has to
@@ -256,9 +257,9 @@ struct VariantImplementation<Tag, N, T, Ts...> {
   static decltype(auto) match(Matcher&& aMatcher, ConcreteVariant&& aV) {
     if (aV.template is<N>()) {
       if constexpr (std::is_invocable_v<Matcher, Tag,
-                                        decltype(
-                                            std::forward<ConcreteVariant>(aV)
-                                                .template as<N>())>) {
+                                        decltype(std::forward<ConcreteVariant>(
+                                                     aV)
+                                                     .template as<N>())>) {
         return std::forward<Matcher>(aMatcher)(
             Tag(N), std::forward<ConcreteVariant>(aV).template as<N>());
       } else {
@@ -284,9 +285,9 @@ struct VariantImplementation<Tag, N, T, Ts...> {
   static decltype(auto) matchN(ConcreteVariant&& aV, Mi&& aMi, Ms&&... aMs) {
     if (aV.template is<N>()) {
       if constexpr (std::is_invocable_v<Mi, Tag,
-                                        decltype(
-                                            std::forward<ConcreteVariant>(aV)
-                                                .template as<N>())>) {
+                                        decltype(std::forward<ConcreteVariant>(
+                                                     aV)
+                                                     .template as<N>())>) {
         static_assert(
             std::is_same_v<
                 decltype(std::forward<Mi>(aMi)(

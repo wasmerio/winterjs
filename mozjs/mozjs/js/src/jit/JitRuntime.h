@@ -26,6 +26,7 @@
 #include "jit/JitCode.h"
 #include "jit/shared/Assembler-shared.h"
 #include "js/AllocPolicy.h"
+#include "js/ProfilingFrameIterator.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
@@ -37,7 +38,6 @@ class JS_PUBLIC_API JSTracer;
 
 namespace js {
 
-class AutoAccessAtomsZone;
 class AutoLockHelperThreadState;
 class GCMarker;
 
@@ -52,7 +52,7 @@ struct VMFunctionData;
 enum class TailCallVMFunctionId;
 enum class VMFunctionId;
 
-enum class BaselineICFallbackKind {
+enum class BaselineICFallbackKind : uint8_t {
 #define DEF_ENUM_KIND(kind) kind,
   IC_BASELINE_FALLBACK_CODE_KIND_LIST(DEF_ENUM_KIND)
 #undef DEF_ENUM_KIND
@@ -129,24 +129,11 @@ class JitRuntime {
   // Shared exception-handler tail.
   WriteOnceData<uint32_t> exceptionTailOffset_{0};
 
-  // Shared post-bailout-handler tail.
-  WriteOnceData<uint32_t> bailoutTailOffset_{0};
-
   // Shared profiler exit frame tail.
   WriteOnceData<uint32_t> profilerExitFrameTailOffset_{0};
 
   // Trampoline for entering JIT code.
   WriteOnceData<uint32_t> enterJITOffset_{0};
-
-  // Vector mapping frame class sizes to bailout tables.
-  struct BailoutTable {
-    uint32_t startOffset;
-    uint32_t size;
-    BailoutTable(uint32_t startOffset, uint32_t size)
-        : startOffset(startOffset), size(size) {}
-  };
-  typedef Vector<BailoutTable, 4, SystemAllocPolicy> BailoutTableVector;
-  WriteOnceData<BailoutTableVector> bailoutTables_;
 
   // Generic bailout table; used if the bailout table overflows.
   WriteOnceData<uint32_t> bailoutHandlerOffset_{0};
@@ -228,9 +215,6 @@ class JitRuntime {
   MainThreadData<IonCompileTaskList> ionLazyLinkList_;
   MainThreadData<size_t> ionLazyLinkListSize_{0};
 
-  // Counter used to help dismbiguate stubs in CacheIR
-  MainThreadData<uint64_t> disambiguationId_{0};
-
 #ifdef DEBUG
   // Flag that can be set from JIT code to indicate it's invalid to call
   // arbitrary JS code in a particular region. This is checked in RunScript.
@@ -245,13 +229,12 @@ class JitRuntime {
   void generateDoubleToInt32ValueStub(MacroAssembler& masm);
   void generateProfilerExitFrameTailStub(MacroAssembler& masm,
                                          Label* profilerExitTail);
-  void generateExceptionTailStub(MacroAssembler& masm, Label* profilerExitTail);
+  void generateExceptionTailStub(MacroAssembler& masm, Label* profilerExitTail,
+                                 Label* bailoutTail);
   void generateBailoutTailStub(MacroAssembler& masm, Label* bailoutTail);
   void generateEnterJIT(JSContext* cx, MacroAssembler& masm);
   void generateArgumentsRectifier(MacroAssembler& masm,
                                   ArgumentsRectifierKind kind);
-  BailoutTable generateBailoutTable(MacroAssembler& masm, Label* bailoutTail,
-                                    uint32_t frameClass);
   void generateBailoutHandler(MacroAssembler& masm, Label* bailoutTail);
   void generateInvalidator(MacroAssembler& masm, Label* bailoutTail);
   uint32_t generatePreBarrier(JSContext* cx, MacroAssembler& masm,
@@ -268,16 +251,6 @@ class JitRuntime {
                           VMWrapperOffsets& offsets);
   bool generateVMWrappers(JSContext* cx, MacroAssembler& masm);
 
-  bool generateTLEventVM(MacroAssembler& masm, const VMFunctionData& f,
-                         bool enter);
-
-  inline bool generateTLEnterVM(MacroAssembler& masm, const VMFunctionData& f) {
-    return generateTLEventVM(masm, f, /* enter = */ true);
-  }
-  inline bool generateTLExitVM(MacroAssembler& masm, const VMFunctionData& f) {
-    return generateTLEventVM(masm, f, /* enter = */ false);
-  }
-
   uint32_t startTrampolineCode(MacroAssembler& masm);
 
   TrampolinePtr trampolineCode(uint32_t offset) const {
@@ -291,8 +264,7 @@ class JitRuntime {
   ~JitRuntime();
   [[nodiscard]] bool initialize(JSContext* cx);
 
-  static void TraceAtomZoneRoots(JSTracer* trc,
-                                 const js::AutoAccessAtomsZone& access);
+  static void TraceAtomZoneRoots(JSTracer* trc);
   [[nodiscard]] static bool MarkJitcodeGlobalTableIteratively(GCMarker* marker);
   static void TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc);
 
@@ -336,16 +308,9 @@ class JitRuntime {
     return trampolineCode(exceptionTailOffset_);
   }
 
-  TrampolinePtr getBailoutTail() const {
-    return trampolineCode(bailoutTailOffset_);
-  }
-
   TrampolinePtr getProfilerExitFrameTail() const {
     return trampolineCode(profilerExitFrameTailOffset_);
   }
-
-  TrampolinePtr getBailoutTable(const FrameSizeClass& frameClass) const;
-  uint32_t getBailoutTableSize(const FrameSizeClass& frameClass) const;
 
   TrampolinePtr getArgumentsRectifier(
       ArgumentsRectifierKind kind = ArgumentsRectifierKind::Normal) const {
@@ -367,6 +332,13 @@ class JitRuntime {
     return JS_DATA_TO_FUNC_PTR(EnterJitCode,
                                trampolineCode(enterJITOffset_).value);
   }
+
+  // Return the registers from the native caller frame of the given JIT frame.
+  // Nothing{} if frameStackAddress is NOT pointing at a native-to-JIT entry
+  // frame, or if the information is not accessible/implemented on this
+  // platform.
+  static mozilla::Maybe<::JS::ProfilingFrameIterator::RegisterState>
+  getCppEntryRegisters(JitFrameLayout* frameStackAddress);
 
   TrampolinePtr preBarrier(MIRType type) const {
     switch (type) {
@@ -435,8 +407,6 @@ class JitRuntime {
 
   void ionLazyLinkListRemove(JSRuntime* rt, js::jit::IonCompileTask* task);
   void ionLazyLinkListAdd(JSRuntime* rt, js::jit::IonCompileTask* task);
-
-  uint64_t nextDisambiguationId() { return disambiguationId_++; }
 };
 
 }  // namespace jit

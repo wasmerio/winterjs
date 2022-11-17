@@ -6,10 +6,10 @@
 
 #include "jit/ValueNumbering.h"
 
-#include "jit/AliasAnalysis.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIRGenerator.h"
+#include "jit/MIRGraph.h"
 
 using namespace js;
 using namespace js::jit;
@@ -122,7 +122,7 @@ static void ReplaceAllUsesWith(MDefinition* from, MDefinition* to) {
   MOZ_ASSERT(!to->isDiscarded(),
              "GVN replaces an instruction by a removed instruction");
 
-  // We don't need the extra setting of UseRemoved flags that the regular
+  // We don't need the extra setting of ImplicitlyUsed flags that the regular
   // replaceAllUsesWith does because we do it ourselves.
   from->justReplaceAllUsesWith(to);
 }
@@ -229,25 +229,26 @@ static bool IsDominatorRefined(MBasicBlock* block) {
 // |def| has just had one of its users release it. If it's now dead, enqueue it
 // for discarding, otherwise just make note of it.
 bool ValueNumberer::handleUseReleased(MDefinition* def,
-                                      UseRemovedOption useRemovedOption) {
+                                      ImplicitUseOption implicitUseOption) {
   if (IsDiscardable(def)) {
     values_.forget(def);
     if (!deadDefs_.append(def)) {
       return false;
     }
   } else {
-    if (useRemovedOption == SetUseRemoved) {
-      def->setUseRemovedUnchecked();
+    if (implicitUseOption == SetImplicitUse) {
+      def->setImplicitlyUsedUnchecked();
     }
   }
   return true;
 }
 
 // Discard |def| and anything in its use-def subtree which is no longer needed.
-bool ValueNumberer::discardDefsRecursively(MDefinition* def) {
+bool ValueNumberer::discardDefsRecursively(MDefinition* def,
+                                           AllowEffectful allowEffectful) {
   MOZ_ASSERT(deadDefs_.empty(), "deadDefs_ not cleared");
 
-  return discardDef(def) && processDeadDefs();
+  return discardDef(def, allowEffectful) && processDeadDefs();
 }
 
 // Assuming |resume| is unreachable, release its operands.
@@ -262,10 +263,10 @@ bool ValueNumberer::releaseResumePointOperands(MResumePoint* resume) {
     MDefinition* op = resume->getOperand(i);
     resume->releaseOperand(i);
 
-    // We set the UseRemoved flag when removing resume point operands,
+    // We set the ImplicitlyUsed flag when removing resume point operands,
     // because even though we may think we're certain that a particular
     // branch might not be taken, the type information might be incomplete.
-    if (!handleUseReleased(op, SetUseRemoved)) {
+    if (!handleUseReleased(op, SetImplicitUse)) {
       return false;
     }
   }
@@ -279,7 +280,7 @@ bool ValueNumberer::releaseAndRemovePhiOperands(MPhi* phi) {
   for (int o = phi->numOperands() - 1; o >= 0; --o) {
     MDefinition* op = phi->getOperand(o);
     phi->removeOperand(o);
-    if (!handleUseReleased(op, DontSetUseRemoved)) {
+    if (!handleUseReleased(op, DontSetImplicitUse)) {
       return false;
     }
   }
@@ -292,7 +293,7 @@ bool ValueNumberer::releaseOperands(MDefinition* def) {
   for (size_t o = 0, e = def->numOperands(); o < e; ++o) {
     MDefinition* op = def->getOperand(o);
     def->releaseOperand(o);
-    if (!handleUseReleased(op, DontSetUseRemoved)) {
+    if (!handleUseReleased(op, DontSetImplicitUse)) {
       return false;
     }
   }
@@ -300,7 +301,8 @@ bool ValueNumberer::releaseOperands(MDefinition* def) {
 }
 
 // Discard |def| and mine its operands for any subsequently dead defs.
-bool ValueNumberer::discardDef(MDefinition* def) {
+bool ValueNumberer::discardDef(MDefinition* def,
+                               AllowEffectful allowEffectful) {
 #ifdef JS_JITSPEW
   JitSpew(JitSpew_GVN, "      Discarding %s %s%u",
           def->block()->isMarked() ? "unreachable" : "dead", def->opName(),
@@ -311,7 +313,10 @@ bool ValueNumberer::discardDef(MDefinition* def) {
   if (def->block()->isMarked()) {
     MOZ_ASSERT(!def->hasUses(), "Discarding def that still has uses");
   } else {
-    MOZ_ASSERT(IsDiscardable(def), "Discarding non-discardable definition");
+    MOZ_ASSERT(allowEffectful == AllowEffectful::Yes
+                   ? IsDiscardableAllowEffectful(def)
+                   : IsDiscardable(def),
+               "Discarding non-discardable definition");
     MOZ_ASSERT(!values_.has(def), "Discarding a definition still in the set");
   }
 #endif
@@ -397,48 +402,20 @@ static bool hasNonDominatingPredecessor(MBasicBlock* block,
 
 // A loop is about to be made reachable only through an OSR entry into one of
 // its nested loops. Fix everything up.
-bool ValueNumberer::fixupOSROnlyLoop(MBasicBlock* block,
-                                     MBasicBlock* backedge) {
+bool ValueNumberer::fixupOSROnlyLoop(MBasicBlock* block) {
   // Create an empty and unreachable(!) block which jumps to |block|. This
   // allows |block| to remain marked as a loop header, so we don't have to
   // worry about moving a different block into place as the new loop header,
   // which is hard, especially if the OSR is into a nested loop. Doing all
   // that would produce slightly more optimal code, but this is so
   // extraordinarily rare that it isn't worth the complexity.
-  MBasicBlock* fake =
-      MBasicBlock::New(graph_, block->info(), nullptr, MBasicBlock::NORMAL);
-  if (fake == nullptr) {
+  MBasicBlock* fake = MBasicBlock::NewFakeLoopPredecessor(graph_, block);
+  if (!fake) {
     return false;
   }
-
-  graph_.insertBlockBefore(block, fake);
   fake->setImmediateDominator(fake);
   fake->addNumDominated(1);
   fake->setDomIndex(fake->id());
-  fake->setUnreachable();
-
-  // Create zero-input phis to use as inputs for any phis in |block|.
-  // Again, this is a little odd, but it's the least-odd thing we can do
-  // without significant complexity.
-  for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd());
-       iter != end; ++iter) {
-    MPhi* phi = *iter;
-    MPhi* fakePhi = MPhi::New(graph_.alloc(), phi->type());
-    fake->addPhi(fakePhi);
-    if (!phi->addInputSlow(fakePhi)) {
-      return false;
-    }
-  }
-
-  fake->end(MGoto::New(graph_.alloc(), block));
-
-  if (!block->addPredecessorWithoutPhis(fake)) {
-    return false;
-  }
-
-  // Restore |backedge| as |block|'s loop backedge.
-  block->clearLoopHeader();
-  block->setLoopHeader(backedge);
 
   JitSpew(JitSpew_GVN, "        Created fake block%u", fake->id());
   hasOSRFixups_ = true;
@@ -468,7 +445,7 @@ bool ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block,
     phi->removeOperand(predIndex);
 
     nextDef_ = iter != end ? *iter : nullptr;
-    if (!handleUseReleased(op, DontSetUseRemoved) || !processDeadDefs()) {
+    if (!handleUseReleased(op, DontSetImplicitUse) || !processDeadDefs()) {
       return false;
     }
 
@@ -778,6 +755,16 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
 
     // If |sim| doesn't belong to a block, insert it next to |def|.
     if (isNewInstruction) {
+      // A new |sim| node mustn't be effectful when |def| wasn't effectful.
+      MOZ_ASSERT((def->isEffectful() && sim->isEffectful()) ||
+                 !sim->isEffectful());
+
+      // If both instructions are effectful, |sim| must have stolen the resume
+      // point of |def| when it's a new instruction.
+      MOZ_ASSERT_IF(def->isEffectful() && sim->isEffectful(),
+                    !def->toInstruction()->resumePoint() &&
+                        sim->toInstruction()->resumePoint());
+
       def->block()->insertAfter(def->toInstruction(), sim->toInstruction());
     }
 
@@ -801,8 +788,11 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
       sim->setBailoutKind(def->bailoutKind());
     }
 
-    if (DeadIfUnused(def)) {
-      if (!discardDefsRecursively(def)) {
+    // Discard |def| if it's now unused. Similar to guards, we allow to replace
+    // effectful instructions when the node's foldsTo method said |def| can be
+    // replaced.
+    if (DeadIfUnusedAllowEffectful(def)) {
+      if (!discardDefsRecursively(def, AllowEffectful::Yes)) {
         return false;
       }
 
@@ -1163,7 +1153,7 @@ bool ValueNumberer::insertOSRFixups() {
       continue;
     }
 
-    if (!fixupOSROnlyLoop(block, block->backedge())) {
+    if (!fixupOSROnlyLoop(block)) {
       return false;
     }
   }

@@ -16,11 +16,15 @@
 #include <string.h>
 #include <type_traits>
 
+#include "jsapi.h"
+
 #include "gc/GC.h"
 #include "js/AllocPolicy.h"
 #include "js/CharacterEncoding.h"
-#include "js/Equality.h"     // JS::SameValue
-#include "js/RegExpFlags.h"  // JS::RegExpFlags
+#include "js/Conversions.h"
+#include "js/Equality.h"      // JS::SameValue
+#include "js/GlobalObject.h"  // JS::DefaultGlobalClassOps
+#include "js/RegExpFlags.h"   // JS::RegExpFlags
 #include "js/Vector.h"
 #include "js/Warnings.h"  // JS::SetWarningReporter
 #include "vm/JSContext.h"
@@ -346,30 +350,12 @@ class JSAPITest {
 
   bool definePrint();
 
-  static void setNativeStackQuota(JSContext* cx) {
-    const size_t MAX_STACK_SIZE =
-/* Assume we can't use more than 5e5 bytes of C stack by default. */
-#if (defined(DEBUG) && defined(__SUNPRO_CC)) || defined(__sparc__)
-        /*
-         * Sun compiler uses a larger stack space for js::Interpret() with
-         * debug.  Use a bigger gMaxStackSize to make "make check" happy.
-         */
-        5000000
-#else
-        500000
-#endif
-        ;
-
-    JS_SetNativeStackQuota(cx, MAX_STACK_SIZE);
-  }
-
   virtual JSContext* createContext() {
     JSContext* cx = JS_NewContext(8L * 1024 * 1024);
     if (!cx) {
       return nullptr;
     }
     JS::SetWarningReporter(cx, &reportWarning);
-    setNativeStackQuota(cx);
     return cx;
   }
 
@@ -527,6 +513,20 @@ class ExternalData {
   }
 };
 
+class AutoGCParameter {
+  JSContext* cx_;
+  JSGCParamKey key_;
+  uint32_t value_;
+
+ public:
+  explicit AutoGCParameter(JSContext* cx, JSGCParamKey key, uint32_t value)
+      : cx_(cx), key_(key), value_() {
+    value_ = JS_GetGCParameter(cx, key);
+    JS_SetGCParameter(cx, key, value);
+  }
+  ~AutoGCParameter() { JS_SetGCParameter(cx_, key_, value_); }
+};
+
 #ifdef JS_GC_ZEAL
 /*
  * Temporarily disable the GC zeal setting. This is only useful in tests that
@@ -543,7 +543,7 @@ class AutoLeaveZeal {
     JS_GetGCZealBits(cx_, &zealBits_, &frequency_, &dummy);
     JS_SetGCZeal(cx_, 0, 0);
     JS::PrepareForFullGC(cx_);
-    JS::NonIncrementalGC(cx_, GC_SHRINK, JS::GCReason::DEBUG_GC);
+    JS::NonIncrementalGC(cx_, JS::GCOptions::Normal, JS::GCReason::DEBUG_GC);
   }
   ~AutoLeaveZeal() {
     JS_SetGCZeal(cx_, 0, 0);
@@ -561,6 +561,12 @@ class AutoLeaveZeal {
 #  endif
   }
 };
-#endif /* JS_GC_ZEAL */
+
+#else
+class AutoLeaveZeal {
+ public:
+  explicit AutoLeaveZeal(JSContext* cx) {}
+};
+#endif
 
 #endif /* jsapi_tests_tests_h */

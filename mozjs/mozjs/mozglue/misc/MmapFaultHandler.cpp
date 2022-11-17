@@ -6,11 +6,10 @@
 
 #include "MmapFaultHandler.h"
 
-#if defined(XP_UNIX) && !defined(XP_DARWIN)
+#if defined(XP_UNIX) && !defined(XP_DARWIN) && !defined(__wasi__)
 
-#  include "PlatformMutex.h"
+#  include "mozilla/Assertions.h"
 #  include "mozilla/Atomics.h"
-#  include "mozilla/MemoryChecking.h"
 #  include "mozilla/ThreadLocal.h"
 #  include <signal.h>
 #  include <cstring>

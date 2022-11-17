@@ -9,9 +9,6 @@ description: Checking if Math.log(+Infinity) equals to +Infinity
 
 // CHECK#1
 var x = +Infinity;
-if (Math.log(x) !== +Infinity)
-{
-  $ERROR("#1: 'var x=+Infinity; Math.log(x) !== +Infinity'");
-}
+assert.sameValue(Math.log(x), +Infinity, 'Math.log(+Infinity) must return +Infinity');
 
 reportCompare(0, 0);

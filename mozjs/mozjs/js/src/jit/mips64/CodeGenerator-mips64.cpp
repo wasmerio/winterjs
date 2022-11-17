@@ -13,7 +13,6 @@
 #include "jit/MIRGraph.h"
 #include "js/Conversions.h"
 #include "vm/Shape.h"
-#include "vm/TraceLogging.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/CodeGenerator-shared-inl.h"
@@ -272,7 +271,7 @@ void CodeGeneratorMIPS64::emitBigIntDiv(LBigIntDiv* ins, Register dividend,
 #endif
 
   // Create and return the result.
-  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, dividend);
 }
 
@@ -289,7 +288,7 @@ void CodeGeneratorMIPS64::emitBigIntMod(LBigIntMod* ins, Register dividend,
 #endif
 
   // Create and return the result.
-  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, dividend);
 }
 
@@ -423,6 +422,20 @@ void CodeGenerator::visitSignExtendInt64(LSignExtendInt64* lir) {
   }
 }
 
+void CodeGenerator::visitWasmExtendU32Index(LWasmExtendU32Index* lir) {
+  Register input = ToRegister(lir->input());
+  Register output = ToRegister(lir->output());
+  MOZ_ASSERT(input == output);
+  masm.move32To64ZeroExtend(input, Register64(output));
+}
+
+void CodeGenerator::visitWasmWrapU32Index(LWasmWrapU32Index* lir) {
+  Register input = ToRegister(lir->input());
+  Register output = ToRegister(lir->output());
+  MOZ_ASSERT(input == output);
+  masm.move64To32(Register64(input), output);
+}
+
 void CodeGenerator::visitClzI64(LClzI64* lir) {
   Register64 input = ToRegister64(lir->getInt64Operand(0));
   Register64 output = ToOutRegister64(lir);
@@ -439,7 +452,15 @@ void CodeGenerator::visitNotI64(LNotI64* lir) {
   Register64 input = ToRegister64(lir->getInt64Operand(0));
   Register output = ToRegister(lir->output());
 
-  masm.cmp64Set(Assembler::Equal, input.reg, Imm32(0), output);
+  masm.ma_cmp_set(output, input.reg, zero, Assembler::Equal);
+}
+
+void CodeGenerator::visitBitNotI64(LBitNotI64* ins) {
+  const LAllocation* input = ins->getOperand(0);
+  MOZ_ASSERT(!input->isConstant());
+  Register inputReg = ToRegister(input);
+  MOZ_ASSERT(inputReg == ToRegister(ins->output()));
+  masm.ma_not(inputReg, inputReg);
 }
 
 void CodeGenerator::visitWasmTruncateToInt64(LWasmTruncateToInt64* lir) {
@@ -505,4 +526,49 @@ void CodeGenerator::visitTestI64AndBranch(LTestI64AndBranch* lir) {
   MBasicBlock* ifFalse = lir->ifFalse();
 
   emitBranch(input.reg, Imm32(0), Assembler::NonZero, ifTrue, ifFalse);
+}
+
+void CodeGenerator::visitAtomicLoad64(LAtomicLoad64* lir) {
+  Register elements = ToRegister(lir->elements());
+  Register temp = ToRegister(lir->temp());
+  Register64 temp64 = ToRegister64(lir->temp64());
+  Register out = ToRegister(lir->output());
+  const MLoadUnboxedScalar* mir = lir->mir();
+
+  Scalar::Type storageType = mir->storageType();
+
+  auto sync = Synchronization::Load();
+  masm.memoryBarrierBefore(sync);
+  if (lir->index()->isConstant()) {
+    Address source =
+        ToAddress(elements, lir->index(), storageType, mir->offsetAdjustment());
+    masm.load64(source, temp64);
+  } else {
+    BaseIndex source(elements, ToRegister(lir->index()),
+                     ScaleFromScalarType(storageType), mir->offsetAdjustment());
+    masm.load64(source, temp64);
+  }
+  masm.memoryBarrierAfter(sync);
+  emitCreateBigInt(lir, storageType, temp64, out, temp);
+}
+
+void CodeGenerator::visitAtomicStore64(LAtomicStore64* lir) {
+  Register elements = ToRegister(lir->elements());
+  Register value = ToRegister(lir->value());
+  Register64 temp1 = ToRegister64(lir->temp1());
+
+  Scalar::Type writeType = lir->mir()->writeType();
+
+  masm.loadBigInt64(value, temp1);
+  auto sync = Synchronization::Store();
+  masm.memoryBarrierBefore(sync);
+  if (lir->index()->isConstant()) {
+    Address dest = ToAddress(elements, lir->index(), writeType);
+    masm.store64(temp1, dest);
+  } else {
+    BaseIndex dest(elements, ToRegister(lir->index()),
+                   ScaleFromScalarType(writeType));
+    masm.store64(temp1, dest);
+  }
+  masm.memoryBarrierAfter(sync);
 }

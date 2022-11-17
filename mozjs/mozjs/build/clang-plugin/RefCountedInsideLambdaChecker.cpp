@@ -36,6 +36,18 @@ void RefCountedInsideLambdaChecker::emitDiagnostics(SourceLocation Loc,
   diag(Loc, "Please consider using a smart pointer", DiagnosticIDs::Note);
 }
 
+static bool IsKnownLive(const VarDecl *Var) {
+  const Stmt *Init = Var->getInit();
+  if (!Init) {
+    return false;
+  }
+  if (auto *Call = dyn_cast<CallExpr>(Init)) {
+    const FunctionDecl *Callee = Call->getDirectCallee();
+    return Callee && Callee->getName() == "MOZ_KnownLive";
+  }
+  return false;
+}
+
 void RefCountedInsideLambdaChecker::check(
     const MatchFinder::MatchResult &Result) {
   static DenseSet<const CXXRecordDecl *> CheckedDecls;
@@ -78,7 +90,7 @@ void RefCountedInsideLambdaChecker::check(
     // "Smart Pointer" somehow?
     if (!StrongRefToThisCaptured && Capture.capturesVariable() &&
         Capture.getCaptureKind() == LCK_ByCopy) {
-      const VarDecl *Var = Capture.getCapturedVar();
+      const VarDecl *Var = dyn_cast<VarDecl>(Capture.getCapturedVar());
       if (Var->hasInit()) {
         const Stmt *Init = Var->getInit();
 
@@ -107,11 +119,11 @@ void RefCountedInsideLambdaChecker::check(
   // pointers.
   for (const LambdaCapture &Capture : Lambda->captures()) {
     if (Capture.capturesVariable()) {
-      QualType Pointee = Capture.getCapturedVar()->getType()->getPointeeType();
-
-      if (!Pointee.isNull() && isClassRefCounted(Pointee)) {
-        emitDiagnostics(Capture.getLocation(),
-                        Capture.getCapturedVar()->getName(), Pointee);
+      const VarDecl *Var = dyn_cast<VarDecl>(Capture.getCapturedVar());
+      QualType Pointee = Var->getType()->getPointeeType();
+      if (!Pointee.isNull() && isClassRefCounted(Pointee) &&
+          !IsKnownLive(Var)) {
+        emitDiagnostics(Capture.getLocation(), Var->getName(), Pointee);
         return;
       }
     }

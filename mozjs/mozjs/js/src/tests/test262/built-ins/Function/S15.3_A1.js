@@ -11,8 +11,6 @@ var obj = Function;
 
 var thisobj = this.Function;
 
-if (obj !== thisobj) {
-  $ERROR('Function is the property of global');
-}
+assert.sameValue(obj, thisobj, 'The value of obj is expected to equal the value of thisobj');
 
 reportCompare(0, 0);

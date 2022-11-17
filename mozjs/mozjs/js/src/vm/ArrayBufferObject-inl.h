@@ -12,8 +12,6 @@
 
 #include "vm/ArrayBufferObject.h"
 
-#include "js/Value.h"
-
 #include "vm/SharedArrayObject.h"
 #include "vm/SharedMem.h"
 
@@ -33,7 +31,7 @@ inline bool ArrayBufferObjectMaybeShared::isDetached() const {
   return false;
 }
 
-inline BufferSize ArrayBufferObjectMaybeShared::byteLength() const {
+inline size_t ArrayBufferObjectMaybeShared::byteLength() const {
   if (this->is<ArrayBufferObject>()) {
     return this->as<ArrayBufferObject>().byteLength();
   }

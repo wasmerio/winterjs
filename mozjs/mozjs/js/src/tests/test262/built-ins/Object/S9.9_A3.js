@@ -8,35 +8,22 @@ info: |
 es5id: 9.9_A3
 description: Trying to convert from Boolean to Object
 ---*/
+assert.sameValue(Object(true).valueOf(), true, 'Object(true).valueOf() must return true');
+assert.sameValue(typeof Object(true), "object", 'The value of `typeof Object(true)` is expected to be "object"');
 
-// CHECK#1
-if (Object(true).valueOf() !== true) {
-  $ERROR('#1: Object(true).valueOf() === true. Actual: ' + (Object(true).valueOf()));
-}
+assert.sameValue(
+  Object(true).constructor.prototype,
+  Boolean.prototype,
+  'The value of Object(true).constructor.prototype is expected to equal the value of Boolean.prototype'
+);
 
-// CHECK#2
-if (typeof Object(true) !== "object") {
-  $ERROR('#2: typeof Object(true) === "object". Actual: ' + (typeof Object(true)));
-}
+assert.sameValue(Object(false).valueOf(), false, 'Object(false).valueOf() must return false');
+assert.sameValue(typeof Object(false), "object", 'The value of `typeof Object(false)` is expected to be "object"');
 
-// CHECK#3
-if (Object(true).constructor.prototype !== Boolean.prototype) {
-  $ERROR('#3: Object(true).constructor.prototype === Boolean.prototype. Actual: ' + (Object(true).constructor.prototype));
-}
-
-// CHECK#4
-if (Object(false).valueOf() !== false) {
-  $ERROR('#4: Object(false).valueOf() === false. Actual: ' + (Object(false).valueOf()));
-}
-
-// CHECK#5
-if (typeof Object(false) !== "object") {
-  $ERROR('#5: typeof Object(false) === "object". Actual: ' + (typeof Object(false)));
-}
-
-// CHECK#6
-if (Object(false).constructor.prototype !== Boolean.prototype) {
-  $ERROR('#6: Object(false).constructor.prototype === Boolean.prototype. Actual: ' + (Object(false).constructor.prototype));
-}
+assert.sameValue(
+  Object(false).constructor.prototype,
+  Boolean.prototype,
+  'The value of Object(false).constructor.prototype is expected to equal the value of Boolean.prototype'
+);
 
 reportCompare(0, 0);

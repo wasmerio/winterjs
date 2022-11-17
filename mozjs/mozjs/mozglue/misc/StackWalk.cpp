@@ -7,10 +7,15 @@
 /* API for getting a stack trace of the C/C++ stack on the current thread */
 
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StackWalk.h"
+#ifdef XP_WIN
+#  include "mozilla/StackWalkThread.h"
+#  include <io.h>
+#else
+#  include <unistd.h>
+#endif
+#include "mozilla/Sprintf.h"
 
 #include <string.h>
 
@@ -62,7 +67,27 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
 #  include <pthread.h>
 #endif
 
-#if MOZ_STACKWALK_SUPPORTS_WINDOWS
+class FrameSkipper {
+ public:
+  constexpr FrameSkipper() : mPc(0) {}
+  bool ShouldSkipPC(void* aPC) {
+    // Skip frames until we encounter the one we were initialized with,
+    // and then never skip again.
+    if (mPc != 0) {
+      if (mPc != uintptr_t(aPC)) {
+        return true;
+      }
+      mPc = 0;
+    }
+    return false;
+  }
+  explicit FrameSkipper(const void* aPc) : mPc(uintptr_t(aPc)) {}
+
+ private:
+  uintptr_t mPc;
+};
+
+#ifdef XP_WIN
 
 #  include <windows.h>
 #  include <process.h>
@@ -77,30 +102,9 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
 // We need a way to know if we are building for WXP (or later), as if we are, we
 // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
 // A value of 9 indicates we want to use the new APIs.
-#ifndef JS_ENABLE_UWP
 #  if API_VERSION_NUMBER < 9
 #    error Too old imagehlp.h
 #  endif
-#endif
-
-struct WalkStackData {
-  // Are we walking the stack of the calling thread? Note that we need to avoid
-  // calling fprintf and friends if this is false, in order to avoid deadlocks.
-  bool walkCallingThread;
-  uint32_t skipFrames;
-  HANDLE thread;
-  HANDLE process;
-  HANDLE eventStart;
-  HANDLE eventEnd;
-  void** pcs;
-  uint32_t pc_size;
-  uint32_t pc_count;
-  uint32_t pc_max;
-  void** sps;
-  uint32_t sp_size;
-  uint32_t sp_count;
-  CONTEXT* context;
-};
 
 CRITICAL_SECTION gDbgHelpCS;
 
@@ -182,39 +186,100 @@ static void InitializeDbgHelpCriticalSection() {
   initialized = true;
 }
 
-static void WalkStackMain64(struct WalkStackData* aData) {
-#ifdef JS_ENABLE_UWP
-  return;
-#else
-  // Get a context for the specified thread.
-  CONTEXT context_buf;
-  CONTEXT* context;
-  if (!aData->context) {
-    context = &context_buf;
-    memset(context, 0, sizeof(CONTEXT));
-    context->ContextFlags = CONTEXT_FULL;
-    if (aData->walkCallingThread) {
-      ::RtlCaptureContext(context);
-    } else if (!GetThreadContext(aData->thread, context)) {
-      return;
-    }
-  } else {
-    context = aData->context;
+// Wrapper around a reference to a CONTEXT, to simplify access to main
+// platform-specific execution registers.
+// It also avoids using CONTEXT* nullable pointers.
+class CONTEXTGenericAccessors {
+ public:
+  explicit CONTEXTGenericAccessors(CONTEXT& aCONTEXT) : mCONTEXT(aCONTEXT) {}
+
+  CONTEXT* CONTEXTPtr() { return &mCONTEXT; }
+
+  inline auto& PC() {
+#  if defined(_M_AMD64)
+    return mCONTEXT.Rip;
+#  elif defined(_M_ARM64)
+    return mCONTEXT.Pc;
+#  elif defined(_M_IX86)
+    return mCONTEXT.Eip;
+#  else
+#    error "unknown platform"
+#  endif
   }
 
-#  if defined(_M_IX86) || defined(_M_IA64)
+  inline auto& SP() {
+#  if defined(_M_AMD64)
+    return mCONTEXT.Rsp;
+#  elif defined(_M_ARM64)
+    return mCONTEXT.Sp;
+#  elif defined(_M_IX86)
+    return mCONTEXT.Esp;
+#  else
+#    error "unknown platform"
+#  endif
+  }
+
+  inline auto& BP() {
+#  if defined(_M_AMD64)
+    return mCONTEXT.Rbp;
+#  elif defined(_M_ARM64)
+    return mCONTEXT.Fp;
+#  elif defined(_M_IX86)
+    return mCONTEXT.Ebp;
+#  else
+#    error "unknown platform"
+#  endif
+  }
+
+ private:
+  CONTEXT& mCONTEXT;
+};
+
+/**
+ * Walk the stack, translating PC's found into strings and recording the
+ * chain in aBuffer. For this to work properly, the DLLs must be rebased
+ * so that the address in the file agrees with the address in memory.
+ * Otherwise StackWalk will return FALSE when it hits a frame in a DLL
+ * whose in memory address doesn't match its in-file address.
+ */
+
+static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
+                                 const void* aFirstFramePC, uint32_t aMaxFrames,
+                                 void* aClosure, HANDLE aThread,
+                                 CONTEXT* aContext) {
+  InitializeDbgHelpCriticalSection();
+
+  HANDLE targetThread = aThread;
+  bool walkCallingThread;
+  if (!targetThread) {
+    targetThread = ::GetCurrentThread();
+    walkCallingThread = true;
+  } else {
+    DWORD targetThreadId = ::GetThreadId(targetThread);
+    DWORD currentThreadId = ::GetCurrentThreadId();
+    walkCallingThread = (targetThreadId == currentThreadId);
+  }
+
+  // If not already provided, get a context for the specified thread.
+  CONTEXT context_buf;
+  if (!aContext) {
+    memset(&context_buf, 0, sizeof(CONTEXT));
+    context_buf.ContextFlags = CONTEXT_FULL;
+    if (walkCallingThread) {
+      ::RtlCaptureContext(&context_buf);
+    } else if (!GetThreadContext(targetThread, &context_buf)) {
+      return;
+    }
+  }
+  CONTEXTGenericAccessors context{aContext ? *aContext : context_buf};
+
+#  if defined(_M_IX86)
   // Setup initial stack frame to walk from.
   STACKFRAME64 frame64;
   memset(&frame64, 0, sizeof(frame64));
-#    ifdef _M_IX86
-  frame64.AddrPC.Offset = context->Eip;
-  frame64.AddrStack.Offset = context->Esp;
-  frame64.AddrFrame.Offset = context->Ebp;
-#    elif defined _M_IA64
-  frame64.AddrPC.Offset = context->StIIP;
-  frame64.AddrStack.Offset = context->SP;
-  frame64.AddrFrame.Offset = context->RsBSP;
-#    endif
+  frame64.AddrPC.Offset = context.PC();
+  frame64.AddrStack.Offset = context.SP();
+  frame64.AddrFrame.Offset = context.BP();
   frame64.AddrPC.Mode = AddrModeFlat;
   frame64.AddrStack.Mode = AddrModeFlat;
   frame64.AddrFrame.Mode = AddrModeFlat;
@@ -241,25 +306,25 @@ static void WalkStackMain64(struct WalkStackData* aData) {
   bool firstFrame = true;
 #  endif
 
-  // Skip our own stack walking frames.
-  int skip = (aData->walkCallingThread ? 3 : 0) + aData->skipFrames;
+  FrameSkipper skipper(aFirstFramePC);
+
+  uint32_t frames = 0;
 
   // Now walk the stack.
   while (true) {
     DWORD64 addr;
     DWORD64 spaddr;
 
-#  if defined(_M_IX86) || defined(_M_IA64)
+#  if defined(_M_IX86)
     // 32-bit frame unwinding.
     // Debug routines are not threadsafe, so grab the lock.
     EnterCriticalSection(&gDbgHelpCS);
     BOOL ok = StackWalk64(
-#    if defined _M_IA64
-        IMAGE_FILE_MACHINE_IA64,
-#    elif defined _M_IX86
+#    if defined _M_IX86
         IMAGE_FILE_MACHINE_I386,
 #    endif
-        aData->process, aData->thread, &frame64, context, nullptr,
+        ::GetCurrentProcess(), targetThread, &frame64, context.CONTEXTPtr(),
+        nullptr,
         SymFunctionTableAccess64,  // function table access routine
         SymGetModuleBase64,        // module base routine
         0);
@@ -271,7 +336,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
     } else {
       addr = 0;
       spaddr = 0;
-      if (aData->walkCallingThread) {
+      if (walkCallingThread) {
         PrintError("WalkStack64");
       }
     }
@@ -282,11 +347,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
 
 #  elif defined(_M_AMD64) || defined(_M_ARM64)
 
-#    if defined(_M_AMD64)
-    auto currentInstr = context->Rip;
-#    elif defined(_M_ARM64)
-    auto currentInstr = context->Pc;
-#    endif
+    auto currentInstr = context.PC();
 
     // If we reach a frame in JIT code, we don't have enough information to
     // unwind, so we have to give up.
@@ -315,29 +376,19 @@ static void WalkStackMain64(struct WalkStackData* aData) {
       PVOID dummyHandlerData;
       ULONG64 dummyEstablisherFrame;
       RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, currentInstr,
-                       runtimeFunction, context, &dummyHandlerData,
+                       runtimeFunction, context.CONTEXTPtr(), &dummyHandlerData,
                        &dummyEstablisherFrame, nullptr);
     } else if (firstFrame) {
       // Leaf functions can be unwound by hand.
-#    if defined(_M_AMD64)
-      context->Rip = *reinterpret_cast<DWORD64*>(context->Rsp);
-      context->Rsp += sizeof(void*);
-#    elif defined(_M_ARM64)
-      context->Pc = *reinterpret_cast<DWORD64*>(context->Sp);
-      context->Sp += sizeof(void*);
-#    endif
+      context.PC() = *reinterpret_cast<DWORD64*>(context.SP());
+      context.SP() += sizeof(void*);
     } else {
       // Something went wrong.
       break;
     }
 
-#    if defined(_M_AMD64)
-    addr = context->Rip;
-    spaddr = context->Rsp;
-#    elif defined(_M_ARM64)
-    addr = context->Pc;
-    spaddr = context->Sp;
-#    endif
+    addr = context.PC();
+    spaddr = context.SP();
     firstFrame = false;
 #  else
 #    error "unknown platform"
@@ -347,101 +398,38 @@ static void WalkStackMain64(struct WalkStackData* aData) {
       break;
     }
 
-    if (skip-- > 0) {
+    if (skipper.ShouldSkipPC((void*)addr)) {
       continue;
     }
 
-    if (aData->pc_count < aData->pc_size) {
-      aData->pcs[aData->pc_count] = (void*)addr;
-    }
-    ++aData->pc_count;
+    aCallback(++frames, (void*)addr, (void*)spaddr, aClosure);
 
-    if (aData->sp_count < aData->sp_size) {
-      aData->sps[aData->sp_count] = (void*)spaddr;
-    }
-    ++aData->sp_count;
-
-    if (aData->pc_max != 0 && aData->pc_count == aData->pc_max) {
+    if (aMaxFrames != 0 && frames == aMaxFrames) {
       break;
     }
 
-#  if defined(_M_IX86) || defined(_M_IA64)
+#  if defined(_M_IX86)
     if (frame64.AddrReturn.Offset == 0) {
       break;
     }
 #  endif
-  }
-#endif
-}
-
-/**
- * Walk the stack, translating PC's found into strings and recording the
- * chain in aBuffer. For this to work properly, the DLLs must be rebased
- * so that the address in the file agrees with the address in memory.
- * Otherwise StackWalk will return FALSE when it hits a frame in a DLL
- * whose in memory address doesn't match its in-file address.
- */
-
-static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
-                                 uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                 void* aClosure, HANDLE aThread,
-                                 CONTEXT* aContext) {
-  struct WalkStackData data;
-
-  InitializeDbgHelpCriticalSection();
-
-  HANDLE targetThread = aThread;
-  if (!aThread) {
-    targetThread = ::GetCurrentThread();
-    data.walkCallingThread = true;
-  } else {
-    DWORD threadId = ::GetThreadId(aThread);
-    DWORD currentThreadId = ::GetCurrentThreadId();
-    data.walkCallingThread = (threadId == currentThreadId);
-  }
-
-  data.skipFrames = aSkipFrames;
-  data.thread = targetThread;
-  data.process = ::GetCurrentProcess();
-  void* local_pcs[1024];
-  data.pcs = local_pcs;
-  data.pc_count = 0;
-  data.pc_size = ArrayLength(local_pcs);
-  data.pc_max = aMaxFrames;
-  void* local_sps[1024];
-  data.sps = local_sps;
-  data.sp_count = 0;
-  data.sp_size = ArrayLength(local_sps);
-  data.context = aContext;
-
-  WalkStackMain64(&data);
-
-  if (data.pc_count > data.pc_size) {
-    data.pcs = (void**)_alloca(data.pc_count * sizeof(void*));
-    data.pc_size = data.pc_count;
-    data.pc_count = 0;
-    data.sps = (void**)_alloca(data.sp_count * sizeof(void*));
-    data.sp_size = data.sp_count;
-    data.sp_count = 0;
-    WalkStackMain64(&data);
-  }
-
-  for (uint32_t i = 0; i < data.pc_count; ++i) {
-    (*aCallback)(i + 1, data.pcs[i], data.sps[i], aClosure);
   }
 }
 
 MFBT_API void MozStackWalkThread(MozWalkStackCallback aCallback,
                                  uint32_t aMaxFrames, void* aClosure,
                                  HANDLE aThread, CONTEXT* aContext) {
-  DoMozStackWalkThread(aCallback, /* aSkipFrames = */ 0, aMaxFrames, aClosure,
-                       aThread, aContext);
+  // We don't pass a aFirstFramePC because we walk the stack for another
+  // thread.
+  DoMozStackWalkThread(aCallback, nullptr, aMaxFrames, aClosure, aThread,
+                       aContext);
 }
 
-MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-                           uint32_t aMaxFrames, void* aClosure) {
-  DoMozStackWalkThread(aCallback, aSkipFrames, aMaxFrames, aClosure, nullptr,
-                       nullptr);
+MFBT_API void MozStackWalk(MozWalkStackCallback aCallback,
+                           const void* aFirstFramePC, uint32_t aMaxFrames,
+                           void* aClosure) {
+  DoMozStackWalkThread(aCallback, aFirstFramePC ? aFirstFramePC : CallerPC(),
+                       aMaxFrames, aClosure, nullptr, nullptr);
 }
 
 static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
@@ -449,7 +437,6 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
   BOOL retval = TRUE;
   DWORD64 addr = *(DWORD64*)aUserContext;
 
-#ifndef JS_ENABLE_UWP
   /*
    * You'll want to control this if we are running on an
    *  architecture where the addresses go the other direction.
@@ -469,7 +456,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
       PrintError("SymLoadModule64");
     }
   }
-#endif
+
   return retval;
 }
 
@@ -501,7 +488,6 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
 #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
 #  endif
 
-#ifndef JS_ENABLE_UWP
 BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
                                 PIMAGEHLP_MODULE64 aModuleInfo,
                                 PIMAGEHLP_LINE64 aLineInfo) {
@@ -558,11 +544,10 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
 
   return retval;
 }
-#endif
 
 static bool EnsureSymInitialized() {
   static bool gInitialized = false;
-  bool retStat = true;
+  bool retStat;
 
   if (gInitialized) {
     return gInitialized;
@@ -570,13 +555,11 @@ static bool EnsureSymInitialized() {
 
   InitializeDbgHelpCriticalSection();
 
-#ifndef JS_ENABLE_UWP
   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
   if (!retStat) {
     PrintError("SymInitialize");
   }
-#endif
 
   gInitialized = retStat;
   /* XXX At some point we need to arrange to call SymCleanup */
@@ -584,7 +567,6 @@ static bool EnsureSymInitialized() {
   return retStat;
 }
 
-#ifndef JS_ENABLE_UWP
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
   aDetails->library[0] = '\0';
@@ -648,7 +630,6 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
   return true;
 }
-#endif
 
 // i386 or PPC Linux stackwalking code
 #elif HAVE_DLADDR &&                                           \
@@ -656,7 +637,6 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
      MOZ_STACKWALK_SUPPORTS_MACOSX)
 
 #  include <stdlib.h>
-#  include <string.h>
 #  include <stdio.h>
 
 // On glibc 2.1, the Dl_info api defined in <dlfcn.h> is only exposed
@@ -697,12 +677,13 @@ void DemangleSymbol(const char* aSymbol, char* aBuffer, int aBufLen) {
        (MOZ_STACKWALK_SUPPORTS_MACOSX || MOZ_STACKWALK_SUPPORTS_LINUX))
 
 static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd);
+                                    const void* aFirstFramePC,
+                                    uint32_t aMaxFrames, void* aClosure,
+                                    void** aBp, void* aStackEnd);
 
-MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-                           uint32_t aMaxFrames, void* aClosure) {
+MFBT_API void MozStackWalk(MozWalkStackCallback aCallback,
+                           const void* aFirstFramePC, uint32_t aMaxFrames,
+                           void* aClosure) {
   // Get the frame pointer
   void** bp = (void**)__builtin_frame_address(0);
 
@@ -739,7 +720,7 @@ MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
 #    else
 #      error Unsupported configuration
 #    endif
-  DoFramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames, aClosure, bp,
+  DoFramePointerStackWalk(aCallback, aFirstFramePC, aMaxFrames, aClosure, bp,
                           stackEnd);
 }
 
@@ -750,7 +731,7 @@ MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
 
 struct unwind_info {
   MozWalkStackCallback callback;
-  int skip;
+  FrameSkipper skipper;
   int maxFrames;
   int numFrames;
   void* closure;
@@ -761,7 +742,7 @@ static _Unwind_Reason_Code unwind_callback(struct _Unwind_Context* context,
   unwind_info* info = static_cast<unwind_info*>(closure);
   void* pc = reinterpret_cast<void*>(_Unwind_GetIP(context));
   // TODO Use something like '_Unwind_GetGR()' to get the stack pointer.
-  if (--info->skip < 0) {
+  if (!info->skipper.ShouldSkipPC(pc)) {
     info->numFrames++;
     (*info->callback)(info->numFrames, pc, nullptr, info->closure);
     if (info->maxFrames != 0 && info->numFrames == info->maxFrames) {
@@ -772,11 +753,12 @@ static _Unwind_Reason_Code unwind_callback(struct _Unwind_Context* context,
   return _URC_NO_REASON;
 }
 
-MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-                           uint32_t aMaxFrames, void* aClosure) {
+MFBT_API void MozStackWalk(MozWalkStackCallback aCallback,
+                           const void* aFirstFramePC, uint32_t aMaxFrames,
+                           void* aClosure) {
   unwind_info info;
   info.callback = aCallback;
-  info.skip = aSkipFrames + 1;
+  info.skipper = FrameSkipper(aFirstFramePC ? aFirstFramePC : CallerPC());
   info.maxFrames = aMaxFrames;
   info.numFrames = 0;
   info.closure = aClosure;
@@ -846,8 +828,9 @@ bool MFBT_API MozDescribeCodeAddress(void* aPC,
 
 #else  // unsupported platform.
 
-MFBT_API void MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
-                           uint32_t aMaxFrames, void* aClosure) {}
+MFBT_API void MozStackWalk(MozWalkStackCallback aCallback,
+                           const void* aFirstFramePC, uint32_t aMaxFrames,
+                           void* aClosure) {}
 
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
@@ -863,15 +846,48 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
 #endif
 
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_LINUX)
+
+#  if defined(XP_MACOSX) && defined(__aarch64__)
+// On macOS arm64, system libraries are arm64e binaries, and arm64e can do
+// pointer authentication: The low bits of the pointer are the actual pointer
+// value, and the high bits are an encrypted hash. During stackwalking, we need
+// to strip off this hash. In theory, ptrauth_strip would be the right function
+// to call for this. However, that function is a no-op unless it's called from
+// code which also builds as arm64e - which we do not. So we cannot use it. So
+// for now, we hardcode a mask that seems to work today: 40 bits for the pointer
+// and 24 bits for the hash seems to do the trick. We can worry about
+// dynamically computing the correct mask if this ever stops working.
+const uintptr_t kPointerMask =
+    (uintptr_t(1) << 40) - 1;  // 40 bits pointer, 24 bit PAC
+#  else
+const uintptr_t kPointerMask = ~uintptr_t(0);
+#  endif
+
 MOZ_ASAN_BLACKLIST
 static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
-                                    uint32_t aSkipFrames, uint32_t aMaxFrames,
-                                    void* aClosure, void** aBp,
-                                    void* aStackEnd) {
+                                    const void* aFirstFramePC,
+                                    uint32_t aMaxFrames, void* aClosure,
+                                    void** aBp, void* aStackEnd) {
   // Stack walking code courtesy Kipp's "leaky".
 
-  int32_t skip = aSkipFrames;
+  FrameSkipper skipper(aFirstFramePC);
   uint32_t numFrames = 0;
+
+  // Sanitize the given aBp. Assume that something reasonably close to
+  // but before the stack end is going be a valid frame pointer. Also
+  // check that it is an aligned address. This increases the chances
+  // that if the pointer is not valid (which might happen if the caller
+  // called __builtin_frame_address(1) and its frame is busted for some
+  // reason), we won't read it, leading to a crash. Because the calling
+  // code is not using frame pointers when returning, it might actually
+  // recover just fine.
+  static const uintptr_t kMaxStackSize = 8 * 1024 * 1024;
+  if (uintptr_t(aBp) < uintptr_t(aStackEnd) -
+                           std::min(kMaxStackSize, uintptr_t(aStackEnd)) ||
+      aBp >= aStackEnd || (uintptr_t(aBp) & 3)) {
+    return;
+  }
+
   while (aBp) {
     void** next = (void**)*aBp;
     // aBp may not be a frame pointer on i386 if code was compiled with
@@ -891,7 +907,13 @@ static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
     void* pc = *(aBp + 1);
     aBp += 2;
 #  endif
-    if (--skip < 0) {
+
+    // Strip off pointer authentication hash, if present. For now, it looks
+    // like only return addresses require stripping, and stack pointers do
+    // not. This might change in the future.
+    pc = (void*)((uintptr_t)pc & kPointerMask);
+
+    if (!skipper.ShouldSkipPC(pc)) {
       // Assume that the SP points to the BP of the function
       // it called. We can't know the exact location of the SP
       // but this should be sufficient for our use the SP
@@ -908,10 +930,13 @@ static void DoFramePointerStackWalk(MozWalkStackCallback aCallback,
 
 namespace mozilla {
 
-void FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aMaxFrames,
-                           void* aClosure, void** aBp, void* aStackEnd) {
-  DoFramePointerStackWalk(aCallback, /* aSkipFrames = */ 0, aMaxFrames,
-                          aClosure, aBp, aStackEnd);
+MFBT_API void FramePointerStackWalk(MozWalkStackCallback aCallback,
+                                    uint32_t aMaxFrames, void* aClosure,
+                                    void** aBp, void* aStackEnd) {
+  // We don't pass a aFirstFramePC because we start walking the stack from the
+  // frame at aBp.
+  DoFramePointerStackWalk(aCallback, nullptr, aMaxFrames, aClosure, aBp,
+                          aStackEnd);
 }
 
 }  // namespace mozilla
@@ -926,37 +951,113 @@ MFBT_API void FramePointerStackWalk(MozWalkStackCallback aCallback,
 
 #endif
 
-MFBT_API void MozFormatCodeAddressDetails(
+MFBT_API int MozFormatCodeAddressDetails(
     char* aBuffer, uint32_t aBufferSize, uint32_t aFrameNumber, void* aPC,
     const MozCodeAddressDetails* aDetails) {
-  MozFormatCodeAddress(aBuffer, aBufferSize, aFrameNumber, aPC,
-                       aDetails->function, aDetails->library, aDetails->loffset,
-                       aDetails->filename, aDetails->lineno);
+  return MozFormatCodeAddress(aBuffer, aBufferSize, aFrameNumber, aPC,
+                              aDetails->function, aDetails->library,
+                              aDetails->loffset, aDetails->filename,
+                              aDetails->lineno);
 }
 
-MFBT_API void MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
-                                   uint32_t aFrameNumber, const void* aPC,
-                                   const char* aFunction, const char* aLibrary,
-                                   ptrdiff_t aLOffset, const char* aFileName,
-                                   uint32_t aLineNo) {
+MFBT_API int MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize,
+                                  uint32_t aFrameNumber, const void* aPC,
+                                  const char* aFunction, const char* aLibrary,
+                                  ptrdiff_t aLOffset, const char* aFileName,
+                                  uint32_t aLineNo) {
   const char* function = aFunction && aFunction[0] ? aFunction : "???";
   if (aFileName && aFileName[0]) {
     // We have a filename and (presumably) a line number. Use them.
-    snprintf(aBuffer, aBufferSize, "#%02u: %s (%s:%u)", aFrameNumber, function,
-             aFileName, aLineNo);
+    return SprintfBuf(aBuffer, aBufferSize, "#%02u: %s (%s:%u)", aFrameNumber,
+                      function, aFileName, aLineNo);
   } else if (aLibrary && aLibrary[0]) {
     // We have no filename, but we do have a library name. Use it and the
     // library offset, and print them in a way that `fix_stacks.py` can
     // post-process.
-    snprintf(aBuffer, aBufferSize, "#%02u: %s[%s +0x%" PRIxPTR "]",
-             aFrameNumber, function, aLibrary,
-             static_cast<uintptr_t>(aLOffset));
+    return SprintfBuf(aBuffer, aBufferSize, "#%02u: %s[%s +0x%" PRIxPTR "]",
+                      aFrameNumber, function, aLibrary,
+                      static_cast<uintptr_t>(aLOffset));
   } else {
     // We have nothing useful to go on. (The format string is split because
     // '??)' is a trigraph and causes a warning, sigh.)
-    snprintf(aBuffer, aBufferSize,
-             "#%02u: ??? (???:???"
-             ")",
-             aFrameNumber);
+    return SprintfBuf(aBuffer, aBufferSize,
+                      "#%02u: ??? (???:???"
+                      ")",
+                      aFrameNumber);
+  }
+}
+
+static void EnsureWrite(FILE* aStream, const char* aBuf, size_t aLen) {
+#ifdef XP_WIN
+  int fd = _fileno(aStream);
+#else
+  int fd = fileno(aStream);
+#endif
+  while (aLen > 0) {
+#ifdef XP_WIN
+    auto written = _write(fd, aBuf, aLen);
+#else
+    auto written = write(fd, aBuf, aLen);
+#endif
+    if (written <= 0 || size_t(written) > aLen) {
+      break;
+    }
+    aBuf += written;
+    aLen -= written;
+  }
+}
+
+template <int N>
+static int PrintStackFrameBuf(char (&aBuf)[N], uint32_t aFrameNumber, void* aPC,
+                              void* aSP) {
+  MozCodeAddressDetails details;
+  MozDescribeCodeAddress(aPC, &details);
+  int len =
+      MozFormatCodeAddressDetails(aBuf, N - 1, aFrameNumber, aPC, &details);
+  len = std::min(len, N - 2);
+  aBuf[len++] = '\n';
+  aBuf[len] = '\0';
+  return len;
+}
+
+static void PrintStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
+                            void* aClosure) {
+  FILE* stream = (FILE*)aClosure;
+  char buf[1025];  // 1024 + 1 for trailing '\n'
+  int len = PrintStackFrameBuf(buf, aFrameNumber, aPC, aSP);
+  fflush(stream);
+  EnsureWrite(stream, buf, len);
+}
+
+static bool WalkTheStackEnabled() {
+  static bool result = [] {
+    char* value = getenv("MOZ_DISABLE_WALKTHESTACK");
+    return !(value && value[0]);
+  }();
+  return result;
+}
+
+MFBT_API void MozWalkTheStack(FILE* aStream, const void* aFirstFramePC,
+                              uint32_t aMaxFrames) {
+  if (WalkTheStackEnabled()) {
+    MozStackWalk(PrintStackFrame, aFirstFramePC ? aFirstFramePC : CallerPC(),
+                 aMaxFrames, aStream);
+  }
+}
+
+static void WriteStackFrame(uint32_t aFrameNumber, void* aPC, void* aSP,
+                            void* aClosure) {
+  auto writer = (void (*)(const char*))aClosure;
+  char buf[1024];
+  PrintStackFrameBuf(buf, aFrameNumber, aPC, aSP);
+  writer(buf);
+}
+
+MFBT_API void MozWalkTheStackWithWriter(void (*aWriter)(const char*),
+                                        const void* aFirstFramePC,
+                                        uint32_t aMaxFrames) {
+  if (WalkTheStackEnabled()) {
+    MozStackWalk(WriteStackFrame, aFirstFramePC ? aFirstFramePC : CallerPC(),
+                 aMaxFrames, (void*)aWriter);
   }
 }

@@ -8,8 +8,7 @@ from pathlib import Path
 import json
 
 from mozterm import Terminal
-from mozboot.util import get_state_dir
-from mozbuild.util import ensure_subprocess_env
+from mach.util import get_state_dir
 from distutils.spawn import find_executable
 
 
@@ -45,7 +44,7 @@ def run_fzf(cmd, tasks):
         cmd,
         stdout=subprocess.PIPE,
         stdin=subprocess.PIPE,
-        env=ensure_subprocess_env(env),
+        env=env,
         universal_newlines=True,
     )
     out = proc.communicate("\n".join(tasks))[0].splitlines()

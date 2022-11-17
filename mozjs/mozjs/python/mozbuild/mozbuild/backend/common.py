@@ -31,25 +31,21 @@ from mozbuild.frontend.data import (
     FinalTargetPreprocessedFiles,
     FinalTargetFiles,
     GeneratedFile,
-    GeneratedSources,
-    GnProjectData,
     HostLibrary,
-    HostGeneratedSources,
+    HostSources,
     IPDLCollection,
     LocalizedPreprocessedFiles,
     LocalizedFiles,
     SandboxedWasmLibrary,
     SharedLibrary,
+    Sources,
     StaticLibrary,
     UnifiedSources,
     XPIDLModule,
     XPCOMComponentManifests,
     WebIDLCollection,
 )
-from mozbuild.jar import (
-    DeprecatedJarManifest,
-    JarManifestParser,
-)
+from mozbuild.jar import DeprecatedJarManifest, JarManifestParser
 from mozbuild.preprocessor import Preprocessor
 from mozpack.chrome.manifest import parse_manifest_line
 
@@ -140,24 +136,20 @@ class CommonBackend(BuildBackend):
             self._handle_webidl_collection(obj)
 
         elif isinstance(obj, IPDLCollection):
-            self._handle_generated_sources(
-                mozpath.join(obj.objdir, f) for f in obj.all_generated_sources()
-            )
-            self._write_unified_files(
-                obj.unified_source_mapping, obj.objdir, poison_windows_h=False
-            )
             self._handle_ipdl_sources(
                 obj.objdir,
                 list(sorted(obj.all_sources())),
                 list(sorted(obj.all_preprocessed_sources())),
                 list(sorted(obj.all_regular_sources())),
-                obj.unified_source_mapping,
             )
 
         elif isinstance(obj, XPCOMComponentManifests):
             self._handle_xpcom_collection(obj)
 
         elif isinstance(obj, UnifiedSources):
+            if obj.generated_files:
+                self._handle_generated_sources(obj.generated_files)
+
             # Unified sources aren't relevant to artifact builds.
             if self.environment.is_artifact_build:
                 return True
@@ -175,8 +167,15 @@ class CommonBackend(BuildBackend):
             self._binaries.shared_libraries.append(obj)
             return False
 
-        elif isinstance(obj, (GeneratedSources, HostGeneratedSources)):
-            self._handle_generated_sources(obj.files)
+        elif isinstance(obj, SandboxedWasmLibrary):
+            self._handle_generated_sources(
+                [mozpath.join(obj.relobjdir, f"{obj.basename}.h")]
+            )
+            return False
+
+        elif isinstance(obj, (Sources, HostSources)):
+            if obj.generated_files:
+                self._handle_generated_sources(obj.generated_files)
             return False
 
         elif isinstance(obj, GeneratedFile):
@@ -198,11 +197,6 @@ class CommonBackend(BuildBackend):
             if objdir_files:
                 self._handle_generated_sources(objdir_files)
             return False
-
-        elif isinstance(obj, GnProjectData):
-            # These are only handled by special purpose build backends,
-            # ignore them here.
-            return True
 
         else:
             return False
@@ -235,9 +229,7 @@ class CommonBackend(BuildBackend):
 
         # Write out a file listing generated sources.
         with self._write_file(mozpath.join(topobjdir, "generated-sources.json")) as fh:
-            d = {
-                "sources": sorted(self._generated_sources),
-            }
+            d = {"sources": sorted(self._generated_sources)}
             json.dump(d, fh, sort_keys=True, indent=4)
 
     def _expand_libs(self, input_bin):
@@ -406,9 +398,7 @@ class CommonBackend(BuildBackend):
 
         # The code generators read their configuration from this file, so it
         # needs to be written early.
-        o = dict(
-            manifests=sorted(manifests.all_sources()),
-        )
+        o = dict(manifests=sorted(manifests.all_sources()))
 
         conf_file = mozpath.join(components_dir, "manifest-lists.json")
         with self._write_file(conf_file) as fh:
@@ -490,16 +480,13 @@ class CommonBackend(BuildBackend):
             pp.context.update(obj.defines.defines)
         pp.context.update(self.environment.defines)
         ab_cd = obj.config.substs["MOZ_UI_LOCALE"][0]
-        pp.context.update(
-            AB_CD=ab_cd,
-        )
+        pp.context.update(AB_CD=ab_cd)
         pp.out = JarManifestParser()
         try:
             pp.do_include(obj.path.full_path)
         except DeprecatedJarManifest as e:
             raise DeprecatedJarManifest(
-                "Parsing error while processing %s: %s"
-                % (obj.path.full_path, e.message)
+                "Parsing error while processing %s: %s" % (obj.path.full_path, e)
             )
         self.backend_input_files |= pp.includes
 
@@ -597,9 +584,7 @@ class CommonBackend(BuildBackend):
         """Write out a rust file which includes the generated xpcom rust modules"""
         topobjdir = self.environment.topobjdir
 
-        include_tmpl = (
-            'include!(concat!(env!("MOZ_TOPOBJDIR"), "/dist/xpcrs/%s/%s.rs"))'
-        )
+        include_tmpl = 'include!(mozbuild::objdir_path!("dist/xpcrs/%s/%s.rs"))'
 
         # Ensure deterministic output files.
         stems = sorted(manager.idl_stems())

@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) async -- requires shell-options
+// |reftest| async
 // This file was procedurally generated from the following sources:
 // - src/async-generators/yield-spread-arr-multiple.case
 // - src/async-generators/default/async-class-decl-private-method.template
@@ -57,7 +57,7 @@ item.then(({ done, value }) => {
   item = iter.next(value);
 
   item.then(({ done, value }) => {
-    assert(compareArray(value, arr));
+    assert.compareArray(value, arr);
     assert.sameValue(done, false);
   }).then($DONE, $DONE);
 }).catch($DONE);

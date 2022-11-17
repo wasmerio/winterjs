@@ -4,8 +4,11 @@
 
 # If this file is changed, update the generated docs:
 # https://firefox-source-docs.mozilla.org/mach/telemetry.html#updating-generated-metrics-docs
+
+# Adding a new metric? We have docs for that!
+# https://mozilla.github.io/glean/book/user/metrics/adding-new-metrics.html
 ---
-$schema: moz://mozilla.org/schemas/glean/metrics/1-0-0
+$schema: moz://mozilla.org/schemas/glean/metrics/2-0-0
 
 mach:
   command:
@@ -156,6 +159,48 @@ mach.system:
     notification_emails:
       - build-telemetry@mozilla.com
       - mhentges@mozilla.com
+    expires: never
+    send_in_pings:
+      - usage
+  vscode_terminal:
+    type: boolean
+    description: True if the current terminal is opened via Visual Studio Code.
+    lifetime: application
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1702172
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1702172#c4
+    notification_emails:
+      - build-telemetry@mozilla.com
+      - andi@mozilla.com
+    expires: never
+    send_in_pings:
+      - usage
+  ssh_connection:
+    type: boolean
+    description: True if the current shell is a remote SSH connection.
+    lifetime: application
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1702172
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1702172#c4
+    notification_emails:
+      - build-telemetry@mozilla.com
+      - andi@mozilla.com
+    expires: never
+    send_in_pings:
+      - usage
+  vscode_running:
+    type: boolean
+    description: True if there is an instance of vscode running.
+    lifetime: application
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1717801
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1717801#c1
+    notification_emails:
+      - build-telemetry@mozilla.com
+      - andi@mozilla.com
     expires: never
     send_in_pings:
       - usage

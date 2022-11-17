@@ -19,7 +19,7 @@
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t
 
-#include "jstypes.h"  // JS_FRIEND_API
+#include "jstypes.h"  // JS_PUBLIC_API
 
 #include "js/AllocPolicy.h"
 #include "js/RootingAPI.h"  // JS::Handle, JS::Rooted
@@ -39,7 +39,7 @@ namespace JS {
  * and often the code can be rewritten so that only indexes instead of char
  * pointers are used in parts of the code that can GC.
  */
-class MOZ_STACK_CLASS JS_FRIEND_API AutoStableStringChars final {
+class MOZ_STACK_CLASS JS_PUBLIC_API AutoStableStringChars final {
   /*
    * When copying string char, use this many bytes of inline storage.  This is
    * chosen to allow the inline string types to be copied without allocating.
@@ -80,12 +80,12 @@ class MOZ_STACK_CLASS JS_FRIEND_API AutoStableStringChars final {
 
   mozilla::Range<const Latin1Char> latin1Range() const {
     MOZ_ASSERT(state_ == Latin1);
-    return mozilla::Range<const Latin1Char>(latin1Chars_, GetStringLength(s_));
+    return mozilla::Range<const Latin1Char>(latin1Chars_, length());
   }
 
   mozilla::Range<const char16_t> twoByteRange() const {
     MOZ_ASSERT(state_ == TwoByte);
-    return mozilla::Range<const char16_t>(twoByteChars_, GetStringLength(s_));
+    return mozilla::Range<const char16_t>(twoByteChars_, length());
   }
 
   /* If we own the chars, transfer ownership to the caller. */
@@ -98,6 +98,8 @@ class MOZ_STACK_CLASS JS_FRIEND_API AutoStableStringChars final {
     ownChars_.reset();
     return true;
   }
+
+  size_t length() const { return GetStringLength(s_); }
 
  private:
   AutoStableStringChars(const AutoStableStringChars& other) = delete;

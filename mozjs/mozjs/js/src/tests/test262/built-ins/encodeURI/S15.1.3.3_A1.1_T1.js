@@ -15,7 +15,6 @@ var indexO = 0;
 
 for (var index = 0xDC00; index <= 0xDFFF; index++) {
   count++;
-  var hex = decimalToHexString(index);
   try {
     encodeURI(String.fromCharCode(index));
   } catch (e) {
@@ -28,11 +27,11 @@ for (var index = 0xDC00; index <= 0xDFFF; index++) {
       if ((indexP - indexO) !== 0) {
         var hexP = decimalToHexString(indexP);
         var hexO = decimalToHexString(indexO);
-        $ERROR('#' + hexO + '-' + hexP + ' ');
+        throw new Test262Error('#' + hexO + '-' + hexP + ' ');
       }
       else {
         var hexP = decimalToHexString(indexP);
-        $ERROR('#' + hexP + ' ');
+        throw new Test262Error('#' + hexP + ' ');
       }
       indexO = index;
     }
@@ -45,12 +44,12 @@ if (errorCount > 0) {
   if ((indexP - indexO) !== 0) {
     var hexP = decimalToHexString(indexP);
     var hexO = decimalToHexString(indexO);
-    $ERROR('#' + hexO + '-' + hexP + ' ');
+    throw new Test262Error('#' + hexO + '-' + hexP + ' ');
   } else {
     var hexP = decimalToHexString(indexP);
-    $ERROR('#' + hexP + ' ');
+    throw new Test262Error('#' + hexP + ' ');
   }
-  $ERROR('Total error: ' + errorCount + ' bad Unicode character in ' + count + ' ');
+  throw new Test262Error('Total error: ' + errorCount + ' bad Unicode character in ' + count + ' ');
 }
 
 reportCompare(0, 0);

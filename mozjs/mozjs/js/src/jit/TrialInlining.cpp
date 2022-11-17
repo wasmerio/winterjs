@@ -7,12 +7,13 @@
 #include "jit/TrialInlining.h"
 
 #include "jit/BaselineCacheIRCompiler.h"
+#include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
+#include "jit/CacheIRCloner.h"
 #include "jit/CacheIRHealth.h"
+#include "jit/CacheIRWriter.h"
 #include "jit/Ion.h"  // TooManyFormalArguments
 
-#include "jit/BaselineFrame-inl.h"
-#include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
 
 using mozilla::Maybe;
@@ -26,20 +27,22 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
   bool isRecursive = icScript->depth() > 0;
 
 #ifdef JS_CACHEIR_SPEW
-  if (cx->spewer().enabled(cx, script, SpewChannel::RateMyCacheIR)) {
+  if (cx->spewer().enabled(cx, script, SpewChannel::CacheIRHealthReport)) {
     for (uint32_t i = 0; i < icScript->numICEntries(); i++) {
       ICEntry& entry = icScript->icEntry(i);
+      ICFallbackStub* fallbackStub = icScript->fallbackStub(i);
 
       // If the IC is megamorphic or generic, then we have already
       // spewed the IC report on transition.
-      if (!(uint8_t(entry.fallbackStub()->state().mode()) > 0)) {
+      if (!(uint8_t(fallbackStub->state().mode()) > 0)) {
         jit::ICStub* stub = entry.firstStub();
         bool sawNonZeroCount = false;
         while (!stub->isFallback()) {
           uint32_t count = stub->enteredCount();
           if (count > 0 && sawNonZeroCount) {
             CacheIRHealth cih;
-            cih.rateIC(cx, &entry, script, SpewContext::TrialInlining);
+            cih.healthReportForIC(cx, &entry, fallbackStub, script,
+                                  SpewContext::TrialInlining);
             break;
           }
 
@@ -67,11 +70,17 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
     return true;
   }
 
-  InliningRoot* root =
-      isRecursive ? icScript->inliningRoot()
-                  : script->jitScript()->getOrCreateInliningRoot(cx, script);
-  if (!root) {
-    return false;
+  InliningRoot* root = isRecursive ? icScript->inliningRoot()
+                                   : script->jitScript()->inliningRoot();
+  if (JitSpewEnabled(JitSpew_WarpTrialInlining)) {
+    // Eagerly create the inlining root when it's used in the spew output.
+    if (!root) {
+      MOZ_ASSERT(!isRecursive);
+      root = script->jitScript()->getOrCreateInliningRoot(cx, script);
+      if (!root) {
+        return false;
+      }
+    }
   }
 
   JitSpew(JitSpew_WarpTrialInlining,
@@ -80,7 +89,7 @@ bool DoTrialInlining(JSContext* cx, BaselineFrame* frame) {
           script->lineno(), script->column(), frame->script(), root);
   JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
 
-  TrialInliner inliner(cx, script, icScript, root);
+  TrialInliner inliner(cx, script, icScript);
   return inliner.tryInlining();
 }
 
@@ -95,26 +104,32 @@ void TrialInliner::cloneSharedPrefix(ICCacheIRStub* stub,
   }
 }
 
-bool TrialInliner::replaceICStub(const ICEntry& entry, CacheIRWriter& writer,
-                                 CacheKind kind) {
-  ICFallbackStub* fallback = entry.fallbackStub();
+bool TrialInliner::replaceICStub(ICEntry& entry, ICFallbackStub* fallback,
+                                 CacheIRWriter& writer, CacheKind kind) {
   MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
 
-  fallback->discardStubs(cx());
+  fallback->discardStubs(cx(), &entry);
 
   // Note: AttachBaselineCacheIRStub never throws an exception.
-  bool attached = false;
-  auto* newStub = AttachBaselineCacheIRStub(cx(), writer, kind, script_,
-                                            icScript_, fallback, &attached);
-  if (!newStub) {
-    MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+  ICAttachResult result = AttachBaselineCacheIRStub(
+      cx(), writer, kind, script_, icScript_, fallback, "TrialInline");
+  if (result == ICAttachResult::Attached) {
+    MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Inlined);
+    return true;
+  }
+
+  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Candidate);
+  icScript_->removeInlinedChild(fallback->pcOffset());
+
+  if (result == ICAttachResult::OOM) {
     ReportOutOfMemory(cx());
     return false;
   }
 
-  MOZ_ASSERT(attached);
-  MOZ_ASSERT(fallback->trialInliningState() == TrialInliningState::Inlined);
-  JitSpew(JitSpew_WarpTrialInlining, "Attached new stub %p", newStub);
+  // We failed to attach a new IC stub due to CacheIR size limits. Disable trial
+  // inlining for this location and return true.
+  MOZ_ASSERT(result == ICAttachResult::TooLarge);
+  fallback->setTrialInliningState(TrialInliningState::Failure);
   return true;
 }
 
@@ -158,7 +173,7 @@ Maybe<InlinableOpData> FindInlinableOpData(ICCacheIRStub* stub,
       return call;
     }
   }
-  if (loc.isGetPropOp()) {
+  if (loc.isGetPropOp() || loc.isGetElemOp()) {
     Maybe<InlinableGetterData> getter = FindInlinableGetterData(stub);
     if (getter.isSome()) {
       return getter;
@@ -198,7 +213,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICCacheIRStub* stub) {
         MOZ_ASSERT(data.isNothing());
         calleeGuardOperand = reader.objOperandId();
         uint32_t targetOffset = reader.stubOffset();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
         uintptr_t rawTarget = stubInfo->getStubRawWord(stubData, targetOffset);
         target = reinterpret_cast<JSFunction*>(rawTarget);
         break;
@@ -209,7 +224,7 @@ Maybe<InlinableCallData> FindInlinableCallData(ICCacheIRStub* stub) {
         uint32_t targetOffset = reader.stubOffset();
         uintptr_t rawTarget = stubInfo->getStubRawWord(stubData, targetOffset);
         target = reinterpret_cast<BaseScript*>(rawTarget)->function();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
         break;
       }
       case CacheOp::CallScriptedFunction: {
@@ -218,6 +233,8 @@ Maybe<InlinableCallData> FindInlinableCallData(ICCacheIRStub* stub) {
         ObjOperandId calleeOperand = reader.objOperandId();
         mozilla::DebugOnly<Int32OperandId> argcId = reader.int32OperandId();
         flags = reader.callFlags();
+        mozilla::DebugOnly<uint32_t> argcFixed = reader.uint32Immediate();
+        MOZ_ASSERT(argcFixed <= MaxUnrolledArgCopy);
 
         if (calleeOperand == calleeGuardOperand) {
           MOZ_ASSERT(static_cast<OperandId&>(argcId).id() == 0);
@@ -232,6 +249,8 @@ Maybe<InlinableCallData> FindInlinableCallData(ICCacheIRStub* stub) {
         mozilla::DebugOnly<Int32OperandId> argcId = reader.int32OperandId();
         uint32_t icScriptOffset = reader.stubOffset();
         flags = reader.callFlags();
+        mozilla::DebugOnly<uint32_t> argcFixed = reader.uint32Immediate();
+        MOZ_ASSERT(argcFixed <= MaxUnrolledArgCopy);
 
         if (calleeOperand == calleeGuardOperand) {
           MOZ_ASSERT(static_cast<OperandId&>(argcId).id() == 0);
@@ -258,6 +277,11 @@ Maybe<InlinableCallData> FindInlinableCallData(ICCacheIRStub* stub) {
   }
 
   if (data.isSome()) {
+    // Warp only supports inlining Standard and FunCall calls.
+    if (flags.getArgFormat() != CallFlags::Standard &&
+        flags.getArgFormat() != CallFlags::FunCall) {
+      return mozilla::Nothing();
+    }
     data->calleeOperand = calleeGuardOperand;
     data->callFlags = flags;
     data->target = target;
@@ -290,7 +314,7 @@ Maybe<InlinableGetterData> FindInlinableGetterData(ICCacheIRStub* stub) {
         data->target = reinterpret_cast<JSFunction*>(rawTarget);
 
         data->sameRealm = reader.readBool();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
 
         data->endOfSharedPrefix = opStart;
         break;
@@ -309,7 +333,7 @@ Maybe<InlinableGetterData> FindInlinableGetterData(ICCacheIRStub* stub) {
         data->icScript = reinterpret_cast<ICScript*>(rawICScript);
 
         data->sameRealm = reader.readBool();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
 
         data->endOfSharedPrefix = opStart;
         break;
@@ -356,7 +380,7 @@ Maybe<InlinableSetterData> FindInlinableSetterData(ICCacheIRStub* stub) {
 
         data->rhsOperand = reader.valOperandId();
         data->sameRealm = reader.readBool();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
 
         data->endOfSharedPrefix = opStart;
         break;
@@ -377,7 +401,7 @@ Maybe<InlinableSetterData> FindInlinableSetterData(ICCacheIRStub* stub) {
         data->icScript = reinterpret_cast<ICScript*>(rawICScript);
 
         data->sameRealm = reader.readBool();
-        mozilla::Unused << reader.stubOffset();  // nargsAndFlags
+        (void)reader.stubOffset();  // nargsAndFlags
 
         data->endOfSharedPrefix = opStart;
         break;
@@ -398,11 +422,13 @@ Maybe<InlinableSetterData> FindInlinableSetterData(ICCacheIRStub* stub) {
   return data;
 }
 
-// Return the number of actual arguments that will be passed to the
-// target function.
-static uint32_t GetCalleeNumActuals(BytecodeLocation loc) {
+// Return the maximum number of actual arguments that will be passed to the
+// target function. This may be an overapproximation, for example when inlining
+// js::fun_call we may omit an argument.
+static uint32_t GetMaxCalleeNumActuals(BytecodeLocation loc) {
   switch (loc.getOp()) {
     case JSOp::GetProp:
+    case JSOp::GetElem:
       // Getters do not pass arguments.
       return 0;
 
@@ -411,16 +437,13 @@ static uint32_t GetCalleeNumActuals(BytecodeLocation loc) {
       // Setters pass 1 argument.
       return 1;
 
-    case JSOp::FunCall: {
-      // If FunCall is passed arguments, one of them will become |this|.
-      uint32_t callArgc = loc.getCallArgc();
-      return callArgc > 0 ? callArgc - 1 : 0;
-    }
-
     case JSOp::Call:
+    case JSOp::CallContent:
     case JSOp::CallIgnoresRv:
     case JSOp::CallIter:
+    case JSOp::CallContentIter:
     case JSOp::New:
+    case JSOp::NewContent:
     case JSOp::SuperCall:
       return loc.getCallArgc();
 
@@ -459,12 +482,12 @@ bool TrialInliner::canInline(JSFunction* target, HandleScript caller,
     return false;
   }
 
-  uint32_t calleeNumActuals = GetCalleeNumActuals(loc);
-  if (script->argumentsHasVarBinding() &&
-      calleeNumActuals > ArgumentsObject::MaxInlinedArgs) {
+  uint32_t maxCalleeNumActuals = GetMaxCalleeNumActuals(loc);
+  if (script->needsArgsObj() &&
+      maxCalleeNumActuals > ArgumentsObject::MaxInlinedArgs) {
     JitSpew(JitSpew_WarpTrialInlining,
             "SKIP: needs arguments object with %u actual args (maximum %u)",
-            calleeNumActuals, ArgumentsObject::MaxInlinedArgs);
+            maxCalleeNumActuals, ArgumentsObject::MaxInlinedArgs);
     return false;
   }
 
@@ -474,7 +497,7 @@ bool TrialInliner::canInline(JSFunction* target, HandleScript caller,
     return false;
   }
 
-  if (TooManyFormalArguments(calleeNumActuals)) {
+  if (TooManyFormalArguments(maxCalleeNumActuals)) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: argc too large: %u",
             unsigned(loc.getCallArgc()));
     return false;
@@ -489,11 +512,12 @@ bool TrialInliner::shouldInline(JSFunction* target, ICCacheIRStub* stub,
   BaseScript* baseScript =
       target->hasBaseScript() ? target->baseScript() : nullptr;
   JitSpew(JitSpew_WarpTrialInlining,
-          "Inlining candidate JSOp::%s: callee script %s:%u:%u",
-          CodeName(loc.getOp()),
+          "Inlining candidate JSOp::%s (offset=%u): callee script %s:%u:%u",
+          CodeName(loc.getOp()), loc.bytecodeToOffset(script_),
           baseScript ? baseScript->filename() : "<not-scripted>",
           baseScript ? baseScript->lineno() : 0,
           baseScript ? baseScript->column() : 0);
+  JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
 #endif
 
   if (!canInline(target, script_, loc)) {
@@ -516,7 +540,8 @@ bool TrialInliner::shouldInline(JSFunction* target, ICCacheIRStub* stub,
   }
 
   // Ensure the total bytecode size does not exceed ionMaxScriptSize.
-  size_t newTotalSize = root_->totalBytecodeSize() + targetScript->length();
+  size_t newTotalSize =
+      inliningRootTotalBytecodeSize() + targetScript->length();
   if (newTotalSize > JitOptions.ionMaxScriptSize) {
     JitSpew(JitSpew_WarpTrialInlining, "SKIP: total size too big");
     return false;
@@ -550,14 +575,21 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
   MOZ_ASSERT(target->hasJitEntry());
   MOZ_ASSERT(target->hasJitScript());
 
+  InliningRoot* root = getOrCreateInliningRoot();
+  if (!root) {
+    return nullptr;
+  }
+
   JSScript* targetScript = target->baseScript()->asJSScript();
 
   // We don't have to check for overflow here because we have already
   // successfully allocated an ICScript with this number of entries
   // when creating the JitScript for the target function, and we
   // checked for overflow then.
-  uint32_t allocSize =
+  uint32_t fallbackStubsOffset =
       sizeof(ICScript) + targetScript->numICEntries() * sizeof(ICEntry);
+  uint32_t allocSize = fallbackStubsOffset +
+                       targetScript->numICEntries() * sizeof(ICFallbackStub);
 
   void* raw = cx()->pod_malloc<uint8_t>(allocSize);
   MOZ_ASSERT(uintptr_t(raw) % alignof(ICScript) == 0);
@@ -568,19 +600,10 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
   uint32_t initialWarmUpCount = JitOptions.trialInliningInitialWarmUpCount;
 
   uint32_t depth = icScript_->depth() + 1;
-  UniquePtr<ICScript> inlinedICScript(
-      new (raw) ICScript(initialWarmUpCount, allocSize, depth, root_));
+  UniquePtr<ICScript> inlinedICScript(new (raw) ICScript(
+      initialWarmUpCount, fallbackStubsOffset, allocSize, depth, root));
 
-  {
-    // Suppress GC. This matches the AutoSuppressGC in
-    // JSScript::createJitScript. It is needed for allocating the
-    // template object for JSOp::Rest and the object group for
-    // JSOp::NewArray.
-    gc::AutoSuppressGC suppress(cx());
-    if (!inlinedICScript->initICEntries(cx(), targetScript)) {
-      return nullptr;
-    }
-  }
+  inlinedICScript->initICEntries(cx(), targetScript);
 
   uint32_t pcOffset = loc.bytecodeToOffset(script_);
   ICScript* result = inlinedICScript.get();
@@ -589,22 +612,33 @@ ICScript* TrialInliner::createInlinedICScript(JSFunction* target,
   }
   MOZ_ASSERT(result->numICEntries() == targetScript->numICEntries());
 
-  root_->addToTotalBytecodeSize(targetScript->length());
+  root->addToTotalBytecodeSize(targetScript->length());
 
+  JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
   JitSpew(JitSpew_WarpTrialInlining,
-          "Outer ICScript: %p Inner ICScript: %p pcOffset: %u", icScript_,
-          result, pcOffset);
+          "SUCCESS: Outer ICScript: %p Inner ICScript: %p", icScript_, result);
 
   return result;
 }
 
-bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
+bool TrialInliner::maybeInlineCall(ICEntry& entry, ICFallbackStub* fallback,
+                                   BytecodeLocation loc) {
   ICCacheIRStub* stub = maybeSingleStub(entry);
   if (!stub) {
+#ifdef JS_JITSPEW
+    if (fallback->numOptimizedStubs() > 1) {
+      JitSpew(JitSpew_WarpTrialInlining,
+              "Inlining candidate JSOp::%s (offset=%u):", CodeName(loc.getOp()),
+              fallback->pcOffset());
+      JitSpewIndent spewIndent(JitSpew_WarpTrialInlining);
+      JitSpew(JitSpew_WarpTrialInlining, "SKIP: Polymorphic (%u stubs)",
+              (unsigned)fallback->numOptimizedStubs());
+    }
+#endif
     return true;
   }
 
-  MOZ_ASSERT(!icScript_->hasInlinedChild(entry.pcOffset()));
+  MOZ_ASSERT(!icScript_->hasInlinedChild(fallback->pcOffset()));
 
   // Look for a CallScriptedFunction with a known target.
   Maybe<InlinableCallData> data = FindInlinableCallData(stub);
@@ -619,10 +653,6 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
     return true;
   }
 
-  // We only inline FunCall if we are calling the js::fun_call builtin.
-  MOZ_ASSERT_IF(loc.getOp() == JSOp::FunCall,
-                data->callFlags.getArgFormat() == CallFlags::FunCall);
-
   ICScript* newICScript = createInlinedICScript(data->target, loc);
   if (!newICScript) {
     return false;
@@ -633,25 +663,21 @@ bool TrialInliner::maybeInlineCall(const ICEntry& entry, BytecodeLocation loc) {
   cloneSharedPrefix(stub, data->endOfSharedPrefix, writer);
 
   writer.callInlinedFunction(data->calleeOperand, argcId, newICScript,
-                             data->callFlags);
+                             data->callFlags,
+                             ClampFixedArgc(loc.getCallArgc()));
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, writer, CacheKind::Call)) {
-    icScript_->removeInlinedChild(entry.pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, CacheKind::Call);
 }
 
-bool TrialInliner::maybeInlineGetter(const ICEntry& entry,
-                                     BytecodeLocation loc) {
+bool TrialInliner::maybeInlineGetter(ICEntry& entry, ICFallbackStub* fallback,
+                                     BytecodeLocation loc, CacheKind kind) {
   ICCacheIRStub* stub = maybeSingleStub(entry);
   if (!stub) {
     return true;
   }
 
-  MOZ_ASSERT(!icScript_->hasInlinedChild(entry.pcOffset()));
+  MOZ_ASSERT(!icScript_->hasInlinedChild(fallback->pcOffset()));
 
   Maybe<InlinableGetterData> data = FindInlinableGetterData(stub);
   if (data.isNothing()) {
@@ -672,28 +698,27 @@ bool TrialInliner::maybeInlineGetter(const ICEntry& entry,
 
   CacheIRWriter writer(cx());
   ValOperandId valId(writer.setInputOperandId(0));
+  if (kind == CacheKind::GetElem) {
+    // Register the key operand.
+    writer.setInputOperandId(1);
+  }
   cloneSharedPrefix(stub, data->endOfSharedPrefix, writer);
 
   writer.callInlinedGetterResult(data->receiverOperand, data->target,
                                  newICScript, data->sameRealm);
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, writer, CacheKind::GetProp)) {
-    icScript_->removeInlinedChild(entry.pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, kind);
 }
 
-bool TrialInliner::maybeInlineSetter(const ICEntry& entry,
-                                     BytecodeLocation loc) {
+bool TrialInliner::maybeInlineSetter(ICEntry& entry, ICFallbackStub* fallback,
+                                     BytecodeLocation loc, CacheKind kind) {
   ICCacheIRStub* stub = maybeSingleStub(entry);
   if (!stub) {
     return true;
   }
 
-  MOZ_ASSERT(!icScript_->hasInlinedChild(entry.pcOffset()));
+  MOZ_ASSERT(!icScript_->hasInlinedChild(fallback->pcOffset()));
 
   Maybe<InlinableSetterData> data = FindInlinableSetterData(stub);
   if (data.isNothing()) {
@@ -721,12 +746,7 @@ bool TrialInliner::maybeInlineSetter(const ICEntry& entry,
                            data->rhsOperand, newICScript, data->sameRealm);
   writer.returnFromIC();
 
-  if (!replaceICStub(entry, writer, CacheKind::SetProp)) {
-    icScript_->removeInlinedChild(entry.pcOffset());
-    return false;
-  }
-
-  return true;
+  return replaceICStub(entry, fallback, writer, kind);
 }
 
 bool TrialInliner::tryInlining() {
@@ -734,28 +754,37 @@ bool TrialInliner::tryInlining() {
   BytecodeLocation startLoc = script_->location();
 
   for (uint32_t icIndex = 0; icIndex < numICEntries; icIndex++) {
-    const ICEntry& entry = icScript_->icEntry(icIndex);
-    BytecodeLocation loc = startLoc + BytecodeLocationOffset(entry.pcOffset());
+    ICEntry& entry = icScript_->icEntry(icIndex);
+    ICFallbackStub* fallback = icScript_->fallbackStub(icIndex);
+    BytecodeLocation loc =
+        startLoc + BytecodeLocationOffset(fallback->pcOffset());
     JSOp op = loc.getOp();
     switch (op) {
       case JSOp::Call:
+      case JSOp::CallContent:
       case JSOp::CallIgnoresRv:
       case JSOp::CallIter:
-      case JSOp::FunCall:
+      case JSOp::CallContentIter:
       case JSOp::New:
+      case JSOp::NewContent:
       case JSOp::SuperCall:
-        if (!maybeInlineCall(entry, loc)) {
+        if (!maybeInlineCall(entry, fallback, loc)) {
           return false;
         }
         break;
       case JSOp::GetProp:
-        if (!maybeInlineGetter(entry, loc)) {
+        if (!maybeInlineGetter(entry, fallback, loc, CacheKind::GetProp)) {
+          return false;
+        }
+        break;
+      case JSOp::GetElem:
+        if (!maybeInlineGetter(entry, fallback, loc, CacheKind::GetElem)) {
           return false;
         }
         break;
       case JSOp::SetProp:
       case JSOp::StrictSetProp:
-        if (!maybeInlineSetter(entry, loc)) {
+        if (!maybeInlineSetter(entry, fallback, loc, CacheKind::SetProp)) {
           return false;
         }
         break;
@@ -765,6 +794,29 @@ bool TrialInliner::tryInlining() {
   }
 
   return true;
+}
+
+InliningRoot* TrialInliner::maybeGetInliningRoot() const {
+  if (auto* root = icScript_->inliningRoot()) {
+    return root;
+  }
+
+  MOZ_ASSERT(!icScript_->isInlined());
+  return script_->jitScript()->inliningRoot();
+}
+
+InliningRoot* TrialInliner::getOrCreateInliningRoot() {
+  if (auto* root = maybeGetInliningRoot()) {
+    return root;
+  }
+  return script_->jitScript()->getOrCreateInliningRoot(cx(), script_);
+}
+
+size_t TrialInliner::inliningRootTotalBytecodeSize() const {
+  if (auto* root = maybeGetInliningRoot()) {
+    return root->totalBytecodeSize();
+  }
+  return script_->length();
 }
 
 bool InliningRoot::addInlinedScript(UniquePtr<ICScript> icScript) {

@@ -20,21 +20,13 @@ description: >
 
 var body = "return \"A\";";
 
-//CHECK#1
 try {
   var f = new Function(void 0, body);
 } catch (e) {
-  $ERROR('#1: test failed with error ' + e);
+  throw new Test262Error('#1: test failed with error ' + e);
 }
 
-//CHECK#2
-if (f.constructor !== Function) {
-  $ERROR('#2: When the Function constructor is called with one argument then body be that argument and creates a new Function object as specified in 13.2');
-}
-
-//CHECK#3
-if (f() !== '\u0041') {
-  $ERROR('#3: When the Function constructor is called with one argument then body be that argument the following steps are taken...');
-}
+assert.sameValue(f.constructor, Function, 'The value of f.constructor is expected to equal the value of Function');
+assert.sameValue(f(), '\u0041', 'f() must return "u0041"');
 
 reportCompare(0, 0);

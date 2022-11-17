@@ -245,8 +245,12 @@ void MacroAssembler::mul64(Imm64 imm, const Register64& dest,
 }
 
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest) {
-  movq(ImmWord(uintptr_t(imm.value)), ScratchReg);
-  imulq(ScratchReg, dest.reg);
+  if (INT32_MIN <= int64_t(imm.value) && int64_t(imm.value) <= INT32_MAX) {
+    imulq(Imm32((int32_t)imm.value), dest.reg, dest.reg);
+  } else {
+    movq(ImmWord(uintptr_t(imm.value)), ScratchReg);
+    imulq(ScratchReg, dest.reg);
+  }
 }
 
 void MacroAssembler::mul64(const Register64& src, const Register64& dest,
@@ -424,6 +428,11 @@ void MacroAssembler::rotateRight64(Imm32 count, Register64 src, Register64 dest,
 // ===============================================================
 // Condition functions
 
+void MacroAssembler::cmp64Set(Condition cond, Address lhs, Imm64 rhs,
+                              Register dest) {
+  cmpPtrSet(cond, lhs, ImmWord(static_cast<uintptr_t>(rhs.value)), dest);
+}
+
 template <typename T1, typename T2>
 void MacroAssembler::cmpPtrSet(Condition cond, T1 lhs, T2 rhs, Register dest) {
   cmpPtr(lhs, rhs);
@@ -582,6 +591,14 @@ void MacroAssembler::branch64(Condition cond, const Address& lhs, Imm64 val,
 }
 
 void MacroAssembler::branch64(Condition cond, const Address& lhs,
+                              Register64 rhs, Label* label) {
+  MOZ_ASSERT(cond == Assembler::NotEqual || cond == Assembler::Equal,
+             "other condition codes not supported");
+
+  branchPtr(cond, lhs, rhs.reg, label);
+}
+
+void MacroAssembler::branch64(Condition cond, const Address& lhs,
                               const Address& rhs, Register scratch,
                               Label* label) {
   MOZ_ASSERT(cond == Assembler::NotEqual || cond == Assembler::Equal,
@@ -719,6 +736,12 @@ void MacroAssembler::branchTestMagic(Condition cond, const Address& valaddr,
   uint64_t magic = MagicValue(why).asRawBits();
   cmpPtr(valaddr, ImmWord(magic));
   j(cond, label);
+}
+
+void MacroAssembler::branchTestValue(Condition cond, const BaseIndex& lhs,
+                                     const ValueOperand& rhs, Label* label) {
+  MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
+  branchPtr(cond, lhs, rhs.valueReg(), label);
 }
 
 void MacroAssembler::branchToComputedAddress(const BaseIndex& address) {
@@ -863,25 +886,16 @@ void MacroAssembler::spectreBoundsCheckPtr(Register index,
 
 // ========================================================================
 // SIMD.
-//
-// These are x64-only because they use ScratchRegister or they use a quadword
-// operation.  SSE4.1 or better is assumed.
-
-// Any lane true, ie any bit set
-
-void MacroAssembler::anyTrueSimd128(FloatRegister src, Register dest) {
-  ScratchRegisterScope one(*this);
-  movl(Imm32(1), one);
-  movl(Imm32(0), dest);
-  vptest(src, src);
-  cmovCCl(NonZero, one, dest);
-}
 
 // Extract lane as scalar
 
 void MacroAssembler::extractLaneInt64x2(uint32_t lane, FloatRegister src,
                                         Register64 dest) {
-  vpextrq(lane, src, dest.reg);
+  if (lane == 0) {
+    vmovq(src, dest.reg);
+  } else {
+    vpextrq(lane, src, dest.reg);
+  }
 }
 
 // Replace lane value
@@ -891,11 +905,20 @@ void MacroAssembler::replaceLaneInt64x2(unsigned lane, Register64 rhs,
   vpinsrq(lane, rhs.reg, lhsDest, lhsDest);
 }
 
+void MacroAssembler::replaceLaneInt64x2(unsigned lane, FloatRegister lhs,
+                                        Register64 rhs, FloatRegister dest) {
+  vpinsrq(lane, rhs.reg, lhs, dest);
+}
+
 // Splat
 
 void MacroAssembler::splatX2(Register64 src, FloatRegister dest) {
-  vpinsrq(0, src.reg, dest, dest);
-  vpinsrq(1, src.reg, dest, dest);
+  vmovq(src.reg, dest);
+  if (HasAVX2()) {
+    vbroadcastq(Operand(dest), dest);
+  } else {
+    vpunpcklqdq(dest, dest, dest);
+  }
 }
 
 // ========================================================================

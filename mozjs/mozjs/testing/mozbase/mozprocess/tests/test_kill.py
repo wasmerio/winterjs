@@ -17,7 +17,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 
 
 class ProcTestKill(proctest.ProcTest):
-    """ Class to test various process tree killing scenatios """
+    """Class to test various process tree killing scenatios"""
 
     def test_kill_before_run(self):
         """Process is not started, and kill() is called"""
@@ -114,7 +114,7 @@ class ProcTestKill(proctest.ProcTest):
         p.run()
         p.kill()
 
-        self.assertEquals(p.proc.returncode, -signal.SIGTERM)
+        self.assertEqual(p.proc.returncode, -signal.SIGTERM)
 
     @unittest.skipUnless(processhandler.isPosix, "posix only")
     def test_process_kill_with_sigint_if_needed(self):
@@ -125,7 +125,22 @@ class ProcTestKill(proctest.ProcTest):
         time.sleep(1)
         p.kill()
 
-        self.assertEquals(p.proc.returncode, -signal.SIGKILL)
+        self.assertEqual(p.proc.returncode, -signal.SIGKILL)
+
+    @unittest.skipUnless(processhandler.isPosix, "posix only")
+    def test_process_kill_with_timeout(self):
+        script = os.path.join(here, "scripts", "ignore_sigterm.py")
+        p = processhandler.ProcessHandler([self.python, script])
+
+        p.run()
+        time.sleep(1)
+        t0 = time.time()
+        p.kill(sig=signal.SIGTERM, timeout=2)
+        self.assertEqual(p.proc.returncode, None)
+        self.assertGreaterEqual(time.time(), t0 + 2)
+
+        p.kill(sig=signal.SIGKILL)
+        self.assertEqual(p.proc.returncode, -signal.SIGKILL)
 
 
 if __name__ == "__main__":

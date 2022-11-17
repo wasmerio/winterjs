@@ -8,17 +8,24 @@
 #define jit_BaselineCodeGen_h
 
 #include "jit/BaselineFrameInfo.h"
-#include "jit/BaselineIC.h"
 #include "jit/BytecodeAnalysis.h"
 #include "jit/FixedList.h"
 #include "jit/MacroAssembler.h"
-#include "vm/GeneratorResumeKind.h"  // GeneratorResumeKind
+#include "jit/PerfSpewer.h"
 
 namespace js {
 
 namespace jit {
 
-enum class ScriptGCThingType { Atom, RegExp, Object, Function, Scope, BigInt };
+enum class ScriptGCThingType {
+  Atom,
+  String,
+  RegExp,
+  Object,
+  Function,
+  Scope,
+  BigInt
+};
 
 // Base class for BaselineCompiler and BaselineInterpreterGenerator. The Handler
 // template is a class storing fields/methods that are interpreter or compiler
@@ -33,8 +40,6 @@ class BaselineCodeGen {
   StackMacroAssembler masm;
 
   typename Handler::FrameInfoT& frame;
-
-  js::Vector<CodeOffset> traceLoggerToggleOffsets_;
 
   // Shared epilogue code to return to the caller.
   NonAssertingLabel return_;
@@ -61,7 +66,8 @@ class BaselineCodeGen {
 #endif
 
   template <typename... HandlerArgs>
-  explicit BaselineCodeGen(JSContext* cx, HandlerArgs&&... args);
+  explicit BaselineCodeGen(JSContext* cx, TempAllocator& alloc,
+                           HandlerArgs&&... args);
 
   template <typename T>
   void pushArg(const T& t) {
@@ -114,8 +120,7 @@ class BaselineCodeGen {
 
   void prepareVMCall();
 
-  void storeFrameSizeAndPushDescriptor(uint32_t argSize, Register scratch1,
-                                       Register scratch2);
+  void storeFrameSizeAndPushDescriptor(uint32_t argSize, Register scratch);
 
   enum class CallVMPhase { BeforePushingLocals, AfterPushingLocals };
   bool callVMInternal(VMFunctionId id, RetAddrEntry::Kind kind,
@@ -173,14 +178,12 @@ class BaselineCodeGen {
 
   [[nodiscard]] bool emitCheckThis(ValueOperand val, bool reinit = false);
   void emitLoadReturnValue(ValueOperand val);
-  void emitPushNonArrowFunctionNewTarget();
   void emitGetAliasedVar(ValueOperand dest);
+  [[nodiscard]] bool emitGetAliasedDebugVar(ValueOperand dest);
 
   [[nodiscard]] bool emitNextIC();
   [[nodiscard]] bool emitInterruptCheck();
   [[nodiscard]] bool emitWarmUpCounterIncrement();
-  [[nodiscard]] bool emitTraceLoggerResume(Register script,
-                                           AllocatableGeneralRegisterSet& regs);
 
 #define EMIT_OP(op, ...) bool emit_##op();
   FOR_EACH_OPCODE(EMIT_OP)
@@ -216,7 +219,6 @@ class BaselineCodeGen {
 
   [[nodiscard]] bool emitReturn();
 
-  [[nodiscard]] bool emitToBoolean();
   [[nodiscard]] bool emitTest(bool branchIfTrue);
   [[nodiscard]] bool emitAndOr(bool branchIfTrue);
   [[nodiscard]] bool emitCoalesce();
@@ -229,9 +231,7 @@ class BaselineCodeGen {
   [[nodiscard]] bool emitSetElemSuper(bool strict);
   [[nodiscard]] bool emitSetPropSuper(bool strict);
 
-  [[nodiscard]] bool emitBindName(JSOp op);
-
-  // Try to bake in the result of GETGNAME/BINDGNAME instead of using an IC.
+  // Try to bake in the result of GetGName/BindGName instead of using an IC.
   // Return true if we managed to optimize the op.
   bool tryOptimizeGetGlobalName();
   bool tryOptimizeBindGlobalName();
@@ -260,9 +260,6 @@ class BaselineCodeGen {
   template <typename F>
   [[nodiscard]] bool initEnvironmentChainHelper(const F& initFunctionEnv);
   [[nodiscard]] bool initEnvironmentChain();
-
-  [[nodiscard]] bool emitTraceLoggerEnter();
-  [[nodiscard]] bool emitTraceLoggerExit();
 
   [[nodiscard]] bool emitHandleCodeCoverageAtPrologue();
 
@@ -376,7 +373,7 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
 
   CodeOffset profilerPushToggleOffset_;
 
-  CodeOffset traceLoggerScriptTextIdOffset_;
+  BaselinePerfSpewer perfSpewer_;
 
  public:
   BaselineCompiler(JSContext* cx, TempAllocator& alloc, JSScript* script);
@@ -508,7 +505,7 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
   uint32_t debugTrapHandlerOffset_ = 0;
 
  public:
-  explicit BaselineInterpreterGenerator(JSContext* cx);
+  explicit BaselineInterpreterGenerator(JSContext* cx, TempAllocator& alloc);
 
   [[nodiscard]] bool generate(BaselineInterpreter& interpreter);
 

@@ -14,17 +14,16 @@
 #include "mozilla/Assertions.h"
 #ifdef _WIN32
 #  include <windows.h>
-#  ifdef JS_ENABLE_UWP
-#    include <memoryapi.h>
-#  endif
 #elif !defined(__OS2__)
 #  include <unistd.h>
-#  include <sys/mman.h>
-#  ifndef MAP_ANON
-#    ifdef MAP_ANONYMOUS
-#      define MAP_ANON MAP_ANONYMOUS
-#    else
-#      error "Don't know how to get anonymous memory"
+#  ifndef __wasi__
+#    include <sys/mman.h>
+#    ifndef MAP_ANON
+#      ifdef MAP_ANONYMOUS
+#        define MAP_ANON MAP_ANONYMOUS
+#      else
+#        error "Don't know how to get anonymous memory"
+#      endif
 #    endif
 #  endif
 #endif
@@ -39,11 +38,7 @@
 
 #ifdef _WIN32
 static void* ReserveRegion(uintptr_t aRegion, uintptr_t aSize) {
-#ifdef JS_ENABLE_UWP
-  return VirtualAllocFromApp((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
-#else
   return VirtualAlloc((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
-#endif
 }
 
 static void ReleaseRegion(void* aRegion, uintptr_t aSize) {
@@ -91,7 +86,26 @@ static uintptr_t GetDesiredRegionSize() {
 
 #  define RESERVE_FAILED 0
 
-#else  // Unix
+#elif defined(__wasi__)
+
+#  define RESERVE_FAILED 0
+
+static void* ReserveRegion(uintptr_t aRegion, uintptr_t aSize) {
+  return RESERVE_FAILED;
+}
+
+static void ReleaseRegion(void* aRegion, uintptr_t aSize) { return; }
+
+static bool ProbeRegion(uintptr_t aRegion, uintptr_t aSize) {
+  const auto pageSize = 1 << 16;
+  MOZ_ASSERT(pageSize == sysconf(_SC_PAGESIZE));
+  auto heapSize = __builtin_wasm_memory_size(0) * pageSize;
+  return aRegion + aSize < heapSize;
+}
+
+static uintptr_t GetDesiredRegionSize() { return 0; }
+
+#else  // __wasi__
 
 #  include "mozilla/TaggedAnonymousMemory.h"
 

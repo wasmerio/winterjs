@@ -1,65 +1,49 @@
 // Tests for Wasm exception import and export.
 
-// The WebAssembly.Exception constructor cannot be called for now until the
-// JS API specifies the behavior. Same with WebAssembly.RuntimeException.
-function testException() {
-  assertErrorMessage(
-    () => new WebAssembly.Exception(),
-    WebAssembly.RuntimeError,
-    /cannot call WebAssembly.Exception/
-  );
-
-  assertErrorMessage(
-    () => new WebAssembly.RuntimeException(),
-    WebAssembly.RuntimeError,
-    /cannot call WebAssembly.RuntimeException/
-  );
-}
-
 function testImports() {
   var mod = `
     (module
       (type (func (param i32 i32)))
-      (import "m" "exn" (event (type 0))))
+      (import "m" "exn" (tag (type 0))))
  `;
 
   assertErrorMessage(
-    () => wasmEvalText(mod, { m: { exn: "not an exception" } }),
+    () => wasmEvalText(mod, { m: { exn: "not a tag" } }),
     WebAssembly.LinkError,
-    /import object field 'exn' is not a Exception/
+    /import object field 'exn' is not a Tag/
   );
 }
 
 function testExports() {
   var exports1 = wasmEvalText(`
-    (module (type (func)) (event (export "exn") (type 0)))
+    (module (type (func)) (tag (export "exn") (type 0)))
   `).exports;
 
   assertEq(typeof exports1.exn, "object");
-  assertEq(exports1.exn instanceof WebAssembly.Exception, true);
+  assertEq(exports1.exn instanceof WebAssembly.Tag, true);
 
   var exports2 = wasmEvalText(`
     (module
       (type (func (param i32 i32)))
-      (event (export "exn") (type 0)))
+      (tag (export "exn") (type 0)))
   `).exports;
 
   assertEq(typeof exports2.exn, "object");
-  assertEq(exports2.exn instanceof WebAssembly.Exception, true);
+  assertEq(exports2.exn instanceof WebAssembly.Tag, true);
 }
 
 function testImportExport() {
   var exports = wasmEvalText(`
     (module
       (type (func (param i32)))
-      (event (export "exn") (type 0)))
+      (tag (export "exn") (type 0)))
   `).exports;
 
   wasmEvalText(
     `
     (module
       (type (func (param i32)))
-      (import "m" "exn" (event (type 0))))
+      (import "m" "exn" (tag (type 0))))
   `,
     { m: exports }
   );
@@ -70,13 +54,13 @@ function testImportExport() {
         `
       (module
         (type (func (param)))
-        (import "m" "exn" (event (type 0))))
+        (import "m" "exn" (tag (type 0))))
     `,
         { m: exports }
       );
     },
     WebAssembly.LinkError,
-    /imported exception 'm.exn' signature mismatch/
+    /imported tag 'm.exn' signature mismatch/
   );
 }
 
@@ -87,7 +71,7 @@ function testDescriptions() {
       wasmTextToBinary(`
         (module $m
           (type (func))
-          (import "m" "e" (event (type 0))))
+          (import "m" "e" (tag (type 0))))
       `)
     )
   );
@@ -97,20 +81,19 @@ function testDescriptions() {
       wasmTextToBinary(`
         (module
           (type (func))
-          (event (export "e") (type 0)))
+          (tag (export "e") (type 0)))
       `)
     )
   );
 
   assertEq(imports[0].module, "m");
   assertEq(imports[0].name, "e");
-  assertEq(imports[0].kind, "event");
+  assertEq(imports[0].kind, "tag");
 
   assertEq(exports[0].name, "e");
-  assertEq(exports[0].kind, "event");
+  assertEq(exports[0].kind, "tag");
 }
 
-testException();
 testImports();
 testExports();
 testImportExport();

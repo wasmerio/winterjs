@@ -21,6 +21,11 @@ enum IonRegisterAllocator {
   RegisterAllocator_Testbed,
 };
 
+// Which register to use as base register to access stack slots: frame pointer,
+// stack pointer, or whichever is the default for this platform. See comment
+// for baseRegForLocals in JitOptions.cpp for more information.
+enum class BaseRegForAddress { Default, FP, SP };
+
 static inline mozilla::Maybe<IonRegisterAllocator> LookupRegisterAllocator(
     const char* name) {
   if (!strcmp(name, "backtracking")) {
@@ -39,26 +44,25 @@ struct DefaultJitOptions {
 #endif
   bool checkRangeAnalysis;
   bool runExtraChecks;
+  bool disableJitBackend;
   bool disableAma;
   bool disableEaa;
   bool disableEdgeCaseAnalysis;
   bool disableGvn;
   bool disableInlining;
   bool disableLicm;
-  bool disablePgo;
+  bool disablePruning;
   bool disableInstructionReordering;
   bool disableRangeAnalysis;
   bool disableRecoverIns;
   bool disableScalarReplacement;
   bool disableCacheIR;
   bool disableSink;
+  bool disableRedundantShapeGuards;
   bool disableBailoutLoopCheck;
-  bool scalarReplaceArguments;
   bool baselineInterpreter;
   bool baselineJit;
   bool ion;
-  bool warpAsync;
-  bool warpGenerator;
   bool jitForTrustedPrincipals;
   bool nativeRegExp;
   bool forceInlineCaches;
@@ -68,13 +72,12 @@ struct DefaultJitOptions {
   bool osr;
   bool wasmFoldOffsets;
   bool wasmDelayTier2;
-#ifdef JS_TRACE_LOGGING
-  bool enableTraceLogger;
-#endif
   bool traceRegExpParser;
   bool traceRegExpAssembler;
   bool traceRegExpInterpreter;
   bool traceRegExpPeephole;
+  bool lessDebugCode;
+  bool enableWatchtowerMegamorphic;
   bool enableWasmJitExit;
   bool enableWasmJitEntry;
   bool enableWasmIonFastCalls;
@@ -106,7 +109,6 @@ struct DefaultJitOptions {
   uint32_t ionMaxLocalsAndArgsMainThread;
   uint32_t wasmBatchBaselineThreshold;
   uint32_t wasmBatchIonThreshold;
-  uint32_t wasmBatchCraneliftThreshold;
   mozilla::Maybe<IonRegisterAllocator> forcedRegisterAllocator;
 
   // Spectre mitigation flags. Each mitigation has its own flag in order to
@@ -118,8 +120,8 @@ struct DefaultJitOptions {
   bool spectreValueMasking;
   bool spectreJitToCxxCalls;
 
-  bool supportsFloatingPoint;
   bool supportsUnalignedAccesses;
+  BaseRegForAddress baseRegForLocals;
 
   DefaultJitOptions();
   bool isSmallFunction(JSScript* script) const;
@@ -135,15 +137,30 @@ struct DefaultJitOptions {
 
 extern DefaultJitOptions JitOptions;
 
-inline bool IsBaselineInterpreterEnabled() {
-#ifdef JS_CODEGEN_NONE
+inline bool HasJitBackend() {
+#if defined(JS_CODEGEN_NONE)
   return false;
 #else
-  return JitOptions.baselineInterpreter && JitOptions.supportsFloatingPoint;
+  return !JitOptions.disableJitBackend;
 #endif
 }
 
+inline bool IsBaselineInterpreterEnabled() {
+  return HasJitBackend() && JitOptions.baselineInterpreter;
+}
+
 }  // namespace jit
+
+extern mozilla::Atomic<bool> fuzzingSafe;
+
+static inline bool IsFuzzing() {
+#ifdef FUZZING
+  return true;
+#else
+  return fuzzingSafe;
+#endif
+}
+
 }  // namespace js
 
 #endif /* jit_JitOptions_h */

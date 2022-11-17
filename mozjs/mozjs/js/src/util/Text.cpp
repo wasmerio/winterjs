@@ -18,12 +18,12 @@
 #include "js/GCAPI.h"
 #include "util/Unicode.h"
 #include "vm/JSContext.h"
+#include "vm/Printer.h"
 #include "vm/StringType.h"
 
 using namespace JS;
 using namespace js;
 
-using js::gc::AutoSuppressGC;
 using mozilla::DecodeOneUtf8CodePoint;
 using mozilla::IsAscii;
 using mozilla::Maybe;
@@ -46,16 +46,6 @@ template const Latin1Char* js_strchr_limit(const Latin1Char* s, char16_t c,
 
 template const char16_t* js_strchr_limit(const char16_t* s, char16_t c,
                                          const char16_t* limit);
-
-int32_t js_fputs(const char16_t* s, FILE* f) {
-  while (*s != 0) {
-    if (fputwc(wchar_t(*s), f) == WEOF) {
-      return WEOF;
-    }
-    s++;
-  }
-  return 1;
-}
 
 UniqueChars js::DuplicateStringToArena(arena_id_t destArenaId, JSContext* cx,
                                        const char* s) {
@@ -204,7 +194,7 @@ char16_t* js::InflateString(JSContext* cx, const char* bytes, size_t length) {
  * Convert one UCS-4 char and write it into a UTF-8 buffer, which must be at
  * least 4 bytes long.  Return the number of UTF-8 bytes of data written.
  */
-uint32_t js::OneUcs4ToUtf8Char(uint8_t* utf8Buffer, uint32_t ucs4Char) {
+uint32_t js::OneUcs4ToUtf8Char(uint8_t* utf8Buffer, char32_t ucs4Char) {
   MOZ_ASSERT(ucs4Char <= unicode::NonBMPMax);
 
   if (ucs4Char < 0x80) {

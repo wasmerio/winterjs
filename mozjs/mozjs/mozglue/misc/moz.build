@@ -8,14 +8,18 @@ FINAL_LIBRARY = "mozglue"
 
 EXPORTS.mozilla += [
     "AutoProfilerLabel.h",
+    "AwakeTimeStamp.h",
     "decimal/Decimal.h",
     "decimal/DoubleConversion.h",
     "IntegerPrintfMacros.h",
     "MmapFaultHandler.h",
     "PlatformConditionVariable.h",
     "PlatformMutex.h",
+    "PlatformRWLock.h",
     "Printf.h",
+    "SIMD.h",
     "Sprintf.h",
+    "SSE.h",
     "StackWalk.h",
     "TimeStamp.h",
     "Uptime.h",
@@ -28,33 +32,53 @@ EXPORTS.mozilla.glue += [
 
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
+        "GetKnownFolderPath.h",
+        "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
+        "StackWalkThread.h",
         "TimeStamp_windows.h",
         "WindowsDpiAwareness.h",
     ]
 
 SOURCES += [
     "AutoProfilerLabel.cpp",
+    "AwakeTimeStamp.cpp",
     "MmapFaultHandler.cpp",
     "Printf.cpp",
+    "SIMD.cpp",
     "StackWalk.cpp",
     "TimeStamp.cpp",
     "Uptime.cpp",
 ]
 
+if CONFIG["CPU_ARCH"].startswith("x86"):
+    SOURCES += [
+        "SIMD_avx2.cpp",
+        "SSE.cpp",
+    ]
+    SOURCES["SIMD_avx2.cpp"].flags += ["-mavx2"]
+
+if not CONFIG["JS_STANDALONE"]:
+    EXPORTS.mozilla += [
+        "ProcessType.h",
+        "RuntimeExceptionModule.h",
+    ]
+
+    SOURCES += [
+        "ProcessType.cpp",
+        "RuntimeExceptionModule.cpp",
+    ]
+
 OS_LIBS += CONFIG["REALTIME_LIBS"]
 
 if CONFIG["OS_ARCH"] == "WINNT":
-    DIRS += [
-        "interceptor",
-    ]
-    EXPORTS += [
-        "nsWindowsDllInterceptor.h",
-    ]
     EXPORTS.mozilla += [
         "DynamicallyLinkedFunctionPtr.h",
         "ImportDir.h",
+        "MozProcessMitigationDynamicCodePolicy.h",
         "NativeNt.h",
+        "WindowsDpiInitialization.h",
+        "WindowsEnumProcessModules.h",
         "WindowsMapRemoteView.h",
         "WindowsProcessMitigations.h",
     ]
@@ -62,12 +86,33 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.h",
     ]
     SOURCES += [
+        "GetKnownFolderPath.cpp",
         "TimeStamp_windows.cpp",
+        "WindowsDllMain.cpp",
+        "WindowsDpiInitialization.cpp",
         "WindowsMapRemoteView.cpp",
         "WindowsProcessMitigations.cpp",
         "WindowsUnicode.cpp",
     ]
-    OS_LIBS += ["dbghelp"]
+
+    OS_LIBS += [
+        "dbghelp",
+        "oleaut32",
+        "ole32",
+    ]
+
+    if not CONFIG["JS_STANDALONE"]:
+        SOURCES += [
+            "/ipc/mscom/COMWrappers.cpp",
+            "/ipc/mscom/ProcessRuntime.cpp",
+            "PreXULSkeletonUI.cpp",
+        ]
+
+    if CONFIG["ACCESSIBILITY"]:
+        SOURCES += [
+            "/ipc/mscom/ActivationContext.cpp",
+        ]
+
 elif CONFIG["HAVE_CLOCK_MONOTONIC"]:
     SOURCES += [
         "TimeStamp_posix.cpp",
@@ -83,11 +128,19 @@ if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
         "ConditionVariable_windows.cpp",
         "Mutex_windows.cpp",
+        "RWLock_windows.cpp",
+    ]
+# WASI hasn't supported cond vars and mutexes yet so noop implementation is used.
+elif CONFIG["OS_ARCH"] == "WASI":
+    SOURCES += [
+        "ConditionVariable_noop.cpp",
+        "Mutex_noop.cpp",
     ]
 else:
     SOURCES += [
         "ConditionVariable_posix.cpp",
         "Mutex_posix.cpp",
+        "RWLock_posix.cpp",
     ]
 
 if CONFIG["MOZ_LINKER"] and CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
@@ -99,7 +152,7 @@ SOURCES += [
     "decimal/Decimal.cpp",
 ]
 
-if CONFIG["CC_TYPE"] == "clang":
+if CONFIG["CC_TYPE"] in ("clang", "clang-cl"):
     # Suppress warnings from third-party V8 Decimal code.
     SOURCES["decimal/Decimal.cpp"].flags += ["-Wno-implicit-fallthrough"]
 

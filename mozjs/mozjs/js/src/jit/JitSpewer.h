@@ -18,6 +18,8 @@
 #include "js/TypeDecls.h"
 #include "vm/Printer.h"
 
+enum JSValueType : uint8_t;
+
 namespace js {
 namespace jit {
 
@@ -59,6 +61,8 @@ namespace jit {
   _(Profiling)                             \
   /* Debug info about the I$ */            \
   _(CacheFlush)                            \
+  /* Info about redundant shape guards */  \
+  _(RedundantShapeGuards)                  \
   /* Output a list of MIR expressions */   \
   _(MIRExpressions)                        \
   /* Spew Tracelogger summary stats */     \
@@ -162,7 +166,7 @@ class AutoSpewEndFunction {
 };
 
 void CheckLogging();
-GenericPrinter& JitSpewPrinter();
+Fprinter& JitSpewPrinter();
 
 class JitSpewIndent {
   JitSpewChannel channel_;
@@ -193,6 +197,8 @@ void EnableChannel(JitSpewChannel channel);
 void DisableChannel(JitSpewChannel channel);
 void EnableIonDebugSyncLogging();
 void EnableIonDebugAsyncLogging();
+
+const char* ValTypeToString(JSValueType type);
 
 #  define JitSpewIfEnabled(channel, fmt, ...) \
     do {                                      \

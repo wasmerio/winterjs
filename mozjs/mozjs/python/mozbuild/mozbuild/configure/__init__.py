@@ -25,13 +25,8 @@ from mozbuild.configure.options import (
     OptionValue,
 )
 from mozbuild.configure.help import HelpFormatter
-from mozbuild.configure.util import (
-    ConfigureOutputHandler,
-    getpreferredencoding,
-    LineIO,
-)
+from mozbuild.configure.util import ConfigureOutputHandler, getpreferredencoding, LineIO
 from mozbuild.util import (
-    ensure_subprocess_env,
     exec_,
     memoize,
     memoized_property,
@@ -123,8 +118,13 @@ class DependsFunction(object):
     def __init__(self, sandbox, func, dependencies, when=None):
         assert isinstance(sandbox, ConfigureSandbox)
         assert not inspect.isgeneratorfunction(func)
+        # Allow non-functions when there are no dependencies. This is equivalent
+        # to passing a lambda that returns the given value.
+        if not (inspect.isroutine(func) or not dependencies):
+            print(func)
+        assert inspect.isroutine(func) or not dependencies
         self._func = func
-        self._name = func.__name__
+        self._name = getattr(func, "__name__", None)
         self.dependencies = dependencies
         self.sandboxed = wraps(func)(SandboxDependsFunction(self))
         self.sandbox = sandbox
@@ -158,8 +158,10 @@ class DependsFunction(object):
         if self.when and not self.sandbox._value_for(self.when):
             return None
 
-        resolved_args = [self.sandbox._value_for(d) for d in self.dependencies]
-        return self._func(*resolved_args)
+        if inspect.isroutine(self._func):
+            resolved_args = [self.sandbox._value_for(d) for d in self.dependencies]
+            return self._func(*resolved_args)
+        return self._func
 
     def __repr__(self):
         return "<%s %s(%s)>" % (
@@ -313,6 +315,8 @@ class ConfigureSandbox(dict):
                 "isinstance",
                 "len",
                 "list",
+                "max",
+                "min",
                 "range",
                 "set",
                 "sorted",
@@ -832,7 +836,16 @@ class ConfigureSandbox(dict):
                 raise ConfigureError(
                     "Cannot decorate generator functions with @depends"
                 )
-            func = self._prepare_function(func)
+            if inspect.isroutine(func):
+                if func in self._templates:
+                    raise TypeError("Cannot use a @template function here")
+                func = self._prepare_function(func)
+            elif isinstance(func, SandboxDependsFunction):
+                raise TypeError("Cannot nest @depends functions")
+            elif dependencies:
+                raise TypeError(
+                    "Cannot wrap literal values in @depends with dependencies"
+                )
             depends = DependsFunction(self, func, dependencies, when=when)
             return depends.sandboxed
 
@@ -1007,6 +1020,11 @@ class ConfigureSandbox(dict):
         # Special case os and os.environ so that os.environ is our copy of
         # the environment.
         wrapped_os["environ"] = self._environ
+        # Also override some os.path functions with ours.
+        wrapped_path = {}
+        exec_("from os.path import *", {}, wrapped_path)
+        wrapped_path.update(self.OS.path.__dict__)
+        wrapped_os["path"] = ReadOnlyNamespace(**wrapped_path)
         return ReadOnlyNamespace(**wrapped_os)
 
     @memoized_property
@@ -1016,15 +1034,9 @@ class ConfigureSandbox(dict):
 
         def wrap(function):
             def wrapper(*args, **kwargs):
-                if kwargs.get("env") is None:
+                if kwargs.get("env") is None and self._environ:
                     kwargs["env"] = dict(self._environ)
-                # Subprocess on older Pythons can't handle unicode keys or
-                # values in environment dicts while subprocess on newer Pythons
-                # needs text in the env. Normalize automagically so callers
-                # don't have to deal with this.
-                kwargs["env"] = ensure_subprocess_env(
-                    kwargs["env"], encoding=system_encoding
-                )
+
                 return function(*args, **kwargs)
 
             return wrapper

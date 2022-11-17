@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmReftypesEnabled()
-
 // Tests wasm frame tracing.  Only tests for direct and indirect call chains
 // in wasm that lead to JS allocation.  Does not test any timeout or interrupt
 // related aspects.  The structure is
@@ -18,13 +16,12 @@ const {Module,Instance} = WebAssembly;
 let t =
   `(module
      (import "" "check3" (func $check3 (param externref) (param externref) (param externref)))
+     (import "" "alloc" (func $alloc (result externref)))
      (type $typeOfFn0
            (func (param i32) (param externref) (param i32)
                  (param externref) (param externref) (param i32) (result i32)))
      (table 1 1 funcref)
      (elem (i32.const 0) $fn0)
-
-     (import "" "alloc" (func $alloc (result externref)))
 
      ;; -- fn 0
      (func $fn0 (export "fn0")

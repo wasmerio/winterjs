@@ -8,6 +8,11 @@
 #include "MemMoveAnnotation.h"
 #include "Utils.h"
 
+#if CLANG_VERSION_FULL >= 1300
+// Starting with clang-13 Expr::isRValue has been renamed to Expr::isPRValue
+#define isRValue isPRValue
+#endif
+
 namespace clang {
 namespace ast_matchers {
 
@@ -53,6 +58,17 @@ AST_POLYMORPHIC_MATCHER(isFirstParty,
                         AST_POLYMORPHIC_SUPPORTED_TYPES(Decl, Stmt)) {
   return !inThirdPartyPath(&Node, &Finder->getASTContext()) &&
          !ASTIsInSystemHeader(Finder->getASTContext(), Node);
+}
+
+AST_MATCHER(DeclaratorDecl, isNotSpiderMonkey) {
+  // Detect SpiderMonkey path. Not as strict as isFirstParty, but this is
+  // expected to disappear soon by getting a common style guide between DOM and
+  // SpiderMonkey.
+  std::string Path = Node.getBeginLoc().printToString(
+      Finder->getASTContext().getSourceManager());
+  return Path.find("js") == std::string::npos &&
+         Path.find("xpc") == std::string::npos &&
+         Path.find("XPC") == std::string::npos;
 }
 
 /// This matcher will match temporary expressions.
@@ -178,17 +194,34 @@ AST_MATCHER(CallExpr, isInWhiteListForPrincipalGetUri) {
 /// code or names of existing threads that we would like to ignore.
 AST_MATCHER(CallExpr, isInAllowlistForThreads) {
 
-  // Get the source location of the call
+  // Get the source location of the call.
   SourceLocation Loc = Node.getRParenLoc();
   StringRef FileName =
       getFilename(Finder->getASTContext().getSourceManager(), Loc);
+
+  const auto rbegin = [](StringRef s) { return llvm::sys::path::rbegin(s); };
+  const auto rend = [](StringRef s) { return llvm::sys::path::rend(s); };
+
+  // Files in the allowlist are (definitionally) explicitly permitted to create
+  // new threads.
   for (auto thread_file : allow_thread_files) {
-    if (llvm::sys::path::rbegin(FileName)->equals(thread_file)) {
+    // All the provided path-elements must match.
+    const bool match = [&] {
+      auto it1 = rbegin(FileName), it2 = rbegin(thread_file),
+           end1 = rend(FileName), end2 = rend(thread_file);
+      for (; it2 != end2; ++it1, ++it2) {
+        if (it1 == end1 || !it1->equals(*it2)) {
+          return false;
+        }
+      }
+      return true;
+    }();
+    if (match) {
       return true;
     }
   }
 
-  // Now we get the first arg (the name of the thread) and we check it.
+  // Check the first arg (the name of the thread).
   const StringLiteral *nameArg =
       dyn_cast<StringLiteral>(Node.getArg(0)->IgnoreImplicit());
   if (nameArg) {
@@ -426,7 +459,41 @@ AST_MATCHER(MemberExpr, hasKnownLiveAnnotation) {
   return Field && hasCustomAttribute<moz_known_live>(Field);
 }
 
+#define GENERATE_JSTYPEDEF_PAIR(templateName)                                  \
+  {templateName "Function", templateName "<JSFunction*>"},                     \
+      {templateName "Id", templateName "<JS::PropertyKey>"},                   \
+      {templateName "Object", templateName "<JSObject*>"},                     \
+      {templateName "Script", templateName "<JSScript*>"},                     \
+      {templateName "String", templateName "<JSString*>"},                     \
+      {templateName "Symbol", templateName "<JS::Symbol*>"},                   \
+      {templateName "BigInt", templateName "<JS::BigInt*>"},                   \
+      {templateName "Value", templateName "<JS::Value>"},                      \
+      {templateName "ValueVector", templateName "Vector<JS::Value>"},          \
+      {templateName "ObjectVector", templateName "Vector<JSObject*>"}, {       \
+    templateName "IdVector", templateName "Vector<JS::PropertyKey>"            \
+  }
+
+static const char *const JSHandleRootedTypedefMap[][2] = {
+    GENERATE_JSTYPEDEF_PAIR("JS::Handle"),
+    GENERATE_JSTYPEDEF_PAIR("JS::MutableHandle"),
+    GENERATE_JSTYPEDEF_PAIR("JS::Rooted"),
+    // Technically there is no PersistentRootedValueVector, and that's okay
+    GENERATE_JSTYPEDEF_PAIR("JS::PersistentRooted"),
+};
+
+AST_MATCHER(DeclaratorDecl, isUsingJSHandleRootedTypedef) {
+  QualType Type = Node.getType();
+  std::string TypeName = Type.getAsString();
+  for (auto &pair : JSHandleRootedTypedefMap) {
+    if (!TypeName.compare(pair[0])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 } // namespace ast_matchers
 } // namespace clang
 
+#undef isRValue
 #endif

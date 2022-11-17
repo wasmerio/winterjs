@@ -25,6 +25,9 @@ class MoveEmitterARM64 {
   bool inCycle_;
   MacroAssembler& masm;
 
+  // A scratch general register used to break cycles.
+  ARMRegister cycleGeneralReg_;
+
   // Original stack push value.
   uint32_t pushedAtStart_;
 
@@ -50,12 +53,21 @@ class MoveEmitterARM64 {
   }
   ARMFPRegister toFPReg(const MoveOperand& operand, MoveOp::Type t) const {
     MOZ_ASSERT(operand.isFloatReg());
-    return ARMFPRegister(operand.floatReg().encoding(),
-                         t == MoveOp::FLOAT32 ? 32 : 64);
+    switch (t) {
+      case MoveOp::FLOAT32:
+        return ARMFPRegister(operand.floatReg().encoding(), 32);
+      case MoveOp::DOUBLE:
+        return ARMFPRegister(operand.floatReg().encoding(), 64);
+      case MoveOp::SIMD128:
+        return ARMFPRegister(operand.floatReg().encoding(), 128);
+      default:
+        MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Bad register type");
+    }
   }
 
   void emitFloat32Move(const MoveOperand& from, const MoveOperand& to);
   void emitDoubleMove(const MoveOperand& from, const MoveOperand& to);
+  void emitSimd128Move(const MoveOperand& from, const MoveOperand& to);
   void emitInt32Move(const MoveOperand& from, const MoveOperand& to);
   void emitGeneralMove(const MoveOperand& from, const MoveOperand& to);
 

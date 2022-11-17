@@ -9,7 +9,9 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT, MOZ_RELEASE_ASSERT, MOZ_CRASH
 
 #ifdef XP_WIN
-#  include "util/Windows.h"
+#  include "util/WindowsWrapper.h"
+#elif defined(__wasi__)
+// Nothing
 #elif defined(XP_DARWIN) || defined(DARWIN) || defined(XP_UNIX)
 #  include <pthread.h>
 #  if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
@@ -70,7 +72,7 @@ void* js::GetNativeStackBaseImpl() {
   // pthread struct, but the main thread must go parse /proc/self/maps to figure
   // the mapped stack address space ranges.  We want to avoid reading from
   // /proc/ so that firefox can run in sandboxed environments where /proc may
-  // not be mounted
+  // not be mounted.
   if (gettid() == getpid()) {
     void** pLibcStackEnd = (void**)dlsym(RTLD_DEFAULT, "__libc_stack_end");
 
@@ -115,7 +117,18 @@ void* js::GetNativeStackBaseImpl() {
 #  endif
 }
 
-#else /* XP_UNIX */
+#elif defined(__wasi__)
+
+// Since we rearrange the layout for wasi via --stack-first flag for the linker
+// the final layout is: 0x00 | <- stack | data | heap -> |.
+static void* const NativeStackBase = __builtin_frame_address(0);
+
+void* js::GetNativeStackBaseImpl() {
+  MOZ_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
+  return NativeStackBase;
+}
+
+#else  // __wasi__
 
 void* js::GetNativeStackBaseImpl() {
   pthread_t thread = pthread_self();

@@ -1,11 +1,8 @@
 #include "gdb-tests.h"
 
-#include "mozilla/Unused.h"
-
-#include "jsapi.h"
-
 #include "js/CompileOptions.h"
 #include "js/CompilationAndEvaluation.h"
+#include "js/GlobalObject.h"
 #include "js/HeapAPI.h"
 #include "js/RegExpFlags.h"
 #include "js/SourceText.h"
@@ -13,7 +10,6 @@
 #include "js/TypeDecls.h"
 #include "vm/BigIntType.h"
 #include "vm/JSObject.h"
-#include "vm/ObjectGroup.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
 
@@ -33,7 +29,7 @@ FRAGMENT(GCCellPtr, simple) {
   JS::CompileOptions options(cx);
   options.setFileAndLine(__FILE__, __LINE__);
   JS::SourceText<char16_t> srcBuf;
-  mozilla::Unused << srcBuf.init(cx, nullptr, 0, JS::SourceOwnership::Borrowed);
+  (void)srcBuf.init(cx, nullptr, 0, JS::SourceOwnership::Borrowed);
   JS::RootedScript emptyScript(cx, JS::Compile(cx, options, srcBuf));
 
   // Inline TraceKinds.

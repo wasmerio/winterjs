@@ -72,7 +72,6 @@ CHECK_VARS := \
  MODULE \
  DEPTH \
  XPI_PKGNAME \
- INSTALL_EXTENSION_ID \
  SHARED_LIBRARY_NAME \
  SONAME \
  STATIC_LIBRARY_NAME \
@@ -191,7 +190,6 @@ HOST_CXX_LDFLAGS = $(COMPUTED_HOST_CXX_LDFLAGS)
 
 WASM_CFLAGS = $(COMPUTED_WASM_CFLAGS) $(_DEPEND_CFLAGS) $(MK_COMPILE_DEFINES)
 WASM_CXXFLAGS = $(COMPUTED_WASM_CXXFLAGS) $(_DEPEND_CFLAGS) $(MK_COMPILE_DEFINES)
-WASM_LDFLAGS = $(COMPUTED_WASM_LDFLAGS)
 
 ifdef MOZ_LTO
 ifeq (Darwin,$(OS_TARGET))
@@ -227,8 +225,6 @@ color_flags_vars := \
   COMPILE_CXXFLAGS \
   COMPILE_CMFLAGS \
   COMPILE_CMMFLAGS \
-  LDFLAGS \
-  WASM_LDFLAGS \
   WASM_CFLAGS \
   WASM_CXXFLAGS \
   $(NULL)
@@ -250,10 +246,6 @@ endif
 # Override defaults
 
 DEPENDENCIES	= .md
-
-ifdef MACOSX_DEPLOYMENT_TARGET
-export MACOSX_DEPLOYMENT_TARGET
-endif # MACOSX_DEPLOYMENT_TARGET
 
 # Export to propagate to cl and submake for third-party code.
 # Eventually, we'll want to just use -I.
@@ -352,7 +344,7 @@ else
 
 # This isn't laid out as conditional directives so that NSDISTMODE can be
 # target-specific.
-INSTALL         = $(if $(filter absolute_symlink, $(NSDISTMODE)), $(NSINSTALL) -L $(PWD), $(NSINSTALL) -R)
+INSTALL         = $(if $(filter copy, $(NSDISTMODE)), $(NSINSTALL) -t, $(if $(filter absolute_symlink, $(NSDISTMODE)), $(NSINSTALL) -L $(PWD), $(NSINSTALL) -R))
 
 endif # WINNT
 

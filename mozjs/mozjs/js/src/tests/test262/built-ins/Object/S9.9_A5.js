@@ -8,65 +8,59 @@ info: |
 es5id: 9.9_A5
 description: Converting from various strings to Object
 ---*/
+assert.sameValue(
+  Object("some string").valueOf(),
+  "some string",
+  'Object("some string").valueOf() must return "some string"'
+);
 
-// CHECK#1
-if (Object("some string").valueOf() !== "some string") {
-  $ERROR('#1: Object("some string").valueOf() === "some string". Actual: ' + (Object("some string").valueOf()));
-}
+assert.sameValue(
+  typeof Object("some string"),
+  "object",
+  'The value of `typeof Object("some string")` is expected to be "object"'
+);
 
-// CHECK#2
-if (typeof Object("some string") !== "object") {
-  $ERROR('#2: typeof Object("some string") === "object". Actual: ' + (typeof Object("some string")));
-}
+assert.sameValue(
+  Object("some string").constructor.prototype,
+  String.prototype,
+  'The value of Object("some string").constructor.prototype is expected to equal the value of String.prototype'
+);
 
-// CHECK#3
-if (Object("some string").constructor.prototype !== String.prototype) {
-  $ERROR('#3: Object("some string").constructor.prototype === String.prototype. Actual: ' + (Object("some string").constructor.prototype));
-}
+assert.sameValue(Object("").valueOf(), "", 'Object("").valueOf() must return ""');
+assert.sameValue(typeof Object(""), "object", 'The value of `typeof Object("")` is expected to be "object"');
 
-// CHECK#4
-if (Object("").valueOf() !== "") {
-  $ERROR('#4: Object("").valueOf() === false. Actual: ' + (Object("").valueOf()));
-}
+assert.sameValue(
+  Object("").constructor.prototype,
+  String.prototype,
+  'The value of Object("").constructor.prototype is expected to equal the value of String.prototype'
+);
 
-// CHECK#5
-if (typeof Object("") !== "object") {
-  $ERROR('#5: typeof Object("") === "object". Actual: ' + (typeof Object("")));
-}
+assert.sameValue(Object("\r\t\b\n\v\f").valueOf(), "\r\t\b\n\v\f", 'Object("rtbnvf").valueOf() must return "rtbnvf"');
 
-// CHECK#6
-if (Object("").constructor.prototype !== String.prototype) {
-  $ERROR('#6: Object("").constructor.prototype === String.prototype. Actual: ' + (Object("").constructor.prototype));
-}
+assert.sameValue(
+  typeof Object("\r\t\b\n\v\f"),
+  "object",
+  'The value of `typeof Object("rtbnvf")` is expected to be "object"'
+);
 
-// CHECK#7
-if (Object("\r\t\b\n\v\f").valueOf() !== "\r\t\b\n\v\f") {
-  $ERROR('#7: Object("\\r\\t\\b\\n\\v\\f").valueOf() === false. Actual: ' + (Object("\r\t\b\n\v\f").valueOf()));
-}
+assert.sameValue(
+  Object("\r\t\b\n\v\f").constructor.prototype,
+  String.prototype,
+  'The value of Object("rtbnvf").constructor.prototype is expected to equal the value of String.prototype'
+);
 
-// CHECK#8
-if (typeof Object("\r\t\b\n\v\f") !== "object") {
-  $ERROR('#8: typeof Object("\\r\\t\\b\\n\\v\\f") === "object". Actual: ' + (typeof Object("\r\t\b\n\v\f")));
-}
+assert.sameValue(Object(String(10)).valueOf(), "10", 'Object(String(10)).valueOf() must return "10"');
 
-// CHECK#9
-if (Object("\r\t\b\n\v\f").constructor.prototype !== String.prototype) {
-  $ERROR('#9: Object("\\r\\t\\b\\n\\v\\f").constructor.prototype === String.prototype. Actual: ' + (Object("\r\t\b\n\v\f").constructor.prototype));
-}
+assert.sameValue(
+  typeof Object(String(10)),
+  "object",
+  'The value of `typeof Object(String(10))` is expected to be "object"'
+);
 
-// CHECK#10
-if (Object(String(10)).valueOf() !== "10") {
-  $ERROR('#10: Object(String(10)).valueOf() === false. Actual: ' + (Object(String(10)).valueOf()));
-}
-
-// CHECK#11
-if (typeof Object(String(10)) !== "object") {
-  $ERROR('#11: typeof Object(String(10)) === "object". Actual: ' + (typeof Object(String(10))));
-}
-
-// CHECK#12
-if (Object(String(10)).constructor.prototype !== String.prototype) {
-  $ERROR('#12: Object(String(10)).constructor.prototype === String.prototype. Actual: ' + (Object(String(10)).constructor.prototype));
-}
+assert.sameValue(
+  Object(String(10)).constructor.prototype,
+  String.prototype,
+  'The value of Object(String(10)).constructor.prototype is expected to equal the value of String.prototype'
+);
 
 reportCompare(0, 0);

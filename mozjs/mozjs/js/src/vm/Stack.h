@@ -7,31 +7,28 @@
 #ifndef vm_Stack_h
 #define vm_Stack_h
 
-#include "mozilla/Atomics.h"
 #include "mozilla/HashFunctions.h"
-#include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Span.h"  // for Span
 
 #include <algorithm>
 #include <type_traits>
 
-#include "gc/Rooting.h"
+#include "js/ErrorReport.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
-#include "js/UniquePtr.h"
+#include "js/ValueArray.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
-#include "vm/SavedFrame.h"
-#include "wasm/WasmTypes.h"  // js::wasm::DebugFrame
+#include "wasm/WasmDebugFrame.h"  // js::wasm::DebugFrame
 
 namespace js {
 
 class InterpreterRegs;
 class CallObject;
 class FrameIter;
+class ClassBodyScope;
 class EnvironmentObject;
 class BlockLexicalEnvironmentObject;
 class ExtensibleLexicalEnvironmentObject;
@@ -39,8 +36,6 @@ class GeckoProfilerRuntime;
 class InterpreterFrame;
 class EnvironmentIter;
 class EnvironmentCoordinate;
-
-class SavedFrame;
 
 namespace jit {
 class CommonFrameLayout;
@@ -81,7 +76,6 @@ class Instance;
 // InterpreterActivation) is a local var of js::Interpret.
 
 enum MaybeCheckAliasing { CHECK_ALIASING = true, DONT_CHECK_ALIASING = false };
-enum MaybeCheckTDZ { CheckTDZ = true, DontCheckTDZ = false };
 
 }  // namespace js
 
@@ -184,7 +178,7 @@ class AbstractFramePtr {
   inline JSObject* environmentChain() const;
   inline CallObject& callObj() const;
   inline bool initFunctionEnvironmentObjects(JSContext* cx);
-  inline bool pushVarEnvironment(JSContext* cx, HandleScope scope);
+  inline bool pushVarEnvironment(JSContext* cx, Handle<Scope*> scope);
   template <typename SpecificEnvironment>
   inline void pushOnEnvironmentChain(SpecificEnvironment& env);
   template <typename SpecificEnvironment>
@@ -208,7 +202,6 @@ class AbstractFramePtr {
   inline Value& thisArgument() const;
 
   inline bool isConstructing() const;
-  inline Value newTarget() const;
 
   inline bool debuggerNeedsCheckPrimitiveReturn() const;
 
@@ -217,6 +210,8 @@ class AbstractFramePtr {
 
   inline bool saveGeneratorSlots(JSContext* cx, unsigned nslots,
                                  ArrayObject* dest) const;
+
+  inline bool hasCachedSavedFrame() const;
 
   inline unsigned numActualArgs() const;
   inline unsigned numFormalArgs() const;
@@ -361,8 +356,7 @@ class InterpreterFrame {
 
   /* Used for eval, module or global frames. */
   void initExecuteFrame(JSContext* cx, HandleScript script,
-                        AbstractFramePtr prev, HandleValue newTargetValue,
-                        HandleObject envChain);
+                        AbstractFramePtr prev, HandleObject envChain);
 
  public:
   /*
@@ -387,7 +381,7 @@ class InterpreterFrame {
   bool prologue(JSContext* cx);
   void epilogue(JSContext* cx, jsbytecode* pc);
 
-  bool checkReturn(JSContext* cx, HandleValue thisv);
+  bool checkReturn(JSContext* cx, HandleValue thisv, MutableHandleValue result);
 
   bool initFunctionEnvironmentObjects(JSContext* cx);
 
@@ -515,6 +509,8 @@ class InterpreterFrame {
   inline HandleObject environmentChain() const;
 
   inline EnvironmentObject& aliasedEnvironment(EnvironmentCoordinate ec) const;
+  inline EnvironmentObject& aliasedEnvironmentMaybeDebug(
+      EnvironmentCoordinate ec) const;
   inline GlobalObject& global() const;
   inline CallObject& callObj() const;
   inline ExtensibleLexicalEnvironmentObject& extensibleLexicalEnvironment()
@@ -528,7 +524,7 @@ class InterpreterFrame {
 
   // Push a VarEnvironmentObject for function frames of functions that have
   // parameter expressions with closed over var bindings.
-  bool pushVarEnvironment(JSContext* cx, HandleScope scope);
+  bool pushVarEnvironment(JSContext* cx, Handle<Scope*> scope);
 
   /*
    * For lexical envs with aliased locals, these interfaces push and pop
@@ -544,6 +540,8 @@ class InterpreterFrame {
   bool pushLexicalEnvironment(JSContext* cx, Handle<LexicalScope*> scope);
   bool freshenLexicalEnvironment(JSContext* cx);
   bool recreateLexicalEnvironment(JSContext* cx);
+
+  bool pushClassBodyEnvironment(JSContext* cx, Handle<ClassBodyScope*> scope);
 
   /*
    * Script
@@ -587,8 +585,7 @@ class InterpreterFrame {
    */
 
   JSFunction& callee() const {
-    MOZ_ASSERT(isFunctionFrame() || isModuleFrame());
-    MOZ_ASSERT_IF(isModuleFrame(), script()->isAsync());
+    MOZ_ASSERT(isFunctionFrame());
     return calleev().toObject().as<JSFunction>();
   }
 
@@ -600,20 +597,11 @@ class InterpreterFrame {
   /*
    * New Target
    *
-   * Only function frames have a meaningful newTarget. An eval frame in a
-   * function will have a copy of the newTarget of the enclosing function
-   * frame.
+   * Only non-arrow function frames have a meaningful newTarget.
    */
   Value newTarget() const {
-    if (isEvalFrame()) {
-      return ((Value*)this)[-1];
-    }
-
     MOZ_ASSERT(isFunctionFrame());
-
-    if (callee().isArrow()) {
-      return callee().getExtendedSlot(FunctionExtended::ARROW_NEWTARGET_SLOT);
-    }
+    MOZ_ASSERT(!callee().isArrow());
 
     if (isConstructing()) {
       unsigned pushedArgs = std::max(numFormalArgs(), numActualArgs());
@@ -825,7 +813,6 @@ class InterpreterStack {
 
   // For execution of eval, module or global code.
   InterpreterFrame* pushExecuteFrame(JSContext* cx, HandleScript script,
-                                     HandleValue newTargetValue,
                                      HandleObject envChain,
                                      AbstractFramePtr evalInFrame);
 
@@ -880,7 +867,7 @@ class GenericArgsBase
   explicit GenericArgsBase(JSContext* cx) : v_(cx) {}
 
  public:
-  bool init(JSContext* cx, unsigned argc) {
+  bool init(JSContext* cx, uint64_t argc) {
     if (argc > ARGS_LENGTH_MAX) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TOO_MANY_ARGUMENTS);

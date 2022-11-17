@@ -8,6 +8,7 @@
 #define jit_WarpBuilderShared_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Maybe.h"
 
 #include "jit/MIRGraph.h"
 #include "js/Value.h"
@@ -43,18 +44,18 @@ class MOZ_STACK_CLASS CallInfo {
   bool setter_ = false;
 
  public:
-  // For some argument formats (normal calls, FunCall, FunApplyArgs in an
-  // inlined function) we can shuffle around definitions in the CallInfo
-  // and use a normal MCall. For others, we need to use a specialized call.
+  // For normal calls and FunCall we can shuffle around definitions in
+  // the CallInfo and use a normal MCall. For others, we need to use a
+  // specialized call.
   enum class ArgFormat {
     Standard,
     Array,
-    FunApplyMagicArgs,
     FunApplyArgsObj,
   };
 
  private:
   ArgFormat argFormat_ = ArgFormat::Standard;
+  mozilla::Maybe<ResumeMode> inliningMode_;
 
  public:
   CallInfo(TempAllocator& alloc, bool constructing, bool ignoresReturnValue,
@@ -137,6 +138,38 @@ class MOZ_STACK_CLASS CallInfo {
     MOZ_ALWAYS_TRUE(args_.reserve(numActuals));
   }
 
+  [[nodiscard]] bool initForApplyArray(MDefinition* callee,
+                                       MDefinition* thisVal,
+                                       uint32_t numActuals) {
+    MOZ_ASSERT(args_.empty());
+    MOZ_ASSERT(!constructing_);
+
+    setCallee(callee);
+    setThis(thisVal);
+
+    return args_.reserve(numActuals);
+  }
+
+  [[nodiscard]] bool initForConstructArray(MDefinition* callee,
+                                           MDefinition* thisVal,
+                                           MDefinition* newTarget,
+                                           uint32_t numActuals) {
+    MOZ_ASSERT(args_.empty());
+    MOZ_ASSERT(constructing_);
+
+    setCallee(callee);
+    setThis(thisVal);
+    setNewTarget(newTarget);
+
+    return args_.reserve(numActuals);
+  }
+
+  void initForCloseIter(MDefinition* iter, MDefinition* callee) {
+    MOZ_ASSERT(args_.empty());
+    setCallee(callee);
+    setThis(iter);
+  }
+
   void popCallStack(MBasicBlock* current) { current->popn(numFormals()); }
 
   [[nodiscard]] bool pushCallStack(MBasicBlock* current) {
@@ -160,10 +193,6 @@ class MOZ_STACK_CLASS CallInfo {
   [[nodiscard]] bool setArgs(const MDefinitionVector& args) {
     MOZ_ASSERT(args_.empty());
     return args_.appendAll(args);
-  }
-  [[nodiscard]] bool replaceArgs(const MDefinitionVector& args) {
-    args_.clear();
-    return setArgs(args);
   }
 
   MDefinitionVector& argv() { return args_; }
@@ -213,6 +242,17 @@ class MOZ_STACK_CLASS CallInfo {
   bool isInlined() const { return inlined_; }
   void markAsInlined() { inlined_ = true; }
 
+  ResumeMode inliningResumeMode() const {
+    MOZ_ASSERT(isInlined());
+    return *inliningMode_;
+  }
+
+  void setInliningResumeMode(ResumeMode mode) {
+    MOZ_ASSERT(isInlined());
+    MOZ_ASSERT(inliningMode_.isNothing());
+    inliningMode_.emplace(mode);
+  }
+
   MDefinition* callee() const {
     MOZ_ASSERT(callee_);
     return callee_;
@@ -243,9 +283,8 @@ class MOZ_STACK_CLASS CallInfo {
   MDefinition* arrayArg() const {
     MOZ_ASSERT(argFormat_ == ArgFormat::Array);
     // The array argument for a spread call or FunApply is always the last
-    // argument, unless the spread call is constructing, in which case the
-    // last argument is NewTarget, and the array argument is second-last.
-    return getArg(argc() - 1 - constructing_);
+    // argument.
+    return getArg(argc() - 1);
   }
 };
 
@@ -353,7 +392,8 @@ class WarpBuilderShared {
 
   MCall* makeCall(CallInfo& callInfo, bool needsThisCheck,
                   WrappedFunction* target = nullptr, bool isDOMCall = false);
-  MInstruction* makeSpreadCall(CallInfo& callInfo, bool isSameRealm = false,
+  MInstruction* makeSpreadCall(CallInfo& callInfo, bool needsThisCheck,
+                               bool isSameRealm = false,
                                WrappedFunction* target = nullptr);
 
  public:

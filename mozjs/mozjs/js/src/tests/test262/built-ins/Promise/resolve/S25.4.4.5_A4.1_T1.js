@@ -19,9 +19,7 @@ var resolveP,
 resolveP(p);
 
 p.then(function() {
-  $ERROR("Should not fulfill: should reject with TypeError.");
+  throw new Test262Error("Should not fulfill: should reject with TypeError.");
 }, function(err) {
-  if (!(err instanceof TypeError)) {
-    $ERROR("Expected TypeError, got " + err);
-  }
+  assert(!!(err instanceof TypeError), 'The value of !!(err instanceof TypeError) is expected to be true');
 }).then($DONE, $DONE);

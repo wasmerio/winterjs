@@ -16,8 +16,9 @@ evaluate(t, { sourceIsLazy: true, saveIncrementalBytecode: true });
 for (var i = 1; i < 100; ++i) {
     try {
         oomAtAllocation(i, THREAD_TYPE_PARSE);
-        offThreadDecodeScript(t);
-        runOffThreadDecodedScript();
+        offThreadDecodeStencil(t, { sourceIsLazy: true });
+        var stencil = finishOffThreadStencil();
+        evalStencil(stencil);
     }
     catch (e) {
         assertEq(e, "out of memory");

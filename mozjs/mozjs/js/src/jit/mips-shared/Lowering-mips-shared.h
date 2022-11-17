@@ -37,6 +37,8 @@ class LIRGeneratorMIPSShared : public LIRGeneratorShared {
   void lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                    MDefinition* lhs, MDefinition* rhs);
 
+  void lowerForALUInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES, 0>* ins,
+                        MDefinition* mir, MDefinition* input);
   void lowerForALUInt64(
       LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
       MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
@@ -62,15 +64,16 @@ class LIRGeneratorMIPSShared : public LIRGeneratorShared {
   void lowerWasmBuiltinTruncateToInt32(MWasmBuiltinTruncateToInt32* ins);
   void lowerDivI(MDiv* div);
   void lowerModI(MMod* mod);
+  void lowerNegI(MInstruction* ins, MDefinition* input);
+  void lowerNegI64(MInstruction* ins, MDefinition* input);
   void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
   void lowerUDiv(MDiv* div);
   void lowerUMod(MMod* mod);
+  void lowerWasmSelectI(MWasmSelect* select);
+  void lowerWasmSelectI64(MWasmSelect* select);
 
   void lowerBigIntLsh(MBigIntLsh* ins);
   void lowerBigIntRsh(MBigIntRsh* ins);
-
-  void lowerAtomicLoad64(MLoadUnboxedScalar* ins);
-  void lowerAtomicStore64(MStoreUnboxedScalar* ins);
 
   LTableSwitch* newLTableSwitch(const LAllocation& in,
                                 const LDefinition& inputCopy,

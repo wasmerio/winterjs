@@ -13,7 +13,6 @@ description: Checking RUSSIAN ALPHABET
 var alphabetR = ["ё", "я", "ю", "э", "ь", "ы", "ъ", "щ", "ш", "ч", "ц", "х", "ф", "у", "т", "с", "р", "П", "О", "Н", "М", "Л", "К", "Й", "И", "З", "Ж", "Е", "Д", "Г", "В", "Б", "А"];
 var alphabet = ["А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "Й", "К", "Л", "М", "Н", "О", "П", "р", "с", "т", "у", "ф", "х", "ц", "ч", "ш", "щ", "ъ", "ы", "ь", "э", "ю", "я", "ё"];
 
-//CHECK#1
 alphabetR.sort();
 var result = true;
 for (var i = 0; i < 26; i++) {
@@ -21,7 +20,7 @@ for (var i = 0; i < 26; i++) {
 }
 
 if (result !== true) {
-  $ERROR('#1: CHECK RUSSIAN ALPHABET');
+  throw new Test262Error('#1: CHECK RUSSIAN ALPHABET');
 }
 
 reportCompare(0, 0);

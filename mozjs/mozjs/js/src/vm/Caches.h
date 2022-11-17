@@ -7,22 +7,18 @@
 #ifndef vm_Caches_h
 #define vm_Caches_h
 
-#include <iterator>
-#include <new>
+#include "mozilla/Array.h"
 
-#include "frontend/SourceNotes.h"  // SrcNote
+#include "frontend/ScopeBindingCache.h"
 #include "gc/Tracer.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
-#include "js/UniquePtr.h"
-#include "util/Memory.h"
-#include "vm/ArrayObject.h"
-#include "vm/JSAtom.h"
-#include "vm/JSObject.h"
 #include "vm/JSScript.h"
-#include "vm/NativeObject.h"
+#include "vm/StencilCache.h"  // js::StencilCache
 
 namespace js {
+
+class SrcNote;
 
 /*
  * GetSrcNote cache to avoid O(n^2) growth in finding a source note for a
@@ -49,17 +45,20 @@ struct EvalCacheEntry {
   JSScript* callerScript;
   jsbytecode* pc;
 
-  // We sweep this cache before a nursery collection to remove entries with
-  // string keys in the nursery.
+  // We sweep this cache after a nursery collection to update entries with
+  // string keys that have been tenured.
   //
   // The entire cache is purged on a major GC, so we don't need to sweep it
   // then.
-  bool needsSweep() { return !str->isTenured(); }
+  bool traceWeak(JSTracer* trc) {
+    MOZ_ASSERT(trc->kind() == JS::TracerKind::MinorSweeping);
+    return TraceManuallyBarrieredWeakEdge(trc, &str, "EvalCacheEntry::str");
+  }
 };
 
 struct EvalCacheLookup {
   explicit EvalCacheLookup(JSContext* cx) : str(cx), callerScript(cx) {}
-  RootedLinearString str;
+  Rooted<JSLinearString*> str;
   RootedScript callerScript;
   MOZ_INIT_OUTSIDE_CTOR jsbytecode* pc;
 };
@@ -71,135 +70,169 @@ struct EvalCacheHashPolicy {
   static bool match(const EvalCacheEntry& entry, const EvalCacheLookup& l);
 };
 
-typedef GCHashSet<EvalCacheEntry, EvalCacheHashPolicy, SystemAllocPolicy>
-    EvalCache;
+using EvalCache =
+    GCHashSet<EvalCacheEntry, EvalCacheHashPolicy, SystemAllocPolicy>;
 
-/*
- * Cache for speeding up repetitive creation of objects in the VM.
- * When an object is created which matches the criteria in the 'key' section
- * below, an entry is filled with the resulting object.
- */
-class NewObjectCache {
-  static constexpr unsigned MAX_OBJ_SIZE = sizeof(JSObject_Slots16);
+// [SMDOC] Megamorphic Property Lookup Cache (MegamorphicCache)
+//
+// MegamorphicCache is a data structure used to speed up megamorphic property
+// lookups from JIT code. The same cache is currently used for both GetProp and
+// HasProp (in, hasOwnProperty) operations.
+//
+// This is implemented as a fixed-size array of entries. Lookups are performed
+// based on the receiver object's Shape + PropertyKey. If found in the cache,
+// the result of a lookup represents either:
+//
+// * A data property on the receiver or on its proto chain (stored as number of
+//   'hops' up the proto chain + the slot of the data property).
+//
+// * A missing property on the receiver or its proto chain.
+//
+// * A missing property on the receiver, but it might exist on the proto chain.
+//   This lets us optimize hasOwnProperty better.
+//
+// Collisions are handled by simply overwriting the previous entry stored in the
+// slot. This is sufficient to achieve a high hit rate on typical web workloads
+// while ensuring cache lookups are always fast and simple.
+//
+// Lookups always check the receiver object's shape (ensuring the properties and
+// prototype are unchanged). Because the cache also caches lookups on the proto
+// chain, Watchtower is used to invalidate the cache when prototype objects are
+// mutated. This is done by incrementing the cache's generation counter to
+// invalidate all entries.
+//
+// The cache is also invalidated on each major GC.
+class MegamorphicCache {
+ public:
+  static constexpr size_t NumEntries = 1024;
+  // log2(alignof(Shape))
+  static constexpr uint8_t ShapeHashShift1 = 3;
+  // ShapeHashShift1 + log2(NumEntries)
+  static constexpr uint8_t ShapeHashShift2 = ShapeHashShift1 + 10;
 
-  static void staticAsserts() {
-    static_assert(gc::AllocKind::OBJECT_LAST ==
-                  gc::AllocKind::OBJECT16_BACKGROUND);
-  }
+  class Entry {
+    // Receiver object's shape.
+    Shape* shape_ = nullptr;
 
-  struct Entry {
-    /* Class of the constructed object. */
-    const JSClass* clasp;
+    // The atom or symbol property being accessed.
+    PropertyKey key_;
 
-    /*
-     * Key with one of two possible values:
-     *
-     * - Global for the object. The object must have a standard class and will
-     *   have this global's builtin prototype for this class as proto.
-     *
-     * - Prototype for the object (non-null). Cannot be a global object because
-     *   that would be ambiguous (see previous case).
-     */
-    JSObject* key;
+    // This entry is valid iff the generation matches the cache's generation.
+    uint16_t generation_ = 0;
 
-    /* Allocation kind for the constructed object. */
-    gc::AllocKind kind;
+    // Slot number of the data property.
+    static constexpr size_t MaxSlotNumber = UINT16_MAX;
+    uint16_t slot_ = 0;
 
-    /* Number of bytes to copy from the template object. */
-    uint32_t nbytes;
+    // Number of hops on the proto chain to get to the holder object. If this is
+    // zero, the property exists on the receiver object. It can also be one of
+    // the sentinel values indicating a missing property lookup.
+    uint8_t numHops_ = 0;
 
-    /*
-     * Template object to copy from, with the initial values of fields,
-     * fixed slots (undefined) and private data (nullptr).
-     */
-    char templateObject[MAX_OBJ_SIZE];
+    friend class MegamorphicCache;
+
+   public:
+    static constexpr uint8_t MaxHopsForDataProperty = UINT8_MAX - 2;
+    static constexpr uint8_t NumHopsForMissingProperty = UINT8_MAX - 1;
+    static constexpr uint8_t NumHopsForMissingOwnProperty = UINT8_MAX;
+
+    void init(Shape* shape, PropertyKey key, uint16_t generation,
+              uint8_t numHops, uint16_t slot) {
+      shape_ = shape;
+      key_ = key;
+      generation_ = generation;
+      slot_ = slot;
+      numHops_ = numHops;
+      MOZ_ASSERT(slot_ == slot, "slot must fit in slot_");
+      MOZ_ASSERT(numHops_ == numHops, "numHops must fit in numHops_");
+    }
+    bool isMissingProperty() const {
+      return numHops_ == NumHopsForMissingProperty;
+    }
+    bool isMissingOwnProperty() const {
+      return numHops_ == NumHopsForMissingOwnProperty;
+    }
+    bool isDataProperty() const { return numHops_ <= MaxHopsForDataProperty; }
+    uint16_t numHops() const {
+      MOZ_ASSERT(isDataProperty());
+      return numHops_;
+    }
+    uint16_t slot() const {
+      MOZ_ASSERT(isDataProperty());
+      return slot_;
+    }
+
+    static constexpr size_t offsetOfShape() { return offsetof(Entry, shape_); }
+
+    static constexpr size_t offsetOfKey() { return offsetof(Entry, key_); }
+
+    static constexpr size_t offsetOfGeneration() {
+      return offsetof(Entry, generation_);
+    }
+
+    static constexpr size_t offsetOfSlot() { return offsetof(Entry, slot_); }
+
+    static constexpr size_t offsetOfNumHops() {
+      return offsetof(Entry, numHops_);
+    }
   };
 
-  using EntryArray = Entry[41];  // TODO: reconsider size;
-  EntryArray entries;
+ private:
+  mozilla::Array<Entry, NumEntries> entries_;
+
+  // Generation counter used to invalidate all entries.
+  uint16_t generation_ = 0;
+
+  // NOTE: this logic is mirrored in MacroAssembler::emitMegamorphicCacheLookup
+  Entry& getEntry(Shape* shape, PropertyKey key) {
+    static_assert(mozilla::IsPowerOfTwo(NumEntries),
+                  "NumEntries must be a power-of-two for fast modulo");
+    uintptr_t hash = uintptr_t(shape) >> ShapeHashShift1;
+    hash ^= uintptr_t(shape) >> ShapeHashShift2;
+    hash += HashAtomOrSymbolPropertyKey(key);
+    return entries_[hash % NumEntries];
+  }
 
  public:
-  using EntryIndex = int;
-
-  NewObjectCache()
-      : entries{}  // zeroes out the array
-  {}
-
-  void purge() {
-    new (&entries) EntryArray{};  // zeroes out the array
+  void bumpGeneration() {
+    generation_++;
+    if (generation_ == 0) {
+      // Generation overflowed. Invalidate the whole cache.
+      for (size_t i = 0; i < NumEntries; i++) {
+        entries_[i].shape_ = nullptr;
+      }
+    }
+  }
+  bool lookup(Shape* shape, PropertyKey key, Entry** entryp) {
+    Entry& entry = getEntry(shape, key);
+    *entryp = &entry;
+    return (entry.shape_ == shape && entry.key_ == key &&
+            entry.generation_ == generation_);
+  }
+  void initEntryForMissingProperty(Entry* entry, Shape* shape,
+                                   PropertyKey key) {
+    entry->init(shape, key, generation_, Entry::NumHopsForMissingProperty, 0);
+  }
+  void initEntryForMissingOwnProperty(Entry* entry, Shape* shape,
+                                      PropertyKey key) {
+    entry->init(shape, key, generation_, Entry::NumHopsForMissingOwnProperty,
+                0);
+  }
+  void initEntryForDataProperty(Entry* entry, Shape* shape, PropertyKey key,
+                                size_t numHops, uint32_t slot) {
+    if (slot > Entry::MaxSlotNumber ||
+        numHops > Entry::MaxHopsForDataProperty) {
+      return;
+    }
+    entry->init(shape, key, generation_, numHops, slot);
   }
 
-  /* Remove any cached items keyed on moved objects. */
-  void clearNurseryObjects(JSRuntime* rt);
-
-  /*
-   * Get the entry index for the given lookup, return whether there was a hit
-   * on an existing entry.
-   */
-  inline bool lookupProto(const JSClass* clasp, JSObject* proto,
-                          gc::AllocKind kind, EntryIndex* pentry);
-  inline bool lookupGlobal(const JSClass* clasp, js::GlobalObject* global,
-                           gc::AllocKind kind, EntryIndex* pentry);
-
-  /*
-   * Return a new object from a cache hit produced by a lookup method, or
-   * nullptr if returning the object could possibly trigger GC (does not
-   * indicate failure).
-   */
-  inline NativeObject* newObjectFromHit(JSContext* cx, EntryIndex entry,
-                                        js::gc::InitialHeap heap);
-
-  /* Fill an entry after a cache miss. */
-  void fillProto(EntryIndex entry, const JSClass* clasp, js::TaggedProto proto,
-                 gc::AllocKind kind, NativeObject* obj);
-
-  inline void fillGlobal(EntryIndex entry, const JSClass* clasp,
-                         js::GlobalObject* global, gc::AllocKind kind,
-                         NativeObject* obj);
-
-  /* Invalidate any entries which might produce an object with shape. */
-  void invalidateEntriesForShape(Shape* shape);
-
- private:
-  EntryIndex makeIndex(const JSClass* clasp, gc::Cell* key,
-                       gc::AllocKind kind) {
-    uintptr_t hash = (uintptr_t(clasp) ^ uintptr_t(key)) + size_t(kind);
-    return hash % std::size(entries);
+  static constexpr size_t offsetOfEntries() {
+    return offsetof(MegamorphicCache, entries_);
   }
 
-  bool lookup(const JSClass* clasp, JSObject* key, gc::AllocKind kind,
-              EntryIndex* pentry) {
-    *pentry = makeIndex(clasp, key, kind);
-    Entry* entry = &entries[*pentry];
-
-    // N.B. Lookups with the same clasp/key but different kinds map to
-    // different entries.
-    return entry->clasp == clasp && entry->key == key;
-  }
-
-  void fill(EntryIndex entry_, const JSClass* clasp, JSObject* key,
-            gc::AllocKind kind, NativeObject* obj) {
-    MOZ_ASSERT(unsigned(entry_) < std::size(entries));
-    MOZ_ASSERT(entry_ == makeIndex(clasp, key, kind));
-    Entry* entry = &entries[entry_];
-
-    MOZ_ASSERT(!obj->hasDynamicSlots());
-    MOZ_ASSERT(obj->hasEmptyElements() || obj->is<ArrayObject>());
-
-    entry->clasp = clasp;
-    entry->key = key;
-    entry->kind = kind;
-
-    entry->nbytes = gc::Arena::thingSize(kind);
-    js_memcpy(&entry->templateObject, obj, entry->nbytes);
-  }
-
-  static void copyCachedToObject(NativeObject* dst, NativeObject* src,
-                                 gc::AllocKind kind) {
-    js_memcpy(dst, src, gc::Arena::thingSize(kind));
-
-    // Initialize with barriers
-    dst->initShape(src->shape());
+  static constexpr size_t offsetOfGeneration() {
+    return offsetof(MegamorphicCache, generation_);
   }
 };
 
@@ -246,27 +279,45 @@ class StringToAtomCache {
 
 class RuntimeCaches {
  public:
-  js::GSNCache gsnCache;
-  js::NewObjectCache newObjectCache;
-  js::UncompressedSourceCache uncompressedSourceCache;
-  js::EvalCache evalCache;
-  js::StringToAtomCache stringToAtomCache;
+  MegamorphicCache megamorphicCache;
+  GSNCache gsnCache;
+  UncompressedSourceCache uncompressedSourceCache;
+  EvalCache evalCache;
+  StringToAtomCache stringToAtomCache;
 
-  void purgeForMinorGC(JSRuntime* rt) {
-    newObjectCache.clearNurseryObjects(rt);
-    evalCache.sweep();
-  }
+  // Delazification: Cache binding for runtime objects which are used during
+  // delazification to quickly resolve NameLocation of bindings without linearly
+  // iterating over the list of bindings.
+  frontend::RuntimeScopeBindingCache scopeCache;
+
+  // This cache is used to store the result of delazification compilations which
+  // might be happening off-thread. The main-thread will concurrently read the
+  // content of this cache to avoid delazification, or fallback on running the
+  // delazification on the main-thread.
+  //
+  // Main-thread results are not stored in the StencilCache as there is no other
+  // consumer.
+  StencilCache delazificationCache;
+
+  void sweepAfterMinorGC(JSTracer* trc) { evalCache.traceWeak(trc); }
+#ifdef JSGC_HASH_TABLE_CHECKS
+  void checkEvalCacheAfterMinorGC();
+#endif
 
   void purgeForCompaction() {
-    newObjectCache.purge();
     evalCache.clear();
     stringToAtomCache.purge();
+    megamorphicCache.bumpGeneration();
+    scopeCache.purge();
   }
+
+  void purgeStencils() { delazificationCache.clearAndDisable(); }
 
   void purge() {
     purgeForCompaction();
     gsnCache.purge();
     uncompressedSourceCache.purge();
+    purgeStencils();
   }
 };
 

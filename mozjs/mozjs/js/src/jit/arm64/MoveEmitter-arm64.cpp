@@ -21,14 +21,23 @@ MemOperand MoveEmitterARM64::toMemOperand(const MoveOperand& operand) const {
 }
 
 void MoveEmitterARM64::emit(const MoveResolver& moves) {
-  if (moves.numCycles()) {
-    masm.reserveStack(sizeof(void*));
-    pushedAtCycle_ = masm.framePushed();
-  }
+  vixl::UseScratchRegisterScope temps(&masm.asVIXL());
+  // We have two scratch general registers, so use one as temporary storage for
+  // breaking cycles and leave the other available for memory to memory moves.
+  //
+  // This register is used when breaking GENERAL, INT32, FLOAT32, and DOUBLE
+  // move cycles. For FLOAT32/DOUBLE, this involves a fmov between float and
+  // general registers. We could avoid this if we had an extra scratch float
+  // register, otherwise we need the scratch float register for memory to
+  // memory moves that may happen in the cycle. We cannot use the scratch
+  // general register for SIMD128 cycles as it is not large enough.
+  cycleGeneralReg_ = temps.AcquireX();
 
   for (size_t i = 0; i < moves.numMoves(); i++) {
     emitMove(moves.getMove(i));
   }
+
+  cycleGeneralReg_ = ARMRegister();
 }
 
 void MoveEmitterARM64::finish() {
@@ -58,6 +67,9 @@ void MoveEmitterARM64::emitMove(const MoveOp& move) {
       break;
     case MoveOp::DOUBLE:
       emitDoubleMove(from, to);
+      break;
+    case MoveOp::SIMD128:
+      emitSimd128Move(from, to);
       break;
     case MoveOp::INT32:
       emitInt32Move(from, to);
@@ -110,6 +122,28 @@ void MoveEmitterARM64::emitDoubleMove(const MoveOperand& from,
 
   vixl::UseScratchRegisterScope temps(&masm.asVIXL());
   const ARMFPRegister scratch = temps.AcquireD();
+  masm.Ldr(scratch, toMemOperand(from));
+  masm.Str(scratch, toMemOperand(to));
+}
+
+void MoveEmitterARM64::emitSimd128Move(const MoveOperand& from,
+                                       const MoveOperand& to) {
+  if (from.isFloatReg()) {
+    if (to.isFloatReg()) {
+      masm.Mov(toFPReg(to, MoveOp::SIMD128), toFPReg(from, MoveOp::SIMD128));
+    } else {
+      masm.Str(toFPReg(from, MoveOp::SIMD128), toMemOperand(to));
+    }
+    return;
+  }
+
+  if (to.isFloatReg()) {
+    masm.Ldr(toFPReg(to, MoveOp::SIMD128), toMemOperand(from));
+    return;
+  }
+
+  vixl::UseScratchRegisterScope temps(&masm.asVIXL());
+  const ARMFPRegister scratch = temps.AcquireQ();
   masm.Ldr(scratch, toMemOperand(from));
   masm.Str(scratch, toMemOperand(to));
 }
@@ -181,8 +215,12 @@ MemOperand MoveEmitterARM64::cycleSlot() {
   // Using SP as stack pointer requires alignment preservation below.
   MOZ_ASSERT(!masm.GetStackPointer64().Is(sp));
 
-  // emit() already allocated a slot for resolving the cycle.
-  MOZ_ASSERT(pushedAtCycle_ != -1);
+  // Allocate a slot for breaking cycles if we have not already
+  if (pushedAtCycle_ == -1) {
+    static_assert(SpillSlotSize == 16);
+    masm.reserveStack(SpillSlotSize);
+    pushedAtCycle_ = masm.framePushed();
+  }
 
   return MemOperand(masm.GetStackPointer64(),
                     masm.framePushed() - pushedAtCycle_);
@@ -193,21 +231,26 @@ void MoveEmitterARM64::breakCycle(const MoveOperand& from,
   switch (type) {
     case MoveOp::FLOAT32:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMFPRegister scratch32 = temps.AcquireS();
-        masm.Ldr(scratch32, toMemOperand(to));
-        masm.Str(scratch32, cycleSlot());
+        masm.Ldr(cycleGeneralReg_.W(), toMemOperand(to));
       } else {
-        masm.Str(toFPReg(to, type), cycleSlot());
+        masm.Fmov(cycleGeneralReg_.W(), toFPReg(to, type));
       }
       break;
 
     case MoveOp::DOUBLE:
       if (to.isMemory()) {
+        masm.Ldr(cycleGeneralReg_.X(), toMemOperand(to));
+      } else {
+        masm.Fmov(cycleGeneralReg_.X(), toFPReg(to, type));
+      }
+      break;
+
+    case MoveOp::SIMD128:
+      if (to.isMemory()) {
         vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMFPRegister scratch64 = temps.AcquireD();
-        masm.Ldr(scratch64, toMemOperand(to));
-        masm.Str(scratch64, cycleSlot());
+        const ARMFPRegister scratch128 = temps.AcquireQ();
+        masm.Ldr(scratch128, toMemOperand(to));
+        masm.Str(scratch128, cycleSlot());
       } else {
         masm.Str(toFPReg(to, type), cycleSlot());
       }
@@ -215,23 +258,17 @@ void MoveEmitterARM64::breakCycle(const MoveOperand& from,
 
     case MoveOp::INT32:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMRegister scratch32 = temps.AcquireW();
-        masm.Ldr(scratch32, toMemOperand(to));
-        masm.Str(scratch32, cycleSlot());
+        masm.Ldr(cycleGeneralReg_.W(), toMemOperand(to));
       } else {
-        masm.Str(toARMReg32(to), cycleSlot());
+        masm.Mov(cycleGeneralReg_.W(), toARMReg32(to));
       }
       break;
 
     case MoveOp::GENERAL:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMRegister scratch64 = temps.AcquireX();
-        masm.Ldr(scratch64, toMemOperand(to));
-        masm.Str(scratch64, cycleSlot());
+        masm.Ldr(cycleGeneralReg_.X(), toMemOperand(to));
       } else {
-        masm.Str(toARMReg64(to), cycleSlot());
+        masm.Mov(cycleGeneralReg_.X(), toARMReg64(to));
       }
       break;
 
@@ -245,19 +282,24 @@ void MoveEmitterARM64::completeCycle(const MoveOperand& from,
   switch (type) {
     case MoveOp::FLOAT32:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMFPRegister scratch32 = temps.AcquireS();
-        masm.Ldr(scratch32, cycleSlot());
-        masm.Str(scratch32, toMemOperand(to));
+        masm.Str(cycleGeneralReg_.W(), toMemOperand(to));
       } else {
-        masm.Ldr(toFPReg(to, type), cycleSlot());
+        masm.Fmov(toFPReg(to, type), cycleGeneralReg_.W());
       }
       break;
 
     case MoveOp::DOUBLE:
       if (to.isMemory()) {
+        masm.Str(cycleGeneralReg_.X(), toMemOperand(to));
+      } else {
+        masm.Fmov(toFPReg(to, type), cycleGeneralReg_.X());
+      }
+      break;
+
+    case MoveOp::SIMD128:
+      if (to.isMemory()) {
         vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMFPRegister scratch = temps.AcquireD();
+        const ARMFPRegister scratch = temps.AcquireQ();
         masm.Ldr(scratch, cycleSlot());
         masm.Str(scratch, toMemOperand(to));
       } else {
@@ -267,23 +309,17 @@ void MoveEmitterARM64::completeCycle(const MoveOperand& from,
 
     case MoveOp::INT32:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMRegister scratch32 = temps.AcquireW();
-        masm.Ldr(scratch32, cycleSlot());
-        masm.Str(scratch32, toMemOperand(to));
+        masm.Str(cycleGeneralReg_.W(), toMemOperand(to));
       } else {
-        masm.Ldr(toARMReg32(to), cycleSlot());
+        masm.Mov(toARMReg32(to), cycleGeneralReg_.W());
       }
       break;
 
     case MoveOp::GENERAL:
       if (to.isMemory()) {
-        vixl::UseScratchRegisterScope temps(&masm.asVIXL());
-        const ARMRegister scratch64 = temps.AcquireX();
-        masm.Ldr(scratch64, cycleSlot());
-        masm.Str(scratch64, toMemOperand(to));
+        masm.Str(cycleGeneralReg_.X(), toMemOperand(to));
       } else {
-        masm.Ldr(toARMReg64(to), cycleSlot());
+        masm.Mov(toARMReg64(to), cycleGeneralReg_.X());
       }
       break;
 

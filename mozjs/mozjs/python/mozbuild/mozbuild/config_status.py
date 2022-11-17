@@ -40,24 +40,12 @@ ANDROID_IDE_ADVERTISEMENT = """
 =============
 ADVERTISEMENT
 
-You are building Firefox for Android. After your build completes, you can open
+You are building GeckoView. After your build completes, you can open
 the top source directory in Android Studio directly and build using Gradle.
 See the documentation at
 
-https://developer.mozilla.org/en-US/docs/Simple_Firefox_for_Android_build
+https://firefox-source-docs.mozilla.org/mobile/android/geckoview/contributor/geckoview-quick-start.html#build-using-android-studio
 =============
-""".strip()
-
-VISUAL_STUDIO_ADVERTISEMENT = """
-===============================
-Visual Studio Support Available
-
-You are building Firefox on Windows. You can generate Visual Studio
-files by running:
-
-   mach build-backend --backend=VisualStudio
-
-===============================
 """.strip()
 
 
@@ -200,10 +188,6 @@ def config_status(
         for the_backend in selected_backends:
             for path, diff in sorted(the_backend.file_diffs.items()):
                 print("\n".join(diff))
-
-    # Advertise Visual Studio if appropriate.
-    if os.name == "nt" and "VisualStudio" not in options.backend:
-        print(VISUAL_STUDIO_ADVERTISEMENT)
 
     # Advertise Android Studio if it is appropriate.
     if MachCommandConditions.is_android(env):

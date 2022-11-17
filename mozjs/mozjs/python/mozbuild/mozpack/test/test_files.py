@@ -30,7 +30,7 @@ from mozpack.files import (
     MercurialFile,
     MercurialRevisionFinder,
     MinifiedJavaScript,
-    MinifiedProperties,
+    MinifiedCommentStripped,
     PreprocessedFile,
 )
 
@@ -350,7 +350,7 @@ class TestAbsoluteSymlinkFile(TestWithTmpDir):
         self.assertEqual(link, source)
 
     def test_noop(self):
-        if not hasattr(os, "symlink"):
+        if not hasattr(os, "symlink") or sys.platform == "win32":
             return
 
         source = self.tmppath("source")
@@ -875,8 +875,8 @@ foo2_xpt = GeneratedFile(
 )
 
 
-class TestMinifiedProperties(TestWithTmpDir):
-    def test_minified_properties(self):
+class TestMinifiedCommentStripped(TestWithTmpDir):
+    def test_minified_comment_stripped(self):
         propLines = [
             "# Comments are removed",
             "foo = bar",
@@ -885,10 +885,10 @@ class TestMinifiedProperties(TestWithTmpDir):
         ]
         prop = GeneratedFile("\n".join(propLines))
         self.assertEqual(
-            MinifiedProperties(prop).open().readlines(), [b"foo = bar\n", b"\n"]
+            MinifiedCommentStripped(prop).open().readlines(), [b"foo = bar\n", b"\n"]
         )
         open(self.tmppath("prop"), "w").write("\n".join(propLines))
-        MinifiedProperties(File(self.tmppath("prop"))).copy(self.tmppath("prop2"))
+        MinifiedCommentStripped(File(self.tmppath("prop"))).copy(self.tmppath("prop2"))
         self.assertEqual(open(self.tmppath("prop2")).readlines(), ["foo = bar\n", "\n"])
 
 
@@ -935,8 +935,8 @@ class TestMinifiedJavaScript(TestWithTmpDir):
         errors.out = sys.stderr
         self.assertEqual(
             output,
-            "Warning: JS minification verification failed for <unknown>:\n"
-            "Warning: Error message\n",
+            "warning: JS minification verification failed for <unknown>:\n"
+            "warning: Error message\n",
         )
         self.assertEqual(mini_lines, orig_f.open().readlines())
 

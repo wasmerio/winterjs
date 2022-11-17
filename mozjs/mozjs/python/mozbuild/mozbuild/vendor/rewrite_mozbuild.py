@@ -183,11 +183,22 @@ import re
 import ast
 import sys
 import copy
-import fileinput
+import shutil
 import subprocess
 
 from pprint import pprint
-from mozbuild.frontend.sandbox import alphabetical_sorted
+
+try:
+    from mozbuild.frontend.sandbox import alphabetical_sorted
+except Exception:
+
+    def alphabetical_sorted(iterable, key=lambda x: x.lower(), reverse=False):
+        return sorted(iterable, key=key, reverse=reverse)
+
+
+# This can be edited to enable better Python 3.8 behavior, but is set so that
+# everything is consistent by default so errors can be detected more easily.
+FORCE_DOWNGRADE_BEHAVIOR = True
 
 statistics = {
     "guess_candidates": {},
@@ -202,6 +213,72 @@ def log(*args, **kwargs):
     #  unless we are debugging
     # print(*args, **kwargs)
     pass
+
+
+##############################################
+
+import inspect
+
+
+def node_to_name(code, node):
+    if (
+        not FORCE_DOWNGRADE_BEHAVIOR
+        and sys.version_info[0] >= 3
+        and sys.version_info[1] >= 8
+    ):
+        return ast.get_source_segment(code, node)
+
+    return node.__class__.__name__
+
+
+def get_attribute_label(node):
+    assert isinstance(node, ast.Attribute)
+
+    label = ""
+    subtarget = node
+    while isinstance(subtarget, ast.Attribute):
+        label = subtarget.attr + ("." if label else "") + label
+        subtarget = subtarget.value
+
+    if isinstance(subtarget, ast.Name):
+        label = subtarget.id + "." + label
+    elif isinstance(subtarget, ast.Subscript) and isinstance(subtarget.value, ast.Name):
+        label = subtarget.value.id + "." + label
+    else:
+        raise Exception(
+            "Unxpected subtarget of type %s found in get_attribute_label. label=%s"
+            % (subtarget, label)
+        )
+
+    return label
+
+
+def ast_get_source_segment(code, node):
+    caller = inspect.stack()[1]
+
+    if "sphinx" in caller.filename or (
+        not FORCE_DOWNGRADE_BEHAVIOR
+        and sys.version_info[0] >= 3
+        and sys.version_info[1] >= 8
+    ):
+        return ast.original_get_source_segment(code, node)
+
+    if caller.function == "assignment_node_to_source_filename_list":
+        return ""
+
+    raise Exception(
+        "ast_get_source_segment is not available with this Python version. (ver=%s.%s, caller=%s)"
+        % (sys.version_info.major, sys.version_info.minor, caller.function)
+    )
+
+
+# Overwrite it so we don't accidently use it
+if sys.version_info[0] >= 3 and sys.version_info[1] >= 8:
+    ast.original_get_source_segment = ast.get_source_segment
+    ast.get_source_segment = ast_get_source_segment
+
+
+##############################################
 
 
 def node_to_readable_file_location(code, node, child_node=None):
@@ -219,28 +296,28 @@ def node_to_readable_file_location(code, node, child_node=None):
     elif isinstance(node, ast.If):
         assert child_node
         if child_node in node.body:
-            location += "if " + ast.get_source_segment(code, node.test)
+            location += "if " + node_to_name(code, node.test)
         else:
-            location += "else-of-if " + ast.get_source_segment(code, node.test)
+            location += "else-of-if " + node_to_name(code, node.test)
     elif isinstance(node, ast.For):
         location += (
             "for "
-            + ast.get_source_segment(code, node.target)
+            + node_to_name(code, node.target)
             + " in "
-            + ast.get_source_segment(code, node.iter)
+            + node_to_name(code, node.iter)
         )
     elif isinstance(node, ast.AugAssign):
         if isinstance(node.target, ast.Name):
             location += node.target.id
         else:
-            location += ast.get_source_segment(code, node.target)
+            location += node_to_name(code, node.target)
     elif isinstance(node, ast.Assign):
         # This assert would fire if we did e.g. some_sources = all_sources = [ ... ]
         assert len(node.targets) == 1, "Assignment node contains more than one target"
         if isinstance(node.targets[0], ast.Name):
             location += node.targets[0].id
         else:
-            location += ast.get_source_segment(code, node.targets[0])
+            location += node_to_name(code, node.targets[0])
     else:
         raise Exception("Got a node type I don't know how to handle: " + str(node))
 
@@ -261,23 +338,25 @@ def assignment_node_to_source_filename_list(code, node):
     """
     if isinstance(node.value, ast.List) and "elts" in node.value._fields:
         for f in node.value.elts:
-            if not isinstance(f, ast.Constant):
+            if not isinstance(f, ast.Constant) and not isinstance(f, ast.Str):
                 log(
                     "Found non-constant source file name in list: ",
-                    ast.get_source_segment(code, f),
+                    ast_get_source_segment(code, f),
                 )
                 return []
-        return [f.value for f in node.value.elts]
+        return [
+            f.value if isinstance(f, ast.Constant) else f.s for f in node.value.elts
+        ]
     elif isinstance(node.value, ast.ListComp):
         # SOURCES += [f for f in foo if blah]
-        log("Could not find the files for " + ast.get_source_segment(code, node.value))
+        log("Could not find the files for " + ast_get_source_segment(code, node.value))
     elif isinstance(node.value, ast.Name) or isinstance(node.value, ast.Subscript):
         # SOURCES += other_var
         # SOURCES += files['X64_SOURCES']
-        log("Could not find the files for " + ast.get_source_segment(code, node))
+        log("Could not find the files for " + ast_get_source_segment(code, node))
     elif isinstance(node.value, ast.Call):
         # SOURCES += sorted(...)
-        log("Could not find the files for " + ast.get_source_segment(code, node))
+        log("Could not find the files for " + ast_get_source_segment(code, node))
     else:
         raise Exception(
             "Unexpected node received in assignment_node_to_source_filename_list: "
@@ -286,7 +365,7 @@ def assignment_node_to_source_filename_list(code, node):
     return []
 
 
-def mozbuild_file_to_source_assignments(normalized_mozbuild_filename):
+def mozbuild_file_to_source_assignments(normalized_mozbuild_filename, assignment_type):
     """
     Returns a dictionary of 'source-assignment-location' -> 'normalized source filename list'
     contained in the moz.build file specified
@@ -294,6 +373,11 @@ def mozbuild_file_to_source_assignments(normalized_mozbuild_filename):
     normalized_mozbuild_filename: the moz.build file to read
     """
     source_assignments = {}
+
+    if assignment_type == "source-files":
+        targets = ["SOURCES", "UNIFIED_SOURCES"]
+    else:
+        targets = ["EXPORTS"]
 
     # Parse the AST of the moz.build file
     code = open(normalized_mozbuild_filename).read()
@@ -306,48 +390,80 @@ def mozbuild_file_to_source_assignments(normalized_mozbuild_filename):
             child.parent = node
 
     # Find all the assignments of SOURCES or UNIFIED_SOURCES
-    source_assignment_nodes = [
-        node
-        for node in ast.walk(root)
-        if isinstance(node, ast.AugAssign)
-        and isinstance(node.target, ast.Name)
-        and node.target.id in ["SOURCES", "UNIFIED_SOURCES"]
-    ]
-    assert (
-        len([n for n in source_assignment_nodes if not isinstance(n.op, ast.Add)]) == 0
-    ), "We got a Source assignment that wasn't +="
+    if assignment_type == "source-files":
+        source_assignment_nodes = [
+            node
+            for node in ast.walk(root)
+            if isinstance(node, ast.AugAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id in targets
+        ]
+        assert (
+            len([n for n in source_assignment_nodes if not isinstance(n.op, ast.Add)])
+            == 0
+        ), "We got a Source assignment that wasn't +="
 
-    # Recurse and find nodes where we do SOURCES += other_var or SOURCES += FILES['foo']
-    recursive_assignment_nodes = [
-        node
-        for node in source_assignment_nodes
-        if isinstance(node.value, ast.Name) or isinstance(node.value, ast.Subscript)
-    ]
+        # Recurse and find nodes where we do SOURCES += other_var or SOURCES += FILES['foo']
+        recursive_assignment_nodes = [
+            node
+            for node in source_assignment_nodes
+            if isinstance(node.value, ast.Name) or isinstance(node.value, ast.Subscript)
+        ]
 
-    recursive_assignment_nodes_names = [
-        node.value.id
-        for node in recursive_assignment_nodes
-        if isinstance(node.value, ast.Name)
-    ]
+        recursive_assignment_nodes_names = [
+            node.value.id
+            for node in recursive_assignment_nodes
+            if isinstance(node.value, ast.Name)
+        ]
 
-    # TODO: We do not dig into subscript variables. These are currently only used by two libraries
-    #       that use external sources.mozbuild files.
-    # recursive_assignment_nodes_names.extend([something<node> for node in
-    #    recursive_assignment_nodes if isinstance(node.value, ast.Subscript)]
+        # TODO: We do not dig into subscript variables. These are currently only used by two
+        #       libraries that use external sources.mozbuild files.
+        # recursive_assignment_nodes_names.extend([something<node> for node in
+        #    recursive_assignment_nodes if isinstance(node.value, ast.Subscript)]
 
-    additional_assignment_nodes = [
-        node
-        for node in ast.walk(root)
-        if isinstance(node, ast.Assign)
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id in recursive_assignment_nodes_names
-    ]
+        additional_assignment_nodes = [
+            node
+            for node in ast.walk(root)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in recursive_assignment_nodes_names
+        ]
 
-    # Remove the original, useless assignment node (the SOURCES += other_var)
-    for node in recursive_assignment_nodes:
-        source_assignment_nodes.remove(node)
-    # Add the other_var += [''] source-assignment
-    source_assignment_nodes.extend(additional_assignment_nodes)
+        # Remove the original, useless assignment node (the SOURCES += other_var)
+        for node in recursive_assignment_nodes:
+            source_assignment_nodes.remove(node)
+        # Add the other_var += [''] source-assignment
+        source_assignment_nodes.extend(additional_assignment_nodes)
+    else:
+        source_assignment_nodes = [
+            node
+            for node in ast.walk(root)
+            if isinstance(node, ast.AugAssign)
+            and (
+                (isinstance(node.target, ast.Name) and node.target.id == "EXPORTS")
+                or (
+                    isinstance(node.target, ast.Attribute)
+                    and get_attribute_label(node.target).startswith("EXPORTS")
+                )
+            )
+        ]
+        source_assignment_nodes.extend(
+            [
+                node
+                for node in ast.walk(root)
+                if isinstance(node, ast.Assign)
+                and (
+                    (
+                        isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id == "EXPORTS"
+                    )
+                    or (
+                        isinstance(node.targets[0], ast.Attribute)
+                        and get_attribute_label(node.targets[0]).startswith("EXPORTS")
+                    )
+                )
+            ]
+        )
 
     # Get the source-assignment-location for the node:
     assignment_index = 1
@@ -386,7 +502,9 @@ def unnormalize_filename(normalized_mozbuild_filename, normalized_filename):
     if normalized_filename[0] == "/":
         return normalized_filename
 
-    mozbuild_path = os.path.dirname(normalized_mozbuild_filename) + "/"
+    mozbuild_path = (
+        os.path.dirname(normalized_mozbuild_filename).replace(os.path.sep, "/") + "/"
+    )
     return normalized_filename.replace(mozbuild_path, "")
 
 
@@ -394,8 +512,10 @@ def normalize_filename(normalized_mozbuild_filename, filename):
     if filename[0] == "/":
         return filename
 
-    mozbuild_path = os.path.dirname(normalized_mozbuild_filename)
-    return os.path.join(mozbuild_path, filename)
+    mozbuild_path = os.path.dirname(normalized_mozbuild_filename).replace(
+        os.path.sep, "/"
+    )
+    return os.path.join(mozbuild_path, filename).replace(os.path.sep, "/")
 
 
 def get_mozbuild_file_search_order(
@@ -471,7 +591,9 @@ def get_mozbuild_file_search_order(
         raise Exception("If moz_yaml_dir or vendoring_dir are specified, both must be")
 
     # Step 1
-    while len(os.path.dirname(test_directory)) > 1:  # While we are not at '/'
+    while (
+        len(os.path.dirname(test_directory).replace(os.path.sep, "/")) > 1
+    ):  # While we are not at '/'
         containing_directory = os.path.dirname(test_directory)
 
         possible_normalized_mozbuild_filename = os.path.join(
@@ -528,8 +650,13 @@ def filenames_directory_is_in_filename_list(
         f("foo/bar/a.c", ["foo/b.c", "foo/bar/c.c"]) -> true
         f("foo/bar/a.c", ["foo/b.c", "foo/bar/baz/d.c"]) -> false
     """
-    path_list = set([os.path.dirname(f) for f in list_of_normalized_filenames])
-    return os.path.dirname(filename_normalized) in path_list
+    path_list = set(
+        [
+            os.path.dirname(f).replace(os.path.sep, "/")
+            for f in list_of_normalized_filenames
+        ]
+    )
+    return os.path.dirname(filename_normalized).replace(os.path.sep, "/") in path_list
 
 
 def find_all_posible_assignments_from_filename(source_assignments, filename_normalized):
@@ -604,6 +731,10 @@ def edit_moz_build_file_to_add_file(
       - dumping the ast out losing comments
     """
 
+    # Make sure that we only write in forward slashes
+    if "\\" in unnormalized_filename_to_add:
+        unnormalized_filename_to_add = unnormalized_filename_to_add.replace("\\", "/")
+
     # add the file into the list, and then sort it in the same way the moz.build validator
     # expects
     unnormalized_list_of_files.append(unnormalized_filename_to_add)
@@ -629,60 +760,59 @@ def edit_moz_build_file_to_add_file(
     # line.
     did_replace = False
 
-    # FileInput is a strange class that lets you edit a file in-place, but does so by hijacking
-    # stdout, so you just print() the output you want as you go through
-    file = fileinput.FileInput(normalized_mozbuild_filename, inplace=True)
-    for line in file:
-        if not did_replace and find_str in line:
-            did_replace = True
+    with open(normalized_mozbuild_filename, mode="r") as file:
+        with open(normalized_mozbuild_filename + ".new", mode="wb") as output:
+            for line in file:
+                if not did_replace and find_str in line:
+                    did_replace = True
 
-            # Okay, we found the line we need to edit, now we need to be ugly about it
-            # Grab the type of quote used in this moz.build file: single or double
-            quote_type = line[line.index(find_str) - 1]
+                    # Okay, we found the line we need to edit, now we need to be ugly about it
+                    # Grab the type of quote used in this moz.build file: single or double
+                    quote_type = line[line.index(find_str) - 1]
 
-            if "[" not in line:
-                # We'll want to put our new file onto its own line
-                newline_to_add = "\n"
-                # And copy the indentation of the line we're adding adjacent to
-                indent_value = line[0 : line.index(quote_type)]
-            else:
-                # This is frustrating, we have the start of the array here. We aren't
-                # going to be able to indent things onto a newline properly. We're just
-                # going to have to stick it in on the same line.
-                newline_to_add = ""
-                indent_value = ""
+                    if "[" not in line:
+                        # We'll want to put our new file onto its own line
+                        newline_to_add = "\n"
+                        # And copy the indentation of the line we're adding adjacent to
+                        indent_value = line[0 : line.index(quote_type)]
+                    else:
+                        # This is frustrating, we have the start of the array here. We aren't
+                        # going to be able to indent things onto a newline properly. We're just
+                        # going to have to stick it in on the same line.
+                        newline_to_add = ""
+                        indent_value = ""
 
-            find_str = "%s%s%s" % (quote_type, find_str, quote_type)
-            if replace_before:
-                replacement_tuple = (
-                    find_str,
-                    newline_to_add,
-                    indent_value,
-                    quote_type,
-                    unnormalized_filename_to_add,
-                    quote_type,
-                )
-                replace_str = "%s,%s%s%s%s%s" % replacement_tuple
-            else:
-                replacement_tuple = (
-                    quote_type,
-                    unnormalized_filename_to_add,
-                    quote_type,
-                    newline_to_add,
-                    indent_value,
-                    find_str,
-                )
-                replace_str = "%s%s%s,%s%s%s" % replacement_tuple
+                    find_str = "%s%s%s" % (quote_type, find_str, quote_type)
+                    if replace_before:
+                        replacement_tuple = (
+                            find_str,
+                            newline_to_add,
+                            indent_value,
+                            quote_type,
+                            unnormalized_filename_to_add,
+                            quote_type,
+                        )
+                        replace_str = "%s,%s%s%s%s%s" % replacement_tuple
+                    else:
+                        replacement_tuple = (
+                            quote_type,
+                            unnormalized_filename_to_add,
+                            quote_type,
+                            newline_to_add,
+                            indent_value,
+                            find_str,
+                        )
+                        replace_str = "%s%s%s,%s%s%s" % replacement_tuple
 
-            line = line.replace(find_str, replace_str)
+                    line = line.replace(find_str, replace_str)
 
-        print(line, end="")  # line has its own newline on it, don't add a second
-    file.close()
+                output.write((line.rstrip() + "\n").encode("utf-8"))
+
+    shutil.move(normalized_mozbuild_filename + ".new", normalized_mozbuild_filename)
 
 
 def edit_moz_build_file_to_remove_file(
-    normalized_mozbuild_filename,
-    unnormalized_filename_to_remove,
+    normalized_mozbuild_filename, unnormalized_filename_to_remove
 ):
     """
     This function edits the moz.build file in-place
@@ -693,38 +823,37 @@ def edit_moz_build_file_to_remove_file(
     )
     did_replace = False
 
-    # FileInput is a strange class that lets you edit a file in-place, but does so by hijacking
-    # stdout, so you just print() the output you want as you go through
-    file = fileinput.FileInput(normalized_mozbuild_filename, inplace=True)
-    for line in file:
-        if not did_replace and unnormalized_filename_to_remove in line:
-            did_replace = True
+    with open(normalized_mozbuild_filename, mode="r") as file:
+        with open(normalized_mozbuild_filename + ".new", mode="wb") as output:
+            for line in file:
+                if not did_replace and unnormalized_filename_to_remove in line:
+                    did_replace = True
 
-            # If the line consists of just a single source file on it, then we're in the clear
-            # we can just skip this line.
-            if simple_file_line.match(line):
-                # Do not output anything, just keep going.
-                continue
+                    # If the line consists of just a single source file on it, then we're in the
+                    # clear - we can just skip this line.
+                    if simple_file_line.match(line):
+                        # Do not output anything, just keep going.
+                        continue
 
-            # Okay, so the line is a little more complicated.
-            quote_type = line[line.index(unnormalized_filename_to_remove) - 1]
+                    # Okay, so the line is a little more complicated.
+                    quote_type = line[line.index(unnormalized_filename_to_remove) - 1]
 
-            if "[" in line or "]" in line:
-                find_str = "%s%s%s,*" % (
-                    quote_type,
-                    unnormalized_filename_to_remove,
-                    quote_type,
-                )
-                line = re.sub(find_str, "", line)
-            else:
-                raise Exception(
-                    "Got an unusual type of line we're trying to remove a file from:",
-                    line,
-                )
+                    if "[" in line or "]" in line:
+                        find_str = "%s%s%s,*" % (
+                            quote_type,
+                            unnormalized_filename_to_remove,
+                            quote_type,
+                        )
+                        line = re.sub(find_str, "", line)
+                    else:
+                        raise Exception(
+                            "Got an unusual type of line we're trying to remove a file from:",
+                            line,
+                        )
 
-        print(line, end="")
+                output.write((line.rstrip() + "\n").encode("utf-8"))
 
-    file.close()
+    shutil.move(normalized_mozbuild_filename + ".new", normalized_mozbuild_filename)
 
 
 def validate_directory_parameters(moz_yaml_dir, vendoring_dir):
@@ -733,16 +862,83 @@ def validate_directory_parameters(moz_yaml_dir, vendoring_dir):
         moz_yaml_dir and vendoring_dir
     ), "If either moz_yaml_dir or vendoring_dir are specified, they both must be"
 
-    # Ensure they are provided with trailing slashes
-    moz_yaml_dir += "/" if moz_yaml_dir[-1] != "/" else ""
-    vendoring_dir += "/" if vendoring_dir[-1] != "/" else ""
+    if moz_yaml_dir is not None and vendoring_dir is not None:
+        # Ensure they are provided with trailing slashes
+        moz_yaml_dir += "/" if moz_yaml_dir[-1] != "/" else ""
+        vendoring_dir += "/" if vendoring_dir[-1] != "/" else ""
 
     return (moz_yaml_dir, vendoring_dir)
+
+
+HAS_ABSOLUTE = 1
+HAS_TRAVERSE_CHILD = 2
+HAS_RELATIVE_CHILD = 2  # behaves the same as above
+
+
+def get_file_reference_modes(source_assignments):
+    """
+    Given a set of source assignments, this function traverses through the
+    files references in those assignments to see if the files are referenced
+    using absolute paths (relative to gecko root) or relative paths.
+
+    It will return all the modes that are seen.
+    """
+    modes = set()
+
+    for key, list_of_normalized_filenames in source_assignments.items():
+        if not list_of_normalized_filenames:
+            continue
+        for file in list_of_normalized_filenames:
+            if file[0] == "/":
+                modes.add(HAS_ABSOLUTE)
+            elif file[0:2] == "../":
+                modes.add(HAS_TRAVERSE_CHILD)
+            else:
+                modes.add(HAS_RELATIVE_CHILD)
+    return modes
+
+
+def renormalize_filename(
+    mode,
+    moz_yaml_dir,
+    vendoring_dir,
+    normalized_mozbuild_filename,
+    normalized_filename_to_act_on,
+):
+    """
+    Edit the normalized_filename_to_act_on to either
+     - Make it an absolute path from gecko root (if we're in that mode)
+     - Get a relative path from the vendoring directory to the yaml directory where the
+       moz.build file is (If they are in separate directories)
+    """
+    if mode == HAS_ABSOLUTE:
+        # If the moz.build file uses absolute paths from the gecko root, this is easy,
+        # all we need to do is prepend a '/' to indicate that
+        normalized_filename_to_act_on = "/" + normalized_filename_to_act_on
+    elif moz_yaml_dir and vendoring_dir:
+        # To re-normalize it in this case, we:
+        #   (a) get the path from gecko_root to the moz.build file we are considering
+        #   (b) compute a relative path from that directory to the file we want
+        #   (c) because (b) started at the moz.build file's directory, it is not
+        #       normalized to the gecko_root. Therefore we need to normalize it by
+        #       prepending (a)
+        a = os.path.dirname(normalized_mozbuild_filename).replace(os.path.sep, "/")
+        b = os.path.relpath(normalized_filename_to_act_on, start=a).replace(
+            os.path.sep, "/"
+        )
+        c = os.path.join(a, b).replace(os.path.sep, "/")
+        normalized_filename_to_act_on = c
+
+    return normalized_filename_to_act_on
 
 
 #########################################################
 # PUBLIC API
 #########################################################
+
+
+class MozBuildRewriteException(Exception):
+    pass
 
 
 def remove_file_from_moz_build_file(
@@ -766,36 +962,43 @@ def remove_file_from_moz_build_file(
     #    save the original normalized filename for this purpose
     original_normalized_filename_to_remove = normalized_filename_to_remove
 
-    for normalized_mozbuild_filename in all_possible_normalized_mozbuild_filenames:
-        if moz_yaml_dir and vendoring_dir:
-            # Here is where we re-normalize the filename. For the rest of the algorithm, we
-            #    will be using this re-normalized filename.
-            # To re-normalize it, we:
-            #   (a) get the path from gecko_root to the moz.build file we are considering
-            #   (b) compute a relative path from that directory to the file we want
-            #   (c) because (b) started at the moz.build file's directory, it is not
-            #       normalized to the gecko_root. Therefore we need to normalize it by
-            #       prepending (a)
-            a = os.path.dirname(normalized_mozbuild_filename)
-            b = os.path.relpath(normalized_filename_to_remove, start=a)
-            c = os.path.join(a, b)
-            normalized_filename_to_remove = c
+    # These are the two header file types specified in vendor_manifest.py > source_suffixes
+    if normalized_filename_to_remove.endswith(
+        ".h"
+    ) or normalized_filename_to_remove.endswith(".hpp"):
+        assignment_type = "header-files"
+    else:
+        assignment_type = "source-files"
 
+    for normalized_mozbuild_filename in all_possible_normalized_mozbuild_filenames:
         source_assignments, root, code = mozbuild_file_to_source_assignments(
-            normalized_mozbuild_filename
+            normalized_mozbuild_filename, assignment_type
         )
 
-        for key, normalized_source_filename_list in source_assignments:
-            if normalized_filename_to_remove in normalized_source_filename_list:
-                unnormalized_filename_to_remove = unnormalize_filename(
-                    normalized_mozbuild_filename, normalized_filename_to_remove
-                )
-                edit_moz_build_file_to_remove_file(
-                    normalized_mozbuild_filename, unnormalized_filename_to_remove
-                )
-                return
+        modes = get_file_reference_modes(source_assignments)
+
+        for mode in modes:
+            normalized_filename_to_remove = renormalize_filename(
+                mode,
+                moz_yaml_dir,
+                vendoring_dir,
+                normalized_mozbuild_filename,
+                normalized_filename_to_remove,
+            )
+
+            for key in source_assignments:
+                normalized_source_filename_list = source_assignments[key]
+                if normalized_filename_to_remove in normalized_source_filename_list:
+                    unnormalized_filename_to_remove = unnormalize_filename(
+                        normalized_mozbuild_filename, normalized_filename_to_remove
+                    )
+                    edit_moz_build_file_to_remove_file(
+                        normalized_mozbuild_filename, unnormalized_filename_to_remove
+                    )
+                    return
 
         normalized_filename_to_remove = original_normalized_filename_to_remove
+    raise MozBuildRewriteException("Could not remove " + normalized_filename_to_remove)
 
 
 def add_file_to_moz_build_file(
@@ -824,64 +1027,71 @@ def add_file_to_moz_build_file(
     #    save the original normalized filename for this purpose
     original_normalized_filename_to_add = normalized_filename_to_add
 
+    if normalized_filename_to_add.endswith(".h") or normalized_filename_to_add.endswith(
+        ".hpp"
+    ):
+        assignment_type = "header-files"
+    else:
+        assignment_type = "source-files"
+
     for normalized_mozbuild_filename in all_possible_normalized_mozbuild_filenames:
-        if moz_yaml_dir and vendoring_dir:
-            # Here is where we re-normalize the filename. For the rest of the algorithm, we
-            #    will be using this re-normalized filename.
-            # To re-normalize it, we:
-            #   (a) get the path from gecko_root to the moz.build file we are considering
-            #   (b) compute a relative path from that directory to the file we want
-            #   (c) because (b) started at the moz.build file's directory, it is not
-            #       normalized to the gecko_root. Therefore we need to normalize it by
-            #       prepending (a)
-            a = os.path.dirname(normalized_mozbuild_filename)
-            b = os.path.relpath(normalized_filename_to_add, start=a)
-            c = os.path.join(a, b)
-            normalized_filename_to_add = c
-
         source_assignments, root, code = mozbuild_file_to_source_assignments(
-            normalized_mozbuild_filename
+            normalized_mozbuild_filename, assignment_type
         )
 
-        possible_assignments = find_all_posible_assignments_from_filename(
-            source_assignments, normalized_filename_to_add
-        )
+        modes = get_file_reference_modes(source_assignments)
 
-        if len(possible_assignments) == 0:
-            normalized_filename_to_add = original_normalized_filename_to_add
-            continue
-
-        assert (
-            len(possible_assignments) > 0
-        ), "Could not find a single possible source assignment"
-        if len(possible_assignments) > 1:
-            best_guess, _ = guess_best_assignment(
-                possible_assignments, normalized_filename_to_add
+        for mode in modes:
+            normalized_filename_to_add = renormalize_filename(
+                mode,
+                moz_yaml_dir,
+                vendoring_dir,
+                normalized_mozbuild_filename,
+                normalized_filename_to_add,
             )
-            chosen_source_assignment_location = best_guess
-        else:
-            chosen_source_assignment_location = list(possible_assignments.keys())[0]
 
-        guessed_list_containing_normalized_filenames = possible_assignments[
-            chosen_source_assignment_location
-        ]
+            possible_assignments = find_all_posible_assignments_from_filename(
+                source_assignments, normalized_filename_to_add
+            )
 
-        # unnormalize filenames so we can edit the moz.build file. They rarely use full paths.
-        unnormalized_filename_to_add = unnormalize_filename(
-            normalized_mozbuild_filename, normalized_filename_to_add
-        )
-        unnormalized_list_of_files = [
-            unnormalize_filename(normalized_mozbuild_filename, f)
-            for f in guessed_list_containing_normalized_filenames
-        ]
+            if len(possible_assignments) == 0:
+                normalized_filename_to_add = original_normalized_filename_to_add
+                continue
 
-        edit_moz_build_file_to_add_file(
-            normalized_mozbuild_filename,
-            unnormalized_filename_to_add,
-            unnormalized_list_of_files,
-        )
-        return
-    assert False, "Could not find a single moz.build file to edit"
+            assert (
+                len(possible_assignments) > 0
+            ), "Could not find a single possible source assignment"
+            if len(possible_assignments) > 1:
+                best_guess, _ = guess_best_assignment(
+                    possible_assignments, normalized_filename_to_add
+                )
+                chosen_source_assignment_location = best_guess
+            else:
+                chosen_source_assignment_location = list(possible_assignments.keys())[0]
+
+            guessed_list_containing_normalized_filenames = possible_assignments[
+                chosen_source_assignment_location
+            ]
+
+            # unnormalize filenames so we can edit the moz.build file. They rarely use full paths.
+            unnormalized_filename_to_add = unnormalize_filename(
+                normalized_mozbuild_filename, normalized_filename_to_add
+            )
+            unnormalized_list_of_files = [
+                unnormalize_filename(normalized_mozbuild_filename, f)
+                for f in guessed_list_containing_normalized_filenames
+            ]
+
+            edit_moz_build_file_to_add_file(
+                normalized_mozbuild_filename,
+                unnormalized_filename_to_add,
+                unnormalized_list_of_files,
+            )
+            return
+
+    raise MozBuildRewriteException(
+        "Could not find a single moz.build file to add " + normalized_filename_to_add
+    )
 
 
 #########################################################
@@ -1061,10 +1271,12 @@ def test_all_third_party_files(gecko_root, all_mozbuild_filenames_normalized):
 
 if __name__ == "__main__":
     gecko_root = get_gecko_root()
-
     os.chdir(gecko_root)
+
     add_file_to_moz_build_file(
-        "third_party/dav1d/src/arm/32/ipred16.S", "media/libdav1d", "third_party/dav1d/"
+        "third_party/jpeg-xl/lib/include/jxl/resizable_parallel_runner.h",
+        "media/libjxl",
+        "third_party/jpeg-xl",
     )
 
     # all_mozbuild_filenames_normalized = get_all_mozbuild_filenames(gecko_root)

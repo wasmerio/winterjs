@@ -56,7 +56,7 @@ class ProfiledThreadData final {
     MOZ_ASSERT(!mBufferPositionWhenReceivedJSContext,
                "JSContext should have been cleared before the thread was "
                "unregistered");
-    mUnregisterTime = TimeStamp::NowUnfuzzed();
+    mUnregisterTime = TimeStamp::Now();
     mBufferPositionWhenUnregistered = Some(aBufferPosition);
   }
   Maybe<uint64_t> BufferPositionWhenUnregistered() {
@@ -106,12 +106,13 @@ class ProfiledThreadData final {
 // Stream all samples and markers from aBuffer with the given aThreadId (or 0
 // for everything, which is assumed to be a single backtrace sample.)
 // Returns the thread id of the output sample(s), or 0 if none was present.
-int StreamSamplesAndMarkers(
-    const char* aName, int aThreadId, const ProfileBuffer& aBuffer,
-    SpliceableJSONWriter& aWriter, const std::string& aProcessName,
-    const std::string& aETLDplus1, const TimeStamp& aProcessStartTime,
-    const TimeStamp& aRegisterTime, const TimeStamp& aUnregisterTime,
-    double aSinceTime, UniqueStacks& aUniqueStacks);
+BaseProfilerThreadId StreamSamplesAndMarkers(
+    const char* aName, BaseProfilerThreadId aThreadId,
+    const ProfileBuffer& aBuffer, SpliceableJSONWriter& aWriter,
+    const std::string& aProcessName, const std::string& aETLDplus1,
+    const TimeStamp& aProcessStartTime, const TimeStamp& aRegisterTime,
+    const TimeStamp& aUnregisterTime, double aSinceTime,
+    UniqueStacks& aUniqueStacks);
 
 }  // namespace baseprofiler
 }  // namespace mozilla

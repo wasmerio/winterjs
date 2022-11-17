@@ -1,8 +1,3 @@
-// |jit-test| skip-if: wasmCompilersPresent().match('cranelift') && !getBuildConfiguration()['arm64']
-//
-// (Reason: the Cranelift backend does not support shared memory on non-AArch64
-// hosts yet.)
-//
 // Tests of limits of memory and table types
 
 const PageSize = PageSizeInBytes;
@@ -51,9 +46,11 @@ function testMemoryFailConstruct(initial, maximum, shared, pattern) {
   }), RangeError, pattern);
 }
 
+// Test initial length, giving a maximum only if required due to being shared
 testMemoryFailConstruct(MemoryMaxValid + 1, undefined, false, /bad Memory initial size/);
+testMemoryFailConstruct(MemoryMaxValid + 1, MemoryMaxValid + 1, true, /bad Memory initial size/);
+// Test maximum length
 testMemoryFailConstruct(0, MemoryMaxValid + 1, false, /bad Memory maximum size/);
-testMemoryFailConstruct(MemoryMaxValid + 1, undefined, true, /bad Memory initial size/);
 testMemoryFailConstruct(0, MemoryMaxValid + 1, true, /bad Memory maximum size/);
 
 // Test that a memory type can be instantiated within a module or constructed
@@ -86,20 +83,39 @@ testMemoryCreate(MemoryMaxRuntime, MemoryMaxValid, true);
 
 // Test that a memory type cannot be instantiated within a module or constructed
 // with a WebAssembly.Memory
-function testMemoryFailCreate(initial, maximum, shared, pattern) {
-  assertErrorMessage(() => wasmEvalText(`(module
+
+if (MemoryMaxRuntime < 65536) {
+    let testMemoryFailCreate = function(initial, maximum, shared) {
+        assertErrorMessage(() => wasmEvalText(`(module
     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
-  )`), WebAssembly.RuntimeError, pattern);
-  assertErrorMessage(() => new WebAssembly.Memory({
-    initial,
-    maximum,
-    shared
-  }), WebAssembly.RuntimeError, pattern);
+  )`), WebAssembly.RuntimeError, /too many memory pages/);
+        assertErrorMessage(() => new WebAssembly.Memory({
+            initial,
+            maximum,
+            shared
+        }), WebAssembly.RuntimeError, /too many memory pages/);
+    }
+
+    testMemoryFailCreate(MemoryMaxRuntime + 1, undefined, false);
+    testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, false);
+    testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, true);
+} else {
+    let testMemoryFailCreate = function(initial, maximum, shared) {
+        assertErrorMessage(() => wasmEvalText(`(module
+    (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+  )`), WebAssembly.CompileError, /(initial memory size too big)|(memory size minimum must not be greater than maximum)/);
+        assertErrorMessage(() => new WebAssembly.Memory({
+            initial,
+            maximum,
+            shared
+        }), RangeError, /bad Memory initial size/);
+    }
+
+    testMemoryFailCreate(MemoryMaxRuntime + 1, undefined, false);
+    testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, false);
+    testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, true);
 }
 
-testMemoryFailCreate(MemoryMaxRuntime + 1, undefined, false, /too many memory pages/);
-testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, false, /too many memory pages/);
-testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, true, /too many memory pages/);
 
 // Test that a memory type cannot be grown from initial to a target due to an
 // implementation limit
@@ -208,28 +224,26 @@ function testTableFailCreate(initial, maximum, pattern) {
 testTableFailCreate(TableMaxRuntime + 1, undefined, /too many table elements/);
 testTableFailCreate(TableMaxRuntime + 1, TableMaxValid, /too many table elements/);
 
-if (wasmReftypesEnabled()) {
-  // Test that a table type cannot be grown from initial to a target due to an
-  // implementation limit
-  function testTableFailGrow(initial, maximum, target) {
-    let {run} = wasmEvalText(`(module
-      (table ${initial} ${maximum || ''} externref)
-      (func (export "run") (result i32)
-        ref.null extern
-        i32.const ${target - initial}
-        table.grow
-      )
-    )`).exports;
-    assertEq(run(), -1, 'failed to grow');
+// Test that a table type cannot be grown from initial to a target due to an
+// implementation limit
+function testTableFailGrow(initial, maximum, target) {
+  let {run} = wasmEvalText(`(module
+    (table ${initial} ${maximum || ''} externref)
+    (func (export "run") (result i32)
+      ref.null extern
+      i32.const ${target - initial}
+      table.grow
+    )
+  )`).exports;
+  assertEq(run(), -1, 'failed to grow');
 
-    let tab = new WebAssembly.Table({
-      initial,
-      maximum,
-      element: 'externref',
-    });
-    assertErrorMessage(() => tab.grow(target - initial), RangeError, /failed to grow table/);
-  }
-
-  testTableFailGrow(1, undefined, TableMaxRuntime + 1);
-  testTableFailGrow(1, TableMaxValid, TableMaxRuntime + 1);
+  let tab = new WebAssembly.Table({
+    initial,
+    maximum,
+    element: 'externref',
+  });
+  assertErrorMessage(() => tab.grow(target - initial), RangeError, /failed to grow table/);
 }
+
+testTableFailGrow(1, undefined, TableMaxRuntime + 1);
+testTableFailGrow(1, TableMaxValid, TableMaxRuntime + 1);

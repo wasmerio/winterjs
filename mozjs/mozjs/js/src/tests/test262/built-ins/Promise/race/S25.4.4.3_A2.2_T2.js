@@ -11,9 +11,7 @@ flags: [async]
 ---*/
 
 Promise.race(new Error("abrupt")).then(function() {
-  $ERROR('Promise unexpectedly resolved: Promise.race(abruptCompletion) should throw TypeError');
+  throw new Test262Error('Promise unexpectedly resolved: Promise.race(abruptCompletion) should throw TypeError');
 }, function(err) {
-  if (!(err instanceof TypeError)) {
-    $ERROR('Expected TypeError, got ' + err);
-  }
+  assert(!!(err instanceof TypeError), 'The value of !!(err instanceof TypeError) is expected to be true');
 }).then($DONE, $DONE);

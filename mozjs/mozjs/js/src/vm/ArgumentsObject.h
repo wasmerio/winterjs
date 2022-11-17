@@ -40,9 +40,6 @@ class RareArgumentsData {
   static RareArgumentsData* create(JSContext* cx, ArgumentsObject* obj);
   static size_t bytesRequired(size_t numActuals);
 
-  bool isAnyElementDeleted(size_t len) const {
-    return IsAnyBitArrayElementSet(deletedBits_, len);
-  }
   bool isElementDeleted(size_t len, size_t i) const {
     MOZ_ASSERT(i < len);
     return IsBitArrayElementSet(deletedBits_, len, i);
@@ -74,16 +71,16 @@ struct ArgumentsData {
    * canonical value so any element access to the arguments object should load
    * the value out of the CallObject (which is pointed to by MAYBE_CALL_SLOT).
    */
-  GCPtrValue args[1];
+  GCPtr<Value> args[1];
 
   /* For jit use: */
   static ptrdiff_t offsetOfArgs() { return offsetof(ArgumentsData, args); }
 
   /* Iterate args. */
-  GCPtrValue* begin() { return args; }
-  const GCPtrValue* begin() const { return args; }
-  GCPtrValue* end() { return args + numArgs; }
-  const GCPtrValue* end() const { return args + numArgs; }
+  GCPtr<Value>* begin() { return args; }
+  const GCPtr<Value>* begin() const { return args; }
+  GCPtr<Value>* end() { return args + numArgs; }
+  const GCPtr<Value>* end() const { return args + numArgs; }
 
   static size_t bytesRequired(size_t numArgs) {
     return offsetof(ArgumentsData, args) + numArgs * sizeof(Value);
@@ -240,6 +237,13 @@ class ArgumentsObject : public NativeObject {
                                                HandleObject scopeChain,
                                                uint32_t numActuals);
 
+ private:
+  template <typename CopyArgs>
+  static ArgumentsObject* finishPure(JSContext* cx, ArgumentsObject* obj,
+                                     JSFunction* callee, JSObject* callObj,
+                                     unsigned numActuals, CopyArgs& copy);
+
+ public:
   /*
    * Allocate ArgumentsData and fill reserved slots after allocating an
    * ArgumentsObject in Ion code.
@@ -248,6 +252,14 @@ class ArgumentsObject : public NativeObject {
                                            jit::JitFrameLayout* frame,
                                            JSObject* scopeChain,
                                            ArgumentsObject* obj);
+
+  /*
+   * Allocate ArgumentsData for inlined arguments and fill reserved slots after
+   * allocating an ArgumentsObject in Ion code.
+   */
+  static ArgumentsObject* finishInlineForIonPure(
+      JSContext* cx, JSObject* rawCallObj, JSFunction* rawCallee, Value* args,
+      uint32_t numActuals, ArgumentsObject* obj);
 
   static ArgumentsObject* createTemplateObject(JSContext* cx, bool mapped);
 
@@ -262,7 +274,7 @@ class ArgumentsObject : public NativeObject {
     return argc;
   }
 
-  /* True iff arguments.length has been assigned or its attributes changed. */
+  // True iff arguments.length has been assigned or deleted.
   bool hasOverriddenLength() const {
     const Value& v = getFixedSlot(INITIAL_LENGTH_SLOT);
     return v.toInt32() & LENGTH_OVERRIDDEN_BIT;
@@ -279,8 +291,7 @@ class ArgumentsObject : public NativeObject {
    */
   static bool reifyLength(JSContext* cx, Handle<ArgumentsObject*> obj);
 
-  /* True iff arguments[@@iterator] has been assigned or its attributes
-   * changed. */
+  // True iff arguments[@@iterator] has been assigned or deleted.
   bool hasOverriddenIterator() const {
     const Value& v = getFixedSlot(INITIAL_LENGTH_SLOT);
     return v.toInt32() & ITERATOR_OVERRIDDEN_BIT;
@@ -302,9 +313,7 @@ class ArgumentsObject : public NativeObject {
    */
   static bool getArgumentsIterator(JSContext* cx, MutableHandleValue val);
 
-  /* True iff any element has been assigned, deleted, or had its
-   * attributes changed.
-   */
+  // True iff any element has been assigned or deleted.
   bool hasOverriddenElement() const {
     const Value& v = getFixedSlot(INITIAL_LENGTH_SLOT);
     return v.toInt32() & ELEMENT_OVERRIDDEN_BIT;
@@ -316,6 +325,7 @@ class ArgumentsObject : public NativeObject {
     setFixedSlot(INITIAL_LENGTH_SLOT, Int32Value(v));
   }
 
+ private:
   /*
    * Because the arguments object is a real object, its elements may be
    * deleted. This is implemented by setting a 'deleted' flag for the arg
@@ -328,7 +338,7 @@ class ArgumentsObject : public NativeObject {
    *
    * This works because, once a property is deleted from an arguments object,
    * it gets regular properties with regular getters/setters that don't alias
-   * ArgumentsData::slots.
+   * ArgumentsData::args.
    */
   bool isElementDeleted(uint32_t i) const {
     MOZ_ASSERT(i < data()->numArgs);
@@ -341,14 +351,23 @@ class ArgumentsObject : public NativeObject {
     return result;
   }
 
-  bool isAnyElementDeleted() const {
-    bool result = maybeRareData() &&
-                  maybeRareData()->isAnyElementDeleted(initialLength());
-    MOZ_ASSERT_IF(result, hasOverriddenElement());
-    return result;
-  }
-
+ protected:
   bool markElementDeleted(JSContext* cx, uint32_t i);
+
+ public:
+  /*
+   * Return true iff the index is a valid element index for this arguments
+   * object.
+   *
+   * Returning true here doesn't imply that the element value can be read
+   * through |ArgumentsObject::element()|. For example unmapped arguments
+   * objects can have an element index property redefined without having marked
+   * the element as deleted. Instead use |maybeGetElement()| or manually check
+   * for |hasOverriddenElement()|.
+   */
+  bool isElement(uint32_t i) const {
+    return i < initialLength() && !isElementDeleted(i);
+  }
 
   /*
    * An ArgumentsObject serves two roles:
@@ -378,7 +397,7 @@ class ArgumentsObject : public NativeObject {
 
   void setArg(unsigned i, const Value& v) {
     MOZ_ASSERT(i < data()->numArgs);
-    GCPtrValue& lhs = data()->args[i];
+    GCPtr<Value>& lhs = data()->args[i];
     MOZ_ASSERT(!lhs.isMagic());
     lhs = v;
   }
@@ -415,7 +434,7 @@ class ArgumentsObject : public NativeObject {
    * NB: Returning false does not indicate error!
    */
   bool maybeGetElement(uint32_t i, MutableHandleValue vp) {
-    if (i >= initialLength() || isElementDeleted(i)) {
+    if (i >= initialLength() || hasOverriddenElement()) {
       return false;
     }
     vp.set(element(i));
@@ -440,7 +459,7 @@ class ArgumentsObject : public NativeObject {
                             : 0);
   }
 
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
   static size_t objectMoved(JSObject* dst, JSObject* src);
 
@@ -525,6 +544,18 @@ class UnmappedArgumentsObject : public ArgumentsObject {
   static bool obj_resolve(JSContext* cx, HandleObject obj, HandleId id,
                           bool* resolvedp);
 };
+
+extern bool MappedArgGetter(JSContext* cx, HandleObject obj, HandleId id,
+                            MutableHandleValue vp);
+
+extern bool MappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
+                            HandleValue v, ObjectOpResult& result);
+
+extern bool UnmappedArgGetter(JSContext* cx, HandleObject obj, HandleId id,
+                              MutableHandleValue vp);
+
+extern bool UnmappedArgSetter(JSContext* cx, HandleObject obj, HandleId id,
+                              HandleValue v, ObjectOpResult& result);
 
 }  // namespace js
 

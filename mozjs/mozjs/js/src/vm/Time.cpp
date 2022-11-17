@@ -14,16 +14,12 @@
 #ifdef SOLARIS
 #  define _REENTRANT 1
 #endif
-#include <algorithm>
 #include <string.h>
 #include <time.h>
 
 #include "jstypes.h"
 
 #ifdef XP_WIN
-#ifdef JS_ENABLE_UWP
-#  include <windows.h>
-#endif
 #  include <windef.h>
 #  include <winbase.h>
 #  include <crtdbg.h>   /* for _CrtSetReportMode */
@@ -43,21 +39,8 @@ extern int gettimeofday(struct timeval* tv);
 
 using mozilla::DebugOnly;
 
-// Forward declare the function
-static int64_t PRMJ_NowImpl();
-
-int64_t PRMJ_Now() {
-  if (mozilla::TimeStamp::GetFuzzyfoxEnabled()) {
-    return mozilla::TimeStamp::NowFuzzyTime();
-  }
-
-  // We check the FuzzyFox clock in case it was recently disabled, to prevent
-  // time from going backwards.
-  return std::max(PRMJ_NowImpl(), mozilla::TimeStamp::NowFuzzyTime());
-}
-
 #if defined(XP_UNIX)
-static int64_t PRMJ_NowImpl() {
+int64_t PRMJ_Now() {
   struct timeval tv;
 
 #  ifdef _SVID_GETTOD /* Defined only on Solaris, see Solaris <sys/types.h> */
@@ -102,17 +85,13 @@ static void NowCalibrate() {
 
   // By wrapping a timeBegin/EndPeriod pair of calls around this loop,
   // the loop seems to take much less time (1 ms vs 15ms) on Vista.
-#ifndef JS_ENABLE_UWP
   timeBeginPeriod(1);
-#endif
   FILETIME ft, ftStart;
   GetSystemTimeAsFileTime(&ftStart);
   do {
     GetSystemTimeAsFileTime(&ft);
   } while (memcmp(&ftStart, &ft, sizeof(ft)) == 0);
-#ifndef JS_ENABLE_UWP
   timeEndPeriod(1);
-#endif
 
   LARGE_INTEGER now;
   QueryPerformanceCounter(&now);
@@ -142,15 +121,11 @@ void PRMJ_NowInit() {
   InitializeCriticalSectionAndSpinCount(&calibration.data_lock,
                                         DataLockSpinCount);
 
-#ifndef JS_ENABLE_UWP
   // Windows 8 has a new API function we can use.
   if (HMODULE h = GetModuleHandle("kernel32.dll")) {
     pGetSystemTimePreciseAsFileTime = (void(WINAPI*)(LPFILETIME))GetProcAddress(
         h, "GetSystemTimePreciseAsFileTime");
   }
-#else
-    pGetSystemTimePreciseAsFileTime = &GetSystemTimeAsFileTime;
-#endif
 }
 
 void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }
@@ -160,7 +135,7 @@ void PRMJ_NowShutdown() { DeleteCriticalSection(&calibration.data_lock); }
 #  define MUTEX_SETSPINCOUNT(m, c) SetCriticalSectionSpinCount((m), (c))
 
 // Please see bug 363258 for why the win32 timing code is so complex.
-static int64_t PRMJ_NowImpl() {
+static int64_t PRMJ_Now() {
   if (pGetSystemTimePreciseAsFileTime) {
     // Windows 8 has a new API function that does all the work.
     FILETIME ft;
@@ -257,7 +232,7 @@ static int64_t PRMJ_NowImpl() {
 }
 #endif
 
-#if !JS_HAS_INTL_API || MOZ_SYSTEM_ICU
+#if !JS_HAS_INTL_API
 #  ifdef XP_WIN
 static void PRMJ_InvalidParameterHandler(const wchar_t* expression,
                                          const wchar_t* function,
@@ -405,4 +380,4 @@ size_t PRMJ_FormatTime(char* buf, size_t buflen, const char* fmt,
 #  endif
   return result;
 }
-#endif /* !JS_HAS_INTL_API || MOZ_SYSTEM_ICU */
+#endif /* !JS_HAS_INTL_API */

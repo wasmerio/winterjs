@@ -6,7 +6,9 @@ from __future__ import absolute_import, unicode_literals
 
 import argparse
 import collections
+import collections.abc
 
+from typing import Optional
 from .base import MachError
 from .registrar import Registrar
 from mozbuild.base import MachCommandBase
@@ -30,24 +32,20 @@ class _MachCommand(object):
         # By default, subcommands will be sorted. If this is set to
         # 'declaration', they will be left in declaration order.
         "order",
-        # Describes how dispatch is performed.
-        # The Python class providing the command. This is the class type not
-        # an instance of the class. Mach will instantiate a new instance of
-        # the class if the command is executed.
-        "cls",
+        # This is the function or callable that will be called when
+        # the command is invoked
+        "func",
         # The path to the `metrics.yaml` file that describes data that telemetry will
         # gather for this command. This path is optional.
         "metrics_path",
-        # The name of the method providing the command. In other words, this
-        # is the str name of the attribute on the class type corresponding to
-        # the name of the function.
-        "method",
         # Dict of string to _MachCommand defining sub-commands for this
         # command.
         "subcommand_handlers",
         # For subcommands, the global order that the subcommand's declaration
         # was seen.
         "decl_order",
+        # Whether to disable automatic logging to last_log.json for the command.
+        "no_auto_log",
     )
 
     def __init__(
@@ -61,6 +59,7 @@ class _MachCommand(object):
         order=None,
         virtualenv_name=None,
         ok_if_tests_disabled=False,
+        no_auto_log=False,
     ):
         self.name = name
         self.subcommand = subcommand
@@ -78,17 +77,26 @@ class _MachCommand(object):
             )
         self.ok_if_tests_disabled = ok_if_tests_disabled
 
-        self.cls = None
+        self.func = None
         self.metrics_path = None
-        self.method = None
         self.subcommand_handlers = {}
         self.decl_order = None
+        self.no_auto_log = no_auto_log
 
     def create_instance(self, context, virtualenv_name):
         metrics = None
         if self.metrics_path:
             metrics = context.telemetry.metrics(self.metrics_path)
-        return self.cls(context, virtualenv_name=virtualenv_name, metrics=metrics)
+
+        # This ensures the resulting class is defined inside `mach` so that logging
+        # works as expected, and has a meaningful name
+        subclass = type(self.name, (MachCommandBase,), {})
+        return subclass(
+            context,
+            virtualenv_name=virtualenv_name,
+            metrics=metrics,
+            no_auto_log=self.no_auto_log,
+        )
 
     @property
     def parser(self):
@@ -101,7 +109,7 @@ class _MachCommand(object):
 
     @property
     def docstring(self):
-        return self.cls.__dict__[self.method].__doc__
+        return self.func.__doc__
 
     def __ior__(self, other):
         if not isinstance(other, _MachCommand):
@@ -113,84 +121,44 @@ class _MachCommand(object):
 
         return self
 
+    def register(self, func):
+        """Register the command in the Registrar with the function to be called on invocation."""
+        if not self.subcommand:
+            if not self.conditions and Registrar.require_conditions:
+                return
 
-def CommandProvider(cls):
-    if not issubclass(cls, MachCommandBase):
-        raise MachError(
-            "Mach command provider class %s must be a subclass of "
-            "mozbuild.base.MachComandBase" % cls.__name__
-        )
-
-    seen_commands = set()
-
-    # We scan __dict__ because we only care about the classes' own attributes,
-    # not inherited ones. If we did inherited attributes, we could potentially
-    # define commands multiple times. We also sort keys so commands defined in
-    # the same class are grouped in a sane order.
-    command_methods = sorted(
-        [
-            (name, value._mach_command)
-            for name, value in cls.__dict__.items()
-            if hasattr(value, "_mach_command")
-        ]
-    )
-
-    for method, command in command_methods:
-        # Ignore subcommands for now: we handle them later.
-        if command.subcommand:
-            continue
-
-        seen_commands.add(command.name)
-
-        if not command.conditions and Registrar.require_conditions:
-            continue
-
-        msg = (
-            "Mach command '%s' implemented incorrectly. "
-            + "Conditions argument must take a list "
-            + "of functions. Found %s instead."
-        )
-
-        if not isinstance(command.conditions, collections.Iterable):
-            msg = msg % (command.name, type(command.conditions))
-            raise MachError(msg)
-
-        for c in command.conditions:
-            if not hasattr(c, "__call__"):
-                msg = msg % (command.name, type(c))
-                raise MachError(msg)
-
-        command.cls = cls
-        command.method = method
-
-        Registrar.register_command_handler(command)
-
-    # Now do another pass to get sub-commands. We do this in two passes so
-    # we can check the parent command existence without having to hold
-    # state and reconcile after traversal.
-    for method, command in command_methods:
-        # It is a regular command.
-        if not command.subcommand:
-            continue
-
-        if command.name not in seen_commands:
-            raise MachError(
-                "Command referenced by sub-command does not exist: %s" % command.name
+            msg = (
+                "Mach command '%s' implemented incorrectly. "
+                + "Conditions argument must take a list "
+                + "of functions. Found %s instead."
             )
 
-        if command.name not in Registrar.command_handlers:
-            continue
+            if not isinstance(self.conditions, collections.abc.Iterable):
+                msg = msg % (self.name, type(self.conditions))
+                raise MachError(msg)
 
-        command.cls = cls
-        command.method = method
-        parent = Registrar.command_handlers[command.name]
+            for c in self.conditions:
+                if not hasattr(c, "__call__"):
+                    msg = msg % (self.name, type(c))
+                    raise MachError(msg)
 
-        if command.subcommand in parent.subcommand_handlers:
-            raise MachError("sub-command already defined: %s" % command.subcommand)
+            self.func = func
 
-        parent.subcommand_handlers[command.subcommand] = command
+            Registrar.register_command_handler(self)
 
-    return cls
+        else:
+            if self.name not in Registrar.command_handlers:
+                raise MachError(
+                    "Command referenced by sub-command does not exist: %s" % self.name
+                )
+
+            self.func = func
+            parent = Registrar.command_handlers[self.name]
+
+            if self.subcommand in parent.subcommand_handlers:
+                raise MachError("sub-command already defined: %s" % self.subcommand)
+
+            parent.subcommand_handlers[self.subcommand] = self
 
 
 class Command(object):
@@ -211,11 +179,11 @@ class Command(object):
     For example:
 
         @Command('foo', category='misc', description='Run the foo action')
-        def foo(self):
+        def foo(self, command_context):
             pass
     """
 
-    def __init__(self, name, metrics_path=None, **kwargs):
+    def __init__(self, name, metrics_path: Optional[str] = None, **kwargs):
         self._mach_command = _MachCommand(name=name, **kwargs)
         self._mach_command.metrics_path = metrics_path
 
@@ -224,6 +192,7 @@ class Command(object):
             func._mach_command = _MachCommand()
 
         func._mach_command |= self._mach_command
+        func._mach_command.register(func)
 
         return func
 
@@ -249,10 +218,20 @@ class SubCommand(object):
     global_order = 0
 
     def __init__(
-        self, command, subcommand, description=None, parser=None, metrics_path=None
+        self,
+        command,
+        subcommand,
+        description=None,
+        parser=None,
+        metrics_path: Optional[str] = None,
+        virtualenv_name: Optional[str] = None,
     ):
         self._mach_command = _MachCommand(
-            name=command, subcommand=subcommand, description=description, parser=parser
+            name=command,
+            subcommand=subcommand,
+            description=description,
+            parser=parser,
+            virtualenv_name=virtualenv_name,
         )
         self._mach_command.decl_order = SubCommand.global_order
         SubCommand.global_order += 1
@@ -264,6 +243,7 @@ class SubCommand(object):
             func._mach_command = _MachCommand()
 
         func._mach_command |= self._mach_command
+        func._mach_command.register(func)
 
         return func
 
@@ -279,7 +259,7 @@ class CommandArgument(object):
         @Command('foo', help='Run the foo action')
         @CommandArgument('-b', '--bar', action='store_true', default=False,
             help='Enable bar mode.')
-        def foo(self):
+        def foo(self, command_context):
             pass
     """
 
@@ -315,7 +295,7 @@ class CommandArgumentGroup(object):
         @CommandArgumentGroup('group1')
         @CommandArgument('-b', '--bar', group='group1', action='store_true',
             default=False, help='Enable bar mode.')
-        def foo(self):
+        def foo(self, command_context):
             pass
 
     The name should be chosen so that it makes sense as part of the phrase

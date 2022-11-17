@@ -14,8 +14,9 @@
 #include "gc/Policy.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitContext.h"
+#include "jit/TypeData.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
-#include "vm/Printer.h"
 
 namespace js {
 
@@ -38,14 +39,15 @@ class WarpScriptSnapshot;
   _(WarpBuiltinObject)           \
   _(WarpGetIntrinsic)            \
   _(WarpGetImport)               \
-  _(WarpLambda)                  \
   _(WarpRest)                    \
-  _(WarpNewArray)                \
-  _(WarpNewObject)               \
   _(WarpBindGName)               \
+  _(WarpVarEnvironment)          \
+  _(WarpLexicalEnvironment)      \
+  _(WarpClassBodyEnvironment)    \
   _(WarpBailout)                 \
   _(WarpCacheIR)                 \
-  _(WarpInlinedCall)
+  _(WarpInlinedCall)             \
+  _(WarpPolymorphicTypes)
 
 // Wrapper for GC things stored in WarpSnapshot. Asserts the GC pointer is not
 // nursery-allocated. These pointers must be traced using TraceWarpGCPtr.
@@ -62,8 +64,8 @@ class WarpGCPtr {
   }
   WarpGCPtr(const WarpGCPtr<T>& other) = default;
 
-  operator T() const { return static_cast<T>(ptr_); }
-  T operator->() const { return static_cast<T>(ptr_); }
+  operator T() const { return ptr_; }
+  T operator->() const { return ptr_; }
 
  private:
   WarpGCPtr() = delete;
@@ -220,33 +222,6 @@ class WarpGetImport : public WarpOpSnapshot {
 #endif
 };
 
-// JSFunction info we don't want to read off-thread for JSOp::Lambda and
-// JSOp::LambdaArrow.
-class WarpLambda : public WarpOpSnapshot {
-  WarpGCPtr<BaseScript*> baseScript_;
-  FunctionFlags flags_;
-  uint16_t nargs_;
-
- public:
-  static constexpr Kind ThisKind = Kind::WarpLambda;
-
-  WarpLambda(uint32_t offset, BaseScript* baseScript, FunctionFlags flags,
-             uint16_t nargs)
-      : WarpOpSnapshot(ThisKind, offset),
-        baseScript_(baseScript),
-        flags_(flags),
-        nargs_(nargs) {}
-  BaseScript* baseScript() const { return baseScript_; }
-  FunctionFlags flags() const { return flags_; }
-  uint16_t nargs() const { return nargs_; }
-
-  void traceData(JSTracer* trc);
-
-#ifdef JS_JITSPEW
-  void dumpData(GenericPrinter& out) const;
-#endif
-};
-
 // Informs WarpBuilder that an IC site is cold and execution should bail out.
 class WarpBailout : public WarpOpSnapshot {
  public:
@@ -377,64 +352,36 @@ class WarpInlinedCall : public WarpOpSnapshot {
 #endif
 };
 
-// Template object for JSOp::Rest.
+// Information for inlining an ordered set of types
+class WarpPolymorphicTypes : public WarpOpSnapshot {
+  TypeDataList list_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpPolymorphicTypes;
+
+  WarpPolymorphicTypes(uint32_t offset, TypeDataList list)
+      : WarpOpSnapshot(ThisKind, offset), list_(list) {}
+
+  const TypeDataList& list() const { return list_; }
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+};
+
+// Shape for JSOp::Rest.
 class WarpRest : public WarpOpSnapshot {
-  WarpGCPtr<ArrayObject*> templateObject_;
-  size_t maxInlineElements_;
+  WarpGCPtr<Shape*> shape_;
 
  public:
   static constexpr Kind ThisKind = Kind::WarpRest;
 
-  WarpRest(uint32_t offset, ArrayObject* templateObject,
-           size_t maxInlineElements)
-      : WarpOpSnapshot(ThisKind, offset),
-        templateObject_(templateObject),
-        maxInlineElements_(maxInlineElements) {}
+  WarpRest(uint32_t offset, Shape* shape)
+      : WarpOpSnapshot(ThisKind, offset), shape_(shape) {}
 
-  ArrayObject* templateObject() const { return templateObject_; }
-  size_t maxInlineElements() const { return maxInlineElements_; }
-
-  void traceData(JSTracer* trc);
-
-#ifdef JS_JITSPEW
-  void dumpData(GenericPrinter& out) const;
-#endif
-};
-
-// Template object for JSOp::NewArray.
-class WarpNewArray : public WarpOpSnapshot {
-  WarpGCPtr<ArrayObject*> templateObject_;
-  bool useVMCall_;
-
- public:
-  static constexpr Kind ThisKind = Kind::WarpNewArray;
-
-  WarpNewArray(uint32_t offset, ArrayObject* templateObject, bool useVMCall)
-      : WarpOpSnapshot(ThisKind, offset),
-        templateObject_(templateObject),
-        useVMCall_(useVMCall) {}
-
-  ArrayObject* templateObject() const { return templateObject_; }
-  bool useVMCall() const { return useVMCall_; }
-
-  void traceData(JSTracer* trc);
-
-#ifdef JS_JITSPEW
-  void dumpData(GenericPrinter& out) const;
-#endif
-};
-
-// Template object for JSOp::NewObject or JSOp::NewInit.
-class WarpNewObject : public WarpOpSnapshot {
-  WarpGCPtr<JSObject*> templateObject_;
-
- public:
-  static constexpr Kind ThisKind = Kind::WarpNewObject;
-
-  WarpNewObject(uint32_t offset, JSObject* templateObject)
-      : WarpOpSnapshot(ThisKind, offset), templateObject_(templateObject) {}
-
-  JSObject* templateObject() const { return templateObject_; }
+  Shape* shape() const { return shape_; }
 
   void traceData(JSTracer* trc);
 
@@ -454,6 +401,67 @@ class WarpBindGName : public WarpOpSnapshot {
       : WarpOpSnapshot(ThisKind, offset), globalEnv_(globalEnv) {}
 
   JSObject* globalEnv() const { return globalEnv_; }
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+};
+
+// Block environment for PushVarEnv
+class WarpVarEnvironment : public WarpOpSnapshot {
+  WarpGCPtr<VarEnvironmentObject*> templateObj_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpVarEnvironment;
+
+  WarpVarEnvironment(uint32_t offset, VarEnvironmentObject* templateObj)
+      : WarpOpSnapshot(ThisKind, offset), templateObj_(templateObj) {}
+
+  VarEnvironmentObject* templateObj() const { return templateObj_; }
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+};
+
+// Block environment for PushLexicalEnv, FreshenLexicalEnv, RecreateLexicalEnv
+class WarpLexicalEnvironment : public WarpOpSnapshot {
+  WarpGCPtr<BlockLexicalEnvironmentObject*> templateObj_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpLexicalEnvironment;
+
+  WarpLexicalEnvironment(uint32_t offset,
+                         BlockLexicalEnvironmentObject* templateObj)
+      : WarpOpSnapshot(ThisKind, offset), templateObj_(templateObj) {}
+
+  BlockLexicalEnvironmentObject* templateObj() const { return templateObj_; }
+
+  void traceData(JSTracer* trc);
+
+#ifdef JS_JITSPEW
+  void dumpData(GenericPrinter& out) const;
+#endif
+};
+
+// Class body lexical environment for PushClassBodyEnv
+class WarpClassBodyEnvironment : public WarpOpSnapshot {
+  WarpGCPtr<ClassBodyLexicalEnvironmentObject*> templateObj_;
+
+ public:
+  static constexpr Kind ThisKind = Kind::WarpClassBodyEnvironment;
+
+  WarpClassBodyEnvironment(uint32_t offset,
+                           ClassBodyLexicalEnvironmentObject* templateObj)
+      : WarpOpSnapshot(ThisKind, offset), templateObj_(templateObj) {}
+
+  ClassBodyLexicalEnvironmentObject* templateObj() const {
+    return templateObj_;
+  }
 
   void traceData(JSTracer* trc);
 
@@ -502,33 +510,18 @@ class WarpScriptSnapshot
   // If the script has a JSOp::ImportMeta op, this is the module to bake in.
   WarpGCPtr<ModuleObject*> moduleObject_;
 
-  // Constants pushed by JSOp::Instrumentation* ops in the script.
-  WarpGCPtr<JSObject*> instrumentationCallback_;
-  mozilla::Maybe<int32_t> instrumentationScriptId_;
-  mozilla::Maybe<bool> instrumentationActive_;
-
   // Whether this script is for an arrow function.
   bool isArrowFunction_;
 
  public:
   WarpScriptSnapshot(JSScript* script, const WarpEnvironment& env,
                      WarpOpSnapshotList&& opSnapshots,
-                     ModuleObject* moduleObject,
-                     JSObject* instrumentationCallback,
-                     mozilla::Maybe<int32_t> instrumentationScriptId,
-                     mozilla::Maybe<bool> instrumentationActive);
+                     ModuleObject* moduleObject);
 
   JSScript* script() const { return script_; }
   const WarpEnvironment& environment() const { return environment_; }
   const WarpOpSnapshotList& opSnapshots() const { return opSnapshots_; }
   ModuleObject* moduleObject() const { return moduleObject_; }
-
-  JSObject* instrumentationCallback() const {
-    MOZ_ASSERT(instrumentationCallback_);
-    return instrumentationCallback_;
-  }
-  int32_t instrumentationScriptId() const { return *instrumentationScriptId_; }
-  bool instrumentationActive() const { return *instrumentationActive_; }
 
   bool isArrowFunction() const { return isArrowFunction_; }
 

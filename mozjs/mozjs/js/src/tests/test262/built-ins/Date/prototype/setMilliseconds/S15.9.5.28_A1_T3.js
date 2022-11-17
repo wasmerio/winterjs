@@ -6,15 +6,15 @@ info: The Date.prototype property "setMilliseconds" has { DontEnum } attributes
 esid: sec-date.prototype.setmilliseconds
 description: Checking DontEnum attribute
 ---*/
-
-if (Date.prototype.propertyIsEnumerable('setMilliseconds')) {
-  $ERROR('#1: The Date.prototype.setMilliseconds property has the attribute DontEnum');
-}
+assert(
+  !Date.prototype.propertyIsEnumerable('setMilliseconds'),
+  'The value of !Date.prototype.propertyIsEnumerable(\'setMilliseconds\') is expected to be true'
+);
 
 for (var x in Date.prototype) {
-  if (x === "setMilliseconds") {
-    $ERROR('#2: The Date.prototype.setMilliseconds has the attribute DontEnum');
-  }
+  assert.notSameValue(x, "setMilliseconds", 'The value of x is not "setMilliseconds"');
 }
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

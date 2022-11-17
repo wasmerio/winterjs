@@ -41,6 +41,7 @@ class ProfileBufferEntry {
   ProfileBufferEntry(Kind aKind, int64_t aInt64);
   ProfileBufferEntry(Kind aKind, uint64_t aUint64);
   ProfileBufferEntry(Kind aKind, int aInt);
+  ProfileBufferEntry(Kind aKind, BaseProfilerThreadId aThreadId);
 
  public:
 #define CTOR(KIND, TYPE, SIZE)                   \
@@ -74,6 +75,7 @@ class ProfileBufferEntry {
   int GetInt() const;
   int64_t GetInt64() const;
   uint64_t GetUint64() const;
+  BaseProfilerThreadId GetThreadId() const;
   void CopyCharsInto(char (&aOutArray)[kNumChars]) const;
 };
 
@@ -202,14 +204,17 @@ class UniqueStacks {
   void SpliceFrameTableElements(SpliceableJSONWriter& aWriter);
   void SpliceStackTableElements(SpliceableJSONWriter& aWriter);
 
+  UniqueJSONStrings& UniqueStrings() {
+    MOZ_RELEASE_ASSERT(mUniqueStrings.get());
+    return *mUniqueStrings;
+  }
+
  private:
   void StreamNonJITFrame(const FrameKey& aFrame);
   void StreamStack(const StackKey& aStack);
 
- public:
   UniquePtr<UniqueJSONStrings> mUniqueStrings;
 
- private:
   SpliceableChunkedJSONWriter mFrameTableWriter;
   HashMap<FrameKey, uint32_t, FrameKeyHasher> mFrameToIndexMap;
 

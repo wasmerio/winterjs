@@ -99,6 +99,38 @@ void JSONPrinter::boolProperty(const char* name, bool value) {
   out_.put(value ? "true" : "false");
 }
 
+template <typename CharT>
+static void JSONString(GenericPrinter& out, const CharT* s, size_t length) {
+  const CharT* end = s + length;
+  for (const CharT* t = s; t < end; s = ++t) {
+    // This quote implementation is probably correct,
+    // but uses \u even when not strictly necessary.
+    char16_t c = *t;
+    if (c == '"' || c == '\\') {
+      out.printf("\\");
+      out.printf("%c", char(c));
+    } else if (!IsAsciiPrintable(c)) {
+      out.printf("\\u%04x", c);
+    } else {
+      out.printf("%c", char(c));
+    }
+  }
+}
+
+void JSONPrinter::property(const char* name, JSLinearString* str) {
+  JS::AutoCheckCannotGC nogc;
+  beginStringProperty(name);
+
+  // Limit the string length to reduce the JSON file size.
+  size_t length = std::min(str->length(), size_t(128));
+  if (str->hasLatin1Chars()) {
+    JSONString(out_, str->latin1Chars(nogc), length);
+  } else {
+    JSONString(out_, str->twoByteChars(nogc), length);
+  }
+  endStringProperty();
+}
+
 void JSONPrinter::property(const char* name, const char* value) {
   beginStringProperty(name);
   out_.put(value);
@@ -168,7 +200,7 @@ void JSONPrinter::property(const char* name, uint64_t value) {
   out_.printf("%" PRIu64, value);
 }
 
-#if defined(XP_DARWIN) || defined(__OpenBSD__)
+#if defined(XP_DARWIN) || defined(__OpenBSD__) || defined(__wasi__)
 void JSONPrinter::property(const char* name, size_t value) {
   propertyName(name);
   out_.printf("%zu", value);
@@ -183,9 +215,8 @@ void JSONPrinter::floatProperty(const char* name, double value,
     return;
   }
 
-  // Note: NumberToCString does not use the |cx| argument for base 10.
   ToCStringBuf cbuf;
-  const char* str = NumberToCString(nullptr, &cbuf, value);
+  const char* str = NumberToCString(&cbuf, value);
   MOZ_ASSERT(str);
 
   property(name, str);

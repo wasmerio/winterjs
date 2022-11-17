@@ -7,12 +7,9 @@
 #include "jit/TypePolicy.h"
 
 #include "jit/JitAllocPolicy.h"
-#include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
-
-#include "jit/shared/Lowering-shared-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -425,6 +422,8 @@ bool BigIntPolicy<Op>::staticAdjustInputs(TempAllocator& alloc,
   return UnboxOperand(alloc, ins, Op, MIRType::BigInt);
 }
 
+template bool BigIntPolicy<0>::staticAdjustInputs(TempAllocator& alloc,
+                                                  MInstruction* ins);
 template bool BigIntPolicy<1>::staticAdjustInputs(TempAllocator& alloc,
                                                   MInstruction* ins);
 
@@ -828,8 +827,8 @@ bool CallPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
   return true;
 }
 
-bool CallSetElementPolicy::adjustInputs(TempAllocator& alloc,
-                                        MInstruction* ins) const {
+bool MegamorphicSetElementPolicy::adjustInputs(TempAllocator& alloc,
+                                               MInstruction* ins) const {
   // The first operand should be an object.
   if (!SingleObjectPolicy::staticAdjustInputs(alloc, ins)) {
     return false;
@@ -990,29 +989,30 @@ bool ClampPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
 }
 
 // Lists of all TypePolicy specializations which are used by MIR Instructions.
-#define TYPE_POLICY_LIST(_)     \
-  _(AllDoublePolicy)            \
-  _(ArithPolicy)                \
-  _(BigIntArithPolicy)          \
-  _(BitwisePolicy)              \
-  _(BoxInputsPolicy)            \
-  _(CallPolicy)                 \
-  _(CallSetElementPolicy)       \
-  _(ClampPolicy)                \
-  _(ComparePolicy)              \
-  _(PowPolicy)                  \
-  _(SignPolicy)                 \
-  _(StoreDataViewElementPolicy) \
-  _(StoreTypedArrayHolePolicy)  \
-  _(StoreUnboxedScalarPolicy)   \
-  _(TestPolicy)                 \
-  _(ToDoublePolicy)             \
-  _(ToInt32Policy)              \
-  _(ToBigIntPolicy)             \
-  _(ToStringPolicy)             \
+#define TYPE_POLICY_LIST(_)      \
+  _(AllDoublePolicy)             \
+  _(ArithPolicy)                 \
+  _(BigIntArithPolicy)           \
+  _(BitwisePolicy)               \
+  _(BoxInputsPolicy)             \
+  _(CallPolicy)                  \
+  _(MegamorphicSetElementPolicy) \
+  _(ClampPolicy)                 \
+  _(ComparePolicy)               \
+  _(PowPolicy)                   \
+  _(SignPolicy)                  \
+  _(StoreDataViewElementPolicy)  \
+  _(StoreTypedArrayHolePolicy)   \
+  _(StoreUnboxedScalarPolicy)    \
+  _(TestPolicy)                  \
+  _(ToDoublePolicy)              \
+  _(ToInt32Policy)               \
+  _(ToBigIntPolicy)              \
+  _(ToStringPolicy)              \
   _(ToInt64Policy)
 
 #define TEMPLATE_TYPE_POLICY_LIST(_)                                          \
+  _(BigIntPolicy<0>)                                                          \
   _(BoxExceptPolicy<0, MIRType::Object>)                                      \
   _(BoxPolicy<0>)                                                             \
   _(ConvertToInt32Policy<0>)                                                  \
@@ -1026,6 +1026,7 @@ bool ClampPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
   _(MixPolicy<ObjectPolicy<0>, StringPolicy<1>, BoxPolicy<2>>)                \
   _(MixPolicy<ObjectPolicy<0>, BoxPolicy<1>, BoxPolicy<2>>)                   \
   _(MixPolicy<ObjectPolicy<0>, BoxPolicy<1>, ObjectPolicy<2>>)                \
+  _(MixPolicy<ObjectPolicy<0>, BoxPolicy<1>, UnboxedInt32Policy<2>>)          \
   _(MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>, BoxPolicy<2>>)          \
   _(MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>, UnboxedInt32Policy<2>>) \
   _(MixPolicy<ObjectPolicy<0>, BoxPolicy<2>>)                                 \
@@ -1036,6 +1037,8 @@ bool ClampPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
   _(MixPolicy<StringPolicy<0>, ObjectPolicy<1>, StringPolicy<2>>)             \
   _(MixPolicy<StringPolicy<0>, StringPolicy<1>, StringPolicy<2>>)             \
   _(MixPolicy<ObjectPolicy<0>, StringPolicy<1>, UnboxedInt32Policy<2>>)       \
+  _(MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>, BoxPolicy<2>,           \
+              ObjectPolicy<3>>)                                               \
   _(MixPolicy<ObjectPolicy<0>, UnboxedInt32Policy<1>, UnboxedInt32Policy<2>,  \
               UnboxedInt32Policy<3>>)                                         \
   _(MixPolicy<TruncateToInt32OrToBigIntPolicy<2>,                             \
@@ -1069,6 +1072,8 @@ bool ClampPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins) const {
   _(MixPolicy<BoxExceptPolicy<0, MIRType::Object>, ObjectPolicy<1>>)          \
   _(MixPolicy<UnboxedInt32Policy<0>, BigIntPolicy<1>>)                        \
   _(MixPolicy<UnboxedInt32Policy<0>, NoFloatPolicyAfter<1>>)                  \
+  _(MixPolicy<UnboxedInt32Policy<0>, UnboxedInt32Policy<1>,                   \
+              NoFloatPolicyAfter<2>>)                                         \
   _(NoFloatPolicy<0>)                                                         \
   _(NoFloatPolicy<1>)                                                         \
   _(NoFloatPolicy<2>)                                                         \

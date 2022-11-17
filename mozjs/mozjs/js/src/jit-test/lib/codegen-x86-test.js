@@ -1,6 +1,5 @@
-// Scaffolding for testing x64 Ion code generation patterns (currently mostly
-// for wasm SIMD).  See codegen-x64-test.js in this directory for more
-// information.
+// Scaffolding for testing x86 Ion code generation patterns .  See
+// codegen-x64-test.js in this directory for more information.
 
 load(libdir + "codegen-test-common.js");
 
@@ -14,10 +13,11 @@ var ABS = `0x${HEXES}`;
 var ABSADDR = `${HEX}{2} ${HEX}{2} ${HEX}{2} ${HEX}{2}`;
 
 // End of prologue.  The mov to eax is debug code, inserted by the register
-// allocator to clobber eax before a move group.
+// allocator to clobber eax before a move group.  But it is only present if
+// there is a move group there.
 var x86_prefix = `
-8b ec            mov %esp, %ebp
-b8 ef be ad de   mov \\$0xDEADBEEF, %eax
+8b ec            mov %esp, %ebp(
+b8 ef be ad de   mov \\$0xDEADBEEF, %eax)?
 `
 
 // `.bp` because zydis chooses 'rbp' even on 32-bit systems

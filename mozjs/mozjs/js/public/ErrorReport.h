@@ -4,22 +4,25 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * Error-reporting types and structures.
+ * Error-reporting APIs.
  *
- * Despite these types and structures existing in js/public, significant parts
- * of their heritage date back to distant SpiderMonkey past, and they are not
- * all universally well-thought-out as ideal, intended-to-be-permanent API.
- * We may eventually replace this with something more consistent with
- * ECMAScript the language and less consistent with '90s-era JSAPI inventions,
- * but it's doubtful this will happen any time soon.
+ * Despite the types and structures defined here existing in js/public,
+ * significant parts of their heritage date back to distant SpiderMonkey past,
+ * and they are not all universally well-thought-out as ideal,
+ * intended-to-be-permanent API.  We may eventually replace this with something
+ * more consistent with ECMAScript the language and less consistent with
+ * '90s-era JSAPI inventions, but it's doubtful this will happen any time soon.
  */
 
 #ifndef js_ErrorReport_h
 #define js_ErrorReport_h
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
+#include "mozilla/Maybe.h"       // mozilla::Maybe
 
+#include <cstdarg>
 #include <iterator>  // std::input_iterator_tag, std::iterator
+#include <stdarg.h>
 #include <stddef.h>  // size_t
 #include <stdint.h>  // int16_t, uint16_t
 #include <string.h>  // strlen
@@ -30,6 +33,7 @@
 #include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
 #include "js/RootingAPI.h"         // JS::HandleObject, JS::RootedObject
 #include "js/UniquePtr.h"          // js::UniquePtr
+#include "js/Value.h"              // JS::Value
 #include "js/Vector.h"             // js::Vector
 
 struct JS_PUBLIC_API JSContext;
@@ -40,7 +44,14 @@ class ExceptionStack;
 }
 namespace js {
 class SystemAllocPolicy;
-}
+
+enum ErrorArgumentsType {
+  ArgumentsAreUnicode,
+  ArgumentsAreASCII,
+  ArgumentsAreLatin1,
+  ArgumentsAreUTF8
+};
+}  // namespace js
 
 /**
  * Possible exception types. These types are part of a JSErrorFormatString
@@ -131,6 +142,19 @@ class JSErrorBase {
         errorNumber(0),
         errorMessageName(nullptr),
         ownsMessage_(false) {}
+  JSErrorBase(JSErrorBase&& other) noexcept
+      : message_(other.message_),
+        filename(other.filename),
+        sourceId(other.sourceId),
+        lineno(other.lineno),
+        column(other.column),
+        errorNumber(other.errorNumber),
+        errorMessageName(other.errorMessageName),
+        ownsMessage_(other.ownsMessage_) {
+    if (ownsMessage_) {
+      other.ownsMessage_ = false;
+    }
+  }
 
   ~JSErrorBase() { freeMessage(); }
 
@@ -163,6 +187,12 @@ class JSErrorNotes {
   // Stores pointers to each note.
   js::Vector<js::UniquePtr<Note>, 1, js::SystemAllocPolicy> notes_;
 
+  bool addNoteVA(js::ErrorContext* ec, const char* filename, unsigned sourceId,
+                 unsigned lineno, unsigned column,
+                 JSErrorCallback errorCallback, void* userRef,
+                 const unsigned errorNumber,
+                 js::ErrorArgumentsType argumentsType, va_list ap);
+
  public:
   JSErrorNotes();
   ~JSErrorNotes();
@@ -172,12 +202,24 @@ class JSErrorNotes {
                     unsigned lineno, unsigned column,
                     JSErrorCallback errorCallback, void* userRef,
                     const unsigned errorNumber, ...);
+  bool addNoteASCII(js::ErrorContext* ec, const char* filename,
+                    unsigned sourceId, unsigned lineno, unsigned column,
+                    JSErrorCallback errorCallback, void* userRef,
+                    const unsigned errorNumber, ...);
   bool addNoteLatin1(JSContext* cx, const char* filename, unsigned sourceId,
                      unsigned lineno, unsigned column,
                      JSErrorCallback errorCallback, void* userRef,
                      const unsigned errorNumber, ...);
+  bool addNoteLatin1(js::ErrorContext* ec, const char* filename,
+                     unsigned sourceId, unsigned lineno, unsigned column,
+                     JSErrorCallback errorCallback, void* userRef,
+                     const unsigned errorNumber, ...);
   bool addNoteUTF8(JSContext* cx, const char* filename, unsigned sourceId,
                    unsigned lineno, unsigned column,
+                   JSErrorCallback errorCallback, void* userRef,
+                   const unsigned errorNumber, ...);
+  bool addNoteUTF8(js::ErrorContext* ec, const char* filename,
+                   unsigned sourceId, unsigned lineno, unsigned column,
                    JSErrorCallback errorCallback, void* userRef,
                    const unsigned errorNumber, ...);
 
@@ -253,6 +295,20 @@ class JSErrorReport : public JSErrorBase {
         isMuted(false),
         isWarning_(false),
         ownsLinebuf_(false) {}
+  JSErrorReport(JSErrorReport&& other) noexcept
+      : JSErrorBase(std::move(other)),
+        linebuf_(other.linebuf_),
+        linebufLength_(other.linebufLength_),
+        tokenOffset_(other.tokenOffset_),
+        notes(std::move(other.notes)),
+        exnType(other.exnType),
+        isMuted(other.isMuted),
+        isWarning_(other.isWarning_),
+        ownsLinebuf_(other.ownsLinebuf_) {
+    if (ownsLinebuf_) {
+      other.ownsLinebuf_ = false;
+    }
+  }
 
   ~JSErrorReport() { freeLinebuf(); }
 
@@ -354,14 +410,132 @@ struct MOZ_STACK_CLASS JS_PUBLIC_API ErrorReportBuilder {
 
 // Writes a full report to a file descriptor. Does nothing for JSErrorReports
 // which are warnings, unless reportWarnings is set.
-extern JS_PUBLIC_API void PrintError(JSContext* cx, FILE* file,
-                                     JSErrorReport* report,
+extern JS_PUBLIC_API void PrintError(FILE* file, JSErrorReport* report,
                                      bool reportWarnings);
 
-extern JS_PUBLIC_API void PrintError(JSContext* cx, FILE* file,
+extern JS_PUBLIC_API void PrintError(FILE* file,
                                      const JS::ErrorReportBuilder& builder,
                                      bool reportWarnings);
 
 }  // namespace JS
+
+/*
+ * There are four encoding variants for the error reporting API:
+ *   UTF-8
+ *     JSAPI's default encoding for error handling.  Use this when the encoding
+ *     of the error message, format string, and arguments is UTF-8.
+ *   ASCII
+ *     Equivalent to UTF-8, but also asserts that the error message, format
+ *     string, and arguments are all ASCII.  Because ASCII is a subset of UTF-8,
+ *     any use of this encoding variant *could* be replaced with use of the
+ *     UTF-8 variant.  This variant exists solely to double-check the
+ *     developer's assumption that all these strings truly are ASCII, given that
+ *     UTF-8 and ASCII strings regrettably have the same C++ type.
+ *   UC = UTF-16
+ *     Use this when arguments are UTF-16.  The format string must be UTF-8.
+ *   Latin1 (planned to be removed)
+ *     In this variant, all strings are interpreted byte-for-byte as the
+ *     corresponding Unicode codepoint.  This encoding may *safely* be used on
+ *     any null-terminated string, regardless of its encoding.  (You shouldn't
+ *     *actually* be uncertain, but in the real world, a string's encoding -- if
+ *     promised at all -- may be more...aspirational...than reality.)  This
+ *     encoding variant will eventually be removed -- work to convert your uses
+ *     to UTF-8 as you're able.
+ */
+
+namespace JS {
+const uint16_t MaxNumErrorArguments = 10;
+};
+
+/**
+ * Report an exception represented by the sprintf-like conversion of format
+ * and its arguments.
+ */
+extern JS_PUBLIC_API void JS_ReportErrorASCII(JSContext* cx, const char* format,
+                                              ...) MOZ_FORMAT_PRINTF(2, 3);
+
+extern JS_PUBLIC_API void JS_ReportErrorLatin1(JSContext* cx,
+                                               const char* format, ...)
+    MOZ_FORMAT_PRINTF(2, 3);
+
+extern JS_PUBLIC_API void JS_ReportErrorUTF8(JSContext* cx, const char* format,
+                                             ...) MOZ_FORMAT_PRINTF(2, 3);
+
+/*
+ * Use an errorNumber to retrieve the format string, args are char*
+ */
+extern JS_PUBLIC_API void JS_ReportErrorNumberASCII(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, ...);
+
+extern JS_PUBLIC_API void JS_ReportErrorNumberASCIIVA(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, va_list ap);
+
+extern JS_PUBLIC_API void JS_ReportErrorNumberLatin1(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, ...);
+
+#ifdef va_start
+extern JS_PUBLIC_API void JS_ReportErrorNumberLatin1VA(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, va_list ap);
+#endif
+
+extern JS_PUBLIC_API void JS_ReportErrorNumberUTF8(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, ...);
+
+#ifdef va_start
+extern JS_PUBLIC_API void JS_ReportErrorNumberUTF8VA(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, va_list ap);
+#endif
+
+/*
+ * args is null-terminated.  That is, a null char* means there are no
+ * more args.  The number of args must match the number expected for
+ * errorNumber for the given JSErrorCallback.
+ */
+extern JS_PUBLIC_API void JS_ReportErrorNumberUTF8Array(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, const char** args);
+
+/*
+ * Use an errorNumber to retrieve the format string, args are char16_t*
+ */
+extern JS_PUBLIC_API void JS_ReportErrorNumberUC(JSContext* cx,
+                                                 JSErrorCallback errorCallback,
+                                                 void* userRef,
+                                                 const unsigned errorNumber,
+                                                 ...);
+
+extern JS_PUBLIC_API void JS_ReportErrorNumberUCArray(
+    JSContext* cx, JSErrorCallback errorCallback, void* userRef,
+    const unsigned errorNumber, const char16_t** args);
+
+/**
+ * Complain when out of memory.
+ */
+extern MOZ_COLD JS_PUBLIC_API void JS_ReportOutOfMemory(JSContext* cx);
+
+extern JS_PUBLIC_API bool JS_ExpandErrorArgumentsASCII(
+    JSContext* cx, JSErrorCallback errorCallback, const unsigned errorNumber,
+    JSErrorReport* reportp, ...);
+
+/**
+ * Complain when an allocation size overflows the maximum supported limit.
+ */
+extern JS_PUBLIC_API void JS_ReportAllocationOverflow(JSContext* cx);
+
+namespace JS {
+
+extern JS_PUBLIC_API bool CreateError(
+    JSContext* cx, JSExnType type, HandleObject stack, HandleString fileName,
+    uint32_t lineNumber, uint32_t columnNumber, JSErrorReport* report,
+    HandleString message, Handle<mozilla::Maybe<Value>> cause,
+    MutableHandleValue rval);
+
+} /* namespace JS */
 
 #endif /* js_ErrorReport_h */

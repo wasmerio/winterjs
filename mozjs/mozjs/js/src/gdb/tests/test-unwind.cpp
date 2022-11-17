@@ -1,11 +1,13 @@
 #include "gdb-tests.h"
-#include "jsapi.h"  // sundry symbols not moved to more-specific headers yet
 #include "jsfriendapi.h"  // JSFunctionSpecWithHelp
 
 #include "jit/JitOptions.h"               // js::jit::JitOptions
 #include "js/CallArgs.h"                  // JS::CallArgs, JS::CallArgsFromVp
 #include "js/CompilationAndEvaluation.h"  // JS::Evaluate
 #include "js/CompileOptions.h"            // JS::CompileOptions
+#include "js/GlobalObject.h"              // JS::CurrentGlobalOrNull
+#include "js/PropertyAndElement.h"        // JS_DefineProperty
+#include "js/PropertyDescriptor.h"        // JSPROP_ENUMERATE
 #include "js/RootingAPI.h"                // JS::Rooted
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "js/Value.h"                     // JS::Value

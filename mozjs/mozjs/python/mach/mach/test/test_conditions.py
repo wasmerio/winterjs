@@ -5,7 +5,7 @@
 from __future__ import absolute_import
 from __future__ import unicode_literals
 
-import os
+from pathlib import Path
 
 from buildconfig import topsrcdir
 from mach.base import MachError
@@ -44,13 +44,15 @@ class TestConditions(TestBase):
     """Tests for conditionally filtering commands."""
 
     def _run(self, args, context_handler=_populate_bare_context):
-        return self._run_mach(args, "conditions.py", context_handler=context_handler)
+        return self._run_mach(
+            args, Path("conditions.py"), context_handler=context_handler
+        )
 
     def test_conditions_pass(self):
         """Test that a command which passes its conditions is runnable."""
 
-        self.assertEquals((0, "", ""), self._run(["cmd_foo"]))
-        self.assertEquals((0, "", ""), self._run(["cmd_foo_ctx"], _populate_context))
+        self.assertEqual((0, "", ""), self._run(["cmd_condition_true"]))
+        self.assertEqual((0, "", ""), self._run(["cmd_foo_ctx"], _populate_context))
 
     def test_invalid_context_message(self):
         """Test that commands which do not pass all their conditions
@@ -61,38 +63,38 @@ class TestConditions(TestBase):
 
         fail_conditions = [is_bar]
 
-        for name in ("cmd_bar", "cmd_foobar"):
+        for name in ("cmd_condition_false", "cmd_condition_true_and_false"):
             result, stdout, stderr = self._run([name])
-            self.assertEquals(1, result)
+            self.assertEqual(1, result)
 
             fail_msg = Registrar._condition_failed_message(name, fail_conditions)
-            self.assertEquals(fail_msg.rstrip(), stdout.rstrip())
+            self.assertEqual(fail_msg.rstrip(), stdout.rstrip())
 
         for name in ("cmd_bar_ctx", "cmd_foobar_ctx"):
             result, stdout, stderr = self._run([name], _populate_context)
-            self.assertEquals(1, result)
+            self.assertEqual(1, result)
 
             fail_msg = Registrar._condition_failed_message(name, fail_conditions)
-            self.assertEquals(fail_msg.rstrip(), stdout.rstrip())
+            self.assertEqual(fail_msg.rstrip(), stdout.rstrip())
 
     def test_invalid_type(self):
         """Test that a condition which is not callable raises an exception."""
 
-        m = Mach(os.getcwd())
+        m = Mach(str(Path.cwd()))
         m.define_category("testing", "Mach unittest", "Testing for mach core", 10)
         self.assertRaises(
             MachError,
             m.load_commands_from_file,
-            os.path.join(PROVIDER_DIR, "conditions_invalid.py"),
+            PROVIDER_DIR / "conditions_invalid.py",
         )
 
     def test_help_message(self):
         """Test that commands that are not runnable do not show up in help."""
 
         result, stdout, stderr = self._run(["help"], _populate_context)
-        self.assertIn("cmd_foo", stdout)
-        self.assertNotIn("cmd_bar", stdout)
-        self.assertNotIn("cmd_foobar", stdout)
+        self.assertIn("cmd_condition_true", stdout)
+        self.assertNotIn("cmd_condition_false", stdout)
+        self.assertNotIn("cmd_condition_true_and_false", stdout)
         self.assertIn("cmd_foo_ctx", stdout)
         self.assertNotIn("cmd_bar_ctx", stdout)
         self.assertNotIn("cmd_foobar_ctx", stdout)

@@ -14,7 +14,7 @@ from abc import ABCMeta, abstractproperty
 
 from mozlog import get_default_logger
 from mozprocess import ProcessHandler
-from six import string_types, text_type
+from six import ensure_str, string_types
 
 try:
     import mozcrash
@@ -78,7 +78,8 @@ class BaseRunner(object):
 
     def __del__(self):
         if not self.explicit_cleanup:
-            self.cleanup()
+            # If we're relying on the gc for cleanup do the same with the profile
+            self.cleanup(keep_profile=True)
 
     @abstractproperty
     def command(self):
@@ -128,22 +129,18 @@ class BaseRunner(object):
         if self.logger:
             self.logger.info("Application command: %s" % " ".join(cmd))
 
-        encoded_env = {}
+        str_env = {}
         for k in self.env:
             v = self.env[k]
-            if isinstance(v, text_type):
-                v = v.encode("utf-8")
-            if isinstance(k, text_type):
-                k = k.encode("utf-8")
-            encoded_env[k] = v
+            str_env[ensure_str(k)] = ensure_str(v)
 
         if interactive:
-            self.process_handler = subprocess.Popen(cmd, env=encoded_env)
+            self.process_handler = subprocess.Popen(cmd, env=str_env)
             # TODO: other arguments
         else:
             # this run uses the managed processhandler
             try:
-                process = self.process_class(cmd, env=encoded_env, **self.process_args)
+                process = self.process_class(cmd, env=str_env, **self.process_args)
                 process.run(self.timeout, self.output_timeout)
 
                 self.process_handler = process
@@ -189,11 +186,13 @@ class BaseRunner(object):
         """
         return self.returncode is None
 
-    def stop(self, sig=None):
+    def stop(self, sig=None, timeout=None):
         """
         Kill the process.
 
         :param sig: Signal used to kill the process, defaults to SIGKILL
+                    (has no effect on Windows).
+        :param timeout: Maximum time to wait for the processs to exit
                     (has no effect on Windows).
         :returns: the process return code if process was already stopped,
                   -<signal> if process was killed (Unix only)
@@ -210,7 +209,7 @@ class BaseRunner(object):
         if isinstance(self.process_handler, subprocess.Popen):
             self.process_handler.kill()
         else:
-            self.process_handler.kill(sig=sig)
+            self.process_handler.kill(sig=sig, timeout=timeout)
 
         return self.returncode
 
@@ -272,8 +271,10 @@ class BaseRunner(object):
 
         return crash_count
 
-    def cleanup(self):
+    def cleanup(self, keep_profile=False):
         """
         Cleanup all runner state
         """
         self.stop()
+        if not keep_profile:
+            self.profile.cleanup()

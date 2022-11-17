@@ -7,12 +7,12 @@
 #ifndef builtin_MapObject_h
 #define builtin_MapObject_h
 
+#include "mozilla/MemoryReporting.h"
+
 #include "builtin/SelfHostingDefines.h"
-#include "vm/GlobalObject.h"
 #include "vm/JSObject.h"
 #include "vm/NativeObject.h"
 #include "vm/PIC.h"
-#include "vm/Runtime.h"
 
 namespace js {
 
@@ -27,7 +27,7 @@ namespace js {
 class HashableValue {
   // This is used for map and set keys. We use OrderedHashTableRef to update all
   // nursery keys on minor GC, so a post barrier is not required here.
-  PreBarrieredValue value;
+  PreBarriered<Value> value;
 
  public:
   struct Hasher {
@@ -83,10 +83,10 @@ template <class T, class OrderedHashPolicy, class AllocPolicy>
 class OrderedHashSet;
 
 typedef OrderedHashMap<HashableValue, HeapPtr<Value>, HashableValue::Hasher,
-                       ZoneAllocPolicy>
+                       CellAllocPolicy>
     ValueMap;
 
-typedef OrderedHashSet<HashableValue, HashableValue::Hasher, ZoneAllocPolicy>
+typedef OrderedHashSet<HashableValue, HashableValue::Hasher, CellAllocPolicy>
     ValueSet;
 
 template <typename ObjectT>
@@ -111,7 +111,7 @@ class MapObject : public NativeObject {
   static const JSClass class_;
   static const JSClass protoClass_;
 
-  enum { NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
+  enum { DataSlot, NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
 
   [[nodiscard]] static bool getKeysAndValuesInterleaved(
       HandleObject obj, JS::MutableHandle<GCVector<JS::Value>> entries);
@@ -137,11 +137,32 @@ class MapObject : public NativeObject {
   [[nodiscard]] static bool iterator(JSContext* cx, IteratorKind kind,
                                      HandleObject obj, MutableHandleValue iter);
 
+  // OrderedHashMap with the same memory layout as ValueMap but without wrappers
+  // that perform post barriers. Used when the owning JS object is in the
+  // nursery.
+  using PreBarrieredTable =
+      OrderedHashMap<HashableValue, PreBarriered<Value>, HashableValue::Hasher,
+                     CellAllocPolicy>;
+
+  // OrderedHashMap with the same memory layout as ValueMap but without any
+  // wrappers that perform barriers. Used when updating the nursery allocated
+  // keys map during minor GC.
   using UnbarrieredTable =
-      OrderedHashMap<Value, Value, UnbarrieredHashPolicy, ZoneAllocPolicy>;
+      OrderedHashMap<Value, Value, UnbarrieredHashPolicy, CellAllocPolicy>;
   friend class OrderedHashTableRef<MapObject>;
 
-  static void sweepAfterMinorGC(JSFreeOp* fop, MapObject* mapobj);
+  static void sweepAfterMinorGC(JS::GCContext* gcx, MapObject* mapobj);
+
+  size_t sizeOfData(mozilla::MallocSizeOf mallocSizeOf);
+
+  static constexpr size_t getDataSlotOffset() {
+    return getFixedSlotOffset(DataSlot);
+  }
+
+  const ValueMap* getData() { return getTableUnchecked(); }
+
+  [[nodiscard]] static bool get(JSContext* cx, unsigned argc, Value* vp);
+  [[nodiscard]] static bool set(JSContext* cx, unsigned argc, Value* vp);
 
  private:
   static const ClassSpec classSpec_;
@@ -151,13 +172,28 @@ class MapObject : public NativeObject {
   static const JSFunctionSpec methods[];
   static const JSPropertySpec staticProperties[];
 
+  PreBarrieredTable* nurseryTable() {
+    MOZ_ASSERT(IsInsideNursery(this));
+    return maybePtrFromReservedSlot<PreBarrieredTable>(DataSlot);
+  }
+  ValueMap* tenuredTable() {
+    MOZ_ASSERT(!IsInsideNursery(this));
+    return getTableUnchecked();
+  }
+  ValueMap* getTableUnchecked() {
+    return maybePtrFromReservedSlot<ValueMap>(DataSlot);
+  }
+
+  static inline bool setWithHashableKey(JSContext* cx, MapObject* obj,
+                                        Handle<HashableValue> key,
+                                        Handle<Value> value);
+
   static bool finishInit(JSContext* cx, HandleObject ctor, HandleObject proto);
 
-  ValueMap* getData() { return static_cast<ValueMap*>(getPrivate()); }
-  static ValueMap& extract(HandleObject o);
-  static ValueMap& extract(const CallArgs& args);
+  static const ValueMap& extract(HandleObject o);
+  static const ValueMap& extract(const CallArgs& args);
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
   [[nodiscard]] static bool construct(JSContext* cx, unsigned argc, Value* vp);
 
   static bool is(HandleValue v);
@@ -169,11 +205,9 @@ class MapObject : public NativeObject {
   [[nodiscard]] static bool size_impl(JSContext* cx, const CallArgs& args);
   [[nodiscard]] static bool size(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool get_impl(JSContext* cx, const CallArgs& args);
-  [[nodiscard]] static bool get(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool has_impl(JSContext* cx, const CallArgs& args);
   [[nodiscard]] static bool has(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool set_impl(JSContext* cx, const CallArgs& args);
-  [[nodiscard]] static bool set(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool delete_impl(JSContext* cx, const CallArgs& args);
   [[nodiscard]] static bool delete_(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool keys_impl(JSContext* cx, const CallArgs& args);
@@ -202,9 +236,9 @@ class MapIteratorObject : public NativeObject {
 
   static const JSFunctionSpec methods[];
   static MapIteratorObject* create(JSContext* cx, HandleObject mapobj,
-                                   ValueMap* data,
+                                   const ValueMap* data,
                                    MapObject::IteratorKind kind);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   void init(MapObject* mapObj, MapObject::IteratorKind kind) {
@@ -240,7 +274,7 @@ class SetObject : public NativeObject {
   static const JSClass class_;
   static const JSClass protoClass_;
 
-  enum { NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
+  enum { DataSlot, NurseryKeysSlot, HasNurseryMemorySlot, SlotCount };
 
   [[nodiscard]] static bool keys(JSContext* cx, HandleObject obj,
                                  JS::MutableHandle<GCVector<JS::Value>> keys);
@@ -252,6 +286,8 @@ class SetObject : public NativeObject {
   // interfaces, etc.)
   static SetObject* create(JSContext* cx, HandleObject proto = nullptr);
   static uint32_t size(JSContext* cx, HandleObject obj);
+  [[nodiscard]] static bool add(JSContext* cx, unsigned argc, Value* vp);
+  [[nodiscard]] static bool has(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool has(JSContext* cx, HandleObject obj,
                                 HandleValue key, bool* rval);
   [[nodiscard]] static bool clear(JSContext* cx, HandleObject obj);
@@ -261,10 +297,18 @@ class SetObject : public NativeObject {
                                     HandleValue key, bool* rval);
 
   using UnbarrieredTable =
-      OrderedHashSet<Value, UnbarrieredHashPolicy, ZoneAllocPolicy>;
+      OrderedHashSet<Value, UnbarrieredHashPolicy, CellAllocPolicy>;
   friend class OrderedHashTableRef<SetObject>;
 
-  static void sweepAfterMinorGC(JSFreeOp* fop, SetObject* setobj);
+  static void sweepAfterMinorGC(JS::GCContext* gcx, SetObject* setobj);
+
+  size_t sizeOfData(mozilla::MallocSizeOf mallocSizeOf);
+
+  static constexpr size_t getDataSlotOffset() {
+    return getFixedSlotOffset(DataSlot);
+  }
+
+  ValueSet* getData() { return getTableUnchecked(); }
 
  private:
   static const ClassSpec classSpec_;
@@ -274,13 +318,16 @@ class SetObject : public NativeObject {
   static const JSFunctionSpec methods[];
   static const JSPropertySpec staticProperties[];
 
+  ValueSet* getTableUnchecked() {
+    return maybePtrFromReservedSlot<ValueSet>(DataSlot);
+  }
+
   static bool finishInit(JSContext* cx, HandleObject ctor, HandleObject proto);
 
-  ValueSet* getData() { return static_cast<ValueSet*>(getPrivate()); }
   static ValueSet& extract(HandleObject o);
   static ValueSet& extract(const CallArgs& args);
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
 
   static bool is(HandleValue v);
@@ -294,9 +341,7 @@ class SetObject : public NativeObject {
   [[nodiscard]] static bool size_impl(JSContext* cx, const CallArgs& args);
   [[nodiscard]] static bool size(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool has_impl(JSContext* cx, const CallArgs& args);
-  [[nodiscard]] static bool has(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool add_impl(JSContext* cx, const CallArgs& args);
-  [[nodiscard]] static bool add(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool delete_impl(JSContext* cx, const CallArgs& args);
   [[nodiscard]] static bool delete_(JSContext* cx, unsigned argc, Value* vp);
   [[nodiscard]] static bool values_impl(JSContext* cx, const CallArgs& args);
@@ -325,7 +370,7 @@ class SetIteratorObject : public NativeObject {
   static SetIteratorObject* create(JSContext* cx, HandleObject setobj,
                                    ValueSet* data,
                                    SetObject::IteratorKind kind);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
   static size_t objectMoved(JSObject* obj, JSObject* old);
 
   void init(SetObject* setObj, SetObject::IteratorKind kind) {
@@ -364,7 +409,7 @@ template <SetInitGetPrototypeOp getPrototypeOp, SetInitIsBuiltinOp isBuiltinOp>
   }
 
   // Get the canonical prototype object.
-  RootedNativeObject setProto(cx, getPrototypeOp(cx, cx->global()));
+  Rooted<NativeObject*> setProto(cx, getPrototypeOp(cx, cx->global()));
   if (!setProto) {
     return false;
   }
@@ -375,13 +420,13 @@ template <SetInitGetPrototypeOp getPrototypeOp, SetInitIsBuiltinOp isBuiltinOp>
   }
 
   // Look up the 'add' value on the prototype object.
-  Shape* addShape = setProto->lookup(cx, cx->names().add);
-  if (!addShape || !addShape->isDataProperty()) {
+  mozilla::Maybe<PropertyInfo> addProp = setProto->lookup(cx, cx->names().add);
+  if (addProp.isNothing() || !addProp->isDataProperty()) {
     return true;
   }
 
   // Get the referred value, ensure it holds the canonical add function.
-  RootedValue add(cx, setProto->getSlot(addShape->slot()));
+  RootedValue add(cx, setProto->getSlot(addProp->slot()));
   if (!isBuiltinOp(add)) {
     return true;
   }

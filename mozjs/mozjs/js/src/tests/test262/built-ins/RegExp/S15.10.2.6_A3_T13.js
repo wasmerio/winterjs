@@ -13,9 +13,6 @@ description: >
 
 var __executed = /op\b/.test("pilot\nsoviet robot\topenoffice");
 
-//CHECK#1
-if (__executed) {
-	$ERROR('#1: /op\\b/.test("pilot\\nsoviet robot\\topenoffice") === false');
-}
+assert(!__executed, 'The value of !__executed is expected to be true');
 
 reportCompare(0, 0);

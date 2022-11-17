@@ -13,16 +13,18 @@
 
 #include "FuzzerDefs.h"
 #include "FuzzingInterface.h"
-#include "jsapi.h"  // JS_ClearPendingException, JS_IsExceptionPending, JS_SetProperty
+#include "jsapi.h"  // JS_ClearPendingException, JS_IsExceptionPending
 
 #include "js/CompilationAndEvaluation.h"  // JS::Evaluate
 #include "js/CompileOptions.h"            // JS::CompileOptions
+#include "js/Conversions.h"               // JS::ToInt32
 #include "js/ErrorReport.h"               // JS::PrintError
 #include "js/Exception.h"                 // JS::StealPendingExceptionStack
 #include "js/experimental/TypedData.h"  // JS_GetUint8ClampedArrayData, JS_NewUint8ClampedArray
-#include "js/RootingAPI.h"  // JS::Rooted
-#include "js/SourceText.h"  // JS::Source{Ownership,Text}
-#include "js/Value.h"       // JS::Value
+#include "js/PropertyAndElement.h"  // JS_SetProperty
+#include "js/RootingAPI.h"          // JS::Rooted
+#include "js/SourceText.h"          // JS::Source{Ownership,Text}
+#include "js/Value.h"               // JS::Value
 #include "shell/jsshell.h"  // js::shell::{reportWarnings,PrintStackTrace,sArg{c,v}}
 #include "util/Text.h"
 #include "vm/Interpreter.h"
@@ -44,7 +46,7 @@ static void CrashOnPendingException() {
       fprintf(stderr, "out of memory initializing JS::ErrorReportBuilder\n");
       fflush(stderr);
     } else {
-      JS::PrintError(gCx, stderr, report, js::shell::reportWarnings);
+      JS::PrintError(stderr, report, js::shell::reportWarnings);
       if (!js::shell::PrintStackTrace(gCx, exnStack.stack())) {
         fputs("(Unable to print stack trace)\n", stderr);
       }
@@ -53,10 +55,6 @@ static void CrashOnPendingException() {
     MOZ_CRASH("Unhandled exception from JS runtime!");
   }
 }
-
-#ifdef LIBFUZZER
-static void FuzzJSRuntimeAtExit() { JS_ShutDown(); }
-#endif
 
 int js::shell::FuzzJSRuntimeStart(JSContext* cx, int* argc, char*** argv) {
   gCx = cx;
@@ -69,10 +67,8 @@ int js::shell::FuzzJSRuntimeStart(JSContext* cx, int* argc, char*** argv) {
   }
 
 #ifdef LIBFUZZER
-  // This is required because libFuzzer can exit() in various cases
-  std::atexit(FuzzJSRuntimeAtExit);
   fuzzer::FuzzerDriver(&shell::sArgc, &shell::sArgv, FuzzJSRuntimeFuzz);
-#elif __AFL_COMPILER
+#elif AFLFUZZ
   MOZ_CRASH("AFL is unsupported for JS runtime fuzzing integration");
 #endif
   return 0;
@@ -135,7 +131,7 @@ int js::shell::FuzzJSRuntimeFuzz(const uint8_t* buf, size_t size) {
   CrashOnPendingException();
 
   int32_t ret = 0;
-  if (!ToInt32(gCx, v, &ret)) {
+  if (!JS::ToInt32(gCx, v, &ret)) {
     MOZ_CRASH("Must return an int32 compatible return value!");
   }
 

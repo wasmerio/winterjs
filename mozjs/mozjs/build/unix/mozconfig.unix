@@ -23,16 +23,14 @@ else
       ;;
     esac
 
-    if [ -z "$USE_ARTIFACT" ]; then
-        if [ -n "$TASKCLUSTER_PGO_PROFILE_USE" ]; then
-            export MOZ_LTO=cross
-            ac_add_options --enable-profile-use=cross
-            ac_add_options --with-pgo-jarlog=${MOZ_FETCHES_DIR}/en-US.log
-            ac_add_options --with-pgo-profile-path=${MOZ_FETCHES_DIR}/merged.profdata
-        fi
-    fi
-
     mk_add_options "export PATH=$MOZ_FETCHES_DIR/binutils/bin:$PATH"
 fi
+
+case "$PERFHERDER_EXTRA_OPTIONS" in
+base-toolchains*)
+  # Clang versions < 8.0 don't support wasm.
+  export WASM_SANDBOXED_LIBRARIES=
+  ;;
+esac
 
 . "$topsrcdir/build/unix/mozconfig.stdcxx"

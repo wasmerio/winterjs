@@ -19,16 +19,18 @@
 #include "wasm/WasmCompile.h"
 
 #include "mozilla/Maybe.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 
-#include "jit/ProcessExecutableMemory.h"
+#ifndef __wasi__
+#  include "jit/ProcessExecutableMemory.h"
+#endif
+
+#include "jit/FlushICache.h"
 #include "util/Text.h"
-#include "vm/HelperThreadState.h"
+#include "vm/HelperThreads.h"
 #include "vm/Realm.h"
 #include "wasm/WasmBaselineCompile.h"
-#include "wasm/WasmCraneliftCompile.h"
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmOpIter.h"
@@ -48,30 +50,31 @@ uint32_t wasm::ObservedCPUFeatures() {
     MIPS = 0x4,
     MIPS64 = 0x5,
     ARM64 = 0x6,
+    LOONG64 = 0x7,
     ARCH_BITS = 3
   };
 
 #if defined(JS_CODEGEN_X86)
-  MOZ_ASSERT(uint32_t(jit::CPUInfo::GetSSEVersion()) <=
+  MOZ_ASSERT(uint32_t(jit::CPUInfo::GetFingerprint()) <=
              (UINT32_MAX >> ARCH_BITS));
-  return X86 | (uint32_t(jit::CPUInfo::GetSSEVersion()) << ARCH_BITS);
+  return X86 | (uint32_t(jit::CPUInfo::GetFingerprint()) << ARCH_BITS);
 #elif defined(JS_CODEGEN_X64)
-  MOZ_ASSERT(uint32_t(jit::CPUInfo::GetSSEVersion()) <=
+  MOZ_ASSERT(uint32_t(jit::CPUInfo::GetFingerprint()) <=
              (UINT32_MAX >> ARCH_BITS));
-  return X64 | (uint32_t(jit::CPUInfo::GetSSEVersion()) << ARCH_BITS);
+  return X64 | (uint32_t(jit::CPUInfo::GetFingerprint()) << ARCH_BITS);
 #elif defined(JS_CODEGEN_ARM)
   MOZ_ASSERT(jit::GetARMFlags() <= (UINT32_MAX >> ARCH_BITS));
   return ARM | (jit::GetARMFlags() << ARCH_BITS);
 #elif defined(JS_CODEGEN_ARM64)
   MOZ_ASSERT(jit::GetARM64Flags() <= (UINT32_MAX >> ARCH_BITS));
   return ARM64 | (jit::GetARM64Flags() << ARCH_BITS);
-#elif defined(JS_CODEGEN_MIPS32)
-  MOZ_ASSERT(jit::GetMIPSFlags() <= (UINT32_MAX >> ARCH_BITS));
-  return MIPS | (jit::GetMIPSFlags() << ARCH_BITS);
 #elif defined(JS_CODEGEN_MIPS64)
   MOZ_ASSERT(jit::GetMIPSFlags() <= (UINT32_MAX >> ARCH_BITS));
   return MIPS64 | (jit::GetMIPSFlags() << ARCH_BITS);
-#elif defined(JS_CODEGEN_NONE)
+#elif defined(JS_CODEGEN_LOONG64)
+  MOZ_ASSERT(jit::GetLOONG64Flags() <= (UINT32_MAX >> ARCH_BITS));
+  return LOONG64 | (jit::GetLOONG64Flags() << ARCH_BITS);
+#elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
   return 0;
 #else
 #  error "unknown architecture"
@@ -80,38 +83,33 @@ uint32_t wasm::ObservedCPUFeatures() {
 
 FeatureArgs FeatureArgs::build(JSContext* cx, const FeatureOptions& options) {
   FeatureArgs features;
-  // See comments in WasmConstants.h regarding the meaning of the wormhole
-  // options.
-  bool wormholeOverride =
-      wasm::SimdWormholeAvailable(cx) && options.simdWormhole;
+
+#define WASM_FEATURE(NAME, LOWER_NAME, ...) \
+  features.LOWER_NAME = wasm::NAME##Available(cx);
+  JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE, WASM_FEATURE);
+#undef WASM_FEATURE
+
   features.sharedMemory =
       wasm::ThreadsAvailable(cx) ? Shareable::True : Shareable::False;
-  features.refTypes = wasm::ReftypesAvailable(cx);
-  features.functionReferences = wasm::FunctionReferencesAvailable(cx);
-  features.gcTypes = wasm::GcTypesAvailable(cx);
-  features.multiValue = wasm::MultiValuesAvailable(cx);
-  features.v128 = wasm::SimdAvailable(cx) || wormholeOverride;
-  features.hugeMemory = wasm::IsHugeMemoryEnabled();
-  features.simdWormhole = wormholeOverride;
-  features.exceptions = wasm::ExceptionsAvailable(cx);
+
+  features.simd = jit::JitSupportsWasmSimd();
+  features.intrinsics = options.intrinsics;
+
   return features;
 }
 
 SharedCompileArgs CompileArgs::build(JSContext* cx,
                                      ScriptedCaller&& scriptedCaller,
-                                     const FeatureOptions& options) {
+                                     const FeatureOptions& options,
+                                     CompileArgsError* error) {
   bool baseline = BaselineAvailable(cx);
   bool ion = IonAvailable(cx);
-  bool cranelift = CraneliftAvailable(cx);
-
-  // At most one optimizing compiler.
-  MOZ_RELEASE_ASSERT(!(ion && cranelift));
 
   // Debug information such as source view or debug traps will require
   // additional memory and permanently stay in baseline code, so we try to
   // only enable it when a developer actually cares: when the debugger tab
   // is open.
-  bool debug = cx->realm() && cx->realm()->debuggerObservesAsmJS();
+  bool debug = cx->realm() && cx->realm()->debuggerObservesWasm();
 
   bool forceTiering =
       cx->options().testWasmAwaitTier2() || JitOptions.wasmDelayTier2;
@@ -119,40 +117,67 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   // The <Compiler>Available() predicates should ensure no failure here, but
   // when we're fuzzing we allow inconsistent switches and the check may thus
   // fail.  Let it go to a run-time error instead of crashing.
-  if (debug && (ion || cranelift)) {
-    JS_ReportErrorASCII(cx, "no WebAssembly compiler available");
+  if (debug && ion) {
+    *error = CompileArgsError::NoCompiler;
     return nullptr;
   }
 
-  if (forceTiering && !(baseline && (cranelift || ion))) {
+  if (forceTiering && !(baseline && ion)) {
     // This can happen only in testing, and in this case we don't have a
     // proper way to signal the error, so just silently override the default,
     // instead of adding a skip-if directive to every test using debug/gc.
     forceTiering = false;
   }
 
-  if (!(baseline || ion || cranelift)) {
-    JS_ReportErrorASCII(cx, "no WebAssembly compiler available");
+  if (!(baseline || ion)) {
+    *error = CompileArgsError::NoCompiler;
     return nullptr;
   }
 
   CompileArgs* target = cx->new_<CompileArgs>(std::move(scriptedCaller));
   if (!target) {
+    *error = CompileArgsError::OutOfMemory;
     return nullptr;
   }
 
   target->baselineEnabled = baseline;
   target->ionEnabled = ion;
-  target->craneliftEnabled = cranelift;
   target->debugEnabled = debug;
   target->forceTiering = forceTiering;
   target->features = FeatureArgs::build(cx, options);
 
-  Log(cx, "available wasm compilers: tier1=%s tier2=%s",
-      baseline ? "baseline" : "none",
-      ion ? "ion" : (cranelift ? "cranelift" : "none"));
-
   return target;
+}
+
+SharedCompileArgs CompileArgs::buildAndReport(JSContext* cx,
+                                              ScriptedCaller&& scriptedCaller,
+                                              const FeatureOptions& options,
+                                              bool reportOOM) {
+  CompileArgsError error;
+  SharedCompileArgs args =
+      CompileArgs::build(cx, std::move(scriptedCaller), options, &error);
+  if (args) {
+    Log(cx, "available wasm compilers: tier1=%s tier2=%s",
+        args->baselineEnabled ? "baseline" : "none",
+        args->ionEnabled ? "ion" : "none");
+    return args;
+  }
+
+  switch (error) {
+    case CompileArgsError::NoCompiler: {
+      JS_ReportErrorASCII(cx, "no WebAssembly compiler available");
+      break;
+    }
+    case CompileArgsError::OutOfMemory: {
+      // Most callers are required to return 'false' without reporting an OOM,
+      // so we make reporting it optional here.
+      if (reportOOM) {
+        ReportOutOfMemory(cx);
+      }
+      break;
+    }
+  }
+  return nullptr;
 }
 
 /*
@@ -229,28 +254,28 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
  *   To do better, we need OSR.
  *
  * - Wasm Table entries are never patched during tier-up.  A Table of funcref
- *   holds not a JSFunction pointer, but a (code*,Tls*) pair of pointers.  When
- *   a table.set operation is performed, the JSFunction value is decomposed and
- *   its code and Tls pointers are stored in the table; subsequently, when a
- *   table.get operation is performed, the JSFunction value is reconstituted
- *   from its code pointer using fairly elaborate machinery.  (The mechanics are
- *   the same also for the reflected JS operations on a WebAssembly.Table.  For
- *   everything, see WasmTable.{cpp,h}.)  The code pointer in the Table will
- *   always be the code pointer belonging to the best tier that was active at
- *   the time when that function was stored in that Table slot; in many cases,
- *   it will be tier-1 code.  As a consequence, a call through a table will
- *   first enter tier-1 code and then jump to tier-2 code.
+ *   holds not a JSFunction pointer, but a (code*,instance*) pair of pointers.
+ * When a table.set operation is performed, the JSFunction value is decomposed
+ * and its code and instance pointers are stored in the table; subsequently,
+ * when a table.get operation is performed, the JSFunction value is
+ * reconstituted from its code pointer using fairly elaborate machinery.  (The
+ * mechanics are the same also for the reflected JS operations on a
+ * WebAssembly.Table.  For everything, see WasmTable.{cpp,h}.)  The code pointer
+ * in the Table will always be the code pointer belonging to the best tier that
+ * was active at the time when that function was stored in that Table slot; in
+ * many cases, it will be tier-1 code.  As a consequence, a call through a table
+ * will first enter tier-1 code and then jump to tier-2 code.
  *
  *   To do better, we must update all the tables in the system when an instance
  *   tiers up.  This is expected to be very hard.
  *
  * - Imported Wasm functions are never patched during tier-up.  Imports are held
- *   in FuncImportTls values in the instance's Tls, and for a wasm callee,
- *   what's stored is the raw code pointer into the best tier of the callee that
- *   was active at the time the import was resolved.  That could be baseline
- *   code, and if it is, the situation is as for Table entries: a call to an
- *   import will always go via that import's tier-1 code, which will tier up
- *   with an indirect jump.
+ *   in FuncImportInstanceData values in the instance, and for a wasm
+ *   callee, what's stored is the raw code pointer into the best tier of the
+ *   callee that was active at the time the import was resolved.  That could be
+ *   baseline code, and if it is, the situation is as for Table entries: a call
+ *   to an import will always go via that import's tier-1 code, which will tier
+ * up with an indirect jump.
  *
  *   To do better, we must update all the import tables in the system that
  *   import functions from instances whose modules have tiered up.  This is
@@ -473,7 +498,7 @@ static const double spaceCutoffPct = 0.9;
 
 // Figure out whether we should use tiered compilation or not.
 static bool TieringBeneficial(uint32_t codeSize) {
-  uint32_t cpuCount = HelperThreadState().cpuCount;
+  uint32_t cpuCount = GetHelperThreadCPUCount();
   MOZ_ASSERT(cpuCount > 0);
 
   // It's mostly sensible not to background compile when there's only one
@@ -487,17 +512,15 @@ static bool TieringBeneficial(uint32_t codeSize) {
     return false;
   }
 
-  MOZ_ASSERT(HelperThreadState().threadCount >= cpuCount);
-
   // Compute the max number of threads available to do actual background
   // compilation work.
 
-  uint32_t workers = HelperThreadState().maxWasmCompilationThreads();
+  uint32_t workers = GetMaxWasmCompilationThreads();
 
   // The number of cores we will use is bounded both by the CPU count and the
-  // worker count.
+  // worker count, since the worker count already takes this into account.
 
-  uint32_t cores = std::min(cpuCount, workers);
+  uint32_t cores = workers;
 
   SystemClass cls = ClassifySystem();
 
@@ -541,6 +564,11 @@ static bool TieringBeneficial(uint32_t codeSize) {
   return true;
 }
 
+// Ensure that we have the non-compiler requirements to tier safely.
+static bool PlatformCanTier() {
+  return CanUseExtraThreads() && jit::CanFlushExecutionContextForAllThreads();
+}
+
 CompilerEnvironment::CompilerEnvironment(const CompileArgs& args)
     : state_(InitialWithArgs), args_(&args) {}
 
@@ -559,20 +587,6 @@ void CompilerEnvironment::computeParameters() {
   state_ = Computed;
 }
 
-// Check that this architecture either:
-// - is cache-coherent, which is the case for most tier-1 architectures we care
-// about.
-// - or has the ability to invalidate the instruction cache of all threads, so
-// background compilation in tiered compilation can be synchronized across all
-// threads.
-static bool IsICacheSafe() {
-#ifdef JS_CODEGEN_ARM64
-  return jit::CanFlushICacheFromBackgroundThreads();
-#else
-  return true;
-#endif
-}
-
 void CompilerEnvironment::computeParameters(Decoder& d) {
   MOZ_ASSERT(!isComputed());
 
@@ -584,16 +598,14 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
   bool baselineEnabled = args_->baselineEnabled;
   bool ionEnabled = args_->ionEnabled;
   bool debugEnabled = args_->debugEnabled;
-  bool craneliftEnabled = args_->craneliftEnabled;
   bool forceTiering = args_->forceTiering;
 
-  bool hasSecondTier = ionEnabled || craneliftEnabled;
+  bool hasSecondTier = ionEnabled;
   MOZ_ASSERT_IF(debugEnabled, baselineEnabled);
   MOZ_ASSERT_IF(forceTiering, baselineEnabled && hasSecondTier);
 
   // Various constraints in various places should prevent failure here.
-  MOZ_RELEASE_ASSERT(baselineEnabled || ionEnabled || craneliftEnabled);
-  MOZ_RELEASE_ASSERT(!(ionEnabled && craneliftEnabled));
+  MOZ_RELEASE_ASSERT(baselineEnabled || ionEnabled);
 
   uint32_t codeSectionSize = 0;
 
@@ -602,8 +614,9 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     codeSectionSize = range.size;
   }
 
-  if (baselineEnabled && hasSecondTier && CanUseExtraThreads() &&
-      (TieringBeneficial(codeSectionSize) || forceTiering) && IsICacheSafe()) {
+  if (baselineEnabled && hasSecondTier &&
+      (TieringBeneficial(codeSectionSize) || forceTiering) &&
+      PlatformCanTier()) {
     mode_ = CompileMode::Tier1;
     tier_ = Tier::Baseline;
   } else {
@@ -611,8 +624,7 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     tier_ = hasSecondTier ? Tier::Optimized : Tier::Baseline;
   }
 
-  optimizedBackend_ =
-      craneliftEnabled ? OptimizedBackend::Cranelift : OptimizedBackend::Ion;
+  optimizedBackend_ = OptimizedBackend::Ion;
 
   debug_ = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
 
@@ -692,7 +704,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   CompilerEnvironment compilerEnv(args);
   compilerEnv.computeParameters(d);
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, nullptr, error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, nullptr, error, warnings);
   if (!mg.init(nullptr)) {
     return nullptr;
   }
@@ -708,42 +720,36 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   return mg.finishModule(bytecode, listener);
 }
 
-void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                        const Module& module, Atomic<bool>* cancelled) {
-  UniqueChars error;
-  Decoder d(bytecode, 0, &error);
+bool wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
+                        const Module& module, UniqueChars* error,
+                        UniqueCharsVector* warnings, Atomic<bool>* cancelled) {
+  Decoder d(bytecode, 0, error);
 
-  OptimizedBackend optimizedBackend = args.craneliftEnabled
-                                          ? OptimizedBackend::Cranelift
-                                          : OptimizedBackend::Ion;
+  OptimizedBackend optimizedBackend = OptimizedBackend::Ion;
 
   ModuleEnvironment moduleEnv(args.features);
   if (!DecodeModuleEnvironment(d, &moduleEnv)) {
-    return;
+    return false;
   }
   CompilerEnvironment compilerEnv(CompileMode::Tier2, Tier::Optimized,
                                   optimizedBackend, DebugEnabled::False);
   compilerEnv.computeParameters(d);
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, &error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, error,
+                     warnings);
   if (!mg.init(nullptr)) {
-    return;
+    return false;
   }
 
   if (!DecodeCodeSection(moduleEnv, d, mg)) {
-    return;
+    return false;
   }
 
   if (!DecodeModuleTail(d, &moduleEnv)) {
-    return;
+    return false;
   }
 
-  if (!mg.finishTier2(module)) {
-    return;
-  }
-
-  // The caller doesn't care about success or failure; only that compilation
-  // is inactive, so there is no success to return here.
+  return mg.finishTier2(module);
 }
 
 class StreamingDecoder {
@@ -847,7 +853,8 @@ SharedModule wasm::CompileStreaming(
     MOZ_RELEASE_ASSERT(d.done());
   }
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, &cancelled, error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, &cancelled, error,
+                     warnings);
   if (!mg.init(nullptr)) {
     return nullptr;
   }

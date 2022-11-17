@@ -1,0 +1,8 @@
+{
+    "cc": "/usr/bin/gcc",
+    "cxx": "/usr/bin/g++",
+    "as": "/usr/bin/gcc",
+    "patches": [
+        "profile-g4a10504e1f70c.patch"
+    ]
+}

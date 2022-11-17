@@ -9,17 +9,27 @@ description: Type(x) is string primitive or String object
 
 //CHECK#1
 if (+"1" !== 1) {
-  $ERROR('#1: +"1" === 1. Actual: ' + (+"1"));
+  throw new Test262Error('#1: +"1" === 1. Actual: ' + (+"1"));
 }
 
 //CHECK#2
-if (isNaN(+"x") !== true) {
-  $ERROR('#2: +"x" === Not-a-Number. Actual: ' + (+"x"));
+if (+new Number("-1") !== -1) {
+  throw new Test262Error('#2: +new String("-1") === -1. Actual: ' + (+new String("-1")));
 }
 
 //CHECK#3
-if (+new Number("-1") !== -1) {
-  $ERROR('#3: +new String("-1") === -1. Actual: ' + (+new String("-1")));
+if (isNaN(+"x") !== true) {
+  throw new Test262Error('#3: +"x" === Not-a-Number. Actual: ' + (+"x"));
+}
+
+//CHECK#4
+if (isNaN(+"INFINITY") !== true) {
+  throw new Test262Error('#4: +"INFINITY" === Not-a-Number. Actual: ' + (+"INFINITY"));
+}
+
+//CHECK#5
+if (isNaN(+"infinity") !== true) {
+  throw new Test262Error('#5: +"infinity" === Not-a-Number. Actual: ' + (+"infinity"));
 }
 
 reportCompare(0, 0);

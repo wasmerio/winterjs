@@ -4,11 +4,31 @@
 
 #include "builtin/TestingFunctions.h"
 #include "js/ArrayBuffer.h"  // JS::{IsArrayBufferObject,GetArrayBufferLengthAndData,NewExternalArrayBuffer}
+#include "js/GlobalObject.h"        // JS_NewGlobalObject
+#include "js/PropertyAndElement.h"  // JS_GetProperty, JS_SetProperty
 #include "js/StructuredClone.h"
 
 #include "jsapi-tests/tests.h"
 
 using namespace js;
+
+#ifdef DEBUG
+// Skip test, since it will abort with an assert in buf->Init(7).
+#else
+BEGIN_TEST(testStructuredClone_invalidLength) {
+  auto buf = js::MakeUnique<JSStructuredCloneData>(
+      JS::StructuredCloneScope::DifferentProcess);
+  CHECK(buf);
+  CHECK(buf->Init(7));
+  RootedValue clone(cx);
+  JS::CloneDataPolicy policy;
+  CHECK(!JS_ReadStructuredClone(cx, *buf, JS_STRUCTURED_CLONE_VERSION,
+                                JS::StructuredCloneScope::DifferentProcess,
+                                &clone, policy, nullptr, nullptr));
+  return true;
+}
+END_TEST(testStructuredClone_invalidLength)
+#endif
 
 BEGIN_TEST(testStructuredClone_object) {
   JS::RootedObject g1(cx, createGlobal());
@@ -290,7 +310,7 @@ BEGIN_TEST(testStructuredClone_SavedFrame) {
     JS::RootedObject srcObj(cx, &srcVal.toObject());
 
     CHECK(srcObj->is<js::SavedFrame>());
-    js::RootedSavedFrame srcFrame(cx, &srcObj->as<js::SavedFrame>());
+    JS::Rooted<js::SavedFrame*> srcFrame(cx, &srcObj->as<js::SavedFrame>());
 
     CHECK(srcFrame->getPrincipals() == pp->principals);
 

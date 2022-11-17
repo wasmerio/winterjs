@@ -9,10 +9,8 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "ds/BitArray.h"
 #include "gc/AllocKind.h"
-#include "gc/GCEnum.h"
-#include "gc/Memory.h"
+#include "gc/Pretenuring.h"
 #include "js/HeapAPI.h"
 #include "js/TypeDecls.h"
 #include "util/Poison.h"
@@ -21,7 +19,7 @@ namespace js {
 
 class AutoLockGC;
 class AutoLockGCBgAlloc;
-class NurseryDecommitTask;
+class Nursery;
 
 namespace gc {
 
@@ -31,7 +29,6 @@ class ArenaList;
 class GCRuntime;
 class MarkingValidator;
 class SortedArenaList;
-class StoreBuffer;
 class TenuredCell;
 
 // Cells are aligned to CellAlignShift, so the largest tagged null pointer is:
@@ -155,9 +152,9 @@ class FreeSpan {
  * <-------------------------> = first thing offset
  */
 class alignas(ArenaSize) Arena {
-  static JS_FRIEND_DATA const uint8_t ThingSizes[];
-  static JS_FRIEND_DATA const uint8_t FirstThingOffsets[];
-  static JS_FRIEND_DATA const uint8_t ThingsPerArena[];
+  static JS_PUBLIC_DATA const uint8_t ThingSizes[];
+  static JS_PUBLIC_DATA const uint8_t FirstThingOffsets[];
+  static JS_PUBLIC_DATA const uint8_t ThingsPerArena[];
   /*
    * The first span of free things in the arena. Most of these spans are
    * stored as offsets in free regions of the data array, and most operations
@@ -168,6 +165,13 @@ class alignas(ArenaSize) Arena {
   FreeSpan firstFreeSpan;
 
  public:
+  /*
+   * One of the AllocKind constants or AllocKind::LIMIT when the arena does
+   * not contain any GC things and is on the list of empty arenas in the GC
+   * chunk.
+   */
+  AllocKind allocKind;
+
   /*
    * The zone that this Arena is contained within, when allocated. The offset
    * of this field must match the ArenaZoneOffset stored in js/HeapAPI.h,
@@ -183,33 +187,27 @@ class alignas(ArenaSize) Arena {
   Arena* next;
 
  private:
-  /*
-   * One of the AllocKind constants or AllocKind::LIMIT when the arena does
-   * not contain any GC things and is on the list of empty arenas in the GC
-   * chunk.
-   *
-   * We use 8 bits for the alloc kind so the compiler can use byte-level
-   * memory instructions to access it.
-   */
-  size_t allocKind : 8;
-
- private:
-  /*
-   * When recursive marking uses too much stack we delay marking of
-   * arenas and link them into a list for later processing. This
-   * uses the following fields.
-   */
-  static const size_t DELAYED_MARKING_FLAG_BITS = 3;
+  static const size_t ARENA_FLAG_BITS = 4;
   static const size_t DELAYED_MARKING_ARENA_BITS =
-      JS_BITS_PER_WORD - 8 - DELAYED_MARKING_FLAG_BITS;
+      JS_BITS_PER_WORD - ArenaShift;
+  static_assert(
+      ARENA_FLAG_BITS + DELAYED_MARKING_ARENA_BITS <= JS_BITS_PER_WORD,
+      "Not enough space to pack flags and nextDelayedMarkingArena_ pointer "
+      "into a single word.");
+
+  /*
+   * True until the arena is swept for the first time.
+   */
+  size_t isNewlyCreated_ : 1;
+
+  /*
+   * When recursive marking uses too much stack we delay marking of arenas and
+   * link them into a list for later processing. This uses the following fields.
+   */
   size_t onDelayedMarkingList_ : 1;
   size_t hasDelayedBlackMarking_ : 1;
   size_t hasDelayedGrayMarking_ : 1;
   size_t nextDelayedMarkingArena_ : DELAYED_MARKING_ARENA_BITS;
-  static_assert(
-      DELAYED_MARKING_ARENA_BITS >= JS_BITS_PER_WORD - ArenaShift,
-      "Arena::nextDelayedMarkingArena_ packing assumes that ArenaShift has "
-      "enough bits to cover allocKind and delayed marking state.");
 
   union {
     /*
@@ -258,7 +256,7 @@ class alignas(ArenaSize) Arena {
     AlwaysPoison(&zone, JS_FREED_ARENA_PATTERN, sizeof(zone),
                  MemCheckKind::MakeNoAccess);
 
-    allocKind = size_t(AllocKind::LIMIT);
+    allocKind = AllocKind::LIMIT;
     onDelayedMarkingList_ = 0;
     hasDelayedBlackMarking_ = 0;
     hasDelayedGrayMarking_ = 0;
@@ -287,7 +285,7 @@ class alignas(ArenaSize) Arena {
 
   AllocKind getAllocKind() const {
     MOZ_ASSERT(allocated());
-    return AllocKind(allocKind);
+    return allocKind;
   }
 
   FreeSpan* getFirstFreeSpan() { return &firstFreeSpan; }
@@ -363,6 +361,8 @@ class alignas(ArenaSize) Arena {
     return tailOffset % thingSize == 0;
   }
 
+  bool isNewlyCreated() const { return isNewlyCreated_; }
+
   bool onDelayedMarkingList() const { return onDelayedMarkingList_; }
 
   Arena* getNextDelayedMarking() const {
@@ -420,7 +420,7 @@ class alignas(ArenaSize) Arena {
   inline size_t& atomBitmapStart();
 
   template <typename T>
-  size_t finalize(JSFreeOp* fop, AllocKind thingKind, size_t thingSize);
+  size_t finalize(JS::GCContext* gcx, AllocKind thingKind, size_t thingSize);
 
   static void staticAsserts();
   static void checkLookupTables();
@@ -572,12 +572,6 @@ MOZ_ALWAYS_INLINE void MarkBitmap::unmark(const TenuredCell* cell) {
   *word &= ~mask;
 }
 
-inline void MarkBitmap::clear() {
-  for (size_t i = 0; i < MarkBitmap::WordCount; i++) {
-    bitmap[i] = 0;
-  }
-}
-
 inline MarkBitmapWord* MarkBitmap::arenaBits(Arena* arena) {
   static_assert(
       ArenaBitmapBits == ArenaBitmapWords * JS_BITS_PER_WORD,
@@ -616,7 +610,8 @@ class TenuredChunk : public TenuredChunkBase {
     return offset >= offsetof(TenuredChunk, arenas) && offset < ChunkSize;
   }
 
-  static size_t arenaIndex(uintptr_t addr) {
+  static size_t arenaIndex(const Arena* arena) {
+    uintptr_t addr = arena->address();
     MOZ_ASSERT(!TenuredChunk::fromAddress(addr)->isNurseryChunk());
     MOZ_ASSERT(withinValidRange(addr));
     uintptr_t offset = addr & ChunkMask;
@@ -643,33 +638,56 @@ class TenuredChunk : public TenuredChunkBase {
   void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
   void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-  [[nodiscard]] bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
+  void decommitFreeArenas(GCRuntime* gc, const bool& cancel, AutoLockGC& lock);
+  [[nodiscard]] bool decommitOneFreePage(GCRuntime* gc, size_t pageIndex,
+                                         AutoLockGC& lock);
   void decommitAllArenas();
 
   // This will decommit each unused not-already decommitted arena. It performs a
   // system call for each arena but is only used during OOM.
   void decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock);
 
-  static TenuredChunk* allocate(GCRuntime* gc);
-  void init(GCRuntime* gc);
+  static void* allocate(GCRuntime* gc);
+  static TenuredChunk* emplace(void* ptr, GCRuntime* gc,
+                               bool allMemoryCommitted);
 
   /* Unlink and return the freeArenasHead. */
   Arena* fetchNextFreeArena(GCRuntime* gc);
 
 #ifdef DEBUG
   void verify() const;
+#else
+  void verify() const {}
 #endif
 
  private:
-  /* Search for a decommitted arena to allocate. */
-  unsigned findDecommittedArenaOffset();
-  Arena* fetchNextDecommittedArena();
-
-  void addArenaToFreeList(GCRuntime* gc, Arena* arena);
-  void addArenaToDecommittedList(const Arena* arena);
+  void commitOnePage(GCRuntime* gc);
 
   void updateChunkListAfterAlloc(GCRuntime* gc, const AutoLockGC& lock);
-  void updateChunkListAfterFree(GCRuntime* gc, const AutoLockGC& lock);
+  void updateChunkListAfterFree(GCRuntime* gc, size_t numArenasFree,
+                                const AutoLockGC& lock);
+
+  // Check if all arenas in a page are free.
+  bool canDecommitPage(size_t pageIndex) const;
+
+  // Check the arena from freeArenasList is located in a free page.
+  // Unlike the isPageFree(size_t) version, this isPageFree(Arena*) will see the
+  // following arenas from the freeArenasHead are also located in the same page,
+  // to prevent not to access the arenas mprotect'ed during compaction in debug
+  // build.
+  bool isPageFree(const Arena* arena) const;
+
+  // Get the page index of the arena.
+  size_t pageIndex(const Arena* arena) const {
+    return pageIndex(arenaIndex(arena));
+  }
+  size_t pageIndex(size_t arenaIndex) const {
+    return arenaIndex / ArenasPerPage;
+  }
+
+  Arena* pageAddress(size_t pageIndex) {
+    return &arenas[pageIndex * ArenasPerPage];
+  }
 };
 
 inline void Arena::checkAddress() const {
@@ -695,27 +713,28 @@ static const int32_t ChunkStoreBufferOffsetFromLastByte =
 // Cell header stored before all nursery cells.
 struct alignas(gc::CellAlignBytes) NurseryCellHeader {
   // Store zone pointer with the trace kind in the lowest three bits.
-  const uintptr_t zoneAndTraceKind;
+  const uintptr_t allocSiteAndTraceKind;
 
   // We only need to store a subset of trace kinds so this doesn't cover the
   // full range.
   static const uintptr_t TraceKindMask = 3;
 
-  static uintptr_t MakeValue(JS::Zone* const zone, JS::TraceKind kind) {
+  static uintptr_t MakeValue(AllocSite* const site, JS::TraceKind kind) {
     MOZ_ASSERT(uintptr_t(kind) < TraceKindMask);
-    MOZ_ASSERT((uintptr_t(zone) & TraceKindMask) == 0);
-    return uintptr_t(zone) | uintptr_t(kind);
+    MOZ_ASSERT((uintptr_t(site) & TraceKindMask) == 0);
+    return uintptr_t(site) | uintptr_t(kind);
   }
 
-  NurseryCellHeader(JS::Zone* const zone, JS::TraceKind kind)
-      : zoneAndTraceKind(MakeValue(zone, kind)) {}
+  inline NurseryCellHeader(AllocSite* site, JS::TraceKind kind);
 
-  JS::Zone* zone() const {
-    return reinterpret_cast<JS::Zone*>(zoneAndTraceKind & ~TraceKindMask);
+  AllocSite* allocSite() const {
+    return reinterpret_cast<AllocSite*>(allocSiteAndTraceKind & ~TraceKindMask);
   }
+
+  JS::Zone* zone() const { return allocSite()->zone(); }
 
   JS::TraceKind traceKind() const {
-    return JS::TraceKind(zoneAndTraceKind & TraceKindMask);
+    return JS::TraceKind(allocSiteAndTraceKind & TraceKindMask);
   }
 
   static const NurseryCellHeader* from(const Cell* cell) {

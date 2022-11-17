@@ -148,14 +148,14 @@ class TestMozConfigure(BaseConfigureTest):
                 self.version = version
 
             def __call__(self, stdin, args):
-                this.assertEquals(args, ("-version",))
+                this.assertEqual(args, ("-version",))
                 return 0, self.version, ""
 
         def check_nsis_version(version):
             sandbox = self.get_sandbox(
                 {"/usr/bin/makensis": FakeNSIS(version)},
                 {},
-                [],
+                ["--target=x86_64-pc-mingw32", "--disable-bootstrap"],
                 {"PATH": "/usr/bin", "MAKENSISU": "/usr/bin/makensis"},
             )
             return sandbox._value_for(sandbox["nsis_version"])
@@ -166,13 +166,13 @@ class TestMozConfigure(BaseConfigureTest):
         with self.assertRaises(SystemExit):
             check_nsis_version("v3.0a2")
 
-        self.assertEquals(check_nsis_version("v3.0b1"), "3.0b1")
-        self.assertEquals(check_nsis_version("v3.0b2"), "3.0b2")
-        self.assertEquals(check_nsis_version("v3.0rc1"), "3.0rc1")
-        self.assertEquals(check_nsis_version("v3.0"), "3.0")
-        self.assertEquals(check_nsis_version("v3.0-2"), "3.0")
-        self.assertEquals(check_nsis_version("v3.0.1"), "3.0")
-        self.assertEquals(check_nsis_version("v3.1"), "3.1")
+        self.assertEqual(check_nsis_version("v3.0b1"), "3.0b1")
+        self.assertEqual(check_nsis_version("v3.0b2"), "3.0b2")
+        self.assertEqual(check_nsis_version("v3.0rc1"), "3.0rc1")
+        self.assertEqual(check_nsis_version("v3.0"), "3.0")
+        self.assertEqual(check_nsis_version("v3.0-2"), "3.0")
+        self.assertEqual(check_nsis_version("v3.0.1"), "3.0")
+        self.assertEqual(check_nsis_version("v3.1"), "3.1")
 
 
 if __name__ == "__main__":

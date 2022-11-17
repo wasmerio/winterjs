@@ -7,7 +7,21 @@
 #ifndef builtin_RegExp_h
 #define builtin_RegExp_h
 
-#include "vm/RegExpObject.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "NamespaceImports.h"
+
+#include "js/PropertySpec.h"
+#include "js/RootingAPI.h"
+#include "js/TypeDecls.h"
+#include "vm/RegExpShared.h"
+
+class JSLinearString;
+
+namespace JS {
+class Value;
+}
 
 /*
  * The following builtin natives are extern'd for pointer comparison in
@@ -15,6 +29,11 @@
  */
 
 namespace js {
+
+class ArrayObject;
+class MatchPairs;
+class RegExpObject;
+class RegExpStatics;
 
 JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
 
@@ -27,7 +46,7 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
  */
 [[nodiscard]] bool ExecuteRegExpLegacy(JSContext* cx, RegExpStatics* res,
                                        Handle<RegExpObject*> reobj,
-                                       HandleLinearString input,
+                                       Handle<JSLinearString*> input,
                                        size_t* lastIndex, bool test,
                                        MutableHandleValue rval);
 
@@ -42,7 +61,7 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
 
 [[nodiscard]] extern bool RegExpMatcherRaw(JSContext* cx, HandleObject regexp,
                                            HandleString input,
-                                           int32_t maybeLastIndex,
+                                           int32_t lastIndex,
                                            MatchPairs* maybeMatches,
                                            MutableHandleValue output);
 
@@ -106,8 +125,9 @@ JSObject* InitRegExpClass(JSContext* cx, HandleObject obj);
                                                        JSObject* proto);
 
 [[nodiscard]] extern bool RegExpGetSubstitution(
-    JSContext* cx, HandleArrayObject matchResult, HandleLinearString string,
-    size_t position, HandleLinearString replacement, size_t firstDollarIndex,
+    JSContext* cx, Handle<ArrayObject*> matchResult,
+    Handle<JSLinearString*> string, size_t position,
+    Handle<JSLinearString*> replacement, size_t firstDollarIndex,
     HandleValue namedCaptures, MutableHandleValue rval);
 
 [[nodiscard]] extern bool GetFirstDollarIndex(JSContext* cx, unsigned argc,

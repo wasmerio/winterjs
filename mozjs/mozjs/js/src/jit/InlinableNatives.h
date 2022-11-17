@@ -63,6 +63,9 @@
   _(IntlGuardToPluralRules)                        \
   _(IntlGuardToRelativeTimeFormat)                 \
                                                    \
+  _(MapGet)                                        \
+  _(MapHas)                                        \
+                                                   \
   _(MathAbs)                                       \
   _(MathFloor)                                     \
   _(MathCeil)                                      \
@@ -112,6 +115,8 @@
   _(RegExpInstanceOptimizable)                     \
   _(GetFirstDollarIndex)                           \
                                                    \
+  _(SetHas)                                        \
+                                                   \
   _(String)                                        \
   _(StringToString)                                \
   _(StringValueOf)                                 \
@@ -119,6 +124,9 @@
   _(StringFromCharCode)                            \
   _(StringFromCodePoint)                           \
   _(StringCharAt)                                  \
+  _(StringIndexOf)                                 \
+  _(StringStartsWith)                              \
+  _(StringEndsWith)                                \
   _(StringToLowerCase)                             \
   _(StringToUpperCase)                             \
                                                    \
@@ -140,7 +148,6 @@
   _(IntrinsicUnsafeGetObjectFromReservedSlot)      \
   _(IntrinsicUnsafeGetInt32FromReservedSlot)       \
   _(IntrinsicUnsafeGetStringFromReservedSlot)      \
-  _(IntrinsicUnsafeGetBooleanFromReservedSlot)     \
                                                    \
   _(IntrinsicIsCallable)                           \
   _(IntrinsicIsConstructor)                        \

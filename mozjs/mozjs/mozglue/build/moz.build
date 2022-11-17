@@ -38,11 +38,22 @@ if CONFIG["MOZ_TSAN"]:
 if CONFIG["OS_TARGET"] == "WINNT":
     if CONFIG["MOZ_MEMORY"]:
         DEFFILE = "mozglue.def"
+    OS_LIBS += [
+        "advapi32",
+        "user32",
+        "winmm",
+        "uuid",
+    ]
     # We'll break the DLL blocklist if we immediately load user32.dll.
-    # For the same reason, we delayload winmm.dll which statically links
-    # user32.dll.
+    # For the same reason, we delayload these other DLLs to avoid eager
+    # dependencies on user32.dll.
     DELAYLOAD_DLLS += [
+        "advapi32.dll",
+        "dbghelp.dll",
+        "oleaut32.dll",
+        "ole32.dll",
         "user32.dll",
+        "version.dll",
         "winmm.dll",
     ]
 
@@ -67,13 +78,7 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"]:
         "arm.h",
         "mips.h",
         "ppc.h",
-        "SSE.h",
     ]
-
-    if CONFIG["CPU_ARCH"].startswith("x86"):
-        SOURCES += [
-            "SSE.cpp",
-        ]
 
     if CONFIG["CPU_ARCH"] == "arm":
         SOURCES += [
@@ -99,18 +104,20 @@ USE_LIBS += [
     "mfbt",
 ]
 
+if CONFIG["OS_ARCH"] == "WINNT":
+    RCINCLUDE = "/mozglue/mozglue.rc"
+
+    if not CONFIG["HAVE_64BIT_BUILD"]:
+        EXPORTS += [
+            "IAccessible32.manifest",
+        ]
+
+    EXPORTS += [
+        "IAccessible64.manifest",
+    ]
+
 LIBRARY_DEFINES["IMPL_MFBT"] = True
 LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True
-
-if CONFIG["OS_TARGET"] == "Darwin":
-    # On OSX 10.10.3, a dead lock happens in some cases involving dynamic
-    # symbol resolution for symbols that jemalloc itself uses. While it
-    # might be possible to find a way to avoid all such symbol resolutions,
-    # it's currently not possible because at the very least there's a call
-    # to pthread_self from tsd_init_check_recursion, which is necessary
-    # because somehow clang doesn't want to accept the __thread keyword
-    # for TLS.
-    LDFLAGS += ["-Wl,-bind_at_load"]
 
 if CONFIG["MOZ_LINKER"] and CONFIG["CPU_ARCH"] == "arm":
     LDFLAGS += ["-Wl,-version-script,%s/arm-eabi-filter" % SRCDIR]

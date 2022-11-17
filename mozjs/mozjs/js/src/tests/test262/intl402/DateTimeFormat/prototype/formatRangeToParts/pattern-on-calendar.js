@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.DateTimeFormat-formatRange is not released yet
 // Copyright 2019 Google Inc.  All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -7,29 +6,12 @@ esid: sec-initializedatetimeformat
 description: >
   Checks the DateTimeFormat choose different patterns based
   on calendar.
+includes: [testIntl.js]
 features: [Intl.DateTimeFormat-formatRange]
 locale: [en]
 ---*/
 
-let calendars = [
-  "buddhist",
-  "chinese",
-  "coptic",
-  "dangi",
-  "ethiopic",
-  "ethioaa",
-  "gregory",
-  "hebrew",
-  "indian",
-  "islamic",
-  "islamic-civil",
-  "islamic-rgsa",
-  "islamic-tbla",
-  "islamic-umalqura",
-  "japanese",
-  "persian",
-  "roc"
-];
+let calendars = allCalendars();
 let date1 = new Date(2017, 3, 12);
 let date2 = new Date();
 

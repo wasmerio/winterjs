@@ -10,8 +10,13 @@
 #  include "mozilla/Maybe.h"
 
 #  include "gc/Zone.h"
+#  include "jit/BaselineIC.h"
 #  include "jit/CacheIRCompiler.h"
 #  include "jit/JitScript.h"
+#  include "vm/JSScript.h"
+
+#  include "vm/JSObject-inl.h"
+#  include "vm/Realm-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -39,7 +44,6 @@ CacheIRHealth::Happiness CacheIRHealth::spewStubHealth(
   const CacheIRStubInfo* stubInfo = stub->stubInfo();
   CacheIRReader stubReader(stubInfo);
   uint32_t totalStubHealth = 0;
-
   spew->beginListProperty("cacheIROps");
   while (stubReader.more()) {
     CacheOp op = stubReader.readOp();
@@ -69,7 +73,93 @@ CacheIRHealth::Happiness CacheIRHealth::spewStubHealth(
   return stubHappiness;
 }
 
+BaseScript* CacheIRHealth::maybeExtractBaseScript(JSContext* cx, Shape* shape) {
+  TaggedProto taggedProto = shape->base()->proto();
+  if (!taggedProto.isObject()) {
+    return nullptr;
+  }
+  Value cval;
+  JSObject* proto = taggedProto.toObject();
+  AutoRealm ar(cx, proto);
+  if (!GetPropertyPure(cx, proto, NameToId(cx->names().constructor), &cval)) {
+    return nullptr;
+  }
+  if (!IsFunctionObject(cval)) {
+    return nullptr;
+  }
+  JSFunction& jsfun = cval.toObject().as<JSFunction>();
+  if (!jsfun.hasBaseScript()) {
+    return nullptr;
+  }
+  return jsfun.baseScript();
+}
+
+void CacheIRHealth::spewShapeInformation(AutoStructuredSpewer& spew,
+                                         JSContext* cx, ICStub* stub) {
+  bool shapesStarted = false;
+  const CacheIRStubInfo* stubInfo = stub->toCacheIRStub()->stubInfo();
+  size_t offset = 0;
+  uint32_t fieldIndex = 0;
+
+  while (stubInfo->fieldType(fieldIndex) != StubField::Type::Limit) {
+    if (stubInfo->fieldType(fieldIndex) == StubField::Type::Shape) {
+      Shape* shape = reinterpret_cast<Shape*>(
+          stubInfo->getStubRawWord(stub->toCacheIRStub(), offset));
+      if (!shapesStarted) {
+        shapesStarted = true;
+        spew->beginListProperty("shapes");
+      }
+
+      const PropMap* propMap = shape->propMap();
+      if (propMap) {
+        spew->beginObject();
+        {
+          if (!propMap->isDictionary()) {
+            uint32_t mapLength = shape->propMapLength();
+            if (mapLength) {
+              PropertyKey lastKey = shape->lastProperty().key();
+              if (lastKey.isInt()) {
+                spew->property("lastProperty", lastKey.toInt());
+              } else if (lastKey.isString()) {
+                JSString* str = lastKey.toString();
+                if (str && str->isLinear()) {
+                  spew->property("lastProperty", &str->asLinear());
+                }
+              } else {
+                MOZ_ASSERT(lastKey.isSymbol());
+                JSString* str = lastKey.toSymbol()->description();
+                if (str && str->isLinear()) {
+                  spew->property("lastProperty", &str->asLinear());
+                }
+              }
+            }
+            spew->property("totalKeys", propMap->approximateEntryCount());
+            BaseScript* baseScript = maybeExtractBaseScript(cx, shape);
+            if (baseScript) {
+              spew->beginObjectProperty("shapeAllocSite");
+              {
+                spew->property("filename", baseScript->filename());
+                spew->property("line", baseScript->lineno());
+                spew->property("column", baseScript->column());
+              }
+              spew->endObject();
+            }
+          }
+        }
+        spew->endObject();
+      }
+    }
+    offset += StubField::sizeInBytes(stubInfo->fieldType(fieldIndex));
+    fieldIndex++;
+  }
+
+  if (shapesStarted) {
+    spew->endList();
+  }
+}
+
 bool CacheIRHealth::spewNonFallbackICInformation(AutoStructuredSpewer& spew,
+                                                 JSContext* cx,
                                                  ICStub* firstStub,
                                                  Happiness* entryHappiness) {
   const CacheIRStubInfo* stubInfo = firstStub->toCacheIRStub()->stubInfo();
@@ -87,6 +177,8 @@ bool CacheIRHealth::spewNonFallbackICInformation(AutoStructuredSpewer& spew,
       if (stubHappiness < *entryHappiness) {
         *entryHappiness = stubHappiness;
       }
+
+      spewShapeInformation(spew, cx, stub);
 
       ICStub* nextStub = stub->toCacheIRStub()->next();
       if (!nextStub->isFallback()) {
@@ -169,10 +261,10 @@ bool CacheIRHealth::spewNonFallbackICInformation(AutoStructuredSpewer& spew,
   return true;
 }
 
-bool CacheIRHealth::spewICEntryHealth(AutoStructuredSpewer& spew,
+bool CacheIRHealth::spewICEntryHealth(AutoStructuredSpewer& spew, JSContext* cx,
                                       HandleScript script, ICEntry* entry,
-                                      jsbytecode* pc, JSOp op,
-                                      Happiness* entryHappiness) {
+                                      ICFallbackStub* fallback, jsbytecode* pc,
+                                      JSOp op, Happiness* entryHappiness) {
   spew->property("op", CodeName(op));
 
   // TODO: If a perf issue arises, look into improving the SrcNotes
@@ -183,20 +275,20 @@ bool CacheIRHealth::spewICEntryHealth(AutoStructuredSpewer& spew,
 
   ICStub* firstStub = entry->firstStub();
   if (!firstStub->isFallback()) {
-    if (!spewNonFallbackICInformation(spew, firstStub, entryHappiness)) {
+    if (!spewNonFallbackICInformation(spew, cx, firstStub, entryHappiness)) {
       return false;
     }
   }
 
-  if (entry->fallbackStub()->state().mode() != ICState::Mode::Specialized) {
+  if (fallback->state().mode() != ICState::Mode::Specialized) {
     *entryHappiness = Sad;
   }
 
   spew->property("entryHappiness", uint8_t(*entryHappiness));
 
-  spew->property("mode", uint8_t(entry->fallbackStub()->state().mode()));
+  spew->property("mode", uint8_t(fallback->state().mode()));
 
-  spew->property("fallbackCount", entry->fallbackStub()->enteredCount());
+  spew->property("fallbackCount", fallback->enteredCount());
 
   return true;
 }
@@ -205,7 +297,7 @@ void CacheIRHealth::spewScriptFinalWarmUpCount(JSContext* cx,
                                                const char* filename,
                                                JSScript* script,
                                                uint32_t warmUpCount) {
-  AutoStructuredSpewer spew(cx, SpewChannel::RateMyCacheIR, nullptr);
+  AutoStructuredSpewer spew(cx, SpewChannel::CacheIRHealthReport, nullptr);
   if (!spew) {
     return;
   }
@@ -228,15 +320,17 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
     zone->scriptFinalWarmUpCountMap = std::move(map);
   }
 
-  auto* filename = js_pod_malloc<char>(strlen(script->filename()) + 1);
-  if (!filename) {
+  SharedImmutableString sfilename =
+      cx->runtime()->sharedImmutableStrings().getOrCreate(
+          script->filename(), strlen(script->filename()));
+  if (!sfilename) {
+    ReportOutOfMemory(cx);
     return false;
   }
-  strcpy(filename, script->filename());
 
   if (!zone->scriptFinalWarmUpCountMap->put(
-          script, mozilla::MakeTuple(uint32_t(0), filename))) {
-    js_free(filename);
+          script, mozilla::MakeTuple(uint32_t(0), std::move(sfilename)))) {
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -244,9 +338,11 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
   return true;
 }
 
-void CacheIRHealth::rateIC(JSContext* cx, ICEntry* entry, HandleScript script,
-                           SpewContext context) {
-  AutoStructuredSpewer spew(cx, SpewChannel::RateMyCacheIR, script);
+void CacheIRHealth::healthReportForIC(JSContext* cx, ICEntry* entry,
+                                      ICFallbackStub* fallback,
+                                      HandleScript script,
+                                      SpewContext context) {
+  AutoStructuredSpewer spew(cx, SpewChannel::CacheIRHealthReport, script);
   if (!spew) {
     return;
   }
@@ -257,25 +353,26 @@ void CacheIRHealth::rateIC(JSContext* cx, ICEntry* entry, HandleScript script,
   }
   spew->property("spewContext", uint8_t(context));
 
-  jsbytecode* op = entry->pc(script);
+  jsbytecode* op = script->offsetToPC(fallback->pcOffset());
   JSOp jsOp = JSOp(*op);
 
   Happiness entryHappiness = Happy;
-  if (!spewICEntryHealth(spew, script, entry, op, jsOp, &entryHappiness)) {
+  if (!spewICEntryHealth(spew, cx, script, entry, fallback, op, jsOp,
+                         &entryHappiness)) {
     cx->recoverFromOutOfMemory();
     return;
   }
   MOZ_ASSERT(entryHappiness == Sad);
 }
 
-void CacheIRHealth::rateScript(JSContext* cx, HandleScript script,
-                               SpewContext context) {
+void CacheIRHealth::healthReportForScript(JSContext* cx, HandleScript script,
+                                          SpewContext context) {
   jit::JitScript* jitScript = script->maybeJitScript();
   if (!jitScript) {
     return;
   }
 
-  AutoStructuredSpewer spew(cx, SpewChannel::RateMyCacheIR, script);
+  AutoStructuredSpewer spew(cx, SpewChannel::CacheIRHealthReport, script);
   if (!spew) {
     return;
   }
@@ -287,43 +384,29 @@ void CacheIRHealth::rateScript(JSContext* cx, HandleScript script,
 
   spew->property("spewContext", uint8_t(context));
 
-  jsbytecode* next = script->code();
-  jsbytecode* end = script->codeEnd();
-
   spew->beginListProperty("entries");
-  ICEntry* prevEntry = nullptr;
+
   Happiness scriptHappiness = Happy;
-  while (next < end) {
-    uint32_t len = 0;
-    uint32_t pcOffset = script->pcToOffset(next);
 
-    jit::ICEntry* entry =
-        jitScript->maybeICEntryFromPCOffset(pcOffset, prevEntry);
-    if (entry) {
-      prevEntry = entry;
+  for (size_t i = 0; i < jitScript->numICEntries(); i++) {
+    ICEntry& entry = jitScript->icEntry(i);
+    ICFallbackStub* fallback = jitScript->fallbackStub(i);
+    jsbytecode* pc = script->offsetToPC(fallback->pcOffset());
+    JSOp op = JSOp(*pc);
+
+    spew->beginObject();
+    Happiness entryHappiness = Happy;
+    if (!spewICEntryHealth(spew, cx, script, &entry, fallback, pc, op,
+                           &entryHappiness)) {
+      cx->recoverFromOutOfMemory();
+      return;
     }
-
-    JSOp op = JSOp(*next);
-    const JSCodeSpec& cs = CodeSpec(op);
-    len = cs.length;
-    MOZ_ASSERT(len);
-
-    if (entry) {
-      spew->beginObject();
-      Happiness entryHappiness = Happy;
-      if (!spewICEntryHealth(spew, script, entry, next, op, &entryHappiness)) {
-        cx->recoverFromOutOfMemory();
-        return;
-      }
-
-      if (entryHappiness < scriptHappiness) {
-        scriptHappiness = entryHappiness;
-      }
-      spew->endObject();
+    if (entryHappiness < scriptHappiness) {
+      scriptHappiness = entryHappiness;
     }
-
-    next += len;
+    spew->endObject();
   }
+
   spew->endList();  // entries
 
   spew->property("scriptHappiness", uint8_t(scriptHappiness));

@@ -6,15 +6,15 @@ info: The Date.prototype property "setUTCHours" has { DontEnum } attributes
 esid: sec-date.prototype.setutchours
 description: Checking DontEnum attribute
 ---*/
-
-if (Date.prototype.propertyIsEnumerable('setUTCHours')) {
-  $ERROR('#1: The Date.prototype.setUTCHours property has the attribute DontEnum');
-}
+assert(
+  !Date.prototype.propertyIsEnumerable('setUTCHours'),
+  'The value of !Date.prototype.propertyIsEnumerable(\'setUTCHours\') is expected to be true'
+);
 
 for (var x in Date.prototype) {
-  if (x === "setUTCHours") {
-    $ERROR('#2: The Date.prototype.setUTCHours has the attribute DontEnum');
-  }
+  assert.notSameValue(x, "setUTCHours", 'The value of x is not "setUTCHours"');
 }
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

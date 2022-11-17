@@ -7,12 +7,12 @@ AC_DEFUN([MOZ_ANDROID_NDK],
 
 case "$target" in
 *-android*|*-linuxandroid*)
-    dnl $android_platform will be set for us by Python configure.
+    dnl $android_* will be set for us by Python configure.
     directory_include_args="-isystem $android_system -isystem $android_sysroot/usr/include"
 
     # clang will do any number of interesting things with host tools unless we tell
     # it to use the NDK tools.
-    extra_opts="-gcc-toolchain $(dirname $(dirname $TOOLCHAIN_PREFIX))"
+    extra_opts="--gcc-toolchain=$(dirname $(dirname $TOOLCHAIN_PREFIX))"
     CPPFLAGS="$extra_opts -D__ANDROID_API__=$android_version $CPPFLAGS"
     ASFLAGS="$extra_opts $ASFLAGS"
     LDFLAGS="$extra_opts $LDFLAGS"
@@ -21,34 +21,9 @@ case "$target" in
     CFLAGS="-fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-fno-short-enums -fno-exceptions $CXXFLAGS $stlport_cppflags"
     ASFLAGS="$directory_include_args -DANDROID $ASFLAGS"
-
-    LDFLAGS="-L$android_platform/usr/lib -Wl,-rpath-link=$android_platform/usr/lib --sysroot=$android_platform $LDFLAGS"
     ;;
 esac
 
-])
-
-AC_DEFUN([MOZ_ANDROID_CPU_ARCH],
-[
-
-if test "$OS_TARGET" = "Android"; then
-    case "${CPU_ARCH}" in
-    arm)
-        ANDROID_CPU_ARCH=armeabi-v7a
-        ;;
-    x86)
-        ANDROID_CPU_ARCH=x86
-        ;;
-    x86_64)
-        ANDROID_CPU_ARCH=x86_64
-        ;;
-    aarch64)
-        ANDROID_CPU_ARCH=arm64-v8a
-        ;;
-    esac
-
-    AC_SUBST(ANDROID_CPU_ARCH)
-fi
 ])
 
 AC_DEFUN([MOZ_ANDROID_STLPORT],
@@ -78,36 +53,5 @@ if test "$OS_TARGET" = "Android"; then
     fi
 fi
 AC_SUBST_LIST([STLPORT_LIBS])
-
-])
-
-
-dnl Configure an Android SDK.
-AC_DEFUN([MOZ_ANDROID_SDK],
-[
-
-MOZ_ARG_WITH_STRING(android-min-sdk,
-[  --with-android-min-sdk=[VER]     Impose a minimum Firefox for Android SDK version],
-[ MOZ_ANDROID_MIN_SDK_VERSION=$withval ])
-
-MOZ_ARG_WITH_STRING(android-max-sdk,
-[  --with-android-max-sdk=[VER]     Impose a maximum Firefox for Android SDK version],
-[ MOZ_ANDROID_MAX_SDK_VERSION=$withval ])
-
-if test -n "$MOZ_ANDROID_MIN_SDK_VERSION"; then
-    if test -n "$MOZ_ANDROID_MAX_SDK_VERSION"; then
-        if test $MOZ_ANDROID_MAX_SDK_VERSION -lt $MOZ_ANDROID_MIN_SDK_VERSION ; then
-            AC_MSG_ERROR([--with-android-max-sdk must be at least the value of --with-android-min-sdk.])
-        fi
-    fi
-
-    if test $MOZ_ANDROID_MIN_SDK_VERSION -gt $ANDROID_TARGET_SDK ; then
-        AC_MSG_ERROR([--with-android-min-sdk is expected to be less than $ANDROID_TARGET_SDK])
-    fi
-
-    AC_SUBST(MOZ_ANDROID_MIN_SDK_VERSION)
-fi
-
-AC_SUBST(MOZ_ANDROID_MAX_SDK_VERSION)
 
 ])

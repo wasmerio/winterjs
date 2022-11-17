@@ -8,20 +8,13 @@ description: >
     For testing call (new Function("arg1,arg2","var x =arg1;
     this.y=arg2;return arg1+arg2;"))("1",2)
 ---*/
+assert.sameValue(
+  (new Function("arg1,arg2", "var x =arg1; this.y=arg2;return arg1+arg2;"))("1", 2),
+  "12",
+  'new Function("arg1,arg2", "var x =arg1; this.y=arg2;return arg1+arg2;")(1, 2) must return "12"'
+);
 
-//CHECK#1
-if ((new Function("arg1,arg2", "var x =arg1; this.y=arg2;return arg1+arg2;"))("1", 2) !== "12") {
-  $ERROR('#1: Every function instance has a [[Call]] property');
-}
-
-//CHECK#2
-if (typeof x !== "undefined") {
-  $ERROR('#2: Every function instance has a [[Call]] property');
-}
-
-//CHECK#3
-if (y !== 2) {
-  $ERROR('#3: Every function instance has a [[Call]] property');
-}
+assert.sameValue(typeof x, "undefined", 'The value of `typeof x` is expected to be "undefined"');
+assert.sameValue(y, 2, 'The value of y is expected to be 2');
 
 reportCompare(0, 0);

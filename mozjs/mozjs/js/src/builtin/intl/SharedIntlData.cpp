@@ -10,31 +10,33 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/intl/Collator.h"
+#include "mozilla/intl/DateTimeFormat.h"
+#include "mozilla/intl/DateTimePatternGenerator.h"
+#include "mozilla/intl/Locale.h"
+#include "mozilla/intl/NumberFormat.h"
+#include "mozilla/intl/TimeZone.h"
+#include "mozilla/Span.h"
 #include "mozilla/TextUtils.h"
 
 #include <algorithm>
 #include <stdint.h>
+#include <string>
+#include <string.h>
+#include <string_view>
 #include <utility>
 
+#include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
-#include "builtin/intl/ScopedICUObject.h"
 #include "builtin/intl/TimeZoneDataGenerated.h"
-#include "builtin/String.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
-#include "unicode/ucal.h"
-#include "unicode/ucol.h"
-#include "unicode/udat.h"
-#include "unicode/udatpg.h"
-#include "unicode/uenum.h"
-#include "unicode/uloc.h"
-#include "unicode/unum.h"
-#include "unicode/utypes.h"
+#include "vm/ArrayObject.h"
 #include "vm/JSAtom.h"
+#include "vm/JSContext.h"
 #include "vm/StringType.h"
 
 using js::HashNumber;
-using js::intl::StringsAreEqual;
 
 template <typename Char>
 static constexpr Char ToUpperASCII(Char c) {
@@ -107,9 +109,10 @@ bool js::intl::SharedIntlData::TimeZoneHasher::match(TimeZoneName key,
                                    lookup.length);
 }
 
-static bool IsLegacyICUTimeZone(const char* timeZone) {
+static bool IsLegacyICUTimeZone(mozilla::Span<const char> timeZone) {
+  std::string_view timeZoneView(timeZone.data(), timeZone.size());
   for (const auto& legacyTimeZone : js::timezone::legacyICUTimeZones) {
-    if (StringsAreEqual(timeZone, legacyTimeZone)) {
+    if (timeZoneView == legacyTimeZone) {
       return true;
     }
   }
@@ -125,34 +128,26 @@ bool js::intl::SharedIntlData::ensureTimeZones(JSContext* cx) {
   // OOM, clear all sets/maps and start from scratch.
   availableTimeZones.clearAndCompact();
 
-  UErrorCode status = U_ZERO_ERROR;
-  UEnumeration* values = ucal_openTimeZones(&status);
-  if (U_FAILURE(status)) {
-    ReportInternalError(cx);
+  auto timeZones = mozilla::intl::TimeZone::GetAvailableTimeZones();
+  if (timeZones.isErr()) {
+    ReportInternalError(cx, timeZones.unwrapErr());
     return false;
   }
-  ScopedICUObject<UEnumeration, uenum_close> toClose(values);
 
-  RootedAtom timeZone(cx);
-  while (true) {
-    int32_t size;
-    const char* rawTimeZone = uenum_next(values, &size, &status);
-    if (U_FAILURE(status)) {
+  Rooted<JSAtom*> timeZone(cx);
+  for (auto timeZoneName : timeZones.unwrap()) {
+    if (timeZoneName.isErr()) {
       ReportInternalError(cx);
       return false;
     }
-
-    if (rawTimeZone == nullptr) {
-      break;
-    }
+    auto timeZoneSpan = timeZoneName.unwrap();
 
     // Skip legacy ICU time zone names.
-    if (IsLegacyICUTimeZone(rawTimeZone)) {
+    if (IsLegacyICUTimeZone(timeZoneSpan)) {
       continue;
     }
 
-    MOZ_ASSERT(size >= 0);
-    timeZone = Atomize(cx, rawTimeZone, size_t(size));
+    timeZone = Atomize(cx, timeZoneSpan.data(), timeZoneSpan.size());
     if (!timeZone) {
       return false;
     }
@@ -189,8 +184,8 @@ bool js::intl::SharedIntlData::ensureTimeZones(JSContext* cx) {
 
   ianaLinksCanonicalizedDifferentlyByICU.clearAndCompact();
 
-  RootedAtom linkName(cx);
-  RootedAtom& target = timeZone;
+  Rooted<JSAtom*> linkName(cx);
+  Rooted<JSAtom*>& target = timeZone;
   for (const auto& linkAndTarget :
        timezone::ianaLinksCanonicalizedDifferentlyByICU) {
     const char* rawLinkName = linkAndTarget.link;
@@ -228,14 +223,13 @@ bool js::intl::SharedIntlData::ensureTimeZones(JSContext* cx) {
   return true;
 }
 
-bool js::intl::SharedIntlData::validateTimeZoneName(JSContext* cx,
-                                                    HandleString timeZone,
-                                                    MutableHandleAtom result) {
+bool js::intl::SharedIntlData::validateTimeZoneName(
+    JSContext* cx, HandleString timeZone, MutableHandle<JSAtom*> result) {
   if (!ensureTimeZones(cx)) {
     return false;
   }
 
-  RootedLinearString timeZoneLinear(cx, timeZone->ensureLinear(cx));
+  Rooted<JSLinearString*> timeZoneLinear(cx, timeZone->ensureLinear(cx));
   if (!timeZoneLinear) {
     return false;
   }
@@ -249,12 +243,12 @@ bool js::intl::SharedIntlData::validateTimeZoneName(JSContext* cx,
 }
 
 bool js::intl::SharedIntlData::tryCanonicalizeTimeZoneConsistentWithIANA(
-    JSContext* cx, HandleString timeZone, MutableHandleAtom result) {
+    JSContext* cx, HandleString timeZone, MutableHandle<JSAtom*> result) {
   if (!ensureTimeZones(cx)) {
     return false;
   }
 
-  RootedLinearString timeZoneLinear(cx, timeZone->ensureLinear(cx));
+  Rooted<JSLinearString*> timeZoneLinear(cx, timeZone->ensureLinear(cx));
   if (!timeZoneLinear) {
     return false;
   }
@@ -281,6 +275,14 @@ bool js::intl::SharedIntlData::tryCanonicalizeTimeZoneConsistentWithIANA(
   }
 
   return true;
+}
+
+JS::Result<js::intl::SharedIntlData::TimeZoneSet::Iterator>
+js::intl::SharedIntlData::availableTimeZonesIteration(JSContext* cx) {
+  if (!ensureTimeZones(cx)) {
+    return cx->alreadyReportedError();
+  }
+  return availableTimeZones.iter();
 }
 
 js::intl::SharedIntlData::LocaleHasher::Lookup::Lookup(JSLinearString* locale)
@@ -319,9 +321,10 @@ bool js::intl::SharedIntlData::LocaleHasher::match(Locale key,
   return EqualChars(keyChars, lookup.twoByteChars, lookup.length);
 }
 
+template <class AvailableLocales>
 bool js::intl::SharedIntlData::getAvailableLocales(
-    JSContext* cx, LocaleSet& locales, CountAvailable countAvailable,
-    GetAvailable getAvailable) {
+    JSContext* cx, LocaleSet& locales,
+    const AvailableLocales& availableLocales) {
   auto addLocale = [cx, &locales](const char* locale, size_t length) {
     JSAtom* atom = Atomize(cx, locale, length);
     if (!atom) {
@@ -343,43 +346,101 @@ bool js::intl::SharedIntlData::getAvailableLocales(
 
   js::Vector<char, 16> lang(cx);
 
-  int32_t count = countAvailable();
-  for (int32_t i = 0; i < count; i++) {
-    const char* locale = getAvailable(i);
+  for (const char* locale : availableLocales) {
     size_t length = strlen(locale);
 
     lang.clear();
     if (!lang.append(locale, length)) {
       return false;
     }
+    MOZ_ASSERT(lang.length() == length);
 
     std::replace(lang.begin(), lang.end(), '_', '-');
 
     if (!addLocale(lang.begin(), length)) {
       return false;
     }
-  }
 
-  // Add old-style language tags without script code for locales that in current
-  // usage would include a script subtag. Also add an entry for the last-ditch
-  // locale, in case ICU doesn't directly support it (but does support it
-  // through fallback, e.g. supporting "en-GB" indirectly using "en" support).
+    // From <https://tc39.es/ecma402/#sec-internal-slots>:
+    //
+    // For locales that include a script subtag in addition to language and
+    // region, the corresponding locale without a script subtag must also be
+    // supported; that is, if an implementation recognizes "zh-Hant-TW", it is
+    // also expected to recognize "zh-TW".
 
-  // Certain old-style language tags lack a script code, but in current usage
-  // they *would* include a script code. Map these over to modern forms.
-  for (const auto& mapping : js::intl::oldStyleLanguageTagMappings) {
-    const char* oldStyle = mapping.oldStyle;
-    const char* modernStyle = mapping.modernStyle;
+    //   2 * Alpha language subtag
+    // + 1 separator
+    // + 4 * Alphanum script subtag
+    // + 1 separator
+    // + 2 * Alpha region subtag
+    using namespace mozilla::intl::LanguageTagLimits;
+    static constexpr size_t MinLanguageLength = 2;
+    static constexpr size_t MinLengthForScriptAndRegion =
+        MinLanguageLength + 1 + ScriptLength + 1 + AlphaRegionLength;
 
-    LocaleHasher::Lookup lookup(modernStyle, strlen(modernStyle));
-    if (locales.has(lookup)) {
-      if (!addLocale(oldStyle, strlen(oldStyle))) {
-        return false;
-      }
+    // Fast case: Skip locales without script subtags.
+    if (length < MinLengthForScriptAndRegion) {
+      continue;
+    }
+
+    // We don't need the full-fledged language tag parser when we just want to
+    // remove the script subtag.
+
+    // Find the separator between the language and script subtags.
+    const char* sep = std::char_traits<char>::find(lang.begin(), length, '-');
+    if (!sep) {
+      continue;
+    }
+
+    // Possible |script| subtag start position.
+    const char* script = sep + 1;
+
+    // Find the separator between the script and region subtags.
+    sep = std::char_traits<char>::find(script, lang.end() - script, '-');
+    if (!sep) {
+      continue;
+    }
+
+    // Continue with the next locale if we didn't find a script subtag.
+    size_t scriptLength = sep - script;
+    if (!mozilla::intl::IsStructurallyValidScriptTag<char>(
+            {script, scriptLength})) {
+      continue;
+    }
+
+    // Possible |region| subtag start position.
+    const char* region = sep + 1;
+
+    // Search if there's yet another subtag after the region subtag.
+    sep = std::char_traits<char>::find(region, lang.end() - region, '-');
+
+    // Continue with the next locale if we didn't find a region subtag.
+    size_t regionLength = (sep ? sep : lang.end()) - region;
+    if (!mozilla::intl::IsStructurallyValidRegionTag<char>(
+            {region, regionLength})) {
+      continue;
+    }
+
+    // We've found a script and a region subtag.
+
+    static constexpr size_t ScriptWithSeparatorLength = ScriptLength + 1;
+
+    // Remove the script subtag. Note: erase() needs non-const pointers, which
+    // means we can't directly pass |script|.
+    char* p = const_cast<char*>(script);
+    lang.erase(p, p + ScriptWithSeparatorLength);
+
+    MOZ_ASSERT(lang.length() == length - ScriptWithSeparatorLength);
+
+    // Add the locale with the script subtag removed.
+    if (!addLocale(lang.begin(), lang.length())) {
+      return false;
     }
   }
 
-  // Also forcibly provide the last-ditch locale.
+  // Forcibly add an entry for the last-ditch locale, in case ICU doesn't
+  // directly support it (but does support it through fallback, e.g. supporting
+  // "en-GB" indirectly using "en" support).
   {
     const char* lastDitch = intl::LastDitchLocale();
     MOZ_ASSERT(strcmp(lastDitch, "en-GB") == 0);
@@ -402,21 +463,15 @@ bool js::intl::SharedIntlData::getAvailableLocales(
 }
 
 #ifdef DEBUG
-template <typename CountAvailable, typename GetAvailable>
-static bool IsSameAvailableLocales(CountAvailable countAvailable1,
-                                   GetAvailable getAvailable1,
-                                   CountAvailable countAvailable2,
-                                   GetAvailable getAvailable2) {
-  int32_t count = countAvailable1();
-  if (count != countAvailable2()) {
-    return false;
-  }
-  for (int32_t i = 0; i < count; i++) {
-    if (getAvailable1(i) != getAvailable2(i)) {
-      return false;
-    }
-  }
-  return true;
+template <class AvailableLocales1, class AvailableLocales2>
+static bool IsSameAvailableLocales(const AvailableLocales1& availableLocales1,
+                                   const AvailableLocales2& availableLocales2) {
+  return std::equal(std::begin(availableLocales1), std::end(availableLocales1),
+                    std::begin(availableLocales2), std::end(availableLocales2),
+                    [](const char* a, const char* b) {
+                      // Intentionally comparing pointer equivalence.
+                      return a == b;
+                    });
 }
 #endif
 
@@ -430,20 +485,22 @@ bool js::intl::SharedIntlData::ensureSupportedLocales(JSContext* cx) {
   supportedLocales.clearAndCompact();
   collatorSupportedLocales.clearAndCompact();
 
-  if (!getAvailableLocales(cx, supportedLocales, uloc_countAvailable,
-                           uloc_getAvailable)) {
+  if (!getAvailableLocales(cx, supportedLocales,
+                           mozilla::intl::Locale::GetAvailableLocales())) {
     return false;
   }
-  if (!getAvailableLocales(cx, collatorSupportedLocales, ucol_countAvailable,
-                           ucol_getAvailable)) {
+  if (!getAvailableLocales(cx, collatorSupportedLocales,
+                           mozilla::intl::Collator::GetAvailableLocales())) {
     return false;
   }
 
-  MOZ_ASSERT(IsSameAvailableLocales(uloc_countAvailable, uloc_getAvailable,
-                                    udat_countAvailable, udat_getAvailable));
+  MOZ_ASSERT(IsSameAvailableLocales(
+      mozilla::intl::Locale::GetAvailableLocales(),
+      mozilla::intl::DateTimeFormat::GetAvailableLocales()));
 
-  MOZ_ASSERT(IsSameAvailableLocales(uloc_countAvailable, uloc_getAvailable,
-                                    unum_countAvailable, unum_getAvailable));
+  MOZ_ASSERT(IsSameAvailableLocales(
+      mozilla::intl::Locale::GetAvailableLocales(),
+      mozilla::intl::NumberFormat::GetAvailableLocales()));
 
   MOZ_ASSERT(!supportedLocalesInitialized,
              "ensureSupportedLocales is neither reentrant nor thread-safe");
@@ -460,7 +517,7 @@ bool js::intl::SharedIntlData::isSupportedLocale(JSContext* cx,
     return false;
   }
 
-  RootedLinearString localeLinear(cx, locale->ensureLinear(cx));
+  Rooted<JSLinearString*> localeLinear(cx, locale->ensureLinear(cx));
   if (!localeLinear) {
     return false;
   }
@@ -483,6 +540,48 @@ bool js::intl::SharedIntlData::isSupportedLocale(JSContext* cx,
   MOZ_CRASH("Invalid Intl constructor");
 }
 
+js::ArrayObject* js::intl::SharedIntlData::availableLocalesOf(
+    JSContext* cx, SupportedLocaleKind kind) {
+  if (!ensureSupportedLocales(cx)) {
+    return nullptr;
+  }
+
+  LocaleSet* localeSet = nullptr;
+  switch (kind) {
+    case SupportedLocaleKind::Collator:
+      localeSet = &collatorSupportedLocales;
+      break;
+    case SupportedLocaleKind::DateTimeFormat:
+    case SupportedLocaleKind::DisplayNames:
+    case SupportedLocaleKind::ListFormat:
+    case SupportedLocaleKind::NumberFormat:
+    case SupportedLocaleKind::PluralRules:
+    case SupportedLocaleKind::RelativeTimeFormat:
+      localeSet = &supportedLocales;
+      break;
+    default:
+      MOZ_CRASH("Invalid Intl constructor");
+  }
+
+  const uint32_t count = localeSet->count();
+  ArrayObject* result = NewDenseFullyAllocatedArray(cx, count);
+  if (!result) {
+    return nullptr;
+  }
+  result->setDenseInitializedLength(count);
+
+  uint32_t index = 0;
+  for (auto range = localeSet->iter(); !range.done(); range.next()) {
+    JSAtom* locale = range.get();
+    cx->markAtom(locale);
+
+    result->initDenseElement(index++, StringValue(locale));
+  }
+  MOZ_ASSERT(index == count);
+
+  return result;
+}
+
 #if DEBUG || MOZ_SYSTEM_ICU
 bool js::intl::SharedIntlData::ensureUpperCaseFirstLocales(JSContext* cx) {
   if (upperCaseFirstInitialized) {
@@ -493,47 +592,25 @@ bool js::intl::SharedIntlData::ensureUpperCaseFirstLocales(JSContext* cx) {
   // complete due to OOM, clear all data and start from scratch.
   upperCaseFirstLocales.clearAndCompact();
 
-  UErrorCode status = U_ZERO_ERROR;
-  UEnumeration* available = ucol_openAvailableLocales(&status);
-  if (U_FAILURE(status)) {
-    ReportInternalError(cx);
-    return false;
-  }
-  ScopedICUObject<UEnumeration, uenum_close> toClose(available);
-
-  RootedAtom locale(cx);
-  while (true) {
-    int32_t size;
-    const char* rawLocale = uenum_next(available, &size, &status);
-    if (U_FAILURE(status)) {
-      ReportInternalError(cx);
+  Rooted<JSAtom*> locale(cx);
+  for (const char* rawLocale : mozilla::intl::Collator::GetAvailableLocales()) {
+    auto collator = mozilla::intl::Collator::TryCreate(rawLocale);
+    if (collator.isErr()) {
+      ReportInternalError(cx, collator.unwrapErr());
       return false;
     }
 
-    if (rawLocale == nullptr) {
-      break;
-    }
-
-    UCollator* collator = ucol_open(rawLocale, &status);
-    if (U_FAILURE(status)) {
-      ReportInternalError(cx);
-      return false;
-    }
-    ScopedICUObject<UCollator, ucol_close> toCloseCollator(collator);
-
-    UColAttributeValue caseFirst =
-        ucol_getAttribute(collator, UCOL_CASE_FIRST, &status);
-    if (U_FAILURE(status)) {
-      ReportInternalError(cx);
+    auto caseFirst = collator.unwrap()->GetCaseFirst();
+    if (caseFirst.isErr()) {
+      ReportInternalError(cx, caseFirst.unwrapErr());
       return false;
     }
 
-    if (caseFirst != UCOL_UPPER_FIRST) {
+    if (caseFirst.unwrap() != mozilla::intl::Collator::CaseFirst::Upper) {
       continue;
     }
 
-    MOZ_ASSERT(size >= 0);
-    locale = Atomize(cx, rawLocale, size_t(size));
+    locale = Atomize(cx, rawLocale, strlen(rawLocale));
     if (!locale) {
       return false;
     }
@@ -567,7 +644,7 @@ bool js::intl::SharedIntlData::isUpperCaseFirst(JSContext* cx,
   }
 #endif
 
-  RootedLinearString localeLinear(cx, locale->ensureLinear(cx));
+  Rooted<JSLinearString*> localeLinear(cx, locale->ensureLinear(cx));
   if (!localeLinear) {
     return false;
   }
@@ -598,11 +675,15 @@ bool js::intl::SharedIntlData::isUpperCaseFirst(JSContext* cx,
 }
 
 void js::intl::DateTimePatternGeneratorDeleter::operator()(
-    UDateTimePatternGenerator* ptr) {
-  udatpg_close(ptr);
+    mozilla::intl::DateTimePatternGenerator* ptr) {
+  delete ptr;
 }
 
-UDateTimePatternGenerator*
+static bool StringsAreEqual(const char* s1, const char* s2) {
+  return !strcmp(s1, s2);
+}
+
+mozilla::intl::DateTimePatternGenerator*
 js::intl::SharedIntlData::getDateTimePatternGenerator(JSContext* cx,
                                                       const char* locale) {
   // Return the cached instance if the requested locale matches the locale
@@ -612,12 +693,15 @@ js::intl::SharedIntlData::getDateTimePatternGenerator(JSContext* cx,
     return dateTimePatternGenerator.get();
   }
 
-  UErrorCode status = U_ZERO_ERROR;
-  UniqueUDateTimePatternGenerator gen(udatpg_open(IcuLocale(locale), &status));
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
+  auto result = mozilla::intl::DateTimePatternGenerator::TryCreate(locale);
+  if (result.isErr()) {
+    intl::ReportInternalError(cx, result.unwrapErr());
     return nullptr;
   }
+  // The UniquePtr needs to be recreated as it's using a different Deleter in
+  // order to be able to forward declare DateTimePatternGenerator in
+  // SharedIntlData.h.
+  UniqueDateTimePatternGenerator gen(result.unwrap().release());
 
   JS::UniqueChars localeCopy = js::DuplicateString(cx, locale);
   if (!localeCopy) {
