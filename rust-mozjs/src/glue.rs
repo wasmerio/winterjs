@@ -232,15 +232,7 @@ pub struct ProxyTraps {
             args: CallArgs,
         ) -> bool,
     >,
-    pub hasInstance: Option<
-        unsafe extern "C" fn(
-            cx: *mut JSContext,
-            proxy: HandleObject,
-            v: MutableHandleValue,
-            bp: *mut bool,
-        ) -> bool,
-    >,
-    pub objectClassIs: Option<
+    pub objectClassIs: ::std::option::Option<
         unsafe extern "C" fn(obj: HandleObject, classValue: ESClass, cx: *mut JSContext) -> bool,
     >,
     pub className:
@@ -268,7 +260,7 @@ pub struct ProxyTraps {
         ) -> bool,
     >,
     pub trace: Option<unsafe extern "C" fn(trc: *mut JSTracer, proxy: *mut JSObject)>,
-    pub finalize: Option<unsafe extern "C" fn(fop: *mut JSFreeOp, proxy: *mut JSObject)>,
+    pub finalize: Option<unsafe extern "C" fn(proxy: *mut JSObject)>,
     pub objectMoved:
         Option<unsafe extern "C" fn(proxy: *mut JSObject, old: *mut JSObject) -> usize>,
     pub isCallable: Option<unsafe extern "C" fn(obj: *mut JSObject) -> bool>,

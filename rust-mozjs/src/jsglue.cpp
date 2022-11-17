@@ -23,6 +23,7 @@
 #include "js/Principals.h"
 #include "js/Promise.h"
 #include "js/Proxy.h"
+#include "js/ScalarType.h"
 #include "js/Stream.h"
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
@@ -80,7 +81,7 @@ class RustJobQueue : public JS::JobQueue {
   }
 };
 
-struct ReadableStreamUnderlyingSourceTraps {
+/*struct ReadableStreamUnderlyingSourceTraps {
   void (*requestData)(void* source, JSContext* cx, JS::HandleObject stream,
                       size_t desiredSize);
   void (*writeIntoReadRequestBuffer)(void* source, JSContext* cx,
@@ -133,7 +134,7 @@ class RustReadableStreamUnderlyingSource
   }
 
   virtual void finalize() { return mTraps.finalize(this); }
-};
+};*/
 
 struct JSExternalStringCallbacksTraps {
   void (*finalize)(void* privateData, char16_t* chars);
@@ -210,8 +211,6 @@ struct ProxyTraps {
                                        JS::MutableHandleIdVector props);
   bool (*nativeCall)(JSContext* cx, JS::IsAcceptableThis test,
                      JS::NativeImpl impl, JS::CallArgs args);
-  bool (*hasInstance)(JSContext* cx, JS::HandleObject proxy,
-                      JS::MutableHandleValue v, bool* bp);
   bool (*objectClassIs)(JS::HandleObject obj, js::ESClass classValue,
                         JSContext* cx);
   const char* (*className)(JSContext* cx, JS::HandleObject proxy);
@@ -224,7 +223,7 @@ struct ProxyTraps {
   bool (*defaultValue)(JSContext* cx, JS::HandleObject obj, JSType hint,
                        JS::MutableHandleValue vp);
   void (*trace)(JSTracer* trc, JSObject* proxy);
-  void (*finalize)(JSFreeOp* fop, JSObject* proxy);
+  void (*finalize)(JSObject* proxy);
   size_t (*objectMoved)(JSObject* proxy, JSObject* old);
 
   bool (*isCallable)(JSObject* obj);
@@ -301,13 +300,6 @@ static int HandlerFamily;
                              : _base::nativeCall(cx, test, impl, args);       \
   }                                                                           \
                                                                               \
-  virtual bool hasInstance(JSContext* cx, JS::HandleObject proxy,             \
-                           JS::MutableHandleValue v, bool* bp)                \
-      const override {                                                        \
-    return mTraps.hasInstance ? mTraps.hasInstance(cx, proxy, v, bp)          \
-                              : _base::hasInstance(cx, proxy, v, bp);         \
-  }                                                                           \
-                                                                              \
   virtual const char* className(JSContext* cx, JS::HandleObject proxy)        \
       const override {                                                        \
     return mTraps.className ? mTraps.className(cx, proxy)                     \
@@ -330,9 +322,9 @@ static int HandlerFamily;
     mTraps.trace ? mTraps.trace(trc, proxy) : _base::trace(trc, proxy);       \
   }                                                                           \
                                                                               \
-  virtual void finalize(JSFreeOp* fop, JSObject* proxy) const override {      \
-    mTraps.finalize ? mTraps.finalize(fop, proxy)                             \
-                    : _base::finalize(fop, proxy);                            \
+  virtual void finalize(JS::GCContext* context, JSObject* proxy) const override { \
+    mTraps.finalize ? mTraps.finalize(proxy)                                  \
+                    : _base::finalize(context, proxy);                        \
   }                                                                           \
                                                                               \
   virtual size_t objectMoved(JSObject* proxy, JSObject* old) const override { \
@@ -386,10 +378,14 @@ class WrapperProxyHandler : public js::Wrapper {
 
   virtual bool getOwnPropertyDescriptor(
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override {
-    return mTraps.getOwnPropertyDescriptor
-               ? mTraps.getOwnPropertyDescriptor(cx, proxy, id, desc)
-               : js::Wrapper::getOwnPropertyDescriptor(cx, proxy, id, desc);
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
+    if (mTraps.getOwnPropertyDescriptor) {
+      JS::Rooted<JS::PropertyDescriptor> pd(cx);
+      bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd);
+      desc.set(mozilla::Some(pd.get()));
+      return result;
+    }
+    return js::Wrapper::getOwnPropertyDescriptor(cx, proxy, id, desc);
   }
 
   virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
@@ -447,8 +443,11 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
 
   virtual bool getOwnPropertyDescriptor(
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc) const override {
-    return mTraps.getOwnPropertyDescriptor(cx, proxy, id, desc);
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
+    JS::Rooted<JS::PropertyDescriptor> pd(cx);
+    bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd);
+    desc.set(mozilla::Some(pd.get()));
+    return result;
   }
 
   virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
@@ -563,8 +562,14 @@ void* GetRustJSPrincipalsPrivate(JSPrincipals* principals) {
 bool InvokeGetOwnPropertyDescriptor(
     const void* handler, JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
     JS::MutableHandle<JS::PropertyDescriptor> desc) {
-  return static_cast<const ForwardingProxyHandler*>(handler)
-      ->getOwnPropertyDescriptor(cx, proxy, id, desc);
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = static_cast<const ForwardingProxyHandler*>(handler)
+      ->getOwnPropertyDescriptor(cx, proxy, id, &mpd);
+  if (mpd.isSome())
+  {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
 bool InvokeHasOwn(const void* handler, JSContext* cx, JS::HandleObject proxy,
@@ -692,21 +697,21 @@ void SetProxyPrivate(JSObject* obj, const JS::Value* expando) {
   js::SetProxyPrivate(obj, *expando);
 }
 
-bool RUST_JSID_IS_INT(JS::HandleId id) { return JSID_IS_INT(id); }
+bool RUST_JSID_IS_INT(JS::HandleId id) { return id.isInt(); }
 
-void int_to_jsid(int32_t i, JS::MutableHandleId id) { id.set(INT_TO_JSID(i)); }
+void int_to_jsid(int32_t i, JS::MutableHandleId id) { id.set(jsid::Int(i)); }
 
-int32_t RUST_JSID_TO_INT(JS::HandleId id) { return JSID_TO_INT(id); }
+int32_t RUST_JSID_TO_INT(JS::HandleId id) { return id.toInt(); }
 
-bool RUST_JSID_IS_STRING(JS::HandleId id) { return JSID_IS_STRING(id); }
+bool RUST_JSID_IS_STRING(JS::HandleId id) { return id.isString(); }
 
-JSString* RUST_JSID_TO_STRING(JS::HandleId id) { return JSID_TO_STRING(id); }
+JSString* RUST_JSID_TO_STRING(JS::HandleId id) { return id.toString(); }
 
 void RUST_SYMBOL_TO_JSID(JS::Symbol* sym, JS::MutableHandleId id) {
-  id.set(SYMBOL_TO_JSID(sym));
+  id.set(jsid::Symbol(sym));
 }
 
-bool RUST_JSID_IS_VOID(JS::HandleId id) { return JSID_IS_VOID(id); }
+bool RUST_JSID_IS_VOID(JS::HandleId id) { return id.isVoid(); }
 
 bool SetBuildId(JS::BuildIdCharVector* buildId, const char* chars, size_t len) {
   buildId->clear();
@@ -887,11 +892,11 @@ void CallUnbarrieredObjectTracer(JSTracer* trc, JSObject** objp,
 }
 
 void CallObjectRootTracer(JSTracer* trc, JSObject** objp, const char* name) {
-  JS::UnsafeTraceRoot(trc, objp, name);
+  JS::TraceRoot(trc, objp, name);
 }
 
 void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name) {
-  JS::UnsafeTraceRoot(trc, valp, name);
+  JS::TraceRoot(trc, valp, name);
 }
 
 bool IsDebugBuild() {
@@ -1005,7 +1010,7 @@ JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
 
-JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
+/*JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
     const ReadableStreamUnderlyingSourceTraps* aTraps, void* aSource) {
   return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
 }
@@ -1013,7 +1018,7 @@ JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
 void DeleteReadableStreamUnderlyingSource(
     JS::ReadableStreamUnderlyingSource* source) {
   delete source;
-}
+  }*/
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {

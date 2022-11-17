@@ -361,7 +361,7 @@ impl Runtime {
             context.set(js_context);
         });
 
-        InitSelfHostedCode(js_context);
+        //InitSelfHostedCode(js_context);
 
         SetWarningReporter(js_context, Some(report_warning));
 
@@ -1196,7 +1196,6 @@ static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     mayResolve: Some(JS_MayResolveStandardClass),
     finalize: None,
     call: None,
-    hasInstance: None,
     construct: None,
     trace: Some(JS_GlobalObjectTraceHook),
 };
@@ -1493,7 +1492,7 @@ pub mod wrappers {
     use jsapi::CallArgs;
     use jsapi::CloneDataPolicy;
     use jsapi::CompartmentTransplantCallback;
-    use jsapi::DynamicImportStatus;
+    //use jsapi::DynamicImportStatus;
     use jsapi::ESClass;
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;
@@ -1638,7 +1637,7 @@ pub mod jsapi_wrapped {
     use jsapi::CallArgs;
     use jsapi::CloneDataPolicy;
     use jsapi::CompartmentTransplantCallback;
-    use jsapi::DynamicImportStatus;
+    //use jsapi::DynamicImportStatus;
     use jsapi::ESClass;
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;

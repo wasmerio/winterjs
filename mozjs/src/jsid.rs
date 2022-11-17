@@ -23,7 +23,7 @@ enum PropertyKeyTag {
 
 #[inline(always)]
 const fn AsPropertyKey(bits: usize) -> jsid {
-	jsid { asBits: bits }
+	jsid { asBits_: bits }
 }
 
 #[inline(always)]
@@ -47,7 +47,7 @@ pub fn SymbolId(symbol: *mut Symbol) -> jsid {
 impl jsid {
 	#[inline(always)]
 	fn asBits(&self) -> usize {
-		self.asBits
+		self.asBits_
 	}
 
 	#[inline(always)]
