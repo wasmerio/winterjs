@@ -13,6 +13,7 @@
 
 #if defined(XP_WIN)
 
+#ifndef JS_ENABLE_UWP
 // Microsoft doesn't "officially" support using RtlGenRandom() directly
 // anymore, and the Windows headers assume that __stdcall is
 // the default calling convention (which is true when Microsoft uses this
@@ -24,6 +25,10 @@
 #  define RtlGenRandom SystemFunction036
 extern "C" BOOLEAN NTAPI RtlGenRandom(PVOID RandomBuffer,
                                       ULONG RandomBufferLength);
+#else
+#  include "bcrypt.h"
+#  include "ntstatus.h"
+#endif // JS_ENABLE_UWP
 
 #endif
 

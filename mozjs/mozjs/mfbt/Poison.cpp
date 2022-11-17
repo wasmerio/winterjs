@@ -14,6 +14,9 @@
 #include "mozilla/Assertions.h"
 #ifdef _WIN32
 #  include <windows.h>
+#  ifdef JS_ENABLE_UWP
+#    include <memoryapi.h>
+#  endif
 #elif !defined(__OS2__)
 #  include <unistd.h>
 #  ifndef __wasi__
@@ -38,7 +41,11 @@
 
 #ifdef _WIN32
 static void* ReserveRegion(uintptr_t aRegion, uintptr_t aSize) {
+#ifdef JS_ENABLE_UWP
+  return VirtualAllocFromApp((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
+#else
   return VirtualAlloc((void*)aRegion, aSize, MEM_RESERVE, PAGE_NOACCESS);
+#endif
 }
 
 static void ReleaseRegion(void* aRegion, uintptr_t aSize) {
