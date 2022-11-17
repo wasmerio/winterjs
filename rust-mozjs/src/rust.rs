@@ -1499,6 +1499,7 @@ pub mod wrappers {
     use jsapi::ForOfIterator_NonIterableBehavior;
     use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
+    use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
     use jsapi::JSExnType;
@@ -1513,7 +1514,9 @@ pub mod wrappers {
     use jsapi::JSScript;
     use jsapi::JSStructuredCloneData;
     use jsapi::JSType;
+    use jsapi::ModuleErrorBehaviour;
     use jsapi::MutableHandleIdVector;
+    use jsapi::MutableHandleObjectVector;
     use jsapi::PromiseState;
     use jsapi::PromiseUserInputEventHandlingState;
     use jsapi::ReadOnlyCompileOptions;
@@ -1644,6 +1647,7 @@ pub mod jsapi_wrapped {
     use jsapi::ForOfIterator_NonIterableBehavior;
     use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
+    use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
     use jsapi::JSExnType;
@@ -1658,6 +1662,7 @@ pub mod jsapi_wrapped {
     use jsapi::JSScript;
     use jsapi::JSStructuredCloneData;
     use jsapi::JSType;
+    use jsapi::ModuleErrorBehaviour;
     use jsapi::MutableHandleIdVector;
     use jsapi::PromiseState;
     use jsapi::PromiseUserInputEventHandlingState;
