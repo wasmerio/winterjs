@@ -57,7 +57,7 @@ impl jsid {
 
 	#[inline(always)]
 	pub fn is_int(&self) -> bool {
-		(self.asBits() & JSID_TYPE_MASK) == (PropertyKeyTag::Int as usize)
+		(self.asBits() & (PropertyKeyTag::Int as usize)) != 0
 	}
 
 	#[inline(always)]
