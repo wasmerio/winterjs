@@ -18,7 +18,7 @@ use jsapi::JSPropertySpec;
 use jsapi::JSPropertySpec_Name;
 use jsapi::JS;
 use jsgc::RootKind;
-use jsid::JSID_VOID;
+use jsid::VoidId;
 use jsval::UndefinedValue;
 
 use std::ops::Deref;
@@ -50,7 +50,7 @@ impl<T> DerefMut for JS::MutableHandle<T> {
 
 impl Default for jsid {
     fn default() -> Self {
-        JSID_VOID
+        VoidId()
     }
 }
 

@@ -405,12 +405,19 @@ extern "C" {
     pub fn SetProxyReservedSlot(obj: *mut JSObject, slot: u32, val: *const Value);
     pub fn SetProxyPrivate(obj: *mut JSObject, expando: *const Value);
 
+    #[deprecated]
     pub fn RUST_JSID_IS_INT(id: HandleId) -> bool;
+    #[deprecated]
     pub fn RUST_JSID_TO_INT(id: HandleId) -> i32;
+    #[deprecated]
     pub fn int_to_jsid(i: i32, id: MutableHandleId);
+    #[deprecated]
     pub fn RUST_JSID_IS_STRING(id: HandleId) -> bool;
+    #[deprecated]
     pub fn RUST_JSID_TO_STRING(id: HandleId) -> *mut JSString;
+    #[deprecated]
     pub fn RUST_SYMBOL_TO_JSID(sym: *mut Symbol, id: MutableHandleId);
+    #[deprecated]
     pub fn RUST_JSID_IS_VOID(id: HandleId) -> bool;
     pub fn SetBuildId(buildId: *mut BuildIdCharVector, chars: *const u8, len: usize) -> bool;
     pub fn RUST_SET_JITINFO(func: *mut JSFunction, info: *const JSJitInfo);
