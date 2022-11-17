@@ -33,7 +33,6 @@ static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     mayResolve: None,
     finalize: None,
     call: None,
-    hasInstance: None,
     construct: None,
     trace: Some(JS_GlobalObjectTraceHook),
 };

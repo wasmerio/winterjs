@@ -361,7 +361,7 @@ impl Runtime {
             context.set(js_context);
         });
 
-        //InitSelfHostedCode(js_context);
+        InitSelfHostedCode(js_context, [0u64; 2], None);
 
         SetWarningReporter(js_context, Some(report_warning));
 

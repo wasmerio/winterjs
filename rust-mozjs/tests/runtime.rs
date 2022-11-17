@@ -11,8 +11,8 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 use mozjs::jsapi::JSCLASS_FOREGROUND_FINALIZE;
-use mozjs::jsapi::{JSAutoRealm, JSClass, JSClassOps, JSFreeOp, JSObject, OnNewGlobalHookOption};
-use mozjs::jsapi::{JS_NewGlobalObject, JS_NewObject};
+use mozjs::jsapi::{JSAutoRealm, JSClass, JSClassOps, JSObject, OnNewGlobalHookOption};
+use mozjs::jsapi::{JS_NewGlobalObject, JS_NewObject, GCContext};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -46,7 +46,7 @@ fn runtime() {
     let _ = receiver.recv();
 }
 
-unsafe extern "C" fn finalize(_fop: *mut JSFreeOp, _object: *mut JSObject) {
+unsafe extern "C" fn finalize(_fop: *mut GCContext, _object: *mut JSObject) {
     assert!(!Runtime::get().is_null());
 }
 
@@ -59,7 +59,6 @@ static CLASS_OPS: JSClassOps = JSClassOps {
     mayResolve: None,
     finalize: Some(finalize),
     call: None,
-    hasInstance: None,
     construct: None,
     trace: None,
 };
