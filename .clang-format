@@ -1,0 +1,9 @@
+# Taken from https://searchfox.org/mozilla-central/rev/aa1bb4f0ca8bfda4b117d1befca47b72d5dd6d5d/.clang-format
+
+BasedOnStyle: Google
+
+IndentPPDirectives: AfterHash
+StatementMacros: [MARKUPMAP, ASSERT_TRUE, ASSERT_FALSE, TEST, CHECK]
+
+DerivePointerAlignment: false
+PointerAlignment: Left
