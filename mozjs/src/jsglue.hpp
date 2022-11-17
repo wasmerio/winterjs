@@ -7,8 +7,6 @@
 #ifndef _JSGLUE_INCLUDED
 #define _JSGLUE_INCLUDED
 
-#include "jsapi.h"
-#include "jsfriendapi.h"
 #include "js/ArrayBuffer.h"
 #include "js/BuildId.h"
 #include "js/CompilationAndEvaluation.h"
@@ -38,13 +36,15 @@
 #include "js/Utility.h"
 #include "js/Warnings.h"
 #include "js/WasmModule.h"
-#include "js/shadow/Object.h"
-#include "js/shadow/Shape.h"
+#include "js/experimental/JitInfo.h"
+#include "js/experimental/TypedData.h"
 #include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
 #include "js/friend/WindowProxy.h"
-#include "js/experimental/JitInfo.h"
-#include "js/experimental/TypedData.h"
+#include "js/shadow/Object.h"
+#include "js/shadow/Shape.h"
+#include "jsapi.h"
+#include "jsfriendapi.h"
 
 // Reexport some functions that are marked inline.
 
@@ -59,10 +59,15 @@ void DeleteOwningCompileOptions(JS::OwningCompileOptions* optiosn);
 
 void JS_StackCapture_AllFrames(JS::StackCapture*);
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture*);
-void JS_StackCapture_FirstSubsumedFrame(JSContext* cx, bool ignoreSelfHostedFrames, JS::StackCapture*);
+void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
+                                        bool ignoreSelfHostedFrames,
+                                        JS::StackCapture*);
 
-bool JS_ForOfIteratorInit(JS::ForOfIterator* iterator, JS::HandleValue iterable, JS::ForOfIterator::NonIterableBehavior nonIterableBehavior);
-bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator, JS::MutableHandleValue val, bool* done);
+bool JS_ForOfIteratorInit(
+    JS::ForOfIterator* iterator, JS::HandleValue iterable,
+    JS::ForOfIterator::NonIterableBehavior nonIterableBehavior);
+bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator,
+                          JS::MutableHandleValue val, bool* done);
 
 JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone);
 
@@ -92,10 +97,10 @@ size_t GetLinearStringLength(JSLinearString* s);
 uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
 JSLinearString* AtomToLinearString(JSAtom* atom);
 
-}
+}  // namespace glue
 
-// There's a couple of classes from pre-57 releases of SM that bindgen can't deal with.
-// https://github.com/rust-lang-nursery/rust-bindgen/issues/851
+// There's a couple of classes from pre-57 releases of SM that bindgen can't
+// deal with. https://github.com/rust-lang-nursery/rust-bindgen/issues/851
 // https://bugzilla.mozilla.org/show_bug.cgi?id=1277338
 // https://rust-lang-nursery.github.io/rust-bindgen/replacing-types.html
 
@@ -103,15 +108,14 @@ JSLinearString* AtomToLinearString(JSAtom* atom);
  * <div rustbindgen replaces="JS::CallArgs"></div>
  */
 
-class MOZ_STACK_CLASS CallArgsReplacement
-{
-  protected:
-    JS::Value* argv_;
-    unsigned argc_;
-    bool constructing_:1;
-    bool ignoresReturnValue_:1;
+class MOZ_STACK_CLASS CallArgsReplacement {
+ protected:
+  JS::Value* argv_;
+  unsigned argc_;
+  bool constructing_ : 1;
+  bool ignoresReturnValue_ : 1;
 #ifdef JS_DEBUG
-    JS::detail::IncludeUsedRval wantUsedRval_;
+  JS::detail::IncludeUsedRval wantUsedRval_;
 #endif
 };
 
@@ -119,32 +123,33 @@ class MOZ_STACK_CLASS CallArgsReplacement
  * <div rustbindgen replaces="JSJitMethodCallArgs"></div>
  */
 
-class JSJitMethodCallArgsReplacement
-{
-  private:
-    JS::Value* argv_;
-    unsigned argc_;
-    bool constructing_:1;
-    bool ignoresReturnValue_:1;
+class JSJitMethodCallArgsReplacement {
+ private:
+  JS::Value* argv_;
+  unsigned argc_;
+  bool constructing_ : 1;
+  bool ignoresReturnValue_ : 1;
 #ifdef JS_DEBUG
-    JS::detail::NoUsedRval wantUsedRval_;
+  JS::detail::NoUsedRval wantUsedRval_;
 #endif
 };
 
 /// <div rustbindgen replaces="JS::MutableHandleIdVector" />
 struct MutableHandleIdVector_Simple {
-    void *ptr;
+  void* ptr;
 };
-static_assert(sizeof(JS::MutableHandleIdVector) == sizeof(MutableHandleIdVector_Simple), "wrong handle size");
+static_assert(sizeof(JS::MutableHandleIdVector) ==
+                  sizeof(MutableHandleIdVector_Simple),
+              "wrong handle size");
 
 /// <div rustbindgen replaces="JS::HandleObjectVector" />
 struct HandleObjectVector_Simple {
-    void *ptr;
+  void* ptr;
 };
 
 /// <div rustbindgen replaces="JS::MutableHandleObjectVector" />
 struct MutableHandleObjectVector_Simple {
-    void *ptr;
+  void* ptr;
 };
 
 #endif
