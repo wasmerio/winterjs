@@ -7,7 +7,6 @@ extern crate mozjs;
 
 use std::ptr;
 
-use mozjs::glue::{RUST_JSID_IS_STRING, RUST_JSID_TO_STRING};
 use mozjs::jsapi::{GetPropertyKeys, JS_NewGlobalObject, JS_StringEqualsAscii, OnNewGlobalHookOption};
 use mozjs::jsapi::JSITER_OWNONLY;
 use mozjs::jsval::UndefinedValue;
@@ -54,8 +53,8 @@ fn enumerate() {
         assert_eq!(ids.len(), 1);
         rooted!(in(context) let id = ids[0]);
 
-        assert!(RUST_JSID_IS_STRING(id.handle().into()));
-        rooted!(in(context) let id = RUST_JSID_TO_STRING(id.handle().into()));
+        assert!(id.is_string());
+        rooted!(in(context) let id = id.to_string());
 
         let mut matches = false;
         assert!(JS_StringEqualsAscii(

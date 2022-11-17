@@ -9,12 +9,12 @@ use jsapi::JSScript;
 use jsapi::JSString;
 use jsapi::JSTracer;
 use jsapi::JS;
-use jsid::JSID_VOID;
 
 use std::cell::UnsafeCell;
 use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
+use jsid::VoidId;
 
 /// A trait for JS types that can be registered as roots.
 pub trait RootKind {
@@ -144,7 +144,7 @@ impl GCMethods for *mut JSScript {
 
 impl GCMethods for jsid {
     unsafe fn initial() -> jsid {
-        JSID_VOID
+        VoidId()
     }
     unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
