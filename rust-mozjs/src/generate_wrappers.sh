@@ -23,5 +23,5 @@ grep_heur() {
         sed 's/Handle<\*mut JSObject>/HandleObject/g'
 }
 
-grep_heur ../target/debug/build/mozjs_sys-*/out/build/jsapi.rs | sed 's/\(.*\)/wrap!(jsapi: \1);/g'  > jsapi_wrappers.in
-grep_heur glue.rs | sed 's/\(.*\)/wrap!(glue: \1);/g'  > glue_wrappers.in
+grep_heur target/debug/build/mozjs_sys-*/out/build/jsapi.rs | sed 's/\(.*\)/wrap!(jsapi: \1);/g'  > rust-mozjs/src/jsapi_wrappers.in
+grep_heur rust-mozjs/src/glue.rs | sed 's/\(.*\)/wrap!(glue: \1);/g'  > rust-mozjs/src/glue_wrappers.in
