@@ -1,7 +1,7 @@
-diff --git a/mozjs/memory/mozalloc/moz.build b/mozjs/memory/mozalloc/moz.build
-index fed4239764..c7b95205cb 100644
---- a/mozjs/memory/mozalloc/moz.build
-+++ b/mozjs/memory/mozalloc/moz.build
+diff --git a/memory/mozalloc/moz.build b/memory/mozalloc/moz.build
+index 2d13c6cf14..5ce2ccf751 100644
+--- a/memory/mozalloc/moz.build
++++ b/memory/mozalloc/moz.build
 @@ -21,12 +21,6 @@ if CONFIG["WRAP_STL_INCLUDES"]:
              "msvc_raise_wrappers.cpp",
          ]
@@ -14,4 +14,4 @@ index fed4239764..c7b95205cb 100644
 -
  UNIFIED_SOURCES += [
      "mozalloc.cpp",
-     "mozalloc_oom.cpp",
+     "mozalloc_abort.cpp",

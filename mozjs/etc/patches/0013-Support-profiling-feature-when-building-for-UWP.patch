@@ -20,23 +20,3 @@ index e65adafb73..48ec64d925 100644
          return True
  
  
-diff --git a/js/src/builtin/Profilers.cpp b/js/src/builtin/Profilers.cpp
-index 53da01dba9..6b2f848510 100644
---- a/js/src/builtin/Profilers.cpp
-+++ b/js/src/builtin/Profilers.cpp
-@@ -24,8 +24,13 @@
- #endif
- 
- #ifdef XP_WIN
--#  include <process.h>
--#  define getpid _getpid
-+#  ifdef JS_ENABLE_UWP
-+#    include <processthreadsapi.h>
-+#    define getpid GetCurrentProcessId
-+#  else
-+#    include <process.h>
-+#    define getpid _getpid
-+#  endif
- #endif
- 
- #include "js/CharacterEncoding.h"

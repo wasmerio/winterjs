@@ -1,8 +1,8 @@
 diff --git a/build/moz.configure/bindgen.configure b/build/moz.configure/bindgen.configure
-index e5e49d8df..706be1359 100644
+index 3a7a5684cd..b06fab1529 100644
 --- a/build/moz.configure/bindgen.configure
 +++ b/build/moz.configure/bindgen.configure
-@@ -94,278 +94,3 @@ rustfmt = check_prog(
+@@ -101,287 +101,3 @@ rustfmt = check_prog(
      input="RUSTFMT",
      allow_missing=True,
  )
@@ -26,11 +26,11 @@ index e5e49d8df..706be1359 100644
 -    cxx_compiler,
 -    clang_search_path,
 -    target,
--    target_sysroot_flags,
+-    target_sysroot.path,
 -)
 -@checking("for clang for bindgen", lambda x: x.path if x else "not found")
 -def bindgen_clang_compiler(
--    clang_path, c_compiler, cxx_compiler, clang_search_path, target, sysroot_flags
+-    clang_path, c_compiler, cxx_compiler, clang_search_path, target, sysroot_path
 -):
 -    # When the target compiler is clang, use that, including flags.
 -    if cxx_compiler.type == "clang":
@@ -67,8 +67,17 @@ index e5e49d8df..706be1359 100644
 -    # Hack before bug 1617793: if the compiler is clang-cl, hack the target
 -    if cxx_compiler.type == "clang-cl":
 -        target = split_triplet("%s-pc-windows-msvc" % target.raw_cpu, allow_msvc=True)
--    flags = list(sysroot_flags or ())
+-    flags = []
+-    if sysroot_path:
+-        flags.extend(("--sysroot", sysroot_path))
 -    info = check_compiler([clang_path] + flags, "C++", target)
+-    # Usually, one check_compiler pass would be enough, but when cross-compiling
+-    # and the host and target don't use the same default C++ standard, we don't
+-    # get the --std flag, so try again. This is the same thing as valid_compiler()
+-    # does in toolchain.configure.
+-    if info.flags:
+-        flags += info.flags
+-        info = check_compiler([clang_path] + flags, "C++", target)
 -    return namespace(
 -        path=clang_path,
 -        flags=flags + info.flags,
@@ -241,7 +250,7 @@ index e5e49d8df..706be1359 100644
 -        "GNU": ["-DOS_LINUX=1"],
 -        "NetBSD": ["-DOS_BSD=1", "-DOS_NETBSD=1"],
 -        "OpenBSD": ["-DOS_BSD=1", "-DOS_OPENBSD=1"],
--        "OSX": ["-DOS_MACOSX=1", "-stdlib=libc++"],
+-        "OSX": ["-DOS_MACOSX=1"],
 -        "SunOS": ["-DOS_SOLARIS=1"],
 -        "WINNT": [
 -            "-DOS_WIN=1",
@@ -280,4 +289,4 @@ index e5e49d8df..706be1359 100644
 -    return " ".join(flags)
 -
 -
--add_old_configure_assignment("_BINDGEN_CFLAGS", bindgen_cflags)
+-set_config("BINDGEN_SYSTEM_FLAGS", bindgen_cflags)

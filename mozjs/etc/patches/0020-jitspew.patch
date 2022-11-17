@@ -38,26 +38,6 @@ index 4fbca27fa..d61b97916 100644
            out.printf("Processing store ");
            def->printName(out);
            out.printf(" (flags %x)\n", set.flags());
-diff --git a/js/src/jit/CacheIRSpewer.cpp b/js/src/jit/CacheIRSpewer.cpp
-index 63d9fa754..e0c99e21e 100644
---- a/js/src/jit/CacheIRSpewer.cpp
-+++ b/js/src/jit/CacheIRSpewer.cpp
-@@ -13,8 +13,13 @@
- #  include <algorithm>
- 
- #  ifdef XP_WIN
--#    include <process.h>
--#    define getpid _getpid
-+#    ifdef JS_ENABLE_UWP
-+#      include <processthreadsapi.h>
-+#      define getpid GetCurrentProcessId
-+#    else
-+#      include <process.h>
-+#      define getpid _getpid
-+#    endif
- #  else
- #    include <unistd.h>
- #  endif
 diff --git a/js/src/jit/IonAnalysis.cpp b/js/src/jit/IonAnalysis.cpp
 index 199c7f99c..0ce9e9e19 100644
 --- a/js/src/jit/IonAnalysis.cpp
@@ -75,24 +55,6 @@ diff --git a/js/src/jit/JitSpewer.cpp b/js/src/jit/JitSpewer.cpp
 index 4fcf78b05..2f947ae1b 100644
 --- a/js/src/jit/JitSpewer.cpp
 +++ b/js/src/jit/JitSpewer.cpp
-@@ -12,8 +12,15 @@
- #  include "mozilla/Sprintf.h"
- 
- #  ifdef XP_WIN
--#    include <process.h>
--#    define getpid _getpid
-+#    ifdef JS_ENABLE_UWP
-+#      define UNICODE
-+#      include <Windows.h>
-+#      include <processthreadsapi.h>
-+#      define getpid GetCurrentProcessId
-+#    else
-+#      include <process.h>
-+#      define getpid _getpid
-+#    endif
- #  else
- #    include <unistd.h>
- #  endif
 @@ -336,8 +343,12 @@ AutoSpewEndFunction::~AutoSpewEndFunction() {
    mir_->graphSpewer().endFunction();
  }
@@ -273,7 +235,7 @@ index cfc4acf7b..36f476380 100644
      MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
      out.printf(" [%u], LIR: ", mirId_);
 @@ -598,7 +598,7 @@ bool SnapshotWriter::add(const RValueAllocation& alloc) {
- 
+ #ifdef JS_JITSPEW
    if (JitSpewEnabled(JitSpew_IonSnapshots)) {
      JitSpewHeader(JitSpew_IonSnapshots);
 -    Fprinter& out = JitSpewPrinter();
@@ -376,8 +338,8 @@ index d477e001b..e7ed0129e 100644
 --- a/js/src/wasm/WasmGenerator.cpp
 +++ b/js/src/wasm/WasmGenerator.cpp
 @@ -40,6 +40,8 @@
- 
- #include "jit/MacroAssembler-inl.h"
+ #include "wasm/WasmIonCompile.h"
+ #include "wasm/WasmStubs.h"
  
 +#undef far
 +

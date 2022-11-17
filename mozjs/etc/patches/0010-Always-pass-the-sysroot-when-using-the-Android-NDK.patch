@@ -2,12 +2,11 @@ diff --git a/build/moz.configure/android-ndk.configure b/build/moz.configure/and
 index b6d198b149..66dc42ef7d 100644
 --- a/build/moz.configure/android-ndk.configure
 +++ b/build/moz.configure/android-ndk.configure
-@@ -319,6 +319,8 @@ def extra_toolchain_flags(
+@@ -319,5 +319,7 @@ def extra_toolchain_flags(
          android_system,
          "-isystem",
          os.path.join(android_sysroot, "usr", "include"),
 +        "--sysroot",
 +        android_sysroot,
-         "-gcc-toolchain",
-         toolchain_dir,
+         "--gcc-toolchain={}".format(toolchain_dir),
          "-D__ANDROID_API__=%d" % android_version,
