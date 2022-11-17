@@ -15,6 +15,7 @@ use jsapi::JSJitSetterCallArgs;
 use jsapi::JSNativeWrapper;
 use jsapi::JSObject;
 use jsapi::JSPropertySpec;
+use jsapi::JSPropertySpec_Kind;
 use jsapi::JSPropertySpec_Name;
 use jsapi::JS;
 use jsgc::RootKind;
@@ -56,7 +57,13 @@ impl Default for jsid {
 
 impl Default for JS::PropertyDescriptor {
     fn default() -> Self {
-        JS::PropertyDescriptor { obj: ptr::null_mut(), attrs: 0, getter: None, setter: None, value: UndefinedValue() }
+        JS::PropertyDescriptor {
+            _bitfield_align_1: [],
+            _bitfield_1: Default::default(),
+            getter_: ptr::null_mut(),
+            setter_: ptr::null_mut(),
+            value_: UndefinedValue(),
+        }
     }
 }
 
@@ -306,7 +313,7 @@ impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
         name: JSPropertySpec_Name { string_: ptr::null() },
         attributes_: 0,
-        isAccessor_: true,
+        kind_: JSPropertySpec_Kind::NativeAccessor,        
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
                 getter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
@@ -315,8 +322,13 @@ impl JSPropertySpec {
         },
     };
 
+    /// https://searchfox.org/mozilla-central/rev/2bdaa395cb841b28f8ef74882a61df5efeedb42b/js/public/PropertySpec.h#305-307
+    pub fn is_accessor(&self) -> bool {
+        self.kind_ == JSPropertySpec_Kind::NativeAccessor || self.kind_ == JSPropertySpec_Kind::SelfHostedAccessor
+    }
+
     pub fn is_zeroed(&self) -> bool {
-        (unsafe { self.name.string_.is_null() }) && self.attributes_ == 0 && self.isAccessor_ && unsafe { self.u.accessors.getter.native.is_zeroed() } && unsafe { self.u.accessors.setter.native.is_zeroed() }
+        (unsafe { self.name.string_.is_null() }) && self.attributes_ == 0 && self.is_accessor() && unsafe { self.u.accessors.getter.native.is_zeroed() } && unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
 }
 
