@@ -59,6 +59,7 @@ pub mod panic;
 pub mod typedarray;
 
 pub use consts::*;
+pub use mozjs_sys::jsid;
 pub use mozjs_sys::jsval;
 
 pub use jsval::JS_ARGV;
