@@ -27,15 +27,15 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/build/jsapi.rs"));
 }
 
-fn panic_hook(info: &std::panic::PanicInfo) {
+/*fn panic_hook(info: &std::panic::PanicInfo) {
     eprint!("Panic from mozjs: {}", info);
-}
+}*/
 
 /// Configure a panic hook to redirect rust panics to MFBT's MOZ_Crash.
 /// See https://searchfox.org/mozilla-central/rev/2bdaa395cb841b28f8ef74882a61df5efeedb42b/mozglue/static/rust/lib.rs#99-103
 #[no_mangle]
 pub extern "C" fn install_rust_panic_hook() {
-    std::panic::set_hook(Box::new(panic_hook));
+    //std::panic::set_hook(Box::new(panic_hook));
 }
 
 #[cfg(feature = "oom_with_hook")]
