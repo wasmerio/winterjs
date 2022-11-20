@@ -381,7 +381,7 @@ class WrapperProxyHandler : public js::Wrapper {
       JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
     if (mTraps.getOwnPropertyDescriptor) {
       JS::Rooted<JS::PropertyDescriptor> pd(cx);
-      bool isNone = false;
+      bool isNone = true;
       bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd, &isNone);
       if (isNone) {
         desc.set(mozilla::Nothing());
@@ -450,7 +450,7 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
       JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
     JS::Rooted<JS::PropertyDescriptor> pd(cx);
-    bool isNone = false;
+    bool isNone = true;
     bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd, &isNone);
     if (isNone) {
       desc.set(mozilla::Nothing());
