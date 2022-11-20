@@ -81,11 +81,11 @@ class RustJobQueue : public JS::JobQueue {
   }
 };
 
-/*struct ReadableStreamUnderlyingSourceTraps {
+struct ReadableStreamUnderlyingSourceTraps {
   void (*requestData)(void* source, JSContext* cx, JS::HandleObject stream,
                       size_t desiredSize);
   void (*writeIntoReadRequestBuffer)(void* source, JSContext* cx,
-                                     JS::HandleObject stream, void* buffer,
+                                     JS::HandleObject stream, JS::HandleObject chunk,
                                      size_t length, size_t* bytesWritten);
   void (*cancel)(void* source, JSContext* cx, JS::HandleObject stream,
                  JS::HandleValue reason, JS::Value* resolve_to);
@@ -111,9 +111,9 @@ class RustReadableStreamUnderlyingSource
   }
 
   virtual void writeIntoReadRequestBuffer(JSContext* cx,
-                                          JS::HandleObject stream, void* buffer,
+                                          JS::HandleObject stream, JS::HandleObject chunk,
                                           size_t length, size_t* bytesWritten) {
-    return mTraps.writeIntoReadRequestBuffer(mSource, cx, stream, buffer,
+	return mTraps.writeIntoReadRequestBuffer(mSource, cx, stream, chunk,
                                              length, bytesWritten);
   }
 
@@ -134,7 +134,7 @@ class RustReadableStreamUnderlyingSource
   }
 
   virtual void finalize() { return mTraps.finalize(this); }
-};*/
+};
 
 struct JSExternalStringCallbacksTraps {
   void (*finalize)(void* privateData, char16_t* chars);
@@ -167,7 +167,7 @@ struct ProxyTraps {
 
   bool (*getOwnPropertyDescriptor)(
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-      JS::MutableHandle<JS::PropertyDescriptor> desc);
+      JS::MutableHandle<JS::PropertyDescriptor> desc, bool *isNone);
   bool (*defineProperty)(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
                          JS::Handle<JS::PropertyDescriptor> desc,
                          JS::ObjectOpResult& result);
@@ -223,7 +223,7 @@ struct ProxyTraps {
   bool (*defaultValue)(JSContext* cx, JS::HandleObject obj, JSType hint,
                        JS::MutableHandleValue vp);
   void (*trace)(JSTracer* trc, JSObject* proxy);
-  void (*finalize)(JSObject* proxy);
+  void (*finalize)(JS::GCContext *cx, JSObject* proxy);
   size_t (*objectMoved)(JSObject* proxy, JSObject* old);
 
   bool (*isCallable)(JSObject* obj);
@@ -323,7 +323,7 @@ static int HandlerFamily;
   }                                                                           \
                                                                               \
   virtual void finalize(JS::GCContext* context, JSObject* proxy) const override { \
-    mTraps.finalize ? mTraps.finalize(proxy)                                  \
+    mTraps.finalize ? mTraps.finalize(context, proxy)                         \
                     : _base::finalize(context, proxy);                        \
   }                                                                           \
                                                                               \
@@ -381,8 +381,13 @@ class WrapperProxyHandler : public js::Wrapper {
       JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
     if (mTraps.getOwnPropertyDescriptor) {
       JS::Rooted<JS::PropertyDescriptor> pd(cx);
-      bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd);
-      desc.set(mozilla::Some(pd.get()));
+      bool isNone = false;
+      bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd, &isNone);
+      if (isNone) {
+        desc.set(mozilla::Nothing());
+      } else {
+        desc.set(mozilla::Some(pd.get()));
+      }
       return result;
     }
     return js::Wrapper::getOwnPropertyDescriptor(cx, proxy, id, desc);
@@ -445,8 +450,14 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
       JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
       JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc) const override {
     JS::Rooted<JS::PropertyDescriptor> pd(cx);
-    bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd);
-    desc.set(mozilla::Some(pd.get()));
+    bool isNone = false;
+    bool result = mTraps.getOwnPropertyDescriptor(cx, proxy, id, &pd, &isNone);
+    if (isNone) {
+      desc.set(mozilla::Nothing());
+    } else {
+      desc.set(mozilla::Some(pd.get()));
+    }
+    return result;
     return result;
   }
 
@@ -561,12 +572,12 @@ void* GetRustJSPrincipalsPrivate(JSPrincipals* principals) {
 
 bool InvokeGetOwnPropertyDescriptor(
     const void* handler, JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc) {
+    JS::MutableHandle<JS::PropertyDescriptor> desc, bool *isNone) {
   JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
   bool result = static_cast<const ForwardingProxyHandler*>(handler)
       ->getOwnPropertyDescriptor(cx, proxy, id, &mpd);
-  if (mpd.isSome())
-  {
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
     desc.set(*mpd);
   }
   return result;
@@ -1010,7 +1021,7 @@ JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
 
-/*JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
+JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
     const ReadableStreamUnderlyingSourceTraps* aTraps, void* aSource) {
   return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
 }
@@ -1018,7 +1029,7 @@ void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
 void DeleteReadableStreamUnderlyingSource(
     JS::ReadableStreamUnderlyingSource* source) {
   delete source;
-  }*/
+}
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {
@@ -1059,6 +1070,14 @@ bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
   }
   strncpy(buffer, filename.get(), buflen);
   return true;
+}
+
+void SetDataPropertyDescriptor(
+  JS::MutableHandle<JS::PropertyDescriptor> desc,
+  JS::HandleValue value,
+  uint32_t attrs
+) {
+  desc.set(JS::PropertyDescriptor::Data(value, attrs));
 }
 
 }  // extern "C"

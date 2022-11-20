@@ -37,6 +37,7 @@
 #include "js/Warnings.h"
 #include "js/WasmModule.h"
 #include "js/experimental/JitInfo.h"
+#include "js/experimental/JSStencil.h"
 #include "js/experimental/TypedData.h"
 #include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
@@ -98,12 +99,12 @@ uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
 JSLinearString* AtomToLinearString(JSAtom* atom);
 
 bool FromPropertyDescriptor(JSContext *cx, JS::Handle<JS::PropertyDescriptor> desc, JS::MutableHandle<JS::Value> vp);
-bool JS_GetOwnPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc);
-bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc);
-bool JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc);
-bool JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder);
-bool JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder);
-bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder);
+bool JS_GetOwnPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
+bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
+bool JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
+bool JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
+bool JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
+bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
 bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v, JS::HandleValue receiver, JS::Handle<JS::PropertyDescriptor> ownDesc, JS::ObjectOpResult& result);
 
 }  // namespace glue

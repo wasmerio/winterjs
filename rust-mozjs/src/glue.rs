@@ -45,7 +45,7 @@ pub struct ReadableStreamUnderlyingSourceTraps {
             source: *const c_void,
             cx: *mut JSContext,
             stream: HandleObject,
-            buffer: *mut c_void,
+            chunk: HandleObject,
             length: usize,
             bytesWritten: *mut usize,
         ),
@@ -99,6 +99,7 @@ pub struct ProxyTraps {
             proxy: HandleObject,
             id: HandleId,
             desc: MutableHandle<PropertyDescriptor>,
+            isNone: *mut bool,
         ) -> bool,
     >,
     pub defineProperty: Option<
@@ -260,7 +261,7 @@ pub struct ProxyTraps {
         ) -> bool,
     >,
     pub trace: Option<unsafe extern "C" fn(trc: *mut JSTracer, proxy: *mut JSObject)>,
-    pub finalize: Option<unsafe extern "C" fn(proxy: *mut JSObject)>,
+    pub finalize: Option<unsafe extern "C" fn(cx: *mut GCContext, proxy: *mut JSObject)>,
     pub objectMoved:
         Option<unsafe extern "C" fn(proxy: *mut JSObject, old: *mut JSObject) -> usize>,
     pub isCallable: Option<unsafe extern "C" fn(obj: *mut JSObject) -> bool>,
@@ -325,6 +326,7 @@ extern "C" {
         proxy: HandleObject,
         id: HandleId,
         desc: MutableHandle<PropertyDescriptor>,
+        isNone: *mut bool,
     ) -> bool;
     pub fn InvokeHasOwn(
         handler: *const c_void,
@@ -602,4 +604,5 @@ extern "C" {
         line: *mut u32,
         col: *mut u32,
     ) -> bool;
+    pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32);
 }
