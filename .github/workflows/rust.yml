@@ -6,33 +6,74 @@ on:
   pull_request:
 
 env:
-  CARGO_TERM_COLOR: always
+  #CARGO_TERM_COLOR: always
   SHELL: /bin/bash
 
 jobs:
-  Build:
-    runs-on: ${{ matrix.os }}
+  mac:
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        rust: [beta, stable]
         features: ["--features debugmozjs", ""]
-        exclude:
-          - os: windows-latest
-            rust: beta
     steps:
     - uses: actions/checkout@v2
-    - name: Install deps on osx
-      if: startsWith(matrix.os, 'macOS')
+    - name: Install deps
+      run: brew install python autoconf@2.13 ccache llvm yasm
+    # TODO: Remove this step when the compatibility issue between mozjs and
+    #       Homebrew's Python 3.10 formula (servo/rust-mozjs#559) is truly fixed
+    - name: Select Python 3.9
       run: |
-        brew install python autoconf@2.13 ccache llvm yasm
-    - name: Install deps on linux
-      if: startsWith(matrix.os, 'ubuntu')
+        brew install python@3.9
+        cd $(dirname $(which python3.9))
+        rm -f python3 pip3
+        ln -s python3.9 python3
+        ln -s pip3.9 pip3
+    - uses: dtolnay/rust-toolchain@stable
+    - name: ccache cache files
+      uses: actions/cache@v1.1.0
+      with:
+        path: .ccache
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+    - name: Build
       run: |
-        sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
-    - name: Install deps on windows
-      if: startsWith(matrix.os, 'windows')
+        ccache -z
+        ccache cargo build --verbose ${{ matrix.features }}
+        ccache cargo test --verbose ${{ matrix.features }}
+        ccache -s
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["--features debugmozjs", ""]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install deps
+      run: |
+        sudo apt install autoconf2.13 ccache llvm -y
+    - uses: dtolnay/rust-toolchain@stable
+    - name: ccache cache files
+      uses: actions/cache@v1.1.0
+      with:
+        path: .ccache
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+    - name: Build
+      run: |
+        ccache -z
+        ccache cargo build --verbose ${{ matrix.features }}
+        ccache cargo test --verbose ${{ matrix.features }}
+        ccache -s
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["--features debugmozjs", ""]
+        target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install deps
       run: |
         Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
         .\MozillaBuildSetup.exe /S | Out-Null
@@ -40,38 +81,9 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm@14.0.6 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    # TODO: Remove this step when the compatibility issue between mozjs and
-    #       Homebrew's Python 3.10 formula (servo/rust-mozjs#559) is truly fixed
-    - name: Select Python 3.9
-      if: startsWith(matrix.os, 'macOS')
-      run: |
-        brew install python@3.9
-        cd $(dirname $(which python3.9))
-        rm -f python3 pip3
-        ln -s python3.9 python3
-        ln -s pip3.9 pip3
-    - uses: actions-rs/toolchain@v1
-      with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-          default: true
-    - name: ccache cache files
-      if: startsWith(matrix.os, 'windows') != true
-      uses: actions/cache@v1.1.0
-      with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-      
-    - name: Build POSIX
-      if: startsWith(matrix.os, 'windows') != true
-      run: |
-        ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
-        ccache -s
-    - name: Build Windows
-      if: startsWith(matrix.os, 'windows')
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Build uwp
+      if: contains(matrix.target, 'uwp')
       shell: cmd
       env:
         MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
@@ -83,7 +95,24 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
-        cargo test --verbose --verbose ${{ matrix.features }} --lib
+        rustup install nightly-2022-11-20
+        rustup default nightly
+        rustup component add rust-src
+        cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
+    - name: Build Windows
+      if: contains(matrix.target, 'uwp') != true
+      shell: cmd
+      env:
+        MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
+        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
+        LINKER: "lld-link.exe"
+        CC: "clang-cl.exe"
+        CXX: "clang-cl.exe"
+        NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
+        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
+        LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
+      run: |
+        cargo test --verbose ${{ matrix.features }} --lib
   Integrity:
     runs-on: ubuntu-latest
     steps:
@@ -104,7 +133,7 @@ jobs:
     name: homu build finished
     runs-on: ubuntu-latest
     # Integrity check is broken for the time being; don't require it.
-    needs: ["Build"]
+    needs: ["mac", "linux", "windows"]
     steps:
       - name: Mark the job as successful
         run: exit 0
