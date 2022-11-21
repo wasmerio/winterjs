@@ -19,8 +19,8 @@
 //! taking advantage of Rust's memory safety. For more about the Spidermonkey API, see the
 //! [API Reference][2] and the [User Guide][3] on MDN, and the [embedding examples][4] on GitHub.
 //!
-//! The code from User Guide sections [A minimal example](https://github.com/servo/rust-mozjs/tree/master/examples/minimal.rs) and
-//! [Running scripts](https://github.com/servo/rust-mozjs/tree/master/examples/eval.rs) are also included.
+//! The code from User Guide sections [A minimal example](https://github.com/servo/mozjs/blob/master/rust-mozjs/examples/minimal.rs) and
+//! [Running scripts](https://github.com/servo/mozjs/blob/master/rust-mozjs/examples/eval.rs) are also included.
 //!
 //! [1]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey
 //! [2]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_reference
