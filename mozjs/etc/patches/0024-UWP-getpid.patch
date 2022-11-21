@@ -18,3 +18,17 @@ index ca00c5bca1..13cd39ead9 100644
  #else
  #  include <unistd.h>
  #endif
+diff --git a/js/src/vm/DateTime.cpp b/js/src/vm/DateTime.cpp
+index a86a6e9f71..3ee5dcc259 100644
+--- a/js/src/vm/DateTime.cpp
++++ b/js/src/vm/DateTime.cpp
+@@ -42,7 +42,9 @@ static bool ComputeLocalTime(time_t local, struct tm* ptm) {
+   // zone changes are correctly picked up.
+ 
+ #if defined(_WIN32)
++#ifndef JS_ENABLE_UWP
+   _tzset();
++#endif
+   return localtime_s(ptm, &local) == 0;
+ #elif defined(HAVE_LOCALTIME_R)
+ #  ifndef __wasi__
