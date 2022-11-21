@@ -97,7 +97,11 @@ MFBT_API bool GenerateRandomBytesFromOS(void* aBuffer, size_t aLength) {
 
 #if defined(XP_WIN)
 
+#ifdef JS_ENABLE_UWP
+  return BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(aBuffer), aLength, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == STATUS_SUCCESS;
+#else
   return !!RtlGenRandom(aBuffer, aLength);
+#endif
 
 #elif defined(USE_ARC4RANDOM)  // defined(XP_WIN)
 

@@ -31,13 +31,18 @@ BaseProfilerThreadId profiler_current_thread_id() {
 // --------------------------------------------- Windows process & thread ids
 #elif defined(XP_WIN)
 
-#  include <process.h>
 #  include <processthreadsapi.h>
+#ifdef JS_ENABLE_UWP
+#  define getpid GetCurrentProcessId
+#else
+#  include <process.h>
+#  define getpid _getpid
+#endif
 
 namespace mozilla::baseprofiler {
 
 BaseProfilerProcessId profiler_current_process_id() {
-  return BaseProfilerProcessId::FromNativeId(_getpid());
+  return BaseProfilerProcessId::FromNativeId(getpid());
 }
 
 BaseProfilerThreadId profiler_current_thread_id() {

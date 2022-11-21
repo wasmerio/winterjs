@@ -574,7 +574,6 @@ static bool EnsureSymInitialized() {
   return retStat;
 }
 
-#ifndef JS_ENABLE_UWP
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
   aDetails->library[0] = '\0';
@@ -584,6 +583,9 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
   aDetails->function[0] = '\0';
   aDetails->foffset = 0;
 
+#ifdef JS_ENABLE_UWP
+  return true;
+#else
   if (!EnsureSymInitialized()) {
     return false;
   }
@@ -637,8 +639,8 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
 
   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
   return true;
-}
 #endif
+}
 
 // i386 or PPC Linux stackwalking code
 #elif HAVE_DLADDR &&                                           \
