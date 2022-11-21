@@ -5,9 +5,9 @@ This repository contains Rust bindings for [SpiderMonkey][sm] for use with
 [s]: https://servo.org/
 
 The bindings are to the raw SpiderMonkey API, higher-level bindings
-are in the [rust-mozjs repository][r-m].
+are in the [rust-mozjs directory][r-m].
 
-[r-m]: https://github.com/servo/rust-mozjs/
+[r-m]: https://github.com/servo/mozjs/tree/master/rust-mozjs
 
 Building
 ========
@@ -85,5 +85,3 @@ In order to upgrade to a new version of SpiderMonkey:
 5. Update `etc/COMMIT` with the commit number.
 
 6. Build and test the bindings as above, then submit a PR!
-
-[bindgen]: https://github.com/servo/rust-bindgen
