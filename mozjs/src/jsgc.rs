@@ -10,11 +10,11 @@ use jsapi::JSString;
 use jsapi::JSTracer;
 use jsapi::JS;
 
+use jsid::VoidId;
 use std::cell::UnsafeCell;
 use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
-use jsid::VoidId;
 
 /// A trait for JS types that can be registered as roots.
 pub trait RootKind {

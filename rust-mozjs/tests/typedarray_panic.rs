@@ -31,7 +31,11 @@ fn typedarray_update_panic() {
         let _ac = JSAutoRealm::new(context, global.get());
 
         rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
-        let _ = Uint32Array::create(context, CreateWith::Slice(&[1, 2, 3, 4, 5]), rval.handle_mut());
+        let _ = Uint32Array::create(
+            context,
+            CreateWith::Slice(&[1, 2, 3, 4, 5]),
+            rval.handle_mut(),
+        );
         typedarray!(in(context) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[0, 2, 4, 6, 8, 10]);
     }

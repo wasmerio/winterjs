@@ -313,7 +313,7 @@ impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
         name: JSPropertySpec_Name { string_: ptr::null() },
         attributes_: 0,
-        kind_: JSPropertySpec_Kind::NativeAccessor,        
+        kind_: JSPropertySpec_Kind::NativeAccessor,
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
                 getter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
