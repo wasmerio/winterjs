@@ -4,8 +4,9 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # get commit and appropriet mozjs tar
-COMMIT=$( cat ./etc/COMMIT )
+COMMIT=$( cat $SCRIPT_DIR/COMMIT )
 echo "Commit $COMMIT"
 job_id=$(curl "https://treeherder.mozilla.org/api/project/mozilla-release/push/?revision=$COMMIT" | jq '.results[0].id')
 echo "Job id $job_id"
