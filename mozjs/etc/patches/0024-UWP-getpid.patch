@@ -1,7 +1,7 @@
-diff --git a/mozjs/mozjs/js/src/util/GetPidProvider.h b/mozjs/mozjs/js/src/util/GetPidProvider.h
+diff --git a/js/src/util/GetPidProvider.h b/js/src/util/GetPidProvider.h
 index ca00c5bca1..13cd39ead9 100644
---- a/mozjs/mozjs/js/src/util/GetPidProvider.h
-+++ b/mozjs/mozjs/js/src/util/GetPidProvider.h
+--- a/js/src/util/GetPidProvider.h
++++ b/js/src/util/GetPidProvider.h
 @@ -8,8 +8,13 @@
  #define util_GetPidProvider_h
  
@@ -52,10 +52,10 @@ diff --git a/mozglue/baseprofiler/core/ProfilerUtils.cpp b/mozglue/baseprofiler/
 index 5f53910774..eacbf32e1b 100644
 --- a/mozglue/baseprofiler/core/ProfilerUtils.cpp
 +++ b/mozglue/baseprofiler/core/ProfilerUtils.cpp
-@@ -31,8 +31,13 @@ BaseProfilerThreadId profiler_current_thread_id() {
+@@ -31,13 +31,18 @@
  // --------------------------------------------- Windows process & thread ids
  #elif defined(XP_WIN)
- 
+
 -#  include <process.h>
  #  include <processthreadsapi.h>
 +#ifdef JS_ENABLE_UWP
@@ -64,17 +64,14 @@ index 5f53910774..eacbf32e1b 100644
 +#  include <process.h>
 +#  define getpid _getpid
 +#endif
- 
+
  namespace mozilla::baseprofiler {
- 
-@@ -42,7 +42,7 @@ BaseProfilerThreadId profiler_current_thread_id() {
- namespace mozilla::baseprofiler {
- 
+
  BaseProfilerProcessId profiler_current_process_id() {
 -  return BaseProfilerProcessId::FromNativeId(_getpid());
 +  return BaseProfilerProcessId::FromNativeId(getpid());
  }
- 
+
  BaseProfilerThreadId profiler_current_thread_id() {
 diff --git a/mozglue/misc/moz.build b/mozglue/misc/moz.build
 index 4bb8f5a110..6a2316db5e 100644
