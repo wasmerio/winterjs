@@ -42,7 +42,8 @@ fn property_descriptor() {
         rooted!(in(context) let mut descriptor: PropertyDescriptor);
 
         rooted!(in(context) let mut holder = ptr::null_mut());
-        assert!(JS_GetPropertyDescriptor(context, object.handle().into(), b"property\0" as *const u8 as *const libc::c_char, descriptor.handle_mut().into(), holder.handle_mut().into()));
+        let mut is_none = true;
+        assert!(JS_GetPropertyDescriptor(context, object.handle().into(), b"property\0" as *const u8 as *const libc::c_char, descriptor.handle_mut().into(), holder.handle_mut().into(), &mut is_none));
         assert!(descriptor.get().enumerable_());
         assert!(!descriptor.get().configurable_());
         assert!(!descriptor.get().writable_());
