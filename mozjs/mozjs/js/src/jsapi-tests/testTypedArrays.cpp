@@ -5,10 +5,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsfriendapi.h"
-
 #include "js/ArrayBuffer.h"  // JS::{NewArrayBuffer,IsArrayBufferObject,GetArrayBuffer{ByteLength,Data}}
 #include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewBuffer, JS_GetTypedArray{Length,ByteOffset,ByteLength}, JS_Get{{Ui,I}nt{8,16,32},Float{32,64},Uint8Clamped}ArrayData, JS_IsTypedArrayObject, JS_New{{Ui,I}nt{8,16,32},Float{32,64},Uint8Clamped}Array{,FromArray,WithBuffer}
+#include "js/PropertyAndElement.h"      // JS_GetElement, JS_SetElement
 #include "js/SharedArrayBuffer.h"  // JS::{NewSharedArrayBuffer,GetSharedArrayBufferData}
 #include "jsapi-tests/tests.h"
 #include "vm/Realm.h"
@@ -118,6 +117,7 @@ bool TestPlainTypedArray(JSContext* cx) {
   {
     RootedObject notArray(cx, Create(cx, SIZE_MAX));
     CHECK(!notArray);
+    JS_ClearPendingException(cx);
   }
 
   RootedObject array(cx, Create(cx, 7));
@@ -171,6 +171,7 @@ bool TestArrayFromBuffer(JSContext* cx) {
   {
     RootedObject notArray(cx, CreateWithBuffer(cx, buffer, UINT32_MAX, -1));
     CHECK(!notArray);
+    JS_ClearPendingException(cx);
   }
 
   RootedObject array(cx, CreateWithBuffer(cx, buffer, 0, -1));

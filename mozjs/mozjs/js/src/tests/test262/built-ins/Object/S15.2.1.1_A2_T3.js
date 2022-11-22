@@ -11,26 +11,13 @@ description: Calling Object function with string argument value
 
 var str = 'Luke Skywalker';
 
-// CHECK#1
-if (typeof str !== 'string') {
-  $ERROR('#1: "Luke Skywalker" should be a String primitive');
-}
+assert.sameValue(typeof str, 'string', 'The value of `typeof str` is expected to be "string"');
 
 var obj = Object(str);
 
-//CHECK#2
-if (obj.constructor !== String) {
-  $ERROR('#2: Object("Luke Skywalker") returns ToObject("Luke Skywalker")');
-}
-
-//CHECK#3
-if (typeof obj !== "object") {
-  $ERROR('#3: Object("Luke Skywalker") returns ToObject("Luke Skywalker")');
-}
-
-//CHECK#4
-if ((obj != "Luke Skywalker") || (obj === "Luke Skywalker")) {
-  $ERROR('#4: Object("Luke Skywalker") returns ToObject("Luke Skywalker")');
-}
+assert.sameValue(obj.constructor, String, 'The value of obj.constructor is expected to equal the value of String');
+assert.sameValue(typeof obj, "object", 'The value of `typeof obj` is expected to be "object"');
+assert(obj == "Luke Skywalker", 'The result of evaluating (obj == "Luke Skywalker") is expected to be true');
+assert.notSameValue(obj, "Luke Skywalker", 'The value of obj is not "Luke Skywalker"');
 
 reportCompare(0, 0);

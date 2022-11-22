@@ -8,7 +8,7 @@
 # It is referred to by the following page, so if this file moves, that page must
 # be modified accordingly:
 #
-# https://developer.mozilla.org/en/docs/Mochitest#How_do_I_test_issues_which_only_show_up_when_tests_are_run_across_domains.3F
+# https://firefox-source-docs.mozilla.org/testing/mochitest-plain/faq.html
 #
 # Empty lines and lines which begin with "#" are ignored and may be used for
 # storing comments.  All other lines consist of an origin followed by whitespace
@@ -74,6 +74,7 @@ http://test2.mochi.test:8888
 http://example.org:80                privileged
 http://test1.example.org:80          privileged
 http://test2.example.org:80          privileged
+http://test3.example.org:80          privileged
 http://sub1.test1.example.org:80     privileged
 http://sub1.test2.example.org:80     privileged
 http://sub2.test1.example.org:80     privileged
@@ -93,7 +94,6 @@ http://sub1.test1.example.com:80     privileged
 http://sub1.test2.example.com:80     privileged
 http://sub2.test1.example.com:80     privileged
 http://sub2.test2.example.com:80     privileged
-http://noxul.example.com:80          privileged,noxul
 http://example.net:80                privileged
 http://supports-insecure.expired.example.com:80 privileged
 # Used to test that clearing Service Workers for domain example.com, does not clear prefixexample.com
@@ -102,16 +102,23 @@ http://prefixexample.com:80
 # The first HTTPS location is used to generate the Common Name (CN) value of the
 # certificate's Issued To field.
 https://example.com:443                privileged
+https://www.example.com:443            privileged
 https://test1.example.com:443          privileged
 https://test2.example.com:443          privileged
 https://example.org:443                privileged
 https://test1.example.org:443          privileged
 https://test2.example.org:443          privileged
+https://sub1.test1.example.org:443     privileged
+https://sub1.test2.example.org:443     privileged
+https://sub2.test1.example.org:443     privileged
+https://sub2.test2.example.org:443     privileged
 https://sub1.test1.example.com:443     privileged
 https://sub1.test2.example.com:443     privileged
 https://sub2.test1.example.com:443     privileged
 https://sub2.test2.example.com:443     privileged
+https://example.net:443                privileged
 https://nocert.example.com:443         privileged,nocert
+https://nocert.example.org:443         privileged,nocert
 https://self-signed.example.com:443    privileged,cert=selfsigned
 https://untrusted.example.com:443      privileged,cert=untrusted
 https://expired.example.com:443        privileged,cert=expired
@@ -188,6 +195,7 @@ http://social-tracking.example.org:80
 http://itisatracker.org:80
 https://itisatracker.org:443
 http://trackertest.org:80
+http://email-tracking.example.org:80
 #
 # Used while testing TLS session ticket resumption for third-party trackers (bug 1500533)
 # (DO NOT USE THIS HOST IN OTHER TESTS!)
@@ -203,6 +211,7 @@ https://not-tracking.example.com:443
 https://tracking.example.org:443
 https://another-tracking.example.net:443
 https://social-tracking.example.org:443
+https://email-tracking.example.org:443
 
 #
 # Used while testing flash blocking (Bug 1307604)
@@ -305,6 +314,10 @@ https://127.0.0.3:433                                             privileged,cer
 https://badcertdomain.example.com:82                              privileged,cert=badCertDomain
 https://mismatch.badcertdomain.example.com:443                    privileged,cert=badCertDomain
 
+# Hosts for HTTPS-First upgrades/downgrades
+http://httpsfirst.com:80                                          privileged
+https://httpsfirst.com:443                                        privileged,nocert
+
 # Hosts for sha1 console warning tests
 https://sha1ee.example.com:443                                    privileged,cert=sha1_end_entity
 https://sha256ee.example.com:443                                  privileged,cert=sha256_end_entity
@@ -312,10 +325,9 @@ https://sha256ee.example.com:443                                  privileged,cer
 # Hosts for imminent distrust warning tests
 https://imminently-distrusted.example.com:443                     privileged,cert=imminently_distrusted
 
-# Hosts for ssl3/rc4/tls1 warning tests
+# Hosts for ssl3/3des/tls1 tests
 https://ssl3.example.com:443         privileged,ssl3
-https://rc4.example.com:443          privileged,rc4
-https://ssl3rc4.example.com:443      privileged,ssl3,rc4
+https://3des.example.com:443         privileged,3des,tls1,tls1_2
 https://tls1.example.com:443         privileged,tls1
 https://tls11.example.com:443        privileged,tls1_1
 https://tls12.example.com:443        privileged,tls1_2
@@ -330,6 +342,9 @@ https://localhost:443
 # Bug 1402530
 http://localhost:80                 privileged
 
+http://localhost:9898
+http://localhost:9899
+
 # Host for testing APIs whitelisted for mozilla.org
 https://www.mozilla.org:443
 
@@ -343,3 +358,16 @@ http://suggestion-example.com:80            privileged
 https://suggestion-example.com:443          privileged,cert=badCertDomain
 http://no-suggestion-example.com:80         privileged
 https://no-suggestion-example.com:443       privileged,cert=badCertDomain
+
+# testing HTTPS-First doesn't show warning page for bad cert
+http://nocert.example.com:80                    privileged
+http://self-signed.example.com:80               privileged
+http://untrusted.example.com:80                 privileged
+http://untrusted-expired.example.com:80         privileged
+http://no-subject-alt-name.example.com:80       privileged
+http://expired.example.com:80                   privileged
+
+# testing HTTPS-First behaviour for redirection (Bug 1706126)
+http://redirect-example.com:80              privileged
+https://redirect-example.com:443            privileged,cert=bug1706126cert
+https://www.redirect-example.com:443        privileged,cert=bug1706126cert

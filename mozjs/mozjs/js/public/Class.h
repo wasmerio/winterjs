@@ -10,6 +10,7 @@
 #define js_Class_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Maybe.h"
 
 #include "jstypes.h"
 
@@ -30,11 +31,11 @@ struct JSFunctionSpec;
 
 namespace js {
 
-class Shape;
+class PropertyResult;
 
-// This is equal to JSFunction::class_.  Use it in places where you don't want
-// to #include jsfun.h.
-extern JS_FRIEND_DATA const JSClass* const FunctionClassPtr;
+// These are equal to js::FunctionClass / js::ExtendedFunctionClass.
+extern JS_PUBLIC_DATA const JSClass* const FunctionClassPtr;
+extern JS_PUBLIC_DATA const JSClass* const FunctionExtendedClassPtr;
 
 }  // namespace js
 
@@ -133,15 +134,20 @@ class ObjectOpResult {
   JS_PUBLIC_API bool failCantSetInterposed();
   JS_PUBLIC_API bool failCantDefineWindowElement();
   JS_PUBLIC_API bool failCantDeleteWindowElement();
+  JS_PUBLIC_API bool failCantDefineWindowNamedProperty();
   JS_PUBLIC_API bool failCantDeleteWindowNamedProperty();
   JS_PUBLIC_API bool failCantPreventExtensions();
   JS_PUBLIC_API bool failCantSetProto();
   JS_PUBLIC_API bool failNoNamedSetter();
   JS_PUBLIC_API bool failNoIndexedSetter();
   JS_PUBLIC_API bool failNotDataDescriptor();
+  JS_PUBLIC_API bool failInvalidDescriptor();
 
   // Careful: This case has special handling in Object.defineProperty.
   JS_PUBLIC_API bool failCantDefineWindowNonConfigurable();
+
+  JS_PUBLIC_API bool failBadArrayLength();
+  JS_PUBLIC_API bool failBadIndex();
 
   uint32_t failureCode() const {
     MOZ_ASSERT(!ok());
@@ -201,160 +207,13 @@ class ObjectOpResult {
   }
 };
 
-class PropertyResult {
-  enum class Kind : uint8_t {
-    NotFound,
-    NativeProperty,
-    NonNativeProperty,
-    DenseElement,
-    TypedArrayElement,
-  };
-  union {
-    // Set if kind is NativeProperty.
-    js::Shape* shape_;
-    // Set if kind is DenseElement.
-    uint32_t denseIndex_;
-    // Set if kind is TypedArrayElement.
-    size_t typedArrayIndex_;
-  };
-  Kind kind_ = Kind::NotFound;
-  bool ignoreProtoChain_ = false;
-
- public:
-  PropertyResult() = default;
-
-  // When a property is not found, we may additionally indicate that the
-  // prototype chain should be ignored. This occurs for:
-  //  - An out-of-range numeric property on a TypedArrayObject.
-  //  - A resolve hook recursively calling itself as it sets the property.
-  bool isNotFound() const { return kind_ == Kind::NotFound; }
-  bool shouldIgnoreProtoChain() const {
-    MOZ_ASSERT(isNotFound());
-    return ignoreProtoChain_;
-  }
-
-  bool isFound() const { return kind_ != Kind::NotFound; }
-  bool isNonNativeProperty() const { return kind_ == Kind::NonNativeProperty; }
-  bool isDenseElement() const { return kind_ == Kind::DenseElement; }
-  bool isTypedArrayElement() const { return kind_ == Kind::TypedArrayElement; }
-  bool isNativeProperty() const { return kind_ == Kind::NativeProperty; }
-
-  js::Shape* shape() const {
-    MOZ_ASSERT(isNativeProperty());
-    return shape_;
-  }
-
-  uint32_t denseElementIndex() const {
-    MOZ_ASSERT(isDenseElement());
-    return denseIndex_;
-  }
-
-  size_t typedArrayElementIndex() const {
-    MOZ_ASSERT(isTypedArrayElement());
-    return typedArrayIndex_;
-  }
-
-  void setNotFound() { kind_ = Kind::NotFound; }
-
-  void setNativeProperty(js::Shape* propertyShape) {
-    kind_ = Kind::NativeProperty;
-    shape_ = propertyShape;
-  }
-
-  void setTypedObjectProperty() { kind_ = Kind::NonNativeProperty; }
-  void setProxyProperty() { kind_ = Kind::NonNativeProperty; }
-
-  void setDenseElement(uint32_t index) {
-    kind_ = Kind::DenseElement;
-    denseIndex_ = index;
-  }
-
-  void setTypedArrayElement(size_t index) {
-    kind_ = Kind::TypedArrayElement;
-    typedArrayIndex_ = index;
-  }
-
-  void setTypedArrayOutOfRange() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
-  void setRecursiveResolve() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
-
-  void trace(JSTracer* trc);
-};
-
 }  // namespace JS
 
-namespace js {
-
-template <class Wrapper>
-class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
-  const JS::PropertyResult& value() const {
-    return static_cast<const Wrapper*>(this)->get();
-  }
-
- public:
-  bool isNotFound() const { return value().isNotFound(); }
-  bool isFound() const { return value().isFound(); }
-  js::Shape* shape() const { return value().shape(); }
-  uint32_t denseElementIndex() const { return value().denseElementIndex(); }
-  size_t typedArrayElementIndex() const {
-    return value().typedArrayElementIndex();
-  }
-  bool isNativeProperty() const { return value().isNativeProperty(); }
-  bool isNonNativeProperty() const { return value().isNonNativeProperty(); }
-  bool isDenseElement() const { return value().isDenseElement(); }
-  bool isTypedArrayElement() const { return value().isTypedArrayElement(); }
-
-  bool shouldIgnoreProtoChain() const {
-    return value().shouldIgnoreProtoChain();
-  }
-};
-
-template <class Wrapper>
-class MutableWrappedPtrOperations<JS::PropertyResult, Wrapper>
-    : public WrappedPtrOperations<JS::PropertyResult, Wrapper> {
-  JS::PropertyResult& value() { return static_cast<Wrapper*>(this)->get(); }
-
- public:
-  void setNotFound() { value().setNotFound(); }
-  void setNativeProperty(js::Shape* shape) { value().setNativeProperty(shape); }
-  void setTypedObjectProperty() { value().setTypedObjectProperty(); }
-  void setProxyProperty() { value().setProxyProperty(); }
-  void setDenseElement(uint32_t index) { value().setDenseElement(index); }
-  void setTypedArrayElement(size_t index) {
-    value().setTypedArrayElement(index);
-  }
-  void setTypedArrayOutOfRange() { value().setTypedArrayOutOfRange(); }
-  void setRecursiveResolve() { value().setRecursiveResolve(); }
-};
-
-}  // namespace js
-
 // JSClass operation signatures.
-
-/**
- * Get a property named by id in obj.  Note the jsid id type -- id may
- * be a string (Unicode property identifier) or an int (element index).  The
- * *vp out parameter, on success, is the new property value after the action.
- */
-typedef bool (*JSGetterOp)(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                           JS::MutableHandleValue vp);
 
 /** Add a property named by id to obj. */
 typedef bool (*JSAddPropertyOp)(JSContext* cx, JS::HandleObject obj,
                                 JS::HandleId id, JS::HandleValue v);
-
-/**
- * Set a property named by id in obj, treating the assignment as strict
- * mode code if strict is true. Note the jsid id type -- id may be a string
- * (Unicode property identifier) or an int (element index).
- */
-typedef bool (*JSSetterOp)(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                           JS::HandleValue v, JS::ObjectOpResult& result);
 
 /**
  * Delete a property named by id in obj.
@@ -436,15 +295,7 @@ typedef bool (*JSMayResolveOp)(const JSAtomState& names, jsid id,
  * from other live objects or from GC roots.  Obviously, finalizers must never
  * store a reference to obj.
  */
-typedef void (*JSFinalizeOp)(JSFreeOp* fop, JSObject* obj);
-
-/**
- * Check whether v is an instance of obj.  Return false on error or exception,
- * true on success with true in *bp if v is an instance of obj, false in
- * *bp otherwise.
- */
-typedef bool (*JSHasInstanceOp)(JSContext* cx, JS::HandleObject obj,
-                                JS::MutableHandleValue vp, bool* bp);
+typedef void (*JSFinalizeOp)(JS::GCContext* gcx, JSObject* obj);
 
 /**
  * Function type for trace operation of the class called to enumerate all
@@ -470,7 +321,7 @@ namespace js {
 
 typedef bool (*LookupPropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id, JS::MutableHandleObject objp,
-                                 JS::MutableHandle<JS::PropertyResult> propp);
+                                 PropertyResult* propp);
 typedef bool (*DefinePropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id,
                                  JS::Handle<JS::PropertyDescriptor> desc,
@@ -486,11 +337,11 @@ typedef bool (*SetPropertyOp)(JSContext* cx, JS::HandleObject obj,
                               JS::ObjectOpResult& result);
 typedef bool (*GetOwnPropertyOp)(
     JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc);
+    JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
 typedef bool (*DeletePropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id, JS::ObjectOpResult& result);
 
-class JS_FRIEND_API ElementAdder {
+class JS_PUBLIC_API ElementAdder {
  public:
   enum GetBehavior {
     // Check if the element exists before performing the Get and preserve
@@ -635,8 +486,7 @@ static constexpr const js::ObjectOps* JS_NULL_OBJECT_OPS = nullptr;
 
 // Classes, objects, and properties.
 
-// Objects have private slot.
-static const uint32_t JSCLASS_HAS_PRIVATE = 1 << 0;
+// (1 << 0 is unused)
 
 // Class's initialization code will call `SetNewObjectMetadata` itself.
 static const uint32_t JSCLASS_DELAY_METADATA_BUILDER = 1 << 1;
@@ -645,8 +495,8 @@ static const uint32_t JSCLASS_DELAY_METADATA_BUILDER = 1 << 1;
 // disposal mechanism.
 static const uint32_t JSCLASS_IS_WRAPPED_NATIVE = 1 << 2;
 
-// Private is `nsISupports*`.
-static const uint32_t JSCLASS_PRIVATE_IS_NSISUPPORTS = 1 << 3;
+// First reserved slot is `PrivateValue(nsISupports*)` or `UndefinedValue`.
+static constexpr uint32_t JSCLASS_SLOT0_IS_NSISUPPORTS = 1 << 3;
 
 // Objects are DOM.
 static const uint32_t JSCLASS_IS_DOMJSCLASS = 1 << 4;
@@ -718,7 +568,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 29;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + 1;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |
@@ -750,7 +600,6 @@ struct MOZ_STATIC_CLASS JSClassOps {
   JSMayResolveOp mayResolve;
   JSFinalizeOp finalize;
   JSNative call;
-  JSHasInstanceOp hasInstance;
   JSNative construct;
   JSTraceOp trace;
 };
@@ -785,9 +634,6 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
     return cOps ? cOps->mayResolve : nullptr;
   }
   JSNative getCall() const { return cOps ? cOps->call : nullptr; }
-  JSHasInstanceOp getHasInstance() const {
-    return cOps ? cOps->hasInstance : nullptr;
-  }
   JSNative getConstruct() const { return cOps ? cOps->construct : nullptr; }
 
   bool hasFinalize() const { return cOps && cOps->finalize; }
@@ -798,9 +644,9 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
   // The special treatment of |finalize| and |trace| is necessary because if we
   // assign either of those hooks to a local variable and then call it -- as is
   // done with the other hooks -- the GC hazard analysis gets confused.
-  void doFinalize(JSFreeOp* fop, JSObject* obj) const {
+  void doFinalize(JS::GCContext* gcx, JSObject* obj) const {
     MOZ_ASSERT(cOps && cOps->finalize);
-    cOps->finalize(fop, obj);
+    cOps->finalize(gcx, obj);
   }
   void doTrace(JSTracer* trc, JSObject* obj) const {
     MOZ_ASSERT(cOps && cOps->trace);
@@ -830,11 +676,11 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
   bool isNativeObject() const { return !(flags & NON_NATIVE); }
   bool isProxyObject() const { return flags & JSCLASS_IS_PROXY; }
 
-  bool hasPrivate() const { return !!(flags & JSCLASS_HAS_PRIVATE); }
-
   bool emulatesUndefined() const { return flags & JSCLASS_EMULATES_UNDEFINED; }
 
-  bool isJSFunction() const { return this == js::FunctionClassPtr; }
+  bool isJSFunction() const {
+    return this == js::FunctionClassPtr || this == js::FunctionExtendedClassPtr;
+  }
 
   bool nonProxyCallable() const {
     MOZ_ASSERT(!isProxyObject());
@@ -850,6 +696,8 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
   }
 
   bool isWrappedNative() const { return flags & JSCLASS_IS_WRAPPED_NATIVE; }
+
+  bool slot0IsISupports() const { return flags & JSCLASS_SLOT0_IS_NSISUPPORTS; }
 
   static size_t offsetOfFlags() { return offsetof(JSClass, flags); }
 
@@ -958,6 +806,11 @@ enum class ESClass {
   BigInt,
   Function,  // Note: Only JSFunction objects.
 
+#ifdef ENABLE_RECORD_TUPLE
+  Record,
+  Tuple,
+#endif
+
   /** None of the above. */
   Other
 };
@@ -966,7 +819,7 @@ enum class ESClass {
 bool Unbox(JSContext* cx, JS::HandleObject obj, JS::MutableHandleValue vp);
 
 #ifdef DEBUG
-JS_FRIEND_API bool HasObjectMovedOp(JSObject* obj);
+JS_PUBLIC_API bool HasObjectMovedOp(JSObject* obj);
 #endif
 
 } /* namespace js */

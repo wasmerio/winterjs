@@ -25,7 +25,6 @@ from mozpack.executables import (
     strip,
     may_elfhack,
     elfhack,
-    xz_compress,
 )
 from mozpack.chrome.manifest import (
     ManifestEntry,
@@ -318,9 +317,8 @@ class ExecutableFile(File):
     (see mozpack.executables.is_executable documentation).
     """
 
-    def __init__(self, path, xz_compress=False):
+    def __init__(self, path):
         File.__init__(self, path)
-        self.xz_compress = xz_compress
 
     def copy(self, dest, skip_if_older=True):
         real_dest = dest
@@ -331,7 +329,7 @@ class ExecutableFile(File):
         assert isinstance(dest, six.string_types)
         # If File.copy didn't actually copy because dest is newer, check the
         # file sizes. If dest is smaller, it means it is already stripped and
-        # elfhacked and xz_compressed, so we can skip.
+        # elfhacked, so we can skip.
         if not File.copy(self, dest, skip_if_older) and os.path.getsize(
             self.path
         ) > os.path.getsize(dest):
@@ -341,8 +339,6 @@ class ExecutableFile(File):
                 strip(dest)
             if may_elfhack(dest):
                 elfhack(dest)
-            if self.xz_compress:
-                xz_compress(dest)
         except ErrorMessage:
             os.remove(dest)
             raise
@@ -367,22 +363,6 @@ class AbsoluteSymlinkFile(File):
 
         File.__init__(self, path)
 
-    @staticmethod
-    def excluded(dest):
-        if platform.system() != "Windows":
-            return False
-
-        # Exclude local resources from symlinking since the sandbox on Windows
-        # does not allow accessing reparse points. See bug 1695556.
-        from buildconfig import topobjdir
-
-        denylist = [("dist", "bin"), ("_tests", "modules")]
-        fulllist = [os.path.join(topobjdir, *paths) for paths in denylist]
-
-        fulldest = os.path.join(os.path.abspath(os.curdir), dest)
-
-        return mozpath.basedir(fulldest, fulllist) is not None
-
     def copy(self, dest, skip_if_older=True):
         assert isinstance(dest, six.string_types)
 
@@ -393,7 +373,7 @@ class AbsoluteSymlinkFile(File):
 
         # Handle the simple case where symlinks are definitely not supported by
         # falling back to file copy.
-        if not hasattr(os, "symlink") or AbsoluteSymlinkFile.excluded(dest):
+        if not hasattr(os, "symlink"):
             return File.copy(self, dest, skip_if_older=skip_if_older)
 
         # Always verify the symlink target path exists.
@@ -574,7 +554,7 @@ class PreprocessedFile(BaseFile):
         pp = Preprocessor(defines=self.defines, marker=self.marker)
         pp.setSilenceDirectiveWarnings(self.silence_missing_directive_warnings)
 
-        with _open(self.path, "rU") as input:
+        with _open(self.path, "r") as input:
             with _open(os.devnull, "w") as output:
                 pp.processFile(input=input, output=output)
 
@@ -631,7 +611,7 @@ class PreprocessedFile(BaseFile):
         pp = Preprocessor(defines=self.defines, marker=self.marker)
         pp.setSilenceDirectiveWarnings(self.silence_missing_directive_warnings)
 
-        with _open(self.path, "rU") as input:
+        with _open(self.path, "r") as input:
             pp.processFile(input=input, output=dest, depfile=deps_out)
 
         dest.close()
@@ -777,10 +757,10 @@ class ManifestFile(BaseFile):
         return len(self._entries) + len(self._interfaces) == 0
 
 
-class MinifiedProperties(BaseFile):
+class MinifiedCommentStripped(BaseFile):
     """
-    File class for minified properties. This wraps around a BaseFile instance,
-    and removes lines starting with a # from its content.
+    File class for content minified by stripping comments. This wraps around a
+    BaseFile instance, and removes lines starting with a # from its content.
     """
 
     def __init__(self, file):
@@ -790,7 +770,7 @@ class MinifiedProperties(BaseFile):
     def open(self):
         """
         Return a file-like object allowing to read() the minified content of
-        the properties file.
+        the underlying file.
         """
         content = "".join(
             l
@@ -939,8 +919,8 @@ class BaseFinder(object):
         if not self._minify or isinstance(file, ExecutableFile):
             return file
 
-        if path.endswith(".properties"):
-            return MinifiedProperties(file)
+        if path.endswith((".ftl", ".properties")):
+            return MinifiedCommentStripped(file)
 
         if self._minify_js and path.endswith((".js", ".jsm")):
             return MinifiedJavaScript(file, self._minify_js_verify_command)

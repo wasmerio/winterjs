@@ -67,9 +67,6 @@ path:.cron.yml
 path:gfx/wr/Cargo.lock
 path:gfx/wr/ci-scripts/
 
-# for the wgpu-deps toolchain task
-path:gfx/wgpu/Cargo.lock
-
 # for the mar-tools toolchain task
 path:mfbt/
 path:modules/libmar/
@@ -77,7 +74,7 @@ path:other-licenses/bsdiff/
 path:other-licenses/nsis/Contrib/CityHash/cityhash/
 path:toolkit/mozapps/update/updater
 
-# for the minidump_stackwalk toolchain task
+# for the minidump-stackwalk toolchain task
 path:toolkit/crashreporter
 path:tools/crashreporter/
 path:mfbt

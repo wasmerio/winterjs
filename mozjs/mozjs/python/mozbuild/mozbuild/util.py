@@ -9,6 +9,8 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import argparse
 import collections
+import collections.abc
+import copy
 import ctypes
 import difflib
 import errno
@@ -132,6 +134,16 @@ class ReadOnlyDict(dict):
     def update(self, *args, **kwargs):
         raise Exception("Object does not support update.")
 
+    def __copy__(self, *args, **kwargs):
+        return ReadOnlyDict(**dict.copy(self, *args, **kwargs))
+
+    def __deepcopy__(self, memo):
+        result = {}
+        for k, v in self.items():
+            result[k] = copy.deepcopy(v, memo)
+
+        return ReadOnlyDict(**result)
+
 
 class undefined_default(object):
     """Represents an undefined argument value that isn't None."""
@@ -224,7 +236,7 @@ class FileAvoidWrite(BytesIO):
     still occur, as well as diff capture if requested.
     """
 
-    def __init__(self, filename, capture_diff=False, dry_run=False, readmode="rU"):
+    def __init__(self, filename, capture_diff=False, dry_run=False, readmode="r"):
         BytesIO.__init__(self)
         self.name = filename
         assert type(capture_diff) == bool
@@ -1193,9 +1205,6 @@ def group_unified_files(files, unified_prefix, unified_suffix, files_per_unified
     files, and determining which original source files go in which unified
     file."""
 
-    # Make sure the input list is sorted. If it's not, bad things could happen!
-    files = sorted(files)
-
     # Our last returned list of source filenames may be short, and we
     # don't want the fill value inserted by zip_longest to be an
     # issue.  So we do a little dance to filter it out ourselves.
@@ -1401,71 +1410,6 @@ def write_indented_repr(f, o, indent=4):
     f.write(result)
 
 
-def patch_main():
-    """This is a hack to work around the fact that Windows multiprocessing needs
-    to import the original main module, and assumes that it corresponds to a file
-    ending in .py.
-
-    We do this by a sort of two-level function interposing. The first
-    level interposes forking.get_command_line() with our version defined
-    in my_get_command_line(). Our version of get_command_line will
-    replace the command string with the contents of the fork_interpose()
-    function to be used in the subprocess.
-
-    The subprocess then gets an interposed imp.find_module(), which we
-    hack up to find the main module name multiprocessing will assume, since we
-    know what this will be based on the main module in the parent. If we're not
-    looking for our main module, then the original find_module will suffice.
-
-    See also: http://bugs.python.org/issue19946
-    And: https://bugzilla.mozilla.org/show_bug.cgi?id=914563
-    """
-    # XXX In Python 3.4 the multiprocessing module was re-written and the below
-    # code is no longer valid. The Python issue19946 also claims to be fixed in
-    # this version. It's not clear whether this hack is still needed in 3.4+ or
-    # not, but at least some basic mach commands appear to work without it. So
-    # skip it in 3.4+ until we determine it's still needed.
-    if sys.platform == "win32" and sys.version_info < (3, 4):
-        import os
-        from multiprocessing import forking
-
-        global orig_command_line
-
-        # Figure out what multiprocessing will assume our main module
-        # is called (see python/Lib/multiprocessing/forking.py).
-        main_path = getattr(sys.modules["__main__"], "__file__", None)
-        if main_path is None:
-            # If someone deleted or modified __main__, there's nothing left for
-            # us to do.
-            return
-        main_file_name = os.path.basename(main_path)
-        main_module_name, ext = os.path.splitext(main_file_name)
-        if ext == ".py":
-            # If main is a .py file, everything ought to work as expected.
-            return
-
-        def my_get_command_line():
-            with open(
-                os.path.join(os.path.dirname(__file__), "fork_interpose.py"), "rU"
-            ) as fork_file:
-                fork_code = fork_file.read()
-            # Add our relevant globals.
-            fork_string = (
-                "main_file_name = '%s'\n" % main_file_name
-                + "main_module_name = '%s'\n" % main_module_name
-                + fork_code
-            )
-            cmdline = orig_command_line()
-            # We don't catch errors if "-c" is not found because it's not clear
-            # what we should do if the original command line is not of the form
-            # "python ... -c 'script'".
-            cmdline[cmdline.index("-c") + 1] = fork_string
-            return cmdline
-
-        orig_command_line = forking.get_command_line
-        forking.get_command_line = my_get_command_line
-
-
 def ensure_bytes(value, encoding="utf-8"):
     if isinstance(value, six.text_type):
         return value.encode(encoding)
@@ -1476,22 +1420,6 @@ def ensure_unicode(value, encoding="utf-8"):
     if isinstance(value, six.binary_type):
         return value.decode(encoding)
     return value
-
-
-def ensure_subprocess_env(env, encoding="utf-8"):
-    """Ensure the environment is in the correct format for the `subprocess`
-    module.
-
-    This will convert all keys and values to bytes on Python 2, and text on
-    Python 3.
-
-    Args:
-        env (dict): Environment to ensure.
-        encoding (str): Encoding to use when converting to/from bytes/text
-                        (default: utf-8).
-    """
-    ensure = ensure_bytes if sys.version_info[0] < 3 else ensure_unicode
-    return {ensure(k, encoding): ensure(v, encoding) for k, v in six.iteritems(env)}
 
 
 def process_time():

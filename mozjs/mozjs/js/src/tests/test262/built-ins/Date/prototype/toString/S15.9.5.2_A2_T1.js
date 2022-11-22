@@ -7,12 +7,12 @@ esid: sec-date.prototype.tostring
 description: The "length" property of the "toString" is 0
 ---*/
 
-if (Date.prototype.toString.hasOwnProperty("length") !== true) {
-  $ERROR('#1: The toString has a "length" property');
-}
+assert.sameValue(
+  Date.prototype.toString.hasOwnProperty("length"),
+  true,
+  'Date.prototype.toString.hasOwnProperty("length") must return true'
+);
 
-if (Date.prototype.toString.length !== 0) {
-  $ERROR('#2: The "length" property of the toString is 0');
-}
+assert.sameValue(Date.prototype.toString.length, 0, 'The value of Date.prototype.toString.length is expected to be 0');
 
 reportCompare(0, 0);

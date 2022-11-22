@@ -29,8 +29,8 @@ This tutorial was tested against Firefox 58 Beta and Nightly. It does not work i
     ```
 
 3.  Visit the HTML file in your browser, and open the Browser Content Toolbox by
-    opening the Firefox menu, choosing “Web Developer”, and then “Browser
-    Content Toolbox”. If that item doesn't appear in the “Web Developer” menu,
+    opening the Firefox menu, choosing “Browser Tools”, and then “Browser
+    Content Toolbox”. If that item doesn't appear in the “Browser Tools” menu,
     make sure you checked both boxes to enable the Browser Content Toolbox as
     explained in Step 1.
 
@@ -44,12 +44,16 @@ This tutorial was tested against Firefox 58 Beta and Nightly. It does not work i
 5.  Click on the Scratchpad panel and enter the following code:
 
     ```js
-    Components.utils.import("resource://gre/modules/jsdebugger.jsm");
-    Components.utils.import("resource://gre/modules/Console.jsm");
+    const { addDebuggerToGlobal } = ChromeUtils.importESModule(
+      "resource://gre/modules/jsdebugger.sys.mjs"
+    );
+    const { console } = ChromeUtils.import(
+      "resource://gre/modules/Console.jsm"
+    );
 
     // This simply defines 'Debugger' in this Scratchpad;
     // it doesn't actually start debugging anything.
-    addDebuggerToGlobal(this);
+    addDebuggerToGlobal(globalThis);
 
     // Create a 'Debugger' instance.
     var dbg = new Debugger;

@@ -101,14 +101,14 @@ class LDivOrModI64
 
   static const size_t Lhs = 0;
   static const size_t Rhs = INT64_PIECES;
-  static const size_t Tls = 2 * INT64_PIECES;
+  static const size_t Instance = 2 * INT64_PIECES;
 
   LDivOrModI64(const LInt64Allocation& lhs, const LInt64Allocation& rhs,
-               const LAllocation& tls)
+               const LAllocation& instance)
       : LCallInstructionHelper(classOpcode) {
     setInt64Operand(Lhs, lhs);
     setInt64Operand(Rhs, rhs);
-    setOperand(Tls, tls);
+    setOperand(Instance, instance);
   }
 
   MDefinition* mir() const {
@@ -143,14 +143,14 @@ class LUDivOrModI64
 
   static const size_t Lhs = 0;
   static const size_t Rhs = INT64_PIECES;
-  static const size_t Tls = 2 * INT64_PIECES;
+  static const size_t Instance = 2 * INT64_PIECES;
 
   LUDivOrModI64(const LInt64Allocation& lhs, const LInt64Allocation& rhs,
-                const LAllocation& tls)
+                const LAllocation& instance)
       : LCallInstructionHelper(classOpcode) {
     setInt64Operand(Lhs, lhs);
     setInt64Operand(Rhs, rhs);
-    setOperand(Tls, tls);
+    setOperand(Instance, instance);
   }
 
   MDefinition* mir() const {
@@ -361,19 +361,19 @@ class LSoftUDivOrMod : public LBinaryCallInstructionHelper<1, 0> {
 
 class LWasmTruncateToInt64 : public LCallInstructionHelper<INT64_PIECES, 2, 0> {
   static const size_t Input = 0;
-  static const size_t Tls = 1;
+  static const size_t Instance = 1;
 
  public:
   LIR_HEADER(WasmTruncateToInt64);
 
-  LWasmTruncateToInt64(const LAllocation& in, const LAllocation& tls)
+  LWasmTruncateToInt64(const LAllocation& in, const LAllocation& instance)
       : LCallInstructionHelper(classOpcode) {
     setOperand(Input, in);
-    setOperand(Tls, tls);
+    setOperand(Instance, instance);
   }
 
   LAllocation* input() { return getOperand(Input); }
-  LAllocation* tls() { return getOperand(Tls); }
+  LAllocation* instance() { return getOperand(Instance); }
 
   MWasmBuiltinTruncateToInt64* mir() const {
     return mir_->toWasmBuiltinTruncateToInt64();
@@ -386,116 +386,20 @@ class LInt64ToFloatingPointCall
   LIR_HEADER(Int64ToFloatingPointCall);
 
   static const size_t Input = 0;
-  static const size_t Tls = INT64_PIECES;
+  static const size_t Instance = INT64_PIECES;
 
-  LInt64ToFloatingPointCall(const LInt64Allocation& in, const LAllocation& tls)
+  LInt64ToFloatingPointCall(const LInt64Allocation& in,
+                            const LAllocation& instance)
       : LCallInstructionHelper(classOpcode) {
     setInt64Operand(Input, in);
-    setOperand(Tls, tls);
+    setOperand(Instance, instance);
   }
 
   LAllocation* input() { return getOperand(Input); }
-  LAllocation* tls() { return getOperand(Tls); }
+  LAllocation* instance() { return getOperand(Instance); }
 
   MBuiltinInt64ToFloatingPoint* mir() const {
     return mir_->toBuiltinInt64ToFloatingPoint();
-  }
-};
-
-namespace details {
-
-// Base class for the int64 and non-int64 variants.
-template <size_t NumDefs>
-class LWasmUnalignedLoadBase : public details::LWasmLoadBase<NumDefs, 4> {
- public:
-  typedef LWasmLoadBase<NumDefs, 4> Base;
-  explicit LWasmUnalignedLoadBase(LNode::Opcode opcode, const LAllocation& ptr,
-                                  const LDefinition& ptrCopy,
-                                  const LDefinition& temp1,
-                                  const LDefinition& temp2,
-                                  const LDefinition& temp3)
-      : Base(opcode, ptr, LAllocation()) {
-    Base::setTemp(0, ptrCopy);
-    Base::setTemp(1, temp1);
-    Base::setTemp(2, temp2);
-    Base::setTemp(3, temp3);
-  }
-
-  const LDefinition* ptrCopy() { return Base::getTemp(0); }
-};
-
-}  // namespace details
-
-class LWasmUnalignedLoad : public details::LWasmUnalignedLoadBase<1> {
- public:
-  explicit LWasmUnalignedLoad(const LAllocation& ptr,
-                              const LDefinition& ptrCopy,
-                              const LDefinition& temp1,
-                              const LDefinition& temp2,
-                              const LDefinition& temp3)
-      : LWasmUnalignedLoadBase(classOpcode, ptr, ptrCopy, temp1, temp2, temp3) {
-  }
-  LIR_HEADER(WasmUnalignedLoad);
-};
-
-class LWasmUnalignedLoadI64
-    : public details::LWasmUnalignedLoadBase<INT64_PIECES> {
- public:
-  explicit LWasmUnalignedLoadI64(const LAllocation& ptr,
-                                 const LDefinition& ptrCopy,
-                                 const LDefinition& temp1,
-                                 const LDefinition& temp2,
-                                 const LDefinition& temp3)
-      : LWasmUnalignedLoadBase(classOpcode, ptr, ptrCopy, temp1, temp2, temp3) {
-  }
-  LIR_HEADER(WasmUnalignedLoadI64);
-};
-
-namespace details {
-
-// Base class for the int64 and non-int64 variants.
-template <size_t NumOps>
-class LWasmUnalignedStoreBase : public LInstructionHelper<0, NumOps, 2> {
- public:
-  typedef LInstructionHelper<0, NumOps, 2> Base;
-
-  static const uint32_t ValueIndex = 1;
-
-  LWasmUnalignedStoreBase(LNode::Opcode opcode, const LAllocation& ptr,
-                          const LDefinition& ptrCopy,
-                          const LDefinition& valueHelper)
-      : Base(opcode) {
-    Base::setOperand(0, ptr);
-    Base::setTemp(0, ptrCopy);
-    Base::setTemp(1, valueHelper);
-  }
-  MWasmStore* mir() const { return Base::mir_->toWasmStore(); }
-  const LDefinition* ptrCopy() { return Base::getTemp(0); }
-  const LDefinition* valueHelper() { return Base::getTemp(1); }
-};
-
-}  // namespace details
-
-class LWasmUnalignedStore : public details::LWasmUnalignedStoreBase<2> {
- public:
-  LIR_HEADER(WasmUnalignedStore);
-  LWasmUnalignedStore(const LAllocation& ptr, const LAllocation& value,
-                      const LDefinition& ptrCopy,
-                      const LDefinition& valueHelper)
-      : LWasmUnalignedStoreBase(classOpcode, ptr, ptrCopy, valueHelper) {
-    setOperand(1, value);
-  }
-};
-
-class LWasmUnalignedStoreI64
-    : public details::LWasmUnalignedStoreBase<1 + INT64_PIECES> {
- public:
-  LIR_HEADER(WasmUnalignedStoreI64);
-  LWasmUnalignedStoreI64(const LAllocation& ptr, const LInt64Allocation& value,
-                         const LDefinition& ptrCopy,
-                         const LDefinition& valueHelper)
-      : LWasmUnalignedStoreBase(classOpcode, ptr, ptrCopy, valueHelper) {
-    setInt64Operand(1, value);
   }
 };
 

@@ -21,7 +21,6 @@ var obj = {
 var alphabetR = [undefined, 2, 1, "X", -1, "a", true, obj, NaN, Infinity];
 var alphabet = [-1, obj, 1, 2, Infinity, NaN, "X", "a", true, undefined];
 
-//CHECK#1
 alphabetR.sort();
 var result = true;
 for (var i = 0; i < 10; i++) {
@@ -31,7 +30,7 @@ for (var i = 0; i < 10; i++) {
 }
 
 if (result !== true) {
-  $ERROR('#1: Check ToString operator');
+  throw new Test262Error('#1: Check ToString operator');
 }
 
 reportCompare(0, 0);

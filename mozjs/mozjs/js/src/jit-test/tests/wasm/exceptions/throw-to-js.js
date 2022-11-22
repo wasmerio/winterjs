@@ -7,18 +7,117 @@ function assertWasmThrowsExn(thunk) {
     thunk();
   } catch (exn) {
     thrown = true;
-    assertEq(exn instanceof WebAssembly.RuntimeException, true);
+    assertEq(exn instanceof WebAssembly.Exception, true);
   }
 
   assertEq(thrown, true, "missing exception");
 }
+
+// Test that handler-less trys don't catch anything.
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (type (func (param)))
+       (tag $exn (type 0))
+       (func (export "f")
+         try (throw $exn) end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (type (func (param)))
+       (tag $exn (type 0))
+       (func $g (throw $exn))
+       (func (export "f")
+         try (call $g) end)
+)`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (type (func (param)))
+       (tag $exn (type 0))
+       (func (export "f")
+         try try (throw $exn) end end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f")
+         try
+           try
+             throw $exn
+           delegate 0
+         end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f")
+         try
+           try
+             throw $exn
+           delegate 1
+         end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f")
+         block
+           try
+             throw $exn
+           delegate 0
+         end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f")
+         loop
+           try
+             throw $exn
+           delegate 0
+         end))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f")
+         (i32.const 1)
+         if
+           try
+             throw $exn
+           delegate 0
+         end))`
+  ).exports.f()
+);
 
 // Test throwing simple empty exceptions to JS.
 assertWasmThrowsExn(() =>
   wasmEvalText(
     `(module
        (type (func (param)))
-       (event $exn (type 0))
+       (tag $exn (type 0))
        (func (export "f")
          (throw $exn)))`
   ).exports.f()
@@ -30,7 +129,7 @@ assertThrowsValue(
   () =>
     wasmEvalText(
       `(module
-         (event $exn)
+         (tag $exn)
          (import "m" "import" (func $import))
          (func (export "f")
            try
@@ -49,13 +148,36 @@ assertThrowsValue(
   42
 );
 
+// Like previous test, but using a rethrow instruction instead.
+assertThrowsValue(
+  () =>
+    wasmEvalText(
+      `(module
+         (import "m" "import" (func $import))
+         (func (export "f")
+           try
+             (call $import)
+           catch_all
+             (rethrow 0)
+           end))`,
+      {
+        m: {
+          import: () => {
+            throw 42;
+          },
+        },
+      }
+    ).exports.f(),
+  42
+);
+
 // Test for throwing to JS and then back to Wasm.
 {
   var wasmThrower;
   let exports = wasmEvalText(
     `(module
        (type (func (param i32)))
-       (event $exn (type 0))
+       (tag $exn (type 0))
        (import "m" "import" (func $import (result i32)))
        (func (export "thrower")
          (i32.const 42)
@@ -83,7 +205,7 @@ assertThrowsValue(
   let exports = wasmEvalText(
     `(module
        (type (func (param i32)))
-       (event $exn (export "exn") (type 0))
+       (tag $exn (export "exn") (type 0))
        (func (export "thrower")
          (i32.const 42)
          (throw $exn)))`
@@ -104,7 +226,7 @@ assertThrowsValue(
       `(module
          (type (func (param i32)))
          (import "store" "throws" (func $thrower (result i32)))
-         (import "store" "exn" (event $exn (type 0)))
+         (import "store" "exn" (tag $exn (type 0)))
          (func (export "catches") (result i32)
            try (result i32)
              (call $thrower)
@@ -124,7 +246,7 @@ assertThrowsValue(
       `(module
          (type (func (param i32)))
          (import "store" "throws" (func $thrower (result i32)))
-         (event $exn (type 0))
+         (tag $exn (type 0))
          (func (export "catchesFail") (result i32)
            try (result i32)
              (call $thrower)
@@ -142,7 +264,7 @@ assertEq(
       wasmEvalText(
         `(module
            (type (func (param)))
-           (event $exn (type 0))
+           (tag $exn (type 0))
            (func (export "f")
              (throw $exn)))`
       ).exports.f();
@@ -161,12 +283,13 @@ assertEq(
   let catcher = wasmEvalText(
     `(module
        (type (func))
-       (event $exn (type 0))
+       (tag $exn (type 0))
        (import "m" "f" (func $foreign (param) (result)))
        (func (export "f")
          try
            call $foreign
          catch $exn
+         catch_all
          end))`,
     {
       m: {
@@ -188,3 +311,33 @@ assertEq(
     "unreachable executed"
   );
 }
+
+// Test delegate throwing out of function.
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f") (result i32)
+         try (result i32)
+           throw $exn
+         delegate 0))`
+  ).exports.f()
+);
+
+assertWasmThrowsExn(() =>
+  wasmEvalText(
+    `(module
+       (tag $exn (param))
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 0
+           if
+             i32.const 1
+             return
+           else
+             throw $exn
+           end
+           i32.const 0
+         delegate 0))`
+  ).exports.f()
+);

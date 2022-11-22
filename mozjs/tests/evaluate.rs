@@ -33,7 +33,6 @@ static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     mayResolve: None,
     finalize: None,
     call: None,
-    hasInstance: None,
     construct: None,
     trace: Some(JS_GlobalObjectTraceHook),
 };
@@ -60,7 +59,7 @@ fn main() {
         let nursery_size = 8 * 1024 * 1024;
         let cx: *mut JSContext = JS_NewContext(heap_size + nursery_size, ptr::null_mut());
         assert!(!cx.is_null());
-        assert!(JS::InitSelfHostedCode(cx));
+        assert!(JS::InitSelfHostedCode(cx, Default::default(), None));
 
         // Create the global object and a new compartment.
         // THIS IS DANGEROUS since the global isn't rooted.

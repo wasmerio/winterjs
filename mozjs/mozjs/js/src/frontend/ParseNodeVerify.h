@@ -7,12 +7,17 @@
 #ifndef frontend_ParseNodeVerify_h
 #define frontend_ParseNodeVerify_h
 
-#include "ds/LifoAlloc.h"                 // LifoAlloc
-#include "frontend/ParseNode.h"           // ParseNode
 #include "frontend/SyntaxParseHandler.h"  // SyntaxParseHandler::Node
+#include "js/Stack.h"                     // JS::NativeStackLimit
 
 namespace js {
+
+class ErrorContext;
+class LifoAlloc;
+
 namespace frontend {
+
+class ParseNode;
 
 // In most builds, examine the given ParseNode and crash if it's not
 // well-formed. (In late beta and shipping builds of Firefox, this does
@@ -22,16 +27,21 @@ namespace frontend {
 // If the ParseNode is actually bad, we crash.
 
 #ifdef DEBUG
-[[nodiscard]] extern bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
-                                         ParseNode* pn);
+[[nodiscard]] extern bool CheckParseTree(ErrorContext* ec,
+                                         JS::NativeStackLimit stackLimit,
+                                         const LifoAlloc& alloc, ParseNode* pn);
 #else
-[[nodiscard]] inline bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
+[[nodiscard]] inline bool CheckParseTree(ErrorContext* ec,
+                                         JS::NativeStackLimit stackLimit,
+                                         const LifoAlloc& alloc,
                                          ParseNode* pn) {
   return true;
 }
 #endif
 
-[[nodiscard]] inline bool CheckParseTree(JSContext* cx, const LifoAlloc& alloc,
+[[nodiscard]] inline bool CheckParseTree(ErrorContext* ec,
+                                         JS::NativeStackLimit stackLimit,
+                                         const LifoAlloc& alloc,
                                          SyntaxParseHandler::Node pn) {
   return true;
 }

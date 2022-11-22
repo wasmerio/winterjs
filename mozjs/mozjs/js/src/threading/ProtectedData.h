@@ -40,10 +40,14 @@ namespace js {
 #  define JS_HAS_PROTECTED_DATA_CHECKS
 #endif
 
-#define DECLARE_ONE_BOOL_OPERATOR(OP, T)   \
-  template <typename U>                    \
-  bool operator OP(const U& other) const { \
-    return ref() OP static_cast<T>(other); \
+#define DECLARE_ONE_BOOL_OPERATOR(OP, T)     \
+  template <typename U>                      \
+  bool operator OP(const U& other) const {   \
+    if constexpr (std::is_integral_v<T>) {   \
+      return ref() OP static_cast<T>(other); \
+    } else {                                 \
+      return ref() OP other;                 \
+    }                                        \
   }
 
 #define DECLARE_BOOL_OPERATORS(T)  \
@@ -255,7 +259,14 @@ using ContextData = ProtectedDataContextArg<CheckContextLocal, T>;
 
 // Enum describing which helper threads (GC tasks or Ion compilations) may
 // access data even though they do not have exclusive access to any zone.
-enum class AllowedHelperThread { None, GCTask, IonCompile, GCTaskOrIonCompile };
+enum class AllowedHelperThread {
+  None,
+  GCTask,
+  ParseTask,
+  IonCompile,
+  GCTaskOrIonCompile,
+  ParseTaskOrIonCompile,
+};
 
 template <AllowedHelperThread Helper>
 class CheckMainThread {
@@ -277,6 +288,14 @@ template <typename T>
 using MainThreadOrIonCompileData =
     ProtectedDataNoCheckArgs<CheckMainThread<AllowedHelperThread::IonCompile>,
                              T>;
+template <typename T>
+using MainThreadOrParseData =
+    ProtectedDataNoCheckArgs<CheckMainThread<AllowedHelperThread::ParseTask>,
+                             T>;
+
+template <typename T>
+using MainThreadOrParseOrIonCompileData = ProtectedDataNoCheckArgs<
+    CheckMainThread<AllowedHelperThread::ParseTaskOrIonCompile>, T>;
 
 template <AllowedHelperThread Helper>
 class CheckZone {

@@ -19,14 +19,16 @@ enum class ThrowMsgKind : uint8_t {
   CantDeleteSuper,
   // Private Fields:
   PrivateDoubleInit,
+  PrivateBrandDoubleInit,
   MissingPrivateOnGet,
   MissingPrivateOnSet,
+  AssignToPrivateMethod,
 };
 
 JSErrNum ThrowMsgKindToErrNum(ThrowMsgKind kind);
 
 // Used for CheckPrivateField
-enum class ThrowCondition : uint8_t { ThrowHas, ThrowHasNot, NoThrow };
+enum class ThrowCondition : uint8_t { ThrowHas, ThrowHasNot, OnlyCheckRhs };
 
 }  // namespace js
 

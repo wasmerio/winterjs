@@ -64,6 +64,7 @@ EXCLUSIVE_COMPONENTS = [
     # specific test suites
     "crashtest",
     "mochitest-a11y",
+    "mochitest-browser-a11y",
     "mochitest-browser-chrome",
     "mochitest-chrome",
     "mochitest-plain",
@@ -73,6 +74,7 @@ EXCLUSIVE_COMPONENTS = [
     "web-platform-tests-wdspec",
     # webrender enabled
     "webrender",
+    "nss",
 ]
 EXCLUSIVE_COMPONENTS = sorted(EXCLUSIVE_COMPONENTS)
 ALL_COMPONENTS = INCLUSIVE_COMPONENTS + EXCLUSIVE_COMPONENTS

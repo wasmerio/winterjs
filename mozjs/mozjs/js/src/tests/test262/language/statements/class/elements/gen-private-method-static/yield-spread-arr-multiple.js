@@ -1,4 +1,3 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) -- requires shell-options
 // This file was procedurally generated from the following sources:
 // - src/generators/yield-spread-arr-multiple.case
 // - src/generators/default/class-decl-static-private-method.template
@@ -50,7 +49,7 @@ iter.next(false);
 item = iter.next(['a', 'b', 'c']);
 item = iter.next(item.value);
 
-assert(compareArray(item.value, arr));
+assert.compareArray(item.value, arr);
 assert.sameValue(item.done, false);
 
 assert.sameValue(callCount, 1);

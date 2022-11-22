@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlsplit, parse_qs
 
 
+from . import __version__
 from . import metrics
 from . import pings
 from . import util
@@ -33,9 +34,6 @@ def extra_info(obj: Union[metrics.Metric, pings.Ping]) -> List[Tuple[str, str]]:
     if isinstance(obj, metrics.Labeled) and obj.ordered_labels is not None:
         for label in obj.ordered_labels:
             extra_info.append((label, None))
-
-    if isinstance(obj, metrics.Jwe):
-        extra_info.append(("decrypted_name", obj.decrypted_name))
 
     if isinstance(obj, metrics.Quantity):
         extra_info.append(("unit", obj.unit))
@@ -237,6 +235,7 @@ def output_markdown(
         )
 
     project_title = options.get("project_title", "this project")
+    introduction_extra = options.get("introduction_extra")
 
     template = util.get_jinja2_template(
         "markdown.jinja2",
@@ -264,7 +263,10 @@ def output_markdown(
     with filepath.open("w", encoding="utf-8") as fd:
         fd.write(
             template.render(
-                metrics_by_pings=metrics_by_pings, project_title=project_title
+                parser_version=__version__,
+                metrics_by_pings=metrics_by_pings,
+                project_title=project_title,
+                introduction_extra=introduction_extra,
             )
         )
         # Jinja2 squashes the final newline, so we explicitly add it

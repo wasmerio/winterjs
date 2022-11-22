@@ -1,4 +1,4 @@
-// |jit-test| test-also=--wasm-gc;
+// |jit-test| test-also=--wasm-extended-const; test-also=--wasm-exceptions; test-also=--wasm-function-references; test-also=--wasm-gc
 
 // Test that if a feature is 'experimental' then we must be in a nightly build,
 // and if a feature is 'released' then it must be enabled on release and beta.
@@ -24,7 +24,27 @@ let { release_or_beta } = getBuildConfiguration();
 let nightly = !release_or_beta;
 
 let nightlyOnlyFeatures = [
-  ['gc', wasmGcEnabled(), `(module (type $s (struct)) (func (param (ref null $s))))`],
+  [
+    'extended-const',
+    wasmExtendedConstEnabled(),
+    `(module
+      (global i32
+        i32.const 0
+        i32.const 0
+        i32.add
+      )
+    )`
+  ],
+  [
+    'function-references',
+    wasmFunctionReferencesEnabled(),
+    `(module (func (param (ref extern))))`
+  ],
+  [
+    'gc',
+    wasmGcEnabled(),
+    `(module (type $s (struct)) (func (param (ref null $s))))`
+  ],
 ];
 
 for (let [name, enabled, test] of nightlyOnlyFeatures) {
@@ -57,9 +77,12 @@ for (let [name, enabled, test] of releasedFeaturesMaybeDisabledAnyway) {
 }
 
 let releasedFeatures = [
-  ['multi-value', wasmMultiValueEnabled(), `(module (func (result i32 i32) i32.const 0 i32.const 0))`],
   ['threads', wasmThreadsEnabled(), `(module (memory 1 1 shared))`],
-  ['reference-types', wasmReftypesEnabled(), `(module (func (param externref)))`],
+  [
+    'exceptions',
+    wasmExceptionsEnabled(),
+    `(module (type (func)) (tag (type 0)))`
+  ],
 ];
 
 for (let [name, enabled, test] of releasedFeatures) {

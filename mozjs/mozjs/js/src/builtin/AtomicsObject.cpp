@@ -18,10 +18,7 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Unused.h"
 
-#include "jsapi.h"
-#include "jsfriendapi.h"
 #include "jsnum.h"
 
 #include "jit/AtomicOperations.h"
@@ -30,10 +27,9 @@
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "js/Result.h"
+#include "js/WaitCallbacks.h"
 #include "vm/GlobalObject.h"
-#include "vm/Time.h"
 #include "vm/TypedArrayObject.h"
-#include "wasm/WasmInstance.h"
 
 #include "vm/Compartment-inl.h"
 #include "vm/JSObject-inl.h"
@@ -116,7 +112,7 @@ static bool ValidateAtomicAccess(JSContext* cx,
   // Step 1 (implicit).
 
   MOZ_ASSERT(!typedArray->hasDetachedBuffer());
-  size_t length = typedArray->length().get();
+  size_t length = typedArray->length();
 
   // Step 2.
   uint64_t accessIndex;
@@ -652,7 +648,7 @@ static bool DoAtomicsWait(JSContext* cx,
       cx, unwrappedTypedArray->bufferShared());
 
   // Step 11.
-  size_t offset = unwrappedTypedArray->byteOffset().get();
+  size_t offset = unwrappedTypedArray->byteOffset();
 
   // Steps 12-13.
   // The computation will not overflow because range checks have been
@@ -821,7 +817,7 @@ static bool atomics_notify(JSContext* cx, unsigned argc, Value* vp) {
       cx, unwrappedTypedArray->bufferShared());
 
   // Step 6.
-  size_t offset = unwrappedTypedArray->byteOffset().get();
+  size_t offset = unwrappedTypedArray->byteOffset();
 
   // Steps 7-9.
   // The computation will not overflow because range checks have been
@@ -952,7 +948,7 @@ FutexThread::WaitResult js::FutexThread::wait(
     }
 
     if (isTimed) {
-      mozilla::Unused << cond_->wait_until(locked, *sliceEnd);
+      (void)cond_->wait_until(locked, *sliceEnd);
     } else {
       cond_->wait(locked);
     }

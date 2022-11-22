@@ -8,13 +8,8 @@
 CXXFLAGS += CONFIG['MOZ_ICU_CFLAGS']
 
 if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
-    # Also disable strict-aliasing for GCC compiler, that is enabled by default
-    # starting with version 7.1, see Bug 1363009
-    CXXFLAGS += ['-fno-strict-aliasing']
     # Error on bad printf-like format strings
     CXXFLAGS += ['-Werror=format']
-    # Ignore shadowed variable warnings as there are too many.
-    CXXFLAGS += ['-Wno-shadow']
 
 # gcc is buggy and warns on our attempts to JS_PUBLIC_API our
 # forward-declarations or explicit template instantiations. See

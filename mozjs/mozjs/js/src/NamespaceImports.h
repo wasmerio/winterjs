@@ -29,14 +29,17 @@ using ScriptVector = JS::GCVector<JSScript*>;
 class HandleValueArray;
 
 class ObjectOpResult;
-class PropertyResult;
 
-struct JS_PUBLIC_API PropertyDescriptor;
+class JS_PUBLIC_API PropertyDescriptor;
+
+namespace Scalar {}
 
 }  // namespace JS
 
 // Do the importing.
 namespace js {
+
+namespace Scalar = JS::Scalar;
 
 using JS::BooleanValue;
 using JS::DoubleValue;
@@ -47,6 +50,9 @@ using JS::NullValue;
 using JS::NumberValue;
 using JS::ObjectOrNullValue;
 using JS::ObjectValue;
+#ifdef ENABLE_RECORD_TUPLE
+using JS::ExtendedPrimitiveValue;
+#endif
 using JS::PrivateGCThingValue;
 using JS::PrivateUint32Value;
 using JS::PrivateValue;
@@ -135,15 +141,20 @@ using JS::UndefinedHandleValue;
 using JS::HandleValueArray;
 
 using JS::ObjectOpResult;
-using JS::PropertyResult;
 
 using JS::PropertyDescriptor;
+using JS::PropertyKey;
 
 using JS::Compartment;
 using JS::Realm;
 using JS::Zone;
 
 using JS::BigInt;
+
+#ifdef ENABLE_RECORD_TUPLE
+using JS::RecordType;
+using JS::TupleType;
+#endif
 
 } /* namespace js */
 

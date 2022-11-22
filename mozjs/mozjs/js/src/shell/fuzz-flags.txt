@@ -25,10 +25,12 @@
 --ion-limit-script-size=off
 --ion-limit-script-size=on
 --ion-offthread-compile=off
+--ion-optimize-shapeguards=off
+--ion-optimize-shapeguards=on
 --ion-osr=off
 --ion-osr=on
---ion-pgo=off
---ion-pgo=on
+--ion-pruning=off
+--ion-pruning=on
 --ion-range-analysis=off
 --ion-range-analysis=on
 --ion-regalloc=testbed
@@ -46,11 +48,10 @@
 --spectre-mitigations=on
 --more-compartments
 --fast-warmup
---warp-generator
---warp-async
---no-warp-generator
---no-warp-async
 --large-arraybuffers
+--no-jit-backend
+--enable-watchtower
+--disable-watchtower
 
 # GC-related
 # These 2 flags can cause the shell to slow down
@@ -82,3 +83,6 @@
 # Profiling, code coverage, and debugging
 # --dump-bytecode option implies --code-coverage
 --dump-bytecode
+
+# Shadow Realms
+--enable-shadow-realms

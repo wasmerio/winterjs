@@ -9,149 +9,132 @@ esid: sec-date-value
 description: Checking types of newly created objects and it values
 includes: [dateConstants.js]
 ---*/
+assert.sameValue(
+  typeof new Date(date_1899_end),
+  "object",
+  'The value of `typeof new Date(date_1899_end)` is expected to be "object"'
+);
 
-if (typeof new Date(date_1899_end) !== "object") {
-  $ERROR("#1.1: typeof new Date(date_1899_end) === 'object'");
-}
-
-if (new Date(date_1899_end) === undefined) {
-  $ERROR("#1.2: new Date(date_1899_end) === undefined");
-}
+assert.notSameValue(new Date(date_1899_end), undefined, 'new Date(date_1899_end) is expected to not equal ``undefined``');
 
 var x13 = new Date(date_1899_end);
-if (typeof x13 !== "object") {
-  $ERROR("#1.3: typeof new Date(date_1899_end) !== 'object'");
-}
+assert.sameValue(typeof x13, "object", 'The value of `typeof x13` is expected to be "object"');
 
 var x14 = new Date(date_1899_end);
-if (x14 === undefined) {
-  $ERROR("#1.4: new Date(date_1899_end) !== undefined");
-}
+assert.notSameValue(x14, undefined, 'The value of x14 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_1900_start) !== "object") {
-  $ERROR("#2.1: typeof new Date(date_1900_start) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_1900_start),
+  "object",
+  'The value of `typeof new Date(date_1900_start)` is expected to be "object"'
+);
 
-if (new Date(date_1900_start) === undefined) {
-  $ERROR("#2.2: new Date(date_1900_start) === undefined");
-}
+assert.notSameValue(
+  new Date(date_1900_start),
+  undefined,
+  'new Date(date_1900_start) is expected to not equal ``undefined``'
+);
 
 var x23 = new Date(date_1900_start);
-if (typeof x23 !== "object") {
-  $ERROR("#2.3: typeof new Date(date_1900_start) !== 'object'");
-}
+assert.sameValue(typeof x23, "object", 'The value of `typeof x23` is expected to be "object"');
 
 var x24 = new Date(date_1900_start);
-if (x24 === undefined) {
-  $ERROR("#2.4: new Date(date_1900_start) !== undefined");
-}
+assert.notSameValue(x24, undefined, 'The value of x24 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_1969_end) !== "object") {
-  $ERROR("#3.1: typeof new Date(date_1969_end) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_1969_end),
+  "object",
+  'The value of `typeof new Date(date_1969_end)` is expected to be "object"'
+);
 
-if (new Date(date_1969_end) === undefined) {
-  $ERROR("#3.2: new Date(date_1969_end) === undefined");
-}
+assert.notSameValue(new Date(date_1969_end), undefined, 'new Date(date_1969_end) is expected to not equal ``undefined``');
 
 var x33 = new Date(date_1969_end);
-if (typeof x33 !== "object") {
-  $ERROR("#3.3: typeof new Date(date_1969_end) !== 'object'");
-}
+assert.sameValue(typeof x33, "object", 'The value of `typeof x33` is expected to be "object"');
 
 var x34 = new Date(date_1969_end);
-if (x34 === undefined) {
-  $ERROR("#3.4: new Date(date_1969_end) !== undefined");
-}
+assert.notSameValue(x34, undefined, 'The value of x34 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_1970_start) !== "object") {
-  $ERROR("#4.1: typeof new Date(date_1970_start) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_1970_start),
+  "object",
+  'The value of `typeof new Date(date_1970_start)` is expected to be "object"'
+);
 
-if (new Date(date_1970_start) === undefined) {
-  $ERROR("#4.2: new Date(date_1970_start) === undefined");
-}
+assert.notSameValue(
+  new Date(date_1970_start),
+  undefined,
+  'new Date(date_1970_start) is expected to not equal ``undefined``'
+);
 
 var x43 = new Date(date_1970_start);
-if (typeof x43 !== "object") {
-  $ERROR("#4.3: typeof new Date(date_1970_start) !== 'object'");
-}
+assert.sameValue(typeof x43, "object", 'The value of `typeof x43` is expected to be "object"');
 
 var x44 = new Date(date_1970_start);
-if (x44 === undefined) {
-  $ERROR("#4.4: new Date(date_1970_start) !== undefined");
-}
+assert.notSameValue(x44, undefined, 'The value of x44 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_1999_end) !== "object") {
-  $ERROR("#5.1: typeof new Date(date_1999_end) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_1999_end),
+  "object",
+  'The value of `typeof new Date(date_1999_end)` is expected to be "object"'
+);
 
-if (new Date(date_1999_end) === undefined) {
-  $ERROR("#5.2: new Date(date_1999_end) === undefined");
-}
+assert.notSameValue(new Date(date_1999_end), undefined, 'new Date(date_1999_end) is expected to not equal ``undefined``');
 
 var x53 = new Date(date_1999_end);
-if (typeof x53 !== "object") {
-  $ERROR("#5.3: typeof new Date(date_1999_end) !== 'object'");
-}
+assert.sameValue(typeof x53, "object", 'The value of `typeof x53` is expected to be "object"');
 
 var x54 = new Date(date_1999_end);
-if (x54 === undefined) {
-  $ERROR("#5.4: new Date(date_1999_end) !== undefined");
-}
+assert.notSameValue(x54, undefined, 'The value of x54 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_2000_start) !== "object") {
-  $ERROR("#6.1: typeof new Date(date_2000_start) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_2000_start),
+  "object",
+  'The value of `typeof new Date(date_2000_start)` is expected to be "object"'
+);
 
-if (new Date(date_2000_start) === undefined) {
-  $ERROR("#6.2: new Date(date_2000_start) === undefined");
-}
+assert.notSameValue(
+  new Date(date_2000_start),
+  undefined,
+  'new Date(date_2000_start) is expected to not equal ``undefined``'
+);
 
 var x63 = new Date(date_2000_start);
-if (typeof x63 !== "object") {
-  $ERROR("#6.3: typeof new Date(date_2000_start) !== 'object'");
-}
+assert.sameValue(typeof x63, "object", 'The value of `typeof x63` is expected to be "object"');
 
 var x64 = new Date(date_2000_start);
-if (x64 === undefined) {
-  $ERROR("#6.4: new Date(date_2000_start) !== undefined");
-}
+assert.notSameValue(x64, undefined, 'The value of x64 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_2099_end) !== "object") {
-  $ERROR("#7.1: typeof new Date(date_2099_end) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_2099_end),
+  "object",
+  'The value of `typeof new Date(date_2099_end)` is expected to be "object"'
+);
 
-if (new Date(date_2099_end) === undefined) {
-  $ERROR("#7.2: new Date(date_2099_end) === undefined");
-}
+assert.notSameValue(new Date(date_2099_end), undefined, 'new Date(date_2099_end) is expected to not equal ``undefined``');
 
 var x73 = new Date(date_2099_end);
-if (typeof x73 !== "object") {
-  $ERROR("#7.3: typeof new Date(date_2099_end) !== 'object'");
-}
+assert.sameValue(typeof x73, "object", 'The value of `typeof x73` is expected to be "object"');
 
 var x74 = new Date(date_2099_end);
-if (x74 === undefined) {
-  $ERROR("#7.4: new Date(date_2099_end) !== undefined");
-}
+assert.notSameValue(x74, undefined, 'The value of x74 is expected to not equal ``undefined``');
 
-if (typeof new Date(date_2100_start) !== "object") {
-  $ERROR("#8.1: typeof new Date(date_2100_start) === 'object'");
-}
+assert.sameValue(
+  typeof new Date(date_2100_start),
+  "object",
+  'The value of `typeof new Date(date_2100_start)` is expected to be "object"'
+);
 
-if (new Date(date_2100_start) === undefined) {
-  $ERROR("#8.2: new Date(date_2100_start) === undefined");
-}
+assert.notSameValue(
+  new Date(date_2100_start),
+  undefined,
+  'new Date(date_2100_start) is expected to not equal ``undefined``'
+);
 
 var x83 = new Date(date_2100_start);
-if (typeof x83 !== "object") {
-  $ERROR("#8.3: typeof new Date(date_2100_start) !== 'object'");
-}
+assert.sameValue(typeof x83, "object", 'The value of `typeof x83` is expected to be "object"');
 
 var x84 = new Date(date_2100_start);
-if (x84 === undefined) {
-  $ERROR("#8.4: new Date(date_2100_start) !== undefined");
-}
+assert.notSameValue(x84, undefined, 'The value of x84 is expected to not equal ``undefined``');
 
 reportCompare(0, 0);

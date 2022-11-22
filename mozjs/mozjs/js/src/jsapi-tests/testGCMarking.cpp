@@ -5,11 +5,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsapi.h"
-
+#include "js/GlobalObject.h"  // JS_NewGlobalObject
+#include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_GetProperty, JS_SetProperty
 #include "js/RootingAPI.h"
 #include "js/SliceBudget.h"
 #include "jsapi-tests/tests.h"
+#include "vm/Compartment.h"
 #include "vm/Realm.h"
 
 using namespace js;
@@ -74,7 +75,7 @@ static bool ConstructCCW(JSContext* cx, const JSClass* globalClasp,
 }
 
 class CCWTestTracer final : public JS::CallbackTracer {
-  void onChild(const JS::GCCellPtr& thing) override {
+  void onChild(JS::GCCellPtr thing, const char* name) override {
     numberOfThingsTraced++;
 
     printf("*thingp         = %p\n", thing.asCell());
@@ -374,8 +375,8 @@ BEGIN_TEST(testIncrementalRoots) {
   // descendants. It shouldn't make it all the way through (it gets a budget
   // of 1000, and the graph is about 3000 objects deep).
   js::SliceBudget budget(js::WorkBudget(1000));
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
-  rt->gc.startDebugGC(GC_NORMAL, budget);
+  AutoGCParameter param(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
+  rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   while (rt->gc.state() != gc::State::Mark) {
     rt->gc.debugGCSlice(budget);
   }

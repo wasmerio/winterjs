@@ -1,6 +1,9 @@
 %include build/sparse-profiles/mach
 
 [include]
+# List of dependencies for the command
+path:python/sites/docs.txt
+
 # Code for generating docs.
 glob:docs/**
 glob:tools/moztreedocs/**
@@ -11,6 +14,7 @@ glob:browser/branding/nightly/**
 # Potential docs sources
 glob:**/*.rst
 glob:**/*.md
+glob:**/*.mjs
 glob:**/*.js
 glob:**/*.jsm
 
@@ -26,14 +30,8 @@ glob:**/*.py
 # moz.build files are read to discover location of docs.
 glob:**/moz.build
 
+# package*.json files are needed for node_modules
+glob:**/package*.json
+
 # Read to set the version of the docs.
 path:config/milestone.txt
-
-# metrics.yaml and pings.yaml files (and their index) are needed to generate
-# Glean autodocs
-glob:**/metrics.yaml
-glob:**/pings.yaml
-path:toolkit/components/glean/metrics_index.py
-# TODO(bug 1672716): Make it easier to use other file names
-path:toolkit/components/glean/test_metrics.yaml
-path:toolkit/components/glean/test_pings.yaml

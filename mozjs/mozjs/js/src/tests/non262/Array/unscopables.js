@@ -1,9 +1,3 @@
-if (typeof getBuildConfiguration === "undefined") {
-  var getBuildConfiguration = SpecialPowers.Cu.getJSTestingFunctions().getBuildConfiguration;
-}
-
-var isNightly = !getBuildConfiguration().release_or_beta;
-
 let Array_unscopables = Array.prototype[Symbol.unscopables];
 
 let desc = Reflect.getOwnPropertyDescriptor(Array.prototype, Symbol.unscopables);
@@ -26,20 +20,37 @@ assertDeepEq(desc2, {
 
 let keys = Reflect.ownKeys(Array_unscopables);
 
-assertDeepEq(keys, [
-    ...(isNightly ? ["at"] : []),
-    ...[
-    "copyWithin",
-    "entries",
-    "fill",
-    "find",
-    "findIndex",
-    "flat",
-    "flatMap",
-    "includes",
-    "keys",
-    "values"
-]]);
+let expectedKeys = ["at",
+		    "copyWithin",
+		    "entries",
+		    "fill",
+		    "find",
+		    "findIndex",
+		    "findLast",
+		    "findLastIndex",
+		    "flat",
+		    "flatMap",
+		    "includes",
+		    "keys",
+		    "values"];
+
+if (typeof getBuildConfiguration === "undefined") {
+  var getBuildConfiguration = SpecialPowers.Cu.getJSTestingFunctions().getBuildConfiguration;
+}
+
+if (typeof getRealmConfiguration === "undefined") {
+  var getRealmConfiguration = SpecialPowers.Cu.getJSTestingFunctions().getRealmConfiguration;
+}
+
+if (!getBuildConfiguration().release_or_beta && getRealmConfiguration().enableArrayGrouping) {
+    expectedKeys.push("group", "groupToMap");
+}
+
+if (getBuildConfiguration()['change-array-by-copy'] && getRealmConfiguration().enableChangeArrayByCopy) {
+    expectedKeys.push("withAt", "withReversed", "withSorted", "withSpliced");
+}
+
+assertDeepEq(keys, expectedKeys);
 
 for (let key of keys)
     assertEq(Array_unscopables[key], true);

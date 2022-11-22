@@ -7,13 +7,13 @@ info: The Date.prototype property "getDay" has { DontEnum } attributes
 es5id: 15.9.5.16_A1_T2
 description: Checking absence of DontDelete attribute
 ---*/
+assert.notSameValue(delete Date.prototype.getDay, false, 'The value of delete Date.prototype.getDay is not false');
 
-if (delete Date.prototype.getDay === false) {
-  $ERROR('#1: The Date.prototype.getDay property has not the attributes DontDelete');
-}
+assert(
+  !Date.prototype.hasOwnProperty('getDay'),
+  'The value of !Date.prototype.hasOwnProperty(\'getDay\') is expected to be true'
+);
 
-if (Date.prototype.hasOwnProperty('getDay')) {
-  $ERROR('#2: The Date.prototype.getDay property has not the attributes DontDelete');
-}
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

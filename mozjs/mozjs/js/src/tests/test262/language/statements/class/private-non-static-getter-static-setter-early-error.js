@@ -1,4 +1,4 @@
-// |reftest| shell-option(--enable-private-methods) skip-if(!xulRuntime.shell) error:SyntaxError -- requires shell-options
+// |reftest| error:SyntaxError
 // Copyright (C) 2019 Caio Lima (Igalia SL). All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -14,7 +14,7 @@ negative:
 $DONOTEVALUATE();
 
 class C {
-  get #f();
+  get #f() {}
   static set #f(v) {}
 }
 

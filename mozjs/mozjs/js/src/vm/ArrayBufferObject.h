@@ -16,21 +16,27 @@
 #include "gc/ZoneAllocator.h"
 #include "js/ArrayBuffer.h"
 #include "js/GCHashTable.h"
-#include "vm/BufferSize.h"
+#include "vm/JSFunction.h"
 #include "vm/JSObject.h"
-#include "vm/Runtime.h"
 #include "vm/SharedMem.h"
+#include "wasm/WasmMemory.h"
 
 namespace js {
 
 class ArrayBufferViewObject;
+class AutoSetNewObjectMetadata;
 class WasmArrayRawBuffer;
+
+namespace wasm {
+struct MemoryDesc;
+}  // namespace wasm
 
 // Create a new mapping of size `mappedSize` with an initially committed prefix
 // of size `initialCommittedSize`.  Both arguments denote bytes and must be
 // multiples of the page size, with `initialCommittedSize` <= `mappedSize`.
 // Returns nullptr on failure.
-void* MapBufferMemory(size_t mappedSize, size_t initialCommittedSize);
+void* MapBufferMemory(wasm::IndexType, size_t mappedSize,
+                      size_t initialCommittedSize);
 
 // Commit additional memory in an existing mapping.  `dataEnd` must be the
 // correct value for the end of the existing committed area, and `delta` must be
@@ -48,7 +54,7 @@ bool ExtendBufferMapping(void* dataStart, size_t mappedSize,
 
 // Remove an existing mapping.  `dataStart` must be the pointer to the start of
 // the mapping, and `mappedSize` the size of that mapping.
-void UnmapBufferMemory(void* dataStart, size_t mappedSize);
+void UnmapBufferMemory(wasm::IndexType t, void* dataStart, size_t mappedSize);
 
 // Return the number of currently live mapped buffers.
 int32_t LiveMappedBufferCount();
@@ -105,13 +111,18 @@ int32_t LiveMappedBufferCount();
 
 class ArrayBufferObjectMaybeShared;
 
-mozilla::Maybe<uint64_t> WasmArrayBufferMaxSize(
+wasm::IndexType WasmArrayBufferIndexType(
+    const ArrayBufferObjectMaybeShared* buf);
+wasm::Pages WasmArrayBufferPages(const ArrayBufferObjectMaybeShared* buf);
+wasm::Pages WasmArrayBufferClampedMaxPages(
+    const ArrayBufferObjectMaybeShared* buf);
+mozilla::Maybe<wasm::Pages> WasmArrayBufferSourceMaxPages(
     const ArrayBufferObjectMaybeShared* buf);
 size_t WasmArrayBufferMappedSize(const ArrayBufferObjectMaybeShared* buf);
 
 class ArrayBufferObjectMaybeShared : public NativeObject {
  public:
-  inline BufferSize byteLength() const;
+  inline size_t byteLength() const;
   inline bool isDetached() const;
   inline SharedMem<uint8_t*> dataPointerEither();
 
@@ -119,8 +130,15 @@ class ArrayBufferObjectMaybeShared : public NativeObject {
   // Note: the eventual goal is to remove this from ArrayBuffer and have
   // (Shared)ArrayBuffers alias memory owned by some wasm::Memory object.
 
-  mozilla::Maybe<uint64_t> wasmMaxSize() const {
-    return WasmArrayBufferMaxSize(this);
+  wasm::IndexType wasmIndexType() const {
+    return WasmArrayBufferIndexType(this);
+  }
+  wasm::Pages wasmPages() const { return WasmArrayBufferPages(this); }
+  wasm::Pages wasmClampedMaxPages() const {
+    return WasmArrayBufferClampedMaxPages(this);
+  }
+  mozilla::Maybe<wasm::Pages> wasmSourceMaxPages() const {
+    return WasmArrayBufferSourceMaxPages(this);
   }
   size_t wasmMappedSize() const { return WasmArrayBufferMappedSize(this); }
 
@@ -169,8 +187,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static constexpr size_t MaxByteLengthForSmallBuffer = INT32_MAX;
 
   // The length of an ArrayBuffer or SharedArrayBuffer can be at most
-  // INT32_MAX. Allow a larger limit on 64-bit platforms if the experimental
-  // large-buffers flag is used.
+  // INT32_MAX. Allow a larger limit on friendly 64-bit platforms if the
+  // experimental large-buffers flag is used.
   static size_t maxBufferByteLength() {
 #ifdef JS_64BIT
     if (supportLargeBuffers) {
@@ -242,7 +260,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   template <FillContents FillType>
   static std::tuple<ArrayBufferObject*, uint8_t*> createBufferAndData(
-      JSContext* cx, BufferSize nbytes, AutoSetNewObjectMetadata&,
+      JSContext* cx, size_t nbytes, AutoSetNewObjectMetadata&,
       JS::Handle<JSObject*> proto = nullptr);
 
  public:
@@ -329,13 +347,13 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
     return native == byteLengthGetter;
   }
 
-  static ArrayBufferObject* createForContents(JSContext* cx, BufferSize nbytes,
+  static ArrayBufferObject* createForContents(JSContext* cx, size_t nbytes,
                                               BufferContents contents);
 
   static ArrayBufferObject* copy(
       JSContext* cx, JS::Handle<ArrayBufferObject*> unwrappedArrayBuffer);
 
-  static ArrayBufferObject* createZeroed(JSContext* cx, BufferSize nbytes,
+  static ArrayBufferObject* createZeroed(JSContext* cx, size_t nbytes,
                                          HandleObject proto = nullptr);
 
   // Create an ArrayBufferObject that is safely finalizable and can later be
@@ -347,7 +365,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   // is deallocated.
   static ArrayBufferObject* createFromNewRawBuffer(JSContext* cx,
                                                    WasmArrayRawBuffer* buffer,
-                                                   BufferSize initialSize);
+                                                   size_t initialSize);
 
   static void copyData(Handle<ArrayBufferObject*> toBuffer, size_t toIndex,
                        Handle<ArrayBufferObject*> fromBuffer, size_t fromIndex,
@@ -363,7 +381,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static void addSizeOfExcludingThis(JSObject* obj,
                                      mozilla::MallocSizeOf mallocSizeOf,
-                                     JS::ClassInfo* info);
+                                     JS::ClassInfo* info,
+                                     JS::RuntimeSizes* runtimeSizes);
 
   // ArrayBufferObjects (strongly) store the first view added to them, while
   // later views are (weakly) stored in the compartment's InnerViewTable
@@ -399,7 +418,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
  public:
   uint8_t* dataPointer() const;
   SharedMem<uint8_t*> dataPointerShared() const;
-  BufferSize byteLength() const;
+  size_t byteLength() const;
 
   BufferContents contents() const {
     if (isExternal()) {
@@ -410,7 +429,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   }
   bool hasInlineData() const { return dataPointer() == inlineDataPointer(); }
 
-  void releaseData(JSFreeOp* fop);
+  void releaseData(JS::GCContext* gcx);
 
   BufferKind bufferKind() const {
     return BufferKind(flags() & BUFFER_KIND_MASK);
@@ -437,22 +456,29 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   [[nodiscard]] bool prepareForAsmJS();
 
   size_t wasmMappedSize() const;
-  mozilla::Maybe<uint64_t> wasmMaxSize() const;
-  [[nodiscard]] static bool wasmGrowToSizeInPlace(
-      BufferSize newSize, Handle<ArrayBufferObject*> oldBuf,
+
+  wasm::IndexType wasmIndexType() const;
+  wasm::Pages wasmPages() const;
+  wasm::Pages wasmClampedMaxPages() const;
+  mozilla::Maybe<wasm::Pages> wasmSourceMaxPages() const;
+
+  [[nodiscard]] static bool wasmGrowToPagesInPlace(
+      wasm::IndexType t, wasm::Pages newPages,
+      Handle<ArrayBufferObject*> oldBuf,
       MutableHandle<ArrayBufferObject*> newBuf, JSContext* cx);
-  [[nodiscard]] static bool wasmMovingGrowToSize(
-      BufferSize newSize, Handle<ArrayBufferObject*> oldBuf,
+  [[nodiscard]] static bool wasmMovingGrowToPages(
+      wasm::IndexType t, wasm::Pages newPages,
+      Handle<ArrayBufferObject*> oldBuf,
       MutableHandle<ArrayBufferObject*> newBuf, JSContext* cx);
 
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
 
   static BufferContents createMappedContents(int fd, size_t offset,
                                              size_t length);
 
  protected:
   void setDataPointer(BufferContents contents);
-  void setByteLength(BufferSize length);
+  void setByteLength(size_t length);
 
   size_t associatedBytes() const;
 
@@ -468,7 +494,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
     setFlags(flags() | FOR_ASMJS);
   }
 
-  void initialize(BufferSize byteLength, BufferContents contents) {
+  void initialize(size_t byteLength, BufferContents contents) {
     setByteLength(byteLength);
     setFlags(0);
     setFirstView(nullptr);
@@ -477,7 +503,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   void* initializeToInlineData(size_t byteLength) {
     void* data = inlineDataPointer();
-    initialize(BufferSize(byteLength), BufferContents::createInlineData(data));
+    initialize(byteLength, BufferContents::createInlineData(data));
     return data;
   }
 };
@@ -486,39 +512,30 @@ using RootedArrayBufferObject = Rooted<ArrayBufferObject*>;
 using HandleArrayBufferObject = Handle<ArrayBufferObject*>;
 using MutableHandleArrayBufferObject = MutableHandle<ArrayBufferObject*>;
 
-// Create a buffer for a 32-bit wasm memory.  Arguments of the Limits structure
-// are broken out in order to avoid having this file depending on WasmTypes.h,
-// as that creates a circularity through WasmJS.h.
-bool CreateWasmBuffer32(JSContext* cx, uint64_t initialSize,
-                        const mozilla::Maybe<uint64_t>& maxSize,
-                        bool sharedMemory,
-                        MutableHandleArrayBufferObjectMaybeShared buffer);
+// Create a buffer for a wasm memory, whose type is determined by
+// memory.indexType().
+bool CreateWasmBuffer(JSContext* cx, const wasm::MemoryDesc& memory,
+                      MutableHandleArrayBufferObjectMaybeShared buffer);
 
 // Per-compartment table that manages the relationship between array buffers
 // and the views that use their storage.
 class InnerViewTable {
  public:
-  typedef Vector<JSObject*, 1, ZoneAllocPolicy> ViewVector;
+  using ViewVector = GCVector<UnsafeBarePtr<JSObject*>, 1, ZoneAllocPolicy>;
 
   friend class ArrayBufferObject;
 
  private:
-  struct MapGCPolicy {
-    static bool needsSweep(JSObject** key, ViewVector* value) {
-      return InnerViewTable::sweepEntry(key, *value);
-    }
-  };
-
   // This key is a raw pointer and not a WeakHeapPtr because the post-barrier
   // would hold nursery-allocated entries live unconditionally. It is a very
   // common pattern in low-level and performance-oriented JavaScript to create
   // hundreds or thousands of very short lived temporary views on a larger
-  // buffer; having to tenured all of these would be a catastrophic performance
+  // buffer; having to tenure all of these would be a catastrophic performance
   // regression. Thus, it is vital that nursery pointers in this map not be held
   // live. Special support is required in the minor GC, implemented in
   // sweepAfterMinorGC.
-  using Map = GCHashMap<JSObject*, ViewVector, MovableCellHasher<JSObject*>,
-                        ZoneAllocPolicy, MapGCPolicy>;
+  using Map = GCHashMap<UnsafeBarePtr<JSObject*>, ViewVector,
+                        MovableCellHasher<JSObject*>, ZoneAllocPolicy>;
 
   // For all objects sharing their storage with some other view, this maps
   // the object to the list of such views. All entries in this map are weak.
@@ -534,9 +551,6 @@ class InnerViewTable {
   // Whether nurseryKeys is a complete list.
   bool nurseryKeysValid;
 
-  // Sweep an entry during GC, returning whether the entry should be removed.
-  static bool sweepEntry(JSObject** pkey, ViewVector& views);
-
   bool addView(JSContext* cx, ArrayBufferObject* buffer, JSObject* view);
   ViewVector* maybeViewsUnbarriered(ArrayBufferObject* obj);
   void removeViews(ArrayBufferObject* obj);
@@ -546,10 +560,10 @@ class InnerViewTable {
 
   // Remove references to dead objects in the table and update table entries
   // to reflect moved objects.
-  void sweep();
-  void sweepAfterMinorGC();
+  bool traceWeak(JSTracer* trc);
+  void sweepAfterMinorGC(JSTracer* trc);
 
-  bool needsSweep() const { return map.needsSweep(); }
+  bool empty() const { return map.empty(); }
 
   bool needsSweepAfterMinorGC() const {
     return !nurseryKeys.empty() || !nurseryKeysValid;
@@ -570,21 +584,31 @@ class MutableWrappedPtrOperations<InnerViewTable, Wrapper>
 };
 
 class WasmArrayRawBuffer {
-  mozilla::Maybe<uint64_t> maxSize_;
+  wasm::IndexType indexType_;
+  wasm::Pages clampedMaxPages_;
+  mozilla::Maybe<wasm::Pages> sourceMaxPages_;
   size_t mappedSize_;  // Not including the header page
-  BufferSize length_;
+  size_t length_;
 
  protected:
-  WasmArrayRawBuffer(uint8_t* buffer, const mozilla::Maybe<uint64_t>& maxSize,
-                     size_t mappedSize, BufferSize length)
-      : maxSize_(maxSize), mappedSize_(mappedSize), length_(length) {
+  WasmArrayRawBuffer(wasm::IndexType indexType, uint8_t* buffer,
+                     wasm::Pages clampedMaxPages,
+                     const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
+                     size_t mappedSize, size_t length)
+      : indexType_(indexType),
+        clampedMaxPages_(clampedMaxPages),
+        sourceMaxPages_(sourceMaxPages),
+        mappedSize_(mappedSize),
+        length_(length) {
     MOZ_ASSERT(buffer == dataPointer());
   }
 
  public:
-  static WasmArrayRawBuffer* Allocate(BufferSize numBytes,
-                                      const mozilla::Maybe<uint64_t>& maxSize,
-                                      const mozilla::Maybe<size_t>& mappedSize);
+  static WasmArrayRawBuffer* AllocateWasm(
+      wasm::IndexType indexType, wasm::Pages initialPages,
+      wasm::Pages clampedMaxPages,
+      const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
+      const mozilla::Maybe<size_t>& mappedSize);
   static void Release(void* mem);
 
   uint8_t* dataPointer() {
@@ -597,21 +621,29 @@ class WasmArrayRawBuffer {
         dataPtr - sizeof(WasmArrayRawBuffer));
   }
 
+  wasm::IndexType indexType() const { return indexType_; }
+
   uint8_t* basePointer() { return dataPointer() - gc::SystemPageSize(); }
 
   size_t mappedSize() const { return mappedSize_; }
 
-  mozilla::Maybe<uint64_t> maxSize() const { return maxSize_; }
+  size_t byteLength() const { return length_; }
 
-  BufferSize byteLength() const { return length_; }
+  wasm::Pages pages() const {
+    return wasm::Pages::fromByteLengthExact(length_);
+  }
 
-  [[nodiscard]] bool growToSizeInPlace(BufferSize oldSize, BufferSize newSize);
+  wasm::Pages clampedMaxPages() const { return clampedMaxPages_; }
 
-  [[nodiscard]] bool extendMappedSize(uint64_t maxSize);
+  mozilla::Maybe<wasm::Pages> sourceMaxPages() const { return sourceMaxPages_; }
+
+  [[nodiscard]] bool growToPagesInPlace(wasm::Pages newPages);
+
+  [[nodiscard]] bool extendMappedSize(wasm::Pages maxPages);
 
   // Try and grow the mapped region of memory. Does not change current size.
   // Does not move memory if no space to grow.
-  void tryGrowMaxSizeInPlace(uint64_t deltaMaxSize);
+  void tryGrowMaxPagesInPlace(wasm::Pages deltaMaxPages);
 };
 
 }  // namespace js

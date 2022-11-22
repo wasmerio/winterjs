@@ -10,98 +10,107 @@
 #ifdef JS_ION_PERF
 #  include <stdio.h>
 #endif
-
+#include "jit/CacheIR.h"
+#include "jit/JitCode.h"
 #include "jit/Label.h"
+#include "jit/LIR.h"
+#include "js/AllocPolicy.h"
+#include "js/JitCodeAPI.h"
+#include "js/Vector.h"
+#include "vm/JSScript.h"
 
 namespace {
-struct AutoLockPerfMap;
+struct AutoLockPerfSpewer;
 }
 
-namespace js {
-namespace jit {
+namespace js::jit {
+
+using ProfilerJitCodeVector = Vector<JS::JitCodeRecord, 0, SystemAllocPolicy>;
+
+#ifdef JS_ION_PERF
+void CheckPerf();
+#else
+inline void CheckPerf() {}
+#endif
+void ResetPerfSpewer(bool enabled);
 
 class MBasicBlock;
 class MacroAssembler;
 
-#ifdef JS_ION_PERF
-void CheckPerf();
-bool PerfBlockEnabled();
-bool PerfFuncEnabled();
-static inline bool PerfEnabled() {
-  return PerfBlockEnabled() || PerfFuncEnabled();
-}
-#else
-static inline void CheckPerf() {}
-static inline bool PerfBlockEnabled() { return false; }
-static inline bool PerfFuncEnabled() { return false; }
-static inline bool PerfEnabled() { return false; }
-#endif
-
-#ifdef JS_ION_PERF
-
-struct Record {
-  const char* filename;
-  unsigned lineNumber;
-  unsigned columnNumber;
-  uint32_t id;
-  Label start, end;
-  size_t startOffset, endOffset;
-
-  Record(const char* filename, unsigned lineNumber, unsigned columnNumber,
-         uint32_t id)
-      : filename(filename),
-        lineNumber(lineNumber),
-        columnNumber(columnNumber),
-        id(id),
-        startOffset(0u),
-        endOffset(0u) {}
-};
-
-typedef Vector<Record, 1, SystemAllocPolicy> BasicBlocksVector;
+bool PerfEnabled();
 
 class PerfSpewer {
  protected:
-  static uint32_t nextFunctionIndex;
+  struct OpcodeEntry {
+    Label addr;
+    unsigned opcode = 0;
+  };
+  Vector<OpcodeEntry, 0, SystemAllocPolicy> opcodes_;
+
+  uint32_t lir_opcode_length = 0;
+  uint32_t js_opcode_length = 0;
+
+  virtual JS::JitTier GetTier() { return JS::JitTier::Other; }
 
  public:
-  Label endInlineCode;
+  PerfSpewer() = default;
 
- protected:
-  BasicBlocksVector basicBlocks_;
+  void saveJitCodeIRInfo(const char* filename, JitCode* code,
+                         JS::JitCodeRecord* profilerRecord,
+                         AutoLockPerfSpewer& lock);
+  static void SaveJitCodeSourceInfo(JSScript* script, JitCode* code,
+                                    JS::JitCodeRecord* record,
+                                    AutoLockPerfSpewer& lock);
 
- public:
-  [[nodiscard]] virtual bool startBasicBlock(MBasicBlock* blk,
-                                             MacroAssembler& masm);
-  virtual void endBasicBlock(MacroAssembler& masm);
-  void noteEndInlineCode(MacroAssembler& masm);
-
-  void writeProfile(JSScript* script, JitCode* code, MacroAssembler& masm);
-
-  static void WriteEntry(const AutoLockPerfMap&, uintptr_t address, size_t size,
-                         const char* fmt, ...) MOZ_FORMAT_PRINTF(4, 5);
+  static void CollectJitCodeInfo(const char* desc, JSScript* script,
+                                 JitCode* code, JS::JitCodeRecord*,
+                                 AutoLockPerfSpewer& lock);
+  static void CollectJitCodeInfo(UniqueChars& function_name, JitCode* code,
+                                 JS::JitCodeRecord*, AutoLockPerfSpewer& lock);
+  static void CollectJitCodeInfo(UniqueChars& function_name, void* code_addr,
+                                 uint64_t code_size,
+                                 JS::JitCodeRecord* profilerRecord,
+                                 AutoLockPerfSpewer& lock);
 };
 
-void writePerfSpewerBaselineProfile(JSScript* script, JitCode* code);
-void writePerfSpewerJitCodeProfile(JitCode* code, const char* msg);
+void CollectPerfSpewerJitCodeProfile(JitCode* code, const char* msg);
 
-// wasm doesn't support block annotations.
-class WasmPerfSpewer : public PerfSpewer {
+void CollectPerfSpewerWasmMap(uintptr_t base, uintptr_t size,
+                              const char* filename, const char* annotation);
+void CollectPerfSpewerWasmFunctionMap(uintptr_t base, uintptr_t size,
+                                      const char* filename, unsigned lineno,
+                                      const char* funcName);
+
+class IonPerfSpewer : public PerfSpewer {
+  static UniqueChars lirFilename;
+
+  JS::JitTier GetTier() override { return JS::JitTier::Ion; }
+
  public:
-  [[nodiscard]] bool startBasicBlock(MBasicBlock* blk, MacroAssembler& masm) {
-    return true;
-  }
-  void endBasicBlock(MacroAssembler& masm) {}
+  void recordInstruction(MacroAssembler& masm, LNode::Opcode op);
+  void saveProfile(JSScript* script, JitCode* code);
 };
 
-void writePerfSpewerWasmMap(uintptr_t base, uintptr_t size,
-                            const char* filename, const char* annotation);
-void writePerfSpewerWasmFunctionMap(uintptr_t base, uintptr_t size,
-                                    const char* filename, unsigned lineno,
-                                    const char* funcName);
+class BaselinePerfSpewer : public PerfSpewer {
+  static UniqueChars jsopFilename;
 
-#endif  // JS_ION_PERF
+  JS::JitTier GetTier() override { return JS::JitTier::Baseline; }
 
-}  // namespace jit
-}  // namespace js
+ public:
+  void recordInstruction(MacroAssembler& masm, JSOp op);
+  void saveProfile(JSScript* script, JitCode* code);
+};
+
+class InlineCachePerfSpewer : public PerfSpewer {
+  static UniqueChars cacheopFilename;
+
+  JS::JitTier GetTier() override { return JS::JitTier::IC; }
+
+ public:
+  void recordInstruction(MacroAssembler& masm, CacheOp op);
+  void saveProfile(JitCode* code, const char* name);
+};
+
+}  // namespace js::jit
 
 #endif /* jit_PerfSpewer_h */

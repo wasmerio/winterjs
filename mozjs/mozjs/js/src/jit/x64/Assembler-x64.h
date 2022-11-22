@@ -65,6 +65,10 @@ static constexpr FloatRegister xmm14 =
 static constexpr FloatRegister xmm15 =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Double);
 
+// Vector registers fixed for use with some instructions, e.g. PBLENDVB.
+static constexpr FloatRegister vmm0 =
+    FloatRegister(X86Encoding::xmm0, FloatRegisters::Simd128);
+
 // X86-common synonyms.
 static constexpr Register eax = rax;
 static constexpr Register ebx = rbx;
@@ -103,9 +107,9 @@ static constexpr FloatRegister ReturnDoubleReg =
     FloatRegister(X86Encoding::xmm0, FloatRegisters::Double);
 static constexpr FloatRegister ReturnSimd128Reg =
     FloatRegister(X86Encoding::xmm0, FloatRegisters::Simd128);
-static constexpr FloatRegister ScratchFloat32Reg =
+static constexpr FloatRegister ScratchFloat32Reg_ =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Single);
-static constexpr FloatRegister ScratchDoubleReg =
+static constexpr FloatRegister ScratchDoubleReg_ =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Double);
 static constexpr FloatRegister ScratchSimd128Reg =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Simd128);
@@ -215,26 +219,27 @@ static constexpr Register ABINonVolatileReg = r13;
 // and non-volatile registers.
 static constexpr Register ABINonArgReturnVolatileReg = r10;
 
-// TLS pointer argument register for WebAssembly functions. This must not alias
-// any other register used for passing function arguments or return values.
-// Preserved by WebAssembly functions.
-static constexpr Register WasmTlsReg = r14;
+// Instance pointer argument register for WebAssembly functions. This must not
+// alias any other register used for passing function arguments or return
+// values. Preserved by WebAssembly functions.
+static constexpr Register InstanceReg = r14;
 
 // Registers used for asm.js/wasm table calls. These registers must be disjoint
-// from the ABI argument registers, WasmTlsReg and each other.
+// from the ABI argument registers, InstanceReg and each other.
 static constexpr Register WasmTableCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmTableCallScratchReg1 = ABINonArgReg1;
 static constexpr Register WasmTableCallSigReg = ABINonArgReg2;
 static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 
-// Register used as a scratch along the return path in the fast js -> wasm stub
-// code.  This must not overlap ReturnReg, JSReturnOperand, or WasmTlsReg.  It
-// must be a volatile register.
-static constexpr Register WasmJitEntryReturnScratch = rbx;
+// Registers used for ref calls.
+static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
+static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefReg = ABINonArgReg3;
 
-// Register used to store a reference to an exception thrown by Wasm to an
-// exception handling block. Should not overlap with WasmTlsReg.
-static constexpr Register WasmExceptionReg = ABINonArgReg0;
+// Register used as a scratch along the return path in the fast js -> wasm stub
+// code.  This must not overlap ReturnReg, JSReturnOperand, or InstanceReg.
+// It must be a volatile register.
+static constexpr Register WasmJitEntryReturnScratch = rbx;
 
 static constexpr Register OsrFrameReg = IntArgReg3;
 
@@ -270,10 +275,10 @@ static_assert(JitStackAlignment % SimdMemoryAlignment == 0,
 static constexpr uint32_t WasmStackAlignment = SimdMemoryAlignment;
 static constexpr uint32_t WasmTrapInstructionLength = 2;
 
-// The offsets are dynamically asserted during
-// code generation in the prologue/epilogue.
+// See comments in wasm::GenerateFunctionPrologue.  The difference between these
+// is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 16u;
+static constexpr uint32_t WasmCheckedTailEntryOffset = 4u;
 
 static constexpr Scale ScalePointer = TimesEight;
 
@@ -933,6 +938,9 @@ class Assembler : public AssemblerX86Shared {
     masm.popcntq_rr(src.encoding(), dest.encoding());
   }
 
+  void imulq(Imm32 imm, Register src, Register dest) {
+    masm.imulq_ir(imm.value, src.encoding(), dest.encoding());
+  }
   void imulq(Register src, Register dest) {
     masm.imulq_rr(src.encoding(), dest.encoding());
   }
@@ -1037,24 +1045,6 @@ class Assembler : public AssemblerX86Shared {
   CodeOffset loadRipRelativeFloat32x4(FloatRegister dest) {
     return CodeOffset(masm.vmovaps_ripr(dest.encoding()).offset());
   }
-  CodeOffset storeRipRelativeInt32(Register dest) {
-    return CodeOffset(masm.movl_rrip(dest.encoding()).offset());
-  }
-  CodeOffset storeRipRelativeInt64(Register dest) {
-    return CodeOffset(masm.movq_rrip(dest.encoding()).offset());
-  }
-  CodeOffset storeRipRelativeDouble(FloatRegister dest) {
-    return CodeOffset(masm.vmovsd_rrip(dest.encoding()).offset());
-  }
-  CodeOffset storeRipRelativeFloat32(FloatRegister dest) {
-    return CodeOffset(masm.vmovss_rrip(dest.encoding()).offset());
-  }
-  CodeOffset storeRipRelativeInt32x4(FloatRegister dest) {
-    return CodeOffset(masm.vmovdqa_rrip(dest.encoding()).offset());
-  }
-  CodeOffset storeRipRelativeFloat32x4(FloatRegister dest) {
-    return CodeOffset(masm.vmovaps_rrip(dest.encoding()).offset());
-  }
   CodeOffset leaRipRelative(Register dest) {
     return CodeOffset(masm.leaq_rip(dest.encoding()).offset());
   }
@@ -1069,6 +1059,10 @@ class Assembler : public AssemblerX86Shared {
         break;
       case Operand::MEM_REG_DISP:
         masm.cmpq_rm(rhs.encoding(), lhs.disp(), lhs.base());
+        break;
+      case Operand::MEM_SCALE:
+        masm.cmpq_rm(rhs.encoding(), lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
         break;
       case Operand::MEM_ADDRESS32:
         masm.cmpq_rm(rhs.encoding(), lhs.address());
@@ -1133,6 +1127,7 @@ class Assembler : public AssemblerX86Shared {
   }
 
   void jmp(ImmPtr target, RelocationKind reloc = RelocationKind::HARDCODED) {
+    MOZ_ASSERT(hasCreator());
     JmpSrc src = masm.jmp();
     addPendingJump(src, target, reloc);
   }

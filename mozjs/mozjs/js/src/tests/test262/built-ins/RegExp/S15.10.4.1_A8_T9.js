@@ -9,29 +9,10 @@ description: Pattern is 1 and flags is new Object("gi")
 
 var __re = new RegExp(1, new Object("gi"));
 
-//CHECK#1
-if (__re.ignoreCase !== true) {
-	$ERROR('#1: __re = new RegExp(1, new Object("gi")); __re.ignoreCase === true. Actual: ' + (__re.ignoreCase));
-}
-
-//CHECK#2
-if (__re.multiline !== false) {
-	$ERROR('#2: __re = new RegExp(1, new Object("gi")); __re.multiline === false. Actual: ' + (__re.multiline));
-}
-
-//CHECK#3
-if (__re.global !== true) {
-	$ERROR('#3: __re = new RegExp(1, new Object("gi")); __re.global === true. Actual: ' + (__re.global));
-}
-
-//CHECK#4
-if (__re.lastIndex !== 0) {
-	$ERROR('#4: __re = new RegExp(1, new Object("gi")); __re.lastIndex === 0. Actual: ' + (__re.lastIndex));
-}
-
-//CHECK#5
-if (typeof __re.source === "undefined") {
-	$ERROR('#5: __re = new RegExp(1, new Object("gi")); typeof __re.source !== "undefined"');
-}
+assert.sameValue(__re.ignoreCase, true, 'The value of __re.ignoreCase is expected to be true');
+assert.sameValue(__re.multiline, false, 'The value of __re.multiline is expected to be false');
+assert.sameValue(__re.global, true, 'The value of __re.global is expected to be true');
+assert.sameValue(__re.lastIndex, 0, 'The value of __re.lastIndex is expected to be 0');
+assert.notSameValue(typeof __re.source, "undefined", 'The value of typeof __re.source is not "undefined"');
 
 reportCompare(0, 0);

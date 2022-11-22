@@ -8,14 +8,13 @@
 
 #include <algorithm>
 #include <stdarg.h>
+#include <string_view>
 
 #include "util/Unicode.h"
 
 using namespace js;
 using namespace js::cli;
 using namespace js::cli::detail;
-
-const char OptionParser::prognameMeta[] = "{progname}";
 
 #define OPTION_CONVERT_IMPL(__cls)                                             \
   bool Option::is##__cls##Option() const { return kind == OptionKind##__cls; } \
@@ -150,10 +149,12 @@ static const char* OptionFlagsToFormatInfo(char shortflag, bool isValued,
 }
 
 OptionParser::Result OptionParser::printHelp(const char* progname) {
-  const char* prefixEnd = strstr(usage, prognameMeta);
+  constexpr std::string_view prognameMeta = "{progname}";
+
+  const char* prefixEnd = strstr(usage, prognameMeta.data());
   if (prefixEnd) {
     printf("%.*s%s%s\n", int(prefixEnd - usage), usage, progname,
-           prefixEnd + sizeof(prognameMeta) - 1);
+           prefixEnd + prognameMeta.length());
   } else {
     puts(usage);
   }
@@ -404,37 +405,38 @@ void OptionParser::setHelpOption(char shortflag, const char* longflag,
 bool OptionParser::getHelpOption() const { return helpOption.value; }
 
 bool OptionParser::getBoolOption(char shortflag) const {
-  return findOption(shortflag)->asBoolOption()->value;
+  return tryFindOption(shortflag)->asBoolOption()->value;
 }
 
 int OptionParser::getIntOption(char shortflag) const {
-  return findOption(shortflag)->asIntOption()->value;
+  return tryFindOption(shortflag)->asIntOption()->value;
 }
 
 const char* OptionParser::getStringOption(char shortflag) const {
-  return findOption(shortflag)->asStringOption()->value;
+  return tryFindOption(shortflag)->asStringOption()->value;
 }
 
 MultiStringRange OptionParser::getMultiStringOption(char shortflag) const {
-  const MultiStringOption* mso = findOption(shortflag)->asMultiStringOption();
+  const MultiStringOption* mso =
+      tryFindOption(shortflag)->asMultiStringOption();
   return MultiStringRange(mso->strings.begin(), mso->strings.end());
 }
 
 bool OptionParser::getBoolOption(const char* longflag) const {
-  return findOption(longflag)->asBoolOption()->value;
+  return tryFindOption(longflag)->asBoolOption()->value;
 }
 
 int OptionParser::getIntOption(const char* longflag) const {
-  return findOption(longflag)->asIntOption()->value;
+  return tryFindOption(longflag)->asIntOption()->value;
 }
 
 const char* OptionParser::getStringOption(const char* longflag) const {
-  return findOption(longflag)->asStringOption()->value;
+  return tryFindOption(longflag)->asStringOption()->value;
 }
 
 MultiStringRange OptionParser::getMultiStringOption(
     const char* longflag) const {
-  const MultiStringOption* mso = findOption(longflag)->asMultiStringOption();
+  const MultiStringOption* mso = tryFindOption(longflag)->asMultiStringOption();
   return MultiStringRange(mso->strings.begin(), mso->strings.end());
 }
 
@@ -463,6 +465,15 @@ Option* OptionParser::findOption(char shortflag) {
 
 const Option* OptionParser::findOption(char shortflag) const {
   return const_cast<OptionParser*>(this)->findOption(shortflag);
+}
+
+const Option* OptionParser::tryFindOption(char shortflag) const {
+  const Option* maybeOption = findOption(shortflag);
+  if (!maybeOption) {
+    fprintf(stderr, "Failed to find short option %c\n", shortflag);
+    MOZ_CRASH();
+  }
+  return maybeOption;
 }
 
 Option* OptionParser::findOption(const char* longflag) {
@@ -498,6 +509,15 @@ const Option* OptionParser::findOption(const char* longflag) const {
   return const_cast<OptionParser*>(this)->findOption(longflag);
 }
 
+const Option* OptionParser::tryFindOption(const char* longflag) const {
+  const Option* maybeOption = findOption(longflag);
+  if (!maybeOption) {
+    fprintf(stderr, "Failed to find long option %s\n", longflag);
+    MOZ_CRASH();
+  }
+  return maybeOption;
+}
+
 /* Argument accessors */
 
 int OptionParser::findArgumentIndex(const char* name) const {
@@ -531,6 +551,9 @@ MultiStringRange OptionParser::getMultiStringArg(const char* name) const {
 
 /* Option builders */
 
+// Use vanilla malloc for allocations. See OptionAllocPolicy.
+JS_DECLARE_NEW_METHODS(opt_new, malloc, static MOZ_ALWAYS_INLINE)
+
 bool OptionParser::addIntOption(char shortflag, const char* longflag,
                                 const char* metavar, const char* help,
                                 int defaultValue) {
@@ -538,7 +561,7 @@ bool OptionParser::addIntOption(char shortflag, const char* longflag,
     return false;
   }
   IntOption* io =
-      js_new<IntOption>(shortflag, longflag, help, metavar, defaultValue);
+      opt_new<IntOption>(shortflag, longflag, help, metavar, defaultValue);
   if (!io) {
     return false;
   }
@@ -551,7 +574,7 @@ bool OptionParser::addBoolOption(char shortflag, const char* longflag,
   if (!options.reserve(options.length() + 1)) {
     return false;
   }
-  BoolOption* bo = js_new<BoolOption>(shortflag, longflag, help);
+  BoolOption* bo = opt_new<BoolOption>(shortflag, longflag, help);
   if (!bo) {
     return false;
   }
@@ -564,7 +587,7 @@ bool OptionParser::addStringOption(char shortflag, const char* longflag,
   if (!options.reserve(options.length() + 1)) {
     return false;
   }
-  StringOption* so = js_new<StringOption>(shortflag, longflag, help, metavar);
+  StringOption* so = opt_new<StringOption>(shortflag, longflag, help, metavar);
   if (!so) {
     return false;
   }
@@ -578,7 +601,7 @@ bool OptionParser::addMultiStringOption(char shortflag, const char* longflag,
     return false;
   }
   MultiStringOption* mso =
-      js_new<MultiStringOption>(shortflag, longflag, help, metavar);
+      opt_new<MultiStringOption>(shortflag, longflag, help, metavar);
   if (!mso) {
     return false;
   }
@@ -592,7 +615,7 @@ bool OptionParser::addOptionalStringArg(const char* name, const char* help) {
   if (!arguments.reserve(arguments.length() + 1)) {
     return false;
   }
-  StringOption* so = js_new<StringOption>(1, name, help, (const char*)nullptr);
+  StringOption* so = opt_new<StringOption>(1, name, help, (const char*)nullptr);
   if (!so) {
     return false;
   }
@@ -607,7 +630,7 @@ bool OptionParser::addOptionalMultiStringArg(const char* name,
     return false;
   }
   MultiStringOption* mso =
-      js_new<MultiStringOption>(1, name, help, (const char*)nullptr);
+      opt_new<MultiStringOption>(1, name, help, (const char*)nullptr);
   if (!mso) {
     return false;
   }

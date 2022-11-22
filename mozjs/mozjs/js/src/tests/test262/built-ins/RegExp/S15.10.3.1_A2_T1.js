@@ -11,13 +11,16 @@ description: >
     exception
 ---*/
 
-//CHECK#1
 try {
-	$ERROR('#1.1: RegExp(new RegExp("\\d"), "1")) throw SyntaxError. Actual: ' + (RegExp(new RegExp("\d"), "1")));
+    throw new Test262Error('#1.1: RegExp(new RegExp("\\d"), "1")) throw SyntaxError. Actual: ' + (RegExp(new RegExp("\d"), "1")));
 } catch (e) {
-	if ((e instanceof SyntaxError) !== true) {
-		$ERROR('#1.2: RegExp(new RegExp("\\d"), "1")) throw SyntaxError. Actual: ' + (e));
-	}
+  assert.sameValue(
+    e instanceof SyntaxError,
+    true,
+    'The result of evaluating (e instanceof SyntaxError) is expected to be true'
+  );
 }
+
+// TODO: Convert to assert.throws() format.
 
 reportCompare(0, 0);

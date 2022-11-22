@@ -59,7 +59,10 @@ wrap(this, 'putstr');
 
 // Convert a debuggee value v to a string.
 function dvToString(v) {
-    return (typeof v !== 'object' || v === null) ? uneval(v) : "[object " + v.class + "]";
+    if (typeof(v) === 'object' && v !== null) {
+        return `[object ${v.class}]`;
+    }
+    return uneval(v);
 }
 
 function summaryObject(dv) {
@@ -76,18 +79,20 @@ function summaryObject(dv) {
 
 function debuggeeValueToString(dv, style) {
     var dvrepr = dvToString(dv);
-    if (!style.pretty || (typeof dv !== 'object'))
+    if (!style.pretty || (typeof dv !== 'object') || (dv === null))
         return [dvrepr, undefined];
 
+    const exec = debuggeeGlobalWrapper.executeInGlobalWithBindings.bind(debuggeeGlobalWrapper);
+
     if (dv.class == "Error") {
-        let errval = debuggeeGlobalWrapper.executeInGlobalWithBindings("$$.toString()", debuggeeValues);
+        let errval = exec("$$.toString()", debuggeeValues);
         return [dvrepr, errval.return];
     }
 
     if (style.brief)
         return [dvrepr, JSON.stringify(summaryObject(dv), null, 4)];
 
-    let str = debuggeeGlobalWrapper.executeInGlobalWithBindings("JSON.stringify(v, null, 4)", {v: dv});
+    let str = exec("JSON.stringify(v, null, 4)", {v: dv});
     if ('throw' in str) {
         if (style.noerror)
             return [dvrepr, undefined];
@@ -226,9 +231,11 @@ function describedRv(r, desc) {
 
 // Rerun the program (reloading it from the file)
 function runCommand(args) {
-    print("Restarting program");
+    print(`Restarting program (${args})`);
     if (args)
         activeTask.scriptArgs = parseArgs(args);
+    else
+        activeTask.scriptArgs = [...actualScriptArgs];
     rerun = true;
     for (var f = topFrame; f; f = f.older) {
         if (f.older) {
@@ -847,7 +854,7 @@ print("jorendb: scriptArgs = " + scriptArgs);
 print("jorendb: actualScriptArgs = " + actualScriptArgs);
 
 for (var task of todo) {
-    task['scriptArgs'] = actualScriptArgs;
+    task['scriptArgs'] = [...actualScriptArgs];
 }
 
 // Always drop into a repl at the end. Especially if the main script throws an
@@ -870,6 +877,7 @@ while (rerun) {
             } catch (exc) {
                 print("Caught exception " + exc);
                 print(exc.stack);
+                break;
             }
         } else if (task.action == 'repl') {
             repl();

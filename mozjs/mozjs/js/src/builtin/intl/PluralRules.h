@@ -9,12 +9,11 @@
 
 #include "builtin/SelfHostingDefines.h"
 #include "js/Class.h"
-#include "js/RootingAPI.h"
 #include "vm/NativeObject.h"
 
-struct UFormattedNumber;
-struct UNumberFormatter;
-struct UPluralRules;
+namespace mozilla::intl {
+class PluralRules;
+}
 
 namespace js {
 
@@ -24,63 +23,36 @@ class PluralRulesObject : public NativeObject {
   static const JSClass& protoClass_;
 
   static constexpr uint32_t INTERNALS_SLOT = 0;
-  static constexpr uint32_t UPLURAL_RULES_SLOT = 1;
-  static constexpr uint32_t UNUMBER_FORMATTER_SLOT = 2;
-  static constexpr uint32_t UFORMATTED_NUMBER_SLOT = 3;
-  static constexpr uint32_t SLOT_COUNT = 4;
+  static constexpr uint32_t PLURAL_RULES_SLOT = 1;
+  static constexpr uint32_t SLOT_COUNT = 2;
 
   static_assert(INTERNALS_SLOT == INTL_INTERNALS_OBJECT_SLOT,
                 "INTERNALS_SLOT must match self-hosting define for internals "
                 "object slot");
 
-  // Estimated memory use for UNumberFormatter and UFormattedNumber
-  // (see IcuMemoryUsage).
-  static constexpr size_t UNumberFormatterEstimatedMemoryUse = 750;
-
   // Estimated memory use for UPluralRules (see IcuMemoryUsage).
-  static constexpr size_t UPluralRulesEstimatedMemoryUse = 2976;
+  // Includes usage for UNumberFormat and UNumberRangeFormatter since our
+  // PluralRules implementations contains a NumberFormat and a NumberRangeFormat
+  // object.
+  static constexpr size_t UPluralRulesEstimatedMemoryUse = 5736;
 
-  UPluralRules* getPluralRules() const {
-    const auto& slot = getFixedSlot(UPLURAL_RULES_SLOT);
+  mozilla::intl::PluralRules* getPluralRules() const {
+    const auto& slot = getFixedSlot(PLURAL_RULES_SLOT);
     if (slot.isUndefined()) {
       return nullptr;
     }
-    return static_cast<UPluralRules*>(slot.toPrivate());
+    return static_cast<mozilla::intl::PluralRules*>(slot.toPrivate());
   }
 
-  void setPluralRules(UPluralRules* pluralRules) {
-    setFixedSlot(UPLURAL_RULES_SLOT, PrivateValue(pluralRules));
-  }
-
-  UNumberFormatter* getNumberFormatter() const {
-    const auto& slot = getFixedSlot(UNUMBER_FORMATTER_SLOT);
-    if (slot.isUndefined()) {
-      return nullptr;
-    }
-    return static_cast<UNumberFormatter*>(slot.toPrivate());
-  }
-
-  void setNumberFormatter(UNumberFormatter* formatter) {
-    setFixedSlot(UNUMBER_FORMATTER_SLOT, PrivateValue(formatter));
-  }
-
-  UFormattedNumber* getFormattedNumber() const {
-    const auto& slot = getFixedSlot(UFORMATTED_NUMBER_SLOT);
-    if (slot.isUndefined()) {
-      return nullptr;
-    }
-    return static_cast<UFormattedNumber*>(slot.toPrivate());
-  }
-
-  void setFormattedNumber(UFormattedNumber* formatted) {
-    setFixedSlot(UFORMATTED_NUMBER_SLOT, PrivateValue(formatted));
+  void setPluralRules(mozilla::intl::PluralRules* pluralRules) {
+    setFixedSlot(PLURAL_RULES_SLOT, PrivateValue(pluralRules));
   }
 
  private:
   static const JSClassOps classOps_;
   static const ClassSpec classSpec_;
 
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
 };
 
 /**
@@ -94,6 +66,19 @@ class PluralRulesObject : public NativeObject {
  */
 [[nodiscard]] extern bool intl_SelectPluralRule(JSContext* cx, unsigned argc,
                                                 JS::Value* vp);
+
+/**
+ * Returns a plural rule for the number range «x - y» according to the effective
+ * locale and the formatting options of the given PluralRules.
+ *
+ * A plural rule is a grammatical category that expresses count distinctions
+ * (such as "one", "two", "few" etc.).
+ *
+ * Usage: rule = intl_SelectPluralRuleRange(pluralRules, x, y)
+ */
+[[nodiscard]] extern bool intl_SelectPluralRuleRange(JSContext* cx,
+                                                     unsigned argc,
+                                                     JS::Value* vp);
 
 /**
  * Returns an array of plural rules categories for a given pluralRules object.

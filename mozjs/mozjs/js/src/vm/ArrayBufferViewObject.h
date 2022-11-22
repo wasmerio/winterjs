@@ -36,17 +36,14 @@ class ArrayBufferViewObject : public NativeObject {
   // Offset of view within underlying (Shared)ArrayBufferObject.
   static constexpr size_t BYTEOFFSET_SLOT = 2;
 
-  static constexpr size_t RESERVED_SLOTS = 3;
+  // Pointer to raw buffer memory.
+  static constexpr size_t DATA_SLOT = 3;
+
+  static constexpr size_t RESERVED_SLOTS = 4;
 
 #ifdef DEBUG
   static const uint8_t ZeroLengthArrayData = 0x4A;
 #endif
-
-  // The raw pointer to the buffer memory, the "private" value.
-  //
-  // This offset is exposed for performance reasons - so that it
-  // need not be looked up on accesses.
-  static constexpr size_t DATA_SLOT = 3;
 
   static constexpr int bufferOffset() {
     return NativeObject::getFixedSlotOffset(BUFFER_SLOT);
@@ -58,19 +55,19 @@ class ArrayBufferViewObject : public NativeObject {
     return NativeObject::getFixedSlotOffset(BYTEOFFSET_SLOT);
   }
   static constexpr int dataOffset() {
-    return NativeObject::getPrivateDataOffset(DATA_SLOT);
+    return NativeObject::getFixedSlotOffset(DATA_SLOT);
   }
 
  private:
   void* dataPointerEither_() const {
     // Note, do not check whether shared or not
     // Keep synced with js::Get<Type>ArrayLengthAndData in jsfriendapi.h!
-    return static_cast<void*>(getPrivate(DATA_SLOT));
+    return maybePtrFromReservedSlot<void>(DATA_SLOT);
   }
 
  public:
   [[nodiscard]] bool init(JSContext* cx, ArrayBufferObjectMaybeShared* buffer,
-                          BufferSize byteOffset, BufferSize length,
+                          size_t byteOffset, size_t length,
                           uint32_t bytesPerElement);
 
   static ArrayBufferObjectMaybeShared* bufferObject(
@@ -86,7 +83,8 @@ class ArrayBufferViewObject : public NativeObject {
     // accessed only from jitted code and from the
     // dataPointerEither_() accessor above; in neither case does the
     // raw pointer escape untagged into C++ code.
-    initPrivate(viewData.unwrap(/*safe - see above*/));
+    void* data = viewData.unwrap(/*safe - see above*/);
+    initReservedSlot(DATA_SLOT, PrivateValue(data));
   }
 
   SharedMem<void*> dataPointerShared() const {
@@ -148,12 +146,12 @@ class ArrayBufferViewObject : public NativeObject {
     return buffer->isDetached();
   }
 
-  BufferSize byteOffset() const {
-    return BufferSize(size_t(getFixedSlot(BYTEOFFSET_SLOT).toPrivate()));
+  size_t byteOffset() const {
+    return size_t(getFixedSlot(BYTEOFFSET_SLOT).toPrivate());
   }
 
   Value byteOffsetValue() const {
-    size_t offset = byteOffset().get();
+    size_t offset = byteOffset();
     return NumberValue(offset);
   }
 

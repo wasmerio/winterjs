@@ -33,6 +33,9 @@
   //         behavior.
   var ObjectGetOwnPropertyDescriptor = global.Object.getOwnPropertyDescriptor;
 
+  var {get: ArrayBufferByteLength} =
+    ObjectGetOwnPropertyDescriptor(global.ArrayBuffer.prototype, "byteLength");
+
   var Worker = global.Worker;
   var Blob = global.Blob;
   var URL = global.URL;
@@ -190,7 +193,15 @@
       if (worker === null) {
         worker = CreateWorker("/* black hole */");
       }
-      ReflectApply(WorkerPrototypePostMessage, worker, ["detach", [arrayBuffer]]);
+      try {
+        ReflectApply(WorkerPrototypePostMessage, worker, ["detach", [arrayBuffer]]);
+      } catch (e) {
+        // postMessage throws an error if the array buffer was already detached.
+        // Test for this condition by checking if the byte length is zero.
+        if (ReflectApply(ArrayBufferByteLength, arrayBuffer, []) !== 0) {
+          throw e;
+        }
+      }
     };
 
     global.detachArrayBuffer = detachArrayBuffer;
@@ -496,6 +507,12 @@
     var scripts = [];
     for (var i = 0; i < testpathparts.length - 1; i++) {
       prepath += testpathparts[i] + "/";
+
+      if (properties["test262-raw"]) {
+        // Skip running test harness files (shell.js and browser.js) if the
+        // test has the raw flag.
+        continue;
+      }
 
       scripts.push({src: prepath + "shell.js", module: false});
       scripts.push({src: prepath + "browser.js", module: false});

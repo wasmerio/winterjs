@@ -7,15 +7,12 @@
 #include "jit/RangeAnalysis.h"
 
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/TemplateLib.h"
 
 #include <algorithm>
 
 #include "jsmath.h"
-#include "jsnum.h"
 
 #include "jit/CompileInfo.h"
-#include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIR.h"
@@ -313,22 +310,10 @@ bool RangeAnalysis::addBetaNodes() {
         }
         break;
       case JSOp::StrictEq:
-        // A strict comparison can test for things other than numeric value.
-        if (!compare->isNumericComparison()) {
-          continue;
-        }
-        // Otherwise fall through to handle JSOp::StrictEq the same as JSOp::Eq.
-        [[fallthrough]];
       case JSOp::Eq:
         comp.setDouble(bound, bound);
         break;
       case JSOp::StrictNe:
-        // A strict comparison can test for things other than numeric value.
-        if (!compare->isNumericComparison()) {
-          continue;
-        }
-        // Otherwise fall through to handle JSOp::StrictNe the same as JSOp::Ne.
-        [[fallthrough]];
       case JSOp::Ne:
         // Negative zero is not not-equal to zero.
         if (bound == 0) {
@@ -370,11 +355,12 @@ bool RangeAnalysis::removeBetaNodes() {
     for (MDefinitionIterator iter(*i); iter;) {
       MDefinition* def = *iter++;
       if (def->isBeta()) {
-        MDefinition* op = def->getOperand(0);
-        JitSpew(JitSpew_Range, "  Removing beta node %u for %u", def->id(),
+        auto* beta = def->toBeta();
+        MDefinition* op = beta->input();
+        JitSpew(JitSpew_Range, "  Removing beta node %u for %u", beta->id(),
                 op->id());
-        def->justReplaceAllUsesWith(op);
-        block->discardDef(def);
+        beta->justReplaceAllUsesWith(op);
+        block->discard(beta);
       } else {
         // We only place Beta nodes at the beginning of basic
         // blocks, so if we see something else, we can move on
@@ -1386,6 +1372,9 @@ void MBitXor::computeRange(TempAllocator& alloc) {
 }
 
 void MBitNot::computeRange(TempAllocator& alloc) {
+  if (type() == MIRType::Int64) {
+    return;
+  }
   MOZ_ASSERT(type() == MIRType::Int32);
 
   Range op(getOperand(0));
@@ -1818,7 +1807,7 @@ void MArrayBufferViewByteOffset::computeRange(TempAllocator& alloc) {
 void MTypedArrayElementSize::computeRange(TempAllocator& alloc) {
   constexpr auto MaxTypedArraySize = sizeof(double);
 
-#define ASSERT_MAX_SIZE(T, N)                   \
+#define ASSERT_MAX_SIZE(_, T, N)                \
   static_assert(sizeof(T) <= MaxTypedArraySize, \
                 "unexpected typed array type exceeding 64-bits storage");
   JS_FOR_EACH_TYPED_ARRAY(ASSERT_MAX_SIZE)
@@ -1905,6 +1894,10 @@ void MNaNToZero::computeRange(TempAllocator& alloc) {
 ///////////////////////////////////////////////////////////////////////////////
 // Range Analysis
 ///////////////////////////////////////////////////////////////////////////////
+
+static BranchDirection NegateBranchDirection(BranchDirection dir) {
+  return (dir == FALSE_BRANCH) ? TRUE_BRANCH : FALSE_BRANCH;
+}
 
 bool RangeAnalysis::analyzeLoop(MBasicBlock* header) {
   MOZ_ASSERT(header->hasUniqueBackedge());
@@ -2577,21 +2570,21 @@ void Range::wrapAroundToBoolean() {
   MOZ_ASSERT(isBoolean());
 }
 
-bool MDefinition::needTruncation(TruncateKind kind) {
+bool MDefinition::needTruncation(TruncateKind kind) const {
   // No procedure defined for truncating this instruction.
   return false;
 }
 
-void MDefinition::truncate() {
+void MDefinition::truncate(TruncateKind kind) {
   MOZ_CRASH("No procedure defined for truncating this instruction.");
 }
 
-bool MConstant::needTruncation(TruncateKind kind) {
+bool MConstant::needTruncation(TruncateKind kind) const {
   return IsFloatingPointType(type());
 }
 
-void MConstant::truncate() {
-  MOZ_ASSERT(needTruncation(TruncateKind::Truncate));
+void MConstant::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
 
   // Truncate the double to int, since all uses truncates it.
   int32_t res = ToInt32(numberToDouble());
@@ -2603,61 +2596,63 @@ void MConstant::truncate() {
   }
 }
 
-bool MPhi::needTruncation(TruncateKind kind) {
+bool MPhi::needTruncation(TruncateKind kind) const {
   if (type() == MIRType::Double || type() == MIRType::Int32) {
-    truncateKind_ = kind;
     return true;
   }
 
   return false;
 }
 
-void MPhi::truncate() {
+void MPhi::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+  truncateKind_ = kind;
   setResultType(MIRType::Int32);
-  if (truncateKind_ >= TruncateKind::IndirectTruncate && range()) {
+  if (kind >= TruncateKind::IndirectTruncate && range()) {
     range()->wrapAroundToInt32();
   }
 }
 
-bool MAdd::needTruncation(TruncateKind kind) {
-  // Remember analysis, needed for fallible checks.
-  setTruncateKind(kind);
-
+bool MAdd::needTruncation(TruncateKind kind) const {
   return type() == MIRType::Double || type() == MIRType::Int32;
 }
 
-void MAdd::truncate() {
-  MOZ_ASSERT(needTruncation(truncateKind()));
+void MAdd::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+
+  // Remember analysis, needed for fallible checks.
+  setTruncateKind(kind);
+
   setSpecialization(MIRType::Int32);
   if (truncateKind() >= TruncateKind::IndirectTruncate && range()) {
     range()->wrapAroundToInt32();
   }
 }
 
-bool MSub::needTruncation(TruncateKind kind) {
-  // Remember analysis, needed for fallible checks.
-  setTruncateKind(kind);
-
+bool MSub::needTruncation(TruncateKind kind) const {
   return type() == MIRType::Double || type() == MIRType::Int32;
 }
 
-void MSub::truncate() {
-  MOZ_ASSERT(needTruncation(truncateKind()));
+void MSub::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+
+  // Remember analysis, needed for fallible checks.
+  setTruncateKind(kind);
   setSpecialization(MIRType::Int32);
   if (truncateKind() >= TruncateKind::IndirectTruncate && range()) {
     range()->wrapAroundToInt32();
   }
 }
 
-bool MMul::needTruncation(TruncateKind kind) {
-  // Remember analysis, needed for fallible checks.
-  setTruncateKind(kind);
-
+bool MMul::needTruncation(TruncateKind kind) const {
   return type() == MIRType::Double || type() == MIRType::Int32;
 }
 
-void MMul::truncate() {
-  MOZ_ASSERT(needTruncation(truncateKind()));
+void MMul::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+
+  // Remember analysis, needed for fallible checks.
+  setTruncateKind(kind);
   setSpecialization(MIRType::Int32);
   if (truncateKind() >= TruncateKind::IndirectTruncate) {
     setCanBeNegativeZero(false);
@@ -2667,15 +2662,15 @@ void MMul::truncate() {
   }
 }
 
-bool MDiv::needTruncation(TruncateKind kind) {
-  // Remember analysis, needed for fallible checks.
-  setTruncateKind(kind);
-
+bool MDiv::needTruncation(TruncateKind kind) const {
   return type() == MIRType::Double || type() == MIRType::Int32;
 }
 
-void MDiv::truncate() {
-  MOZ_ASSERT(needTruncation(truncateKind()));
+void MDiv::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+
+  // Remember analysis, needed for fallible checks.
+  setTruncateKind(kind);
   setSpecialization(MIRType::Int32);
 
   // Divisions where the lhs and rhs are unsigned and the result is
@@ -2686,16 +2681,16 @@ void MDiv::truncate() {
   }
 }
 
-bool MMod::needTruncation(TruncateKind kind) {
-  // Remember analysis, needed for fallible checks.
-  setTruncateKind(kind);
-
+bool MMod::needTruncation(TruncateKind kind) const {
   return type() == MIRType::Double || type() == MIRType::Int32;
 }
 
-void MMod::truncate() {
+void MMod::truncate(TruncateKind kind) {
   // As for division, handle unsigned modulus with a truncated result.
-  MOZ_ASSERT(needTruncation(truncateKind()));
+  MOZ_ASSERT(needTruncation(kind));
+
+  // Remember analysis, needed for fallible checks.
+  setTruncateKind(kind);
   setSpecialization(MIRType::Int32);
 
   if (unsignedOperands()) {
@@ -2704,15 +2699,14 @@ void MMod::truncate() {
   }
 }
 
-bool MToDouble::needTruncation(TruncateKind kind) {
+bool MToDouble::needTruncation(TruncateKind kind) const {
   MOZ_ASSERT(type() == MIRType::Double);
-  setTruncateKind(kind);
-
   return true;
 }
 
-void MToDouble::truncate() {
-  MOZ_ASSERT(needTruncation(truncateKind()));
+void MToDouble::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
+  setTruncateKind(kind);
 
   // We use the return type to flag that this MToDouble should be replaced by
   // a MTruncateToInt32 when modifying the graph.
@@ -2724,16 +2718,18 @@ void MToDouble::truncate() {
   }
 }
 
-bool MLimitedTruncate::needTruncation(TruncateKind kind) {
+bool MLimitedTruncate::needTruncation(TruncateKind kind) const { return true; }
+
+void MLimitedTruncate::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
   setTruncateKind(kind);
   setResultType(MIRType::Int32);
   if (kind >= TruncateKind::IndirectTruncate && range()) {
     range()->wrapAroundToInt32();
   }
-  return false;
 }
 
-bool MCompare::needTruncation(TruncateKind kind) {
+bool MCompare::needTruncation(TruncateKind kind) const {
   // If we're compiling wasm, don't try to optimize the comparison type, as
   // the code presumably is already using the type it wants. Also, wasm
   // doesn't support bailouts, so we woudn't be able to rely on
@@ -2755,7 +2751,8 @@ bool MCompare::needTruncation(TruncateKind kind) {
   return true;
 }
 
-void MCompare::truncate() {
+void MCompare::truncate(TruncateKind kind) {
+  MOZ_ASSERT(needTruncation(kind));
   compareType_ = Compare_Int32;
 
   // Truncating the operands won't change their value because we don't force a
@@ -2927,9 +2924,9 @@ static bool CloneForDeadBranches(TempAllocator& alloc,
   }
   clone->setRange(nullptr);
 
-  // Set UseRemoved flag on the cloned instruction in order to chain recover
+  // Set ImplicitlyUsed flag on the cloned instruction in order to chain recover
   // instruction for the bailout path.
-  clone->setUseRemovedUnchecked();
+  clone->setImplicitlyUsedUnchecked();
 
   candidate->block()->insertBefore(candidate, clone);
 
@@ -2962,7 +2959,8 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
   bool isObservableResult =
       false;  // Check if it can be read from another frame.
   bool isRecoverableResult = true;  // Check if it can safely be reconstructed.
-  bool hasUseRemoved = candidate->isUseRemoved();
+  bool isImplicitlyUsed = candidate->isImplicitlyUsed();
+  bool hasTryBlock = candidate->block()->graph().hasTryBlock();
 
   TruncateKind kind = TruncateKind::Truncate;
   for (MUseIterator use(candidate->usesBegin()); use != candidate->usesEnd();
@@ -2971,7 +2969,7 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
       // Truncation is a destructive optimization, as such, we need to pay
       // attention to removed branches and prevent optimization
       // destructive optimizations if we have no alternative. (see
-      // UseRemoved flag)
+      // ImplicitlyUsed flag)
       isCapturedResult = true;
       isObservableResult =
           isObservableResult ||
@@ -2985,7 +2983,7 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
     MDefinition* consumer = use->consumer()->toDefinition();
     if (consumer->isRecoveredOnBailout()) {
       isCapturedResult = true;
-      hasUseRemoved = hasUseRemoved || consumer->isUseRemoved();
+      isImplicitlyUsed = isImplicitlyUsed || consumer->isImplicitlyUsed();
       continue;
     }
 
@@ -3008,15 +3006,17 @@ static TruncateKind ComputeRequestedTruncateKind(MDefinition* candidate,
   bool needsConversion = !candidate->range() || !candidate->range()->isInt32();
 
   // If the instruction is explicitly truncated (not indirectly) by all its
-  // uses and if it has no removed uses, then we can safely encode its
+  // uses and if it is not implicitly used, then we can safely encode its
   // truncated result as part of the resume point operands.  This is safe,
   // because even if we resume with a truncated double, the next baseline
   // instruction operating on this instruction is going to be a no-op.
   //
   // Note, that if the result can be observed from another frame, then this
-  // optimization is not safe.
-  bool safeToConvert =
-      kind == TruncateKind::Truncate && !hasUseRemoved && !isObservableResult;
+  // optimization is not safe. Similarly, if this function contains a try
+  // block, the result could be observed from a catch block, which we do
+  // not compile.
+  bool safeToConvert = kind == TruncateKind::Truncate && !isImplicitlyUsed &&
+                       !isObservableResult && !hasTryBlock;
 
   // If the candidate instruction appears as operand of a resume point or a
   // recover instruction, and we have to truncate its result, then we might
@@ -3238,7 +3238,7 @@ bool RangeAnalysis::truncate() {
         iter->setBailoutKind(BailoutKind::EagerTruncation);
       }
 
-      iter->truncate();
+      iter->truncate(kind);
 
       // Delay updates of inputs/outputs to avoid creating node which
       // would be removed by the truncation of the next operations.
@@ -3260,7 +3260,7 @@ bool RangeAnalysis::truncate() {
 
       SpewTruncate(*iter, kind, shouldClone);
 
-      iter->truncate();
+      iter->truncate(kind);
 
       // Delay updates of inputs/outputs to avoid creating node which
       // would be removed by the truncation of the next operations.
@@ -3334,6 +3334,13 @@ void MLoadElementHole::collectRangeInfoPreTrunc() {
   }
 }
 
+void MStoreElementHole::collectRangeInfoPreTrunc() {
+  Range indexRange(index());
+  if (indexRange.isFiniteNonNegative()) {
+    needsNegativeIntCheck_ = false;
+  }
+}
+
 void MInt32ToIntPtr::collectRangeInfoPreTrunc() {
   Range inputRange(input());
   if (inputRange.isFiniteNonNegative()) {
@@ -3390,6 +3397,10 @@ void MDiv::collectRangeInfoPreTrunc() {
   if (rhsRange.isFiniteNonNegative()) {
     canBeNegativeZero_ = false;
   }
+
+  if (fallible()) {
+    setGuardRangeBailoutsUnchecked();
+  }
 }
 
 void MMul::collectRangeInfoPreTrunc() {
@@ -3426,6 +3437,9 @@ void MMod::collectRangeInfoPreTrunc() {
   }
   if (!rhsRange.canBeZero()) {
     canBeDivideByZero_ = false;
+  }
+  if (type() == MIRType::Int32 && fallible()) {
+    setGuardRangeBailoutsUnchecked();
   }
 }
 

@@ -5,8 +5,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsfriendapi.h"
-
 #include "js/ArrayBuffer.h"
 #include "js/ArrayBufferMaybeShared.h"
 #include "js/experimental/TypedData.h"
@@ -64,7 +62,9 @@ BEGIN_TEST(testLargeArrayBuffers) {
     CHECK_EQUAL(length, nbytes);
 
     length = 0;
-    CHECK(JS_GetObjectAsUint8Array(tarr, &length, &isShared, &data));
+    JS::AutoCheckCannotGC nogc(cx);
+    CHECK(data = JS::TypedArray<Scalar::Uint8>::unwrap(tarr).getLengthAndData(
+              &length, &isShared, nogc));
     CHECK_EQUAL(length, nbytes);
 
     length = 0;
@@ -93,7 +93,10 @@ BEGIN_TEST(testLargeArrayBuffers) {
     CHECK_EQUAL(length, nbytes / 2);
 
     length = 0;
-    CHECK(JS_GetObjectAsInt16Array(tarr, &length, &isShared, &int16Data));
+    JS::AutoCheckCannotGC nogc(cx);
+    CHECK(int16Data =
+              JS::TypedArray<Scalar::Int16>::unwrap(tarr).getLengthAndData(
+                  &length, &isShared, nogc));
     CHECK_EQUAL(length, nbytes / 2);
 
     length = 0;

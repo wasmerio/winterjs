@@ -4,26 +4,15 @@
 Visual Studio Projects
 ======================
 
-The build system contains alpha support for generating Visual Studio
-project files to aid with development.
+The build system automatically generates Visual Studio project files to aid
+with development, as part of a normal ``mach build`` from the command line.
 
-To generate Visual Studio project files, you'll need to have a configured tree::
+You can find the solution file at ``$OBJDIR/msvs/mozilla.sln``.
 
-   mach configure
+If you want to generate the project files before/without doing a full build,
+running ``./mach configure && ./mach build-backend -b VisualStudio`` will do
+so.
 
-(If you have built recently, your tree is already configured.)
-
-Then, simply generate the Visual Studio build backend::
-
-   mach build-backend -b VisualStudio
-
-If all goes well, the path to the generated Solution (``.sln``) file should be
-printed. You should be able to open that solution with Visual Studio 2010 or
-newer.
-
-Currently, output is hard-coded to the Visual Studio 2010 format. If you open
-the solution in a newer Visual Studio release, you will be prompted to upgrade
-projects. Simply click through the wizard to do that.
 
 Structure of Solution
 =====================
@@ -59,20 +48,8 @@ Libraries
 Updating Project Files
 ======================
 
-As you pull and update the source tree, your Visual Studio files may fall out
-of sync with the build configuration. The tree should still build fine from
-within Visual Studio. But source files may be missing and IntelliSense may not
-have the proper build configuration.
-
-To account for this, you'll want to periodically regenerate the Visual Studio
-project files. You can do this within Visual Studio by building the
-``Build Targets :: visual-studio`` project or by running
-``mach build-backend -b VisualStudio`` from the command line.
-
-Currently, regeneration rewrites the original project files. **If you've made
-any customizations to the solution or projects, they will likely get
-overwritten.** We would like to improve this user experience in the
-future.
+Either re-running ``./mach build`` or ``./mach build-backend -b VisualStudio``
+will update the Visual Studio files after the tree changes.
 
 Moving Project Files Around
 ===========================
@@ -84,7 +61,7 @@ to work from wherever they are. If they don't, please file a bug.
 Invoking mach through Visual Studio
 ===================================
 
-It's possible to build the tree via Visual Studio. There is some light magic
+It's possible to run mach commands via Visual Studio. There is some light magic
 involved here.
 
 Alongside the Visual Studio project files is a batch script named ``mach.bat``.
@@ -94,7 +71,12 @@ and invokes *mach* inside an msys shell with the arguments specified to the
 batch script. This script essentially allows you to invoke mach commands
 inside the MozillaBuild environment without having to load MozillaBuild.
 
-While projects currently only utilize the ``mach build`` command, the batch
-script does not limit it's use: any mach command can be invoked. Developers
-may abuse this fact to add custom projects and commands that invoke other
-mach commands.
+Projects currently utilize the ``mach build`` and ``mach clobber`` commands
+for building and cleaning the tree respectively. Note that running ``clobber``
+deletes the Visual Studio project files, and running ``build`` recreates them.
+This might cause issues while Visual Studio is running. Thus a full rebuild is
+currently neither recommended, nor supported, but incremental builds should work.
+
+The batch script does not limit its use: any mach command can be invoked.
+Developers may use this fact to add custom projects and commands that invoke
+other mach commands.

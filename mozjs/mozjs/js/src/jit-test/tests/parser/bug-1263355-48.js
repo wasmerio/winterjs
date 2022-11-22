@@ -1,10 +1,11 @@
 // |jit-test| skip-if: helperThreadCount() === 0
 
 function eval(source) {
-    offThreadCompileModule(source);
-    let m = finishOffThreadModule();
-    m.declarationInstantiation();
-    return m.evaluation();
+    offThreadCompileModuleToStencil(source);
+    let stencil = finishOffThreadStencil();
+    let m = instantiateModuleStencil(stencil);
+    moduleLink(m);
+    return moduleEvaluate(m);
 }
 function runTestCase(testcase) {
     if (testcase() !== true) {}

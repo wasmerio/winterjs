@@ -101,8 +101,8 @@ class L10NRepackFormatterMixin(object):
         self._dictionaries = {}
 
     def add(self, path, file):
+        base, relpath = self._get_base(path)
         if path.endswith(".dic"):
-            base, relpath = self._get_base(path)
             if relpath.startswith("dictionaries/"):
                 root, ext = mozpath.splitext(mozpath.basename(path))
                 self._dictionaries[root] = path
@@ -112,6 +112,14 @@ class L10NRepackFormatterMixin(object):
             # The GeneratedFile content is only really generated after
             # all calls to formatter.add.
             file = GeneratedFile(lambda: json.dumps(data))
+        elif relpath.startswith("META-INF/"):
+            # Ignore signatures inside omnijars.  We drop these items: if we
+            # don't treat them as omnijar resources, they will be included in
+            # the top-level package, and that's not how omnijars are signed (Bug
+            # 1750676).  If we treat them as omnijar resources, they will stay
+            # in the omnijar, as expected -- but the signatures won't be valid
+            # after repacking.  Therefore, drop them.
+            return
         super(L10NRepackFormatterMixin, self).add(path, file)
 
 
@@ -262,7 +270,9 @@ def _repack(app_finder, l10n_finder, copier, formatter, non_chrome=set()):
         copier[path].preload([l.replace(locale, l10n_locale) for l in log])
 
 
-def repack(source, l10n, extra_l10n={}, non_resources=[], non_chrome=set()):
+def repack(
+    source, l10n, extra_l10n={}, non_resources=[], non_chrome=set(), minify=False
+):
     """
     Replace localized data from the `source` directory with localized data
     from `l10n` and `extra_l10n`.
@@ -281,15 +291,16 @@ def repack(source, l10n, extra_l10n={}, non_resources=[], non_chrome=set()):
     is in that format.
     The `non_chrome` argument gives a list of file/directory patterns for
     localized files that are not listed in a chrome.manifest.
+    If `minify`, `.properties` files are minified.
     """
-    app_finder = UnpackFinder(source)
-    l10n_finder = UnpackFinder(l10n)
+    app_finder = UnpackFinder(source, minify=minify)
+    l10n_finder = UnpackFinder(l10n, minify=minify)
     if extra_l10n:
         finders = {
             "": l10n_finder,
         }
         for base, path in six.iteritems(extra_l10n):
-            finders[base] = UnpackFinder(path)
+            finders[base] = UnpackFinder(path, minify=minify)
         l10n_finder = ComposedFinder(finders)
     copier = FileCopier()
     compress = min(app_finder.compressed, JAR_DEFLATED)

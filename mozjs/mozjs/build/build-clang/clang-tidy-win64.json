@@ -1,10 +1,6 @@
 {
     "stages": "1",
-    "build_libcxx": false,
-    "build_type": "Release",
-    "assertions": false,
     "build_clang_tidy": true,
-    "python_path": "c:/mozilla-build/python/python.exe",
     "cc": "cl.exe",
     "cxx": "cl.exe",
     "ml": "ml64.exe",

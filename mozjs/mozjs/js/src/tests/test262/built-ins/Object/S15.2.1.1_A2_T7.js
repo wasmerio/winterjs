@@ -11,26 +11,13 @@ description: Calling Object function with empty string argument value
 
 var str = '';
 
-// CHECK#1
-if (typeof(str) !== 'string') {
-  $ERROR('#1: "" is NOT a String');
-}
+assert.sameValue(typeof(str), 'string', 'The value of `typeof(str)` is expected to be "string"');
 
 var obj = Object(str);
 
-//CHECK#2
-if (obj.constructor !== String) {
-  $ERROR('#2: Object("") returns ToObject("")');
-}
-
-//CHECK#3
-if (typeof obj !== "object") {
-  $ERROR('#3: Object("") returns ToObject("")');
-}
-
-//CHECK#4
-if ((obj != "") || (obj === "")) {
-  $ERROR('#4: Object("") returns ToObject("")');
-}
+assert.sameValue(obj.constructor, String, 'The value of obj.constructor is expected to equal the value of String');
+assert.sameValue(typeof obj, "object", 'The value of `typeof obj` is expected to be "object"');
+assert(obj == "", 'The result of evaluating (obj == "") is expected to be true');
+assert.notSameValue(obj, "", 'The value of obj is not ""');
 
 reportCompare(0, 0);

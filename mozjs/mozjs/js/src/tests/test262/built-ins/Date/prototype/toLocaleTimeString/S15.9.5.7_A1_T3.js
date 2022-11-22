@@ -8,15 +8,15 @@ info: |
 esid: sec-date.prototype.tolocaletimestring
 description: Checking DontEnum attribute
 ---*/
-
-if (Date.prototype.propertyIsEnumerable('toLocaleTimeString')) {
-  $ERROR('#1: The Date.prototype.toLocaleTimeString property has the attribute DontEnum');
-}
+assert(
+  !Date.prototype.propertyIsEnumerable('toLocaleTimeString'),
+  'The value of !Date.prototype.propertyIsEnumerable(\'toLocaleTimeString\') is expected to be true'
+);
 
 for (var x in Date.prototype) {
-  if (x === "toLocaleTimeString") {
-    $ERROR('#2: The Date.prototype.toLocaleTimeString has the attribute DontEnum');
-  }
+  assert.notSameValue(x, "toLocaleTimeString", 'The value of x is not "toLocaleTimeString"');
 }
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

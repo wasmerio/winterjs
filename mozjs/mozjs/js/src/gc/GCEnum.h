@@ -35,28 +35,28 @@ enum class State {
 #undef MAKE_STATE
 };
 
-#define JS_FOR_EACH_ZEAL_MODE(D)       \
-  D(RootsChange, 1)                    \
-  D(Alloc, 2)                          \
-  D(VerifierPre, 4)                    \
-  D(YieldBeforeRootMarking, 6)         \
-  D(GenerationalGC, 7)                 \
-  D(YieldBeforeMarking, 8)             \
-  D(YieldBeforeSweeping, 9)            \
-  D(IncrementalMultipleSlices, 10)     \
-  D(IncrementalMarkingValidator, 11)   \
-  D(ElementsBarrier, 12)               \
-  D(CheckHashTablesOnMinorGC, 13)      \
-  D(Compact, 14)                       \
-  D(CheckHeapAfterGC, 15)              \
-  D(CheckNursery, 16)                  \
-  D(YieldBeforeSweepingAtoms, 17)      \
-  D(CheckGrayMarking, 18)              \
-  D(YieldBeforeSweepingCaches, 19)     \
-  D(YieldBeforeSweepingObjects, 21)    \
-  D(YieldBeforeSweepingNonObjects, 22) \
-  D(YieldBeforeSweepingShapeTrees, 23) \
-  D(CheckWeakMapMarking, 24)           \
+#define JS_FOR_EACH_ZEAL_MODE(D)         \
+  D(RootsChange, 1)                      \
+  D(Alloc, 2)                            \
+  D(VerifierPre, 4)                      \
+  D(YieldBeforeRootMarking, 6)           \
+  D(GenerationalGC, 7)                   \
+  D(YieldBeforeMarking, 8)               \
+  D(YieldBeforeSweeping, 9)              \
+  D(IncrementalMultipleSlices, 10)       \
+  D(IncrementalMarkingValidator, 11)     \
+  D(ElementsBarrier, 12)                 \
+  D(CheckHashTablesOnMinorGC, 13)        \
+  D(Compact, 14)                         \
+  D(CheckHeapAfterGC, 15)                \
+  D(CheckNursery, 16)                    \
+  D(YieldBeforeSweepingAtoms, 17)        \
+  D(CheckGrayMarking, 18)                \
+  D(YieldBeforeSweepingCaches, 19)       \
+  D(YieldBeforeSweepingObjects, 21)      \
+  D(YieldBeforeSweepingNonObjects, 22)   \
+  D(YieldBeforeSweepingPropMapTrees, 23) \
+  D(CheckWeakMapMarking, 24)             \
   D(YieldWhileGrayMarking, 25)
 
 enum class ZealMode {
@@ -99,14 +99,14 @@ enum class GCAbortReason {
   _(BigIntDigits)                          \
   _(ScopeData)                             \
   _(WeakMapObject)                         \
-  _(ShapeChildren)                         \
-  _(ShapeCache)                            \
+  _(ShapeSetForAdd)                        \
+  _(PropMapChildren)                       \
+  _(PropMapTable)                          \
   _(ModuleBindingMap)                      \
   _(BaselineScript)                        \
   _(IonScript)                             \
   _(ArgumentsData)                         \
   _(RareArgumentsData)                     \
-  _(RegExpStatics)                         \
   _(RegExpSharedBytecode)                  \
   _(RegExpSharedNamedCaptureData)          \
   _(TypedArrayElements)                    \
@@ -126,23 +126,24 @@ enum class GCAbortReason {
   _(WasmResolveResponseClosure)            \
   _(WasmModule)                            \
   _(WasmTableTable)                        \
-  _(WasmExceptionTag)                      \
-  _(WasmExceptionType)                     \
-  _(WasmRuntimeExceptionTag)               \
+  _(WasmExceptionData)                     \
+  _(WasmTagType)                           \
+  _(WasmRttValueChildren)                  \
   _(FileObjectFile)                        \
   _(Debugger)                              \
   _(DebuggerFrameGeneratorInfo)            \
   _(DebuggerFrameIterData)                 \
   _(DebuggerOnStepHandler)                 \
   _(DebuggerOnPopHandler)                  \
-  _(RealmInstrumentation)                  \
   _(ICUObject)                             \
   _(FinalizationRegistryRecordVector)      \
   _(FinalizationRegistryRegistrations)     \
   _(FinalizationRecordVector)              \
-  _(ZoneAllocPolicy)                       \
+  _(TrackedAllocPolicy)                    \
   _(SharedArrayRawBuffer)                  \
-  _(XDRBufferElements)
+  _(XDRBufferElements)                     \
+  _(GlobalObjectData)                      \
+  _(ProxyExternalValueArray)
 
 #define JS_FOR_EACH_MEMORY_USE(_)  \
   JS_FOR_EACH_PUBLIC_MEMORY_USE(_) \

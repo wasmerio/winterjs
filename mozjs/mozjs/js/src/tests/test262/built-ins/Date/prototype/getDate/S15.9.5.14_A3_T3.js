@@ -8,15 +8,15 @@ info: |
 esid: sec-date.prototype.getdate
 description: Checking DontEnum attribute
 ---*/
-
-if (Date.prototype.getDate.propertyIsEnumerable('length')) {
-  $ERROR('#1: The Date.prototype.getDate.length property has the attribute DontEnum');
-}
+assert(
+  !Date.prototype.getDate.propertyIsEnumerable('length'),
+  'The value of !Date.prototype.getDate.propertyIsEnumerable(\'length\') is expected to be true'
+);
 
 for (var x in Date.prototype.getDate) {
-  if (x === "length") {
-    $ERROR('#2: The Date.prototype.getDate.length has the attribute DontEnum');
-  }
+  assert.notSameValue(x, "length", 'The value of x is not "length"');
 }
+
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

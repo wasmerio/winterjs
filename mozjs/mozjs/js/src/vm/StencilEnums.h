@@ -237,19 +237,21 @@ enum class ImmutableScriptFlagsEnum : uint32_t {
   //    // Implicit use in parameter expression
   //    function f(a = arguments) { return a; }
   //   ```
-  ArgumentsHasVarBinding = 1 << 26,
-
-  // This function requires the `arguments` binding to be initialized with the
-  // real arguments object. If unset, but ArgumentsHasVarBinding is set then an
-  // analysis pass will determine if an efficient placeholder value can be used
-  // instead.
-  // See the implementation of JSOp::Arguments opcode.
-  AlwaysNeedsArgsObj = 1 << 27,
+  NeedsArgsObj = 1 << 26,
 
   // This function must use the "mapped" form of an arguments object. This flag
   // is set independently of whether we actually use an `arguments` binding. The
   // conditions are specified in the ECMAScript spec.
-  HasMappedArgsObj = 1 << 28,
+  HasMappedArgsObj = 1 << 27,
+
+  // Large self-hosted methods that should be inlined anyway by the JIT for
+  // performance reasons can be marked with this flag.
+  IsInlinableLargeFunction = 1 << 28,
+
+  // This function has an internal .newTarget binding and we need to emit
+  // JSOp::NewTarget in the prologue to initialize it. This binding may be
+  // used directly for "new.target", or indirectly (e.g. in super() calls).
+  FunctionHasNewTargetBinding = 1 << 29,
 };
 
 enum class MutableScriptFlagsEnum : uint32_t {
@@ -269,9 +271,8 @@ enum class MutableScriptFlagsEnum : uint32_t {
   // Script has an entry in Realm::debugScriptMap.
   HasDebugScript = 1 << 11,
 
-  // See: JSScript::ensureHasAnalyzedArgsUsage.
-  NeedsArgsAnalysis = 1 << 12,
-  NeedsArgsObj = 1 << 13,
+  // (1 << 12) is unused.
+  // (1 << 13) is unused.
 
   // Script supports relazification where it releases bytecode and gcthings to
   // save memory. This process is opt-in since various complexities may disallow
@@ -300,9 +301,7 @@ enum class MutableScriptFlagsEnum : uint32_t {
   // has failed.
   Uninlineable = 1 << 19,
 
-  // Large self-hosted methods that should be inlined anyway by the JIT for
-  // performance reasons can be marked with this flag.
-  IsInlinableLargeFunction = 1 << 20,
+  // (1 << 20) is unused.
 
   // *****************************************************************
   // The flags below are set when we bail out and invalidate a script.
@@ -330,6 +329,11 @@ enum class MutableScriptFlagsEnum : uint32_t {
   // An unbox folded with a load bailed out.
   HadUnboxFoldingBailout = 1 << 27,
 };
+
+// Retrievable source can be retrieved using the source hook (and therefore
+// need not be XDR'd, can be discarded if desired because it can always be
+// reconstituted later, etc.).
+enum class SourceRetrievable { No = 0, Yes };
 
 }  // namespace js
 

@@ -8,11 +8,12 @@
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 
+#include "jspubtd.h"  // JSProto_*
+
 #include "builtin/Promise.h"  // js::Promise_then, js::Promise_static_resolve, js::Promise_static_species
-#include "js/HeapAPI.h"   // js::gc::IsInsideNursery
-#include "js/Id.h"        // SYMBOL_TO_JSID
-#include "js/ProtoKey.h"  // JSProto_*
-#include "js/Value.h"     // JS::Value, JS::ObjectValue
+#include "js/HeapAPI.h"  // js::gc::IsInsideNursery
+#include "js/Id.h"       // SYMBOL_TO_JSID
+#include "js/Value.h"    // JS::Value, JS::ObjectValue
 #include "util/Poison.h"  // js::AlwaysPoison, JS_RESET_VALUE_PATTERN, MemCheckKind
 #include "vm/GlobalObject.h"  // js::GlobalObject
 #include "vm/JSContext.h"     // JSContext
@@ -30,13 +31,13 @@ using JS::Value;
 using js::NativeObject;
 
 JSFunction* js::PromiseLookup::getPromiseConstructor(JSContext* cx) {
-  const Value& val = cx->global()->getConstructor(JSProto_Promise);
-  return val.isObject() ? &val.toObject().as<JSFunction>() : nullptr;
+  JSObject* obj = cx->global()->maybeGetConstructor(JSProto_Promise);
+  return obj ? &obj->as<JSFunction>() : nullptr;
 }
 
 NativeObject* js::PromiseLookup::getPromisePrototype(JSContext* cx) {
-  const Value& val = cx->global()->getPrototype(JSProto_Promise);
-  return val.isObject() ? &val.toObject().as<NativeObject>() : nullptr;
+  JSObject* obj = cx->global()->maybeGetPrototype(JSProto_Promise);
+  return obj ? &obj->as<NativeObject>() : nullptr;
 }
 
 bool js::PromiseLookup::isDataPropertyNative(JSContext* cx, NativeObject* obj,
@@ -48,9 +49,11 @@ bool js::PromiseLookup::isDataPropertyNative(JSContext* cx, NativeObject* obj,
   return fun->maybeNative() == native && fun->realm() == cx->realm();
 }
 
-bool js::PromiseLookup::isAccessorPropertyNative(JSContext* cx, Shape* shape,
+bool js::PromiseLookup::isAccessorPropertyNative(JSContext* cx,
+                                                 NativeObject* holder,
+                                                 uint32_t getterSlot,
                                                  JSNative native) {
-  JSObject* getter = shape->getterObject();
+  JSObject* getter = holder->getGetter(getterSlot);
   return getter && IsNativeFunction(getter, native) &&
          getter->as<JSFunction>().realm() == cx->realm();
 }
@@ -80,15 +83,16 @@ void js::PromiseLookup::initialize(JSContext* cx) {
 
   // Check condition 2:
   // Look up Promise.prototype.constructor and ensure it's a data property.
-  Shape* ctorShape = promiseProto->lookup(cx, cx->names().constructor);
-  if (!ctorShape || !ctorShape->isDataProperty()) {
+  mozilla::Maybe<PropertyInfo> ctorProp =
+      promiseProto->lookup(cx, cx->names().constructor);
+  if (ctorProp.isNothing() || !ctorProp->isDataProperty()) {
     return;
   }
 
   // Get the referred value, and ensure it holds the canonical Promise
   // constructor.
   JSFunction* ctorFun;
-  if (!IsFunctionObject(promiseProto->getSlot(ctorShape->slot()), &ctorFun)) {
+  if (!IsFunctionObject(promiseProto->getSlot(ctorProp->slot()), &ctorFun)) {
     return;
   }
   if (ctorFun != promiseCtor) {
@@ -97,61 +101,61 @@ void js::PromiseLookup::initialize(JSContext* cx) {
 
   // Check condition 3:
   // Look up Promise.prototype.then and ensure it's a data property.
-  Shape* thenShape = promiseProto->lookup(cx, cx->names().then);
-  if (!thenShape || !thenShape->isDataProperty()) {
+  mozilla::Maybe<PropertyInfo> thenProp =
+      promiseProto->lookup(cx, cx->names().then);
+  if (thenProp.isNothing() || !thenProp->isDataProperty()) {
     return;
   }
 
   // Get the referred value, and ensure it holds the canonical "then"
   // function.
-  if (!isDataPropertyNative(cx, promiseProto, thenShape->slot(),
-                            Promise_then)) {
+  if (!isDataPropertyNative(cx, promiseProto, thenProp->slot(), Promise_then)) {
     return;
   }
 
   // Check condition 4:
   // Look up the '@@species' value on Promise.
-  Shape* speciesShape =
-      promiseCtor->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().species));
-  if (!speciesShape || !speciesShape->hasGetterObject()) {
+  mozilla::Maybe<PropertyInfo> speciesProp = promiseCtor->lookup(
+      cx, PropertyKey::Symbol(cx->wellKnownSymbols().species));
+  if (speciesProp.isNothing() || !promiseCtor->hasGetter(*speciesProp)) {
     return;
   }
 
   // Get the referred value, ensure it holds the canonical Promise[@@species]
   // function.
-  if (!isAccessorPropertyNative(cx, speciesShape, Promise_static_species)) {
+  uint32_t speciesGetterSlot = speciesProp->slot();
+  if (!isAccessorPropertyNative(cx, promiseCtor, speciesGetterSlot,
+                                Promise_static_species)) {
     return;
   }
 
   // Check condition 5:
   // Look up Promise.resolve and ensure it's a data property.
-  Shape* resolveShape = promiseCtor->lookup(cx, cx->names().resolve);
-  if (!resolveShape || !resolveShape->isDataProperty()) {
+  mozilla::Maybe<PropertyInfo> resolveProp =
+      promiseCtor->lookup(cx, cx->names().resolve);
+  if (resolveProp.isNothing() || !resolveProp->isDataProperty()) {
     return;
   }
 
   // Get the referred value, and ensure it holds the canonical "resolve"
   // function.
-  if (!isDataPropertyNative(cx, promiseCtor, resolveShape->slot(),
+  if (!isDataPropertyNative(cx, promiseCtor, resolveProp->slot(),
                             Promise_static_resolve)) {
     return;
   }
 
   // Store raw pointers below. This is okay to do here, because all objects
   // are in the tenured heap.
-  MOZ_ASSERT(!gc::IsInsideNursery(promiseCtor->lastProperty()));
-  MOZ_ASSERT(!gc::IsInsideNursery(speciesShape));
-  MOZ_ASSERT(!gc::IsInsideNursery(promiseProto->lastProperty()));
+  MOZ_ASSERT(!gc::IsInsideNursery(promiseCtor->shape()));
+  MOZ_ASSERT(!gc::IsInsideNursery(promiseProto->shape()));
 
   state_ = State::Initialized;
-  promiseConstructorShape_ = promiseCtor->lastProperty();
-#ifdef DEBUG
-  promiseSpeciesShape_ = speciesShape;
-#endif
-  promiseProtoShape_ = promiseProto->lastProperty();
-  promiseResolveSlot_ = resolveShape->slot();
-  promiseProtoConstructorSlot_ = ctorShape->slot();
-  promiseProtoThenSlot_ = thenShape->slot();
+  promiseConstructorShape_ = promiseCtor->shape();
+  promiseProtoShape_ = promiseProto->shape();
+  promiseSpeciesGetterSlot_ = speciesGetterSlot;
+  promiseResolveSlot_ = resolveProp->slot();
+  promiseProtoConstructorSlot_ = ctorProp->slot();
+  promiseProtoThenSlot_ = thenProp->slot();
 }
 
 void js::PromiseLookup::reset() {
@@ -170,12 +174,12 @@ bool js::PromiseLookup::isPromiseStateStillSane(JSContext* cx) {
   MOZ_ASSERT(promiseCtor);
 
   // Ensure that Promise.prototype still has the expected shape.
-  if (promiseProto->lastProperty() != promiseProtoShape_) {
+  if (promiseProto->shape() != promiseProtoShape_) {
     return false;
   }
 
   // Ensure that Promise still has the expected shape.
-  if (promiseCtor->lastProperty() != promiseConstructorShape_) {
+  if (promiseCtor->shape() != promiseConstructorShape_) {
     return false;
   }
 
@@ -192,13 +196,10 @@ bool js::PromiseLookup::isPromiseStateStillSane(JSContext* cx) {
   }
 
   // Ensure the species getter contains the canonical @@species function.
-  // Note: This is currently guaranteed to be always true, because modifying
-  // the getter property implies a new shape is generated. If this ever
-  // changes, convert this assertion into an if-statement.
-#ifdef DEBUG
-  MOZ_ASSERT(isAccessorPropertyNative(cx, promiseSpeciesShape_,
-                                      Promise_static_species));
-#endif
+  if (!isAccessorPropertyNative(cx, promiseCtor, promiseSpeciesGetterSlot_,
+                                Promise_static_species)) {
+    return false;
+  }
 
   // Ensure that Promise.resolve is the canonical "resolve" function.
   if (!isDataPropertyNative(cx, promiseCtor, promiseResolveSlot_,
@@ -257,7 +258,7 @@ bool js::PromiseLookup::hasDefaultProtoAndNoShadowedProperties(
   // quick check to make sure |promise| doesn't define an own "constructor"
   // or "then" property which may shadow Promise.prototype.constructor or
   // Promise.prototype.then.
-  return promise->lastProperty()->isEmptyShape();
+  return promise->empty();
 }
 
 bool js::PromiseLookup::isDefaultInstance(JSContext* cx, PromiseObject* promise,

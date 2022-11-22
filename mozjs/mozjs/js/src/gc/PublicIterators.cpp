@@ -4,16 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/DebugOnly.h"
-
 #include "gc/GCInternals.h"
 #include "gc/GCLock.h"
-#include "js/HashTable.h"
 #include "vm/Realm.h"
 #include "vm/Runtime.h"
 
 #include "gc/PrivateIterators-inl.h"
-#include "vm/JSContext-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -98,7 +94,25 @@ static void TraverseInnerLazyScriptsForLazyScript(
                "All objects in lazy scripts should be functions");
     JSFunction* fun = &obj->as<JSFunction>();
 
-    if (!fun->hasBaseScript() || fun->hasBytecode()) {
+    if (!fun->hasBaseScript()) {
+      // Ignore asm.js.
+      continue;
+    }
+    MOZ_ASSERT(fun->baseScript());
+    if (!fun->baseScript()) {
+      // If the function doesn't have script, ignore it.
+      continue;
+    }
+
+    if (fun->hasBytecode()) {
+      // Ignore non lazy function.
+      continue;
+    }
+
+    // If the function is "ghost", we shouldn't expose it to the debugger.
+    //
+    // See GHOST_FUNCTION in FunctionFlags.h for more details.
+    if (fun->isGhost()) {
       continue;
     }
 

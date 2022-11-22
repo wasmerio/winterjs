@@ -7,6 +7,8 @@
 #ifndef util_EnumFlags_h
 #define util_EnumFlags_h
 
+#include "mozilla/Attributes.h"
+
 #include <initializer_list>
 #include <type_traits>
 
@@ -60,9 +62,14 @@ class EnumFlags {
     }
   }
 
+  constexpr bool hasAnyFlag(const EnumFlags& other) const {
+    return (flags_ & other.flags_) != 0;
+  }
+
   constexpr bool isEmpty() const { return flags_ == 0; }
 
   constexpr FieldType toRaw() const { return flags_; }
+  void setRaw(FieldType flag) { flags_ = flag; }
 
   constexpr bool operator==(const EnumFlags& other) const {
     return flags_ == other.flags_;

@@ -31,8 +31,7 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
                                     double aSinceTime) {
   UniqueStacks uniqueStacks;
 
-  MOZ_ASSERT(uniqueStacks.mUniqueStrings);
-  aWriter.SetUniqueStrings(*uniqueStacks.mUniqueStrings);
+  aWriter.SetUniqueStrings(uniqueStacks.UniqueStrings());
 
   aWriter.Start();
   {
@@ -78,7 +77,7 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
 
     aWriter.StartArrayProperty("stringTable");
     {
-      std::move(*uniqueStacks.mUniqueStrings)
+      std::move(uniqueStacks.UniqueStrings())
           .SpliceStringTableElements(aWriter);
     }
     aWriter.EndArray();
@@ -88,13 +87,14 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
   aWriter.ResetUniqueStrings();
 }
 
-int StreamSamplesAndMarkers(
-    const char* aName, int aThreadId, const ProfileBuffer& aBuffer,
-    SpliceableJSONWriter& aWriter, const std::string& aProcessName,
-    const std::string& aETLDplus1, const TimeStamp& aProcessStartTime,
-    const TimeStamp& aRegisterTime, const TimeStamp& aUnregisterTime,
-    double aSinceTime, UniqueStacks& aUniqueStacks) {
-  int processedThreadId = 0;
+BaseProfilerThreadId StreamSamplesAndMarkers(
+    const char* aName, BaseProfilerThreadId aThreadId,
+    const ProfileBuffer& aBuffer, SpliceableJSONWriter& aWriter,
+    const std::string& aProcessName, const std::string& aETLDplus1,
+    const TimeStamp& aProcessStartTime, const TimeStamp& aRegisterTime,
+    const TimeStamp& aUnregisterTime, double aSinceTime,
+    UniqueStacks& aUniqueStacks) {
+  BaseProfilerThreadId processedThreadId;
 
   aWriter.StringProperty(
       "processType",
@@ -174,11 +174,16 @@ int StreamSamplesAndMarkers(
   }
   aWriter.EndObject();
 
-  aWriter.IntProperty("pid",
-                      static_cast<int64_t>(profiler_current_process_id()));
+  // Tech note: If `ToNumber()` returns a uint64_t, the conversion to int64_t is
+  // "implementation-defined" before C++20. This is acceptable here, because
+  // this is a one-way conversion to a unique identifier that's used to visually
+  // separate data by thread on the front-end.
   aWriter.IntProperty(
-      "tid",
-      static_cast<int64_t>(aThreadId != 0 ? aThreadId : processedThreadId));
+      "pid", static_cast<int64_t>(profiler_current_process_id().ToNumber()));
+  aWriter.IntProperty("tid",
+                      static_cast<int64_t>(aThreadId.IsSpecified()
+                                               ? aThreadId.ToNumber()
+                                               : processedThreadId.ToNumber()));
 
   return processedThreadId;
 }

@@ -9,19 +9,8 @@ description: Checking f.call.length, where f is new Function
 
 var f = new Function;
 
-//CHECK#1
-if (typeof f.call !== "function") {
-  $ERROR('#1: call method accessed');
-}
-
-//CHECK#2
-if (typeof f.call.length === "undefined") {
-  $ERROR('#2: length property of call method defined');
-}
-
-//CHECK#3
-if (f.call.length !== 1) {
-  $ERROR('#3: The length property of the call method is 1');
-}
+assert.sameValue(typeof f.call, "function", 'The value of `typeof f.call` is expected to be "function"');
+assert.notSameValue(typeof f.call.length, "undefined", 'The value of typeof f.call.length is not "undefined"');
+assert.sameValue(f.call.length, 1, 'The value of f.call.length is expected to be 1');
 
 reportCompare(0, 0);

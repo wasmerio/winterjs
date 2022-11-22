@@ -10,15 +10,10 @@ import six.moves.cPickle as pickle
 import six
 import unittest
 
-from mozpack.manifests import (
-    InstallManifest,
-)
+from mozpack.manifests import InstallManifest
 from mozunit import main
 
-from mozbuild.backend.recursivemake import (
-    RecursiveMakeBackend,
-    RecursiveMakeTraversal,
-)
+from mozbuild.backend.recursivemake import RecursiveMakeBackend, RecursiveMakeTraversal
 from mozbuild.backend.test_manifest import TestManifestBackend
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
@@ -305,12 +300,7 @@ class TestRecursiveMakeBackend(BackendTester):
         p = mozpath.join(env.topobjdir, "backend.mk")
 
         lines = [l.strip() for l in open(p, "rt").readlines()[2:]]
-        self.assertEqual(
-            lines,
-            [
-                "DIRS := dir1 dir2",
-            ],
-        )
+        self.assertEqual(lines, ["DIRS := dir1 dir2"])
 
         # Make env.substs writable to add ENABLE_TESTS
         env.substs = dict(env.substs)
@@ -319,12 +309,7 @@ class TestRecursiveMakeBackend(BackendTester):
         p = mozpath.join(env.topobjdir, "backend.mk")
 
         lines = [l.strip() for l in open(p, "rt").readlines()[2:]]
-        self.assertEqual(
-            lines,
-            [
-                "DIRS := dir1 dir2 dir3",
-            ],
-        )
+        self.assertEqual(lines, ["DIRS := dir1 dir2 dir3"])
 
     def test_mtime_no_change(self):
         """Ensure mtime is not updated if file content does not change."""
@@ -351,12 +336,7 @@ class TestRecursiveMakeBackend(BackendTester):
         p = mozpath.join(env.topobjdir, "foo")
         self.assertTrue(os.path.exists(p))
         lines = [l.strip() for l in open(p, "rt").readlines()]
-        self.assertEqual(
-            lines,
-            [
-                "TEST = foo",
-            ],
-        )
+        self.assertEqual(lines, ["TEST = foo"])
 
     def test_install_substitute_config_files(self):
         """Ensure we recurse into the dirs that install substituted config files."""
@@ -377,15 +357,9 @@ class TestRecursiveMakeBackend(BackendTester):
         lines = [l.strip() for l in open(backend_path, "rt").readlines()[2:]]
 
         expected = {
-            "RCFILE": [
-                "RCFILE := $(srcdir)/foo.rc",
-            ],
-            "RCINCLUDE": [
-                "RCINCLUDE := $(srcdir)/bar.rc",
-            ],
-            "WIN32_EXE_LDFLAGS": [
-                "WIN32_EXE_LDFLAGS += -subsystem:console",
-            ],
+            "RCFILE": ["RCFILE := $(srcdir)/foo.rc"],
+            "RCINCLUDE": ["RCINCLUDE := $(srcdir)/bar.rc"],
+            "WIN32_EXE_LDFLAGS": ["WIN32_EXE_LDFLAGS += -subsystem:console"],
         }
 
         for var, val in expected.items():
@@ -401,40 +375,20 @@ class TestRecursiveMakeBackend(BackendTester):
         lines = [l.strip() for l in open(backend_path, "rt").readlines()[2:]]
 
         expected = {
-            "ASFILES": [
-                "ASFILES += $(srcdir)/bar.s",
-                "ASFILES += $(srcdir)/foo.asm",
-            ],
-            "CMMSRCS": [
-                "CMMSRCS += $(srcdir)/bar.mm",
-                "CMMSRCS += $(srcdir)/foo.mm",
-            ],
-            "CSRCS": [
-                "CSRCS += $(srcdir)/bar.c",
-                "CSRCS += $(srcdir)/foo.c",
-            ],
+            "ASFILES": ["ASFILES += $(srcdir)/bar.s", "ASFILES += $(srcdir)/foo.asm"],
+            "CMMSRCS": ["CMMSRCS += $(srcdir)/fuga.mm", "CMMSRCS += $(srcdir)/hoge.mm"],
+            "CSRCS": ["CSRCS += $(srcdir)/baz.c", "CSRCS += $(srcdir)/qux.c"],
             "HOST_CPPSRCS": [
                 "HOST_CPPSRCS += $(srcdir)/bar.cpp",
                 "HOST_CPPSRCS += $(srcdir)/foo.cpp",
             ],
             "HOST_CSRCS": [
-                "HOST_CSRCS += $(srcdir)/bar.c",
-                "HOST_CSRCS += $(srcdir)/foo.c",
+                "HOST_CSRCS += $(srcdir)/baz.c",
+                "HOST_CSRCS += $(srcdir)/qux.c",
             ],
-            "SSRCS": [
-                "SSRCS += $(srcdir)/baz.S",
-                "SSRCS += $(srcdir)/foo.S",
-            ],
-            "WASM_CSRCS": [
-                "WASM_CSRCS += $(srcdir)/bar.c",
-                (
-                    "WASM_CSRCS += $(srcdir)/third_party/rust/rlbox_lucet_sandbox/"
-                    "c_src/lucet_sandbox_wrapper.c"
-                ),
-            ],
-            "WASM_CPPSRCS": [
-                "WASM_CPPSRCS += $(srcdir)/bar.cpp",
-            ],
+            "SSRCS": ["SSRCS += $(srcdir)/titi.S", "SSRCS += $(srcdir)/toto.S"],
+            "WASM_CSRCS": ["WASM_CSRCS += $(srcdir)/baz.c"],
+            "WASM_CPPSRCS": ["WASM_CPPSRCS += $(srcdir)/bar.cpp"],
         }
 
         for var, val in expected.items():
@@ -839,32 +793,80 @@ class TestRecursiveMakeBackend(BackendTester):
         ipdlsrcs.mk correctly."""
         env = self._get_environment("ipdl_sources")
 
+        # Use the ipdl directory as the IPDL root for testing.
+        ipdl_root = mozpath.join(env.topobjdir, "ipdl")
+
         # Make substs writable so we can set the value of IPDL_ROOT to reflect
         # the correct objdir.
         env.substs = dict(env.substs)
-        env.substs["IPDL_ROOT"] = env.topobjdir
+        env.substs["IPDL_ROOT"] = ipdl_root
 
         self._consume("ipdl_sources", RecursiveMakeBackend, env)
 
-        manifest_path = mozpath.join(env.topobjdir, "ipdlsrcs.mk")
+        manifest_path = mozpath.join(ipdl_root, "ipdlsrcs.mk")
         lines = [l.strip() for l in open(manifest_path, "rt").readlines()]
 
         # Handle Windows paths correctly
-        topsrcdir = env.topsrcdir.replace(os.sep, "/")
+        topsrcdir = mozpath.normsep(env.topsrcdir)
 
         expected = [
             "ALL_IPDLSRCS := bar1.ipdl foo1.ipdl %s/bar/bar.ipdl %s/bar/bar2.ipdlh %s/foo/foo.ipdl %s/foo/foo2.ipdlh"  # noqa
             % tuple([topsrcdir] * 4),
-            "CPPSRCS := UnifiedProtocols0.cpp",
-            "IPDLDIRS := %s %s/bar %s/foo" % (env.topobjdir, topsrcdir, topsrcdir),
+            "IPDLDIRS := %s %s/bar %s/foo" % (ipdl_root, topsrcdir, topsrcdir),
         ]
 
-        found = [
-            str
-            for str in lines
-            if str.startswith(("ALL_IPDLSRCS", "CPPSRCS", "IPDLDIRS"))
-        ]
+        found = [str for str in lines if str.startswith(("ALL_IPDLSRCS", "IPDLDIRS"))]
         self.assertEqual(found, expected)
+
+        # Check that each directory declares the generated relevant .cpp files
+        # to be built in CPPSRCS.
+        # ENABLE_UNIFIED_BUILD defaults to False without mozilla-central's
+        # moz.configure so we don't see unified sources here.
+        for dir, expected in (
+            (".", []),
+            ("ipdl", []),
+            (
+                "bar",
+                [
+                    "CPPSRCS += "
+                    + " ".join(
+                        f"{ipdl_root}/{f}"
+                        for f in [
+                            "bar.cpp",
+                            "bar1.cpp",
+                            "bar1Child.cpp",
+                            "bar1Parent.cpp",
+                            "bar2.cpp",
+                            "barChild.cpp",
+                            "barParent.cpp",
+                        ]
+                    )
+                ],
+            ),
+            (
+                "foo",
+                [
+                    "CPPSRCS += "
+                    + " ".join(
+                        f"{ipdl_root}/{f}"
+                        for f in [
+                            "foo.cpp",
+                            "foo1.cpp",
+                            "foo1Child.cpp",
+                            "foo1Parent.cpp",
+                            "foo2.cpp",
+                            "fooChild.cpp",
+                            "fooParent.cpp",
+                        ]
+                    )
+                ],
+            ),
+        ):
+            backend_path = mozpath.join(env.topobjdir, dir, "backend.mk")
+            lines = [l.strip() for l in open(backend_path, "rt").readlines()]
+
+            found = [str for str in lines if str.startswith("CPPSRCS")]
+            self.assertEqual(found, expected)
 
     def test_defines(self):
         """Test that DEFINES are written to backend.mk correctly."""
@@ -1122,11 +1124,7 @@ class TestRecursiveMakeBackend(BackendTester):
 
         self.assertEqual(
             open(os.path.join(env.topobjdir, "file"), "r").readlines(),
-            [
-                "#ifdef foo\n",
-                "bar baz\n",
-                "@bar@\n",
-            ],
+            ["#ifdef foo\n", "bar baz\n", "@bar@\n"],
         )
 
     def test_prog_lib_c_only(self):
@@ -1227,9 +1225,7 @@ class TestRecursiveMakeBackend(BackendTester):
                 "../static/bar/bar2.o",
                 "../static/bar/bar_helper/bar_helper1.o",
             ],
-            "shared/baz_so.list": [
-                "baz/baz1.o",
-            ],
+            "shared/baz_so.list": ["baz/baz1.o"],
         }
         actual_list_files = {}
         for name in expected_list_files.keys():

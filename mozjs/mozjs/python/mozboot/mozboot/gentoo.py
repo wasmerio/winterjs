@@ -18,29 +18,12 @@ class GentooBootstrapper(LinuxBootstrapper, BaseBootstrapper):
     def install_system_packages(self):
         self.ensure_system_packages()
 
-    def install_browser_packages(self, mozconfig_builder):
-        self.ensure_browser_packages()
-
-    def install_browser_artifact_mode_packages(self, mozconfig_builder):
-        self.ensure_browser_packages(artifact_mode=True)
-
-    def install_mobile_android_packages(self, mozconfig_builder):
-        self.ensure_mobile_android_packages(mozconfig_builder, artifact_mode=False)
-
-    def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
-        self.ensure_mobile_android_packages(mozconfig_builder, artifact_mode=True)
-
     def ensure_system_packages(self):
         self.run_as_root(
-            [
-                "emerge",
-                "--noreplace",
-                "--quiet",
-                "app-arch/zip",
-            ]
+            ["emerge", "--noreplace", "--quiet", "app-arch/zip", "dev-util/watchman"]
         )
 
-    def ensure_browser_packages(self, artifact_mode=False):
+    def install_browser_packages(self, mozconfig_builder, artifact_mode=False):
         # TODO: Figure out what not to install for artifact mode
         self.run_as_root(
             [
@@ -51,17 +34,13 @@ class GentooBootstrapper(LinuxBootstrapper, BaseBootstrapper):
                 "--newuse",
                 "dev-libs/dbus-glib",
                 "media-sound/pulseaudio",
-                "x11-libs/gtk+:2",
                 "x11-libs/gtk+:3",
                 "x11-libs/libXt",
             ]
         )
 
-    def ensure_mobile_android_packages(self, mozconfig_builder, artifact_mode=False):
-        self.run_as_root(["emerge", "--noreplace", "--quiet", "dev-java/openjdk-bin"])
-
-        self.ensure_java(mozconfig_builder)
-        super().ensure_mobile_android_packages(artifact_mode=artifact_mode)
+    def install_browser_artifact_mode_packages(self, mozconfig_builder):
+        self.install_browser_packages(mozconfig_builder, artifact_mode=True)
 
     def _update_package_manager(self):
         self.run_as_root(["emerge", "--sync"])

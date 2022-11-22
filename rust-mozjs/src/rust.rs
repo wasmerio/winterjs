@@ -38,11 +38,12 @@ use jsapi::HandleValue as RawHandleValue;
 use jsapi::MutableHandle as RawMutableHandle;
 use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use jsapi::JS::RegExpFlags;
-use jsapi::{jsid, Value};
+use jsapi::js::frontend::CompilationStencil;
+use jsapi::{jsid, Value, already_AddRefed};
 use jsapi::{AutoGCRooter, AutoGCRooterKind};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
-use jsapi::{Evaluate2, HandleValueArray, Heap};
-use jsapi::{InitSelfHostedCode, IsWindowSlow};
+use jsapi::{Evaluate2, HandleValueArray, Heap, StencilRelease};
+use jsapi::{InitSelfHostedCode, IsWindowSlow, OffThreadToken, InstantiationStorage};
 use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue};
 use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use jsapi::{JSErrorReport, JSFunction, JSFunctionSpec, JSGCParamKey};
@@ -361,7 +362,7 @@ impl Runtime {
             context.set(js_context);
         });
 
-        InitSelfHostedCode(js_context);
+        InitSelfHostedCode(js_context, [0u64; 2], None);
 
         SetWarningReporter(js_context, Some(report_warning));
 
@@ -941,6 +942,46 @@ impl Drop for CompileOptionsWrapper {
     }
 }
 
+pub struct Stencil {
+    inner: already_AddRefed<CompilationStencil>,
+}
+
+/*unsafe impl Send for Stencil {}
+unsafe impl Sync for Stencil {}*/
+
+impl Drop for Stencil {
+    fn drop(&mut self) {
+        unsafe {
+            StencilRelease(self.inner.mRawPtr);
+        }
+    }
+}
+
+impl Deref for Stencil {
+    type Target = *mut CompilationStencil;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.mRawPtr
+    }
+}
+
+impl Stencil {
+    pub fn is_null(&self) -> bool {
+        self.inner.mRawPtr.is_null()
+    }
+}
+
+pub unsafe fn FinishOffThreadStencil(
+    cx: *mut JSContext, 
+    token: *mut OffThreadToken, 
+    storage: *mut InstantiationStorage
+) -> Stencil {
+    let stencil = jsapi::FinishOffThreadStencil(cx, token, storage);
+    return Stencil {
+        inner: stencil,
+    }
+}
+
 // ___________________________________________________________________________
 // Fast inline converters
 
@@ -1196,7 +1237,6 @@ static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
     mayResolve: Some(JS_MayResolveStandardClass),
     finalize: None,
     call: None,
-    hasInstance: None,
     construct: None,
     trace: Some(JS_GlobalObjectTraceHook),
 };
@@ -1493,13 +1533,14 @@ pub mod wrappers {
     use jsapi::CallArgs;
     use jsapi::CloneDataPolicy;
     use jsapi::CompartmentTransplantCallback;
-    use jsapi::DynamicImportStatus;
+    //use jsapi::DynamicImportStatus;
     use jsapi::ESClass;
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;
     use jsapi::ForOfIterator_NonIterableBehavior;
     use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
+    use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
     use jsapi::JSExnType;
@@ -1514,6 +1555,7 @@ pub mod wrappers {
     use jsapi::JSScript;
     use jsapi::JSStructuredCloneData;
     use jsapi::JSType;
+    use jsapi::ModuleErrorBehaviour;
     use jsapi::MutableHandleIdVector;
     use jsapi::PromiseState;
     use jsapi::PromiseUserInputEventHandlingState;
@@ -1530,8 +1572,6 @@ pub mod wrappers {
     use jsapi::Symbol;
     use jsapi::SymbolCode;
     use jsapi::TranscodeBuffer;
-    use jsapi::TranscodeRange;
-    use jsapi::TranscodeResult;
     use jsapi::TwoByteChars;
     use jsapi::UniqueChars;
     use jsapi::Value;
@@ -1638,13 +1678,14 @@ pub mod jsapi_wrapped {
     use jsapi::CallArgs;
     use jsapi::CloneDataPolicy;
     use jsapi::CompartmentTransplantCallback;
-    use jsapi::DynamicImportStatus;
+    //use jsapi::DynamicImportStatus;
     use jsapi::ESClass;
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;
     use jsapi::ForOfIterator_NonIterableBehavior;
     use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
+    use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
     use jsapi::JSExnType;
@@ -1659,6 +1700,7 @@ pub mod jsapi_wrapped {
     use jsapi::JSScript;
     use jsapi::JSStructuredCloneData;
     use jsapi::JSType;
+    use jsapi::ModuleErrorBehaviour;
     use jsapi::MutableHandleIdVector;
     use jsapi::PromiseState;
     use jsapi::PromiseUserInputEventHandlingState;
@@ -1675,8 +1717,6 @@ pub mod jsapi_wrapped {
     use jsapi::Symbol;
     use jsapi::SymbolCode;
     use jsapi::TranscodeBuffer;
-    use jsapi::TranscodeRange;
-    use jsapi::TranscodeResult;
     use jsapi::TwoByteChars;
     use jsapi::UniqueChars;
     use jsapi::Value;

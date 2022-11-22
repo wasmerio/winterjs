@@ -344,6 +344,8 @@ function rimul_object(i) {
 
 var uceFault_div_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_div_number'));
 function rdiv_number(i) {
+    i = i | 0;
+    if (i < 1) { return i; }
     var x = 1 / i;
     if (uceFault_div_number(i) || uceFault_div_number(i))
         assertEq(x, 0.010101010101010102  /* = 1 / 99 */);
@@ -410,6 +412,222 @@ function rnot_object(i) {
     var x = !o;
     if(uceFault_not_object(i) || uceFault_not_object(i))
         assertEq(x, true /* = !undefined = !document.all = !createIsHTMLDDA() */);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_eq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_eq'));
+function rcompare_number_eq(i) {
+    var x = i == 99;
+    if (uceFault_compare_number_eq(i) || uceFault_compare_number_eq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_stricteq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_stricteq'));
+function rcompare_number_stricteq(i) {
+    var x = i === 99;
+    if (uceFault_compare_number_stricteq(i) || uceFault_compare_number_stricteq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_ne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_ne'));
+function rcompare_number_ne(i) {
+    var x = i != 99;
+    if (uceFault_compare_number_ne(i) || uceFault_compare_number_ne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_strictne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_strictne'));
+function rcompare_number_strictne(i) {
+    var x = i !== 99;
+    if (uceFault_compare_number_strictne(i) || uceFault_compare_number_strictne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_lt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_lt'));
+function rcompare_number_lt(i) {
+    var x = i < 99;
+    if (uceFault_compare_number_lt(i) || uceFault_compare_number_lt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_le = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_le'));
+function rcompare_number_le(i) {
+    var x = i <= 99;
+    if (uceFault_compare_number_le(i) || uceFault_compare_number_le(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_gt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_gt'));
+function rcompare_number_gt(i) {
+    var x = i > 99;
+    if (uceFault_compare_number_gt(i) || uceFault_compare_number_gt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_number_ge = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_number_ge'));
+function rcompare_number_ge(i) {
+    var x = i >= 99;
+    if (uceFault_compare_number_ge(i) || uceFault_compare_number_ge(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_eq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_eq'));
+function rcompare_string_eq(i) {
+    var x = String(i) == "99";
+    if (uceFault_compare_string_eq(i) || uceFault_compare_string_eq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_stricteq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_stricteq'));
+function rcompare_string_stricteq(i) {
+    var x = String(i) === "99";
+    if (uceFault_compare_string_stricteq(i) || uceFault_compare_string_stricteq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_ne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_ne'));
+function rcompare_string_ne(i) {
+    var x = String(i) != "99";
+    if (uceFault_compare_string_ne(i) || uceFault_compare_string_ne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_strictne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_strictne'));
+function rcompare_string_strictne(i) {
+    var x = String(i) !== "99";
+    if (uceFault_compare_string_strictne(i) || uceFault_compare_string_strictne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_lt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_lt'));
+function rcompare_string_lt(i) {
+    var x = String(i) < "99";
+    if (uceFault_compare_string_lt(i) || uceFault_compare_string_lt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_le = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_le'));
+function rcompare_string_le(i) {
+    var x = String(i) <= "99";
+    if (uceFault_compare_string_le(i) || uceFault_compare_string_le(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_gt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_gt'));
+function rcompare_string_gt(i) {
+    var x = String(i) > "99";
+    if (uceFault_compare_string_gt(i) || uceFault_compare_string_gt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_string_ge = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_string_ge'));
+function rcompare_string_ge(i) {
+    var x = String(i) >= "99";
+    if (uceFault_compare_string_ge(i) || uceFault_compare_string_ge(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_eq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_eq'));
+function rcompare_bigint_eq(i) {
+    var x = BigInt(i) == 99n;
+    if (uceFault_compare_bigint_eq(i) || uceFault_compare_bigint_eq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_stricteq = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_stricteq'));
+function rcompare_bigint_stricteq(i) {
+    var x = BigInt(i) === 99n;
+    if (uceFault_compare_bigint_stricteq(i) || uceFault_compare_bigint_stricteq(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_ne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_ne'));
+function rcompare_bigint_ne(i) {
+    var x = BigInt(i) != 99n;
+    if (uceFault_compare_bigint_ne(i) || uceFault_compare_bigint_ne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_strictne = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_strictne'));
+function rcompare_bigint_strictne(i) {
+    var x = BigInt(i) !== 99n;
+    if (uceFault_compare_bigint_strictne(i) || uceFault_compare_bigint_strictne(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_lt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_lt'));
+function rcompare_bigint_lt(i) {
+    var x = BigInt(i) < 99n;
+    if (uceFault_compare_bigint_lt(i) || uceFault_compare_bigint_lt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_le = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_le'));
+function rcompare_bigint_le(i) {
+    var x = BigInt(i) <= 99n;
+    if (uceFault_compare_bigint_le(i) || uceFault_compare_bigint_le(i))
+        assertEq(x, true);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_gt = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_gt'));
+function rcompare_bigint_gt(i) {
+    var x = BigInt(i) > 99n;
+    if (uceFault_compare_bigint_gt(i) || uceFault_compare_bigint_gt(i))
+        assertEq(x, false);
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_compare_bigint_ge = eval(`(${uceFault})`.replace('uceFault', 'uceFault_compare_bigint_ge'));
+function rcompare_bigint_ge(i) {
+    var x = BigInt(i) >= 99n;
+    if (uceFault_compare_bigint_ge(i) || uceFault_compare_bigint_ge(i))
+        assertEq(x, true);
     assertRecoveredOnBailout(x, true);
     return i;
 }
@@ -1161,6 +1379,24 @@ function rstring_replace_g(i) {
     return i;
 }
 
+var uceFault_string_slice = eval(`(${uceFault})`.replace('uceFault', 'uceFault_string_slice'))
+function rstring_slice(i) {
+    var res = "str00123456789".slice(0, 3);
+    if (uceFault_string_slice(i) || uceFault_string_slice(i))
+        assertEq(res, "str");
+    assertRecoveredOnBailout(res, false);
+    return i;
+}
+
+var uceFault_string_substring = eval(`(${uceFault})`.replace('uceFault', 'uceFault_string_substring'))
+function rstring_substring(i) {
+    var res = "str00123456789".substring(0, 3);
+    if (uceFault_string_substring(i) || uceFault_string_substring(i))
+        assertEq(res, "str");
+    assertRecoveredOnBailout(res, false);
+    return i;
+}
+
 var uceFault_typeof = eval(`(${uceFault})`.replace('uceFault', 'uceFault_typeof'))
 function rtypeof(i) {
     var inputs = [ {}, [], 1, true, undefined, function(){}, null, Symbol() ];
@@ -1184,7 +1420,7 @@ function rtodouble_value(i) {
 
     if (uceFault_todouble_value(i) || uceFault_todouble_value(i))
         assertEq(x, true);
-    assertRecoveredOnBailout(x, false);
+    assertRecoveredOnBailout(x, true);
     return i;
 }
 
@@ -1389,6 +1625,159 @@ function rlog_object(i) {
     return i;
 }
 
+var uceFault_cos_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_cos_number'));
+function rcos_number(i) {
+    var x = Math.cos(i);
+    if (uceFault_cos_number(i) || uceFault_cos_number(i))
+        assertEq(x, Math.cos(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_tan_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_tan_number'));
+function rtan_number(i) {
+    var x = Math.tan(i);
+    if (uceFault_tan_number(i) || uceFault_tan_number(i))
+        assertEq(x, Math.tan(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_exp_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_exp_number'));
+function rexp_number(i) {
+    var x = Math.exp(i);
+    if (uceFault_exp_number(i) || uceFault_exp_number(i))
+        assertEq(x, Math.exp(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_acos_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_acos_number'));
+function racos_number(i) {
+    var x = Math.acos(1 / i);
+    if (uceFault_acos_number(i) || uceFault_acos_number(i))
+        assertEq(x, Math.acos(1 / 99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_asin_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_asin_number'));
+function rasin_number(i) {
+    var x = Math.asin(1 / i);
+    if (uceFault_asin_number(i) || uceFault_asin_number(i))
+        assertEq(x, Math.asin(1 / 99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_atan_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_atan_number'));
+function ratan_number(i) {
+    var x = Math.atan(i);
+    if (uceFault_atan_number(i) || uceFault_atan_number(i))
+        assertEq(x, Math.atan(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_log10_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_log10_number'));
+function rlog10_number(i) {
+    var x = Math.log10(i);
+    if (uceFault_log10_number(i) || uceFault_log10_number(i))
+        assertEq(x, Math.log10(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_log2_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_log2_number'));
+function rlog2_number(i) {
+    var x = Math.log2(i);
+    if (uceFault_log2_number(i) || uceFault_log2_number(i))
+        assertEq(x, Math.log2(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_log1p_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_log1p_number'));
+function rlog1p_number(i) {
+    var x = Math.log1p(i);
+    if (uceFault_log1p_number(i) || uceFault_log1p_number(i))
+        assertEq(x, Math.log1p(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_expm1_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_expm1_number'));
+function rexpm1_number(i) {
+    var x = Math.expm1(i);
+    if (uceFault_expm1_number(i) || uceFault_expm1_number(i))
+        assertEq(x, Math.expm1(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_cosh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_cosh_number'));
+function rcosh_number(i) {
+    var x = Math.cosh(i);
+    if (uceFault_cosh_number(i) || uceFault_cosh_number(i))
+        assertEq(x, Math.cosh(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_sinh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_sinh_number'));
+function rsinh_number(i) {
+    var x = Math.sinh(i);
+    if (uceFault_sinh_number(i) || uceFault_sinh_number(i))
+        assertEq(x, Math.sinh(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_tanh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_tanh_number'));
+function rtanh_number(i) {
+    var x = Math.tanh(1 / i);
+    if (uceFault_tanh_number(i) || uceFault_tanh_number(i))
+        assertEq(x, Math.tanh(1 / 99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_acosh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_acosh_number'));
+function racosh_number(i) {
+    var x = Math.acosh(i);
+    if (uceFault_acosh_number(i) || uceFault_acosh_number(i))
+        assertEq(x, Math.acosh(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_asinh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_asinh_number'));
+function rasinh_number(i) {
+    var x = Math.asinh(i);
+    if (uceFault_asinh_number(i) || uceFault_asinh_number(i))
+        assertEq(x, Math.asinh(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_atanh_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_atanh_number'));
+function ratanh_number(i) {
+    var x = Math.atanh(1 / i);
+    if (uceFault_atanh_number(i) || uceFault_atanh_number(i))
+        assertEq(x, Math.atanh(1 / 99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
+var uceFault_cbrt_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_cbrt_number'));
+function rcbrt_number(i) {
+    var x = Math.cbrt(i);
+    if (uceFault_cbrt_number(i) || uceFault_cbrt_number(i))
+        assertEq(x, Math.cbrt(99));
+    assertRecoveredOnBailout(x, true);
+    return i;
+}
+
 var uceFault_sign_number = eval(`(${uceFault})`.replace('uceFault', 'uceFault_sign_number'));
 function rsign_number(i) {
     var x = Math.sign(-i - 0.12010799100);
@@ -1562,6 +1951,39 @@ function rbigintasuint(i) {
     return i;
 }
 
+let uceFault_nantozero_nan = eval(`(${uceFault})`.replace('uceFault', 'uceFault_nantozero_nan'));
+function rnantozero_nan(i) {
+    // Note: |x| must be Double-typed.
+    var x = (i + 0.5) * NaN;
+    var y = x ? x : +0;
+    if (uceFault_nantozero_nan(i) || uceFault_nantozero_nan(i))
+        assertEq(y, +0);
+    assertRecoveredOnBailout(y, true);
+    return i;
+}
+
+let uceFault_nantozero_poszero = eval(`(${uceFault})`.replace('uceFault', 'uceFault_nantozero_poszero'));
+function rnantozero_poszero(i) {
+    // Note: |x| must be Double-typed.
+    var x = (i + 0.5) * +0;
+    var y = x ? x : +0;
+    if (uceFault_nantozero_poszero(i) || uceFault_nantozero_poszero(i))
+        assertEq(y, +0);
+    assertRecoveredOnBailout(y, true);
+    return i;
+}
+
+let uceFault_nantozero_negzero = eval(`(${uceFault})`.replace('uceFault', 'uceFault_nantozero_negzero'));
+function rnantozero_negzero(i) {
+    // Note: |x| must be Double-typed.
+    var x = (i + 0.5) * -0;
+    var y = x ? x : +0;
+    if (uceFault_nantozero_negzero(i) || uceFault_nantozero_negzero(i))
+        assertEq(y, +0);
+    assertRecoveredOnBailout(y, true);
+    return i;
+}
+
 for (j = 100 - max; j < 100; j++) {
     with({}){} // Do not Ion-compile this loop.
     let i = j < 2 ? (Math.abs(j) % 50) + 2 : j;
@@ -1603,6 +2025,30 @@ for (j = 100 - max; j < 100; j++) {
     rmod_object(i);
     rnot_number(i);
     rnot_object(i);
+    rcompare_number_eq(i);
+    rcompare_number_stricteq(i);
+    rcompare_number_ne(i);
+    rcompare_number_stricteq(i);
+    rcompare_number_lt(i);
+    rcompare_number_le(i);
+    rcompare_number_gt(i);
+    rcompare_number_ge(i);
+    rcompare_string_eq(i);
+    rcompare_string_stricteq(i);
+    rcompare_string_ne(i);
+    rcompare_string_stricteq(i);
+    rcompare_string_lt(i);
+    rcompare_string_le(i);
+    rcompare_string_gt(i);
+    rcompare_string_ge(i);
+    rcompare_bigint_eq(i);
+    rcompare_bigint_stricteq(i);
+    rcompare_bigint_ne(i);
+    rcompare_bigint_stricteq(i);
+    rcompare_bigint_lt(i);
+    rcompare_bigint_le(i);
+    rcompare_bigint_gt(i);
+    rcompare_bigint_ge(i);
     rconcat_string(i);
     rconcat_number(i);
     rstring_length(i);
@@ -1676,6 +2122,8 @@ for (j = 100 - max; j < 100; j++) {
     rstring_replace(i);
     rstring_replace_y(i);
     rstring_replace_g(i);
+    rstring_slice(i);
+    rstring_substring(i);
     rtypeof(i);
     rtodouble_value(i);
     rtodouble_number(i);
@@ -1698,6 +2146,23 @@ for (j = 100 - max; j < 100; j++) {
     rsin_object(i);
     rlog_number(i);
     rlog_object(i);
+    rcos_number(i);
+    rexp_number(i);
+    rtan_number(i);
+    racos_number(i);
+    rasin_number(i);
+    ratan_number(i);
+    rlog10_number(i);
+    rlog2_number(i);
+    rlog1p_number(i);
+    rexpm1_number(i);
+    rcosh_number(i);
+    rsinh_number(i);
+    rtanh_number(i);
+    racosh_number(i);
+    rasinh_number(i);
+    ratanh_number(i);
+    rcbrt_number(i);
     rsign_number(i);
     rsign_double(i);
     rbigintadd(BigInt(i));
@@ -1717,6 +2182,9 @@ for (j = 100 - max; j < 100; j++) {
     rbigintrsh(BigInt(i));
     rbigintasint(BigInt(i));
     rbigintasuint(BigInt(i));
+    rnantozero_nan(i);
+    rnantozero_poszero(i);
+    rnantozero_negzero(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

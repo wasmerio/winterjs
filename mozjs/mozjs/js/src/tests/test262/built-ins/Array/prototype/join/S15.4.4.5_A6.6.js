@@ -7,9 +7,8 @@ esid: sec-array.prototype.join
 description: Checking Array.prototype.join.prototype
 ---*/
 
-//CHECK#1
 if (Array.prototype.join.prototype !== undefined) {
-  $ERROR('#1: Array.prototype.join.prototype === undefined. Actual: ' + (Array.prototype.join.prototype));
+  throw new Test262Error('#1: Array.prototype.join.prototype === undefined. Actual: ' + (Array.prototype.join.prototype));
 }
 
 reportCompare(0, 0);

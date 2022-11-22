@@ -9,13 +9,14 @@
 
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
-#include "jsfriendapi.h"
-
+#include "js/CallAndConstruct.h"
 #include "js/CompilationAndEvaluation.h"  // JS::CompileFunction
+#include "js/PropertyAndElement.h"        // JS_DefineProperty
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
 #include "util/Text.h"
 #include "vm/JSFunction.h"  // JSFunction
+#include "vm/Scope.h"       // Scope
 #include "vm/ScopeKind.h"   // ScopeKind
 
 using namespace js;

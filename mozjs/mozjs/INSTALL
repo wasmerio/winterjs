@@ -1,13 +1,24 @@
-Full build documentation for SpiderMonkey is hosted on MDN:
-  https://developer.mozilla.org/en-US/docs/SpiderMonkey/Build_Documentation
+Documentation for SpiderMonkey is available at:
+
+  https://spidermonkey.dev/
+
+In particular, it points to build documentation at
+
+  https://firefox-source-docs.mozilla.org/js/build.html
 
 Note that the libraries produced by the build system include symbols,
 causing the binaries to be extremely large. It is highly suggested that `strip`
 be run over the binaries before deploying them.
 
 Building with default options may be performed as follows:
-  cd js/src
-  mkdir obj
-  cd obj
-  ../configure
-  make # or mozmake on Windows
+
+  ./mach build
+
+This will produce a debug build (much more suitable for developing against the
+SpiderMonkey JSAPI). To produce an optimized build:
+
+  export MOZCONFIG=$(pwd)/mozconfig.opt
+  ./mach build
+
+You may edit the mozconfig and mozconfig.opt files to configure your own build
+appropriately.

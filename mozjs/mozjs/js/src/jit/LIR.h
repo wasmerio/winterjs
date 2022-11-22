@@ -17,7 +17,7 @@
 #include "jit/FixedList.h"
 #include "jit/InlineList.h"
 #include "jit/JitAllocPolicy.h"
-#include "jit/LOpcodesGenerated.h"
+#include "jit/LIROpsGenerated.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "jit/Registers.h"
@@ -72,7 +72,11 @@ class LAllocation : public TempObject {
   static const uintptr_t KIND_MASK = (1 << KIND_BITS) - 1;
 
  protected:
+#ifdef JS_64BIT
+  static const uintptr_t DATA_BITS = sizeof(uint32_t) * 8;
+#else
   static const uintptr_t DATA_BITS = (sizeof(uint32_t) * 8) - KIND_BITS;
+#endif
   static const uintptr_t DATA_SHIFT = KIND_SHIFT + KIND_BITS;
 
  public:
@@ -87,7 +91,7 @@ class LAllocation : public TempObject {
     ARGUMENT_SLOT  // Argument slot.
   };
 
-  static const uintptr_t DATA_MASK = (1 << DATA_BITS) - 1;
+  static const uintptr_t DATA_MASK = (uintptr_t(1) << DATA_BITS) - 1;
 
  protected:
   uint32_t data() const {
@@ -196,7 +200,11 @@ class LUse : public LAllocation {
   static const uint32_t POLICY_BITS = 3;
   static const uint32_t POLICY_SHIFT = 0;
   static const uint32_t POLICY_MASK = (1 << POLICY_BITS) - 1;
+#ifdef JS_CODEGEN_ARM64
+  static const uint32_t REG_BITS = 7;
+#else
   static const uint32_t REG_BITS = 6;
+#endif
   static const uint32_t REG_SHIFT = POLICY_SHIFT + POLICY_BITS;
   static const uint32_t REG_MASK = (1 << REG_BITS) - 1;
 
@@ -542,18 +550,21 @@ class LDefinition {
     return (Policy)((bits_ >> POLICY_SHIFT) & POLICY_MASK);
   }
   Type type() const { return (Type)((bits_ >> TYPE_SHIFT) & TYPE_MASK); }
+
+  static bool isFloatRegCompatible(Type type, FloatRegister reg) {
+    if (type == FLOAT32) {
+      return reg.isSingle();
+    }
+    if (type == DOUBLE) {
+      return reg.isDouble();
+    }
+    MOZ_ASSERT(type == SIMD128);
+    return reg.isSimd128();
+  }
+
   bool isCompatibleReg(const AnyRegister& r) const {
     if (isFloatReg() && r.isFloat()) {
-      if (type() == FLOAT32) {
-        return r.fpu().isSingle();
-      }
-      if (type() == DOUBLE) {
-        return r.fpu().isDouble();
-      }
-      if (type() == SIMD128) {
-        return r.fpu().isSimd128();
-      }
-      MOZ_CRASH("Unexpected MDefinition type");
+      return isFloatRegCompatible(type(), r.fpu());
     }
     return !isFloatReg() && !r.isFloat();
   }
@@ -568,9 +579,11 @@ class LDefinition {
 #endif
   }
 
-  bool isFloatReg() const {
-    return type() == FLOAT32 || type() == DOUBLE || type() == SIMD128;
+  static bool isFloatReg(Type type) {
+    return type == FLOAT32 || type == DOUBLE || type == SIMD128;
   }
+  bool isFloatReg() const { return isFloatReg(type()); }
+
   uint32_t virtualRegister() const {
     uint32_t index = (bits_ >> VREG_SHIFT) & VREG_MASK;
     // MOZ_ASSERT(index != 0);
@@ -802,7 +815,7 @@ class LNode {
   LIR_OPCODE_LIST(LIROP)
 #undef LIROP
 
-// Note: GenerateOpcodeFiles.py generates LOpcodesGenerated.h based on this
+// Note: GenerateOpcodeFiles.py generates LIROpsGenerated.h based on this
 // macro.
 #define LIR_HEADER(opcode) \
   static constexpr LNode::Opcode classOpcode = LNode::Opcode::opcode;
@@ -1315,7 +1328,6 @@ class LSnapshot : public TempObject {
   LRecoverInfo* recoverInfo_;
   SnapshotOffset snapshotOffset_;
   uint32_t numSlots_;
-  BailoutId bailoutId_;
   BailoutKind bailoutKind_;
 
   LSnapshot(LRecoverInfo* recover, BailoutKind kind);
@@ -1350,14 +1362,9 @@ class LSnapshot : public TempObject {
   LRecoverInfo* recoverInfo() const { return recoverInfo_; }
   MResumePoint* mir() const { return recoverInfo()->mir(); }
   SnapshotOffset snapshotOffset() const { return snapshotOffset_; }
-  BailoutId bailoutId() const { return bailoutId_; }
   void setSnapshotOffset(SnapshotOffset offset) {
     MOZ_ASSERT(snapshotOffset_ == INVALID_SNAPSHOT_OFFSET);
     snapshotOffset_ = offset;
-  }
-  void setBailoutId(BailoutId id) {
-    MOZ_ASSERT(bailoutId_ == INVALID_BAILOUT_ID);
-    bailoutId_ = id;
   }
   BailoutKind bailoutKind() const { return bailoutKind_; }
   void rewriteRecoveredInput(LUse input);
@@ -1406,7 +1413,7 @@ class LSafepoint : public TempObject {
   // For call instructions, the live regs are empty. Call instructions may
   // have register inputs or temporaries, which will *not* be in the live
   // registers: if passed to the call, the values passed will be marked via
-  // MarkJitExitFrame, and no registers can be live after the instruction
+  // TraceJitExitFrame, and no registers can be live after the instruction
   // except its outputs.
   LiveRegisterSet liveRegs_;
 
@@ -1827,9 +1834,9 @@ class LIRGraph {
   uint32_t numVirtualRegisters_;
   uint32_t numInstructions_;
 
-  // Number of stack slots needed for local spills.
-  uint32_t localSlotCount_;
-  // Number of stack slots needed for argument construction for calls.
+  // Size of stack slots needed for local spills.
+  uint32_t localSlotsSize_;
+  // Number of JS::Value stack slots needed for argument construction for calls.
   uint32_t argumentSlotCount_;
 
   MIRGraph& mir_;
@@ -1860,30 +1867,14 @@ class LIRGraph {
   }
   uint32_t getInstructionId() { return numInstructions_++; }
   uint32_t numInstructions() const { return numInstructions_; }
-  void setLocalSlotCount(uint32_t localSlotCount) {
-    localSlotCount_ = localSlotCount;
+  void setLocalSlotsSize(uint32_t localSlotsSize) {
+    localSlotsSize_ = localSlotsSize;
   }
-  uint32_t localSlotCount() const { return localSlotCount_; }
-  // Return the localSlotCount() value rounded up so that it satisfies the
-  // platform stack alignment requirement, and so that it's a multiple of
-  // the number of slots per Value.
-  uint32_t paddedLocalSlotCount() const {
-    // Round to JitStackAlignment, and implicitly to sizeof(Value) as
-    // JitStackAlignment is a multiple of sizeof(Value). These alignments
-    // are needed for spilling SIMD registers properly, and for
-    // StackOffsetOfPassedArg which rounds argument slots to 8-byte
-    // boundaries.
-    return AlignBytes(localSlotCount(), JitStackAlignment);
-  }
-  size_t paddedLocalSlotsSize() const { return paddedLocalSlotCount(); }
+  uint32_t localSlotsSize() const { return localSlotsSize_; }
   void setArgumentSlotCount(uint32_t argumentSlotCount) {
     argumentSlotCount_ = argumentSlotCount;
   }
   uint32_t argumentSlotCount() const { return argumentSlotCount_; }
-  size_t argumentsSize() const { return argumentSlotCount() * sizeof(Value); }
-  uint32_t totalSlotCount() const {
-    return paddedLocalSlotCount() + argumentsSize();
-  }
   [[nodiscard]] bool addConstantToPool(const Value& v, uint32_t* index);
   size_t numConstants() const { return constantPool_.length(); }
   Value* constantPool() { return &constantPool_[0]; }
@@ -1933,6 +1924,8 @@ AnyRegister LAllocation::toRegister() const {
 #  include "jit/arm/LIR-arm.h"
 #elif defined(JS_CODEGEN_ARM64)
 #  include "jit/arm64/LIR-arm64.h"
+#elif defined(JS_CODEGEN_LOONG64)
+#  include "jit/loong64/LIR-loong64.h"
 #elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
 #  if defined(JS_CODEGEN_MIPS32)
 #    include "jit/mips32/LIR-mips32.h"
@@ -1940,6 +1933,8 @@ AnyRegister LAllocation::toRegister() const {
 #    include "jit/mips64/LIR-mips64.h"
 #  endif
 #  include "jit/mips-shared/LIR-mips-shared.h"
+#elif defined(JS_CODEGEN_WASM32)
+#  include "jit/wasm32/LIR-wasm32.h"
 #elif defined(JS_CODEGEN_NONE)
 #  include "jit/none/LIR-none.h"
 #else

@@ -12,7 +12,6 @@
 #include "vm/TypedArrayObject.h"
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Compiler.h"
 #include "mozilla/FloatingPoint.h"
 
 #include <algorithm>
@@ -20,7 +19,6 @@
 
 #include "jsnum.h"
 
-#include "builtin/Array.h"
 #include "gc/Zone.h"
 #include "jit/AtomicOperations.h"
 #include "js/Conversions.h"
@@ -28,12 +26,13 @@
 #include "js/Value.h"
 #include "util/DifferentialTesting.h"
 #include "util/Memory.h"
+#include "vm/ArrayObject.h"
 #include "vm/BigIntType.h"
-#include "vm/JSContext.h"
 #include "vm/NativeObject.h"
 #include "vm/Uint8Clamped.h"
 
 #include "gc/ObjectKind-inl.h"
+#include "vm/NativeObject-inl.h"
 #include "vm/ObjectOperations-inl.h"
 
 namespace js {
@@ -304,8 +303,8 @@ class ElementSpecific {
     MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(!source->hasDetachedBuffer(), "source isn't detached");
 
-    MOZ_ASSERT(offset <= target->length().get());
-    MOZ_ASSERT(source->length().get() <= target->length().get() - offset);
+    MOZ_ASSERT(offset <= target->length());
+    MOZ_ASSERT(source->length() <= target->length() - offset);
 
     if (TypedArrayObject::sameBuffer(target, source)) {
       return setFromOverlappingTypedArray(target, source, offset);
@@ -313,7 +312,7 @@ class ElementSpecific {
 
     SharedMem<T*> dest =
         target->dataPointerEither().template cast<T*>() + offset;
-    size_t count = source->length().get();
+    size_t count = source->length();
 
     if (source->type() == target->type()) {
       Ops::podCopy(dest, source->dataPointerEither().template cast<T*>(),
@@ -412,12 +411,15 @@ class ElementSpecific {
                                    size_t offset = 0) {
     MOZ_ASSERT(target->type() == TypeIDOfType<T>::id,
                "target type and NativeType must match");
-    MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(!source->is<TypedArrayObject>(),
                "use setFromTypedArray instead of this method");
+    MOZ_ASSERT_IF(target->hasDetachedBuffer(), target->length() == 0);
+    MOZ_ASSERT_IF(!target->hasDetachedBuffer(), offset <= target->length());
+    MOZ_ASSERT_IF(!target->hasDetachedBuffer(),
+                  len <= target->length() - offset);
 
     size_t i = 0;
-    if (source->is<NativeObject>()) {
+    if (source->is<NativeObject>() && !target->hasDetachedBuffer()) {
       // Attempt fast-path infallible conversion of dense elements up to
       // the first potentially side-effectful lookup or conversion.
       size_t bound = std::min<size_t>(
@@ -444,8 +446,14 @@ class ElementSpecific {
     // Convert and copy any remaining elements generically.
     RootedValue v(cx);
     for (; i < len; i++) {
-      if (!GetElement(cx, source, source, i, &v)) {
-        return false;
+      if constexpr (sizeof(i) == sizeof(uint32_t)) {
+        if (!GetElement(cx, source, source, uint32_t(i), &v)) {
+          return false;
+        }
+      } else {
+        if (!GetElementLargeIndex(cx, source, source, i, &v)) {
+          return false;
+        }
       }
 
       T n;
@@ -453,10 +461,13 @@ class ElementSpecific {
         return false;
       }
 
-      len = std::min<size_t>(len, target->length().get());
-      if (i >= len) {
-        break;
+      // Ignore out-of-bounds writes, but still execute getElement/valueToNative
+      // because of observable side-effects.
+      if (offset + i >= target->length()) {
+        continue;
       }
+
+      MOZ_ASSERT(!target->hasDetachedBuffer());
 
       // Compute every iteration in case getElement/valueToNative
       // detaches the underlying array buffer or GC moves the data.
@@ -473,12 +484,12 @@ class ElementSpecific {
    */
   static bool initFromIterablePackedArray(JSContext* cx,
                                           Handle<TypedArrayObject*> target,
-                                          HandleArrayObject source) {
+                                          Handle<ArrayObject*> source) {
     MOZ_ASSERT(target->type() == TypeIDOfType<T>::id,
                "target type and NativeType must match");
     MOZ_ASSERT(!target->hasDetachedBuffer(), "target isn't detached");
     MOZ_ASSERT(IsPackedArray(source), "source array must be packed");
-    MOZ_ASSERT(source->getDenseInitializedLength() <= target->length().get());
+    MOZ_ASSERT(source->getDenseInitializedLength() <= target->length());
 
     size_t len = source->getDenseInitializedLength();
     size_t i = 0;
@@ -518,7 +529,7 @@ class ElementSpecific {
       // |target| is a newly allocated typed array and not yet visible to
       // content script, so valueToNative can't detach the underlying
       // buffer.
-      MOZ_ASSERT(i < target->length().get());
+      MOZ_ASSERT(i < target->length());
 
       // Compute every iteration in case GC moves the data.
       SharedMem<T*> newDest = target->dataPointerEither().template cast<T*>();
@@ -543,12 +554,12 @@ class ElementSpecific {
                "the provided arrays don't actually overlap, so it's "
                "undesirable to use this method");
 
-    MOZ_ASSERT(offset <= target->length().get());
-    MOZ_ASSERT(source->length().get() <= target->length().get() - offset);
+    MOZ_ASSERT(offset <= target->length());
+    MOZ_ASSERT(source->length() <= target->length() - offset);
 
     SharedMem<T*> dest =
         target->dataPointerEither().template cast<T*>() + offset;
-    size_t len = source->length().get();
+    size_t len = source->length();
 
     if (source->type() == target->type()) {
       SharedMem<T*> src = source->dataPointerEither().template cast<T*>();

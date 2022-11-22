@@ -54,29 +54,21 @@ namespace js {
  * adding new thread types.
  */
 enum ThreadType {
-  THREAD_TYPE_NONE = 0,      // 0
-  THREAD_TYPE_MAIN,          // 1
-  THREAD_TYPE_WASM,          // 2
-  THREAD_TYPE_ION,           // 3
-  THREAD_TYPE_PARSE,         // 4
-  THREAD_TYPE_COMPRESS,      // 5
-  THREAD_TYPE_GCPARALLEL,    // 6
-  THREAD_TYPE_PROMISE_TASK,  // 7
-  THREAD_TYPE_ION_FREE,      // 8
-  THREAD_TYPE_WASM_TIER2,    // 9
-  THREAD_TYPE_WORKER,        // 10
-  THREAD_TYPE_MAX            // Used to check shell function arguments
-};
-
-/*
- * Threads need a universal way to dispatch from xpcom thread pools,
- * so having objects inherit from this struct enables
- * mozilla::HelperThreadPool's runnable handler to call runTask() on each type.
- */
-struct RunnableTask {
-  virtual ThreadType threadType() = 0;
-  virtual void runTask() = 0;
-  virtual ~RunnableTask() = default;
+  THREAD_TYPE_NONE = 0,              // 0
+  THREAD_TYPE_MAIN,                  // 1
+  THREAD_TYPE_WASM_COMPILE_TIER1,    // 2
+  THREAD_TYPE_WASM_COMPILE_TIER2,    // 3
+  THREAD_TYPE_ION,                   // 4
+  THREAD_TYPE_PARSE,                 // 5
+  THREAD_TYPE_COMPRESS,              // 6
+  THREAD_TYPE_GCPARALLEL,            // 7
+  THREAD_TYPE_PROMISE_TASK,          // 8
+  THREAD_TYPE_ION_FREE,              // 9
+  THREAD_TYPE_WASM_GENERATOR_TIER2,  // 10
+  THREAD_TYPE_WORKER,                // 11
+  THREAD_TYPE_DELAZIFY,              // 12
+  THREAD_TYPE_DELAZIFY_FREE,         // 13
+  THREAD_TYPE_MAX                    // Used to check shell function arguments
 };
 
 namespace oom {
@@ -95,11 +87,11 @@ namespace oom {
 // Define the range of threads tested by simulated OOM testing and the
 // like. Testing worker threads is not supported.
 const ThreadType FirstThreadTypeToTest = THREAD_TYPE_MAIN;
-const ThreadType LastThreadTypeToTest = THREAD_TYPE_WASM_TIER2;
+const ThreadType LastThreadTypeToTest = THREAD_TYPE_WASM_GENERATOR_TIER2;
 
 extern bool InitThreadType(void);
 extern void SetThreadType(ThreadType);
-extern JS_FRIEND_API uint32_t GetThreadType(void);
+extern JS_PUBLIC_API uint32_t GetThreadType(void);
 
 #  else
 
@@ -256,14 +248,6 @@ inline bool HadSimulatedInterrupt() {
         if (js::oom::ShouldFailWithStackOOM()) return false; \
       } while (0)
 
-#    define JS_STACK_OOM_POSSIBLY_FAIL_REPORT()  \
-      do {                                       \
-        if (js::oom::ShouldFailWithStackOOM()) { \
-          ReportOverRecursed(cx);                \
-          return false;                          \
-        }                                        \
-      } while (0)
-
 #    define JS_INTERRUPT_POSSIBLY_FAIL()                             \
       do {                                                           \
         if (MOZ_UNLIKELY(js::oom::ShouldFailWithInterrupt())) {      \
@@ -282,9 +266,6 @@ inline bool HadSimulatedInterrupt() {
       } while (0)
 #    define JS_STACK_OOM_POSSIBLY_FAIL() \
       do {                               \
-      } while (0)
-#    define JS_STACK_OOM_POSSIBLY_FAIL_REPORT() \
-      do {                                      \
       } while (0)
 #    define JS_INTERRUPT_POSSIBLY_FAIL() \
       do {                               \
@@ -426,9 +407,10 @@ static inline void* js_realloc(void* p, size_t bytes) {
 }
 
 static inline void js_free(void* p) {
-  // TODO: This should call |moz_arena_free(js::MallocArena, p)| but we
+  // Bug 1784164: This should call |moz_arena_free(js::MallocArena, p)| but we
   // currently can't enforce that all memory freed here was allocated by
-  // js_malloc().
+  // js_malloc(). All other memory should go through a different allocator and
+  // deallocator.
   free(p);
 }
 #endif /* JS_USE_CUSTOM_ALLOCATOR */
@@ -481,9 +463,9 @@ static inline void js_free(void* p) {
  * - Ordinarily, use js_free/js_delete.
  *
  * - For deallocations during GC finalization, use one of the following
- *   operations on the JSFreeOp provided to the finalizer:
+ *   operations on the JS::GCContext provided to the finalizer:
  *
- *     JSFreeOp::{free_,delete_}
+ *     JS::GCContext::{free_,delete_}
  */
 
 /*

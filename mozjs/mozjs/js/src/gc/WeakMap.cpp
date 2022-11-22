@@ -8,16 +8,10 @@
 
 #include <string.h>
 
-#include "jsapi.h"
-#include "jsfriendapi.h"
-
 #include "gc/PublicIterators.h"
-#include "js/Wrapper.h"
-#include "vm/GlobalObject.h"
-#include "vm/JSContext.h"
 #include "vm/JSObject.h"
 
-#include "vm/JSObject-inl.h"
+#include "gc/Marking-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -34,21 +28,21 @@ WeakMapBase::~WeakMapBase() {
 
 void WeakMapBase::unmarkZone(JS::Zone* zone) {
   AutoEnterOOMUnsafeRegion oomUnsafe;
-  if (!zone->gcWeakKeys().clear()) {
-    oomUnsafe.crash("clearing weak keys table");
+  if (!zone->gcEphemeronEdges().clear()) {
+    oomUnsafe.crash("clearing ephemeron edges table");
   }
-  MOZ_ASSERT(zone->gcNurseryWeakKeys().count() == 0);
+  MOZ_ASSERT(zone->gcNurseryEphemeronEdges().count() == 0);
 
   for (WeakMapBase* m : zone->gcWeakMapList()) {
     m->mapColor = CellColor::White;
   }
 }
 
-void WeakMapBase::traceZone(JS::Zone* zone, JSTracer* tracer) {
-  MOZ_ASSERT(tracer->weakMapAction() != JS::WeakMapTraceAction::Skip);
-  for (WeakMapBase* m : zone->gcWeakMapList()) {
-    m->trace(tracer);
-    TraceNullableEdge(tracer, &m->memberOf, "memberOf");
+void Zone::traceWeakMaps(JSTracer* trc) {
+  MOZ_ASSERT(trc->weakMapAction() != JS::WeakMapTraceAction::Skip);
+  for (WeakMapBase* m : gcWeakMapList()) {
+    m->trace(trc);
+    TraceNullableEdge(trc, &m->memberOf, "memberOf");
   }
 }
 
@@ -87,20 +81,20 @@ bool WeakMapBase::findSweepGroupEdgesForZone(JS::Zone* zone) {
   return true;
 }
 
-void WeakMapBase::sweepZone(JS::Zone* zone) {
-  for (WeakMapBase* m = zone->gcWeakMapList().getFirst(); m;) {
+void Zone::sweepWeakMaps(JSTracer* trc) {
+  for (WeakMapBase* m = gcWeakMapList().getFirst(); m;) {
     WeakMapBase* next = m->getNext();
     if (m->mapColor) {
-      m->sweep();
+      m->traceWeakEdges(trc);
     } else {
       m->clearAndCompact();
-      m->removeFrom(zone->gcWeakMapList());
+      m->removeFrom(gcWeakMapList());
     }
     m = next;
   }
 
 #ifdef DEBUG
-  for (WeakMapBase* m : zone->gcWeakMapList()) {
+  for (WeakMapBase* m : gcWeakMapList()) {
     MOZ_ASSERT(m->isInList() && m->mapColor);
   }
 #endif
@@ -135,11 +129,6 @@ void WeakMapBase::restoreMarkedWeakMaps(WeakMapColors& markedWeakMaps) {
     MOZ_ASSERT(map->mapColor == CellColor::White);
     map->mapColor = r.front().value();
   }
-}
-
-size_t ObjectValueWeakMap::sizeOfIncludingThis(
-    mozilla::MallocSizeOf mallocSizeOf) {
-  return mallocSizeOf(this) + shallowSizeOfExcludingThis(mallocSizeOf);
 }
 
 ObjectWeakMap::ObjectWeakMap(JSContext* cx) : map(cx, nullptr) {}

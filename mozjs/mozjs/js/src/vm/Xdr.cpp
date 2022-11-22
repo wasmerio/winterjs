@@ -6,41 +6,49 @@
 
 #include "vm/Xdr.h"
 
-#include "mozilla/ArrayUtils.h"
-#include "mozilla/ScopeExit.h"
-#include "mozilla/Utf8.h"
+#include "mozilla/Assertions.h"   // MOZ_ASSERT, MOZ_ASSERT_IF
+#include "mozilla/EndianUtils.h"  // mozilla::NativeEndian, MOZ_LITTLE_ENDIAN
+#include "mozilla/Result.h"       // mozilla::{Result, Ok, Err}, MOZ_TRY
+#include "mozilla/Utf8.h"         // mozilla::Utf8Unit
 
-#include <algorithm>  // std::transform
-#include <string.h>
-#include <type_traits>  // std::is_same
+#include <algorithm>    // std::transform
+#include <stddef.h>     // size_t
+#include <stdint.h>     // uint8_t, uint32_t, uintptr_t
+#include <string>       // std::char_traits
+#include <type_traits>  // std::is_same_v
 #include <utility>      // std::move
 
-#include "jsapi.h"
-
-#include "builtin/ModuleObject.h"
-#include "debugger/DebugAPI.h"
-#include "frontend/CompilationStencil.h"  // frontend::{CompilationStencil, ExtensibleCompilationStencil, CompilationStencilMerger, BorrowingCompilationStencil}
-#include "frontend/StencilXdr.h"          // frontend::StencilXDR
-#include "js/BuildId.h"                   // JS::BuildIdCharVector
-#include "vm/JSContext.h"
-#include "vm/JSScript.h"
-#include "vm/SharedStencil.h"  // js::SourceExtent
-#include "vm/TraceLogging.h"
+#include "js/Transcoding.h"  // JS::TranscodeResult, JS::TranscodeBuffer, JS::TranscodeRange
+#include "js/UniquePtr.h"     // UniquePtr
+#include "js/Utility.h"       // JS::FreePolicy, js_delete
+#include "vm/ErrorContext.h"  // ErrorContext
+#include "vm/JSContext.h"     // JSContext, ReportAllocationOverflow
+#include "vm/StringType.h"    // JSString
 
 using namespace js;
 
-using mozilla::ArrayEqual;
 using mozilla::Utf8Unit;
 
 #ifdef DEBUG
-bool XDRCoderBase::validateResultCode(JSContext* cx,
+bool XDRCoderBase::validateResultCode(JSContext* cx, ErrorContext* ec,
                                       JS::TranscodeResult code) const {
   // NOTE: This function is called to verify that we do not have a pending
   // exception on the JSContext at the same time as a TranscodeResult failure.
   if (cx->isHelperThreadContext()) {
     return true;
   }
-  return cx->isExceptionPending() == bool(code == JS::TranscodeResult::Throw);
+
+  // NOTE: Errors during XDR encode/decode are supposed to be reported to
+  //       ErrorContext, instead of JSContext.
+  //       This branch is for covering remaining consumer of JSContext for
+  //       error reporting (e.g. memory allocation).
+  // TODO: Remove this once JSContext is removed from frontend and all errors
+  //       are reported to ErrorContext.
+  if (cx->isExceptionPending()) {
+    return bool(code == JS::TranscodeResult::Throw);
+  }
+
+  return ec->hadErrors() == bool(code == JS::TranscodeResult::Throw);
 }
 #endif
 
@@ -170,269 +178,5 @@ XDRResult XDRState<mode>::codeCharsZ(XDRTranscodeString<char16_t>& buffer) {
   return XDRCodeCharsZ(this, buffer);
 }
 
-enum class XDRFormatType : uint8_t {
-  UseOption,
-  JSScript,
-  Stencil,
-};
-
-static bool GetScriptTranscodingBuildId(XDRFormatType formatType,
-                                        JS::BuildIdCharVector* buildId) {
-  MOZ_ASSERT(buildId->empty());
-  MOZ_ASSERT(GetBuildId);
-
-  if (!GetBuildId(buildId)) {
-    return false;
-  }
-
-  // Note: the buildId returned here is also used for the bytecode cache MIME
-  // type so use plain ASCII characters.
-
-  if (!buildId->reserve(buildId->length() + 4)) {
-    return false;
-  }
-
-  buildId->infallibleAppend('-');
-
-  // XDR depends on pointer size and endianness.
-  static_assert(sizeof(uintptr_t) == 4 || sizeof(uintptr_t) == 8);
-  buildId->infallibleAppend(sizeof(uintptr_t) == 4 ? '4' : '8');
-  buildId->infallibleAppend(MOZ_LITTLE_ENDIAN() ? 'l' : 'b');
-
-  // '0': Stencil
-  // '1': JSScript.
-  char formatChar = '0';
-  switch (formatType) {
-    case XDRFormatType::UseOption:
-      // If off-thread parse global isn't used for single script decoding,
-      // we use stencil XDR instead of JSScript XDR.
-      formatChar = js::UseOffThreadParseGlobal() ? '1' : '0';
-      break;
-    case XDRFormatType::JSScript:
-      formatChar = '1';
-      break;
-    case XDRFormatType::Stencil:
-      formatChar = '0';
-      break;
-  }
-  buildId->infallibleAppend(formatChar);
-
-  return true;
-}
-
-JS_PUBLIC_API bool JS::GetScriptTranscodingBuildId(
-    JS::BuildIdCharVector* buildId) {
-  return GetScriptTranscodingBuildId(XDRFormatType::UseOption, buildId);
-}
-
-template <XDRMode mode>
-static XDRResult VersionCheck(XDRState<mode>* xdr, XDRFormatType formatType) {
-  JS::BuildIdCharVector buildId;
-  if (!GetScriptTranscodingBuildId(formatType, &buildId)) {
-    ReportOutOfMemory(xdr->cx());
-    return xdr->fail(JS::TranscodeResult::Throw);
-  }
-  MOZ_ASSERT(!buildId.empty());
-
-  uint32_t buildIdLength;
-  if (mode == XDR_ENCODE) {
-    buildIdLength = buildId.length();
-  }
-
-  MOZ_TRY(xdr->codeUint32(&buildIdLength));
-
-  if (mode == XDR_DECODE && buildIdLength != buildId.length()) {
-    return xdr->fail(JS::TranscodeResult::Failure_BadBuildId);
-  }
-
-  if (mode == XDR_ENCODE) {
-    MOZ_TRY(xdr->codeBytes(buildId.begin(), buildIdLength));
-  } else {
-    JS::BuildIdCharVector decodedBuildId;
-
-    // buildIdLength is already checked against the length of current
-    // buildId.
-    if (!decodedBuildId.resize(buildIdLength)) {
-      ReportOutOfMemory(xdr->cx());
-      return xdr->fail(JS::TranscodeResult::Throw);
-    }
-
-    MOZ_TRY(xdr->codeBytes(decodedBuildId.begin(), buildIdLength));
-
-    // We do not provide binary compatibility with older scripts.
-    if (!ArrayEqual(decodedBuildId.begin(), buildId.begin(), buildIdLength)) {
-      return xdr->fail(JS::TranscodeResult::Failure_BadBuildId);
-    }
-  }
-
-  return Ok();
-}
-
-template <XDRMode mode>
-XDRResult XDRState<mode>::codeModuleObject(MutableHandleModuleObject modp) {
-#ifdef DEBUG
-  auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
-#endif
-  if (mode == XDR_DECODE) {
-    modp.set(nullptr);
-  } else {
-    MOZ_ASSERT(modp->status() < MODULE_STATUS_LINKING);
-  }
-
-  MOZ_TRY(XDRModuleObject(this, modp));
-  return Ok();
-}
-
-template <XDRMode mode>
-XDRResult XDRState<mode>::codeScript(MutableHandleScript scriptp) {
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx());
-  TraceLoggerTextId event =
-      mode == XDR_DECODE ? TraceLogger_DecodeScript : TraceLogger_EncodeScript;
-  AutoTraceLog tl(logger, event);
-
-#ifdef DEBUG
-  auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
-#endif
-  auto guard = mozilla::MakeScopeExit([&] { scriptp.set(nullptr); });
-
-  if (mode == XDR_DECODE) {
-    scriptp.set(nullptr);
-  } else {
-    MOZ_ASSERT(!scriptp->enclosingScope());
-  }
-
-  MOZ_TRY(VersionCheck(this, XDRFormatType::JSScript));
-  MOZ_TRY(XDRScript(this, nullptr, nullptr, nullptr, scriptp));
-
-  guard.release();
-  return Ok();
-}
-
-template <XDRMode mode>
-static XDRResult XDRStencilHeader(
-    XDRState<mode>* xdr, const JS::ReadOnlyCompileOptions* maybeOptions,
-    RefPtr<ScriptSource>& source) {
-  // The XDR-Stencil header is inserted at beginning of buffer, but it is
-  // computed at the end the incremental-encoding process.
-
-  MOZ_TRY(VersionCheck(xdr, XDRFormatType::Stencil));
-  MOZ_TRY(ScriptSource::XDR(xdr, maybeOptions, source));
-
-  return Ok();
-}
-
 template class js::XDRState<XDR_ENCODE>;
 template class js::XDRState<XDR_DECODE>;
-
-static bool IsOptionCompatibleWithEncoding(
-    const JS::ReadOnlyCompileOptions& options) {
-  // Instrumented scripts cannot be encoded, as they have extra instructions
-  // which are not normally present. Globals with instrumentation enabled must
-  // compile scripts via the bytecode emitter, which will insert these
-  // instructions.
-  return !options.instrumentationKinds;
-}
-
-XDRResult XDRStencilEncoder::codeStencil(
-    const JS::ReadOnlyCompileOptions* options,
-    const RefPtr<ScriptSource>& source,
-    const frontend::CompilationStencil& stencil) {
-#ifdef DEBUG
-  auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
-#endif
-
-  if (options) {
-    if (!IsOptionCompatibleWithEncoding(*options)) {
-      return fail(JS::TranscodeResult::Failure);
-    }
-  }
-
-  MOZ_TRY(frontend::StencilXDR::checkCompilationStencil(this, stencil));
-
-  MOZ_TRY(XDRStencilHeader(this, options,
-                           const_cast<RefPtr<ScriptSource>&>(source)));
-  MOZ_TRY(frontend::StencilXDR::codeCompilationStencil(
-      this, const_cast<frontend::CompilationStencil&>(stencil)));
-
-  return Ok();
-}
-
-XDRResult XDRStencilEncoder::codeStencil(
-    const frontend::CompilationInput& input,
-    const frontend::CompilationStencil& stencil) {
-  return codeStencil(&input.options, stencil.source, stencil);
-}
-
-XDRResult XDRStencilEncoder::codeStencil(
-    const RefPtr<ScriptSource>& source,
-    const frontend::CompilationStencil& stencil) {
-  return codeStencil(nullptr, source, stencil);
-}
-
-XDRIncrementalStencilEncoder::~XDRIncrementalStencilEncoder() {
-  if (merger_) {
-    js_delete(merger_);
-  }
-}
-
-XDRResult XDRIncrementalStencilEncoder::setInitial(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    UniquePtr<frontend::ExtensibleCompilationStencil>&& initial) {
-  if (!IsOptionCompatibleWithEncoding(options)) {
-    return mozilla::Err(JS::TranscodeResult::Failure);
-  }
-
-  MOZ_TRY(frontend::StencilXDR::checkCompilationStencil(*initial));
-
-  merger_ = cx->new_<frontend::CompilationStencilMerger>();
-  if (!merger_) {
-    return mozilla::Err(JS::TranscodeResult::Throw);
-  }
-
-  if (!merger_->setInitial(
-          cx, std::forward<UniquePtr<frontend::ExtensibleCompilationStencil>>(
-                  initial))) {
-    return mozilla::Err(JS::TranscodeResult::Throw);
-  }
-
-  return Ok();
-}
-
-XDRResult XDRIncrementalStencilEncoder::addDelazification(
-    JSContext* cx, const frontend::CompilationStencil& delazification) {
-  if (!merger_->addDelazification(cx, delazification)) {
-    return mozilla::Err(JS::TranscodeResult::Throw);
-  }
-
-  return Ok();
-}
-
-XDRResult XDRIncrementalStencilEncoder::linearize(JSContext* cx,
-                                                  JS::TranscodeBuffer& buffer,
-                                                  ScriptSource* ss) {
-  XDRStencilEncoder encoder(cx, buffer);
-  RefPtr<ScriptSource> source(ss);
-  {
-    frontend::BorrowingCompilationStencil borrowingStencil(
-        merger_->getResult());
-    MOZ_TRY(encoder.codeStencil(source, borrowingStencil));
-  }
-
-  return Ok();
-}
-
-XDRResult XDRStencilDecoder::codeStencil(
-    frontend::CompilationInput& input, frontend::CompilationStencil& stencil) {
-#ifdef DEBUG
-  auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
-#endif
-
-  MOZ_TRY(XDRStencilHeader(this, &input.options, stencil.source));
-  MOZ_TRY(frontend::StencilXDR::codeCompilationStencil(this, stencil));
-
-  return Ok();
-}

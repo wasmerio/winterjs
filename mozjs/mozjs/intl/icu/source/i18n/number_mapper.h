@@ -7,13 +7,16 @@
 #ifndef __NUMBER_MAPPER_H__
 #define __NUMBER_MAPPER_H__
 
-#include <atomic>
 #include "number_types.h"
 #include "unicode/currpinf.h"
 #include "standardplural.h"
 #include "number_patternstring.h"
 #include "number_currencysymbols.h"
 #include "numparse_impl.h"
+
+#ifndef __wasi__
+#include <atomic>
+#endif
 
 U_NAMESPACE_BEGIN
 namespace number {
@@ -56,12 +59,15 @@ class PropertiesAffixPatternProvider : public AffixPatternProvider, public UMemo
 
     bool hasBody() const U_OVERRIDE;
 
+    bool currencyAsDecimal() const U_OVERRIDE;
+
   private:
     UnicodeString posPrefix;
     UnicodeString posSuffix;
     UnicodeString negPrefix;
     UnicodeString negSuffix;
     bool isCurrencyPattern;
+    bool fCurrencyAsDecimal;
 
     PropertiesAffixPatternProvider() = default; // puts instance in valid but undefined state
 
@@ -107,6 +113,8 @@ class CurrencyPluralInfoAffixProvider : public AffixPatternProvider, public UMem
 
     bool hasBody() const U_OVERRIDE;
 
+    bool currencyAsDecimal() const U_OVERRIDE;
+
   private:
     PropertiesAffixPatternProvider affixesByPlural[StandardPlural::COUNT];
 
@@ -136,6 +144,16 @@ class AutoAffixPatternProvider {
         }
     }
 
+    inline void setTo(const AffixPatternProvider* provider, UErrorCode& status) {
+        if (auto ptr = dynamic_cast<const PropertiesAffixPatternProvider*>(provider)) {
+            propertiesAPP = *ptr;
+        } else if (auto ptr = dynamic_cast<const CurrencyPluralInfoAffixProvider*>(provider)) {
+            currencyPluralInfoAPP = *ptr;
+        } else {
+            status = U_INTERNAL_PROGRAM_ERROR;
+        }
+    }
+
     inline const AffixPatternProvider& get() const {
       if (!currencyPluralInfoAPP.isBogus()) {
         return currencyPluralInfoAPP;
@@ -153,9 +171,9 @@ class AutoAffixPatternProvider {
 /**
  * A struct for ownership of a few objects needed for formatting.
  */
-struct DecimalFormatWarehouse {
+struct DecimalFormatWarehouse : public UMemory {
     AutoAffixPatternProvider affixProvider;
-
+    LocalPointer<PluralRules> rules;
 };
 
 
@@ -183,10 +201,18 @@ struct DecimalFormatFields : public UMemory {
     LocalizedNumberFormatter formatter;
 
     /** The lazy-computed parser for .parse() */
+#ifndef __wasi__
     std::atomic<::icu::numparse::impl::NumberParserImpl*> atomicParser = {};
+#else
+    ::icu::numparse::impl::NumberParserImpl* atomicParser = nullptr;
+#endif
 
     /** The lazy-computed parser for .parseCurrency() */
+#ifndef __wasi__
     std::atomic<::icu::numparse::impl::NumberParserImpl*> atomicCurrencyParser = {};
+#else
+    ::icu::numparse::impl::NumberParserImpl* atomicCurrencyParser = {};
+#endif
 
     /** Small object ownership warehouse for the formatter and parser */
     DecimalFormatWarehouse warehouse;

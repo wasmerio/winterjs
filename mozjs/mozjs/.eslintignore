@@ -7,7 +7,7 @@
 # - intentionally invalid files
 # - build directories and other items that we need to ignore
 
-!.eslintrc.js
+!.eslintrc*.js
 
 # Always ignore node_modules.
 **/node_modules/
@@ -38,13 +38,13 @@ browser/components/sessionstore/test/unit/data/sessionstore_invalid.js
 # for documentation purposes (policies.json) but to be accessed by the
 # code as a .jsm (schema.jsm)
 browser/components/enterprisepolicies/schemas/schema.jsm
-# generated & special files in cld2
-browser/components/translation/cld2/
-# Screenshots is imported as a system add-on and has
-# their own lint rules currently.
-browser/extensions/screenshots/
 # generated or library files in pocket
 browser/components/pocket/content/panels/js/tmpl.js
+browser/components/pocket/content/panels/js/vendor.bundle.js
+browser/components/pocket/content/panels/js/main.bundle.js
+# Include the Storybook config files.
+!browser/components/storybook/.storybook/
+!browser/components/storybook/.storybook/*.js
 
 # Ignore newtab files
 browser/components/newtab/aboutwelcome/content/aboutwelcome.bundle.js
@@ -59,11 +59,14 @@ browser/extensions/formautofill/phonenumberutils/PhoneNumberMetaData.jsm
 # Ignore devtools debugger files which aren't intended for linting, and also
 # aren't included in any .eslintignore or .prettierignore file.
 # See https://github.com/firefox-devtools/debugger/blob/master/package.json#L24
+devtools/client/debugger/bin/
 devtools/client/debugger/configs/
 devtools/client/debugger/dist/
 devtools/client/debugger/images/
-devtools/client/debugger/test/
+devtools/client/debugger/packages/
+devtools/client/debugger/test/mochitest/examples/
 devtools/client/debugger/index.html
+devtools/client/debugger/webpack.config.js
 
 # Ignore devtools preferences files
 devtools/client/preferences/
@@ -72,6 +75,7 @@ devtools/client/preferences/
 devtools/shared/css/generated/properties-db.js
 devtools/client/webconsole/test/node/fixtures/stubs/*.js
 !devtools/client/webconsole/test/node/fixtures/stubs/index.js
+devtools/client/shared/components/test/node/stubs/reps/*.js
 
 # Ignore devtools files testing sourcemaps / code style
 devtools/client/framework/test/code_*
@@ -79,8 +83,13 @@ devtools/client/inspector/markup/test/events_bundle.js
 devtools/client/netmonitor/test/xhr_bundle.js
 devtools/client/webconsole/test/browser/code_bundle_nosource.js
 devtools/client/webconsole/test/browser/code_bundle_invalidmap.js
+devtools/client/webconsole/test/browser/test-autocomplete-mapped.js
+devtools/client/webconsole/test/browser/test-autocomplete-mapped.src.js
 devtools/server/tests/xpcshell/setBreakpoint*
 devtools/server/tests/xpcshell/sourcemapped.js
+
+# Ignore generated code from wasm-bindgen
+devtools/client/performance-new/profiler_get_symbols.js
 
 # Testing syntax error
 devtools/client/webconsole/test/browser/test-syntaxerror-worklet.js
@@ -127,15 +136,16 @@ dom/workers/test/threadErrors_worker1.js
 intl/l10n/
 
 # Exclude everything but self-hosted JS
-js/ductwork/
 js/examples/
 js/public/
-js/xpconnect/
 js/src/devtools/
 js/src/jit-test/
-js/src/jsapi-tests/binast/
 js/src/tests/
 js/src/Y.js
+
+# Changes to XPConnect tests must be carefully audited.
+js/xpconnect/tests/mochitest/
+js/xpconnect/tests/unit/
 
 # Fuzzing code for testing only, targeting the JS shell
 js/src/fuzz-tests/
@@ -157,8 +167,12 @@ modules/libpref/test/unit/*data/
 python/
 
 # These are (mainly) imported code that we don't want to lint to make imports easier.
-remote/cdp/Protocol.jsm
+remote/cdp/Protocol.sys.mjs
 remote/cdp/test/browser/chrome-remote-interface.js
+remote/marionette/atom.sys.mjs
+
+# This file explicitly has a syntax error and cannot be parsed by eslint.
+remote/shared/messagehandler/test/browser/resources/modules/root/invalid.sys.mjs
 
 # services/ exclusions
 
@@ -174,9 +188,7 @@ servo/
 
 # Test files that we don't want to lint (preprocessed, minified etc)
 testing/condprofile/condprof/tests/profile
-testing/marionette/atom.js
 testing/mozbase/mozprofile/tests/files/prefs_with_comments.js
-testing/talos/talos/scripts/jszip.min.js
 testing/talos/talos/startup_test/sessionrestore/profile/sessionstore.js
 testing/talos/talos/startup_test/sessionrestore/profile-manywindows/sessionstore.js
 testing/talos/talos/tests/devtools/addon/content/pages/
@@ -188,9 +200,6 @@ testing/talos/talos/fis/tp5n/
 testing/web-platform/
 
 # toolkit/ exclusions
-
-# Ignore generated code from wasm-bindgen
-toolkit/components/extensions/profiler_get_symbols.js
 
 # Intentionally invalid JS
 toolkit/components/workerloader/tests/moduleF-syntax-error.js
@@ -207,12 +216,15 @@ toolkit/components/reader/JSDOMParser.js
 # Uses preprocessing
 toolkit/components/reader/Readerable.jsm
 
+# Generated & special files in cld2
+toolkit/components/translation/cld2/
+
 # Uses preprocessing
 toolkit/mozapps/update/tests/data/xpcshellConstantsPP.js
 toolkit/modules/AppConstants.jsm
 
-# Tests old non-star function generators
-toolkit/modules/tests/xpcshell/test_task.js
+# Tests of ESLint command.
+tools/lint/test/files
 
 # Uses special template formatting.
 tools/tryselect/selectors/chooser/templates/chooser.html
@@ -222,3 +234,9 @@ tools/update-packaging/**/*refs.js
 
 # Ignore backgroundtasks preferences files.
 toolkit/components/backgroundtasks/defaults
+
+# Ignore pre-generated webpack and typescript transpiled files for translations
+browser/extensions/translations/extension/
+
+# "scaffolding" used by uniffi which isn't valid JS in its original form.
+toolkit/components/uniffi-bindgen-gecko-js/src/templates/js/

@@ -20,6 +20,7 @@ info: |
     11. Perform CreateDataProperty(unscopableList, "values", true).
     12. Assert: Each of the above calls returns true.
     13. Return unscopableList.
+
 includes: [propertyHelper.js]
 features: [Symbol.unscopables]
 ---*/

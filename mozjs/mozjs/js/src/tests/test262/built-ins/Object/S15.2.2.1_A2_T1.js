@@ -15,14 +15,7 @@ var obj = {
 
 var n_obj = new Object(obj);
 
-//CHECK#1
-if (n_obj !== obj) {
-  $ERROR('#1: When the Object constructor is called and if the value is an Object simply value returns.');
-}
-
-//CHECK#2
-if (n_obj['prop'] !== 1) {
-  $ERROR('#2: When the Object constructor is called and if the value is an Object simply value returns.');
-}
+assert.sameValue(n_obj, obj, 'The value of n_obj is expected to equal the value of obj');
+assert.sameValue(n_obj['prop'], 1, 'The value of n_obj["prop"] is expected to be 1');
 
 reportCompare(0, 0);

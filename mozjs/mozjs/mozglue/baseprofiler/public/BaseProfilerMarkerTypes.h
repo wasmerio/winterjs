@@ -25,8 +25,6 @@
 
 #include "mozilla/BaseProfilerMarkers.h"
 
-#ifdef MOZ_GECKO_PROFILER
-
 namespace mozilla::baseprofiler::markers {
 
 struct MediaSampleMarker {
@@ -41,11 +39,11 @@ struct MediaSampleMarker {
   }
   static MarkerSchema MarkerTypeDisplay() {
     using MS = MarkerSchema;
-    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
     schema.AddKeyLabelFormat("sampleStartTimeUs", "Sample start time",
-                             MS::Format::microseconds);
+                             MS::Format::Microseconds);
     schema.AddKeyLabelFormat("sampleEndTimeUs", "Sample end time",
-                             MS::Format::microseconds);
+                             MS::Format::Microseconds);
     return schema;
   }
 };
@@ -57,13 +55,11 @@ struct ContentBuildMarker {
   static void StreamJSONMarkerData(SpliceableJSONWriter& aWriter) {}
   static MarkerSchema MarkerTypeDisplay() {
     using MS = MarkerSchema;
-    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
     return schema;
   }
 };
 
 }  // namespace mozilla::baseprofiler::markers
-
-#endif  // MOZ_GECKO_PROFILER
 
 #endif  // BaseProfilerMarkerTypes_h

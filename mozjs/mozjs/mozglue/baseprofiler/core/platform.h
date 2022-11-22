@@ -33,6 +33,7 @@
 
 #include "BaseProfiler.h"
 
+#include "mozilla/Atomics.h"
 #include "mozilla/Logging.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
@@ -51,37 +52,49 @@ void PrintToConsole(const char* aFmt, ...) MOZ_FORMAT_PRINTF(1, 2);
 // These are for MOZ_BASE_PROFILER_LOGGING and above. It's the default logging
 // level for the profiler, and should be used sparingly.
 #define LOG_TEST ::mozilla::baseprofiler::LogTest(3)
-#define LOG(arg, ...)                                           \
-  do {                                                          \
-    if (LOG_TEST) {                                             \
-      ::mozilla::baseprofiler::PrintToConsole(                  \
-          "[I %d/%d] " arg "\n", profiler_current_process_id(), \
-          profiler_current_thread_id(), ##__VA_ARGS__);         \
-    }                                                           \
+#define LOG(arg, ...)                                                \
+  do {                                                               \
+    if (LOG_TEST) {                                                  \
+      ::mozilla::baseprofiler::PrintToConsole(                       \
+          "[I %d/%d] " arg "\n",                                     \
+          int(::mozilla::baseprofiler::profiler_current_process_id() \
+                  .ToNumber()),                                      \
+          int(::mozilla::baseprofiler::profiler_current_thread_id()  \
+                  .ToNumber()),                                      \
+          ##__VA_ARGS__);                                            \
+    }                                                                \
   } while (0)
 
 // These are for MOZ_BASE_PROFILER_DEBUG_LOGGING. It should be used for logging
 // that is somewhat more verbose than LOG.
 #define DEBUG_LOG_TEST ::mozilla::baseprofiler::LogTest(4)
-#define DEBUG_LOG(arg, ...)                                     \
-  do {                                                          \
-    if (DEBUG_LOG_TEST) {                                       \
-      ::mozilla::baseprofiler::PrintToConsole(                  \
-          "[D %d/%d] " arg "\n", profiler_current_process_id(), \
-          profiler_current_thread_id(), ##__VA_ARGS__);         \
-    }                                                           \
+#define DEBUG_LOG(arg, ...)                                          \
+  do {                                                               \
+    if (DEBUG_LOG_TEST) {                                            \
+      ::mozilla::baseprofiler::PrintToConsole(                       \
+          "[D %d/%d] " arg "\n",                                     \
+          int(::mozilla::baseprofiler::profiler_current_process_id() \
+                  .ToNumber()),                                      \
+          int(::mozilla::baseprofiler::profiler_current_thread_id()  \
+                  .ToNumber()),                                      \
+          ##__VA_ARGS__);                                            \
+    }                                                                \
   } while (0)
 
 // These are for MOZ_BASE_PROFILER_VERBOSE_LOGGING. It should be used for
 // logging that is somewhat more verbose than DEBUG_LOG.
 #define VERBOSE_LOG_TEST ::mozilla::baseprofiler::LogTest(5)
-#define VERBOSE_LOG(arg, ...)                                   \
-  do {                                                          \
-    if (VERBOSE_LOG_TEST) {                                     \
-      ::mozilla::baseprofiler::PrintToConsole(                  \
-          "[V %d/%d] " arg "\n", profiler_current_process_id(), \
-          profiler_current_thread_id(), ##__VA_ARGS__);         \
-    }                                                           \
+#define VERBOSE_LOG(arg, ...)                                        \
+  do {                                                               \
+    if (VERBOSE_LOG_TEST) {                                          \
+      ::mozilla::baseprofiler::PrintToConsole(                       \
+          "[V %d/%d] " arg "\n",                                     \
+          int(::mozilla::baseprofiler::profiler_current_process_id() \
+                  .ToNumber()),                                      \
+          int(::mozilla::baseprofiler::profiler_current_thread_id()  \
+                  .ToNumber()),                                      \
+          ##__VA_ARGS__);                                            \
+    }                                                                \
   } while (0)
 
 namespace mozilla {
@@ -89,6 +102,15 @@ namespace mozilla {
 class JSONWriter;
 
 namespace baseprofiler {
+
+// If positive, skip stack-sampling in the sampler thread loop.
+// Users should increment it atomically when samplings should be avoided, and
+// later decrement it back. Multiple uses can overlap.
+// There could be a sampling in progress when this is first incremented, so if
+// it is critical to prevent any sampling, lock the profiler mutex instead.
+// Relaxed ordering, because it's used to request that the profiler pause
+// future sampling; this is not time critical, nor dependent on anything else.
+extern mozilla::Atomic<int, mozilla::MemoryOrdering::Relaxed> gSkipSampling;
 
 typedef uint8_t* Address;
 
@@ -101,22 +123,17 @@ struct PlatformDataDestructor {
 };
 
 typedef UniquePtr<PlatformData, PlatformDataDestructor> UniquePlatformData;
-UniquePlatformData AllocPlatformData(int aThreadId);
+UniquePlatformData AllocPlatformData(BaseProfilerThreadId aThreadId);
 
 // Convert the array of strings to a bitfield.
 uint32_t ParseFeaturesFromStringArray(const char** aFeatures,
                                       uint32_t aFeatureCount,
                                       bool aIsStartup = false);
 
-void profiler_get_profile_json_into_lazily_allocated_buffer(
-    const std::function<char*(size_t)>& aAllocator, double aSinceTime,
-    bool aIsShuttingDown);
-
 // Flags to conveniently track various JS instrumentations.
 enum class JSInstrumentationFlags {
   StackSampling = 0x1,
-  TraceLogging = 0x2,
-  Allocations = 0x4,
+  Allocations = 0x2,
 };
 
 // Record an exit profile from a child process.

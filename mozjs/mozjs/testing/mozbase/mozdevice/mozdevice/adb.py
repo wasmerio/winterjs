@@ -752,8 +752,8 @@ class ADBDevice(ADBCommand):
 
        adbdevice = ADBDevice()
        print(adbdevice.list_files("/mnt/sdcard"))
-       if adbdevice.process_exist("org.mozilla.geckoview.test"):
-           print("org.mozilla.geckoview.test is running")
+       if adbdevice.process_exist("org.mozilla.geckoview.test_runner"):
+           print("org.mozilla.geckoview.test_runner is running")
     """
 
     SOCKET_DIRECTION_REVERSE = "reverse"
@@ -2089,14 +2089,21 @@ class ADBDevice(ADBCommand):
                 exitcode = adb_process.proc.poll()
         else:
             stdout2 = io.open(adb_process.stdout_file.name, "rb")
+            partial = b""
             while ((time.time() - start_time) <= float(timeout)) and exitcode is None:
                 try:
                     line = _timed_read_line(stdout2)
                     if line and len(line) > 0:
-                        line = line.rstrip()
-                        if self._verbose:
-                            self._logger.info(six.ensure_str(line))
-                        stdout_callback(line)
+                        if line.endswith(b"\n") or line.endswith(b"\r"):
+                            line = partial + line
+                            partial = b""
+                            line = line.rstrip()
+                            if self._verbose:
+                                self._logger.info(six.ensure_str(line))
+                            stdout_callback(line)
+                        else:
+                            # no more output available now, but more to come?
+                            partial = partial + line
                     else:
                         # no new output, so sleep and poll
                         time.sleep(self._polling_interval)
@@ -2122,8 +2129,16 @@ class ADBDevice(ADBCommand):
         if stdout_callback:
             line = stdout2.readline()
             while line:
-                stdout_callback(line.rstrip())
+                if line.endswith(b"\n") or line.endswith(b"\r"):
+                    line = partial + line
+                    partial = b""
+                    stdout_callback(line.rstrip())
+                else:
+                    # no more output available now, but more to come?
+                    partial = partial + line
                 line = stdout2.readline()
+            if partial:
+                stdout_callback(partial)
             stdout2.close()
 
         adb_process.stdout_file.seek(0, os.SEEK_SET)
@@ -3860,6 +3875,28 @@ class ADBDevice(ADBCommand):
 
     # Application management methods
 
+    def add_change_device_settings(self, app_name, timeout=None):
+        """
+        Allows the test to change Android device settings.
+        :param str: app_name: Name of application (e.g. `org.mozilla.fennec`)
+        """
+        self.shell_output(
+            "appops set %s android:write_settings allow" % app_name,
+            timeout=timeout,
+            enable_run_as=False,
+        )
+
+    def add_mock_location(self, app_name, timeout=None):
+        """
+        Allows the Android device to use mock locations.
+        :param str: app_name: Name of application (e.g. `org.mozilla.fennec`)
+        """
+        self.shell_output(
+            "appops set %s android:mock_location allow" % app_name,
+            timeout=timeout,
+            enable_run_as=False,
+        )
+
     def grant_runtime_permissions(self, app_name, timeout=None):
         """
         Grant required runtime permissions to the specified app
@@ -3889,6 +3926,93 @@ class ADBDevice(ADBCommand):
                         "Unable to grant runtime permission %s to %s due to %s"
                         % (permission, app_name, e)
                     )
+
+    def install_app_bundle(self, bundletool, bundle_path, java_home=None, timeout=None):
+        """Installs an app bundle (AAB) on the device.
+
+        :param str bundletool: Path to the bundletool jar
+        :param str bundle_path: The aab file name to be installed.
+        :param int timeout: The maximum time in
+            seconds for any spawned adb process to complete before
+            throwing an ADBTimeoutError.
+            This timeout is per adb call. The total time spent
+            may exceed this value. If it is not specified, the value
+            set in the ADB constructor is used.
+        :param str java_home: Path to the JDK location. Will default to
+            $JAVA_HOME when not specififed.
+        :raises: :exc:`ADBTimeoutError`
+                 :exc:`ADBError`
+        """
+        device_serial = self._device_serial or os.environ.get("ANDROID_SERIAL")
+        java_home = java_home or os.environ.get("JAVA_HOME")
+        with tempfile.TemporaryDirectory() as temporaryDirectory:
+            # bundletool doesn't come with a debug-key so we need to provide
+            # one ourselves.
+            keystore_path = os.path.join(temporaryDirectory, "debug.keystore")
+            keytool_path = os.path.join(java_home, "bin", "keytool")
+            key_gen = [
+                keytool_path,
+                "-genkey",
+                "-v",
+                "-keystore",
+                keystore_path,
+                "-alias",
+                "androiddebugkey",
+                "-storepass",
+                "android",
+                "-keypass",
+                "android",
+                "-keyalg",
+                "RSA",
+                "-validity",
+                "14000",
+                "-dname",
+                "cn=Unknown, ou=Unknown, o=Unknown, c=Unknown",
+            ]
+            self._logger.info("key_gen: %s" % key_gen)
+            try:
+                subprocess.check_call(key_gen, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise ADBTimeoutError("ADBDevice: unable to generate key")
+
+            apks_path = "{}/tmp.apks".format(temporaryDirectory)
+            java_path = os.path.join(java_home, "bin", "java")
+            build_apks = [
+                java_path,
+                "-jar",
+                bundletool,
+                "build-apks",
+                "--bundle={}".format(bundle_path),
+                "--output={}".format(apks_path),
+                "--connected-device",
+                "--device-id={}".format(device_serial),
+                "--adb={}".format(self._adb_path),
+                "--ks={}".format(keystore_path),
+                "--ks-key-alias=androiddebugkey",
+                "--key-pass=pass:android",
+                "--ks-pass=pass:android",
+            ]
+            self._logger.info("build_apks: %s" % build_apks)
+
+            try:
+                subprocess.check_call(build_apks, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise ADBTimeoutError("ADBDevice: unable to generate apks")
+            install_apks = [
+                java_path,
+                "-jar",
+                bundletool,
+                "install-apks",
+                "--apks={}".format(apks_path),
+                "--device-id={}".format(device_serial),
+                "--adb={}".format(self._adb_path),
+            ]
+            self._logger.info("install_apks: %s" % install_apks)
+
+            try:
+                subprocess.check_call(install_apks, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise ADBTimeoutError("ADBDevice: unable to install apks")
 
     def install_app(self, apk_path, replace=False, timeout=None):
         """Installs an app on the device.
@@ -3957,6 +4081,7 @@ class ADBDevice(ADBCommand):
         fail_if_running=True,
         grant_runtime_permissions=True,
         timeout=None,
+        is_service=False,
     ):
         """Launches an Android application
 
@@ -3977,6 +4102,7 @@ class ADBDevice(ADBCommand):
             This timeout is per adb call. The total time spent
             may exceed this value. If it is not specified, the value
             set in the ADB constructor is used.
+        :param bool is_service: Whether we want to launch a service or not.
         :raises: :exc:`ADBTimeoutError`
                  :exc:`ADBError`
         """
@@ -3992,7 +4118,8 @@ class ADBDevice(ADBCommand):
         if grant_runtime_permissions:
             self.grant_runtime_permissions(app_name)
 
-        acmd = ["am", "start"] + [
+        acmd = ["am"] + [
+            "startservice" if is_service else "start",
             "-W" if wait else "",
             "-n",
             "%s/%s" % (app_name, activity_name),
@@ -4084,6 +4211,76 @@ class ADBDevice(ADBCommand):
             timeout=timeout,
         )
 
+    def launch_service(
+        self,
+        app_name,
+        activity_name=None,
+        intent="android.intent.action.MAIN",
+        moz_env=None,
+        extra_args=None,
+        url=None,
+        e10s=False,
+        wait=True,
+        grant_runtime_permissions=False,
+        out_file=None,
+        timeout=None,
+    ):
+        """Convenience method to launch a service on Android with various
+        debugging arguments; convenient for geckoview apps.
+
+        :param str app_name: Name of application (e.g.
+            `org.mozilla.geckoview_example` or `org.mozilla.geckoview.test_runner`)
+        :param str activity_name: Activity name, like `GeckoViewActivity`, or
+            `TestRunnerActivity`.
+        :param str intent: Intent to launch application.
+        :param str moz_env: Mozilla specific environment to pass into
+            application.
+        :param str extra_args: Extra arguments to be parsed by the app.
+        :param str url: URL to open
+        :param bool e10s: If True, run in multiprocess mode.
+        :param bool wait: If True, wait for application to start before
+            returning.
+        :param bool grant_runtime_permissions: Grant special runtime
+            permissions.
+        :param str out_file: File where to redirect the output to
+        :param int timeout: The maximum time in
+            seconds for any spawned adb process to complete before
+            throwing an ADBTimeoutError.
+            This timeout is per adb call. The total time spent
+            may exceed this value. If it is not specified, the value
+            set in the ADB constructor is used.
+        :raises: :exc:`ADBTimeoutError`
+                 :exc:`ADBError`
+        """
+        extras = {}
+
+        if moz_env:
+            # moz_env is expected to be a dictionary of environment variables:
+            # geckoview_example itself will set them when launched
+            for (env_count, (env_key, env_val)) in enumerate(moz_env.items()):
+                extras["env" + str(env_count)] = env_key + "=" + env_val
+
+        # Additional command line arguments that the app will read and use (e.g.
+        # with a custom profile)
+        if extra_args:
+            for (arg_count, arg) in enumerate(extra_args):
+                extras["arg" + str(arg_count)] = arg
+
+        extras["use_multiprocess"] = e10s
+        extras["out_file"] = out_file
+        self.launch_application(
+            app_name,
+            "%s.%s" % (app_name, activity_name),
+            intent,
+            url=url,
+            extras=extras,
+            wait=wait,
+            grant_runtime_permissions=grant_runtime_permissions,
+            timeout=timeout,
+            is_service=True,
+            fail_if_running=False,
+        )
+
     def launch_activity(
         self,
         app_name,
@@ -4101,7 +4298,7 @@ class ADBDevice(ADBCommand):
         debugging arguments; convenient for geckoview apps.
 
         :param str app_name: Name of application (e.g.
-            `org.mozilla.geckoview_example` or `org.mozilla.geckoview.test`)
+            `org.mozilla.geckoview_example` or `org.mozilla.geckoview.test_runner`)
         :param str activity_name: Activity name, like `GeckoViewActivity`, or
             `TestRunnerActivity`.
         :param str intent: Intent to launch application.
@@ -4134,7 +4331,9 @@ class ADBDevice(ADBCommand):
         # Additional command line arguments that the app will read and use (e.g.
         # with a custom profile)
         if extra_args:
-            extras["args"] = " ".join(extra_args)
+            for (arg_count, arg) in enumerate(extra_args):
+                extras["arg" + str(arg_count)] = arg
+
         extras["use_multiprocess"] = e10s
         self.launch_application(
             app_name,

@@ -10,23 +10,23 @@
 #define vm_ObjectOperations_h
 
 #include "mozilla/Attributes.h"  // MOZ_ALWAYS_INLINE
+#include "mozilla/Maybe.h"
 
 #include <stdint.h>  // uint32_t
 
-#include "jsapi.h"  // JSPROP_ENUMERATE, JS::PropertyDescriptor
+#include "js/Id.h"  // INT_TO_JSID, jsid, JSID_INT_MAX, SYMBOL_TO_JSID
+#include "js/PropertyDescriptor.h"  // JSPROP_ENUMERATE, JS::PropertyDescriptor
+#include "js/RootingAPI.h"          // JS::Handle, JS::MutableHandle, JS::Rooted
+#include "js/TypeDecls.h"           // fwd-decl: JSContext, Symbol, Value
+#include "vm/StringType.h"          // js::NameToId
 
-#include "js/Class.h"       // JS::ObjectOpResult
-#include "js/Id.h"          // INT_TO_JSID, jsid, JSID_INT_MAX, SYMBOL_TO_JSID
-#include "js/RootingAPI.h"  // JS::Handle, JS::MutableHandle, JS::Rooted
-#include "js/Value.h"       // JS::Value
-#include "vm/JSContext.h"   // JSContext
-#include "vm/JSObject.h"    // JSObject
-#include "vm/StringType.h"  // js::NameToId
-#include "vm/SymbolType.h"  // JS::Symbol
+namespace JS {
+class ObjectOpResult;
+}
 
 namespace js {
 
-class PropertyName;
+class PropertyResult;
 
 // The functions below are the fundamental operations on objects. See the
 // comment about "Standard internal methods" in jsapi.h.
@@ -77,12 +77,11 @@ extern bool PreventExtensions(JSContext* cx, JS::Handle<JSObject*> obj);
 /*
  * ES6 [[GetOwnProperty]]. Get a description of one of obj's own properties.
  *
- * If no such property exists on obj, return true with desc.object() set to
- * null.
+ * If no such property exists on obj, desc will be Nothing().
  */
 extern bool GetOwnPropertyDescriptor(
     JSContext* cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-    JS::MutableHandle<JS::PropertyDescriptor> desc);
+    JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
 
 /* ES6 [[DefineOwnProperty]]. Define a property on obj. */
 extern bool DefineProperty(JSContext* cx, JS::Handle<JSObject*> obj,
@@ -265,9 +264,15 @@ extern bool GetPrototypeIfOrdinary(JSContext* cx, JS::Handle<JSObject*> obj,
 extern bool SetImmutablePrototype(JSContext* cx, JS::Handle<JSObject*> obj,
                                   bool* succeeded);
 
-extern bool GetPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> obj,
-                                  JS::Handle<jsid> id,
-                                  MutableHandle<JS::PropertyDescriptor> desc);
+/*
+ * Deprecated. Finds a PropertyDescriptor somewhere along the prototype chain,
+ * similar to GetOwnPropertyDescriptor. |holder| indicates on which object the
+ * property was found.
+ */
+extern bool GetPropertyDescriptor(
+    JSContext* cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
+    MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc,
+    JS::MutableHandle<JSObject*> holder);
 
 /*
  * Deprecated. A version of HasProperty that also returns the object on which
@@ -277,12 +282,12 @@ extern bool GetPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> obj,
 extern bool LookupProperty(JSContext* cx, JS::Handle<JSObject*> obj,
                            JS::Handle<jsid> id,
                            JS::MutableHandle<JSObject*> objp,
-                           MutableHandle<PropertyResult> propp);
+                           PropertyResult* propp);
 
 inline bool LookupProperty(JSContext* cx, JS::Handle<JSObject*> obj,
                            PropertyName* name,
                            JS::MutableHandle<JSObject*> objp,
-                           MutableHandle<PropertyResult> propp) {
+                           PropertyResult* propp) {
   JS::Rooted<jsid> id(cx, NameToId(name));
   return LookupProperty(cx, obj, id, objp, propp);
 }

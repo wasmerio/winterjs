@@ -76,6 +76,7 @@ arg_writer_info = {
     "IntPtrId": ("IntPtrOperandId", "writeOperandId"),
     "RawId": ("OperandId", "writeOperandId"),
     "ShapeField": ("Shape*", "writeShapeField"),
+    "GetterSetterField": ("GetterSetter*", "writeGetterSetterField"),
     "ObjectField": ("JSObject*", "writeObjectField"),
     "StringField": ("JSString*", "writeStringField"),
     "AtomField": ("JSAtom*", "writeStringField"),
@@ -87,6 +88,8 @@ arg_writer_info = {
     "IdField": ("jsid", "writeIdField"),
     "ValueField": ("const Value&", "writeValueField"),
     "RawInt64Field": ("uint64_t", "writeRawInt64Field"),
+    "DoubleField": ("double", "writeDoubleField"),
+    "AllocSiteField": ("gc::AllocSite*", "writeAllocSiteField"),
     "JSOpImm": ("JSOp", "writeJSOpImm"),
     "BoolImm": ("bool", "writeBoolImm"),
     "ByteImm": ("uint32_t", "writeByteImm"),  # uint32_t to enable fits-in-byte asserts.
@@ -101,6 +104,8 @@ arg_writer_info = {
     "UInt32Imm": ("uint32_t", "writeUInt32Imm"),
     "JSNativeImm": ("JSNative", "writeJSNativeImm"),
     "StaticStringImm": ("const char*", "writeStaticStringImm"),
+    "AllocKindImm": ("gc::AllocKind", "writeAllocKindImm"),
+    "CompletionKindImm": ("CompletionKind", "writeCompletionKindImm"),
 }
 
 
@@ -170,6 +175,7 @@ arg_reader_info = {
     "IntPtrId": ("IntPtrOperandId", "Id", "reader.intPtrOperandId()"),
     "RawId": ("uint32_t", "Id", "reader.rawOperandId()"),
     "ShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "GetterSetterField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "StringField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "AtomField": ("uint32_t", "Offset", "reader.stubOffset()"),
@@ -181,6 +187,8 @@ arg_reader_info = {
     "IdField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ValueField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawInt64Field": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "DoubleField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "AllocSiteField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "JSOpImm": ("JSOp", "", "reader.jsop()"),
     "BoolImm": ("bool", "", "reader.readBool()"),
     "ByteImm": ("uint8_t", "", "reader.readByte()"),
@@ -195,6 +203,8 @@ arg_reader_info = {
     "UInt32Imm": ("uint32_t", "", "reader.uint32Immediate()"),
     "JSNativeImm": ("JSNative", "", "reinterpret_cast<JSNative>(reader.pointer())"),
     "StaticStringImm": ("const char*", "", "reinterpret_cast<char*>(reader.pointer())"),
+    "AllocKindImm": ("gc::AllocKind", "", "reader.allocKind()"),
+    "CompletionKindImm": ("CompletionKind", "", "reader.completionKind()"),
 }
 
 
@@ -250,6 +260,7 @@ arg_spewer_method = {
     "IntPtrId": "spewOperandId",
     "RawId": "spewRawOperandId",
     "ShapeField": "spewField",
+    "GetterSetterField": "spewField",
     "ObjectField": "spewField",
     "StringField": "spewField",
     "AtomField": "spewField",
@@ -261,6 +272,8 @@ arg_spewer_method = {
     "IdField": "spewField",
     "ValueField": "spewField",
     "RawInt64Field": "spewField",
+    "DoubleField": "spewField",
+    "AllocSiteField": "spewField",
     "JSOpImm": "spewJSOpImm",
     "BoolImm": "spewBoolImm",
     "ByteImm": "spewByteImm",
@@ -275,6 +288,8 @@ arg_spewer_method = {
     "UInt32Imm": "spewUInt32Imm",
     "JSNativeImm": "spewJSNativeImm",
     "StaticStringImm": "spewStaticStringImm",
+    "AllocKindImm": "spewAllocKindImm",
+    "CompletionKindImm": "spewCompletionKindImm",
 }
 
 
@@ -381,6 +396,7 @@ arg_length = {
     "IntPtrId": 1,
     "RawId": 1,
     "ShapeField": 1,
+    "GetterSetterField": 1,
     "ObjectField": 1,
     "StringField": 1,
     "AtomField": 1,
@@ -390,8 +406,10 @@ arg_length = {
     "RawInt32Field": 1,
     "RawPointerField": 1,
     "RawInt64Field": 1,
+    "DoubleField": 1,
     "IdField": 1,
     "ValueField": 1,
+    "AllocSiteField": 1,
     "ByteImm": 1,
     "BoolImm": 1,
     "CallFlagsImm": 1,
@@ -406,6 +424,8 @@ arg_length = {
     "UInt32Imm": 4,
     "JSNativeImm": "sizeof(uintptr_t)",
     "StaticStringImm": "sizeof(uintptr_t)",
+    "AllocKindImm": 1,
+    "CompletionKindImm": 1,
 }
 
 

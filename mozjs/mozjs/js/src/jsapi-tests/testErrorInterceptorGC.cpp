@@ -1,5 +1,4 @@
-#include "jsapi.h"
-
+#include "js/ErrorInterceptor.h"
 #include "jsapi-tests/tests.h"
 
 namespace {
@@ -8,7 +7,7 @@ namespace {
 struct ErrorInterceptorWithGC : JSErrorInterceptor {
   void interceptError(JSContext* cx, JS::HandleValue val) override {
     JS::PrepareForFullGC(cx);
-    JS::NonIncrementalGC(cx, GC_SHRINK, JS::GCReason::DEBUG_GC);
+    JS::NonIncrementalGC(cx, JS::GCOptions::Shrink, JS::GCReason::DEBUG_GC);
   }
 };
 

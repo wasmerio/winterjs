@@ -13,46 +13,51 @@
 #include <stddef.h>  // size_t
 #include <stdint.h>  // int32_t, uint32_t
 
-#include "builtin/SelfHostingDefines.h"  // MODULE_OBJECT_*
-#include "gc/Barrier.h"                  // HeapPtr, PreBarrieredId
-#include "gc/Rooting.h"                  // HandleAtom, HandleArrayObject
-#include "gc/ZoneAllocator.h"            // ZoneAllocPolicy
-#include "js/Class.h"                    // JSClass, ObjectOpResult
-#include "js/GCVector.h"                 // GCVector
-#include "js/Id.h"                       // jsid
-#include "js/Modules.h"                  // JS::DynamicImportStatus
-#include "js/PropertyDescriptor.h"       // PropertyDescriptor
-#include "js/Proxy.h"                    // BaseProxyHandler
-#include "js/RootingAPI.h"               // Rooted, Handle, MutableHandle
+#include "gc/Barrier.h"        // HeapPtr
+#include "gc/ZoneAllocator.h"  // CellAllocPolicy
+#include "js/Class.h"          // JSClass, ObjectOpResult
+#include "js/Id.h"             // jsid
+#include "js/Modules.h"
+#include "js/Proxy.h"       // BaseProxyHandler
+#include "js/RootingAPI.h"  // Rooted, Handle, MutableHandle
 #include "js/TypeDecls.h"  // HandleValue, HandleId, HandleObject, HandleScript, MutableHandleValue, MutableHandleIdVector, MutableHandleObject
 #include "js/UniquePtr.h"  // UniquePtr
-#include "js/Value.h"      // JS::Value
-#include "vm/JSAtom.h"     // JSAtom
 #include "vm/JSObject.h"   // JSObject
-#include "vm/List.h"       // ListObject
-#include "vm/NativeObject.h"   // NativeObject
-#include "vm/PromiseObject.h"  // js::PromiseObject
-#include "vm/ProxyObject.h"    // ProxyObject
-#include "vm/Xdr.h"            // XDRMode, XDRResult, XDRState
+#include "vm/NativeObject.h"  // NativeObject
+#include "vm/ProxyObject.h"   // ProxyObject
 
-class JSFreeOp;
+class JSAtom;
 class JSScript;
 class JSTracer;
+
+namespace JS {
+class PropertyDescriptor;
+class Value;
+}  // namespace JS
 
 namespace js {
 
 class ArrayObject;
-class Shape;
-class Scope;
+class ListObject;
+class PromiseObject;
 class ScriptSourceObject;
 
 class ModuleEnvironmentObject;
 class ModuleObject;
 
-using RootedModuleObject = Rooted<ModuleObject*>;
-using HandleModuleObject = Handle<ModuleObject*>;
-using RootedModuleEnvironmentObject = Rooted<ModuleEnvironmentObject*>;
-using HandleModuleEnvironmentObject = Handle<ModuleEnvironmentObject*>;
+class ModuleRequestObject : public NativeObject {
+ public:
+  enum { SpecifierSlot = 0, AssertionSlot, SlotCount };
+
+  static const JSClass class_;
+  static bool isInstance(HandleValue value);
+  [[nodiscard]] static ModuleRequestObject* create(
+      JSContext* cx, Handle<JSAtom*> specifier,
+      Handle<ArrayObject*> maybeAssertions);
+
+  JSAtom* specifier() const;
+  ArrayObject* assertions() const;
+};
 
 class ImportEntryObject : public NativeObject {
  public:
@@ -67,25 +72,16 @@ class ImportEntryObject : public NativeObject {
 
   static const JSClass class_;
   static bool isInstance(HandleValue value);
-  static ImportEntryObject* create(JSContext* cx, HandleAtom moduleRequest,
-                                   HandleAtom maybeImportName,
-                                   HandleAtom localName, uint32_t lineNumber,
-                                   uint32_t columnNumber);
-  JSAtom* moduleRequest() const;
+  static ImportEntryObject* create(JSContext* cx, HandleObject moduleRequest,
+                                   Handle<JSAtom*> maybeImportName,
+                                   Handle<JSAtom*> localName,
+                                   uint32_t lineNumber, uint32_t columnNumber);
+  ModuleRequestObject* moduleRequest() const;
   JSAtom* importName() const;
   JSAtom* localName() const;
   uint32_t lineNumber() const;
   uint32_t columnNumber() const;
 };
-
-using RootedImportEntryObject = Rooted<ImportEntryObject*>;
-using HandleImportEntryObject = Handle<ImportEntryObject*>;
-using RootedImportEntryVector = Rooted<GCVector<ImportEntryObject*> >;
-using MutableHandleImportEntryObject = MutableHandle<ImportEntryObject*>;
-
-template <XDRMode mode>
-XDRResult XDRImportEntryObject(XDRState<mode>* xdr,
-                               MutableHandleImportEntryObject impObj);
 
 class ExportEntryObject : public NativeObject {
  public:
@@ -101,63 +97,61 @@ class ExportEntryObject : public NativeObject {
 
   static const JSClass class_;
   static bool isInstance(HandleValue value);
-  static ExportEntryObject* create(JSContext* cx, HandleAtom maybeExportName,
-                                   HandleAtom maybeModuleRequest,
-                                   HandleAtom maybeImportName,
-                                   HandleAtom maybeLocalName,
+  static ExportEntryObject* create(JSContext* cx,
+                                   Handle<JSAtom*> maybeExportName,
+                                   HandleObject maybeModuleRequest,
+                                   Handle<JSAtom*> maybeImportName,
+                                   Handle<JSAtom*> maybeLocalName,
                                    uint32_t lineNumber, uint32_t columnNumber);
   JSAtom* exportName() const;
-  JSAtom* moduleRequest() const;
+  ModuleRequestObject* moduleRequest() const;
   JSAtom* importName() const;
   JSAtom* localName() const;
   uint32_t lineNumber() const;
   uint32_t columnNumber() const;
 };
 
-template <XDRMode mode>
-XDRResult XDRExportEntries(XDRState<mode>* xdr, MutableHandleArrayObject vec);
-
-using RootedExportEntryObject = Rooted<ExportEntryObject*>;
-using HandleExportEntryObject = Handle<ExportEntryObject*>;
-
 class RequestedModuleObject : public NativeObject {
  public:
-  enum { ModuleSpecifierSlot = 0, LineNumberSlot, ColumnNumberSlot, SlotCount };
+  enum { ModuleRequestSlot = 0, LineNumberSlot, ColumnNumberSlot, SlotCount };
 
   static const JSClass class_;
   static bool isInstance(HandleValue value);
   static RequestedModuleObject* create(JSContext* cx,
-                                       HandleAtom moduleSpecifier,
+                                       HandleObject moduleRequest,
                                        uint32_t lineNumber,
                                        uint32_t columnNumber);
-  JSAtom* moduleSpecifier() const;
+  ModuleRequestObject* moduleRequest() const;
   uint32_t lineNumber() const;
   uint32_t columnNumber() const;
 };
 
-using RootedRequestedModuleObject = Rooted<RequestedModuleObject*>;
-using HandleRequestedModuleObject = Handle<RequestedModuleObject*>;
-using RootedRequestedModuleVector = Rooted<GCVector<RequestedModuleObject*> >;
-using MutableHandleRequestedModuleObject =
-    MutableHandle<RequestedModuleObject*>;
+class ResolvedBindingObject : public NativeObject {
+ public:
+  enum { ModuleSlot = 0, BindingNameSlot, SlotCount };
 
-template <XDRMode mode>
-XDRResult XDRRequestedModuleObject(XDRState<mode>* xdr,
-                                   MutableHandleRequestedModuleObject reqObj);
+  static const JSClass class_;
+  static bool isInstance(HandleValue value);
+  static ResolvedBindingObject* create(JSContext* cx,
+                                       Handle<ModuleObject*> module,
+                                       Handle<JSAtom*> bindingName);
+  ModuleObject* module() const;
+  JSAtom* bindingName() const;
+};
 
 class IndirectBindingMap {
  public:
   void trace(JSTracer* trc);
 
   bool put(JSContext* cx, HandleId name,
-           HandleModuleEnvironmentObject environment, HandleId localName);
+           Handle<ModuleEnvironmentObject*> environment, HandleId targetName);
 
   size_t count() const { return map_ ? map_->count() : 0; }
 
   bool has(jsid name) const { return map_ ? map_->has(name) : false; }
 
   bool lookup(jsid name, ModuleEnvironmentObject** envOut,
-              Shape** shapeOut) const;
+              mozilla::Maybe<PropertyInfo>* propOut) const;
 
   template <typename Func>
   void forEachExportedName(Func func) const {
@@ -172,14 +166,18 @@ class IndirectBindingMap {
 
  private:
   struct Binding {
-    Binding(ModuleEnvironmentObject* environment, Shape* shape);
+    Binding(ModuleEnvironmentObject* environment, jsid targetName,
+            PropertyInfo prop);
     HeapPtr<ModuleEnvironmentObject*> environment;
-    HeapPtr<Shape*> shape;
+#ifdef DEBUG
+    HeapPtr<jsid> targetName;
+#endif
+    PropertyInfo prop;
   };
 
-  using Map =
-      mozilla::HashMap<PreBarrieredId, Binding,
-                       mozilla::DefaultHasher<PreBarrieredId>, ZoneAllocPolicy>;
+  using Map = mozilla::HashMap<PreBarriered<jsid>, Binding,
+                               mozilla::DefaultHasher<PreBarriered<jsid>>,
+                               CellAllocPolicy>;
 
   mozilla::Maybe<Map> map_;
 };
@@ -189,16 +187,18 @@ class ModuleNamespaceObject : public ProxyObject {
   enum ModuleNamespaceSlot { ExportsSlot = 0, BindingsSlot };
 
   static bool isInstance(HandleValue value);
-  static ModuleNamespaceObject* create(JSContext* cx, HandleModuleObject module,
-                                       HandleObject exports,
+  static ModuleNamespaceObject* create(JSContext* cx,
+                                       Handle<ModuleObject*> module,
+                                       Handle<ArrayObject*> exports,
                                        UniquePtr<IndirectBindingMap> bindings);
 
   ModuleObject& module();
-  JSObject& exports();
+  ArrayObject& exports();
   IndirectBindingMap& bindings();
 
-  bool addBinding(JSContext* cx, HandleAtom exportedName,
-                  HandleModuleObject targetModule, HandleAtom localName);
+  bool addBinding(JSContext* cx, Handle<JSAtom*> exportedName,
+                  Handle<ModuleObject*> targetModule,
+                  Handle<JSAtom*> targetName);
 
  private:
   struct ProxyHandler : public BaseProxyHandler {
@@ -206,7 +206,7 @@ class ModuleNamespaceObject : public ProxyObject {
 
     bool getOwnPropertyDescriptor(
         JSContext* cx, HandleObject proxy, HandleId id,
-        MutableHandle<PropertyDescriptor> desc) const override;
+        MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const override;
     bool defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
                         Handle<PropertyDescriptor> desc,
                         ObjectOpResult& result) const override;
@@ -236,7 +236,7 @@ class ModuleNamespaceObject : public ProxyObject {
              HandleValue receiver, ObjectOpResult& result) const override;
 
     void trace(JSTracer* trc, JSObject* proxy) const override;
-    void finalize(JSFreeOp* fop, JSObject* proxy) const override;
+    void finalize(JS::GCContext* gcx, JSObject* proxy) const override;
 
     static const char family;
   };
@@ -247,11 +247,46 @@ class ModuleNamespaceObject : public ProxyObject {
   static const ProxyHandler proxyHandler;
 };
 
-using RootedModuleNamespaceObject = Rooted<ModuleNamespaceObject*>;
-using HandleModuleNamespaceObject = Handle<ModuleNamespaceObject*>;
+// Value types of [[Status]] in a Cyclic Module Record
+// https://tc39.es/ecma262/#table-cyclic-module-fields
+enum class ModuleStatus : int32_t {
+  Unlinked,
+  Linking,
+  Linked,
+  Evaluating,
+  EvaluatingAsync,
+  Evaluated,
 
-// Possible values for ModuleStatus are defined in SelfHostingDefines.h.
-using ModuleStatus = int32_t;
+  // Sub-state of Evaluated with error value set.
+  //
+  // This is not returned from ModuleObject::status(); use hadEvaluationError()
+  // to check this.
+  Evaluated_Error
+};
+
+// Special values for ModuleObject's AsyncEvaluatingPostOrderSlot slot, which is
+// used to implement the AsyncEvaluation field of cyclic module records.
+//
+// The spec requires us to distinguish true, false, and 'never previously set to
+// true', as well as the order in which the field was set to true for async
+// evaluating modules.
+//
+// This is arranged by using an integer to record the order. Undefined is used
+// to mean false and any integer value true. While a module is async evaluating
+// the integer value gives the order that the field was set to true. After
+// evaluation is complete the value is set to ASYNC_EVALUATING_POST_ORDER_TRUE,
+// which still signifies true but loses the order information.
+//
+// See https://tc39.es/ecma262/#sec-cyclic-module-records for field defintion.
+// See https://tc39.es/ecma262/#sec-async-module-execution-fulfilled for sort
+// requirement.
+
+// True value that also indicates that the field was previously true.
+constexpr uint32_t ASYNC_EVALUATING_POST_ORDER_TRUE = 0;
+
+// Initial value for the runtime's counter used to generate these values; the
+// first non-false value.
+constexpr uint32_t ASYNC_EVALUATING_POST_ORDER_INIT = 1;
 
 class ModuleObject : public NativeObject {
  public:
@@ -272,33 +307,14 @@ class ModuleObject : public NativeObject {
     FunctionDeclarationsSlot,
     DFSIndexSlot,
     DFSAncestorIndexSlot,
-    AsyncSlot,
-    AsyncEvaluatingSlot,
+    HasTopLevelAwaitSlot,
+    AsyncEvaluatingPostOrderSlot,
     TopLevelCapabilitySlot,
     AsyncParentModulesSlot,
     PendingAsyncDependenciesSlot,
     CycleRootSlot,
     SlotCount
   };
-
-  static_assert(EnvironmentSlot == MODULE_OBJECT_ENVIRONMENT_SLOT,
-                "EnvironmentSlot must match self-hosting define");
-  static_assert(StatusSlot == MODULE_OBJECT_STATUS_SLOT,
-                "StatusSlot must match self-hosting define");
-  static_assert(EvaluationErrorSlot == MODULE_OBJECT_EVALUATION_ERROR_SLOT,
-                "EvaluationErrorSlot must match self-hosting define");
-  static_assert(DFSIndexSlot == MODULE_OBJECT_DFS_INDEX_SLOT,
-                "DFSIndexSlot must match self-hosting define");
-  static_assert(DFSAncestorIndexSlot == MODULE_OBJECT_DFS_ANCESTOR_INDEX_SLOT,
-                "DFSAncestorIndexSlot must match self-hosting define");
-  static_assert(AsyncEvaluatingSlot == MODULE_OBJECT_ASYNC_EVALUATING_SLOT,
-                "AsyncEvaluatingSlot must match self-hosting define");
-  static_assert(TopLevelCapabilitySlot ==
-                    MODULE_OBJECT_TOP_LEVEL_CAPABILITY_SLOT,
-                "topLevelCapabilitySlot must match self-hosting define");
-  static_assert(PendingAsyncDependenciesSlot ==
-                    MODULE_OBJECT_PENDING_ASYNC_DEPENDENCIES_SLOT,
-                "PendingAsyncDependenciesSlot must match self-hosting define");
 
   static const JSClass class_;
 
@@ -313,27 +329,28 @@ class ModuleObject : public NativeObject {
       Handle<ModuleEnvironmentObject*> initialEnvironment);
 
   void initStatusSlot();
-  void initImportExportData(HandleArrayObject requestedModules,
-                            HandleArrayObject importEntries,
-                            HandleArrayObject localExportEntries,
-                            HandleArrayObject indiretExportEntries,
-                            HandleArrayObject starExportEntries);
-  static bool Freeze(JSContext* cx, HandleModuleObject self);
+  void initImportExportData(Handle<ArrayObject*> requestedModules,
+                            Handle<ArrayObject*> importEntries,
+                            Handle<ArrayObject*> localExportEntries,
+                            Handle<ArrayObject*> indirectExportEntries,
+                            Handle<ArrayObject*> starExportEntries);
+  static bool Freeze(JSContext* cx, Handle<ModuleObject*> self);
 #ifdef DEBUG
-  static bool AssertFrozen(JSContext* cx, HandleModuleObject self);
+  static bool AssertFrozen(JSContext* cx, Handle<ModuleObject*> self);
 #endif
-  void fixEnvironmentsAfterRealmMerge();
 
   JSScript* maybeScript() const;
   JSScript* script() const;
-  Scope* enclosingScope() const;
   ModuleEnvironmentObject& initialEnvironment() const;
   ModuleEnvironmentObject* environment() const;
   ModuleNamespaceObject* namespace_();
   ModuleStatus status() const;
+  mozilla::Maybe<uint32_t> maybeDfsIndex() const;
   uint32_t dfsIndex() const;
+  mozilla::Maybe<uint32_t> maybeDfsAncestorIndex() const;
   uint32_t dfsAncestorIndex() const;
   bool hadEvaluationError() const;
+  Value maybeEvaluationError() const;
   Value evaluationError() const;
   JSObject* metaObject() const;
   ScriptSourceObject* scriptSourceObject() const;
@@ -344,59 +361,61 @@ class ModuleObject : public NativeObject {
   ArrayObject& starExportEntries() const;
   IndirectBindingMap& importBindings();
 
+  void setStatus(ModuleStatus newStatus);
+  void setDfsIndex(uint32_t index);
+  void setDfsAncestorIndex(uint32_t index);
+  void clearDfsIndexes();
+
   static PromiseObject* createTopLevelCapability(JSContext* cx,
-                                                 HandleModuleObject module);
-  bool isAsync() const;
-  void setAsync(bool isAsync);
+                                                 Handle<ModuleObject*> module);
+  bool hasTopLevelAwait() const;
   bool isAsyncEvaluating() const;
-  void setAsyncEvaluating(bool isEvaluating);
+  void setAsyncEvaluating();
   void setEvaluationError(HandleValue newValue);
   void setPendingAsyncDependencies(uint32_t newValue);
-  void setInitialTopLevelCapability(HandleObject promiseObj);
+  void setInitialTopLevelCapability(Handle<PromiseObject*> capability);
   bool hasTopLevelCapability() const;
-  JSObject* topLevelCapability() const;
+  PromiseObject* maybeTopLevelCapability() const;
+  PromiseObject* topLevelCapability() const;
   ListObject* asyncParentModules() const;
+  mozilla::Maybe<uint32_t> maybePendingAsyncDependencies() const;
   uint32_t pendingAsyncDependencies() const;
+  bool hasAsyncEvaluatingPostOrder() const;
+  mozilla::Maybe<uint32_t> maybeAsyncEvaluatingPostOrder() const;
+  uint32_t getAsyncEvaluatingPostOrder() const;
+  void clearAsyncEvaluatingPostOrder();
   void setCycleRoot(ModuleObject* cycleRoot);
   ModuleObject* getCycleRoot() const;
 
-  static bool appendAsyncParentModule(JSContext* cx, HandleModuleObject self,
-                                      HandleModuleObject parent);
+  static void onTopLevelEvaluationFinished(ModuleObject* module);
 
-  static bool topLevelCapabilityResolve(JSContext* cx,
-                                        HandleModuleObject module);
-  static bool topLevelCapabilityReject(JSContext* cx, HandleModuleObject module,
-                                       HandleValue error);
+  static bool appendAsyncParentModule(JSContext* cx, Handle<ModuleObject*> self,
+                                      Handle<ModuleObject*> parent);
 
-  static bool Instantiate(JSContext* cx, HandleModuleObject self);
-
-  // Start evaluating the module. If TLA is enabled, rval will be a promise
-  static bool Evaluate(JSContext* cx, HandleModuleObject self,
-                       MutableHandleValue rval);
-
-  static ModuleNamespaceObject* GetOrCreateModuleNamespace(
-      JSContext* cx, HandleModuleObject self);
+  [[nodiscard]] static bool topLevelCapabilityResolve(
+      JSContext* cx, Handle<ModuleObject*> module);
+  [[nodiscard]] static bool topLevelCapabilityReject(
+      JSContext* cx, Handle<ModuleObject*> module, HandleValue error);
 
   void setMetaObject(JSObject* obj);
 
-  // For intrinsic_InstantiateModuleFunctionDeclarations.
   static bool instantiateFunctionDeclarations(JSContext* cx,
-                                              HandleModuleObject self);
+                                              Handle<ModuleObject*> self);
 
-  // For intrinsic_ExecuteModule.
-  static bool execute(JSContext* cx, HandleModuleObject self,
-                      MutableHandleValue rval);
+  static bool execute(JSContext* cx, Handle<ModuleObject*> self);
 
-  // For intrinsic_NewModuleNamespace.
   static ModuleNamespaceObject* createNamespace(JSContext* cx,
-                                                HandleModuleObject self,
+                                                Handle<ModuleObject*> self,
                                                 HandleObject exports);
 
-  static bool createEnvironment(JSContext* cx, HandleModuleObject self);
+  static bool createEnvironment(JSContext* cx, Handle<ModuleObject*> self);
 
-  bool initAsyncSlots(JSContext* cx, bool isAsync,
+  bool initAsyncSlots(JSContext* cx, bool hasTopLevelAwait,
                       HandleObject asyncParentModulesList);
 
+  static bool GatherAsyncParentCompletions(
+      JSContext* cx, Handle<ModuleObject*> module,
+      MutableHandle<ArrayObject*> execList);
   // NOTE: accessor for FunctionDeclarationsSlot is defined inside
   // ModuleObject.cpp as static function.
 
@@ -404,50 +423,27 @@ class ModuleObject : public NativeObject {
   static const JSClassOps classOps_;
 
   static void trace(JSTracer* trc, JSObject* obj);
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
 
   bool hasImportBindings() const;
 };
 
 JSObject* GetOrCreateModuleMetaObject(JSContext* cx, HandleObject module);
 
-JSObject* CallModuleResolveHook(JSContext* cx, HandleValue referencingPrivate,
-                                HandleString specifier);
-
-// https://tc39.es/proposal-top-level-await/#sec-asyncmodulexecutionfulfilled
-void AsyncModuleExecutionFulfilled(JSContext* cx, HandleModuleObject module);
-
-// https://tc39.es/proposal-top-level-await/#sec-asyncmodulexecutionrejected
-void AsyncModuleExecutionRejected(JSContext* cx, HandleModuleObject module,
-                                  HandleValue error);
-
-// https://tc39.es/proposal-top-level-await/#sec-asyncmodulexecutionfulfilled
-bool AsyncModuleExecutionFulfilledHandler(JSContext* cx, unsigned argc,
-                                          Value* vp);
-
-// https://tc39.es/proposal-top-level-await/#sec-asyncmodulexecutionrejected
-bool AsyncModuleExecutionRejectedHandler(JSContext* cx, unsigned argc,
-                                         Value* vp);
+ModuleObject* CallModuleResolveHook(JSContext* cx,
+                                    HandleValue referencingPrivate,
+                                    HandleObject moduleRequest);
 
 JSObject* StartDynamicModuleImport(JSContext* cx, HandleScript script,
-                                   HandleValue specifier);
+                                   HandleValue specifier, HandleValue options);
 
-bool OnModuleEvaluationFailure(JSContext* cx, HandleObject evaluationPromise);
+bool OnModuleEvaluationFailure(JSContext* cx, HandleObject evaluationPromise,
+                               JS::ModuleErrorBehaviour errorBehaviour);
 
 bool FinishDynamicModuleImport(JSContext* cx, HandleObject evaluationPromise,
                                HandleValue referencingPrivate,
-                               HandleString specifier, HandleObject promise);
-
-// This is used so that Top Level Await functionality can be turned off
-// entirely. It will be removed in bug#1676612.
-bool FinishDynamicModuleImport_NoTLA(JSContext* cx,
-                                     JS::DynamicImportStatus status,
-                                     HandleValue referencingPrivate,
-                                     HandleString specifier,
-                                     HandleObject promise);
-
-template <XDRMode mode>
-XDRResult XDRModuleObject(XDRState<mode>* xdr, MutableHandleModuleObject modp);
+                               HandleObject moduleRequest,
+                               HandleObject promise);
 
 }  // namespace js
 

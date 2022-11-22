@@ -42,11 +42,12 @@ class UnpackFinder(BaseFinder):
     or with files from a FileFinder using the given path as its root.
     """
 
-    def __init__(self, source, omnijar_name=None):
+    def __init__(self, source, omnijar_name=None, unpack_xpi=True, **kwargs):
         if isinstance(source, BaseFinder):
+            assert not kwargs
             self._finder = source
         else:
-            self._finder = FileFinder(source)
+            self._finder = FileFinder(source, **kwargs)
         self.base = self._finder.base
         self.files = FileRegistry()
         self.kind = "flat"
@@ -59,6 +60,7 @@ class UnpackFinder(BaseFinder):
             self.omnijar = substs.get("OMNIJAR_NAME", "omni.ja")
         self.jarlogs = {}
         self.compressed = False
+        self._unpack_xpi = unpack_xpi
 
         jars = set()
 
@@ -89,9 +91,9 @@ class UnpackFinder(BaseFinder):
                 if self.files.contains(p):
                     continue
                 f = m
-            # If the file is a packed addon, unpack it under a directory named
-            # after the xpi.
-            if p.endswith(".xpi") and self._maybe_zip(f):
+            # If we're unpacking packed addons and the file is a packed addon,
+            # unpack it under a directory named after the xpi.
+            if self._unpack_xpi and p.endswith(".xpi") and self._maybe_zip(f):
                 self._fill_with_jar(p[:-4], self._open_jar(p, f))
                 continue
             if p not in jars:

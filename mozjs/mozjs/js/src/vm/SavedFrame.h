@@ -9,9 +9,10 @@
 
 #include "mozilla/Attributes.h"
 
+#include "gc/Policy.h"
 #include "js/GCHashTable.h"
+#include "js/Principals.h"
 #include "js/UbiNode.h"
-#include "js/Wrapper.h"
 #include "vm/NativeObject.h"
 
 namespace js {
@@ -42,7 +43,7 @@ class SavedFrame : public NativeObject {
   static bool parentProperty(JSContext* cx, unsigned argc, Value* vp);
   static bool toStringMethod(JSContext* cx, unsigned argc, Value* vp);
 
-  static void finalize(JSFreeOp* fop, JSObject* obj);
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
 
   // Convenient getters for SavedFrame's reserved slots for use from C++.
   JSAtom* getSource();
@@ -63,8 +64,8 @@ class SavedFrame : public NativeObject {
 
   // Iterator for use with C++11 range based for loops, eg:
   //
-  //     RootedSavedFrame stack(cx, getSomeSavedFrameStack());
-  //     for (HandleSavedFrame frame : SavedFrame::RootedRange(cx, stack)) {
+  //     Rooted<SavedFrame*> stack(cx, getSomeSavedFrameStack());
+  //     for (Handle<SavedFrame*> frame : SavedFrame::RootedRange(cx, stack)) {
   //         ...
   //     }
   //
@@ -82,7 +83,7 @@ class SavedFrame : public NativeObject {
 
    public:
     explicit RootedIterator(RootedRange& range) : range_(&range) {}
-    HandleSavedFrame operator*() {
+    Handle<SavedFrame*> operator*() {
       MOZ_ASSERT(range_);
       return range_->frame_;
     }
@@ -97,10 +98,10 @@ class SavedFrame : public NativeObject {
 
   class MOZ_STACK_CLASS RootedRange {
     friend class RootedIterator;
-    RootedSavedFrame frame_;
+    Rooted<SavedFrame*> frame_;
 
    public:
-    RootedRange(JSContext* cx, HandleSavedFrame frame) : frame_(cx, frame) {}
+    RootedRange(JSContext* cx, Handle<SavedFrame*> frame) : frame_(cx, frame) {}
     RootedIterator begin() { return RootedIterator(*this); }
     RootedIterator end() { return RootedIterator(); }
   };

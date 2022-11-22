@@ -43,6 +43,10 @@ ASTDEF(AST_CLASS_EXPR,            "ClassExpression",                "classExpres
 ASTDEF(AST_METAPROPERTY,          "MetaProperty",                   "metaProperty")
 ASTDEF(AST_SUPER,                 "Super",                          "super")
 ASTDEF(AST_CALL_IMPORT,           "CallImport",                     "callImport")
+#ifdef ENABLE_RECORD_TUPLE
+ASTDEF(AST_RECORD_EXPR,           "RecordExpression",               "recordExpression")
+ASTDEF(AST_TUPLE_EXPR,            "TupleExpression",                "tupleExpression")
+#endif
 
 ASTDEF(AST_EMPTY_STMT,            "EmptyStatement",                 "emptyStatement")
 ASTDEF(AST_BLOCK_STMT,            "BlockStatement",                 "blockStatement")
@@ -63,6 +67,8 @@ ASTDEF(AST_TRY_STMT,              "TryStatement",                   "tryStatemen
 ASTDEF(AST_THROW_STMT,            "ThrowStatement",                 "throwStatement")
 ASTDEF(AST_DEBUGGER_STMT,         "DebuggerStatement",              "debuggerStatement")
 ASTDEF(AST_LET_STMT,              "LetStatement",                   "letStatement")
+ASTDEF(AST_MODULE_REQUEST,        "ModuleRequest",                  "moduleRequest")
+ASTDEF(AST_IMPORT_ASSERTION,      "ImportAssertion",                "importAssertion")
 ASTDEF(AST_IMPORT_DECL,           "ImportDeclaration",              "importDeclaration")
 ASTDEF(AST_IMPORT_SPEC,           "ImportSpecifier",                "importSpecifier")
 ASTDEF(AST_IMPORT_NAMESPACE_SPEC, "ImportNamespaceSpecifier",       "importNamespaceSpecifier")
@@ -85,4 +91,5 @@ ASTDEF(AST_COMPUTED_NAME,         "ComputedName",                   "computedNam
 ASTDEF(AST_CLASS_STMT,            "ClassStatement",                 "classStatement")
 ASTDEF(AST_CLASS_METHOD,          "ClassMethod",                    "classMethod")
 ASTDEF(AST_CLASS_FIELD,           "ClassField",                     "classField")
+ASTDEF(AST_STATIC_CLASS_BLOCK,    "StaticClassBlock",               "staticClassBlock")
 /* AST_LIMIT = last + 1 */

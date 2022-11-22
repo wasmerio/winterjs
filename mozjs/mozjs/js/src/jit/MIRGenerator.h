@@ -24,9 +24,7 @@
 #include "jit/JitAllocPolicy.h"
 #include "jit/JitContext.h"
 #include "jit/JitSpewer.h"
-#ifdef JS_ION_PERF
-#  include "jit/PerfSpewer.h"
-#endif
+#include "jit/PerfSpewer.h"
 #include "js/Utility.h"
 #include "vm/GeckoProfiler.h"
 
@@ -101,9 +99,13 @@ class MIRGenerator final {
     return !compilingWasm() && instrumentedProfiling();
   }
 
-  bool stringsCanBeInNursery() const { return stringsCanBeInNursery_; }
+  gc::InitialHeap initialStringHeap() const {
+    return stringsCanBeInNursery_ ? gc::DefaultHeap : gc::TenuredHeap;
+  }
 
-  bool bigIntsCanBeInNursery() const { return bigIntsCanBeInNursery_; }
+  gc::InitialHeap initialBigIntHeap() const {
+    return bigIntsCanBeInNursery_ ? gc::DefaultHeap : gc::TenuredHeap;
+  }
 
   // Whether the main thread is trying to cancel this build.
   bool shouldCancel(const char* why) { return cancelBuild_; }
@@ -153,12 +155,10 @@ class MIRGenerator final {
 
   uint64_t minWasmHeapLength_;
 
-#if defined(JS_ION_PERF)
-  WasmPerfSpewer wasmPerfSpewer_;
+  IonPerfSpewer wasmPerfSpewer_;
 
  public:
-  WasmPerfSpewer& perfSpewer() { return wasmPerfSpewer_; }
-#endif
+  IonPerfSpewer& perfSpewer() { return wasmPerfSpewer_; }
 
  public:
   const JitCompileOptions options;

@@ -9,6 +9,8 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/ScopeExit.h"
+#include "mozilla/TimeStamp.h"
 
 #include <stddef.h>
 
@@ -16,6 +18,7 @@
 #include "jit/JitCode.h"
 #include "jit/ProcessExecutableMemory.h"
 #include "vm/JSContext.h"
+#include "vm/Realm.h"
 #include "vm/Runtime.h"
 
 namespace js::jit {
@@ -49,8 +52,14 @@ class MOZ_RAII AutoWritableJitCodeFallible {
   }
 
   ~AutoWritableJitCodeFallible() {
-    if (!ExecutableAllocator::makeExecutableAndFlushICache(
-            FlushICacheSpec::LocalThreadOnly, addr_, size_)) {
+    mozilla::TimeStamp startTime = mozilla::TimeStamp::Now();
+    auto timer = mozilla::MakeScopeExit([&] {
+      if (Realm* realm = rt_->mainContextFromOwnThread()->realm()) {
+        realm->timers.protectTime += mozilla::TimeStamp::Now() - startTime;
+      }
+    });
+
+    if (!ExecutableAllocator::makeExecutableAndFlushICache(addr_, size_)) {
       MOZ_CRASH();
     }
     rt_->toggleAutoWritableJitCodeActive(false);

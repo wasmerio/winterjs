@@ -1,10 +1,5 @@
-commit 40252f6fe1dabbe6b043773b639acfae2294add3
-Author: Jeff Genovy <29107334+jefgen@users.noreply.github.com>
-Date:   Wed Jun 10 10:34:28 2020 -0700
+commit c205e7ee49a7086a28b9c275fcfdac9ca3dc815d
+Author: yumaoka <y.umaoka@gmail.com>
+Date:   Wed Mar 30 14:47:46 2022 -0400
 
-    ICU-21150 Backport fix for broken Windows build with prebuilt datafile to ICU 67
-    
-    This is cherry-picked from:
-    ICU-21102 Fix broken builds on Windows when using a pre-built data file (from the tgz).
-    
-    (cherry picked from commit 82a5959b863ac647fce3bcc5804ed906fb3b4bc0)
+    ICU-21971 Added a new numeric currecny code SLE/695 for Sierra Leone Leone.

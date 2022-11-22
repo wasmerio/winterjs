@@ -13,30 +13,29 @@
 #include "jsfriendapi.h"
 
 #include "debugger/DebugAPI.h"
-#include "gc/Policy.h"
+#include "gc/GC.h"
+#include "gc/Memory.h"
 #include "gc/PublicIterators.h"
 #include "gc/Zone.h"
-#include "js/Date.h"
-#include "js/friend/StackLimits.h"  // js::CheckSystemRecursionLimit
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
 #include "js/friend/WindowProxy.h"  // js::IsWindow, js::IsWindowProxy, js::ToWindowProxyIfWindow
 #include "js/Proxy.h"
 #include "js/RootingAPI.h"
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
+#include "js/WrapperCallbacks.h"
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/DOMProxy.h"
-#include "vm/Iteration.h"
 #include "vm/JSContext.h"
+#ifdef ENABLE_RECORD_TUPLE
+#  include "vm/RecordTupleShared.h"
+#endif
 #include "vm/WrapperObject.h"
 
-#include "gc/GC-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/WeakMap-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSFunction-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/JSScript-inl.h"
-#include "vm/NativeObject-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -57,7 +56,7 @@ void Compartment::checkObjectWrappersAfterMovingGC() {
     // wrapper map that points into the nursery, and that the hash table entries
     // are discoverable.
     auto key = e.front().key();
-    CheckGCThingAfterMovingGC(key);
+    CheckGCThingAfterMovingGC(key.get());
 
     auto ptr = crossCompartmentObjectWrappers.lookup(key);
     MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &e.front());
@@ -99,7 +98,7 @@ void Compartment::removeWrapper(js::ObjectWrapperMap::Ptr p) {
   crossCompartmentObjectWrappers.remove(p);
 }
 
-static JSString* CopyStringPure(JSContext* cx, JSString* str) {
+JSString* js::CopyStringPure(JSContext* cx, JSString* str) {
   /*
    * Directly allocate the copy in the destination compartment, rather than
    * first flattening it (and possibly allocating in source compartment),
@@ -209,13 +208,6 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
   // Ensure that we have entered a realm.
   MOZ_ASSERT(cx->global());
 
-  // If we have a cross-compartment wrapper, make sure that the cx isn't
-  // associated with the self-hosting zone. We don't want to create
-  // wrappers for objects in other runtimes, which may be the case for the
-  // self-hosting zone.
-  MOZ_ASSERT(!cx->zone()->isSelfHostingZone());
-  MOZ_ASSERT(!obj->zone()->isSelfHostingZone());
-
   // The object is already in the right compartment. Normally same-
   // compartment returns the object itself, however, windows are always
   // wrapped by a proxy, so we have to check for that case here manually.
@@ -279,7 +271,8 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
   // We're a bit worried about infinite recursion here, so we do a check -
   // see bug 809295.
   auto preWrap = cx->runtime()->wrapObjectCallbacks->preWrap;
-  if (!CheckSystemRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.checkSystem(cx)) {
     return false;
   }
   if (preWrap) {
@@ -333,12 +326,36 @@ bool Compartment::getOrCreateWrapper(JSContext* cx, HandleObject existing,
   return true;
 }
 
+#ifdef ENABLE_RECORD_TUPLE
+bool Compartment::wrapExtendedPrimitive(JSContext* cx,
+                                        MutableHandleObject obj) {
+  MOZ_ASSERT(IsExtendedPrimitive(*obj));
+  MOZ_ASSERT(cx->compartment() == this);
+
+  if (obj->compartment() == this) {
+    return true;
+  }
+
+  JSObject* copy = CopyExtendedPrimitive(cx, obj);
+  if (!copy) {
+    return false;
+  }
+
+  obj.set(copy);
+  return true;
+}
+#endif
+
 bool Compartment::wrap(JSContext* cx, MutableHandleObject obj) {
   MOZ_ASSERT(cx->compartment() == this);
 
   if (!obj) {
     return true;
   }
+
+#ifdef ENABLE_RECORD_TUPLE
+  MOZ_ASSERT(!IsExtendedPrimitive(*obj));
+#endif
 
   AutoDisableProxyCheck adpc;
 
@@ -406,22 +423,36 @@ bool Compartment::rewrap(JSContext* cx, MutableHandleObject obj,
 
 bool Compartment::wrap(JSContext* cx,
                        MutableHandle<JS::PropertyDescriptor> desc) {
-  if (!wrap(cx, desc.object())) {
+  if (desc.hasGetter()) {
+    if (!wrap(cx, desc.getter())) {
+      return false;
+    }
+  }
+  if (desc.hasSetter()) {
+    if (!wrap(cx, desc.setter())) {
+      return false;
+    }
+  }
+  if (desc.hasValue()) {
+    if (!wrap(cx, desc.value())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool Compartment::wrap(JSContext* cx,
+                       MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
+  if (desc.isNothing()) {
+    return true;
+  }
+
+  Rooted<PropertyDescriptor> desc_(cx, *desc);
+  if (!wrap(cx, &desc_)) {
     return false;
   }
-
-  if (desc.hasGetterObject()) {
-    if (!wrap(cx, desc.getterObject())) {
-      return false;
-    }
-  }
-  if (desc.hasSetterObject()) {
-    if (!wrap(cx, desc.setterObject())) {
-      return false;
-    }
-  }
-
-  return wrap(cx, desc.value());
+  desc.set(mozilla::Some(desc_.get()));
+  return true;
 }
 
 bool Compartment::wrap(JSContext* cx, MutableHandle<GCVector<Value>> vec) {
@@ -495,13 +526,13 @@ void Compartment::sweepAfterMinorGC(JSTracer* trc) {
   crossCompartmentObjectWrappers.sweepAfterMinorGC(trc);
 
   for (RealmsInCompartmentIter r(this); !r.done(); r.next()) {
-    r->sweepAfterMinorGC();
+    r->sweepAfterMinorGC(trc);
   }
 }
 
 // Remove dead wrappers from the table or update pointers to moved objects.
-void Compartment::sweepCrossCompartmentObjectWrappers() {
-  crossCompartmentObjectWrappers.sweep();
+void Compartment::traceCrossCompartmentObjectWrapperEdges(JSTracer* trc) {
+  crossCompartmentObjectWrappers.traceWeak(trc);
 }
 
 void Compartment::fixupCrossCompartmentObjectWrappersAfterMovingGC(
@@ -510,7 +541,7 @@ void Compartment::fixupCrossCompartmentObjectWrappersAfterMovingGC(
 
   // Sweep the wrapper map to update keys (wrapped values) in other
   // compartments that may have been moved.
-  sweepCrossCompartmentObjectWrappers();
+  traceCrossCompartmentObjectWrapperEdges(trc);
 
   // Trace the wrappers in the map to update their cross-compartment edges
   // to wrapped values in other compartments that may have been moved.
@@ -526,7 +557,7 @@ void Compartment::fixupAfterMovingGC(JSTracer* trc) {
 
   // Sweep the wrapper map to update values (wrapper objects) in this
   // compartment that may have been moved.
-  sweepCrossCompartmentObjectWrappers();
+  traceCrossCompartmentObjectWrapperEdges(trc);
 }
 
 void Compartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
@@ -554,11 +585,11 @@ GlobalObject& Compartment::firstGlobal() const {
   MOZ_CRASH("If all our globals are dead, why is someone expecting a global?");
 }
 
-JS_FRIEND_API JSObject* js::GetFirstGlobalInCompartment(JS::Compartment* comp) {
+JS_PUBLIC_API JSObject* js::GetFirstGlobalInCompartment(JS::Compartment* comp) {
   return &comp->firstGlobal();
 }
 
-JS_FRIEND_API bool js::CompartmentHasLiveGlobal(JS::Compartment* comp) {
+JS_PUBLIC_API bool js::CompartmentHasLiveGlobal(JS::Compartment* comp) {
   MOZ_ASSERT(comp);
   for (Realm* r : comp->realms()) {
     if (r->hasLiveGlobal()) {

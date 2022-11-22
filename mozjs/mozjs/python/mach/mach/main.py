@@ -16,9 +16,9 @@ import os
 import sys
 import traceback
 import uuid
-from collections import Iterable
-
-from six import string_types
+from collections.abc import Iterable
+from typing import Union, Dict, List
+from pathlib import Path
 
 from .base import (
     CommandContext,
@@ -174,6 +174,18 @@ class ContextWrapper(object):
         setattr(object.__getattribute__(self, "_context"), key, value)
 
 
+class MachCommandReference:
+    """A reference to a mach command.
+
+    Holds the metadata for a mach command.
+    """
+
+    module: Path
+
+    def __init__(self, module: Union[str, Path]):
+        self.module = Path(module)
+
+
 class Mach(object):
     """Main mach driver type.
 
@@ -216,8 +228,8 @@ To see more help for a specific command, run:
   %(prog)s help <command>
 """
 
-    def __init__(self, cwd):
-        assert os.path.isdir(cwd)
+    def __init__(self, cwd: str):
+        assert Path(cwd).is_dir()
 
         self.cwd = cwd
         self.log_manager = LoggingManager()
@@ -231,22 +243,22 @@ To see more help for a specific command, run:
         self.log_manager.register_structured_logger(self.logger)
         self.populate_context_handler = None
 
-    def load_commands_from_directory(self, path):
+    def load_commands_from_directory(self, path: Path):
         """Scan for mach commands from modules in a directory.
 
         This takes a path to a directory, loads the .py files in it, and
         registers and found mach command providers with this mach instance.
         """
-        for f in sorted(os.listdir(path)):
-            if not f.endswith(".py") or f == "__init__.py":
+        for f in sorted(path.iterdir()):
+            if not f.suffix == ".py" or f.name == "__init__.py":
                 continue
 
-            full_path = os.path.join(path, f)
-            module_name = "mach.commands.%s" % f[0:-3]
+            full_path = path / f
+            module_name = f"mach.commands.{str(f)[0:-3]}"
 
             self.load_commands_from_file(full_path, module_name=module_name)
 
-    def load_commands_from_file(self, path, module_name=None):
+    def load_commands_from_file(self, path: Union[str, Path], module_name=None):
         """Scan for mach commands from a file.
 
         This takes a path to a file and loads it as a Python module under the
@@ -260,15 +272,31 @@ To see more help for a specific command, run:
                 mod = imp.new_module("mach.commands")
                 sys.modules["mach.commands"] = mod
 
-            module_name = "mach.commands.%s" % uuid.uuid4().hex
+            module_name = f"mach.commands.{uuid.uuid4().hex}"
 
         try:
-            imp.load_source(module_name, path)
+            imp.load_source(module_name, str(path))
         except IOError as e:
             if e.errno != errno.ENOENT:
                 raise
 
-            raise MissingFileError("%s does not exist" % path)
+            raise MissingFileError(f"{path} does not exist")
+
+    def load_commands_from_spec(
+        self, spec: Dict[str, MachCommandReference], topsrcdir: str, missing_ok=False
+    ):
+        """Load mach commands based on the given spec.
+
+        Takes a dictionary mapping command names to their metadata.
+        """
+        modules = set(spec[command].module for command in spec)
+
+        for path in modules:
+            try:
+                self.load_commands_from_file(topsrcdir / path)
+            except MissingFileError:
+                if not missing_ok:
+                    raise
 
     def load_commands_from_entry_point(self, group="mach.providers"):
         """Scan installed packages for mach command provider entry points. An
@@ -294,12 +322,13 @@ To see more help for a specific command, run:
                 sys.exit(1)
 
             for path in paths:
-                if os.path.isfile(path):
+                path = Path(path)
+                if path.is_file():
                     self.load_commands_from_file(path)
-                elif os.path.isdir(path):
+                elif path.is_dir():
                     self.load_commands_from_directory(path)
                 else:
-                    print("command provider '%s' does not exist" % path)
+                    print(f"command provider '{path}' does not exist")
 
     def define_category(self, name, title, description, priority=50):
         """Provide a description for a named command category."""
@@ -346,13 +375,9 @@ To see more help for a specific command, run:
             # can use them.
             for provider in Registrar.settings_providers:
                 self.settings.register_provider(provider)
-            self.load_settings(self.settings_paths)
 
-            if self.populate_context_handler:
-                topsrcdir = self.populate_context_handler("topdir")
-                sentry = register_sentry(argv, self.settings, topsrcdir)
-            else:
-                sentry = NoopErrorReporter()
+            setting_paths_to_pass = [Path(path) for path in self.settings_paths]
+            self.load_settings(setting_paths_to_pass)
 
             if sys.version_info < (3, 0):
                 if stdin.encoding is None:
@@ -371,7 +396,7 @@ To see more help for a specific command, run:
             if os.isatty(orig_stdout.fileno()):
                 setenv("MACH_STDOUT_ISATTY", "1")
 
-            return self._run(argv, sentry)
+            return self._run(argv)
         except KeyboardInterrupt:
             print("mach interrupted by signal or user action. Stopping.")
             return 1
@@ -403,14 +428,18 @@ To see more help for a specific command, run:
             sys.stdout = orig_stdout
             sys.stderr = orig_stderr
 
-    def _run(self, argv, sentry):
-        telemetry = create_telemetry_from_environment(self.settings)
+    def _run(self, argv):
+        if self.populate_context_handler:
+            topsrcdir = Path(self.populate_context_handler("topdir"))
+            sentry = register_sentry(argv, self.settings, topsrcdir)
+        else:
+            sentry = NoopErrorReporter()
+
         context = CommandContext(
             cwd=self.cwd,
             settings=self.settings,
             log_manager=self.log_manager,
             commands=Registrar,
-            telemetry=telemetry,
         )
 
         if self.populate_context_handler:
@@ -453,6 +482,8 @@ To see more help for a specific command, run:
             and sys.__stderr__.isatty()
             and not os.environ.get("MOZ_AUTOMATION", None)
         )
+        context.telemetry = create_telemetry_from_environment(self.settings)
+
         handler = getattr(args, "mach_handler")
         report_invocation_metrics(context.telemetry, handler.name)
 
@@ -468,7 +499,11 @@ To see more help for a specific command, run:
         self.log_manager.register_structured_logger(logging.getLogger("mach"))
 
         write_times = True
-        if args.log_no_times or "MACH_NO_WRITE_TIMES" in os.environ:
+        if (
+            args.log_no_times
+            or "MACH_NO_WRITE_TIMES" in os.environ
+            or "MOZ_AUTOMATION" in os.environ
+        ):
             write_times = False
 
         # Always enable terminal logging. The log manager figures out if we are
@@ -480,14 +515,15 @@ To see more help for a specific command, run:
         if args.settings_file:
             # Argument parsing has already happened, so settings that apply
             # to command line handling (e.g alias, defaults) will be ignored.
-            self.load_settings(args.settings_file)
+            self.load_settings([Path(args.settings_file)])
 
         try:
             return Registrar._run_command_handler(
                 handler,
                 context,
                 debug_command=args.debug_command,
-                **vars(args.command_args)
+                profile_command=args.profile_command,
+                **vars(args.command_args),
             )
         except KeyboardInterrupt as ki:
             raise ki
@@ -583,7 +619,7 @@ To see more help for a specific command, run:
 
         fh.write("\nSentry event ID: {}\n".format(sentry_event_id))
 
-    def load_settings(self, paths):
+    def load_settings(self, paths: List[Path]):
         """Load the specified settings files.
 
         If a directory is specified, the following basenames will be
@@ -591,24 +627,21 @@ To see more help for a specific command, run:
 
             machrc, .machrc
         """
-        if isinstance(paths, string_types):
-            paths = [paths]
-
         valid_names = ("machrc", ".machrc")
 
-        def find_in_dir(base):
-            if os.path.isfile(base):
+        def find_in_dir(base: Path):
+            if base.is_file():
                 return base
 
             for name in valid_names:
-                path = os.path.join(base, name)
-                if os.path.isfile(path):
+                path = base / name
+                if path.is_file():
                     return path
 
-        files = map(find_in_dir, self.settings_paths)
+        files = map(find_in_dir, paths)
         files = filter(bool, files)
 
-        self.settings.load_files(files)
+        self.settings.load_files(list(files))
 
     def get_argument_parser(self, context):
         """Returns an argument parser for the command-line interface."""
@@ -681,6 +714,11 @@ To see more help for a specific command, run:
             "--debug-command",
             action="store_true",
             help="Start a Python debugger when command is dispatched.",
+        )
+        global_group.add_argument(
+            "--profile-command",
+            action="store_true",
+            help="Capture a Python profile of the mach process as command is dispatched.",
         )
         global_group.add_argument(
             "--settings",

@@ -10,26 +10,30 @@ description: Pattern is /./i and RegExp is new RegExp(pattern)
 ---*/
 
 var __pattern = /./i;
-var __re = new RegExp(__pattern); 
+var __re = new RegExp(__pattern);
 
-//CHECK#1
-if (__re.source !== __pattern.source) {
-  $ERROR('#1: __pattern = /./i; __re = new RegExp(__pattern); __re.source === __pattern.source. Actual: '+ (__re.source));
-}
+assert.sameValue(
+  __re.source,
+  __pattern.source,
+  'The value of __re.source is expected to equal the value of __pattern.source'
+);
 
-//CHECK#2
-if (__re.multiline !== __pattern.multiline) {
-  $ERROR('#2: __pattern = /./i; __re = new RegExp(__pattern); __re.multiline === __pattern.multiline. Actual: ' + (__re.multiline));
-}
+assert.sameValue(
+  __re.multiline,
+  __pattern.multiline,
+  'The value of __re.multiline is expected to equal the value of __pattern.multiline'
+);
 
-//CHECK#3
-if (__re.global !== __pattern.global) {
-  $ERROR('#3: __pattern = /./i; __re = new RegExp(__pattern); __re.global === __pattern.global. Actual: ' + (__re.global));
-}
+assert.sameValue(
+  __re.global,
+  __pattern.global,
+  'The value of __re.global is expected to equal the value of __pattern.global'
+);
 
-//CHECK#4
-if (__re.ignoreCase !== __pattern.ignoreCase) {
-  $ERROR('#4: __pattern = /./i; __re = new RegExp(__pattern); __re.ignoreCase === __pattern.ignoreCase. Actual: ' + (__re.ignoreCase));
-}
+assert.sameValue(
+  __re.ignoreCase,
+  __pattern.ignoreCase,
+  'The value of __re.ignoreCase is expected to equal the value of __pattern.ignoreCase'
+);
 
 reportCompare(0, 0);

@@ -11,9 +11,9 @@
 
 #include "jit/arm/Assembler-arm.h"
 #include "jit/MoveResolver.h"
-#include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmCodegenTypes.h"
 
 namespace js {
 namespace jit {
@@ -66,6 +66,7 @@ class MacroAssemblerARM : public Assembler {
     return Operand(Register::FromCode(base.base()), base.disp());
   }
   Address ToPayload(const Address& base) const { return base; }
+  BaseIndex ToPayload(const BaseIndex& base) const { return base; }
 
  protected:
   Operand ToType(Operand base) const {
@@ -74,6 +75,10 @@ class MacroAssemblerARM : public Assembler {
   }
   Address ToType(const Address& base) const {
     return ToType(Operand(base)).toAddress();
+  }
+  BaseIndex ToType(const BaseIndex& base) const {
+    return BaseIndex(base.base, base.index, base.scale,
+                     base.offset + sizeof(void*));
   }
 
   Address ToPayloadAfterStackPush(const Address& base) const {
@@ -180,6 +185,8 @@ class MacroAssemblerARM : public Assembler {
   void ma_neg(Register src, Register dest, SBit s = LeaveCC,
               Condition c = Always);
 
+  void ma_neg(Register64 src, Register64 dest);
+
   // And
   void ma_and(Register src, Register dest, SBit s = LeaveCC,
               Condition c = Always);
@@ -233,6 +240,9 @@ class MacroAssemblerARM : public Assembler {
   void ma_adc(Register src, Register dest, SBit s = LeaveCC,
               Condition c = Always);
   void ma_adc(Register src1, Register src2, Register dest, SBit s = LeaveCC,
+              Condition c = Always);
+  void ma_adc(Register src1, Imm32 op, Register dest,
+              AutoRegisterScope& scratch, SBit s = LeaveCC,
               Condition c = Always);
 
   // Add:
@@ -551,44 +561,7 @@ class MacroAssemblerARM : public Assembler {
                      Register64 val64, Register memoryBase, Register ptr,
                      Register ptrScratch);
 
- protected:
-  // `outAny` is valid if and only if `out64` == Register64::Invalid().
-  void wasmUnalignedLoadImpl(const wasm::MemoryAccessDesc& access,
-                             Register memoryBase, Register ptr,
-                             Register ptrScratch, AnyRegister outAny,
-                             Register64 out64, Register tmp1, Register tmp2,
-                             Register tmp3);
-
-  // The value to be stored is in `floatValue` (if not invalid), `val64` (if not
-  // invalid), or in `valOrTmp` (if `floatValue` and `val64` are both invalid).
-  // Note `valOrTmp` must always be valid.
-  void wasmUnalignedStoreImpl(const wasm::MemoryAccessDesc& access,
-                              FloatRegister floatValue, Register64 val64,
-                              Register memoryBase, Register ptr,
-                              Register ptrScratch, Register valOrTmp);
-
  private:
-  // Loads `byteSize` bytes, byte by byte, by reading from ptr[offset],
-  // applying the indicated signedness (defined by isSigned).
-  // - all three registers must be different.
-  // - tmp and dest will get clobbered, ptr will remain intact.
-  // - byteSize can be up to 4 bytes and no more (GPR are 32 bits on ARM).
-  // - offset can be 0 or 4
-  // If `access` is not null then emit the appropriate access metadata.
-  void emitUnalignedLoad(const wasm::MemoryAccessDesc* access, bool isSigned,
-                         unsigned byteSize, Register ptr, Register tmp,
-                         Register dest, unsigned offset = 0);
-
-  // Ditto, for a store. Note stores don't care about signedness.
-  // - the two registers must be different.
-  // - val will get clobbered, ptr will remain intact.
-  // - byteSize can be up to 4 bytes and no more (GPR are 32 bits on ARM).
-  // - offset can be 0 or 4
-  // If `access` is not null then emit the appropriate access metadata.
-  void emitUnalignedStore(const wasm::MemoryAccessDesc* access,
-                          unsigned byteSize, Register ptr, Register val,
-                          unsigned offset = 0);
-
   // Implementation for transferMultipleByRuns so we can use different
   // iterators for forward/backward traversals. The sign argument should be 1
   // if we traverse forwards, -1 if we traverse backwards.
@@ -1084,6 +1057,15 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
     store32(temp, ToPayload(dest));
   }
 
+  void storePrivateValue(Register src, const Address& dest) {
+    store32(Imm32(0), ToType(dest));
+    store32(src, ToPayload(dest));
+  }
+  void storePrivateValue(ImmGCPtr imm, const Address& dest) {
+    store32(Imm32(0), ToType(dest));
+    storePtr(imm, ToPayload(dest));
+  }
+
   void loadValue(Address src, ValueOperand val);
   void loadValue(Operand dest, ValueOperand val) {
     loadValue(dest.toAddress(), val);
@@ -1119,7 +1101,8 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   void storeTypeTag(ImmTag tag, const Address& dest);
   void storeTypeTag(ImmTag tag, const BaseIndex& dest);
 
-  void handleFailureWithHandlerTail(Label* profilerExitTail);
+  void handleFailureWithHandlerTail(Label* profilerExitTail,
+                                    Label* bailoutTail);
 
   /////////////////////////////////////////////////////////////////
   // Common interface.
@@ -1171,12 +1154,28 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
   }
 
   void load64(const Address& address, Register64 dest) {
-    load32(LowWord(address), dest.low);
-    load32(HighWord(address), dest.high);
+    bool highBeforeLow = address.base == dest.low;
+    if (highBeforeLow) {
+      load32(HighWord(address), dest.high);
+      load32(LowWord(address), dest.low);
+    } else {
+      load32(LowWord(address), dest.low);
+      load32(HighWord(address), dest.high);
+    }
   }
   void load64(const BaseIndex& address, Register64 dest) {
-    load32(LowWord(address), dest.low);
-    load32(HighWord(address), dest.high);
+    // If you run into this, relax your register allocation constraints.
+    MOZ_RELEASE_ASSERT(
+        !((address.base == dest.low || address.base == dest.high) &&
+          (address.index == dest.low || address.index == dest.high)));
+    bool highBeforeLow = address.base == dest.low || address.index == dest.low;
+    if (highBeforeLow) {
+      load32(HighWord(address), dest.high);
+      load32(LowWord(address), dest.low);
+    } else {
+      load32(LowWord(address), dest.low);
+      load32(HighWord(address), dest.high);
+    }
   }
 
   template <typename S>
@@ -1388,17 +1387,6 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM {
                    Condition cc = Always) {
     as_vmov(VFPRegister(dest).singleOverlay(), VFPRegister(src).singleOverlay(),
             cc);
-  }
-
-  void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
-    loadPtr(Address(WasmTlsReg,
-                    offsetof(wasm::TlsData, globalArea) + globalDataOffset),
-            dest);
-  }
-  void loadWasmPinnedRegsFromTls() {
-    ScratchRegisterScope scratch(asMasm());
-    ma_ldr(Address(WasmTlsReg, offsetof(wasm::TlsData, memoryBase)), HeapReg,
-           scratch);
   }
 
   // Instrumentation for entering and leaving the profiler.

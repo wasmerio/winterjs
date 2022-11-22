@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmReftypesEnabled()
-
 // Note that negative tests not having to do with table indices have been taken
 // care of by tables-generalized.js.
 
@@ -46,7 +44,7 @@ var ins = wasmEvalText(
       (table $t1 (export "t1") 2 funcref)
       (table 1 externref)
       (table $t2 (export "t2") 3 funcref))`,
-    {m:{t: new WebAssembly.Table({element:"funcref", initial:2})}}).exports;
+    {m:{t: new WebAssembly.Table({element:"anyfunc", initial:2})}}).exports;
 
 assertEq(ins.t1 instanceof WebAssembly.Table, true);
 assertEq(ins.t1.length, 2);
@@ -56,25 +54,24 @@ assertEq(ins.t2.length, 3);
 // - multiple imported tables of misc type
 // - table.get and table.set can point to a table
 
-var exp = {m:{t0: new WebAssembly.Table({element:"funcref", initial:2}),
+var exp = {m:{t0: new WebAssembly.Table({element:"anyfunc", initial:2}),
               t1: new WebAssembly.Table({element:"externref", initial:3}),
-              t2: new WebAssembly.Table({element:"funcref", initial:4}),
+              t2: new WebAssembly.Table({element:"anyfunc", initial:4}),
               t3: new WebAssembly.Table({element:"externref", initial:5})}};
 var ins = wasmEvalText(
     `(module
       (table $t0 (import "m" "t0") 2 funcref)
+      (table $t1 (import "m" "t1") 3 externref)
+      (table $t2 (import "m" "t2") 4 funcref)
+      (table $t3 (import "m" "t3") 5 externref)
+
       (type $id_i32_t (func (param i32) (result i32)))
       (func $id_i32 (param i32) (result i32) (local.get 0))
       (elem (table $t0) (i32.const 1) func $id_i32)
 
-      (table $t1 (import "m" "t1") 3 externref)
-
-      (table $t2 (import "m" "t2") 4 funcref)
       (type $id_f64_t (func (param f64) (result f64)))
       (func $id_f64 (param f64) (result f64) (local.get 0))
       (elem (table $t2) (i32.const 3) func $id_f64)
-
-      (table $t3 (import "m" "t3") 5 externref)
 
       (func (export "f0") (param i32) (result i32)
        (call_indirect $t0 (type $id_i32_t) (local.get 0) (i32.const 1)))
@@ -269,7 +266,7 @@ assertEq(ins.exports.call(1, 10), -1);
 //   from JS at the moment.
 // - also test that bounds checking continues to catch OOB calls
 
-var tbl = new WebAssembly.Table({element:"funcref", initial:2});
+var tbl = new WebAssembly.Table({element:"anyfunc", initial:2});
 var exp = {m:{t0: tbl, t1: tbl}};
 var ins = wasmEvalText(
     `(module
@@ -407,7 +404,7 @@ assertErrorMessage(() => wasmEvalText(
       (func $f (result i32)
        (table.init $t0 (i32.const 0) (i32.const 0) (i32.const 0))))`), // no segment
                    SyntaxError,
-                   /failed to find elem/);
+                   /failed to find name/);
 
 assertErrorMessage(() => wasmEvalText(
     `(module
@@ -416,16 +413,7 @@ assertErrorMessage(() => wasmEvalText(
       (func $f
        (table.copy 0 (i32.const 0) (i32.const 0) (i32.const 2))))`), // target without source
                    SyntaxError,
-                   /expected keyword `table`/);
-
-assertErrorMessage(() => wasmEvalText(
-    `(module
-      (table $t0 2 funcref)
-      (table $t1 2 funcref)
-      (func $f
-       (table.copy (i32.const 0) 0 (i32.const 0) (i32.const 2))))`), // source without target
-                   SyntaxError,
-                   /wasm text error/);
+                   /unexpected token, expected an identifier or u32/);
 
 // Make sure that dead code doesn't prevent compilation.
 wasmEvalText(

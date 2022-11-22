@@ -14,21 +14,13 @@ es5id: 15.3.2.1_A1_T3
 description: Value of the function constructor argument is 1
 ---*/
 
-//CHECK#1
 try {
   var f = new Function(1);
 } catch (e) {
-  $ERROR('#1: test failed with error ' + e);
+  throw new Test262Error('#1: test failed with error ' + e);
 }
 
-//CHECK#2
-if (f.constructor !== Function) {
-  $ERROR('#2: When the Function constructor is called with one argument then body be that argument and creates a new Function object as specified in 13.2');
-}
-
-//CHECK#3
-if (f() !== undefined) {
-  $ERROR('#3: When the Function constructor is called with one argument then body be that argument the following steps are taken...');
-}
+assert.sameValue(f.constructor, Function, 'The value of f.constructor is expected to equal the value of Function');
+assert.sameValue(f(), undefined, 'f() returns undefined');
 
 reportCompare(0, 0);

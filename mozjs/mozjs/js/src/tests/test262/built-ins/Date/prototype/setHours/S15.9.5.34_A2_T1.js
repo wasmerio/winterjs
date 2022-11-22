@@ -6,13 +6,12 @@ info: The "length" property of the "setHours" is 4
 esid: sec-date.prototype.sethours
 description: The "length" property of the "setHours" is 4
 ---*/
+assert.sameValue(
+  Date.prototype.setHours.hasOwnProperty("length"),
+  true,
+  'Date.prototype.setHours.hasOwnProperty("length") must return true'
+);
 
-if (Date.prototype.setHours.hasOwnProperty("length") !== true) {
-  $ERROR('#1: The setHours has a "length" property');
-}
-
-if (Date.prototype.setHours.length !== 4) {
-  $ERROR('#2: The "length" property of the setHours is 4');
-}
+assert.sameValue(Date.prototype.setHours.length, 4, 'The value of Date.prototype.setHours.length is expected to be 4');
 
 reportCompare(0, 0);

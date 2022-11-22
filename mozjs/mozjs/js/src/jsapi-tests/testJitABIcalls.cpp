@@ -8,6 +8,8 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerTypeTraits.h"
 
+#include <iterator>
+
 #include "jit/ABIFunctions.h"
 #include "jit/IonAnalysis.h"
 #include "jit/Linker.h"
@@ -236,9 +238,10 @@ struct ArgsOffsets<Size> {
 
 template <uint64_t Size, typename Arg, typename... Args>
 struct ArgsOffsets<Size, Arg, Args...> {
-  using type = Concat_t<
-      std::integer_sequence<uint64_t, Size + PadBytes(Size, alignof(Arg))>,
-      typename ArgsOffsets<Size + PadSize<Arg>(Size), Args...>::type>;
+  using type =
+      Concat_t<std::integer_sequence<
+                   uint64_t, Size + PadBytes(Size, ActualAlignOf<Arg>())>,
+               typename ArgsOffsets<Size + PadSize<Arg>(Size), Args...>::type>;
 };
 
 template <uint64_t Size, typename... Args>
@@ -246,11 +249,11 @@ using ArgsOffsets_t = typename ArgsOffsets<Size, Args...>::type;
 
 // Not all 32bits architecture align uint64_t type on 8 bytes, so check the
 // validity of the stored content based on the alignment of the architecture.
-static_assert(alignof(uint64_t) != 8 ||
+static_assert(ActualAlignOf<uint64_t>() != 8 ||
               std::is_same_v<ArgsOffsets_t<0, uint8_t, uint64_t, bool>,
                              std::integer_sequence<uint64_t, 0, 8, 16>>);
 
-static_assert(alignof(uint64_t) != 4 ||
+static_assert(ActualAlignOf<uint64_t>() != 4 ||
               std::is_same_v<ArgsOffsets_t<0, uint8_t, uint64_t, bool>,
                              std::integer_sequence<uint64_t, 0, 4, 12>>);
 
@@ -582,10 +585,10 @@ struct DefineCheckArgs<Res (*)(Args...)> {
         {ArgsFillBits::table, ArgsFillBits::size, CheckArgsFillBits},
     };
     const Test* tests = testsWithoutBoolArgs;
-    size_t numTests = sizeof(testsWithoutBoolArgs) / sizeof(Test);
+    size_t numTests = std::size(testsWithoutBoolArgs);
     if (AnyBool_v<Args...>) {
       tests = testsWithBoolArgs;
-      numTests = sizeof(testsWithBoolArgs) / sizeof(Test);
+      numTests = std::size(testsWithBoolArgs);
     }
 
     for (size_t i = 0; i < numTests; i++) {
@@ -633,7 +636,10 @@ class JitABICall final : public JSAPITest, public DefineCheckArgs<Sig> {
     bool result = true;
     this->set_instance(this, &result);
 
-    StackMacroAssembler masm(cx);
+    TempAllocator temp(&cx->tempLifoAlloc());
+    JitContext jcx(cx);
+    StackMacroAssembler masm(cx, temp);
+    AutoCreatedBy acb(masm, __func__);
     PrepareJit(masm);
 
     AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
@@ -656,6 +662,9 @@ class JitABICall final : public JSAPITest, public DefineCheckArgs<Sig> {
     regs.take(base);
 #elif defined(JS_CODEGEN_MIPS64)
     Register base = t1;
+    regs.take(base);
+#elif defined(JS_CODEGEN_LOONG64)
+    Register base = t0;
     regs.take(base);
 #else
 #  error "Unknown architecture!"

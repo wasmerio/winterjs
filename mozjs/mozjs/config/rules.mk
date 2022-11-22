@@ -149,6 +149,15 @@ MOZ_PROGRAM_LDFLAGS += -Wl,-rpath -Wl,@executable_path/Frameworks
 endif
 endif
 
+# For Mac executables, set the @rpath to be @executable_path by default so that
+# shared libraries built with an @rpath install name in the same directory
+# as the executable can be resolved. Executables not in the same directory
+# should override the @rpath with a relative path such as @executable_path/../
+# depending on their install location.
+ifeq ($(OS_ARCH),Darwin)
+MOZ_PROGRAM_LDFLAGS += -Wl,-rpath,@executable_path
+endif
+
 ifeq ($(OS_ARCH),WINNT)
 ifeq ($(CC_TYPE),clang)
 MOZ_PROGRAM_LDFLAGS += -Wl,-pdb,$(dir $@)/$(LINK_PDBFILE)
@@ -172,7 +181,7 @@ endif
 
 ifdef COMPILE_ENVIRONMENT
 ifndef TARGETS
-TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_SHARED_LIBRARY) $(WASM_LIBRARY)
+TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_SHARED_LIBRARY)
 endif
 
 COBJS = $(notdir $(CSRCS:.c=.$(OBJ_SUFFIX)))
@@ -210,10 +219,7 @@ SIMPLE_PROGRAMS :=
 HOST_SHARED_LIBRARY :=
 HOST_PROGRAM :=
 HOST_SIMPLE_PROGRAMS :=
-WASM_LIBRARY :=
 endif
-
-WASM_ARCHIVE = $(addsuffix .$(WASM_OBJ_SUFFIX),$(WASM_LIBRARY))
 
 ifdef MACH
 ifndef NO_BUILDSTATUS_MESSAGES
@@ -271,9 +277,9 @@ endif
 #
 
 ifeq ($(OS_ARCH),Darwin)
-ifdef SHARED_LIBRARY
-_LOADER_PATH := @executable_path
-EXTRA_DSO_LDOPTS	+= -dynamiclib -install_name $(_LOADER_PATH)/$(SHARED_LIBRARY) -compatibility_version 1 -current_version 1 -single_module
+ifneq (,$(SHARED_LIBRARY))
+_LOADER_PATH := @rpath
+EXTRA_DSO_LDOPTS	+= -dynamiclib -install_name $(_LOADER_PATH)/$@ -compatibility_version 1 -current_version 1
 endif
 endif
 
@@ -387,7 +393,7 @@ compile:: host target
 
 host:: $(HOST_OBJS) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(HOST_RUST_PROGRAMS) $(HOST_RUST_LIBRARY_FILE) $(HOST_SHARED_LIBRARY)
 
-target:: $(filter-out $(MOZBUILD_NON_DEFAULT_TARGETS),$(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(RUST_LIBRARY_FILE) $(RUST_PROGRAMS) $(WASM_LIBRARY))
+target:: $(filter-out $(MOZBUILD_NON_DEFAULT_TARGETS),$(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(RUST_LIBRARY_FILE) $(RUST_PROGRAMS))
 
 ifndef LIBRARY
 ifdef OBJS
@@ -497,22 +503,11 @@ $(LIBRARY): $(OBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
 
 $(WASM_ARCHIVE): $(CWASMOBJS) $(CPPWASMOBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD_VERBOSE)
-	$(RM) $(WASM_LIBRARY).$(WASM_OBJ_SUFFIX)
-	$(WASM_CXX) $(OUTOPTION)$@ -Wl,--export-all $(WASM_LDFLAGS) $(CWASMOBJS) $(CPPWASMOBJS)
+	$(RM) $(WASM_ARCHIVE)
+	$(WASM_CXX) -o $@ -Wl,--export-all -Wl,--stack-first -Wl,-z,stack-size=$(if $(MOZ_OPTIMIZE),262144,1048576) -Wl,--no-entry -Wl,--growable-table $(CWASMOBJS) $(CPPWASMOBJS) -lwasi-emulated-process-clocks
 
-lucet_options := \
-    --target $(LUCETC_TARGET) \
-    --target-cpu baseline \
-    --bindings $(topsrcdir)/third_party/rust/lucet-wasi-wasmsbx/bindings.json \
-    --guard-size 4GiB \
-    --min-reserved-size 4GiB \
-    --max-reserved-size 4GiB \
-    --opt-level 2
-
-$(WASM_LIBRARY): $(WASM_LIBRARY).$(WASM_OBJ_SUFFIX)
-	$(REPORT_BUILD)
-	$(RM) $(WASM_LIBRARY)
-	env LD="$(CC)" LDFLAGS="$(LUCETC_LDFLAGS)" $(LUCETC) $(lucet_options) $(WASM_LIBRARY).$(WASM_OBJ_SUFFIX) -o $(WASM_LIBRARY)
+$(addsuffix .c,$(WASM_ARCHIVE)): $(WASM_ARCHIVE) $(DIST)/host/bin/wasm2c$(HOST_BIN_SUFFIX)
+	$(DIST)/host/bin/wasm2c$(HOST_BIN_SUFFIX) -o $@ $<
 
 ifeq ($(OS_ARCH),WINNT)
 # Import libraries are created by the rules creating shared libraries.
@@ -541,9 +536,7 @@ endif
 
 $(SHARED_LIBRARY): $(OBJS) $(call resfile,$(SHARED_LIBRARY)) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
-ifndef INCREMENTAL_LINKER
 	$(RM) $@
-endif
 	$(MKSHLIB) $($@_OBJS) $(filter %.res,$^) $(LDFLAGS) $(STATIC_LIBS) $(SHARED_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS)
 	$(call py_action,check_binary,--target $@)
 
@@ -598,7 +591,7 @@ $(COBJS):
 
 $(CWASMOBJS):
 	$(REPORT_BUILD_VERBOSE)
-	$(WASM_CC) $(OUTOPTION)$@ -c $(WASM_CFLAGS) $($(notdir $<)_FLAGS) $<
+	$(WASM_CC) -o $@ -c $(WASM_CFLAGS) $($(notdir $<)_FLAGS) $<
 
 WINEWRAP = $(if $(and $(filter %.exe,$1),$(WINE)),$(WINE) $1,$1)
 
@@ -678,7 +671,7 @@ $(CPPOBJS):
 $(CPPWASMOBJS):
 	$(REPORT_BUILD_VERBOSE)
 	$(call BUILDSTATUS,OBJECT_FILE $@)
-	$(WASM_CXX) $(OUTOPTION)$@ -c $(WASM_CXXFLAGS) $($(notdir $<)_FLAGS) $<
+	$(WASM_CXX) -o $@ -c $(WASM_CXXFLAGS) $($(notdir $<)_FLAGS) $<
 
 $(CMMOBJS):
 	$(REPORT_BUILD_VERBOSE)
@@ -883,19 +876,6 @@ ifneq ($(XPI_PKGNAME),)
 tools realchrome::
 	@echo 'Packaging $(XPI_PKGNAME).xpi...'
 	$(call py_action,zip,-C $(FINAL_TARGET) ../$(XPI_PKGNAME).xpi '*')
-endif
-
-# See comment above about moving this out of the tools tier.
-ifdef INSTALL_EXTENSION_ID
-ifndef XPI_NAME
-$(error XPI_NAME must be set for INSTALL_EXTENSION_ID)
-endif
-
-tools::
-	$(RM) -r '$(DIST)/bin/distribution$(DIST_SUBDIR:%=/%)/extensions/$(INSTALL_EXTENSION_ID)'
-	$(NSINSTALL) -D '$(DIST)/bin/distribution$(DIST_SUBDIR:%=/%)/extensions/$(INSTALL_EXTENSION_ID)'
-	$(call copy_dir,$(FINAL_TARGET),$(DIST)/bin/distribution$(DIST_SUBDIR:%=/%)/extensions/$(INSTALL_EXTENSION_ID))
-
 endif
 
 #############################################################################
@@ -1140,7 +1120,6 @@ FREEZE_VARIABLES = \
   EXPORTS \
   DIRS \
   LIBRARY \
-  WASM_LIBRARY \
   MODULE \
   $(NULL)
 

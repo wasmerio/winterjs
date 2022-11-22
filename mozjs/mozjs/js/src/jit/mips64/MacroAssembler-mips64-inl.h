@@ -412,6 +412,11 @@ void MacroAssembler::cmp32Set(Condition cond, T1 lhs, T2 rhs, Register dest) {
   ma_cmp_set(dest, lhs, rhs, cond);
 }
 
+void MacroAssembler::cmp64Set(Condition cond, Address lhs, Imm64 rhs,
+                              Register dest) {
+  ma_cmp_set(dest, lhs, ImmWord(uint64_t(rhs.value)), cond);
+}
+
 // ===============================================================
 // Bit counting functions
 
@@ -487,16 +492,24 @@ void MacroAssembler::branch64(Condition cond, Register64 lhs, Register64 rhs,
 
 void MacroAssembler::branch64(Condition cond, const Address& lhs, Imm64 val,
                               Label* label) {
-  MOZ_ASSERT(cond == Assembler::NotEqual,
+  MOZ_ASSERT(cond == Assembler::NotEqual || cond == Assembler::Equal,
              "other condition codes not supported");
 
   branchPtr(cond, lhs, ImmWord(val.value), label);
 }
 
 void MacroAssembler::branch64(Condition cond, const Address& lhs,
+                              Register64 rhs, Label* label) {
+  MOZ_ASSERT(cond == Assembler::NotEqual || cond == Assembler::Equal,
+             "other condition codes not supported");
+
+  branchPtr(cond, lhs, rhs.reg, label);
+}
+
+void MacroAssembler::branch64(Condition cond, const Address& lhs,
                               const Address& rhs, Register scratch,
                               Label* label) {
-  MOZ_ASSERT(cond == Assembler::NotEqual,
+  MOZ_ASSERT(cond == Assembler::NotEqual || cond == Assembler::Equal,
              "other condition codes not supported");
   MOZ_ASSERT(lhs.base != scratch);
   MOZ_ASSERT(rhs.base != scratch);
@@ -655,6 +668,12 @@ void MacroAssembler::branchTestMagic(Condition cond, const Address& valaddr,
   SecondScratchRegisterScope scratch(*this);
   loadPtr(valaddr, scratch);
   ma_b(scratch, ImmWord(magic), label, cond);
+}
+
+void MacroAssembler::branchTestValue(Condition cond, const BaseIndex& lhs,
+                                     const ValueOperand& rhs, Label* label) {
+  MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
+  branchPtr(cond, lhs, rhs.valueReg(), label);
 }
 
 void MacroAssembler::branchTruncateDoubleMaybeModUint32(FloatRegister src,

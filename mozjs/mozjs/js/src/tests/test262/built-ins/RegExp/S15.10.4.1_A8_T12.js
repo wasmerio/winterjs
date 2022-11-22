@@ -9,13 +9,12 @@ description: >
     valueOf:function(){throw "invalof";} }
 ---*/
 
-//CHECK#1
 try {
-	$ERROR('#1.1: new RegExp("\\u0042", {toString:void 0, valueOf:function(){throw "invalof";}}) throw "invalof". Actual: ' + (new RegExp("\u0042", {toString:void 0, valueOf:function(){throw "invalof";}})));
+    throw new Test262Error('#1.1: new RegExp("\\u0042", {toString:void 0, valueOf:function(){throw "invalof";}}) throw "invalof". Actual: ' + (new RegExp("\u0042", {toString:void 0, valueOf:function(){throw "invalof";}})));
 } catch (e) {
-	if (e !== "invalof" ) {
-		$ERROR('#1.2: new RegExp("\\u0042", {toString:void 0, valueOf:function(){throw "invalof";}}) throw "invalof". Actual: ' + (e));
-	}
+  assert.sameValue(e, "invalof", 'The value of e is expected to be "invalof"');
 }
+
+// TODO: Convert to assert.throws() format.
 
 reportCompare(0, 0);

@@ -7,33 +7,25 @@
 #ifndef vm_Xdr_h
 #define vm_Xdr_h
 
-#include "mozilla/EndianUtils.h"
-#include "mozilla/MaybeOneOf.h"
-#include "mozilla/Utf8.h"
+#include "mozilla/Assertions.h"  // MOZ_ASSERT, MOZ_CRASH
+#include "mozilla/MaybeOneOf.h"  // mozilla::MaybeOneOf
+#include "mozilla/Result.h"      // mozilla::{Result, Ok, Err}, MOZ_TRY
+#include "mozilla/Utf8.h"        // mozilla::Utf8Unit
 
-#include <type_traits>
+#include <stddef.h>     // size_t
+#include <stdint.h>     // uint8_t, uint16_t, uint32_t, uint64_t
+#include <string.h>     // memcpy
+#include <type_traits>  // std::enable_if_t
 
-#include "jsapi.h"
-#include "jsfriendapi.h"
-#include "NamespaceImports.h"
+#include "js/AllocPolicy.h"  // ReportOutOfMemory
+#include "js/Transcoding.h"  // JS::TranscodeResult, JS::TranscodeBuffer, JS::TranscodeRange, IsTranscodingBytecodeAligned, IsTranscodingBytecodeOffsetAligned
+#include "js/TypeDecls.h"    // JS::Latin1Char
+#include "js/UniquePtr.h"    // UniquePtr
+#include "js/Utility.h"      // JS::FreePolicy
 
-#include "js/CompileOptions.h"
-#include "js/Transcoding.h"
-#include "js/TypeDecls.h"
-#include "vm/JSAtom.h"
+struct JSContext;
 
 namespace js {
-
-struct SourceExtent;
-
-namespace frontend {
-struct CompilationStencil;
-struct ExtensibleCompilationStencil;
-struct CompilationStencilMerger;
-struct CompilationInput;
-}  // namespace frontend
-
-class LifoAlloc;
 
 enum XDRMode { XDR_ENCODE, XDR_DECODE };
 
@@ -43,15 +35,18 @@ using XDRResult = XDRResultT<mozilla::Ok>;
 
 class XDRBufferBase {
  public:
-  explicit XDRBufferBase(JSContext* cx, size_t cursor = 0)
-      : context_(cx), cursor_(cursor) {}
+  explicit XDRBufferBase(JSContext* cx, ErrorContext* ec, size_t cursor = 0)
+      : context_(cx), err_(ec), cursor_(cursor) {}
 
   JSContext* cx() const { return context_; }
+
+  ErrorContext* ec() const { return err_; }
 
   size_t cursor() const { return cursor_; }
 
  protected:
   JSContext* const context_;
+  ErrorContext* const err_;
   size_t cursor_;
 };
 
@@ -61,13 +56,14 @@ class XDRBuffer;
 template <>
 class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
  public:
-  XDRBuffer(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
-      : XDRBufferBase(cx, cursor), buffer_(buffer) {}
+  XDRBuffer(JSContext* cx, ErrorContext* ec, JS::TranscodeBuffer& buffer,
+            size_t cursor = 0)
+      : XDRBufferBase(cx, ec, cursor), buffer_(buffer) {}
 
   uint8_t* write(size_t n) {
     MOZ_ASSERT(n != 0);
     if (!buffer_.growByUninitialized(n)) {
-      ReportOutOfMemory(cx());
+      ReportOutOfMemory(ec());
       return nullptr;
     }
     uint8_t* ptr = &buffer_[cursor_];
@@ -80,7 +76,7 @@ class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
     if (extra) {
       size_t padding = 4 - extra;
       if (!buffer_.appendN(0, padding)) {
-        ReportOutOfMemory(cx());
+        ReportOutOfMemory(ec());
         return false;
       }
       cursor_ += padding;
@@ -88,9 +84,7 @@ class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
     return true;
   }
 
-#ifdef DEBUG
   bool isAligned32() { return cursor_ % 4 == 0; }
-#endif
 
   const uint8_t* read(size_t n) {
     MOZ_CRASH("Should never read in encode mode");
@@ -109,11 +103,15 @@ class XDRBuffer<XDR_ENCODE> : public XDRBufferBase {
 template <>
 class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
  public:
-  XDRBuffer(JSContext* cx, const JS::TranscodeRange& range)
-      : XDRBufferBase(cx), buffer_(range) {}
+  XDRBuffer(JSContext* cx, ErrorContext* ec, const JS::TranscodeRange& range)
+      : XDRBufferBase(cx, ec), buffer_(range) {}
 
-  XDRBuffer(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
-      : XDRBufferBase(cx, cursor), buffer_(buffer.begin(), buffer.length()) {}
+  // This isn't used by XDRStencilDecoder.
+  // Defined just for XDRState, shared with XDRStencilEncoder.
+  XDRBuffer(JSContext* cx, ErrorContext* ec, JS::TranscodeBuffer& buffer,
+            size_t cursor = 0)
+      : XDRBufferBase(cx, ec, cursor),
+        buffer_(buffer.begin(), buffer.length()) {}
 
   bool align32() {
     size_t extra = cursor_ % 4;
@@ -129,13 +127,11 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
     return true;
   }
 
-#ifdef DEBUG
   bool isAligned32() { return cursor_ % 4 == 0; }
-#endif
 
   const uint8_t* read(size_t n) {
     MOZ_ASSERT(cursor_ < buffer_.length());
-    uint8_t* ptr = &buffer_[cursor_];
+    const uint8_t* ptr = &buffer_[cursor_];
     cursor_ += n;
 
     // Don't let buggy code read past our buffer
@@ -148,7 +144,7 @@ class XDRBuffer<XDR_DECODE> : public XDRBufferBase {
 
   const uint8_t* peek(size_t n) {
     MOZ_ASSERT(cursor_ < buffer_.length());
-    uint8_t* ptr = &buffer_[cursor_];
+    const uint8_t* ptr = &buffer_[cursor_];
 
     // Don't let buggy code read past our buffer
     if (cursor_ + n > buffer_.length()) {
@@ -193,12 +189,14 @@ class XDRCoderBase {
     MOZ_ASSERT(resultCode() == JS::TranscodeResult::Ok);
     resultCode_ = code;
   }
-  bool validateResultCode(JSContext* cx, JS::TranscodeResult code) const;
+  bool validateResultCode(JSContext* cx, ErrorContext* ec,
+                          JS::TranscodeResult code) const;
 #endif
 };
 
 /*
- * XDR serialization state.  All data is encoded in little endian.
+ * XDR serialization state.  All data is encoded in native endian, except
+ * bytecode.
  */
 template <XDRMode mode>
 class XDRState : public XDRCoderBase {
@@ -207,38 +205,30 @@ class XDRState : public XDRCoderBase {
   XDRBuffer<mode>* buf;
 
  public:
-  XDRState(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor = 0)
-      : mainBuf(cx, buffer, cursor), buf(&mainBuf) {}
+  XDRState(JSContext* cx, ErrorContext* ec, JS::TranscodeBuffer& buffer,
+           size_t cursor = 0)
+      : mainBuf(cx, ec, buffer, cursor), buf(&mainBuf) {}
 
   template <typename RangeType>
-  XDRState(JSContext* cx, const RangeType& range)
-      : mainBuf(cx, range), buf(&mainBuf) {}
+  XDRState(JSContext* cx, ErrorContext* ec, const RangeType& range)
+      : mainBuf(cx, ec, range), buf(&mainBuf) {}
 
   // No default copy constructor or copying assignment, because |buf|
   // is an internal pointer.
   XDRState(const XDRState&) = delete;
   XDRState& operator=(const XDRState&) = delete;
 
-  virtual ~XDRState() = default;
+  ~XDRState() = default;
 
   JSContext* cx() const { return mainBuf.cx(); }
 
-  virtual bool isMultiDecode() const { return false; }
-
-  virtual bool hasOptions() const { return false; }
-  virtual const JS::ReadOnlyCompileOptions& options() {
-    MOZ_CRASH("does not have options");
-  }
-  virtual bool hasScriptSourceObjectOut() const { return false; }
-  virtual ScriptSourceObject** scriptSourceObjectOut() {
-    MOZ_CRASH("does not have scriptSourceObjectOut.");
-  }
+  ErrorContext* ec() const { return mainBuf.ec(); }
 
   template <typename T = mozilla::Ok>
   XDRResultT<T> fail(JS::TranscodeResult code) {
 #ifdef DEBUG
     MOZ_ASSERT(code != JS::TranscodeResult::Ok);
-    MOZ_ASSERT(validateResultCode(cx(), code));
+    MOZ_ASSERT(validateResultCode(cx(), ec(), code));
     setResultCode(code);
 #endif
     return mozilla::Err(code);
@@ -248,12 +238,10 @@ class XDRState : public XDRCoderBase {
     if (!buf->align32()) {
       return fail(JS::TranscodeResult::Throw);
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
-#ifdef DEBUG
   bool isAligned32() { return buf->isAligned32(); }
-#endif
 
   XDRResult readData(const uint8_t** pptr, size_t length) {
     const uint8_t* ptr = buf->read(length);
@@ -261,7 +249,7 @@ class XDRState : public XDRCoderBase {
       return fail(JS::TranscodeResult::Failure_BadDecode);
     }
     *pptr = ptr;
-    return Ok();
+    return mozilla::Ok();
   }
 
   // Peek the `sizeof(T)` bytes and return the pointer to `*pptr`.
@@ -275,18 +263,18 @@ class XDRState : public XDRCoderBase {
       return fail(JS::TranscodeResult::Failure_BadDecode);
     }
     *pptr = reinterpret_cast<const T*>(ptr);
-    return Ok();
+    return mozilla::Ok();
   }
 
-  // Peek uint32_t data, without handling endian-ness.
-  XDRResult peekRawUint32(uint32_t* n) {
+  // Peek uint32_t data.
+  XDRResult peekUint32(uint32_t* n) {
     MOZ_ASSERT(mode == XDR_DECODE);
     const uint8_t* ptr = buf->peek(sizeof(*n));
     if (!ptr) {
       return fail(JS::TranscodeResult::Failure_BadDecode);
     }
     *n = *reinterpret_cast<const uint32_t*>(ptr);
-    return Ok();
+    return mozilla::Ok();
   }
 
   XDRResult codeUint8(uint8_t* n) {
@@ -303,59 +291,34 @@ class XDRState : public XDRCoderBase {
       }
       *n = *ptr;
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
-  XDRResult codeUint16(uint16_t* n) {
+ private:
+  template <typename T>
+  XDRResult codeUintImpl(T* n) {
     if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
+      uint8_t* ptr = buf->write(sizeof(T));
       if (!ptr) {
         return fail(JS::TranscodeResult::Throw);
       }
-      mozilla::LittleEndian::writeUint16(ptr, *n);
+      memcpy(ptr, n, sizeof(T));
     } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
+      const uint8_t* ptr = buf->read(sizeof(T));
       if (!ptr) {
         return fail(JS::TranscodeResult::Failure_BadDecode);
       }
-      *n = mozilla::LittleEndian::readUint16(ptr);
+      memcpy(n, ptr, sizeof(T));
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
-  XDRResult codeUint32(uint32_t* n) {
-    if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Throw);
-      }
-      mozilla::LittleEndian::writeUint32(ptr, *n);
-    } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Failure_BadDecode);
-      }
-      *n = mozilla::LittleEndian::readUint32(ptr);
-    }
-    return Ok();
-  }
+ public:
+  XDRResult codeUint16(uint16_t* n) { return codeUintImpl(n); }
 
-  XDRResult codeUint64(uint64_t* n) {
-    if (mode == XDR_ENCODE) {
-      uint8_t* ptr = buf->write(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Throw);
-      }
-      mozilla::LittleEndian::writeUint64(ptr, *n);
-    } else {
-      const uint8_t* ptr = buf->read(sizeof(*n));
-      if (!ptr) {
-        return fail(JS::TranscodeResult::Failure_BadDecode);
-      }
-      *n = mozilla::LittleEndian::readUint64(ptr);
-    }
-    return Ok();
-  }
+  XDRResult codeUint32(uint32_t* n) { return codeUintImpl(n); }
+
+  XDRResult codeUint64(uint64_t* n) { return codeUintImpl(n); }
 
   /*
    * Use SFINAE to refuse any specialization which is not an enum.  Uses of
@@ -376,7 +339,7 @@ class XDRState : public XDRCoderBase {
     if (mode == XDR_DECODE) {
       *val = T(tmp ^ MAGIC);
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
   XDRResult codeDouble(double* dp) {
@@ -391,7 +354,7 @@ class XDRState : public XDRCoderBase {
     if (mode == XDR_DECODE) {
       *dp = pun.d;
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
   XDRResult codeMarker(uint32_t magic) {
@@ -402,12 +365,12 @@ class XDRState : public XDRCoderBase {
       MOZ_ASSERT(false, "Bad XDR marker");
       return fail(JS::TranscodeResult::Failure_BadDecode);
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
   XDRResult codeBytes(void* bytes, size_t len) {
     if (len == 0) {
-      return Ok();
+      return mozilla::Ok();
     }
     if (mode == XDR_ENCODE) {
       uint8_t* ptr = buf->write(len);
@@ -422,7 +385,7 @@ class XDRState : public XDRCoderBase {
       }
       memcpy(bytes, ptr, len);
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
   // While encoding, code the given data to the buffer.
@@ -444,7 +407,7 @@ class XDRState : public XDRCoderBase {
       MOZ_TRY(readData(&cursor, length));
       *data = reinterpret_cast<T*>(const_cast<uint8_t*>(cursor));
     }
-    return Ok();
+    return mozilla::Ok();
   }
 
   // Prefer using a variant below that is encoding aware.
@@ -460,155 +423,7 @@ class XDRState : public XDRCoderBase {
   // NOTE: Throws if string longer than JSString::MAX_LENGTH.
   XDRResult codeCharsZ(XDRTranscodeString<char>& buffer);
   XDRResult codeCharsZ(XDRTranscodeString<char16_t>& buffer);
-
-  XDRResult codeModuleObject(MutableHandleModuleObject modp);
-  XDRResult codeScript(MutableHandleScript scriptp);
 };
-
-using XDREncoder = XDRState<XDR_ENCODE>;
-using XDRDecoderBase = XDRState<XDR_DECODE>;
-
-class XDRDecoder : public XDRDecoderBase {
- public:
-  XDRDecoder(JSContext* cx, const JS::ReadOnlyCompileOptions* options,
-             JS::TranscodeBuffer& buffer, size_t cursor = 0)
-      : XDRDecoderBase(cx, buffer, cursor), options_(options) {
-    MOZ_ASSERT(options);
-  }
-
-  template <typename RangeType>
-  XDRDecoder(JSContext* cx, const JS::ReadOnlyCompileOptions* options,
-             const RangeType& range)
-      : XDRDecoderBase(cx, range), options_(options) {
-    MOZ_ASSERT(options);
-  }
-
-  bool hasOptions() const override { return true; }
-  const JS::ReadOnlyCompileOptions& options() override { return *options_; }
-
- private:
-  const JS::ReadOnlyCompileOptions* options_;
-};
-
-class XDROffThreadDecoder : public XDRDecoder {
-  ScriptSourceObject** sourceObjectOut_;
-  bool isMultiDecode_;
-
- public:
-  enum class Type {
-    Single,
-    Multi,
-  };
-
-  // Note, when providing an JSContext, where isJSContext is false,
-  // then the initialization of the ScriptSourceObject would remain
-  // incomplete. Thus, the sourceObjectOut must be used to finish the
-  // initialization with ScriptSourceObject::initFromOptions after the
-  // decoding.
-  //
-  // When providing a sourceObjectOut pointer, you have to ensure that it is
-  // marked by the GC to avoid dangling pointers.
-  XDROffThreadDecoder(JSContext* cx, const JS::ReadOnlyCompileOptions* options,
-                      Type type, ScriptSourceObject** sourceObjectOut,
-                      const JS::TranscodeRange& range)
-      : XDRDecoder(cx, options, range),
-        sourceObjectOut_(sourceObjectOut),
-        isMultiDecode_(type == Type::Multi) {
-    MOZ_ASSERT(sourceObjectOut);
-    MOZ_ASSERT(*sourceObjectOut == nullptr);
-  }
-
-  bool isMultiDecode() const override { return isMultiDecode_; }
-
-  bool hasScriptSourceObjectOut() const override { return true; }
-  ScriptSourceObject** scriptSourceObjectOut() override {
-    return sourceObjectOut_;
-  }
-};
-
-/*
- * The structure of the Stencil XDR buffer is:
- *
- * 1. Header
- *   a. Version
- *   b. ScriptSource
- *   d. Alignment padding
- * 2. Stencil
- *   a. CompilationStencil
- */
-
-/*
- * The stencil decoder accepts `range` as input.
- *
- * The decoded stencils are outputted to the default-initialized
- * `stencil` parameter of `codeStencil` method.
- *
- * The decoded stencils borrow the input `buffer`/`range`, and the consumer
- * has to keep the buffer alive while the decoded stencils are alive.
- */
-class XDRStencilDecoder : public XDRDecoderBase {
- public:
-  XDRStencilDecoder(JSContext* cx, JS::TranscodeBuffer& buffer, size_t cursor)
-      : XDRDecoderBase(cx, buffer, cursor) {
-    MOZ_ASSERT(JS::IsTranscodingBytecodeAligned(buffer.begin()));
-    MOZ_ASSERT(JS::IsTranscodingBytecodeOffsetAligned(cursor));
-  }
-
-  XDRStencilDecoder(JSContext* cx, const JS::TranscodeRange& range)
-      : XDRDecoderBase(cx, range) {
-    MOZ_ASSERT(JS::IsTranscodingBytecodeAligned(range.begin().get()));
-  }
-
-  XDRResult codeStencil(frontend::CompilationInput& input,
-                        frontend::CompilationStencil& stencil);
-};
-
-class XDRStencilEncoder : public XDREncoder {
- public:
-  XDRStencilEncoder(JSContext* cx, JS::TranscodeBuffer& buffer)
-      : XDREncoder(cx, buffer, buffer.length()) {
-    // NOTE: If buffer is empty, buffer.begin() doesn't point valid buffer.
-    MOZ_ASSERT_IF(!buffer.empty(),
-                  JS::IsTranscodingBytecodeAligned(buffer.begin()));
-    MOZ_ASSERT(JS::IsTranscodingBytecodeOffsetAligned(buffer.length()));
-  }
-
- private:
-  XDRResult codeStencil(const JS::ReadOnlyCompileOptions* options,
-                        const RefPtr<ScriptSource>& source,
-                        const frontend::CompilationStencil& stencil);
-
- public:
-  XDRResult codeStencil(const frontend::CompilationInput& input,
-                        const frontend::CompilationStencil& stencil);
-
-  XDRResult codeStencil(const RefPtr<ScriptSource>& source,
-                        const frontend::CompilationStencil& stencil);
-};
-
-class XDRIncrementalStencilEncoder {
-  frontend::CompilationStencilMerger* merger_ = nullptr;
-
- public:
-  XDRIncrementalStencilEncoder() = default;
-
-  ~XDRIncrementalStencilEncoder();
-
-  XDRResult linearize(JSContext* cx, JS::TranscodeBuffer& buffer,
-                      js::ScriptSource* ss);
-
-  XDRResult setInitial(
-      JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-      UniquePtr<frontend::ExtensibleCompilationStencil>&& initial);
-  XDRResult addDelazification(
-      JSContext* cx, const frontend::CompilationStencil& delazification);
-};
-
-template <XDRMode mode>
-XDRResult XDRAtomOrNull(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
-
-template <XDRMode mode>
-XDRResult XDRAtom(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
 
 } /* namespace js */
 

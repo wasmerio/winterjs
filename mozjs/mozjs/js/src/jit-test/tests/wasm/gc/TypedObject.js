@@ -7,7 +7,7 @@
                              (type $p (struct (field f64) (field (mut i32))))
 
                              (func (export "mkp") (result eqref)
-                              (struct.new_with_rtt $p (f64.const 1.5) (i32.const 33) (rtt.canon $p))))`).exports;
+                              (struct.new $p (f64.const 1.5) (i32.const 33))))`).exports;
 
     let p = ins.mkp();
     assertEq(p[0], 1.5);
@@ -22,7 +22,7 @@
                              (type $p (struct (field f64)))
 
                              (func (export "mkp") (result eqref)
-                              (struct.new_with_rtt $p (f64.const 1.5) (rtt.canon $p))))`).exports;
+                              (struct.new $p (f64.const 1.5))))`).exports;
 
     let p = ins.mkp();
     assertErrorMessage(() => p[0] = 5.7,
@@ -30,7 +30,7 @@
                        /setting immutable field/);
 }
 
-// MVA v1 restriction: structs are not constructible from JS.
+// MVA v1 restriction: structs have no prototype
 
 {
     let ins = wasmEvalText(`(module
@@ -40,13 +40,13 @@
                              (type $r (struct (field (mut eqref))))
 
                              (func (export "mkp") (result eqref)
-                              (struct.new_with_rtt $p (ref.null $q) (rtt.canon $p)))
+                              (struct.new $p (ref.null $q)))
 
                              (func (export "mkr") (result eqref)
-                              (struct.new_with_rtt $r (ref.null eq) (rtt.canon $r))))`).exports;
+                              (struct.new $r (ref.null eq))))`).exports;
 
-    assertEq(ins.mkp().constructor, Object);
-    assertEq(ins.mkr().constructor, Object);
+    assertEq(Object.getPrototypeOf(ins.mkp()), null);
+    assertEq(Object.getPrototypeOf(ins.mkr()), null);
 }
 
 // MVA v1 restriction: all fields are immutable
@@ -57,10 +57,10 @@
                              (type $p (struct (field (mut (ref null $q))) (field (mut eqref))))
 
                              (func (export "mkq") (result eqref)
-                              (struct.new_with_rtt $q (f64.const 1.5) (rtt.canon $q)))
+                              (struct.new $q (f64.const 1.5)))
 
                              (func (export "mkp") (result eqref)
-                              (struct.new_with_rtt $p (ref.null $q) (ref.null eq) (rtt.canon $p))))`).exports;
+                              (struct.new $p (ref.null $q) (ref.null eq))))`).exports;
     let q = ins.mkq();
     assertEq(typeof q, "object");
     assertEq(q[0], 1.5);
@@ -85,13 +85,11 @@
     let ins = wasmEvalText(`(module
                              (type $p (struct (field (mut i64))))
                              (func (export "mkp") (result eqref)
-                              (struct.new_with_rtt $p (i64.const 0x1234567887654321) (rtt.canon $p))))`).exports;
+                              (struct.new $p (i64.const 0x1234567887654321))))`).exports;
 
     let p = ins.mkp();
     assertEq(typeof p, "object");
     assertEq(p[0], 0x1234567887654321n)
-
-    assertEq(p.constructor, Object);
 
     assertErrorMessage(() => { p[0] = 0 },
                        Error,
@@ -108,18 +106,16 @@
           (type $q (struct (field i32) (field i32)))
           (func $f (param eqref) (result i32)
            local.get 0
-           rtt.canon $q
-           ref.test
+           ref.test $q
           )
           (func $g (param eqref) (result i32)
            local.get 0
-           rtt.canon $p
-           ref.test
+           ref.test $p
           )
           (func (export "t1") (result i32)
-           (call $f (struct.new_with_rtt $p (i64.const 0) (rtt.canon $p))))
+           (call $f (struct.new $p (i64.const 0))))
           (func (export "t2") (result i32)
-           (call $g (struct.new_with_rtt $q (i32.const 0) (i32.const 0) (rtt.canon $q)))))`).exports;
+           (call $g (struct.new $q (i32.const 0) (i32.const 0)))))`).exports;
     assertEq(ins.t1(), 0);
     assertEq(ins.t2(), 0);
 }

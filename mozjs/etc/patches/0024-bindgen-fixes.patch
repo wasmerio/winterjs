@@ -1,0 +1,57 @@
+diff --git a/js/public/CompileOptions.h b/js/public/CompileOptions.h
+index 9745ffbd9..c7c7e2203 100644
+--- a/js/public/CompileOptions.h
++++ b/js/public/CompileOptions.h
+@@ -81,7 +81,7 @@ class JS_PUBLIC_API DecodeOptions;
+  * Use this in code that needs to propagate compile options from one
+  * compilation unit to another.
+  */
+-class JS_PUBLIC_API TransitiveCompileOptions {
++class JS_PUBLIC_API __attribute__ ((__packed__))  TransitiveCompileOptions {
+   friend class JS_PUBLIC_API DecodeOptions;
+
+  protected:
+@@ -227,7 +227,7 @@ class JS_PUBLIC_API TransitiveCompileOptions {
+  * is protected anyway); instead, create instances only of the derived classes:
+  * CompileOptions and OwningCompileOptions.
+  */
+-class JS_PUBLIC_API ReadOnlyCompileOptions : public TransitiveCompileOptions {
++class JS_PUBLIC_API __attribute__ ((__packed__)) ReadOnlyCompileOptions : public TransitiveCompileOptions {
+  public:
+   // POD options.
+   unsigned lineno = 1;
+diff --git a/js/public/Proxy.h b/js/public/Proxy.h
+index 93239d588..920b55f57 100644
+--- a/js/public/Proxy.h
++++ b/js/public/Proxy.h
+@@ -156,7 +156,7 @@ class JS_PUBLIC_API Wrapper;
+  * explicit override for the method in SecurityWrapper. See bug 945826 comment
+  * 0.
+  */
+-class JS_PUBLIC_API BaseProxyHandler {
++class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+   /*
+    * Sometimes it's desirable to designate groups of proxy handlers as
+    * "similar". For this, we use the notion of a "family": A consumer-provided
+diff --git a/js/public/Wrapper.h b/js/public/Wrapper.h
+index 807e9e4d6..140763fcc 100644
+--- a/js/public/Wrapper.h
++++ b/js/public/Wrapper.h
+@@ -41,7 +41,7 @@ class MOZ_STACK_CLASS WrapperOptions : public ProxyOptions {
+
+ // Base class for proxy handlers that want to forward all operations to an
+ // object stored in the proxy's private slot.
+-class JS_PUBLIC_API ForwardingProxyHandler : public BaseProxyHandler {
++class JS_PUBLIC_API __attribute__ ((__packed__)) ForwardingProxyHandler : public BaseProxyHandler {
+  public:
+   using BaseProxyHandler::BaseProxyHandler;
+
+@@ -132,7 +132,7 @@ class JS_PUBLIC_API ForwardingProxyHandler : public BaseProxyHandler {
+  * to add an override in CrossCompartmentWrapper. If you don't, you risk
+  * compartment mismatches. See bug 945826 comment 0.
+  */
+-class JS_PUBLIC_API Wrapper : public ForwardingProxyHandler {
++class JS_PUBLIC_API __attribute__ ((__packed__)) Wrapper : public ForwardingProxyHandler {
+   unsigned mFlags;
+
+  public:

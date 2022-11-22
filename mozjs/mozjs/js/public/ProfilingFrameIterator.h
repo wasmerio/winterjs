@@ -46,6 +46,12 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
   JSContext* cx_;
   mozilla::Maybe<uint64_t> samplePositionInProfilerBuffer_;
   js::Activation* activation_;
+  // For each JitActivation, this records the lowest (most recent) stack
+  // address. This will usually be either the exitFP of the activation or the
+  // frame or stack pointer of currently executing JIT/Wasm code. The Gecko
+  // profiler uses this to skip native frames between the activation and
+  // endStackAddress_.
+  void* endStackAddress_ = nullptr;
   Kind kind_;
 
   static const unsigned StorageSpace = 8 * sizeof(void*);
@@ -75,6 +81,14 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
     MOZ_ASSERT(!done());
     MOZ_ASSERT(isJSJit());
     return *static_cast<const js::jit::JSJitProfilingFrameIterator*>(storage());
+  }
+
+  void maybeSetEndStackAddress(void* addr) {
+    // If endStackAddress_ has already been set, don't change it because we
+    // want this to correspond to the most recent frame.
+    if (!endStackAddress_) {
+      endStackAddress_ = addr;
+    }
   }
 
   void settleFrames();
@@ -142,6 +156,11 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
 
   mozilla::Maybe<Frame> getPhysicalFrameWithoutLabel() const;
 
+  // Return the registers from the native caller frame.
+  // Nothing{} if this iterator is NOT pointing at a native-to-JIT entry frame,
+  // or if the information is not accessible/implemented on this platform.
+  mozilla::Maybe<RegisterState> getCppEntryRegisters() const;
+
  private:
   mozilla::Maybe<Frame> getPhysicalFrameAndEntry(
       js::jit::JitcodeGlobalEntry* entry) const;
@@ -152,7 +171,7 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
   bool iteratorDone();
 } JS_HAZ_GC_INVALIDATED;
 
-JS_FRIEND_API bool IsProfilingEnabledForContext(JSContext* cx);
+JS_PUBLIC_API bool IsProfilingEnabledForContext(JSContext* cx);
 
 /**
  * After each sample run, this method should be called with the current buffer
@@ -162,7 +181,7 @@ JS_FRIEND_API bool IsProfilingEnabledForContext(JSContext* cx);
  * See the field |profilerSampleBufferRangeStart| on JSRuntime for documentation
  * about what this value is used for.
  */
-JS_FRIEND_API void SetJSContextProfilerSampleBufferRangeStart(
+JS_PUBLIC_API void SetJSContextProfilerSampleBufferRangeStart(
     JSContext* cx, uint64_t rangeStart);
 
 class ProfiledFrameRange;

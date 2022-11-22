@@ -13,22 +13,30 @@
 #include <stddef.h>
 
 #include "js/AllocPolicy.h"
-#include "js/CharacterEncoding.h"
 #include "js/GCAPI.h"
 #include "js/GCHashTable.h"
+#include "js/Result.h"
 #include "js/RootingAPI.h"
 #include "js/Utility.h"
 #include "vm/StringType.h"
 
-using UDateTimePatternGenerator = void*;
+namespace mozilla::intl {
+class DateTimePatternGenerator;
+}  // namespace mozilla::intl
 
 namespace js {
 
+class ArrayObject;
+
 namespace intl {
 
+/**
+ * This deleter class exists so that mozilla::intl::DateTimePatternGenerator
+ * can be a forward declaration, but still be used inside of a UniquePtr.
+ */
 class DateTimePatternGeneratorDeleter {
  public:
-  void operator()(UDateTimePatternGenerator* ptr);
+  void operator()(mozilla::intl::DateTimePatternGenerator* ptr);
 };
 
 /**
@@ -63,7 +71,7 @@ class SharedIntlData {
     }
   };
 
- private:
+ public:
   /**
    * Information tracking the set of the supported time zone names, derived
    * from the IANA time zone database <https://www.iana.org/time-zones>.
@@ -105,6 +113,7 @@ class SharedIntlData {
   using TimeZoneMap =
       GCHashMap<TimeZoneName, TimeZoneName, TimeZoneHasher, SystemAllocPolicy>;
 
+ private:
   /**
    * As a threshold matter, available time zones are those time zones ICU
    * supports, via ucal_openTimeZones. But ICU supports additional non-IANA
@@ -169,6 +178,12 @@ class SharedIntlData {
       JSContext* cx, JS::Handle<JSString*> timeZone,
       JS::MutableHandle<JSAtom*> result);
 
+  /**
+   * Returns an iterator over all available time zones supported by ICU. The
+   * returned time zone names aren't canonicalized.
+   */
+  JS::Result<TimeZoneSet::Iterator> availableTimeZonesIteration(JSContext* cx);
+
  private:
   using Locale = JSAtom*;
 
@@ -211,9 +226,9 @@ class SharedIntlData {
   using CountAvailable = int32_t (*)();
   using GetAvailable = const char* (*)(int32_t localeIndex);
 
+  template <class AvailableLocales>
   static bool getAvailableLocales(JSContext* cx, LocaleSet& locales,
-                                  CountAvailable countAvailable,
-                                  GetAvailable getAvailable);
+                                  const AvailableLocales& availableLocales);
 
   /**
    * Precomputes the available locales sets.
@@ -238,6 +253,11 @@ class SharedIntlData {
   [[nodiscard]] bool isSupportedLocale(JSContext* cx, SupportedLocaleKind kind,
                                        JS::Handle<JSString*> locale,
                                        bool* supported);
+
+  /**
+   * Returns all available locales for |kind|.
+   */
+  ArrayObject* availableLocalesOf(JSContext* cx, SupportedLocaleKind kind);
 
  private:
   /**
@@ -283,20 +303,22 @@ class SharedIntlData {
                         bool* isUpperFirst);
 
  private:
-  using UniqueUDateTimePatternGenerator =
-      mozilla::UniquePtr<UDateTimePatternGenerator,
+  using UniqueDateTimePatternGenerator =
+      mozilla::UniquePtr<mozilla::intl::DateTimePatternGenerator,
                          DateTimePatternGeneratorDeleter>;
 
-  UniqueUDateTimePatternGenerator dateTimePatternGenerator;
+  UniqueDateTimePatternGenerator dateTimePatternGenerator;
   JS::UniqueChars dateTimePatternGeneratorLocale;
 
  public:
   /**
-   * Wrapper around |udatpg_open| to return a possibly cached generator
-   * instance. The returned pointer must not be closed via |udatpg_close|.
+   * Get a non-owned cached instance of the DateTimePatternGenerator, which is
+   * expensive to instantiate.
+   *
+   * See: https://bugzilla.mozilla.org/show_bug.cgi?id=1549578
    */
-  UDateTimePatternGenerator* getDateTimePatternGenerator(JSContext* cx,
-                                                         const char* locale);
+  mozilla::intl::DateTimePatternGenerator* getDateTimePatternGenerator(
+      JSContext* cx, const char* locale);
 
  public:
   void destroyInstance();

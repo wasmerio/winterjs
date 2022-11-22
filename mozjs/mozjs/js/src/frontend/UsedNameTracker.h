@@ -7,14 +7,17 @@
 #ifndef frontend_UsedNameTracker_h
 #define frontend_UsedNameTracker_h
 
+#include "mozilla/Assertions.h"
+#include "mozilla/Maybe.h"
+
+#include <stdint.h>
+
 #include "frontend/ParserAtom.h"                   // TaggedParserAtomIndex
 #include "frontend/TaggedParserAtomIndexHasher.h"  // TaggedParserAtomIndexHasher
 #include "frontend/Token.h"
 #include "js/AllocPolicy.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
-
-#include "vm/StringType.h"
 
 namespace js {
 namespace frontend {
@@ -163,6 +166,17 @@ class UsedNameTracker {
     bool empty() { return uses_.empty(); }
 
     mozilla::Maybe<TokenPos> pos() { return firstUsePos_; }
+
+    // When we leave a scope, and subsequently find a new private name
+    // reference, we don't want our error messages to be attributed to an old
+    // scope, so we update the position in that scenario.
+    void maybeUpdatePos(mozilla::Maybe<TokenPos> p) {
+      MOZ_ASSERT_IF(!isPublic(), p.isSome());
+
+      if (empty() && !isPublic()) {
+        firstUsePos_ = p;
+      }
+    }
   };
 
   using UsedNameMap =

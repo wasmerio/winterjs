@@ -23,7 +23,8 @@
 #include "irregexp/RegExpAPI.h"
 // js::irregexp::CaseInsensitiveCompareNonUnicode,
 // js::irregexp::CaseInsensitiveCompareUnicode,
-// js::irregexp::GrowBacktrackStack
+// js::irregexp::GrowBacktrackStack,
+// js::irregexp::IsCharacterInRangeArray
 
 #include "jit/ABIFunctions.h"
 #include "jit/Bailouts.h"  // js::jit::FinishBailoutToBaseline, js::jit::Bailout,
@@ -42,13 +43,10 @@
 #include "proxy/Proxy.h"  // js::ProxyGetProperty
 
 #include "vm/ArgumentsObject.h"  // js::ArgumentsObject::finishForIonPure
+#include "vm/Interpreter.h"      // js::TypeOfObject
 #include "vm/NativeObject.h"     // js::NativeObject
 #include "vm/RegExpShared.h"     // js::ExecuteRegExpAtomRaw
-#include "vm/TraceLogging.h"     // js::TraceLogStartEventPrivate,
-                                 // js::TraceLogStartEvent,
-                                 // js::TraceLogStopEventPrivate
-
-#include "wasm/WasmBuiltins.h"  // js::wasm::*
+#include "wasm/WasmBuiltins.h"   // js::wasm::*
 
 #include "builtin/Boolean-inl.h"  // js::EmulatesUndefined
 
@@ -87,6 +85,7 @@ namespace jit {
   ABIFUNCTION_JS_CODEGEN_ARM_LIST(_)                                  \
   ABIFUNCTION_WASM_CODEGEN_DEBUG_LIST(_)                              \
   _(js::ArgumentsObject::finishForIonPure)                            \
+  _(js::ArgumentsObject::finishInlineForIonPure)                      \
   _(js::ArrayShiftMoveElements)                                       \
   _(js::ecmaAtan2)                                                    \
   _(js::ecmaHypot)                                                    \
@@ -100,10 +99,14 @@ namespace jit {
   _(js::irregexp::CaseInsensitiveCompareNonUnicode)                   \
   _(js::irregexp::CaseInsensitiveCompareUnicode)                      \
   _(js::irregexp::GrowBacktrackStack)                                 \
+  _(js::irregexp::IsCharacterInRangeArray)                            \
   _(js::jit::AllocateAndInitTypedArrayBuffer)                         \
   _(js::jit::AllocateBigIntNoGC)                                      \
   _(js::jit::AllocateFatInlineString)                                 \
-  _(js::jit::AllocateString)                                          \
+  _(js::jit::AllocateDependentString)                                 \
+  _(js::jit::ArrayPushDensePure)                                      \
+  _(js::jit::AssertMapObjectHash)                                     \
+  _(js::jit::AssertSetObjectHash)                                     \
   _(js::jit::AssertValidBigIntPtr)                                    \
   _(js::jit::AssertValidObjectPtr)                                    \
   _(js::jit::AssertValidStringPtr)                                    \
@@ -111,6 +114,7 @@ namespace jit {
   _(js::jit::AssertValidValue)                                        \
   _(js::jit::AssumeUnreachable)                                       \
   _(js::jit::AtomicsStore64)                                          \
+  _(js::jit::AtomizeStringNoGC)                                       \
   _(js::jit::Bailout)                                                 \
   _(js::jit::BigIntNumberEqual<EqualityKind::Equal>)                  \
   _(js::jit::BigIntNumberEqual<EqualityKind::NotEqual>)               \
@@ -127,6 +131,7 @@ namespace jit {
   _(js::jit::GetInt32FromStringPure)                                  \
   _(js::jit::GetNativeDataPropertyByValuePure)                        \
   _(js::jit::GetNativeDataPropertyPure)                               \
+  _(js::jit::GetNativeDataPropertyPureFallback)                       \
   _(js::jit::GlobalHasLiveOnDebuggerStatement)                        \
   _(js::jit::HandleCodeCoverageAtPC)                                  \
   _(js::jit::HandleCodeCoverageAtPrologue)                            \
@@ -147,9 +152,10 @@ namespace jit {
   _(js::jit::PostWriteElementBarrier<IndexInBounds::Maybe>)           \
   _(js::jit::Printf0)                                                 \
   _(js::jit::Printf1)                                                 \
+  _(js::jit::SetDenseElementPure)                                     \
   _(js::jit::SetNativeDataPropertyPure)                               \
   _(js::jit::StringFromCharCodeNoGC)                                  \
-  _(js::jit::TypeOfObject)                                            \
+  _(js::jit::TypeOfNameObject)                                        \
   _(js::jit::WrapObjectPure)                                          \
   _(js::MapIteratorObject::next)                                      \
   _(js::NativeObject::addDenseElementPure)                            \
@@ -163,8 +169,7 @@ namespace jit {
   _(js::RegExpPrototypeOptimizableRaw)                                \
   _(js::SetIteratorObject::next)                                      \
   _(js::StringToNumberPure)                                           \
-  _(js::TraceLogStartEventPrivate)                                    \
-  _(js::TraceLogStopEventPrivate)
+  _(js::TypeOfObject)
 
 // List of all ABI functions to be used with callWithABI, which are
 // overloaded. Each entry stores the fully qualified name of the C++ function,
@@ -172,10 +177,7 @@ namespace jit {
 // is not overloaded, you should prefer adding the function to
 // ABIFUNCTION_LIST instead. This list must be sorted with the name of the C++
 // function.
-#define ABIFUNCTION_AND_TYPE_LIST(_)                       \
-  _(js::TraceLogStartEvent,                                \
-    void (*)(TraceLoggerThread*, const TraceLoggerEvent&)) \
-  _(JS::ToInt32, int32_t (*)(double))
+#define ABIFUNCTION_AND_TYPE_LIST(_) _(JS::ToInt32, int32_t (*)(double))
 
 // List of all ABI function signature which are using a computed function
 // pointer instead of a statically known function pointer.

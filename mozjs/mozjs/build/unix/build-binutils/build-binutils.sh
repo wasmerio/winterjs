@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -x
+
 make_flags="-j$(nproc)"
 
 root_dir="$1"
@@ -60,7 +62,14 @@ EOF
 
 cd ..
 
-TARGETS="aarch64-linux-gnu"
+TARGETS="aarch64-linux-gnu i686-w64-mingw32"
+
+if [ -d $MOZ_FETCHES_DIR/sysroot ]; then
+  # Don't silently use a non-existing directory for C++ headers.
+  [ -d $MOZ_FETCHES_DIR/sysroot/usr/include/c++/7 ] || exit 1
+  export CFLAGS="-g -O2 --sysroot=$MOZ_FETCHES_DIR/sysroot"
+  export CXXFLAGS="$CFLAGS -isystem $MOZ_FETCHES_DIR/sysroot/usr/include/c++/7 -isystem $MOZ_FETCHES_DIR/sysroot/usr/include/x86_64-linux-gnu/c++/7"
+fi
 
 # Build target-specific GNU as ; build them first so that the few documentation
 # files they install are overwritten by the full binutils build.
@@ -70,7 +79,7 @@ for target in $TARGETS; do
   mkdir binutils-$target
   cd binutils-$target
 
-  ../binutils-source/configure --prefix /tools/binutils/ --disable-gold --disable-ld --disable-binutils --disable-gprof --disable-nls --target=$target || exit 1
+  ../binutils-source/configure --prefix /tools/binutils/ --disable-gold --disable-ld --disable-binutils --disable-gprof --disable-nls --target=$target $EXTRA_CONFIGURE_FLAGS || exit 1
   make $make_flags || exit 1
   make install $make_flags DESTDIR=$root_dir || exit 1
 
@@ -83,7 +92,7 @@ cd binutils-objdir
 
 # --enable-targets builds extra target support in ld.
 # Enabling aarch64 support brings in arm support, so we don't need to specify that too.
-../binutils-source/configure --prefix /tools/binutils/ --enable-gold --enable-plugins --disable-nls --enable-targets="$TARGETS" || exit 1
+../binutils-source/configure --prefix /tools/binutils/ --enable-gold --enable-plugins --disable-nls --enable-targets="$TARGETS" $EXTRA_CONFIGURE_FLAGS || exit 1
 make $make_flags || exit 1
 make install $make_flags DESTDIR=$root_dir || exit 1
 
@@ -91,4 +100,4 @@ cd ..
 
 # Make a package of the built binutils
 cd $root_dir/tools
-tar caf $root_dir/binutils.tar.xz binutils/
+tar caf $root_dir/binutils.tar.zst binutils/

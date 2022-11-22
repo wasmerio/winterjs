@@ -12,13 +12,11 @@ description: Promise.prototype.then treats non-callable arg1, arg2 as undefined
 flags: [async]
 ---*/
 
-var obj = {};
-var p = Promise.reject(obj);
+var arg = {};
+var p = Promise.reject(arg);
 
 p.then(3, 5).then(function() {
-  $ERROR("Should not be called -- promise was rejected.");
-}, function(arg) {
-  if (arg !== obj) {
-    $ERROR("Expected resolution object to be passed through, got " + arg);
-  }
+  throw new Test262Error("Should not be called -- promise was rejected.");
+}, function(result) {
+  assert.sameValue(result, arg, 'The value of result is expected to equal the value of arg');
 }).then($DONE, $DONE);

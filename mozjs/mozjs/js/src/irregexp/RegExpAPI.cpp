@@ -13,6 +13,8 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Casting.h"
 
+#include "frontend/TokenStream.h"
+#include "gc/GC.h"
 #include "gc/Zone.h"
 #include "irregexp/imported/regexp-ast.h"
 #include "irregexp/imported/regexp-bytecode-generator.h"
@@ -29,7 +31,9 @@
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/friend/StackLimits.h"    // js::ReportOverRecursed
 #include "util/StringBuffer.h"
+#include "vm/ErrorContext.h"  // AutoReportFrontendContext
 #include "vm/MatchPairs.h"
+#include "vm/PlainObject.h"
 #include "vm/RegExpShared.h"
 
 namespace js {
@@ -45,12 +49,12 @@ using frontend::DummyTokenStream;
 using frontend::TokenStreamAnyChars;
 
 using v8::internal::DisallowGarbageCollection;
-using v8::internal::FlatStringReader;
 using v8::internal::HandleScope;
 using v8::internal::InputOutputData;
 using v8::internal::IrregexpInterpreter;
 using v8::internal::NativeRegExpMacroAssembler;
 using v8::internal::RegExpBytecodeGenerator;
+using v8::internal::RegExpCapture;
 using v8::internal::RegExpCompileData;
 using v8::internal::RegExpCompiler;
 using v8::internal::RegExpError;
@@ -60,6 +64,7 @@ using v8::internal::RegExpNode;
 using v8::internal::RegExpParser;
 using v8::internal::SMRegExpMacroAssembler;
 using v8::internal::Zone;
+using v8::internal::ZoneVector;
 
 using V8HandleString = v8::internal::Handle<v8::internal::String>;
 using V8HandleRegExp = v8::internal::Handle<v8::internal::JSRegExp>;
@@ -148,6 +153,8 @@ Isolate* CreateIsolate(JSContext* cx) {
   return isolate.release();
 }
 
+void TraceIsolate(JSTracer* trc, Isolate* isolate) { isolate->trace(trc); }
+
 void DestroyIsolate(Isolate* isolate) {
   MOZ_ASSERT(isolate->liveHandles() == 0);
   MOZ_ASSERT(isolate->livePseudoHandles() == 0);
@@ -177,11 +184,11 @@ static void ReportSyntaxError(TokenStreamAnyChars& ts,
                               size_t length, ...) {
   MOZ_ASSERT(line.isSome() == column.isSome());
 
-  gc::AutoSuppressGC suppressGC(ts.context());
+  gc::AutoSuppressGC suppressGC(ts.jsContext());
   uint32_t errorNumber = ErrorNumber(result.error);
 
   if (errorNumber == JSMSG_OVER_RECURSED) {
-    ReportOverRecursed(ts.context());
+    ReportOverRecursed(ts.jsContext());
     return;
   }
 
@@ -237,7 +244,7 @@ static void ReportSyntaxError(TokenStreamAnyChars& ts,
 
   // Create the windowed string, not including the potential line
   // terminator.
-  StringBuffer windowBuf(ts.context());
+  StringBuffer windowBuf(ts.jsContext());
   if (!windowBuf.append(windowStart, windowEnd)) {
     return;
   }
@@ -264,7 +271,8 @@ static void ReportSyntaxError(TokenStreamAnyChars& ts,
 }
 
 static void ReportSyntaxError(TokenStreamAnyChars& ts,
-                              RegExpCompileData& result, HandleAtom pattern) {
+                              RegExpCompileData& result,
+                              Handle<JSAtom*> pattern) {
   JS::AutoCheckCannotGC nogc_;
   if (pattern->hasLatin1Chars()) {
     ReportSyntaxError(ts, Nothing(), Nothing(), result,
@@ -275,25 +283,29 @@ static void ReportSyntaxError(TokenStreamAnyChars& ts,
   }
 }
 
-static bool CheckPatternSyntaxImpl(JSContext* cx, FlatStringReader* pattern,
+template <typename CharT>
+static bool CheckPatternSyntaxImpl(JSContext* cx,
+                                   JS::NativeStackLimit stackLimit,
+                                   const CharT* input, uint32_t inputLength,
                                    JS::RegExpFlags flags,
-                                   RegExpCompileData* result) {
+                                   RegExpCompileData* result,
+                                   JS::AutoAssertNoGC& nogc) {
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   Zone zone(allocScope.alloc());
 
-  HandleScope handleScope(cx->isolate);
-  DisallowGarbageCollection no_gc;
-  return RegExpParser::VerifyRegExpSyntax(cx->isolate, &zone, pattern, flags,
-                                          result, no_gc);
+  return RegExpParser::VerifyRegExpSyntax(&zone, stackLimit, input, inputLength,
+                                          flags, result, nogc);
 }
 
-bool CheckPatternSyntax(JSContext* cx, TokenStreamAnyChars& ts,
+bool CheckPatternSyntax(JSContext* cx, JS::NativeStackLimit stackLimit,
+                        TokenStreamAnyChars& ts,
                         const mozilla::Range<const char16_t> chars,
                         JS::RegExpFlags flags, mozilla::Maybe<uint32_t> line,
                         mozilla::Maybe<uint32_t> column) {
-  FlatStringReader reader(chars);
   RegExpCompileData result;
-  if (!CheckPatternSyntaxImpl(cx, &reader, flags, &result)) {
+  JS::AutoAssertNoGC nogc(cx);
+  if (!CheckPatternSyntaxImpl(cx, stackLimit, chars.begin().get(),
+                              chars.length(), flags, &result, nogc)) {
     ReportSyntaxError(ts, line, column, result, chars.begin().get(),
                       chars.length());
     return false;
@@ -301,11 +313,21 @@ bool CheckPatternSyntax(JSContext* cx, TokenStreamAnyChars& ts,
   return true;
 }
 
-bool CheckPatternSyntax(JSContext* cx, TokenStreamAnyChars& ts,
-                        HandleAtom pattern, JS::RegExpFlags flags) {
-  FlatStringReader reader(cx, pattern);
+bool CheckPatternSyntax(JSContext* cx, JS::NativeStackLimit stackLimit,
+                        TokenStreamAnyChars& ts, Handle<JSAtom*> pattern,
+                        JS::RegExpFlags flags) {
   RegExpCompileData result;
-  if (!CheckPatternSyntaxImpl(cx, &reader, flags, &result)) {
+  JS::AutoAssertNoGC nogc(cx);
+  if (pattern->hasLatin1Chars()) {
+    if (!CheckPatternSyntaxImpl(cx, stackLimit, pattern->latin1Chars(nogc),
+                                pattern->length(), flags, &result, nogc)) {
+      ReportSyntaxError(ts, result, pattern);
+      return false;
+    }
+    return true;
+  }
+  if (!CheckPatternSyntaxImpl(cx, stackLimit, pattern->twoByteChars(nogc),
+                              pattern->length(), flags, &result, nogc)) {
     ReportSyntaxError(ts, result, pattern);
     return false;
   }
@@ -319,9 +341,8 @@ template <typename CharT>
 static bool HasFewDifferentCharacters(const CharT* chars, size_t length) {
   const uint32_t tableSize =
       v8::internal::NativeRegExpMacroAssembler::kTableSize;
-  bool character_found[tableSize];
+  bool character_found[tableSize] = {};
   uint32_t different = 0;
-  memset(&character_found[0], 0, sizeof(character_found));
   for (uint32_t i = 0; i < length; i++) {
     uint32_t ch = chars[i] % tableSize;
     if (!character_found[ch]) {
@@ -338,7 +359,7 @@ static bool HasFewDifferentCharacters(const CharT* chars, size_t length) {
 }
 
 // Identifies the sort of pattern where Boyer-Moore is faster than string search
-static bool UseBoyerMoore(HandleAtom pattern, JS::AutoAssertNoGC& nogc) {
+static bool UseBoyerMoore(Handle<JSAtom*> pattern, JS::AutoAssertNoGC& nogc) {
   size_t length =
       std::min(size_t(kMaxLookaheadForBoyerMoore), pattern->length());
   if (length <= kPatternTooShortForBoyerMoore) {
@@ -353,7 +374,7 @@ static bool UseBoyerMoore(HandleAtom pattern, JS::AutoAssertNoGC& nogc) {
 }
 
 // Sample character frequency information for use in Boyer-Moore.
-static void SampleCharacters(FlatStringReader* sample_subject,
+static void SampleCharacters(Handle<JSLinearString*> sample_subject,
                              RegExpCompiler& compiler) {
   static const int kSampleSize = 128;
   int chars_sampled = 0;
@@ -363,7 +384,8 @@ static void SampleCharacters(FlatStringReader* sample_subject,
   int half_way = (length - kSampleSize) / 2;
   for (int i = std::max(0, half_way); i < length && chars_sampled < kSampleSize;
        i++, chars_sampled++) {
-    compiler.frequency_collator()->CountCharacter(sample_subject->Get(i));
+    compiler.frequency_collator()->CountCharacter(
+        sample_subject->latin1OrTwoByteChar(i));
   }
 }
 
@@ -384,7 +406,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
   void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
     uint8_t padding[FRAME_PADDING];                                     \
     dummy_ = padding; /* Prevent padding from being optimized away.*/   \
-    return (void*)CheckRecursionLimitDontReport(cx_);                   \
+    AutoCheckRecursionLimit recursion(cx_);                             \
+    return (void*)recursion.checkDontReport(cx_);                       \
   }
 
   LEAF_DEPTH(Assertion)
@@ -400,7 +423,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
   void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
     uint8_t padding[FRAME_PADDING];                                     \
     dummy_ = padding; /* Prevent padding from being optimized away.*/   \
-    if (!CheckRecursionLimitDontReport(cx_)) {                          \
+    AutoCheckRecursionLimit recursion(cx_);                             \
+    if (!recursion.checkDontReport(cx_)) {                              \
       return nullptr;                                                   \
     }                                                                   \
     return node->body()->Accept(this, nullptr);                         \
@@ -416,7 +440,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
                          void*) override {
     uint8_t padding[FRAME_PADDING];
     dummy_ = padding; /* Prevent padding from being optimized away.*/
-    if (!CheckRecursionLimitDontReport(cx_)) {
+    AutoCheckRecursionLimit recursion(cx_);
+    if (!recursion.checkDontReport(cx_)) {
       return nullptr;
     }
     for (auto* child : *node->nodes()) {
@@ -430,7 +455,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
                          void*) override {
     uint8_t padding[FRAME_PADDING];
     dummy_ = padding; /* Prevent padding from being optimized away.*/
-    if (!CheckRecursionLimitDontReport(cx_)) {
+    AutoCheckRecursionLimit recursion(cx_);
+    if (!recursion.checkDontReport(cx_)) {
       return nullptr;
     }
     for (auto* child : *node->alternatives()) {
@@ -458,10 +484,11 @@ enum class AssembleResult {
 
 [[nodiscard]] static AssembleResult Assemble(
     JSContext* cx, RegExpCompiler* compiler, RegExpCompileData* data,
-    MutableHandleRegExpShared re, HandleAtom pattern, Zone* zone,
+    MutableHandleRegExpShared re, Handle<JSAtom*> pattern, Zone* zone,
     bool useNativeCode, bool isLatin1) {
   // Because we create a StackMacroAssembler, this function is not allowed
   // to GC. If needed, we allocate and throw errors in the caller.
+  jit::TempAllocator temp(&cx->tempLifoAlloc());
   Maybe<jit::JitContext> jctx;
   Maybe<js::jit::StackMacroAssembler> stack_masm;
   UniquePtr<RegExpMacroAssembler> masm;
@@ -471,8 +498,14 @@ enum class AssembleResult {
                  : NativeRegExpMacroAssembler::UC16;
     // If we are compiling native code, we need a macroassembler,
     // which needs a jit context.
-    jctx.emplace(cx, nullptr);
-    stack_masm.emplace();
+    jctx.emplace(cx);
+    stack_masm.emplace(cx, temp);
+#ifdef DEBUG
+    // It would be much preferable to use `class AutoCreatedBy` here, but we
+    // may be operating without an assembler at all if `useNativeCode` is
+    // `false`, so there's no place to put such a call.
+    stack_masm.ref().pushCreator("Assemble() in RegExpAPI.cpp");
+#endif
     uint32_t num_capture_registers = re->pairCount() * 2;
     masm = MakeUnique<SMRegExpMacroAssembler>(cx, stack_masm.ref(), zone, mode,
                                               num_capture_registers);
@@ -480,6 +513,7 @@ enum class AssembleResult {
     masm = MakeUnique<RegExpBytecodeGenerator>(cx->isolate, zone);
   }
   if (!masm) {
+    ReportOutOfMemory(cx);
     return AssembleResult::OutOfMemory;
   }
 
@@ -528,6 +562,14 @@ enum class AssembleResult {
   V8HandleString wrappedPattern(v8::internal::String(pattern), cx->isolate);
   RegExpCompiler::CompilationResult result = compiler->Assemble(
       cx->isolate, masm_ptr, data->node, data->capture_count, wrappedPattern);
+
+  if (useNativeCode) {
+#ifdef DEBUG
+    // See comment referencing `pushCreator` above.
+    stack_masm.ref().popCreator();
+#endif
+  }
+
   if (!result.Succeeded()) {
     MOZ_ASSERT(result.error == RegExpError::kTooLarge);
     return AssembleResult::TooLarge;
@@ -546,6 +588,7 @@ enum class AssembleResult {
         static_cast<SMRegExpMacroAssembler*>(masm.get())->tables();
     for (uint32_t i = 0; i < tables.length(); i++) {
       if (!re->addTable(std::move(tables[i]))) {
+        ReportOutOfMemory(cx);
         return AssembleResult::OutOfMemory;
       }
     }
@@ -563,9 +606,70 @@ enum class AssembleResult {
   return AssembleResult::Success;
 }
 
+struct RegExpCaptureIndexLess {
+  bool operator()(const RegExpCapture* lhs, const RegExpCapture* rhs) const {
+    return lhs->index() < rhs->index();
+  }
+};
+
+bool InitializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
+                             ZoneVector<RegExpCapture*>* namedCaptures) {
+  // The irregexp parser returns named capture information in the form
+  // of a ZoneVector of RegExpCaptures nodes, each of which stores the
+  // capture name and the corresponding capture index. We create a
+  // template object with a property for each capture name, and store
+  // the capture indices as a heap-allocated array.
+  uint32_t numNamedCaptures = namedCaptures->size();
+
+  // Named captures are sorted by name (because the set is used to ensure
+  // name uniqueness). But the capture name map must be sorted by index.
+  std::sort(namedCaptures->begin(), namedCaptures->end(),
+            RegExpCaptureIndexLess{});
+
+  // Create a plain template object.
+  Rooted<js::PlainObject*> templateObject(
+      cx, js::NewPlainObjectWithProto(cx, nullptr, TenuredObject));
+  if (!templateObject) {
+    return false;
+  }
+
+  // Allocate the capture index array.
+  uint32_t arraySize = numNamedCaptures * sizeof(uint32_t);
+  UniquePtr<uint32_t[], JS::FreePolicy> captureIndices(
+      static_cast<uint32_t*>(js_malloc(arraySize)));
+  if (!captureIndices) {
+    js::ReportOutOfMemory(cx);
+    return false;
+  }
+
+  // Initialize the properties of the template and populate the
+  // capture index array.
+  RootedId id(cx);
+  RootedValue dummyString(cx, StringValue(cx->runtime()->emptyString));
+  for (uint32_t i = 0; i < numNamedCaptures; i++) {
+    RegExpCapture* capture = (*namedCaptures)[i];
+    JSAtom* name =
+        js::AtomizeChars(cx, capture->name()->data(), capture->name()->size());
+    if (!name) {
+      return false;
+    }
+    id = NameToId(name->asPropertyName());
+    if (!NativeDefineDataProperty(cx, templateObject, id, dummyString,
+                                  JSPROP_ENUMERATE)) {
+      return false;
+    }
+    captureIndices[i] = capture->index();
+  }
+
+  RegExpShared::InitializeNamedCaptures(
+      cx, re, numNamedCaptures, templateObject, captureIndices.release());
+  return true;
+}
+
 bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
-                    HandleLinearString input, RegExpShared::CodeKind codeKind) {
-  RootedAtom pattern(cx, re->getSource());
+                    Handle<JSLinearString*> input,
+                    RegExpShared::CodeKind codeKind) {
+  Rooted<JSAtom*> pattern(cx, re->getSource());
   JS::RegExpFlags flags = re->getFlags();
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   HandleScope handleScope(cx->isolate);
@@ -573,11 +677,12 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
 
   RegExpCompileData data;
   {
-    FlatStringReader patternBytes(cx, pattern);
-    if (!RegExpParser::ParseRegExp(cx->isolate, &zone, &patternBytes, flags,
-                                   &data)) {
+    V8HandleString wrappedPattern(v8::internal::String(pattern), cx->isolate);
+    if (!RegExpParser::ParseRegExpFromHeapString(
+            cx->isolate, &zone, wrappedPattern, flags, &data)) {
+      AutoReportFrontendContext ec(cx);
       JS::CompileOptions options(cx);
-      DummyTokenStream dummyTokenStream(cx, options);
+      DummyTokenStream dummyTokenStream(cx, &ec, options);
       ReportSyntaxError(dummyTokenStream, data, pattern);
       return false;
     }
@@ -587,6 +692,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
   RegExpDepthCheck depthCheck(cx);
   if (!depthCheck.check(data.tree)) {
     JS_ReportErrorASCII(cx, "regexp too big");
+    cx->reportResourceExhaustion();
     return false;
   }
 
@@ -595,7 +701,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
     // First, check to see if we should use simple string search
     // with an atom.
     if (!flags.ignoreCase() && !flags.sticky()) {
-      RootedAtom searchAtom(cx);
+      Rooted<JSAtom*> searchAtom(cx);
       if (data.simple) {
         // The parse-tree is a single atom that is equal to the pattern.
         searchAtom = re->getSource();
@@ -614,9 +720,8 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
         return true;
       }
     }
-    if (!data.capture_name_map.is_null()) {
-      RootedNativeObject namedCaptures(cx, data.capture_name_map->inner());
-      if (!RegExpShared::initializeNamedCaptures(cx, re, namedCaptures)) {
+    if (data.named_captures) {
+      if (!InitializeNamedCaptures(cx, re, data.named_captures)) {
         return false;
       }
     }
@@ -628,15 +733,14 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
 
   MOZ_ASSERT(re->kind() == RegExpShared::Kind::RegExp);
 
-  RegExpCompiler compiler(cx->isolate, &zone, data.capture_count,
+  RegExpCompiler compiler(cx->isolate, &zone, data.capture_count, flags,
                           input->hasLatin1Chars());
 
   bool isLatin1 = input->hasLatin1Chars();
 
-  FlatStringReader sample_subject(cx, input);
-  SampleCharacters(&sample_subject, compiler);
+  SampleCharacters(input, compiler);
   data.node = compiler.PreprocessRegExp(&data, flags, isLatin1);
-  data.error = AnalyzeRegExp(cx->isolate, isLatin1, data.node);
+  data.error = AnalyzeRegExp(cx->isolate, isLatin1, flags, data.node);
   if (data.error != RegExpError::kNone) {
     MOZ_ASSERT(data.error == RegExpError::kAnalysisStackOverflow);
     ReportOverRecursed(cx);
@@ -650,9 +754,10 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
                    isLatin1)) {
     case AssembleResult::TooLarge:
       JS_ReportErrorASCII(cx, "regexp too big");
+      cx->reportResourceExhaustion();
       return false;
     case AssembleResult::OutOfMemory:
-      ReportOutOfMemory(cx);
+      MOZ_ASSERT(cx->isThrowingOutOfMemory());
       return false;
     case AssembleResult::Success:
       break;
@@ -682,7 +787,7 @@ RegExpRunStatus ExecuteRaw(jit::JitCode* code, const CharT* chars,
 }
 
 RegExpRunStatus Interpret(JSContext* cx, MutableHandleRegExpShared re,
-                          HandleLinearString input, size_t startIndex,
+                          Handle<JSLinearString*> input, size_t startIndex,
                           VectorMatchPairs* matches) {
   MOZ_ASSERT(re->getByteCode(input->hasLatin1Chars()));
 
@@ -710,7 +815,7 @@ RegExpRunStatus Interpret(JSContext* cx, MutableHandleRegExpShared re,
 }
 
 RegExpRunStatus Execute(JSContext* cx, MutableHandleRegExpShared re,
-                        HandleLinearString input, size_t startIndex,
+                        Handle<JSLinearString*> input, size_t startIndex,
                         VectorMatchPairs* matches) {
   bool latin1 = input->hasLatin1Chars();
   jit::JitCode* jitCode = re->getJitCode(latin1);
@@ -732,8 +837,8 @@ RegExpRunStatus Execute(JSContext* cx, MutableHandleRegExpShared re,
   return Interpret(cx, re, input, startIndex, matches);
 }
 
-RegExpRunStatus ExecuteForFuzzing(JSContext* cx, HandleAtom pattern,
-                                  HandleLinearString input,
+RegExpRunStatus ExecuteForFuzzing(JSContext* cx, Handle<JSAtom*> pattern,
+                                  Handle<JSLinearString*> input,
                                   JS::RegExpFlags flags, size_t startIndex,
                                   VectorMatchPairs* matches,
                                   RegExpShared::CodeKind codeKind) {
@@ -761,6 +866,23 @@ uint32_t CaseInsensitiveCompareUnicode(const char16_t* substring1,
   return SMRegExpMacroAssembler::CaseInsensitiveCompareUnicode(
       substring1, substring2, byteLength);
 }
+
+bool IsCharacterInRangeArray(uint32_t c, ByteArrayData* ranges) {
+  return SMRegExpMacroAssembler::IsCharacterInRangeArray(c, ranges);
+}
+
+#ifdef DEBUG
+bool IsolateShouldSimulateInterrupt(Isolate* isolate) {
+  return isolate->shouldSimulateInterrupt_ != 0;
+}
+
+void IsolateSetShouldSimulateInterrupt(Isolate* isolate) {
+  isolate->shouldSimulateInterrupt_ = 1;
+}
+void IsolateClearShouldSimulateInterrupt(Isolate* isolate) {
+  isolate->shouldSimulateInterrupt_ = 0;
+}
+#endif
 
 }  // namespace irregexp
 }  // namespace js

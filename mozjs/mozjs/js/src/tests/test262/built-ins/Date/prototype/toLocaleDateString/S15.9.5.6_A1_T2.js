@@ -8,13 +8,17 @@ info: |
 esid: sec-date.prototype.tolocaledatestring
 description: Checking absence of DontDelete attribute
 ---*/
+assert.notSameValue(
+  delete Date.prototype.toLocaleDateString,
+  false,
+  'The value of delete Date.prototype.toLocaleDateString is not false'
+);
 
-if (delete Date.prototype.toLocaleDateString === false) {
-  $ERROR('#1: The Date.prototype.toLocaleDateString property has not the attributes DontDelete');
-}
+assert(
+  !Date.prototype.hasOwnProperty('toLocaleDateString'),
+  'The value of !Date.prototype.hasOwnProperty(\'toLocaleDateString\') is expected to be true'
+);
 
-if (Date.prototype.hasOwnProperty('toLocaleDateString')) {
-  $ERROR('#2: The Date.prototype.toLocaleDateString property has not the attributes DontDelete');
-}
+// TODO: Convert to verifyProperty() format.
 
 reportCompare(0, 0);

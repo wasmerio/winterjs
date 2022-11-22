@@ -12,9 +12,6 @@ flags: [noStrict]
 
 eval(" (function(){this.feat=1}).apply()");
 
-//CHECK#1
-if (this["feat"] !== 1) {
-  $ERROR('#1: If thisArg is null or undefined, the called function is passed the global object as the this value');
-}
+assert.sameValue(this["feat"], 1, 'The value of this["feat"] is expected to be 1');
 
 reportCompare(0, 0);

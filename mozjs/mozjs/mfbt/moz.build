@@ -47,6 +47,7 @@ EXPORTS.mozilla = [
     "FStream.h",
     "FunctionRef.h",
     "FunctionTypeTraits.h",
+    "Fuzzing.h",
     "HashFunctions.h",
     "HashTable.h",
     "HelperMacros.h",
@@ -63,8 +64,10 @@ EXPORTS.mozilla = [
     "MathAlgorithms.h",
     "Maybe.h",
     "MaybeOneOf.h",
+    "MaybeStorageBase.h",
     "MemoryChecking.h",
     "MemoryReporting.h",
+    "MoveOnlyFunction.h",
     "NonDereferenceable.h",
     "NotNull.h",
     "Opaque.h",
@@ -102,6 +105,7 @@ EXPORTS.mozilla = [
     "TemplateLib.h",
     "TextUtils.h",
     "ThreadLocal.h",
+    "ThreadSafety.h",
     "ThreadSafeWeakPtr.h",
     "ToString.h",
     "Tuple.h",
@@ -126,6 +130,10 @@ EXPORTS["double-conversion"] = [
     "double-conversion/double-conversion/utils.h",
 ]
 
+EXPORTS.function2 += [
+    "/third_party/function2/include/function2/function2.hpp",
+]
+
 LOCAL_INCLUDES += [
     "/mfbt/double-conversion",
 ]
@@ -133,6 +141,11 @@ LOCAL_INCLUDES += [
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
         "WindowsVersion.h",
+    ]
+
+if CONFIG["OS_ARCH"] == "WASI":
+    EXPORTS.mozilla += [
+        "WasiAtomic.h",
     ]
 
 if CONFIG["MOZ_TSAN"]:
@@ -175,6 +188,7 @@ DEFINES["IMPL_MFBT"] = True
 
 SOURCES += [
     "lz4/lz4.c",
+    "lz4/lz4file.c",
     "lz4/lz4frame.c",
     "lz4/lz4hc.c",
     "lz4/xxhash.c",
@@ -188,3 +202,5 @@ if CONFIG["MOZ_NEEDS_LIBATOMIC"]:
     OS_LIBS += ["atomic"]
 
 DEFINES["LZ4LIB_VISIBILITY"] = ""
+
+REQUIRES_UNIFIED_BUILD = True

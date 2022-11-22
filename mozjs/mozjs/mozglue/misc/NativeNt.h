@@ -26,9 +26,7 @@
 #include "mozilla/interceptor/TargetFunction.h"
 
 #if defined(MOZILLA_INTERNAL_API)
-#  include "nsHashKeys.h"
 #  include "nsString.h"
-#  include "nsTHashtable.h"
 #endif  // defined(MOZILLA_INTERNAL_API)
 
 // The declarations within this #if block are intended to be used for initial
@@ -473,11 +471,20 @@ inline void GetLeafName(PUNICODE_STRING aDestString,
 
 #if defined(MOZILLA_INTERNAL_API)
 
-inline const nsDependentSubstring GetLeafName(const nsString& aString) {
-  int32_t lastBackslashPos = aString.RFindChar(L'\\');
-  int32_t leafStartPos =
-      (lastBackslashPos == kNotFound) ? 0 : (lastBackslashPos + 1);
-  return Substring(aString, leafStartPos);
+inline const nsDependentSubstring GetLeafName(const nsAString& aString) {
+  auto it = aString.EndReading();
+  size_t pos = aString.Length();
+  while (it > aString.BeginReading()) {
+    if (*(it - 1) == u'\\') {
+      return Substring(aString, pos);
+    }
+
+    MOZ_ASSERT(pos > 0);
+    --pos;
+    --it;
+  }
+
+  return Substring(aString, 0);  // No backslash in the string
 }
 
 #endif  // defined(MOZILLA_INTERNAL_API)
@@ -521,6 +528,15 @@ inline size_t StrlenASCII(const char* aStr) {
 
   return len;
 }
+
+struct CodeViewRecord70 {
+  uint32_t signature;
+  GUID pdbSignature;
+  uint32_t pdbAge;
+  // A UTF-8 string, according to
+  // https://github.com/Microsoft/microsoft-pdb/blob/082c5290e5aff028ae84e43affa8be717aa7af73/PDB/dbi/locator.cpp#L785
+  char pdbFileName[1];
+};
 
 class MOZ_RAII PEHeaders final {
   /**
@@ -629,6 +645,10 @@ class MOZ_RAII PEHeaders final {
     auto base = reinterpret_cast<const uint8_t*>(mMzHeader);
     DWORD imageSize = mPeHeader->OptionalHeader.SizeOfImage;
     return Some(Range(base, imageSize));
+  }
+
+  DWORD GetFileCharacteristics() const {
+    return mPeHeader ? mPeHeader->FileHeader.Characteristics : 0;
   }
 
   bool IsWithinImage(const void* aAddress) const {
@@ -743,17 +763,6 @@ class MOZ_RAII PEHeaders final {
     }
   }
 
-#if defined(MOZILLA_INTERNAL_API)
-  nsTHashtable<nsStringCaseInsensitiveHashKey> GenerateDependentModuleSet()
-      const {
-    nsTHashtable<nsStringCaseInsensitiveHashKey> dependentModuleSet;
-    EnumImportChunks([&dependentModuleSet](const char* aModule) {
-      dependentModuleSet.PutEntry(GetLeafName(NS_ConvertASCIItoUTF16(aModule)));
-    });
-    return dependentModuleSet;
-  }
-#endif  // defined(MOZILLA_INTERNAL_API)
-
   /**
    * If |aBoundaries| is given, this method checks whether each IAT entry is
    * within the given range, and if any entry is out of the range, we return
@@ -831,7 +840,7 @@ class MOZ_RAII PEHeaders final {
 
     auto dataEntry =
         RVAToPtr<PIMAGE_RESOURCE_DATA_ENTRY>(topLevel, langEntry->OffsetToData);
-    return RVAToPtr<T>(dataEntry->OffsetToData);
+    return dataEntry ? RVAToPtr<T>(dataEntry->OffsetToData) : nullptr;
   }
 
   template <size_t N>
@@ -897,6 +906,19 @@ class MOZ_RAII PEHeaders final {
         mPeHeader->OptionalHeader.AddressOfEntryPoint);
   }
 
+  const CodeViewRecord70* GetPdbInfo() const {
+    PIMAGE_DEBUG_DIRECTORY debugDirectory =
+        GetImageDirectoryEntry<PIMAGE_DEBUG_DIRECTORY>(
+            IMAGE_DIRECTORY_ENTRY_DEBUG);
+    if (!debugDirectory) {
+      return nullptr;
+    }
+
+    const CodeViewRecord70* debugInfo =
+        RVAToPtr<CodeViewRecord70*>(debugDirectory->AddressOfRawData);
+    return (debugInfo && debugInfo->signature == 'SDSR') ? debugInfo : nullptr;
+  }
+
  private:
   enum class BoundsCheckPolicy { Default, Skip };
 
@@ -931,6 +953,10 @@ class MOZ_RAII PEHeaders final {
 
   PIMAGE_RESOURCE_DIRECTORY_ENTRY
   FindResourceEntry(PIMAGE_RESOURCE_DIRECTORY aCurLevel, WORD aId) const {
+    if (!aCurLevel) {
+      return nullptr;
+    }
+
     // Immediately after the IMAGE_RESOURCE_DIRECTORY structure is an array
     // of IMAGE_RESOURCE_DIRECTORY_ENTRY structures. Since this function
     // searches by ID, we need to skip past any named entries before iterating.

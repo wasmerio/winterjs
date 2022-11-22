@@ -6,12 +6,17 @@
 
 #include "proxy/ScriptedProxyHandler.h"
 
+#include "mozilla/Maybe.h"
+
 #include "jsapi.h"
 
+#include "builtin/Object.h"
+#include "js/CallAndConstruct.h"  // JS::Construct, JS::IsCallable
 #include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertyDescriptor.h"    // JS::FromPropertyDescriptor
 #include "vm/EqualityOperations.h"    // js::SameValue
+#include "vm/Interpreter.h"           // js::Call
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -23,24 +28,25 @@ using namespace js;
 
 using JS::IsArrayAnswer;
 
-// ES8 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93
-// 9.1.6.2 IsCompatiblePropertyDescriptor.  BUT that method just calls
-// 9.1.6.3 ValidateAndApplyPropertyDescriptor with two additional constant
-// arguments.  Therefore step numbering is from the latter method, and
-// resulting dead code has been removed.
+using mozilla::Maybe;
+
+// ES2022 rev 33fe30f9a6b0dc81826f2f217167a89c025779a0
+// IsCompatiblePropertyDescriptor. BUT that method just calls
+// ValidateAndApplyPropertyDescriptor with two additional constant arguments.
+// Therefore step numbering is from the latter method, and resulting dead code
+// has been removed.
 
 // If an exception should be thrown, we will set errorDetails.
-static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
-                                           Handle<PropertyDescriptor> desc,
-                                           Handle<PropertyDescriptor> current,
-                                           const char** errorDetails) {
+static bool IsCompatiblePropertyDescriptor(
+    JSContext* cx, bool extensible, Handle<PropertyDescriptor> desc,
+    Handle<Maybe<PropertyDescriptor>> current, const char** errorDetails) {
   // precondition:  we won't set details if checks pass, so it must be null
   // here.
   MOZ_ASSERT(*errorDetails == nullptr);
 
   // Step 2.
-  if (!current.object()) {
-    // Step 2a-b,e.  As |O| is always undefined, steps 2c-d fall away.
+  if (current.isNothing()) {
+    // Step 2.a-b,e.  As |O| is always undefined, steps 2.c-d fall away.
     if (!extensible) {
       static const char DETAILS_NOT_EXTENSIBLE[] =
           "proxy can't report an extensible object as non-extensible";
@@ -49,38 +55,17 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
     return true;
   }
 
+  current->assertComplete();
+
   // Step 3.
-  if (!desc.hasValue() && !desc.hasWritable() && !desc.hasGetterObject() &&
-      !desc.hasSetterObject() && !desc.hasEnumerable() &&
-      !desc.hasConfigurable()) {
+  if (!desc.hasValue() && !desc.hasWritable() && !desc.hasGetter() &&
+      !desc.hasSetter() && !desc.hasEnumerable() && !desc.hasConfigurable()) {
     return true;
   }
 
   // Step 4.
-  if ((!desc.hasWritable() ||
-       (current.hasWritable() && desc.writable() == current.writable())) &&
-      (!desc.hasGetterObject() || desc.getter() == current.getter()) &&
-      (!desc.hasSetterObject() || desc.setter() == current.setter()) &&
-      (!desc.hasEnumerable() || desc.enumerable() == current.enumerable()) &&
-      (!desc.hasConfigurable() ||
-       desc.configurable() == current.configurable())) {
-    if (!desc.hasValue()) {
-      return true;
-    }
-
-    bool same = false;
-    if (!SameValue(cx, desc.value(), current.value(), &same)) {
-      return false;
-    }
-
-    if (same) {
-      return true;
-    }
-  }
-
-  // Step 5.
-  if (!current.configurable()) {
-    // Step 5a.
+  if (!current->configurable()) {
+    // Step 4.a.
     if (desc.hasConfigurable() && desc.configurable()) {
       static const char DETAILS_CANT_REPORT_NC_AS_C[] =
           "proxy can't report an existing non-configurable property as "
@@ -89,8 +74,8 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
       return true;
     }
 
-    // Step 5b.
-    if (desc.hasEnumerable() && desc.enumerable() != current.enumerable()) {
+    // Step 4.b.
+    if (desc.hasEnumerable() && desc.enumerable() != current->enumerable()) {
       static const char DETAILS_ENUM_DIFFERENT[] =
           "proxy can't report a different 'enumerable' from target when target "
           "is not configurable";
@@ -99,15 +84,15 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
     }
   }
 
-  // Step 6.
+  // Step 5.
   if (desc.isGenericDescriptor()) {
     return true;
   }
 
-  // Step 7.
-  if (current.isDataDescriptor() != desc.isDataDescriptor()) {
-    // Steps 7a, 11.  As |O| is always undefined, steps 2b-c fall away.
-    if (!current.configurable()) {
+  // Step 6.
+  if (current->isDataDescriptor() != desc.isDataDescriptor()) {
+    // Steps 6.a., 10.  As |O| is always undefined, steps 6.b-c fall away.
+    if (!current->configurable()) {
       static const char DETAILS_CURRENT_NC_DIFF_TYPE[] =
           "proxy can't report a different descriptor type when target is not "
           "configurable";
@@ -116,10 +101,12 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
     return true;
   }
 
-  // Step 8.
-  if (current.isDataDescriptor()) {
-    MOZ_ASSERT(desc.isDataDescriptor());  // by step 7
-    if (!current.configurable() && !current.writable()) {
+  // Step 7.
+  if (current->isDataDescriptor()) {
+    MOZ_ASSERT(desc.isDataDescriptor());  // by step 6
+    // Step 7.a.
+    if (!current->configurable() && !current->writable()) {
+      // Step 7.a.i.
       if (desc.hasWritable() && desc.writable()) {
         static const char DETAILS_CANT_REPORT_NW_AS_W[] =
             "proxy can't report a non-configurable, non-writable property as "
@@ -128,9 +115,11 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
         return true;
       }
 
+      // Step 7.a.ii.
       if (desc.hasValue()) {
+        RootedValue value(cx, current->value());
         bool same;
-        if (!SameValue(cx, desc.value(), current.value(), &same)) {
+        if (!SameValue(cx, desc.value(), value, &same)) {
           return false;
         }
         if (!same) {
@@ -143,27 +132,37 @@ static bool IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible,
       }
     }
 
+    // Step 7.a.ii, 10.
     return true;
   }
 
-  // Step 9.
-  MOZ_ASSERT(current.isAccessorDescriptor());  // by step 8
-  MOZ_ASSERT(desc.isAccessorDescriptor());     // by step 7
+  // Step 8.
 
-  if (current.configurable()) {
+  // Step 8.a.
+  MOZ_ASSERT(current->isAccessorDescriptor());  // by step 7
+  MOZ_ASSERT(desc.isAccessorDescriptor());      // by step 6
+
+  // Step 8.b.
+  if (current->configurable()) {
     return true;
   }
-  if (desc.hasSetterObject() && (desc.setter() != current.setter())) {
+  // Steps 8.b.i-ii.
+  if (desc.hasSetter() && desc.setter() != current->setter()) {
     static const char DETAILS_SETTERS_DIFFERENT[] =
         "proxy can't report different setters for a currently non-configurable "
         "property";
     *errorDetails = DETAILS_SETTERS_DIFFERENT;
-  } else if (desc.hasGetterObject() && (desc.getter() != current.getter())) {
+  } else if (desc.hasGetter() && desc.getter() != current->getter()) {
     static const char DETAILS_GETTERS_DIFFERENT[] =
         "proxy can't report different getters for a currently non-configurable "
         "property";
     *errorDetails = DETAILS_GETTERS_DIFFERENT;
   }
+
+  // Step 9.
+  // |O| is always undefined.
+
+  // Step 10.
   return true;
 }
 
@@ -181,7 +180,7 @@ JSObject* ScriptedProxyHandler::handlerObject(const JSObject* proxy) {
 // 7.3.9 GetMethod, reimplemented for proxy handler trap-getting to produce
 // better error messages.
 static bool GetProxyTrap(JSContext* cx, HandleObject handler,
-                         HandlePropertyName name, MutableHandleValue func) {
+                         Handle<PropertyName*> name, MutableHandleValue func) {
   // Steps 2, 5.
   if (!GetProperty(cx, handler, handler, name, func)) {
     return false;
@@ -511,7 +510,7 @@ bool ScriptedProxyHandler::isExtensible(JSContext* cx, HandleObject proxy,
 // 9.5.5 Proxy.[[GetOwnProperty]](P)
 bool ScriptedProxyHandler::getOwnPropertyDescriptor(
     JSContext* cx, HandleObject proxy, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) const {
+    MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) const {
   // Steps 2-4.
   RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
   if (!handler) {
@@ -553,7 +552,7 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
   }
 
   // Step 10.
-  Rooted<PropertyDescriptor> targetDesc(cx);
+  Rooted<Maybe<PropertyDescriptor>> targetDesc(cx);
   if (!GetOwnPropertyDescriptor(cx, target, id, &targetDesc)) {
     return false;
   }
@@ -561,13 +560,13 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
   // Step 11.
   if (trapResult.isUndefined()) {
     // Step 11a.
-    if (!targetDesc.object()) {
-      desc.object().set(nullptr);
+    if (targetDesc.isNothing()) {
+      desc.reset();
       return true;
     }
 
     // Step 11b.
-    if (!targetDesc.configurable()) {
+    if (!targetDesc->configurable()) {
       return js::Throw(cx, id, JSMSG_CANT_REPORT_NC_AS_NE);
     }
 
@@ -583,7 +582,7 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
     }
 
     // Step 11f.
-    desc.object().set(nullptr);
+    desc.reset();
     return true;
   }
 
@@ -615,24 +614,23 @@ bool ScriptedProxyHandler::getOwnPropertyDescriptor(
 
   // Step 17.
   if (!resultDesc.configurable()) {
-    if (!targetDesc.object()) {
+    if (targetDesc.isNothing()) {
       return js::Throw(cx, id, JSMSG_CANT_REPORT_NE_AS_NC);
     }
 
-    if (targetDesc.configurable()) {
+    if (targetDesc->configurable()) {
       return js::Throw(cx, id, JSMSG_CANT_REPORT_C_AS_NC);
     }
 
     if (resultDesc.hasWritable() && !resultDesc.writable()) {
-      if (targetDesc.writable()) {
+      if (targetDesc->writable()) {
         return js::Throw(cx, id, JSMSG_CANT_REPORT_W_AS_NW);
       }
     }
   }
 
   // Step 18.
-  desc.set(resultDesc);
-  desc.object().set(proxy);
+  desc.set(mozilla::Some(resultDesc.get()));
   return true;
 }
 
@@ -697,7 +695,7 @@ bool ScriptedProxyHandler::defineProperty(JSContext* cx, HandleObject proxy,
   }
 
   // Step 11.
-  Rooted<PropertyDescriptor> targetDesc(cx);
+  Rooted<Maybe<PropertyDescriptor>> targetDesc(cx);
   if (!GetOwnPropertyDescriptor(cx, target, id, &targetDesc)) {
     return false;
   }
@@ -712,7 +710,7 @@ bool ScriptedProxyHandler::defineProperty(JSContext* cx, HandleObject proxy,
   bool settingConfigFalse = desc.hasConfigurable() && !desc.configurable();
 
   // Steps 15-16.
-  if (!targetDesc.object()) {
+  if (targetDesc.isNothing()) {
     // Step 15a.
     if (!extensibleTarget) {
       return js::Throw(cx, id, JSMSG_CANT_DEFINE_NEW);
@@ -734,7 +732,7 @@ bool ScriptedProxyHandler::defineProperty(JSContext* cx, HandleObject proxy,
     }
 
     // Step 16b.
-    if (settingConfigFalse && targetDesc.configurable()) {
+    if (settingConfigFalse && targetDesc->configurable()) {
       static const char DETAILS_CANT_REPORT_C_AS_NC[] =
           "proxy can't define an existing configurable property as "
           "non-configurable";
@@ -742,8 +740,8 @@ bool ScriptedProxyHandler::defineProperty(JSContext* cx, HandleObject proxy,
                        DETAILS_CANT_REPORT_C_AS_NC);
     }
 
-    if (targetDesc.isDataDescriptor() && !targetDesc.configurable() &&
-        targetDesc.writable()) {
+    if (targetDesc->isDataDescriptor() && !targetDesc->configurable() &&
+        targetDesc->writable()) {
       if (desc.hasWritable() && !desc.writable()) {
         static const char DETAILS_CANT_DEFINE_NW[] =
             "proxy can't define an existing non-configurable writable property "
@@ -770,7 +768,7 @@ static bool CreateFilteredListFromArrayLike(JSContext* cx, HandleValue v,
   }
 
   // Step 3.
-  uint32_t len;
+  uint64_t len;
   if (!GetLengthProperty(cx, obj, &len)) {
     return false;
   }
@@ -778,10 +776,10 @@ static bool CreateFilteredListFromArrayLike(JSContext* cx, HandleValue v,
   // Steps 4-6.
   RootedValue next(cx);
   RootedId id(cx);
-  uint32_t index = 0;
+  uint64_t index = 0;
   while (index < len) {
     // Steps 6a-b.
-    if (!GetElement(cx, obj, obj, index, &next)) {
+    if (!GetElementLargeIndex(cx, obj, obj, index, &next)) {
       return false;
     }
 
@@ -855,7 +853,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
       cx, GCHashSet<jsid>(cx, trapResult.length()));
 
   for (size_t i = 0, len = trapResult.length(); i < len; i++) {
-    MOZ_ASSERT(!JSID_IS_VOID(trapResult[i]));
+    MOZ_ASSERT(!trapResult[i].isVoid());
 
     auto ptr = uncheckedResultKeys.lookupForAdd(trapResult[i]);
     if (ptr) {
@@ -886,7 +884,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
   RootedIdVector targetNonconfigurableKeys(cx);
 
   // Step 16.
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   for (size_t i = 0; i < targetKeys.length(); ++i) {
     // Step 16.a.
     if (!GetOwnPropertyDescriptor(cx, target, targetKeys[i], &desc)) {
@@ -894,7 +892,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
     }
 
     // Steps 16.b-c.
-    if (desc.object() && !desc.configurable()) {
+    if (desc.isSome() && !desc->configurable()) {
       if (!targetNonconfigurableKeys.append(targetKeys[i])) {
         return false;
       }
@@ -912,7 +910,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 19.
   for (size_t i = 0; i < targetNonconfigurableKeys.length(); ++i) {
-    MOZ_ASSERT(!JSID_IS_VOID(targetNonconfigurableKeys[i]));
+    MOZ_ASSERT(!targetNonconfigurableKeys[i].isVoid());
 
     auto ptr = uncheckedResultKeys.lookup(targetNonconfigurableKeys[i]);
 
@@ -932,7 +930,7 @@ bool ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
   // Step 21.
   for (size_t i = 0; i < targetConfigurableKeys.length(); ++i) {
-    MOZ_ASSERT(!JSID_IS_VOID(targetConfigurableKeys[i]));
+    MOZ_ASSERT(!targetConfigurableKeys[i].isVoid());
 
     auto ptr = uncheckedResultKeys.lookup(targetConfigurableKeys[i]);
 
@@ -1006,18 +1004,18 @@ bool ScriptedProxyHandler::delete_(JSContext* cx, HandleObject proxy,
   }
 
   // Step 10.
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   if (!GetOwnPropertyDescriptor(cx, target, id, &desc)) {
     return false;
   }
 
   // Step 11.
-  if (!desc.object()) {
+  if (desc.isNothing()) {
     return result.succeed();
   }
 
   // Step 12.
-  if (!desc.configurable()) {
+  if (!desc->configurable()) {
     return Throw(cx, id, JSMSG_CANT_DELETE);
   }
 
@@ -1078,15 +1076,15 @@ bool ScriptedProxyHandler::has(JSContext* cx, HandleObject proxy, HandleId id,
   // Step 9.
   if (!booleanTrapResult) {
     // Step 9a.
-    Rooted<PropertyDescriptor> desc(cx);
+    Rooted<Maybe<PropertyDescriptor>> desc(cx);
     if (!GetOwnPropertyDescriptor(cx, target, id, &desc)) {
       return false;
     }
 
     // Step 9b.
-    if (desc.object()) {
+    if (desc.isSome()) {
       // Step 9b(i).
-      if (!desc.configurable()) {
+      if (!desc->configurable()) {
         return js::Throw(cx, id, JSMSG_CANT_REPORT_NC_AS_NE);
       }
 
@@ -1157,17 +1155,19 @@ bool ScriptedProxyHandler::get(JSContext* cx, HandleObject proxy,
   }
 
   // Step 9.
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   if (!GetOwnPropertyDescriptor(cx, target, id, &desc)) {
     return false;
   }
 
   // Step 10.
-  if (desc.object()) {
+  if (desc.isSome()) {
     // Step 10a.
-    if (desc.isDataDescriptor() && !desc.configurable() && !desc.writable()) {
+    if (desc->isDataDescriptor() && !desc->configurable() &&
+        !desc->writable()) {
+      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, trapResult, desc.value(), &same)) {
+      if (!SameValue(cx, trapResult, value, &same)) {
         return false;
       }
       if (!same) {
@@ -1176,8 +1176,8 @@ bool ScriptedProxyHandler::get(JSContext* cx, HandleObject proxy,
     }
 
     // Step 10b.
-    if (desc.isAccessorDescriptor() && !desc.configurable() &&
-        (desc.getterObject() == nullptr) && !trapResult.isUndefined()) {
+    if (desc->isAccessorDescriptor() && !desc->configurable() &&
+        (desc->getter() == nullptr) && !trapResult.isUndefined()) {
       return js::Throw(cx, id, JSMSG_MUST_REPORT_UNDEFINED);
     }
   }
@@ -1242,17 +1242,19 @@ bool ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id,
   }
 
   // Step 10.
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   if (!GetOwnPropertyDescriptor(cx, target, id, &desc)) {
     return false;
   }
 
   // Step 11.
-  if (desc.object()) {
+  if (desc.isSome()) {
     // Step 11a.
-    if (desc.isDataDescriptor() && !desc.configurable() && !desc.writable()) {
+    if (desc->isDataDescriptor() && !desc->configurable() &&
+        !desc->writable()) {
+      RootedValue value(cx, desc->value());
       bool same;
-      if (!SameValue(cx, v, desc.value(), &same)) {
+      if (!SameValue(cx, v, value, &same)) {
         return false;
       }
       if (!same) {
@@ -1261,8 +1263,8 @@ bool ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id,
     }
 
     // Step 11b.
-    if (desc.isAccessorDescriptor() && !desc.configurable() &&
-        desc.setterObject() == nullptr) {
+    if (desc->isAccessorDescriptor() && !desc->configurable() &&
+        desc->setter() == nullptr) {
       return js::Throw(cx, id, JSMSG_CANT_SET_WO_SETTER);
     }
   }
@@ -1397,11 +1399,6 @@ bool ScriptedProxyHandler::nativeCall(JSContext* cx, IsAcceptableThis test,
                                       const CallArgs& args) const {
   ReportIncompatible(cx, args);
   return false;
-}
-
-bool ScriptedProxyHandler::hasInstance(JSContext* cx, HandleObject proxy,
-                                       MutableHandleValue v, bool* bp) const {
-  return InstanceofOperator(cx, proxy, v, bp);
 }
 
 bool ScriptedProxyHandler::getBuiltinClass(JSContext* cx, HandleObject proxy,
@@ -1564,7 +1561,7 @@ bool js::proxy_revocable(JSContext* cx, unsigned argc, Value* vp) {
 
   revoker->initExtendedSlot(ScriptedProxyHandler::REVOKE_SLOT, proxyVal);
 
-  RootedPlainObject result(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  Rooted<PlainObject*> result(cx, NewPlainObject(cx));
   if (!result) {
     return false;
   }

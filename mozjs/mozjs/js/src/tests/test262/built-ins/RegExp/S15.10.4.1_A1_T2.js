@@ -14,25 +14,29 @@ description: >
 var __pattern = /\t/m;
 var __re = new RegExp(__pattern, x);
 
-//CHECK#1
-if (__re.source !== __pattern.source) {
-  $ERROR('#1: __pattern = /\\t/m; _re = new RegExp(__pattern, x); var x; __re.source === __pattern.source. Actual: '+ (__re.source));
-}
+assert.sameValue(
+  __re.source,
+  __pattern.source,
+  'The value of __re.source is expected to equal the value of __pattern.source'
+);
 
-//CHECK#2
-if (__re.multiline !== __pattern.multiline) {
-  $ERROR('#2: __pattern = /\\t/m; _re = new RegExp(__pattern, x); var x; __re.multiline === __pattern.multiline. Actual: ' + (__re.multiline));
-}
+assert.sameValue(
+  __re.multiline,
+  __pattern.multiline,
+  'The value of __re.multiline is expected to equal the value of __pattern.multiline'
+);
 
-//CHECK#3
-if (__re.global !== __pattern.global) {
-  $ERROR('#3: __pattern = /\\t/m; _re = new RegExp(__pattern, x); var x; __re.global === __pattern.global. Actual: ' + (__re.global));
-}
+assert.sameValue(
+  __re.global,
+  __pattern.global,
+  'The value of __re.global is expected to equal the value of __pattern.global'
+);
 
-//CHECK#4
-if (__re.ignoreCase !== __pattern.ignoreCase) {
-  $ERROR('#4: __pattern = /\\t/m; _re = new RegExp(__pattern, x); var x; __re.ignoreCase === __pattern.ignoreCase. Actual: ' + (__re.ignoreCase));
-}
+assert.sameValue(
+  __re.ignoreCase,
+  __pattern.ignoreCase,
+  'The value of __re.ignoreCase is expected to equal the value of __pattern.ignoreCase'
+);
 
 var x;
 

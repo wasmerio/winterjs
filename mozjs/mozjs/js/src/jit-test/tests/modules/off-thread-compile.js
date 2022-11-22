@@ -5,10 +5,11 @@
 load(libdir + "asserts.js");
 
 function offThreadParseAndEvaluate(source) {
-    offThreadCompileModule(source);
-    let m = finishOffThreadModule();
-    m.declarationInstantiation();
-    return m.evaluation();
+    offThreadCompileModuleToStencil(source);
+    let stencil = finishOffThreadStencil();
+    let m = instantiateModuleStencil(stencil);
+    moduleLink(m);
+    return moduleEvaluate(m);
 }
 
 offThreadParseAndEvaluate("export let x = 2 * 3;");

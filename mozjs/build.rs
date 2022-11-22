@@ -314,6 +314,10 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.allowlist_function(func);
     }
 
+    for func in BLACKLIST_FUNCTIONS {
+        builder = builder.blocklist_function(func);
+    }
+
     for ty in OPAQUE_TYPES {
         builder = builder.opaque_type(ty);
     }
@@ -373,6 +377,18 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_DeprecatedStringHasLatin1Chars",
 ];
 
+/// Functions we do not want to generate bindings to.
+const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
+    "JS::FromPropertyDescriptor",
+    "JS_GetOwnPropertyDescriptorById",
+    "JS_GetOwnPropertyDescriptor",
+    "JS_GetOwnUCPropertyDescriptor",
+    "JS_GetPropertyDescriptorById",
+    "JS_GetPropertyDescriptor",
+    "JS_GetUCPropertyDescriptor",
+    "js::SetPropertyIgnoringNamedGetter"
+];
+
 /// Types that should be treated as an opaque blob of bytes whenever they show
 /// up within a whitelisted type.
 ///
@@ -410,6 +426,13 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
     "JS::RootedValueArray",
+    // Classes we don't use and we cannot generate theri
+    // types properly from bindgen so we'll skip them for now.
+    "JS::dbg::Builder",
+    "JS::dbg::Builder_BuiltThing",
+    "JS::dbg::Builder_Object",
+    "JS::dbg::Builder_Object_Base",
+    "JS::dbg::BuilderOrigin",
 ];
 
 /// Definitions for types that were blacklisted

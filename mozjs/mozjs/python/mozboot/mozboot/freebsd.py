@@ -18,8 +18,9 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         self.packages = [
             "gmake",
             "gtar",
+            "m4",
             "pkgconf",
-            "py%s%s-sqlite3" % sys.version_info[0:2],
+            "py%d%d-sqlite3" % sys.version_info[0:2],
             "rust",
             "watchman",
             "zip",
@@ -27,13 +28,9 @@ class FreeBSDBootstrapper(BaseBootstrapper):
 
         self.browser_packages = [
             "dbus-glib",
-            "gtk2",
-            "gtk3",
             "libXt",
-            "mesa-dri",  # depends on llvm*
             "nasm",
             "pulseaudio",
-            "v4l_compat",
         ]
 
         if not which("as"):
@@ -43,7 +40,10 @@ class FreeBSDBootstrapper(BaseBootstrapper):
             self.packages.append("unzip")
 
     def pkg_install(self, *packages):
-        command = ["pkg", "install"]
+        if sys.platform.startswith("netbsd"):
+            command = ["pkgin", "install"]
+        else:
+            command = ["pkg", "install"]
         if self.no_interactive:
             command.append("-y")
 
@@ -53,29 +53,34 @@ class FreeBSDBootstrapper(BaseBootstrapper):
     def install_system_packages(self):
         self.pkg_install(*self.packages)
 
-    def install_browser_packages(self, mozconfig_builder):
-        self.ensure_browser_packages()
+    def install_browser_packages(self, mozconfig_builder, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
+        packages = self.browser_packages.copy()
+        if sys.platform.startswith("netbsd"):
+            packages.extend(["brotli", "gtk3+", "libv4l"])
+        else:
+            packages.extend(["gtk3", "mesa-dri", "v4l_compat"])
+        self.pkg_install(*packages)
 
     def install_browser_artifact_mode_packages(self, mozconfig_builder):
-        self.ensure_browser_packages(artifact_mode=True)
+        self.install_browser_packages(mozconfig_builder, artifact_mode=True)
 
-    def ensure_browser_packages(self, artifact_mode=False):
-        # TODO: Figure out what not to install for artifact mode
-        self.pkg_install(*self.browser_packages)
-
-    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
+    def ensure_clang_static_analysis_package(self):
         # TODO: we don't ship clang base static analysis for this platform
         pass
 
-    def ensure_stylo_packages(self, state_dir, checkout_root):
+    def ensure_stylo_packages(self):
         # Clang / llvm already installed as browser package
-        self.pkg_install("rust-cbindgen")
+        if sys.platform.startswith("netbsd"):
+            self.pkg_install("cbindgen")
+        else:
+            self.pkg_install("rust-cbindgen")
 
-    def ensure_nasm_packages(self, state_dir, checkout_root):
-        # installed via ensure_browser_packages
+    def ensure_nasm_packages(self):
+        # installed via install_browser_packages
         pass
 
-    def ensure_node_packages(self, state_dir, checkout_root):
+    def ensure_node_packages(self):
         self.pkg_install("npm")
 
     def upgrade_mercurial(self, current):

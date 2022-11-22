@@ -11,60 +11,52 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 #include "mozilla/FloatingPoint.h"
+#include "mozilla/intl/Locale.h"
+#include "mozilla/intl/MeasureUnit.h"
+#include "mozilla/intl/MeasureUnitGenerated.h"
+#include "mozilla/intl/NumberFormat.h"
+#include "mozilla/intl/NumberingSystem.h"
+#include "mozilla/intl/NumberRangeFormat.h"
+#include "mozilla/Span.h"
+#include "mozilla/TextUtils.h"
 #include "mozilla/UniquePtr.h"
 
 #include <algorithm>
-#include <cstring>
-#include <iterator>
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
+#include "builtin/intl/DecimalNumber.h"
+#include "builtin/intl/FormatBuffer.h"
 #include "builtin/intl/LanguageTag.h"
-#include "builtin/intl/MeasureUnitGenerated.h"
 #include "builtin/intl/RelativeTimeFormat.h"
-#include "builtin/intl/ScopedICUObject.h"
-#include "ds/Sort.h"
-#include "gc/FreeOp.h"
+#include "gc/GCContext.h"
 #include "js/CharacterEncoding.h"
 #include "js/PropertySpec.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
-#include "js/Vector.h"
-#include "unicode/udata.h"
-#include "unicode/ufieldpositer.h"
-#include "unicode/uformattedvalue.h"
-#include "unicode/unum.h"
-#include "unicode/unumberformatter.h"
-#include "unicode/unumsys.h"
-#include "unicode/ures.h"
-#include "unicode/utypes.h"
+#include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/SelfHosting.h"
-#include "vm/Stack.h"
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
+#include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 
 using mozilla::AssertedCast;
-using mozilla::IsFinite;
-using mozilla::IsNaN;
-using mozilla::IsNegative;
-using mozilla::SpecificNaN;
 
-using js::intl::CallICU;
 using js::intl::DateTimeFormatOptions;
 using js::intl::FieldType;
-using js::intl::IcuLocale;
 
 const JSClassOps NumberFormatObject::classOps_ = {
     nullptr,                       // addProperty
@@ -75,7 +67,6 @@ const JSClassOps NumberFormatObject::classOps_ = {
     nullptr,                       // mayResolve
     NumberFormatObject::finalize,  // finalize
     nullptr,                       // call
-    nullptr,                       // hasInstance
     nullptr,                       // construct
     nullptr,                       // trace
 };
@@ -98,18 +89,27 @@ static bool numberFormat_toSource(JSContext* cx, unsigned argc, Value* vp) {
 static const JSFunctionSpec numberFormat_static_methods[] = {
     JS_SELF_HOSTED_FN("supportedLocalesOf",
                       "Intl_NumberFormat_supportedLocalesOf", 1, 0),
-    JS_FS_END};
+    JS_FS_END,
+};
 
 static const JSFunctionSpec numberFormat_methods[] = {
     JS_SELF_HOSTED_FN("resolvedOptions", "Intl_NumberFormat_resolvedOptions", 0,
                       0),
     JS_SELF_HOSTED_FN("formatToParts", "Intl_NumberFormat_formatToParts", 1, 0),
-    JS_FN(js_toSource_str, numberFormat_toSource, 0, 0), JS_FS_END};
+#ifdef NIGHTLY_BUILD
+    JS_SELF_HOSTED_FN("formatRange", "Intl_NumberFormat_formatRange", 2, 0),
+    JS_SELF_HOSTED_FN("formatRangeToParts",
+                      "Intl_NumberFormat_formatRangeToParts", 2, 0),
+#endif
+    JS_FN(js_toSource_str, numberFormat_toSource, 0, 0),
+    JS_FS_END,
+};
 
 static const JSPropertySpec numberFormat_properties[] = {
     JS_SELF_HOSTED_GET("format", "$Intl_NumberFormat_format_get", 0),
     JS_STRING_SYM_PS(toStringTag, "Intl.NumberFormat", JSPROP_READONLY),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 static bool NumberFormat(JSContext* cx, unsigned argc, Value* vp);
 
@@ -129,6 +129,8 @@ const ClassSpec NumberFormatObject::classSpec_ = {
  * ES2017 Intl draft rev 94045d234762ad107a3d09bb6f7381a65f1a2f9b
  */
 static bool NumberFormat(JSContext* cx, const CallArgs& args, bool construct) {
+  AutoJSConstructorProfilerEntry pseudoFrame(cx, "Intl.NumberFormat");
+
   // Step 1 (Handled by OrdinaryCreateFromConstructor fallback code).
 
   // Step 2 (Inlined 9.1.14, OrdinaryCreateFromConstructor).
@@ -170,22 +172,26 @@ bool js::intl_NumberFormat(JSContext* cx, unsigned argc, Value* vp) {
   return NumberFormat(cx, args, true);
 }
 
-void js::NumberFormatObject::finalize(JSFreeOp* fop, JSObject* obj) {
-  MOZ_ASSERT(fop->onMainThread());
+void js::NumberFormatObject::finalize(JS::GCContext* gcx, JSObject* obj) {
+  MOZ_ASSERT(gcx->onMainThread());
 
   auto* numberFormat = &obj->as<NumberFormatObject>();
-  UNumberFormatter* nf = numberFormat->getNumberFormatter();
-  UFormattedNumber* formatted = numberFormat->getFormattedNumber();
+  mozilla::intl::NumberFormat* nf = numberFormat->getNumberFormatter();
+  mozilla::intl::NumberRangeFormat* nrf =
+      numberFormat->getNumberRangeFormatter();
 
   if (nf) {
-    intl::RemoveICUCellMemory(fop, obj, NumberFormatObject::EstimatedMemoryUse);
-
-    unumf_close(nf);
+    intl::RemoveICUCellMemory(gcx, obj, NumberFormatObject::EstimatedMemoryUse);
+    // This was allocated using `new` in mozilla::intl::NumberFormat, so we
+    // delete here.
+    delete nf;
   }
-  if (formatted) {
-    // UFormattedNumber memory tracked as part of UNumberFormatter.
 
-    unumf_closeResult(formatted);
+  if (nrf) {
+    intl::RemoveICUCellMemory(gcx, obj, EstimatedRangeFormatterMemoryUse);
+    // This was allocated using `new` in mozilla::intl::NumberRangeFormat, so we
+    // delete here.
+    delete nrf;
   }
 }
 
@@ -199,22 +205,20 @@ bool js::intl_numberingSystem(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  UErrorCode status = U_ZERO_ERROR;
-  UNumberingSystem* numbers = unumsys_open(IcuLocale(locale.get()), &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
+  auto numberingSystem =
+      mozilla::intl::NumberingSystem::TryCreate(locale.get());
+  if (numberingSystem.isErr()) {
+    intl::ReportInternalError(cx, numberingSystem.unwrapErr());
     return false;
   }
 
-  ScopedICUObject<UNumberingSystem, unumsys_close> toClose(numbers);
-
-  const char* name = unumsys_getName(numbers);
-  if (!name) {
-    intl::ReportInternalError(cx);
+  auto name = numberingSystem.inspect()->GetName();
+  if (name.isErr()) {
+    intl::ReportInternalError(cx, name.unwrapErr());
     return false;
   }
 
-  JSString* jsname = NewStringCopyZ<CanGC>(cx, name);
+  JSString* jsname = NewStringCopy<CanGC>(cx, name.unwrap());
   if (!jsname) {
     return false;
   }
@@ -224,80 +228,38 @@ bool js::intl_numberingSystem(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 #if DEBUG || MOZ_SYSTEM_ICU
-class UResourceBundleDeleter {
- public:
-  void operator()(UResourceBundle* aPtr) { ures_close(aPtr); }
-};
-
-using UniqueUResourceBundle =
-    mozilla::UniquePtr<UResourceBundle, UResourceBundleDeleter>;
-
 bool js::intl_availableMeasurementUnits(JSContext* cx, unsigned argc,
                                         Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  RootedObject measurementUnits(
-      cx, NewObjectWithGivenProto<PlainObject>(cx, nullptr));
+  RootedObject measurementUnits(cx, NewPlainObjectWithProto(cx, nullptr));
   if (!measurementUnits) {
     return false;
   }
 
-  // Lookup the available measurement units in the resource boundle of the root
-  // locale.
-
-  static const char packageName[] =
-      U_ICUDATA_NAME U_TREE_SEPARATOR_STRING "unit";
-  static const char rootLocale[] = "";
-
-  UErrorCode status = U_ZERO_ERROR;
-  UResourceBundle* rawRes = ures_open(packageName, rootLocale, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
+  auto units = mozilla::intl::MeasureUnit::GetAvailable();
+  if (units.isErr()) {
+    intl::ReportInternalError(cx, units.unwrapErr());
     return false;
   }
-  UniqueUResourceBundle res(rawRes);
 
-  UResourceBundle* rawUnits =
-      ures_getByKey(res.get(), "units", nullptr, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return false;
-  }
-  UniqueUResourceBundle units(rawUnits);
-
-  RootedAtom unitAtom(cx);
-
-  int32_t unitsSize = ures_getSize(units.get());
-  for (int32_t i = 0; i < unitsSize; i++) {
-    UResourceBundle* rawType =
-        ures_getByIndex(units.get(), i, nullptr, &status);
-    if (U_FAILURE(status)) {
+  Rooted<JSAtom*> unitAtom(cx);
+  for (auto unit : units.unwrap()) {
+    if (unit.isErr()) {
       intl::ReportInternalError(cx);
       return false;
     }
-    UniqueUResourceBundle type(rawType);
+    auto unitIdentifier = unit.unwrap();
 
-    int32_t typeSize = ures_getSize(type.get());
-    for (int32_t j = 0; j < typeSize; j++) {
-      UResourceBundle* rawSubtype =
-          ures_getByIndex(type.get(), j, nullptr, &status);
-      if (U_FAILURE(status)) {
-        intl::ReportInternalError(cx);
-        return false;
-      }
-      UniqueUResourceBundle subtype(rawSubtype);
+    unitAtom = Atomize(cx, unitIdentifier.data(), unitIdentifier.size());
+    if (!unitAtom) {
+      return false;
+    }
 
-      const char* unitIdentifier = ures_getKey(subtype.get());
-
-      unitAtom = Atomize(cx, unitIdentifier, strlen(unitIdentifier));
-      if (!unitAtom) {
-        return false;
-      }
-      if (!DefineDataProperty(cx, measurementUnits, unitAtom->asPropertyName(),
-                              TrueHandleValue)) {
-        return false;
-      }
+    if (!DefineDataProperty(cx, measurementUnits, unitAtom->asPropertyName(),
+                            TrueHandleValue)) {
+      return false;
     }
   }
 
@@ -306,211 +268,30 @@ bool js::intl_availableMeasurementUnits(JSContext* cx, unsigned argc,
 }
 #endif
 
-bool js::intl::NumberFormatterSkeleton::currency(JSLinearString* currency) {
-  MOZ_ASSERT(currency->length() == 3,
-             "IsWellFormedCurrencyCode permits only length-3 strings");
-
-  char16_t currencyChars[] = {currency->latin1OrTwoByteChar(0),
-                              currency->latin1OrTwoByteChar(1),
-                              currency->latin1OrTwoByteChar(2), '\0'};
-  return append(u"currency/") && append(currencyChars) && append(' ');
-}
-
-bool js::intl::NumberFormatterSkeleton::currencyDisplay(
-    CurrencyDisplay display) {
-  switch (display) {
-    case CurrencyDisplay::Code:
-      return appendToken(u"unit-width-iso-code");
-    case CurrencyDisplay::Name:
-      return appendToken(u"unit-width-full-name");
-    case CurrencyDisplay::Symbol:
-      // Default, no additional tokens needed.
-      return true;
-    case CurrencyDisplay::NarrowSymbol:
-      return appendToken(u"unit-width-narrow");
-  }
-  MOZ_CRASH("unexpected currency display type");
-}
-
-static const MeasureUnit& FindSimpleMeasureUnit(const char* name) {
-  auto measureUnit = std::lower_bound(
-      std::begin(simpleMeasureUnits), std::end(simpleMeasureUnits), name,
-      [](const auto& measureUnit, const char* name) {
-        return strcmp(measureUnit.name, name) < 0;
-      });
-  MOZ_ASSERT(measureUnit != std::end(simpleMeasureUnits),
-             "unexpected unit identifier: unit not found");
-  MOZ_ASSERT(strcmp(measureUnit->name, name) == 0,
-             "unexpected unit identifier: wrong unit found");
-  return *measureUnit;
-}
-
 static constexpr size_t MaxUnitLength() {
   size_t length = 0;
-  for (const auto& unit : simpleMeasureUnits) {
+  for (const auto& unit : mozilla::intl::simpleMeasureUnits) {
     length = std::max(length, std::char_traits<char>::length(unit.name));
   }
   return length * 2 + std::char_traits<char>::length("-per-");
 }
 
-bool js::intl::NumberFormatterSkeleton::unit(JSLinearString* unit) {
-  MOZ_RELEASE_ASSERT(unit->length() <= MaxUnitLength());
-
-  char unitChars[MaxUnitLength() + 1] = {};
-  CopyChars(reinterpret_cast<Latin1Char*>(unitChars), *unit);
-
-  auto appendUnit = [this](const MeasureUnit& unit) {
-    return append(unit.type, strlen(unit.type)) && append('-') &&
-           append(unit.name, strlen(unit.name));
-  };
-
-  // |unit| can be a compound unit identifier, separated by "-per-".
-
-  static constexpr char separator[] = "-per-";
-  if (char* p = strstr(unitChars, separator)) {
-    // Split into two strings.
-    p[0] = '\0';
-
-    auto& numerator = FindSimpleMeasureUnit(unitChars);
-    if (!append(u"measure-unit/") || !appendUnit(numerator) || !append(' ')) {
-      return false;
-    }
-
-    auto& denominator = FindSimpleMeasureUnit(p + strlen(separator));
-    if (!append(u"per-measure-unit/") || !appendUnit(denominator) ||
-        !append(' ')) {
-      return false;
-    }
-  } else {
-    auto& simple = FindSimpleMeasureUnit(unitChars);
-    if (!append(u"measure-unit/") || !appendUnit(simple) || !append(' ')) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool js::intl::NumberFormatterSkeleton::unitDisplay(UnitDisplay display) {
-  switch (display) {
-    case UnitDisplay::Short:
-      return appendToken(u"unit-width-short");
-    case UnitDisplay::Narrow:
-      return appendToken(u"unit-width-narrow");
-    case UnitDisplay::Long:
-      return appendToken(u"unit-width-full-name");
-  }
-  MOZ_CRASH("unexpected unit display type");
-}
-
-bool js::intl::NumberFormatterSkeleton::percent() {
-  return appendToken(u"percent scale/100");
-}
-
-bool js::intl::NumberFormatterSkeleton::fractionDigits(uint32_t min,
-                                                       uint32_t max) {
-  // Note: |min| can be zero here.
-  MOZ_ASSERT(min <= max);
-  return append('.') && appendN('0', min) && appendN('#', max - min) &&
-         append(' ');
-}
-
-bool js::intl::NumberFormatterSkeleton::integerWidth(uint32_t min) {
-  MOZ_ASSERT(min > 0);
-  return append(u"integer-width/+") && appendN('0', min) && append(' ');
-}
-
-bool js::intl::NumberFormatterSkeleton::significantDigits(uint32_t min,
-                                                          uint32_t max) {
-  MOZ_ASSERT(min > 0);
-  MOZ_ASSERT(min <= max);
-  return appendN('@', min) && appendN('#', max - min) && append(' ');
-}
-
-bool js::intl::NumberFormatterSkeleton::useGrouping(bool on) {
-  return on || appendToken(u"group-off");
-}
-
-bool js::intl::NumberFormatterSkeleton::notation(Notation style) {
-  switch (style) {
-    case Notation::Standard:
-      // Default, no additional tokens needed.
-      return true;
-    case Notation::Scientific:
-      return appendToken(u"scientific");
-    case Notation::Engineering:
-      return appendToken(u"engineering");
-    case Notation::CompactShort:
-      return appendToken(u"compact-short");
-    case Notation::CompactLong:
-      return appendToken(u"compact-long");
-  }
-  MOZ_CRASH("unexpected notation style");
-}
-
-bool js::intl::NumberFormatterSkeleton::signDisplay(SignDisplay display) {
-  switch (display) {
-    case SignDisplay::Auto:
-      // Default, no additional tokens needed.
-      return true;
-    case SignDisplay::Always:
-      return appendToken(u"sign-always");
-    case SignDisplay::Never:
-      return appendToken(u"sign-never");
-    case SignDisplay::ExceptZero:
-      return appendToken(u"sign-except-zero");
-    case SignDisplay::Accounting:
-      return appendToken(u"sign-accounting");
-    case SignDisplay::AccountingAlways:
-      return appendToken(u"sign-accounting-always");
-    case SignDisplay::AccountingExceptZero:
-      return appendToken(u"sign-accounting-except-zero");
-  }
-  MOZ_CRASH("unexpected sign display type");
-}
-
-bool js::intl::NumberFormatterSkeleton::roundingModeHalfUp() {
-  return appendToken(u"rounding-mode-half-up");
-}
-
-UNumberFormatter* js::intl::NumberFormatterSkeleton::toFormatter(
-    JSContext* cx, const char* locale) {
-  UErrorCode status = U_ZERO_ERROR;
-  UNumberFormatter* nf = unumf_openForSkeletonAndLocale(
-      vector_.begin(), vector_.length(), locale, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return nullptr;
-  }
-  return nf;
-}
-
-/**
- * Returns a new UNumberFormatter with the locale and number formatting options
- * of the given NumberFormat.
- */
-static UNumberFormatter* NewUNumberFormatter(
-    JSContext* cx, Handle<NumberFormatObject*> numberFormat) {
+static UniqueChars NumberFormatLocale(JSContext* cx, HandleObject internals) {
   RootedValue value(cx);
-
-  RootedObject internals(cx, intl::GetInternalsObject(cx, numberFormat));
-  if (!internals) {
-    return nullptr;
-  }
-
   if (!GetProperty(cx, internals, internals, cx->names().locale, &value)) {
     return nullptr;
   }
 
   // ICU expects numberingSystem as a Unicode locale extensions on locale.
 
-  intl::LanguageTag tag(cx);
+  mozilla::intl::Locale tag;
   {
-    JSLinearString* locale = value.toString()->ensureLinear(cx);
+    Rooted<JSLinearString*> locale(cx, value.toString()->ensureLinear(cx));
     if (!locale) {
       return nullptr;
     }
 
-    if (!intl::LanguageTagParser::parse(cx, locale, tag)) {
+    if (!intl::ParseLocale(cx, locale, tag)) {
       return nullptr;
     }
   }
@@ -541,48 +322,65 @@ static UNumberFormatter* NewUNumberFormatter(
     return nullptr;
   }
 
-  UniqueChars locale = tag.toStringZ(cx);
-  if (!locale) {
+  intl::FormatBuffer<char> buffer(cx);
+  if (auto result = tag.ToString(buffer); result.isErr()) {
+    intl::ReportInternalError(cx, result.unwrapErr());
     return nullptr;
   }
+  return buffer.extractStringZ();
+}
 
-  intl::NumberFormatterSkeleton skeleton(cx);
+struct NumberFormatOptions : public mozilla::intl::NumberRangeFormatOptions {
+  static_assert(std::is_base_of_v<mozilla::intl::NumberFormatOptions,
+                                  mozilla::intl::NumberRangeFormatOptions>);
 
+  char currencyChars[3] = {};
+  char unitChars[MaxUnitLength()] = {};
+};
+
+static bool FillNumberFormatOptions(JSContext* cx, HandleObject internals,
+                                    NumberFormatOptions& options) {
+  RootedValue value(cx);
   if (!GetProperty(cx, internals, internals, cx->names().style, &value)) {
-    return nullptr;
+    return false;
   }
 
   bool accountingSign = false;
   {
     JSLinearString* style = value.toString()->ensureLinear(cx);
     if (!style) {
-      return nullptr;
+      return false;
     }
 
     if (StringEqualsLiteral(style, "currency")) {
       if (!GetProperty(cx, internals, internals, cx->names().currency,
                        &value)) {
-        return nullptr;
+        return false;
       }
       JSLinearString* currency = value.toString()->ensureLinear(cx);
       if (!currency) {
-        return nullptr;
+        return false;
       }
 
-      if (!skeleton.currency(currency)) {
-        return nullptr;
-      }
+      MOZ_RELEASE_ASSERT(
+          currency->length() == 3,
+          "IsWellFormedCurrencyCode permits only length-3 strings");
+      MOZ_ASSERT(StringIsAscii(currency),
+                 "IsWellFormedCurrencyCode permits only ASCII strings");
+      CopyChars(reinterpret_cast<Latin1Char*>(options.currencyChars),
+                *currency);
 
       if (!GetProperty(cx, internals, internals, cx->names().currencyDisplay,
                        &value)) {
-        return nullptr;
+        return false;
       }
       JSLinearString* currencyDisplay = value.toString()->ensureLinear(cx);
       if (!currencyDisplay) {
-        return nullptr;
+        return false;
       }
 
-      using CurrencyDisplay = intl::NumberFormatterSkeleton::CurrencyDisplay;
+      using CurrencyDisplay =
+          mozilla::intl::NumberFormatOptions::CurrencyDisplay;
 
       CurrencyDisplay display;
       if (StringEqualsLiteral(currencyDisplay, "code")) {
@@ -596,17 +394,13 @@ static UNumberFormatter* NewUNumberFormatter(
         display = CurrencyDisplay::Name;
       }
 
-      if (!skeleton.currencyDisplay(display)) {
-        return nullptr;
-      }
-
       if (!GetProperty(cx, internals, internals, cx->names().currencySign,
                        &value)) {
-        return nullptr;
+        return false;
       }
       JSLinearString* currencySign = value.toString()->ensureLinear(cx);
       if (!currencySign) {
-        return nullptr;
+        return false;
       }
 
       if (StringEqualsLiteral(currencySign, "accounting")) {
@@ -614,33 +408,36 @@ static UNumberFormatter* NewUNumberFormatter(
       } else {
         MOZ_ASSERT(StringEqualsLiteral(currencySign, "standard"));
       }
+
+      options.mCurrency = mozilla::Some(
+          std::make_pair(std::string_view(options.currencyChars, 3), display));
     } else if (StringEqualsLiteral(style, "percent")) {
-      if (!skeleton.percent()) {
-        return nullptr;
-      }
+      options.mPercent = true;
     } else if (StringEqualsLiteral(style, "unit")) {
       if (!GetProperty(cx, internals, internals, cx->names().unit, &value)) {
-        return nullptr;
+        return false;
       }
       JSLinearString* unit = value.toString()->ensureLinear(cx);
       if (!unit) {
-        return nullptr;
+        return false;
       }
 
-      if (!skeleton.unit(unit)) {
-        return nullptr;
-      }
+      size_t unit_str_length = unit->length();
+
+      MOZ_ASSERT(StringIsAscii(unit));
+      MOZ_RELEASE_ASSERT(unit_str_length <= MaxUnitLength());
+      CopyChars(reinterpret_cast<Latin1Char*>(options.unitChars), *unit);
 
       if (!GetProperty(cx, internals, internals, cx->names().unitDisplay,
                        &value)) {
-        return nullptr;
+        return false;
       }
       JSLinearString* unitDisplay = value.toString()->ensureLinear(cx);
       if (!unitDisplay) {
-        return nullptr;
+        return false;
       }
 
-      using UnitDisplay = intl::NumberFormatterSkeleton::UnitDisplay;
+      using UnitDisplay = mozilla::intl::NumberFormatOptions::UnitDisplay;
 
       UnitDisplay display;
       if (StringEqualsLiteral(unitDisplay, "short")) {
@@ -652,9 +449,8 @@ static UNumberFormatter* NewUNumberFormatter(
         display = UnitDisplay::Long;
       }
 
-      if (!skeleton.unitDisplay(display)) {
-        return nullptr;
-      }
+      options.mUnit = mozilla::Some(std::make_pair(
+          std::string_view(options.unitChars, unit_str_length), display));
     } else {
       MOZ_ASSERT(StringEqualsLiteral(style, "decimal"));
     }
@@ -663,81 +459,137 @@ static UNumberFormatter* NewUNumberFormatter(
   bool hasMinimumSignificantDigits;
   if (!HasProperty(cx, internals, cx->names().minimumSignificantDigits,
                    &hasMinimumSignificantDigits)) {
-    return nullptr;
+    return false;
   }
 
   if (hasMinimumSignificantDigits) {
     if (!GetProperty(cx, internals, internals,
                      cx->names().minimumSignificantDigits, &value)) {
-      return nullptr;
+      return false;
     }
     uint32_t minimumSignificantDigits = AssertedCast<uint32_t>(value.toInt32());
 
     if (!GetProperty(cx, internals, internals,
                      cx->names().maximumSignificantDigits, &value)) {
-      return nullptr;
+      return false;
     }
     uint32_t maximumSignificantDigits = AssertedCast<uint32_t>(value.toInt32());
 
-    if (!skeleton.significantDigits(minimumSignificantDigits,
-                                    maximumSignificantDigits)) {
-      return nullptr;
-    }
+    options.mSignificantDigits = mozilla::Some(
+        std::make_pair(minimumSignificantDigits, maximumSignificantDigits));
   }
 
   bool hasMinimumFractionDigits;
   if (!HasProperty(cx, internals, cx->names().minimumFractionDigits,
                    &hasMinimumFractionDigits)) {
-    return nullptr;
+    return false;
   }
 
   if (hasMinimumFractionDigits) {
     if (!GetProperty(cx, internals, internals,
                      cx->names().minimumFractionDigits, &value)) {
-      return nullptr;
+      return false;
     }
     uint32_t minimumFractionDigits = AssertedCast<uint32_t>(value.toInt32());
 
     if (!GetProperty(cx, internals, internals,
                      cx->names().maximumFractionDigits, &value)) {
-      return nullptr;
+      return false;
     }
     uint32_t maximumFractionDigits = AssertedCast<uint32_t>(value.toInt32());
 
-    if (!skeleton.fractionDigits(minimumFractionDigits,
-                                 maximumFractionDigits)) {
-      return nullptr;
+    options.mFractionDigits = mozilla::Some(
+        std::make_pair(minimumFractionDigits, maximumFractionDigits));
+  }
+
+  if (!GetProperty(cx, internals, internals, cx->names().roundingPriority,
+                   &value)) {
+    return false;
+  }
+
+  {
+    JSLinearString* roundingPriority = value.toString()->ensureLinear(cx);
+    if (!roundingPriority) {
+      return false;
     }
+
+    using RoundingPriority =
+        mozilla::intl::NumberFormatOptions::RoundingPriority;
+
+    RoundingPriority priority;
+    if (StringEqualsLiteral(roundingPriority, "auto")) {
+      priority = RoundingPriority::Auto;
+    } else if (StringEqualsLiteral(roundingPriority, "morePrecision")) {
+      priority = RoundingPriority::MorePrecision;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(roundingPriority, "lessPrecision"));
+      priority = RoundingPriority::LessPrecision;
+    }
+
+    options.mRoundingPriority = priority;
   }
 
   if (!GetProperty(cx, internals, internals, cx->names().minimumIntegerDigits,
                    &value)) {
-    return nullptr;
+    return false;
   }
-  uint32_t minimumIntegerDigits = AssertedCast<uint32_t>(value.toInt32());
-
-  if (!skeleton.integerWidth(minimumIntegerDigits)) {
-    return nullptr;
-  }
+  options.mMinIntegerDigits =
+      mozilla::Some(AssertedCast<uint32_t>(value.toInt32()));
 
   if (!GetProperty(cx, internals, internals, cx->names().useGrouping, &value)) {
-    return nullptr;
+    return false;
   }
-  if (!skeleton.useGrouping(value.toBoolean())) {
-    return nullptr;
+
+  if (value.isString()) {
+    JSLinearString* useGrouping = value.toString()->ensureLinear(cx);
+    if (!useGrouping) {
+      return false;
+    }
+
+    using Grouping = mozilla::intl::NumberFormatOptions::Grouping;
+
+    Grouping grouping;
+    if (StringEqualsLiteral(useGrouping, "auto")) {
+      grouping = Grouping::Auto;
+    } else if (StringEqualsLiteral(useGrouping, "always")) {
+      grouping = Grouping::Always;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(useGrouping, "min2"));
+      grouping = Grouping::Min2;
+    }
+
+    options.mGrouping = grouping;
+  } else {
+    MOZ_ASSERT(value.isBoolean());
+#ifdef NIGHTLY_BUILD
+    // The caller passes the string "always" instead of |true| when the
+    // NumberFormat V3 spec is being used.
+    MOZ_ASSERT(value.toBoolean() == false);
+#endif
+
+    using Grouping = mozilla::intl::NumberFormatOptions::Grouping;
+
+    Grouping grouping;
+    if (value.toBoolean()) {
+      grouping = Grouping::Auto;
+    } else {
+      grouping = Grouping::Never;
+    }
+
+    options.mGrouping = grouping;
   }
 
   if (!GetProperty(cx, internals, internals, cx->names().notation, &value)) {
-    return nullptr;
+    return false;
   }
 
   {
     JSLinearString* notation = value.toString()->ensureLinear(cx);
     if (!notation) {
-      return nullptr;
+      return false;
     }
 
-    using Notation = intl::NumberFormatterSkeleton::Notation;
+    using Notation = mozilla::intl::NumberFormatOptions::Notation;
 
     Notation style;
     if (StringEqualsLiteral(notation, "standard")) {
@@ -751,12 +603,12 @@ static UNumberFormatter* NewUNumberFormatter(
 
       if (!GetProperty(cx, internals, internals, cx->names().compactDisplay,
                        &value)) {
-        return nullptr;
+        return false;
       }
 
       JSLinearString* compactDisplay = value.toString()->ensureLinear(cx);
       if (!compactDisplay) {
-        return nullptr;
+        return false;
       }
 
       if (StringEqualsLiteral(compactDisplay, "short")) {
@@ -767,22 +619,20 @@ static UNumberFormatter* NewUNumberFormatter(
       }
     }
 
-    if (!skeleton.notation(style)) {
-      return nullptr;
-    }
+    options.mNotation = style;
   }
 
   if (!GetProperty(cx, internals, internals, cx->names().signDisplay, &value)) {
-    return nullptr;
+    return false;
   }
 
   {
     JSLinearString* signDisplay = value.toString()->ensureLinear(cx);
     if (!signDisplay) {
-      return nullptr;
+      return false;
     }
 
-    using SignDisplay = intl::NumberFormatterSkeleton::SignDisplay;
+    using SignDisplay = mozilla::intl::NumberFormatOptions::SignDisplay;
 
     SignDisplay display;
     if (StringEqualsLiteral(signDisplay, "auto")) {
@@ -799,197 +649,204 @@ static UNumberFormatter* NewUNumberFormatter(
       } else {
         display = SignDisplay::Always;
       }
-    } else {
-      MOZ_ASSERT(StringEqualsLiteral(signDisplay, "exceptZero"));
+    } else if (StringEqualsLiteral(signDisplay, "exceptZero")) {
       if (accountingSign) {
         display = SignDisplay::AccountingExceptZero;
       } else {
         display = SignDisplay::ExceptZero;
       }
-    }
-
-    if (!skeleton.signDisplay(display)) {
-      return nullptr;
-    }
-  }
-
-  if (!skeleton.roundingModeHalfUp()) {
-    return nullptr;
-  }
-
-  return skeleton.toFormatter(cx, locale.get());
-}
-
-static UFormattedNumber* NewUFormattedNumber(JSContext* cx) {
-  UErrorCode status = U_ZERO_ERROR;
-  UFormattedNumber* formatted = unumf_openResult(&status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return nullptr;
-  }
-  return formatted;
-}
-
-static const UFormattedValue* PartitionNumberPattern(
-    JSContext* cx, const UNumberFormatter* nf, UFormattedNumber* formatted,
-    HandleValue x) {
-  UErrorCode status = U_ZERO_ERROR;
-  if (x.isNumber()) {
-    double num = x.toNumber();
-
-    // ICU incorrectly formats NaN values with the sign bit set, as if they
-    // were negative.  Replace all NaNs with a single pattern with sign bit
-    // unset ("positive", that is) until ICU is fixed.
-    if (MOZ_UNLIKELY(IsNaN(num))) {
-      num = SpecificNaN<double>(0, 1);
-    }
-
-    unumf_formatDouble(nf, num, formatted, &status);
-  } else {
-    RootedBigInt bi(cx, x.toBigInt());
-
-    int64_t num;
-    if (BigInt::isInt64(bi, &num)) {
-      unumf_formatInt(nf, num, formatted, &status);
     } else {
-      JSLinearString* str = BigInt::toString<CanGC>(cx, bi, 10);
-      if (!str) {
-        return nullptr;
+      MOZ_ASSERT(StringEqualsLiteral(signDisplay, "negative"));
+      if (accountingSign) {
+        display = SignDisplay::AccountingNegative;
+      } else {
+        display = SignDisplay::Negative;
       }
-      MOZ_ASSERT(str->hasLatin1Chars());
+    }
 
-      // Tell the analysis the |unumf_formatDecimal| function can't GC.
-      JS::AutoSuppressGCAnalysis nogc;
+    options.mSignDisplay = display;
+  }
 
-      const char* chars = reinterpret_cast<const char*>(str->latin1Chars(nogc));
-      unumf_formatDecimal(nf, chars, str->length(), formatted, &status);
+  if (!GetProperty(cx, internals, internals, cx->names().roundingIncrement,
+                   &value)) {
+    return false;
+  }
+  options.mRoundingIncrement = AssertedCast<uint32_t>(value.toInt32());
+
+  if (!GetProperty(cx, internals, internals, cx->names().roundingMode,
+                   &value)) {
+    return false;
+  }
+
+  {
+    JSLinearString* roundingMode = value.toString()->ensureLinear(cx);
+    if (!roundingMode) {
+      return false;
+    }
+
+    using RoundingMode = mozilla::intl::NumberFormatOptions::RoundingMode;
+
+    RoundingMode rounding;
+    if (StringEqualsLiteral(roundingMode, "halfExpand")) {
+      // "halfExpand" is the default mode, so we handle it first.
+      rounding = RoundingMode::HalfExpand;
+    } else if (StringEqualsLiteral(roundingMode, "ceil")) {
+      rounding = RoundingMode::Ceil;
+    } else if (StringEqualsLiteral(roundingMode, "floor")) {
+      rounding = RoundingMode::Floor;
+    } else if (StringEqualsLiteral(roundingMode, "expand")) {
+      rounding = RoundingMode::Expand;
+    } else if (StringEqualsLiteral(roundingMode, "trunc")) {
+      rounding = RoundingMode::Trunc;
+    } else if (StringEqualsLiteral(roundingMode, "halfCeil")) {
+      rounding = RoundingMode::HalfCeil;
+    } else if (StringEqualsLiteral(roundingMode, "halfFloor")) {
+      rounding = RoundingMode::HalfFloor;
+    } else if (StringEqualsLiteral(roundingMode, "halfTrunc")) {
+      rounding = RoundingMode::HalfTrunc;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(roundingMode, "halfEven"));
+      rounding = RoundingMode::HalfEven;
+    }
+
+    options.mRoundingMode = rounding;
+  }
+
+  if (!GetProperty(cx, internals, internals, cx->names().trailingZeroDisplay,
+                   &value)) {
+    return false;
+  }
+
+  {
+    JSLinearString* trailingZeroDisplay = value.toString()->ensureLinear(cx);
+    if (!trailingZeroDisplay) {
+      return false;
+    }
+
+    if (StringEqualsLiteral(trailingZeroDisplay, "auto")) {
+      options.mStripTrailingZero = false;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(trailingZeroDisplay, "stripIfInteger"));
+      options.mStripTrailingZero = true;
     }
   }
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return nullptr;
-  }
 
-  const UFormattedValue* formattedValue =
-      unumf_resultAsValue(formatted, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return nullptr;
-  }
-  return formattedValue;
-}
-
-static JSString* FormattedNumberToString(
-    JSContext* cx, const UFormattedValue* formattedValue) {
-  UErrorCode status = U_ZERO_ERROR;
-  int32_t strLength;
-  const char16_t* str = ufmtval_getString(formattedValue, &strLength, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return nullptr;
-  }
-
-  return NewStringCopyN<CanGC>(cx, str, AssertedCast<uint32_t>(strLength));
-}
-
-static bool FormatNumeric(JSContext* cx, const UNumberFormatter* nf,
-                          UFormattedNumber* formatted, HandleValue x,
-                          MutableHandleValue result) {
-  const UFormattedValue* formattedValue =
-      PartitionNumberPattern(cx, nf, formatted, x);
-  if (!formattedValue) {
-    return false;
-  }
-
-  JSString* str = FormattedNumberToString(cx, formattedValue);
-  if (!str) {
-    return false;
-  }
-
-  result.setString(str);
   return true;
 }
 
-enum class FormattingType { ForUnit, NotForUnit };
+/**
+ * Returns a new mozilla::intl::Number[Range]Format with the locale and number
+ * formatting options of the given NumberFormat, or a nullptr if
+ * initialization failed.
+ */
+template <class Formatter>
+static Formatter* NewNumberFormat(JSContext* cx,
+                                  Handle<NumberFormatObject*> numberFormat) {
+  RootedObject internals(cx, intl::GetInternalsObject(cx, numberFormat));
+  if (!internals) {
+    return nullptr;
+  }
 
-static FieldType GetFieldTypeForNumberField(UNumberFormatFields fieldName,
-                                            HandleValue x,
-                                            FormattingType formattingType) {
-  // See intl/icu/source/i18n/unicode/unum.h for a detailed field list.  This
-  // list is deliberately exhaustive: cases might have to be added/removed if
-  // this code is compiled with a different ICU with more UNumberFormatFields
-  // enum initializers.  Please guard such cases with appropriate ICU
-  // version-testing #ifdefs, should cross-version divergence occur.
-  switch (fieldName) {
-    case UNUM_INTEGER_FIELD:
-      if (x.isNumber()) {
-        double d = x.toNumber();
-        if (IsNaN(d)) {
-          return &JSAtomState::nan;
-        }
-        if (!IsFinite(d)) {
-          return &JSAtomState::infinity;
-        }
-      }
-      return &JSAtomState::integer;
+  UniqueChars locale = NumberFormatLocale(cx, internals);
+  if (!locale) {
+    return nullptr;
+  }
 
-    case UNUM_GROUPING_SEPARATOR_FIELD:
-      return &JSAtomState::group;
+  NumberFormatOptions options;
+  if (!FillNumberFormatOptions(cx, internals, options)) {
+    return nullptr;
+  }
 
-    case UNUM_DECIMAL_SEPARATOR_FIELD:
-      return &JSAtomState::decimal;
+  options.mRangeCollapse = NumberFormatOptions::RangeCollapse::Auto;
+  options.mRangeIdentityFallback =
+      NumberFormatOptions::RangeIdentityFallback::Approximately;
 
-    case UNUM_FRACTION_FIELD:
-      return &JSAtomState::fraction;
+  mozilla::Result<mozilla::UniquePtr<Formatter>, mozilla::intl::ICUError>
+      result = Formatter::TryCreate(locale.get(), options);
 
-    case UNUM_SIGN_FIELD: {
-      // We coerce all NaNs to one with the sign bit unset, so all NaNs are
-      // positive in our implementation.
-      bool isNegative = x.isNumber()
-                            ? !IsNaN(x.toNumber()) && IsNegative(x.toNumber())
-                            : x.toBigInt()->isNegative();
-      return isNegative ? &JSAtomState::minusSign : &JSAtomState::plusSign;
-    }
+  if (result.isOk()) {
+    return result.unwrap().release();
+  }
 
-    case UNUM_PERCENT_FIELD:
-      // Percent fields are returned as "unit" elements when the number
-      // formatter's style is "unit".
-      if (formattingType == FormattingType::ForUnit) {
-        return &JSAtomState::unit;
-      }
-      return &JSAtomState::percentSign;
+  intl::ReportInternalError(cx, result.unwrapErr());
+  return nullptr;
+}
 
-    case UNUM_CURRENCY_FIELD:
-      return &JSAtomState::currency;
+static mozilla::intl::NumberFormat* GetOrCreateNumberFormat(
+    JSContext* cx, Handle<NumberFormatObject*> numberFormat) {
+  // Obtain a cached mozilla::intl::NumberFormat object.
+  mozilla::intl::NumberFormat* nf = numberFormat->getNumberFormatter();
+  if (nf) {
+    return nf;
+  }
 
-    case UNUM_PERMILL_FIELD:
-      MOZ_ASSERT_UNREACHABLE(
-          "unexpected permill field found, even though "
-          "we don't use any user-defined patterns that "
-          "would require a permill field");
-      break;
+  nf = NewNumberFormat<mozilla::intl::NumberFormat>(cx, numberFormat);
+  if (!nf) {
+    return nullptr;
+  }
+  numberFormat->setNumberFormatter(nf);
 
-    case UNUM_EXPONENT_SYMBOL_FIELD:
-      return &JSAtomState::exponentSeparator;
+  intl::AddICUCellMemory(numberFormat, NumberFormatObject::EstimatedMemoryUse);
+  return nf;
+}
 
-    case UNUM_EXPONENT_SIGN_FIELD:
-      return &JSAtomState::exponentMinusSign;
+static mozilla::intl::NumberRangeFormat* GetOrCreateNumberRangeFormat(
+    JSContext* cx, Handle<NumberFormatObject*> numberFormat) {
+  // Obtain a cached mozilla::intl::NumberRangeFormat object.
+  mozilla::intl::NumberRangeFormat* nrf =
+      numberFormat->getNumberRangeFormatter();
+  if (nrf) {
+    return nrf;
+  }
 
-    case UNUM_EXPONENT_FIELD:
-      return &JSAtomState::exponentInteger;
+  nrf = NewNumberFormat<mozilla::intl::NumberRangeFormat>(cx, numberFormat);
+  if (!nrf) {
+    return nullptr;
+  }
+  numberFormat->setNumberRangeFormatter(nrf);
 
-    case UNUM_MEASURE_UNIT_FIELD:
-      return &JSAtomState::unit;
+  intl::AddICUCellMemory(numberFormat,
+                         NumberFormatObject::EstimatedRangeFormatterMemoryUse);
+  return nrf;
+}
 
-    case UNUM_COMPACT_FIELD:
+static FieldType GetFieldTypeForNumberPartType(
+    mozilla::intl::NumberPartType type) {
+  switch (type) {
+    case mozilla::intl::NumberPartType::ApproximatelySign:
+      return &JSAtomState::approximatelySign;
+    case mozilla::intl::NumberPartType::Compact:
       return &JSAtomState::compact;
-
-#ifndef U_HIDE_DEPRECATED_API
-    case UNUM_FIELD_COUNT:
-      MOZ_ASSERT_UNREACHABLE(
-          "format field sentinel value returned by iterator!");
-      break;
-#endif
+    case mozilla::intl::NumberPartType::Currency:
+      return &JSAtomState::currency;
+    case mozilla::intl::NumberPartType::Decimal:
+      return &JSAtomState::decimal;
+    case mozilla::intl::NumberPartType::ExponentInteger:
+      return &JSAtomState::exponentInteger;
+    case mozilla::intl::NumberPartType::ExponentMinusSign:
+      return &JSAtomState::exponentMinusSign;
+    case mozilla::intl::NumberPartType::ExponentSeparator:
+      return &JSAtomState::exponentSeparator;
+    case mozilla::intl::NumberPartType::Fraction:
+      return &JSAtomState::fraction;
+    case mozilla::intl::NumberPartType::Group:
+      return &JSAtomState::group;
+    case mozilla::intl::NumberPartType::Infinity:
+      return &JSAtomState::infinity;
+    case mozilla::intl::NumberPartType::Integer:
+      return &JSAtomState::integer;
+    case mozilla::intl::NumberPartType::Literal:
+      return &JSAtomState::literal;
+    case mozilla::intl::NumberPartType::MinusSign:
+      return &JSAtomState::minusSign;
+    case mozilla::intl::NumberPartType::Nan:
+      return &JSAtomState::nan;
+    case mozilla::intl::NumberPartType::Percent:
+      return &JSAtomState::percentSign;
+    case mozilla::intl::NumberPartType::PlusSign:
+      return &JSAtomState::plusSign;
+    case mozilla::intl::NumberPartType::Unit:
+      return &JSAtomState::unit;
   }
 
   MOZ_ASSERT_UNREACHABLE(
@@ -997,472 +854,521 @@ static FieldType GetFieldTypeForNumberField(UNumberFormatFields fieldName,
   return nullptr;
 }
 
-struct Field {
-  uint32_t begin;
-  uint32_t end;
-  FieldType type;
-
-  // Needed for vector-resizing scratch space.
-  Field() = default;
-
-  Field(uint32_t begin, uint32_t end, FieldType type)
-      : begin(begin), end(end), type(type) {}
-};
-
-class NumberFormatFields {
-  using FieldsVector = Vector<Field, 16>;
-
-  FieldsVector fields_;
-
- public:
-  explicit NumberFormatFields(JSContext* cx) : fields_(cx) {}
-
-  [[nodiscard]] bool append(FieldType type, int32_t begin, int32_t end);
-
-  [[nodiscard]] ArrayObject* toArray(JSContext* cx,
-                                     JS::HandleString overallResult,
-                                     FieldType unitType);
-};
-
-bool NumberFormatFields::append(FieldType type, int32_t begin, int32_t end) {
-  MOZ_ASSERT(begin >= 0);
-  MOZ_ASSERT(end >= 0);
-  MOZ_ASSERT(begin < end, "erm, aren't fields always non-empty?");
-
-  return fields_.emplaceBack(uint32_t(begin), uint32_t(end), type);
-}
-
-ArrayObject* NumberFormatFields::toArray(JSContext* cx,
-                                         HandleString overallResult,
-                                         FieldType unitType) {
-  // Merge sort the fields vector.  Expand the vector to have scratch space for
-  // performing the sort.
-  size_t fieldsLen = fields_.length();
-  if (!fields_.growByUninitialized(fieldsLen)) {
-    return nullptr;
+static FieldType GetFieldTypeForNumberPartSource(
+    mozilla::intl::NumberPartSource source) {
+  switch (source) {
+    case mozilla::intl::NumberPartSource::Shared:
+      return &JSAtomState::shared;
+    case mozilla::intl::NumberPartSource::Start:
+      return &JSAtomState::startRange;
+    case mozilla::intl::NumberPartSource::End:
+      return &JSAtomState::endRange;
   }
 
-  MOZ_ALWAYS_TRUE(MergeSort(
-      fields_.begin(), fieldsLen, fields_.begin() + fieldsLen,
-      [](const Field& left, const Field& right, bool* lessOrEqual) {
-        // Sort first by begin index, then to place
-        // enclosing fields before nested fields.
-        *lessOrEqual = left.begin < right.begin ||
-                       (left.begin == right.begin && left.end > right.end);
-        return true;
-      }));
+  MOZ_CRASH("unexpected number part source");
+}
 
-  // Delete the elements in the scratch space.
-  fields_.shrinkBy(fieldsLen);
+enum class DisplayNumberPartSource : bool { No, Yes };
 
-  // Then iterate over the sorted field list to generate a sequence of parts
-  // (what ECMA-402 actually exposes).  A part is a maximal character sequence
-  // entirely within no field or a single most-nested field.
-  //
-  // Diagrams may be helpful to illustrate how fields map to parts.  Consider
-  // formatting -19,766,580,028,249.41, the US national surplus (negative
-  // because it's actually a debt) on October 18, 2016.
-  //
-  //    var options =
-  //      { style: "currency", currency: "USD", currencyDisplay: "name" };
-  //    var usdFormatter = new Intl.NumberFormat("en-US", options);
-  //    usdFormatter.format(-19766580028249.41);
-  //
-  // The formatted result is "-19,766,580,028,249.41 US dollars".  ICU
-  // identifies these fields in the string:
-  //
-  //     UNUM_GROUPING_SEPARATOR_FIELD
-  //                   |
-  //   UNUM_SIGN_FIELD |  UNUM_DECIMAL_SEPARATOR_FIELD
-  //    |   __________/|   |
-  //    |  /   |   |   |   |
-  //   "-19,766,580,028,249.41 US dollars"
-  //     \________________/ |/ \_______/
-  //             |          |      |
-  //    UNUM_INTEGER_FIELD  |  UNUM_CURRENCY_FIELD
-  //                        |
-  //               UNUM_FRACTION_FIELD
-  //
-  // These fields map to parts as follows:
-  //
-  //         integer     decimal
-  //       _____|________  |
-  //      /  /| |\  |\  |\ |  literal
-  //     /| / | | \ | \ | \|  |
-  //   "-19,766,580,028,249.41 US dollars"
-  //    |  \___|___|___/    |/ \________/
-  //    |        |          |       |
-  //    |      group        |   currency
-  //    |                   |
-  //   minusSign        fraction
-  //
-  // The sign is a part.  Each comma is a part, splitting the integer field
-  // into parts for trillions/billions/&c. digits.  The decimal point is a
-  // part.  Cents are a part.  The space between cents and currency is a part
-  // (outside any field).  Last, the currency field is a part.
-  //
-  // Because parts fully partition the formatted string, we only track the
-  // end of each part -- the beginning is implicitly the last part's end.
-  struct Part {
-    uint32_t end;
-    FieldType type;
-  };
-
-  class PartGenerator {
-    // The fields in order from start to end, then least to most nested.
-    const FieldsVector& fields;
-
-    // Index of the current field, in |fields|, being considered to
-    // determine part boundaries.  |lastEnd <= fields[index].begin| is an
-    // invariant.
-    size_t index;
-
-    // The end index of the last part produced, always less than or equal
-    // to |limit|, strictly increasing.
-    uint32_t lastEnd;
-
-    // The length of the overall formatted string.
-    const uint32_t limit;
-
-    Vector<size_t, 4> enclosingFields;
-
-    void popEnclosingFieldsEndingAt(uint32_t end) {
-      MOZ_ASSERT_IF(enclosingFields.length() > 0,
-                    fields[enclosingFields.back()].end >= end);
-
-      while (enclosingFields.length() > 0 &&
-             fields[enclosingFields.back()].end == end) {
-        enclosingFields.popBack();
-      }
-    }
-
-    bool nextPartInternal(Part* part) {
-      size_t len = fields.length();
-      MOZ_ASSERT(index <= len);
-
-      // If we're out of fields, all that remains are part(s) consisting
-      // of trailing portions of enclosing fields, and maybe a final
-      // literal part.
-      if (index == len) {
-        if (enclosingFields.length() > 0) {
-          const auto& enclosing = fields[enclosingFields.popCopy()];
-          part->end = enclosing.end;
-          part->type = enclosing.type;
-
-          // If additional enclosing fields end where this part ends,
-          // pop them as well.
-          popEnclosingFieldsEndingAt(part->end);
-        } else {
-          part->end = limit;
-          part->type = &JSAtomState::literal;
-        }
-
-        return true;
-      }
-
-      // Otherwise we still have a field to process.
-      const Field* current = &fields[index];
-      MOZ_ASSERT(lastEnd <= current->begin);
-      MOZ_ASSERT(current->begin < current->end);
-
-      // But first, deal with inter-field space.
-      if (lastEnd < current->begin) {
-        if (enclosingFields.length() > 0) {
-          // Space between fields, within an enclosing field, is part
-          // of that enclosing field, until the start of the current
-          // field or the end of the enclosing field, whichever is
-          // earlier.
-          const auto& enclosing = fields[enclosingFields.back()];
-          part->end = std::min(enclosing.end, current->begin);
-          part->type = enclosing.type;
-          popEnclosingFieldsEndingAt(part->end);
-        } else {
-          // If there's no enclosing field, the space is a literal.
-          part->end = current->begin;
-          part->type = &JSAtomState::literal;
-        }
-
-        return true;
-      }
-
-      // Otherwise, the part spans a prefix of the current field.  Find
-      // the most-nested field containing that prefix.
-      const Field* next;
-      do {
-        current = &fields[index];
-
-        // If the current field is last, the part extends to its end.
-        if (++index == len) {
-          part->end = current->end;
-          part->type = current->type;
-          return true;
-        }
-
-        next = &fields[index];
-        MOZ_ASSERT(current->begin <= next->begin);
-        MOZ_ASSERT(current->begin < next->end);
-
-        // If the next field nests within the current field, push an
-        // enclosing field.  (If there are no nested fields, don't
-        // bother pushing a field that'd be immediately popped.)
-        if (current->end > next->begin) {
-          if (!enclosingFields.append(index - 1)) {
-            return false;
-          }
-        }
-
-        // Do so until the next field begins after this one.
-      } while (current->begin == next->begin);
-
-      part->type = current->type;
-
-      if (current->end <= next->begin) {
-        // The next field begins after the current field ends.  Therefore
-        // the current part ends at the end of the current field.
-        part->end = current->end;
-        popEnclosingFieldsEndingAt(part->end);
-      } else {
-        // The current field encloses the next one.  The current part
-        // ends where the next field/part will start.
-        part->end = next->begin;
-      }
-
-      return true;
-    }
-
-   public:
-    PartGenerator(JSContext* cx, const FieldsVector& vec, uint32_t limit)
-        : fields(vec),
-          index(0),
-          lastEnd(0),
-          limit(limit),
-          enclosingFields(cx) {}
-
-    bool nextPart(bool* hasPart, Part* part) {
-      // There are no parts left if we've partitioned the entire string.
-      if (lastEnd == limit) {
-        MOZ_ASSERT(enclosingFields.length() == 0);
-        *hasPart = false;
-        return true;
-      }
-
-      if (!nextPartInternal(part)) {
-        return false;
-      }
-
-      *hasPart = true;
-      lastEnd = part->end;
-      return true;
-    }
-  };
-
-  // Finally, generate the result array.
+static bool FormattedNumberToParts(JSContext* cx, HandleString str,
+                                   const mozilla::intl::NumberPartVector& parts,
+                                   DisplayNumberPartSource displaySource,
+                                   FieldType unitType,
+                                   MutableHandleValue result) {
   size_t lastEndIndex = 0;
+
   RootedObject singlePart(cx);
   RootedValue propVal(cx);
 
-  RootedArrayObject partsArray(cx, NewDenseEmptyArray(cx));
+  Rooted<ArrayObject*> partsArray(
+      cx, NewDenseFullyAllocatedArray(cx, parts.length()));
   if (!partsArray) {
-    return nullptr;
+    return false;
   }
+  partsArray->ensureDenseInitializedLength(0, parts.length());
 
-  PartGenerator gen(cx, fields_, overallResult->length());
-  do {
-    bool hasPart;
-    Part part;
-    if (!gen.nextPart(&hasPart, &part)) {
-      return nullptr;
-    }
-
-    if (!hasPart) {
-      break;
-    }
-
-    FieldType type = part.type;
-    size_t endIndex = part.end;
+  size_t index = 0;
+  for (const auto& part : parts) {
+    FieldType type = GetFieldTypeForNumberPartType(part.type);
+    size_t endIndex = part.endIndex;
 
     MOZ_ASSERT(lastEndIndex < endIndex);
 
-    singlePart = NewBuiltinClassInstance<PlainObject>(cx);
+    singlePart = NewPlainObject(cx);
     if (!singlePart) {
-      return nullptr;
+      return false;
     }
 
     propVal.setString(cx->names().*type);
     if (!DefineDataProperty(cx, singlePart, cx->names().type, propVal)) {
-      return nullptr;
+      return false;
     }
 
-    JSLinearString* partSubstr = NewDependentString(
-        cx, overallResult, lastEndIndex, endIndex - lastEndIndex);
+    JSLinearString* partSubstr =
+        NewDependentString(cx, str, lastEndIndex, endIndex - lastEndIndex);
     if (!partSubstr) {
-      return nullptr;
+      return false;
     }
 
     propVal.setString(partSubstr);
     if (!DefineDataProperty(cx, singlePart, cx->names().value, propVal)) {
-      return nullptr;
+      return false;
+    }
+
+    if (displaySource == DisplayNumberPartSource::Yes) {
+      FieldType source = GetFieldTypeForNumberPartSource(part.source);
+
+      propVal.setString(cx->names().*source);
+      if (!DefineDataProperty(cx, singlePart, cx->names().source, propVal)) {
+        return false;
+      }
     }
 
     if (unitType != nullptr && type != &JSAtomState::literal) {
       propVal.setString(cx->names().*unitType);
       if (!DefineDataProperty(cx, singlePart, cx->names().unit, propVal)) {
-        return nullptr;
+        return false;
       }
     }
 
-    if (!NewbornArrayPush(cx, partsArray, ObjectValue(*singlePart))) {
-      return nullptr;
-    }
+    partsArray->initDenseElement(index++, ObjectValue(*singlePart));
 
     lastEndIndex = endIndex;
-  } while (true);
+  }
 
-  MOZ_ASSERT(lastEndIndex == overallResult->length(),
+  MOZ_ASSERT(index == parts.length());
+  MOZ_ASSERT(lastEndIndex == str->length(),
              "result array must partition the entire string");
 
-  return partsArray;
-}
-
-static bool FormattedNumberToParts(JSContext* cx,
-                                   const UFormattedValue* formattedValue,
-                                   HandleValue number,
-                                   FieldType relativeTimeUnit,
-                                   FormattingType formattingType,
-                                   MutableHandleValue result) {
-  MOZ_ASSERT(number.isNumeric());
-
-  RootedString overallResult(cx, FormattedNumberToString(cx, formattedValue));
-  if (!overallResult) {
-    return false;
-  }
-
-  UErrorCode status = U_ZERO_ERROR;
-  UConstrainedFieldPosition* fpos = ucfpos_open(&status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return false;
-  }
-  ScopedICUObject<UConstrainedFieldPosition, ucfpos_close> toCloseFpos(fpos);
-
-  // We're only interested in UFIELD_CATEGORY_NUMBER fields.
-  ucfpos_constrainCategory(fpos, UFIELD_CATEGORY_NUMBER, &status);
-  if (U_FAILURE(status)) {
-    intl::ReportInternalError(cx);
-    return false;
-  }
-
-  // Vacuum up fields in the overall formatted string.
-
-  NumberFormatFields fields(cx);
-
-  while (true) {
-    bool hasMore = ufmtval_nextPosition(formattedValue, fpos, &status);
-    if (U_FAILURE(status)) {
-      intl::ReportInternalError(cx);
-      return false;
-    }
-    if (!hasMore) {
-      break;
-    }
-
-    int32_t field = ucfpos_getField(fpos, &status);
-    if (U_FAILURE(status)) {
-      intl::ReportInternalError(cx);
-      return false;
-    }
-
-    int32_t beginIndex, endIndex;
-    ucfpos_getIndexes(fpos, &beginIndex, &endIndex, &status);
-    if (U_FAILURE(status)) {
-      intl::ReportInternalError(cx);
-      return false;
-    }
-
-    FieldType type = GetFieldTypeForNumberField(UNumberFormatFields(field),
-                                                number, formattingType);
-
-    if (!fields.append(type, beginIndex, endIndex)) {
-      return false;
-    }
-  }
-
-  ArrayObject* array = fields.toArray(cx, overallResult, relativeTimeUnit);
-  if (!array) {
-    return false;
-  }
-
-  result.setObject(*array);
+  result.setObject(*partsArray);
   return true;
 }
 
 bool js::intl::FormattedRelativeTimeToParts(
-    JSContext* cx, const UFormattedValue* formattedValue, double timeValue,
-    FieldType relativeTimeUnit, MutableHandleValue result) {
-  Value tval = DoubleValue(timeValue);
-  return FormattedNumberToParts(
-      cx, formattedValue, HandleValue::fromMarkedLocation(&tval),
-      relativeTimeUnit, FormattingType::NotForUnit, result);
+    JSContext* cx, HandleString str,
+    const mozilla::intl::NumberPartVector& parts, FieldType relativeTimeUnit,
+    MutableHandleValue result) {
+  return FormattedNumberToParts(cx, str, parts, DisplayNumberPartSource::No,
+                                relativeTimeUnit, result);
 }
 
-static bool FormatNumericToParts(JSContext* cx, const UNumberFormatter* nf,
-                                 UFormattedNumber* formatted, HandleValue x,
-                                 FormattingType formattingType,
-                                 MutableHandleValue result) {
-  const UFormattedValue* formattedValue =
-      PartitionNumberPattern(cx, nf, formatted, x);
-  if (!formattedValue) {
+// Return true if the string starts with "0[bBoOxX]", possibly skipping over
+// leading whitespace.
+template <typename CharT>
+static bool IsNonDecimalNumber(mozilla::Range<const CharT> chars) {
+  const CharT* end = chars.begin().get() + chars.length();
+  const CharT* start = SkipSpace(chars.begin().get(), end);
+
+  if (end - start >= 2 && start[0] == '0') {
+    CharT ch = start[1];
+    return ch == 'b' || ch == 'B' || ch == 'o' || ch == 'O' || ch == 'x' ||
+           ch == 'X';
+  }
+  return false;
+}
+
+static bool IsNonDecimalNumber(JSLinearString* str) {
+  JS::AutoCheckCannotGC nogc;
+  return str->hasLatin1Chars() ? IsNonDecimalNumber(str->latin1Range(nogc))
+                               : IsNonDecimalNumber(str->twoByteRange(nogc));
+}
+
+static bool ToIntlMathematicalValue(JSContext* cx, MutableHandleValue value) {
+  if (!ToPrimitive(cx, JSTYPE_NUMBER, value)) {
     return false;
   }
 
-  return FormattedNumberToParts(cx, formattedValue, x, nullptr, formattingType,
-                                result);
+  // Maximum exponent supported by ICU. Exponents larger than this value will
+  // cause ICU to report an error.
+  // See also "intl/icu/source/i18n/decContext.h".
+  constexpr int32_t maximumExponent = 999'999'999;
+
+  // We further limit the maximum positive exponent to avoid spending multiple
+  // seconds or even minutes in ICU when formatting large numbers.
+  constexpr int32_t maximumPositiveExponent = 9'999'999;
+
+  // Compute the maximum BigInt digit length from the maximum positive exponent.
+  //
+  // BigInts are stored with base |2 ** BigInt::DigitBits|, so we have:
+  //
+  //   |maximumPositiveExponent| * Log_DigitBase(10)
+  // = |maximumPositiveExponent| * Log2(10) / Log2(2 ** BigInt::DigitBits)
+  // = |maximumPositiveExponent| * Log2(10) / BigInt::DigitBits
+  // = 33219277.626945525... / BigInt::DigitBits
+  constexpr size_t maximumBigIntLength = 33219277.626945525 / BigInt::DigitBits;
+
+  if (!value.isString()) {
+    if (!ToNumeric(cx, value)) {
+      return false;
+    }
+
+    if (value.isBigInt() &&
+        value.toBigInt()->digitLength() > maximumBigIntLength) {
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_EXPONENT_TOO_LARGE);
+      return false;
+    }
+
+    return true;
+  }
+
+  JSLinearString* str = value.toString()->ensureLinear(cx);
+  if (!str) {
+    return false;
+  }
+
+  // Parse the string as a number.
+  double number = LinearStringToNumber(str);
+
+  bool exponentTooLarge = false;
+  if (mozilla::IsNaN(number)) {
+    // Set to NaN if the input can't be parsed as a number.
+    value.setNaN();
+  } else if (IsNonDecimalNumber(str)) {
+    // ICU doesn't accept non-decimal numbers, so we have to convert the input
+    // into a base-10 string.
+
+    MOZ_ASSERT(!mozilla::IsNegative(number),
+               "non-decimal numbers can't be negative");
+
+    if (number < DOUBLE_INTEGRAL_PRECISION_LIMIT) {
+      // Fast-path if we can guarantee there was no loss of precision.
+      value.setDouble(number);
+    } else {
+      // For the slow-path convert the string into a BigInt.
+
+      // StringToBigInt can't fail (other than OOM) when StringToNumber already
+      // succeeded.
+      RootedString rooted(cx, str);
+      BigInt* bi;
+      JS_TRY_VAR_OR_RETURN_FALSE(cx, bi, StringToBigInt(cx, rooted));
+      MOZ_ASSERT(bi);
+
+      if (bi->digitLength() > maximumBigIntLength) {
+        exponentTooLarge = true;
+      } else {
+        value.setBigInt(bi);
+      }
+    }
+  } else {
+    JS::AutoCheckCannotGC nogc;
+    if (auto decimal = intl::DecimalNumber::from(str, nogc)) {
+      if (decimal->isZero()) {
+        // Normalize positive/negative zero.
+        MOZ_ASSERT(number == 0);
+
+        value.setDouble(number);
+      } else if (decimal->exponentTooLarge() ||
+                 std::abs(decimal->exponent()) >= maximumExponent ||
+                 decimal->exponent() > maximumPositiveExponent) {
+        exponentTooLarge = true;
+      }
+    } else {
+      // If we can't parse the string as a decimal, it must be ±Infinity.
+      MOZ_ASSERT(mozilla::IsInfinite(number));
+      MOZ_ASSERT(StringFindPattern(str, cx->names().Infinity, 0) >= 0);
+
+      value.setDouble(number);
+    }
+  }
+
+  if (exponentTooLarge) {
+    // Throw an error if the exponent is too large.
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_EXPONENT_TOO_LARGE);
+    return false;
+  }
+
+  return true;
+}
+
+// Return the number part of the input by removing leading and trailing
+// whitespace.
+template <typename CharT>
+static mozilla::Span<const CharT> NumberPart(const CharT* chars,
+                                             size_t length) {
+  const CharT* start = chars;
+  const CharT* end = chars + length;
+
+  start = SkipSpace(start, end);
+
+  // |SkipSpace| only supports forward iteration, so inline the backwards
+  // iteration here.
+  MOZ_ASSERT(start <= end);
+  while (end > start && unicode::IsSpace(end[-1])) {
+    end--;
+  }
+
+  // The number part is a non-empty, ASCII-only substring.
+  MOZ_ASSERT(start < end);
+  MOZ_ASSERT(mozilla::IsAscii(mozilla::Span(start, end)));
+
+  return {start, end};
+}
+
+static bool NumberPart(JSContext* cx, JSLinearString* str,
+                       const JS::AutoCheckCannotGC& nogc,
+                       JS::UniqueChars& latin1, std::string_view& result) {
+  if (str->hasLatin1Chars()) {
+    auto span = NumberPart(
+        reinterpret_cast<const char*>(str->latin1Chars(nogc)), str->length());
+
+    result = {span.data(), span.size()};
+    return true;
+  }
+
+  auto span = NumberPart(str->twoByteChars(nogc), str->length());
+
+  latin1.reset(JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, span).c_str());
+  if (!latin1) {
+    return false;
+  }
+
+  result = {latin1.get(), span.size()};
+  return true;
 }
 
 bool js::intl_FormatNumber(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 4);
+  MOZ_ASSERT(args.length() == 3);
   MOZ_ASSERT(args[0].isObject());
+#ifndef NIGHTLY_BUILD
   MOZ_ASSERT(args[1].isNumeric());
+#endif
   MOZ_ASSERT(args[2].isBoolean());
-  MOZ_ASSERT(args[3].isBoolean());
 
   Rooted<NumberFormatObject*> numberFormat(
       cx, &args[0].toObject().as<NumberFormatObject>());
 
-  // Obtain a cached UNumberFormatter object.
-  UNumberFormatter* nf = numberFormat->getNumberFormatter();
+  RootedValue value(cx, args[1]);
+#ifdef NIGHTLY_BUILD
+  if (!ToIntlMathematicalValue(cx, &value)) {
+    return false;
+  }
+#endif
+
+  mozilla::intl::NumberFormat* nf = GetOrCreateNumberFormat(cx, numberFormat);
   if (!nf) {
-    nf = NewUNumberFormatter(cx, numberFormat);
-    if (!nf) {
+    return false;
+  }
+
+  // Actually format the number
+  using ICUError = mozilla::intl::ICUError;
+
+  bool formatToParts = args[2].toBoolean();
+  mozilla::Result<std::u16string_view, ICUError> result =
+      mozilla::Err(ICUError::InternalError);
+  mozilla::intl::NumberPartVector parts;
+  if (value.isNumber()) {
+    double num = value.toNumber();
+    if (formatToParts) {
+      result = nf->formatToParts(num, parts);
+    } else {
+      result = nf->format(num);
+    }
+  } else if (value.isBigInt()) {
+    RootedBigInt bi(cx, value.toBigInt());
+
+    int64_t num;
+    if (BigInt::isInt64(bi, &num)) {
+      if (formatToParts) {
+        result = nf->formatToParts(num, parts);
+      } else {
+        result = nf->format(num);
+      }
+    } else {
+      JSLinearString* str = BigInt::toString<CanGC>(cx, bi, 10);
+      if (!str) {
+        return false;
+      }
+      MOZ_RELEASE_ASSERT(str->hasLatin1Chars());
+
+      JS::AutoCheckCannotGC nogc;
+
+      const char* chars = reinterpret_cast<const char*>(str->latin1Chars(nogc));
+      if (formatToParts) {
+        result =
+            nf->formatToParts(std::string_view(chars, str->length()), parts);
+      } else {
+        result = nf->format(std::string_view(chars, str->length()));
+      }
+    }
+  } else {
+    JSLinearString* str = value.toString()->ensureLinear(cx);
+    if (!str) {
       return false;
     }
-    numberFormat->setNumberFormatter(nf);
 
-    intl::AddICUCellMemory(numberFormat,
-                           NumberFormatObject::EstimatedMemoryUse);
-  }
+    JS::AutoCheckCannotGC nogc;
 
-  // Obtain a cached UFormattedNumber object.
-  UFormattedNumber* formatted = numberFormat->getFormattedNumber();
-  if (!formatted) {
-    formatted = NewUFormattedNumber(cx);
-    if (!formatted) {
+    // Two-byte strings have to be copied into a separate |char| buffer.
+    JS::UniqueChars latin1;
+
+    std::string_view sv;
+    if (!NumberPart(cx, str, nogc, latin1, sv)) {
       return false;
     }
-    numberFormat->setFormattedNumber(formatted);
 
-    // UFormattedNumber memory tracked as part of UNumberFormatter.
+    if (formatToParts) {
+      result = nf->formatToParts(sv, parts);
+    } else {
+      result = nf->format(sv);
+    }
   }
 
-  // Use the UNumberFormatter to actually format the number.
-  if (args[2].toBoolean()) {
-    FormattingType formattingType = args[3].toBoolean()
-                                        ? FormattingType::ForUnit
-                                        : FormattingType::NotForUnit;
-    return FormatNumericToParts(cx, nf, formatted, args[1], formattingType,
-                                args.rval());
+  if (result.isErr()) {
+    intl::ReportInternalError(cx, result.unwrapErr());
+    return false;
   }
 
-  return FormatNumeric(cx, nf, formatted, args[1], args.rval());
+  RootedString str(cx, NewStringCopy<CanGC>(cx, result.unwrap()));
+  if (!str) {
+    return false;
+  }
+
+  if (formatToParts) {
+    return FormattedNumberToParts(cx, str, parts, DisplayNumberPartSource::No,
+                                  nullptr, args.rval());
+  }
+
+  args.rval().setString(str);
+  return true;
+}
+
+static JSLinearString* ToLinearString(JSContext* cx, HandleValue val) {
+  // Special case to preserve negative zero.
+  if (val.isDouble() && mozilla::IsNegativeZero(val.toDouble())) {
+    constexpr std::string_view negativeZero = "-0";
+    return NewStringCopy<CanGC>(cx, negativeZero);
+  }
+
+  JSString* str = ToString(cx, val);
+  return str ? str->ensureLinear(cx) : nullptr;
+};
+
+bool js::intl_FormatNumberRange(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 4);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(!args[1].isUndefined());
+  MOZ_ASSERT(!args[2].isUndefined());
+  MOZ_ASSERT(args[3].isBoolean());
+
+  Rooted<NumberFormatObject*> numberFormat(
+      cx, &args[0].toObject().as<NumberFormatObject>());
+  bool formatToParts = args[3].toBoolean();
+
+  RootedValue start(cx, args[1]);
+  if (!ToIntlMathematicalValue(cx, &start)) {
+    return false;
+  }
+
+  RootedValue end(cx, args[2]);
+  if (!ToIntlMathematicalValue(cx, &end)) {
+    return false;
+  }
+
+  // PartitionNumberRangePattern, step 1.
+  if (start.isDouble() && mozilla::IsNaN(start.toDouble())) {
+    JS_ReportErrorNumberASCII(
+        cx, GetErrorMessage, nullptr, JSMSG_NAN_NUMBER_RANGE, "start",
+        "NumberFormat", formatToParts ? "formatRangeToParts" : "formatRange");
+    return false;
+  }
+  if (end.isDouble() && mozilla::IsNaN(end.toDouble())) {
+    JS_ReportErrorNumberASCII(
+        cx, GetErrorMessage, nullptr, JSMSG_NAN_NUMBER_RANGE, "end",
+        "NumberFormat", formatToParts ? "formatRangeToParts" : "formatRange");
+    return false;
+  }
+
+  using NumberRangeFormat = mozilla::intl::NumberRangeFormat;
+  NumberRangeFormat* nf = GetOrCreateNumberRangeFormat(cx, numberFormat);
+  if (!nf) {
+    return false;
+  }
+
+  auto valueRepresentableAsDouble = [](const Value& val, double* num) {
+    if (val.isNumber()) {
+      *num = val.toNumber();
+      return true;
+    }
+    if (val.isBigInt()) {
+      int64_t i64;
+      if (BigInt::isInt64(val.toBigInt(), &i64) &&
+          i64 < int64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT) &&
+          i64 > -int64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT)) {
+        *num = double(i64);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Actually format the number range.
+  using ICUError = mozilla::intl::ICUError;
+
+  mozilla::Result<std::u16string_view, ICUError> result =
+      mozilla::Err(ICUError::InternalError);
+  mozilla::intl::NumberPartVector parts;
+
+  double numStart, numEnd;
+  if (valueRepresentableAsDouble(start, &numStart) &&
+      valueRepresentableAsDouble(end, &numEnd)) {
+    if (formatToParts) {
+      result = nf->formatToParts(numStart, numEnd, parts);
+    } else {
+      result = nf->format(numStart, numEnd);
+    }
+  } else {
+    Rooted<JSLinearString*> strStart(cx, ToLinearString(cx, start));
+    if (!strStart) {
+      return false;
+    }
+
+    Rooted<JSLinearString*> strEnd(cx, ToLinearString(cx, end));
+    if (!strEnd) {
+      return false;
+    }
+
+    JS::AutoCheckCannotGC nogc;
+
+    // Two-byte strings have to be copied into a separate |char| buffer.
+    JS::UniqueChars latin1Start;
+    JS::UniqueChars latin1End;
+
+    std::string_view svStart;
+    if (!NumberPart(cx, strStart, nogc, latin1Start, svStart)) {
+      return false;
+    }
+
+    std::string_view svEnd;
+    if (!NumberPart(cx, strEnd, nogc, latin1End, svEnd)) {
+      return false;
+    }
+
+    if (formatToParts) {
+      result = nf->formatToParts(svStart, svEnd, parts);
+    } else {
+      result = nf->format(svStart, svEnd);
+    }
+  }
+
+  if (result.isErr()) {
+    intl::ReportInternalError(cx, result.unwrapErr());
+    return false;
+  }
+
+  RootedString str(cx, NewStringCopy<CanGC>(cx, result.unwrap()));
+  if (!str) {
+    return false;
+  }
+
+  if (formatToParts) {
+    return FormattedNumberToParts(cx, str, parts, DisplayNumberPartSource::Yes,
+                                  nullptr, args.rval());
+  }
+
+  args.rval().setString(str);
+  return true;
 }

@@ -13,28 +13,31 @@
 #include <stdio.h>     // fprintf, fflush
 
 #include "jsfriendapi.h"  // js::WeakMapTracer
-#include "jstypes.h"      // JS_FRIEND_API
+#include "jstypes.h"      // JS_PUBLIC_API
 
-#include "gc/Allocator.h"   // js::CanGC
-#include "gc/Cell.h"        // js::gc::Cell, js::gc::TenuredCell
-#include "gc/GC.h"          // js::TraceRuntimeWithoutEviction
-#include "gc/Heap.h"        // js::gc::Arena
-#include "gc/Tracer.h"      // js::TraceChildren
-#include "gc/WeakMap.h"     // js::IterateHeapUnbarriered, js::WeakMapBase
-#include "js/GCAPI.h"       // JS::GCReason
-#include "js/GCVector.h"    // JS::RootedVector
-#include "js/HeapAPI.h"     // JS::GCCellPtr, js::gc::IsInsideNursery
-#include "js/Id.h"          // JS::PropertyKey
-#include "js/RootingAPI.h"  // JS::Handle, JS::Rooted
-#include "js/TracingAPI.h"  // JS::CallbackTracer, JS_GetTraceThingInfo
-#include "js/UbiNode.h"     // JS::ubi::Node
-#include "js/Value.h"       // JS::Value
-#include "js/Wrapper.h"     // js::UncheckedUnwrapWithoutExpose
-#include "vm/FrameIter.h"   // js::AllFramesIter, js::FrameIter
-#include "vm/JSContext.h"   // JSContext
-#include "vm/JSFunction.h"  // JSFunction
-#include "vm/JSObject.h"    // JSObject
-#include "vm/JSScript.h"    // JSScript
+#include "gc/Allocator.h"         // js::CanGC
+#include "gc/Cell.h"              // js::gc::Cell, js::gc::TenuredCell
+#include "gc/GC.h"                // js::TraceRuntimeWithoutEviction
+#include "gc/Heap.h"              // js::gc::Arena
+#include "gc/Tracer.h"            // js::TraceChildren
+#include "gc/WeakMap.h"           // js::IterateHeapUnbarriered, js::WeakMapBase
+#include "js/CallAndConstruct.h"  // JS::IsCallable
+#include "js/GCAPI.h"             // JS::GCReason
+#include "js/GCVector.h"          // JS::RootedVector
+#include "js/HeapAPI.h"           // JS::GCCellPtr, js::gc::IsInsideNursery
+#include "js/Id.h"                // JS::PropertyKey
+#include "js/RootingAPI.h"        // JS::Handle, JS::Rooted
+#include "js/TracingAPI.h"        // JS::CallbackTracer, JS_GetTraceThingInfo
+#include "js/UbiNode.h"           // JS::ubi::Node
+#include "js/Value.h"             // JS::Value
+#include "js/Wrapper.h"           // js::UncheckedUnwrapWithoutExpose
+#include "vm/BigIntType.h"        // JS::BigInt::dump
+#include "vm/FrameIter.h"         // js::AllFramesIter, js::FrameIter
+#include "vm/Interpreter.h"       // GetFunctionThis
+#include "vm/JSContext.h"         // JSContext
+#include "vm/JSFunction.h"        // JSFunction
+#include "vm/JSObject.h"          // JSObject
+#include "vm/JSScript.h"          // JSScript
 #include "vm/Printer.h"     // js::GenericPrinter, js::QuoteString, js::Sprinter
 #include "vm/Realm.h"       // JS::Realm
 #include "vm/Runtime.h"     // JSRuntime
@@ -80,21 +83,23 @@ namespace js {
 
 class InterpreterFrame;
 
-extern JS_FRIEND_API void DumpString(JSString* str, GenericPrinter& out);
+extern JS_PUBLIC_API void DumpString(JSString* str, GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpAtom(JSAtom* atom, GenericPrinter& out);
+extern JS_PUBLIC_API void DumpAtom(JSAtom* atom, GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpObject(JSObject* obj, GenericPrinter& out);
+extern JS_PUBLIC_API void DumpObject(JSObject* obj, GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpChars(const char16_t* s, size_t n,
+extern JS_PUBLIC_API void DumpChars(const char16_t* s, size_t n,
                                     GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpValue(const JS::Value& val, GenericPrinter& out);
+extern JS_PUBLIC_API void DumpValue(const JS::Value& val, GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpId(PropertyKey id, GenericPrinter& out);
+extern JS_PUBLIC_API void DumpId(PropertyKey id, GenericPrinter& out);
 
-extern JS_FRIEND_API void DumpInterpreterFrame(
+extern JS_PUBLIC_API void DumpInterpreterFrame(
     JSContext* cx, GenericPrinter& out, InterpreterFrame* start = nullptr);
+
+extern JS_PUBLIC_API void DumpBigInt(JS::BigInt* bi, GenericPrinter& out);
 
 }  // namespace js
 
@@ -128,6 +133,12 @@ void js::DumpObject(JSObject* obj, GenericPrinter& out) {
 #endif
 }
 
+void js::DumpBigInt(JS::BigInt* bi, GenericPrinter& out) {
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  bi->dump(out);
+#endif
+}
+
 void js::DumpString(JSString* str, FILE* fp) {
 #if defined(DEBUG) || defined(JS_JITSPEW)
   Fprinter out(fp);
@@ -156,6 +167,13 @@ void js::DumpObject(JSObject* obj, FILE* fp) {
 #endif
 }
 
+void js::DumpBigInt(JS::BigInt* bi, FILE* fp) {
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  Fprinter out(fp);
+  js::DumpBigInt(bi, out);
+#endif
+}
+
 void js::DumpId(PropertyKey id, FILE* fp) {
 #if defined(DEBUG) || defined(JS_JITSPEW)
   Fprinter out(fp);
@@ -174,6 +192,7 @@ void js::DumpString(JSString* str) { DumpString(str, stderr); }
 void js::DumpAtom(JSAtom* atom) { DumpAtom(atom, stderr); }
 void js::DumpObject(JSObject* obj) { DumpObject(obj, stderr); }
 void js::DumpChars(const char16_t* s, size_t n) { DumpChars(s, n, stderr); }
+void js::DumpBigInt(JS::BigInt* bi) { DumpBigInt(bi, stderr); }
 void js::DumpValue(const JS::Value& val) { DumpValue(val, stderr); }
 void js::DumpId(PropertyKey id) { DumpId(id, stderr); }
 void js::DumpInterpreterFrame(JSContext* cx, InterpreterFrame* start) {
@@ -291,8 +310,7 @@ static bool FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp,
           arg = MagicValue(JS_OPTIMIZED_OUT);
         }
       } else if (iter.hasUsableAbstractFramePtr()) {
-        if (!script->needsArgsAnalysis() && script->argsObjAliasesFormals() &&
-            iter.hasArgsObj()) {
+        if (script->argsObjAliasesFormals() && iter.hasArgsObj()) {
           arg = iter.argsObj().arg(i);
         } else {
           arg = iter.unaliasedActual(i, DONT_CHECK_ALIASING);
@@ -382,7 +400,7 @@ static bool FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp,
   if (showThisProps && thisVal.isObject()) {
     Rooted<JSObject*> obj(cx, &thisVal.toObject());
 
-    RootedVector<JS::PropertyKey> keys(cx);
+    RootedVector<PropertyKey> keys(cx);
     if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY, &keys)) {
       if (cx->isThrowingOutOfMemory()) {
         return false;
@@ -519,7 +537,7 @@ struct DumpHeapTracer final : public JS::CallbackTracer, public WeakMapTracer {
             key.asCell(), kdelegate, value.asCell());
   }
 
-  void onChild(const JS::GCCellPtr& thing) override;
+  void onChild(JS::GCCellPtr thing, const char* name) override;
 };
 
 static char MarkDescriptor(js::gc::Cell* thing) {
@@ -585,13 +603,13 @@ static void DumpHeapVisitCell(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
   JS::TraceChildren(dtrc, cellptr);
 }
 
-void DumpHeapTracer::onChild(const JS::GCCellPtr& thing) {
+void DumpHeapTracer::onChild(JS::GCCellPtr thing, const char* name) {
   if (js::gc::IsInsideNursery(thing.asCell())) {
     return;
   }
 
   char buffer[1024];
-  context().getEdgeName(buffer, sizeof(buffer));
+  context().getEdgeName(name, buffer, sizeof(buffer));
   fprintf(output, "%s%p %c %s\n", prefix, thing.asCell(),
           MarkDescriptor(thing.asCell()), buffer);
 }

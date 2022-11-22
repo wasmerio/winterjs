@@ -160,20 +160,11 @@ recurse:
 	$(LOOP_OVER_DIRS)
 
 ifeq (.,$(DEPTH))
-# The Android SDK bindings needs to build the Java generator code
-# source code in order to write the SDK bindings.
-widget/android/bindings/export: mobile/android/base/export
 
-# The widget JNI wrapper generator code needs to build the GeckoView
-# source code in order to find JNI wrapper annotations.
-widget/android/export: mobile/android/base/export
-
-# android_apks is not built on artifact builds without this dependency.
-mobile/android/base/export: mobile/android/base/android_apks
-
-# This is required so that the pre-export tier sees the rules in mobile/android/base
+# This is required so that the pre-export tier sees the rules in
+# mobile/android
 ifeq ($(MOZ_WIDGET_TOOLKIT),android)
-recurse_pre-export:: mobile/android/base/pre-export
+recurse_pre-export:: mobile/android/pre-export
 endif
 
 # CSS2Properties.webidl needs ServoCSSPropList.py from layout/style
@@ -210,10 +201,6 @@ endif
 
 # Interdependencies that moz.build world don't know about yet for compilation.
 # Note some others are hardcoded or "guessed" in recursivemake.py and emitter.py
-ifeq ($(MOZ_WIDGET_TOOLKIT),gtk)
-toolkit/library/build/target: widget/gtk/mozgtk/gtk3/target
-endif
-
 ifndef MOZ_FOLD_LIBS
 ifndef MOZ_SYSTEM_NSS
 netwerk/test/http3server/target: security/nss/lib/nss/nss_nss3/target security/nss/lib/ssl/ssl_ssl3/target
@@ -225,6 +212,12 @@ else
 ifndef MOZ_SYSTEM_NSS
 netwerk/test/http3server/target: security/target
 endif
+endif
+
+ifdef MOZ_USING_WASM_SANDBOXING
+security/rlbox/target-objects: config/external/wasm2c_sandbox_compiler/host
+security/rlbox/target: security/rlbox/target-objects
+dom/media/ogg/target-objects extensions/spellcheck/hunspell/glue/target-objects gfx/thebes/target-objects parser/expat/target-objects parser/htmlparser/target-objects gfx/ots/src/target-objects: security/rlbox/target-objects
 endif
 
 # Most things are built during compile (target/host), but some things happen during export

@@ -2065,10 +2065,7 @@ void MacroAssembler::wasmUnalignedLoad(const wasm::MemoryAccessDesc& access,
 void MacroAssembler::wasmUnalignedLoadFP(const wasm::MemoryAccessDesc& access,
                                          Register memoryBase, Register ptr,
                                          Register ptrScratch,
-                                         FloatRegister output, Register tmp1,
-                                         Register tmp2, Register tmp3) {
-  MOZ_ASSERT(tmp2 == InvalidReg);
-  MOZ_ASSERT(tmp3 == InvalidReg);
+                                         FloatRegister output, Register tmp1) {
   wasmLoadImpl(access, memoryBase, ptr, ptrScratch, AnyRegister(output), tmp1);
 }
 
@@ -2102,7 +2099,7 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
 
   // Maybe add the offset.
   if (offset) {
-    asMasm().addPtr(Imm32(offset), ptrScratch);
+    asMasm().addPtr(ImmWord(offset), ptrScratch);
     ptr = ptrScratch;
   }
 
@@ -2184,7 +2181,7 @@ void MacroAssemblerMIPSShared::wasmStoreImpl(
 
   // Maybe add the offset.
   if (offset) {
-    asMasm().addPtr(Imm32(offset), ptrScratch);
+    asMasm().addPtr(ImmWord(offset), ptrScratch);
     ptr = ptrScratch;
   }
 
@@ -3346,6 +3343,17 @@ void MacroAssembler::nearbyIntFloat32(RoundingMode mode, FloatRegister src,
 void MacroAssembler::copySignDouble(FloatRegister lhs, FloatRegister rhs,
                                     FloatRegister output) {
   MOZ_CRASH("not supported on this platform");
+}
+
+void MacroAssembler::shiftIndex32AndAdd(Register indexTemp32, int shift,
+                                        Register pointer) {
+  if (IsShiftInScaleRange(shift)) {
+    computeEffectiveAddress(
+        BaseIndex(pointer, indexTemp32, ShiftToScale(shift)), pointer);
+    return;
+  }
+  lshift32(Imm32(shift), indexTemp32);
+  addPtr(indexTemp32, pointer);
 }
 
 //}}} check_macroassembler_style

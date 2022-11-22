@@ -56,12 +56,7 @@ class WindowsBootstrapper(BaseBootstrapper):
         "mingw-w64-i686-toolchain",
     ]
 
-    BROWSER_PACKAGES = [
-        "mingw-w64-x86_64-nasm",
-        "mingw-w64-i686-nsis",
-    ]
-
-    MOBILE_ANDROID_COMMON_PACKAGES = ["wget"]
+    BROWSER_PACKAGES = ["mingw-w64-x86_64-nasm", "mingw-w64-i686-nsis"]
 
     def __init__(self, **kwargs):
         if (
@@ -96,19 +91,22 @@ class WindowsBootstrapper(BaseBootstrapper):
             "We do not support building Android on Windows. Sorry!"
         )
 
+    def ensure_mobile_android_packages(self):
+        raise NotImplementedError(
+            "We do not support building Android on Windows. Sorry!"
+        )
+
     def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
         raise NotImplementedError(
             "We do not support building Android on Windows. Sorry!"
         )
 
-    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
+    def ensure_clang_static_analysis_package(self):
         from mozboot import static_analysis
 
-        self.install_toolchain_static_analysis(
-            state_dir, checkout_root, static_analysis.WINDOWS_CLANG_TIDY
-        )
+        self.install_toolchain_static_analysis(static_analysis.WINDOWS_CLANG_TIDY)
 
-    def ensure_stylo_packages(self, state_dir, checkout_root):
+    def ensure_stylo_packages(self):
         # On-device artifact builds are supported; on-device desktop builds are not.
         if is_aarch64_host():
             raise Exception(
@@ -118,25 +116,14 @@ class WindowsBootstrapper(BaseBootstrapper):
                 "option when beginning bootstrap."
             )
 
-        from mozboot import stylo
+        self.install_toolchain_artifact("clang")
+        self.install_toolchain_artifact("cbindgen")
 
-        self.install_toolchain_artifact(state_dir, checkout_root, stylo.WINDOWS_CLANG)
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, stylo.WINDOWS_CBINDGEN
-        )
+    def ensure_nasm_packages(self):
+        self.install_toolchain_artifact("nasm")
 
-    def ensure_nasm_packages(self, state_dir, checkout_root):
-        from mozboot import nasm
-
-        self.install_toolchain_artifact(state_dir, checkout_root, nasm.WINDOWS_NASM)
-
-    def ensure_node_packages(self, state_dir, checkout_root):
-        from mozboot import node
-
-        # We don't have native aarch64 node available, but aarch64 windows
-        # runs x86 binaries, so just use the x86 packages for such hosts.
-        node_artifact = node.WIN32 if is_aarch64_host() else node.WIN64
-        self.install_toolchain_artifact(state_dir, checkout_root, node_artifact)
+    def ensure_node_packages(self):
+        self.install_toolchain_artifact("node")
 
     def _update_package_manager(self):
         self.pacman_update()

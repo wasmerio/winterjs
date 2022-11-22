@@ -1,13 +1,12 @@
-// |jit-test| --enable-top-level-await;
+// |jit-test|
 
 load(libdir + "asserts.js");
 
 async function parseAndEvaluate(source) {
-    let og = parseModule(source);
-    let bc = codeModule(og);
-    let m = decodeModule(bc);
-    m.declarationInstantiation();
-    await m.evaluation();
+    let stencil = compileToStencilXDR(source, {module: true});
+    let m = instantiateModuleStencilXDR(stencil);
+    moduleLink(m);
+    await moduleEvaluate(m);
     return m;
 }
 
@@ -19,23 +18,21 @@ async function parseAndEvaluate(source) {
 (async () => {
   // Check that evaluation returns evaluation promise,
   // and promise is always the same.
-  let og = parseModule("1");
-  let bc = codeModule(og);
-  let m = decodeModule(bc);
-  m.declarationInstantiation();
-  assertEq(typeof m.evaluation(), "object");
-  assertEq(m.evaluation() instanceof Promise, true);
-  assertEq(m.evaluation(), m.evaluation());
+  let stencil = compileToStencilXDR("1", {module: true});
+  let m = instantiateModuleStencilXDR(stencil);
+  moduleLink(m);
+  assertEq(typeof moduleEvaluate(m), "object");
+  assertEq(moduleEvaluate(m) instanceof Promise, true);
+  assertEq(moduleEvaluate(m), moduleEvaluate(m));
 })();
 
 (async () => {
   // Check top level variables are initialized by evaluation.
-  let og = parseModule("export var x = 2 + 2;");
-  let bc = codeModule(og);
-  let m = decodeModule(bc);
+  let stencil = compileToStencilXDR("export var x = 2 + 2;", {module: true});
+  let m = instantiateModuleStencilXDR(stencil);
   assertEq(typeof getModuleEnvironmentValue(m, "x"), "undefined");
-  m.declarationInstantiation();
-  await m.evaluation();
+  moduleLink(m);
+  await moduleEvaluate(m);
   assertEq(getModuleEnvironmentValue(m, "x"), 4);
 })();
 
@@ -44,12 +41,14 @@ async function parseAndEvaluate(source) {
   assertEq(getModuleEnvironmentValue(m, "x"), 6);
 
   // Set up a module to import from.
-  let og = parseModule(`var x = 1;
-                          export { x };
-                          export default 2;
-                          export function f(x) { return x + 1; }`);
-  let bc = codeModule(og);
-  let a = registerModule('a', decodeModule(bc));
+  let stencil = compileToStencilXDR(
+    `var x = 1;
+     export { x };
+     export default 2;
+     export function f(x) { return x + 1; }`,
+  {module: true});
+  let mod = instantiateModuleStencilXDR(stencil);
+  let a = registerModule('a', mod);
 
   // Check we can evaluate top level definitions.
   await parseAndEvaluate("var foo = 1;");

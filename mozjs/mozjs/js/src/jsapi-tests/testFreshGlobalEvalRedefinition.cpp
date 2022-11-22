@@ -8,6 +8,8 @@
 #include "mozilla/Utf8.h"  // mozilla::Utf8Unit
 
 #include "js/CompilationAndEvaluation.h"  // JS::Evaluate
+#include "js/GlobalObject.h"              // JS_NewGlobalObject
+#include "js/PropertyAndElement.h"        // JS_GetProperty
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
 #include "util/Text.h"
@@ -27,7 +29,6 @@ BEGIN_TEST(testRedefineGlobalEval) {
       nullptr,                         // mayResolve
       nullptr,                         // finalize
       nullptr,                         // call
-      nullptr,                         // hasInstance
       nullptr,                         // construct
       JS_GlobalObjectTraceHook,        // trace
   };

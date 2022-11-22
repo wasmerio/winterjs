@@ -9,14 +9,10 @@
 #ifndef vm_RegExpObject_h
 #define vm_RegExpObject_h
 
-#include "mozilla/MemoryReporting.h"
-
 #include "builtin/SelfHostingDefines.h"
-#include "gc/Marking.h"
-#include "js/GCHashTable.h"
 #include "js/RegExpFlags.h"
 #include "proxy/Proxy.h"
-#include "vm/ArrayObject.h"
+#include "vm/JSAtomState.h"
 #include "vm/JSContext.h"
 #include "vm/RegExpShared.h"
 #include "vm/Shape.h"
@@ -36,10 +32,6 @@
  */
 namespace js {
 
-struct MatchPair;
-class MatchPairs;
-class RegExpStatics;
-
 extern RegExpObject* RegExpAlloc(JSContext* cx, NewObjectKind newKind,
                                  HandleObject proto = nullptr);
 
@@ -53,7 +45,7 @@ class RegExpObject : public NativeObject {
   static_assert(RegExpObject::FLAGS_SLOT == REGEXP_FLAGS_SLOT,
                 "FLAGS_SLOT values should be in sync with self-hosted JS");
 
-  static RegExpObject* create(JSContext* cx, HandleAtom source,
+  static RegExpObject* create(JSContext* cx, Handle<JSAtom*> source,
                               NewObjectKind newKind);
 
  public:
@@ -73,11 +65,12 @@ class RegExpObject : public NativeObject {
 
   // This variant assumes that the characters have already previously been
   // syntax checked.
-  static RegExpObject* createSyntaxChecked(JSContext* cx, HandleAtom source,
+  static RegExpObject* createSyntaxChecked(JSContext* cx,
+                                           Handle<JSAtom*> source,
                                            JS::RegExpFlags flags,
                                            NewObjectKind newKind);
 
-  static RegExpObject* create(JSContext* cx, HandleAtom source,
+  static RegExpObject* create(JSContext* cx, Handle<JSAtom*> source,
                               JS::RegExpFlags flags, NewObjectKind newKind);
 
   /*
@@ -92,34 +85,38 @@ class RegExpObject : public NativeObject {
   static unsigned lastIndexSlot() { return LAST_INDEX_SLOT; }
 
   static bool isInitialShape(RegExpObject* rx) {
-    Shape* shape = rx->lastProperty();
-    if (shape->isEmptyShape() || !shape->isDataProperty()) {
+    ShapePropertyIter<NoGC> iter(rx->shape());
+    if (iter.done() || !iter->isDataProperty()) {
       return false;
     }
-    if (shape->maybeSlot() != LAST_INDEX_SLOT) {
+    if (iter->slot() != LAST_INDEX_SLOT) {
       return false;
     }
     return true;
   }
 
-  const Value& getLastIndex() const { return getSlot(LAST_INDEX_SLOT); }
+  const Value& getLastIndex() const { return getReservedSlot(LAST_INDEX_SLOT); }
 
-  void setLastIndex(double d) { setSlot(LAST_INDEX_SLOT, NumberValue(d)); }
+  void setLastIndex(double d) {
+    setReservedSlot(LAST_INDEX_SLOT, NumberValue(d));
+  }
 
   void zeroLastIndex(JSContext* cx) {
     MOZ_ASSERT(lookupPure(cx->names().lastIndex)->writable(),
                "can't infallibly zero a non-writable lastIndex on a "
                "RegExp that's been exposed to script");
-    setSlot(LAST_INDEX_SLOT, Int32Value(0));
+    setReservedSlot(LAST_INDEX_SLOT, Int32Value(0));
   }
 
   static JSLinearString* toString(JSContext* cx, Handle<RegExpObject*> obj);
 
   JSAtom* getSource() const {
-    return &getSlot(SOURCE_SLOT).toString()->asAtom();
+    return &getReservedSlot(SOURCE_SLOT).toString()->asAtom();
   }
 
-  void setSource(JSAtom* source) { setSlot(SOURCE_SLOT, StringValue(source)); }
+  void setSource(JSAtom* source) {
+    setReservedSlot(SOURCE_SLOT, StringValue(source));
+  }
 
   /* Flags. */
 
@@ -168,7 +165,7 @@ class RegExpObject : public NativeObject {
 #ifdef DEBUG
   [[nodiscard]] static bool dumpBytecode(JSContext* cx,
                                          Handle<RegExpObject*> regexp,
-                                         HandleLinearString input);
+                                         Handle<JSLinearString*> input);
 #endif
 
  private:
@@ -202,14 +199,8 @@ inline RegExpShared* RegExpToShared(JSContext* cx, HandleObject obj) {
   return Proxy::regexp_toShared(cx, obj);
 }
 
-template <XDRMode mode>
-XDRResult XDRScriptRegExpObject(XDRState<mode>* xdr,
-                                MutableHandle<RegExpObject*> objp);
-
-extern JSObject* CloneScriptRegExpObject(JSContext* cx, RegExpObject& re);
-
 /* Escape all slashes and newlines in the given string. */
-extern JSLinearString* EscapeRegExpPattern(JSContext* cx, HandleAtom src);
+extern JSLinearString* EscapeRegExpPattern(JSContext* cx, Handle<JSAtom*> src);
 
 template <typename CharT>
 extern bool HasRegExpMetaChars(const CharT* chars, size_t length);

@@ -87,7 +87,7 @@ assertErrorMessage(() => wasmEvalText(`
 (module
  (func (param (ref null $odd)) (unreachable)))
 `),
-SyntaxError, /failed to find type/);
+SyntaxError, /failed to find name/);
 
 // Ref type mismatch in parameter is allowed through the prefix rule
 // but not if the structs are incompatible.
@@ -171,21 +171,23 @@ assertErrorMessage(() => wasmEvalText(`
 `),
 WebAssembly.CompileError, /expression has type \(ref null.*\) but expected \(ref null.*\)/);
 
-// Ref type can't reference a function type
+if (!wasmFunctionReferencesEnabled()) {
+  // Ref type can't reference a function type
 
-assertErrorMessage(() => wasmEvalText(`
+  assertErrorMessage(() => wasmEvalText(`
 (module
  (type $x (func (param i32)))
  (func $f (param (ref null $x)) (unreachable)))
 `),
-WebAssembly.CompileError, /does not reference a gc type/);
+  WebAssembly.CompileError, /does not reference a gc type/);
 
-assertErrorMessage(() => wasmEvalText(`
+  assertErrorMessage(() => wasmEvalText(`
 (module
  (type (func (param i32)))
  (func $f (param (ref null 0)) (unreachable)))
 `),
-WebAssembly.CompileError, /does not reference a gc type/);
+  WebAssembly.CompileError, /does not reference a gc type/);
+}
 
 // No automatic downcast from eqref
 

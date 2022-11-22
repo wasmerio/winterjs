@@ -16,10 +16,14 @@
 #include "ds/BitArray.h"
 #include "ds/LifoAlloc.h"
 #include "gc/Nursery.h"
+#include "gc/TraceKind.h"
 #include "js/AllocPolicy.h"
-#include "js/MemoryMetrics.h"
 #include "js/UniquePtr.h"
 #include "threading/Mutex.h"
+
+namespace JS {
+struct GCSizes;
+}
 
 namespace js {
 
@@ -28,26 +32,6 @@ extern bool CurrentThreadIsGCMarking();
 #endif
 
 namespace gc {
-
-// Map from all trace kinds to the base GC type.
-template <JS::TraceKind kind>
-struct MapTraceKindToType {};
-
-#define DEFINE_TRACE_KIND_MAP(name, type, _, _1)   \
-  template <>                                      \
-  struct MapTraceKindToType<JS::TraceKind::name> { \
-    using Type = type;                             \
-  };
-JS_FOR_EACH_TRACEKIND(DEFINE_TRACE_KIND_MAP);
-#undef DEFINE_TRACE_KIND_MAP
-
-// Map from a possibly-derived type to the base GC type.
-template <typename T>
-struct BaseGCType {
-  using type =
-      typename MapTraceKindToType<JS::MapTypeToTraceKind<T>::kind>::Type;
-  static_assert(std::is_base_of_v<type, T>, "Failed to find base type");
-};
 
 class Arena;
 class ArenaCellSet;
@@ -88,8 +72,8 @@ class StoreBuffer {
   static const size_t GenericBufferLowAvailableThreshold =
       LifoAllocBlockSize / 2;
 
-  /* The size at which the whole cell buffer is about to overflow. */
-  static const size_t WholeCellBufferOverflowThresholdBytes = 128 * 1024;
+  /* The size at which other store buffers are about to overflow. */
+  static const size_t BufferOverflowThresholdBytes = 128 * 1024;
 
   /*
    * This buffer holds only a single type of edge. Using this buffer is more
@@ -113,7 +97,7 @@ class StoreBuffer {
     JS::GCReason gcReason_;
 
     /* Maximum number of entries before we request a minor GC. */
-    const static size_t MaxEntries = 48 * 1024 / sizeof(T);
+    const static size_t MaxEntries = BufferOverflowThresholdBytes / sizeof(T);
 
     explicit MonoTypeBuffer(StoreBuffer* owner, JS::GCReason reason)
         : last_(T()), owner_(owner), gcReason_(reason) {}
@@ -186,7 +170,7 @@ class StoreBuffer {
 
     bool isAboutToOverflow() const {
       return !storage_->isEmpty() &&
-             storage_->used() > WholeCellBufferOverflowThresholdBytes;
+             storage_->used() > BufferOverflowThresholdBytes;
     }
 
     void trace(TenuringTracer& mover);
@@ -413,23 +397,15 @@ class StoreBuffer {
     } Hasher;
   };
 
-  // The GC runs tasks that may access the storebuffer in parallel and so must
-  // take a lock. The mutator may only access the storebuffer from the main
-  // thread.
-  inline void CheckAccess() const {
 #ifdef DEBUG
-    if (JS::RuntimeHeapIsBusy()) {
-      MOZ_ASSERT(!CurrentThreadIsGCMarking());
-      lock_.assertOwnedByCurrentThread();
-    } else {
-      MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
-    }
+  void checkAccess() const;
+#else
+  void checkAccess() const {}
 #endif
-  }
 
   template <typename Buffer, typename Edge>
   void unput(Buffer& buffer, const Edge& edge) {
-    CheckAccess();
+    checkAccess();
     if (!isEnabled()) {
       return;
     }
@@ -439,7 +415,7 @@ class StoreBuffer {
 
   template <typename Buffer, typename Edge>
   void put(Buffer& buffer, const Edge& edge) {
-    CheckAccess();
+    checkAccess();
     if (!isEnabled()) {
       return;
     }
@@ -449,7 +425,7 @@ class StoreBuffer {
     }
   }
 
-  Mutex lock_;
+  Mutex lock_ MOZ_UNANNOTATED;
 
   MonoTypeBuffer<ValueEdge> bufferVal;
   MonoTypeBuffer<StringPtrEdge> bufStrCell;
@@ -667,7 +643,7 @@ MOZ_ALWAYS_INLINE void PostWriteBarrier(T** vp, T* prev, T* next) {
     return;
   }
 
-  MOZ_ASSERT(!IsInsideNursery(next));
+  MOZ_ASSERT_IF(next, !IsInsideNursery(next));
 }
 
 // Used when we don't have a specific edge to put in the store buffer.

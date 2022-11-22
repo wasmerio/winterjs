@@ -18,11 +18,15 @@ mk_add_options AUTOCLOBBER=1
 
 ac_add_options --enable-crashreporter
 
-# Enable enforcing that add-ons are signed by the trusted root
-MOZ_REQUIRE_SIGNING=${MOZ_REQUIRE_SIGNING-1}
-
 ac_add_options --enable-js-shell
 
 . "$topsrcdir/build/mozconfig.automation"
 . "$topsrcdir/build/mozconfig.rust"
 . "$topsrcdir/build/mozconfig.cache"
+
+if [ -n "$TASKCLUSTER_PGO_PROFILE_USE" -a -z "$USE_ARTIFACT" ]; then
+    export MOZ_LTO=cross
+    ac_add_options --enable-profile-use=cross
+    ac_add_options --with-pgo-jarlog="${MOZ_FETCHES_DIR}/en-US.log"
+    ac_add_options --with-pgo-profile-path="${MOZ_FETCHES_DIR}/merged.profdata"
+fi

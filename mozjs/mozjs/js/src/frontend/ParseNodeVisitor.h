@@ -9,12 +9,14 @@
 
 #include "mozilla/Assertions.h"
 
-#include "jsfriendapi.h"
-
 #include "frontend/ParseNode.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
+#include "js/Stack.h"               // JS::NativeStackLimit
 
 namespace js {
+
+class ErrorContext;
+
 namespace frontend {
 
 /**
@@ -52,12 +54,15 @@ namespace frontend {
 template <typename Derived>
 class ParseNodeVisitor {
  public:
-  JSContext* cx_;
+  ErrorContext* ec_;
+  JS::NativeStackLimit stackLimit_;
 
-  explicit ParseNodeVisitor(JSContext* cx) : cx_(cx) {}
+  ParseNodeVisitor(ErrorContext* ec, JS::NativeStackLimit stackLimit)
+      : ec_(ec), stackLimit_(stackLimit) {}
 
   [[nodiscard]] bool visit(ParseNode* pn) {
-    if (!CheckRecursionLimit(cx_)) {
+    AutoCheckRecursionLimit recursion(ec_);
+    if (!recursion.check(ec_, stackLimit_)) {
       return false;
     }
 
@@ -96,12 +101,15 @@ class ParseNodeVisitor {
 template <typename Derived>
 class RewritingParseNodeVisitor {
  public:
-  JSContext* cx_;
+  ErrorContext* ec_;
+  JS::NativeStackLimit stackLimit_;
 
-  explicit RewritingParseNodeVisitor(JSContext* cx) : cx_(cx) {}
+  RewritingParseNodeVisitor(ErrorContext* ec, JS::NativeStackLimit stackLimit)
+      : ec_(ec), stackLimit_(stackLimit) {}
 
   [[nodiscard]] bool visit(ParseNode*& pn) {
-    if (!CheckRecursionLimit(cx_)) {
+    AutoCheckRecursionLimit recursion(ec_);
+    if (!recursion.check(ec_, stackLimit_)) {
       return false;
     }
 

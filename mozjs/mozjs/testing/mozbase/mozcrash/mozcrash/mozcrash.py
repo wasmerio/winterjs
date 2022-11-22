@@ -60,6 +60,7 @@ def check_for_crashes(
     dump_save_path=None,
     test_name=None,
     quiet=False,
+    keep=False,
 ):
     """
     Print a stack trace for minidump files left behind by a crashing program.
@@ -68,10 +69,10 @@ def check_for_crashes(
     have `stackwalk_binary` executed on them, with `symbols_path` passed as an extra
     argument.
 
-    `stackwalk_binary` should be a path to the minidump_stackwalk binary.
+    `stackwalk_binary` should be a path to the minidump-stackwalk binary.
     If `stackwalk_binary` is not set, the MINIDUMP_STACKWALK environment variable
     will be checked and its value used if it is not empty. If neither is set, then
-    ~/.mozbuild/minidump_stackwalk/minidump_stackwalk will be used.
+    ~/.mozbuild/minidump-stackwalk/minidump-stackwalk will be used.
 
     `symbols_path` should be a path to a directory containing symbols to use for
     dump processing. This can either be a path to a directory containing Breakpad-format
@@ -86,6 +87,8 @@ def check_for_crashes(
 
     If `quiet` is set, no PROCESS-CRASH message will be printed to stdout if a
     crash is detected.
+
+    If `keep` is set, minidump files will not be removed after processing.
 
     Returns number of minidump files found.
     """
@@ -105,6 +108,7 @@ def check_for_crashes(
         symbols_path,
         dump_save_path=dump_save_path,
         stackwalk_binary=stackwalk_binary,
+        keep=keep,
     )
 
     crash_count = 0
@@ -120,13 +124,13 @@ def check_for_crashes(
             if info.reason:
                 stackwalk_output.append("Mozilla crash reason: %s" % info.reason)
             if info.stackwalk_stderr:
-                stackwalk_output.append("stderr from minidump_stackwalk:")
+                stackwalk_output.append("stderr from minidump-stackwalk:")
                 stackwalk_output.append(info.stackwalk_stderr)
             elif info.stackwalk_stdout is not None:
                 stackwalk_output.append(info.stackwalk_stdout)
             if info.stackwalk_retcode is not None and info.stackwalk_retcode != 0:
                 stackwalk_output.append(
-                    "minidump_stackwalk exited with return code {}".format(
+                    "minidump-stackwalk exited with return code {}".format(
                         info.stackwalk_retcode
                     )
                 )
@@ -183,10 +187,15 @@ ABORT_SIGNATURES = (
     # is automatically filtered out by that pattern.
     "core::ops::function::Fn::call",
     "gkrust_shared::panic_hook",
+    "mozglue_static::panic_hook",
     "intentional_panic",
     "mozalloc_abort",
     "mozalloc_abort(char const* const)",
     "static void Abort(const char *)",
+    "std::sys_common::backtrace::__rust_end_short_backtrace",
+    "rust_begin_unwind",
+    # This started showing up when we enabled dumping inlined functions
+    "MOZ_Crash",
 )
 
 # Similar to above, but matches if the substring appears anywhere in the
@@ -196,6 +205,7 @@ ABORT_SUBSTRINGS = (
     # std::panicking or core::panic namespaces.
     "_panic_",
     "core::panic::",
+    "core::panicking::",
     "core::result::unwrap_failed",
     "std::panicking::",
 )
@@ -214,18 +224,25 @@ class CrashInfo(object):
                          containing a set of symbols.
     :param dump_save_path: Path to which to save the dump files. If this is None,
                            the MINIDUMP_SAVE_PATH environment variable will be used.
-    :param stackwalk_binary: Path to the minidump_stackwalk binary. If this is None,
+    :param stackwalk_binary: Path to the minidump-stackwalk binary. If this is None,
                              the MINIDUMP_STACKWALK environment variable will be used
                              as the path to the minidump binary. If neither is set,
-                             then ~/.mozbuild/minidump_stackwalk/minidump_stackwalk
+                             then ~/.mozbuild/minidump-stackwalk/minidump-stackwalk
                              will be used."""
 
     def __init__(
-        self, dump_directory, symbols_path, dump_save_path=None, stackwalk_binary=None
+        self,
+        dump_directory,
+        symbols_path,
+        dump_save_path=None,
+        stackwalk_binary=None,
+        keep=False,
     ):
         self.dump_directory = dump_directory
         self.symbols_path = symbols_path
         self.remove_symbols = False
+        self.brief_output = False
+        self.keep = keep
 
         if dump_save_path is None:
             dump_save_path = os.environ.get("MINIDUMP_SAVE_PATH", None)
@@ -234,23 +251,41 @@ class CrashInfo(object):
         if stackwalk_binary is None:
             stackwalk_binary = os.environ.get("MINIDUMP_STACKWALK", None)
         if stackwalk_binary is None:
-            # Location of minidump_stackwalk installed by "mach bootstrap".
-            stackwalk_binary = os.path.expanduser(
-                "~/.mozbuild/minidump_stackwalk/minidump_stackwalk"
-            )
-            if mozinfo.isWin and not stackwalk_binary.endswith(".exe"):
-                stackwalk_binary += ".exe"
+            # Location of minidump-stackwalk installed by "mach bootstrap".
+            #
+            # In the transition to rust-minidump, the binary name was changed
+            # from minidump_stackwalk to minidump-stackwalk, but if the user
+            # hasn't run mach bootstrap yet, then they'll still have the old
+            # binary. So we try both names (but prefer the new one).
+            #
+            # If neither exists, then we intentionally leave a junk path
+            # in stackwalk_binary, as later checks will handle this properly
+            # when our actual error reporting is setup.
+            possible_names = ["minidump-stackwalk", "minidump_stackwalk"]
+            for possible_name in possible_names:
+                stackwalk_binary = os.path.expanduser(
+                    "~/.mozbuild/{name}/{name}".format(name=possible_name)
+                )
+                if mozinfo.isWin and not stackwalk_binary.endswith(".exe"):
+                    stackwalk_binary += ".exe"
+                if os.path.exists(stackwalk_binary):
+                    # If we reach this point, then we're almost certainly
+                    # running on a local user's machine. Full minidump-stackwalk
+                    # output is a bit noisy and verbose for that use-case,
+                    # so we should use the --brief output.
+                    self.brief_output = True
+                    break
+
         self.stackwalk_binary = stackwalk_binary
 
         self.logger = get_logger()
         self._dump_files = None
 
     def _get_symbols(self):
-        # If no symbols path has been set create a temporary folder to let the
-        # minidump stackwalk download the symbols.
         if not self.symbols_path:
-            self.symbols_path = tempfile.mkdtemp()
-            self.remove_symbols = True
+            self.logger.warning(
+                "No local symbols_path provided, only http symbols will be used."
+            )
 
         # This updates self.symbols_path so we only download once.
         if mozfile.is_url(self.symbols_path):
@@ -328,15 +363,72 @@ class CrashInfo(object):
         reason = None
         java_stack = None
         if (
-            self.symbols_path
-            and self.stackwalk_binary
+            self.stackwalk_binary
             and os.path.exists(self.stackwalk_binary)
             and os.access(self.stackwalk_binary, os.X_OK)
         ):
+            # If minidump-stackwalk -V fails, then we're using the old breakpad version,
+            # (minidump_stackwalk) which is implicitly "human" output and doesn't
+            # support the --human flag.
+            #
+            # Otherwise we're using rust-minidump's minidump-stackwalk. Before 0.9.6
+            # --human had to be passed explicitly to get human output, but now it's
+            # the default (to behave more similarly to breakpad). But since we've
+            # already filtered out breakpad as an option, we can explicitly pass
+            # --human.
+            #
+            # In the future we would also like to use rust-minidump's --cyborg
+            # (introduced in 0.9.5), which outputs both human-readable *and*
+            # machine-readable (JSON) output, so we can output something nice to the
+            # CLI, but more reliably parse all the details we care about.
+            # The machine-readable output is also exactly what socorro (crash-stats)
+            # consumes, so in theory using it will make the two more compatible.
+            stackwalk_version_check = subprocess.Popen(
+                [self.stackwalk_binary, "-V"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            stackwalk_version_check.wait()
 
-            command = [self.stackwalk_binary, path, self.symbols_path]
+            # Right now we don't have any rust-minidump-version-specific handling,
+            # so we don't need to bother parsing the output at all. But when we
+            # want to start using newer features (like --cyborg) we should parse
+            # the version string, so here's some notes on that:
+            #
+            # Example outputs:
+            # minidump_stackwalk 0.9.2
+            # minidump-stackwalk 0.9.5
+            #
+            # Either `_` or `-` may be used in the name, so be careful of that
+            # (newer versions should use `-`). Otherwise the actual version number
+            # is the usual `<major>.<minor>.<patch>` that can be parsed with
+            # `looseversion.LooseVersion`.
+            rust_minidump = stackwalk_version_check.returncode == 0
+
+            # Now build up the actual command
+            command = [self.stackwalk_binary]
+
+            # Fallback to the symbols server for unknown symbols on automation
+            # (mostly for system libraries).
+            if "MOZ_AUTOMATION" in os.environ:
+                command.append("--symbols-url=https://symbols.mozilla.org/")
+
+            # Specify the kind of output
+            if rust_minidump:
+                command.append("--human")
+                if self.brief_output:
+                    command.append("--brief")
+
+            # The minidump path and symbols_path values are positional and come last
+            # (in practice the CLI parsers are more permissive, but best not to
+            # unecessarily play with fire).
+            command.append(path)
+
+            if self.symbols_path:
+                command.append(self.symbols_path)
+
             self.logger.info(u"Copy/paste: {}".format(" ".join(command)))
-            # run minidump_stackwalk
+            # run minidump-stackwalk
             p = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
@@ -347,7 +439,7 @@ class CrashInfo(object):
                 err = six.ensure_str(err)
 
             if len(out) > 3:
-                # minidump_stackwalk is chatty,
+                # minidump-stackwalk is chatty,
                 # so ignore stderr when it succeeds.
                 # The top frame of the crash is always the line after "Thread N (crashed)"
                 # Examples:
@@ -380,18 +472,16 @@ class CrashInfo(object):
                 include_stderr = True
 
         else:
-            if not self.symbols_path:
-                errors.append("No symbols path given, can't process dump.")
             if not self.stackwalk_binary:
                 errors.append(
                     "MINIDUMP_STACKWALK not set, can't process dump. Either set "
                     "MINIDUMP_STACKWALK or use mach bootstrap --no-system-changes "
-                    "to install minidump_stackwalk."
+                    "to install minidump-stackwalk."
                 )
             elif self.stackwalk_binary and not os.path.exists(self.stackwalk_binary):
                 errors.append(
                     "MINIDUMP_STACKWALK binary not found: %s. Use mach bootstrap "
-                    "--no-system-changes to install minidump_stackwalk."
+                    "--no-system-changes to install minidump-stackwalk."
                     % self.stackwalk_binary
                 )
             elif not os.access(self.stackwalk_binary, os.X_OK):
@@ -405,9 +495,9 @@ class CrashInfo(object):
         if self.dump_save_path:
             self._save_dump_file(path, extra)
 
-        if os.path.exists(path):
+        if os.path.exists(path) and not self.keep:
             mozfile.remove(path)
-        if os.path.exists(extra):
+        if os.path.exists(extra) and not self.keep:
             mozfile.remove(extra)
 
         return StackInfo(
@@ -571,10 +661,6 @@ if mozinfo.isWin:
             if not os.path.exists(minidumpwriter):
                 log.error(u"minidumpwriter not found in {}".format(utility_path))
                 return
-
-            if isinstance(file_name, six.string_types):
-                # Convert to a byte string before sending to the shell.
-                file_name = file_name.encode(sys.getfilesystemencoding())
 
             status = subprocess.Popen([minidumpwriter, str(pid), file_name]).wait()
             if status:
@@ -746,6 +832,7 @@ if __name__ == "__main__":
     parser.add_argument("--stackwalk-binary", "-b")
     parser.add_argument("--dump-save-path", "-o")
     parser.add_argument("--test-name", "-n")
+    parser.add_argument("--keep", action="store_true")
     parser.add_argument("dump_directory")
     parser.add_argument("symbols_path")
     args = parser.parse_args()
@@ -756,4 +843,5 @@ if __name__ == "__main__":
         stackwalk_binary=args.stackwalk_binary,
         dump_save_path=args.dump_save_path,
         test_name=args.test_name,
+        keep=args.keep,
     )

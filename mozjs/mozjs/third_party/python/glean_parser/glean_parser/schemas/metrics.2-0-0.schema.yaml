@@ -94,7 +94,7 @@ definitions:
 
             - `uuid`: Record a UUID v4.
 
-            - `jwe`: Record a [JWE](https://tools.ietf.org/html/rfc7516) value.
+            - `url`: Record a valid URL string.
 
             - `memory_distribution`: A histogram for recording memory usage
               values. Additional properties: `memory_unit`.
@@ -105,12 +105,19 @@ definitions:
               properties: `range_min`, `range_max`, `bucket_count`,
               `histogram_type`.
 
+            - `rate`: Used to record the rate something happens relative to some
+              other thing. For example, the number of HTTP connections that
+              experience an error relative to the number of total HTTP
+              connections made.
+
             - Additionally, labeled versions of many metric types are supported.
               These support the `labels`_ parameter, allowing multiple instances
               of the metric to be stored at a given set of labels. The labeled
               metric types include:
 
                 `labeled_boolean`, `labeled_string`, `labeled_counter`.
+
+            - `text`: Record long text data.
 
         type: string
         enum:
@@ -126,11 +133,13 @@ definitions:
           - memory_distribution
           - datetime
           - uuid
+          - url
           - jwe
           - labeled_boolean
           - labeled_string
           - labeled_counter
           - rate
+          - text
 
       description:
         title: Description
@@ -143,6 +152,22 @@ definitions:
           Descriptions may contain [markdown
           syntax](https://www.markdownguide.org/basic-syntax/).
         type: string
+
+      metadata:
+        title: Metadata
+        description: |
+          Additional metadata about this metric. Currently limited to a list of
+          tags.
+        type: object
+        properties:
+          tags:
+            title: Tags
+            description: Which tags are specified for this metric.
+            type: array
+            items:
+              type: string
+              maxLength: 80
+        default: {}
 
       lifetime:
         title: Lifetime
@@ -177,7 +202,12 @@ definitions:
           in any ping.)
         type: array
         items:
-          $ref: "#/definitions/kebab_case"
+          anyOf:
+            - $ref: "#/definitions/kebab_case"
+            # Allow "special" ping names that start with "glean_" used
+            # internally by the Glean SDK
+            - type: string
+              pattern: "^glean_.*$"
         default:
           - default
 
@@ -240,12 +270,24 @@ definitions:
               metric expires. For example, `2019-03-13`. This date is checked at
               build time. Except in special cases, this form should be used so
               that the metric automatically "sunsets" after a period of time.
+            - `<major version>`: An integer greater than 0 representing the
+              major version the metric expires in. For example, `11`. The
+              version is checked at build time against the major provided to the
+              glean_parser and is only valid if a major version is provided at
+              built time. If no major version is provided at build time and
+              expiration by major version is used for a metric, an error is
+              raised.
+              Note that mixing expiration by date and version is not allowed
+              within a product.
             - `never`: This metric never expires.
             - `expired`: This metric is manually expired.
 
           The default may be overriden in certain applications by the
           `custom_validate_expires` and `custom_is_expired` configs.
-        type: string
+        oneOf:
+          - type: string
+          - type: integer
+            minimum: 1
 
       version:
         title: Metric version
@@ -318,7 +360,7 @@ definitions:
             uniqueItems: true
             items:
               $ref: "#/definitions/labeled_metric_id"
-            maxItems: 16
+            maxItems: 4096
           - type: "null"
 
       extra_keys:
@@ -340,6 +382,12 @@ definitions:
           properties:
             description:
               type: string
+            type:
+              type: string
+              enum:
+                - string
+                - boolean
+                - quantity
           required:
             - description
         maxProperties: 10
@@ -398,10 +446,14 @@ definitions:
       unit:
         title: Unit
         description: |
-          The unit of the metric, for metrics that don't already require a
-          meaningful unit, such as `time_unit`.
+          The unit of the metric.
+          This is only required for metrics
+          that don't already require a meaningful unit, e.g. `quantity`
           This is provided for informational purposes only and doesn't have any
           effect on data collection.
+
+          Metric types like `timespan`, `datetime`
+          and `timing_distribution` take a `time_unit` instead.
         type: string
 
       no_lint:
@@ -411,16 +463,6 @@ definitions:
         type: array
         items:
           type: string
-
-      decrypted_name:
-        title: Decrypted name
-        description: |
-          Name of the column where to persist the decrypted value
-          stored in the JWE after processing.
-
-          Required when `type`_ is `jwe`.
-        type: string
-        pattern: "^[a-z_][a-z0-9_]{0,29}(\\.[a-z_][a-z0-9_]{0,29})*$"
 
       data_sensitivity:
         title: The level of data sensitivity
@@ -509,7 +551,10 @@ propertyNames:
         - not:
             description: "'pings' is reserved as a category name."
             const: pings
-    - enum: ['$schema']
+        - not:
+            description: "'tags' is reserved as a category name."
+            const: tags
+    - enum: ['$schema', '$tags']
 
 properties:
   $schema:
@@ -520,6 +565,14 @@ properties:
     title: Lint checks to skip globally
     description: |
       This parameter lists any lint checks to skip for this whole file.
+    type: array
+    items:
+      type: string
+
+  $tags:
+    title: Tags that apply to the whole file
+    description: |
+      This denotes the list of tags that apply to all metrics in this file.
     type: array
     items:
       type: string
@@ -567,18 +620,6 @@ additionalProperties:
         if:
           properties:
             type:
-              enum:
-                - custom_distribution
-        then:
-          required:
-            - gecko_datapoint
-          description: |
-            `custom_distribution` is only allowed for Gecko
-            metrics.
-      -
-        if:
-          properties:
-            type:
               const: custom_distribution
         then:
           required:
@@ -615,9 +656,10 @@ additionalProperties:
               const: jwe
         then:
           required:
-            - decrypted_name
+            - jwe_support_was_removed
           description: |
-            `jwe` is missing required parameter `decrypted_name`.
+            JWE support was removed.
+            If you require this send an email to glean-team@mozilla.com.
       - if:
           not:
             properties:
@@ -629,3 +671,65 @@ additionalProperties:
               description: |
                 `denominator_metric` is only allowed for `rate`.
               maxLength: 0
+      -
+        if:
+          properties:
+            type:
+              const: text
+        then:
+          properties:
+            lifetime:
+              description: >
+                Text metrics must have ping or application lifetime.
+              enum:
+                - ping
+                - application
+
+            data_sensitivity:
+              description: >
+                Text metrics require Category 3 (`web_activity`)
+                or Category 4 (`highly_sensitive`).
+              type: array
+              items:
+                enum:
+                  - web_activity
+                  - highly_sensitive
+
+            send_in_pings:
+              description: |
+                Text metrics can only be sent in custom pings.
+                Built-in pings are not allowed.
+              type: array
+              items:
+                allOf:
+                  - $ref: "#/definitions/kebab_case"
+                  - not:
+                      description: >
+                        Text metrics can only be sent in custom pings.
+                        Built-in pings are not allowed."
+                      pattern:
+                        "^(metrics|baseline|events|deletion-request|default|glean_.*)$"
+
+      -
+        if:
+          # This is a schema check:
+          # This is true when the checked YAML passes the schema validation.
+          #
+          # If it has a datetime/timing_distribution/timespan type
+          # AND has a `unit` property, then...
+          properties:
+            type:
+              enum:
+                - datetime
+                - timing_distribution
+                - timespan
+          required:
+            - unit
+        # ... then `time_unit` is required,
+        # because that's the only way we can force this to fail.
+        then:
+          required:
+            - time_unit
+          description: |
+            This metric type uses the (optional) `time_unit` parameter,
+            not `unit`.

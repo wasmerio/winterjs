@@ -333,6 +333,14 @@ class JitTest:
                     elif name == "module":
                         test.is_module = True
                     elif name == "crash":
+                        # Crashes are only allowed in self-test, as it is
+                        # intended to verify that our testing infrastructure
+                        # works, and not meant as a way to accept temporary
+                        # failing tests. These tests should either be fixed or
+                        # skipped.
+                        assert (
+                            "self-test" in path
+                        ), "{}: has an unexpected crash annotation.".format(path)
                         test.expect_crash = True
                     elif name.startswith("--"):
                         # // |jit-test| --ion-gvn=off; --no-sse4
@@ -457,32 +465,15 @@ def check_output(out, err, rc, timed_out, test, options):
             return True
 
     if timed_out:
-        if (
-            os.path.normpath(test.relpath_tests).replace(os.sep, "/")
-            in options.ignore_timeouts
-        ):
+        relpath = os.path.normpath(test.relpath_tests).replace(os.sep, "/")
+        if relpath in options.ignore_timeouts:
             return True
-
-        # The shell sometimes hangs on shutdown on Windows 7 and Windows
-        # Server 2008. See bug 970063 comment 7 for a description of the
-        # problem. Until bug 956899 is fixed, ignore timeouts on these
-        # platforms (versions 6.0 and 6.1).
-        if sys.platform == "win32":
-            ver = sys.getwindowsversion()
-            if ver.major == 6 and ver.minor <= 1:
-                return True
         return False
 
     if test.expect_error:
         # The shell exits with code 3 on uncaught exceptions.
-        # Sometimes 0 is returned on Windows for unknown reasons.
-        # See bug 899697.
-        if sys.platform in ["win32", "cygwin"]:
-            if rc != 3 and rc != 0:
-                return False
-        else:
-            if rc != 3:
-                return False
+        if rc != 3:
+            return False
 
         return test.expect_error in err
 
@@ -516,13 +507,12 @@ def check_output(out, err, rc, timed_out, test, options):
         if rc == 139 or rc == 138:
             return True
 
-    if rc != test.expect_status:
-        # Tests which expect a timeout check for exit code 6.
-        # Sometimes 0 is returned on Windows for unknown reasons.
-        # See bug 899697.
-        if sys.platform in ["win32", "cygwin"] and rc == 0:
-            return True
+        # Crashing test should always crash as expected, otherwise this is an
+        # error. The JS shell crash() function can be used to force the test
+        # case to crash in unexpected configurations.
+        return False
 
+    if rc != test.expect_status:
         # Allow a non-zero exit code if we want to allow OOM, but only if we
         # actually got OOM.
         if (

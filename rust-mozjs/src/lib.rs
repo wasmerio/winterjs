@@ -39,7 +39,7 @@ extern crate num_traits;
 pub mod jsapi {
     pub use mozjs_sys::jsapi::glue::*;
     pub use mozjs_sys::jsapi::js::detail::*;
-    pub use mozjs_sys::jsapi::js::Scalar::Type;
+    pub use mozjs_sys::jsapi::JS::Scalar::Type;
     pub use mozjs_sys::jsapi::js::*;
     pub use mozjs_sys::jsapi::mozilla::MallocSizeOf;
     pub use mozjs_sys::jsapi::JS::detail::*;

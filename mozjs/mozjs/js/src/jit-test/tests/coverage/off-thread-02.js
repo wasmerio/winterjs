@@ -2,7 +2,7 @@
 
 assertEq(isLcovEnabled(), true);
 
-offThreadCompileModule(`
+offThreadCompileModuleToStencil(`
     globalThis.hitCount = 0;
     function offThreadFun() {
         globalThis.hitCount += 1;
@@ -13,9 +13,10 @@ offThreadCompileModule(`
     offThreadFun();
     offThreadFun();
 `);
-let mod = finishOffThreadModule();
-mod.declarationInstantiation();
-mod.evaluation();
+let stencil = finishOffThreadStencil();
+let mod = instantiateModuleStencil(stencil);
+moduleLink(mod);
+moduleEvaluate(mod);
 assertEq(hitCount, 4);
 
 const expected = "FNDA:4,offThreadFun";

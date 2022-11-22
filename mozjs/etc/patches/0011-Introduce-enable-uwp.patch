@@ -41,7 +41,7 @@ index 98f12139e..ae2cfe266 100644
 @@ -5544,7 +5544,9 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    auto getTimeZone = [](std::time_t* now) -> const char* {
      std::tm local{};
- #if defined(_WIN32)
+ #  if defined(_WIN32)
 +#ifndef JS_ENABLE_UWP
      _tzset();
 +#endif
@@ -51,65 +51,13 @@ index 98f12139e..ae2cfe266 100644
 @@ -5639,7 +5641,9 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
    }
  
- #if defined(_WIN32)
+ #  if defined(_WIN32)
 +#ifndef JS_ENABLE_UWP
    _tzset();
 +#endif
- #else
+ #  else
    tzset();
- #endif /* _WIN32 */
-diff --git a/js/src/ds/MemoryProtectionExceptionHandler.cpp b/js/src/ds/MemoryProtectionExceptionHandler.cpp
-index 3c4eb00c3..010316ff9 100644
---- a/js/src/ds/MemoryProtectionExceptionHandler.cpp
-+++ b/js/src/ds/MemoryProtectionExceptionHandler.cpp
-@@ -110,7 +110,7 @@ static bool sExceptionHandlerInstalled = false;
- static ProtectedRegionTree sProtectedRegions;
- 
- bool MemoryProtectionExceptionHandler::isDisabled() {
--#if defined(XP_WIN) && defined(MOZ_ASAN)
-+#if defined(XP_WIN) && (defined(MOZ_ASAN) || defined(JS_ENABLE_UWP))
-   // Under Windows ASan, WasmFaultHandler registers itself at 'last' priority
-   // in order to let ASan's ShadowExceptionHandler stay at 'first' priority.
-   // Unfortunately that results in spurious wasm faults passing through the
-@@ -175,6 +175,7 @@ static mozilla::Atomic<bool> sHandlingException(false);
- 
- static long __stdcall VectoredExceptionHandler(
-     EXCEPTION_POINTERS* ExceptionInfo) {
-+#ifndef JS_ENABLE_UWP
-   EXCEPTION_RECORD* ExceptionRecord = ExceptionInfo->ExceptionRecord;
- 
-   // We only handle one kind of exception; ignore all others.
-@@ -199,6 +200,7 @@ static long __stdcall VectoredExceptionHandler(
-       }
-     }
-   }
-+#endif
- 
-   // Forward to the previous handler which may be a debugger,
-   // the crash reporter or something else entirely.
-@@ -213,9 +215,11 @@ bool MemoryProtectionExceptionHandler::install() {
-     return true;
-   }
- 
-+#ifndef JS_ENABLE_UWP
-   // Install our new exception handler.
-   sVectoredExceptionHandler = AddVectoredExceptionHandler(
-       /* FirstHandler = */ true, VectoredExceptionHandler);
-+#endif
- 
-   sExceptionHandlerInstalled = sVectoredExceptionHandler != nullptr;
-   return sExceptionHandlerInstalled;
-@@ -225,8 +229,10 @@ void MemoryProtectionExceptionHandler::uninstall() {
-   if (sExceptionHandlerInstalled) {
-     MOZ_ASSERT(!sHandlingException);
- 
-+#ifndef JS_ENABLE_UWP
-     // Restore the previous exception handler.
-     MOZ_ALWAYS_TRUE(RemoveVectoredExceptionHandler(sVectoredExceptionHandler));
-+#endif
- 
-     sExceptionHandlerInstalled = false;
-   }
+ #  endif /* _WIN32 */
 diff --git a/js/src/gc/Memory.cpp b/js/src/gc/Memory.cpp
 index d59585f0c..c9f7dd7bc 100644
 --- a/js/src/gc/Memory.cpp
@@ -195,7 +143,7 @@ index 9b0bdf047..47c201220 100644
      return false;
    }
 @@ -777,7 +798,11 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
- #ifdef XP_WIN
+ #  ifdef XP_WIN
    DWORD oldProtect;
    DWORD flags = ProtectionSettingToFlags(protection);
 +#ifdef JS_ENABLE_UWP
@@ -205,21 +153,21 @@ index 9b0bdf047..47c201220 100644
 +#endif
      return false;
    }
- #else
+ #  else
 diff --git a/js/src/js-config.h.in b/js/src/js-config.h.in
 index b54f1bc2c..bcea2070d 100644
 --- a/js/src/js-config.h.in
 +++ b/js/src/js-config.h.in
 @@ -58,6 +58,9 @@
- /* Define to 1 if SpiderMonkey is in PUNBOX64 mode. */
- #undef JS_PUNBOX64
- 
+ /* Define to 1 if SpiderMonkey should support SmooshMonkey parser. */
+ #undef JS_ENABLE_SMOOSH
+
 +/* Define to 1 if SpiderMonkey is built in a UWP environment. */
 +#undef JS_ENABLE_UWP
 +
- /* MOZILLA JSAPI version number components */
- #undef MOZJS_MAJOR_VERSION
- #undef MOZJS_MINOR_VERSION
+ /* Experimental WASM features */
+ #undef ENABLE_WASM_EXCEPTIONS
+ #undef ENABLE_WASM_FUNCTION_REFERENCES
 diff --git a/js/src/old-configure b/js/src/old-configure
 index 20edd22ae..3ddca5ebb 100644
 --- a/js/src/old-configure
@@ -250,24 +198,6 @@ index bf7e10ec8..e20bb5b6d 100644
  
  case "$target" in
  *-mingw*)
-diff --git a/js/src/vm/CodeCoverage.cpp b/js/src/vm/CodeCoverage.cpp
-index f96cfdff6..a4936e562 100644
---- a/js/src/vm/CodeCoverage.cpp
-+++ b/js/src/vm/CodeCoverage.cpp
-@@ -13,8 +13,13 @@
- #include <utility>
- #ifdef XP_WIN
- #  include <process.h>
-+#  include <windows.h>
-+#ifndef JS_ENABLE_UWP
- #  define getpid _getpid
- #else
-+#  define getpid GetCurrentProcessId
-+#endif
-+#else
- #  include <unistd.h>
- #endif
- 
 diff --git a/js/src/vm/Time.cpp b/js/src/vm/Time.cpp
 index 059710064..6ffc8e55c 100644
 --- a/js/src/vm/Time.cpp
@@ -334,12 +264,12 @@ index 6ab1a0c71..fc100c360 100644
  }
 +#endif
  
- #elif defined(XP_DARWIN)
+ #  elif defined(XP_DARWIN)
  // On OSX we are forced to use the lower-level Mach exception mechanism instead
 @@ -1036,11 +1038,13 @@ void wasm::EnsureEagerProcessSignalHandlers() {
-   // such as MemoryProtectionExceptionHandler that assume we are crashing.
+   // such as Breakpad that assume we are crashing.
    const bool firstHandler = true;
- #  endif
+ #    endif
 +#  ifndef JS_ENABLE_UWP
    if (!AddVectoredExceptionHandler(firstHandler, WasmTrapHandler)) {
      // Windows has all sorts of random security knobs for disabling things
@@ -348,7 +278,7 @@ index 6ab1a0c71..fc100c360 100644
    }
 +#  endif
  
- #elif defined(XP_DARWIN)
+ #  elif defined(XP_DARWIN)
    // All the Mach setup in EnsureLazyProcessSignalHandlers.
 diff --git a/mfbt/Poison.cpp b/mfbt/Poison.cpp
 index f5d5b4986..096378189 100644
@@ -363,7 +293,7 @@ index f5d5b4986..096378189 100644
 +#  endif
  #elif !defined(__OS2__)
  #  include <unistd.h>
- #  include <sys/mman.h>
+ #  ifndef __wasi__
 @@ -36,7 +39,11 @@
  
  #ifdef _WIN32
@@ -398,22 +328,6 @@ index c3bb9ecef..7ea7d127d 100644
 +#endif // JS_ENABLE_UWP
  
  #endif
- 
-@@ -98,9 +103,15 @@ MFBT_API Maybe<uint64_t> RandomUint64() {
- #if defined(XP_WIN)
- 
-   uint64_t result = 0;
-+#ifdef JS_ENABLE_UWP
-+  if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&result), sizeof(result), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != STATUS_SUCCESS) {
-+    return Nothing();
-+  }
-+#else
-   if (!RtlGenRandom(&result, sizeof(result))) {
-     return Nothing();
-   }
-+#endif
- 
-   return Some(result);
  
 diff --git a/mfbt/WindowsVersion.h b/mfbt/WindowsVersion.h
 index 502015382..085d1dbc9 100644
@@ -455,7 +369,7 @@ diff --git a/mozglue/misc/StackWalk.cpp b/mozglue/misc/StackWalk.cpp
 index 24868ae5d..c6166b6a6 100644
 --- a/mozglue/misc/StackWalk.cpp
 +++ b/mozglue/misc/StackWalk.cpp
-@@ -77,9 +77,11 @@ extern MOZ_EXPORT void* __libc_stack_end;  // from ld-linux.so
+@@ -104,9 +104,11 @@ class FrameSkipper {
  // We need a way to know if we are building for WXP (or later), as if we are, we
  // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
  // A value of 9 indicates we want to use the new APIs.
@@ -465,27 +379,9 @@ index 24868ae5d..c6166b6a6 100644
  #  endif
 +#endif
  
- struct WalkStackData {
-   // Are we walking the stack of the calling thread? Note that we need to avoid
-@@ -181,6 +183,9 @@ static void InitializeDbgHelpCriticalSection() {
- }
+ CRITICAL_SECTION gDbgHelpCS;
  
- static void WalkStackMain64(struct WalkStackData* aData) {
-+#ifdef JS_ENABLE_UWP
-+  return;
-+#else
-   // Get a context for the specified thread.
-   CONTEXT context_buf;
-   CONTEXT* context;
-@@ -366,6 +371,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
-     }
- #  endif
-   }
-+#endif
- }
- 
- /**
-@@ -436,6 +442,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
+@@ -439,6 +441,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
    BOOL retval = TRUE;
    DWORD64 addr = *(DWORD64*)aUserContext;
  
@@ -667,27 +563,6 @@ index 464380b6d..a84e2860e 100644
  
  }  // namespace glue
  }  // namespace mozilla
-diff --git a/js/src/gc/Nursery.cpp b/js/src/gc/Nursery.cpp
-index 37cf8ef62..568967532 100644
---- a/js/src/gc/Nursery.cpp
-+++ b/js/src/gc/Nursery.cpp
-@@ -38,8 +38,13 @@
- #include "vm/NativeObject-inl.h"
- 
- #ifdef XP_WIN
--#  include <process.h>
--#  define getpid _getpid
-+#  ifndef JS_ENABLE_UWP
-+#    include <process.h>
-+#    define getpid _getpid
-+#  else
-+#   include <windows.h>
-+#   define getpid GetCurrentProcessId
-+#  endif
- #else
- #  include <unistd.h>
- #endif
-
 diff --git a/mozglue/misc/WindowsUnicode.h b/mozglue/misc/WindowsUnicode.h
 index 77fc376b9..dcf793839 100644
 --- a/mozglue/misc/WindowsUnicode.h

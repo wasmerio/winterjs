@@ -6,26 +6,14 @@ info: The initial value of Infinity is Number.POSITIVE_INFINITY
 es5id: 15.1.1.2_A1
 description: Use typeof, isNaN, isFinite
 ---*/
+assert.sameValue(typeof(Infinity), "number", 'The value of `typeof(Infinity)` is expected to be "number"');
+assert.sameValue(isFinite(Infinity), false, 'isFinite(Infinity) must return false');
+assert.sameValue(isNaN(Infinity), false, 'isNaN(Infinity) must return false');
 
-// CHECK#1
-if (typeof(Infinity) !== "number") {
-  $ERROR('#1: typeof(Infinity) === "number". Actual: ' + (typeof(Infinity)));
-}
-
-// CHECK#2
-if (isFinite(Infinity) !== false) {
-  $ERROR('#2: Infinity === Not-a-Finite. Actual: ' + (Infinity));
-}
-
-// CHECK#3
-if (isNaN(Infinity) !== false) {
-  $ERROR('#3: Infinity === Not-a-Number. Actual: ' + (Infinity));
-}
-
-
-// CHECK#4
-if (Infinity !== Number.POSITIVE_INFINITY) {
-  $ERROR('#4: Infinity === Number.POSITIVE_INFINITY. Actual: ' + (Infinity));
-}
+assert.sameValue(
+  Infinity,
+  Number.POSITIVE_INFINITY,
+  'The value of Infinity is expected to equal the value of Number.POSITIVE_INFINITY'
+);
 
 reportCompare(0, 0);

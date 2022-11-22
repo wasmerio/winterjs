@@ -523,8 +523,9 @@ BEGIN_TEST(testAssemblerBuffer_ARM64) {
 
   js::LifoAlloc lifo(4096);
   TempAllocator alloc(&lifo);
-  JitContext jc(cx, &alloc);
-  StackMacroAssembler masm;
+  JitContext jc(cx);
+  StackMacroAssembler masm(cx, alloc);
+  AutoCreatedBy acb(masm, __func__);
 
   // Branches to an unbound label.
   Label lab1;

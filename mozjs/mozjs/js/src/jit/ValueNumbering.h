@@ -70,19 +70,21 @@ class ValueNumberer {
   bool dependenciesBroken_;        // Have we broken AliasAnalysis?
   bool hasOSRFixups_;              // Have we created any OSR fixup blocks?
 
-  enum UseRemovedOption { DontSetUseRemoved, SetUseRemoved };
+  enum ImplicitUseOption { DontSetImplicitUse, SetImplicitUse };
+  enum class AllowEffectful : bool { No, Yes };
 
   [[nodiscard]] bool handleUseReleased(MDefinition* def,
-                                       UseRemovedOption useRemovedOption);
-  [[nodiscard]] bool discardDefsRecursively(MDefinition* def);
+                                       ImplicitUseOption implicitUseOption);
+  [[nodiscard]] bool discardDefsRecursively(
+      MDefinition* def, AllowEffectful allowEffectful = AllowEffectful::No);
   [[nodiscard]] bool releaseResumePointOperands(MResumePoint* resume);
   [[nodiscard]] bool releaseAndRemovePhiOperands(MPhi* phi);
   [[nodiscard]] bool releaseOperands(MDefinition* def);
-  [[nodiscard]] bool discardDef(MDefinition* def);
+  [[nodiscard]] bool discardDef(
+      MDefinition* def, AllowEffectful allowEffectful = AllowEffectful::No);
   [[nodiscard]] bool processDeadDefs();
 
-  [[nodiscard]] bool fixupOSROnlyLoop(MBasicBlock* block,
-                                      MBasicBlock* backedge);
+  [[nodiscard]] bool fixupOSROnlyLoop(MBasicBlock* block);
   [[nodiscard]] bool removePredecessorAndDoDCE(MBasicBlock* block,
                                                MBasicBlock* pred,
                                                size_t predIndex);

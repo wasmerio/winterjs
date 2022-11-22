@@ -5,10 +5,15 @@
 /*---
 description: |
     Collection of functions used to assert the correctness of RegExp objects.
-defines: [buildString, testPropertyEscapes, matchValidator]
+defines: [buildString, testPropertyEscapes, testPropertyOfStrings, testExtendedCharacterClass, matchValidator]
 ---*/
 
-function buildString({ loneCodePoints, ranges }) {
+function buildString(args) {
+  // Use member expressions rather than destructuring `args` for improved
+  // compatibility with engines that only implement assignment patterns
+  // partially or not at all.
+  const loneCodePoints = args.loneCodePoints;
+  const ranges = args.ranges;
   const CHUNK_SIZE = 10000;
   let result = Reflect.apply(String.fromCodePoint, null, loneCodePoints);
   for (let i = 0; i < ranges.length; i++) {
@@ -28,23 +33,71 @@ function buildString({ loneCodePoints, ranges }) {
   return result;
 }
 
-function testPropertyEscapes(regex, string, expression) {
-  if (!regex.test(string)) {
+function printCodePoint(codePoint) {
+  const hex = codePoint
+    .toString(16)
+    .toUpperCase()
+    .padStart(6, "0");
+  return `U+${hex}`;
+}
+
+function printStringCodePoints(string) {
+  const buf = [];
+  for (const symbol of string) {
+    const formatted = printCodePoint(symbol.codePointAt(0));
+    buf.push(formatted);
+  }
+  return buf.join(' ');
+}
+
+function testPropertyEscapes(regExp, string, expression) {
+  if (!regExp.test(string)) {
     for (const symbol of string) {
-      const hex = symbol
-        .codePointAt(0)
-        .toString(16)
-        .toUpperCase()
-        .padStart(6, "0");
+      const hex = printCodePoint(symbol.codePointAt(0));
       assert(
-        regex.test(symbol),
+        regExp.test(symbol),
         `\`${ expression }\` should match U+${ hex } (\`${ symbol }\`)`
       );
     }
   }
 }
 
-// Returns a function that will validate RegExp match result
+function testPropertyOfStrings(args) {
+  // Use member expressions rather than destructuring `args` for improved
+  // compatibility with engines that only implement assignment patterns
+  // partially or not at all.
+  const regExp = args.regExp;
+  const expression = args.expression;
+  const matchStrings = args.matchStrings;
+  const nonMatchStrings = args.nonMatchStrings;
+  const allStrings = matchStrings.join('');
+  if (!regExp.test(allStrings)) {
+    for (const string of matchStrings) {
+      assert(
+        regExp.test(string),
+        `\`${ expression }\` should match ${ string } (U+${ printStringCodePoints(string) })`
+      );
+    }
+  }
+
+  const allNonMatchStrings = nonMatchStrings.join('');
+  if (regExp.test(allNonMatchStrings)) {
+    for (const string of nonMatchStrings) {
+      assert(
+        !regExp.test(string),
+        `\`${ expression }\` should not match ${ string } (U+${ printStringCodePoints(string) })`
+      );
+    }
+  }
+}
+
+// The exact same logic can be used to test extended character classes
+// as enabled through the RegExp `v` flag. This is useful to test not
+// just standalone properties of strings, but also string literals, and
+// set operations.
+const testExtendedCharacterClass = testPropertyOfStrings;
+
+// Returns a function that validates a RegExp match result.
 //
 // Example:
 //

@@ -73,7 +73,7 @@ to just keep them separate so there is no potential for conflicts.
 Very early in the build process, a virtualenv is created inside the
 :term:`object directory`. The virtualenv is configured such that it can
 find all the Python packages in the source tree. The code for this lives
-in :py:mod:`mozbuild.virtualenv`.
+in :py:mod:`mach.site`.
 
 Deficiencies
 ------------
@@ -83,7 +83,7 @@ the build system.
 
 * mach reinvents the virtualenv.
 
-  There is code in ``build/mach_bootstrap.py`` that configures ``sys.path``
+  There is code in ``build/mach_initialize.py`` that configures ``sys.path``
   much the same way the virtualenv does. There are various bugs tracking
   this. However, no clear solution has yet been devised. It's not a huge
   problem and thus not a huge priority.

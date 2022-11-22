@@ -11,31 +11,13 @@ description: Argument value is Infinity
 
 var num = Infinity;
 
-//CHECK#1
-if (typeof num !== 'number') {
-  $ERROR('#1: Infinity is NOT a number');
-}
+assert.sameValue(typeof num, 'number', 'The value of `typeof num` is expected to be "number"');
 
 var n_obj = new Object(num);
 
-//CHECK#2
-if (n_obj.constructor !== Number) {
-  $ERROR('#2: When the Object constructor is called with Number argument return ToObject(number)');
-}
-
-//CHECK#3
-if (typeof n_obj !== 'object') {
-  $ERROR('#3: When the Object constructor is called with Number argument return ToObject(number)');
-}
-
-//CHECK#4
-if (n_obj != num) {
-  $ERROR('#4: When the Object constructor is called with Number argument return ToObject(number)');
-}
-
-//CHECK#5
-if (n_obj === num) {
-  $ERROR('#5: When the Object constructor is called with Number argument return ToObject(number)');
-}
+assert.sameValue(n_obj.constructor, Number, 'The value of n_obj.constructor is expected to equal the value of Number');
+assert.sameValue(typeof n_obj, 'object', 'The value of `typeof n_obj` is expected to be "object"');
+assert(n_obj == num, 'The result of evaluating (n_obj == num) is expected to be true');
+assert.notSameValue(n_obj, num, 'The value of n_obj is expected to not equal the value of `num`');
 
 reportCompare(0, 0);

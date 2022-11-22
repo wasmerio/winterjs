@@ -10,9 +10,10 @@ import os
 import re
 import shutil
 import subprocess
-import sys
+from pathlib import Path
+from typing import Optional, Union
 
-from mozbuild.util import ensure_subprocess_env
+from mach.util import to_optional_path
 from mozfile import which
 from mozpack.files import FileListFinder
 
@@ -51,26 +52,20 @@ class CannotDeleteFromRootOfRepositoryException(Exception):
     the repository, which is not permitted."""
 
 
-def get_tool_path(tool):
+def get_tool_path(tool: Union[str, Path]):
+    tool = Path(tool)
     """Obtain the path of `tool`."""
-    if os.path.isabs(tool) and os.path.exists(tool):
-        return tool
+    if tool.is_absolute() and tool.exists():
+        return str(tool)
 
-    path = which(tool)
+    path = to_optional_path(which(str(tool)))
     if not path:
         raise MissingVCSTool(
-            "Unable to obtain %s path. Try running "
+            f"Unable to obtain {tool} path. Try running "
             "|mach bootstrap| to ensure your environment is up to "
-            "date." % tool
+            "date."
         )
-    return path
-
-
-def _paths_equal(a, b):
-    """Return True iff the two paths refer to the "same" file on disk."""
-    return os.path.normpath(os.path.realpath(a)) == os.path.normpath(
-        os.path.realpath(b)
-    )
+    return str(path)
 
 
 class Repository(object):
@@ -85,22 +80,12 @@ class Repository(object):
 
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, path, tool):
-        self.path = os.path.abspath(path)
-        self._tool = get_tool_path(tool)
+    def __init__(self, path: Path, tool: str):
+        self.path = str(path.resolve())
+        self._tool = Path(get_tool_path(tool))
         self._version = None
         self._valid_diff_filter = ("m", "a", "d")
-
-        if os.name == "nt" and sys.version_info[0] == 2:
-            self._env = {}
-            for k, v in os.environ.iteritems():
-                if isinstance(k, unicode):
-                    k = k.encode("utf8")
-                if isinstance(v, unicode):
-                    v = v.encode("utf8")
-                self._env[k] = v
-        else:
-            self._env = os.environ.copy()
+        self._env = os.environ.copy()
 
     def __enter__(self):
         return self
@@ -111,13 +96,10 @@ class Repository(object):
     def _run(self, *args, **runargs):
         return_codes = runargs.get("return_codes", [])
 
-        cmd = (self._tool,) + args
+        cmd = (str(self._tool),) + args
         try:
             return subprocess.check_output(
-                cmd,
-                cwd=self.path,
-                env=ensure_subprocess_env(self._env),
-                universal_newlines=True,
+                cmd, cwd=self.path, env=self._env, universal_newlines=True
             )
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
@@ -153,6 +135,17 @@ class Repository(object):
     @abc.abstractproperty
     def base_ref(self):
         """Hash of revision the current topic branch is based on."""
+
+    @abc.abstractmethod
+    def base_ref_as_hg(self):
+        """Mercurial hash of revision the current topic branch is based on.
+
+        Return None if the hg hash of the base ref could not be calculated.
+        """
+
+    @abc.abstractproperty
+    def branch(self):
+        """Current branch or bookmark the checkout has active."""
 
     @abc.abstractmethod
     def get_commit_time(self):
@@ -201,7 +194,7 @@ class Repository(object):
         """
 
     @abc.abstractmethod
-    def get_outgoing_files(self, diff_filter, upstream="default"):
+    def get_outgoing_files(self, diff_filter, upstream):
         """Return a list of changed files compared to upstream.
 
         ``diff_filter`` works the same as `get_changed_files`.
@@ -211,11 +204,11 @@ class Repository(object):
         """
 
     @abc.abstractmethod
-    def add_remove_files(self, *paths):
+    def add_remove_files(self, *paths: Union[str, Path]):
         """Add and remove files under `paths` in this repository's working copy."""
 
     @abc.abstractmethod
-    def forget_add_remove_files(self, *paths):
+    def forget_add_remove_files(self, *paths: Union[str, Path]):
         """Undo the effects of a previous add_remove_files call for `paths`."""
 
     @abc.abstractmethod
@@ -241,7 +234,7 @@ class Repository(object):
         """
 
     @abc.abstractmethod
-    def clean_directory(self, path):
+    def clean_directory(self, path: Union[str, Path]):
         """Undo all changes (including removing new untracked files) in the
         given `path`.
         """
@@ -286,26 +279,23 @@ class Repository(object):
 class HgRepository(Repository):
     """An implementation of `Repository` for Mercurial repositories."""
 
-    def __init__(self, path, hg="hg"):
+    def __init__(self, path: Path, hg="hg"):
         import hglib.client
 
         super(HgRepository, self).__init__(path, tool=hg)
-        self._env[b"HGPLAIN"] = b"1"
+        self._env["HGPLAIN"] = "1"
 
         # Setting this modifies a global variable and makes all future hglib
         # instances use this binary. Since the tool path was validated, this
         # should be OK. But ideally hglib would offer an API that defines
         # per-instance binaries.
-        hglib.HGPATH = self._tool
+        hglib.HGPATH = str(self._tool)
 
         # Without connect=False this spawns a persistent process. We want
         # the process lifetime tied to a context manager.
         self._client = hglib.client.hgclient(
-            self.path, encoding=b"UTF-8", configs=None, connect=False
+            self.path, encoding="UTF-8", configs=None, connect=False
         )
-
-        # Work around py3 compat issues in python-hglib
-        self._client._env = ensure_subprocess_env(self._client._env)
 
     @property
     def name(self):
@@ -319,11 +309,24 @@ class HgRepository(Repository):
     def base_ref(self):
         return self._run("log", "-r", "last(ancestors(.) and public())", "-T", "{node}")
 
+    def base_ref_as_hg(self):
+        return self.base_ref
+
+    @property
+    def branch(self):
+        bookmarks_fn = Path(self.path) / ".hg" / "bookmarks.current"
+        if bookmarks_fn.exists():
+            with open(bookmarks_fn) as f:
+                bookmark = f.read()
+                return bookmark or None
+
+        return None
+
     def __enter__(self):
         if self._client.server is None:
             # The cwd if the spawned process should be the repo root to ensure
             # relative paths are normalized to it.
-            old_cwd = os.getcwd()
+            old_cwd = Path.cwd()
             try:
                 os.chdir(self.path)
                 self._client.open()
@@ -370,10 +373,10 @@ class HgRepository(Repository):
         # .hg/requires. But since the requirement is still experimental
         # as of Mercurial 4.3, it's probably more trouble than its worth
         # to verify it.
-        sparse = os.path.join(self.path, ".hg", "sparse")
+        sparse = Path(self.path) / ".hg" / "sparse"
 
         try:
-            st = os.stat(sparse)
+            st = sparse.stat()
             return st.st_size > 0
         except OSError as e:
             if e.errno != errno.ENOENT:
@@ -425,8 +428,14 @@ class HgRepository(Repository):
             template = self._files_template(diff_filter)
             return self._run("log", "-r", rev, "-T", template).splitlines()
 
-    def get_outgoing_files(self, diff_filter="ADM", upstream="default"):
+    def get_outgoing_files(self, diff_filter="ADM", upstream=None):
         template = self._files_template(diff_filter)
+
+        if not upstream:
+            return self._run(
+                "log", "-r", "draft() and ancestors(.)", "--template", template
+            ).split()
+
         return self._run(
             "outgoing",
             "-r",
@@ -438,19 +447,25 @@ class HgRepository(Repository):
             return_codes=(1,),
         ).split()
 
-    def add_remove_files(self, *paths):
+    def add_remove_files(self, *paths: Union[str, Path]):
         if not paths:
             return
-        args = ["addremove"] + list(paths)
+
+        paths = [str(path) for path in paths]
+
+        args = ["addremove"] + paths
         m = re.search(r"\d+\.\d+", self.tool_version)
         simplified_version = float(m.group(0)) if m else 0
         if simplified_version >= 3.9:
             args = ["--config", "extensions.automv="] + args
         self._run(*args)
 
-    def forget_add_remove_files(self, *paths):
+    def forget_add_remove_files(self, *paths: Union[str, Path]):
         if not paths:
             return
+
+        paths = [str(path) for path in paths]
+
         self._run("forget", *paths)
 
     def get_tracked_files_finder(self):
@@ -471,15 +486,16 @@ class HgRepository(Repository):
         # means we are clean.
         return not len(self._run(*args).strip())
 
-    def clean_directory(self, path):
-        if _paths_equal(self.path, path):
+    def clean_directory(self, path: Union[str, Path]):
+        if Path(self.path).samefile(path):
             raise CannotDeleteFromRootOfRepositoryException()
-        self._run("revert", path)
-        for f in self._run("st", "-un", path).split():
-            if os.path.isfile(f):
-                os.remove(f)
+        self._run("revert", str(path))
+        for single_path in self._run("st", "-un", str(path)).splitlines():
+            single_path = Path(single_path)
+            if single_path.is_file():
+                single_path.unlink()
             else:
-                shutil.rmtree(f)
+                shutil.rmtree(str(single_path))
 
     def update(self, ref):
         return self._run("update", "--check", ref)
@@ -487,9 +503,9 @@ class HgRepository(Repository):
     def push_to_try(self, message):
         try:
             subprocess.check_call(
-                (self._tool, "push-to-try", "-m", message),
+                (str(self._tool), "push-to-try", "-m", message),
                 cwd=self.path,
-                env=ensure_subprocess_env(self._env),
+                env=self._env,
             )
         except subprocess.CalledProcessError:
             try:
@@ -504,7 +520,7 @@ class HgRepository(Repository):
 class GitRepository(Repository):
     """An implementation of `Repository` for Git repositories."""
 
-    def __init__(self, path, git="git"):
+    def __init__(self, path: Path, git="git"):
         super(GitRepository, self).__init__(path, tool=git)
 
     @property
@@ -523,6 +539,17 @@ class GitRepository(Repository):
         if refs:
             return refs[-1][1:]  # boundary starts with a prefix `-`
         return self.head_ref
+
+    def base_ref_as_hg(self):
+        base_ref = self.base_ref
+        try:
+            return self._run("cinnabar", "git2hg", base_ref)
+        except subprocess.CalledProcessError:
+            return
+
+    @property
+    def branch(self):
+        return self._run("branch", "--show-current").strip() or None
 
     @property
     def has_git_cinnabar(self):
@@ -571,10 +598,10 @@ class GitRepository(Repository):
 
         return self._run(*cmd).splitlines()
 
-    def get_outgoing_files(self, diff_filter="ADM", upstream="default"):
+    def get_outgoing_files(self, diff_filter="ADM", upstream=None):
         assert all(f.lower() in self._valid_diff_filter for f in diff_filter)
 
-        not_condition = "--remotes" if upstream == "default" else upstream
+        not_condition = upstream if upstream else "--remotes"
 
         files = self._run(
             "log",
@@ -588,14 +615,20 @@ class GitRepository(Repository):
         ).splitlines()
         return [f for f in files if f]
 
-    def add_remove_files(self, *paths):
+    def add_remove_files(self, *paths: Union[str, Path]):
         if not paths:
             return
+
+        paths = [str(path) for path in paths]
+
         self._run("add", *paths)
 
-    def forget_add_remove_files(self, *paths):
+    def forget_add_remove_files(self, *paths: Union[str, Path]):
         if not paths:
             return
+
+        paths = [str(path) for path in paths]
+
         self._run("reset", *paths)
 
     def get_tracked_files_finder(self):
@@ -618,11 +651,11 @@ class GitRepository(Repository):
 
         return not len(self._run(*args).strip())
 
-    def clean_directory(self, path):
-        if _paths_equal(self.path, path):
+    def clean_directory(self, path: Union[str, Path]):
+        if Path(self.path).samefile(path):
             raise CannotDeleteFromRootOfRepositoryException()
-        self._run("checkout", "--", path)
-        self._run("clean", "-df", path)
+        self._run("checkout", "--", str(path))
+        self._run("clean", "-df", str(path))
 
     def update(self, ref):
         self._run("checkout", ref)
@@ -637,7 +670,7 @@ class GitRepository(Repository):
         try:
             subprocess.check_call(
                 (
-                    self._tool,
+                    str(self._tool),
                     "push",
                     "hg::ssh://hg.mozilla.org/try",
                     "+HEAD:refs/heads/branches/default/tip",
@@ -651,16 +684,20 @@ class GitRepository(Repository):
         self._run("config", name, value)
 
 
-def get_repository_object(path, hg="hg", git="git"):
+def get_repository_object(path: Optional[Union[str, Path]], hg="hg", git="git"):
     """Get a repository object for the repository at `path`.
     If `path` is not a known VCS repository, raise an exception.
     """
-    if os.path.isdir(os.path.join(path, ".hg")):
+    # If we provide a path to hg that does not match the on-disk casing (e.g.,
+    # because `path` was normcased), then the hg fsmonitor extension will call
+    # watchman with that path and watchman will spew errors.
+    path = Path(path).resolve()
+    if (path / ".hg").is_dir():
         return HgRepository(path, hg=hg)
-    elif os.path.exists(os.path.join(path, ".git")):
+    elif (path / ".git").exists():
         return GitRepository(path, git=git)
     else:
-        raise InvalidRepoPath("Unknown VCS, or not a source checkout: %s" % path)
+        raise InvalidRepoPath(f"Unknown VCS, or not a source checkout: {path}")
 
 
 def get_repository_from_build_config(config):
@@ -681,9 +718,9 @@ def get_repository_from_build_config(config):
         )
 
     if flavor == "hg":
-        return HgRepository(config.topsrcdir, hg=config.substs["HG"])
+        return HgRepository(Path(config.topsrcdir), hg=config.substs["HG"])
     elif flavor == "git":
-        return GitRepository(config.topsrcdir, git=config.substs["GIT"])
+        return GitRepository(Path(config.topsrcdir), git=config.substs["GIT"])
     else:
         raise MissingVCSInfo("unknown VCS_CHECKOUT_TYPE value: %s" % flavor)
 
@@ -700,22 +737,15 @@ def get_repository_from_env():
         import buildconfig
 
         return get_repository_from_build_config(buildconfig)
-    except ImportError:
+    except (ImportError, MissingVCSTool):
         pass
 
-    def ancestors(path):
-        while path:
-            yield path
-            path, child = os.path.split(path)
-            if child == "":
-                break
+    paths_to_check = [Path.cwd(), *Path.cwd().parents]
 
-    for path in ancestors(os.getcwd()):
+    for path in paths_to_check:
         try:
             return get_repository_object(path)
         except InvalidRepoPath:
             continue
 
-    raise MissingVCSInfo(
-        "Could not find Mercurial or Git checkout for %s" % os.getcwd()
-    )
+    raise MissingVCSInfo(f"Could not find Mercurial or Git checkout for {Path.cwd()}")

@@ -6,10 +6,12 @@ from __future__ import absolute_import
 
 import abc
 import re
-from os.path import expanduser
+
+from pathlib import Path
+from threading import Thread
 
 import sentry_sdk
-from mozboot.util import get_state_dir
+from mach.util import get_state_dir
 from mach.telemetry import is_telemetry_enabled
 from mozversioncontrol import (
     get_repository_object,
@@ -19,8 +21,10 @@ from mozversioncontrol import (
 )
 from six import string_types
 
-# https://sentry.prod.mozaws.net/operations/mach/
-_SENTRY_DSN = "https://8228c9aff64949c2ba4a2154dc515f55@sentry.prod.mozaws.net/525"
+# https://sentry.io/organizations/mozilla/projects/mach/
+_SENTRY_DSN = (
+    "https://5cfe351fb3a24e8d82c751252b48722b@o1069899.ingest.sentry.io/6250014"
+)
 
 
 class ErrorReporter(object):
@@ -47,9 +51,17 @@ class NoopErrorReporter(ErrorReporter):
         return None
 
 
-def register_sentry(argv, settings, topsrcdir):
+def register_sentry(argv, settings, topsrcdir: Path):
     if not is_telemetry_enabled(settings):
         return NoopErrorReporter()
+
+    global _is_unmodified_mach_core_thread
+    _is_unmodified_mach_core_thread = Thread(
+        target=_is_unmodified_mach_core,
+        args=[topsrcdir],
+        daemon=True,
+    )
+    _is_unmodified_mach_core_thread.start()
 
     sentry_sdk.init(
         _SENTRY_DSN, before_send=lambda event, _: _process_event(event, topsrcdir)
@@ -58,13 +70,29 @@ def register_sentry(argv, settings, topsrcdir):
     return SentryErrorReporter()
 
 
-def _process_event(sentry_event, topsrcdir):
-    if not _is_unmodified_mach_core(topsrcdir):
-        # Returning None causes the event to be dropped:
-        # https://docs.sentry.io/platforms/python/configuration/filtering/#using-beforesend
-        return None
+def _process_event(sentry_event, topsrcdir: Path):
+    # Returning nothing causes the event to be dropped:
+    # https://docs.sentry.io/platforms/python/configuration/filtering/#using-beforesend
+    repo = _get_repository_object(topsrcdir)
+    if repo is None:
+        # We don't know the repo state, so we don't know if mach files are
+        # unmodified.
+        return
+
+    base_ref = repo.base_ref_as_hg()
+    if not base_ref:
+        # If we don't know which revision this exception is attached to, then it's
+        # not worth sending
+        return
+
+    _is_unmodified_mach_core_thread.join()
+    if not _is_unmodified_mach_core_result:
+        return
+
     for map_fn in (_settle_mach_module_id, _patch_absolute_paths, _delete_server_name):
         sentry_event = map_fn(sentry_event, topsrcdir)
+
+    sentry_event["release"] = "hg-rev-{}".format(base_ref)
     return sentry_event
 
 
@@ -88,7 +116,7 @@ def _settle_mach_module_id(sentry_event, _):
     return sentry_event
 
 
-def _patch_absolute_paths(sentry_event, topsrcdir):
+def _patch_absolute_paths(sentry_event, topsrcdir: Path):
     # As discussed here (https://bugzilla.mozilla.org/show_bug.cgi?id=1636251#c28),
     # we remove usernames from file names with a best-effort basis. The most likely
     # place for usernames to manifest in Sentry information is within absolute paths,
@@ -113,8 +141,8 @@ def _patch_absolute_paths(sentry_event, topsrcdir):
 
     for (target_path, replacement) in (
         (get_state_dir(), "<statedir>"),
-        (topsrcdir, "<topsrcdir>"),
-        (expanduser("~"), "~"),
+        (str(topsrcdir), "<topsrcdir>"),
+        (str(Path.home()), "~"),
     ):
         # Sentry converts "vars" to their "representations". When paths are in local
         # variables on Windows, "C:\Users\MozillaUser\Desktop" becomes
@@ -126,13 +154,19 @@ def _patch_absolute_paths(sentry_event, topsrcdir):
         for target in (target_path, repr_path):
             # Paths in the Sentry event aren't consistent:
             # * On *nix, they're mostly forward slashes.
+            # * On *nix, not all absolute paths start with a leading forward slash.
             # * On Windows, they're mostly backslashes.
             # * On Windows, `.extra."sys.argv"` uses forward slashes.
             # * The Python variables in-scope captured by the Sentry report may be
             #   inconsistent, even for a single path. For example, on
             #   Windows, Mach calculates the state_dir as "C:\Users\<user>/.mozbuild".
-            #
-            # To resolve this, we have our path-patching match
+
+            # Handle the case where not all absolute paths start with a leading
+            # forward slash: make the initial slash optional in the search string.
+            if target.startswith("/"):
+                target = "/?" + target[1:]
+
+            # Handle all possible slash variants: our search string should match
             # both forward slashes and backslashes. This is done by dynamically
             # replacing each "/" and "\" with the regex "[\/\\]" (match both).
             slash_regex = re.compile(r"[\/\\]")
@@ -152,14 +186,14 @@ def _delete_server_name(sentry_event, _):
     return sentry_event
 
 
-def _get_repository_object(topsrcdir):
+def _get_repository_object(topsrcdir: Path):
     try:
-        return get_repository_object(topsrcdir)
+        return get_repository_object(str(topsrcdir))
     except (InvalidRepoPath, MissingVCSTool):
         return None
 
 
-def _is_unmodified_mach_core(topsrcdir):
+def _is_unmodified_mach_core(topsrcdir: Path):
     """True if mach is unmodified compared to the public tree.
 
     To avoid submitting Sentry events for errors caused by user's
@@ -172,17 +206,19 @@ def _is_unmodified_mach_core(topsrcdir):
     pretty confident that the Mach behaviour that caused the exception
     also exists in the public tree.
     """
-    repo = _get_repository_object(topsrcdir)
-    if repo is None:
-        # We don't know the repo state, so we don't know if mach files are
-        # unmodified.
-        return False
+    global _is_unmodified_mach_core_result
 
+    repo = _get_repository_object(topsrcdir)
     try:
         files = set(repo.get_outgoing_files()) | set(repo.get_changed_files())
+        _is_unmodified_mach_core_result = not any(
+            [file for file in files if file == "mach" or file.endswith(".py")]
+        )
     except MissingUpstreamRepo:
         # If we don't know the upstream state, we don't know if the mach files
         # have been unmodified.
-        return False
+        _is_unmodified_mach_core_result = False
 
-    return not any([file for file in files if file == "mach" or file.endswith(".py")])
+
+_is_unmodified_mach_core_result = None
+_is_unmodified_mach_core_thread = None

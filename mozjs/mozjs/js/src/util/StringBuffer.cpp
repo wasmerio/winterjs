@@ -8,12 +8,14 @@
 
 #include "mozilla/Latin1.h"
 #include "mozilla/Range.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 
 #include "frontend/ParserAtom.h"  // frontend::{ParserAtomsTable, TaggedParserAtomIndex
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "vm/BigIntType.h"
+#include "vm/StaticStrings.h"
+
 #include "vm/JSObject-inl.h"
 #include "vm/StringType-inl.h"
 
@@ -33,7 +35,7 @@ static CharT* ExtractWellSized(Buffer& cb) {
   /* For medium/big buffers, avoid wasting more than 1/4 of the memory. */
   MOZ_ASSERT(capacity >= length);
   if (length > Buffer::sMaxInlineStorage && capacity - length > length / 4) {
-    CharT* tmp = allocPolicy.pod_realloc<CharT>(buf, capacity, length + 1);
+    CharT* tmp = allocPolicy.pod_realloc<CharT>(buf, capacity, length);
     if (!tmp) {
       allocPolicy.free_(buf);
       return nullptr;
@@ -115,7 +117,7 @@ JSLinearString* JSStringBuilder::finishString() {
     return cx_->names().empty;
   }
 
-  if (!JSString::validateLength(cx_, len)) {
+  if (MOZ_UNLIKELY(!JSString::validateLength(cx_, len))) {
     return nullptr;
   }
 
@@ -146,19 +148,19 @@ JSAtom* StringBuffer::finishAtom() {
 }
 
 frontend::TaggedParserAtomIndex StringBuffer::finishParserAtom(
-    frontend::ParserAtomsTable& parserAtoms) {
+    frontend::ParserAtomsTable& parserAtoms, ErrorContext* ec) {
   size_t len = length();
   if (len == 0) {
     return frontend::TaggedParserAtomIndex::WellKnown::empty();
   }
 
   if (isLatin1()) {
-    auto result = parserAtoms.internLatin1(cx_, latin1Chars().begin(), len);
+    auto result = parserAtoms.internLatin1(ec, latin1Chars().begin(), len);
     latin1Chars().clear();
     return result;
   }
 
-  auto result = parserAtoms.internChar16(cx_, twoByteChars().begin(), len);
+  auto result = parserAtoms.internChar16(ec, twoByteChars().begin(), len);
   twoByteChars().clear();
   return result;
 }
@@ -174,7 +176,7 @@ bool js::ValueToStringBufferSlow(JSContext* cx, const Value& arg,
     return sb.append(v.toString());
   }
   if (v.isNumber()) {
-    return NumberValueToStringBuffer(cx, v, sb);
+    return NumberValueToStringBuffer(v, sb);
   }
   if (v.isBoolean()) {
     return BooleanToStringBuffer(v.toBoolean(), sb);

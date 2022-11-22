@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,6 +11,7 @@ from __future__ import absolute_import, print_function, division
 import argparse
 import collections
 import gzip
+import io
 import json
 import os
 import platform
@@ -19,6 +20,8 @@ import shutil
 import sys
 import tempfile
 from bisect import bisect_right
+from functools import cmp_to_key
+from typing import Callable
 
 # The DMD output version this script handles.
 outputVersion = 5
@@ -43,11 +46,18 @@ allocatorFns = [
     "operator new(",
     "operator new[](",
     "g_slice_alloc",
-    # This one necessary to fully filter some sequences of allocation functions
-    # that happen in practice. Note that ??? entries that follow non-allocation
-    # functions won't be stripped, as explained above.
+    # This one is necessary to fully filter some sequences of allocation
+    # functions that happen in practice. Note that ??? entries that follow
+    # non-allocation functions won't be stripped, as explained above.
     "???",
+    # Match DMD internals.
+    "mozilla::dmd::AllocCallback",
+    "mozilla::dmd::StackTrace::Get",
 ]
+
+
+def cmp(a, b):
+    return (a > b) - (a < b)
 
 
 class Record(object):
@@ -225,8 +235,12 @@ variable is used to find breakpad symbols for stack fixing.
     )
 
     p.add_argument(
-        "--allocation-filter",
-        help="Only print entries that have a stack that matches the filter",
+        "--filter",
+        default=[],
+        action="append",
+        help="Only print entries that have a stack that matches the filter. "
+        "A filter may be negated by prefixing it with `!`. "
+        "If multiple filters are specified, all of them must match.",
     )
 
     p.add_argument("input_file", help="a file produced by DMD")
@@ -280,7 +294,7 @@ def fixStackTraces(inputFilename, isZipped, opener):
     # get that now in order to move |tmpFile| at the end.
     tmpFilename = tmpFile.name
     if isZipped:
-        tmpFile = gzip.GzipFile(filename="", fileobj=tmpFile)
+        tmpFile = gzip.GzipFile(filename="", fileobj=tmpFile, mode="wb")
 
     with opener(inputFilename, "rb") as inputFile:
         for line in inputFile:
@@ -355,7 +369,7 @@ def getDigestFromFile(args, inputFile):
     # Trim the number of frames.
     for traceKey, frameKeys in traceTable.items():
         if len(frameKeys) > args.max_frames:
-            traceTable[traceKey] = frameKeys[: args.max_frames]
+            del frameKeys[args.max_frames :]
 
     def buildTraceDescription(traceTable, frameTable, traceKey):
         frameKeys = traceTable[traceKey]
@@ -444,7 +458,7 @@ def getDigestFromFile(args, inputFile):
                 return recordKeyPartCache[traceKey]
 
             recordKeyPart = str(
-                map(lambda frameKey: frameTable[frameKey], traceTable[traceKey])
+                list(map(lambda frameKey: frameTable[frameKey], traceTable[traceKey]))
             )
             recordKeyPartCache[traceKey] = recordKeyPart
             return recordKeyPart
@@ -500,7 +514,7 @@ def getDigestFromFile(args, inputFile):
                 def f(k):
                     return buildTraceDescription(traceTable, frameTable, k)
 
-                record.reportedAtDescs = map(f, reportedAtTraceKeys)
+                record.reportedAtDescs = list(map(f, reportedAtTraceKeys))
         record.usableSizes[usableSize] += num
 
     # All the processed data for a single DMD file is called a "digest".
@@ -606,20 +620,30 @@ def printDigest(args, digest):
         out(separator)
         numRecords = len(records)
         cmpRecords = sortByChoices[args.sort_by]
-        sortedRecords = sorted(records.values(), cmp=cmpRecords, reverse=True)
+        sortedRecords = sorted(
+            records.values(), key=cmp_to_key(cmpRecords), reverse=True
+        )
         kindBlocks = 0
         kindUsableSize = 0
         maxRecord = 1000
 
-        if args.allocation_filter:
-            sortedRecords = list(
-                filter(
-                    lambda x: any(
-                        map(lambda y: args.allocation_filter in y, x.allocatedAtDesc)
-                    ),
-                    sortedRecords,
-                )
-            )
+        def is_match(rec: Record, key: str):
+            return any(key in desc for desc in rec.allocatedAtDesc)
+
+        for arg in args.filter:
+            key: str
+            cond: Callable[[Record], bool]
+            if arg.startswith("\\"):
+                # just in case you really need to start a filter with '!' (or '\')
+                key = arg[1:]
+                cond = is_match
+            elif arg.startswith("!"):
+                key = arg[1:]
+                cond = lambda rec, key: not is_match(rec, key)  # noqa: E731
+            else:
+                key = arg
+                cond = is_match
+            sortedRecords = [rec for rec in sortedRecords if cond(rec, key)]
 
         # First iteration: get totals, etc.
         for record in sortedRecords:
@@ -813,7 +837,7 @@ def prettyPrintDmdJson(out, j):
 
     out.write(' "traceTable": {')
     first = True
-    for k, l in j["traceTable"].iteritems():
+    for k, l in j["traceTable"].items():
         out.write("" if first else ",")
         out.write('\n  "{0}": {1}'.format(k, json.dumps(l)))
         first = False
@@ -821,7 +845,7 @@ def prettyPrintDmdJson(out, j):
 
     out.write(' "frameTable": {')
     first = True
-    for k, v in j["frameTable"].iteritems():
+    for k, v in j["frameTable"].items():
         out.write("" if first else ",")
         out.write('\n  "{0}": {1}'.format(k, json.dumps(v)))
         first = False
@@ -983,8 +1007,8 @@ def clampBlockList(args, inputFileName, isZipped, opener):
     tmpFile = tempfile.NamedTemporaryFile(delete=False)
     tmpFilename = tmpFile.name
     if isZipped:
-        tmpFile = gzip.GzipFile(filename="", fileobj=tmpFile)
-    prettyPrintDmdJson(tmpFile, j)
+        tmpFile = gzip.GzipFile(filename="", fileobj=tmpFile, mode="wb")
+    prettyPrintDmdJson(io.TextIOWrapper(tmpFile, encoding="utf-8"), j)
     tmpFile.close()
     shutil.move(tmpFilename, inputFileName)
 

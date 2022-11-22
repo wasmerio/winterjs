@@ -7,20 +7,50 @@
 #ifndef jit_JitScript_h
 #define jit_JitScript_h
 
+#include "mozilla/Assertions.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/HashFunctions.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/MemoryReporting.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 #include "jstypes.h"
+#include "NamespaceImports.h"
+
+#include "gc/Barrier.h"
 #include "jit/BaselineIC.h"
-#include "jit/TrialInlining.h"
+#include "jit/ICStubSpace.h"
+#include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
+#include "js/Vector.h"
 #include "util/TrailingArray.h"
 #include "vm/EnvironmentObject.h"
 
 class JS_PUBLIC_API JSScript;
+class JS_PUBLIC_API JSTracer;
+struct JS_PUBLIC_API JSContext;
+
+namespace JS {
+class Zone;
+}
 
 namespace js {
+
+class SystemAllocPolicy;
+
+namespace gc {
+class AllocSite;
+}
+
 namespace jit {
 
+class BaselineScript;
+class InliningRoot;
+class IonScript;
+class JitScript;
 class JitZone;
 
 // Information about a script's bytecode, used by WarpBuilder. This is cached
@@ -28,7 +58,6 @@ class JitZone;
 struct IonBytecodeInfo {
   bool usesEnvironmentChain = false;
   bool modifiesArguments = false;
-  bool hasTryFinally = false;
 };
 
 // Magic BaselineScript value indicating Baseline compilation has been disabled.
@@ -46,9 +75,6 @@ static IonScript* const IonDisabledScriptPtr =
     reinterpret_cast<IonScript*>(IonDisabledScript);
 static IonScript* const IonCompilingScriptPtr =
     reinterpret_cast<IonScript*>(IonCompilingScript);
-
-class JitScript;
-class InliningRoot;
 
 /* [SMDOC] ICScript Lifetimes
  *
@@ -84,20 +110,37 @@ class InliningRoot;
 
 class alignas(uintptr_t) ICScript final : public TrailingArray {
  public:
-  ICScript(uint32_t warmUpCount, Offset endOffset, uint32_t depth,
-           InliningRoot* inliningRoot = nullptr)
+  ICScript(uint32_t warmUpCount, Offset fallbackStubsOffset, Offset endOffset,
+           uint32_t depth, InliningRoot* inliningRoot = nullptr)
       : inliningRoot_(inliningRoot),
         warmUpCount_(warmUpCount),
+        fallbackStubsOffset_(fallbackStubsOffset),
         endOffset_(endOffset),
         depth_(depth) {}
 
   bool isInlined() const { return depth_ > 0; }
 
-  [[nodiscard]] bool initICEntries(JSContext* cx, JSScript* script);
+  void initICEntries(JSContext* cx, JSScript* script);
 
   ICEntry& icEntry(size_t index) {
     MOZ_ASSERT(index < numICEntries());
     return icEntries()[index];
+  }
+
+  ICFallbackStub* fallbackStub(size_t index) {
+    MOZ_ASSERT(index < numICEntries());
+    return fallbackStubs() + index;
+  }
+
+  ICEntry* icEntryForStub(const ICFallbackStub* stub) {
+    size_t index = stub - fallbackStubs();
+    MOZ_ASSERT(index < numICEntries());
+    return &icEntry(index);
+  }
+  ICFallbackStub* fallbackStubForICEntry(const ICEntry* entry) {
+    size_t index = entry - icEntries();
+    MOZ_ASSERT(index < numICEntries());
+    return fallbackStub(index);
   }
 
   InliningRoot* inliningRoot() const { return inliningRoot_; }
@@ -117,14 +160,10 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
 
   static constexpr Offset offsetOfICEntries() { return sizeof(ICScript); }
   uint32_t numICEntries() const {
-    return numElements<ICEntry>(icEntriesOffset(), endOffset());
+    return numElements<ICEntry>(icEntriesOffset(), fallbackStubsOffset());
   }
 
   ICEntry* interpreterICEntryFromPCOffset(uint32_t pcOffset);
-
-  ICEntry* maybeICEntryFromPCOffset(uint32_t pcOffset);
-  ICEntry* maybeICEntryFromPCOffset(uint32_t pcOffset,
-                                    ICEntry* prevLookedUpEntry);
 
   ICEntry& icEntryFromPCOffset(uint32_t pcOffset);
 
@@ -135,7 +174,7 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   void removeInlinedChild(uint32_t pcOffset);
   bool hasInlinedChild(uint32_t pcOffset);
 
-  FallbackICStubSpace* fallbackStubSpace();
+  JitScriptICStubSpace* jitScriptStubSpace();
   void purgeOptimizedStubs(Zone* zone);
 
   void trace(JSTracer* trc);
@@ -166,6 +205,9 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   // See also the ScriptWarmUpData class.
   mozilla::Atomic<uint32_t, mozilla::Relaxed> warmUpCount_ = {};
 
+  // The offset of the ICFallbackStub array.
+  Offset fallbackStubsOffset_;
+
   // The size of this allocation.
   Offset endOffset_;
 
@@ -173,9 +215,14 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   uint32_t depth_;
 
   Offset icEntriesOffset() const { return offsetOfICEntries(); }
+  Offset fallbackStubsOffset() const { return fallbackStubsOffset_; }
   Offset endOffset() const { return endOffset_; }
 
   ICEntry* icEntries() { return offsetToPointer<ICEntry>(icEntriesOffset()); }
+
+  ICFallbackStub* fallbackStubs() {
+    return offsetToPointer<ICFallbackStub>(fallbackStubsOffset());
+  }
 
   JitScript* outerJitScript();
 
@@ -195,22 +242,22 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
 // stored in IonScript.
 //
 // For each IC we store an ICEntry, which points to the first ICStub in the
-// chain. Note that multiple stubs in the same zone can share Baseline IC code.
-// This works because the stub data is stored in the ICStub instead of baked in
-// in the stub code.
+// chain, and an ICFallbackStub. Note that multiple stubs in the same zone can
+// share Baseline IC code. This works because the stub data is stored in the
+// ICStub instead of baked in in the stub code.
 //
 // Storing this separate from BaselineScript allows us to use the same ICs in
 // the Baseline Interpreter and Baseline JIT. It also simplifies debug mode OSR
 // because the JitScript can be reused when we have to recompile the
 // BaselineScript.
 //
-// The JitScript contains a fallback stub space. This stores all fallback stubs
-// and the "can GC" stubs. These stubs are never purged before destroying the
-// JitScript. Other stubs are stored in the optimized stub space stored in
-// JitZone and can be purged more eagerly. See JitScript::purgeOptimizedStubs.
+// The JitScript contains a stub space. This stores the "can GC" CacheIR stubs.
+// These stubs are never purged before destroying the JitScript. Other stubs are
+// stored in the optimized stub space stored in JitZone and can be purged more
+// eagerly. See JitScript::purgeOptimizedStubs.
 //
-// An ICScript contains a list of IC entries. There's one IC for each JOF_IC
-// bytecode op.
+// An ICScript contains a list of IC entries and a list of fallback stubs.
+// There's one ICEntry and ICFallbackStub for each JOF_IC bytecode op.
 //
 // The ICScript also contains the warmUpCount for the script.
 //
@@ -221,21 +268,23 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
 //
 // Memory Layout
 // =============
-// JitScript contains an ICScript as the last field. ICScript has a trailing
-// (variable length) ICEntry array. The memory layout is as follows:
+// JitScript contains an ICScript as the last field. ICScript has trailing
+// (variable length) arrays for ICEntry and ICFallbackStub. The memory layout is
+// as follows:
 //
 //  Item                    | Offset
 //  ------------------------+------------------------
 //  JitScript               | 0
 //  -->ICScript  (field)    |
 //     ICEntry[]            | icEntriesOffset()
+//     ICFallbackStub[]     | fallbackStubsOffset()
 //
 // These offsets are also used to compute numICEntries.
 class alignas(uintptr_t) JitScript final : public TrailingArray {
   friend class ::JSScript;
 
-  // Allocated space for fallback IC stubs.
-  FallbackICStubSpace fallbackStubSpace_ = {};
+  // Allocated space for Can-GC CacheIR stubs.
+  JitScriptICStubSpace jitScriptStubSpace_ = {};
 
   // Profile string used by the profiler for Baseline Interpreter frames.
   const char* profileString_ = nullptr;
@@ -263,11 +312,11 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   // Baseline code for the script. Either nullptr, BaselineDisabledScriptPtr or
   // a valid BaselineScript*.
-  BaselineScript* baselineScript_ = nullptr;
+  GCStructPtr<BaselineScript*> baselineScript_;
 
   // Ion code for this script. Either nullptr, IonDisabledScriptPtr,
   // IonCompilingScriptPtr or a valid IonScript*.
-  IonScript* ionScript_ = nullptr;
+  GCStructPtr<IonScript*> ionScript_;
 
   // The size of this allocation.
   Offset endOffset_ = 0;
@@ -289,7 +338,14 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   // bailouts, this is a hash of the ICScripts used in that compilation.
   // When recompiling, we assert that the hash has changed.
   mozilla::Maybe<mozilla::HashNumber> failedICHash_;
+
+  // To avoid pathological cases, we skip the check if we have purged
+  // stubs due to GC pressure.
+  bool hasPurgedStubs_ = false;
 #endif
+
+  // List of allocation sites referred to by ICs in this script.
+  Vector<gc::AllocSite*, 0, SystemAllocPolicy> allocSites_;
 
   ICScript icScript_;
   // End of fields.
@@ -308,19 +364,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   }
 
  public:
-  JitScript(JSScript* script, Offset endOffset, const char* profileString);
+  JitScript(JSScript* script, Offset fallbackStubsOffset, Offset endOffset,
+            const char* profileString);
 
-#ifdef DEBUG
-  ~JitScript() {
-    // The contents of the fallback stub space are removed and freed
-    // separately after the next minor GC. See prepareForDestruction.
-    MOZ_ASSERT(fallbackStubSpace_.isEmpty());
-
-    // BaselineScript and IonScript must have been destroyed at this point.
-    MOZ_ASSERT(!hasBaselineScript());
-    MOZ_ASSERT(!hasIonScript());
-  }
-#endif
+  ~JitScript();
 
   [[nodiscard]] bool ensureHasCachedIonData(JSContext* cx, HandleScript script);
 
@@ -361,17 +408,9 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   void incWarmUpCount(uint32_t amount) { icScript_.warmUpCount_ += amount; }
   void resetWarmUpCount(uint32_t count);
 
-  void prepareForDestruction(Zone* zone) {
-    // When the script contains pointers to nursery things, the store buffer can
-    // contain entries that point into the fallback stub space. Since we can
-    // destroy scripts outside the context of a GC, this situation could result
-    // in us trying to mark invalid store buffer entries.
-    //
-    // Defer freeing any allocated blocks until after the next minor GC.
-    fallbackStubSpace_.freeAllAfterMinorGC(zone);
-  }
+  void prepareForDestruction(Zone* zone);
 
-  FallbackICStubSpace* fallbackStubSpace() { return &fallbackStubSpace_; }
+  JitScriptICStubSpace* jitScriptStubSpace() { return &jitScriptStubSpace_; }
 
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t* data,
                               size_t* fallbackStubs) const {
@@ -379,18 +418,24 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
     // |data| already includes the ICStubSpace itself, so use
     // sizeOfExcludingThis.
-    *fallbackStubs += fallbackStubSpace_.sizeOfExcludingThis(mallocSizeOf);
+    *fallbackStubs += jitScriptStubSpace_.sizeOfExcludingThis(mallocSizeOf);
   }
 
   ICEntry& icEntry(size_t index) { return icScript_.icEntry(index); }
 
+  ICFallbackStub* fallbackStub(size_t index) {
+    return icScript_.fallbackStub(index);
+  }
+
+  ICEntry* icEntryForStub(const ICFallbackStub* stub) {
+    return icScript_.icEntryForStub(stub);
+  }
+  ICFallbackStub* fallbackStubForICEntry(const ICEntry* entry) {
+    return icScript_.fallbackStubForICEntry(entry);
+  }
+
   void trace(JSTracer* trc);
   void purgeOptimizedStubs(JSScript* script);
-
-  ICEntry* maybeICEntryFromPCOffset(uint32_t pcOffset,
-                                    ICEntry* prevLookedUpEntry) {
-    return icScript_.maybeICEntryFromPCOffset(pcOffset, prevLookedUpEntry);
-  }
 
   ICEntry& icEntryFromPCOffset(uint32_t pcOffset) {
     return icScript_.icEntryFromPCOffset(pcOffset);
@@ -408,15 +453,16 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   bool usesEnvironmentChain() const {
     return cachedIonData().bytecodeInfo.usesEnvironmentChain;
   }
-  bool hasTryFinally() const {
-    return cachedIonData().bytecodeInfo.hasTryFinally;
-  }
+
+  gc::AllocSite* createAllocSite(JSScript* script);
+
+  bool resetAllocSites(bool resetNurserySites, bool resetPretenuredSites);
 
  private:
   // Methods to set baselineScript_ to a BaselineScript*, nullptr, or
   // BaselineDisabledScriptPtr.
   void setBaselineScriptImpl(JSScript* script, BaselineScript* baselineScript);
-  void setBaselineScriptImpl(JSFreeOp* fop, JSScript* script,
+  void setBaselineScriptImpl(JS::GCContext* gcx, JSScript* script,
                              BaselineScript* baselineScript);
 
  public:
@@ -435,17 +481,18 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     setBaselineScriptImpl(script, baselineScript);
     MOZ_ASSERT(hasBaselineScript());
   }
-  [[nodiscard]] BaselineScript* clearBaselineScript(JSFreeOp* fop,
+  [[nodiscard]] BaselineScript* clearBaselineScript(JS::GCContext* gcx,
                                                     JSScript* script) {
     BaselineScript* baseline = baselineScript();
-    setBaselineScriptImpl(fop, script, nullptr);
+    setBaselineScriptImpl(gcx, script, nullptr);
     return baseline;
   }
 
  private:
   // Methods to set ionScript_ to an IonScript*, nullptr, or one of the special
   // Ion{Disabled,Compiling}ScriptPtr values.
-  void setIonScriptImpl(JSFreeOp* fop, JSScript* script, IonScript* ionScript);
+  void setIonScriptImpl(JS::GCContext* gcx, JSScript* script,
+                        IonScript* ionScript);
   void setIonScriptImpl(JSScript* script, IonScript* ionScript);
 
  public:
@@ -465,9 +512,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     setIonScriptImpl(script, ionScript);
     MOZ_ASSERT(hasIonScript());
   }
-  [[nodiscard]] IonScript* clearIonScript(JSFreeOp* fop, JSScript* script) {
+  [[nodiscard]] IonScript* clearIonScript(JS::GCContext* gcx,
+                                          JSScript* script) {
     IonScript* ion = ionScript();
-    setIonScriptImpl(fop, script, nullptr);
+    setIonScriptImpl(gcx, script, nullptr);
     return ion;
   }
 
@@ -494,7 +542,9 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   mozilla::HashNumber getFailedICHash() { return failedICHash_.extract(); }
   void setFailedICHash(mozilla::HashNumber hash) {
     MOZ_ASSERT(failedICHash_.isNothing());
-    failedICHash_.emplace(hash);
+    if (!hasPurgedStubs_) {
+      failedICHash_.emplace(hash);
+    }
   }
 #endif
 };

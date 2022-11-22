@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # We don't import all modules at the top for performance reasons. See Bug 1008943
-
-from __future__ import absolute_import, print_function
 
 import errno
 import os
@@ -16,9 +12,9 @@ import sys
 import time
 import warnings
 from contextlib import contextmanager
+from textwrap import dedent
 
 from six.moves import urllib
-
 
 __all__ = [
     "extract_tarball",
@@ -49,6 +45,19 @@ def extract_tarball(src, dest, ignore=None):
         namelist = []
 
         for m in bundle:
+            # Mitigation for CVE-2007-4559, Python's tarfile library will allow
+            # writing files outside of the intended destination.
+            if ".." in m.name:
+                raise RuntimeError(
+                    dedent(
+                        f"""
+                    Tar bundle '{src}' may be maliciously crafted to escape the destination!
+                    The following path was detected:
+
+                      {m.name}
+                    """
+                    )
+                )
             if ignore and any(match(m.name, i) for i in ignore):
                 continue
             bundle.extract(m, path=dest)
@@ -96,8 +105,8 @@ def extract(src, dest=None, ignore=None):
     Returns the list of top level files that were extracted
     """
 
-    import zipfile
     import tarfile
+    import zipfile
 
     assert os.path.exists(src), "'%s' does not exist" % src
 
@@ -231,7 +240,7 @@ def remove(path):
 
         _call_with_windows_retry(os.chmod, (path, mode))
 
-    if not os.path.exists(path):
+    if not os.path.lexists(path):
         return
 
     """
@@ -245,7 +254,7 @@ def remove(path):
         and path[1] == ":"
         and path[2] == "\\"
     ):
-        path = u"\\\\?\\%s" % path
+        path = "\\\\?\\%s" % path
 
     if os.path.isfile(path) or os.path.islink(path):
         # Verify the file or link is read/write for the current user
@@ -321,7 +330,7 @@ def move(src, dst):
 
 
 def depth(directory):
-    """returns the integer depth of a directory or path relative to '/' """
+    """returns the integer depth of a directory or path relative to '/'"""
 
     directory = os.path.abspath(directory)
     level = 0
@@ -335,9 +344,9 @@ def depth(directory):
 
 def tree(directory, sort_key=lambda x: x.lower()):
     """Display tree directory structure for `directory`."""
-    vertical_line = u"│"
-    item_marker = u"├"
-    last_child = u"└"
+    vertical_line = "│"
+    item_marker = "├"
+    last_child = "└"
 
     retval = []
     indent = []
@@ -421,10 +430,7 @@ def which(cmd, mode=os.F_OK | os.X_OK, path=None, exts=None, extra_search_dirs=(
     extra_search_dirs is a convenience argument. If provided, the strings in
     the sequence will be appended to the END of the given `path`.
     """
-    try:
-        from shutil import which as shutil_which
-    except ImportError:
-        from shutil_which import which as shutil_which
+    from shutil import which as shutil_which
 
     if isinstance(path, (list, tuple)):
         path = os.pathsep.join(path)
@@ -547,8 +553,8 @@ def TemporaryDirectory():
 
     """
 
-    import tempfile
     import shutil
+    import tempfile
 
     tempdir = tempfile.mkdtemp()
     try:

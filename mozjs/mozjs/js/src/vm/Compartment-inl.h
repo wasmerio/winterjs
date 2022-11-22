@@ -14,12 +14,9 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jsnum.h"
-#include "gc/Barrier.h"
-#include "gc/Marking.h"
 #include "js/CallArgs.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Wrapper.h"
-#include "vm/Iteration.h"
 #include "vm/JSObject.h"
 
 #include "vm/JSContext-inl.h"
@@ -65,6 +62,17 @@ inline bool JS::Compartment::wrap(JSContext* cx, JS::MutableHandleValue vp) {
     vp.setBigInt(bi);
     return true;
   }
+
+#ifdef ENABLE_RECORD_TUPLE
+  if (vp.isExtendedPrimitive()) {
+    JS::RootedObject extPrim(cx, &vp.toExtendedPrimitive());
+    if (!wrapExtendedPrimitive(cx, &extPrim)) {
+      return false;
+    }
+    vp.setExtendedPrimitive(*extPrim);
+    return true;
+  }
+#endif
 
   MOZ_ASSERT(vp.isObject());
 
@@ -267,14 +275,12 @@ template <class T>
                                                    int argIndex) {
   HandleValue val = args.get(argIndex);
   return UnwrapAndTypeCheckValue<T>(cx, val, [cx, val, methodName, argIndex] {
-    ToCStringBuf cbuf;
-    if (char* numStr = NumberToCString(cx, &cbuf, argIndex + 1, 10)) {
-      JS_ReportErrorNumberLatin1(
-          cx, GetErrorMessage, nullptr, JSMSG_WRONG_TYPE_ARG, numStr,
-          methodName, detail::ClassName<T>(), InformalValueTypeName(val));
-    } else {
-      ReportOutOfMemory(cx);
-    }
+    Int32ToCStringBuf cbuf;
+    char* numStr = Int32ToCString(&cbuf, argIndex + 1);
+    MOZ_ASSERT(numStr);
+    JS_ReportErrorNumberLatin1(
+        cx, GetErrorMessage, nullptr, JSMSG_WRONG_TYPE_ARG, numStr, methodName,
+        detail::ClassName<T>(), InformalValueTypeName(val));
   });
 }
 

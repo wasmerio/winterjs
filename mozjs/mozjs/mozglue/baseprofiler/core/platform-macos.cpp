@@ -36,18 +36,6 @@
 namespace mozilla {
 namespace baseprofiler {
 
-int profiler_current_process_id() { return getpid(); }
-
-int profiler_current_thread_id() {
-  uint64_t tid;
-  pthread_threadid_np(nullptr, &tid);
-  // Cast the uint64_t value to an int.
-  // In theory, this risks truncating the value. It's unknown if such large
-  // values occur in reality.
-  // It may be worth changing our cross-platform tid type to 64 bits.
-  return static_cast<int>(tid);
-}
-
 static int64_t MicrosecondsSince1970() {
   struct timeval tv;
   gettimeofday(&tv, NULL);
@@ -61,7 +49,8 @@ void* GetStackTop(void* aGuess) {
 
 class PlatformData {
  public:
-  explicit PlatformData(int aThreadId) : mProfiledThread(mach_thread_self()) {}
+  explicit PlatformData(BaseProfilerThreadId aThreadId)
+      : mProfiledThread(mach_thread_self()) {}
 
   ~PlatformData() {
     // Deallocate Mach port for thread.
@@ -142,14 +131,15 @@ void Sampler::SuspendAndSampleAndResumeThread(
     regs.mPC = reinterpret_cast<Address>(state.REGISTER_FIELD(ip));
     regs.mSP = reinterpret_cast<Address>(state.REGISTER_FIELD(sp));
     regs.mFP = reinterpret_cast<Address>(state.REGISTER_FIELD(bp));
+    regs.mLR = 0;
 #elif defined(__aarch64__)
     regs.mPC = reinterpret_cast<Address>(state.REGISTER_FIELD(pc));
     regs.mSP = reinterpret_cast<Address>(state.REGISTER_FIELD(sp));
     regs.mFP = reinterpret_cast<Address>(state.REGISTER_FIELD(fp));
+    regs.mLR = reinterpret_cast<Address>(state.REGISTER_FIELD(lr));
 #else
 #  error "unknown architecture"
 #endif
-    regs.mLR = 0;
 
     aProcessRegs(regs, aNow);
   }
@@ -179,7 +169,7 @@ static void* ThreadEntry(void* aArg) {
 }
 
 SamplerThread::SamplerThread(PSLockRef aLock, uint32_t aActivityGeneration,
-                             double aIntervalMilliseconds)
+                             double aIntervalMilliseconds, uint32_t aFeatures)
     : mSampler(aLock),
       mActivityGeneration(aActivityGeneration),
       mIntervalMicroseconds(
@@ -210,25 +200,15 @@ static void PlatformInit(PSLockRef aLock) {}
 
 #if defined(HAVE_NATIVE_UNWIND)
 void Registers::SyncPopulate() {
-#  if defined(__x86_64__)
-  asm(
-      // Compute caller's %rsp by adding to %rbp:
-      // 8 bytes for previous %rbp, 8 bytes for return address
-      "leaq 0x10(%%rbp), %0\n\t"
-      // Dereference %rbp to get previous %rbp
-      "movq (%%rbp), %1\n\t"
-      : "=r"(mSP), "=r"(mFP));
-#  elif defined(__aarch64__)
-  asm(
-      // Compute caller's sp by adding to fp:
-      // 8 bytes for previous fp, 8 bytes for return address
-      "add %0, x29, #0x10\n\t"
-      // Dereference fp to get previous fp
-      "ldr %1, [x29]\n\t"
-      : "=r"(mSP), "=r"(mFP));
-#  else
-#    error "unknown architecture"
-#  endif
+  // Derive the stack pointer from the frame pointer. The 0x10 offset is
+  // 8 bytes for the previous frame pointer and 8 bytes for the return
+  // address both stored on the stack after at the beginning of the current
+  // frame.
+  mSP = reinterpret_cast<Address>(__builtin_frame_address(0)) + 0x10;
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wframe-address"
+  mFP = reinterpret_cast<Address>(__builtin_frame_address(1));
+#  pragma GCC diagnostic pop
   mPC = reinterpret_cast<Address>(
       __builtin_extract_return_addr(__builtin_return_address(0)));
   mLR = 0;

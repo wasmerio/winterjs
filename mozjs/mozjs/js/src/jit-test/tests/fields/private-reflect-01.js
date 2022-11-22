@@ -1,5 +1,3 @@
-// |jit-test| --enable-private-fields;
-
 function rp(x) {
   return Reflect.parse(x);
 };
@@ -9,6 +7,15 @@ rp(`(
       static #m = 'test262';
     }
   )`);
+
+rp(`(
+  class {
+    static #m = 'test262';
+    constructor() {
+      #m in {};
+    }
+  }
+)`);
 
 rp(`(
     class {

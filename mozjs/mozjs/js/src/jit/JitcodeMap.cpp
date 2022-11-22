@@ -10,10 +10,8 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Sprintf.h"
 
 #include "gc/Marking.h"
-#include "gc/Statistics.h"
 #include "jit/BaselineJIT.h"
 #include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
@@ -22,7 +20,6 @@
 #include "vm/BytecodeLocation.h"  // for BytecodeLocation
 #include "vm/GeckoProfiler.h"
 
-#include "vm/BytecodeLocation-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSScript-inl.h"
 
@@ -637,13 +634,13 @@ void JitcodeGlobalTable::traceWeak(JSRuntime* rt, JSTracer* trc) {
             "JitcodeGlobalTable::JitcodeGlobalEntry::jitcode_")) {
       e.removeFront();
     } else {
-      entry->sweepChildren(rt);
+      entry->traceWeak(trc);
     }
   }
 }
 
 bool JitcodeGlobalEntry::BaseEntry::traceJitcode(JSTracer* trc) {
-  if (!IsMarkedUnbarriered(trc->runtime(), &jitcode_)) {
+  if (!IsMarkedUnbarriered(trc->runtime(), jitcode_)) {
     TraceManuallyBarrieredEdge(trc, &jitcode_,
                                "jitcodglobaltable-baseentry-jitcode");
     return true;
@@ -653,11 +650,11 @@ bool JitcodeGlobalEntry::BaseEntry::traceJitcode(JSTracer* trc) {
 
 bool JitcodeGlobalEntry::BaseEntry::isJitcodeMarkedFromAnyThread(
     JSRuntime* rt) {
-  return IsMarkedUnbarriered(rt, &jitcode_);
+  return IsMarkedUnbarriered(rt, jitcode_);
 }
 
 bool JitcodeGlobalEntry::BaselineEntry::trace(JSTracer* trc) {
-  if (!IsMarkedUnbarriered(trc->runtime(), &script_)) {
+  if (!IsMarkedUnbarriered(trc->runtime(), script_)) {
     TraceManuallyBarrieredEdge(trc, &script_,
                                "jitcodeglobaltable-baselineentry-script");
     return true;
@@ -665,8 +662,9 @@ bool JitcodeGlobalEntry::BaselineEntry::trace(JSTracer* trc) {
   return false;
 }
 
-void JitcodeGlobalEntry::BaselineEntry::sweepChildren() {
-  MOZ_ALWAYS_FALSE(IsAboutToBeFinalizedUnbarriered(&script_));
+void JitcodeGlobalEntry::BaselineEntry::traceWeak(JSTracer* trc) {
+  MOZ_ALWAYS_TRUE(
+      TraceManuallyBarrieredWeakEdge(trc, &script_, "BaselineEntry::script_"));
 }
 
 bool JitcodeGlobalEntry::IonEntry::trace(JSTracer* trc) {
@@ -674,7 +672,7 @@ bool JitcodeGlobalEntry::IonEntry::trace(JSTracer* trc) {
 
   JSRuntime* rt = trc->runtime();
   for (unsigned i = 0; i < numScripts(); i++) {
-    if (!IsMarkedUnbarriered(rt, &sizedScriptList()->pairs[i].script)) {
+    if (!IsMarkedUnbarriered(rt, sizedScriptList()->pairs[i].script)) {
       TraceManuallyBarrieredEdge(trc, &sizedScriptList()->pairs[i].script,
                                  "jitcodeglobaltable-ionentry-script");
       tracedAny = true;
@@ -684,10 +682,11 @@ bool JitcodeGlobalEntry::IonEntry::trace(JSTracer* trc) {
   return tracedAny;
 }
 
-void JitcodeGlobalEntry::IonEntry::sweepChildren() {
+void JitcodeGlobalEntry::IonEntry::traceWeak(JSTracer* trc) {
   for (unsigned i = 0; i < numScripts(); i++) {
-    MOZ_ALWAYS_FALSE(
-        IsAboutToBeFinalizedUnbarriered(&sizedScriptList()->pairs[i].script));
+    JSScript** scriptp = &sizedScriptList()->pairs[i].script;
+    MOZ_ALWAYS_TRUE(
+        TraceManuallyBarrieredWeakEdge(trc, scriptp, "IonEntry script"));
   }
 }
 

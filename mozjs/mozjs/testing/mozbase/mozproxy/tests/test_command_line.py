@@ -4,12 +4,13 @@ import json
 import os
 import re
 import signal
+import subprocess
+import sys
 import threading
 import time
 
+from buildconfig import topsrcdir, topobjdir
 import mozunit
-import pytest
-from mozbuild.base import MozbuildObject
 from mozprocess import ProcessHandler
 
 here = os.path.dirname(__file__)
@@ -32,7 +33,16 @@ def _install_package(virtualenv_manager, package):
         if site_packages.startswith(venv_site_lib):
             # already installed in this venv, we can skip
             return
-    virtualenv_manager._run_pip(["install", package])
+
+    subprocess.check_call(
+        [
+            virtualenv_manager.python_path,
+            "-m",
+            "pip",
+            "install",
+            package,
+        ]
+    )
 
 
 def _kill_mozproxy(pid):
@@ -69,34 +79,119 @@ class OutputHandler(object):
         self.port_event.set()
 
 
-@pytest.fixture(scope="module")
-def install_mozproxy():
-    build = MozbuildObject.from_environment(cwd=here, virtualenv_name="python-test")
-    build.virtualenv_manager.activate()
-
-    mozbase = os.path.join(build.topsrcdir, "testing", "mozbase")
-    mozproxy_deps = ["mozinfo", "mozlog", "mozproxy"]
-    for i in mozproxy_deps:
-        _install_package(build.virtualenv_manager, os.path.join(mozbase, i))
-    return build
-
-
-def test_help(install_mozproxy):
-    p = ProcessHandler(["mozproxy", "--help"])
+def test_help():
+    p = ProcessHandler([sys.executable, "-m", "mozproxy", "--help"])
     p.run()
     assert p.wait() == 0
 
 
-def test_run(install_mozproxy):
-    build = install_mozproxy
+def test_run_record_no_files():
     output_handler = OutputHandler()
     p = ProcessHandler(
         [
+            sys.executable,
+            "-m",
+            "mozproxy",
+            "--local",
+            "--mode=record",
+            "--binary=firefox",
+            "--topsrcdir=" + topsrcdir,
+            "--objdir=" + topobjdir,
+        ],
+        processOutputLine=output_handler,
+        onFinish=output_handler.finished,
+    )
+
+    p.run()
+    # The first time we run mozproxy, we need to fetch mitmproxy, which can
+    # take a while...
+    assert output_handler.port_event.wait(120) is True
+    # Give mitmproxy a bit of time to start up so we can verify that it's
+    # actually running before we kill mozproxy.
+    time.sleep(5)
+    _kill_mozproxy(p.pid)
+
+    # Assert process raises error
+    assert p.wait(10) == 2
+    assert output_handler.port is None
+
+
+def test_run_record_multiple_files():
+    output_handler = OutputHandler()
+    p = ProcessHandler(
+        [
+            sys.executable,
+            "-m",
+            "mozproxy",
+            "--local",
+            "--mode=record",
+            "--binary=firefox",
+            "--topsrcdir=" + topsrcdir,
+            "--objdir=" + topobjdir,
+            os.path.join(here, "files", "new_record.zip"),
+            os.path.join(here, "files", "new_record2.zip"),
+        ],
+        processOutputLine=output_handler,
+        onFinish=output_handler.finished,
+    )
+
+    p.run()
+    # The first time we run mozproxy, we need to fetch mitmproxy, which can
+    # take a while...
+    assert output_handler.port_event.wait(120) is True
+    # Give mitmproxy a bit of time to start up so we can verify that it's
+    # actually running before we kill mozproxy.
+    time.sleep(5)
+    _kill_mozproxy(p.pid)
+
+    assert p.wait(10) == 4
+    assert output_handler.port is None
+
+
+def test_run_record():
+    output_handler = OutputHandler()
+    p = ProcessHandler(
+        [
+            sys.executable,
+            "-m",
+            "mozproxy",
+            "--local",
+            "--mode=record",
+            "--binary=firefox",
+            "--topsrcdir=" + topsrcdir,
+            "--objdir=" + topobjdir,
+            os.path.join(here, "files", "record.zip"),
+        ],
+        processOutputLine=output_handler,
+        onFinish=output_handler.finished,
+    )
+    try:
+        p.run()
+        # The first time we run mozproxy, we need to fetch mitmproxy, which can
+        # take a while...
+        assert output_handler.port_event.wait(120) is True
+        # Give mitmproxy a bit of time to start up so we can verify that it's
+        # actually running before we kill mozproxy.
+        time.sleep(5)
+        _kill_mozproxy(p.pid)
+
+        assert p.wait(10) == 0
+        assert output_handler.port is not None
+    finally:
+        os.remove(os.path.join(here, "files", "record.zip"))
+
+
+def test_run_playback():
+    output_handler = OutputHandler()
+    p = ProcessHandler(
+        [
+            sys.executable,
+            "-m",
             "mozproxy",
             "--local",
             "--binary=firefox",
-            "--topsrcdir=" + build.topsrcdir,
-            "--objdir=" + build.topobjdir,
+            "--topsrcdir=" + topsrcdir,
+            "--objdir=" + topobjdir,
             os.path.join(here, "files", "mitm5-linux-firefox-amazon.zip"),
         ],
         processOutputLine=output_handler,
@@ -115,10 +210,12 @@ def test_run(install_mozproxy):
     assert output_handler.port is not None
 
 
-def test_failure(install_mozproxy):
+def test_failure():
     output_handler = OutputHandler()
     p = ProcessHandler(
         [
+            sys.executable,
+            "-m",
             "mozproxy",
             "--local",
             # Exclude some options here to trigger a command-line error.

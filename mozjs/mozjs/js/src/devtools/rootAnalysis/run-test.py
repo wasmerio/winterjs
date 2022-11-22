@@ -51,7 +51,14 @@ parser.add_argument(
 parser.add_argument(
     "tests",
     nargs="*",
-    default=["sixgill-tree", "suppression", "hazards", "exceptions", "virtual"],
+    default=[
+        "sixgill-tree",
+        "suppression",
+        "hazards",
+        "exceptions",
+        "virtual",
+        "graph",
+    ],
     help="tests to run",
 )
 
@@ -98,6 +105,10 @@ def make_dir(dirname, exist_ok=True):
 outroot = os.path.join(testdir, "out")
 make_dir(outroot)
 
+os.environ["HAZARD_RUN_INTERNAL_TESTS"] = "1"
+
+failed = set()
+passed = set()
 for name in cfg.tests:
     name = os.path.basename(name)
     indir = os.path.join(testdir, name)
@@ -117,8 +128,16 @@ for name in cfg.tests:
         exec(testcode, {"test": test, "equal": equal})
     except subprocess.CalledProcessError:
         print("TEST-FAILED: %s" % name)
+        failed.add(name)
     except AssertionError:
         print("TEST-FAILED: %s" % name)
+        failed.add(name)
         raise
     else:
         print("TEST-PASSED: %s" % name)
+        passed.add(name)
+
+if failed:
+    raise Exception("Failed tests: " + " ".join(failed))
+
+print(f"All {len(passed)} tests passed.")

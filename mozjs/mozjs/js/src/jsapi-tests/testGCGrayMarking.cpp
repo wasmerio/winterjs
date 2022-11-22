@@ -9,7 +9,9 @@
 
 #include "gc/WeakMap.h"
 #include "gc/Zone.h"
+#include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById
 #include "js/Proxy.h"
+#include "js/WeakMap.h"
 #include "jsapi-tests/tests.h"
 
 using namespace js;
@@ -50,9 +52,7 @@ class AutoNoAnalysisForTest {
 BEGIN_TEST(testGCGrayMarking) {
   AutoNoAnalysisForTest disableAnalysis;
   AutoDisableCompactingGC disableCompactingGC(cx);
-#ifdef JS_GC_ZEAL
   AutoLeaveZeal nozeal(cx);
-#endif /* JS_GC_ZEAL */
 
   CHECK(InitGlobals());
   JSAutoRealm ar(cx, global1);
@@ -60,14 +60,11 @@ BEGIN_TEST(testGCGrayMarking) {
   InitGrayRootTracer();
 
   // Enable incremental GC.
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
-  JS_SetGCParameter(cx, JSGC_PER_ZONE_GC_ENABLED, true);
+  AutoGCParameter param1(cx, JSGC_INCREMENTAL_GC_ENABLED, true);
+  AutoGCParameter param2(cx, JSGC_PER_ZONE_GC_ENABLED, true);
 
   bool ok = TestMarking() && TestJSWeakMaps() && TestInternalWeakMaps() &&
             TestCCWs() && TestGrayUnmarking();
-
-  JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, false);
-  JS_SetGCParameter(cx, JSGC_PER_ZONE_GC_ENABLED, false);
 
   global1 = nullptr;
   global2 = nullptr;
@@ -284,7 +281,9 @@ bool TestJSWeakMapWithGrayUnmarking(MarkKeyOrDelegate markKey,
     // Start an incremental GC and run until gray roots have been pushed onto
     // the mark stack.
     JS::PrepareForFullGC(cx);
-    JS::StartIncrementalGC(cx, GC_NORMAL, JS::GCReason::DEBUG_GC, 1000000);
+    js::SliceBudget budget(TimeBudget(1000000));
+    JS::StartIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::DEBUG_GC,
+                           budget);
     MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
     MOZ_ASSERT(cx->zone()->gcState() == Zone::MarkBlackAndGray);
 
@@ -411,7 +410,9 @@ bool TestInternalWeakMapWithGrayUnmarking(CellColor keyMarkColor,
     // Start an incremental GC and run until gray roots have been pushed onto
     // the mark stack.
     JS::PrepareForFullGC(cx);
-    JS::StartIncrementalGC(cx, GC_NORMAL, JS::GCReason::DEBUG_GC, 1000000);
+    js::SliceBudget budget(TimeBudget(1000000));
+    JS::StartIncrementalGC(cx, JS::GCOptions::Normal, JS::GCReason::DEBUG_GC,
+                           budget);
     MOZ_ASSERT(cx->runtime()->gc.state() == gc::State::Sweep);
     MOZ_ASSERT(cx->zone()->gcState() == Zone::MarkBlackAndGray);
 
@@ -502,7 +503,7 @@ bool TestCCWs() {
   JSRuntime* rt = cx->runtime();
   JS::PrepareForFullGC(cx);
   js::SliceBudget budget(js::WorkBudget(1));
-  rt->gc.startDebugGC(GC_NORMAL, budget);
+  rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   while (rt->gc.state() == gc::State::Prepare) {
     rt->gc.debugGCSlice(budget);
   }
@@ -530,7 +531,7 @@ bool TestCCWs() {
   // Incremental zone GC started: the source is now unmarked.
   JS::PrepareZoneForGC(cx, wrapper->zone());
   budget = js::SliceBudget(js::WorkBudget(1));
-  rt->gc.startDebugGC(GC_NORMAL, budget);
+  rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
   while (rt->gc.state() == gc::State::Prepare) {
     rt->gc.debugGCSlice(budget);
   }
@@ -616,7 +617,8 @@ struct ColorCheckFunctor {
     }
 
     // Shapes and symbols are never marked gray.
-    jsid id = shape->propid();
+    ShapePropertyIter<NoGC> iter(shape);
+    jsid id = iter->key();
     if (id.isGCThing() &&
         !CheckCellColor(id.toGCCellPtr().asCell(), MarkColor::Black)) {
       return false;
@@ -661,10 +663,11 @@ void RemoveGrayRootTracer() {
   JS_SetGrayGCRootsTracer(cx, nullptr, nullptr);
 }
 
-static void TraceGrayRoots(JSTracer* trc, void* data) {
+static bool TraceGrayRoots(JSTracer* trc, SliceBudget& budget, void* data) {
   auto grayRoots = static_cast<GrayRoots*>(data);
   TraceEdge(trc, &grayRoots->grayRoot1, "gray root 1");
   TraceEdge(trc, &grayRoots->grayRoot2, "gray root 2");
+  return true;
 }
 
 JSObject* AllocPlainObject() {
@@ -792,7 +795,7 @@ void EvictNursery() { cx->runtime()->gc.evictNursery(); }
 
 bool ZoneGC(JS::Zone* zone) {
   JS::PrepareZoneForGC(cx, zone);
-  cx->runtime()->gc.gc(GC_NORMAL, JS::GCReason::API);
+  cx->runtime()->gc.gc(JS::GCOptions::Normal, JS::GCReason::API);
   CHECK(!cx->runtime()->gc.isFullGc());
   return true;
 }

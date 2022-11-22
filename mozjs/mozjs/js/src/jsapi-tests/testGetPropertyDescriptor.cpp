@@ -2,7 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor
+#include "js/CallAndConstruct.h"  // JS::IsCallable
+#include "js/PropertyAndElement.h"
+#include "js/PropertyDescriptor.h"  // JS::FromPropertyDescriptor, JS_GetPropertyDescriptor
+#include "js/RootingAPI.h"
 #include "jsapi-tests/tests.h"
 
 BEGIN_TEST(test_GetPropertyDescriptor) {
@@ -11,11 +14,12 @@ BEGIN_TEST(test_GetPropertyDescriptor) {
   CHECK(v.isObject());
 
   JS::RootedObject obj(cx, &v.toObject());
-  JS::Rooted<JS::PropertyDescriptor> desc(cx);
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> desc(cx);
+  JS::RootedObject holder(cx);
 
-  CHECK(JS_GetPropertyDescriptor(cx, obj, "somename", &desc));
-  CHECK_EQUAL(desc.object(), obj);
-  CHECK_SAME(desc.value(), JS::Int32Value(123));
+  CHECK(JS_GetPropertyDescriptor(cx, obj, "somename", &desc, &holder));
+  CHECK(desc.isSome());
+  CHECK_SAME(desc->value(), JS::Int32Value(123));
 
   JS::RootedValue descValue(cx);
   CHECK(JS::FromPropertyDescriptor(cx, desc, &descValue));
@@ -35,15 +39,15 @@ BEGIN_TEST(test_GetPropertyDescriptor) {
   CHECK(JS_GetProperty(cx, descObj, "enumerable", &value));
   CHECK(value.isTrue());
 
-  CHECK(JS_GetPropertyDescriptor(cx, obj, "not-here", &desc));
-  CHECK_EQUAL(desc.object(), nullptr);
+  CHECK(JS_GetPropertyDescriptor(cx, obj, "not-here", &desc, &holder));
+  CHECK(desc.isNothing());
 
-  CHECK(JS_GetPropertyDescriptor(cx, obj, "toString", &desc));
+  CHECK(JS_GetPropertyDescriptor(cx, obj, "toString", &desc, &holder));
   JS::RootedObject objectProto(cx, JS::GetRealmObjectPrototype(cx));
   CHECK(objectProto);
-  CHECK_EQUAL(desc.object(), objectProto);
-  CHECK(desc.value().isObject());
-  CHECK(JS::IsCallable(&desc.value().toObject()));
+  CHECK_EQUAL(holder, objectProto);
+  CHECK(desc->value().isObject());
+  CHECK(JS::IsCallable(&desc->value().toObject()));
 
   return true;
 }

@@ -409,6 +409,7 @@ SimInstruction::Type SimInstruction::instructionType() const {
         case ff_dextm:
         case ff_dextu:
         case ff_bshfl:
+        case ff_dbshfl:
           return kRegisterType;
         default:
           return kUnsupported;
@@ -1514,6 +1515,16 @@ JS::ProfilingFrameIterator::RegisterState Simulator::registerState() {
   return state;
 }
 
+static bool AllowUnaligned() {
+  static bool hasReadFlag = false;
+  static bool unalignedAllowedFlag = false;
+  if (!hasReadFlag) {
+    unalignedAllowedFlag = !!getenv("MIPS_UNALIGNED");
+    hasReadFlag = true;
+  }
+  return unalignedAllowedFlag;
+}
+
 // MIPS memory instructions (except lw(d)l/r , sw(d)l/r) trap on unaligned
 // memory access enabling the OS to handle them via trap-and-emulate. Note that
 // simulator runs have the runtime system running directly on the host system
@@ -1565,7 +1576,7 @@ uint16_t Simulator::readHU(uint64_t addr, SimInstruction* instr) {
     return 0xffff;
   }
 
-  if ((addr & 1) == 0 ||
+  if (AllowUnaligned() || (addr & 1) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     return *ptr;
@@ -1582,7 +1593,7 @@ int16_t Simulator::readH(uint64_t addr, SimInstruction* instr) {
     return -1;
   }
 
-  if ((addr & 1) == 0 ||
+  if (AllowUnaligned() || (addr & 1) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     int16_t* ptr = reinterpret_cast<int16_t*>(addr);
     return *ptr;
@@ -1599,7 +1610,7 @@ void Simulator::writeH(uint64_t addr, uint16_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 1) == 0 ||
+  if (AllowUnaligned() || (addr & 1) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     LLBit_ = false;
@@ -1617,7 +1628,7 @@ void Simulator::writeH(uint64_t addr, int16_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 1) == 0 ||
+  if (AllowUnaligned() || (addr & 1) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     int16_t* ptr = reinterpret_cast<int16_t*>(addr);
     LLBit_ = false;
@@ -1634,7 +1645,7 @@ uint32_t Simulator::readWU(uint64_t addr, SimInstruction* instr) {
     return -1;
   }
 
-  if ((addr & 3) == 0 ||
+  if (AllowUnaligned() || (addr & 3) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(addr);
     return *ptr;
@@ -1650,7 +1661,7 @@ int32_t Simulator::readW(uint64_t addr, SimInstruction* instr) {
     return -1;
   }
 
-  if ((addr & 3) == 0 ||
+  if (AllowUnaligned() || (addr & 3) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     int32_t* ptr = reinterpret_cast<int32_t*>(addr);
     return *ptr;
@@ -1666,7 +1677,7 @@ void Simulator::writeW(uint64_t addr, uint32_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 3) == 0 ||
+  if (AllowUnaligned() || (addr & 3) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(addr);
     LLBit_ = false;
@@ -1683,7 +1694,7 @@ void Simulator::writeW(uint64_t addr, int32_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 3) == 0 ||
+  if (AllowUnaligned() || (addr & 3) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     int32_t* ptr = reinterpret_cast<int32_t*>(addr);
     LLBit_ = false;
@@ -1700,7 +1711,7 @@ int64_t Simulator::readDW(uint64_t addr, SimInstruction* instr) {
     return -1;
   }
 
-  if ((addr & kPointerAlignmentMask) == 0 ||
+  if (AllowUnaligned() || (addr & kPointerAlignmentMask) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     intptr_t* ptr = reinterpret_cast<intptr_t*>(addr);
     return *ptr;
@@ -1716,7 +1727,7 @@ void Simulator::writeDW(uint64_t addr, int64_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & kPointerAlignmentMask) == 0 ||
+  if (AllowUnaligned() || (addr & kPointerAlignmentMask) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     int64_t* ptr = reinterpret_cast<int64_t*>(addr);
     LLBit_ = false;
@@ -1733,7 +1744,7 @@ double Simulator::readD(uint64_t addr, SimInstruction* instr) {
     return NAN;
   }
 
-  if ((addr & kDoubleAlignmentMask) == 0 ||
+  if (AllowUnaligned() || (addr & kDoubleAlignmentMask) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     double* ptr = reinterpret_cast<double*>(addr);
     return *ptr;
@@ -1749,7 +1760,7 @@ void Simulator::writeD(uint64_t addr, double value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & kDoubleAlignmentMask) == 0 ||
+  if (AllowUnaligned() || (addr & kDoubleAlignmentMask) == 0 ||
       wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     double* ptr = reinterpret_cast<double*>(addr);
     LLBit_ = false;
@@ -1911,38 +1922,90 @@ typedef int64_t (*Prototype_General7)(int64_t arg0, int64_t arg1, int64_t arg2,
 typedef int64_t (*Prototype_General8)(int64_t arg0, int64_t arg1, int64_t arg2,
                                       int64_t arg3, int64_t arg4, int64_t arg5,
                                       int64_t arg6, int64_t arg7);
-typedef int32_t (*Prototype_Int_GeneralGeneralGeneralInt64)(int64_t arg0,
-                                                            int64_t arg1,
-                                                            int64_t arg2,
-                                                            int64_t arg3);
-typedef int32_t (*Prototype_Int_GeneralGeneralInt64Int64)(int64_t arg0,
-                                                          int64_t arg1,
-                                                          int64_t arg2,
-                                                          int64_t arg3);
-typedef double (*Prototype_Double_None)();
-typedef double (*Prototype_Double_Double)(double arg0);
-typedef double (*Prototype_Double_Int)(int64_t arg0);
+typedef int64_t (*Prototype_GeneralGeneralGeneralInt64)(int64_t arg0,
+                                                        int64_t arg1,
+                                                        int64_t arg2,
+                                                        int64_t arg3);
+typedef int64_t (*Prototype_GeneralGeneralInt64Int64)(int64_t arg0,
+                                                      int64_t arg1,
+                                                      int64_t arg2,
+                                                      int64_t arg3);
+
 typedef int64_t (*Prototype_Int_Double)(double arg0);
+typedef int64_t (*Prototype_Int_IntDouble)(int64_t arg0, double arg1);
+typedef int64_t (*Prototype_Int_DoubleInt)(double arg0, int64_t arg1);
 typedef int64_t (*Prototype_Int_DoubleIntInt)(double arg0, int64_t arg1,
                                               int64_t arg2);
 typedef int64_t (*Prototype_Int_IntDoubleIntInt)(int64_t arg0, double arg1,
                                                  int64_t arg2, int64_t arg3);
+
 typedef float (*Prototype_Float32_Float32)(float arg0);
 typedef int64_t (*Prototype_Int_Float32)(float arg0);
 typedef float (*Prototype_Float32_Float32Float32)(float arg0, float arg1);
-typedef float (*Prototype_Float32_IntInt)(int64_t arg0, int64_t arg1);
 
+typedef double (*Prototype_Double_None)();
+typedef double (*Prototype_Double_Double)(double arg0);
+typedef double (*Prototype_Double_Int)(int64_t arg0);
 typedef double (*Prototype_Double_DoubleInt)(double arg0, int64_t arg1);
 typedef double (*Prototype_Double_IntDouble)(int64_t arg0, double arg1);
 typedef double (*Prototype_Double_DoubleDouble)(double arg0, double arg1);
-typedef int64_t (*Prototype_Int_IntDouble)(int64_t arg0, double arg1);
-
 typedef double (*Prototype_Double_DoubleDoubleDouble)(double arg0, double arg1,
                                                       double arg2);
 typedef double (*Prototype_Double_DoubleDoubleDoubleDouble)(double arg0,
                                                             double arg1,
                                                             double arg2,
                                                             double arg3);
+
+typedef int32_t (*Prototype_Int32_General)(int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32)(int64_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32)(int64_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32Int32)(int64_t, int32_t,
+                                                               int32_t, int32_t,
+                                                               int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32Int32Int32)(
+    int64_t, int32_t, int32_t, int32_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32Int32General)(
+    int64_t, int32_t, int32_t, int32_t, int32_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32General)(
+    int64_t, int32_t, int32_t, int32_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int64)(int64_t, int32_t,
+                                                          int32_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32General)(int64_t, int32_t,
+                                                            int32_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int64Int64)(int64_t, int32_t,
+                                                          int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32GeneralInt32)(int64_t, int32_t,
+                                                            int64_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32GeneralInt32Int32)(
+    int64_t, int32_t, int64_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralGeneral)(int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralGeneralGeneral)(int64_t, int64_t,
+                                                         int64_t);
+typedef int32_t (*Prototype_Int32_GeneralGeneralInt32Int32)(int64_t, int64_t,
+                                                            int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int32Int32)(int64_t, int64_t,
+                                                               int32_t, int32_t,
+                                                               int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32)(int64_t, int64_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int64)(int64_t, int64_t,
+                                                          int32_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int64General)(
+    int64_t, int64_t, int32_t, int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64)(int64_t, int64_t,
+                                                          int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64General)(
+    int64_t, int64_t, int64_t, int64_t, int64_t);
+typedef int64_t (*Prototype_General_GeneralInt32)(int64_t, int32_t);
+typedef int64_t (*Prototype_General_GeneralInt32Int32)(int64_t, int32_t,
+                                                       int32_t);
+typedef int64_t (*Prototype_General_GeneralInt32General)(int64_t, int32_t,
+                                                         int64_t);
+typedef int64_t (*Prototype_General_GeneralInt32Int32GeneralInt32)(
+    int64_t, int32_t, int32_t, int64_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralGeneralInt32GeneralInt32Int32Int32)(
+    int64_t, int64_t, int32_t, int64_t, int32_t, int32_t, int32_t);
+typedef int64_t (*Prototype_Int64_General)(int64_t);
+typedef int64_t (*Prototype_Int64_GeneralInt64)(int64_t, int64_t);
 
 // Software interrupt instructions are used by the simulator to call into C++.
 void Simulator::softwareInterrupt(SimInstruction* instr) {
@@ -1955,6 +2018,9 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
     MOZ_CRASH("Only N64 ABI supported.");
 #else
     Redirection* redirection = Redirection::FromSwiInstruction(instr);
+    uintptr_t nativeFn =
+        reinterpret_cast<uintptr_t>(redirection->nativeFunction());
+
     int64_t arg0 = getRegister(a0);
     int64_t arg1 = getRegister(a1);
     int64_t arg2 = getRegister(a2);
@@ -2005,7 +2071,7 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
         Prototype_General3 target =
             reinterpret_cast<Prototype_General3>(external);
         int64_t result = target(arg0, arg1, arg2);
-        if (external == intptr_t(&js::wasm::Instance::wake)) {
+        if (external == intptr_t(&js::wasm::Instance::wake_m32)) {
           result = int32_t(result);
         }
         setCallResult(result);
@@ -2068,23 +2134,30 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
         break;
       }
       case Args_Int_GeneralGeneralGeneralInt64: {
-        Prototype_Int_GeneralGeneralGeneralInt64 target =
-            reinterpret_cast<Prototype_Int_GeneralGeneralGeneralInt64>(
-                external);
+        Prototype_GeneralGeneralGeneralInt64 target =
+            reinterpret_cast<Prototype_GeneralGeneralGeneralInt64>(external);
         int64_t result = target(arg0, arg1, arg2, arg3);
-        if (external == intptr_t(&js::wasm::Instance::wait_i32)) {
+        if (external == intptr_t(&js::wasm::Instance::wait_i32_m32)) {
           result = int32_t(result);
         }
         setRegister(v0, result);
         break;
       }
       case Args_Int_GeneralGeneralInt64Int64: {
-        Prototype_Int_GeneralGeneralInt64Int64 target =
-            reinterpret_cast<Prototype_Int_GeneralGeneralInt64Int64>(external);
+        Prototype_GeneralGeneralInt64Int64 target =
+            reinterpret_cast<Prototype_GeneralGeneralInt64Int64>(external);
         int64_t result = target(arg0, arg1, arg2, arg3);
-        if (external == intptr_t(&js::wasm::Instance::wait_i64)) {
+        if (external == intptr_t(&js::wasm::Instance::wait_i64_m32)) {
           result = int32_t(result);
         }
+        setRegister(v0, result);
+        break;
+      }
+      case Args_Int_DoubleInt: {
+        double dval = getFpuRegisterDouble(12);
+        Prototype_Int_DoubleInt target =
+            reinterpret_cast<Prototype_Int_DoubleInt>(external);
+        int64_t result = target(dval, arg1);
         setRegister(v0, result);
         break;
       }
@@ -2138,13 +2211,6 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
         Prototype_Float32_Float32Float32 target =
             reinterpret_cast<Prototype_Float32_Float32Float32>(external);
         float fresult = target(fval0, fval1);
-        setCallResultFloat(fresult);
-        break;
-      }
-      case Args_Float32_IntInt: {
-        Prototype_Float32_IntInt target =
-            reinterpret_cast<Prototype_Float32_IntInt>(external);
-        float fresult = target(arg0, arg1);
         setCallResultFloat(fresult);
         break;
       }
@@ -2210,8 +2276,190 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
         setCallResultDouble(dresult);
         break;
       }
+      case Args_Int32_General: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_General>(nativeFn)(arg0);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32>(nativeFn)(
+            arg0, I32(arg1));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int32>(
+            nativeFn)(arg0, I32(arg1), I32(arg2));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32Int32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int32Int32>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), I32(arg3), I32(arg4));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32Int32Int32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int32Int32Int32>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), I32(arg3), I32(arg4),
+                          I32(arg5));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32Int32Int32General: {
+        int32_t ret = reinterpret_cast<
+            Prototype_Int32_GeneralInt32Int32Int32Int32General>(nativeFn)(
+            arg0, I32(arg1), I32(arg2), I32(arg3), I32(arg4), arg5);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32Int32General: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int32General>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), I32(arg3), arg4);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32Int64: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int64>(
+            nativeFn)(arg0, I32(arg1), I32(arg2), arg3);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int32General: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int32General>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), arg3);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32Int64Int64: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int64Int64>(
+            nativeFn)(arg0, I32(arg1), arg2, arg3);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32GeneralInt32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32GeneralInt32>(
+                nativeFn)(arg0, I32(arg1), arg2, I32(arg3));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralInt32GeneralInt32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32GeneralInt32Int32>(
+                nativeFn)(arg0, I32(arg1), arg2, I32(arg3), I32(arg4));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralGeneral: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralGeneral>(
+            nativeFn)(arg0, arg1);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralGeneralGeneral: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralGeneralGeneral>(
+            nativeFn)(arg0, arg1, arg2);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_Int32_GeneralGeneralInt32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralGeneralInt32Int32>(
+                nativeFn)(arg0, arg1, I32(arg2), I32(arg3));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int32Int32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int32Int32>(
+                nativeFn)(arg0, arg1, I32(arg2), I32(arg3), I32(arg4));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int32: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int32>(
+            nativeFn)(arg0, arg1, I32(arg2));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int32Int64: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int64>(
+            nativeFn)(arg0, arg1, I32(arg2), arg3);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int32Int64General: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int64General>(
+                nativeFn)(arg0, arg1, I32(arg2), arg3, arg4);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int64Int64: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int64Int64>(
+            nativeFn)(arg0, arg1, arg2, arg3);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int64Int64General: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int64Int64General>(
+                nativeFn)(arg0, arg1, arg2, arg3, arg4);
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case Args_General_GeneralInt32: {
+        int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32>(
+            nativeFn)(arg0, I32(arg1));
+        setRegister(v0, ret);
+        break;
+      }
+      case Args_General_GeneralInt32Int32: {
+        int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32Int32>(
+            nativeFn)(arg0, I32(arg1), I32(arg2));
+        setRegister(v0, ret);
+        break;
+      }
+      case Args_General_GeneralInt32General: {
+        int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32General>(
+            nativeFn)(arg0, I32(arg1), arg2);
+        setRegister(v0, ret);
+        break;
+      }
+      case js::jit::Args_General_GeneralInt32Int32GeneralInt32: {
+        int64_t ret =
+            reinterpret_cast<Prototype_General_GeneralInt32Int32GeneralInt32>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), arg3, I32(arg4));
+        setRegister(v0, ret);
+        break;
+      }
+      case js::jit::Args_Int32_GeneralGeneralInt32GeneralInt32Int32Int32: {
+        int64_t arg6 = getRegister(a6);
+        int32_t ret = reinterpret_cast<
+            Prototype_Int32_GeneralGeneralInt32GeneralInt32Int32Int32>(
+            nativeFn)(arg0, arg1, I32(arg2), arg3, I32(arg4), I32(arg5),
+                      I32(arg6));
+        setRegister(v0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int64_General: {
+        int64_t ret = reinterpret_cast<Prototype_Int64_General>(nativeFn)(arg0);
+        setRegister(v0, ret);
+        break;
+      }
+      case js::jit::Args_Int64_GeneralInt64: {
+        int64_t ret = reinterpret_cast<Prototype_Int64_GeneralInt64>(nativeFn)(
+            arg0, arg1);
+        setRegister(v0, ret);
+        break;
+      }
       default:
-        MOZ_CRASH("call");
+        MOZ_CRASH("Unknown function type.");
     }
 
     if (single_stepping_) {
@@ -2676,8 +2924,8 @@ void Simulator::configureTypeRegister(SimInstruction* instr, int64_t& alu_out,
           if (lsb > msb) {
             alu_out = Unpredictable;
           } else {
-            alu_out = (U32(I32_CHECK(rt)) & ~(mask << lsb)) |
-                      ((U32(I32_CHECK(rs)) & mask) << lsb);
+            alu_out = I32((U32(I32_CHECK(rt)) & ~(mask << lsb)) |
+                          ((U32(I32_CHECK(rs)) & mask) << lsb));
           }
           break;
         }
@@ -2776,7 +3024,63 @@ void Simulator::configureTypeRegister(SimInstruction* instr, int64_t& alu_out,
             alu_out = I64(I8(I32_CHECK(rt)));
           } else if (24 == sa) {  // seh
             alu_out = I64(I16(I32_CHECK(rt)));
+          } else if (2 == sa) {  // wsbh
+            uint32_t input = U32(I32_CHECK(rt));
+            uint64_t output = 0;
+
+            uint32_t mask = 0xFF000000;
+            for (int i = 0; i < 4; i++) {
+              uint32_t tmp = mask & input;
+              if (i % 2 == 0) {
+                tmp = tmp >> 8;
+              } else {
+                tmp = tmp << 8;
+              }
+              output = output | tmp;
+              mask = mask >> 8;
+            }
+            alu_out = I64(I32(output));
+          } else {
+            MOZ_CRASH();
           }
+          break;
+        }
+        case ff_dbshfl: {  // Mips64r2 instruction.
+          uint64_t input = U64(rt);
+          uint64_t output = 0;
+
+          if (2 == sa) {  // dsbh
+            uint64_t mask = 0xFF00000000000000;
+            for (int i = 0; i < 8; i++) {
+              uint64_t tmp = mask & input;
+              if (i % 2 == 0)
+                tmp = tmp >> 8;
+              else
+                tmp = tmp << 8;
+
+              output = output | tmp;
+              mask = mask >> 8;
+            }
+          } else if (5 == sa) {  // dshd
+            uint64_t mask = 0xFFFF000000000000;
+            for (int i = 0; i < 4; i++) {
+              uint64_t tmp = mask & input;
+              if (i == 0)
+                tmp = tmp >> 48;
+              else if (i == 1)
+                tmp = tmp >> 16;
+              else if (i == 2)
+                tmp = tmp << 16;
+              else
+                tmp = tmp << 48;
+              output = output | tmp;
+              mask = mask >> 16;
+            }
+          } else {
+            MOZ_CRASH();
+          }
+
+          alu_out = I64(output);
           break;
         }
         default:
@@ -3405,6 +3709,9 @@ void Simulator::decodeTypeRegister(SimInstruction* instr) {
         case ff_bshfl:
           setRegister(rd_reg, alu_out);
           break;
+        case ff_dbshfl:
+          setRegister(rd_reg, alu_out);
+          break;
         default:
           MOZ_CRASH();
       };
@@ -3614,6 +3921,7 @@ void Simulator::decodeTypeImmediate(SimInstruction* instr) {
       alu_out = readW(addr, instr);
       alu_out = U32(alu_out) >> al_offset * 8;
       alu_out |= rt & mask;
+      alu_out = I32(alu_out);
       break;
     }
     case op_ll:

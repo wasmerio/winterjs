@@ -10,37 +10,47 @@
 
 #include "NamespaceImports.h"
 
-#include "gc/GCInternals.h"
-#include "gc/Marking.h"
 #include "gc/PublicIterators.h"
-#include "gc/Zone.h"
+#include "jit/JitCode.h"
 #include "util/Memory.h"
 #include "util/Text.h"
 #include "vm/BigIntType.h"
+#include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
+#include "vm/RegExpShared.h"
+#include "vm/Scope.h"
 #include "vm/Shape.h"
+#include "vm/StringType.h"
 #include "vm/SymbolType.h"
 
-#include "gc/GC-inl.h"
-#include "gc/Marking-inl.h"
-#include "vm/Realm-inl.h"
+#include "gc/TraceMethods-inl.h"
+#include "vm/Shape-inl.h"
 
 using namespace js;
 using namespace js::gc;
 using mozilla::DebugOnly;
 
-void JS::TracingContext::getEdgeName(char* buffer, size_t bufferSize) {
+template void RuntimeScopeData<LexicalScope::SlotInfo>::trace(JSTracer* trc);
+template void RuntimeScopeData<ClassBodyScope::SlotInfo>::trace(JSTracer* trc);
+template void RuntimeScopeData<VarScope::SlotInfo>::trace(JSTracer* trc);
+template void RuntimeScopeData<GlobalScope::SlotInfo>::trace(JSTracer* trc);
+template void RuntimeScopeData<EvalScope::SlotInfo>::trace(JSTracer* trc);
+template void RuntimeScopeData<WasmFunctionScope::SlotInfo>::trace(
+    JSTracer* trc);
+
+void JS::TracingContext::getEdgeName(const char* name, char* buffer,
+                                     size_t bufferSize) {
   MOZ_ASSERT(bufferSize > 0);
   if (functor_) {
     (*functor_)(this, buffer, bufferSize);
     return;
   }
   if (index_ != InvalidIndex) {
-    snprintf(buffer, bufferSize, "%s[%zu]", name_, index_);
+    snprintf(buffer, bufferSize, "%s[%zu]", name, index_);
     return;
   }
-  snprintf(buffer, bufferSize, "%s", name_);
+  snprintf(buffer, bufferSize, "%s", name);
 }
 
 /*** Public Tracing API *****************************************************/
@@ -48,8 +58,7 @@ void JS::TracingContext::getEdgeName(char* buffer, size_t bufferSize) {
 JS_PUBLIC_API void JS::TraceChildren(JSTracer* trc, GCCellPtr thing) {
   ApplyGCThingTyped(thing.asCell(), thing.kind(), [trc](auto t) {
     MOZ_ASSERT_IF(t->runtimeFromAnyThread() != trc->runtime(),
-                  t->isPermanentAndMayBeShared() ||
-                      t->zoneFromAnyThread()->isSelfHostingZone());
+                  t->isPermanentAndMayBeShared());
     t->traceChildren(trc);
   });
 }
@@ -83,37 +92,12 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 /*** Cycle Collector Helpers ************************************************/
 
 // This function is used by the Cycle Collector (CC) to trace through -- or in
-// CC parlance, traverse -- a Shape tree. The CC does not care about Shapes or
-// BaseShapes, only the JSObjects held live by them. Thus, we walk the Shape
-// lineage, but only report non-Shape things. This effectively makes the entire
-// shape lineage into a single node in the CC, saving tremendous amounts of
-// space and time in its algorithms.
-//
-// The algorithm implemented here uses only bounded stack space. This would be
-// possible to implement outside the engine, but would require much extra
-// infrastructure and many, many more slow GOT lookups. We have implemented it
-// inside SpiderMonkey, despite the lack of general applicability, for the
-// simplicity and performance of FireFox's embedding of this engine.
+// CC parlance, traverse -- a Shape. The CC does not care about Shapes,
+// BaseShapes or PropMaps, only the JSObjects held live by them. Thus, we only
+// report non-Shape things.
 void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
-  do {
-    shape->base()->traceChildren(trc);
-
-    // Don't trace the propid because the CC doesn't care about jsid.
-
-    if (shape->hasGetterObject()) {
-      JSObject* tmp = shape->getterObject();
-      TraceEdgeInternal(trc, &tmp, "getter");
-      MOZ_ASSERT(tmp == shape->getterObject());
-    }
-
-    if (shape->hasSetterObject()) {
-      JSObject* tmp = shape->setterObject();
-      TraceEdgeInternal(trc, &tmp, "setter");
-      MOZ_ASSERT(tmp == shape->setterObject());
-    }
-
-    shape = shape->previous();
-  } while (shape);
+  shape->base()->traceChildren(trc);
+  // Don't trace the PropMap because the CC doesn't care about PropertyKey.
 }
 
 /*** Traced Edge Printer ****************************************************/
@@ -172,6 +156,14 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
   switch (kind) {
     case JS::TraceKind::BaseShape:
       name = "base_shape";
+      break;
+
+    case JS::TraceKind::GetterSetter:
+      name = "getter_setter";
+      break;
+
+    case JS::TraceKind::PropMap:
+      name = "prop_map";
       break;
 
     case JS::TraceKind::JitCode:
@@ -240,10 +232,8 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
             bufsize--;
             PutEscapedString(buf, bufsize, fun->displayAtom(), 0);
           }
-        } else if (obj->getClass()->flags & JSCLASS_HAS_PRIVATE) {
-          snprintf(buf, bufsize, " %p", obj->as<NativeObject>().getPrivate());
         } else {
-          snprintf(buf, bufsize, " <no private>");
+          snprintf(buf, bufsize, " <unknown object>");
         }
         break;
       }
@@ -305,8 +295,3 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
 JS::CallbackTracer::CallbackTracer(JSContext* cx, JS::TracerKind kind,
                                    JS::TraceOptions options)
     : CallbackTracer(cx->runtime(), kind, options) {}
-
-uint32_t JSTracer::gcNumberForMarking() const {
-  MOZ_ASSERT(isMarkingTracer());
-  return runtime()->gc.gcNumber();
-}

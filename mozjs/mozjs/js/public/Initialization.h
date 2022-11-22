@@ -8,7 +8,11 @@
 #ifndef js_Initialization_h
 #define js_Initialization_h
 
+#include "mozilla/Span.h"
+
 #include "jstypes.h"
+
+struct JS_PUBLIC_API JSContext;
 
 namespace JS {
 namespace detail {
@@ -93,6 +97,64 @@ inline bool JS_IsInitialized(void) {
   return JS::detail::libraryInitState >= JS::detail::InitState::Running;
 }
 
+namespace JS {
+
+// Reference to a sequence of bytes.
+// TODO: This type should be Span<cont uint8_t> (Bug 1709135)
+using SelfHostedCache = mozilla::Span<const uint8_t>;
+
+// Callback function used to copy the SelfHosted content to memory or to disk.
+using SelfHostedWriter = bool (*)(JSContext*, SelfHostedCache);
+
+/*
+ * Initialize the runtime's self-hosted code. Embeddings should call this
+ * exactly once per runtime/context, before the first JS_NewGlobalObject
+ * call.
+ *
+ * This function parses the self-hosted code, except if the provided cache span
+ * is not empty, in which case the self-hosted content is decoded from the span.
+ *
+ * The cached content provided as argument, when non-empty, should come from the
+ * a previous execution of JS::InitSelfHostedCode where a writer was registered.
+ * The content should come from the same version of the binary, otherwise this
+ * would cause an error.
+ *
+ * The cached content provided with the Span should remain alive until
+ * JS_Shutdown is called.
+ *
+ * The writer callback given as argument would be called by when the result of
+ * the parser is ready to be cached. The writer is in charge of saving the
+ * content in memory or on disk. The span given as argument of the writer only
+ * last for the time of the call, and contains the content to be saved.
+ *
+ * The writer is not called if the cached content given as argument of
+ * InitSelfHostedCode is non-empty.
+ *
+ * Errors returned by the writer callback would bubble up through
+ * JS::InitSelfHostedCode.
+ *
+ * The cached content provided by the writer callback is safe to reuse across
+ * threads, and even across multiple executions as long as the executable is
+ * identical.
+ *
+ * NOTE: This may not set a pending exception in the case of OOM since this
+ *       runs very early in startup.
+ */
+JS_PUBLIC_API bool InitSelfHostedCode(JSContext* cx,
+                                      SelfHostedCache cache = nullptr,
+                                      SelfHostedWriter writer = nullptr);
+
+/*
+ * Permanently disable the JIT backend for this process. This disables the JS
+ * Baseline Interpreter, JIT compilers, regular expression JIT and support for
+ * WebAssembly.
+ *
+ * If called, this *must* be called before JS_Init.
+ */
+JS_PUBLIC_API void DisableJitBackend();
+
+}  // namespace JS
+
 /**
  * Destroy free-standing resources allocated by SpiderMonkey, not associated
  * with any runtime, context, or other structure.
@@ -111,5 +173,14 @@ inline bool JS_IsInitialized(void) {
  * again).  This restriction may eventually be lifted.
  */
 extern JS_PUBLIC_API void JS_ShutDown(void);
+
+#if defined(ENABLE_WASM_SIMD) && \
+    (defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86))
+namespace JS {
+// Enable support for AVX instructions in the JIT/Wasm backend on x86/x64
+// platforms. Must be called before JS_Init*.
+void SetAVXEnabled(bool enabled);
+}  // namespace JS
+#endif
 
 #endif /* js_Initialization_h */

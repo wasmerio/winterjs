@@ -18,16 +18,17 @@ using mozilla::MakeUnique;
 using mozilla::Span;
 
 // This writes all the output into a big buffer.
-struct StringWriteFunc : public JSONWriteFunc {
+struct StringWriteFunc final : public JSONWriteFunc {
   std::string mString;
 
-  void Write(const mozilla::Span<const char>& aStr) override {
+  void Write(const mozilla::Span<const char>& aStr) final {
     mString.append(aStr.data(), aStr.size());
   }
 };
 
-void Check(JSONWriteFunc* aFunc, const char* aExpected) {
-  const std::string& actual = static_cast<StringWriteFunc*>(aFunc)->mString;
+void Check(JSONWriter& aWriter, const char* aExpected) {
+  JSONWriteFunc& func = aWriter.WriteFunc();
+  const std::string& actual = static_cast<StringWriteFunc&>(func).mString;
   if (strcmp(aExpected, actual.c_str()) != 0) {
     fprintf(stderr,
             "---- EXPECTED ----\n<<<%s>>>\n"
@@ -212,7 +213,7 @@ void TestBasicProperties() {
   }
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
 }
 
 void TestBasicElements() {
@@ -388,7 +389,7 @@ void TestBasicElements() {
   w.EndArray();
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
 }
 
 void TestOneLineObject() {
@@ -429,7 +430,49 @@ void TestOneLineObject() {
 
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
+}
+
+void TestOneLineJson() {
+  const char* expected =
+      "\
+{\"i\":1,\"array\":[null,[{}],{\"o\":{}},\"s\"],\"d\":3.33}\
+";
+
+  StringWriteFunc func;
+  JSONWriter w(func, JSONWriter::SingleLineStyle);
+
+  w.Start(w.MultiLineStyle);  // style overridden from above
+
+  w.IntProperty("i", 1);
+
+  w.StartArrayProperty("array");
+  {
+    w.NullElement();
+
+    w.StartArrayElement(w.MultiLineStyle);  // style overridden from above
+    {
+      w.StartObjectElement();
+      w.EndObject();
+    }
+    w.EndArray();
+
+    w.StartObjectElement();
+    {
+      w.StartObjectProperty("o");
+      w.EndObject();
+    }
+    w.EndObject();
+
+    w.StringElement("s");
+  }
+  w.EndArray();
+
+  w.DoubleProperty("d", 3.33);
+
+  w.End();  // No newline in this case.
+
+  Check(w, expected);
 }
 
 void TestStringEscaping() {
@@ -491,7 +534,7 @@ void TestStringEscaping() {
   }
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
 }
 
 void TestDeepNesting() {
@@ -557,7 +600,7 @@ void TestDeepNesting() {
   }
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
 }
 
 void TestEscapedPropertyNames() {
@@ -598,13 +641,14 @@ void TestEscapedPropertyNames() {
 
   w.End();
 
-  Check(w.WriteFunc(), expected);
+  Check(w, expected);
 }
 
 int main(void) {
   TestBasicProperties();
   TestBasicElements();
   TestOneLineObject();
+  TestOneLineJson();
   TestStringEscaping();
   TestDeepNesting();
   TestEscapedPropertyNames();

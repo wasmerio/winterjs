@@ -49,6 +49,9 @@ if CONFIG["JS_HAS_INTL_API"]:
         "icu",
     ]
 
+if CONFIG["MOZ_ICU4X"]:
+    USE_LIBS += ["icu4xdata"]
+
 USE_LIBS += [
     "nspr",
     "zlib",
@@ -75,6 +78,11 @@ if CONFIG["OS_ARCH"] == "SunOS":
         "dl",
         "nsl",
         "socket",
+    ]
+
+if CONFIG["OS_ARCH"] == "WINNT":
+    OS_LIBS += [
+        "bcrypt",
     ]
 
 if CONFIG["MOZ_NEEDS_LIBATOMIC"]:

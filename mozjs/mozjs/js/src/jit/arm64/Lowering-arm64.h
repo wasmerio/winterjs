@@ -24,8 +24,9 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
   LAllocation useByteOpRegister(MDefinition* mir);
   LAllocation useByteOpRegisterAtStart(MDefinition* mir);
   LAllocation useByteOpRegisterOrNonDoubleConstant(MDefinition* mir);
+  LDefinition tempByteOpRegister();
 
-  inline LDefinition tempToUnbox() { return temp(); }
+  LDefinition tempToUnbox();
 
   bool needTempForPostBarrier() { return true; }
 
@@ -54,6 +55,8 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
   void lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                    MDefinition* lhs, MDefinition* rhs);
 
+  void lowerForALUInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES, 0>* ins,
+                        MDefinition* mir, MDefinition* input);
   void lowerForALUInt64(
       LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
       MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
@@ -90,9 +93,18 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
   void lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod);
   void lowerUDivI64(MDiv* div);
   void lowerUModI64(MMod* mod);
+  void lowerNegI(MInstruction* ins, MDefinition* input);
+  void lowerNegI64(MInstruction* ins, MDefinition* input);
   void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
   void lowerUDiv(MDiv* div);
   void lowerUMod(MMod* mod);
+  void lowerWasmSelectI(MWasmSelect* select);
+  void lowerWasmSelectI64(MWasmSelect* select);
+  bool canSpecializeWasmCompareAndSelect(MCompare::CompareType compTy,
+                                         MIRType insTy);
+  void lowerWasmCompareAndSelect(MWasmSelect* ins, MDefinition* lhs,
+                                 MDefinition* rhs, MCompare::CompareType compTy,
+                                 JSOp jsop);
 
   void lowerBigIntLsh(MBigIntLsh* ins);
   void lowerBigIntRsh(MBigIntRsh* ins);
@@ -101,6 +113,11 @@ class LIRGeneratorARM64 : public LIRGeneratorShared {
 
   void lowerAtomicLoad64(MLoadUnboxedScalar* ins);
   void lowerAtomicStore64(MStoreUnboxedScalar* ins);
+
+#ifdef ENABLE_WASM_SIMD
+  bool canFoldReduceSimd128AndBranch(wasm::SimdOp op);
+  bool canEmitWasmReduceSimd128AtUses(MWasmReduceSimd128* ins);
+#endif
 
   LTableSwitchV* newLTableSwitchV(MTableSwitch* ins);
   LTableSwitch* newLTableSwitch(const LAllocation& in,

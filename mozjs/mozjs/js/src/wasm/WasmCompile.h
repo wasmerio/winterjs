@@ -22,6 +22,10 @@
 #include "vm/Runtime.h"
 #include "wasm/WasmModule.h"
 
+namespace JS {
+class OptimizedEncodingListener;
+}
+
 namespace js {
 namespace wasm {
 
@@ -30,55 +34,6 @@ namespace wasm {
 // later, the ObservedCPUFeatures() must be ensured to be the same.
 
 uint32_t ObservedCPUFeatures();
-
-// Describes the JS scripted caller of a request to compile a wasm module.
-
-struct ScriptedCaller {
-  UniqueChars filename;
-  bool filenameIsURL;
-  unsigned line;
-
-  ScriptedCaller() : filenameIsURL(false), line(0) {}
-};
-
-// Describes all the parameters that control wasm compilation.
-
-struct CompileArgs;
-using MutableCompileArgs = RefPtr<CompileArgs>;
-using SharedCompileArgs = RefPtr<const CompileArgs>;
-
-struct CompileArgs : ShareableBase<CompileArgs> {
-  ScriptedCaller scriptedCaller;
-  UniqueChars sourceMapURL;
-
-  bool baselineEnabled;
-  bool ionEnabled;
-  bool craneliftEnabled;
-  bool debugEnabled;
-  bool forceTiering;
-
-  FeatureArgs features;
-
-  // CompileArgs has two constructors:
-  //
-  // - one through a factory function `build`, which checks that flags are
-  // consistent with each other.
-  // - one that gives complete access to underlying fields.
-  //
-  // You should use the first one in general, unless you have a very good
-  // reason (i.e. no JSContext around and you know which flags have been used).
-
-  static SharedCompileArgs build(JSContext* cx, ScriptedCaller&& scriptedCaller,
-                                 const FeatureOptions& options);
-
-  explicit CompileArgs(ScriptedCaller&& scriptedCaller)
-      : scriptedCaller(std::move(scriptedCaller)),
-        baselineEnabled(false),
-        ionEnabled(false),
-        craneliftEnabled(false),
-        debugEnabled(false),
-        forceTiering(false) {}
-};
 
 // Return the estimated compiled (machine) code size for the given bytecode size
 // compiled at the given tier.
@@ -98,8 +53,9 @@ SharedModule CompileBuffer(const CompileArgs& args,
 
 // Attempt to compile the second tier of the given wasm::Module.
 
-void CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                  const Module& module, Atomic<bool>* cancelled);
+bool CompileTier2(const CompileArgs& args, const Bytes& bytecode,
+                  const Module& module, UniqueChars* error,
+                  UniqueCharsVector* warnings, Atomic<bool>* cancelled);
 
 // Compile the given WebAssembly module which has been broken into three
 // partitions:

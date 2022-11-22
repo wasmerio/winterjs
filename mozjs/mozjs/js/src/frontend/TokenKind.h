@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include "js/TypeDecls.h"  // IF_RECORD_TUPLE
+
 /*
  * List of token kinds and their ranges.
  *
@@ -68,8 +70,10 @@
   MACRO(TripleDot, "'...'") /* rest arguments and spread operator */   \
   MACRO(OptionalChain, "'?.'")                                         \
   MACRO(LeftBracket, "'['")                                            \
+  IF_RECORD_TUPLE(MACRO(HashBracket, "'#['"))                          \
   MACRO(RightBracket, "']'")                                           \
   MACRO(LeftCurly, "'{'")                                              \
+  IF_RECORD_TUPLE(MACRO(HashCurly, "'#{'"))                            \
   MACRO(RightCurly, "'}'")                                             \
   MACRO(LeftParen, "'('")                                              \
   MACRO(RightParen, "')'")                                             \
@@ -78,6 +82,7 @@
   MACRO(Number, "numeric literal")                                     \
   MACRO(String, "string literal")                                      \
   MACRO(BigInt, "bigint literal")                                      \
+  IF_DECORATORS(MACRO(At, "'@'"))                                      \
                                                                        \
   /* start of template literal with substitutions */                   \
   MACRO(TemplateHead, "'${'")                                          \
@@ -124,6 +129,9 @@
   /* contextual keywords */                                            \
   MACRO(As, "'as'")                                                    \
   RANGE(ContextualKeywordFirst, As)                                    \
+  /* TODO: Move to alphabetical order when IF_DECORATORS is removed */ \
+  IF_DECORATORS(MACRO(Accessor, "'accessor'"))                         \
+  MACRO(Assert, "'assert'")                                            \
   MACRO(Async, "'async'")                                              \
   MACRO(Await, "'await'")                                              \
   MACRO(Each, "'each'")                                                \
@@ -164,14 +172,13 @@
    *   - the precedence list in Parser.cpp                             \
    *   - the JSOp code list in BytecodeEmitter.cpp                     \
    */                                                                  \
-  MACRO(Pipeline, "'|>'")                                              \
-  RANGE(BinOpFirst, Pipeline)                                          \
   MACRO(Coalesce, "'\?\?'") /* escapes to avoid trigraphs warning */   \
-  MACRO(Or, "'||'")         /* logical or */                           \
-  MACRO(And, "'&&'")        /* logical and */                          \
-  MACRO(BitOr, "'|'")       /* bitwise-or */                           \
-  MACRO(BitXor, "'^'")      /* bitwise-xor */                          \
-  MACRO(BitAnd, "'&'")      /* bitwise-and */                          \
+  RANGE(BinOpFirst, Coalesce)                                          \
+  MACRO(Or, "'||'")    /* logical or */                                \
+  MACRO(And, "'&&'")   /* logical and */                               \
+  MACRO(BitOr, "'|'")  /* bitwise-or */                                \
+  MACRO(BitXor, "'^'") /* bitwise-xor */                               \
+  MACRO(BitAnd, "'&'") /* bitwise-and */                               \
                                                                        \
   /* Equality operation tokens, per TokenKindIsEquality. */            \
   MACRO(StrictEq, "'==='")                                             \
@@ -192,7 +199,8 @@
   MACRO(InstanceOf, "keyword 'instanceof'")                            \
   RANGE(KeywordBinOpFirst, InstanceOf)                                 \
   MACRO(In, "keyword 'in'")                                            \
-  RANGE(KeywordBinOpLast, In)                                          \
+  MACRO(PrivateIn, "keyword 'in' (private)")                           \
+  RANGE(KeywordBinOpLast, PrivateIn)                                   \
                                                                        \
   /* Shift ops, per TokenKindIsShift. */                               \
   MACRO(Lsh, "'<<'")                                                   \

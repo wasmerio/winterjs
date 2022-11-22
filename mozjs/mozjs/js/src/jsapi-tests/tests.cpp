@@ -12,7 +12,9 @@
 
 #include "js/ArrayBuffer.h"
 #include "js/CompilationAndEvaluation.h"  // JS::Evaluate
+#include "js/GlobalObject.h"              // JS_NewGlobalObject
 #include "js/Initialization.h"
+#include "js/PropertyAndElement.h"  // JS_DefineFunction
 #include "js/RootingAPI.h"
 #include "js/SourceText.h"  // JS::Source{Ownership,Text}
 
@@ -33,7 +35,6 @@ bool JSAPITest::init(JSContext* maybeReusableContext) {
   }
 
   js::UseInternalJobQueues(cx);
-  JS::SetLargeArrayBuffersEnabled(true);
 
   if (!JS::InitSelfHostedCode(cx)) {
     return false;
@@ -158,6 +159,11 @@ int main(int argc, char* argv[]) {
     total += 1;
 
     printf("%s\n", name);
+
+    // Make sure the test name is printed before we enter the test that can
+    // crash on failure.
+    fflush(stdout);
+
     if (!test->init(maybeReusedContext)) {
       printf("TEST-UNEXPECTED-FAIL | %s | Failed to initialize.\n", name);
       failures++;

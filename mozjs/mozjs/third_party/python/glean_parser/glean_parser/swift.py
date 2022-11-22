@@ -13,8 +13,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from . import __version__
 from . import metrics
 from . import pings
+from . import tags
 from . import util
 
 # An (imcomplete) list of reserved keywords in Swift.
@@ -30,6 +32,8 @@ def swift_datatypes_filter(value: util.JSONType) -> str:
       - dicts to use `[key: value]`
       - sets to use `[...]`
       - enums to use the like-named Swift enum
+      - Rate objects to a CommonMetricData initializer
+        (for external Denominators' Numerators lists)
     """
 
     class SwiftEncoder(json.JSONEncoder):
@@ -47,6 +51,15 @@ def swift_datatypes_filter(value: util.JSONType) -> str:
                 yield "]"
             elif isinstance(value, enum.Enum):
                 yield ("." + util.camelize(value.name))
+            elif isinstance(value, list):
+                yield "["
+                first = True
+                for subvalue in value:
+                    if not first:
+                        yield ", "
+                    yield from self.iterencode(subvalue)
+                    first = False
+                yield "]"
             elif isinstance(value, set):
                 yield "["
                 first = True
@@ -58,6 +71,17 @@ def swift_datatypes_filter(value: util.JSONType) -> str:
                 yield "]"
             elif value is None:
                 yield "nil"
+            elif isinstance(value, metrics.Rate):
+                yield "CommonMetricData("
+                first = True
+                for arg_name in util.common_metric_args:
+                    if hasattr(value, arg_name):
+                        if not first:
+                            yield ", "
+                        yield f"{util.camelize(arg_name)}: "
+                        yield from self.iterencode(getattr(value, arg_name))
+                        first = False
+                yield ")"
             else:
                 yield from super().iterencode(value)
 
@@ -73,16 +97,43 @@ def type_name(obj: Union[metrics.Metric, pings.Ping]) -> str:
         template_args = []
         for member, suffix in generate_enums:
             if len(getattr(obj, member)):
-                template_args.append(util.Camelize(obj.name) + suffix)
+                # Ugly hack to support the newer event extras API
+                # along the deprecated API.
+                # We need to specify both generic parameters,
+                # but only for event metrics.
+                if suffix == "Extra":
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtraKeys")
+                    template_args.append(util.Camelize(obj.name) + suffix)
+                else:
+                    template_args.append(util.Camelize(obj.name) + suffix)
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtras")
             else:
                 if suffix == "Keys":
                     template_args.append("NoExtraKeys")
+                    template_args.append("NoExtras")
                 else:
                     template_args.append("No" + suffix)
 
         return "{}<{}>".format(class_name(obj.type), ", ".join(template_args))
 
     return class_name(obj.type)
+
+
+def extra_type_name(typ: str) -> str:
+    """
+    Returns the corresponding Kotlin type for event's extra key types.
+    """
+
+    if typ == "boolean":
+        return "Bool"
+    elif typ == "string":
+        return "String"
+    elif typ == "quantity":
+        return "Int32"
+    else:
+        return "UNSUPPORTED"
 
 
 def class_name(obj_type: str) -> str:
@@ -106,13 +157,40 @@ def variable_name(var: str) -> str:
         return var
 
 
+class BuildInfo:
+    def __init__(self, build_date):
+        self.build_date = build_date
+
+
+def generate_build_date(date: Optional[str]) -> str:
+    """
+    Generate the build timestamp.
+    """
+
+    ts = util.build_date(date)
+
+    data = [
+        ("year", ts.year),
+        ("month", ts.month),
+        ("day", ts.day),
+        ("hour", ts.hour),
+        ("minute", ts.minute),
+        ("second", ts.second),
+    ]
+
+    # The internal DatetimeMetricType API can take a `DateComponents` object,
+    # which lets us easily specify the timezone.
+    components = ", ".join([f"{name}: {val}" for (name, val) in data])
+    return f'DateComponents(calendar: Calendar.current, timeZone: TimeZone(abbreviation: "UTC"), {components})'  # noqa
+
+
 class Category:
     """
     Data struct holding information about a metric to be used in the template.
     """
 
     name: str
-    objs: Dict[str, Union[metrics.Metric, pings.Ping]]
+    objs: Dict[str, Union[metrics.Metric, pings.Ping, tags.Tag]]
     contains_pings: bool
 
 
@@ -129,6 +207,14 @@ def output_swift(
         - namespace: The namespace to generate metrics in
         - glean_namespace: The namespace to import Glean from
         - allow_reserved: When True, this is a Glean-internal build
+        - with_buildinfo: If "true" the `GleanBuildInfo` is generated.
+          Otherwise generation of that file is skipped.
+          Defaults to "true".
+        - build_date: If set to `0` a static unix epoch time will be used.
+                      If set to a ISO8601 datetime string (e.g. `2022-01-03T17:30:00`)
+                      it will use that date.
+                      Other values will throw an error.
+                      If not set it will use the current date & time.
     """
     if options is None:
         options = {}
@@ -140,11 +226,18 @@ def output_swift(
             ("type_name", type_name),
             ("class_name", class_name),
             ("variable_name", variable_name),
+            ("extra_type_name", extra_type_name),
         ),
     )
 
     namespace = options.get("namespace", "GleanMetrics")
     glean_namespace = options.get("glean_namespace", "Glean")
+    with_buildinfo = options.get("with_buildinfo", "true").lower() == "true"
+    build_date = options.get("build_date", None)
+    build_info = None
+    if with_buildinfo:
+        build_date = generate_build_date(build_date)
+        build_info = BuildInfo(build_date=build_date)
 
     filename = "Metrics.swift"
     filepath = output_dir / filename
@@ -165,11 +258,14 @@ def output_swift(
     with filepath.open("w", encoding="utf-8") as fd:
         fd.write(
             template.render(
+                parser_version=__version__,
                 categories=categories,
-                extra_args=util.metric_args,
+                common_metric_args=util.common_metric_args,
+                extra_metric_args=util.extra_metric_args,
                 namespace=namespace,
                 glean_namespace=glean_namespace,
                 allow_reserved=options.get("allow_reserved", False),
+                build_info=build_info,
             )
         )
         # Jinja2 squashes the final newline, so we explicitly add it

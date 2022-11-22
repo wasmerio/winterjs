@@ -4,25 +4,69 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Verify MAR signatures
+# Updater
+# ==============================================================
+@depends(build_project)
+def updater_default(build_project):
+    return build_project != "mobile/android"
+
+
+option(
+    "--enable-updater",
+    default=updater_default,
+    help="{Enable|Disable} building the updater",
+)
+
+set_config("MOZ_UPDATER", True, when="--enable-updater")
+set_define("MOZ_UPDATER", True, when="--enable-updater")
+
+# Updates that do not verify signatures
 # ==============================================================
 
-option("--disable-verify-mar", help="Disable verifying MAR signatures")
+option(
+    "--enable-unverified-updates",
+    default=False,
+    help="Enable application update without verifying MAR or updater binary signatures",
+)
+
+
+@depends("--enable-unverified-updates", "--enable-compile-environment")
+def disable_unverified_updates(unverified_updates, compile_environment):
+    if unverified_updates:
+        if not compile_environment:
+            die("--enable-unverified-updates requires --enable-compile-environment")
+    return not unverified_updates
+
 
 set_define(
-    "MOZ_VERIFY_MAR_SIGNATURE", depends_if("--enable-verify-mar")(lambda _: True)
+    "MOZ_VERIFY_MAR_SIGNATURE",
+    depends_if(disable_unverified_updates)(lambda _: True),
 )
 set_config(
-    "MOZ_VERIFY_MAR_SIGNATURE", depends_if("--enable-verify-mar")(lambda _: True)
+    "MOZ_VERIFY_MAR_SIGNATURE",
+    True,
+    depends_if(disable_unverified_updates)(lambda _: True),
+)
+
+set_config(
+    "DISABLE_UPDATER_AUTHENTICODE_CHECK",
+    True,
+    depends_if("--enable-unverified-updates")(lambda _: True),
 )
 
 # Maintenance service (Windows only)
 # ==============================================================
 
+
+@depends("--enable-updater")
+def maintenance_service_default(updater):
+    return bool(updater)
+
+
 option(
     "--enable-maintenance-service",
     when=target_is_windows,
-    default=target_is_windows,
+    default=maintenance_service_default,
     help="{Enable|Disable} building of maintenance service",
 )
 
@@ -35,15 +79,29 @@ set_config(
     depends_if("--enable-maintenance-service", when=target_is_windows)(lambda _: True),
 )
 
+
+@depends("--enable-maintenance-service", "--enable-updater", when=target_is_windows)
+def check_maintenance_service(mainteance_service, updater):
+    if mainteance_service and not updater:
+        die("--enable-updater is required to --enable-maintenance-service")
+    return mainteance_service
+
+
 # Update agent (currently Windows and macOS only)
 # This is an independent task that runs on a schedule to
 # check for, download, and install updates.
 # ==============================================================
 
+
+@depends("--enable-backgroundtasks", "--enable-updater", build_project)
+def update_agent_default(backgroundtasks, updater, build_project):
+    return bool(backgroundtasks) and bool(updater) and build_project == "browser"
+
+
 option(
     "--disable-update-agent",
     when=target_is_windows | target_is_osx,
-    default=True,
+    default=update_agent_default,
     help="{Enable|Disable} building update agent",
 )
 
@@ -54,14 +112,29 @@ set_config(
     ),
 )
 
+
+@depends(
+    "--enable-update-agent",
+    "--enable-backgroundtasks",
+    "--enable-updater",
+    when=target_is_windows | target_is_osx,
+)
+def check_update_agent(update_agent, backgroundtasks, updater):
+    if update_agent and not backgroundtasks:
+        die("--enable-backgroundtasks is required to --enable-update-agent")
+    if update_agent and not updater:
+        die("--enable-updater is required to --enable-update-agent")
+    return update_agent
+
+
 # Enable or disable the default browser agent, which monitors the user's default
 # browser setting on Windows.
 # ==============================================================================
 
 
-@depends(target)
-def default_browser_agent_default(target):
-    return target.os == "WINNT"
+@depends(target, build_project)
+def default_browser_agent_default(target, build_project):
+    return target.os == "WINNT" and build_project == "browser"
 
 
 option(
@@ -78,3 +151,21 @@ def default_agent_flag(enabled):
 
 
 set_config("MOZ_DEFAULT_BROWSER_AGENT", default_agent_flag)
+
+
+# Enable or disable the notification server, which allows Windows native
+# notifications to persist when the application is not running and relaunch as
+# necessary.
+# ==============================================================================
+@depends(target, build_project)
+def notification_server_default(target, build_project):
+    return target.os == "WINNT" and build_project == "browser"
+
+
+option(
+    "--disable-notification-server",
+    when=notification_server_default,
+    help="Disable building the notification server",
+)
+
+set_config("MOZ_NOTIFICATION_SERVER", True, when="--enable-notification-server")

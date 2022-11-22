@@ -9,6 +9,7 @@
 
 #include "jit/BaselineFrame.h"
 
+#include "jit/TrialInlining.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 
@@ -55,6 +56,18 @@ inline bool BaselineFrame::pushLexicalEnvironment(JSContext* cx,
                                                   Handle<LexicalScope*> scope) {
   BlockLexicalEnvironmentObject* env =
       BlockLexicalEnvironmentObject::createForFrame(cx, scope, this);
+  if (!env) {
+    return false;
+  }
+  pushOnEnvironmentChain(*env);
+
+  return true;
+}
+
+inline bool BaselineFrame::pushClassBodyEnvironment(
+    JSContext* cx, Handle<ClassBodyScope*> scope) {
+  ClassBodyLexicalEnvironmentObject* env =
+      ClassBodyLexicalEnvironmentObject::createForFrame(cx, scope, this);
   if (!env) {
     return false;
   }

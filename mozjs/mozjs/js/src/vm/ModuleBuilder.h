@@ -9,16 +9,12 @@
 
 #include "mozilla/Attributes.h"  // MOZ_STACK_CLASS
 
-#include "jstypes.h"               // JS_PUBLIC_API
-#include "builtin/ModuleObject.h"  // js::{{Im,Ex}portEntry,Requested{Module,}}Object
+#include "jstypes.h"                // JS_PUBLIC_API
 #include "frontend/EitherParser.h"  // js::frontend::EitherParser
 #include "frontend/ParserAtom.h"    // js::frontend::TaggedParserAtomIndex
 #include "frontend/Stencil.h"       // js::frontend::StencilModuleEntry
 #include "frontend/TaggedParserAtomIndexHasher.h"  // frontend::TaggedParserAtomIndexHasher
-#include "js/GCHashTable.h"                        // JS::GCHash{Map,Set}
 #include "js/GCVector.h"                           // JS::GCVector
-#include "js/RootingAPI.h"                         // JS::{Handle,Rooted}
-#include "vm/AtomsTable.h"                         // js::AtomSet
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSAtom;
@@ -86,7 +82,7 @@ class MOZ_STACK_CLASS ModuleBuilder {
   frontend::StencilModuleEntry* importEntryFor(
       frontend::TaggedParserAtomIndex localName) const;
 
-  bool processExportBinding(frontend::ParseNode* pn);
+  bool processExportBinding(frontend::ParseNode* binding);
   bool processExportArrayBinding(frontend::ListNode* array);
   bool processExportObjectBinding(frontend::ListNode* obj);
 
@@ -95,9 +91,17 @@ class MOZ_STACK_CLASS ModuleBuilder {
                          frontend::ParseNode* node = nullptr);
 
   bool maybeAppendRequestedModule(frontend::TaggedParserAtomIndex specifier,
-                                  frontend::ParseNode* node);
+                                  frontend::ParseNode* node,
+                                  frontend::ListNode* assertionList);
 
   void markUsedByStencil(frontend::TaggedParserAtomIndex name);
+
+  [[nodiscard]] bool processAssertions(frontend::StencilModuleEntry& entry,
+                                       frontend::ListNode* assertionList);
+
+  [[nodiscard]] bool isAssertionSupported(
+      JS::ImportAssertion supportedAssertion,
+      frontend::TaggedParserAtomIndex key);
 };
 
 template <typename T>

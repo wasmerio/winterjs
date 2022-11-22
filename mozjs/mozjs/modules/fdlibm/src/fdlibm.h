@@ -23,6 +23,9 @@ double	acos(double);
 double	asin(double);
 double	atan(double);
 double	atan2(double, double);
+double	cos(double);
+double	sin(double);
+double	tan(double);
 
 double	cosh(double);
 double	sinh(double);
@@ -33,11 +36,10 @@ double	log(double);
 double	log10(double);
 
 double	pow(double, double);
-double	fabs(double);
 
-double	floor(double);
-double	trunc(double);
 double	ceil(double);
+double	fabs(double);
+double	floor(double);
 
 double	acosh(double);
 double	asinh(double);
@@ -51,10 +53,10 @@ double	rint(double);
 double	copysign(double, double);
 double	nearbyint(double);
 double	scalbn(double, int);
+double	trunc(double);
 
 float	ceilf(float);
 float	floorf(float);
-
 float	nearbyintf(float);
 float	rintf(float);
 float	truncf(float);

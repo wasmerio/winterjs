@@ -15,13 +15,14 @@
 
 #include "jit/CompileWrappers.h"  // CompileRuntime
 #include "jit/JitFrames.h"        // MinJITStackSize
-#include "js/TypeDecls.h"         // jsbytecode
-#include "vm/BindingKind.h"       // BindingLocation
-#include "vm/BytecodeUtil.h"      // JSOp
-#include "vm/JSAtomState.h"       // JSAtomState
-#include "vm/JSFunction.h"        // JSFunction
-#include "vm/JSScript.h"          // JSScript
-#include "vm/Scope.h"             // BindingIter
+#include "jit/shared/Assembler-shared.h"
+#include "js/TypeDecls.h"    // jsbytecode
+#include "vm/BindingKind.h"  // BindingLocation
+#include "vm/JSAtomState.h"  // JSAtomState
+#include "vm/JSFunction.h"   // JSFunction
+#include "vm/JSScript.h"     // JSScript
+#include "vm/Opcodes.h"      // JSOp
+#include "vm/Scope.h"        // BindingIter
 
 namespace js {
 
@@ -41,7 +42,7 @@ inline unsigned StartArgSlot(JSScript* script) {
 
   // Note: when updating this, please also update the assert in
   // SnapshotWriter::startFrame
-  return 2 + (script->argumentsHasVarBinding() ? 1 : 0);
+  return 2 + (script->needsArgsObj() ? 1 : 0);
 }
 
 inline unsigned CountArgSlots(JSScript* script, JSFunction* fun) {
@@ -55,27 +56,22 @@ inline unsigned CountArgSlots(JSScript* script, JSFunction* fun) {
   return StartArgSlot(script) + (fun ? fun->nargs() + 1 : 0);
 }
 
-enum AnalysisMode {
-  /* JavaScript execution, not analysis. */
-  Analysis_None,
-
-  /*
-   * MIR analysis performed when executing a script which uses its arguments,
-   * when it is not known whether a lazy arguments value can be used.
-   */
-  Analysis_ArgumentsUsage
-};
+inline unsigned CountArgSlots(JSScript* script, bool hasFun,
+                              uint32_t funArgCount) {
+  // Same as the previous function, for use when the JSFunction is not
+  // available.
+  return StartArgSlot(script) + (hasFun ? funArgCount + 1 : 0);
+}
 
 // Contains information about the compilation source for IR being generated.
 class CompileInfo {
  public:
   CompileInfo(CompileRuntime* runtime, JSScript* script, JSFunction* fun,
-              jsbytecode* osrPc, AnalysisMode analysisMode,
-              bool scriptNeedsArgsObj, InlineScriptTree* inlineScriptTree)
+              jsbytecode* osrPc, bool scriptNeedsArgsObj,
+              InlineScriptTree* inlineScriptTree)
       : script_(script),
         fun_(fun),
         osrPc_(osrPc),
-        analysisMode_(analysisMode),
         scriptNeedsArgsObj_(scriptNeedsArgsObj),
         hadEagerTruncationBailout_(script->hadEagerTruncationBailout()),
         hadSpeculativePhiBailout_(script->hadSpeculativePhiBailout()),
@@ -84,7 +80,7 @@ class CompileInfo {
         hadBoundsCheckBailout_(script->failedBoundsCheck()),
         hadUnboxFoldingBailout_(script->hadUnboxFoldingBailout()),
         mayReadFrameArgsDirectly_(script->mayReadFrameArgsDirectly()),
-        anyFormalIsAliased_(script->anyFormalIsAliased()),
+        anyFormalIsForwarded_(script->anyFormalIsForwarded()),
         isDerivedClassConstructor_(script->isDerivedClassConstructor()),
         inlineScriptTree_(inlineScriptTree) {
     MOZ_ASSERT_IF(osrPc, JSOp(*osrPc) == JSOp::LoopHead);
@@ -141,7 +137,6 @@ class CompileInfo {
       : script_(nullptr),
         fun_(nullptr),
         osrPc_(nullptr),
-        analysisMode_(Analysis_None),
         scriptNeedsArgsObj_(false),
         hadEagerTruncationBailout_(false),
         hadSpeculativePhiBailout_(false),
@@ -150,7 +145,7 @@ class CompileInfo {
         hadBoundsCheckBailout_(false),
         hadUnboxFoldingBailout_(false),
         mayReadFrameArgsDirectly_(false),
-        anyFormalIsAliased_(false),
+        anyFormalIsForwarded_(false),
         inlineScriptTree_(nullptr),
         needsBodyEnvironmentObject_(false),
         funNeedsSomeEnvironmentObject_(false) {
@@ -163,10 +158,13 @@ class CompileInfo {
 
   JSScript* script() const { return script_; }
   bool compilingWasm() const { return script() == nullptr; }
-  JSFunction* funMaybeLazy() const { return fun_; }
   ModuleObject* module() const { return script_->module(); }
   jsbytecode* osrPc() const { return osrPc_; }
   InlineScriptTree* inlineScriptTree() const { return inlineScriptTree_; }
+
+  // It's not safe to access the JSFunction off main thread.
+  bool hasFunMaybeLazy() const { return fun_; }
+  ImmGCPtr funMaybeLazy() const { return ImmGCPtr(fun_); }
 
   const char* filename() const { return script_->filename(); }
 
@@ -194,11 +192,11 @@ class CompileInfo {
     return 1;
   }
   uint32_t argsObjSlot() const {
-    MOZ_ASSERT(hasArguments());
+    MOZ_ASSERT(needsArgsObj());
     return 2;
   }
   uint32_t thisSlot() const {
-    MOZ_ASSERT(funMaybeLazy());
+    MOZ_ASSERT(hasFunMaybeLazy());
     MOZ_ASSERT(nimplicit_ > 0);
     return nimplicit_ - 1;
   }
@@ -222,23 +220,15 @@ class CompileInfo {
   uint32_t stackSlot(uint32_t i) const { return firstStackSlot() + i; }
 
   uint32_t totalSlots() const {
-    MOZ_ASSERT(script() && funMaybeLazy());
+    MOZ_ASSERT(script() && hasFunMaybeLazy());
     return nimplicit() + nargs() + nlocals();
   }
 
-  bool hasArguments() const { return script()->argumentsHasVarBinding(); }
-  bool argumentsAliasesFormals() const {
-    return script()->argumentsAliasesFormals();
-  }
   bool hasMappedArgsObj() const { return script()->hasMappedArgsObj(); }
   bool needsArgsObj() const { return scriptNeedsArgsObj_; }
   bool argsObjAliasesFormals() const {
     return scriptNeedsArgsObj_ && script()->hasMappedArgsObj();
   }
-
-  AnalysisMode analysisMode() const { return analysisMode_; }
-
-  bool isAnalysis() const { return analysisMode_ != Analysis_None; }
 
   bool needsBodyEnvironmentObject() const {
     return needsBodyEnvironmentObject_;
@@ -274,7 +264,7 @@ class CompileInfo {
 
     // Formal argument slots.
     if (slot >= firstArgSlot()) {
-      MOZ_ASSERT(funMaybeLazy());
+      MOZ_ASSERT(hasFunMaybeLazy());
       MOZ_ASSERT(slot - firstArgSlot() < nargs());
 
       // Preserve formal arguments if they might be read when creating a rest or
@@ -287,7 +277,7 @@ class CompileInfo {
     }
 
     // |this| slot is observable but it can be recovered.
-    if (funMaybeLazy() && slot == thisSlot()) {
+    if (hasFunMaybeLazy() && slot == thisSlot()) {
       return SlotObservableKind::ObservableRecoverable;
     }
 
@@ -301,7 +291,7 @@ class CompileInfo {
       // If the function may need an arguments object, also preserve the
       // environment chain because it may be needed to reconstruct the arguments
       // object during bailout.
-      if (funNeedsSomeEnvironmentObject_ || hasArguments()) {
+      if (funNeedsSomeEnvironmentObject_ || needsArgsObj()) {
         return SlotObservableKind::ObservableRecoverable;
       }
       return SlotObservableKind::NotObservable;
@@ -309,8 +299,8 @@ class CompileInfo {
 
     // The arguments object is observable. If it does not escape, it can
     // be recovered.
-    if (hasArguments() && slot == argsObjSlot()) {
-      MOZ_ASSERT(funMaybeLazy());
+    if (needsArgsObj() && slot == argsObjSlot()) {
+      MOZ_ASSERT(hasFunMaybeLazy());
       return SlotObservableKind::ObservableRecoverable;
     }
 
@@ -347,7 +337,7 @@ class CompileInfo {
   bool hadUnboxFoldingBailout() const { return hadUnboxFoldingBailout_; }
 
   bool mayReadFrameArgsDirectly() const { return mayReadFrameArgsDirectly_; }
-  bool anyFormalIsAliased() const { return anyFormalIsAliased_; }
+  bool anyFormalIsForwarded() const { return anyFormalIsForwarded_; }
 
   bool isDerivedClassConstructor() const { return isDerivedClassConstructor_; }
 
@@ -361,11 +351,7 @@ class CompileInfo {
   JSScript* script_;
   JSFunction* fun_;
   jsbytecode* osrPc_;
-  AnalysisMode analysisMode_;
 
-  // Whether a script needs an arguments object is unstable over compilation
-  // since the arguments optimization could be marked as failed on the active
-  // thread, so cache a value here and use it throughout for consistency.
   bool scriptNeedsArgsObj_;
 
   // Record the state of previous bailouts in order to prevent compiling the
@@ -378,7 +364,7 @@ class CompileInfo {
   bool hadUnboxFoldingBailout_;
 
   bool mayReadFrameArgsDirectly_;
-  bool anyFormalIsAliased_;
+  bool anyFormalIsForwarded_;
 
   bool isDerivedClassConstructor_;
 

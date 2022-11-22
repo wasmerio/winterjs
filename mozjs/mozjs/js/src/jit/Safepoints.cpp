@@ -19,13 +19,14 @@ using namespace jit;
 
 using mozilla::FloorLog2;
 
-SafepointWriter::SafepointWriter(uint32_t slotCount, uint32_t argumentCount)
-    : frameSlots_((slotCount / sizeof(intptr_t)) +
+SafepointWriter::SafepointWriter(uint32_t localSlotsSize,
+                                 uint32_t argumentsSize)
+    : localSlots_((localSlotsSize / sizeof(intptr_t)) +
                   1),  // Stack slot counts are inclusive.
-      argumentSlots_(argumentCount / sizeof(intptr_t)) {}
+      argumentSlots_(argumentsSize / sizeof(intptr_t)) {}
 
 bool SafepointWriter::init(TempAllocator& alloc) {
-  return frameSlots_.init(alloc) && argumentSlots_.init(alloc);
+  return localSlots_.init(alloc) && argumentSlots_.init(alloc);
 }
 
 uint32_t SafepointWriter::startEntry() {
@@ -56,29 +57,52 @@ static PackedRegisterMask ReadRegisterMask(CompactBufferReader& stream) {
   return stream.readUnsigned();
 }
 
-static void WriteFloatRegisterMask(CompactBufferWriter& stream, uint64_t bits) {
-  if (sizeof(FloatRegisters::SetType) == 1) {
-    stream.writeByte(bits);
-  } else if (sizeof(FloatRegisters::SetType) == 4) {
-    stream.writeUnsigned(bits);
-  } else {
-    MOZ_ASSERT(sizeof(FloatRegisters::SetType) == 8);
-    stream.writeUnsigned(bits & 0xffffffff);
-    stream.writeUnsigned(bits >> 32);
+static void WriteFloatRegisterMask(CompactBufferWriter& stream,
+                                   FloatRegisters::SetType bits) {
+  switch (sizeof(FloatRegisters::SetType)) {
+#ifdef JS_CODEGEN_ARM64
+    case 16:
+      stream.writeUnsigned64(bits.low());
+      stream.writeUnsigned64(bits.high());
+      break;
+#else
+    case 1:
+      stream.writeByte(bits);
+      break;
+    case 4:
+      stream.writeUnsigned(bits);
+      break;
+    case 8:
+      stream.writeUnsigned64(bits);
+      break;
+#endif
+    default:
+      MOZ_CRASH("WriteFloatRegisterMask: unexpected size");
   }
 }
 
-static int64_t ReadFloatRegisterMask(CompactBufferReader& stream) {
-  if (sizeof(FloatRegisters::SetType) == 1) {
-    return stream.readByte();
+static FloatRegisters::SetType ReadFloatRegisterMask(
+    CompactBufferReader& stream) {
+  switch (sizeof(FloatRegisters::SetType)) {
+#ifdef JS_CODEGEN_ARM64
+    case 16: {
+      uint64_t low = stream.readUnsigned64();
+      uint64_t high = stream.readUnsigned64();
+      return Bitset128(high, low);
+    }
+#else
+    case 1:
+      return stream.readByte();
+    case 2:
+    case 3:
+    case 4:
+      return stream.readUnsigned();
+    case 8:
+      return stream.readUnsigned64();
+#endif
+    default:
+      MOZ_CRASH("ReadFloatRegisterMask: unexpected size");
   }
-  if (sizeof(FloatRegisters::SetType) <= 4) {
-    return stream.readUnsigned();
-  }
-  MOZ_ASSERT(sizeof(FloatRegisters::SetType) == 8);
-  uint64_t ret = stream.readUnsigned();
-  ret |= uint64_t(stream.readUnsigned()) << 32;
-  return ret;
 }
 
 void SafepointWriter::writeGcRegs(LSafepoint* safepoint) {
@@ -157,7 +181,7 @@ void SafepointWriter::writeGcSlots(LSafepoint* safepoint) {
   }
 #endif
 
-  MapSlotsToBitset(frameSlots_, argumentSlots_, stream_, slots);
+  MapSlotsToBitset(localSlots_, argumentSlots_, stream_, slots);
 }
 
 void SafepointWriter::writeSlotsOrElementsSlots(LSafepoint* safepoint) {
@@ -186,7 +210,7 @@ void SafepointWriter::writeValueSlots(LSafepoint* safepoint) {
   }
 #  endif
 
-  MapSlotsToBitset(frameSlots_, argumentSlots_, stream_, slots);
+  MapSlotsToBitset(localSlots_, argumentSlots_, stream_, slots);
 }
 #endif
 
@@ -379,9 +403,9 @@ void SafepointWriter::endEntry() {
 SafepointReader::SafepointReader(IonScript* script, const SafepointIndex* si)
     : stream_(script->safepoints() + si->safepointOffset(),
               script->safepoints() + script->safepointsSize()),
-      frameSlots_((script->frameSlots() / sizeof(intptr_t)) +
+      localSlots_((script->localSlotsSize() / sizeof(intptr_t)) +
                   1),  // Stack slot counts are inclusive.
-      argumentSlots_(script->argumentSlots() / sizeof(intptr_t)),
+      argumentSlots_(script->argumentSlotsSize() / sizeof(intptr_t)),
       nunboxSlotsRemaining_(0),
       slotsOrElementsSlotsRemaining_(0) {
   osiCallPointOffset_ = stream_.readUnsigned();
@@ -399,6 +423,7 @@ SafepointReader::SafepointReader(IonScript* script, const SafepointIndex* si)
     valueSpills_ = GeneralRegisterSet(ReadRegisterMask(stream_));
 #endif
   }
+
   allFloatSpills_ = FloatRegisterSet(ReadFloatRegisterMask(stream_));
 
   advanceFromGcRegs();
@@ -426,7 +451,7 @@ bool SafepointReader::getSlotFromBitmap(SafepointSlotEntry* entry) {
   while (currentSlotChunk_ == 0) {
     // Are there any more chunks to read?
     if (currentSlotsAreStack_) {
-      if (nextSlotChunkNumber_ == BitSet::RawLengthForBits(frameSlots_)) {
+      if (nextSlotChunkNumber_ == BitSet::RawLengthForBits(localSlots_)) {
         nextSlotChunkNumber_ = 0;
         currentSlotsAreStack_ = false;
         continue;

@@ -17,7 +17,7 @@ function assert(mustBeTrue, message) {
   if (message === undefined) {
     message = 'Expected true but got ' + assert._toString(mustBeTrue);
   }
-  $ERROR(message);
+  throw new Test262Error(message);
 }
 
 assert._isSameValue = function (a, b) {
@@ -36,7 +36,7 @@ assert.sameValue = function (actual, expected, message) {
       return;
     }
   } catch (error) {
-    $ERROR(message + ' (_isSameValue operation threw) ' + error);
+    throw new Test262Error(message + ' (_isSameValue operation threw) ' + error);
     return;
   }
 
@@ -48,7 +48,7 @@ assert.sameValue = function (actual, expected, message) {
 
   message += 'Expected SameValue(«' + assert._toString(actual) + '», «' + assert._toString(expected) + '») to be true';
 
-  $ERROR(message);
+  throw new Test262Error(message);
 };
 
 assert.notSameValue = function (actual, unexpected, message) {
@@ -64,12 +64,13 @@ assert.notSameValue = function (actual, unexpected, message) {
 
   message += 'Expected SameValue(«' + assert._toString(actual) + '», «' + assert._toString(unexpected) + '») to be false';
 
-  $ERROR(message);
+  throw new Test262Error(message);
 };
 
 assert.throws = function (expectedErrorConstructor, func, message) {
+  var expectedName, actualName;
   if (typeof func !== "function") {
-    $ERROR('assert.throws requires two arguments: the error constructor ' +
+    throw new Test262Error('assert.throws requires two arguments: the error constructor ' +
       'and a function to run');
     return;
   }
@@ -84,16 +85,22 @@ assert.throws = function (expectedErrorConstructor, func, message) {
   } catch (thrown) {
     if (typeof thrown !== 'object' || thrown === null) {
       message += 'Thrown value was not an object!';
-      $ERROR(message);
+      throw new Test262Error(message);
     } else if (thrown.constructor !== expectedErrorConstructor) {
-      message += 'Expected a ' + expectedErrorConstructor.name + ' but got a ' + thrown.constructor.name;
-      $ERROR(message);
+      expectedName = expectedErrorConstructor.name;
+      actualName = thrown.constructor.name;
+      if (expectedName === actualName) {
+        message += 'Expected a ' + expectedName + ' but got a different error constructor with the same name';
+      } else {
+        message += 'Expected a ' + expectedName + ' but got a ' + actualName;
+      }
+      throw new Test262Error(message);
     }
     return;
   }
 
   message += 'Expected a ' + expectedErrorConstructor.name + ' to be thrown but no exception was thrown at all';
-  $ERROR(message);
+  throw new Test262Error(message);
 };
 
 assert._toString = function (value) {
@@ -141,18 +148,27 @@ compareArray.isSameValue = function(a, b) {
   return a === b;
 };
 
-compareArray.format = function(array) {
-  return `[${array.map(String).join(', ')}]`;
+compareArray.format = function(arrayLike) {
+  return `[${[].map.call(arrayLike, String).join(', ')}]`;
 };
 
-assert.compareArray = function(actual, expected, message = '') {
+assert.compareArray = function(actual, expected, message) {
+  message  = message === undefined ? '' : message;
+
+  if (typeof message === 'symbol') {
+    message = message.toString();
+  }
+
   assert(actual != null, `First argument shouldn't be nullish. ${message}`);
   assert(expected != null, `Second argument shouldn't be nullish. ${message}`);
   var format = compareArray.format;
-  assert(
-    compareArray(actual, expected),
-    `Expected ${format(actual)} and ${format(expected)} to have the same contents. ${message}`
-  );
+  var result = compareArray(actual, expected);
+
+  // The following prevents actual and expected from being iterated and evaluated
+  // more than once unless absolutely necessary.
+  if (!result) {
+    assert(false, `Expected ${format(actual)} and ${format(expected)} to have the same contents. ${message}`);
+  }
 };
 
 // file: propertyHelper.js
@@ -164,13 +180,13 @@ description: |
     property descriptors.
 defines:
   - verifyProperty
-  - verifyEqualTo
-  - verifyWritable
-  - verifyNotWritable
-  - verifyEnumerable
-  - verifyNotEnumerable
-  - verifyConfigurable
-  - verifyNotConfigurable
+  - verifyEqualTo # deprecated
+  - verifyWritable # deprecated
+  - verifyNotWritable # deprecated
+  - verifyEnumerable # deprecated
+  - verifyNotEnumerable # deprecated
+  - verifyConfigurable # deprecated
+  - verifyNotConfigurable # deprecated
 ---*/
 
 // @ts-check
@@ -264,7 +280,7 @@ function isConfigurable(obj, name) {
     delete obj[name];
   } catch (e) {
     if (!(e instanceof TypeError)) {
-      $ERROR("Expected TypeError, got " + e);
+      throw new Test262Error("Expected TypeError, got " + e);
     }
   }
   return !hasOwnProperty.call(obj, name);
@@ -311,7 +327,7 @@ function isWritable(obj, name, verifyProp, value) {
     obj[name] = newValue;
   } catch (e) {
     if (!(e instanceof TypeError)) {
-      $ERROR("Expected TypeError, got " + e);
+      throw new Test262Error("Expected TypeError, got " + e);
     }
   }
 
@@ -331,62 +347,83 @@ function isWritable(obj, name, verifyProp, value) {
   return writeSucceeded;
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyEqualTo(obj, name, value) {
   if (!isSameValue(obj[name], value)) {
-    $ERROR("Expected obj[" + String(name) + "] to equal " + value +
+    throw new Test262Error("Expected obj[" + String(name) + "] to equal " + value +
            ", actually " + obj[name]);
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyWritable(obj, name, verifyProp, value) {
   if (!verifyProp) {
     assert(Object.getOwnPropertyDescriptor(obj, name).writable,
          "Expected obj[" + String(name) + "] to have writable:true.");
   }
   if (!isWritable(obj, name, verifyProp, value)) {
-    $ERROR("Expected obj[" + String(name) + "] to be writable, but was not.");
+    throw new Test262Error("Expected obj[" + String(name) + "] to be writable, but was not.");
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyNotWritable(obj, name, verifyProp, value) {
   if (!verifyProp) {
     assert(!Object.getOwnPropertyDescriptor(obj, name).writable,
          "Expected obj[" + String(name) + "] to have writable:false.");
   }
   if (isWritable(obj, name, verifyProp)) {
-    $ERROR("Expected obj[" + String(name) + "] NOT to be writable, but was.");
+    throw new Test262Error("Expected obj[" + String(name) + "] NOT to be writable, but was.");
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyEnumerable(obj, name) {
   assert(Object.getOwnPropertyDescriptor(obj, name).enumerable,
        "Expected obj[" + String(name) + "] to have enumerable:true.");
   if (!isEnumerable(obj, name)) {
-    $ERROR("Expected obj[" + String(name) + "] to be enumerable, but was not.");
+    throw new Test262Error("Expected obj[" + String(name) + "] to be enumerable, but was not.");
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyNotEnumerable(obj, name) {
   assert(!Object.getOwnPropertyDescriptor(obj, name).enumerable,
        "Expected obj[" + String(name) + "] to have enumerable:false.");
   if (isEnumerable(obj, name)) {
-    $ERROR("Expected obj[" + String(name) + "] NOT to be enumerable, but was.");
+    throw new Test262Error("Expected obj[" + String(name) + "] NOT to be enumerable, but was.");
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyConfigurable(obj, name) {
   assert(Object.getOwnPropertyDescriptor(obj, name).configurable,
        "Expected obj[" + String(name) + "] to have configurable:true.");
   if (!isConfigurable(obj, name)) {
-    $ERROR("Expected obj[" + String(name) + "] to be configurable, but was not.");
+    throw new Test262Error("Expected obj[" + String(name) + "] to be configurable, but was not.");
   }
 }
 
+/**
+ * Deprecated; please use `verifyProperty` in new tests.
+ */
 function verifyNotConfigurable(obj, name) {
   assert(!Object.getOwnPropertyDescriptor(obj, name).configurable,
        "Expected obj[" + String(name) + "] to have configurable:false.");
   if (isConfigurable(obj, name)) {
-    $ERROR("Expected obj[" + String(name) + "] NOT to be configurable, but was.");
+    throw new Test262Error("Expected obj[" + String(name) + "] NOT to be configurable, but was.");
   }
 }
 
@@ -399,7 +436,7 @@ description: |
 
     - An error class to avoid false positives when testing for thrown exceptions
     - A function to explicitly throw an exception using the Test262Error class
-defines: [Test262Error, $ERROR, $DONOTEVALUATE]
+defines: [Test262Error, $DONOTEVALUATE]
 ---*/
 
 
@@ -411,11 +448,9 @@ Test262Error.prototype.toString = function () {
   return "Test262Error: " + this.message;
 };
 
-Test262Error.thrower = (...args) => {
-  throw new Test262Error(...args);
+Test262Error.thrower = (message) => {
+  throw new Test262Error(message);
 };
-
-var $ERROR = Test262Error.thrower;
 
 function $DONOTEVALUATE() {
   throw "Test262: This statement should not be evaluated.";
