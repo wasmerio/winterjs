@@ -7,8 +7,10 @@ extern crate mozjs;
 
 use std::ptr;
 
-use mozjs::jsapi::{GetPropertyKeys, JS_NewGlobalObject, JS_StringEqualsAscii, OnNewGlobalHookOption};
 use mozjs::jsapi::JSITER_OWNONLY;
+use mozjs::jsapi::{
+    GetPropertyKeys, JS_NewGlobalObject, JS_StringEqualsAscii, OnNewGlobalHookOption,
+};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rust::{IdVector, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 

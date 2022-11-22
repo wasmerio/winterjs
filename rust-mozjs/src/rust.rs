@@ -31,6 +31,7 @@ use conversions::jsstr_to_string;
 
 use jsapi;
 use jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
+use jsapi::js::frontend::CompilationStencil;
 use jsapi::mozilla::Utf8Unit;
 use jsapi::Handle as RawHandle;
 use jsapi::HandleObjectVector as RawHandleObjectVector;
@@ -38,12 +39,11 @@ use jsapi::HandleValue as RawHandleValue;
 use jsapi::MutableHandle as RawMutableHandle;
 use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use jsapi::JS::RegExpFlags;
-use jsapi::js::frontend::CompilationStencil;
-use jsapi::{jsid, Value, already_AddRefed};
+use jsapi::{already_AddRefed, jsid, Value};
 use jsapi::{AutoGCRooter, AutoGCRooterKind};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use jsapi::{Evaluate2, HandleValueArray, Heap, StencilRelease};
-use jsapi::{InitSelfHostedCode, IsWindowSlow, OffThreadToken, InstantiationStorage};
+use jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
 use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue};
 use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use jsapi::{JSErrorReport, JSFunction, JSFunctionSpec, JSGCParamKey};
@@ -972,14 +972,12 @@ impl Stencil {
 }
 
 pub unsafe fn FinishOffThreadStencil(
-    cx: *mut JSContext, 
-    token: *mut OffThreadToken, 
-    storage: *mut InstantiationStorage
+    cx: *mut JSContext,
+    token: *mut OffThreadToken,
+    storage: *mut InstantiationStorage,
 ) -> Stencil {
     let stencil = jsapi::FinishOffThreadStencil(cx, token, storage);
-    return Stencil {
-        inner: stencil,
-    }
+    return Stencil { inner: stencil };
 }
 
 // ___________________________________________________________________________

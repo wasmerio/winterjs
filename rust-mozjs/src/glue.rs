@@ -604,5 +604,9 @@ extern "C" {
         line: *mut u32,
         col: *mut u32,
     ) -> bool;
-    pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32);
+    pub fn SetDataPropertyDescriptor(
+        desc: MutableHandle<PropertyDescriptor>,
+        value: HandleValue,
+        attrs: u32,
+    );
 }

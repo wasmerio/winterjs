@@ -11,8 +11,8 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 use mozjs::jsapi::JSCLASS_FOREGROUND_FINALIZE;
+use mozjs::jsapi::{GCContext, JS_NewGlobalObject, JS_NewObject};
 use mozjs::jsapi::{JSAutoRealm, JSClass, JSClassOps, JSObject, OnNewGlobalHookOption};
-use mozjs::jsapi::{JS_NewGlobalObject, JS_NewObject, GCContext};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
