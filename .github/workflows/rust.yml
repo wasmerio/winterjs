@@ -20,15 +20,6 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install deps
       run: brew install python autoconf@2.13 ccache llvm yasm
-    # TODO: Remove this step when the compatibility issue between mozjs and
-    #       Homebrew's Python 3.10 formula (servo/rust-mozjs#559) is truly fixed
-    - name: Select Python 3.9
-      run: |
-        brew install python@3.9
-        cd $(dirname $(which python3.9))
-        rm -f python3 pip3
-        ln -s python3.9 python3
-        ln -s pip3.9 pip3
     - uses: dtolnay/rust-toolchain@stable
     - name: ccache cache files
       uses: actions/cache@v1.1.0
