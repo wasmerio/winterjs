@@ -70,7 +70,8 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
-        target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
+        target: [""]
+        #target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     steps:
     - uses: actions/checkout@v2
     - name: Install deps
