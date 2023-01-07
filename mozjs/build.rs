@@ -379,9 +379,19 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
 
 /// Functions we do not want to generate bindings to.
 const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
+    "JS::CopyAsyncStack",
     "JS::CreateError",
-    "JS::GetExceptionCause",
+    "JS::DecodeMultiStencilsOffThread",
+    "JS::DecodeStencilOffThread",
+    "JS::EncodeStencil",
+    "JS::FinishDecodeMultiStencilsOffThread",
+    "JS::FinishIncrementalEncoding",
     "JS::FromPropertyDescriptor",
+    "JS::GetExceptionCause",
+    "JS::GetOptimizedEncodingBuildId",
+    "JS::GetScriptTranscodingBuildId",
+    "JS::dbg::FireOnGarbageCollectionHook",
+    "JS_EncodeStringToUTF8BufferPartial",
     "JS_GetErrorType",
     "JS_GetOwnPropertyDescriptorById",
     "JS_GetOwnPropertyDescriptor",
@@ -389,6 +399,11 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_GetPropertyDescriptorById",
     "JS_GetPropertyDescriptor",
     "JS_GetUCPropertyDescriptor",
+    "JS_NewLatin1String",
+    "JS_NewUCStringDontDeflate",
+    "JS_NewUCString",
+    "JS_PCToLineNumber",
+    "js::AppendUnique",
     "js::SetPropertyIgnoringNamedGetter",
 ];
 
