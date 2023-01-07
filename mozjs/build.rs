@@ -379,7 +379,10 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
 
 /// Functions we do not want to generate bindings to.
 const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
+    "JS::CreateError",
+    "JS::GetExceptionCause",
     "JS::FromPropertyDescriptor",
+    "JS_GetErrorType",
     "JS_GetOwnPropertyDescriptorById",
     "JS_GetOwnPropertyDescriptor",
     "JS_GetOwnUCPropertyDescriptor",
