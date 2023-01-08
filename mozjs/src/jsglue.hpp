@@ -129,6 +129,16 @@ bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj,
                                     JS::Handle<JS::PropertyDescriptor> ownDesc,
                                     JS::ObjectOpResult& result);
 
+bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
+                 JS::HandleString fileName, uint32_t lineNumber,
+                 uint32_t columnNumber, JSErrorReport* report,
+                 JS::HandleString message, JS::HandleValue cause,
+                 JS::MutableHandleValue rval);
+
+JSExnType GetErrorType(const JS::Value& val);
+
+JS::Value GetExceptionCause(JSObject* exc);
+
 }  // namespace glue
 
 // There's a couple of classes from pre-57 releases of SM that bindgen can't
