@@ -61,8 +61,8 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
-        target: [""]
-        #target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
+        #target: [""]
+        target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     steps:
     - uses: actions/checkout@v2
     - name: Install deps
@@ -71,7 +71,7 @@ jobs:
         .\MozillaBuildSetup.exe /S | Out-Null
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\install.ps1 -RunAsAdmin
-        scoop install llvm@14.0.6 --global
+        scoop install llvm@15.0.7 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - uses: dtolnay/rust-toolchain@stable
     - name: Build uwp
@@ -88,8 +88,9 @@ jobs:
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
         rustup install nightly-2022-11-20
-        rustup default nightly
+        rustup default nightly-2022-11-20
         rustup component add rust-src
+        rustc --version --verbose
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
