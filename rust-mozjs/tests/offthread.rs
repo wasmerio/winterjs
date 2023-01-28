@@ -54,6 +54,8 @@ fn evaluate() {
             &*c_option,
         ));
 
+        let _ac = JSAutoRealm::new(context, global.get());
+
         let src = "1 + 1".to_string();
         let mut options = CompileOptionsWrapper::new(context, "", 1);
         (*options.ptr)._base.forceAsync = true;
@@ -75,8 +77,6 @@ fn evaluate() {
         let token = receiver.recv().unwrap();
         let compiled_script = FinishOffThreadStencil(context, token.0, ptr::null_mut());
         assert!(!compiled_script.is_null());
-
-        let _ac = JSAutoRealm::new(context, global.get());
 
         let options = InstantiateOptions {
             skipFilenameValidation: false,
