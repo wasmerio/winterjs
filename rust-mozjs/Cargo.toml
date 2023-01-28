@@ -28,6 +28,8 @@ name = "enumerate"
 [[test]]
 name = "evaluate"
 [[test]]
+name = "offthread"
+[[test]]
 name = "panic"
 [[test]]
 name = "property_descriptor"
