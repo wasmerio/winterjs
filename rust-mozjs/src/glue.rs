@@ -1,4 +1,5 @@
 use jsapi::*;
+use jsapi::js::frontend::CompilationStencil;
 use std::os::raw::{c_char, c_void};
 use std::{mem, ptr};
 
@@ -608,5 +609,11 @@ extern "C" {
         desc: MutableHandle<PropertyDescriptor>,
         value: HandleValue,
         attrs: u32,
+    );
+    pub fn FinishOffThreadStencil(
+        cx: *mut JSContext,
+        token: *mut OffThreadToken,
+        storage: *mut InstantiationStorage,
+        out: *mut already_AddRefed<CompilationStencil>,
     );
 }

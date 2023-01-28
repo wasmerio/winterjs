@@ -387,6 +387,7 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_GetPropertyDescriptor",
     "JS_GetUCPropertyDescriptor",
     "js::SetPropertyIgnoringNamedGetter",
+    "JS::FinishOffThreadStencil",
 ];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
