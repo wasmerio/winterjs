@@ -78,6 +78,7 @@ jobs:
       if: contains(matrix.target, 'uwp')
       shell: cmd
       env:
+        TOOLCHAIN: nightly-2023-02-02
         MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
         AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
@@ -87,8 +88,8 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
-        rustup install nightly-2022-11-20
-        rustup default nightly-2022-11-20
+        rustup install ${{ env.TOOLCHAIN }}
+        rustup default ${{ env.TOOLCHAIN }}
         rustup component add rust-src
         rustc --version --verbose
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
