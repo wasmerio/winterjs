@@ -90,9 +90,9 @@ jobs:
       run: |
         rustup install ${{ env.TOOLCHAIN }}
         rustup default ${{ env.TOOLCHAIN }}
-        rustup component add rust-src
+        rustup component add rust-src --toolchain ${{ env.TOOLCHAIN }}-x86_64-pc-windows-msvc
         rustc --version --verbose
-        cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
+        cargo +${{ env.TOOLCHAIN }} build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
       shell: cmd
