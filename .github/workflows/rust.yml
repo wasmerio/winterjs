@@ -74,11 +74,16 @@ jobs:
         scoop install llvm@15.0.7 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - uses: dtolnay/rust-toolchain@1.66
+      if: (!contains(matrix.target, 'uwp'))
+    - uses: dtolnay/rust-toolchain@master
+      if: contains(matrix.target, 'uwp')
+      with:
+        toolchain: "nightly-2023-02-02"
+        components: rust-src
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       shell: cmd
       env:
-        TOOLCHAIN: nightly-2023-02-02
         MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
         AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
@@ -88,11 +93,8 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
-        rustup install ${{ env.TOOLCHAIN }}
-        rustup default ${{ env.TOOLCHAIN }}
-        rustup component add rust-src --toolchain ${{ env.TOOLCHAIN }}-x86_64-pc-windows-msvc
         rustc --version --verbose
-        cargo +${{ env.TOOLCHAIN }} build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
+        cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
       shell: cmd
