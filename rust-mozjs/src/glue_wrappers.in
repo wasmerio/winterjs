@@ -20,3 +20,4 @@ wrap!(glue: pub fn JS_GetScriptPrivate(script: *mut JSScript, dest: MutableHandl
 wrap!(glue: pub fn JS_GetModulePrivate(module: *mut JSObject, dest: MutableHandleValue));
 wrap!(glue: pub fn EncodeStringToUTF8(cx: *mut JSContext, str: HandleString, cb: fn(*const c_char)));
 wrap!(glue: pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32));
+wrap!(glue: pub fn FinishOffThreadStencil(cx: *mut JSContext, token: *mut OffThreadToken, storage: *mut InstantiationStorage, out: *mut already_AddRefed<CompilationStencil>));

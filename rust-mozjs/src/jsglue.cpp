@@ -28,6 +28,7 @@
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
 #include "js/experimental/JitInfo.h"
+#include "js/experimental/JSStencil.h"
 #include "js/experimental/TypedData.h"
 #include "js/friend/ErrorMessages.h"
 #include "jsapi.h"
@@ -1078,6 +1079,16 @@ void SetDataPropertyDescriptor(
   uint32_t attrs
 ) {
   desc.set(JS::PropertyDescriptor::Data(value, attrs));
+}
+
+void FinishOffThreadStencil(
+  JSContext* cx,
+  JS::OffThreadToken* token,
+  JS::InstantiationStorage* storage,
+  already_AddRefed<JS::Stencil>* stencil
+) {
+  already_AddRefed<JS::Stencil> retval = JS::FinishOffThreadStencil(cx, token, storage);
+  *stencil = std::move(retval);
 }
 
 }  // extern "C"

@@ -108,7 +108,7 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
-        cargo test --verbose ${{ matrix.features }} --lib
+        cargo test --verbose ${{ matrix.features }}
   Integrity:
     runs-on: ubuntu-latest
     steps:
