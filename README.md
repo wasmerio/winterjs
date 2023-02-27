@@ -85,3 +85,22 @@ In order to upgrade to a new version of SpiderMonkey:
 5. Update `etc/COMMIT` with the commit number.
 
 6. Build and test the bindings as above, then submit a PR!
+
+NixOS users
+===========
+
+To get a dev environment with shell.nix:
+
+```sh
+$ nix-shell
+```
+
+To configure rust-analyzer in Visual Studio Code:
+
+```json
+{
+    "rust-analyzer.check.overrideCommand": ["nix-shell", "--run", "cargo check --message-format=json"],
+    "rust-analyzer.cargo.buildScripts.overrideCommand": ["nix-shell", "--run", "cargo check --message-format=json"],
+    "rust-analyzer.rustfmt.overrideCommand": ["nix-shell", "--run", "cargo fmt"],
+}
+```
