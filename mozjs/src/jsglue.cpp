@@ -115,91 +115,132 @@ JSLinearString* AtomToLinearString(JSAtom* atom) {
   return JS::AtomToLinearString(atom);
 }
 
-/* This types are using maybe so we manually unwrap it in these wrappers */
+/* These types are using maybe, so we manually unwrap it in these wrappers */
 
-bool FromPropertyDescriptor(
-        JSContext *cx, JS::Handle<JS::PropertyDescriptor> desc_,
-        JS::MutableHandleValue vp)
-{
-    return JS::FromPropertyDescriptor(cx, JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(cx, mozilla::ToMaybe(&desc_)), vp);
+bool FromPropertyDescriptor(JSContext* cx,
+                            JS::Handle<JS::PropertyDescriptor> desc_,
+                            JS::MutableHandleValue vp) {
+  return JS::FromPropertyDescriptor(
+      cx,
+      JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(
+          cx, mozilla::ToMaybe(&desc_)),
+      vp);
 }
 
-bool JS_GetPropertyDescriptor(
-        JSContext *cx, JS::Handle<JSObject *> obj, const char *name,
-        JS::MutableHandle<JS::PropertyDescriptor> desc,
-        JS::MutableHandle<JSObject *> holder,
-        bool *isNone)
-{
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetPropertyDescriptor(cx, obj, name, &mpd, holder);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+bool JS_GetPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> obj,
+                              const char* name,
+                              JS::MutableHandle<JS::PropertyDescriptor> desc,
+                              JS::MutableHandle<JSObject*> holder,
+                              bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = JS_GetPropertyDescriptor(cx, obj, name, &mpd, holder);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
 bool JS_GetOwnPropertyDescriptorById(
-        JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-        JS::MutableHandle<JS::PropertyDescriptor> desc,
-        bool *isNone)
-{
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetOwnPropertyDescriptorById(cx, obj, id, &mpd);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id,
+    JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = JS_GetOwnPropertyDescriptorById(cx, obj, id, &mpd);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
-bool JS_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char *name, JS::MutableHandle<JS::PropertyDescriptor> desc, bool *isNone){
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetOwnPropertyDescriptor(cx, obj, name, &mpd);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
+                                 const char* name,
+                                 JS::MutableHandle<JS::PropertyDescriptor> desc,
+                                 bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = JS_GetOwnPropertyDescriptor(cx, obj, name, &mpd);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
-bool JS_GetOwnUCPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char16_t *name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, bool *isNone){
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetOwnUCPropertyDescriptor(cx, obj, name, namelen, &mpd);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+bool JS_GetOwnUCPropertyDescriptor(
+    JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
+    JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = JS_GetOwnUCPropertyDescriptor(cx, obj, name, namelen, &mpd);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
-bool JS_GetPropertyDescriptorById(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool *isNone){
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetPropertyDescriptorById(cx, obj, id, &mpd, holder);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+bool JS_GetPropertyDescriptorById(
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id,
+    JS::MutableHandle<JS::PropertyDescriptor> desc,
+    JS::MutableHandleObject holder, bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result = JS_GetPropertyDescriptorById(cx, obj, id, &mpd, holder);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
-bool JS_GetUCPropertyDescriptor(JSContext *cx, JS::HandleObject obj, const char16_t *name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool *isNone){
-    JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
-    bool result = JS_GetUCPropertyDescriptor(cx, obj, name, namelen, &mpd, holder);
-    *isNone = mpd.isNothing();
-    if (!*isNone)
-    {
-        desc.set(*mpd);
-    }
-    return result;
+bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
+                                const char16_t* name, size_t namelen,
+                                JS::MutableHandle<JS::PropertyDescriptor> desc,
+                                JS::MutableHandleObject holder, bool* isNone) {
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> mpd(cx);
+  bool result =
+      JS_GetUCPropertyDescriptor(cx, obj, name, namelen, &mpd, holder);
+  *isNone = mpd.isNothing();
+  if (!*isNone) {
+    desc.set(*mpd);
+  }
+  return result;
 }
 
-bool SetPropertyIgnoringNamedGetter(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v, JS::HandleValue receiver, JS::Handle<JS::PropertyDescriptor> ownDesc, JS::ObjectOpResult &result){
-    return js::SetPropertyIgnoringNamedGetter(cx, obj, id, v, receiver, JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(cx, mozilla::ToMaybe(&ownDesc)), result);
+bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj,
+                                    JS::HandleId id, JS::HandleValue v,
+                                    JS::HandleValue receiver,
+                                    JS::Handle<JS::PropertyDescriptor> ownDesc,
+                                    JS::ObjectOpResult& result) {
+  return js::SetPropertyIgnoringNamedGetter(
+      cx, obj, id, v, receiver,
+      JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(
+          cx, mozilla::ToMaybe(&ownDesc)),
+      result);
+}
+
+bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
+                 JS::HandleString fileName, uint32_t lineNumber,
+                 uint32_t columnNumber, JSErrorReport* report,
+                 JS::HandleString message, JS::HandleValue cause,
+                 JS::MutableHandleValue rval) {
+  return JS::CreateError(
+      cx, type, stack, fileName, lineNumber, columnNumber, report, message,
+      JS::Rooted<mozilla::Maybe<JS::Value>>(cx, mozilla::ToMaybe(&cause)),
+      rval);
+}
+
+JSExnType GetErrorType(const JS::Value& val) {
+  auto type = JS_GetErrorType(val);
+  if (type.isNothing()) {
+    return JSEXN_ERROR_LIMIT;
+  }
+  return *type;
+}
+
+JS::Value GetExceptionCause(JSObject* exc) {
+  auto cause = JS::GetExceptionCause(exc);
+  if (cause.isNothing()) {
+    return JS::NullValue();
+  }
+  return *cause;
 }
 }  // namespace glue

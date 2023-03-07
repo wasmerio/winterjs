@@ -1540,13 +1540,10 @@ pub mod wrappers {
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;
     use jsapi::ForOfIterator_NonIterableBehavior;
-    use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
     use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
-    use jsapi::JSExnType;
-    use jsapi::JSFunctionSpec;
     use jsapi::JSFunctionSpecWithHelp;
     use jsapi::JSJitInfo;
     use jsapi::JSONWriteCallback;
@@ -1573,7 +1570,6 @@ pub mod wrappers {
     use jsapi::StructuredCloneScope;
     use jsapi::Symbol;
     use jsapi::SymbolCode;
-    use jsapi::TranscodeBuffer;
     use jsapi::TwoByteChars;
     use jsapi::UniqueChars;
     use jsapi::Value;
@@ -1680,17 +1676,14 @@ pub mod jsapi_wrapped {
     use jsapi::CallArgs;
     use jsapi::CloneDataPolicy;
     use jsapi::CompartmentTransplantCallback;
-    //use jsapi::DynamicImportStatus;
     use jsapi::ESClass;
     use jsapi::ExceptionStackBehavior;
     use jsapi::ForOfIterator;
     use jsapi::ForOfIterator_NonIterableBehavior;
-    use jsapi::HandleIdVector;
     use jsapi::HandleObjectVector;
     use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
-    use jsapi::JSExnType;
     use jsapi::JSFunctionSpec;
     use jsapi::JSFunctionSpecWithHelp;
     use jsapi::JSJitInfo;
@@ -1718,7 +1711,6 @@ pub mod jsapi_wrapped {
     use jsapi::StructuredCloneScope;
     use jsapi::Symbol;
     use jsapi::SymbolCode;
-    use jsapi::TranscodeBuffer;
     use jsapi::TwoByteChars;
     use jsapi::UniqueChars;
     use jsapi::Value;
