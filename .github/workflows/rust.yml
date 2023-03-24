@@ -7,7 +7,12 @@ on:
 
 env:
   #CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
   SHELL: /bin/bash
+  SCCACHE_GHA_ENABLED: "true"
+  CCACHE: sccache
+  CARGO_INCREMENTAL: 0
+  SCCACHE_VERSION: "v0.4.0"
 
 jobs:
   mac:
@@ -16,45 +21,42 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
+    env:
+      RUSTC_WRAPPER: sccache
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install deps
-      run: brew install python autoconf@2.13 ccache llvm yasm
-    - uses: dtolnay/rust-toolchain@stable
-    - name: ccache cache files
-      uses: actions/cache@v1.1.0
+      run: brew install python autoconf@2.13 llvm yasm
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
       with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        version: ${{ env.SCCACHE_VERSION }}
     - name: Build
       run: |
-        ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
-        ccache -s
+        cargo build --verbose ${{ matrix.features }}
+        cargo test --verbose ${{ matrix.features }}
   linux:
+    env:
+      RUSTC_WRAPPER: "sccache"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
     - name: Install deps
       run: |
-        sudo apt install autoconf2.13 ccache llvm -y
-    - uses: dtolnay/rust-toolchain@stable
-    - name: ccache cache files
-      uses: actions/cache@v1.1.0
+        sudo apt install autoconf2.13 llvm -y
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
       with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        version: ${{ env.SCCACHE_VERSION }}
     - name: Build
       run: |
-        ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
-        ccache -s
+        cargo build --verbose ${{ matrix.features }}
+        cargo test --verbose ${{ matrix.features }}
   windows:
     runs-on: windows-latest
     strategy:
@@ -64,7 +66,14 @@ jobs:
         #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+      if: (!contains(matrix.target, 'uwp'))
+    - uses: dtolnay/rust-toolchain@master
+      if: contains(matrix.target, 'uwp')
+      with:
+        toolchain: "nightly-2023-02-02"
+        components: rust-src
     - name: Install deps
       run: |
         Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
@@ -73,13 +82,10 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm@15.0.7 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    - uses: dtolnay/rust-toolchain@stable
-      if: (!contains(matrix.target, 'uwp'))
-    - uses: dtolnay/rust-toolchain@master
-      if: contains(matrix.target, 'uwp')
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.3
       with:
-        toolchain: "nightly-2023-02-02"
-        components: rust-src
+        version: ${{ env.SCCACHE_VERSION }}
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       shell: cmd
@@ -112,7 +118,7 @@ jobs:
   Integrity:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Get mozjs
       run: |
         bash ./mozjs/etc/get_mozjs.sh
