@@ -65,6 +65,14 @@ jobs:
         features: ["--features debugmozjs", ""]
         #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
+    env:
+        MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
+        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
+        LINKER: "lld-link.exe"
+        CC: "clang-cl"
+        CXX: "clang-cl"
+        NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
+        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
     steps:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
@@ -78,10 +86,7 @@ jobs:
       run: |
         Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
         .\MozillaBuildSetup.exe /S | Out-Null
-        iwr -useb get.scoop.sh -outfile 'install.ps1'
-        .\install.ps1 -RunAsAdmin
-        scoop install llvm@15.0.7 --global
-        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Tools\LLVM\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.3
       with:
@@ -89,30 +94,12 @@ jobs:
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       shell: cmd
-      env:
-        MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
-        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
-        LINKER: "lld-link.exe"
-        CC: "clang-cl.exe"
-        CXX: "clang-cl.exe"
-        NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
-        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
-        LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
         rustc --version --verbose
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
       shell: cmd
-      env:
-        MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
-        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
-        LINKER: "lld-link.exe"
-        CC: "clang-cl.exe"
-        CXX: "clang-cl.exe"
-        NATIVE_WIN32_PYTHON: "C:\\mozilla-build\\python2\\python.exe"
-        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
-        LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
         cargo test --verbose ${{ matrix.features }}
   Integrity:
