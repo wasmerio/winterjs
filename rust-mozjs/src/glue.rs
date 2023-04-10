@@ -460,35 +460,6 @@ extern "C" {
     pub fn InitializeMemoryReporter(
         want_to_measure: Option<unsafe extern "C" fn(obj: *mut JSObject) -> bool>,
     );
-    pub fn CallIdTracer(trc: *mut JSTracer, idp: *mut Heap<jsid>, name: *const c_char);
-    pub fn CallValueTracer(trc: *mut JSTracer, valuep: *mut Heap<Value>, name: *const c_char);
-    pub fn CallObjectTracer(
-        trc: *mut JSTracer,
-        objp: *mut Heap<*mut JSObject>,
-        name: *const c_char,
-    );
-    pub fn CallStringTracer(
-        trc: *mut JSTracer,
-        strp: *mut Heap<*mut JSString>,
-        name: *const c_char,
-    );
-    pub fn CallScriptTracer(
-        trc: *mut JSTracer,
-        scriptp: *mut Heap<*mut JSScript>,
-        name: *const c_char,
-    );
-    pub fn CallFunctionTracer(
-        trc: *mut JSTracer,
-        funp: *mut Heap<*mut JSFunction>,
-        name: *const c_char,
-    );
-    pub fn CallUnbarrieredObjectTracer(
-        trc: *mut JSTracer,
-        objp: *mut *mut JSObject,
-        name: *const c_char,
-    );
-    pub fn CallObjectRootTracer(trc: *mut JSTracer, objp: *mut *mut JSObject, name: *const c_char);
-    pub fn CallValueRootTracer(trc: *mut JSTracer, valp: *mut Value, name: *const c_char);
     pub fn GetProxyHandlerFamily() -> *const c_void;
 
     pub fn GetInt8ArrayLengthAndData(

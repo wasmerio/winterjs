@@ -4,11 +4,6 @@
 
 //! Rust wrappers around the raw JS apis
 
-use mozjs_sys::jsgc::IntoHandle as IntoRawHandle;
-use mozjs_sys::jsgc::IntoMutableHandle as IntoRawMutableHandle;
-use mozjs_sys::jsgc::RootKind;
-use mozjs_sys::{jsapi::JS::shadow::BaseShape, jsgc::CustomAutoRooterVFTable};
-
 use std::cell::Cell;
 use std::char;
 use std::default::Default;
@@ -17,62 +12,55 @@ use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::os::raw::c_void;
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
-
 use conversions::jsstr_to_string;
-
+use default_heapsize;
+pub use gc::custom::*;
+pub use gc::root::*;
+use glue::{CreateRootedIdVector, CreateRootedObjectVector};
+use glue::{
+	DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
+};
+use glue::{GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector};
+use glue::AppendToRootedObjectVector;
 use jsapi;
-use jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
-use jsapi::js::frontend::CompilationStencil;
-use jsapi::mozilla::Utf8Unit;
-use jsapi::Handle as RawHandle;
-use jsapi::HandleObjectVector as RawHandleObjectVector;
-use jsapi::HandleValue as RawHandleValue;
-use jsapi::MutableHandle as RawMutableHandle;
-use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
-use jsapi::JS::RegExpFlags;
-use jsapi::{already_AddRefed, jsid, Value};
-use jsapi::{AutoGCRooter, AutoGCRooterKind};
+use jsapi::{already_AddRefed, jsid};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
-use jsapi::{Evaluate2, HandleValueArray, Heap, StencilRelease};
+use jsapi::{Evaluate2, StencilRelease, HandleValueArray};
 use jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
-use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue};
-use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
-use jsapi::{JSErrorReport, JSFunction, JSFunctionSpec, JSGCParamKey};
-use jsapi::{JSObject, JSPropertySpec, JSRuntime, JSScript};
-use jsapi::{JSString, JSTracer, Object, PersistentRootedIdVector};
+use jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue, JSAutoRealm};
+use jsapi::{JSClass, JSCLASS_RESERVED_SLOTS_SHIFT, JSClassOps, JSContext, Realm};
+use jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
+use jsapi::{JSObject, JSPropertySpec, JSRuntime};
+use jsapi::{JSString, Object, PersistentRootedIdVector};
 use jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
 use jsapi::{JS_EnumerateStandardClasses, JS_GetRuntime, JS_GlobalObjectTraceHook};
 use jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
-use jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, Rooted, RootingContext};
-use jsapi::{SetWarningReporter, SourceText, Symbol, ToBooleanSlow};
+use jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
+use jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-
+use jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
+use jsapi::HandleObjectVector as RawHandleObjectVector;
+use jsapi::HandleValue as RawHandleValue;
+use jsapi::js::frontend::CompilationStencil;
+use jsapi::mozilla::Utf8Unit;
+use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
+use jsapi::shadow::BaseShape;
 use jsval::ObjectValue;
-
-use glue::{AppendToRootedObjectVector, CallFunctionTracer, CallIdTracer, CallObjectRootTracer};
-use glue::{CallObjectTracer, CallScriptTracer, CallStringTracer, CallValueRootTracer};
-use glue::{CallValueTracer, CreateRootedIdVector, CreateRootedObjectVector};
-use glue::{
-    DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
-};
-use glue::{GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector};
-
+pub use mozjs_sys::jsgc::*;
+pub use mozjs_sys::jsgc::Traceable as Trace;
 use panic::maybe_resume_unwind;
 
-use default_heapsize;
-
-pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
+use rooted;
 
 // From Gecko:
 // Our "default" stack is what we use in configurations where we don't have a compelling reason to
@@ -434,458 +422,6 @@ impl Drop for Runtime {
     }
 }
 
-// Creates a C string literal `$str`.
-macro_rules! c_str {
-    ($str:expr) => {
-        concat!($str, "\0").as_ptr() as *const ::std::os::raw::c_char
-    };
-}
-
-/// Types that can be traced.
-///
-/// This trait is unsafe; if it is implemented incorrectly, the GC may end up collecting objects
-/// that are still reachable.
-pub unsafe trait Trace {
-    unsafe fn trace(&self, trc: *mut JSTracer);
-}
-
-unsafe impl Trace for Heap<*mut JSFunction> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallFunctionTracer(trc, self as *const _ as *mut Self, c_str!("function"));
-    }
-}
-
-unsafe impl Trace for Heap<*mut JSObject> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallObjectTracer(trc, self as *const _ as *mut Self, c_str!("object"));
-    }
-}
-
-unsafe impl Trace for Heap<*mut JSScript> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallScriptTracer(trc, self as *const _ as *mut Self, c_str!("script"));
-    }
-}
-
-unsafe impl Trace for Heap<*mut JSString> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallStringTracer(trc, self as *const _ as *mut Self, c_str!("string"));
-    }
-}
-
-unsafe impl Trace for Heap<Value> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallValueTracer(trc, self as *const _ as *mut Self, c_str!("value"));
-    }
-}
-
-unsafe impl Trace for Heap<jsid> {
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallIdTracer(trc, self as *const _ as *mut Self, c_str!("id"));
-    }
-}
-
-/// Rust API for keeping a Rooted value in the context's root stack.
-/// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
-/// `RootedGuard::new` also works, but the macro is preferred.
-pub struct RootedGuard<'a, T: 'a + RootKind + GCMethods> {
-    root: &'a mut Rooted<T>,
-}
-
-impl<'a, T: 'a + RootKind + GCMethods> RootedGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
-        root.ptr = initial;
-        unsafe {
-            root.add_to_root_stack(cx);
-        }
-        RootedGuard { root: root }
-    }
-
-    pub fn handle(&'a self) -> Handle<'a, T> {
-        Handle::new(&self.root.ptr)
-    }
-
-    pub fn handle_mut(&mut self) -> MutableHandle<T> {
-        unsafe { MutableHandle::from_marked_location(&mut self.root.ptr) }
-    }
-
-    pub fn get(&self) -> T
-    where
-        T: Copy,
-    {
-        self.root.ptr
-    }
-
-    pub fn set(&mut self, v: T) {
-        self.root.ptr = v;
-    }
-}
-
-impl<'a, T: 'a + RootKind + GCMethods> Deref for RootedGuard<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.root.ptr
-    }
-}
-
-impl<'a, T: 'a + RootKind + GCMethods> DerefMut for RootedGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.root.ptr
-    }
-}
-
-impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
-    fn drop(&mut self) {
-        unsafe {
-            self.root.ptr = T::initial();
-            self.root.remove_from_root_stack();
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! rooted {
-    (in($cx:expr) let $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
-    };
-    (in($cx:expr) let mut $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let mut $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
-    };
-    (in($cx:expr) let $name:ident: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let $name = $crate::rust::RootedGuard::new(
-            $cx,
-            &mut __root,
-            <$type as $crate::rust::GCMethods>::initial(),
-        );
-    };
-    (in($cx:expr) let mut $name:ident: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let mut $name = $crate::rust::RootedGuard::new(
-            $cx,
-            &mut __root,
-            <$type as $crate::rust::GCMethods>::initial(),
-        );
-    };
-}
-
-/// Similarly to `Trace` trait, it's used to specify tracing of various types
-/// that are used in conjunction with `CustomAutoRooter`.
-pub unsafe trait CustomTrace {
-    fn trace(&self, trc: *mut JSTracer);
-}
-
-unsafe impl CustomTrace for *mut JSObject {
-    fn trace(&self, trc: *mut JSTracer) {
-        let this = self as *const *mut _ as *mut *mut _;
-        unsafe {
-            CallObjectRootTracer(trc, this, c_str!("object"));
-        }
-    }
-}
-
-unsafe impl CustomTrace for Value {
-    fn trace(&self, trc: *mut JSTracer) {
-        let this = self as *const _ as *mut _;
-        unsafe {
-            CallValueRootTracer(trc, this, c_str!("any"));
-        }
-    }
-}
-
-unsafe impl<T: CustomTrace> CustomTrace for Option<T> {
-    fn trace(&self, trc: *mut JSTracer) {
-        if let Some(ref some) = *self {
-            some.trace(trc);
-        }
-    }
-}
-
-unsafe impl<T: CustomTrace> CustomTrace for Vec<T> {
-    fn trace(&self, trc: *mut JSTracer) {
-        for elem in self {
-            elem.trace(trc);
-        }
-    }
-}
-
-// This structure reimplements a C++ class that uses virtual dispatch, so
-// use C layout to guarantee that vftable in CustomAutoRooter is in right place.
-#[repr(C)]
-pub struct CustomAutoRooter<T> {
-    _base: jsapi::CustomAutoRooter,
-    data: T,
-}
-
-impl<T> CustomAutoRooter<T> {
-    unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
-        self._base._base.add_to_root_stack(cx);
-    }
-
-    unsafe fn remove_from_root_stack(&mut self) {
-        self._base._base.remove_from_root_stack();
-    }
-}
-
-/// `CustomAutoRooter` uses dynamic dispatch on the C++ side for custom tracing,
-/// so provide trace logic via vftable when creating an object on Rust side.
-unsafe trait CustomAutoTraceable: Sized {
-    const vftable: CustomAutoRooterVFTable = CustomAutoRooterVFTable {
-        padding: CustomAutoRooterVFTable::PADDING,
-        trace: Self::trace,
-    };
-
-    unsafe extern "C" fn trace(this: *mut c_void, trc: *mut JSTracer) {
-        let this = this as *const Self;
-        let this = this.as_ref().unwrap();
-        Self::do_trace(this, trc);
-    }
-
-    /// Used by `CustomAutoTraceable` implementer to trace its contents.
-    /// Corresponds to virtual `trace` call in a `CustomAutoRooter` subclass (C++).
-    fn do_trace(&self, trc: *mut JSTracer);
-}
-
-unsafe impl<T: CustomTrace> CustomAutoTraceable for CustomAutoRooter<T> {
-    fn do_trace(&self, trc: *mut JSTracer) {
-        self.data.trace(trc);
-    }
-}
-
-impl<T: CustomTrace> CustomAutoRooter<T> {
-    pub fn new(data: T) -> Self {
-        let vftable = &Self::vftable;
-        CustomAutoRooter {
-            _base: jsapi::CustomAutoRooter {
-                vtable_: vftable as *const _ as *const _,
-                _base: AutoGCRooter::new_unrooted(AutoGCRooterKind::Custom),
-            },
-            data,
-        }
-    }
-
-    pub fn root<'a>(&'a mut self, cx: *mut JSContext) -> CustomAutoRooterGuard<'a, T> {
-        CustomAutoRooterGuard::new(cx, self)
-    }
-}
-
-/// An RAII guard used to root underlying data in `CustomAutoRooter` until the
-/// guard is dropped (falls out of scope).
-/// The underlying data can be accessed through this guard via its Deref and
-/// DerefMut implementations.
-/// This structure is created by `root` method on `CustomAutoRooter` or
-/// by the `auto_root!` macro.
-pub struct CustomAutoRooterGuard<'a, T: 'a + CustomTrace> {
-    rooter: &'a mut CustomAutoRooter<T>,
-}
-
-impl<'a, T: 'a + CustomTrace> CustomAutoRooterGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, rooter: &'a mut CustomAutoRooter<T>) -> Self {
-        unsafe {
-            rooter.add_to_root_stack(cx);
-        }
-        CustomAutoRooterGuard { rooter }
-    }
-
-    pub fn handle(&'a self) -> Handle<'a, T>
-    where
-        T: RootKind,
-    {
-        Handle::new(&self.rooter.data)
-    }
-
-    pub fn handle_mut(&mut self) -> MutableHandle<T>
-    where
-        T: RootKind,
-    {
-        unsafe { MutableHandle::from_marked_location(&mut self.rooter.data) }
-    }
-}
-
-impl<'a, T: 'a + CustomTrace> Deref for CustomAutoRooterGuard<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.rooter.data
-    }
-}
-
-impl<'a, T: 'a + CustomTrace> DerefMut for CustomAutoRooterGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.rooter.data
-    }
-}
-
-impl<'a, T: 'a + CustomTrace> Drop for CustomAutoRooterGuard<'a, T> {
-    fn drop(&mut self) {
-        unsafe {
-            self.rooter.remove_from_root_stack();
-        }
-    }
-}
-
-pub type SequenceRooter<T> = CustomAutoRooter<Vec<T>>;
-pub type SequenceRooterGuard<'a, T> = CustomAutoRooterGuard<'a, Vec<T>>;
-
-#[macro_export]
-macro_rules! auto_root {
-    (in($cx:expr) let $name:ident = $init:expr) => {
-        let mut __root = $crate::rust::CustomAutoRooter::new($init);
-        let $name = __root.root($cx);
-    };
-    (in($cx:expr) let mut $name:ident = $init:expr) => {
-        let mut __root = $crate::rust::CustomAutoRooter::new($init);
-        let mut $name = __root.root($cx);
-    };
-}
-
-#[derive(Clone, Copy)]
-pub struct Handle<'a, T: 'a> {
-    ptr: &'a T,
-}
-
-#[derive(Copy, Clone)]
-pub struct MutableHandle<'a, T: 'a> {
-    ptr: *mut T,
-    anchor: PhantomData<&'a mut T>,
-}
-
-pub type HandleFunction<'a> = Handle<'a, *mut JSFunction>;
-pub type HandleId<'a> = Handle<'a, jsid>;
-pub type HandleObject<'a> = Handle<'a, *mut JSObject>;
-pub type HandleScript<'a> = Handle<'a, *mut JSScript>;
-pub type HandleString<'a> = Handle<'a, *mut JSString>;
-pub type HandleSymbol<'a> = Handle<'a, *mut Symbol>;
-pub type HandleValue<'a> = Handle<'a, Value>;
-pub type MutableHandleFunction<'a> = MutableHandle<'a, *mut JSFunction>;
-pub type MutableHandleId<'a> = MutableHandle<'a, jsid>;
-pub type MutableHandleObject<'a> = MutableHandle<'a, *mut JSObject>;
-pub type MutableHandleScript<'a> = MutableHandle<'a, *mut JSScript>;
-pub type MutableHandleString<'a> = MutableHandle<'a, *mut JSString>;
-pub type MutableHandleSymbol<'a> = MutableHandle<'a, *mut Symbol>;
-pub type MutableHandleValue<'a> = MutableHandle<'a, Value>;
-
-impl<'a, T> Handle<'a, T> {
-    pub fn get(&self) -> T
-    where
-        T: Copy,
-    {
-        *self.ptr
-    }
-
-    fn new(ptr: &'a T) -> Self {
-        Handle { ptr: ptr }
-    }
-
-    pub unsafe fn from_marked_location(ptr: *const T) -> Self {
-        Handle::new(&*ptr)
-    }
-
-    pub unsafe fn from_raw(handle: RawHandle<T>) -> Self {
-        Handle::from_marked_location(handle.ptr)
-    }
-}
-
-impl<'a, T> IntoRawHandle for Handle<'a, T> {
-    type Target = T;
-    fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
-    }
-}
-
-impl<'a, T> IntoRawHandle for MutableHandle<'a, T> {
-    type Target = T;
-    fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
-    }
-}
-
-impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
-    fn into_handle_mut(self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
-    }
-}
-
-impl<'a, T> Deref for Handle<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.ptr
-    }
-}
-
-impl<'a, T> MutableHandle<'a, T> {
-    pub unsafe fn from_marked_location(ptr: *mut T) -> Self {
-        MutableHandle::new(&mut *ptr)
-    }
-
-    pub unsafe fn from_raw(handle: RawMutableHandle<T>) -> Self {
-        MutableHandle::from_marked_location(handle.ptr)
-    }
-
-    pub fn handle(&self) -> Handle<T> {
-        unsafe { Handle::new(&*self.ptr) }
-    }
-
-    pub fn new(ptr: &'a mut T) -> Self {
-        Self {
-            ptr: ptr,
-            anchor: PhantomData,
-        }
-    }
-
-    pub fn get(&self) -> T
-    where
-        T: Copy,
-    {
-        unsafe { *self.ptr }
-    }
-
-    pub fn set(&mut self, v: T)
-    where
-        T: Copy,
-    {
-        unsafe { *self.ptr = v }
-    }
-
-    fn raw(&mut self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
-    }
-}
-
-impl<'a, T> Deref for MutableHandle<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.ptr }
-    }
-}
-
-impl<'a, T> DerefMut for MutableHandle<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
-    }
-}
-
-impl HandleValue<'static> {
-    pub fn null() -> Self {
-        unsafe { Self::from_raw(RawHandleValue::null()) }
-    }
-
-    pub fn undefined() -> Self {
-        unsafe { Self::from_raw(RawHandleValue::undefined()) }
-    }
-}
-
-const ConstNullValue: *mut JSObject = 0 as *mut JSObject;
-
-impl<'a> HandleObject<'a> {
-    pub fn null() -> Self {
-        unsafe { HandleObject::from_marked_location(&ConstNullValue) }
-    }
-}
-
 const ChunkShift: usize = 20;
 const ChunkSize: usize = 1 << ChunkShift;
 
@@ -1105,7 +641,7 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
 
     let fnptr = (*report)._base.filename;
     let fname = if !fnptr.is_null() {
-        let c_str = ffi::CStr::from_ptr(fnptr);
+        let c_str = CStr::from_ptr(fnptr);
         latin1_to_string(c_str.to_bytes())
     } else {
         "none".to_string()
@@ -1402,10 +938,7 @@ impl<'a> CapturedJSStack<'a> {
         if !CaptureCurrentStack(cx, guard.handle_mut().raw(), stack_capture) {
             None
         } else {
-            Some(CapturedJSStack {
-                cx: cx,
-                stack: guard,
-            })
+            Some(CapturedJSStack { cx, stack: guard })
         }
     }
 
@@ -1564,6 +1097,7 @@ pub mod wrappers {
     use jsapi::ReadableStreamUnderlyingSource;
     use jsapi::Realm;
     use jsapi::RefPtr;
+    use jsapi::RegExpFlags;
     use jsapi::ScriptEnvironmentPreparer_Closure;
     use jsapi::SourceText;
     use jsapi::StackCapture;
@@ -1705,6 +1239,7 @@ pub mod jsapi_wrapped {
     use jsapi::ReadableStreamUnderlyingSource;
     use jsapi::Realm;
     use jsapi::RefPtr;
+    use jsapi::RegExpFlags;
     use jsapi::ScriptEnvironmentPreparer_Closure;
     use jsapi::SourceText;
     use jsapi::StackCapture;

@@ -41,6 +41,7 @@ use jsval::{BooleanValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
 use libc;
 use num_traits::{Bounded, Zero};
+use rooted;
 use rust::maybe_wrap_value;
 use rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, ToString};
 use rust::{HandleValue, MutableHandleValue};
@@ -631,7 +632,7 @@ impl<'a> ForOfIteratorGuard<'a> {
         unsafe {
             root.iterator.add_to_root_stack(cx);
         }
-        ForOfIteratorGuard { root: root }
+        ForOfIteratorGuard { root }
     }
 }
 
