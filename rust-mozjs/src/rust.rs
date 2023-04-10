@@ -55,6 +55,7 @@ use jsapi::mozilla::Utf8Unit;
 use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use jsapi::shadow::BaseShape;
 use jsval::ObjectValue;
+use mozjs_sys::jsapi::JS_AddExtraGCRootsTracer;
 pub use mozjs_sys::jsgc::*;
 pub use mozjs_sys::jsgc::Traceable as Trace;
 use panic::maybe_resume_unwind;
@@ -336,6 +337,8 @@ impl Runtime {
         // still in effect to cause periodical, and we hope hygienic,
         // last-ditch GCs from within the GC's allocator.
         JS_SetGCParameter(js_context, JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
+
+        JS_AddExtraGCRootsTracer(js_context, Some(trace_traceables), ptr::null_mut());
 
         JS_SetNativeStackQuota(
             js_context,

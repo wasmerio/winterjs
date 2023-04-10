@@ -531,7 +531,7 @@ impl RootedTraceableSet {
     }
 }
 
-pub(crate) unsafe extern "C" fn trace_traceables(trc: *mut JSTracer, _: *mut c_void) {
+pub unsafe extern "C" fn trace_traceables(trc: *mut JSTracer, _: *mut c_void) {
     ROOTED_TRACEABLES.with(|traceables| {
         traceables.borrow().trace(trc);
     });
