@@ -10,7 +10,7 @@ use rust::{Handle, MutableHandle};
 use mozjs_sys::c_str;
 use jsapi::glue::{CallObjectRootTracer, CallValueRootTracer};
 
-/// Similarly to `Trace` trait, it's used to specify tracing of various types
+/// Similarly to `Traceable` trait, it's used to specify tracing of various types
 /// that are used in conjunction with `CustomAutoRooter`.
 pub unsafe trait CustomTrace {
     fn trace(&self, trc: *mut JSTracer);

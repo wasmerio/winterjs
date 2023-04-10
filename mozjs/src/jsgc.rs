@@ -494,7 +494,7 @@ unsafe impl<A: Traceable, B: Traceable, C: Traceable, D: Traceable> Traceable fo
     }
 }
 
-struct RootedTraceableSet {
+pub struct RootedTraceableSet {
     set: Vec<*const dyn Traceable>,
 }
 
@@ -507,13 +507,13 @@ impl RootedTraceableSet {
         RootedTraceableSet { set: Vec::new() }
     }
 
-    unsafe fn add(traceable: *const dyn Traceable) {
+    pub unsafe fn add(traceable: *const dyn Traceable) {
         ROOTED_TRACEABLES.with(|traceables| {
             traceables.borrow_mut().set.push(traceable);
         });
     }
 
-    unsafe fn remove(traceable: *const dyn Traceable) {
+    pub unsafe fn remove(traceable: *const dyn Traceable) {
         ROOTED_TRACEABLES.with(|traceables| {
             let mut traceables = traceables.borrow_mut();
             let idx = match traceables.set.iter().rposition(|x| *x as *const () == traceable as *const ()) {

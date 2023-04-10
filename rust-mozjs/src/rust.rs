@@ -22,8 +22,7 @@ use consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use conversions::jsstr_to_string;
 use default_heapsize;
-pub use gc::custom::*;
-pub use gc::root::*;
+pub use gc::*;
 use glue::{CreateRootedIdVector, CreateRootedObjectVector};
 use glue::{
 	DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,

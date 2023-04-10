@@ -90,7 +90,7 @@ impl<T> JS::Handle<T> {
 
 impl<T> JS::MutableHandle<T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> JS::MutableHandle<T> {
-        JS::MutableHandle { ptr: ptr, _phantom_0: ::std::marker::PhantomData }
+        JS::MutableHandle { ptr, _phantom_0: ::std::marker::PhantomData }
     }
 
     pub fn handle(&self) -> JS::Handle<T> {
