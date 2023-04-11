@@ -4,8 +4,7 @@ use std::ops::{Deref, DerefMut};
 use c_str;
 use glue::{CallObjectRootTracer, CallValueRootTracer};
 use jsapi;
-use mozjs_sys::jsapi::JS::{AutoGCRooter, AutoGCRooterKind, Value};
-use mozjs_sys::jsapi::{JSContext, JSObject, JSTracer};
+use jsapi::{AutoGCRooter, AutoGCRooterKind, JSContext, JSObject, JSTracer, Value};
 use mozjs_sys::jsgc::{CustomAutoRooterVFTable, RootKind};
 use rust::{Handle, MutableHandle};
 

@@ -1,9 +1,9 @@
+use c_str;
 use glue::{
     CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer, CallStringTracer,
     CallValueTracer,
 };
-use mozjs_sys::jsapi::JS::Value;
-use mozjs_sys::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
+use jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
 use mozjs_sys::jsgc::Heap;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::btree_map::BTreeMap;
@@ -14,7 +14,6 @@ use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
 use std::rc::Rc;
 use std::sync::Arc;
-use c_str;
 
 /// Types that can be traced.
 ///

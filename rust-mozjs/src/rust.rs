@@ -37,6 +37,7 @@ use jsapi::mozilla::Utf8Unit;
 use jsapi::shadow::BaseShape;
 use jsapi::HandleObjectVector as RawHandleObjectVector;
 use jsapi::HandleValue as RawHandleValue;
+use jsapi::JS_AddExtraGCRootsTracer;
 use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use jsapi::{already_AddRefed, jsid};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
@@ -56,7 +57,6 @@ use jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
 use jsval::ObjectValue;
-use mozjs_sys::jsapi::JS_AddExtraGCRootsTracer;
 use mozjs_sys::jsgc::IntoHandle;
 use panic::maybe_resume_unwind;
 
