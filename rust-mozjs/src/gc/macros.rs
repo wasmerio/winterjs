@@ -27,6 +27,14 @@ macro_rules! rooted {
 }
 
 #[macro_export]
+macro_rules! rooted_vec {
+    (let mut $name:ident) => {
+        let mut __root = $crate::gc::RootableVec::new_unrooted();
+        let mut $name = $crate::dom::bindings::trace::RootedVec::new(&mut __root);
+    };
+}
+
+#[macro_export]
 macro_rules! auto_root {
     (in($cx:expr) let $($var:ident)+ = $init:expr) => {
         let mut __root = $crate::gc::CustomAutoRooter::new($init);
