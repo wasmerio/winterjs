@@ -14,14 +14,7 @@ use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
 use std::rc::Rc;
 use std::sync::Arc;
-
-// Creates a C string literal `$str`.
-#[macro_export]
-macro_rules! c_str {
-    ($str:expr) => {
-        concat!($str, "\0").as_ptr() as *const ::std::os::raw::c_char
-    };
-}
+use c_str;
 
 /// Types that can be traced.
 ///

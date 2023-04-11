@@ -69,34 +69,6 @@ impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
     }
 }
 
-#[macro_export]
-macro_rules! rooted {
-    (in($cx:expr) let $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
-    };
-    (in($cx:expr) let mut $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let mut $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
-    };
-    (in($cx:expr) let $name:ident: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let $name = $crate::rust::RootedGuard::new(
-            $cx,
-            &mut __root,
-            <$type as $crate::rust::GCMethods>::initial(),
-        );
-    };
-    (in($cx:expr) let mut $name:ident: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
-        let mut $name = $crate::rust::RootedGuard::new(
-            $cx,
-            &mut __root,
-            <$type as $crate::rust::GCMethods>::initial(),
-        );
-    };
-}
-
 #[derive(Clone, Copy)]
 pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: &'a T,

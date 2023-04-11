@@ -165,15 +165,3 @@ impl<'a, T: 'a + CustomTrace> Drop for CustomAutoRooterGuard<'a, T> {
 
 pub type SequenceRooter<T> = CustomAutoRooter<Vec<T>>;
 pub type SequenceRooterGuard<'a, T> = CustomAutoRooterGuard<'a, Vec<T>>;
-
-#[macro_export]
-macro_rules! auto_root {
-    (in($cx:expr) let $name:ident = $init:expr) => {
-        let mut __root = $crate::rust::CustomAutoRooter::new($init);
-        let $name = __root.root($cx);
-    };
-    (in($cx:expr) let mut $name:ident = $init:expr) => {
-        let mut __root = $crate::rust::CustomAutoRooter::new($init);
-        let mut $name = __root.root($cx);
-    };
-}
