@@ -77,24 +77,6 @@ bool JS_ForOfIteratorInit(
 bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator,
                           JS::MutableHandleValue val, bool* done);
 
-// Expose templated functions for tracing
-
-void CallValueTracer(JSTracer* trc, JS::Heap<JS::Value>* valuep,
-                     const char* name);
-void CallIdTracer(JSTracer* trc, JS::Heap<jsid>* idp, const char* name);
-void CallObjectTracer(JSTracer* trc, JS::Heap<JSObject*>* objp,
-                      const char* name);
-void CallStringTracer(JSTracer* trc, JS::Heap<JSString*>* strp,
-                      const char* name);
-void CallScriptTracer(JSTracer* trc, JS::Heap<JSScript*>* scriptp,
-                      const char* name);
-void CallFunctionTracer(JSTracer* trc, JS::Heap<JSFunction*>* funp,
-                        const char* name);
-void CallUnbarrieredObjectTracer(JSTracer* trc, JSObject** objp,
-                                 const char* name);
-void CallObjectRootTracer(JSTracer* trc, JSObject** objp, const char* name);
-void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name);
-
 // These functions are only intended for use in testing,
 // to make sure that the Rust implementation of JS::Value
 // agrees with the C++ implementation.

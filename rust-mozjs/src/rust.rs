@@ -15,27 +15,35 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use conversions::jsstr_to_string;
 use default_heapsize;
+pub use gc::Traceable as Trace;
 pub use gc::*;
+use glue::AppendToRootedObjectVector;
 use glue::{CreateRootedIdVector, CreateRootedObjectVector};
 use glue::{
-	DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
+    DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
 };
 use glue::{GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector};
-use glue::AppendToRootedObjectVector;
 use jsapi;
+use jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
+use jsapi::js::frontend::CompilationStencil;
+use jsapi::mozilla::Utf8Unit;
+use jsapi::shadow::BaseShape;
+use jsapi::HandleObjectVector as RawHandleObjectVector;
+use jsapi::HandleValue as RawHandleValue;
+use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use jsapi::{already_AddRefed, jsid};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
-use jsapi::{Evaluate2, StencilRelease, HandleValueArray};
+use jsapi::{Evaluate2, HandleValueArray, StencilRelease};
 use jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
-use jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue, JSAutoRealm};
-use jsapi::{JSClass, JSCLASS_RESERVED_SLOTS_SHIFT, JSClassOps, JSContext, Realm};
+use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue};
+use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use jsapi::{JSObject, JSPropertySpec, JSRuntime};
 use jsapi::{JSString, Object, PersistentRootedIdVector};
@@ -47,17 +55,9 @@ use jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext
 use jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-use jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
-use jsapi::HandleObjectVector as RawHandleObjectVector;
-use jsapi::HandleValue as RawHandleValue;
-use jsapi::js::frontend::CompilationStencil;
-use jsapi::mozilla::Utf8Unit;
-use jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
-use jsapi::shadow::BaseShape;
 use jsval::ObjectValue;
 use mozjs_sys::jsapi::JS_AddExtraGCRootsTracer;
-pub use mozjs_sys::jsgc::*;
-pub use mozjs_sys::jsgc::Traceable as Trace;
+use mozjs_sys::jsgc::IntoHandle;
 use panic::maybe_resume_unwind;
 
 use rooted;

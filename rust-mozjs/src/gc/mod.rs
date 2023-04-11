@@ -1,5 +1,7 @@
 pub use gc::custom::*;
 pub use gc::root::*;
+pub use gc::trace::*;
 
-pub mod custom;
-pub mod root;
+mod custom;
+mod root;
+mod trace;

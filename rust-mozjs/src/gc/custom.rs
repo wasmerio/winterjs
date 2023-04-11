@@ -1,14 +1,13 @@
 use std::ffi::c_void;
 use std::ops::{Deref, DerefMut};
 
+use c_str;
+use glue::{CallObjectRootTracer, CallValueRootTracer};
 use jsapi;
 use mozjs_sys::jsapi::JS::{AutoGCRooter, AutoGCRooterKind, Value};
 use mozjs_sys::jsapi::{JSContext, JSObject, JSTracer};
 use mozjs_sys::jsgc::{CustomAutoRooterVFTable, RootKind};
 use rust::{Handle, MutableHandle};
-
-use mozjs_sys::c_str;
-use jsapi::glue::{CallObjectRootTracer, CallValueRootTracer};
 
 /// Similarly to `Traceable` trait, it's used to specify tracing of various types
 /// that are used in conjunction with `CustomAutoRooter`.

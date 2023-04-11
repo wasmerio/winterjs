@@ -869,6 +869,50 @@ bool CollectServoSizes(JSContext* cx, JS::ServoSizes* sizes, GetSize gs) {
 
 void InitializeMemoryReporter(WantToMeasure wtm) { gWantToMeasure = wtm; }
 
+// Expose templated functions for tracing
+
+void CallValueTracer(JSTracer* trc, JS::Heap<JS::Value>* valuep,
+                     const char* name) {
+  JS::TraceEdge(trc, valuep, name);
+}
+
+void CallIdTracer(JSTracer* trc, JS::Heap<jsid>* idp, const char* name) {
+  JS::TraceEdge(trc, idp, name);
+}
+
+void CallObjectTracer(JSTracer* trc, JS::Heap<JSObject*>* objp,
+                      const char* name) {
+  JS::TraceEdge(trc, objp, name);
+}
+
+void CallStringTracer(JSTracer* trc, JS::Heap<JSString*>* strp,
+                      const char* name) {
+  JS::TraceEdge(trc, strp, name);
+}
+
+void CallScriptTracer(JSTracer* trc, JS::Heap<JSScript*>* scriptp,
+                      const char* name) {
+  JS::TraceEdge(trc, scriptp, name);
+}
+
+void CallFunctionTracer(JSTracer* trc, JS::Heap<JSFunction*>* funp,
+                        const char* name) {
+  JS::TraceEdge(trc, funp, name);
+}
+
+void CallUnbarrieredObjectTracer(JSTracer* trc, JSObject** objp,
+                                 const char* name) {
+  js::UnsafeTraceManuallyBarrieredEdge(trc, objp, name);
+}
+
+void CallObjectRootTracer(JSTracer* trc, JSObject** objp, const char* name) {
+  JS::TraceRoot(trc, objp, name);
+}
+
+void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name) {
+  JS::TraceRoot(trc, valp, name);
+}
+
 bool IsDebugBuild() {
 #ifdef JS_DEBUG
   return true;
