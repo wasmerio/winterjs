@@ -138,7 +138,11 @@ nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run '
 C++ editor setup
 ----------------
 
-Start by checking out mozilla-unified ([Building Firefox on Linux](https://firefox-source-docs.mozilla.org/setup/linux_build.html) §§ 1 and 2), then create your MOZCONFIG file ([Building and testing SpiderMonkey](https://firefox-source-docs.mozilla.org/js/build.html)). I recommend (and this guide assumes) that the file is named `debug.mozconfig`, because simple names like `debug` can cause MozconfigFindException problems. The file should look like this:
+Start by checking out mozilla-unified ([Building Firefox on Linux](https://firefox-source-docs.mozilla.org/setup/linux_build.html) §§ 1 and 2).
+
+**NixOS users:** it’s ok if the bootstrap command fails with a NotImplementedError due to NixOS not being a supported distro.
+
+Now create your MOZCONFIG file ([Building and testing SpiderMonkey](https://firefox-source-docs.mozilla.org/js/build.html)). I recommend (and this guide assumes) that the file is named `debug.mozconfig`, because simple names like `debug` can cause MozconfigFindException problems. The file should look like this:
 
 ```
 # Build only the JS shell
