@@ -1,5 +1,7 @@
 use gc::{RootedTraceableSet, Traceable};
-use jsapi::JSTracer;
+use jsapi::{Heap, JSTracer};
+use mozjs_sys::jsgc::GCMethods;
+use rust::Handle;
 use std::ops::{Deref, DerefMut};
 
 /// A vector of items to be rooted with `RootedVec`.
@@ -54,5 +56,61 @@ impl<'a, T: Traceable> Deref for RootedVec<'a, T> {
 impl<'a, T: Traceable> DerefMut for RootedVec<'a, T> {
     fn deref_mut(&mut self) -> &mut Vec<T> {
         &mut self.root.v
+    }
+}
+
+pub struct RootedTraceableBox<T: Traceable + 'static> {
+    ptr: *mut T,
+}
+
+impl<T: Traceable + 'static> RootedTraceableBox<T> {
+    pub fn new(traceable: T) -> RootedTraceableBox<T> {
+        Self::from_box(Box::new(traceable))
+    }
+
+    pub fn from_box(boxed_traceable: Box<T>) -> RootedTraceableBox<T> {
+        let traceable = Box::into_raw(boxed_traceable);
+        unsafe {
+            RootedTraceableSet::add(traceable);
+        }
+        RootedTraceableBox { ptr: traceable }
+    }
+}
+
+impl<T> RootedTraceableBox<Heap<T>>
+where
+    Heap<T>: Traceable + 'static,
+    T: GCMethods + Copy,
+{
+    pub fn handle(&self) -> Handle<T> {
+        unsafe { Handle::from_raw((*self.ptr).handle()) }
+    }
+}
+
+unsafe impl<T: Traceable + 'static> Traceable for RootedTraceableBox<T> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        (*self.ptr).trace(trc)
+    }
+}
+
+impl<T: Traceable> Deref for RootedTraceableBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.ptr }
+    }
+}
+
+impl<T: Traceable> DerefMut for RootedTraceableBox<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.ptr }
+    }
+}
+
+impl<T: Traceable + 'static> Drop for RootedTraceableBox<T> {
+    fn drop(&mut self) {
+        unsafe {
+            RootedTraceableSet::remove(self.ptr);
+            let _ = Box::from_raw(self.ptr);
+        }
     }
 }
