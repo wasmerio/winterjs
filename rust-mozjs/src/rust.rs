@@ -57,7 +57,7 @@ use jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
 use jsval::ObjectValue;
-use mozjs_sys::jsgc::IntoHandle;
+pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
 use panic::maybe_resume_unwind;
 
 use rooted;

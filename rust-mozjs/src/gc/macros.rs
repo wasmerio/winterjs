@@ -40,7 +40,7 @@ macro_rules! rooted_vec {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
         let mut $name: $crate::gc::RootedVec<$type> = $crate::gc::RootedVec::new(&mut __root);
         ::std::iter::Extend::extend(&mut $name, $init);
-    }
+    };
 }
 
 #[macro_export]
