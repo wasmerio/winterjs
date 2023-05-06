@@ -13,6 +13,10 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
 use std::rc::Rc;
+use std::sync::atomic::{
+    AtomicBool, AtomicI16, AtomicI32, AtomicI64, AtomicI8, AtomicIsize, AtomicU16, AtomicU32,
+    AtomicU64, AtomicU8, AtomicUsize,
+};
 use std::sync::Arc;
 
 /// Types that can be traced.
@@ -202,31 +206,122 @@ unsafe impl<T: Traceable> Traceable for BTreeSet<T> {
     }
 }
 
-unsafe impl<A: Traceable, B: Traceable> Traceable for (A, B) {
-    #[inline]
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        self.0.trace(trc);
-        self.1.trace(trc);
+macro_rules! impl_traceable_tuple {
+    () => {
+        unsafe impl Traceable for () {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+    };
+    ($($name:ident)+) => {
+        unsafe impl<$($name: Traceable,)+> Traceable for ($($name,)+) {
+            #[allow(non_snake_case)]
+            #[inline]
+            unsafe fn trace(&self, trc: *mut JSTracer) {
+                let ($($name,)+) = self;
+                $($name.trace(trc);)+
+            }
+        }
+    };
+}
+
+impl_traceable_tuple! {}
+impl_traceable_tuple! { A }
+impl_traceable_tuple! { A B }
+impl_traceable_tuple! { A B C }
+impl_traceable_tuple! { A B C D }
+impl_traceable_tuple! { A B C D E }
+impl_traceable_tuple! { A B C D E F }
+impl_traceable_tuple! { A B C D E F G }
+impl_traceable_tuple! { A B C D E F G H }
+impl_traceable_tuple! { A B C D E F G H I }
+impl_traceable_tuple! { A B C D E F G H I J }
+impl_traceable_tuple! { A B C D E F G H I J K }
+impl_traceable_tuple! { A B C D E F G H I J K L }
+
+macro_rules! impl_traceable_fnptr {
+    () => {
+        unsafe impl<Ret> Traceable for fn() -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret> Traceable for unsafe fn() -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret> Traceable for extern "C" fn() -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret> Traceable for unsafe extern "C" fn() -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+    };
+    ($($arg:ident)+) => {
+        unsafe impl<Ret, $($arg,)+> Traceable for fn($($arg,)+) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret, $($arg,)+> Traceable for unsafe fn($($arg,)+) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret, $($arg,)+> Traceable for extern "C" fn($($arg,)+) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret, $($arg,)+> Traceable for unsafe extern "C" fn($($arg,)+) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret, $($arg,)+> Traceable for extern "C" fn($($arg),+, ...) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
+        unsafe impl<Ret, $($arg,)+> Traceable for unsafe extern "C" fn($($arg),+, ...) -> Ret {
+            #[inline]
+            unsafe fn trace(&self, _: *mut JSTracer) {}
+        }
     }
 }
 
-unsafe impl<A: Traceable, B: Traceable, C: Traceable> Traceable for (A, B, C) {
-    #[inline]
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        self.0.trace(trc);
-        self.1.trace(trc);
-        self.2.trace(trc);
+impl_traceable_fnptr! {}
+impl_traceable_fnptr! { A }
+impl_traceable_fnptr! { A B }
+impl_traceable_fnptr! { A B C }
+impl_traceable_fnptr! { A B C D }
+impl_traceable_fnptr! { A B C D E }
+impl_traceable_fnptr! { A B C D E F }
+impl_traceable_fnptr! { A B C D E F G }
+impl_traceable_fnptr! { A B C D E F G H }
+impl_traceable_fnptr! { A B C D E F G H I }
+impl_traceable_fnptr! { A B C D E F G H I J }
+impl_traceable_fnptr! { A B C D E F G H I J K }
+impl_traceable_fnptr! { A B C D E F G H I J K L }
+
+macro_rules! impl_traceable_simple {
+    ($($ty:ty $(,)?)+) => {
+        $(
+            unsafe impl Traceable for $ty {
+                #[inline]
+                unsafe fn trace(&self, _: *mut JSTracer) {}
+            }
+        )+
     }
 }
 
-unsafe impl<A: Traceable, B: Traceable, C: Traceable, D: Traceable> Traceable for (A, B, C, D) {
+impl_traceable_simple!(bool);
+impl_traceable_simple!(i8, i16, i32, i64, isize);
+impl_traceable_simple!(u8, u16, u32, u64, usize);
+impl_traceable_simple!(f32, f64);
+impl_traceable_simple!(AtomicBool);
+impl_traceable_simple!(AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize);
+impl_traceable_simple!(AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize);
+
+unsafe impl<'a> Traceable for &'a str {
     #[inline]
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        self.0.trace(trc);
-        self.1.trace(trc);
-        self.2.trace(trc);
-        self.3.trace(trc);
-    }
+    unsafe fn trace(&self, _: *mut JSTracer) {}
 }
 
 pub struct RootedTraceableSet {
