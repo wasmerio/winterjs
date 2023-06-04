@@ -4,20 +4,17 @@
 
 # This module provides mixins to perform process execution.
 
-from __future__ import absolute_import, unicode_literals
-
 import logging
 import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
-
 from typing import Optional
+
 from mozprocess.processhandler import ProcessHandlerMixin
 
 from .logging import LoggingMixin
-
 
 # Perform detection of operating system environment. This is used by command
 # execution. We only do this once to save redundancy. Yes, this can fail module
@@ -48,6 +45,10 @@ if (
 
     if not _current_shell.lower().endswith(".exe"):
         _current_shell += ".exe"
+
+
+class LineHandlingEarlyReturn(Exception):
+    pass
 
 
 class ProcessExecutionMixin(LoggingMixin):
@@ -114,7 +115,10 @@ class ProcessExecutionMixin(LoggingMixin):
                 line = line.decode(sys.stdout.encoding or "utf-8", "replace")
 
             if line_handler:
-                line_handler(line)
+                try:
+                    line_handler(line)
+                except LineHandlingEarlyReturn:
+                    return
 
             if line.startswith("BUILDTASK") or not log_name:
                 return
