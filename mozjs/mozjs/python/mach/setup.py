@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
+import os
 
 try:
     from setuptools import setup
@@ -11,8 +11,8 @@ except ImportError:
 
 
 VERSION = "1.0.0"
-
-README = open("README.rst").read()
+HERE = os.path.dirname(__file__)
+README = open(os.path.join(HERE, "README.rst")).read()
 
 setup(
     name="mach",
@@ -33,7 +33,7 @@ setup(
         "Programming Language :: Python :: 3.5",
     ],
     install_requires=[
-        "blessings",
+        "blessed",
         "mozfile",
         "mozprocess",
         "six",

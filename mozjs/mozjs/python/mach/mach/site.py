@@ -5,8 +5,6 @@
 # This file contains code for managing the Python import scope for Mach. This
 # generally involves populating a Python virtualenv.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import ast
 import enum
 import functools
@@ -18,10 +16,10 @@ import site
 import subprocess
 import sys
 import sysconfig
-from pathlib import Path
 import tempfile
 from contextlib import contextmanager
-from typing import Optional, Callable
+from pathlib import Path
+from typing import Callable, Optional
 
 from mach.requirements import (
     MachEnvRequirements,
@@ -34,6 +32,18 @@ METADATA_FILENAME = "moz_virtualenv_metadata.json"
 # install pip packages over the network. In such a case, they must access unvendored
 # python packages via the system environment.
 PIP_NETWORK_INSTALL_RESTRICTED_VIRTUALENVS = ("mach", "build", "common")
+
+_is_windows = sys.platform == "cygwin" or (sys.platform == "win32" and os.sep == "\\")
+
+
+class VenvModuleNotFoundException(Exception):
+    def __init__(self):
+        msg = (
+            'Mach was unable to find the "venv" module, which is needed '
+            "to create virtual environments in Python. You may need to "
+            "install it manually using the package manager for your system."
+        )
+        super(Exception, self).__init__(msg)
 
 
 class VirtualenvOutOfDateException(Exception):
@@ -220,6 +230,7 @@ class MozSiteMetadata:
 
         yield
         MozSiteMetadata.current = self
+
         sys.executable = executable
 
         if pkg_resources:
@@ -321,14 +332,11 @@ class MachSiteManager:
         if self._site_packages_source == SitePackagesSource.NONE:
             return SiteUpToDateResult(True)
         elif self._site_packages_source == SitePackagesSource.SYSTEM:
-            _assert_pip_check(
-                self._topsrcdir, self._sys_path(), "mach", self._requirements
-            )
+            _assert_pip_check(self._sys_path(), "mach", self._requirements)
             return SiteUpToDateResult(True)
         elif self._site_packages_source == SitePackagesSource.VENV:
             environment = self._virtualenv()
             return _is_venv_up_to_date(
-                self._topsrcdir,
                 environment,
                 self._pthfile_lines(environment),
                 self._requirements,
@@ -384,7 +392,6 @@ class MachSiteManager:
 
         environment = self._virtualenv()
         _create_venv_with_pthfile(
-            self._topsrcdir,
             environment,
             self._pthfile_lines(environment),
             True,
@@ -437,13 +444,16 @@ class CommandSiteManager:
     used standalone to invoke a script).
 
     A few notes:
-    * The command environment always inherits Mach's import scope. This is because
-      "unloading" packages in Python is error-prone, so in-process activations will always
-      carry Mach's dependencies along with it. Accordingly, compatibility between each
-      command environment and the Mach environment must be maintained
+
+    * The command environment always inherits Mach's import scope. This is
+      because "unloading" packages in Python is error-prone, so in-process activations
+      will always carry Mach's dependencies along with it. Accordingly, compatibility
+      between each command environment and the Mach environment must be maintained
+
     * Unlike the Mach environment, command environments *always* have an associated
       physical virtualenv on-disk. This is because some commands invoke child Python
       processes, and that child process should have the same import scope.
+
     """
 
     def __init__(
@@ -563,7 +573,6 @@ class CommandSiteManager:
                 )
 
             _create_venv_with_pthfile(
-                self._topsrcdir,
                 self._virtualenv,
                 self._pthfile_lines(),
                 self._populate_virtualenv,
@@ -655,6 +664,66 @@ class CommandSiteManager:
             stderr=subprocess.STDOUT,
             universal_newlines=True,
         )
+
+        if not check_result.returncode:
+            return
+
+        """
+        Some commands may use the "setup.py" script of first-party modules. This causes
+        a "*.egg-info" dir to be created for that module (which pip can then detect as
+        a package). Since we add all first-party module directories to the .pthfile for
+        the "mach" venv, these first-party modules are then detected by all venvs after
+        they are created. The problem is that these .egg-info directories can become
+        stale (since if the first-party module is updated it's not guaranteed that the
+        command that runs the "setup.py" was ran afterwards). This can cause
+        incompatibilities with the pip check (since the dependencies can change between
+        different versions).
+
+        These .egg-info dirs are in our VCS ignore lists (eg: ".hgignore") because they
+        are necessary to run some commands, so we don't want to always purge them, and we
+        also don't want to accidentally commit them. Given this, we can leverage our VCS
+        to find all the current first-party .egg-info dirs.
+
+        If we're in the case where 'pip check' fails, then we can try purging the
+        first-party .egg-info dirs, then run the 'pip check' again afterwards. If it's
+        still failing, then we know the .egg-info dirs weren't the problem. If that's
+        the case we can just raise the error encountered, which is the same as before.
+        """
+
+        def _delete_ignored_egg_info_dirs():
+            from pathlib import Path
+
+            from mozversioncontrol import (
+                MissingConfigureInfo,
+                MissingVCSInfo,
+                get_repository_from_env,
+            )
+
+            try:
+                with get_repository_from_env() as repo:
+                    ignored_file_finder = repo.get_ignored_files_finder().find(
+                        "**/*.egg-info"
+                    )
+
+                    unique_egg_info_dirs = {
+                        Path(found[0]).parent for found in ignored_file_finder
+                    }
+
+                    for egg_info_dir in unique_egg_info_dirs:
+                        shutil.rmtree(egg_info_dir)
+
+            except (MissingVCSInfo, MissingConfigureInfo):
+                pass
+
+        _delete_ignored_egg_info_dirs()
+
+        check_result = subprocess.run(
+            [self.python_path, "-m", "pip", "check"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+        )
+
         if check_result.returncode:
             if quiet:
                 # If "quiet" was specified, then the "pip install" output wasn't printed
@@ -732,14 +801,12 @@ class CommandSiteManager:
         pthfile_lines = self._pthfile_lines()
         if self._mach_site_packages_source == SitePackagesSource.SYSTEM:
             _assert_pip_check(
-                self._topsrcdir,
                 pthfile_lines,
                 self._site_name,
                 self._requirements if not self._populate_virtualenv else None,
             )
 
         return _is_venv_up_to_date(
-            self._topsrcdir,
             self._virtualenv,
             pthfile_lines,
             self._requirements,
@@ -751,17 +818,13 @@ class PythonVirtualenv:
     """Calculates paths of interest for general python virtual environments"""
 
     def __init__(self, prefix):
-        is_windows = sys.platform == "cygwin" or (
-            sys.platform == "win32" and os.sep == "\\"
-        )
-
-        if is_windows:
+        if _is_windows:
             self.bin_path = os.path.join(prefix, "Scripts")
             self.python_path = os.path.join(self.bin_path, "python.exe")
         else:
             self.bin_path = os.path.join(prefix, "bin")
             self.python_path = os.path.join(self.bin_path, "python")
-        self.prefix = prefix
+        self.prefix = os.path.realpath(prefix)
 
     @functools.lru_cache(maxsize=None)
     def resolve_sysconfig_packages_path(self, sysconfig_path):
@@ -1023,12 +1086,6 @@ def resolve_requirements(topsrcdir, site_name):
         )
 
 
-def _virtualenv_py_path(topsrcdir):
-    return os.path.join(
-        topsrcdir, "third_party", "python", "virtualenv", "virtualenv.py"
-    )
-
-
 def _resolve_installed_packages(python_executable):
     pip_json = subprocess.check_output(
         [
@@ -1047,7 +1104,50 @@ def _resolve_installed_packages(python_executable):
     return {package["name"]: package["version"] for package in installed_packages}
 
 
-def _assert_pip_check(topsrcdir, pthfile_lines, virtualenv_name, requirements):
+def _ensure_python_exe(python_exe_root: Path):
+    """On some machines in CI venv does not behave consistently. Sometimes
+    only a "python3" executable is created, but we expect "python". Since
+    they are functionally identical, we can just copy "python3" to "python"
+    (and vice-versa) to solve the problem.
+    """
+    python3_exe_path = python_exe_root / "python3"
+    python_exe_path = python_exe_root / "python"
+
+    if _is_windows:
+        python3_exe_path = python3_exe_path.with_suffix(".exe")
+        python_exe_path = python_exe_path.with_suffix(".exe")
+
+    if python3_exe_path.exists() and not python_exe_path.exists():
+        shutil.copy(str(python3_exe_path), str(python_exe_path))
+
+    if python_exe_path.exists() and not python3_exe_path.exists():
+        shutil.copy(str(python_exe_path), str(python3_exe_path))
+
+    if not python_exe_path.exists() and not python3_exe_path.exists():
+        raise Exception(
+            f'Neither a "{python_exe_path.name}" or "{python3_exe_path.name}" '
+            f"were found. This means something unexpected happened during the "
+            f"virtual environment creation and we cannot proceed."
+        )
+
+
+def _ensure_pyvenv_cfg(venv_root: Path):
+    # We can work around a bug on some versions of Python 3.6 on
+    # Windows by copying the 'pyvenv.cfg' of the current venv
+    # to the new venv. This will make the new venv reference
+    # the original Python install instead of the current venv,
+    # which resolves the issue. There shouldn't be any harm in
+    # always doing this, but we'll play it safe and restrict it
+    # to Windows Python 3.6 anyway.
+    if _is_windows and sys.version_info[:2] == (3, 6):
+        this_venv = Path(sys.executable).parent.parent
+        this_venv_config = this_venv / "pyvenv.cfg"
+        if this_venv_config.exists():
+            new_venv_config = Path(venv_root) / "pyvenv.cfg"
+            shutil.copyfile(str(this_venv_config), str(new_venv_config))
+
+
+def _assert_pip_check(pthfile_lines, virtualenv_name, requirements):
     """Check if the provided pthfile lines have a package incompatibility
 
     If there's an incompatibility, raise an exception and allow it to bubble up since
@@ -1077,17 +1177,32 @@ def _assert_pip_check(topsrcdir, pthfile_lines, virtualenv_name, requirements):
         # we create a new virtualenv that has our pinned pip version, so that
         # we get consistent results (there's been lots of pip resolver behaviour
         # changes recently).
-
-        subprocess.check_call(
-            [
-                sys.executable,
-                _virtualenv_py_path(topsrcdir),
-                "--no-download",
-                check_env_path,
-            ],
-            stdout=subprocess.DEVNULL,
+        process = subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", check_env_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="UTF-8",
         )
+
+        _ensure_pyvenv_cfg(Path(check_env_path))
+
+        if process.returncode != 0:
+            if "No module named venv" in process.stderr:
+                raise VenvModuleNotFoundException()
+            else:
+                raise subprocess.CalledProcessError(
+                    process.returncode,
+                    process.args,
+                    output=process.stdout,
+                    stderr=process.stderr,
+                )
+
+        if process.stdout:
+            print(process.stdout)
+
         check_env = PythonVirtualenv(check_env_path)
+        _ensure_python_exe(Path(check_env.python_path).parent)
+
         with open(
             os.path.join(
                 os.path.join(check_env.resolve_sysconfig_packages_path("platlib")),
@@ -1161,7 +1276,6 @@ def _deprioritize_venv_packages(virtualenv, populate_virtualenv):
 
 
 def _create_venv_with_pthfile(
-    topsrcdir,
     target_venv,
     pthfile_lines,
     populate_with_pip,
@@ -1175,16 +1289,30 @@ def _create_venv_with_pthfile(
     os.makedirs(virtualenv_root)
     metadata.write(is_finalized=False)
 
-    subprocess.check_call(
-        [
-            metadata.original_python.python_path,
-            _virtualenv_py_path(topsrcdir),
-            # pip, setuptools and wheel are vendored and inserted into the virtualenv
-            # scope automatically, so "virtualenv" doesn't need to seed it.
-            "--no-seed",
-            virtualenv_root,
-        ]
+    process = subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", virtualenv_root],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="UTF-8",
     )
+
+    _ensure_pyvenv_cfg(Path(virtualenv_root))
+
+    if process.returncode != 0:
+        if "No module named venv" in process.stderr:
+            raise VenvModuleNotFoundException()
+        else:
+            raise subprocess.CalledProcessError(
+                process.returncode,
+                process.args,
+                output=process.stdout,
+                stderr=process.stderr,
+            )
+
+    if process.stdout:
+        print(process.stdout)
+
+    _ensure_python_exe(Path(target_venv.python_path).parent)
 
     platlib_site_packages_dir = target_venv.resolve_sysconfig_packages_path("platlib")
     pthfile_contents = "\n".join(pthfile_lines)
@@ -1200,7 +1328,6 @@ def _create_venv_with_pthfile(
 
 
 def _is_venv_up_to_date(
-    topsrcdir,
     target_venv,
     expected_pthfile_lines,
     requirements,
@@ -1209,23 +1336,12 @@ def _is_venv_up_to_date(
     if not os.path.exists(target_venv.prefix):
         return SiteUpToDateResult(False, f'"{target_venv.prefix}" does not exist')
 
-    # Modifications to any of the following files mean the virtualenv should be
-    # rebuilt:
-    # * The `virtualenv` package
-    # * Any of our requirements manifest files
-    virtualenv_package = os.path.join(
-        topsrcdir,
-        "third_party",
-        "python",
-        "virtualenv",
-        "virtualenv",
-        "version.py",
-    )
-    deps = [virtualenv_package] + requirements.requirements_paths
+    # Modifications to any of the requirements manifest files mean the virtualenv should
+    # be rebuilt:
     metadata_mtime = os.path.getmtime(
         os.path.join(target_venv.prefix, METADATA_FILENAME)
     )
-    for dep_file in deps:
+    for dep_file in requirements.requirements_paths:
         if os.path.getmtime(dep_file) > metadata_mtime:
             return SiteUpToDateResult(
                 False, f'"{dep_file}" has changed since the virtualenv was created'
