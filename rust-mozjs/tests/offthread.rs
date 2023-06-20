@@ -10,13 +10,13 @@ use std::ptr;
 use std::sync::mpsc::{channel, Sender};
 
 use mozjs::jsapi::{
-    JS_NewGlobalObject, OnNewGlobalHookOption, OffThreadToken, CanCompileOffThread,
-    CompileToStencilOffThread1, InstantiateOptions, InstantiateGlobalStencil, JSAutoRealm,
+    CanCompileOffThread, CompileToStencilOffThread1, InstantiateGlobalStencil, InstantiateOptions,
+    JSAutoRealm, JS_NewGlobalObject, OffThreadToken, OnNewGlobalHookOption,
 };
 use mozjs::jsval::UndefinedValue;
 use mozjs::rust::{
-    JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS, CompileOptionsWrapper,
-    transform_str_to_source_text, FinishOffThreadStencil, wrappers::JS_ExecuteScript
+    transform_str_to_source_text, wrappers::JS_ExecuteScript, CompileOptionsWrapper,
+    FinishOffThreadStencil, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS,
 };
 
 struct Token(*mut OffThreadToken);
@@ -28,10 +28,7 @@ struct Context {
     sender: Sender<Token>,
 }
 
-unsafe extern "C" fn callback(
-    token: *mut OffThreadToken,
-    callback_data: *mut c_void,
-) {
+unsafe extern "C" fn callback(token: *mut OffThreadToken, callback_data: *mut c_void) {
     let context = Box::from_raw(callback_data as *mut Context);
     let token = Token(token);
     context.sender.send(token).unwrap();
@@ -62,17 +59,15 @@ fn evaluate() {
         let options_ptr = options.ptr as *const _;
         assert!(CanCompileOffThread(context, options_ptr, src.len()));
         let (sender, receiver) = channel();
-        let script_context = Box::new(Context {
-            text: src,
-            sender,
-        });
+        let script_context = Box::new(Context { text: src, sender });
         assert!(!CompileToStencilOffThread1(
             context,
             options_ptr,
             &mut transform_str_to_source_text(&script_context.text) as *mut _,
             Some(callback),
             Box::into_raw(script_context) as *mut c_void,
-        ).is_null());
+        )
+        .is_null());
 
         let token = receiver.recv().unwrap();
         let compiled_script = FinishOffThreadStencil(context, token.0, ptr::null_mut());
@@ -94,8 +89,8 @@ fn evaluate() {
         let result = JS_ExecuteScript(context, script.handle(), rval.handle_mut());
         assert!(result);
         /*assert!(runtime
-           .evaluate_script(global.handle(), "1 + 1", "test", 1, rval.handle_mut())
-            .is_ok());*/
+        .evaluate_script(global.handle(), "1 + 1", "test", 1, rval.handle_mut())
+         .is_ok());*/
         assert_eq!(rval.get().to_int32(), 2);
     }
 }

@@ -869,6 +869,8 @@ bool CollectServoSizes(JSContext* cx, JS::ServoSizes* sizes, GetSize gs) {
 
 void InitializeMemoryReporter(WantToMeasure wtm) { gWantToMeasure = wtm; }
 
+// Expose templated functions for tracing
+
 void CallValueTracer(JSTracer* trc, JS::Heap<JS::Value>* valuep,
                      const char* name) {
   JS::TraceEdge(trc, valuep, name);

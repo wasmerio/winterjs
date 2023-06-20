@@ -115,7 +115,7 @@ JSLinearString* AtomToLinearString(JSAtom* atom) {
   return JS::AtomToLinearString(atom);
 }
 
-/* These types are using maybe, so we manually unwrap it in these wrappers */
+// These types are using maybe so we manually unwrap them in these wrappers
 
 bool FromPropertyDescriptor(JSContext* cx,
                             JS::Handle<JS::PropertyDescriptor> desc_,

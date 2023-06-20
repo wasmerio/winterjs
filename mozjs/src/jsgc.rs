@@ -2,18 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::jsid;
-use jsapi::JSFunction;
-use jsapi::JSObject;
-use jsapi::JSScript;
-use jsapi::JSString;
-use jsapi::JSTracer;
 use jsapi::JS;
+use jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 
 use jsid::VoidId;
 use std::cell::UnsafeCell;
+use std::ffi::c_void;
 use std::mem;
-use std::os::raw::c_void;
 use std::ptr;
 
 /// A trait for JS types that can be registered as roots.

@@ -1,5 +1,5 @@
-use jsapi::*;
 use jsapi::js::frontend::CompilationStencil;
+use jsapi::*;
 use std::os::raw::{c_char, c_void};
 use std::{mem, ptr};
 
