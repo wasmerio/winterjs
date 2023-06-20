@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import time
 from cProfile import Profile
 from pathlib import Path
@@ -108,7 +106,7 @@ class MachRegistrar(object):
             profile = Profile()
             profile.enable()
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         if debug_command:
             import pdb
@@ -117,7 +115,7 @@ class MachRegistrar(object):
         else:
             result = fn(instance, **kwargs)
 
-        end_time = time.time()
+        end_time = time.monotonic()
 
         if profile_command:
             profile.disable()

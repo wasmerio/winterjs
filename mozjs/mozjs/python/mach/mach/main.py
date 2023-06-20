@@ -5,8 +5,6 @@
 # This module provides functionality for the command-line build tool
 # (mach). It is packaged as a module because everything is a library.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import codecs
 import errno
@@ -17,29 +15,29 @@ import sys
 import traceback
 import uuid
 from collections.abc import Iterable
-from typing import Union, Dict, List
 from pathlib import Path
+from typing import Dict, List, Union
 
 from .base import (
     CommandContext,
+    FailedCommandError,
     MachError,
     MissingFileError,
     NoCommandError,
     UnknownCommandError,
     UnrecognizedArgumentError,
-    FailedCommandError,
 )
 from .config import ConfigSettings
 from .dispatcher import CommandAction
 from .logging import LoggingManager
 from .registrar import Registrar
-from .sentry import register_sentry, NoopErrorReporter
-from .telemetry import report_invocation_metrics, create_telemetry_from_environment
-from .util import setenv, UserError
+from .sentry import NoopErrorReporter, register_sentry
+from .telemetry import create_telemetry_from_environment, report_invocation_metrics
+from .util import UserError, setenv
 
 SUGGEST_MACH_BUSTED_TEMPLATE = r"""
-You can invoke |./mach busted| to check if this issue is already on file. If it
-isn't, please use |./mach busted file %s| to report it. If |./mach busted| is
+You can invoke ``./mach busted`` to check if this issue is already on file. If it
+isn't, please use ``./mach busted file %s`` to report it. If ``./mach busted`` is
 misbehaving, you can also inspect the dependencies of bug 1543241.
 """.lstrip()
 
@@ -84,13 +82,13 @@ a bug in the called code itself or in the way that mach is calling it.
 NO_COMMAND_ERROR = r"""
 It looks like you tried to run mach without a command.
 
-Run |mach help| to show a list of commands.
+Run ``mach help`` to show a list of commands.
 """.lstrip()
 
 UNKNOWN_COMMAND_ERROR = r"""
 It looks like you are trying to %s an unknown mach command: %s
 %s
-Run |mach help| to show a list of commands.
+Run ``mach help`` to show a list of commands.
 """.lstrip()
 
 SUGGESTED_COMMANDS_MESSAGE = r"""
@@ -197,7 +195,7 @@ class Mach(object):
 
         populate_context_handler -- If defined, it must be a callable. The
             callable signature is the following:
-                populate_context_handler(key=None)
+            populate_context_handler(key=None)
             It acts as a fallback getter for the mach.base.CommandContext
             instance.
             This allows to augment the context instance with arbitrary data

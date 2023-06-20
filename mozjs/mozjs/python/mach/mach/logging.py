@@ -6,19 +6,51 @@
 # support for a structured logging framework built on top of Python's built-in
 # logging framework.
 
-from __future__ import absolute_import, unicode_literals
-
-try:
-    import blessings
-except ImportError:
-    blessings = None
-
 import codecs
 import json
 import logging
-import six
+import os
 import sys
 import time
+
+print(sys.path, file=sys.stderr)
+import blessed
+import six
+from packaging.version import Version
+
+IS_WINDOWS = sys.platform.startswith("win")
+
+if IS_WINDOWS:
+    import msvcrt
+    from ctypes import byref, windll
+    from ctypes.wintypes import DWORD
+
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+
+    def enable_virtual_terminal_processing(file_descriptor):
+        handle = msvcrt.get_osfhandle(file_descriptor)
+        try:
+            mode = DWORD()
+            windll.kernel32.GetConsoleMode(handle, byref(mode))
+            mode.value |= ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            windll.kernel32.SetConsoleMode(handle, mode.value)
+        except Exception as e:
+            raise e
+
+
+def enable_blessed():
+    # Only Windows has issues with enabling blessed
+    # and interpreting ANSI escape sequences
+    if not IS_WINDOWS:
+        return True
+
+    if os.environ.get("NO_ANSI"):
+        return False
+
+    # MozillaBuild 4.0.2 is the first Release that supports
+    # ANSI escape sequences, so if we're greater than that
+    # version, we can enable them (via Blessed).
+    return False
 
 
 # stdout and stderr may not necessarily be set up to write Unicode output, so
@@ -86,7 +118,7 @@ class StructuredHumanFormatter(logging.Formatter):
         self.last_time = None
 
     def format(self, record):
-        formatted_msg = record.msg.format(**record.params)
+        formatted_msg = record.msg.format(**getattr(record, "params", {}))
 
         elapsed_time = (
             format_seconds(self._time(record)) + " " if self.write_times else ""
@@ -117,10 +149,10 @@ class StructuredTerminalFormatter(StructuredHumanFormatter):
 
     def set_terminal(self, terminal):
         self.terminal = terminal
-        self._sgr0 = terminal.normal if terminal and blessings else ""
+        self._sgr0 = terminal.normal if terminal else ""
 
     def format(self, record):
-        formatted_msg = record.msg.format(**record.params)
+        formatted_msg = record.msg.format(**getattr(record, "params", {}))
         elapsed_time = (
             self.terminal.blue(format_seconds(self._time(record))) + " "
             if self.write_times
@@ -223,19 +255,19 @@ class LoggingManager(object):
 
         self._terminal = None
 
-    @property
-    def terminal(self):
-        if not self._terminal and blessings:
-            # Sometimes blessings fails to set up the terminal. In that case,
-            # silently fail.
+    def create_terminal(self):
+        if enable_blessed():
+            # Sometimes blessed fails to set up the terminal, in that case, silently fail.
             try:
-                terminal = blessings.Terminal(stream=_wrap_stdstream(sys.stdout))
+                terminal = blessed.Terminal(stream=_wrap_stdstream(sys.stdout))
 
                 if terminal.is_a_tty:
                     self._terminal = terminal
             except Exception:
                 pass
 
+    @property
+    def terminal(self):
         return self._terminal
 
     def add_json_handler(self, fh):
@@ -256,6 +288,16 @@ class LoggingManager(object):
         self, fh=sys.stdout, level=logging.INFO, write_interval=False, write_times=True
     ):
         """Enable logging to the terminal."""
+        self.create_terminal()
+
+        if IS_WINDOWS:
+            try:
+                # fileno() can raise in some cases, like unit tests.
+                # so we can try to enable this but if we fail it's fine
+                enable_virtual_terminal_processing(sys.stdout.fileno())
+                enable_virtual_terminal_processing(sys.stderr.fileno())
+            except Exception:
+                pass
 
         fh = _wrap_stdstream(fh)
         formatter = StructuredHumanFormatter(

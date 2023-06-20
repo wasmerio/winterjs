@@ -163,7 +163,7 @@ class JSJitMethodCallArgsReplacement {
 #endif
 };
 
-/// <div rustbindgen replaces="JS::MutableHandleIdVector" />
+/// <div rustbindgen replaces="JS::MutableHandleIdVector"></div>
 struct MutableHandleIdVector_Simple {
   void* ptr;
 };
@@ -171,12 +171,12 @@ static_assert(sizeof(JS::MutableHandleIdVector) ==
                   sizeof(MutableHandleIdVector_Simple),
               "wrong handle size");
 
-/// <div rustbindgen replaces="JS::HandleObjectVector" />
+/// <div rustbindgen replaces="JS::HandleObjectVector"></div>
 struct HandleObjectVector_Simple {
   void* ptr;
 };
 
-/// <div rustbindgen replaces="JS::MutableHandleObjectVector" />
+/// <div rustbindgen replaces="JS::MutableHandleObjectVector"></div>
 struct MutableHandleObjectVector_Simple {
   void* ptr;
 };

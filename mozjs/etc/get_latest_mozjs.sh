@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # get commit and appropriet mozjs tar
 jobs=( $(curl "https://treeherder.mozilla.org/api/project/mozilla-release/push/?full=true&count=20" | jq '.results[].id') )
 for i in "${jobs[@]}"

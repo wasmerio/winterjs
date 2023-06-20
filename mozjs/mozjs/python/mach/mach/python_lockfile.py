@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytoml
+import toml
 from packaging.requirements import Requirement
 
 
@@ -57,13 +57,13 @@ class PoetryHandle:
             "description": "",
             "version": "0",
             "authors": [],
-            "dependencies": {"python": "^3.6"},
+            "dependencies": {"python": "^3.7"},
         }
         poetry_config["dependencies"].update(self._dependencies)
 
         pyproject = {"tool": {"poetry": poetry_config}}
         with open(self._work_dir / "pyproject.toml", "w") as pyproject_file:
-            pytoml.dump(pyproject_file, pyproject)
+            toml.dump(pyproject, pyproject_file)
 
         self._run_poetry(["lock"] + (["--no-update"] if not do_update else []))
         self._run_poetry(["export", "-o", "requirements.txt"])

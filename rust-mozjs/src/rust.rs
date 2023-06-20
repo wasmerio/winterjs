@@ -43,7 +43,7 @@ use jsapi::{already_AddRefed, jsid};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use jsapi::{Evaluate2, HandleValueArray, StencilRelease};
 use jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
-use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue};
+use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue, JS_WrapObject};
 use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use jsapi::{JSObject, JSPropertySpec, JSRuntime};
@@ -839,6 +839,23 @@ pub unsafe fn try_to_outerize(mut rval: MutableHandleValue) {
         assert!(!obj.is_null());
         rval.set(ObjectValue(&mut *obj));
     }
+}
+
+#[inline]
+pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
+    if is_window(*rval) {
+        let obj = ToWindowProxyIfWindowSlow(*rval);
+        assert!(!obj.is_null());
+        rval.set(obj);
+    }
+}
+
+#[inline]
+pub unsafe fn maybe_wrap_object(cx: *mut JSContext, obj: MutableHandleObject) {
+    if get_object_realm(*obj) != get_context_realm(cx) {
+        assert!(JS_WrapObject(cx, obj.into()));
+    }
+    try_to_outerize_object(obj);
 }
 
 #[inline]
