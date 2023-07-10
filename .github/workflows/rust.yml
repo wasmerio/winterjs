@@ -2,8 +2,10 @@ name: Rust
 
 on: 
   push:
-    branches-ignore: "master"
+    branches: [master]
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 env:
   #CARGO_TERM_COLOR: always
@@ -122,7 +124,7 @@ jobs:
       run: |
         git diff --staged --no-ext-diff --quiet --exit-code
   build_result:
-    name: homu build finished
+    name: Result
     runs-on: ubuntu-latest
     # Integrity check is broken for the time being; don't require it.
     needs: ["mac", "linux", "windows"]
