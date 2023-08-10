@@ -43,7 +43,7 @@ use jsapi::{already_AddRefed, jsid};
 use jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use jsapi::{Evaluate2, HandleValueArray, StencilRelease};
 use jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
-use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapValue, JS_WrapObject};
+use jsapi::{JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
 use jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use jsapi::{JSObject, JSPropertySpec, JSRuntime};

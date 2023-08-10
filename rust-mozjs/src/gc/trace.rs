@@ -4,7 +4,9 @@ use glue::{
     CallValueTracer,
 };
 use jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use mozjs_sys::jsapi::JS::JobQueue;
 use mozjs_sys::jsgc::Heap;
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::btree_map::BTreeMap;
 use std::collections::btree_set::BTreeSet;
@@ -12,12 +14,23 @@ use std::collections::vec_deque::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
+use std::num::{
+    NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
+    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
+};
+use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{
     AtomicBool, AtomicI16, AtomicI32, AtomicI64, AtomicI8, AtomicIsize, AtomicU16, AtomicU32,
     AtomicU64, AtomicU8, AtomicUsize,
 };
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::{Instant, SystemTime};
+
+use crate::rust::{Runtime, Stencil};
+use crate::typedarray::{TypedArray, TypedArrayElement};
 
 /// Types that can be traced.
 ///
@@ -96,7 +109,7 @@ unsafe impl<T: Traceable> Traceable for Arc<T> {
     }
 }
 
-unsafe impl<T: Traceable> Traceable for Box<T> {
+unsafe impl<T: Traceable + ?Sized> Traceable for Box<T> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
         (**self).trace(trc);
@@ -150,6 +163,18 @@ unsafe impl<T: Traceable> Traceable for [T] {
     }
 }
 
+// jsmanaged array
+unsafe impl<T: Traceable, const COUNT: usize> Traceable for [T; COUNT] {
+    #[inline]
+    unsafe fn trace(&self, tracer: *mut JSTracer) {
+        for v in self.iter() {
+            v.trace(tracer);
+        }
+    }
+}
+
+// TODO: Check if the following two are optimized to no-ops
+// if e.trace() is a no-op (e.g it is an impl_traceable_simple type)
 unsafe impl<T: Traceable> Traceable for Vec<T> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
@@ -206,6 +231,12 @@ unsafe impl<T: Traceable> Traceable for BTreeSet<T> {
     }
 }
 
+unsafe impl<T: TypedArrayElement> Traceable for TypedArray<T, Box<Heap<*mut JSObject>>> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        self.underlying_object().trace(trc);
+    }
+}
+
 macro_rules! impl_traceable_tuple {
     () => {
         unsafe impl Traceable for () {
@@ -218,7 +249,7 @@ macro_rules! impl_traceable_tuple {
             #[allow(non_snake_case)]
             #[inline]
             unsafe fn trace(&self, trc: *mut JSTracer) {
-                let ($($name,)+) = self;
+                let ($(ref $name,)+) = *self;
                 $($name.trace(trc);)+
             }
         }
@@ -300,6 +331,7 @@ impl_traceable_fnptr! { A B C D E F G H I J }
 impl_traceable_fnptr! { A B C D E F G H I J K }
 impl_traceable_fnptr! { A B C D E F G H I J K L }
 
+/// For use on non-jsmanaged types
 macro_rules! impl_traceable_simple {
     ($($ty:ty $(,)?)+) => {
         $(
@@ -315,15 +347,42 @@ impl_traceable_simple!(bool);
 impl_traceable_simple!(i8, i16, i32, i64, isize);
 impl_traceable_simple!(u8, u16, u32, u64, usize);
 impl_traceable_simple!(f32, f64);
+impl_traceable_simple!(char, String);
+impl_traceable_simple!(
+    NonZeroI128,
+    NonZeroI16,
+    NonZeroI32,
+    NonZeroI64,
+    NonZeroI8,
+    NonZeroIsize
+);
+impl_traceable_simple!(
+    NonZeroU128,
+    NonZeroU16,
+    NonZeroU32,
+    NonZeroU64,
+    NonZeroU8,
+    NonZeroUsize
+);
 impl_traceable_simple!(AtomicBool);
 impl_traceable_simple!(AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize);
 impl_traceable_simple!(AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize);
+impl_traceable_simple!(*mut JobQueue);
+impl_traceable_simple!(Cow<'static, str>);
+impl_traceable_simple!(JoinHandle<()>);
+impl_traceable_simple!(Runtime);
+impl_traceable_simple!(SystemTime);
+impl_traceable_simple!(Instant);
+impl_traceable_simple!(PathBuf);
+impl_traceable_simple!(Range<u64>);
+impl_traceable_simple!(Stencil);
 
 unsafe impl<'a> Traceable for &'a str {
     #[inline]
     unsafe fn trace(&self, _: *mut JSTracer) {}
 }
 
+/// Holds a set of JSTraceables that need to be rooted
 pub struct RootedTraceableSet {
     set: Vec<*const dyn Traceable>,
 }

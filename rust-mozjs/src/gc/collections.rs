@@ -59,21 +59,32 @@ impl<'a, T: Traceable> DerefMut for RootedVec<'a, T> {
     }
 }
 
+/// Roots any JSTraceable thing
+///
+/// If you have GC things like *mut JSObject or JSVal, use rooted!.
+/// If you know what you're doing, use this.
 pub struct RootedTraceableBox<T: Traceable + 'static> {
     ptr: *mut T,
 }
 
 impl<T: Traceable + 'static> RootedTraceableBox<T> {
+    /// Root a JSTraceable thing for the life of this RootedTraceableBox
     pub fn new(traceable: T) -> RootedTraceableBox<T> {
         Self::from_box(Box::new(traceable))
     }
 
+    /// Consumes a boxed JSTraceable and roots it for the life of this RootedTraceableBox.
     pub fn from_box(boxed_traceable: Box<T>) -> RootedTraceableBox<T> {
         let traceable = Box::into_raw(boxed_traceable);
         unsafe {
             RootedTraceableSet::add(traceable);
         }
         RootedTraceableBox { ptr: traceable }
+    }
+
+    /// Returns underlying pointer
+    pub unsafe fn ptr(&self) -> *mut T {
+        self.ptr
     }
 }
 
