@@ -238,7 +238,7 @@ pub struct ProxyTraps {
         unsafe extern "C" fn(obj: HandleObject, classValue: ESClass, cx: *mut JSContext) -> bool,
     >,
     pub className:
-        Option<unsafe extern "C" fn(cx: *mut JSContext, proxy: HandleObject) -> *const i8>,
+        Option<unsafe extern "C" fn(cx: *mut JSContext, proxy: HandleObject) -> *const c_char>,
     pub fun_toString: Option<
         unsafe extern "C" fn(
             cx: *mut JSContext,
