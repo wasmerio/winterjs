@@ -101,14 +101,6 @@ else
 			CXX ?= c++
 		endif
 		AR ?= ar
-
-		# check if python2 is a valid Python executable, otherwise fall back to python
-		ifeq (, $(findstring Python 2.,$(shell python2 --version 2> /dev/null)))
-		PYTHON ?= python2
-		else
-		PYTHON ?= python
-		endif 
-
 	endif
 
 endif
@@ -126,9 +118,6 @@ ifneq (,$(CCACHE))
 endif
 
 ifneq ($(WINDOWS),)
-	# Visual Studio build
-	NEED_WIN_PYTHON := 1
-
 	# There's no cygpath in mozilla-build, and we're expecting to
 	# be building with MOZ_BUILD_TOOLS, so do our best
 	OUT_DIR:=$(subst \,/,$(OUT_DIR))
@@ -146,9 +135,6 @@ endif
 	MOZ_TOOLS=/
 
 else ifeq ($(MSYSTEM),MINGW64)
-	# MSYS2/MINGW64 build
-	NEED_WIN_PYTHON := 1
-
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
@@ -162,20 +148,6 @@ else ifeq ($(MSYSTEM),MINGW64)
 	# Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
 	# to exist
 	MOZ_TOOLS=/
-endif
-
-# If we need to do extra work to find an appropriate python on
-# Windows, do it here
-ifeq ($(NEED_WIN_PYTHON),1)
-	ifneq (,$(NATIVE_WIN32_PYTHON))
-		PYTHON := $(NATIVE_WIN32_PYTHON)
-	else ifneq (,$(wildcard c:/python27/python.exe))
-		PYTHON := c:/python27/python.exe
-	else
-		$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
-		$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
-		$(error Native Win32 Python not found)
-	endif
 endif
 
 .PHONY : all maybe-configure
@@ -193,7 +165,7 @@ maybe-configure:
 	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
 	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
 	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
-	  PYTHON="$(PYTHON)" MOZ_TOOLS="$(MOZ_TOOLS)" \
+	  MOZ_TOOLS="$(MOZ_TOOLS)" \
 	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
 	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
