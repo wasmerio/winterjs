@@ -9,62 +9,59 @@ are in the [rust-mozjs directory][r-m].
 
 [r-m]: https://github.com/servo/mozjs/tree/master/rust-mozjs
 
-Building
-========
+# Building
 
-Under Linux:
+## Linux
 
-Install Clang (at least version 3.9) and autoconf v 2.13, for example in a Debian-based Linux:
-```
+Install Clang (at least version 3.9) and autoconf v 2.13, for example on a
+Debian-based Linux:
+
+```sh
 sudo apt-get install clang-6.0 autoconf2.13
-
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`
 environment variable, for example:
-```
+
+```sh
 export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ```
 
-Under Windows:
+## Windows
 
-1. Follow the directions at
-   https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Build_Instructions/Windows_Prerequisites
+1. Install [MozillaBuild 3.4][mozbuild].
+   [mozbuild]: https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe
 
-2. Open up a shell configured to use Visual Studio. This could be the
+2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
+
+3. Open up a shell configured to use Visual Studio. This could be the
    one included with Visual Studio (e.g. Visual Studio 2017 / X64 Native
-   Tools Command Prompt for VS 2017) or a shell in which you have run
-```
-"c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-```
+   Tools Command Prompt for VS 2017) or a shell in which you have run:
 
-3. Set the `MOZTOOLS_PATH` environment variable to point to the tools from the Mozilla Build Package:
-```
-set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\bin
-```
+   ```shell
+   "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+   ```
 
-4. Download and install Clang for Windows (64 bit) from https://releases.llvm.org/download.html
-   and set the `LIBCLANG_PATH` environment variable to its `lib` directory:
-```
-set LIBCLANG_PATH=C:\Program Files\LLVM\lib
-```
+4. Set the following environment variables according to where you installed
+   the dependencies above:
 
-5. Set environment variables so the build script can find Python 2.7 and Autoconf 2.13:
-```
-set AUTOCONF=C:\mozilla-build\msys\local\bin\autoconf-2.13
-set NATIVE_WIN32_PYTHON=C:\mozilla-build\python\python2.7.exe
-```
+   ```shell
+    set MOZILLA_BUILD=C:\mozilla-build
+    set LIBCLANG_PATH=C:\Program Files\LLVM\lib
+   ```
+
+## Run Cargo
 
 You can now build and test the crate using cargo:
-```
+
+```shell
 cargo build
 cargo test
 cargo build --features debugmozjs
 cargo test --features debugmozjs
 ```
 
-Building servo against your local mozjs
-=======================================
+# Building servo against your local mozjs
 
 Assuming your local `servo` and `mozjs` directories are siblings, you can build `servo` against `mozjs` by adding the following to `servo/Cargo.toml`:
 
@@ -74,8 +71,7 @@ mozjs = { path = "../mozjs/rust-mozjs" }
 mozjs_sys = { path = "../mozjs/mozjs" }
 ```
 
-Upgrading
-=========
+# Upgrading
 
 In order to upgrade to a new version of SpiderMonkey:
 
@@ -97,8 +93,7 @@ In order to upgrade to a new version of SpiderMonkey:
 
 6. Build and test the bindings as above, then submit a PR!
 
-NixOS users
-===========
+# NixOS users
 
 To get a dev environment with shell.nix:
 
@@ -116,8 +111,7 @@ To configure rust-analyzer in Visual Studio Code:
 }
 ```
 
-Editor support
-==============
+# Editor support
 
 If you are working on the Rust code only, rust-analyzer should work perfectly out of the box, though NixOS users will need to configure rust-analyzer to wrap cargo invocations (see above).
 
@@ -135,8 +129,7 @@ This guide assumes that your code is checked out at:
 nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run '...'
 ```
 
-C++ editor setup
-----------------
+## C++ editor setup
 
 Start by checking out mozilla-unified ([Building Firefox on Linux](https://firefox-source-docs.mozilla.org/setup/linux_build.html) §§ 1 and 2).
 
@@ -240,8 +233,7 @@ In this case, it was because your compiler was gcc (which supports `-fmax-errors
                                                                                             ^^^^^
 ```
 
-Importing changes for local testing
------------------------------------
+## Importing changes for local testing
 
 Start by making a source tarball from your local upstream SpiderMonkey checkout. [TODO(@delan) the default xz compression is very slow here, we should add an option upstream to make it faster]
 

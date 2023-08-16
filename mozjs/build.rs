@@ -135,14 +135,27 @@ fn build_jsapi(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
 
-    // Put MOZTOOLS_PATH at the beginning of PATH if specified
-    if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
-        let path = env::var_os("PATH").unwrap();
+    // If MOZILLA_BUILD is specified, process that environment variable to put
+    // the build tools on the path and properly set the AUTOCONF environment
+    // variable.
+    if let Some(mozilla_build_path) = env::var_os("MOZILLA_BUILD") {
         let mut paths = Vec::new();
-        paths.extend(env::split_paths(&moztools));
-        paths.extend(env::split_paths(&path));
-        let new_path = env::join_paths(paths).unwrap();
-        env::set_var("PATH", &new_path);
+        paths.push(Path::new(&mozilla_build_path).join("msys").join("bin"));
+        paths.push(Path::new(&mozilla_build_path).join("bin"));
+        paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
+        env::set_var("PATH", &env::join_paths(paths).unwrap());
+
+        if env::var_os("AUTOCONF").is_none() {
+            env::set_var(
+                "AUTOCONF",
+                Path::new(&mozilla_build_path)
+                    .join("msys")
+                    .join("local")
+                    .join("bin")
+                    .join("autoconf-2.13"),
+            );
+        }
+
         make = OsStr::new("mozmake").to_os_string();
     }
 
