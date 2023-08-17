@@ -393,7 +393,7 @@ impl JS::ObjectOpResult {
     }
 
     pub fn fail(&mut self, code: JSErrNum) -> bool {
-        assert_ne!(code, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
+        assert_ne!(code as usize, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
         self.code_ = code as usize;
         true
     }
