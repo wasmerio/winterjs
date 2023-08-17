@@ -10,14 +10,27 @@ CONFIGURE_FLAGS := \
 	--disable-export-js \
 	--disable-shared-js \
 	--build-backends=RecursiveMake \
-        --enable-js-streams
-
-ifneq (,$(MACOS_SDK_PATH))
-	CONFIGURE_FLAGS += --with-macos-sdk=$(MACOS_SDK_PATH)
-endif
+	--enable-js-streams
 
 ifneq (,$(CARGO_FEATURE_JITSPEW))
     CONFIGURE_FLAGS += --enable-jitspew
+endif
+
+ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
+	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
+endif
+
+ifneq (,$(CARGO_FEATURE_PROFILEMOZJS))
+	CONFIGURE_FLAGS += --enable-profiling
+endif
+
+ifneq (,$(CCACHE))
+	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
+endif
+
+
+ifneq (,$(MACOS_SDK_PATH))
+	CONFIGURE_FLAGS += --with-macos-sdk=$(MACOS_SDK_PATH)
 endif
 
 ifeq (windows,$(findstring windows,$(TARGET)))
@@ -89,52 +102,40 @@ ifneq ($(HOST),$(TARGET))
 
 else
 
-	ifeq (,$(WINDOWS))
-		ifeq (freebsd,$(findstring freebsd,$(TARGET)))
-			# Does not symlink clang as "gcc" like macOS does
-			CC ?= clang
-			CPP ?= clang -E
-			CXX ?= clang++
-		else
-			CC ?= cc
-			CPP ?= cc -E
-			CXX ?= c++
-		endif
+	ifeq (freebsd,$(findstring freebsd,$(TARGET)))
+		# Does not symlink clang as "gcc" like macOS does
+		CC ?= clang
+		CPP ?= clang -E
+		CXX ?= clang++
+		AR ?= ar
+	else ifeq (,$(WINDOWS))
+		CC ?= cc
+		CPP ?= cc -E
+		CXX ?= c++
 		AR ?= ar
 	endif
 
 endif
 
-ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
-endif
-
-ifneq (,$(CARGO_FEATURE_PROFILEMOZJS))
-	CONFIGURE_FLAGS += --enable-profiling
-endif
-
-ifneq (,$(CCACHE))
-	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
-endif
-
 ifneq ($(WINDOWS),)
+
+	ifeq ($(findstring x86_64,$(TARGET)),x86_64)
+		# This is the correct target for MSVC builds
+		CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+	else ifeq ($(findstring i686,$(TARGET)),i686)
+		# This is the correct target for MSVC builds
+		CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
+	else ifeq ($(findstring aarch64,$(TARGET)),aarch64)
+		# This is the correct target for MSVC builds
+		CONFIGURE_FLAGS += --target=aarch64-windows-mingw32 --host=x86_64-pc-mingw32
+	endif
+
 	# There's no cygpath in mozilla-build, and we're expecting to
 	# be building with MOZ_BUILD_TOOLS, so do our best
 	OUT_DIR:=$(subst \,/,$(OUT_DIR))
 
-ifeq ($(findstring x86_64,$(TARGET)),x86_64)
-	# This is the correct target for MSVC builds
-	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
-else ifeq ($(findstring i686,$(TARGET)),i686)
-	# This is the correct target for MSVC builds
-	CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
-else ifeq ($(findstring aarch64,$(TARGET)),aarch64)
-	# This is the correct target for MSVC builds
-	CONFIGURE_FLAGS += --target=aarch64-windows-mingw32 --host=x86_64-pc-mingw32
-endif
-	MOZ_TOOLS=/
-
 else ifeq ($(MSYSTEM),MINGW64)
+
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
@@ -145,9 +146,6 @@ else ifeq ($(MSYSTEM),MINGW64)
 	# cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
 	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 
-	# Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
-	# to exist
-	MOZ_TOOLS=/
 endif
 
 .PHONY : all maybe-configure
@@ -165,11 +163,9 @@ maybe-configure:
 	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
 	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
 	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
-	  MOZ_TOOLS="$(MOZ_TOOLS)" \
 	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
 	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
 	  AS="$(AS)" AR="$(AR)" \
-	  STLPORT_LIBS="$(STLPORT_LIBS)" \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi
