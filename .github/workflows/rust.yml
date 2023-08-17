@@ -102,25 +102,29 @@ jobs:
       shell: cmd
       run: |
         cargo test --verbose ${{ matrix.features }}
-  Integrity:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - name: Get mozjs
-      run: |
-        bash ./mozjs/etc/get_mozjs.sh
-    - name: Apply patch
-      run: |
-        python3 ./mozjs/etc/update.py --no-commit mozjs.tar.xz
-        # Run `git add` here to force CRLF converted into LF
-        # so that we can check diff properly in next run
-        git add --all mozjs
-    - name: Check patch integrity
-      working-directory: ./mozjs
-      # Because we've added files in previous run, we need to
-      # check diff with `--staged`.
-      run: |
-        git diff --staged --no-ext-diff --quiet --exit-code
+
+  # The integrity check is currently broken. See issue #345.
+  #
+  # Integrity:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v3
+  #   - name: Get mozjs
+  #     run: |
+  #       bash ./mozjs/etc/get_mozjs.sh
+  #   - name: Apply patch
+  #     run: |
+  #       python3 ./mozjs/etc/update.py --no-commit mozjs.tar.xz
+  #       # Run `git add` here to force CRLF converted into LF
+  #       # so that we can check diff properly in next run
+  #       git add --all mozjs
+  #   - name: Check patch integrity
+  #     working-directory: ./mozjs
+  #     # Because we've added files in previous run, we need to
+  #     # check diff with `--staged`.
+  #     run: |
+  #       git diff --staged --no-ext-diff --quiet --exit-code
+
   build_result:
     name: Result
     runs-on: ubuntu-latest
