@@ -26,6 +26,7 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
 use std::ptr;
+use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 
 impl<T> Deref for JS::Handle<T> {
     type Target = T;
@@ -380,17 +381,112 @@ impl<T> JS::Rooted<T> {
 }
 
 impl JS::ObjectOpResult {
+    pub fn ok(&self) -> bool {
+        assert_ne!(self.code_, JS::ObjectOpResult_SpecialCodes::Uninitialized as usize);
+        self.code_ == JS::ObjectOpResult_SpecialCodes::OkCode as usize
+    }
+
     /// Set this ObjectOpResult to true and return true.
     pub fn succeed(&mut self) -> bool {
         self.code_ = JS::ObjectOpResult_SpecialCodes::OkCode as usize;
         true
     }
 
+    pub fn fail(&mut self, code: JSErrNum) -> bool {
+        assert_ne!(code, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
+        self.code_ = code as usize;
+        true
+    }
+
+    pub fn fail_cant_redefine_prop(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_REDEFINE_PROP)
+    }
+
+    pub fn fail_read_only(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_READ_ONLY)
+    }
+
+    pub fn fail_getter_only(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_GETTER_ONLY)
+    }
+
+    pub fn fail_cant_delete(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DELETE)
+    }
+
+    pub fn fail_cant_set_interposed(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_SET_INTERPOSED)
+    }
+
+    pub fn fail_cant_define_window_element(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DEFINE_WINDOW_ELEMENT)
+    }
+
+    pub fn fail_cant_delete_window_element(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DELETE_WINDOW_ELEMENT)
+    }
+
+    pub fn fail_cant_define_window_named_property(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DEFINE_WINDOW_NAMED_PROPERTY)
+    }
+
+    pub fn fail_cant_delete_window_named_property(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DELETE_WINDOW_NAMED_PROPERTY)
+    }
+
+    pub fn fail_cant_define_window_non_configurable(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_DEFINE_WINDOW_NC)
+    }
+
+    pub fn fail_cant_prevent_extensions(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_PREVENT_EXTENSIONS)
+    }
+
+    pub fn fail_cant_set_proto(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_CANT_SET_PROTO)
+    }
+
+    pub fn fail_no_named_setter(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_NO_NAMED_SETTER)
+    }
+
+    pub fn fail_no_indexed_setter(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_NO_INDEXED_SETTER)
+    }
+
+    pub fn fail_not_data_descriptor(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_NOT_DATA_DESCRIPTOR)
+    }
+
+    pub fn fail_invalid_descriptor(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_INVALID_DESCRIPTOR)
+    }
+
+    pub fn fail_bad_array_length(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_BAD_ARRAY_LENGTH)
+    }
+
+    pub fn fail_bad_index(&mut self) -> bool {
+        self.fail(JSErrNum::JSMSG_BAD_INDEX)
+    }
+
+    pub fn failure_code(&self) -> u32 {
+        assert!(!self.ok());
+        self.code_ as u32
+    }
+
+    #[deprecated]
     #[allow(non_snake_case)]
     pub fn failNoNamedSetter(&mut self) -> bool {
-        assert!(self.code_ != JS::ObjectOpResult_SpecialCodes::OkCode as usize);
-        self.code_ = JSErrNum::JSMSG_NO_NAMED_SETTER as usize;
-        true
+        self.fail_no_named_setter()
+    }
+}
+
+impl Default for ObjectOpResult {
+    fn default() -> ObjectOpResult {
+        ObjectOpResult {
+            code_: ObjectOpResult_SpecialCodes::Uninitialized as usize,
+        }
     }
 }
 
