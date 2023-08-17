@@ -569,6 +569,7 @@ extern "C" {
     pub fn JS_GetEmptyStringValue(cx: *mut JSContext, dest: *mut Value);
     pub fn JS_GetReservedSlot(obj: *mut JSObject, index: u32, dest: *mut Value);
     pub fn EncodeStringToUTF8(cx: *mut JSContext, str: HandleString, cb: fn(*const c_char));
+    pub fn JS_ForgetStringLinearness(str: *mut JSLinearString) -> *mut JSString;
     pub fn CreateJobQueue(traps: *const JobQueueTraps, queue: *const c_void) -> *mut JobQueue;
     pub fn DeleteJobQueue(queue: *mut JobQueue);
     pub fn CreateReadableStreamUnderlyingSource(
