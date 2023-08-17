@@ -2,7 +2,6 @@ name: Rust
 
 on: 
   push:
-    branches: [master]
   pull_request:
   merge_group:
     types: [checks_requested]
@@ -18,6 +17,8 @@ env:
 
 jobs:
   mac:
+    # Run CI only on master in upstream
+    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -38,6 +39,8 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   linux:
+    # Run CI only on master in upstream
+    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
     env:
       RUSTC_WRAPPER: "sccache"
     runs-on: ubuntu-latest
@@ -60,6 +63,8 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   windows:
+    # Run CI only on master in upstream
+    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
