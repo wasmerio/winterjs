@@ -17,8 +17,7 @@ env:
 
 jobs:
   mac:
-    # Run CI only on master in upstream
-    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
+    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -39,8 +38,7 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   linux:
-    # Run CI only on master in upstream
-    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
+    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     env:
       RUSTC_WRAPPER: "sccache"
     runs-on: ubuntu-latest
@@ -63,8 +61,7 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   windows:
-    # Run CI only on master in upstream
-    if: ${{ !(github.repository == 'servo/mozjs' && github.event_name == 'push') || github.ref_name == 'master' }}
+    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -133,12 +130,12 @@ jobs:
   build_result:
     name: Result
     runs-on: ubuntu-latest
-    # Integrity check is broken for the time being; don't require it.
     needs: ["mac", "linux", "windows"]
+    if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - name: Mark the job as successful
+        if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
         run: exit 0
-        if: success()
       - name: Mark the job as unsuccessful
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
-        if: "!success()"
