@@ -380,13 +380,25 @@ def extra_toolchain_flags(
 ):
     if not android_sysroot:
         return []
+
+    # Note for mozjs:
+    # Normally Gecko passes all the arguments below to the compiler. The truth
+    # is though that modern NDKs do not need them. They are all handled by the
+    # special NDK-provided compiler wrappers [1]. The mozjs build expects to
+    # use these wrappers and any small mistake in the way the compiler is
+    # invoked will cause any number of subtle build errors. We are simple
+    # people in mozjs land. Let's not even try to get this right and rely on
+    # the NDK to properly invoke the compiler.
+    #
+    # 1. https://android.googlesource.com/platform/ndk/+/master/docs/BuildSystemMaintainers.md#Clang
+    if android_sysroot:
+        return []
+
     flags = [
         "-isystem",
         android_system,
         "-isystem",
         os.path.join(android_sysroot, "usr", "include"),
-        "--sysroot",
-        android_sysroot,
         "--gcc-toolchain={}".format(toolchain_dir),
         "-D__ANDROID_API__=%d" % android_version,
     ]

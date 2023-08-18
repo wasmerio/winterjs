@@ -1,0 +1,129 @@
+#!/bin/env python
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+import os
+import platform
+import shutil
+import subprocess
+import sys 
+
+from typing import Dict, Optional
+
+
+SUPPORTED_NDK_VERSION = '21'
+API_LEVEL = '30'
+
+
+def get_host_string() -> str:
+    os_type = platform.system().lower()
+    if os_type not in ["linux", "darwin"]:
+        raise Exception("Android cross builds are only supported on Linux and macOS.")
+
+    cpu_type = platform.machine().lower()
+    host_suffix = "unknown"
+    if cpu_type in ["i386", "i486", "i686", "i768", "x86"]:
+        host_suffix = "x86"
+    elif cpu_type in ["x86_64", "x86-64", "x64", "amd64"]:
+        host_suffix = "x86_64"
+    return os_type + "-" + host_suffix
+
+
+def check_output(*args, **kwargs) -> str:
+    return subprocess.check_output(*args, **kwargs).decode("utf-8").strip()
+
+
+def get_target_from_args() -> Optional[str]:
+    for arg in sys.argv:
+        if arg.startswith("--target="):
+            return arg.replace("--target=", "")
+    return None 
+
+
+def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
+    cc = os.path.join(toolchain_dir, "bin", "clang")
+    cxx = os.path.join(toolchain_dir, "bin", "clang++")
+    ar = check_output([cc, "--print-prog-name=ar"])
+    objcopy = check_output([cc, "--print-prog-name=objcopy"])
+    ranlib = check_output([cc, "--print-prog-name=ranlib"])
+    strip = check_output([cc, "--print-prog-name=strip"])
+    yasm = check_output([cc, "--print-prog-name=yasm"])
+    host_cc = env.get('HOST_CC') or shutil.which("clang") or shutil.which("gcc")
+    host_cxx = env.get('HOST_CXX') or shutil.which("clang++") or shutil.which("g++")
+
+    assert(host_cc)
+    assert(host_cxx)
+
+    env["AR"] = ar
+    env["CC"] = cc
+    env["CPP"] = f"{cc} -E"
+    env["CXX"] = cxx
+    env["HOST_CC"] = host_cc
+    env["HOST_CXX"] = host_cxx
+    env["OBJCOPY"] = objcopy
+    env["PKG_CONFIG"] = "/usr/bin/pkg-config"
+    env["RANLIB"] = ranlib
+    env["STRIP"] = strip
+    env["YASM"] = yasm
+
+
+def set_compiler_flags_in_env(toolchain_dir: str, env: Dict[str, str]):
+    target = get_target_from_args()
+    if target == "armv7-linux-androideabi":
+        ndk_target_name = "armv7a-linux-androideabi"
+    elif target == "aarch64-linux-android":
+        ndk_target_name = "aarch64-linux-androideabi"
+    elif target == "i686-linux-android" or target == "x86_64-linux-android":
+        ndk_target_name = target
+    else:
+        raise Exception(f"Unknown target {target}")
+
+    # Including the api level in the target name means that we will not have to
+    # define the Android API level when calling the compiler.
+    target_arg = f"--target={ndk_target_name}{API_LEVEL}"
+    stl_include_dir = os.path.join(toolchain_dir, "sysroot", "usr", "include", "c++", "v1")
+    stl_arg = f"-I{stl_include_dir}"
+
+    env["CFLAGS"] = target_arg
+    env["CPPFLAGS"] = stl_arg
+    env["CXXFLAGS"] = " ".join([target_arg, stl_arg])
+
+def create_environment_for_build() -> Dict[str, str]:
+    env = os.environ.copy()
+    if "ANDROID_NDK_HOME" not in env:
+        raise Exception("Please set the ANDROID_NDK_HOME environment variable.")
+
+    ndk_home_dir = env["ANDROID_NDK_HOME"]
+
+    # Check if the NDK version is 21
+    if not os.path.isfile(os.path.join(ndk_home_dir, 'source.properties')):
+        raise Exception(
+            "ANDROID_NDK should have file `source.properties`.\n" +
+            "The environment variable ANDROID_NDK_HOME may be set at a wrong path."
+        )
+
+    with open(os.path.join(ndk_home_dir, 'source.properties'), encoding="utf8") as ndk_properties:
+        version_found = ndk_properties.readlines()[1].split(' = ')[1].split('.')[0] 
+        if version_found != SUPPORTED_NDK_VERSION:
+            raise Exception(
+                "Servo and dependencies currently only support NDK version " +
+                f"{SUPPORTED_NDK_VERSION}. Found {version_found}"
+            )
+
+    # Add the toolchain to the path.
+    host_string = get_host_string()
+    toolchain_dir = os.path.join(ndk_home_dir, "toolchains", "llvm", "prebuilt", host_string)
+    env['PATH'] = os.pathsep.join([os.path.join(toolchain_dir, "bin"), env["PATH"]])
+
+    set_toolchain_binaries_in_env(toolchain_dir, env)
+    set_compiler_flags_in_env(toolchain_dir, env)
+
+    # This environment variable is only used by the mozjs build.
+    env["ANDROID_API_LEVEL"] = API_LEVEL
+
+    return env
+
+if __name__ == "__main__":
+    completed_process = subprocess.run(sys.argv[1:], env=create_environment_for_build())
+    sys.exit(completed_process.returncode)

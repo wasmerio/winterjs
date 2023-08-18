@@ -1692,11 +1692,13 @@ def linker_ldflags(
                     sysroot.path, multiarch_dir, sysroot.stdcxx_version
                 )
             )
-    if android_platform:
-        flags.append("-L{}/usr/lib".format(android_platform))
-        flags.append("-Wl,--rpath-link={}/usr/lib".format(android_platform))
-        flags.append("--sysroot")
-        flags.append(android_platform)
+    # mozjs: The NDK compiler / linker wrappers take care of properly setting these variables.
+    # See the mozjs note in android-ndk.configure.
+    # if android_platform:
+    #     flags.append("-L{}/usr/lib".format(android_platform))
+    #     flags.append("-Wl,--rpath-link={}/usr/lib".format(android_platform))
+    #     flags.append("--sysroot")
+    #     flags.append(android_platform)
     return flags
 
 

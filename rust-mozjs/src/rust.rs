@@ -352,7 +352,10 @@ impl Runtime {
             context.set(js_context);
         });
 
+        #[cfg(target_pointer_width = "64")]
         InitSelfHostedCode(js_context, [0u64; 2], None);
+        #[cfg(target_pointer_width = "32")]
+        InitSelfHostedCode(js_context, [0u32; 2], None);
 
         SetWarningReporter(js_context, Some(report_warning));
 

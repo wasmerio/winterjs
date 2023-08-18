@@ -72,7 +72,6 @@ enum ValueShiftedTag {
     OBJECT = (ValueTag::OBJECT as u64) << JSVAL_TAG_SHIFT,
 }
 
-#[cfg(target_pointer_width = "64")]
 const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 
 #[inline(always)]

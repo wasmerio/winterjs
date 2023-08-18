@@ -52,7 +52,7 @@ ifneq ($(HOST),$(TARGET))
 	ifeq (armv7-linux-androideabi,$(TARGET))
 		# Reset TARGET variable because armv7 target name used by Rust is not 
 		# the same as the target name needed for the CXX toolchain.
-		TARGET = arm-linux-androideabi
+		TARGET = armv7a-linux-androideabi
 		CONFIGURE_FLAGS += \
 			--with-arch=armv7-a \
 			--with-fpu=neon \
@@ -69,27 +69,21 @@ ifneq ($(HOST),$(TARGET))
 	endif
 
 	ifeq (android,$(findstring android,$(TARGET)))
-		ifneq (,$(STLPORT_CPPFLAGS))
-			CONFIGURE_FLAGS += STLPORT_CPPFLAGS="$(STLPORT_CPPFLAGS)"
-		endif
-		ifneq (,$(ANDROID_NDK))
-			CONFIGURE_FLAGS += --with-android-ndk=$(ANDROID_NDK)
-		endif
-		ifneq (,$(ANDROID_NDK_VERSION))
-			CONFIGURE_FLAGS += --with-android-ndk-version=$(ANDROID_NDK_VERSION)
-		endif
-		ifneq (,$(ANDROID_VERSION))
-			CONFIGURE_FLAGS += --with-android-version=$(ANDROID_VERSION)
-		endif
-		ifneq (,$(ANDROID_PLATFORM_DIR))
-			CONFIGURE_FLAGS += --with-android-platform=$(ANDROID_PLATFORM_DIR)
-		endif
-		ifneq (,$(ANDROID_TOOLCHAIN_DIR))
-			CONFIGURE_FLAGS += --with-android-toolchain=$(ANDROID_TOOLCHAIN_DIR)
-		endif
-		ifneq (,$(ANDROID_CLANG))
-			CONFIGURE_FLAGS += --with-android-clang=$(ANDROID_CLANG)
-		endif
+		# The target must be suffixed by the Android API level to avoid having
+		# to define it in the compiler arguments.
+		TARGET := $(TARGET)$(ANDROID_API_LEVEL)
+
+		# STLPORT_CPPFLAGS and the toolchain directory are set here just to
+		# make the SpiderMonkey build system happy. rust-mozjs patches have
+		# disabled the actual use of these values, as the NDKs compiler should
+		# take care of setting these flags internally.
+		CONFIGURE_FLAGS += \
+			--without-system-zlib \
+			--with-android-ndk=$(ANDROID_NDK_HOME) \
+			--with-android-platform="$(ANDROID_NDK_HOME)/sysroot" \
+			--with-android-version=$(ANDROID_API_LEVEL) \
+			STLPORT_CPPFLAGS=" " \
+			$(NULL)
 	endif
 
 	ifeq ($(WINDOWS),)
@@ -97,7 +91,7 @@ ifneq ($(HOST),$(TARGET))
 		CPP ?= $(TARGET)-gcc -E
 		CXX ?= $(TARGET)-g++
 		AR ?= $(TARGET)-ar
-		CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
+		CONFIGURE_FLAGS += --target=$(TARGET)
 	endif
 
 else
