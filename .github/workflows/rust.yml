@@ -2,6 +2,7 @@ name: Rust
 
 on: 
   push:
+    branches: [master]
   pull_request:
   merge_group:
     types: [checks_requested]
@@ -17,7 +18,6 @@ env:
 
 jobs:
   mac:
-    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -38,7 +38,6 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   linux:
-    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     env:
       RUSTC_WRAPPER: "sccache"
     runs-on: ubuntu-latest
@@ -61,7 +60,6 @@ jobs:
         cargo build --verbose ${{ matrix.features }}
         cargo test --verbose ${{ matrix.features }}
   windows:
-    if: ${{ github.event_name != 'push' || github.ref_name == 'master' || github.repository != 'servo/mozjs' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -131,7 +129,7 @@ jobs:
     name: Result
     runs-on: ubuntu-latest
     needs: ["mac", "linux", "windows"]
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    if: ${{ always() }}
     steps:
       - name: Mark the job as successful
         if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
