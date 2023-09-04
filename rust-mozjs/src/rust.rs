@@ -1099,6 +1099,7 @@ pub mod wrappers {
     use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
+    use jsapi::JSExnType;
     use jsapi::JSFunctionSpecWithHelp;
     use jsapi::JSJitInfo;
     use jsapi::JSONWriteCallback;
@@ -1135,7 +1136,7 @@ pub mod wrappers {
     use jsapi::{JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter};
     use jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    use std::os::raw::c_char;
+    use std::os::raw::{c_char, c_void};
     include!("jsapi_wrappers.in");
     include!("glue_wrappers.in");
 }
@@ -1240,6 +1241,7 @@ pub mod jsapi_wrapped {
     use jsapi::InstantiateOptions;
     use jsapi::JSClass;
     use jsapi::JSErrorReport;
+    use jsapi::JSExnType;
     use jsapi::JSFunctionSpec;
     use jsapi::JSFunctionSpecWithHelp;
     use jsapi::JSJitInfo;
@@ -1277,7 +1279,7 @@ pub mod jsapi_wrapped {
     use jsapi::{JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter};
     use jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    use std::os::raw::c_char;
+    use std::os::raw::{c_char, c_void};
     include!("jsapi_wrappers.in");
     include!("glue_wrappers.in");
 }

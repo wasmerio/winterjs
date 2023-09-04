@@ -30,7 +30,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ## Windows
 
 1. Install [MozillaBuild 3.4][mozbuild].
-   [mozbuild]: https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe
+   [mozbuild]: <https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe>
 
 2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
 
@@ -76,7 +76,7 @@ mozjs_sys = { path = "../mozjs/mozjs" }
 In order to upgrade to a new version of SpiderMonkey:
 
 1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
-   https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg.
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
@@ -91,14 +91,16 @@ In order to upgrade to a new version of SpiderMonkey:
 
 5. Update `etc/COMMIT` with the commit number.
 
-6. Build and test the bindings as above, then submit a PR!
+6. Run `./rust-mozjs/src/generate_wrappers.sh` to regenerate wrappers.
+
+7. Build and test the bindings as above, then submit a PR!
 
 # NixOS users
 
 To get a dev environment with shell.nix:
 
 ```sh
-$ nix-shell
+nix-shell
 ```
 
 To configure rust-analyzer in Visual Studio Code:

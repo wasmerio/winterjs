@@ -38,7 +38,6 @@ wrap!(jsapi: pub fn ArrayBufferCopyData(cx: *mut JSContext, toBlock: HandleObjec
 wrap!(jsapi: pub fn ArrayBufferClone(cx: *mut JSContext, srcBuffer: HandleObject, srcByteOffset: usize, srcLength: usize) -> *mut JSObject);
 wrap!(jsapi: pub fn ComputeThis(cx: *mut JSContext, vp: *mut Value, thisObject: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn MaybeFreezeCtorAndPrototype(cx: *mut JSContext, ctor: HandleObject, maybeProto: HandleObject) -> bool);
-wrap!(jsapi: pub fn GetRealmObjectPrototypeHandle(cx: *mut JSContext) -> mozjs_sys::jsapi::JS::HandleObject);
 wrap!(jsapi: pub fn GetFunctionRealm(cx: *mut JSContext, objArg: HandleObject) -> *mut Realm);
 wrap!(jsapi: pub fn CaptureCurrentStack(cx: *mut JSContext, stackp: MutableHandleObject, capture: *mut StackCapture) -> bool);
 wrap!(jsapi: pub fn BuildStackString(cx: *mut JSContext, principals: *mut JSPrincipals, stack: HandleObject, stringp: MutableHandleString, indent: usize, stackFormat: StackFormat) -> bool);
@@ -146,7 +145,6 @@ wrap!(jsapi: pub fn GetWasmModule(obj: HandleObject) -> RefPtr<WasmModule>);
 wrap!(jsapi: pub fn Call(cx: *mut JSContext, thisv: Handle<Value>, fun: Handle<Value>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn Construct(cx: *mut JSContext, fun: Handle<Value>, newTarget: HandleObject, args: *const HandleValueArray, objp: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn Construct1(cx: *mut JSContext, fun: Handle<Value>, args: *const HandleValueArray, objp: MutableHandleObject) -> bool);
-// wrap!(jsapi: pub fn GetDebuggeeGlobals(cx: *mut JSContext, dbgObj: *mut JSObject, vector: MutableHandleObjectVector) -> bool);
 wrap!(jsapi: pub fn ExceptionStackOrNull(obj: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn MapSize(cx: *mut JSContext, obj: HandleObject) -> u32);
 wrap!(jsapi: pub fn MapGet(cx: *mut JSContext, obj: HandleObject, key: HandleValue, rval: MutableHandleValue) -> bool);
@@ -367,3 +365,4 @@ wrap!(jsapi: pub fn JS_GetPropertyDescriptorById(cx: *mut JSContext, obj: Handle
 wrap!(jsapi: pub fn JS_GetPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn SetPropertyIgnoringNamedGetter(cx: *mut JSContext, obj: HandleObject, id: HandleId, v: HandleValue, receiver: HandleValue, ownDesc: Handle<PropertyDescriptor>, result: *mut ObjectOpResult) -> bool);
+wrap!(jsapi: pub fn CreateError(cx: *mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, rval: MutableHandleValue) -> bool);

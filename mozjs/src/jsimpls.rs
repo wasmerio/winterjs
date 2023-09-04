@@ -22,11 +22,11 @@ use jsgc::RootKind;
 use jsid::VoidId;
 use jsval::UndefinedValue;
 
+use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
 use std::ptr;
-use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 
 impl<T> Deref for JS::Handle<T> {
     type Target = T;
@@ -85,13 +85,19 @@ impl<T> JS::Handle<T> {
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> JS::Handle<T> {
-        JS::Handle { ptr: ptr as *mut T, _phantom_0: ::std::marker::PhantomData }
+        JS::Handle {
+            ptr: ptr as *mut T,
+            _phantom_0: ::std::marker::PhantomData,
+        }
     }
 }
 
 impl<T> JS::MutableHandle<T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> JS::MutableHandle<T> {
-        JS::MutableHandle { ptr, _phantom_0: ::std::marker::PhantomData }
+        JS::MutableHandle {
+            ptr,
+            _phantom_0: ::std::marker::PhantomData,
+        }
     }
 
     pub fn handle(&self) -> JS::Handle<T> {
@@ -125,11 +131,17 @@ impl JS::HandleValue {
 
 impl JS::HandleValueArray {
     pub fn new() -> JS::HandleValueArray {
-        JS::HandleValueArray { length_: 0, elements_: ptr::null() }
+        JS::HandleValueArray {
+            length_: 0,
+            elements_: ptr::null(),
+        }
     }
 
     pub unsafe fn from_rooted_slice(values: &[JS::Value]) -> JS::HandleValueArray {
-        JS::HandleValueArray { length_: values.len(), elements_: values.as_ptr() }
+        JS::HandleValueArray {
+            length_: values.len(),
+            elements_: values.as_ptr(),
+        }
     }
 }
 
@@ -146,13 +158,20 @@ impl JS::HandleObject {
 
 impl JSAutoRealm {
     pub fn new(cx: *mut JSContext, target: *mut JSObject) -> JSAutoRealm {
-        JSAutoRealm { cx_: cx, oldRealm_: unsafe { JS::EnterRealm(cx, target) } }
+        JSAutoRealm {
+            cx_: cx,
+            oldRealm_: unsafe { JS::EnterRealm(cx, target) },
+        }
     }
 }
 
 impl JS::AutoGCRooter {
     pub fn new_unrooted(kind: JS::AutoGCRooterKind) -> JS::AutoGCRooter {
-        JS::AutoGCRooter { down: ptr::null_mut(), kind_: kind, stackTop: ptr::null_mut() }
+        JS::AutoGCRooter {
+            down: ptr::null_mut(),
+            kind_: kind,
+            stackTop: ptr::null_mut(),
+        }
     }
 
     pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
@@ -284,7 +303,9 @@ impl JS::CallArgs {
     #[inline]
     pub fn new_target(&self) -> JS::MutableHandleValue {
         assert!(self.constructing_());
-        unsafe { JS::MutableHandleValue::from_marked_location(self.argv_.offset(self.argc_ as isize)) }
+        unsafe {
+            JS::MutableHandleValue::from_marked_location(self.argv_.offset(self.argc_ as isize))
+        }
     }
 }
 
@@ -298,7 +319,9 @@ impl JSJitSetterCallArgs {
 
 impl JSFunctionSpec {
     pub const ZERO: Self = JSFunctionSpec {
-        name: JSPropertySpec_Name { string_: ptr::null() },
+        name: JSPropertySpec_Name {
+            string_: ptr::null(),
+        },
         selfHostedName: 0 as *const _,
         flags: 0,
         nargs: 0,
@@ -306,35 +329,53 @@ impl JSFunctionSpec {
     };
 
     pub fn is_zeroed(&self) -> bool {
-        (unsafe { self.name.string_.is_null() }) && self.selfHostedName.is_null() && self.flags == 0 && self.nargs == 0 && self.call.is_zeroed()
+        (unsafe { self.name.string_.is_null() })
+            && self.selfHostedName.is_null()
+            && self.flags == 0
+            && self.nargs == 0
+            && self.call.is_zeroed()
     }
 }
 
 impl JSPropertySpec {
     pub const ZERO: Self = JSPropertySpec {
-        name: JSPropertySpec_Name { string_: ptr::null() },
+        name: JSPropertySpec_Name {
+            string_: ptr::null(),
+        },
         attributes_: 0,
         kind_: JSPropertySpec_Kind::NativeAccessor,
         u: ::jsapi::JSPropertySpec_AccessorsOrValue {
             accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
-                getter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
-                setter: ::jsapi::JSPropertySpec_Accessor { native: JSNativeWrapper::ZERO },
+                getter: ::jsapi::JSPropertySpec_Accessor {
+                    native: JSNativeWrapper::ZERO,
+                },
+                setter: ::jsapi::JSPropertySpec_Accessor {
+                    native: JSNativeWrapper::ZERO,
+                },
             },
         },
     };
 
     /// https://searchfox.org/mozilla-central/rev/2bdaa395cb841b28f8ef74882a61df5efeedb42b/js/public/PropertySpec.h#305-307
     pub fn is_accessor(&self) -> bool {
-        self.kind_ == JSPropertySpec_Kind::NativeAccessor || self.kind_ == JSPropertySpec_Kind::SelfHostedAccessor
+        self.kind_ == JSPropertySpec_Kind::NativeAccessor
+            || self.kind_ == JSPropertySpec_Kind::SelfHostedAccessor
     }
 
     pub fn is_zeroed(&self) -> bool {
-        (unsafe { self.name.string_.is_null() }) && self.attributes_ == 0 && self.is_accessor() && unsafe { self.u.accessors.getter.native.is_zeroed() } && unsafe { self.u.accessors.setter.native.is_zeroed() }
+        (unsafe { self.name.string_.is_null() })
+            && self.attributes_ == 0
+            && self.is_accessor()
+            && unsafe { self.u.accessors.getter.native.is_zeroed() }
+            && unsafe { self.u.accessors.setter.native.is_zeroed() }
     }
 }
 
 impl JSNativeWrapper {
-    pub const ZERO: Self = JSNativeWrapper { info: 0 as *const _, op: None };
+    pub const ZERO: Self = JSNativeWrapper {
+        info: 0 as *const _,
+        op: None,
+    };
 
     pub fn is_zeroed(&self) -> bool {
         self.op.is_none() && self.info.is_null()
@@ -382,7 +423,10 @@ impl<T> JS::Rooted<T> {
 
 impl JS::ObjectOpResult {
     pub fn ok(&self) -> bool {
-        assert_ne!(self.code_, JS::ObjectOpResult_SpecialCodes::Uninitialized as usize);
+        assert_ne!(
+            self.code_,
+            JS::ObjectOpResult_SpecialCodes::Uninitialized as usize
+        );
         self.code_ == JS::ObjectOpResult_SpecialCodes::OkCode as usize
     }
 
@@ -393,7 +437,10 @@ impl JS::ObjectOpResult {
     }
 
     pub fn fail(&mut self, code: JSErrNum) -> bool {
-        assert_ne!(code as usize, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
+        assert_ne!(
+            code as usize,
+            JS::ObjectOpResult_SpecialCodes::OkCode as usize
+        );
         self.code_ = code as usize;
         true
     }
@@ -491,7 +538,11 @@ impl Default for ObjectOpResult {
 }
 
 impl JS::ForOfIterator {
-    pub unsafe fn init(&mut self, iterable: JS::HandleValue, non_iterable_behavior: JS::ForOfIterator_NonIterableBehavior) -> bool {
+    pub unsafe fn init(
+        &mut self,
+        iterable: JS::HandleValue,
+        non_iterable_behavior: JS::ForOfIterator_NonIterableBehavior,
+    ) -> bool {
         JS_ForOfIteratorInit(self, iterable, non_iterable_behavior)
     }
 

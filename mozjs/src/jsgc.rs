@@ -108,7 +108,11 @@ impl GCMethods for *mut JSFunction {
         ptr::null_mut()
     }
     unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
-        JS::HeapObjectWriteBarriers(mem::transmute(v), mem::transmute(prev), mem::transmute(next));
+        JS::HeapObjectWriteBarriers(
+            mem::transmute(v),
+            mem::transmute(prev),
+            mem::transmute(next),
+        );
     }
 }
 
@@ -157,7 +161,12 @@ impl GCMethods for JS::PropertyDescriptor {
     unsafe fn initial() -> JS::PropertyDescriptor {
         JS::PropertyDescriptor::default()
     }
-    unsafe fn post_barrier(_: *mut JS::PropertyDescriptor, _: JS::PropertyDescriptor, _: JS::PropertyDescriptor) {}
+    unsafe fn post_barrier(
+        _: *mut JS::PropertyDescriptor,
+        _: JS::PropertyDescriptor,
+        _: JS::PropertyDescriptor,
+    ) {
+    }
 }
 
 /// Heap values encapsulate GC concerns of an on-heap reference to a JS
@@ -237,13 +246,17 @@ where
     *mut T: GCMethods + Copy,
 {
     fn default() -> Heap<*mut T> {
-        Heap { ptr: UnsafeCell::new(ptr::null_mut()) }
+        Heap {
+            ptr: UnsafeCell::new(ptr::null_mut()),
+        }
     }
 }
 
 impl Default for Heap<JS::Value> {
     fn default() -> Heap<JS::Value> {
-        Heap { ptr: UnsafeCell::new(JS::Value::default()) }
+        Heap {
+            ptr: UnsafeCell::new(JS::Value::default()),
+        }
     }
 }
 

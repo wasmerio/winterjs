@@ -247,8 +247,6 @@ fn build_jsglue(build_dir: &Path) {
 /// To add or remove which functions, types, and variables get bindings
 /// generated, see the `const` configuration variables below.
 fn build_jsapi_bindings(build_dir: &Path) {
-    let rustfmt_config = Some(PathBuf::from("src/rustfmt.toml"));
-
     // By default, constructors, destructors and methods declared in .h files are inlined,
     // so their symbols aren't available. Adding the -fkeep-inlined-functions option
     // causes the jsapi library to bloat from 500M to 6G, so that's not an option.
@@ -268,7 +266,6 @@ fn build_jsapi_bindings(build_dir: &Path) {
         .enable_cxx_namespaces()
         .with_codegen_config(config)
         .rustfmt_bindings(true)
-        .rustfmt_configuration_file(rustfmt_config)
         .clang_arg("-I")
         .clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
         .clang_arg("-I")
