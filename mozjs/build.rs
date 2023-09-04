@@ -25,9 +25,8 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXX",
     "CXXFLAGS",
     "MAKE",
-    "MOZ_TOOLS",
-    "MOZJS_FORCE_RERUN",
     "MOZTOOLS_PATH",
+    "MOZJS_FORCE_RERUN",
     "PYTHON",
     "STLPORT_LIBS",
 ];
@@ -38,6 +37,9 @@ const EXTRA_FILES: &'static [&'static str] = &[
     "src/jsglue.hpp",
     "src/jsglue.cpp",
 ];
+
+/// Which version of moztools we expect
+const MOZTOOLS_VERSION: &str = "3.2";
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113
@@ -131,24 +133,60 @@ fn cc_flags() -> Vec<&'static str> {
     result
 }
 
+fn cargo_target_dir() -> PathBuf {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let mut dir = out_dir.as_path();
+    while let Some(target_dir) = dir.parent() {
+        if target_dir.file_name().unwrap().to_string_lossy() == "target" {
+            return target_dir.to_path_buf();
+        }
+        dir = target_dir;
+    }
+    panic!("$OUT_DIR is not in target")
+}
+
+fn find_moztools() -> Option<PathBuf> {
+    let cargo_target_dir = cargo_target_dir();
+    let deps_dir = cargo_target_dir.join("dependencies");
+    let moztools_path = deps_dir.join("moztools").join(MOZTOOLS_VERSION);
+
+    if moztools_path.exists() {
+        Some(moztools_path)
+    } else {
+        None
+    }
+}
+
 fn build_jsapi(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
 
-    // If MOZILLA_BUILD is specified, process that environment variable to put
-    // the build tools on the path and properly set the AUTOCONF environment
-    // variable.
-    if let Some(mozilla_build_path) = env::var_os("MOZILLA_BUILD") {
+    #[cfg(windows)]
+    {
+        let moztools = if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
+            PathBuf::from(moztools)
+        } else if let Some(moztools) = find_moztools() {
+            // moztools already in target/dependencies/moztools-*
+            moztools
+        } else if let Some(moz_build) = env::var_os("MOZILLA_BUILD") {
+            // For now we also support mozilla build
+            PathBuf::from(moz_build)
+        } else {
+            panic!(
+                "MozTools or MozillaBuild not found!\n \
+                Follow instructions on: https://github.com/servo/mozjs?tab=readme-ov-file#windows"
+            );
+        };
         let mut paths = Vec::new();
-        paths.push(Path::new(&mozilla_build_path).join("msys").join("bin"));
-        paths.push(Path::new(&mozilla_build_path).join("bin"));
+        paths.push(moztools.join("msys").join("bin"));
+        paths.push(moztools.join("bin"));
         paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
         env::set_var("PATH", &env::join_paths(paths).unwrap());
 
         if env::var_os("AUTOCONF").is_none() {
             env::set_var(
                 "AUTOCONF",
-                Path::new(&mozilla_build_path)
+                moztools
                     .join("msys")
                     .join("local")
                     .join("bin")

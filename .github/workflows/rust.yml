@@ -70,11 +70,10 @@ jobs:
         #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     env:
-        MOZILLA_BUILD: 'C:\mozilla-build'
         LINKER: "lld-link.exe"
         CC: "clang-cl"
         CXX: "clang-cl"
-        PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
+        MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-3.2"
     steps:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
@@ -86,8 +85,8 @@ jobs:
         components: rust-src
     - name: Install deps
       run: |
-        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
-        .\MozillaBuildSetup.exe /S | Out-Null
+        curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip" --create-dirs -o target/dependencies/moztools.zip
+        cd target/dependencies && unzip -qo moztools.zip -d .
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.3
       with:
