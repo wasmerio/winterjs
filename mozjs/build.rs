@@ -6,6 +6,7 @@ extern crate bindgen;
 extern crate cc;
 extern crate walkdir;
 
+use bindgen::Formatter;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -294,7 +295,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::METHODS;
 
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_40)
+        .rust_target(bindgen::RustTarget::Stable_1_59)
         .header("./src/jsglue.hpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
@@ -303,7 +304,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
         .size_t_is_usize(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
-        .rustfmt_bindings(true)
+        .formatter(Formatter::Rustfmt)
         .clang_arg("-I")
         .clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
         .clang_arg("-I")

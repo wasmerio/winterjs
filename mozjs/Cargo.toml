@@ -35,7 +35,7 @@ libc.workspace = true
 libz-sys = "1.0"
 
 [build-dependencies]
-bindgen = { version = "0.62", default-features = false, features = [
+bindgen = { version = "0.66", default-features = false, features = [
   "runtime",
   "which-rustfmt",
 ] }
