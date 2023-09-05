@@ -46,6 +46,13 @@ impl RootKind for *mut JS::Symbol {
     }
 }
 
+impl RootKind for *mut JS::BigInt {
+    #[inline(always)]
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::BigInt
+    }
+}
+
 impl RootKind for *mut JSScript {
     #[inline(always)]
     fn rootKind() -> JS::RootKind {
@@ -130,6 +137,15 @@ impl GCMethods for *mut JS::Symbol {
         ptr::null_mut()
     }
     unsafe fn post_barrier(_: *mut *mut JS::Symbol, _: *mut JS::Symbol, _: *mut JS::Symbol) {}
+}
+
+impl GCMethods for *mut JS::BigInt {
+    unsafe fn initial() -> *mut JS::BigInt {
+        ptr::null_mut()
+    }
+    unsafe fn post_barrier(v: *mut *mut JS::BigInt, prev: *mut JS::BigInt, next: *mut JS::BigInt) {
+        JS::HeapBigIntWriteBarriers(v, prev, next);
+    }
 }
 
 impl GCMethods for *mut JSScript {

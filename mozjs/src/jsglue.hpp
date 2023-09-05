@@ -8,6 +8,7 @@
 #define _JSGLUE_INCLUDED
 
 #include "js/ArrayBuffer.h"
+#include "js/BigInt.h"
 #include "js/BuildId.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/ContextOptions.h"

@@ -472,6 +472,16 @@ extern "C" {
         strp: *mut Heap<*mut JSString>,
         name: *const c_char,
     );
+    pub fn CallSymbolTracer(
+        trc: *mut JSTracer,
+        bip: *mut Heap<*mut Symbol>,
+        name: *const c_char,
+    );
+    pub fn CallBigIntTracer(
+        trc: *mut JSTracer,
+        bip: *mut Heap<*mut BigInt>,
+        name: *const c_char,
+    );
     pub fn CallScriptTracer(
         trc: *mut JSTracer,
         scriptp: *mut Heap<*mut JSScript>,

@@ -1,10 +1,9 @@
 use c_str;
 use glue::{
-    CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer, CallStringTracer,
-    CallValueTracer,
+    CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer, CallStringTracer,
+    CallSymbolTracer, CallValueTracer,
 };
-use jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
-use mozjs_sys::jsapi::JS::JobQueue;
+use jsapi::{BigInt, JobQueue, jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Symbol, Value};
 use mozjs_sys::jsgc::Heap;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};
@@ -58,6 +57,24 @@ unsafe impl Traceable for Heap<*mut JSObject> {
             return;
         }
         CallObjectTracer(trc, self as *const _ as *mut Self, c_str!("object"));
+    }
+}
+
+unsafe impl Traceable for Heap<*mut Symbol> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        if self.get().is_null() {
+            return;
+        }
+        CallSymbolTracer(trc, self as *const _ as *mut Self, c_str!("symbol"));
+    }
+}
+
+unsafe impl Traceable for Heap<*mut BigInt> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        if self.get().is_null() {
+            return;
+        }
+        CallBigIntTracer(trc, self as *const _ as *mut Self, c_str!("bigint"));
     }
 }
 
