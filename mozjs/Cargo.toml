@@ -1,12 +1,12 @@
 [package]
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
-repository = "https://github.com/servo/mozjs/"
+repository.workspace = true
 version = "0.68.2"
 authors = ["Mozilla"]
 links = "mozjs"
 build = "build.rs"
-license = "MPL-2.0"
+license.workspace = true
 exclude = [
   "mozjs/js/src/tests/**",
   "mozjs/js/src/octane/**",
@@ -14,6 +14,7 @@ exclude = [
   "mozjs/js/src/jsapi-tests/**",
   "mozjs/js/src/doc/**",
 ]
+edition.workspace = true
 
 [features]
 debugmozjs = []
@@ -30,10 +31,13 @@ doctest = false
 [dependencies]
 encoding_c = "0.9.6"
 encoding_c_mem = "0.2.5"
-libc = "0.2"
+libc.workspace = true
 libz-sys = "1.0"
 
 [build-dependencies]
-bindgen = { version = "0.62", default-features = false, features = ["runtime", "which-rustfmt"] }
-cc = "1.0"
+bindgen = { version = "0.62", default-features = false, features = [
+  "runtime",
+  "which-rustfmt",
+] }
+cc.workspace = true
 walkdir = "2"

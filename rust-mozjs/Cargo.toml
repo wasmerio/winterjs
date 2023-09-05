@@ -1,14 +1,15 @@
 [package]
 name = "mozjs"
 description = "Rust bindings to the Mozilla SpiderMonkey JavaScript engine."
-repository = "https://github.com/servo/mozjs"
+repository.workspace = true
 version = "0.14.1"
 authors = ["The Servo Project Developers"]
 build = "build.rs"
-license = "MPL-2.0"
+license.workspace = true
+edition.workspace = true
 
 [build-dependencies]
-cc = "1"
+cc.workspace = true
 
 [[example]]
 name = "minimal"
@@ -59,7 +60,7 @@ uwp = ['mozjs_sys/uwp']
 
 [dependencies]
 lazy_static = "1"
-libc = "0.2"
+libc.workspace = true
 log = "0.4"
 num-traits = "0.2"
 mozjs_sys = { path = "../mozjs" }

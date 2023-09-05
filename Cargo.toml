@@ -1,2 +1,11 @@
 [workspace]
 members = ["mozjs", "rust-mozjs"]
+
+[workspace.package]
+repository = "https://github.com/servo/mozjs/"
+license = "MPL-2.0"
+edition = "2015"
+
+[workspace.dependencies]
+cc = "1"
+libc = "0.2"
