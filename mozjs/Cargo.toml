@@ -29,10 +29,10 @@ name = "mozjs_sys"
 doctest = false
 
 [dependencies]
-encoding_c = "0.9.6"
-encoding_c_mem = "0.2.5"
+encoding_c = "0.9.8"
+encoding_c_mem = "0.2.6"
 libc.workspace = true
-libz-sys = "1.0"
+libz-sys = "1.1"
 
 [build-dependencies]
 bindgen = { version = "0.66", default-features = false, features = [
