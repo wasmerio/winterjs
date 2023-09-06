@@ -4,10 +4,6 @@
 
 #![cfg(feature = "debugmozjs")]
 
-extern crate libc;
-#[macro_use]
-extern crate mozjs;
-
 use std::ptr;
 
 use mozjs::jsapi::JSPROP_ENUMERATE;
@@ -19,6 +15,7 @@ use mozjs::jsapi::{
     JSPropertySpec_Name, JSString, OnNewGlobalHookOption, Value,
 };
 use mozjs::jsval::JSVal;
+use mozjs::rooted;
 use mozjs::rust::{define_methods, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]

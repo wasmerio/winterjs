@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-extern crate libc;
-#[macro_use]
-extern crate mozjs;
-
 use std::ffi::CStr;
 use std::ptr;
 use std::str;
@@ -14,6 +10,7 @@ use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
 use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject, JS_ReportErrorASCII};
 use mozjs::jsval::UndefinedValue;
+use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]

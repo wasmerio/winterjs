@@ -13,12 +13,11 @@
 //! [1]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_User_Guide
 //!
 
-use std::ptr;
+use ::std::ptr;
 
-#[macro_use]
-extern crate mozjs;
 use mozjs::jsapi::*;
 use mozjs::jsval::UndefinedValue;
+use mozjs::rooted;
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime};
 

@@ -13,10 +13,9 @@
 //! Here is the code under "A minimal example" in the MDN User Guide[1] translated into Rust.
 //! [1]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_User_Guide
 
-use std::ptr;
+use ::std::ptr;
 
-#[macro_use]
-extern crate mozjs;
+use mozjs::rooted;
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::{jsapi::*, rust::JSEngine, rust::RealmOptions, rust::Runtime};
 

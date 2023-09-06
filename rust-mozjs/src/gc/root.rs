@@ -2,12 +2,12 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value};
+use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value};
 use mozjs_sys::jsgc::{GCMethods, RootKind, Rooted};
 
-use jsapi::Handle as RawHandle;
-use jsapi::HandleValue as RawHandleValue;
-use jsapi::MutableHandle as RawMutableHandle;
+use crate::jsapi::Handle as RawHandle;
+use crate::jsapi::HandleValue as RawHandleValue;
+use crate::jsapi::MutableHandle as RawMutableHandle;
 use mozjs_sys::jsgc::IntoHandle as IntoRawHandle;
 use mozjs_sys::jsgc::IntoMutableHandle as IntoRawMutableHandle;
 

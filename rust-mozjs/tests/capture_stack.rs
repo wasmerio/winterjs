@@ -2,15 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-extern crate libc;
-#[macro_use]
-extern crate mozjs;
-
 use std::ptr;
 
+use mozjs::capture_stack;
 use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, StackFormat, Value};
 use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject};
 use mozjs::jsval::UndefinedValue;
+use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]

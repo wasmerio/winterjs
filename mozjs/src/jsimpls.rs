@@ -2,27 +2,27 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::glue::JS_ForOfIteratorInit;
-use jsapi::glue::JS_ForOfIteratorNext;
-use jsapi::jsid;
-use jsapi::JSAutoRealm;
-use jsapi::JSContext;
-use jsapi::JSErrNum;
-use jsapi::JSFunctionSpec;
-use jsapi::JSJitGetterCallArgs;
-use jsapi::JSJitMethodCallArgs;
-use jsapi::JSJitSetterCallArgs;
-use jsapi::JSNativeWrapper;
-use jsapi::JSObject;
-use jsapi::JSPropertySpec;
-use jsapi::JSPropertySpec_Kind;
-use jsapi::JSPropertySpec_Name;
-use jsapi::JS;
-use jsgc::RootKind;
-use jsid::VoidId;
-use jsval::UndefinedValue;
+use crate::jsapi::glue::JS_ForOfIteratorInit;
+use crate::jsapi::glue::JS_ForOfIteratorNext;
+use crate::jsapi::jsid;
+use crate::jsapi::JSAutoRealm;
+use crate::jsapi::JSContext;
+use crate::jsapi::JSErrNum;
+use crate::jsapi::JSFunctionSpec;
+use crate::jsapi::JSJitGetterCallArgs;
+use crate::jsapi::JSJitMethodCallArgs;
+use crate::jsapi::JSJitSetterCallArgs;
+use crate::jsapi::JSNativeWrapper;
+use crate::jsapi::JSObject;
+use crate::jsapi::JSPropertySpec;
+use crate::jsapi::JSPropertySpec_Kind;
+use crate::jsapi::JSPropertySpec_Name;
+use crate::jsapi::JS;
+use crate::jsgc::RootKind;
+use crate::jsid::VoidId;
+use crate::jsval::UndefinedValue;
 
-use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
+use crate::jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
@@ -344,12 +344,12 @@ impl JSPropertySpec {
         },
         attributes_: 0,
         kind_: JSPropertySpec_Kind::NativeAccessor,
-        u: ::jsapi::JSPropertySpec_AccessorsOrValue {
-            accessors: ::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
-                getter: ::jsapi::JSPropertySpec_Accessor {
+        u: crate::jsapi::JSPropertySpec_AccessorsOrValue {
+            accessors: crate::jsapi::JSPropertySpec_AccessorsOrValue_Accessors {
+                getter: crate::jsapi::JSPropertySpec_Accessor {
                     native: JSNativeWrapper::ZERO,
                 },
-                setter: ::jsapi::JSPropertySpec_Accessor {
+                setter: crate::jsapi::JSPropertySpec_Accessor {
                     native: JSNativeWrapper::ZERO,
                 },
             },
@@ -531,7 +531,9 @@ impl JS::ObjectOpResult {
 
 impl Default for ObjectOpResult {
     fn default() -> ObjectOpResult {
-        ObjectOpResult { code_: ObjectOpResult_SpecialCodes::Uninitialized as usize }
+        ObjectOpResult {
+            code_: ObjectOpResult_SpecialCodes::Uninitialized as usize,
+        }
     }
 }
 

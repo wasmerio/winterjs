@@ -2,11 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#[macro_use]
-extern crate mozjs;
-
 use std::cell::Cell;
 
+use mozjs::auto_root;
 use mozjs::jsapi::{GCReason, JSTracer, JS_GC};
 use mozjs::rust::{CustomTrace, JSEngine, Runtime};
 

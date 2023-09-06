@@ -37,6 +37,8 @@ wrap!(jsapi: pub fn StealArrayBufferContents(cx: *mut JSContext, obj: HandleObje
 wrap!(jsapi: pub fn ArrayBufferCopyData(cx: *mut JSContext, toBlock: HandleObject, toIndex: usize, fromBlock: HandleObject, fromIndex: usize, count: usize) -> bool);
 wrap!(jsapi: pub fn ArrayBufferClone(cx: *mut JSContext, srcBuffer: HandleObject, srcByteOffset: usize, srcLength: usize) -> *mut JSObject);
 wrap!(jsapi: pub fn ComputeThis(cx: *mut JSContext, vp: *mut Value, thisObject: MutableHandleObject) -> bool);
+wrap!(jsapi: pub fn ToBigInt(cx: *mut JSContext, val: Handle<Value>) -> *mut BigInt);
+wrap!(jsapi: pub fn BigIntToString(cx: *mut JSContext, bi: Handle<*mut BigInt>, radix: u8) -> *mut JSString);
 wrap!(jsapi: pub fn MaybeFreezeCtorAndPrototype(cx: *mut JSContext, ctor: HandleObject, maybeProto: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetFunctionRealm(cx: *mut JSContext, objArg: HandleObject) -> *mut Realm);
 wrap!(jsapi: pub fn CaptureCurrentStack(cx: *mut JSContext, stackp: MutableHandleObject, capture: *mut StackCapture) -> bool);

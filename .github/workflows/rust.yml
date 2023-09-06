@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
   merge_group:
     types: [checks_requested]
 
@@ -25,17 +26,17 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_VERSION: "v0.4.0"
     steps:
-    - uses: actions/checkout@v3
-    - name: Install deps
-      run: brew install python autoconf@2.13 llvm yasm
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.3
-      with:
-        version: ${{ env.SCCACHE_VERSION }}
-    - name: Build
-      run: |
-        cargo build --verbose ${{ matrix.features }}
-        cargo test --verbose ${{ matrix.features }}
+      - uses: actions/checkout@v3
+      - name: Install deps
+        run: brew install python autoconf@2.13 llvm yasm
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+        with:
+          version: ${{ env.SCCACHE_VERSION }}
+      - name: Build
+        run: |
+          cargo build --verbose ${{ matrix.features }}
+          cargo test --verbose ${{ matrix.features }}
   linux:
     env:
       RUSTC_WRAPPER: "sccache"
@@ -48,19 +49,19 @@ jobs:
       matrix:
         features: ["--features debugmozjs", ""]
     steps:
-    - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@stable
-    - name: Install deps
-      run: |
-        sudo apt install autoconf2.13 llvm -y
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.3
-      with:
-        version: ${{ env.SCCACHE_VERSION }}
-    - name: Build
-      run: |
-        cargo build --verbose ${{ matrix.features }}
-        cargo test --verbose ${{ matrix.features }}
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install deps
+        run: |
+          sudo apt install autoconf2.13 llvm -y
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+        with:
+          version: ${{ env.SCCACHE_VERSION }}
+      - name: Build
+        run: |
+          cargo build --verbose ${{ matrix.features }}
+          cargo test --verbose ${{ matrix.features }}
   windows:
     runs-on: windows-2019
     strategy:
@@ -70,57 +71,57 @@ jobs:
         #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     env:
-        LINKER: "lld-link.exe"
-        CC: "clang-cl"
-        CXX: "clang-cl"
-        MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-3.2"
+      LINKER: "lld-link.exe"
+      CC: "clang-cl"
+      CXX: "clang-cl"
+      MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-3.2"
     steps:
-    - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@stable
-      if: (!contains(matrix.target, 'uwp'))
-    - uses: dtolnay/rust-toolchain@master
-      if: contains(matrix.target, 'uwp')
-      with:
-        toolchain: "nightly-2023-02-02"
-        components: rust-src
-    - name: Install deps
-      run: |
-        curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip" --create-dirs -o target/dependencies/moztools.zip
-        cd target/dependencies && unzip -qo moztools.zip -d .
-    - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.3
-      with:
-        version: ${{ env.SCCACHE_VERSION }}
-    - name: Build uwp
-      if: contains(matrix.target, 'uwp')
-      shell: cmd
-      run: |
-        rustc --version --verbose
-        cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
-    - name: Build Windows
-      if: contains(matrix.target, 'uwp') != true
-      shell: cmd
-      run: |
-        cargo test --verbose ${{ matrix.features }}
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        if: (!contains(matrix.target, 'uwp'))
+      - uses: dtolnay/rust-toolchain@master
+        if: contains(matrix.target, 'uwp')
+        with:
+          toolchain: "nightly-2023-02-02"
+          components: rust-src
+      - name: Install deps
+        run: |
+          curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip" --create-dirs -o target/dependencies/moztools.zip
+          cd target/dependencies && unzip -qo moztools.zip -d .
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+        with:
+          version: ${{ env.SCCACHE_VERSION }}
+      - name: Build uwp
+        if: contains(matrix.target, 'uwp')
+        shell: cmd
+        run: |
+          rustc --version --verbose
+          cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
+      - name: Build Windows
+        if: contains(matrix.target, 'uwp') != true
+        shell: cmd
+        run: |
+          cargo test --verbose ${{ matrix.features }}
 
   android:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Install NDK
-      uses: nttld/setup-ndk@v1
-      id: setup-ndk
-      with:
-        ndk-version: r21d
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: armv7-linux-androideabi
-    - name: Build
-      env:
-        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      run: |
-        ./android-build cargo build --target="armv7-linux-androideabi"
+      - uses: actions/checkout@v3
+      - name: Install NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r21d
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          ./android-build cargo build --target="armv7-linux-androideabi"
 
   # The integrity check is currently broken. See issue #345.
   #

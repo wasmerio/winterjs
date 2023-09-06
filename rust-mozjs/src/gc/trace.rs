@@ -1,9 +1,10 @@
-use c_str;
-use glue::{
-    CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer, CallStringTracer,
-    CallSymbolTracer, CallValueTracer,
+use crate::c_str;
+use crate::glue::{
+    CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
+    CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use jsapi::{BigInt, JobQueue, jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Symbol, Value};
+use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use mozjs_sys::jsapi::JS::{BigInt, JobQueue, Symbol};
 use mozjs_sys::jsgc::Heap;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};

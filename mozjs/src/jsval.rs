@@ -5,14 +5,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use jsapi::JSContext;
-use jsapi::JSObject;
-use jsapi::JSString;
-use jsapi::JSValueType;
-use jsapi::JS::BigInt;
-use jsapi::JS::Symbol;
-use jsapi::JS::TraceKind;
-use jsapi::JS::Value;
+use crate::jsapi::JSContext;
+use crate::jsapi::JSObject;
+use crate::jsapi::JSString;
+use crate::jsapi::JSValueType;
+use crate::jsapi::JS::BigInt;
+use crate::jsapi::JS::Symbol;
+use crate::jsapi::JS::TraceKind;
+use crate::jsapi::JS::Value;
 
 use libc::c_void;
 use std::default::Default;
@@ -565,7 +565,7 @@ fn test_representation_agreement() {
     // Annoyingly, we can't check JSObject, JSString, etc. without creating a runtime,
     // since the constructor has checks that fail if we try mocking.  There are no-check
     // versions of the setters, but they're private.
-    use jsapi::glue::*;
+    use crate::jsapi::glue::*;
     let mut val1 = UndefinedValue();
     let mut val2;
 
@@ -596,7 +596,7 @@ fn test_representation_agreement() {
 
 #[cfg(test)]
 fn assert_agreement(val1: JSVal, val2: JSVal) {
-    use jsapi::glue::*;
+    use crate::jsapi::glue::*;
 
     assert_eq!(val1.asBits(), val2.asBits());
 

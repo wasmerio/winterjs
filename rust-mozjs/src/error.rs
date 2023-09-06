@@ -6,7 +6,7 @@
 
 #![deny(missing_docs)]
 
-use jsapi::{JSContext, JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
+use crate::jsapi::{JSContext, JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
 use libc;
 use std::ffi::CString;
 use std::{mem, os, ptr};

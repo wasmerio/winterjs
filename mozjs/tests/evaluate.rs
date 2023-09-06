@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-extern crate mozjs_sys;
-
 use mozjs_sys::jsapi::glue::DeleteOwningCompileOptions;
 use mozjs_sys::jsapi::glue::JS_Init;
 use mozjs_sys::jsapi::glue::JS_NewOwningCompileOptions;

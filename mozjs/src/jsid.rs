@@ -4,8 +4,8 @@
 
 #![allow(non_snake_case)]
 
-use jsapi::JS::Symbol;
-use jsapi::{jsid, JSString};
+use crate::jsapi::JS::Symbol;
+use crate::jsapi::{jsid, JSString};
 use libc::c_void;
 
 #[deprecated]

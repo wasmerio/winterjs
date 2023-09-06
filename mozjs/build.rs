@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-extern crate bindgen;
-extern crate cc;
-extern crate walkdir;
-
 use bindgen::Formatter;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -506,8 +502,8 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
 /// Definitions for types that were blacklisted
 const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type FILE = ::libc::FILE;"),
-    ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
-    ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
+    ("root::JS", "pub type Heap<T> = crate::jsgc::Heap<T>;"),
+    ("root::JS", "pub type Rooted<T> = crate::jsgc::Rooted<T>;"),
 ];
 
 /// Rerun this build script if files under mozjs/ changed, unless this returns true.

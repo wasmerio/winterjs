@@ -2,10 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use jsapi::JS;
-use jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
+use crate::jsapi::JS;
+use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 
-use jsid::VoidId;
+use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::mem;

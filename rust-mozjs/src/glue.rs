@@ -1,7 +1,7 @@
-use jsapi::js::frontend::CompilationStencil;
-use jsapi::*;
-use std::os::raw::{c_char, c_void};
-use std::{mem, ptr};
+use crate::jsapi::js::frontend::CompilationStencil;
+use crate::jsapi::*;
+use ::std::os::raw::{c_char, c_void};
+use ::std::{mem, ptr};
 
 pub enum Action {}
 unsafe impl Sync for ProxyTraps {}
@@ -472,16 +472,8 @@ extern "C" {
         strp: *mut Heap<*mut JSString>,
         name: *const c_char,
     );
-    pub fn CallSymbolTracer(
-        trc: *mut JSTracer,
-        bip: *mut Heap<*mut Symbol>,
-        name: *const c_char,
-    );
-    pub fn CallBigIntTracer(
-        trc: *mut JSTracer,
-        bip: *mut Heap<*mut BigInt>,
-        name: *const c_char,
-    );
+    pub fn CallSymbolTracer(trc: *mut JSTracer, bip: *mut Heap<*mut Symbol>, name: *const c_char);
+    pub fn CallBigIntTracer(trc: *mut JSTracer, bip: *mut Heap<*mut BigInt>, name: *const c_char);
     pub fn CallScriptTracer(
         trc: *mut JSTracer,
         scriptp: *mut Heap<*mut JSScript>,
