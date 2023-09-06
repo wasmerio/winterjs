@@ -8,47 +8,6 @@ build = "build.rs"
 license.workspace = true
 edition.workspace = true
 
-[build-dependencies]
-cc.workspace = true
-
-[[example]]
-name = "minimal"
-[[example]]
-name = "eval"
-
-[[test]]
-name = "callback"
-[[test]]
-name = "capture_stack"
-[[test]]
-name = "custom_auto_rooter"
-[[test]]
-name = "custom_auto_rooter_macro"
-[[test]]
-name = "enumerate"
-[[test]]
-name = "evaluate"
-[[test]]
-name = "offthread"
-[[test]]
-name = "panic"
-[[test]]
-name = "property_descriptor"
-[[test]]
-name = "rooting"
-[[test]]
-name = "runtime"
-[[test]]
-name = "runtime_no_outlive"
-[[test]]
-name = "typedarray"
-[[test]]
-name = "typedarray_panic"
-[[test]]
-name = "stack_limit"
-[[test]]
-name = "vec_conversion"
-
 [lib]
 doctest = false
 
@@ -64,3 +23,6 @@ libc.workspace = true
 log = "0.4"
 num-traits = "0.2"
 mozjs_sys = { path = "../mozjs" }
+
+[build-dependencies]
+cc.workspace = true

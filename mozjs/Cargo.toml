@@ -16,17 +16,17 @@ exclude = [
 ]
 edition.workspace = true
 
-[features]
-debugmozjs = []
-profilemozjs = []
-uwp = []
-jitspew = []
-
 [lib]
 name = "mozjs_sys"
 # The generated jsapi.rs contains #[doc] strings which look like
 # doctests but are definitely not.
 doctest = false
+
+[features]
+debugmozjs = []
+profilemozjs = []
+uwp = []
+jitspew = []
 
 [dependencies]
 encoding_c = "0.9.8"
