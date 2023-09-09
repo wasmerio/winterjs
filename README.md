@@ -13,11 +13,10 @@ are in the [rust-mozjs directory][r-m].
 
 ## Linux
 
-Install Clang (at least version 3.9) and autoconf v 2.13, for example on a
-Debian-based Linux:
+Install Clang and `build-essential`, for example on a Debian-based Linux:
 
 ```sh
-sudo apt-get install clang-6.0 autoconf2.13
+sudo apt-get install clang build-essential
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`
@@ -29,8 +28,8 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 ## Windows
 
-1. Install [MozillaBuild 3.4](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe)
-   or download and unzip [MozTools 3.2](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip)
+1. Install [MozillaBuild 4.0](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-4.0.2.exe)
+   or download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip)
 
 2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
 
@@ -58,7 +57,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
    or if you unzipped MozTools in 1.:
 
    ```shell
-    set MOZTOOLS_PATH=C:\path\to\moztools-3.2
+    set MOZTOOLS_PATH=C:\path\to\moztools-4.0
    ```
 
 ## Run Cargo

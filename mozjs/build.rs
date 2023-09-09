@@ -36,7 +36,7 @@ const EXTRA_FILES: &'static [&'static str] = &[
 ];
 
 /// Which version of moztools we expect
-const MOZTOOLS_VERSION: &str = "3.2";
+const MOZTOOLS_VERSION: &str = "4.0";
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113
@@ -175,26 +175,15 @@ fn build_jsapi(build_dir: &Path) {
             );
         };
         let mut paths = Vec::new();
-        paths.push(moztools.join("msys").join("bin"));
+        paths.push(moztools.join("msys2").join("usr").join("bin"));
         paths.push(moztools.join("bin"));
         paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
         env::set_var("PATH", &env::join_paths(paths).unwrap());
 
-        if env::var_os("AUTOCONF").is_none() {
-            env::set_var(
-                "AUTOCONF",
-                moztools
-                    .join("msys")
-                    .join("local")
-                    .join("bin")
-                    .join("autoconf-2.13"),
-            );
-        }
-
         make = OsStr::new("mozmake").to_os_string();
     }
 
-    let mut cmd = Command::new(make);
+    let mut cmd = Command::new(make.clone());
 
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from("-I");
@@ -222,7 +211,7 @@ fn build_jsapi(build_dir: &Path) {
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
         .status()
-        .expect("Failed to run `make`");
+        .expect(&format!("Failed to run `{:?}`", make));
     assert!(result.success());
 
     println!(
