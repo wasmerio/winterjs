@@ -10,3 +10,7 @@ edition = "2021"
 [workspace.dependencies]
 cc = "1"
 libc = "0.2"
+bindgen = { version = "0.66", default-features = false, features = [
+    "runtime",
+    "which-rustfmt",
+] }

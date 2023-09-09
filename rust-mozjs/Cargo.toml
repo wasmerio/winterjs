@@ -26,3 +26,4 @@ mozjs_sys = { path = "../mozjs" }
 
 [build-dependencies]
 cc.workspace = true
+bindgen.workspace = true

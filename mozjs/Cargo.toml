@@ -35,9 +35,6 @@ libc.workspace = true
 libz-sys = "1.1"
 
 [build-dependencies]
-bindgen = { version = "0.66", default-features = false, features = [
-  "runtime",
-  "which-rustfmt",
-] }
+bindgen.workspace = true
 cc.workspace = true
 walkdir = "2"

@@ -30,7 +30,7 @@ grep_heur() {
 # clone file and reformat
 cp target/debug/build/mozjs_sys-*/out/build/jsapi.rs target/jsapi.rs
 rustfmt target/jsapi.rs --config max_width=1000
-cp rust-mozjs/src/glue.rs target/glue.rs
+cp target/debug/build/mozjs-*/out/gluebindings.rs target/glue.rs
 rustfmt target/glue.rs --config max_width=1000
 
 # parse file

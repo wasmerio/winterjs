@@ -1020,6 +1020,7 @@ void JS_GetReservedSlot(JSObject* obj, uint32_t index, JS::Value* dest) {
   *dest = JS::GetReservedSlot(obj, index);
 }
 
+// keep this in sync with EncodedStringCallback in glue.rs
 typedef void (*EncodedStringCallback)(char*);
 
 void EncodeStringToUTF8(JSContext* cx, JS::HandleString str,

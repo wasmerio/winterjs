@@ -1090,6 +1090,7 @@ pub mod wrappers {
 
     use super::*;
     use crate::glue;
+    use crate::glue::EncodedStringCallback;
     use crate::jsapi;
     use crate::jsapi::jsid;
     use crate::jsapi::mozilla::Utf8Unit;
@@ -1145,7 +1146,6 @@ pub mod wrappers {
     };
     use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    use std::os::raw::{c_char, c_void};
     include!("jsapi_wrappers.in");
     include!("glue_wrappers.in");
 }
@@ -1237,6 +1237,7 @@ pub mod jsapi_wrapped {
 
     use super::*;
     use crate::glue;
+    use crate::glue::EncodedStringCallback;
     use crate::jsapi;
     use crate::jsapi::mozilla::Utf8Unit;
     use crate::jsapi::BigInt;
@@ -1291,7 +1292,6 @@ pub mod jsapi_wrapped {
     };
     use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    use std::os::raw::{c_char, c_void};
     include!("jsapi_wrappers.in");
     include!("glue_wrappers.in");
 }
