@@ -41,20 +41,20 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  JSObject* (*getIncumbentGlobal)(void* queue, JSContext* cx);
-  bool (*enqueuePromiseJob)(void* queue, JSContext* cx,
+  JSObject* (*getIncumbentGlobal)(const void* queue, JSContext* cx);
+  bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
                             JS::HandleObject incumbentGlobal) = 0;
-  bool (*empty)(void* queue);
+  bool (*empty)(const void* queue);
 };
 
 class RustJobQueue : public JS::JobQueue {
   JobQueueTraps mTraps;
-  void* mQueue;
+  const void* mQueue;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, void* aQueue)
+  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
       : mTraps(aTraps), mQueue(aQueue) {}
 
   virtual JSObject* getIncumbentGlobal(JSContext* cx) {
@@ -83,15 +83,15 @@ class RustJobQueue : public JS::JobQueue {
 };
 
 struct ReadableStreamUnderlyingSourceTraps {
-  void (*requestData)(void* source, JSContext* cx, JS::HandleObject stream,
+  void (*requestData)(const void* source, JSContext* cx, JS::HandleObject stream,
                       size_t desiredSize);
-  void (*writeIntoReadRequestBuffer)(void* source, JSContext* cx,
+  void (*writeIntoReadRequestBuffer)(const void* source, JSContext* cx,
                                      JS::HandleObject stream, JS::HandleObject chunk,
                                      size_t length, size_t* bytesWritten);
-  void (*cancel)(void* source, JSContext* cx, JS::HandleObject stream,
+  void (*cancel)(const void* source, JSContext* cx, JS::HandleObject stream,
                  JS::HandleValue reason, JS::Value* resolve_to);
-  void (*onClosed)(void* source, JSContext* cx, JS::HandleObject stream);
-  void (*onErrored)(void* source, JSContext* cx, JS::HandleObject stream,
+  void (*onClosed)(const void* source, JSContext* cx, JS::HandleObject stream);
+  void (*onErrored)(const void* source, JSContext* cx, JS::HandleObject stream,
                     JS::HandleValue reason);
   void (*finalize)(JS::ReadableStreamUnderlyingSource* source);
 };
@@ -99,11 +99,11 @@ struct ReadableStreamUnderlyingSourceTraps {
 class RustReadableStreamUnderlyingSource
     : public JS::ReadableStreamUnderlyingSource {
   ReadableStreamUnderlyingSourceTraps mTraps;
-  void* mSource;
+  const void* mSource;
 
  public:
   RustReadableStreamUnderlyingSource(
-      const ReadableStreamUnderlyingSourceTraps& aTraps, void* aSource)
+      const ReadableStreamUnderlyingSourceTraps& aTraps, const void* aSource)
       : mTraps(aTraps), mSource(aSource) {}
 
   virtual void requestData(JSContext* cx, JS::HandleObject stream,
@@ -138,8 +138,8 @@ class RustReadableStreamUnderlyingSource
 };
 
 struct JSExternalStringCallbacksTraps {
-  void (*finalize)(void* privateData, char16_t* chars);
-  size_t (*sizeOfBuffer)(void* privateData, const char16_t* chars,
+  void (*finalize)(const void* privateData, char16_t* chars);
+  size_t (*sizeOfBuffer)(const void* privateData, const char16_t* chars,
                          mozilla::MallocSizeOf mallocSizeOf);
 };
 
@@ -663,7 +663,7 @@ JS::ReadOnlyCompileOptions* NewCompileOptions(JSContext* aCx, const char* aFile,
 
 JSObject* NewProxyObject(JSContext* aCx, const void* aHandler,
                          JS::HandleValue aPriv, JSObject* proto,
-                         JSClass* aClass, bool aLazyProto) {
+                         const JSClass* aClass, bool aLazyProto) {
   js::ProxyOptions options;
   if (aClass) {
     options.setClass(aClass);
@@ -787,12 +787,12 @@ JSObject* UnwrapObjectStatic(JSObject* obj) {
   return js::CheckedUnwrapStatic(obj);
 }
 
-JSObject* UnwrapObjectDynamic(JSObject* obj, JSContext* cx, bool stopAtOuter) {
-  return js::CheckedUnwrapDynamic(obj, cx, stopAtOuter);
+JSObject* UnwrapObjectDynamic(JSObject* obj, JSContext* cx, bool stopAtWindowProxy) {
+  return js::CheckedUnwrapDynamic(obj, cx, stopAtWindowProxy);
 }
 
-JSObject* UncheckedUnwrapObject(JSObject* obj, bool stopAtOuter) {
-  return js::UncheckedUnwrap(obj, stopAtOuter);
+JSObject* UncheckedUnwrapObject(JSObject* obj, bool stopAtWindowProxy) {
+  return js::UncheckedUnwrap(obj, stopAtWindowProxy);
 }
 
 JS::PersistentRootedIdVector* CreateRootedIdVector(JSContext* cx) {
@@ -1021,7 +1021,7 @@ void JS_GetReservedSlot(JSObject* obj, uint32_t index, JS::Value* dest) {
 }
 
 // keep this in sync with EncodedStringCallback in glue.rs
-typedef void (*EncodedStringCallback)(char*);
+typedef void (*EncodedStringCallback)(const char*);
 
 void EncodeStringToUTF8(JSContext* cx, JS::HandleString str,
                         EncodedStringCallback cb) {
@@ -1033,14 +1033,14 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
+JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
   return new RustJobQueue(*aTraps, aQueue);
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
 
 JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
-    const ReadableStreamUnderlyingSourceTraps* aTraps, void* aSource) {
+    const ReadableStreamUnderlyingSourceTraps* aTraps, const void* aSource) {
   return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
 }
 

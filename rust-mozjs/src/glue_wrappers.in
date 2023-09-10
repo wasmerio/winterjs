@@ -3,7 +3,7 @@ wrap!(glue: pub fn InvokeHasOwn(handler: *const ::std::os::raw::c_void, cx: *mut
 wrap!(glue: pub fn CallJitGetterOp(info: *const JSJitInfo, cx: *mut JSContext, thisObj: HandleObject, specializedThis: *mut ::std::os::raw::c_void, argc: ::std::os::raw::c_uint, vp: *mut Value) -> bool);
 wrap!(glue: pub fn CallJitSetterOp(info: *const JSJitInfo, cx: *mut JSContext, thisObj: HandleObject, specializedThis: *mut ::std::os::raw::c_void, argc: ::std::os::raw::c_uint, vp: *mut Value) -> bool);
 wrap!(glue: pub fn CallJitMethodOp(info: *const JSJitInfo, cx: *mut JSContext, thisObj: HandleObject, specializedThis: *mut ::std::os::raw::c_void, argc: u32, vp: *mut Value) -> bool);
-wrap!(glue: pub fn NewProxyObject(aCx: *mut JSContext, aHandler: *const ::std::os::raw::c_void, aPriv: HandleValue, proto: *mut JSObject, aClass: *mut JSClass, aLazyProto: bool) -> *mut JSObject);
+wrap!(glue: pub fn NewProxyObject(aCx: *mut JSContext, aHandler: *const ::std::os::raw::c_void, aPriv: HandleValue, proto: *mut JSObject, aClass: *const JSClass, aLazyProto: bool) -> *mut JSObject);
 wrap!(glue: pub fn WrapperNew(aCx: *mut JSContext, aObj: HandleObject, aHandler: *const ::std::os::raw::c_void, aClass: *const JSClass) -> *mut JSObject);
 wrap!(glue: pub fn NewWindowProxy(aCx: *mut JSContext, aObj: HandleObject, aHandler: *const ::std::os::raw::c_void) -> *mut JSObject);
 wrap!(glue: pub fn RUST_JSID_IS_INT(id: HandleId) -> bool);
