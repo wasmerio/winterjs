@@ -231,9 +231,6 @@ fn build_jsapi(build_dir: &Path) {
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
-        if cfg!(feature = "uwp") {
-            println!("cargo:rustc-link-lib=mincore");
-        }
     } else if target.contains("apple") || target.contains("freebsd") {
         println!("cargo:rustc-link-lib=c++");
     } else {

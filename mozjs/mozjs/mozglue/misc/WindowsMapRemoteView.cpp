@@ -29,7 +29,6 @@ WINBASEAPI BOOL WINAPI UnmapViewOfFile2(HANDLE aProcess, PVOID aBaseAddress,
 
 enum SECTION_INHERIT { ViewShare = 1, ViewUnmap = 2 };
 
-#ifndef JS_ENABLE_UWP
 NTSTATUS NTAPI NtMapViewOfSection(
     HANDLE aSection, HANDLE aProcess, PVOID* aBaseAddress, ULONG_PTR aZeroBits,
     SIZE_T aCommitSize, PLARGE_INTEGER aSectionOffset, PSIZE_T aViewSize,
@@ -50,7 +49,6 @@ static DWORD GetWin32ErrorCode(NTSTATUS aNtStatus) {
 
   return pRtlNtStatusToDosError(aNtStatus);
 }
-#endif
 
 namespace mozilla {
 
@@ -58,9 +56,6 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
                                    ULONG64 aOffset, PVOID aBaseAddress,
                                    SIZE_T aViewSize, ULONG aAllocationType,
                                    ULONG aProtectionFlags) {
-#ifdef JS_ENABLE_UWP
-  return false;
-#else
   static const StaticDynamicallyLinkedFunctionPtr<decltype(&MapViewOfFileNuma2)>
       pMapViewOfFileNuma2(L"Api-ms-win-core-memory-l1-1-5.dll",
                           "MapViewOfFileNuma2");
@@ -101,14 +96,10 @@ MFBT_API void* MapRemoteViewOfFile(HANDLE aFileMapping, HANDLE aProcess,
   }
 
   ::SetLastError(GetWin32ErrorCode(ntStatus));
-#endif
   return nullptr;
 }
 
 MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
-#ifdef JS_ENABLE_UWP
-  return false;
-#else
   static const StaticDynamicallyLinkedFunctionPtr<decltype(&UnmapViewOfFile2)>
       pUnmapViewOfFile2(L"kernel32.dll", "UnmapViewOfFile2");
 
@@ -128,7 +119,6 @@ MFBT_API bool UnmapRemoteViewOfFile(HANDLE aProcess, PVOID aBaseAddress) {
   NTSTATUS ntStatus = pNtUnmapViewOfSection(aProcess, aBaseAddress);
   ::SetLastError(GetWin32ErrorCode(ntStatus));
   return NT_SUCCESS(ntStatus);
-#endif
 }
 
 }  // namespace mozilla

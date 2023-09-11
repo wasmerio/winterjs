@@ -4658,7 +4658,7 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.printf("===== %s =====\n", phase);
 
   size_t depth = 2;

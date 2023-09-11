@@ -7,8 +7,6 @@
 #ifndef mozilla_WindowsVersion_h
 #define mozilla_WindowsVersion_h
 
-#ifndef JS_ENABLE_UWP
-
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include <stdint.h>
@@ -213,7 +211,5 @@ MOZ_ALWAYS_INLINE bool NeedsWindows11SuggestedActionsWorkaround() {
 }
 
 }  // namespace mozilla
-
-#endif
 
 #endif /* mozilla_WindowsVersion_h */

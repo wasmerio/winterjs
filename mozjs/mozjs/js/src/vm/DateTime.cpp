@@ -42,9 +42,7 @@ static bool ComputeLocalTime(time_t local, struct tm* ptm) {
   // zone changes are correctly picked up.
 
 #if defined(_WIN32)
-#ifndef JS_ENABLE_UWP
   _tzset();
-#endif
   return localtime_s(ptm, &local) == 0;
 #elif defined(HAVE_LOCALTIME_R)
 #  ifndef __wasi__

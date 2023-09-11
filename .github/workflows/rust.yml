@@ -24,15 +24,12 @@ jobs:
       RUSTC_WRAPPER: sccache
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_VERSION: "v0.4.0"
     steps:
       - uses: actions/checkout@v3
       - name: Install deps
         run: brew install python llvm yasm
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-        with:
-          version: ${{ env.SCCACHE_VERSION }}
       - name: Build
         run: |
           cargo build --verbose ${{ matrix.features }}
@@ -42,7 +39,6 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_VERSION: "v0.4.0"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -56,8 +52,6 @@ jobs:
           sudo apt install llvm -y
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-        with:
-          version: ${{ env.SCCACHE_VERSION }}
       - name: Build
         run: |
           cargo build --verbose ${{ matrix.features }}
@@ -68,38 +62,23 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
-        #target: [""]
-        target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
       CXX: "clang-cl"
       MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
+      CCACHE: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
-        if: (!contains(matrix.target, 'uwp'))
-      - uses: dtolnay/rust-toolchain@master
-        if: contains(matrix.target, 'uwp')
-        with:
-          toolchain: "nightly-2023-02-02"
-          components: rust-src
       - name: Install deps
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
-        with:
-          version: ${{ env.SCCACHE_VERSION }}
-      - name: Build uwp
-        if: contains(matrix.target, 'uwp')
-        shell: cmd
-        run: |
-          rustc --version --verbose
-          cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
       - name: Build Windows
-        if: contains(matrix.target, 'uwp') != true
         shell: cmd
         run: |
           cargo test --verbose ${{ matrix.features }}

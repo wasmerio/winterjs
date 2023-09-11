@@ -15,7 +15,6 @@ doctest = false
 debugmozjs = ['mozjs_sys/debugmozjs']
 jitspew = ['mozjs_sys/jitspew']
 profilemozjs = ['mozjs_sys/profilemozjs']
-uwp = ['mozjs_sys/uwp']
 
 [dependencies]
 lazy_static = "1"

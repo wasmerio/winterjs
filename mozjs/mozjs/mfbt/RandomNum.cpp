@@ -13,7 +13,6 @@
 
 #if defined(XP_WIN)
 
-#ifndef JS_ENABLE_UWP
 // Microsoft doesn't "officially" support using RtlGenRandom() directly
 // anymore, and the Windows headers assume that __stdcall is
 // the default calling convention (which is true when Microsoft uses this
@@ -25,10 +24,6 @@
 #  define RtlGenRandom SystemFunction036
 extern "C" BOOLEAN NTAPI RtlGenRandom(PVOID RandomBuffer,
                                       ULONG RandomBufferLength);
-#else
-#  include "bcrypt.h"
-#  include "ntstatus.h"
-#endif // JS_ENABLE_UWP
 
 #endif
 
@@ -97,11 +92,7 @@ MFBT_API bool GenerateRandomBytesFromOS(void* aBuffer, size_t aLength) {
 
 #if defined(XP_WIN)
 
-#ifdef JS_ENABLE_UWP
-  return BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(aBuffer), aLength, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == STATUS_SUCCESS;
-#else
   return !!RtlGenRandom(aBuffer, aLength);
-#endif
 
 #elif defined(USE_ARC4RANDOM)  // defined(XP_WIN)
 

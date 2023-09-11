@@ -38,11 +38,6 @@ ifeq (windows,$(findstring windows,$(TARGET)))
 	# Override any attempt to use the debug CRT when building with debug.
 	CFLAGS += -MD
 	CXXFLAGS += -MD
-	ifneq (,$(CARGO_FEATURE_UWP))
-		CONFIGURE_FLAGS += --enable-uwp --without-intl-api --disable-vtune
-		CFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
-		CXXFLAGS += -DWINAPI_FAMILY=WINAPI_FAMILY_APP
-	endif
 else
 	WINDOWS :=
 endif
