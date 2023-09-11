@@ -57,7 +57,7 @@ jobs:
           cargo build --verbose ${{ matrix.features }}
           cargo test --verbose ${{ matrix.features }}
   windows:
-    runs-on: windows-2019
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
