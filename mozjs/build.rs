@@ -200,6 +200,23 @@ fn build_jsapi(build_dir: &Path) {
         encoding_c_mem_include_dir.replace("\\", "/"),
     ));
     cppflags.push(" ");
+    // add zlib from libz-sys to include path
+    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        cppflags.push(format!("-I{} ", zlib_include_dir.replace("\\", "/")));
+    }
+    // add zlib.pc into pkg-config's search path
+    // this is only needed when libz-sys builds zlib from source
+    if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
+        let mut pkg_config_path = OsString::from(format!(
+            "{}/lib/pkgconfig",
+            zlib_root_dir.replace("\\", "/")
+        ));
+        if let Some(env_pkg_config_path) = env::var_os("PKG_CONFIG_PATH") {
+            pkg_config_path.push(":");
+            pkg_config_path.push(env_pkg_config_path);
+        }
+        cmd.env("PKG_CONFIG_PATH", pkg_config_path);
+    }
     cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 

@@ -14,3 +14,7 @@ bindgen = { version = "0.66", default-features = false, features = [
     "runtime",
     "which-rustfmt",
 ] }
+
+[patch.crates-io]
+# until version with https://github.com/rust-lang/libz-sys/pull/157 is released
+libz-sys = { git = "https://github.com/rust-lang/libz-sys", branch = "main" }
