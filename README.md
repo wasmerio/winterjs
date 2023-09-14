@@ -28,8 +28,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 ## Windows
 
-1. Install [MozillaBuild 4.0](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-4.0.2.exe)
-   or download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip)
+1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
 2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
 
@@ -46,17 +45,6 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
    ```shell
     set LIBCLANG_PATH=C:\Program Files\LLVM\lib
-   ```
-
-   If you installed MozillaBuild in 1.:
-
-   ```shell
-    set MOZILLA_BUILD=C:\mozilla-build
-   ```
-
-   or if you unzipped MozTools in 1.:
-
-   ```shell
     set MOZTOOLS_PATH=C:\path\to\moztools-4.0
    ```
 
