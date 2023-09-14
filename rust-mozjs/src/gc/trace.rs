@@ -3,9 +3,9 @@ use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
-use mozjs_sys::jsapi::JS::{BigInt, JobQueue, Symbol};
-use mozjs_sys::jsgc::Heap;
+use crate::jsapi::{jsid, Heap, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use crate::jsapi::JS::{BigInt, JobQueue, Symbol};
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::btree_map::BTreeMap;
@@ -385,14 +385,14 @@ impl_traceable_simple!(
 impl_traceable_simple!(AtomicBool);
 impl_traceable_simple!(AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize);
 impl_traceable_simple!(AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize);
-impl_traceable_simple!(*mut JobQueue);
 impl_traceable_simple!(Cow<'static, str>);
-impl_traceable_simple!(JoinHandle<()>);
-impl_traceable_simple!(Runtime);
-impl_traceable_simple!(SystemTime);
-impl_traceable_simple!(Instant);
+impl_traceable_simple!(TypeId);
+impl_traceable_simple!(SystemTime, Instant);
 impl_traceable_simple!(PathBuf);
 impl_traceable_simple!(Range<u64>);
+impl_traceable_simple!(JoinHandle<()>);
+impl_traceable_simple!(*mut JobQueue);
+impl_traceable_simple!(Runtime);
 impl_traceable_simple!(Stencil);
 
 unsafe impl<'a> Traceable for &'a str {
