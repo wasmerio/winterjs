@@ -1098,6 +1098,15 @@ void SetDataPropertyDescriptor(
   desc.set(JS::PropertyDescriptor::Data(value, attrs));
 }
 
+void SetAccessorPropertyDescriptor(
+    JS::MutableHandle<JS::PropertyDescriptor> desc,
+    JS::HandleObject getter,
+    JS::HandleObject setter,
+    uint32_t attrs
+) {
+  desc.set(JS::PropertyDescriptor::Accessor(getter, setter, attrs));
+}
+
 void FinishOffThreadStencil(
   JSContext* cx,
   JS::OffThreadToken* token,

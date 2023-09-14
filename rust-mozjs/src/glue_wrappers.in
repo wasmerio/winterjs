@@ -20,3 +20,4 @@ wrap!(glue: pub fn JS_GetScriptPrivate(script: *mut JSScript, dest: MutableHandl
 wrap!(glue: pub fn JS_GetModulePrivate(module: *mut JSObject, dest: MutableHandleValue));
 wrap!(glue: pub fn EncodeStringToUTF8(cx: *mut JSContext, str_: HandleString, cb: EncodedStringCallback));
 wrap!(glue: pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32));
+wrap!(glue: pub fn SetAccessorPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, getter: HandleObject, setter: HandleObject, attrs: u32));
